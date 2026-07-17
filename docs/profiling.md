@@ -470,6 +470,34 @@ from +74.663/+68.110 ms to +60.736/+53.322 ms; end-to-end deltas were +78.227,
 byte-identical to cold DVI, and the fourth edit retained 14 pages, re-shipped
 three, and adopted all 83 suffix pages.
 
+The compositional follow-up separates pagination-changing slow edits from
+suffix-preserving interaction and height-preserving fast edits. Its final
+release build used eight AB/BA pairs after two warm-ups. Enabled-minus-disabled
+means were +33.048 ms for the large insertion, +26.295 ms for the
+suffix-preserving follow-up, +34.547 ms for the inverse removal, and +0.960 ms
+for the height-preserving substitution. The two slow edits therefore lost
+67.594 ms in steady state and 110.206 ms including the 42.612 ms initial
+recording cost. All four baseline and candidate boundary schedules were
+identical. The fast edit retained 14 pages, re-shipped three, adopted 83 as one
+subtree, and measured 0.280x/0.284x cold latency without/with paragraph
+recording.
+
+On the slow edits, 137 fully armed opportunities produced 27 hits (19.7%) and
+skipped 3,851 commands, about 4.5% of the combined dispatched-plus-skipped
+work. Validation and import totaled only 1.432 ms. Additive paired ownership
+assigned 40.955 ms to executor work, 8.904 ms to splice construction, and
+15.628 ms to acceptance; the remaining named stages were individually below
+1 ms combined except restart fork. Priming published 512 seeded regions and
+13,543,881 bytes of paragraph metadata. A bounded hot-path change replaced
+per-read B-tree insertion with append-only paragraph dependency capture and one
+sort/dedup at paragraph publication. In matched four-pair instrumented runs,
+the combined slow executor delta fell from 49.507 to 38.593 ms and the slow
+end-to-end delta from 77.347 to 66.960 ms. A separate acceptance/pruning
+hypothesis did not affect the measured path and was discarded. The retained
+optimization is material, but sparse useful coverage still cannot repay
+recording and generation costs, so paragraph memoization remains
+default-disabled.
+
 The runner requires the same external inputs as Gentle conformance. Populate
 them with `scripts/setup-conformance-tests.sh` if necessary.
 

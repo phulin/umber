@@ -1112,13 +1112,36 @@ useful hits. The enabled-minus-disabled per-edit paired means were +39.646,
 last edit retained 14 pages, re-shipped three, and adopted 83, but trace
 attrition and the losing total independently trigger the issue's stop rules.
 Paragraph memoization therefore remains default-disabled, and this negative
-release verdict does not create another recording micro-optimization chain.
+release verdict does not justify an open-ended recording micro-optimization
+chain.
 This completes the macro-bearing paragraph capability evaluation: the
 dependency, provenance, stable-anchor, prior-generation import, parity, and
 eligible-validation goals were delivered, while default enablement was
 rejected on end-to-end speed. The encompassing release decision must consume
 that split verdict rather than treating completion as evidence that the speed
 criterion passed.
+
+A later compositional audit first repaired paragraph-hit publication of the
+same named boundaries as ordinary execution, then measured three paths
+separately. Pagination-changing insertion and inverse-removal edits are the
+paragraph slow path and rebuild the page suffix. The follow-up edit preserves
+the suffix after paragraph work; the equal-width substitution is the pure
+height/page-preserving fast path. An eight-pair release run kept identical
+boundary schedules in both policies and measured +67.594 ms for the combined
+slow path, +110.206 ms with initial paragraph priming, +26.295 ms for the
+suffix-preserving interaction, and +0.960 ms for the fast path. The fast path
+retained 14 pages, re-shipped three, and adopted 83 in both policies.
+
+Only one bounded slow-path optimization survived measurement: paragraph
+expansion dependencies are now appended while the paragraph runs and sorted
+and deduplicated once at publication, rather than allocating and searching a
+B-tree node for every read. A matched instrumented comparison reduced the
+combined slow executor delta by 10.914 ms. Even after that improvement, 137
+armed slow-path opportunities yielded only 27 useful hits, validation/import
+cost just 1.432 ms, and recording plus generation ownership remained larger
+than the avoided work. This reinforces the default-disabled verdict without
+weakening validation, provenance, or the independent fast suffix-identity
+contract.
 
 ### Dependency-recorder baseline
 

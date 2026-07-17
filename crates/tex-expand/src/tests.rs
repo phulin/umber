@@ -1,6 +1,6 @@
 use crate::{
     DriverExpansionMode, EngineMode, ExpandableOpcode, ExpansionContext, ExpansionMode,
-    ReadRecorder, dispatch, dispatch_expandable_opcode, dispatch_with_context,
+    ReadDependency, ReadRecorder, dispatch, dispatch_expandable_opcode, dispatch_with_context,
     install_expandable_primitives, semantic_token,
 };
 use ahash::AHashMap;
@@ -21,6 +21,23 @@ use tex_state::provenance::{
 use tex_state::scaled::{GlueSetRatio, Scaled};
 use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 use tex_state::{ExpansionState, InputReadState, Universe};
+
+#[test]
+fn paragraph_reads_are_deduplicated_at_publication() {
+    let mut context = ExpansionContext::new("test");
+    context.begin_paragraph_recording();
+    context.record_dependency(ReadDependency::InputStack);
+    context.record_dependency(ReadDependency::Meaning(7));
+    context.record_dependency(ReadDependency::InputStack);
+
+    let (reads, barriers) = context.finish_paragraph_recording();
+
+    assert_eq!(
+        reads,
+        vec![ReadDependency::Meaning(7), ReadDependency::InputStack]
+    );
+    assert!(barriers.is_empty());
+}
 
 fn pdf_test_font(name: &str, content_hash: [u8; 32], size: i32) -> tex_state::font::LoadedFont {
     tex_state::font::LoadedFont::new(

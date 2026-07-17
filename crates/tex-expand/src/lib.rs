@@ -1055,7 +1055,11 @@ pub struct ExpansionContext<'a> {
     fuel_limit: u64,
     remaining_fuel: u64,
     fuel_scope_depth: u32,
-    paragraph_reads: Option<ReadSetRecorder>,
+    // Paragraph reads are a batch: execution only consumes them when the
+    // paragraph closes. Keep the hot recording path append-only, then sort
+    // and deduplicate once at publication instead of allocating a B-tree
+    // node and searching the set for every expansion read.
+    paragraph_reads: Option<Vec<ReadDependency>>,
     paragraph_barriers: BTreeSet<ParagraphExpansionBarrier>,
 }
 
@@ -1152,7 +1156,7 @@ impl<'a> ExpansionContext<'a> {
     #[doc(hidden)]
     pub fn begin_paragraph_recording(&mut self) {
         debug_assert!(self.paragraph_reads.is_none());
-        self.paragraph_reads = Some(ReadSetRecorder::default());
+        self.paragraph_reads = Some(Vec::new());
         self.paragraph_barriers.clear();
     }
 
@@ -1160,10 +1164,9 @@ impl<'a> ExpansionContext<'a> {
     pub fn finish_paragraph_recording(
         &mut self,
     ) -> (Vec<ReadDependency>, Vec<ParagraphExpansionBarrier>) {
-        let reads = self
-            .paragraph_reads
-            .take()
-            .map_or_else(Vec::new, |reads| reads.dependencies().collect());
+        let mut reads = self.paragraph_reads.take().unwrap_or_default();
+        reads.sort_unstable();
+        reads.dedup();
         let barriers = std::mem::take(&mut self.paragraph_barriers)
             .into_iter()
             .collect();
@@ -1182,7 +1185,7 @@ impl<'a> ExpansionContext<'a> {
             recorder.record_dependency(dependency);
         }
         if let Some(recorder) = &mut self.paragraph_reads {
-            recorder.record_dependency(dependency);
+            recorder.push(dependency);
         }
     }
 
@@ -1326,7 +1329,7 @@ impl<'a> ExpansionContext<'a> {
             recorder.record_meaning(symbol, meaning);
         }
         if let Some(recorder) = &mut self.paragraph_reads {
-            recorder.record_meaning(symbol, meaning);
+            recorder.push(ReadDependency::Meaning(symbol.raw()));
         }
     }
 
