@@ -245,6 +245,13 @@ O(1) and work at a compared boundary is proportional to roots dirtied since
 their cached projections. Detached effects and artifacts remain splice-owned
 history and are deliberately excluded.
 
+The copy-on-write hyphenation root also retains derived per-language dependency
+fingerprints for paragraph validation and recording. Pattern, exception, and
+saved-code writes invalidate the new root's projection before mutation; forks
+of an unchanged root share it. This acceleration is excluded from format
+serialization and semantic equality, while dependency changed-at stamps remain
+the validation authority.
+
 This identity is session-local acceleration state, not a durable content or
 persistence identity. Equality is authoritative for suffix adoption: there is
 no SHA-256 or structural fallback on this path. A 64-bit collision can therefore

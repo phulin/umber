@@ -4,13 +4,24 @@
 //! not Knuth's packed `trie_link`/`trie_char` array layout, but it preserves the
 //! same edge labels and hyphen-value semantics used by Liang's algorithm.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
+use std::sync::OnceLock;
 
-#[derive(Clone, Debug, Default, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
+#[derive(Clone, Debug, Default, serde::Deserialize, serde::Serialize)]
 pub struct HyphenationTable {
     languages: BTreeMap<u8, LanguageHyphenation>,
     hyphen_codes: BTreeMap<u8, BTreeMap<char, char>>,
+    #[serde(skip)]
+    dependency_fingerprints: OnceLock<BTreeMap<(u8, u8), u64>>,
 }
+
+impl PartialEq for HyphenationTable {
+    fn eq(&self, other: &Self) -> bool {
+        self.languages == other.languages && self.hyphen_codes == other.hyphen_codes
+    }
+}
+
+impl Eq for HyphenationTable {}
 
 #[derive(Clone, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
 struct LanguageHyphenation {
@@ -51,6 +62,7 @@ impl HyphenationTable {
         Self {
             languages: BTreeMap::new(),
             hyphen_codes: BTreeMap::new(),
+            dependency_fingerprints: OnceLock::new(),
         }
     }
 
@@ -96,6 +108,7 @@ impl HyphenationTable {
         if pattern.letters.is_empty() {
             return;
         }
+        self.dependency_fingerprints = OnceLock::new();
         let table = self.languages.entry(language).or_default();
         let mut node = 0usize;
         for ch in pattern.letters {
@@ -112,6 +125,7 @@ impl HyphenationTable {
         if exception.word.is_empty() {
             return;
         }
+        self.dependency_fingerprints = OnceLock::new();
         self.languages
             .entry(language)
             .or_default()
@@ -124,6 +138,7 @@ impl HyphenationTable {
         language: u8,
         codes: impl IntoIterator<Item = (char, char)>,
     ) {
+        self.dependency_fingerprints = OnceLock::new();
         self.hyphen_codes
             .insert(language, codes.into_iter().collect());
     }
@@ -229,6 +244,31 @@ impl HyphenationTable {
     }
 
     pub(crate) fn dependency_fingerprint(&self, language: u8, kind: u8) -> u64 {
+        assert!(kind < 3, "hyphenation dependency kind is fixed");
+        self.dependency_fingerprints
+            .get_or_init(|| {
+                self.languages
+                    .keys()
+                    .chain(self.hyphen_codes.keys())
+                    .copied()
+                    .collect::<BTreeSet<_>>()
+                    .into_iter()
+                    .flat_map(|language| {
+                        (0..3).map(move |kind| {
+                            (
+                                (language, kind),
+                                self.compute_dependency_fingerprint(language, kind),
+                            )
+                        })
+                    })
+                    .collect()
+            })
+            .get(&(language, kind))
+            .copied()
+            .unwrap_or_else(|| self.compute_dependency_fingerprint(language, kind))
+    }
+
+    fn compute_dependency_fingerprint(&self, language: u8, kind: u8) -> u64 {
         let mut hasher =
             crate::state_hash::StateHasher::new(0x6879_7068_6465_7000_u64 | u64::from(kind));
         hasher.u8(language);
@@ -273,7 +313,7 @@ impl HyphenationTable {
                     }
                 }
             }
-            _ => unreachable!("hyphenation dependency kind is fixed"),
+            _ => unreachable!("validated hyphenation dependency kind"),
         }
         hasher.finish()
     }

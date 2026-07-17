@@ -389,6 +389,25 @@ unchanged, and the fourth edit retained 14 pages, re-shipped three, and adopted
 all 83 suffix pages. The still-material executor residual is a separate
 follow-up rather than grounds to add another optimization to this pass.
 
+A bounded non-instrumented same-policy differential attributed the next
+executor residual to the first break-dependency projection after restart. The
+paragraph-enabled profile contained 705 samples below paragraph publication;
+263 (37%) walked `HyphenationTable::dependency_fingerprint`, while the disabled
+profile had no paragraph-publication traffic. The existing execution-local
+cache prevented repeated projection within one advance, but every checkpoint
+fork still rescanned the unchanged pattern trie. Hyphenation copy-on-write
+roots now retain this derived per-language projection. Mutations invalidate the
+new root's cache, and serialization, semantic equality, changed-at validation,
+and detached observations do not depend on it.
+
+The single final four-pair AB/BA run measured 0.883/0.906 ms of complete break-
+dependency capture and 0.346/0.353 ms of value projection on the large/inverse
+edits, down from the prior 18.6--18.8 ms projection totals. Executor deltas fell
+from +74.663/+68.110 ms to +60.736/+53.322 ms; end-to-end deltas were +78.227,
++43.475, +67.372, and +7.792 ms across the four edits. All outputs remained
+byte-identical to cold DVI, and the fourth edit retained 14 pages, re-shipped
+three, and adopted all 83 suffix pages.
+
 The runner requires the same external inputs as Gentle conformance. Populate
 them with `scripts/setup-conformance-tests.sh` if necessary.
 

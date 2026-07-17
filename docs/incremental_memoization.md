@@ -1027,6 +1027,28 @@ dependency/barrier counts, provenance and source batching, and the final 14
 retained / 3 re-shipped / 83 adopted suffix split remained exact. The residual
 is still material and remains separate follow-up work.
 
+The post-validation residual sample then compared two non-instrumented runs
+with both policies disabled against two with both policies recording
+paragraphs. Of 705 samples below paragraph publication, 263 (37%) belonged to
+the first unchanged hyphenation-pattern dependency fingerprint projection in
+each restarted executor. The execution-local observation cache had correctly
+removed repeated per-paragraph projection, but its first miss still walked the
+complete pattern trie even though the checkpoint fork retained the exact same
+copy-on-write hyphenation root.
+
+`HyphenationTable` now retains its per-language pattern, exception, and saved-
+code dependency fingerprints as derived data on that immutable root. Snapshot
+forks share the projection; every pattern, exception, or saved-code mutation
+first invalidates it on the copy-on-write table. The cache is excluded from
+serialization and semantic equality, and dependency changed-at tracking plus
+the execution-local observation guard remain authoritative. In the one final
+four-pair AB/BA comparison, large/inverse break-dependency capture fell from
+the prior 18.6--18.8 ms to 0.883/0.906 ms, including only 0.346/0.353 ms of
+value projection. Executor deltas fell from +74.663/+68.110 ms to
++60.736/+53.322 ms. Every accepted revision remained byte-identical to cold,
+and inverse restart, dependency/barrier/provenance counts, batching, tracing,
+and the final 14 retained / 3 re-shipped / 83 adopted suffix split held.
+
 ### Dependency-recorder baseline
 
 The state-layer recorder has an explicit disabled branch and no lock or atomic.
