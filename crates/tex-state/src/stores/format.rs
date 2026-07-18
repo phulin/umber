@@ -5,6 +5,7 @@ mod node;
 use node::FormatNode;
 
 mod frozen_core;
+mod frozen_env;
 mod frozen_node;
 mod frozen_non_node;
 
@@ -18,6 +19,7 @@ pub(crate) use frozen_core::{
     FrozenCoreSections, GLUE_SECTION, MACROS_SECTION, NAMES_LOOKUP_SECTION, NAMES_SECTION,
     TOKEN_LISTS_SECTION,
 };
+pub(crate) use frozen_env::FROZEN_ENV_SECTION;
 pub(crate) use frozen_node::{FROZEN_NODES_SECTION, FrozenNodeSection};
 pub(crate) use frozen_non_node::{
     CODE_TABLES_SECTION, FONTS_SECTION, FrozenNonNodeSections, HYPHENATION_SECTION,
@@ -34,22 +36,16 @@ pub(crate) fn testing_take_legacy_restore_count() -> usize {
 }
 
 #[cfg(test)]
-pub(crate) fn testing_transitional_overlay_shape(payload: &[u8]) -> (usize, usize) {
-    let format: TransitionalOverlayFormat =
-        bincode::deserialize(payload).expect("test transitional overlay payload");
-    assert_eq!(
-        bincode::serialize(&format).expect("test transitional overlay serializes"),
-        payload
-    );
-    (0, format.env.len())
+pub(crate) fn testing_frozen_environment_shape(payload: &[u8]) -> usize {
+    frozen_env::decode(payload)
+        .expect("test frozen environment payload")
+        .len()
 }
 
 #[cfg(test)]
-pub(crate) fn testing_corrupt_overlay_macro_reference(payload: &[u8]) -> Vec<u8> {
-    let mut format: TransitionalOverlayFormat =
-        bincode::deserialize(payload).expect("test transitional overlay payload");
-    let entry = format
-        .env
+pub(crate) fn testing_corrupt_environment_macro_reference(payload: &[u8]) -> Vec<u8> {
+    let mut entries = frozen_env::decode(payload).expect("test frozen environment payload");
+    let entry = entries
         .iter_mut()
         .find(|entry| {
             crate::cell::CellId::from_raw(entry.cell)
@@ -63,11 +59,34 @@ pub(crate) fn testing_corrupt_overlay_macro_reference(payload: &[u8]) -> Vec<u8>
         }
         .encode(),
     );
-    bincode::serialize(&format).expect("corrupted transitional overlay serializes")
+    frozen_env::encode(&entries).expect("corrupted frozen environment serializes")
+}
+
+#[cfg(test)]
+pub(crate) fn testing_corrupt_environment_global_cell(payload: &[u8]) -> Vec<u8> {
+    let mut entries = frozen_env::decode(payload).expect("test frozen environment payload");
+    entries[0].cell |= 1_u64 << 30;
+    entries.sort_unstable_by_key(|entry| entry.cell);
+    frozen_env::encode(&entries).expect("corrupted frozen environment serializes")
+}
+
+#[cfg(test)]
+pub(crate) fn testing_corrupt_environment_box_reference(payload: &[u8]) -> Vec<u8> {
+    let mut entries = frozen_env::decode(payload).expect("test frozen environment payload");
+    let entry = entries
+        .iter_mut()
+        .find(|entry| matches!(entry.value, FormatEnvValue::Box(_)))
+        .expect("test frozen environment has a box entry");
+    entry.value = FormatEnvValue::Box(FormatListKey {
+        survivor_root: None,
+        start: u32::MAX,
+        len: 1,
+    });
+    frozen_env::encode(&entries).expect("corrupted frozen environment serializes")
 }
 
 pub(crate) struct EncodedStoreFormat {
-    pub overlay: Vec<u8>,
+    pub env: Vec<u8>,
     pub names: Vec<u8>,
     pub names_lookup: Vec<u8>,
     pub token_lists: Vec<u8>,
@@ -81,7 +100,7 @@ pub(crate) struct EncodedStoreFormat {
 
 impl EncodedStoreFormat {
     pub(crate) fn payload_len(&self) -> usize {
-        self.overlay
+        self.env
             .len()
             .saturating_add(self.names.len())
             .saturating_add(self.names_lookup.len())
@@ -119,11 +138,6 @@ struct StoreFormat {
     hyphenation: HyphenationTable,
     prepared_mag: Option<i32>,
     last_loaded_font: u32,
-}
-
-#[derive(Clone, Debug, Deserialize, Serialize)]
-struct TransitionalOverlayFormat {
-    env: Vec<FormatEnvEntry>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -302,10 +316,9 @@ impl Stores {
         let frozen = frozen_core::encode(&format)?;
         let non_node = frozen_non_node::encode(&format)?;
         let nodes = frozen_node::encode(&format, self)?;
-        let overlay = bincode::serialize(&format.transitional_overlay())
-            .map_err(|error| StoreFormatError::Codec(error.to_string()))?;
+        let env = frozen_env::encode(&format.env)?;
         Ok(EncodedStoreFormat {
-            overlay,
+            env,
             names: frozen.names,
             names_lookup: frozen.names_lookup,
             token_lists: frozen.token_lists,
@@ -319,13 +332,12 @@ impl Stores {
     }
 
     pub(crate) fn decode_frozen_format(
-        bytes: &[u8],
+        env_section: &[u8],
         sections: FrozenCoreSections<'_>,
         non_node_sections: FrozenNonNodeSections<'_>,
         node_section: FrozenNodeSection<'_>,
     ) -> Result<Self, StoreFormatError> {
-        let overlay: TransitionalOverlayFormat = bincode::deserialize(bytes)
-            .map_err(|error| StoreFormatError::Codec(error.to_string()))?;
+        let env = frozen_env::decode(env_section)?;
         let mut core = frozen_core::decode(sections)?;
         let mut non_node = frozen_non_node::decode(non_node_sections, &core.interner)?;
         let node_lists = frozen_node::decode(node_section)?;
@@ -336,7 +348,7 @@ impl Stores {
             glue: std::mem::take(&mut core.glue_rows),
             fonts: std::mem::take(&mut non_node.font_rows),
             node_lists: node_lists.lists,
-            env: overlay.env,
+            env,
             code_tables: std::mem::take(&mut non_node.code_rows),
             hyphenation: std::mem::take(&mut non_node.hyphenation),
             prepared_mag: non_node.prepared_mag,
@@ -349,11 +361,6 @@ impl Stores {
 }
 
 impl StoreFormat {
-    fn transitional_overlay(&self) -> TransitionalOverlayFormat {
-        TransitionalOverlayFormat {
-            env: self.env.clone(),
-        }
-    }
     fn capture(stores: &Stores) -> Result<Self, StoreFormatError> {
         let names = (0..stores.interner.len())
             .map(|raw| {
@@ -454,6 +461,7 @@ impl StoreFormat {
             })
             .collect();
         canonicalize_node_list_keys(&mut node_lists, &mut env);
+        env.sort_unstable_by_key(|entry| entry.cell);
         let mut code_tables = Vec::new();
         stores.code_tables.for_each_non_default(|ch, values| {
             code_tables.push(FormatCodeTables {
@@ -695,6 +703,7 @@ impl StoreFormat {
                 return Err(StoreFormatError::Invalid("frozen node semantic identity"));
             }
         }
+        let mut base = Vec::with_capacity(self.env.len());
         for entry in self.env {
             let dto_cell = crate::cell::CellId::from_raw(entry.cell)
                 .ok_or(StoreFormatError::Invalid("unknown environment cell"))?;
@@ -718,8 +727,9 @@ impl StoreFormat {
                     return Err(StoreFormatError::Invalid("box value in non-box bank"));
                 }
             };
-            stores.env.restore_raw(cell, word);
+            base.push(crate::env::FormatBaseCell { cell, word });
         }
+        stores.env.install_format_base(base);
         Ok(stores)
     }
 

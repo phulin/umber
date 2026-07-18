@@ -74,15 +74,17 @@ mod node_semantic;
 mod state_hash;
 
 pub(crate) use format::{
-    CODE_TABLES_SECTION, FONTS_SECTION, FROZEN_NODES_SECTION, FrozenCoreSections,
-    FrozenNodeSection, FrozenNonNodeSections, GLUE_SECTION, HYPHENATION_SECTION, MACROS_SECTION,
-    NAMES_LOOKUP_SECTION, NAMES_SECTION, StoreFormatError, TOKEN_LISTS_SECTION,
+    CODE_TABLES_SECTION, FONTS_SECTION, FROZEN_ENV_SECTION, FROZEN_NODES_SECTION,
+    FrozenCoreSections, FrozenNodeSection, FrozenNonNodeSections, GLUE_SECTION,
+    HYPHENATION_SECTION, MACROS_SECTION, NAMES_LOOKUP_SECTION, NAMES_SECTION, StoreFormatError,
+    TOKEN_LISTS_SECTION,
 };
 #[cfg(test)]
 pub(crate) use format::{
-    TestingFontFormatCorruption, testing_corrupt_font_format,
-    testing_corrupt_overlay_macro_reference, testing_take_legacy_restore_count,
-    testing_transitional_overlay_shape,
+    TestingFontFormatCorruption, testing_corrupt_environment_box_reference,
+    testing_corrupt_environment_global_cell, testing_corrupt_environment_macro_reference,
+    testing_corrupt_font_format, testing_frozen_environment_shape,
+    testing_take_legacy_restore_count,
 };
 
 pub use crate::env::group::{GroupKind, GroupMismatch};

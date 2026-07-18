@@ -126,11 +126,14 @@ content and code-table/hyphenation mutations extend those bases and follow the
 same lookup, snapshot, generation, and rollback rules as a cold store; no
 format byte is mutated.
 
-The transitional schema-10 semantic section is restricted to reachable node
-graphs and environment entries. Core names, tokens, macros, glue, fonts, code
-tables, and hyphenation are neither duplicated there nor reconstructed through
-their ordinary mutation APIs. Overlay references are checked against the
-decoded frozen prefixes before either the overlay or its stores are published.
+Schema-10 kind 528 installs validated environment cells directly as an
+immutable format base, including references into kind 512's frozen node arena.
+The existing banks form the mutable job overlay and retain their ordinary
+write barrier, journal, grouping, snapshot, and rollback semantics. Core
+names, tokens, macros, glue, fonts, code tables, and hyphenation are neither
+duplicated there nor reconstructed through their ordinary mutation APIs.
+Environment references are checked against the decoded frozen prefixes before
+either the base or its stores are published.
 
 Provenance is diagnostic metadata and does not affect semantic identity.
 Packed origins refer to immutable input records or editor fragments. The

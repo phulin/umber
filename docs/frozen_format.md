@@ -1,15 +1,16 @@
 # Portable Frozen Format Images
 
 Status: schema-10 container, authoritative core-store sections, portable
-precomputed lookup indexes, and runtime-ready frozen node arena.
+precomputed lookup indexes, runtime-ready frozen node arena, and groupable
+environment base/overlay.
 
 This document is the durable ABI contract for Umber format images. The outer
 container is implemented in `tex-state::format_container`. Schema 10 replaces
-the schema-9 envelope. Section 1 is now an isolated transitional overlay that
-contains only format-visible environment entries. Reachable node graphs are
-authoritative in kind 512, and non-node semantic stores are authoritative in
-their fixed sections. Later phases replace the remaining environment overlay;
-no section serializes live Rust objects.
+the schema-9 envelope. Section 1 now contains only Universe-level interaction
+mode and permitted PDF configuration. Format-visible environment entries are
+authoritative in kind 528, reachable node graphs are authoritative in kind
+512, and non-node semantic stores are authoritative in their fixed sections.
+No section serializes live Rust objects.
 
 ## Goals and trust boundary
 
@@ -76,12 +77,11 @@ fingerprints, the directory, alignment padding, and every payload byte. It is
 an accidental-corruption checksum, not an authenticity mechanism.
 
 Section kind 1 retains the historical directory name
-`TransitionalSemanticV9`, but its schema-10 payload is restricted to detached
-environment entries. It contains no node lists, names,
-token lists, macros, glue, fonts, code tables, hyphenation data, prepared
-magnification, or last-font metadata. The schema-10 runtime requires exactly
-kinds 1, 256, 257, 272, 288, 304, 320, 336, 352, and 512. The following kinds are
-allocated for the complete rollout:
+`TransitionalSemanticV9`, but its schema-10 payload is restricted to
+Universe-level interaction mode and permitted format-level PDF configuration.
+It contains no store or environment data. The schema-10 runtime requires
+exactly kinds 1, 256, 257, 272, 288, 304, 320, 336, 352, 512, and 528. The
+following kinds are allocated for the complete rollout:
 
 | Kind | Intended contents                        |
 | ---: | ---------------------------------------- |
@@ -239,6 +239,28 @@ arena root with their precomputed semantic spans. No legacy key map, graph
 promotion, or semantic reseal runs on the load path. The job epoch arena starts
 empty; job-local lists may safely refer to frozen lists and allocate normally.
 
+### Frozen environment (kind 528)
+
+The 16-byte header is `(version, count, records_offset, reserved)` as four
+`u32` values; `records_offset` is 16. Each 24-byte record contains packed cell
+id `u64`, value tag `u8`, seven reserved zero bytes, and payload `u64`.
+Records are strictly ordered by the complete packed cell id, global-bit cells
+and duplicate cells are rejected, and each bank's index and value domain is
+validated against the decoded frozen stores.
+
+Value tag 0 stores the raw fixed-width semantic cell word. Tag 1 is permitted
+only for a nonvoid box cell and packs the frozen node-list record index in the
+low `u32` and its validated node count in the high `u32`. No runtime handle is
+serialized. After cross-store and node-reference validation, the loader maps
+box records to the installed survivor arena and bulk-installs all cells as an
+immutable format base without calling assignment APIs.
+
+The ordinary environment banks are the mutable job overlay seeded from that
+base. Their existing write barrier owns all later local/global assignment,
+save-stack journaling, grouping, snapshot, and rollback behavior. The retained
+base cells are immutable and shared across environment clones; job mutation
+changes only overlay storage.
+
 ## References and structural validation
 
 Within a section, a reference is either a fixed-width record index or an
@@ -332,11 +354,9 @@ boundary: the loader rejects schema 9 with `UnsupportedVersion(9)`. Users
 regenerate format images from their source under the schema-10 engine; Umber
 does not reinterpret an old image heuristically.
 
-During the transition, schema 10 writes section 1 only for the environment
-overlay; node graphs are written to kind 512. Names, token lists, macros, glue, fonts, code tables, and
-hyphenation exist only in authoritative sections 256 through 352 and are never
-reinterned during normal loading. The decoder validates overlay references
-against those frozen stores before publication. A later phase replaces the
-remaining environment reconstruction with a mutable overlay. Once that path
-is integrated across all drivers, section 1 is removed under another explicit
-schema bump.
+Schema 10 writes environment cells only to kind 528 and node graphs only to
+kind 512. Names, token lists, macros, glue, fonts, code tables, and hyphenation
+exist only in authoritative sections 256 through 352 and are never reinterned
+during normal loading. The decoder validates environment references against
+those frozen stores before publication. Section 1 remains only for
+Universe-level format metadata until a later explicit schema migration.

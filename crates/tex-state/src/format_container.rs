@@ -15,7 +15,7 @@ const CHECKSUM_LEN: usize = 8;
 const MAX_SECTIONS: usize = 64;
 const MAX_ALIGNMENT: u32 = 4096;
 
-/// Temporary schema-10 payload containing the schema-v9 semantic DTO.
+/// Transitional Universe-level metadata payload; store data lives elsewhere.
 pub(crate) const TRANSITIONAL_SEMANTIC_SECTION: u32 = 1;
 
 pub(crate) const ABI_FINGERPRINT: u64 = fingerprint(

@@ -89,6 +89,7 @@ All production mutation of live TeX state should pass through `Universe` or simi
 - `src/stores/format/frozen_core.rs`: Fixed-width schema-10 names, token-list, macro, and glue section codecs plus direct validated dense-store restoration.
 - `src/stores/format/frozen_non_node.rs`: Schema-10 font, code-table, and hyphenation section codecs plus direct validated store restoration.
 - `src/stores/format/frozen_node.rs`: Schema-10 fixed-record reachable node-graph codec, semantic-identity validation, and frozen arena installation metadata.
+- `src/stores/format/frozen_env.rs`: Schema-10 fixed-record environment-cell codec and validated immutable-base installation input.
 - `src/stores/format/node.rs`: Handle-free serialized node/math DTO graph and validated conversion to and from live nodes.
 - `src/stores/format/tests.rs`: Malformed format DTO validation tests that reject references before live-store publication.
 - `src/stores/format/font_validation.rs`: Pre-publication validation of detached font metrics, identifiers, and serialized Env font banks, plus test-only corruption fixtures.

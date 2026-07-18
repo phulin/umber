@@ -213,13 +213,12 @@ pub(crate) enum TestingFontFormatCorruption {
 
 #[cfg(test)]
 pub(crate) fn testing_corrupt_font_format(
-    transitional: &[u8],
+    environment: &[u8],
     frozen_fonts: &[u8],
     corruption: TestingFontFormatCorruption,
 ) -> (Vec<u8>, Vec<u8>) {
     const HEADER: usize = 32;
-    let mut format: TransitionalOverlayFormat =
-        bincode::deserialize(transitional).expect("test transitional format payload");
+    let mut env = super::frozen_env::decode(environment).expect("test frozen environment payload");
     let mut fonts: Vec<FormatFont> =
         bincode::deserialize(&frozen_fonts[HEADER..]).expect("test frozen font payload");
     let font = fonts.get_mut(1).expect("test format has a loaded font");
@@ -278,9 +277,7 @@ pub(crate) fn testing_corrupt_font_format(
         TestingFontFormatCorruption::FontIdentifier => font.identifier = Some(u32::MAX),
         TestingFontFormatCorruption::FontParameterCount => {
             let raw = crate::cell::CellId::new(crate::cell::BankTag::FontParamLen, 1).raw();
-            format
-                .env
-                .iter_mut()
+            env.iter_mut()
                 .find(|entry| entry.cell == raw)
                 .expect("test format has a font parameter count")
                 .value = FormatEnvValue::Raw(6);
@@ -288,7 +285,7 @@ pub(crate) fn testing_corrupt_font_format(
         TestingFontFormatCorruption::FontDimenSlot => {
             let index = (1 << FONT_DIMEN_BITS) | 7;
             let raw = crate::cell::CellId::new(crate::cell::BankTag::FontDimen, index).raw();
-            format.env.push(FormatEnvEntry {
+            env.push(FormatEnvEntry {
                 cell: raw,
                 value: FormatEnvValue::Raw(1),
             });
@@ -296,10 +293,10 @@ pub(crate) fn testing_corrupt_font_format(
         TestingFontFormatCorruption::CurrentFont => {
             let raw = crate::cell::CellId::new(crate::cell::BankTag::CurrentFont, 0).raw();
             let word = u64::from(u32::MAX);
-            if let Some(entry) = format.env.iter_mut().find(|entry| entry.cell == raw) {
+            if let Some(entry) = env.iter_mut().find(|entry| entry.cell == raw) {
                 entry.value = FormatEnvValue::Raw(word);
             } else {
-                format.env.push(FormatEnvEntry {
+                env.push(FormatEnvEntry {
                     cell: raw,
                     value: FormatEnvValue::Raw(word),
                 });
@@ -317,8 +314,9 @@ pub(crate) fn testing_corrupt_font_format(
         frozen[24..28].copy_from_slice(&u32::MAX.to_le_bytes());
     }
     frozen.extend_from_slice(&font_payload);
+    env.sort_unstable_by_key(|entry| entry.cell);
     (
-        bincode::serialize(&format).expect("corrupted transitional format serializes"),
+        super::frozen_env::encode(&env).expect("corrupted frozen environment serializes"),
         frozen,
     )
 }

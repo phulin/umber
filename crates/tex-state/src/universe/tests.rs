@@ -562,6 +562,7 @@ fn checksum_valid_non_node_section_corruption_fails_closed() {
 #[test]
 fn frozen_foundational_sections_restore_ids_and_accept_job_local_additions() {
     let mut universe = Universe::new();
+    universe.set_count(7, 41);
     let base = universe.intern("frozen-base");
     let base_tokens = universe.intern_token_list(&[
         Token::Cs(base.symbol()),
@@ -609,16 +610,13 @@ fn frozen_foundational_sections_restore_ids_and_accept_job_local_additions() {
             crate::stores::CODE_TABLES_SECTION,
             crate::stores::HYPHENATION_SECTION,
             crate::stores::FROZEN_NODES_SECTION,
+            crate::stores::FROZEN_ENV_SECTION,
         ]
     );
-    let transitional = container
-        .section(crate::format_container::TRANSITIONAL_SEMANTIC_SECTION)
-        .expect("transitional overlay section");
-    let payload: super::UniverseFormatPayload =
-        bincode::deserialize(transitional.bytes).expect("universe format payload");
-    let (node_lists, env_entries) =
-        crate::stores::testing_transitional_overlay_shape(&payload.stores);
-    assert_eq!(node_lists, 0);
+    let environment = container
+        .section(crate::stores::FROZEN_ENV_SECTION)
+        .expect("frozen environment section");
+    let env_entries = crate::stores::testing_frozen_environment_shape(environment.bytes);
     assert!(env_entries > 0);
 
     let _ = crate::stores::testing_take_legacy_restore_count();
@@ -629,6 +627,21 @@ fn frozen_foundational_sections_restore_ids_and_accept_job_local_additions() {
         "normal schema-10 loading must not enter legacy semantic reinterning"
     );
     assert_eq!(loaded.dump_format().expect("canonical redump"), image);
+    let immutable_base = loaded.stores.env().testing_format_base().to_vec();
+    let environment_snapshot = loaded.snapshot();
+    loaded.enter_group();
+    loaded.set_count(7, 99);
+    assert_eq!(loaded.count(7), 99);
+    assert!(loaded.leave_group().is_empty());
+    assert_eq!(loaded.count(7), 41);
+    loaded.enter_group();
+    loaded.set_count(7, 100);
+    loaded.set_count_global(7, 77);
+    assert!(loaded.leave_group().is_empty());
+    assert_eq!(loaded.count(7), 77);
+    loaded.rollback(&environment_snapshot);
+    assert_eq!(loaded.count(7), 41);
+    assert_eq!(loaded.stores.env().testing_format_base(), immutable_base);
     let restored_base = loaded.symbol("frozen-base").expect("restored name");
     assert_eq!(restored_base.raw(), base.raw());
     assert_eq!(
@@ -770,7 +783,7 @@ fn checksum_valid_foundational_section_corruption_fails_structural_validation() 
 }
 
 #[test]
-fn transitional_overlay_references_are_validated_against_frozen_stores() {
+fn frozen_environment_references_are_validated_against_frozen_stores() {
     let mut universe = Universe::new();
     let symbol = universe.intern("overlay-cross-store");
     let tokens = universe.intern_token_list(&[Token::Cs(symbol.symbol())]);
@@ -788,22 +801,76 @@ fn transitional_overlay_references_are_validated_against_frozen_stores() {
     );
     let mut image = universe.dump_format().expect("cross-store format");
     let container = crate::format_container::decode(&image).expect("decode format container");
-    let transitional = container
-        .section(crate::format_container::TRANSITIONAL_SEMANTIC_SECTION)
-        .expect("transitional section");
-    let mut payload: super::UniverseFormatPayload =
-        bincode::deserialize(transitional.bytes).expect("universe format payload");
-    payload.stores = crate::stores::testing_corrupt_overlay_macro_reference(&payload.stores);
-    replace_store_format_payload(
-        &mut image,
-        bincode::serialize(&payload).expect("corrupted universe format payload"),
-    );
+    let environment = container
+        .section(crate::stores::FROZEN_ENV_SECTION)
+        .expect("frozen environment section");
+    let corrupt = crate::stores::testing_corrupt_environment_macro_reference(environment.bytes);
+    replace_format_section(&mut image, crate::stores::FROZEN_ENV_SECTION, |section| {
+        *section = corrupt;
+    });
     let error = Universe::from_format(World::memory(), &image)
         .expect_err("overlay reference outside frozen macro store");
     assert!(
         matches!(error, FormatError::InvalidState(ref message) if message.contains("meaning macro is not live")),
         "unexpected cross-store validation error: {error:?}"
     );
+}
+
+#[test]
+fn frozen_environment_rejects_global_cells_and_bad_box_references() {
+    let mut universe = Universe::new();
+    let list = universe.freeze_node_list(&[Node::Penalty(12)]);
+    universe.set_box_reg(3, list);
+    let valid = universe.dump_format().expect("format with frozen box");
+    for (corrupt, expected) in [
+        (
+            crate::stores::testing_corrupt_environment_global_cell as fn(&[u8]) -> Vec<u8>,
+            "global environment cell",
+        ),
+        (
+            crate::stores::testing_corrupt_environment_box_reference as fn(&[u8]) -> Vec<u8>,
+            "missing box node list",
+        ),
+    ] {
+        let container = crate::format_container::decode(&valid).expect("decode valid format");
+        let environment = container
+            .section(crate::stores::FROZEN_ENV_SECTION)
+            .expect("frozen environment section");
+        let payload = corrupt(environment.bytes);
+        let mut image = valid.clone();
+        replace_format_section(&mut image, crate::stores::FROZEN_ENV_SECTION, |section| {
+            *section = payload;
+        });
+        let error =
+            Universe::from_format(World::memory(), &image).expect_err("invalid frozen environment");
+        assert!(
+            matches!(error, FormatError::InvalidState(ref message) if message.contains(expected)),
+            "unexpected environment validation error: {error:?}"
+        );
+    }
+}
+
+#[test]
+fn checksum_valid_frozen_environment_corruption_fails_closed() {
+    let valid = Universe::new()
+        .dump_format()
+        .expect("valid environment format");
+    for (offset, expected) in [
+        (12_usize, "reserved header"),
+        (16 + 8, "value tag"),
+        (16 + 9, "reserved record"),
+    ] {
+        let mut corrupt = valid.clone();
+        replace_format_section(&mut corrupt, crate::stores::FROZEN_ENV_SECTION, |section| {
+            section[offset] = u8::MAX
+        });
+        let error = Universe::from_format(World::memory(), &corrupt)
+            .expect_err("checksum-valid environment corruption");
+        assert!(
+            matches!(error, FormatError::InvalidState(ref message) if message.contains(expected)),
+            "offset {offset} returned {error:?}"
+        );
+    }
 }
 
 #[test]
@@ -1211,34 +1278,6 @@ fn refresh_format_checksum(bytes: &mut [u8]) {
     crate::format_container::refresh_checksum(bytes);
 }
 
-fn replace_store_format_payload(bytes: &mut Vec<u8>, payload: Vec<u8>) {
-    let container = crate::format_container::decode(bytes).expect("decode test container");
-    let owned: Vec<_> = container
-        .sections
-        .iter()
-        .map(|section| {
-            let section_bytes =
-                if section.kind == crate::format_container::TRANSITIONAL_SEMANTIC_SECTION {
-                    payload.clone()
-                } else {
-                    section.bytes.to_vec()
-                };
-            (section.kind, section.alignment, section_bytes)
-        })
-        .collect();
-    let inputs: Vec<_> = owned
-        .iter()
-        .map(
-            |(kind, alignment, section_bytes)| crate::format_container::SectionInput {
-                kind: *kind,
-                alignment: *alignment,
-                bytes: section_bytes,
-            },
-        )
-        .collect();
-    *bytes = crate::format_container::encode(&inputs).expect("re-encode test container");
-}
-
 fn replace_format_section(bytes: &mut Vec<u8>, kind: u32, mutate: impl FnOnce(&mut Vec<u8>)) {
     let container = crate::format_container::decode(bytes).expect("decode test container");
     let mut sections: Vec<_> = container
@@ -1269,21 +1308,17 @@ fn corrupt_font_format(
     corruption: crate::stores::TestingFontFormatCorruption,
 ) {
     let container = crate::format_container::decode(bytes).expect("decode test container");
-    let section = container
-        .section(crate::format_container::TRANSITIONAL_SEMANTIC_SECTION)
-        .expect("semantic section");
-    let mut format: super::UniverseFormatPayload =
-        bincode::deserialize(section.bytes).expect("test universe format payload");
+    let environment = container
+        .section(crate::stores::FROZEN_ENV_SECTION)
+        .expect("frozen environment section");
     let frozen = container
         .section(crate::stores::FONTS_SECTION)
         .expect("frozen font section");
-    let (transitional, frozen) =
-        crate::stores::testing_corrupt_font_format(&format.stores, frozen.bytes, corruption);
-    format.stores = transitional;
-    replace_store_format_payload(
-        bytes,
-        bincode::serialize(&format).expect("corrupted universe format payload"),
-    );
+    let (environment, frozen) =
+        crate::stores::testing_corrupt_font_format(environment.bytes, frozen.bytes, corruption);
+    replace_format_section(bytes, crate::stores::FROZEN_ENV_SECTION, |section| {
+        *section = environment;
+    });
     replace_format_section(bytes, crate::stores::FONTS_SECTION, |section| {
         *section = frozen;
     });

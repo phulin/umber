@@ -33,6 +33,7 @@ use crate::token::Token;
 #[cfg(feature = "shadow")]
 use ahash::AHashMap;
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
 const SEGMENT_BITS: u32 = 16;
 const SEGMENT_LEN: usize = 1 << SEGMENT_BITS;
@@ -59,6 +60,13 @@ impl Default for WordStamp {
 }
 
 pub(crate) use group::EnvSnapshot;
+
+/// One validated cell in the immutable environment installed by a format.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct FormatBaseCell {
+    pub(crate) cell: CellId,
+    pub(crate) word: u64,
+}
 
 macro_rules! register_accessors {
     ($get:ident, $set:ident, $set_global:ident, $value:ty, $bank:ident, $dense:ident, $sparse:ident) => {
@@ -136,6 +144,7 @@ macro_rules! register_accessors {
 /// TeX environment cells plus the journal that makes mutation replayable.
 #[derive(Clone, Debug)]
 pub struct Env {
+    format_base: Arc<[FormatBaseCell]>,
     meaning_cells: Vec<Option<MeaningSegment>>,
     meaning_stamps: Vec<Option<StampSegment>>,
     counts: FixedBank<I32Codec, DENSE_REGISTER_COUNT>,
@@ -184,6 +193,7 @@ impl Env {
     #[must_use]
     pub(crate) fn new() -> Self {
         Self {
+            format_base: Arc::from([]),
             meaning_cells: Vec::new(),
             meaning_stamps: Vec::new(),
             counts: FixedBank::new(),
@@ -226,6 +236,25 @@ impl Env {
             #[cfg(feature = "shadow")]
             shadow: AHashMap::new(),
         }
+    }
+
+    /// Installs a validated immutable format base into a fresh environment.
+    ///
+    /// The ordinary banks are the mutable job overlay. Seeding them here does
+    /// not create assignment history; later writes use the normal barrier and
+    /// can therefore restore these base values through groups and snapshots.
+    pub(crate) fn install_format_base(&mut self, cells: Vec<FormatBaseCell>) {
+        debug_assert_eq!(self.group_depth, 0);
+        debug_assert!(self.format_base.is_empty());
+        for entry in &cells {
+            self.restore_raw(entry.cell, entry.word);
+        }
+        self.format_base = cells.into();
+    }
+
+    #[cfg(test)]
+    pub(crate) fn testing_format_base(&self) -> &[FormatBaseCell] {
+        &self.format_base
     }
 
     /// Returns the current epoch.
