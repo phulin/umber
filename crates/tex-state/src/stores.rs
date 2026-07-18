@@ -4,7 +4,6 @@
 //! `Universe` for checkpointing and rollback so the whole timeline tuple is
 //! restored atomically.
 
-use crate::cell::CellId;
 use crate::code_tables::{
     CodeTableGenerations, CodeTables, CodeTablesSnapshot, DelCode, LcCode, MathCode, SfCode, UcCode,
 };
@@ -2102,7 +2101,7 @@ impl Stores {
         &mut self,
     ) -> (
         Vec<Token>,
-        Vec<CellId>,
+        crate::env::group::ChangedCells,
         CodeTableGenerations,
         CodeTableGenerations,
     ) {
@@ -2127,7 +2126,7 @@ impl Stores {
     ) -> Result<
         (
             Vec<Token>,
-            Vec<CellId>,
+            crate::env::group::ChangedCells,
             CodeTableGenerations,
             CodeTableGenerations,
         ),
