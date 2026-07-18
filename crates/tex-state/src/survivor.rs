@@ -4,7 +4,7 @@
 //! and rewrites child spans to be relative to the survivor root.
 
 use crate::glue::GlueSpec;
-use crate::ids::{ArenaRef, GlueId, NodeListId, SurvivorRootId};
+use crate::ids::{ArenaRef, FontId, GlueId, NodeListId, SurvivorRootId};
 #[cfg(debug_assertions)]
 use crate::node::Node;
 use crate::node_arena::{
@@ -137,12 +137,16 @@ struct SurvivorPayload {
 ///
 /// The semantic payload is shared directly. Cloning or dropping this handle
 /// never walks the node graph; a live Universe installs a local root slot and
-/// ordinary rollback pin only when it actually consumes the mount.
+/// ordinary rollback pin only when it actually consumes the mount. Retention
+/// also summarizes the immutable graph's supported shape and external resource
+/// closure so replay validation never has to decode the graph again.
 #[derive(Clone, Debug)]
 pub struct RetainedNodeList {
     id: NodeListId,
     payload: Arc<SurvivorPayload>,
     glues: Arc<[(GlueId, GlueSpec)]>,
+    fonts: Arc<[FontId]>,
+    mountable: bool,
 }
 
 impl RetainedNodeList {
@@ -155,16 +159,23 @@ impl RetainedNodeList {
         &self.glues
     }
 
-    pub(crate) fn contains_glue(&self, id: GlueId) -> bool {
-        self.glues
-            .binary_search_by_key(&id.raw(), |(candidate, _)| candidate.raw())
-            .is_ok()
+    pub(crate) fn fonts(&self) -> &[FontId] {
+        &self.fonts
+    }
+
+    pub(crate) const fn is_mountable(&self) -> bool {
+        self.mountable
     }
 
     pub(crate) fn resource_retained_bytes(&self) -> usize {
         self.glues
             .len()
             .saturating_mul(core::mem::size_of::<(GlueId, GlueSpec)>())
+            .saturating_add(
+                self.fonts
+                    .len()
+                    .saturating_mul(core::mem::size_of::<FontId>()),
+            )
     }
 }
 
@@ -363,6 +374,8 @@ impl SurvivorArena {
         &self,
         id: NodeListId,
         glues: Vec<(GlueId, GlueSpec)>,
+        fonts: Vec<FontId>,
+        mountable: bool,
     ) -> RetainedNodeList {
         let ArenaRef::Survivor(_) = id.arena() else {
             panic!("only survivor node-list ids can be retained");
@@ -372,24 +385,9 @@ impl SurvivorArena {
             id,
             payload: Arc::clone(&root.payload),
             glues: glues.into(),
+            fonts: fonts.into(),
+            mountable,
         }
-    }
-
-    /// Reads a list directly from an accepted-history mount without requiring
-    /// that its root currently have a local arena slot.
-    #[must_use]
-    pub(crate) fn retained_nodes<'a>(
-        &'a self,
-        retained: &'a RetainedNodeList,
-        id: NodeListId,
-    ) -> Option<NodeList<'a>> {
-        if id.arena() != retained.id.arena() {
-            return None;
-        }
-        let start = id.start() as usize;
-        let end = start.checked_add(id.len() as usize)?;
-        (end <= retained.payload.storage.len())
-            .then(|| retained.payload.storage.view(id.start(), id.len()))
     }
 
     /// Installs one accepted-history payload as a local root. The returned

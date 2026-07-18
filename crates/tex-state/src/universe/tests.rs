@@ -1597,6 +1597,24 @@ fn paragraph_mount_rejects_unsupported_handle_bearing_nodes() {
 }
 
 #[test]
+fn paragraph_mount_rejects_a_font_missing_from_the_current_store() {
+    let mut universe = Universe::new();
+    let before_font = universe.snapshot();
+    let font = universe.intern_font(test_font("transient", b"transient"));
+    let origin = universe.synthetic_origin(SyntheticOriginKind::Test);
+    let graph = universe.freeze_node_list(&[Node::Char {
+        font,
+        ch: 'x',
+        origin,
+    }]);
+    let retained = universe.retain_paragraph_result(graph);
+
+    assert!(universe.can_mount_retained_paragraph_result(&retained));
+    universe.rollback(&before_font);
+    assert!(!universe.can_mount_retained_paragraph_result(&retained));
+}
+
+#[test]
 fn generation_fork_detaches_the_accepted_effect_prefix() {
     let mut universe = Universe::new();
     universe.begin_retained_session().expect("retained session");

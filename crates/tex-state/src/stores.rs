@@ -45,7 +45,7 @@ use crate::macro_store::{
 };
 use crate::math::MathFontSize;
 use crate::meaning::Meaning;
-use crate::node::{LeaderPayload, Node};
+use crate::node::Node;
 #[cfg(feature = "profiling-stats")]
 use crate::node_arena::NodeMemoryColumn;
 use crate::node_arena::{NodeArena, NodeArenaMark, NodeList, NodeListBuilder};
@@ -1750,16 +1750,17 @@ impl Stores {
 
     /// Captures accepted-history ownership of one paragraph graph. The local
     /// survivor slot is held by the ordinary rollback pin log; the returned
-    /// mount shares its immutable payload and complete glue closure directly.
+    /// mount shares its immutable payload and precomputed mount summary.
     pub fn retain_paragraph_result(&mut self, id: NodeListId) -> RetainedNodeList {
         let mut glues = Vec::new();
-        self.collect_paragraph_glues(id, &mut glues);
+        let mut fonts = Vec::new();
+        let mountable = self.collect_paragraph_mount_resources(id, &mut glues, &mut fonts);
         glues.sort_unstable_by_key(|id| id.raw());
         glues.dedup_by_key(|id| id.raw());
         let glues = glues.into_iter().map(|id| (id, self.glue(id))).collect();
         let retained = self.prepare_box_value(id);
         self.survivor_pins.push(retained);
-        self.survivors.retain(retained, glues)
+        self.survivors.retain(retained, glues, fonts, mountable)
     }
 
     #[cfg(test)]
@@ -1774,78 +1775,12 @@ impl Stores {
     /// can be read directly by this Universe. Unsupported handle-bearing forms
     /// conservatively miss before replay mutates live state.
     pub fn can_mount_retained_paragraph_result(&self, retained: &RetainedNodeList) -> bool {
-        if !self.glue.can_restore_retained(retained.glues()) {
-            return false;
-        }
-        let root = retained.id().arena();
-        let mut pending = vec![retained.id()];
-        let mut seen = std::collections::HashSet::new();
-        while let Some(list) = pending.pop() {
-            if list.arena() != root {
-                return false;
-            }
-            if !seen.insert(list) {
-                continue;
-            }
-            let Some(nodes) = self.survivors.retained_nodes(retained, list) else {
-                return false;
-            };
-            for node in nodes {
-                match node {
-                    crate::node_arena::NodeRef::Char { font, .. }
-                    | crate::node_arena::NodeRef::Lig { font, .. } => {
-                        if self.fonts.resolve_stored(font).is_none() {
-                            return false;
-                        }
-                    }
-                    crate::node_arena::NodeRef::Glue {
-                        spec, leader: None, ..
-                    } => {
-                        if !retained.contains_glue(spec) {
-                            return false;
-                        }
-                    }
-                    crate::node_arena::NodeRef::HList(node)
-                    | crate::node_arena::NodeRef::VList(node) => pending.push(node.children),
-                    crate::node_arena::NodeRef::Disc {
-                        pre, post, replace, ..
-                    } => pending.extend([pre, post, replace]),
-                    crate::node_arena::NodeRef::Ins {
-                        split_top_skip,
-                        content,
-                        ..
-                    } => {
-                        if !retained.contains_glue(split_top_skip) {
-                            return false;
-                        }
-                        pending.push(content);
-                    }
-                    crate::node_arena::NodeRef::Adjust(content) => pending.push(content),
-                    crate::node_arena::NodeRef::Kern { .. }
-                    | crate::node_arena::NodeRef::Penalty(_)
-                    | crate::node_arena::NodeRef::Rule { .. }
-                    | crate::node_arena::NodeRef::MathOn(_)
-                    | crate::node_arena::NodeRef::MathOff(_)
-                    | crate::node_arena::NodeRef::Direction(_)
-                    | crate::node_arena::NodeRef::Nonscript => {}
-                    crate::node_arena::NodeRef::Whatsit(crate::node::Whatsit::Language {
-                        ..
-                    }) => {}
-                    crate::node_arena::NodeRef::Glue {
-                        leader: Some(_), ..
-                    }
-                    | crate::node_arena::NodeRef::Unset(_)
-                    | crate::node_arena::NodeRef::Mark { .. }
-                    | crate::node_arena::NodeRef::Whatsit(_)
-                    | crate::node_arena::NodeRef::MathNoad(_)
-                    | crate::node_arena::NodeRef::FractionNoad(_)
-                    | crate::node_arena::NodeRef::MathStyle(_)
-                    | crate::node_arena::NodeRef::MathChoice(_)
-                    | crate::node_arena::NodeRef::MathList(_) => return false,
-                }
-            }
-        }
-        true
+        retained.is_mountable()
+            && self.glue.can_restore_retained(retained.glues())
+            && retained
+                .fonts()
+                .iter()
+                .all(|font| self.fonts.resolve_stored(*font).is_some())
     }
 
     /// Mounts current-revision provenance over an already validated immutable
@@ -1885,30 +1820,39 @@ impl Stores {
             .then_some(id)
     }
 
-    fn collect_paragraph_glues(&self, id: NodeListId, glues: &mut Vec<GlueId>) {
+    fn collect_paragraph_mount_resources(
+        &self,
+        id: NodeListId,
+        glues: &mut Vec<GlueId>,
+        fonts: &mut Vec<FontId>,
+    ) -> bool {
         for node in self.nodes(id) {
             match node {
-                crate::node_arena::NodeRef::Glue { spec, leader, .. } => {
-                    glues.push(spec);
-                    if let Some(LeaderPayload::HList(box_node) | LeaderPayload::VList(box_node)) =
-                        leader
-                    {
-                        self.collect_paragraph_glues(box_node.children, glues);
+                crate::node_arena::NodeRef::Char { font, .. }
+                | crate::node_arena::NodeRef::Lig { font, .. } => {
+                    if !fonts.contains(&font) {
+                        fonts.push(font);
                     }
+                }
+                crate::node_arena::NodeRef::Glue {
+                    spec, leader: None, ..
+                } => {
+                    glues.push(spec);
                 }
                 crate::node_arena::NodeRef::HList(box_node)
                 | crate::node_arena::NodeRef::VList(box_node) => {
-                    self.collect_paragraph_glues(box_node.children, glues);
-                }
-                crate::node_arena::NodeRef::Unset(unset) => {
-                    self.collect_paragraph_glues(unset.children, glues);
+                    if !self.collect_paragraph_mount_resources(box_node.children, glues, fonts) {
+                        return false;
+                    }
                 }
                 crate::node_arena::NodeRef::Disc {
                     pre, post, replace, ..
                 } => {
-                    self.collect_paragraph_glues(pre, glues);
-                    self.collect_paragraph_glues(post, glues);
-                    self.collect_paragraph_glues(replace, glues);
+                    for child in [pre, post, replace] {
+                        if !self.collect_paragraph_mount_resources(child, glues, fonts) {
+                            return false;
+                        }
+                    }
                 }
                 crate::node_arena::NodeRef::Ins {
                     split_top_skip,
@@ -1916,14 +1860,37 @@ impl Stores {
                     ..
                 } => {
                     glues.push(split_top_skip);
-                    self.collect_paragraph_glues(content, glues);
+                    if !self.collect_paragraph_mount_resources(content, glues, fonts) {
+                        return false;
+                    }
                 }
                 crate::node_arena::NodeRef::Adjust(content) => {
-                    self.collect_paragraph_glues(content, glues);
+                    if !self.collect_paragraph_mount_resources(content, glues, fonts) {
+                        return false;
+                    }
                 }
-                _ => {}
+                crate::node_arena::NodeRef::Kern { .. }
+                | crate::node_arena::NodeRef::Penalty(_)
+                | crate::node_arena::NodeRef::Rule { .. }
+                | crate::node_arena::NodeRef::MathOn(_)
+                | crate::node_arena::NodeRef::MathOff(_)
+                | crate::node_arena::NodeRef::Direction(_)
+                | crate::node_arena::NodeRef::Nonscript
+                | crate::node_arena::NodeRef::Whatsit(crate::node::Whatsit::Language { .. }) => {}
+                crate::node_arena::NodeRef::Glue {
+                    leader: Some(_), ..
+                }
+                | crate::node_arena::NodeRef::Unset(_)
+                | crate::node_arena::NodeRef::Mark { .. }
+                | crate::node_arena::NodeRef::Whatsit(_)
+                | crate::node_arena::NodeRef::MathNoad(_)
+                | crate::node_arena::NodeRef::FractionNoad(_)
+                | crate::node_arena::NodeRef::MathStyle(_)
+                | crate::node_arena::NodeRef::MathChoice(_)
+                | crate::node_arena::NodeRef::MathList(_) => return false,
             }
         }
+        true
     }
 
     /// Enters a TeX group.
