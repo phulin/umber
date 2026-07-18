@@ -100,6 +100,9 @@ pub(crate) struct PendingParagraphMemo {
 pub(crate) struct ColdParagraphRecording {
     pub(crate) effect_start: usize,
     pub(crate) starting_span: Option<tex_state::RootSpanId>,
+    pub(crate) starting_root_span: Option<tex_state::RootSpanId>,
+    pub(crate) starting_input: Option<tex_state::InputSummary>,
+    pub(crate) starting_input_identity: Option<u64>,
     pub(crate) starting_group_depth: u32,
     pub(crate) delivered_tokens: usize,
     pub(crate) barriers: std::collections::BTreeSet<ParagraphBarrierReason>,
@@ -215,6 +218,9 @@ impl<'a> ExecutionContext<'a> {
         &mut self,
         effect_start: usize,
         starting_span: Option<tex_state::RootSpanId>,
+        starting_root_span: Option<tex_state::RootSpanId>,
+        starting_input: Option<tex_state::InputSummary>,
+        starting_input_identity: Option<u64>,
         starting_group_depth: u32,
     ) -> bool {
         if self.cold_paragraph_recording.is_some() {
@@ -224,6 +230,9 @@ impl<'a> ExecutionContext<'a> {
         self.cold_paragraph_recording = Some(ColdParagraphRecording {
             effect_start,
             starting_span,
+            starting_root_span,
+            starting_input,
+            starting_input_identity,
             starting_group_depth,
             delivered_tokens: 0,
             barriers: std::collections::BTreeSet::new(),
@@ -584,33 +593,45 @@ where
             && stores.int_param(tex_state::env::banks::IntParam::PDF_PROTRUDE_CHARS) == 0
         {
             let starting_span = input.current_root_delivery_anchor(stores)?;
+            let starting_input = starting_span.is_none().then(|| input.summary());
+            let starting_input_identity = starting_input
+                .as_ref()
+                .map(|summary| summary.paragraph_boundary_identity(stores));
+            let starting_root_span = match starting_span {
+                Some(span) => Some(span),
+                None => input.root_source_cursor_anchor(stores),
+            };
             #[cfg(feature = "profiling-stats")]
             {
                 paragraph_probe_anchor = Some(starting_span.is_some());
             }
-            if let Some(starting_span) = starting_span {
+            if starting_root_span.is_some() {
                 if execution.cold_paragraph_recording.is_none()
                     && execution.begin_cold_paragraph_recording(
                         stores.world().effect_records().len(),
-                        Some(starting_span),
+                        starting_span,
+                        starting_root_span,
+                        starting_input.clone(),
+                        starting_input_identity,
                         tex_state::ExpansionState::execution_group_depth(stores),
                     )
                 {
                     stores.begin_pure_paragraph_recording();
                 }
                 execution.update_cold_paragraph_start(
-                    Some(starting_span),
+                    starting_span,
                     tex_state::ExpansionState::execution_group_depth(stores),
                 );
                 if execution.cold_paragraph_recording.is_some() {
                     let before_artifacts = stores.world().artifact_commits().len();
                     if crate::paragraph_memo::try_reuse_aligned_paragraph(
-                        Some(starting_span),
+                        starting_span,
+                        starting_root_span,
+                        starting_input_identity,
                         nest,
                         input,
                         stores,
                         execution,
-                        stats,
                     )? {
                         output::drain_pending_output(nest, input, stores, execution, stats)?;
                         execution.paragraph_memo_barrier = false;
@@ -904,8 +925,8 @@ where
         {
             let anchored = execution
                 .cold_paragraph_recording
-                .is_some()
-                .then_some(true)
+                .as_ref()
+                .map(|recording| recording.starting_span.is_some())
                 .or(paragraph_probe_anchor);
             stores.record_pure_paragraph_cold_start(anchored);
         }

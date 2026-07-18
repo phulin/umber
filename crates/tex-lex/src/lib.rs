@@ -1485,11 +1485,20 @@ pub struct DirectSourceDelivery {
 pub struct PreparedParagraphTransition {
     frame_index: usize,
     ending: SourceFrameSummary,
+    token_list_indices: Vec<(usize, usize)>,
     document_line_start: usize,
     document_content_end: usize,
     document_terminator_start: usize,
     document_terminator_end: usize,
     document_normalized_end_anchor: usize,
+}
+
+/// Stable editor coverage consumed by one recorded paragraph.
+#[derive(Clone, Copy, Debug)]
+pub struct ParagraphSourceCoverage<'a> {
+    pub starting: RootSpanId,
+    pub consumed: &'a [RootSpanId],
+    pub ending: RootSpanId,
 }
 
 /// Stable class of immutable non-editor input.
@@ -2906,6 +2915,31 @@ impl InputStack {
         Ok(stores.registered_root_span_id(registration, offset..offset))
     }
 
+    /// Returns the underlying root lexer cursor without refilling or otherwise
+    /// advancing the physical source while a replay frame is active.
+    pub fn root_source_cursor_anchor(
+        &mut self,
+        stores: &mut impl ExpansionState,
+    ) -> Option<RootSpanId> {
+        let (frame_index, _) = self
+            .frames
+            .iter_indexed_from(0)
+            .rev()
+            .find(|(_, frame)| matches!(frame, InputFrame::Source(_)))?;
+        let InputFrame::Source(source) = &mut self.frames[frame_index] else {
+            unreachable!();
+        };
+        ensure_source_registered(source, stores);
+        if let Some(pending) = source.frame.pending.front() {
+            return stores
+                .direct_root_span_for_origin(pending.origin())
+                .map(RootSpanId::start_anchor);
+        }
+        let registration = source.registration?;
+        let offset = source_coordinate(source).byte_offset;
+        stores.registered_root_span_id(registration, offset..offset)
+    }
+
     /// Returns the root checkpoint cursor without refilling the next physical
     /// line. Paragraph recording uses this to retain a stable continuation
     /// without changing the named-boundary schedule merely by observing it.
@@ -2960,15 +2994,50 @@ impl InputStack {
     pub fn prepare_paragraph_transition(
         &self,
         stores: &impl ExpansionState,
-        starting_span: RootSpanId,
-        consumed_spans: &[RootSpanId],
-        ending_span: RootSpanId,
+        coverage: ParagraphSourceCoverage<'_>,
+        recorded_starting_input: Option<&InputSummary>,
+        recorded_starting_identity: Option<u64>,
+        current_starting_identity: Option<u64>,
         ending_input: &InputSummary,
     ) -> Option<PreparedParagraphTransition> {
-        if self.source_frame_count != 1 || self.frames.len() != 1 {
+        if self.source_frame_count != 1 {
             return None;
         }
-        let frame_index = self.current_token_frame_index()?;
+        let live_frame_indices = self
+            .frames
+            .iter_indexed_from(0)
+            .map(|(index, _)| index)
+            .collect::<Vec<_>>();
+        let token_list_indices = match recorded_starting_input {
+            Some(recorded)
+                if recorded_starting_identity == current_starting_identity
+                    && recorded_starting_identity.is_some()
+                    && recorded.supports_paragraph_cursor_transition_to(ending_input) =>
+            {
+                recorded
+                    .frames()
+                    .iter()
+                    .zip(ending_input.frames())
+                    .enumerate()
+                    .filter_map(|(position, (starting, ending))| match (starting, ending) {
+                        (
+                            InputFrameSummary::TokenList { .. },
+                            InputFrameSummary::TokenList {
+                                index: ending_index,
+                                ..
+                            },
+                        ) => Some((live_frame_indices[position], *ending_index)),
+                        _ => None,
+                    })
+                    .collect()
+            }
+            None if self.frames.len() == 1 && ending_input.frames().len() == 1 => Vec::new(),
+            _ => return None,
+        };
+        let frame_index = self
+            .frames
+            .iter_indexed_from(0)
+            .find_map(|(index, frame)| matches!(frame, InputFrame::Source(_)).then_some(index))?;
         let InputFrame::Source(source) = &self.frames[frame_index] else {
             return None;
         };
@@ -2985,7 +3054,7 @@ impl InputStack {
             .filter(|frame| matches!(frame, InputFrameSummary::Source { .. }))
             .count()
             != 1
-            || ending_input.frames().len() != 1
+            || (recorded_starting_input.is_none() && ending_input.frames().len() != 1)
         {
             return None;
         }
@@ -3013,7 +3082,7 @@ impl InputStack {
             let pending_start = stores
                 .direct_root_span_for_origin(pending.origin())?
                 .start_anchor();
-            if pending_start != starting_span {
+            if pending_start != coverage.starting {
                 return None;
             }
             let pending_range = cursor
@@ -3027,19 +3096,20 @@ impl InputStack {
         } else {
             lexer_document_offset
         };
-        let start = cursor.document_range_at_or_after(starting_span, current_document_offset)?;
+        let start =
+            cursor.document_range_at_or_after(coverage.starting, current_document_offset)?;
         if start.start != current_document_offset || start.start != start.end {
             return None;
         }
         let mut covered_through = current_document_offset;
-        for &span in consumed_spans {
+        for &span in coverage.consumed {
             let range = cursor.document_range_at_or_after(span, covered_through)?;
             if range.start != covered_through {
                 return None;
             }
             covered_through = range.end;
         }
-        let ending_range = cursor.document_range_at_or_after(ending_span, covered_through)?;
+        let ending_range = cursor.document_range_at_or_after(coverage.ending, covered_through)?;
         if ending_range.start != ending_range.end {
             return None;
         }
@@ -3053,7 +3123,7 @@ impl InputStack {
         let expected_fragment_offset = ending
             .origin_line_start()
             .checked_add(u64::try_from(ending_line_offset).ok()?)?;
-        if expected_fragment_offset != u64::from(ending_span.start()) {
+        if expected_fragment_offset != u64::from(coverage.ending.start()) {
             return None;
         }
         let document_line_start = ending_range.start.checked_sub(ending_line_offset)?;
@@ -3063,6 +3133,7 @@ impl InputStack {
         Some(PreparedParagraphTransition {
             frame_index,
             ending: ending.clone(),
+            token_list_indices,
             document_line_start,
             document_content_end: rebase(ending.physical_content_end())?,
             document_terminator_start: rebase(ending.terminator_start())?,
@@ -3161,6 +3232,12 @@ impl InputStack {
             end_after_current_line: transition.ending.end_after_current_line(),
         };
         source.next_source_offset = transition.document_terminator_end;
+        for (frame_index, ending_index) in transition.token_list_indices {
+            let InputFrame::TokenList(frame) = &mut self.frames[frame_index] else {
+                return Ok(false);
+            };
+            frame.index = ending_index;
+        }
         Ok(true)
     }
 

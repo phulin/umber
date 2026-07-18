@@ -450,6 +450,67 @@ impl Hash for InputSummary {
 }
 
 impl InputSummary {
+    /// Cheap revision-coordinate-independent candidate identity for a
+    /// paragraph beginning while replay input is active.
+    #[must_use]
+    pub fn paragraph_boundary_identity(&self, stores: &impl crate::ExpansionState) -> u64 {
+        let mut hasher = ahash::AHasher::default();
+        let state = &self.semantic_root.0;
+        state.unicode_superscript_notation.hash(&mut hasher);
+        state.utf8_input_as_bytes.hash(&mut hasher);
+        for frame in &state.frames {
+            match frame {
+                InputFrameSummary::Source { source, .. } => {
+                    0_u8.hash(&mut hasher);
+                    hash_paragraph_source_frame(source, stores, &mut hasher);
+                }
+                InputFrameSummary::TokenList {
+                    token_list,
+                    replay_kind,
+                    index,
+                    macro_arguments,
+                    ..
+                } => {
+                    1_u8.hash(&mut hasher);
+                    stores
+                        .token_list_semantic_fingerprint(*token_list)
+                        .hash(&mut hasher);
+                    replay_kind.hash(&mut hasher);
+                    index.hash(&mut hasher);
+                    hash_macro_arguments_semantic_stable(macro_arguments, stores, &mut hasher);
+                }
+                InputFrameSummary::TransientTokenList {
+                    tokens,
+                    replay_kind,
+                    ..
+                } => {
+                    2_u8.hash(&mut hasher);
+                    replay_kind.hash(&mut hasher);
+                    for word in tokens.iter().copied() {
+                        hash_traced_token_semantic_stable(word, stores, &mut hasher);
+                    }
+                }
+                InputFrameSummary::Condition { condition, .. } => {
+                    3_u8.hash(&mut hasher);
+                    hash_traced_token_semantic_stable(condition.context(), stores, &mut hasher);
+                    condition.kind().hash(&mut hasher);
+                    condition.limb().hash(&mut hasher);
+                    condition.evaluating().hash(&mut hasher);
+                    condition.current_limb_taken().hash(&mut hasher);
+                    condition.any_limb_taken().hash(&mut hasher);
+                    condition.ifcase_or_count().hash(&mut hasher);
+                    condition.skip_nesting().hash(&mut hasher);
+                    condition.inverted().hash(&mut hasher);
+                    condition.if_type().hash(&mut hasher);
+                }
+            }
+        }
+        if let Some(source) = &state.last_source_frame {
+            hash_paragraph_source_frame(source, stores, &mut hasher);
+        }
+        hasher.finish()
+    }
+
     /// Exact future input semantics with revision-relative byte coordinates
     /// excluded. The editor checkpoint restore separately proves the mapped
     /// root suffix; this comparison retains line/token content and lexer state
@@ -471,33 +532,53 @@ impl InputSummary {
             }
     }
 
-    /// Compares the input continuation after a replayable paragraph while
-    /// ignoring revision-relative coordinates and already-consumed line text.
+    /// Returns whether a paragraph may advance this live frame stack to
+    /// `ending` by changing only stored token-list cursors and the root source
+    /// continuation. Runtime provenance stays attached to the live frames.
     #[must_use]
-    pub fn paragraph_transition_matches(&self, other: &Self) -> bool {
-        let left = &self.semantic_root.0;
-        let right = &other.semantic_root.0;
-        let left_frames = left
-            .frames
-            .iter()
-            .filter(|frame| !empty_transient_frame(frame))
-            .collect::<Vec<_>>();
-        let right_frames = right
-            .frames
-            .iter()
-            .filter(|frame| !empty_transient_frame(frame))
-            .collect::<Vec<_>>();
-        left.unicode_superscript_notation == right.unicode_superscript_notation
-            && left_frames.len() == right_frames.len()
-            && left_frames
+    pub fn supports_paragraph_cursor_transition_to(&self, ending: &Self) -> bool {
+        let starting_frames = self.frames();
+        let ending_frames = ending.frames();
+        ending_frames.len() == starting_frames.len()
+            && starting_frames
                 .iter()
-                .zip(right_frames)
-                .all(|(left, right)| paragraph_input_frame_eq(left, right))
-            && match (&left.last_source_frame, &right.last_source_frame) {
-                (Some(left), Some(right)) => paragraph_source_frame_eq(left, right),
-                (None, None) => true,
-                _ => false,
-            }
+                .take(ending_frames.len())
+                .zip(ending_frames)
+                .all(|(starting, ending)| match (starting, ending) {
+                    (InputFrameSummary::Source { .. }, InputFrameSummary::Source { .. }) => true,
+                    (
+                        InputFrameSummary::TokenList {
+                            token_list: starting_list,
+                            replay_kind: starting_kind,
+                            index: starting_index,
+                            macro_arguments: starting_arguments,
+                            ..
+                        },
+                        InputFrameSummary::TokenList {
+                            token_list: ending_list,
+                            replay_kind: ending_kind,
+                            index: ending_index,
+                            macro_arguments: ending_arguments,
+                            ..
+                        },
+                    ) => {
+                        starting_list == ending_list
+                            && starting_kind == ending_kind
+                            && ending_index >= starting_index
+                            && macro_arguments_semantic_eq(starting_arguments, ending_arguments)
+                    }
+                    (
+                        InputFrameSummary::Condition {
+                            condition: starting_condition,
+                            ..
+                        },
+                        InputFrameSummary::Condition {
+                            condition: ending_condition,
+                            ..
+                        },
+                    ) => starting_condition == ending_condition,
+                    (_, _) => false,
+                })
     }
 
     pub(crate) fn retained_bytes(&self) -> usize {
@@ -736,13 +817,6 @@ impl InputSummary {
     }
 }
 
-fn empty_transient_frame(frame: &InputFrameSummary) -> bool {
-    matches!(
-        frame,
-        InputFrameSummary::TransientTokenList { tokens, .. } if tokens.is_empty()
-    )
-}
-
 fn input_frame_future_eq(left: &InputFrameSummary, right: &InputFrameSummary) -> bool {
     match (left, right) {
         (
@@ -794,23 +868,71 @@ fn input_frame_future_eq(left: &InputFrameSummary, right: &InputFrameSummary) ->
     }
 }
 
-fn paragraph_input_frame_eq(left: &InputFrameSummary, right: &InputFrameSummary) -> bool {
-    match (left, right) {
-        (
-            InputFrameSummary::Source { source: left, .. },
-            InputFrameSummary::Source { source: right, .. },
-        ) => paragraph_source_frame_eq(left, right),
-        _ => input_frame_future_eq(left, right),
+fn hash_paragraph_source_frame(
+    source: &SourceFrameSummary,
+    stores: &impl crate::ExpansionState,
+    hasher: &mut impl Hasher,
+) {
+    source.lexer_state.hash(hasher);
+    source.normalized_line[source.line_byte_offset..].hash(hasher);
+    source.end_after_current_line.hash(hasher);
+    source.scantokens.hash(hasher);
+    source.byte_oriented.hash(hasher);
+    source.bytes_as_chars.hash(hasher);
+    for word in source.pending.iter().copied() {
+        hash_traced_token_semantic_stable(word, stores, hasher);
     }
 }
 
-fn paragraph_source_frame_eq(left: &SourceFrameSummary, right: &SourceFrameSummary) -> bool {
-    left.lexer_state == right.lexer_state
-        && left.normalized_line.get(left.line_byte_offset..)
-            == right.normalized_line.get(right.line_byte_offset..)
-        && left.end_after_current_line == right.end_after_current_line
-        && left.scantokens == right.scantokens
-        && traced_pending_tokens_eq(&left.pending, &right.pending)
+fn hash_macro_arguments_semantic_stable(
+    arguments: &MacroArguments,
+    stores: &impl crate::ExpansionState,
+    state: &mut impl Hasher,
+) {
+    for slot in 1..=MACRO_ARGUMENT_SLOTS as u8 {
+        match arguments.get(slot) {
+            Some(words) => {
+                true.hash(state);
+                words.len().hash(state);
+                for &word in words {
+                    hash_traced_token_semantic_stable(word, stores, state);
+                }
+            }
+            None => false.hash(state),
+        }
+    }
+}
+
+fn hash_traced_token_semantic_stable(
+    word: TracedTokenWord,
+    stores: &impl crate::ExpansionState,
+    state: &mut impl Hasher,
+) {
+    let token = word
+        .token()
+        .expect("input-summary tokens must contain valid semantic tokens");
+    match token {
+        Token::Char { ch, cat } => {
+            0_u8.hash(state);
+            ch.hash(state);
+            cat.hash(state);
+        }
+        Token::Cs(symbol) => {
+            1_u8.hash(state);
+            stores.control_sequence_kind(symbol).hash(state);
+            stores.resolve(symbol).hash(state);
+        }
+        Token::Param(slot) => {
+            2_u8.hash(state);
+            slot.hash(state);
+        }
+        Token::Frozen(frozen) => {
+            3_u8.hash(state);
+            frozen.primitive_index().hash(state);
+            token.is_frozen_end_template().hash(state);
+            token.is_frozen_endv().hash(state);
+        }
+    }
 }
 
 fn source_frame_future_eq(left: &SourceFrameSummary, right: &SourceFrameSummary) -> bool {

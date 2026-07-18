@@ -163,6 +163,11 @@ pub trait ExpansionState {
     fn finish_token_list(&mut self, builder: &mut TokenListBuilder) -> TokenListId;
     fn finish_traced_token_list(&mut self, tokens: &[TracedTokenWord]) -> TracedTokenList;
     fn tokens(&self, id: TokenListId) -> &[Token];
+    /// Allocation-independent identity for immutable token-list content.
+    ///
+    /// This is intentionally a compact fingerprint for hot-path candidate
+    /// matching, not a cryptographic proof.
+    fn token_list_semantic_fingerprint(&self, id: TokenListId) -> u64;
     fn intern_glue(&mut self, spec: GlueSpec) -> GlueId;
     fn glue(&self, id: GlueId) -> GlueSpec;
     fn font_name(&self, id: FontId) -> String;
@@ -1924,9 +1929,15 @@ impl Universe {
     #[doc(hidden)]
     pub fn align_recorded_paragraph_start(
         &mut self,
-        starting_span: crate::RootSpanId,
+        starting_span: Option<crate::RootSpanId>,
+        starting_root_span: Option<crate::RootSpanId>,
+        starting_input_identity: Option<u64>,
     ) -> Option<crate::RecordedParagraphRegion> {
-        self.pure_memo.align_recorded_paragraph_start(starting_span)
+        self.pure_memo.align_recorded_paragraph_start(
+            starting_span,
+            starting_root_span,
+            starting_input_identity,
+        )
     }
 
     #[doc(hidden)]
@@ -6131,6 +6142,10 @@ impl ExpansionState for Universe {
         Self::tokens(self, id)
     }
 
+    fn token_list_semantic_fingerprint(&self, id: TokenListId) -> u64 {
+        self.stores.token_list_semantic_id_value(id)
+    }
+
     fn intern_glue(&mut self, spec: GlueSpec) -> GlueId {
         Self::intern_glue(self, spec)
     }
@@ -6658,6 +6673,10 @@ impl ExpansionState for ExpansionContext<'_> {
 
     fn tokens(&self, id: TokenListId) -> &[Token] {
         self.universe.tokens(id)
+    }
+
+    fn token_list_semantic_fingerprint(&self, id: TokenListId) -> u64 {
+        self.universe.stores.token_list_semantic_id_value(id)
     }
 
     fn intern_glue(&mut self, spec: GlueSpec) -> GlueId {

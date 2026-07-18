@@ -733,6 +733,42 @@ fn direct_root_delivery_exposes_piece_identity_without_origin_identity() {
 }
 
 #[test]
+fn root_cursor_anchor_does_not_refill_underlying_source_during_token_replay() {
+    let (fragments, layout, _) = three_line_fragment_layout();
+    let expected = fragments
+        .root_span_id(&layout.pieces()[0], 2..2)
+        .expect("end of first physical line has a stable cursor");
+    let mut input = InputStack::new(MemoryInput::new("aa\nbb\ncc"));
+    input.install_root_layout_cursor(
+        LayoutCursor::new(&layout, &fragments).expect("layout cursor freezes"),
+    );
+    let mut stores = Universe::new();
+    stores
+        .install_editor_fragments(&fragments, &layout)
+        .expect("editor fragments install");
+    stores.set_int_param(IntParam::END_LINE_CHAR, -1);
+    for expected_token in ['a', 'a'] {
+        assert_eq!(
+            input
+                .next_traced_token(&mut stores)
+                .expect("first line tokenizes")
+                .and_then(TracedTokenWord::token),
+            Some(char_token(expected_token, Catcode::Letter))
+        );
+    }
+    let replay = stores.intern_token_list(&[char_token('x', Catcode::Letter)]);
+    input.push_token_list(replay, TokenListReplayKind::Inserted);
+    let before = input.summary();
+
+    assert_eq!(input.root_source_cursor_anchor(&mut stores), Some(expected));
+    assert_eq!(
+        input.summary(),
+        before,
+        "anchor observation must not load line 2"
+    );
+}
+
+#[test]
 fn immutable_source_delivery_identity_uses_content_not_runtime_record() {
     let mut stores = Universe::new();
     stores.set_int_param(IntParam::END_LINE_CHAR, -1);

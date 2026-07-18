@@ -424,6 +424,14 @@ pub struct ParagraphProvenanceSpan {
 pub struct RecordedParagraphRegion {
     /// Cheap candidate identity captured before the first raw delivery.
     pub starting_span: Option<RootSpanId>,
+    /// Underlying root cursor used to prove complete physical-source coverage.
+    /// This remains available while a token-list frame supplies the next token.
+    pub starting_root_span: Option<RootSpanId>,
+    /// Semantic start continuation needed only when no direct root delivery can
+    /// identify the paragraph. The ordered accepted trace supplies alignment.
+    pub starting_input: Option<InputSummary>,
+    /// Allocation-independent content identity for `starting_input`.
+    pub starting_input_identity: Option<u64>,
     /// Stable raw cursor reached after the paragraph terminator.
     pub ending_span: Option<RootSpanId>,
     pub consumed_spans: Arc<[RootSpanId]>,
@@ -549,6 +557,12 @@ pub struct PureMemoRuntime {
     prior_paragraphs: Vec<RecordedParagraphRegion>,
     /// Stable-source alignment index for the ordered accepted paragraph trace.
     prior_paragraph_starts: HashMap<RootSpanId, usize>,
+    /// Candidate buckets for paragraphs whose first delivery is not direct
+    /// root source. Full input semantics verify every candidate.
+    prior_paragraph_input_starts: HashMap<(RootSpanId, u64), Vec<usize>>,
+    /// Next accepted occurrence to consider independently for each semantic
+    /// replay-input boundary.
+    prior_paragraph_input_cursors: HashMap<(RootSpanId, u64), usize>,
     /// First accepted paragraph that may still align with the new execution.
     prior_paragraph_cursor: usize,
     recorded_paragraphs: Vec<RecordedParagraphRegion>,
@@ -1063,7 +1077,9 @@ impl PureMemoRuntime {
 
     pub(crate) fn align_recorded_paragraph_start(
         &mut self,
-        starting_span: RootSpanId,
+        starting_span: Option<RootSpanId>,
+        starting_root_span: Option<RootSpanId>,
+        starting_input_identity: Option<u64>,
     ) -> Option<RecordedParagraphRegion> {
         if !self.reuse_prior_paragraphs || !self.paragraph_front_ends {
             self.record_not_attempted(PureMemoLayer::Paragraph);
@@ -1073,13 +1089,26 @@ impl PureMemoRuntime {
         let cache = self.cache.as_mut()?;
         cache.stats.lookups = cache.stats.lookups.saturating_add(1);
         cache.stats.paragraph_lookups = cache.stats.paragraph_lookups.saturating_add(1);
-        let aligned_index = self
-            .prior_paragraph_starts
-            .get(&starting_span)
-            .copied()
+        let aligned_by_root = starting_span
+            .and_then(|span| self.prior_paragraph_starts.get(&span).copied())
             .filter(|&index| index >= self.prior_paragraph_cursor);
+        let aligned_by_input = starting_root_span
+            .zip(starting_input_identity)
+            .and_then(|key| {
+                let bucket = self.prior_paragraph_input_starts.get(&key)?;
+                let cursor = self
+                    .prior_paragraph_input_cursors
+                    .get(&key)
+                    .copied()
+                    .unwrap_or(0);
+                let (position, index) = bucket.iter().copied().enumerate().nth(cursor)?;
+                self.prior_paragraph_input_cursors
+                    .insert(key, position.saturating_add(1));
+                Some(index)
+            });
+        let aligned_index = aligned_by_root.or(aligned_by_input);
         let result = aligned_index.and_then(|index| self.prior_paragraphs.get(index).cloned());
-        if let Some(index) = aligned_index {
+        if let Some(index) = aligned_by_root {
             self.prior_paragraph_cursor = index.saturating_add(1);
         }
         if result.is_none() {
@@ -1102,6 +1131,7 @@ impl PureMemoRuntime {
         self.reuse_prior_paragraphs = reuse_prior;
         self.preserve_prior_paragraphs = false;
         self.prior_paragraph_cursor = 0;
+        self.prior_paragraph_input_cursors.clear();
     }
 
     /// Keeps the last accepted trace when a run-wide dependency mismatch makes
@@ -1122,17 +1152,29 @@ impl PureMemoRuntime {
             self.recorded_paragraphs.clear();
             self.preserve_prior_paragraphs = false;
             self.prior_paragraph_cursor = 0;
+            self.prior_paragraph_input_cursors.clear();
             self.reuse_prior_paragraphs = false;
             return;
         }
         self.prior_paragraphs = std::mem::take(&mut self.recorded_paragraphs);
         self.prior_paragraph_starts.clear();
+        self.prior_paragraph_input_starts.clear();
         for (index, region) in self.prior_paragraphs.iter().enumerate() {
             if let Some(start) = region.starting_span {
                 self.prior_paragraph_starts.entry(start).or_insert(index);
             }
+            if let Some(key) = region
+                .starting_root_span
+                .zip(region.starting_input_identity)
+            {
+                self.prior_paragraph_input_starts
+                    .entry(key)
+                    .or_default()
+                    .push(index);
+            }
         }
         self.prior_paragraph_cursor = 0;
+        self.prior_paragraph_input_cursors.clear();
         self.reuse_prior_paragraphs = false;
     }
 
@@ -1142,6 +1184,7 @@ impl PureMemoRuntime {
         self.preserve_prior_paragraphs = false;
         self.reuse_prior_paragraphs = false;
         self.prior_paragraph_cursor = 0;
+        self.prior_paragraph_input_cursors.clear();
     }
 
     pub fn recorded_paragraphs(&self) -> &[RecordedParagraphRegion] {
@@ -1464,6 +1507,13 @@ fn elapsed_nanos(duration: Duration) -> u64 {
 
 fn recorded_paragraph_retained_bytes(region: &RecordedParagraphRegion) -> usize {
     std::mem::size_of::<RecordedParagraphRegion>()
+        .saturating_add(
+            region
+                .starting_input
+                .as_ref()
+                .map_or(0, InputSummary::retained_bytes),
+        )
+        .saturating_add(region.ending_input.retained_bytes())
         .saturating_add(
             region
                 .lines

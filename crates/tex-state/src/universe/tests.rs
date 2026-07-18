@@ -1061,6 +1061,60 @@ fn token_semantic_id_converges_across_cold_restore_and_fork() {
 }
 
 #[test]
+fn paragraph_input_identity_uses_token_and_symbol_semantics_across_restore() {
+    let mut cold = Universe::new();
+    let target = cold.intern("target");
+    let body = cold.intern_token_list(&[
+        Token::Cs(target.symbol()),
+        Token::Char {
+            ch: 'x',
+            cat: Catcode::Letter,
+        },
+    ]);
+    cold.set_toks(7, body);
+    let bytes = cold.dump_format().expect("token format encodes");
+    let restored = Universe::from_format(World::memory(), &bytes).expect("format restores");
+    let restored_target = restored.symbol("target").expect("target restores");
+
+    let summary = |token_list, symbol| {
+        InputSummary::new_with_source_records(
+            vec![InputFrameSummary::TokenList {
+                token_list,
+                origin_list: crate::ids::OriginListId::EMPTY,
+                replay_kind: TokenListReplayKind::MacroBody,
+                index: 1,
+                macro_arguments: MacroArguments::from_parts(
+                    Arc::from([TracedTokenWord::pack(Token::Cs(symbol), OriginId::UNKNOWN)]),
+                    [
+                        Some(MacroArgumentRange::new(0, 1)),
+                        None,
+                        None,
+                        None,
+                        None,
+                        None,
+                        None,
+                        None,
+                        None,
+                    ],
+                ),
+                macro_invocation: OriginId::UNKNOWN,
+                parent_macro_invocation: OriginId::UNKNOWN,
+            }],
+            None,
+            None,
+            None,
+        )
+    };
+    let cold_summary = summary(body, target.symbol());
+    let restored_summary = summary(restored.toks(7), restored_target.symbol());
+
+    assert_eq!(
+        cold_summary.paragraph_boundary_identity(&cold),
+        restored_summary.paragraph_boundary_identity(&restored)
+    );
+}
+
+#[test]
 fn semantic_format_restores_validated_fonts_banks_hashes_and_rollback_exactly() {
     let mut universe = Universe::new();
     let null_identifier = universe.intern("nullfont");

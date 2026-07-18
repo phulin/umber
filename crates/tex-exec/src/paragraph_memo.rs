@@ -7,7 +7,7 @@ use tex_state::{
     ParagraphValidationFailure, PrintSink, Universe,
 };
 
-use crate::{ExecError, ExecutionContext, ExecutionStats, ModeNest};
+use crate::{ExecError, ExecutionContext, ModeNest};
 
 const MAX_PARAGRAPH_DEPENDENCY_CACHE_ENTRIES: usize = 4_096;
 
@@ -55,21 +55,28 @@ fn finish_memo_phase(stores: &mut Universe, phase: MemoTimingPhase, started: Pha
 
 pub(crate) fn try_reuse_aligned_paragraph(
     starting_span: Option<tex_state::RootSpanId>,
+    starting_root_span: Option<tex_state::RootSpanId>,
+    starting_input_identity: Option<u64>,
     nest: &mut ModeNest,
     input: &mut InputStack,
     stores: &mut Universe,
     execution: &mut ExecutionContext<'_>,
-    _stats: &mut ExecutionStats,
 ) -> Result<bool, ExecError> {
-    let Some(mut entry) =
-        starting_span.and_then(|start| stores.align_recorded_paragraph_start(start))
-    else {
+    let Some(mut entry) = stores.align_recorded_paragraph_start(
+        starting_span,
+        starting_root_span,
+        starting_input_identity,
+    ) else {
         return Ok(false);
     };
     debug_assert!(entry.barriers.is_empty());
     let validation_started = start_phase();
     let validated = validate_paragraph_entry(
-        &mut entry, input, stores, execution,
+        &mut entry,
+        input,
+        stores,
+        execution,
+        starting_input_identity,
         // Every recorded outer paragraph crosses `start_paragraph`, which
         // resets the enclosing vertical prev_graf before line construction.
         // Validation runs just before that transition, so compare against the
@@ -137,20 +144,27 @@ fn validate_paragraph_entry(
     input: &InputStack,
     stores: &mut Universe,
     execution: &mut ExecutionContext<'_>,
+    current_starting_input_identity: Option<u64>,
     current_prev_graf: i32,
 ) -> Option<ValidatedParagraphEntry> {
-    let prepared_input = entry
-        .starting_span
-        .zip(entry.ending_span)
-        .and_then(|(start, end)| {
-            input.prepare_paragraph_transition(
-                stores,
-                start,
-                &entry.consumed_spans,
-                end,
-                &entry.ending_input,
-            )
-        });
+    let prepared_input =
+        entry
+            .starting_root_span
+            .zip(entry.ending_span)
+            .and_then(|(start, end)| {
+                input.prepare_paragraph_transition(
+                    stores,
+                    tex_lex::ParagraphSourceCoverage {
+                        starting: start,
+                        consumed: &entry.consumed_spans,
+                        ending: end,
+                    },
+                    entry.starting_input.as_ref(),
+                    entry.starting_input_identity,
+                    current_starting_input_identity,
+                    &entry.ending_input,
+                )
+            });
     let mutation_entry_class_changed = !same_mutation_entry_class(
         entry.mutation_entry_in_group,
         tex_state::ExpansionState::execution_group_depth(stores),
@@ -467,7 +481,7 @@ fn publish_recorded_region(
         .expect("cold paragraph recording has matching state checkpoint");
     let ending_span = input.root_source_checkpoint_anchor(stores);
     let consumed_spans = recording
-        .starting_span
+        .starting_root_span
         .zip(ending_span)
         .and_then(|(start, end)| input.root_source_coverage(start, end, stores));
     let consumed_spans = match consumed_spans {
@@ -492,7 +506,10 @@ fn publish_recorded_region(
             .barriers
             .insert(tex_state::ParagraphBarrierReason::UnsupportedGroupTransition);
     }
-    if ending_input.frames().len() != 1 {
+    if recording.starting_input.as_ref().map_or_else(
+        || ending_input.frames().len() != 1,
+        |starting| !starting.supports_paragraph_cursor_transition_to(&ending_input),
+    ) {
         recording
             .barriers
             .insert(tex_state::ParagraphBarrierReason::UnsupportedInputTransition);
@@ -562,6 +579,9 @@ fn publish_recorded_region(
     let publication_started = start_phase();
     stores.record_paragraph_region(tex_state::RecordedParagraphRegion {
         starting_span: recording.starting_span,
+        starting_root_span: recording.starting_root_span,
+        starting_input: recording.starting_input,
+        starting_input_identity: recording.starting_input_identity,
         ending_span,
         consumed_spans: consumed_spans.into(),
         delivered_tokens: recording.delivered_tokens,
