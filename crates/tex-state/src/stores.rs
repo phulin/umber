@@ -1820,6 +1820,44 @@ impl Stores {
             .then_some(id)
     }
 
+    /// Mounts semantic paragraph output and attaches only its stable
+    /// diagnostic recipe. No origin record or overlay is built here.
+    pub fn mount_prevalidated_paragraph_result_deferred(
+        &mut self,
+        retained: &RetainedNodeList,
+        provenance: crate::ParagraphProvenanceRecipe,
+    ) -> Option<NodeListId> {
+        if !self.glue.restore_retained(retained.glues()) {
+            return None;
+        }
+        let id = retained.id();
+        let newly_mounted = self.survivors.mount(retained)?;
+        if newly_mounted {
+            self.survivor_pins.push(id);
+        } else {
+            self.pin_survivor(id);
+        }
+        self.survivors
+            .mount_deferred_paragraph_origins(id, provenance)
+            .then_some(id)
+    }
+
+    pub(crate) fn deferred_node_origins(
+        &self,
+        list: NodeListId,
+        index: usize,
+        len: usize,
+    ) -> Option<(&crate::ParagraphProvenanceRecipe, std::ops::Range<usize>)> {
+        self.survivors.deferred_node_origins(list, index, len)
+    }
+
+    pub(crate) fn deferred_node_origin_cursor(
+        &self,
+        list: NodeListId,
+    ) -> crate::survivor::DeferredNodeOriginCursor<'_> {
+        self.survivors.deferred_node_origin_cursor(list)
+    }
+
     fn collect_paragraph_mount_resources(
         &self,
         id: NodeListId,

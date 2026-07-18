@@ -63,8 +63,156 @@ pub enum WorldCommitMode {
 pub struct CommittedArtifact {
     hash: ContentHash,
     bytes: Arc<[u8]>,
-    render_origin_ends: Arc<[u32]>,
-    render_origins: Arc<[OriginId]>,
+    render_provenance: ArtifactRenderProvenance,
+}
+
+const LIVE_RENDER_REF: u64 = 1 << 63;
+const UNKNOWN_RENDER_REF: u64 = u64::MAX;
+
+#[derive(Clone, Debug)]
+pub(crate) struct ArtifactRenderProvenance {
+    ends: Arc<[u32]>,
+    sources: ArtifactRenderSources,
+}
+
+#[derive(Clone, Debug)]
+enum ArtifactRenderSources {
+    Live(Arc<[OriginId]>),
+    Deferred(crate::ParagraphProvenanceRecipe),
+    Mixed {
+        live: Arc<[OriginId]>,
+        refs: Arc<[u64]>,
+        recipes: Arc<[crate::ParagraphProvenanceRecipe]>,
+    },
+}
+
+impl ArtifactRenderProvenance {
+    fn live(ends: Vec<u32>, origins: Vec<OriginId>) -> Self {
+        assert_valid_render_origins(&ends, origins.len());
+        Self {
+            ends: ends.into(),
+            sources: ArtifactRenderSources::Live(origins.into()),
+        }
+    }
+
+    fn deferred(ends: Vec<u32>, recipe: crate::ParagraphProvenanceRecipe) -> Self {
+        assert_valid_render_origins(&ends, recipe.origin_slots.len());
+        Self {
+            ends: ends.into(),
+            sources: ArtifactRenderSources::Deferred(recipe),
+        }
+    }
+
+    fn built(ends: Vec<u32>, builder: RenderProvenanceBuilder) -> Self {
+        let (live, refs, recipes) = builder.into_parts();
+        let flat_len = ends.last().copied().unwrap_or(0) as usize;
+        let sources = if refs.is_empty() {
+            assert_eq!(flat_len, live.len());
+            ArtifactRenderSources::Live(live.into())
+        } else {
+            assert_eq!(flat_len, refs.len());
+            ArtifactRenderSources::Mixed {
+                live: live.into(),
+                refs: refs.into(),
+                recipes: recipes.into(),
+            }
+        };
+        Self {
+            ends: ends.into(),
+            sources,
+        }
+    }
+
+    fn live_origins(&self) -> &[OriginId] {
+        match &self.sources {
+            ArtifactRenderSources::Live(origins) => origins,
+            ArtifactRenderSources::Deferred(_) => &[],
+            ArtifactRenderSources::Mixed { live, .. } => live,
+        }
+    }
+
+    fn is_deferred(&self) -> bool {
+        !matches!(self.sources, ArtifactRenderSources::Live(_))
+    }
+}
+
+/// Cheap artifact-provenance construction used by direct shipout. It stays in
+/// the old flat-OriginId mode until the first deferred paragraph source.
+#[doc(hidden)]
+#[derive(Debug, Default)]
+pub struct RenderProvenanceBuilder {
+    live: Vec<OriginId>,
+    refs: Vec<u64>,
+    recipes: Vec<crate::ParagraphProvenanceRecipe>,
+    recipe_ids: ahash::AHashMap<usize, u32>,
+    mixed: bool,
+}
+
+impl RenderProvenanceBuilder {
+    pub fn push_live(&mut self, origin: OriginId) {
+        let index = self.live.len();
+        self.live.push(origin);
+        if self.mixed {
+            self.refs.push(
+                LIVE_RENDER_REF
+                    | u64::try_from(index).expect("artifact live provenance exceeds u63"),
+            );
+        }
+    }
+
+    pub fn push_deferred(
+        &mut self,
+        recipe: &crate::ParagraphProvenanceRecipe,
+        slots: std::ops::Range<usize>,
+    ) {
+        if !self.mixed {
+            self.refs.extend((0..self.live.len()).map(|index| {
+                LIVE_RENDER_REF
+                    | u64::try_from(index).expect("artifact live provenance exceeds u63")
+            }));
+            self.mixed = true;
+        }
+        let identity = std::ptr::from_ref(recipe).addr();
+        let recipe_index = if let Some(&index) = self.recipe_ids.get(&identity) {
+            index
+        } else {
+            let index = u32::try_from(self.recipes.len())
+                .expect("artifact deferred recipe count exceeds u32");
+            self.recipes.push(recipe.clone());
+            self.recipe_ids.insert(identity, index);
+            index
+        };
+        for slot in slots {
+            let Ok(slot) = u32::try_from(slot) else {
+                self.refs.push(UNKNOWN_RENDER_REF);
+                continue;
+            };
+            self.refs
+                .push((u64::from(recipe_index) << 32) | u64::from(slot));
+        }
+    }
+
+    fn into_parts(
+        self,
+    ) -> (
+        Vec<OriginId>,
+        Vec<u64>,
+        Vec<crate::ParagraphProvenanceRecipe>,
+    ) {
+        if self.mixed {
+            (self.live, self.refs, self.recipes)
+        } else {
+            (self.live, Vec::new(), Vec::new())
+        }
+    }
+}
+
+/// One artifact source reference, kept stable until diagnostic consumption.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ArtifactOrigin {
+    Live(OriginId),
+    Stable(crate::RootSpanId),
+    Unknown,
 }
 
 /// Borrowed diagnostic provenance spans aligned with artifact nodes.
@@ -143,8 +291,7 @@ impl ExactSizeIterator for RenderOriginIter<'_> {}
 pub struct VerifiedArtifact {
     hash: ContentHash,
     bytes: Vec<u8>,
-    render_origin_ends: Vec<u32>,
-    render_origins: Vec<OriginId>,
+    render_provenance: ArtifactRenderProvenance,
 }
 
 impl VerifiedArtifact {
@@ -154,24 +301,23 @@ impl VerifiedArtifact {
         Self {
             hash,
             bytes,
-            render_origin_ends: Vec::new(),
-            render_origins: Vec::new(),
+            render_provenance: ArtifactRenderProvenance::live(Vec::new(), Vec::new()),
         }
     }
 
     /// Attaches diagnostic-only origins in artifact-node preorder.
     #[must_use]
     pub fn with_render_origins(mut self, render_origins: Vec<Vec<OriginId>>) -> Self {
-        self.render_origin_ends.reserve(render_origins.len());
-        self.render_origins
-            .reserve(render_origins.iter().map(Vec::len).sum());
-        for origins in render_origins {
-            self.render_origins.extend(origins);
-            self.render_origin_ends.push(
-                u32::try_from(self.render_origins.len())
+        let mut ends = Vec::with_capacity(render_origins.len());
+        let mut origins = Vec::with_capacity(render_origins.iter().map(Vec::len).sum());
+        for node_origins in render_origins {
+            origins.extend(node_origins);
+            ends.push(
+                u32::try_from(origins.len())
                     .expect("artifact render provenance exceeds u32 entries"),
             );
         }
+        self.render_provenance = ArtifactRenderProvenance::live(ends, origins);
         self
     }
 
@@ -183,9 +329,30 @@ impl VerifiedArtifact {
         render_origin_ends: Vec<u32>,
         render_origins: Vec<OriginId>,
     ) -> Self {
-        assert_valid_render_origins(&render_origin_ends, render_origins.len());
-        self.render_origin_ends = render_origin_ends;
-        self.render_origins = render_origins;
+        self.render_provenance = ArtifactRenderProvenance::live(render_origin_ends, render_origins);
+        self
+    }
+
+    /// Attaches stable paragraph provenance without allocating live origins.
+    #[doc(hidden)]
+    #[must_use]
+    pub fn with_deferred_render_origins(
+        mut self,
+        render_origin_ends: Vec<u32>,
+        provenance: crate::ParagraphProvenanceRecipe,
+    ) -> Self {
+        self.render_provenance = ArtifactRenderProvenance::deferred(render_origin_ends, provenance);
+        self
+    }
+
+    #[doc(hidden)]
+    #[must_use]
+    pub fn with_built_render_origins(
+        mut self,
+        render_origin_ends: Vec<u32>,
+        provenance: RenderProvenanceBuilder,
+    ) -> Self {
+        self.render_provenance = ArtifactRenderProvenance::built(render_origin_ends, provenance);
         self
     }
 
@@ -203,18 +370,37 @@ impl VerifiedArtifact {
     #[doc(hidden)]
     #[must_use]
     pub fn render_origins_for_memo(&self) -> RenderOrigins<'_> {
-        self.render_origins()
-    }
-
-    fn render_origins(&self) -> RenderOrigins<'_> {
+        let ArtifactRenderSources::Live(origins) = &self.render_provenance.sources else {
+            unreachable!("deferred artifacts are not memoized")
+        };
         RenderOrigins {
-            ends: &self.render_origin_ends,
-            origins: &self.render_origins,
+            ends: &self.render_provenance.ends,
+            origins,
         }
     }
 
-    pub(crate) fn into_parts(self) -> (Vec<u8>, Vec<u32>, Vec<OriginId>) {
-        (self.bytes, self.render_origin_ends, self.render_origins)
+    #[doc(hidden)]
+    #[must_use]
+    pub fn render_origin_ends_for_memo(&self) -> &[u32] {
+        &self.render_provenance.ends
+    }
+
+    #[doc(hidden)]
+    #[must_use]
+    pub fn has_deferred_render_origins(&self) -> bool {
+        self.render_provenance.is_deferred()
+    }
+
+    /// Live origins which still require accepted-fork retention. Stable recipe
+    /// sources deliberately do not appear here.
+    #[doc(hidden)]
+    #[must_use]
+    pub fn live_render_origins(&self) -> &[OriginId] {
+        self.render_provenance.live_origins()
+    }
+
+    pub(crate) fn into_parts(self) -> (Vec<u8>, ArtifactRenderProvenance) {
+        (self.bytes, self.render_provenance)
     }
 }
 
@@ -237,40 +423,122 @@ impl CommittedArtifact {
         &self.bytes
     }
 
-    /// Diagnostic-only origins aligned with artifact nodes in preorder.
+    /// Eager diagnostic origins aligned with artifact nodes in preorder.
+    ///
+    /// Replayed paragraphs retain stable recipes instead. Call
+    /// [`Self::render_origin`] to query those sources without materializing
+    /// the complete sidecar.
     #[must_use]
-    pub fn render_origins(&self) -> RenderOrigins<'_> {
-        RenderOrigins {
-            ends: &self.render_origin_ends,
-            origins: &self.render_origins,
+    pub fn render_origins(&self) -> Option<RenderOrigins<'_>> {
+        let ArtifactRenderSources::Live(origins) = &self.render_provenance.sources else {
+            return None;
+        };
+        Some(RenderOrigins {
+            ends: &self.render_provenance.ends,
+            origins,
+        })
+    }
+
+    /// Number of artifact nodes addressable through [`Self::render_origin`].
+    #[must_use]
+    pub fn render_node_count(&self) -> usize {
+        self.render_provenance.ends.len()
+    }
+
+    #[doc(hidden)]
+    #[must_use]
+    pub fn has_deferred_render_origins(&self) -> bool {
+        self.render_provenance.is_deferred()
+    }
+
+    /// Live origins which still require accepted-fork retention. Stable recipe
+    /// sources deliberately do not appear here.
+    #[doc(hidden)]
+    #[must_use]
+    pub fn live_render_origins(&self) -> &[OriginId] {
+        self.render_provenance.live_origins()
+    }
+
+    /// Returns one diagnostic source without materializing deferred origins.
+    #[must_use]
+    pub fn render_origin(&self, node: usize, source: usize) -> ArtifactOrigin {
+        let Some(&end) = self.render_provenance.ends.get(node) else {
+            return ArtifactOrigin::Unknown;
+        };
+        let start = node
+            .checked_sub(1)
+            .and_then(|previous| self.render_provenance.ends.get(previous).copied())
+            .unwrap_or(0);
+        let Some(flat) = (start as usize).checked_add(source) else {
+            return ArtifactOrigin::Unknown;
+        };
+        if flat >= end as usize {
+            return ArtifactOrigin::Unknown;
+        }
+        match &self.render_provenance.sources {
+            ArtifactRenderSources::Live(origins) => origins
+                .get(flat)
+                .copied()
+                .map_or(ArtifactOrigin::Unknown, ArtifactOrigin::Live),
+            ArtifactRenderSources::Deferred(recipe) => recipe
+                .stable_span(flat)
+                .map_or(ArtifactOrigin::Unknown, ArtifactOrigin::Stable),
+            ArtifactRenderSources::Mixed {
+                live,
+                refs,
+                recipes,
+            } => {
+                let Some(&reference) = refs.get(flat) else {
+                    return ArtifactOrigin::Unknown;
+                };
+                if reference == UNKNOWN_RENDER_REF {
+                    return ArtifactOrigin::Unknown;
+                }
+                if reference & LIVE_RENDER_REF != 0 {
+                    return live
+                        .get((reference & !LIVE_RENDER_REF) as usize)
+                        .copied()
+                        .map_or(ArtifactOrigin::Unknown, ArtifactOrigin::Live);
+                }
+                let recipe = (reference >> 32) as usize;
+                let slot = reference as u32 as usize;
+                recipes
+                    .get(recipe)
+                    .and_then(|recipe| recipe.stable_span(slot))
+                    .map_or(ArtifactOrigin::Unknown, ArtifactOrigin::Stable)
+            }
         }
     }
 
     /// Retained bytes used by the diagnostic-only provenance sidecar.
     #[must_use]
     pub fn render_provenance_bytes(&self) -> usize {
-        self.render_origin_ends
+        self.render_provenance
+            .ends
             .len()
             .saturating_mul(std::mem::size_of::<u32>())
-            .saturating_add(
-                self.render_origins
+            .saturating_add(match &self.render_provenance.sources {
+                ArtifactRenderSources::Live(origins) => origins
                     .len()
                     .saturating_mul(std::mem::size_of::<OriginId>()),
-            )
+                ArtifactRenderSources::Deferred(recipe) => provenance_recipe_bytes(recipe),
+                ArtifactRenderSources::Mixed {
+                    live,
+                    refs,
+                    recipes,
+                } => live
+                    .len()
+                    .saturating_mul(std::mem::size_of::<OriginId>())
+                    .saturating_add(refs.len().saturating_mul(std::mem::size_of::<u64>()))
+                    .saturating_add(recipes.iter().map(provenance_recipe_bytes).sum::<usize>()),
+            })
     }
 
-    fn new(
-        hash: ContentHash,
-        bytes: Vec<u8>,
-        render_origin_ends: Vec<u32>,
-        render_origins: Vec<OriginId>,
-    ) -> Self {
-        assert_valid_render_origins(&render_origin_ends, render_origins.len());
+    fn new(hash: ContentHash, bytes: Vec<u8>, render_provenance: ArtifactRenderProvenance) -> Self {
         Self {
             hash,
             bytes: bytes.into(),
-            render_origin_ends: render_origin_ends.into(),
-            render_origins: render_origins.into(),
+            render_provenance,
         }
     }
 }
@@ -285,6 +553,31 @@ fn assert_valid_render_origins(ends: &[u32], origin_len: usize) {
         origin_len,
         "artifact render-origin ends must cover the flat origin buffer"
     );
+}
+
+fn provenance_recipe_bytes(recipe: &crate::ParagraphProvenanceRecipe) -> usize {
+    recipe
+        .piece_anchors
+        .len()
+        .saturating_mul(std::mem::size_of::<crate::RootSpanId>())
+        .saturating_add(
+            recipe
+                .root_spans
+                .len()
+                .saturating_mul(std::mem::size_of::<crate::ParagraphProvenanceSpan>()),
+        )
+        .saturating_add(
+            recipe
+                .origin_slots
+                .len()
+                .saturating_mul(std::mem::size_of::<u32>()),
+        )
+        .saturating_add(
+            recipe
+                .node_slots
+                .len()
+                .saturating_mul(std::mem::size_of::<crate::ParagraphProvenanceNode>()),
+        )
 }
 
 impl PartialEq for CommittedArtifact {
@@ -1904,15 +2197,13 @@ impl World {
         &mut self,
         hash: ContentHash,
         bytes: Vec<u8>,
-        render_origin_ends: Vec<u32>,
-        render_origins: Vec<OriginId>,
+        render_provenance: ArtifactRenderProvenance,
     ) {
         Arc::make_mut(&mut self.artifact_commits).push(hash);
         Arc::make_mut(&mut self.committed_artifacts).push(CommittedArtifact::new(
             hash,
             bytes,
-            render_origin_ends,
-            render_origins,
+            render_provenance,
         ));
     }
 

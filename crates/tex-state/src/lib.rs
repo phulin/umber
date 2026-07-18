@@ -116,11 +116,11 @@ pub use page::{
 pub use provenance_resolver::{ProvenanceResolver, ResolvedSourceLocation};
 pub use pure_memo::{
     MemoLayerStats, MemoTimingPhase, ParagraphBarrierReason, ParagraphOpportunityMetric,
-    ParagraphOpportunityStats, ParagraphProvenanceRecipe, ParagraphProvenanceSpan,
-    ParagraphRecordingPhase, ParagraphRecordingStats, ParagraphValidationFailure,
-    PureBreakDecision, PureBreakPlan, PureMemoConfig, PureMemoKey, PureMemoLayer,
-    PureMemoRecordingPolicy, PureMemoRuntime, PureMemoStats, PurePageEntry, PureParagraphMutation,
-    PureParagraphMutationSummary, PureShipoutEntry, RecordedParagraphLines,
+    ParagraphOpportunityStats, ParagraphProvenanceNode, ParagraphProvenanceRecipe,
+    ParagraphProvenanceSpan, ParagraphRecordingPhase, ParagraphRecordingStats,
+    ParagraphValidationFailure, PureBreakDecision, PureBreakPlan, PureMemoConfig, PureMemoKey,
+    PureMemoLayer, PureMemoRecordingPolicy, PureMemoRuntime, PureMemoStats, PurePageEntry,
+    PureParagraphMutation, PureParagraphMutationSummary, PureShipoutEntry, RecordedParagraphLines,
     RecordedParagraphRegion,
 };
 pub use source_fragments::{
@@ -128,6 +128,8 @@ pub use source_fragments::{
     LayoutResolvedOrigin, Piece, PieceId, RootSpanId,
 };
 pub use stores::{FontParameterError, GroupKind, GroupMismatch, PrepareMagDiagnostic};
+#[doc(hidden)]
+pub use survivor::DeferredNodeOriginCursor;
 pub use universe::{
     BoxBuildTransaction, BoxDimension, EngineBoundaryHasher, ExpansionContext, ExpansionState,
     FormatError, GenerationForkError, GenerationSubstrate, InputOpenContext, InputOpenState,
@@ -137,11 +139,12 @@ pub use universe::{
 #[cfg(feature = "profiling-stats")]
 pub use world::ProfilingTimer;
 pub use world::{
-    CommittedArtifact, ContentDomain, ContentHash, ContentIdentity, EffectPos, EffectRecord,
-    EffectRetrySafety, ExecutionTraceEvent, FileContent, FileModificationDate, InputRecord,
-    InputRecordId, JobClock, MemoryOutput, PrintSink, ReadTarget, RenderOriginIter, RenderOrigins,
-    RngState, ShellEscapePolicy, ShellEscapeRecord, StreamBufState, StreamSlot, VerifiedArtifact,
-    World, WorldCommitMode, WorldError, WorldSnapshot,
+    ArtifactOrigin, CommittedArtifact, ContentDomain, ContentHash, ContentIdentity, EffectPos,
+    EffectRecord, EffectRetrySafety, ExecutionTraceEvent, FileContent, FileModificationDate,
+    InputRecord, InputRecordId, JobClock, MemoryOutput, PrintSink, ReadTarget, RenderOriginIter,
+    RenderOrigins, RenderProvenanceBuilder, RngState, ShellEscapePolicy, ShellEscapeRecord,
+    StreamBufState, StreamSlot, VerifiedArtifact, World, WorldCommitMode, WorldError,
+    WorldSnapshot,
 };
 
 #[cfg(test)]

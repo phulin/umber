@@ -63,7 +63,7 @@ The repository already provides the required correctness substrate:
 - retained logical effects and page artifacts;
 - accepted-history-owned finished-line mounts;
 - shared immutable survivor payloads with mount-owned glue closures, ordinary
-  rollback-local root pins, and local provenance overlays;
+  rollback-local root pins, and deferred provenance recipes;
 - compact output-reachable, current-revision provenance rebinding recipes;
 - typed dependency keys, semantic observations, changed-at stamps, and
   backdating; and
@@ -192,8 +192,8 @@ For each candidate record, in order:
 5. atomically apply the prepared input transition and replay the supported
    ordered mutations/effects;
 6. mount the accepted finished lines;
-7. resolve only the stable editor roots named by reachable line
-   origins and bind them through the mount-local origin overlay;
+7. attach the shared stable provenance recipe without resolving editor roots
+   or allocating live origins;
 8. install the result through the ordinary vertical/page-builder boundary;
    and
 9. publish the same `ShipoutComplete` and `OuterParagraphEnd` events as cold
@@ -362,9 +362,9 @@ The accepted-history implementation now owns cloneable retained-root handles
 whose immutable survivor payload and glue closure are shared between related
 Universes. A finished-line hit validates the handle before mutation, installs
 its payload under the restarted Universe's ordinary rollback pin log, mounts a
-local provenance overlay, restores its glue closure, and returns the unchanged
-`NodeListId`. It does not import, promote, re-freeze, rehash, or recursively
-rewrite semantic nodes. The existing reused-paragraph
+shared diagnostic recipe, restores its glue closure, and returns the unchanged
+`NodeListId`. It does not resolve editor roots, allocate live origins, import,
+promote, re-freeze, rehash, or recursively rewrite semantic nodes. The existing reused-paragraph
 installation still materializes only the mounted top-level contributions and
 feeds them through ordinary vertical append, baseline glue, prevdepth, page
 building, and output-routine behavior. Marks, whatsits, leaders, unset nodes,
@@ -398,26 +398,40 @@ publication it traverses the ordinary node graph, follows only
 reachable char and ligature origins to stable editor roots, and builds a
 compact recipe. Each referenced editor piece contributes one full
 `RootSpanId` anchor; distinct output ranges use `(piece ordinal, start, end)`
-records, and depth-first origin slots use `u32` indexes. Unknown or non-rooted
-output origins use the reserved unknown slot. Token values and origins that
-produced no accepted node are not retained.
+records, depth-first origin slots use `u32` indexes, and sparse survivor-word
+entries identify only character-bearing nodes. Unknown or non-rooted output
+origins use the reserved unknown slot. Token values and origins that produced
+no accepted node are not retained.
 
-On a finished-line hit, replay prepares and validates the ordinary
-input transition first, recreates origins only for the recipe's distinct output
-ranges, and installs them in the existing survivor mount overlay. Every
-ordinary `Universe::nodes` traversal therefore observes current-revision
-provenance immediately during page building, output-routine inspection, node
-diagnostics, and shipout. Replay keeps the accepted `NodeListId` and does not
-copy child graphs into the active epoch. There is no
-shipout-only map and no second node model.
+On a finished-line hit, replay prepares and validates the ordinary input
+transition, then attaches the shared recipe to the survivor mount. Page
+promotion rebases only sparse survivor-word entries; the stable piece, span,
+and slot columns remain shared. Direct shipout advances a monotonic provenance
+cursor beside each already-required node-list traversal and emits compact
+stable references. Shipout-memo hits retain one recipe directly. Committed
+artifacts distinguish eager, deferred, and mixed provenance, and decode a
+single stable `RootSpanId` only when a diagnostic requests that rendered
+source. Current/deleted editor-layout resolution likewise occurs only for the
+queried source. Replay therefore keeps the accepted semantic graph while
+making unused diagnostic provenance nearly free.
 
 The focused scaling regression expands 4,096 `\relax` tokens after paragraph
 entry but produces only two characters; both retained recipes contain at most
 three roots and three slots. Current-layout resolution after a finished-line
 hit and typed deletion after replacing the referenced fragment are covered
-separately. Thus retained metadata and replay origin allocation scale with
-reachable output provenance, while the scalar delivered-token count remains
-only avoided-work telemetry.
+separately. Thus retained metadata scales with reachable output provenance,
+while replay performs no origin allocation and the scalar delivered-token
+count remains only avoided-work telemetry.
+
+On the 2026-07-18 stable 721-hit Gentle run, deferral reduced paragraph import
+from 2.565 to 0.209 ms on the forward slow edit and from 1.793 to 0.203 ms on
+the inverse edit. A rejected first implementation performed a survivor lookup
+and binary search for every glyph: that function alone was 2.59% of samples
+and expanded shipout from 9.16% to 13.49%. The per-list monotonic cursor reduced
+the lookup to 0.18% plus 0.11% cursor setup; matching sampled runs no longer
+showed shipout growth. The tradeoff is explicit: cold line-provenance recording
+rose by 0.807 ms and retained paragraph-cache bytes by 7.5% for the sparse node
+index. All five representative edits remained DVI-byte-identical to cold.
 
 On the q02h.58 baseline, the Gentle edit history retained 3,916,504 metadata
 bytes. The compact closure retains 1,999,076 bytes for the same 132 line hits,

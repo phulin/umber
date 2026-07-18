@@ -64,37 +64,22 @@ pub(crate) fn shipout_node(
             validation_started.elapsed(),
         );
     }
-    let input_origins = if cacheable {
-        stores.node_memo_origins(&node).ok()
-    } else {
+    if !cacheable {
         stores.record_pure_shipout_barrier();
-        None
-    };
-    if let (Some(key), Some(input_origins)) = (key, input_origins.as_ref())
+    }
+    if let Some(key) = key
         && let Some(entry) = stores.lookup_pure_shipout(key)
     {
         #[allow(clippy::disallowed_methods)]
         let import_started = std::time::Instant::now();
         let detached = entry.artifact.artifact(MemoValueLimits::default());
         if let Ok(detached) = detached {
-            let render_origins = entry
-                .render_origin_ordinals
-                .iter()
-                .map(|node_origins| {
-                    node_origins
-                        .iter()
-                        .map(|ordinal| {
-                            usize::try_from(*ordinal)
-                                .ok()
-                                .and_then(|ordinal| input_origins.get(ordinal))
-                                .copied()
-                                .unwrap_or(tex_state::token::OriginId::UNKNOWN)
-                        })
-                        .collect::<Vec<_>>()
-                })
-                .collect();
             let imported_bytes = entry.artifact.retained_bytes();
-            stores.commit_replayed_artifact(detached.payload, render_origins)?;
+            stores.commit_replayed_artifact(
+                detached.payload,
+                entry.render_origin_ends,
+                entry.render_provenance,
+            )?;
             stores.record_pure_memo_timing(
                 PureMemoLayer::Shipout,
                 MemoTimingPhase::Import,
@@ -114,48 +99,38 @@ pub(crate) fn shipout_node(
     let mut transaction = stores.begin_shipout();
     let staged = direct::stage_shipout(node, input, &mut transaction, execution)?;
     let retained_diagnostics = staged.retained_diagnostics.clone();
-    let memo_payload = (key.is_some() && input_origins.is_some()).then(|| {
-        let artifact_bytes = staged.artifact.bytes().to_vec();
-        let artifact_origins = staged
-            .artifact
-            .render_origins_for_memo()
-            .iter()
-            .map(|origins| origins.to_vec())
-            .collect::<Vec<_>>();
-        (artifact_bytes, artifact_origins)
-    });
+    let memo_payload =
+        (key.is_some() && !staged.artifact.has_deferred_render_origins()).then(|| {
+            let artifact_bytes = staged.artifact.bytes().to_vec();
+            let render_origin_ends = staged.artifact.render_origin_ends_for_memo().to_vec();
+            let render_origins = staged
+                .artifact
+                .render_origins_for_memo()
+                .iter()
+                .flat_map(|origins| origins.iter().copied())
+                .collect::<Vec<_>>();
+            (artifact_bytes, render_origin_ends, render_origins)
+        });
     let hash = transaction.commit(staged.artifact, staged.effect_pos)?;
     for (sink, text) in retained_diagnostics {
         stores.world_mut().write_text(sink, &text);
     }
-    if let (Some(key), Some(input_origins), Some((artifact_bytes, artifact_origins))) =
-        (key, input_origins, memo_payload)
+    if let (Some(key), Some((artifact_bytes, render_origin_ends, render_origins))) =
+        (key, memo_payload)
         && stores.world().effect_records().len() == effect_start
         && let Ok(artifact) = tex_state::DetachedMemoValue::from_artifact(&DetachedArtifact {
             artifact_schema: 10,
             payload: artifact_bytes,
         })
     {
-        let render_origin_ordinals = artifact_origins
-            .iter()
-            .map(|origins| {
-                origins
-                    .iter()
-                    .map(|origin| {
-                        input_origins
-                            .iter()
-                            .position(|candidate| candidate == origin)
-                            .and_then(|index| u32::try_from(index).ok())
-                            .unwrap_or(u32::MAX)
-                    })
-                    .collect()
-            })
-            .collect();
+        let render_provenance =
+            crate::paragraph_memo::provenance_recipe_for_origins(stores, render_origins);
         stores.insert_pure_shipout(
             key,
             PureShipoutEntry {
                 artifact,
-                render_origin_ordinals,
+                render_origin_ends,
+                render_provenance,
             },
         );
     }

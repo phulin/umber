@@ -123,7 +123,81 @@ pub struct SurvivorArena {
 struct SurvivorRoot {
     payload: Arc<SurvivorPayload>,
     origin_overlay: Option<NodeOriginOverlay>,
+    deferred_origins: Vec<DeferredParagraphOrigins>,
     refcount: u32,
+}
+
+#[derive(Clone, Debug)]
+struct DeferredParagraphOrigins {
+    recipe: crate::ParagraphProvenanceRecipe,
+}
+
+/// Monotonic diagnostic-provenance lookup for one emitted survivor list.
+///
+/// Ordinary shipout visits list words in order. Resolving the survivor root
+/// and locating its first sparse provenance entry once keeps the per-glyph
+/// path to a single cursor comparison. Direction permutations use the random
+/// lookup below because they are deliberately rare.
+#[doc(hidden)]
+#[derive(Debug)]
+pub struct DeferredNodeOriginCursor<'a> {
+    entries: &'a [DeferredParagraphOrigins],
+    entry: usize,
+    node: usize,
+    list_start: u32,
+    list_end: u32,
+}
+
+impl<'a> DeferredNodeOriginCursor<'a> {
+    fn empty() -> Self {
+        Self {
+            entries: &[],
+            entry: 0,
+            node: 0,
+            list_start: 0,
+            list_end: 0,
+        }
+    }
+
+    /// Returns the stable recipe slots for the next provenance-bearing word.
+    #[doc(hidden)]
+    pub fn node_origins(
+        &mut self,
+        index: usize,
+        len: usize,
+    ) -> Option<(&'a crate::ParagraphProvenanceRecipe, std::ops::Range<usize>)> {
+        let word = self.list_start.checked_add(u32::try_from(index).ok()?)?;
+        if word >= self.list_end {
+            return None;
+        }
+        while let Some(deferred) = self.entries.get(self.entry) {
+            let slots = &deferred.recipe.node_slots;
+            while let Some(slot) = slots.get(self.node) {
+                if slot.word >= self.list_end {
+                    return None;
+                }
+                if slot.word < word {
+                    self.node += 1;
+                    continue;
+                }
+                if slot.word > word {
+                    return None;
+                }
+                self.node += 1;
+                let start = slot.slot as usize;
+                let end = start.checked_add(len)?;
+                return (end <= deferred.recipe.origin_slots.len())
+                    .then_some((&deferred.recipe, start..end));
+            }
+            self.entry += 1;
+            self.node = self.entries.get(self.entry).map_or(0, |next| {
+                next.recipe
+                    .node_slots
+                    .partition_point(|slot| slot.word < self.list_start)
+            });
+        }
+        None
+    }
 }
 
 #[derive(Debug)]
@@ -297,7 +371,12 @@ impl SurvivorArena {
         }
         self.promotion_remap = copied.remapped;
         self.promotion_pending = copied.pending;
-        self.allocate_root(root, copied.storage, copied.semantic_spans);
+        self.allocate_root(
+            root,
+            copied.storage,
+            copied.semantic_spans,
+            copied.deferred_origins,
+        );
         self.debug_assert_no_epoch_ids(copied.promoted);
         #[cfg(feature = "profiling-stats")]
         {
@@ -405,6 +484,7 @@ impl SurvivorArena {
         self.slots.push(Some(SurvivorRoot {
             payload: Arc::clone(&retained.payload),
             origin_overlay: None,
+            deferred_origins: Vec::new(),
             refcount: 1,
         }));
         assert!(
@@ -511,7 +591,114 @@ impl SurvivorArena {
             .as_mut()
             .expect("survivor root is live")
             .origin_overlay = Some(overlay);
+        self.slots[index]
+            .as_mut()
+            .expect("survivor root is live")
+            .deferred_origins
+            .clear();
         true
+    }
+
+    /// Attaches an allocation-free diagnostic recipe to one mounted root.
+    pub(crate) fn mount_deferred_paragraph_origins(
+        &mut self,
+        id: NodeListId,
+        recipe: crate::ParagraphProvenanceRecipe,
+    ) -> bool {
+        let ArenaRef::Survivor(root_id) = id.arena() else {
+            return false;
+        };
+        let Some(index) = self.root_slots.get(&root_id).copied() else {
+            return false;
+        };
+        let Some(Some(root)) = self.slots.get_mut(index) else {
+            return false;
+        };
+        root.origin_overlay = None;
+        root.deferred_origins.clear();
+        root.deferred_origins
+            .push(DeferredParagraphOrigins { recipe });
+        true
+    }
+
+    fn deferred_paragraph_origins_ref(&self, id: NodeListId) -> &[DeferredParagraphOrigins] {
+        let ArenaRef::Survivor(root_id) = id.arena() else {
+            return &[];
+        };
+        let Some(index) = self.root_slots.get(&root_id).copied() else {
+            return &[];
+        };
+        self.slots
+            .get(index)
+            .and_then(Option::as_ref)
+            .map_or(&[], |root| root.deferred_origins.as_slice())
+    }
+
+    pub(crate) fn deferred_node_origin_cursor(
+        &self,
+        list: NodeListId,
+    ) -> DeferredNodeOriginCursor<'_> {
+        if !matches!(list.arena(), ArenaRef::Survivor(_)) {
+            return DeferredNodeOriginCursor::empty();
+        }
+        let Some(list_end) = list.start().checked_add(list.len()) else {
+            return DeferredNodeOriginCursor::empty();
+        };
+        let entries = self.deferred_paragraph_origins_ref(list);
+        let entry = entries.partition_point(|deferred| {
+            deferred
+                .recipe
+                .node_slots
+                .last()
+                .is_none_or(|slot| slot.word < list.start())
+        });
+        let node = entries.get(entry).map_or(0, |deferred| {
+            deferred
+                .recipe
+                .node_slots
+                .partition_point(|slot| slot.word < list.start())
+        });
+        DeferredNodeOriginCursor {
+            entries,
+            entry,
+            node,
+            list_start: list.start(),
+            list_end,
+        }
+    }
+
+    pub(crate) fn deferred_node_origins(
+        &self,
+        list: NodeListId,
+        index: usize,
+        len: usize,
+    ) -> Option<(&crate::ParagraphProvenanceRecipe, std::ops::Range<usize>)> {
+        let ArenaRef::Survivor(root_id) = list.arena() else {
+            return None;
+        };
+        let slot = self.root_slots.get(&root_id).copied()?;
+        let deferred = self
+            .slots
+            .get(slot)?
+            .as_ref()?
+            .deferred_origins
+            .iter()
+            .find(|deferred| {
+                let Some(word) = list
+                    .start()
+                    .checked_add(u32::try_from(index).ok().unwrap_or(u32::MAX))
+                else {
+                    return false;
+                };
+                deferred
+                    .recipe
+                    .node_slots
+                    .binary_search_by_key(&word, |node| node.word)
+                    .is_ok()
+            })?;
+        let word = list.start().checked_add(u32::try_from(index).ok()?)?;
+        let range = deferred.recipe.node_origin_slots(word, len)?;
+        Some((&deferred.recipe, range))
     }
 
     #[cfg(test)]
@@ -635,6 +822,7 @@ impl SurvivorArena {
         root: SurvivorRootId,
         storage: NodeStorage,
         semantic_spans: Vec<SurvivorSemanticSpan>,
+        deferred_origins: Vec<DeferredParagraphOrigins>,
     ) {
         let slot = SurvivorRoot {
             payload: Arc::new(SurvivorPayload {
@@ -642,6 +830,7 @@ impl SurvivorArena {
                 semantic_spans,
             }),
             origin_overlay: None,
+            deferred_origins,
             refcount: 1,
         };
         let index = self.slots.len();
@@ -721,6 +910,7 @@ struct PromotionResult {
     semantic_spans: Vec<SurvivorSemanticSpan>,
     remapped: AHashMap<NodeListId, NodeListId>,
     pending: Vec<ChildPatch>,
+    deferred_origins: Vec<DeferredParagraphOrigins>,
     #[cfg(feature = "profiling-stats")]
     peak_scratch_logical: usize,
     #[cfg(feature = "profiling-stats")]
@@ -756,6 +946,7 @@ fn copy_list_iterative(
         semantic_spans: copy.semantic_spans,
         remapped: copy.remapped,
         pending: copy.pending,
+        deferred_origins: copy.deferred_origins,
         #[cfg(feature = "profiling-stats")]
         peak_scratch_logical: copy.peak_scratch_logical,
         #[cfg(feature = "profiling-stats")]
@@ -774,6 +965,7 @@ struct PromotionCopy<'a> {
     remapped: AHashMap<NodeListId, NodeListId>,
     pending: Vec<ChildPatch>,
     semantic_spans: Vec<SurvivorSemanticSpan>,
+    deferred_origins: Vec<DeferredParagraphOrigins>,
     #[cfg(feature = "profiling-stats")]
     peak_scratch_logical: usize,
     #[cfg(feature = "profiling-stats")]
@@ -800,6 +992,7 @@ impl<'a> PromotionCopy<'a> {
             remapped,
             pending,
             semantic_spans: Vec::new(),
+            deferred_origins: Vec::new(),
             #[cfg(feature = "profiling-stats")]
             peak_scratch_logical: 0,
             #[cfg(feature = "profiling-stats")]
@@ -842,6 +1035,32 @@ impl<'a> PromotionCopy<'a> {
         let start = u32_len(self.storage.len(), "promoted node root exceeds u32 entries");
         let remapped = NodeListId::new_survivor(self.root, start, len);
         self.remapped.insert(id, remapped);
+        if matches!(id.arena(), ArenaRef::Survivor(_)) {
+            let source_start = id.start();
+            let source_end = source_start
+                .checked_add(id.len())
+                .expect("source survivor span fits u32");
+            for deferred in self.survivor.deferred_paragraph_origins_ref(id) {
+                let node_slots = deferred
+                    .recipe
+                    .node_slots
+                    .iter()
+                    .filter(|node| (source_start..source_end).contains(&node.word))
+                    .map(|node| crate::ParagraphProvenanceNode {
+                        word: start
+                            .checked_add(node.word - source_start)
+                            .expect("promoted provenance word fits u32"),
+                        slot: node.slot,
+                    })
+                    .collect::<Vec<_>>();
+                if !node_slots.is_empty() {
+                    let mut recipe = deferred.recipe.clone();
+                    recipe.node_slots = node_slots.into();
+                    self.deferred_origins
+                        .push(DeferredParagraphOrigins { recipe });
+                }
+            }
+        }
         if len != 0 {
             self.semantic_spans.push(SurvivorSemanticSpan {
                 start,

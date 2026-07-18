@@ -254,7 +254,7 @@ fn replayed_paragraph_provenance_tracks_current_then_deleted_layout() {
     );
     assert!(
         session.artifacts.iter().any(|artifact| {
-            (0..artifact.render_origins().len()).any(|node| {
+            (0..artifact.render_node_count()).any(|node| {
                 (0..16).any(|source| {
                     matches!(
                         artifact.render_origin(node, source),
@@ -284,11 +284,13 @@ fn replayed_paragraph_provenance_tracks_current_then_deleted_layout() {
             )
         })
         .expect("stable paragraph output has mounted provenance");
-    let replayed_origin = session
-        .rendered_origin(page, event, None)
+    let replayed_span = match session
+        .rendered_artifact_origin(page, event, None)
         .expect("render lookup")
-        .expect("stable paragraph origin");
-
+    {
+        Some(tex_state::ArtifactOrigin::Stable(span)) => span,
+        origin => panic!("replayed paragraph should retain a stable origin: {origin:?}"),
+    };
     let revision_two = session.source.clone();
     let stable_text = revision_two[stable_start..stable_end].to_owned();
     session
@@ -307,7 +309,7 @@ fn replayed_paragraph_provenance_tracks_current_then_deleted_layout() {
             .substrate
             .as_ref()
             .expect("accepted substrate")
-            .resolve_layout_origin(replayed_origin, &session.fragments, &session.layout),
+            .resolve_stable_layout_origin(replayed_span, &session.fragments, &session.layout),
         LayoutResolvedOrigin::Deleted { minted_revision: 1 }
     );
 }

@@ -629,9 +629,9 @@ impl ShipoutTransaction<'_> {
             self.page.set_integer(PageInteger::DeadCycles, 0);
             self.pdf
                 .commit_page(hash, output_parameters, page_parameters, pk_mode);
-            let (bytes, render_origin_ends, render_origins) = artifact.into_parts();
+            let (bytes, render_provenance) = artifact.into_parts();
             self.world
-                .record_artifact_commit(hash, bytes, render_origin_ends, render_origins);
+                .record_artifact_commit(hash, bytes, render_provenance);
             self.rollback = None;
             self.finished = true;
             return Ok(hash);
@@ -650,9 +650,9 @@ impl ShipoutTransaction<'_> {
         self.page.set_integer(PageInteger::DeadCycles, 0);
         self.pdf
             .commit_page(hash, output_parameters, page_parameters, pk_mode);
-        let (bytes, render_origin_ends, render_origins) = artifact.into_parts();
+        let (bytes, render_provenance) = artifact.into_parts();
         self.world
-            .record_artifact_commit(hash, bytes, render_origin_ends, render_origins);
+            .record_artifact_commit(hash, bytes, render_provenance);
         self.rollback = None;
         self.finished = true;
         Ok(hash)
@@ -774,6 +774,23 @@ impl GenerationSubstrate {
         } else {
             resolved
         }
+    }
+
+    /// Resolves a stable paragraph recipe span directly at the diagnostic
+    /// boundary, without first allocating a live `OriginId`.
+    #[must_use]
+    pub fn resolve_stable_layout_origin(
+        &self,
+        span: crate::RootSpanId,
+        fragments: &crate::FragmentStore,
+        layout: &crate::EditorLayout,
+    ) -> crate::LayoutResolvedOrigin {
+        fragments
+            .source_span_for_root(span)
+            .and_then(|span| {
+                crate::source_fragments::resolve_fragment_span(span, fragments, layout)
+            })
+            .unwrap_or(crate::LayoutResolvedOrigin::Unknown)
     }
 
     /// Retains only the diagnostic origin graph needed by artifacts adopted
@@ -4609,6 +4626,12 @@ impl Universe {
         self.stores.freeze_node_list_owned(nodes)
     }
 
+    #[doc(hidden)]
+    #[must_use]
+    pub fn node_word_index(&self, list: NodeListId, index: usize) -> Option<u32> {
+        list.start().checked_add(u32::try_from(index).ok()?)
+    }
+
     /// Captures accepted-history ownership of a shared, mountable paragraph
     /// graph while keeping the local root under ordinary rollback ownership.
     pub fn retain_paragraph_result(&mut self, id: NodeListId) -> crate::survivor::RetainedNodeList {
@@ -4647,6 +4670,38 @@ impl Universe {
     ) -> Option<NodeListId> {
         self.stores
             .mount_prevalidated_paragraph_result(retained, root_origins, origin_slots)
+    }
+
+    /// Mounts validated semantic output while keeping diagnostic provenance
+    /// as a stable recipe until a non-memoized shipout actually needs it.
+    #[doc(hidden)]
+    pub fn mount_prevalidated_paragraph_result_deferred(
+        &mut self,
+        retained: &crate::survivor::RetainedNodeList,
+        provenance: crate::ParagraphProvenanceRecipe,
+    ) -> Option<NodeListId> {
+        self.stores
+            .mount_prevalidated_paragraph_result_deferred(retained, provenance)
+    }
+
+    #[doc(hidden)]
+    #[must_use]
+    pub fn deferred_node_origins(
+        &self,
+        list: NodeListId,
+        index: usize,
+        len: usize,
+    ) -> Option<(&crate::ParagraphProvenanceRecipe, std::ops::Range<usize>)> {
+        self.stores.deferred_node_origins(list, index, len)
+    }
+
+    #[doc(hidden)]
+    #[must_use]
+    pub fn deferred_node_origin_cursor(
+        &self,
+        list: NodeListId,
+    ) -> crate::survivor::DeferredNodeOriginCursor<'_> {
+        self.stores.deferred_node_origin_cursor(list)
     }
 
     pub fn finish_node_list(&mut self, builder: &mut NodeListBuilder) -> NodeListId {
@@ -5360,12 +5415,14 @@ impl Universe {
     pub fn commit_replayed_artifact(
         &mut self,
         bytes: Vec<u8>,
-        render_origins: Vec<Vec<OriginId>>,
+        render_origin_ends: Vec<u32>,
+        render_provenance: crate::ParagraphProvenanceRecipe,
     ) -> Result<ContentHash, WorldError> {
         let effect_pos = self.world.effect_pos();
         let transaction = self.begin_shipout();
         transaction.commit(
-            crate::VerifiedArtifact::new(bytes).with_render_origins(render_origins),
+            crate::VerifiedArtifact::new(bytes)
+                .with_deferred_render_origins(render_origin_ends, render_provenance),
             effect_pos,
         )
     }

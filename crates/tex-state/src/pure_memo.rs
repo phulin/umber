@@ -411,6 +411,31 @@ pub struct ParagraphProvenanceRecipe {
     pub piece_anchors: Arc<[RootSpanId]>,
     pub root_spans: Arc<[ParagraphProvenanceSpan]>,
     pub origin_slots: Arc<[u32]>,
+    /// Sparse survivor-word to origin-slot starts for character-bearing nodes.
+    pub node_slots: Arc<[ParagraphProvenanceNode]>,
+}
+
+impl ParagraphProvenanceRecipe {
+    /// Resolves one compact diagnostic slot to stable editor backing without
+    /// allocating a live provenance record.
+    #[must_use]
+    pub fn stable_span(&self, slot: usize) -> Option<RootSpanId> {
+        let ordinal = usize::try_from(*self.origin_slots.get(slot)?).ok()?;
+        let span = self.root_spans.get(ordinal)?;
+        let piece = self.piece_anchors.get(usize::try_from(span.piece).ok()?)?;
+        Some(piece.with_offsets(span.start, span.end))
+    }
+
+    #[must_use]
+    pub fn node_origin_slots(&self, word: u32, len: usize) -> Option<std::ops::Range<usize>> {
+        let index = self
+            .node_slots
+            .binary_search_by_key(&word, |node| node.word)
+            .ok()?;
+        let start = self.node_slots[index].slot as usize;
+        let end = start.checked_add(len)?;
+        (end <= self.origin_slots.len()).then_some(start..end)
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -418,6 +443,12 @@ pub struct ParagraphProvenanceSpan {
     pub piece: u32,
     pub start: u32,
     pub end: u32,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct ParagraphProvenanceNode {
+    pub word: u32,
+    pub slot: u32,
 }
 
 /// Recorder output for one normally executed paragraph. Accepted history owns
@@ -500,7 +531,8 @@ pub struct PurePageEntry {
 #[derive(Clone, Debug)]
 pub struct PureShipoutEntry {
     pub artifact: DetachedMemoValue,
-    pub render_origin_ordinals: Vec<Vec<u32>>,
+    pub render_origin_ends: Vec<u32>,
+    pub render_provenance: ParagraphProvenanceRecipe,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -873,13 +905,10 @@ impl PureMemoRuntime {
             .artifact
             .retained_bytes()
             .saturating_sub(std::mem::size_of::<DetachedMemoValue>())
-            .saturating_add(
-                value
-                    .render_origin_ordinals
-                    .iter()
-                    .map(|origins| origins.capacity().saturating_mul(4))
-                    .sum::<usize>(),
-            );
+            .saturating_add(value.render_origin_ends.capacity().saturating_mul(4))
+            .saturating_add(paragraph_provenance_retained_bytes(
+                &value.render_provenance,
+            ));
         let started = std::time::Instant::now();
         let before = self.cache.as_ref().map_or(0, |cache| cache.stats.inserts);
         self.insert_value(key, PureMemoValue::Shipout(value), owned_bytes);
@@ -1637,6 +1666,12 @@ fn paragraph_provenance_retained_bytes(recipe: &ParagraphProvenanceRecipe) -> us
                 .origin_slots
                 .len()
                 .saturating_mul(std::mem::size_of::<u32>()),
+        )
+        .saturating_add(
+            recipe
+                .node_slots
+                .len()
+                .saturating_mul(std::mem::size_of::<ParagraphProvenanceNode>()),
         )
 }
 

@@ -116,12 +116,10 @@ pub(crate) fn try_reuse_aligned_paragraph(
     replay_mutations(stores, &entry.mutations);
     replay_effects(stores, &entry.effects);
     let mount_started = start_phase();
-    let origins = resolve_paragraph_provenance(stores, &entry.line_provenance);
     let mounted_lines = stores
-        .mount_prevalidated_paragraph_result(
+        .mount_prevalidated_paragraph_result_deferred(
             &retained_lines,
-            &origins,
-            &entry.line_provenance.origin_slots,
+            entry.line_provenance.clone(),
         )
         .expect("prevalidated paragraph line mount must remain valid");
     let lines = stores.nodes(mounted_lines).to_vec();
@@ -479,11 +477,23 @@ fn resolve_paragraph_provenance(
         .collect()
 }
 
+pub(crate) fn provenance_recipe_for_origins(
+    stores: &Universe,
+    origins: impl IntoIterator<Item = tex_state::token::OriginId>,
+) -> tex_state::ParagraphProvenanceRecipe {
+    let mut recipe = ParagraphProvenanceBuilder::default();
+    for origin in origins {
+        recipe.push_origin(stores, origin);
+    }
+    recipe.finish()
+}
+
 #[derive(Default)]
 struct ParagraphProvenanceBuilder {
     piece_anchors: Vec<tex_state::RootSpanId>,
     root_spans: Vec<tex_state::ParagraphProvenanceSpan>,
     origin_slots: Vec<u32>,
+    node_slots: Vec<tex_state::ParagraphProvenanceNode>,
     root_ordinals: ahash::AHashMap<tex_state::RootSpanId, u32>,
     piece_ordinals: ahash::AHashMap<tex_state::PieceId, u32>,
 }
@@ -529,6 +539,23 @@ impl ParagraphProvenanceBuilder {
             piece_anchors: self.piece_anchors.into(),
             root_spans: self.root_spans.into(),
             origin_slots: self.origin_slots.into(),
+            node_slots: self.node_slots.into(),
+        }
+    }
+
+    fn push_node_origins(
+        &mut self,
+        stores: &Universe,
+        word: u32,
+        origins: impl IntoIterator<Item = tex_state::token::OriginId>,
+    ) {
+        let Ok(slot) = u32::try_from(self.origin_slots.len()) else {
+            return;
+        };
+        self.node_slots
+            .push(tex_state::ParagraphProvenanceNode { word, slot });
+        for origin in origins {
+            self.push_origin(stores, origin);
         }
     }
 }
@@ -853,7 +880,7 @@ pub(crate) fn publish_finished_lines(
         retention_started,
     );
     let provenance_started = start_phase();
-    let provenance = paragraph_graph_provenance(stores, list);
+    let provenance = paragraph_graph_provenance(stores, retained.id());
     finish_phase(
         stores,
         ParagraphRecordingPhase::LineProvenance,
@@ -890,15 +917,16 @@ fn paragraph_graph_provenance(
         list: tex_state::ids::NodeListId,
         recipe: &mut ParagraphProvenanceBuilder,
     ) {
-        for node in stores.nodes(list) {
+        for (index, node) in stores.nodes(list).iter().enumerate() {
+            let word = stores
+                .node_word_index(list, index)
+                .expect("survivor word index fits u32");
             match node {
                 tex_state::node_arena::NodeRef::Char { origin, .. } => {
-                    recipe.push_origin(stores, origin);
+                    recipe.push_node_origins(stores, word, [origin]);
                 }
                 tex_state::node_arena::NodeRef::Lig { origins, .. } => {
-                    for &origin in origins {
-                        recipe.push_origin(stores, origin);
-                    }
+                    recipe.push_node_origins(stores, word, origins.iter().copied());
                 }
                 tex_state::node_arena::NodeRef::HList(box_node)
                 | tex_state::node_arena::NodeRef::VList(box_node) => {

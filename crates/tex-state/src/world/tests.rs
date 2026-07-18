@@ -41,12 +41,15 @@ fn content_hash_is_stable_for_same_bytes() {
 fn artifact_identity_excludes_render_provenance() {
     let bytes = b"page artifact".to_vec();
     let hash = ContentHash::for_domain(ContentDomain::Artifact, &bytes);
-    let first = CommittedArtifact::new(hash, bytes.clone(), vec![1], vec![OriginId::from_raw(1)]);
+    let first = CommittedArtifact::new(
+        hash,
+        bytes.clone(),
+        ArtifactRenderProvenance::live(vec![1], vec![OriginId::from_raw(1)]),
+    );
     let second = CommittedArtifact::new(
         hash,
         bytes,
-        vec![2],
-        vec![OriginId::from_raw(2), OriginId::from_raw(3)],
+        ArtifactRenderProvenance::live(vec![2], vec![OriginId::from_raw(2), OriginId::from_raw(3)]),
     );
 
     assert_eq!(first, second);
@@ -60,15 +63,17 @@ fn flat_artifact_render_provenance_preserves_empty_and_nonempty_spans() {
     let artifact = CommittedArtifact::new(
         ContentHash::for_domain(ContentDomain::Artifact, &bytes),
         bytes,
-        vec![0, 2, 3],
-        vec![
-            OriginId::from_raw(1),
-            OriginId::from_raw(2),
-            OriginId::from_raw(3),
-        ],
+        ArtifactRenderProvenance::live(
+            vec![0, 2, 3],
+            vec![
+                OriginId::from_raw(1),
+                OriginId::from_raw(2),
+                OriginId::from_raw(3),
+            ],
+        ),
     );
 
-    let origins = artifact.render_origins();
+    let origins = artifact.render_origins().expect("eager provenance");
     assert_eq!(origins.len(), 3);
     assert_eq!(origins.get(0), Some([].as_slice()));
     assert_eq!(
@@ -82,6 +87,47 @@ fn flat_artifact_render_provenance_preserves_empty_and_nonempty_spans() {
         artifact.render_provenance_bytes(),
         3 * std::mem::size_of::<u32>() + 3 * std::mem::size_of::<OriginId>()
     );
+}
+
+#[test]
+fn mixed_artifact_provenance_decodes_only_the_requested_source() {
+    let mut fragments = crate::FragmentStore::new();
+    let (_, registration) = fragments
+        .append(Arc::from(&b"stable"[..]), 1)
+        .expect("fragment registration");
+    let span = fragments
+        .registered_root_span_id(registration, 1..4)
+        .expect("stable root span");
+    let recipe = crate::ParagraphProvenanceRecipe {
+        piece_anchors: Arc::from([span.start_anchor()]),
+        root_spans: Arc::from([crate::ParagraphProvenanceSpan {
+            piece: 0,
+            start: span.start(),
+            end: span.end(),
+        }]),
+        origin_slots: Arc::from([0]),
+        node_slots: Arc::from([]),
+    };
+    let first = OriginId::from_raw(11);
+    let last = OriginId::from_raw(12);
+    let mut provenance = RenderProvenanceBuilder::default();
+    provenance.push_live(first);
+    provenance.push_deferred(&recipe, 0..1);
+    provenance.push_live(last);
+    let verified = VerifiedArtifact::new(b"page artifact".to_vec())
+        .with_built_render_origins(vec![1, 2, 3], provenance);
+    let (bytes, render_provenance) = verified.into_parts();
+    let artifact = CommittedArtifact::new(
+        ContentHash::for_domain(ContentDomain::Artifact, &bytes),
+        bytes,
+        render_provenance,
+    );
+
+    assert_eq!(artifact.render_origin(0, 0), ArtifactOrigin::Live(first));
+    assert_eq!(artifact.render_origin(1, 0), ArtifactOrigin::Stable(span));
+    assert_eq!(artifact.render_origin(2, 0), ArtifactOrigin::Live(last));
+    assert_eq!(artifact.render_origin(1, 1), ArtifactOrigin::Unknown);
+    assert!(artifact.render_origins().is_none());
 }
 
 #[test]

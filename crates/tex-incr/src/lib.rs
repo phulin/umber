@@ -21,8 +21,8 @@ use tex_out::dvi::{DviError, DviPagePlan, DviStreamWriter};
 pub use tex_out::html::RenderedOutputId;
 use tex_state::token::OriginId;
 use tex_state::{
-    CommittedArtifact, ContentHash, EditorLayout, EditorLayoutError, EffectRecord, FragmentStore,
-    GenerationForkError, GenerationSubstrate, InputReadState, LayoutGeneration,
+    ArtifactOrigin, CommittedArtifact, ContentHash, EditorLayout, EditorLayoutError, EffectRecord,
+    FragmentStore, GenerationForkError, GenerationSubstrate, InputReadState, LayoutGeneration,
     LayoutResolvedOrigin, Piece, Universe, WorldError,
 };
 
@@ -276,7 +276,7 @@ pub enum RenderedSourceResult {
 #[derive(Debug)]
 struct PageRenderMap {
     event_units: Vec<u32>,
-    origins: Vec<OriginId>,
+    origins: Vec<ArtifactOrigin>,
 }
 
 impl PageRenderMap {
@@ -287,11 +287,11 @@ impl PageRenderMap {
             .saturating_add(
                 self.origins
                     .capacity()
-                    .saturating_mul(size_of::<OriginId>()),
+                    .saturating_mul(size_of::<ArtifactOrigin>()),
             )
     }
 
-    fn origin(&self, event: u32, unit: Option<u32>) -> Option<OriginId> {
+    fn origin(&self, event: u32, unit: Option<u32>) -> Option<ArtifactOrigin> {
         let event = usize::try_from(event).ok()?;
         let start = *self.event_units.get(event)? as usize;
         let end = *self.event_units.get(event.checked_add(1)?)? as usize;
@@ -301,9 +301,9 @@ impl PageRenderMap {
             None => origins
                 .iter()
                 .copied()
-                .find(|origin| *origin != OriginId::UNKNOWN)?,
+                .find(|origin| *origin != ArtifactOrigin::Unknown)?,
         };
-        (origin != OriginId::UNKNOWN).then_some(origin)
+        (origin != ArtifactOrigin::Unknown).then_some(origin)
     }
 }
 
@@ -631,18 +631,22 @@ impl Session {
         event: u32,
         unit: Option<u32>,
     ) -> Result<Option<LayoutResolvedOrigin>, SessionError> {
-        let Some(origin) = self.rendered_origin(page, event, unit)? else {
+        let Some(origin) = self.rendered_artifact_origin(page, event, unit)? else {
             return Ok(None);
         };
         let substrate = self
             .substrate
             .as_ref()
             .ok_or(SessionError::MissingAcceptedSubstrate)?;
-        Ok(Some(substrate.resolve_layout_origin(
-            origin,
-            &self.fragments,
-            &self.layout,
-        )))
+        Ok(Some(match origin {
+            ArtifactOrigin::Live(origin) => {
+                substrate.resolve_layout_origin(origin, &self.fragments, &self.layout)
+            }
+            ArtifactOrigin::Stable(span) => {
+                substrate.resolve_stable_layout_origin(span, &self.fragments, &self.layout)
+            }
+            ArtifactOrigin::Unknown => return Ok(None),
+        }))
     }
 
     fn rendered_origin(
@@ -651,6 +655,18 @@ impl Session {
         event: u32,
         unit: Option<u32>,
     ) -> Result<Option<OriginId>, SessionError> {
+        Ok(match self.rendered_artifact_origin(page, event, unit)? {
+            Some(ArtifactOrigin::Live(origin)) => Some(origin),
+            Some(ArtifactOrigin::Stable(_) | ArtifactOrigin::Unknown) | None => None,
+        })
+    }
+
+    fn rendered_artifact_origin(
+        &self,
+        page: u32,
+        event: u32,
+        unit: Option<u32>,
+    ) -> Result<Option<ArtifactOrigin>, SessionError> {
         let Some(page_index) = page.checked_sub(1).map(|page| page as usize) else {
             return Ok(None);
         };
@@ -964,8 +980,7 @@ impl Session {
                 }
                 let adopted_origins = advance.artifacts[..scratch_artifact_count]
                     .iter()
-                    .flat_map(|artifact| artifact.render_origins())
-                    .flat_map(|origins| origins.iter())
+                    .flat_map(|artifact| artifact.live_render_origins().iter())
                     .copied()
                     .collect::<Vec<_>>();
                 let convergence_boundary = history.get(restart_index + 1).map(BoundaryRecord::key);
@@ -1341,14 +1356,13 @@ fn build_page_render_map(
             for source in run.sources {
                 origins.push(
                     source
-                        .and_then(|source| {
-                            artifact
-                                .render_origins()
-                                .get(source.node_ordinal as usize)
-                                .and_then(|origins| origins.get(source.source_index as usize))
-                                .copied()
+                        .map(|source| {
+                            artifact.render_origin(
+                                source.node_ordinal as usize,
+                                source.source_index as usize,
+                            )
                         })
-                        .unwrap_or(OriginId::UNKNOWN),
+                        .unwrap_or(ArtifactOrigin::Unknown),
                 );
             }
         }
