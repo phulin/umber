@@ -1,4 +1,106 @@
 use super::*;
+use crate::{DependencyBank, DependencyValue};
+
+fn observation_region(ordinal: u32) -> RecordedParagraphRegion {
+    RecordedParagraphRegion {
+        starting_span: None,
+        starting_root_span: None,
+        starting_input: None,
+        starting_input_identity: None,
+        ending_span: None,
+        consumed_spans: Arc::from([]),
+        delivered_tokens: 0,
+        dependency_ordinals: Arc::from([ordinal]),
+        dependency_observations: None,
+        mutation_entry_in_group: false,
+        mutations: Arc::from([]),
+        effects: Arc::from([]),
+        ending_input: crate::InputSummary::default(),
+        input_transition_common_frames: 0,
+        input_provenance: ParagraphProvenanceRecipe::default(),
+        input_origin_list_lengths: Arc::from([]),
+        input_suffix_token_lists: Arc::from([]),
+        barriers: Arc::from([]),
+        break_dependency_ordinals: Arc::from([]),
+        break_prev_graf: None,
+        lines: None,
+        line_count: 0,
+        line_last_badness: 0,
+        display_active_directions: None,
+        line_provenance: ParagraphLineProvenance::Pending,
+    }
+}
+
+#[test]
+fn accepted_paragraphs_keep_generation_local_observation_tables() {
+    let key = DependencyKey::Cell {
+        bank: DependencyBank::Count,
+        index: 7,
+    };
+    let mut universe = crate::Universe::new();
+    let initial_stamp = universe.track_dependency(key);
+    let mut runtime = PureMemoRuntime::default();
+    runtime.enable(PureMemoConfig::default());
+
+    runtime.begin_paragraph_history(false);
+    let initial = runtime.record_paragraph_observation(ObservedDependency {
+        key,
+        changed_at: initial_stamp,
+        value: DependencyValue::Integer(0),
+    });
+    runtime.record_paragraph_region(observation_region(initial));
+    runtime.accept_paragraph_history(universe.paragraph_origin_resolver());
+    let carried = runtime.accepted_paragraphs()[0].clone();
+    let initial_table = Arc::clone(
+        carried
+            .dependency_observations
+            .as_ref()
+            .expect("accepted paragraph has an observation table"),
+    );
+
+    universe.set_count(7, 41);
+    let changed_stamp = universe.track_dependency(key);
+    assert!(changed_stamp > initial_stamp);
+    runtime.begin_paragraph_history(true);
+    runtime.record_paragraph_region(carried);
+    let changed = runtime.record_paragraph_observation(ObservedDependency {
+        key,
+        changed_at: changed_stamp,
+        value: DependencyValue::Integer(41),
+    });
+    runtime.record_paragraph_region(observation_region(changed));
+    runtime.accept_paragraph_history(universe.paragraph_origin_resolver());
+
+    let accepted = runtime.accepted_paragraphs();
+    assert_eq!(accepted.len(), 2);
+    let carried_table = accepted[0]
+        .dependency_observations
+        .as_ref()
+        .expect("carried paragraph keeps its table");
+    let changed_table = accepted[1]
+        .dependency_observations
+        .as_ref()
+        .expect("new paragraph receives the new table");
+    assert!(Arc::ptr_eq(&initial_table, carried_table));
+    assert!(!Arc::ptr_eq(carried_table, changed_table));
+    assert_eq!(
+        accepted[0]
+            .dependencies()
+            .next()
+            .expect("carried observation")
+            .changed_at,
+        initial_stamp
+    );
+    assert_eq!(
+        accepted[1]
+            .dependencies()
+            .next()
+            .expect("new observation")
+            .changed_at,
+        changed_stamp
+    );
+}
+
 fn plan(position: usize) -> Option<PureBreakPlan> {
     Some(PureBreakPlan {
         breaks: vec![PureBreakDecision {
