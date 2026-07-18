@@ -24,6 +24,10 @@ from schema 9.
 `format_cache.md` defines generated-format cache identity, validated atomic
 native entries, corruption recovery, and the browser portability boundary.
 
+`arxiv_corpus.md` is the durable accounting record for source-side limitations
+and reproducible entrypoint decisions in the pinned 100-document arXiv sample.
+Keep engine failures in Beads rather than classifying them there prematurely.
+
 `incremental_v1.md` fixes the named-boundary schedule, editor-session
 retention, edit mapping, pruning, and schedule-relative convergence contract
 for the first incremental engine.
