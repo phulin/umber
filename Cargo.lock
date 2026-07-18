@@ -1835,6 +1835,7 @@ name = "tex-exec"
 version = "0.1.0"
 dependencies = [
  "ahash",
+ "smallvec",
  "test-support",
  "tex-expand",
  "tex-fonts",

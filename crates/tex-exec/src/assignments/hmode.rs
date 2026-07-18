@@ -77,7 +77,7 @@ pub(crate) fn flush_pending_hchars(
 }
 
 fn flush_pending_hchar_run(nest: &mut ModeNest, stores: &mut Universe, insert_hyphen_discs: bool) {
-    let Some(pending) = nest.current_list().pending_hchars() else {
+    let Some(pending) = nest.current_list_mut().take_pending_hchars() else {
         return;
     };
     if is_ltr_shaping_font(stores, pending.first.font) && is_supported_script(pending.script) {
@@ -95,8 +95,6 @@ fn flush_pending_hchar_run(nest: &mut ModeNest, stores: &mut Universe, insert_hy
         };
         let shaped = shape_open_type_chars(stores, &pending.source, &breaks);
         let list = nest.current_list_mut();
-        let removed = list.take_pending_hchars();
-        debug_assert_eq!(removed, Some(pending));
         list.set_no_boundary(false);
         list.append(shaped);
         return;
@@ -112,8 +110,6 @@ fn flush_pending_hchar_run(nest: &mut ModeNest, stores: &mut Universe, insert_hy
     let disc = literal_hyphen_disc(stores, &pending.current, insert_hyphen_discs);
     let trailing_auto_kern = auto_kern(stores, &pending.current, None);
     let list = nest.current_list_mut();
-    let removed = list.take_pending_hchars();
-    debug_assert_eq!(removed, Some(pending.clone()));
     list.set_no_boundary(false);
     list.push_reconstituted(
         boundary,
@@ -465,12 +461,12 @@ fn append_hchar(nest: &mut ModeNest, stores: &mut Universe, ch: char, origin: Or
     }
     let font = stores.current_font();
     if stores.font_character_exists(font, ch) {
-        if let Some(pending) = nest.current_list().pending_hchars()
-            && (is_ltr_shaping_font(stores, font)
-                || is_ltr_shaping_font(stores, pending.first.font))
-            && (pending.first.font != font
-                || !scripts_compatible(pending.script, tex_shape::character_script(ch)))
-        {
+        let flush_incompatible_run = nest.current_list().pending_hchars().is_some_and(|pending| {
+            (is_ltr_shaping_font(stores, font) || is_ltr_shaping_font(stores, pending.first.font))
+                && (pending.first.font != font
+                    || !scripts_compatible(pending.script, tex_shape::character_script(ch)))
+        });
+        if flush_incompatible_run {
             let insert_hyphen_discs = nest.current_mode() == Mode::Horizontal;
             flush_pending_hchar_run(nest, stores, insert_hyphen_discs);
         }
@@ -488,7 +484,7 @@ fn append_pending_hchar(
     ch: char,
     origin: OriginId,
 ) {
-    let Some(mut pending) = nest.current_list().pending_hchars() else {
+    let Some(mut pending) = nest.current_list_mut().take_pending_hchars() else {
         if let Some(kern) = auto_kern(stores, &PendingHRunChar::new(font, ch, origin), Some(true)) {
             nest.current_list_mut().push(kern);
         }
@@ -512,12 +508,16 @@ fn append_pending_hchar(
         return;
     }
     let next = PendingHRunChar::new(font, ch, origin);
-    let emitted = match reconstitution_step(stores, pending.current, next.clone()) {
+    let emitted = match reconstitution_step(stores, pending.current, next) {
         ReconstitutionStep::Merge(merged) => {
             pending.current = merged;
             None
         }
-        ReconstitutionStep::Emit { current, kern } => {
+        ReconstitutionStep::Emit {
+            current,
+            next,
+            kern,
+        } => {
             let insert_hyphen_discs = nest.current_mode() == Mode::Horizontal;
             let disc = literal_hyphen_disc(stores, &current, insert_hyphen_discs);
             let auto = auto_kern_between(stores, &current, &next);
@@ -732,10 +732,11 @@ pub(crate) fn reconstitute(
     let mut current = PendingHRunChar::new(first.font, first.ch, first.origin);
     for entry in entries {
         let next = PendingHRunChar::new(entry.font, entry.ch, entry.origin);
-        match reconstitution_step(stores, current, next.clone()) {
+        match reconstitution_step(stores, current, next) {
             ReconstitutionStep::Merge(merged) => current = merged,
             ReconstitutionStep::Emit {
                 current: emitted,
+                next,
                 kern,
             } => {
                 let auto = auto_kern_between(stores, &emitted, &next);
@@ -901,6 +902,7 @@ enum ReconstitutionStep {
     Merge(PendingHRunChar),
     Emit {
         current: PendingHRunChar,
+        next: PendingHRunChar,
         kern: Option<Scaled>,
     },
 }
@@ -922,6 +924,7 @@ fn reconstitution_step(
         return match command {
             LigKernCommand::Kern(amount) => ReconstitutionStep::Emit {
                 current,
+                next,
                 kern: Some(amount),
             },
             LigKernCommand::Ligature(lig) if lig.delete_next => {
@@ -939,12 +942,14 @@ fn reconstitution_step(
             }
             LigKernCommand::Ligature(_) => ReconstitutionStep::Emit {
                 current,
+                next,
                 kern: None,
             },
         };
     }
     ReconstitutionStep::Emit {
         current,
+        next,
         kern: None,
     }
 }
@@ -954,8 +959,8 @@ fn rechar_node(current: PendingHRunChar) -> Node {
         Node::Lig {
             font: current.font,
             ch: current.ch,
-            orig: current.orig,
-            origins: current.origins,
+            orig: current.orig.into_vec(),
+            origins: current.origins.into_vec(),
         }
     } else {
         Node::Char {

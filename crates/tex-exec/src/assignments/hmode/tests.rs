@@ -278,6 +278,28 @@ fn opentype_run_is_batched_and_uses_shaped_cluster_advance() {
 }
 
 #[test]
+fn long_opentype_run_preserves_every_source_character() {
+    let mut stores = Universe::new();
+    let font = opentype_test_font(&mut stores, 10);
+    stores.set_current_font(font);
+    let mut nest = ModeNest::new();
+
+    for _ in 0..4096 {
+        append_hchar(&mut nest, &mut stores, 'a', OriginId::UNKNOWN);
+    }
+    flush_pending_hchars(&mut nest, &mut stores).expect("long run flushes");
+
+    assert_eq!(
+        nest.current_list()
+            .nodes()
+            .iter()
+            .filter(|node| matches!(node, Node::Char { ch: 'a', .. }))
+            .count(),
+        4096,
+    );
+}
+
+#[test]
 fn reshaping_respects_font_kern_glue_and_discretionary_boundaries() {
     let mut stores = Universe::new();
     let first = opentype_test_font(&mut stores, 10);
@@ -573,8 +595,8 @@ fn composite_rechar_keeps_ligature_provenance_when_emitted() {
     let current = PendingHRunChar {
         font: tex_state::ids::FontId::testing_new(7),
         ch: 'A',
-        orig: vec!['B'],
-        origins: vec![tex_state::token::OriginId::UNKNOWN],
+        orig: vec!['B'].into(),
+        origins: vec![tex_state::token::OriginId::UNKNOWN].into(),
         ligature_present: true,
     };
 

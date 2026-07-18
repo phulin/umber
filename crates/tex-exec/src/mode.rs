@@ -1,3 +1,4 @@
+use smallvec::{SmallVec, smallvec};
 use std::sync::Arc;
 use tex_expand::EngineMode;
 use tex_state::ids::FontId;
@@ -161,8 +162,8 @@ impl ModeList {
         self.pending_hchars = Some(PendingHRun::new(font, ch, origin, self.nodes.len()));
     }
 
-    pub(crate) fn pending_hchars(&self) -> Option<PendingHRun> {
-        self.pending_hchars.clone()
+    pub(crate) fn pending_hchars(&self) -> Option<&PendingHRun> {
+        self.pending_hchars.as_ref()
     }
 
     pub(crate) fn set_pending_hchars(&mut self, pending: PendingHRun) {
@@ -542,8 +543,8 @@ impl PendingHRun {
 pub(crate) struct PendingHRunChar {
     pub(crate) font: FontId,
     pub(crate) ch: char,
-    pub(crate) orig: Vec<char>,
-    pub(crate) origins: Vec<OriginId>,
+    pub(crate) orig: SmallVec<[char; 4]>,
+    pub(crate) origins: SmallVec<[OriginId; 4]>,
     pub(crate) ligature_present: bool,
 }
 
@@ -552,8 +553,8 @@ impl PendingHRunChar {
         Self {
             font,
             ch,
-            orig: vec![ch],
-            origins: vec![origin],
+            orig: smallvec![ch],
+            origins: smallvec![origin],
             ligature_present: false,
         }
     }

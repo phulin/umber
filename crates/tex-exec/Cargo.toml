@@ -8,6 +8,7 @@ profiling-stats = ["tex-expand/profiling-stats", "tex-lex/profiling-stats"]
 
 [dependencies]
 ahash.workspace = true
+smallvec.workspace = true
 tex-expand = { path = "../tex-expand" }
 tex-fonts = { path = "../tex-fonts" }
 tex-lex = { path = "../tex-lex" }
