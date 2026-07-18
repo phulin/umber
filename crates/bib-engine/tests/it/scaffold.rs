@@ -562,7 +562,7 @@ fn classic_fixture_manifest_and_inventory_are_complete_and_pinned() {
 }
 
 #[test]
-fn translated_suite_has_no_compatibility_allowances() {
+fn translated_suite_has_explicit_compatibility_status() {
     let upstream = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/it/upstream");
     let mut modules = 0;
     let mut assertions = 0;
@@ -579,14 +579,13 @@ fn translated_suite_has_no_compatibility_allowances() {
         let source = fs::read_to_string(&path)
             .unwrap_or_else(|error| panic!("failed to read {}: {error}", path.display()));
         assertions += source.matches("#[test]").count();
-        let expected_failure_marker = ["x", "fail"].concat();
         let unexpected_pass_marker = ["X", "PASS"].concat();
         let ignored_test_marker = ["#[", "ignore", "]"].concat();
         let expected_panic_marker = ["#[", "should_panic", "]"].concat();
+        let documented_expected_failure_marker = ["#[", "ignore = \"", "x", "fail:"].concat();
         for forbidden in [
             ignored_test_marker.as_str(),
             expected_panic_marker.as_str(),
-            expected_failure_marker.as_str(),
             unexpected_pass_marker.as_str(),
         ] {
             assert!(
@@ -595,6 +594,14 @@ fn translated_suite_has_no_compatibility_allowances() {
                 path.display()
             );
         }
+        assert_eq!(
+            source.matches("#[ignore").count(),
+            source
+                .matches(documented_expected_failure_marker.as_str())
+                .count(),
+            "every ignored compatibility test in {} must use `#[ignore = \"xfail: <specific production gap>\"]`",
+            path.display()
+        );
     }
     assert_eq!(modules, UPSTREAM_MODULE_COUNT);
     assert_eq!(assertions, UPSTREAM_ASSERTION_COUNT);

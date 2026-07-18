@@ -25,8 +25,12 @@ in native and WASM builds without subprocesses or native-filesystem access.
   compatibility-allowance audit.
 - `tests/it/upstream/`: direct, assertion-isolated translations of the pinned
   upstream compatibility suite. Each module retains the complete upstream
-  source beside its passing Rust assertions so names, order, expressions,
-  fixture references, and Unicode stay auditable.
+  source beside Rust assertions with identical inputs and expectations so
+  names, order, expressions, fixture references, and Unicode stay auditable.
+  Unsupported or currently divergent production behavior is marked on the
+  individual test as `#[ignore = "xfail: <specific production gap>"]`; bare
+  ignores, weakened expectations, and source-presence substitutes are not
+  compatibility tests.
 
 Translated upstream cohorts belong below `tests/it/upstream/` and are modules
 of `tests/it.rs`, not additional top-level integration binaries. Public
