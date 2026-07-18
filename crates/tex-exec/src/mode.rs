@@ -805,8 +805,13 @@ impl ModeNest {
     /// Creates the outer main vertical nest level.
     #[must_use]
     pub fn new() -> Self {
+        // Every usable nested mode starts above the mandatory outer vertical
+        // level. Allocate that first nested slot together with the base so the
+        // common first push does not replace and copy a one-element buffer.
+        let mut levels = Vec::with_capacity(2);
+        levels.push(ModeLevelSummary::new(Mode::Vertical));
         Self {
-            levels: Arc::new(vec![ModeLevelSummary::new(Mode::Vertical)]),
+            levels: Arc::new(levels),
         }
     }
 
@@ -845,7 +850,25 @@ impl ModeNest {
         if matches!(mode, Mode::Horizontal | Mode::RestrictedHorizontal) {
             level.list_mut().set_space_factor(1000);
         }
-        Arc::make_mut(&mut self.levels).push(level);
+        self.levels_mut_for_push().push(level);
+    }
+
+    fn levels_mut_for_push(&mut self) -> &mut Vec<ModeLevelSummary> {
+        if Arc::get_mut(&mut self.levels).is_none() {
+            // `Arc::make_mut` clones a shared Vec at its exact length. A
+            // subsequent push would therefore allocate and copy that freshly
+            // detached buffer a second time. Detach directly with the slot
+            // that this operation is about to consume.
+            let mut levels = Vec::with_capacity(
+                self.levels
+                    .len()
+                    .checked_add(1)
+                    .expect("mode nest depth overflow"),
+            );
+            levels.extend(self.levels.iter().cloned());
+            self.levels = Arc::new(levels);
+        }
+        Arc::get_mut(&mut self.levels).expect("mode nest root was made unique")
     }
 
     pub fn pop(&mut self) -> Result<ModeLevelSummary, ExecError> {
