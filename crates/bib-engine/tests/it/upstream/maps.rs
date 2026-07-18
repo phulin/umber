@@ -4,12 +4,17 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use bib_engine::{
-    BibAttempt, BibJob, BibOptionsBuilder, BibResult, BibSession, Entry, EntryId, FieldId,
-    FieldValue, FileProvisioner, OutputFormat, OutputRequest, ResolvedFile, SectionId, VfsLimits,
-    VirtualPath,
+    BibAttempt, BibFailure, BibJob, BibOptionsBuilder, BibResult, BibSession, Entry, EntryId,
+    FieldId, FieldValue, FileProvisioner, OutputFormat, OutputRequest, ResolvedFile, SectionId,
+    VfsLimits, VirtualPath,
 };
 
 pub(super) fn run_fixture(stem: &str) -> BibResult {
+    try_run_fixture(stem)
+        .unwrap_or_else(|failure| panic!("native fixture processing failed: {failure:?}"))
+}
+
+pub(super) fn try_run_fixture(stem: &str) -> Result<BibResult, BibFailure> {
     let corpus =
         Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/corpus/bib/upstream-2.22/tdata");
     let control_name = format!("{stem}.bcf");
@@ -33,7 +38,7 @@ pub(super) fn run_fixture(stem: &str) -> BibResult {
 
     for _ in 0..16 {
         match session.process(&job, &provisioner.snapshot()) {
-            BibAttempt::Complete(result) => return result,
+            BibAttempt::Complete(result) => return Ok(result),
             BibAttempt::NeedResources(batch) => {
                 provisioner.expect(&batch);
                 for request in &batch.required {
@@ -53,7 +58,7 @@ pub(super) fn run_fixture(stem: &str) -> BibResult {
                         .expect("provision committed fixture");
                 }
             }
-            BibAttempt::Failed(failure) => panic!("native fixture processing failed: {failure:?}"),
+            BibAttempt::Failed(failure) => return Err(failure),
         }
     }
     panic!("native fixture processing did not converge")
@@ -108,6 +113,15 @@ pub(super) fn list_keys<'a>(result: &'a BibResult, section: u32, list_id: &str) 
 
 pub(super) fn output_entry(result: &BibResult, key: &str) -> Option<String> {
     output_entry_nth(result, key, 0)
+}
+
+pub(super) fn output_text(result: &BibResult) -> &str {
+    let bytes = result
+        .files()
+        .find(|file| file.path().as_str().ends_with(".bbl"))
+        .expect("native BBL output")
+        .bytes();
+    std::str::from_utf8(bytes).expect("native BBL is UTF-8")
 }
 
 pub(super) fn output_entry_nth(result: &BibResult, key: &str, occurrence: usize) -> Option<String> {
