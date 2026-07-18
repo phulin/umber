@@ -85,6 +85,9 @@ const plainMetadata = JSON.parse(
 		"utf8",
 	),
 );
+const corruptPlain = Uint8Array.from(plain);
+corruptPlain[corruptPlain.byteLength - 1] ^= 1;
+const corruptPlainSha256 = digest(corruptPlain);
 const files = {
 	"tex:remote.tex": objectEntry("/texlive/tex/remote.tex", remote),
 	"tfm:cmr10.tfm": objectEntry("/texlive/fonts/cmr10.tfm", cmr10),
@@ -97,6 +100,7 @@ const objectBytes = new Map([
 	[files["tfm:cmtt10.tfm"].object, cmtt10],
 	[files["tex:corrupt.tex"].object, corruptActual],
 	[plainMetadata.object, plain],
+	[`sha256-${corruptPlainSha256}`, corruptPlain],
 ]);
 const { name: formatName, schema: _schema, ...formatMetadata } = plainMetadata;
 const shardBytes = encoder.encode(
@@ -116,7 +120,15 @@ const manifest = () => ({
 	shardBits: 0,
 	shardCount: 1,
 	shards: [shardDigest],
-	formats: { [formatName]: formatMetadata },
+	formats: {
+		[formatName]: formatMetadata,
+		"plain-corrupt": {
+			...formatMetadata,
+			object: `sha256-${corruptPlainSha256}`,
+			sha256: corruptPlainSha256,
+			bytes: corruptPlain.byteLength,
+		},
+	},
 });
 const manifestBytes = () => encoder.encode(`${JSON.stringify(manifest())}\n`);
 const statistics = {

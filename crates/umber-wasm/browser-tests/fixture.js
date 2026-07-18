@@ -2,7 +2,11 @@ import { loadComputerModernTextFont } from "/package/cm-fonts.js";
 import { compile } from "/package/compile.js";
 import { HttpManifestResolver } from "/package/manifest-resolver.js";
 import { renderedSourceLocationFromPoint } from "/package/source-map.js";
-import initWasm, { CompilerSession, contentHash } from "/package/umber_wasm.js";
+import initWasm, {
+	CompilerSession,
+	contentHash,
+	formatSchemaVersion,
+} from "/package/umber_wasm.js";
 import { compileInWorker } from "/package/worker-controller.js";
 
 const encode = (value) => new TextEncoder().encode(value);
@@ -203,6 +207,30 @@ async function integration() {
 		manifestUrl,
 		manifestSha256,
 	});
+	assert(
+		formatSchemaVersion() === 10,
+		"browser runtime did not expose schema 10",
+	);
+	await rejected(
+		() =>
+			direct.resolveFormat("plain", {
+				formatSchema: formatSchemaVersion() - 1,
+			}),
+		"incompatible-format",
+	);
+	const corruptFormatError = await rejected(
+		() =>
+			compileInWorker(
+				{ mainPath: "main.tex" },
+				new Map([["main.tex", encode("\\end")]]),
+				{ ...resolver, format: "plain-corrupt" },
+			),
+		"compile",
+	);
+	assert(
+		corruptFormatError.diagnostic?.message.includes("checksum mismatch"),
+		"corrupt browser format did not preserve its checksum diagnostic",
+	);
 	const directOutput = await compile(
 		{ mainPath: "main.tex" },
 		new Map([["main.tex", encode("\\shipout\\hbox{}\\end")]]),

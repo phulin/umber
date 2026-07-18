@@ -5,6 +5,8 @@ use bib_engine::{
     FileProvisioner, FileRequestKey, ResolvedFile, VfsLimits, VirtualPath,
 };
 use js_sys::{Array, Date, Object, Reflect, Uint8Array};
+use tex_state::{Universe, World};
+use umber::prepare_run_stores;
 use umber_wasm::{
     CompilerSession, JsFileRequestKey, JsProjectSessionOptions, JsSessionOptions, JsSourcePatch,
     ProjectSession, format_schema_version, package_version,
@@ -616,24 +618,46 @@ fn unavailable_file_response_crosses_the_wire_and_counts_as_progress() {
 #[wasm_bindgen_test]
 fn committed_plain_format_loads_and_rejects_incompatible_bytes() {
     assert_eq!(package_version(), env!("CARGO_PKG_VERSION"));
-    assert_eq!(format_schema_version(), 9);
+    assert_eq!(format_schema_version(), 10);
     let format = include_bytes!("../assets/plain.fmt");
+    assert_eq!(u32::from_le_bytes(format[8..12].try_into().unwrap()), 10);
+    let source = b"\\shipout\\hbox{}\\end";
     let mut plain = session_with_format("main.tex", format);
     plain
-        .add_user_file("main.tex", &bytes(b"\\shipout\\hbox{}\\end"))
+        .add_user_file("main.tex", &bytes(source))
         .expect("add plain source");
-    assert_eq!(
-        string_field(
-            plain.compile_attempt().expect("plain attempt").as_ref(),
-            "kind",
-        ),
-        "complete",
-    );
+    let formatted = plain.compile_attempt().expect("plain attempt");
+    assert_eq!(string_field(formatted.as_ref(), "kind"), "complete");
 
-    let native_tex = b"\\catcode`\\{=1 \\catcode`\\}=2 \\endinput";
-    assert_format_error(native_tex, "not an Umber format file");
+    let mut initialized = Universe::with_world(World::memory());
+    prepare_run_stores(&mut initialized);
+    let minimal_format = initialized.dump_format().expect("dump schema-10 format");
+    let mut format_initialized = session_with_format("main.tex", &minimal_format);
+    format_initialized
+        .add_user_file("main.tex", &bytes(source))
+        .expect("add format-initialized input");
+    let format_result = format_initialized
+        .compile_attempt()
+        .expect("format-initialized attempt");
+    assert_eq!(string_field(format_result.as_ref(), "kind"), "complete");
 
-    for incompatible in [8_u32, 10] {
+    let mut source_initialized = session("main.tex");
+    source_initialized
+        .add_user_file("main.tex", &bytes(source))
+        .expect("add source-initialized input");
+    let source_result = source_initialized
+        .compile_attempt()
+        .expect("source-initialized attempt");
+    assert_eq!(string_field(source_result.as_ref(), "kind"), "complete");
+    let formatted_dvi = Uint8Array::new(&field(&field(format_result.as_ref(), "output"), "dvi"));
+    let source_dvi = Uint8Array::new(&field(&field(source_result.as_ref(), "output"), "dvi"));
+    assert_eq!(formatted_dvi.to_vec(), source_dvi.to_vec());
+
+    let mut wrong_magic = format.to_vec();
+    wrong_magic[..8].copy_from_slice(b"plaintex");
+    assert_format_error(&wrong_magic, "not an Umber format file");
+
+    for incompatible in [8_u32, 9, 11] {
         let mut wrong_schema = format.to_vec();
         wrong_schema[8..12].copy_from_slice(&incompatible.to_le_bytes());
         assert_format_error(

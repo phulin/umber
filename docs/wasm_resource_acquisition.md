@@ -215,6 +215,17 @@ payloads without a second index lookup. Only verified absence in the canonical
 shard produces `file-unavailable`; shard transport and verification failures
 remain actionable resolver errors.
 
+Format startup is a distinct, pre-session acquisition. The worker compares an
+inline format entry's `engineVersion` and `formatSchema` with the WASM exports
+before downloading it, then passes the verified object as a `Uint8Array` to the
+shared session without decoding or reformatting it in JavaScript. The Rust
+schema-10 decoder performs the complete checksum, compatibility-fingerprint,
+directory, fixed-width section, and cross-reference validation; browser code
+must not interpret fields using JavaScript or host object layout. The packaged
+Plain image and `plain-format.json` are regenerated together from
+`plain-source.lock`, and browser acceptance tests cover both schema mismatch
+before acquisition and checksum failure after byte transport.
+
 ## Client-owned distribution
 
 The client maps logical requests to resources. Valid implementations include:
