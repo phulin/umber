@@ -20,7 +20,7 @@ macro_rules! native_test {
 macro_rules! xfail {
     ($name:ident, $reason:literal, $body:expr) => {
         #[test]
-        #[ignore = $reason]
+        #[ignore = "xfail: native utility behavior does not yet reproduce Biber"]
         fn $name() {
             $body
         }

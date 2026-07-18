@@ -407,7 +407,7 @@ fn contains(actual: &[u8], expected: &str) -> bool {
 macro_rules! xentry {
     ($name:ident, $expected:ident, $gap:literal) => {
         #[test]
-        #[ignore = $gap]
+        #[ignore = "xfail: exact Biber truncation output is not yet reproduced"]
         fn $name() {
             assert!(contains(&run().0, $expected));
         }
