@@ -867,8 +867,15 @@ fn dispatch_math_primitive(
             }
             Ok(DispatchAction::Continue)
         }
-        UnexpandablePrimitive::HAlign if nest.current_mode() == Mode::DisplayMath => {
-            finish_display_halign(traced, nest, input, stores, execution)?;
+        UnexpandablePrimitive::HAlign => {
+            if nest.current_mode() == Mode::DisplayMath {
+                finish_display_halign(traced, nest, input, stores, execution)?;
+            } else {
+                // TeX.web §1130 dispatches `mmode+halign` through
+                // `privileged`. Inline math is negative mmode, so §1051
+                // diagnoses the illegal case and ignores only `\halign`.
+                crate::diagnostics::report_illegal_case(stores, token, nest.current_mode());
+            }
             Ok(DispatchAction::Continue)
         }
         UnexpandablePrimitive::Left => {

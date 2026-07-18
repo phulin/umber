@@ -126,6 +126,49 @@ fn moveleft_in_math_is_ignored_without_consuming_lastbox() {
 }
 
 #[test]
+fn halign_in_inline_math_reports_illegal_case_without_scanning_a_preamble() {
+    let (stores, executor) = run_math_source(r"$\halign a");
+    let nodes = math_nodes(&stores, &executor);
+
+    assert_eq!(nodes.len(), 1, "the token after \\halign must remain input");
+    assert_math_char(&math_noad(&nodes[0]).nucleus, 1, 'a');
+    assert!(terminal_effect_text(&stores).contains("You can't use `\\halign' in math mode"));
+}
+
+#[test]
+fn raw_font_character_dimensions_in_math_do_not_scan_operands() {
+    let mut stores = Universe::new();
+    tex_expand::install_expandable_primitives(&mut stores);
+    install_unexpandable_primitives(&mut stores);
+    crate::install_etex_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(
+        r"$\fontcharwd a\fontcharht b\fontchardp c\fontcharic d",
+    ));
+    let mut executor = Executor::new();
+    executor
+        .run(&mut input, &mut stores)
+        .expect("raw e-TeX dimension recovery executes");
+    let nodes = math_nodes(&stores, &executor);
+
+    assert_eq!(
+        nodes.len(),
+        4,
+        "raw font-character dimensions must leave following tokens in the math list"
+    );
+    assert_math_char(&math_noad(&nodes[0]).nucleus, 1, 'a');
+    assert_math_char(&math_noad(&nodes[1]).nucleus, 1, 'b');
+    assert_math_char(&math_noad(&nodes[2]).nucleus, 1, 'c');
+    assert_math_char(&math_noad(&nodes[3]).nucleus, 1, 'd');
+    let output = terminal_effect_text(&stores);
+    for primitive in ["fontcharwd", "fontcharht", "fontchardp", "fontcharic"] {
+        assert!(
+            output.contains(&format!("You can't use `\\{primitive}' in math mode")),
+            "{output}"
+        );
+    }
+}
+
+#[test]
 fn vertical_skip_in_math_inserts_math_shift_and_retries() {
     let mut stores = Universe::new();
     tex_expand::install_expandable_primitives(&mut stores);

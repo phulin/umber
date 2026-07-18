@@ -157,6 +157,14 @@ const fn admissibility(primitive: UnexpandablePrimitive) -> Admissibility {
         | UnexpandablePrimitive::NoAlign
         | UnexpandablePrimitive::Mark
         | UnexpandablePrimitive::Marks => MATH_ONLY,
+        // pdftex.web §1667 classifies these e-TeX dimensions as
+        // `last_item`. When they reach main control raw instead of through a
+        // dimension scanner, TeX.web §1048 diagnoses and ignores the
+        // command in every mode without scanning its font/character operands.
+        UnexpandablePrimitive::FontCharWd
+        | UnexpandablePrimitive::FontCharHt
+        | UnexpandablePrimitive::FontCharDp
+        | UnexpandablePrimitive::FontCharIc => MATH_ONLY,
         _ => NEITHER,
     }
 }
@@ -194,6 +202,9 @@ mod tests {
         ));
         assert!(math_allows_mode_independent_primitive(
             UnexpandablePrimitive::OpenIn
+        ));
+        assert!(math_allows_mode_independent_primitive(
+            UnexpandablePrimitive::FontCharWd
         ));
     }
 }
