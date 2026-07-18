@@ -3,6 +3,7 @@
 use std::env;
 use std::fs;
 use std::hint::black_box;
+use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::time::{Duration, Instant};
@@ -45,6 +46,7 @@ struct Options {
     warmups: usize,
     checkpoints: bool,
     incremental_edit: bool,
+    incremental_path: Option<IncrementalPath>,
     baseline_memo_recording: Option<PureMemoRecordingPolicy>,
     memo_recording: PureMemoRecordingPolicy,
 }
@@ -56,6 +58,7 @@ impl Options {
         let mut warmups = DEFAULT_WARMUPS;
         let mut checkpoints = false;
         let mut incremental_edit = false;
+        let mut incremental_path = None;
         let mut baseline_memo_recording = None;
         let mut memo_recording = PureMemoRecordingPolicy::default();
         let mut args = env::args().skip(1);
@@ -76,6 +79,12 @@ impl Options {
                 }
                 "--checkpoints" => checkpoints = true,
                 "--incremental-edit" => incremental_edit = true,
+                "--incremental-path" => {
+                    incremental_path = Some(parse_incremental_path(&next_value(
+                        &mut args,
+                        "--incremental-path",
+                    )?)?);
+                }
                 "--memo-layers" => {
                     memo_recording = parse_memo_layers(&next_value(&mut args, "--memo-layers")?)?;
                 }
@@ -105,6 +114,7 @@ impl Options {
             warmups,
             checkpoints,
             incremental_edit,
+            incremental_path,
             baseline_memo_recording,
             memo_recording,
         }))
@@ -150,6 +160,9 @@ fn run() -> Result<(), String> {
     };
     let template = load_template(&options.repo_root)?;
 
+    if let Some(path) = options.incremental_path {
+        return run_incremental_path(&options, &template, path);
+    }
     if options.incremental_edit {
         return run_incremental_edit(&options, &template);
     }
@@ -259,7 +272,10 @@ struct IncrementalStages {
 
 impl IncrementalStages {
     fn from_step(step: &IncrementalStep) -> Self {
-        let reuse = step.reuse;
+        Self::from_reuse(step.elapsed, step.dvi_latency, step.reuse)
+    }
+
+    fn from_reuse(elapsed: Duration, dvi_latency: Duration, reuse: ReuseMetrics) -> Self {
         let executor_shell = reuse
             .reexecution_latency
             .saturating_sub(reuse.executor_latency);
@@ -282,10 +298,186 @@ impl IncrementalStages {
             splice: reuse.splice_latency,
             substrate_transition: reuse.substrate_transition_latency,
             acceptance: reuse.acceptance_latency,
-            unaccounted: step.elapsed.saturating_sub(accounted),
-            dvi_materialization: step.dvi_latency,
+            unaccounted: elapsed.saturating_sub(accounted),
+            dvi_materialization: dvi_latency,
         }
     }
+}
+
+#[allow(clippy::disallowed_methods)] // Host-side path-isolated profiling timer.
+fn run_incremental_path(
+    options: &Options,
+    template: &World,
+    path_kind: IncrementalPath,
+) -> Result<(), String> {
+    if options.checkpoints || options.incremental_edit {
+        return Err(
+            "--incremental-path cannot be combined with --checkpoints or --incremental-edit"
+                .to_owned(),
+        );
+    }
+    let fixture = incremental_fixture(&options.repo_root)?;
+    let (left, right) = match path_kind {
+        IncrementalPath::Slow => (&fixture.original, &fixture.revisions[0]),
+        IncrementalPath::Fast => (&fixture.revisions[2], &fixture.revisions[3]),
+        IncrementalPath::Interaction | IncrementalPath::Rebreak => {
+            return Err("--incremental-path currently accepts only fast or slow".to_owned());
+        }
+    };
+    let source_path = Path::new(JOB_DIR).join(JOB_FILE);
+    let mut session = incremental_session(
+        template,
+        left,
+        RevisionId::new(1),
+        true,
+        options.memo_recording,
+    )?;
+    let mut resolvers = FileSessionResolvers::new(&source_path, Vec::new(), Vec::new());
+    let (input, font) = resolvers.resolvers();
+    let initial = session
+        .cold_with_resolvers(input, font)
+        .map_err(|error| format!("prepare isolated {} path: {error}", path_kind.name()))?;
+    let left_dvi = initial.dvi_bytes().map_err(|error| error.to_string())?;
+    let (_, right_cold) = execute_cold_sample(template, right, RevisionId::new(1))?;
+    let right_dvi = right_cold.dvi_bytes().map_err(|error| error.to_string())?;
+
+    let mut revision = 1_u64;
+    let mut on_left = true;
+    let total_steps = options.warmups + options.iterations;
+    let mut durations = Vec::with_capacity(options.iterations);
+    let mut stages = Vec::with_capacity(options.iterations);
+    let mut line_hits = 0_u64;
+    let mut commands_skipped = 0_u64;
+    let mut last_reuse = ReuseMetrics::default();
+    for step_index in 0..total_steps {
+        let (from, to, expected_dvi) = if on_left {
+            (left.as_str(), right.as_str(), right_dvi.as_slice())
+        } else {
+            (right.as_str(), left.as_str(), left_dvi.as_slice())
+        };
+        debug_assert_eq!(session.source(), from);
+        revision += 1;
+        let edit = replacement_edit(from, to, session.revision(), session.content_hash());
+        let previous_memo = session.pure_memo_stats();
+        let mut resolvers = FileSessionResolvers::new(&source_path, Vec::new(), Vec::new());
+        let started = Instant::now();
+        let (input, font) = resolvers.resolvers();
+        let accepted = session
+            .advance_with_resolvers(RevisionId::new(revision), edit, input, font)
+            .map_err(|error| {
+                format!(
+                    "advance isolated {} path step {}: {error}",
+                    path_kind.name(),
+                    step_index + 1,
+                )
+            })?;
+        let elapsed = started.elapsed();
+        let dvi_started = Instant::now();
+        let dvi = accepted.dvi_bytes().map_err(|error| error.to_string())?;
+        let dvi_latency = dvi_started.elapsed();
+        if dvi != expected_dvi {
+            return Err(format!(
+                "isolated {} path step {} differs from cold output",
+                path_kind.name(),
+                step_index + 1,
+            ));
+        }
+        let current_memo = session.pure_memo_stats();
+        if step_index >= options.warmups {
+            durations.push(elapsed);
+            stages.push(IncrementalStages::from_reuse(
+                elapsed,
+                dvi_latency,
+                accepted.reuse,
+            ));
+            line_hits = line_hits.saturating_add(
+                current_memo
+                    .paragraph_line_hits
+                    .saturating_sub(previous_memo.paragraph_line_hits),
+            );
+            commands_skipped = commands_skipped.saturating_add(
+                current_memo
+                    .paragraph_commands_skipped
+                    .saturating_sub(previous_memo.paragraph_commands_skipped),
+            );
+        }
+        last_reuse = accepted.reuse;
+        on_left = !on_left;
+    }
+
+    println!(
+        "gentle-profile isolated incremental path: path={} measured_advances={} warmup_advances={} memo_layers={:?}",
+        path_kind.name(),
+        options.iterations,
+        options.warmups,
+        options.memo_recording,
+    );
+    print_duration_stats(
+        &format!("isolated {}", path_kind.name()),
+        duration_stats(&durations),
+    );
+    print_isolated_stage_attribution(path_kind, &stages);
+    println!(
+        "gentle-profile isolated incremental work: path={} last_pages_retained_prefix={} last_pages_retyped={} last_pages_reused={} last_paragraphs_reexecuted={} last_bytes_reexecuted={} last_tokens_reexecuted={} last_commands_reexecuted={} last_trace_nodes_walked={} last_trace_leaf_hits={} last_trace_subtree_hits={} last_suffixes_adopted={} paragraph_line_hits={} paragraph_commands_skipped={}",
+        path_kind.name(),
+        last_reuse.pages_retained_prefix,
+        last_reuse.pages_retyped,
+        last_reuse.pages_reused,
+        last_reuse.reexecuted_paragraphs,
+        last_reuse.reexecuted_bytes,
+        last_reuse.reexecuted_tokens,
+        last_reuse.reexecuted_commands,
+        last_reuse.trace_nodes_walked,
+        last_reuse.trace_leaf_hits,
+        last_reuse.trace_subtree_hits,
+        last_reuse.suffixes_adopted,
+        line_hits,
+        commands_skipped,
+    );
+    Ok(())
+}
+
+fn replacement_edit(
+    from: &str,
+    to: &str,
+    base_revision: RevisionId,
+    expected_hash: ContentHash,
+) -> Edit {
+    let (range, replacement) = replacement_between(from, to);
+    Edit {
+        base_revision,
+        expected_hash,
+        range,
+        replacement,
+    }
+}
+
+fn replacement_between(from: &str, to: &str) -> (Range<usize>, String) {
+    let mut prefix = from
+        .as_bytes()
+        .iter()
+        .zip(to.as_bytes())
+        .take_while(|(left, right)| left == right)
+        .count();
+    while !from.is_char_boundary(prefix) || !to.is_char_boundary(prefix) {
+        prefix -= 1;
+    }
+    let max_suffix = from.len().min(to.len()).saturating_sub(prefix);
+    let mut suffix = from
+        .as_bytes()
+        .iter()
+        .rev()
+        .zip(to.as_bytes().iter().rev())
+        .take(max_suffix)
+        .take_while(|(left, right)| left == right)
+        .count();
+    while !from.is_char_boundary(from.len() - suffix) || !to.is_char_boundary(to.len() - suffix) {
+        suffix -= 1;
+    }
+    (
+        prefix..from.len() - suffix,
+        to[prefix..to.len() - suffix].to_owned(),
+    )
 }
 
 fn run_incremental_edit(options: &Options, template: &World) -> Result<(), String> {
@@ -809,6 +1001,29 @@ fn print_stage_attribution(
     }
     println!(
         "gentle-profile stage attribution (baseline/candidate/delta ms): edit={edit} baseline={baseline_name:?} candidate={candidate_name:?} delta={delta_name:?} revision_setup={} restart_fork={} executor={} executor_shell={} diagnostics_effects_snapshot={} paragraph_history_publish_drop={} splice={} substrate_publish_drop={} acceptance={} unaccounted_system_noise={} dvi_materialization={}",
+        stage!(revision_setup),
+        stage!(restart_fork),
+        stage!(executor),
+        stage!(executor_shell),
+        stage!(output_snapshot),
+        stage!(paragraph_history_transition),
+        stage!(splice),
+        stage!(substrate_transition),
+        stage!(acceptance),
+        stage!(unaccounted),
+        stage!(dvi_materialization),
+    );
+}
+
+fn print_isolated_stage_attribution(path: IncrementalPath, samples: &[IncrementalStages]) {
+    macro_rules! stage {
+        ($field:ident) => {
+            stage_mean(samples, |sample| sample.$field)
+        };
+    }
+    println!(
+        "gentle-profile isolated stage means (ms): path={} revision_setup={:.3} restart_fork={:.3} executor={:.3} executor_shell={:.3} diagnostics_effects_snapshot={:.3} paragraph_history_publish_drop={:.3} splice={:.3} substrate_publish_drop={:.3} acceptance={:.3} unaccounted_system_noise={:.3} dvi_materialization={:.3}",
+        path.name(),
         stage!(revision_setup),
         stage!(restart_fork),
         stage!(executor),
@@ -1564,6 +1779,16 @@ fn parse_positive_count(value: &str, option: &str) -> Result<usize, String> {
     Ok(value)
 }
 
+fn parse_incremental_path(value: &str) -> Result<IncrementalPath, String> {
+    match value {
+        "fast" => Ok(IncrementalPath::Fast),
+        "slow" => Ok(IncrementalPath::Slow),
+        _ => Err(format!(
+            "--incremental-path expects fast or slow, got {value:?}"
+        )),
+    }
+}
+
 fn parse_memo_layers(value: &str) -> Result<PureMemoRecordingPolicy, String> {
     if value == "all" {
         return Ok(PureMemoRecordingPolicy::all());
@@ -1593,7 +1818,7 @@ fn parse_memo_layers(value: &str) -> Result<PureMemoRecordingPolicy, String> {
 
 fn print_help() {
     println!(
-        "Usage: gentle-profile [--iterations N] [--warmups N] [--repo-root PATH] [--checkpoints] [--incremental-edit] [--baseline-memo-layers LIST] [--memo-layers LIST]\n\n\
+        "Usage: gentle-profile [--iterations N] [--warmups N] [--repo-root PATH] [--checkpoints] [--incremental-edit] [--incremental-path fast|slow] [--baseline-memo-layers LIST] [--memo-layers LIST]\n\n\
          Loads Gentle and its support files once, then executes fresh deterministic\n\
          in-memory Umber sessions for profiling. Defaults: {DEFAULT_ITERATIONS} measured\n\
          iterations and {DEFAULT_WARMUPS} warm-up. --checkpoints captures and hashes every\n\
@@ -1601,8 +1826,34 @@ fn print_help() {
          --incremental-edit compares a memo baseline, memo candidate, and cold compilation\n\
          five accepted edits/session using balanced AB/BA pairs and DVI parity verification;\n\
          the fifth changes a line-breaking dependency to verify one-shot cold fallback.\n\
+         --incremental-path repeatedly ping-pongs one fast or slow edit after cold setup,\n\
+         verifies each direction against cold output, and isolates its sampled stacks.\n\
          --memo-layers configures enabled recording layers; the default is paragraph.\n\
          --baseline-memo-layers replaces the disabled control with an explicit recording\n\
          policy for direct marginal layer comparisons."
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::replacement_between;
+
+    fn assert_replacement(from: &str, to: &str) {
+        let (range, replacement) = replacement_between(from, to);
+        let mut actual = from.to_owned();
+        actual.replace_range(range, &replacement);
+        assert_eq!(actual, to);
+    }
+
+    #[test]
+    fn replacement_between_round_trips_ascii_and_unicode_edits() {
+        for (left, right) in [
+            ("prefix words suffix", "prefix sword suffix"),
+            ("prefix suffix", "prefix inserted suffix"),
+            ("préfixe naïf suffix", "préfixe brûlé suffix"),
+        ] {
+            assert_replacement(left, right);
+            assert_replacement(right, left);
+        }
+    }
 }
