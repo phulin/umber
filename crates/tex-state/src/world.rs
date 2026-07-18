@@ -63,8 +63,77 @@ pub enum WorldCommitMode {
 pub struct CommittedArtifact {
     hash: ContentHash,
     bytes: Arc<[u8]>,
-    render_origins: Arc<[Arc<[OriginId]>]>,
+    render_origin_ends: Arc<[u32]>,
+    render_origins: Arc<[OriginId]>,
 }
+
+/// Borrowed diagnostic provenance spans aligned with artifact nodes.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct RenderOrigins<'a> {
+    ends: &'a [u32],
+    origins: &'a [OriginId],
+}
+
+impl<'a> RenderOrigins<'a> {
+    #[must_use]
+    pub const fn len(self) -> usize {
+        self.ends.len()
+    }
+
+    #[must_use]
+    pub const fn is_empty(self) -> bool {
+        self.ends.is_empty()
+    }
+
+    #[must_use]
+    pub fn get(self, index: usize) -> Option<&'a [OriginId]> {
+        let &end = self.ends.get(index)?;
+        let start = index
+            .checked_sub(1)
+            .and_then(|previous| self.ends.get(previous).copied())
+            .unwrap_or(0);
+        self.origins.get(start as usize..end as usize)
+    }
+
+    pub fn iter(self) -> RenderOriginIter<'a> {
+        RenderOriginIter {
+            origins: self,
+            index: 0,
+        }
+    }
+}
+
+impl<'a> IntoIterator for RenderOrigins<'a> {
+    type Item = &'a [OriginId];
+    type IntoIter = RenderOriginIter<'a>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.iter()
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct RenderOriginIter<'a> {
+    origins: RenderOrigins<'a>,
+    index: usize,
+}
+
+impl<'a> Iterator for RenderOriginIter<'a> {
+    type Item = &'a [OriginId];
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let origins = self.origins.get(self.index)?;
+        self.index += 1;
+        Some(origins)
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        let remaining = self.origins.len().saturating_sub(self.index);
+        (remaining, Some(remaining))
+    }
+}
+
+impl ExactSizeIterator for RenderOriginIter<'_> {}
 
 /// Artifact bytes paired with their already-computed content identity.
 ///
@@ -74,7 +143,8 @@ pub struct CommittedArtifact {
 pub struct VerifiedArtifact {
     hash: ContentHash,
     bytes: Vec<u8>,
-    render_origins: Vec<Vec<OriginId>>,
+    render_origin_ends: Vec<u32>,
+    render_origins: Vec<OriginId>,
 }
 
 impl VerifiedArtifact {
@@ -84,6 +154,7 @@ impl VerifiedArtifact {
         Self {
             hash,
             bytes,
+            render_origin_ends: Vec::new(),
             render_origins: Vec::new(),
         }
     }
@@ -91,6 +162,29 @@ impl VerifiedArtifact {
     /// Attaches diagnostic-only origins in artifact-node preorder.
     #[must_use]
     pub fn with_render_origins(mut self, render_origins: Vec<Vec<OriginId>>) -> Self {
+        self.render_origin_ends.reserve(render_origins.len());
+        self.render_origins
+            .reserve(render_origins.iter().map(Vec::len).sum());
+        for origins in render_origins {
+            self.render_origins.extend(origins);
+            self.render_origin_ends.push(
+                u32::try_from(self.render_origins.len())
+                    .expect("artifact render provenance exceeds u32 entries"),
+            );
+        }
+        self
+    }
+
+    /// Attaches already-flattened diagnostic origins in artifact-node order.
+    #[doc(hidden)]
+    #[must_use]
+    pub fn with_flat_render_origins(
+        mut self,
+        render_origin_ends: Vec<u32>,
+        render_origins: Vec<OriginId>,
+    ) -> Self {
+        assert_valid_render_origins(&render_origin_ends, render_origins.len());
+        self.render_origin_ends = render_origin_ends;
         self.render_origins = render_origins;
         self
     }
@@ -108,12 +202,19 @@ impl VerifiedArtifact {
     /// Diagnostic provenance captured before a memoized shipout commit.
     #[doc(hidden)]
     #[must_use]
-    pub fn render_origins_for_memo(&self) -> &[Vec<OriginId>] {
-        &self.render_origins
+    pub fn render_origins_for_memo(&self) -> RenderOrigins<'_> {
+        self.render_origins()
     }
 
-    pub(crate) fn into_parts(self) -> (Vec<u8>, Vec<Vec<OriginId>>) {
-        (self.bytes, self.render_origins)
+    fn render_origins(&self) -> RenderOrigins<'_> {
+        RenderOrigins {
+            ends: &self.render_origin_ends,
+            origins: &self.render_origins,
+        }
+    }
+
+    pub(crate) fn into_parts(self) -> (Vec<u8>, Vec<u32>, Vec<OriginId>) {
+        (self.bytes, self.render_origin_ends, self.render_origins)
     }
 }
 
@@ -138,39 +239,52 @@ impl CommittedArtifact {
 
     /// Diagnostic-only origins aligned with artifact nodes in preorder.
     #[must_use]
-    pub fn render_origins(&self) -> &[Arc<[OriginId]>] {
-        &self.render_origins
+    pub fn render_origins(&self) -> RenderOrigins<'_> {
+        RenderOrigins {
+            ends: &self.render_origin_ends,
+            origins: &self.render_origins,
+        }
     }
 
     /// Retained bytes used by the diagnostic-only provenance sidecar.
     #[must_use]
     pub fn render_provenance_bytes(&self) -> usize {
-        self.render_origins
+        self.render_origin_ends
             .len()
-            .saturating_mul(std::mem::size_of::<Arc<[OriginId]>>())
+            .saturating_mul(std::mem::size_of::<u32>())
             .saturating_add(
                 self.render_origins
-                    .iter()
-                    .map(|origins| {
-                        origins
-                            .len()
-                            .saturating_mul(std::mem::size_of::<OriginId>())
-                    })
-                    .sum::<usize>(),
+                    .len()
+                    .saturating_mul(std::mem::size_of::<OriginId>()),
             )
     }
 
-    fn new(hash: ContentHash, bytes: Vec<u8>, render_origins: Vec<Vec<OriginId>>) -> Self {
+    fn new(
+        hash: ContentHash,
+        bytes: Vec<u8>,
+        render_origin_ends: Vec<u32>,
+        render_origins: Vec<OriginId>,
+    ) -> Self {
+        assert_valid_render_origins(&render_origin_ends, render_origins.len());
         Self {
             hash,
             bytes: bytes.into(),
-            render_origins: render_origins
-                .into_iter()
-                .map(Arc::<[OriginId]>::from)
-                .collect::<Vec<_>>()
-                .into(),
+            render_origin_ends: render_origin_ends.into(),
+            render_origins: render_origins.into(),
         }
     }
+}
+
+fn assert_valid_render_origins(ends: &[u32], origin_len: usize) {
+    assert!(
+        ends.windows(2).all(|ends| ends[0] <= ends[1]),
+        "artifact render-origin ends must be monotonic"
+    );
+    assert_eq!(
+        ends.last().copied().unwrap_or(0) as usize,
+        origin_len,
+        "artifact render-origin ends must cover the flat origin buffer"
+    );
 }
 
 impl PartialEq for CommittedArtifact {
@@ -1790,12 +1904,14 @@ impl World {
         &mut self,
         hash: ContentHash,
         bytes: Vec<u8>,
-        render_origins: Vec<Vec<OriginId>>,
+        render_origin_ends: Vec<u32>,
+        render_origins: Vec<OriginId>,
     ) {
         Arc::make_mut(&mut self.artifact_commits).push(hash);
         Arc::make_mut(&mut self.committed_artifacts).push(CommittedArtifact::new(
             hash,
             bytes,
+            render_origin_ends,
             render_origins,
         ));
     }

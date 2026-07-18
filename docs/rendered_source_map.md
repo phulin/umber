@@ -29,6 +29,12 @@ by `LayoutGeneration`, not revision.
 4. joining against the retained `render_origins` sidecar and resolving the
    `OriginId`.
 
+The retained sidecar is a packed ragged table: one shared `u32` end offset per
+artifact node and one shared flat `OriginId` buffer. Fresh shipout appends to
+those two buffers directly, so artifact nodes do not allocate or retain
+individual provenance vectors. Artifact clones remain O(1) through the two
+shared buffers, and indexed lookup still returns the origin slice for one node.
+
 Two structural defects:
 
 - **O(page) work on every query.** Steps 1–2 repeat, per click or hover

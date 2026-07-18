@@ -41,16 +41,47 @@ fn content_hash_is_stable_for_same_bytes() {
 fn artifact_identity_excludes_render_provenance() {
     let bytes = b"page artifact".to_vec();
     let hash = ContentHash::for_domain(ContentDomain::Artifact, &bytes);
-    let first = CommittedArtifact::new(hash, bytes.clone(), vec![vec![OriginId::from_raw(1)]]);
+    let first = CommittedArtifact::new(hash, bytes.clone(), vec![1], vec![OriginId::from_raw(1)]);
     let second = CommittedArtifact::new(
         hash,
         bytes,
-        vec![vec![OriginId::from_raw(2), OriginId::from_raw(3)]],
+        vec![2],
+        vec![OriginId::from_raw(2), OriginId::from_raw(3)],
     );
 
     assert_eq!(first, second);
     assert_ne!(first.render_origins(), second.render_origins());
     assert!(second.render_provenance_bytes() > first.render_provenance_bytes());
+}
+
+#[test]
+fn flat_artifact_render_provenance_preserves_empty_and_nonempty_spans() {
+    let bytes = b"page artifact".to_vec();
+    let artifact = CommittedArtifact::new(
+        ContentHash::for_domain(ContentDomain::Artifact, &bytes),
+        bytes,
+        vec![0, 2, 3],
+        vec![
+            OriginId::from_raw(1),
+            OriginId::from_raw(2),
+            OriginId::from_raw(3),
+        ],
+    );
+
+    let origins = artifact.render_origins();
+    assert_eq!(origins.len(), 3);
+    assert_eq!(origins.get(0), Some([].as_slice()));
+    assert_eq!(
+        origins.get(1),
+        Some([OriginId::from_raw(1), OriginId::from_raw(2)].as_slice())
+    );
+    assert_eq!(origins.get(2), Some([OriginId::from_raw(3)].as_slice()));
+    assert_eq!(origins.get(3), None);
+    assert_eq!(origins.iter().count(), 3);
+    assert_eq!(
+        artifact.render_provenance_bytes(),
+        3 * std::mem::size_of::<u32>() + 3 * std::mem::size_of::<OriginId>()
+    );
 }
 
 #[test]

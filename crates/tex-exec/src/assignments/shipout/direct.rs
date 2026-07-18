@@ -82,7 +82,8 @@ fn stage_form_inner(
         fonts: Vec::new(),
         live_fonts: Vec::new(),
         font_slots: Vec::new(),
-        render_origins: vec![Vec::new()],
+        render_origin_ends: None,
+        render_origins: Vec::new(),
         anchor: 0,
     };
     encoder.stream_root_nodes(|output| {
@@ -203,7 +204,8 @@ pub(super) fn stage_shipout(
         live_fonts: Vec::new(),
         font_slots: Vec::new(),
         // The artifact root is a synthetic box header preceding its children.
-        render_origins: vec![Vec::new()],
+        render_origin_ends: Some(vec![0]),
+        render_origins: Vec::new(),
         anchor: u32::try_from(overlay.pending_effect_count)
             .map_err(|_| ExecError::ArithmeticOverflow)?,
     };
@@ -267,9 +269,12 @@ pub(super) fn stage_shipout(
     stores.set_input_summary(input_summary);
     let effect_pos = stores.world().effect_pos();
     let retained_diagnostics = overlay.diagnostics.clone();
+    let render_origin_ends = emission
+        .render_origin_ends
+        .expect("page shipout must record render provenance");
     Ok(StagedShipout {
         artifact: VerifiedArtifact::new(artifact_bytes)
-            .with_render_origins(emission.render_origins),
+            .with_flat_render_origins(render_origin_ends, emission.render_origins),
         dvi_plan,
         effect_pos,
         retained_diagnostics,
@@ -376,12 +381,20 @@ struct EmissionState {
     live_fonts: Vec<FontId>,
     font_slots: Vec<Option<u32>>,
     anchor: u32,
-    render_origins: Vec<Vec<OriginId>>,
+    render_origin_ends: Option<Vec<u32>>,
+    render_origins: Vec<OriginId>,
 }
 
 impl EmissionState {
     fn node(&mut self, origins: impl IntoIterator<Item = OriginId>) {
-        self.render_origins.push(origins.into_iter().collect());
+        let Some(ends) = &mut self.render_origin_ends else {
+            return;
+        };
+        self.render_origins.extend(origins);
+        ends.push(
+            u32::try_from(self.render_origins.len())
+                .expect("artifact render provenance exceeds u32 entries"),
+        );
     }
 }
 
