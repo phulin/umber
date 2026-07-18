@@ -232,3 +232,20 @@ it.
 9. Native and WASM hosts observe the same engine and session semantics.
 10. Production crates contain no unsafe code; a future sealed JIT is the only
     possible exception.
+
+## 14. Portable format images
+
+`tex-state` owns a fixed-width little-endian frozen-format container beginning
+at schema 10. Its canonical section directory, alignment and zero-padding
+rules, whole-image checksum, exact ABI and lookup-configuration fingerprints,
+relative/index reference model, validation order, literal hash-table layout,
+and immutable-versus-job-local state boundary are specified in
+[frozen_format.md](frozen_format.md).
+
+Schema 10 temporarily wraps the validated schema-9 semantic DTO as a single
+transition section, so existing format behavior continues while later phases
+install runtime-ready frozen stores. Schema 9 itself is rejected rather than
+guessed or reinterpreted; formats are regenerated from source. Loading never
+publishes partially validated state, persists Rust heap layout, or mutates
+frozen bytes. Job-local clocks, input, page state, journals, effects, and
+mutable overlays are constructed fresh.

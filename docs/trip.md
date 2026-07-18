@@ -185,8 +185,9 @@ committed-artifact and downstream DVI boundary is documented in
 
 `umber run INPUT --format-out NAME.fmt` writes a format when INPUT terminates
 with `\dump`; `umber run INPUT --format NAME.fmt` starts from that image. The
-format has an explicit magic/version header, payload length, interaction mode,
-and checksum. Its deterministic payload contains semantic engine state only:
+schema-10 format has an explicit fixed-width little-endian header and section
+directory, compatibility fingerprints, deterministic alignment, and a
+whole-image checksum. Its transitional deterministic payload contains semantic engine state only:
 control-sequence namespaces and meanings, immutable token/macro/glue/font and
 hyphenation content, code tables, and environment cells. Loading validates and
 rebuilds fresh dense stores; it never restores host pointers, hash-table
@@ -194,4 +195,6 @@ layout, allocation capacities, journals, checkpoints, input cursors,
 provenance caches, or `World` effects. Logical node graphs such as box
 registers remap into a fresh arena rather than preserving process-local arena
 identities. The official two-phase TRIP workload exercises this format path
-before DVI comparison.
+before DVI comparison. Schema 9 images are rejected and regenerated from
+source; the durable container and frozen-store migration are specified in
+[frozen_format.md](frozen_format.md).

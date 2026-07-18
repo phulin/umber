@@ -16,6 +16,11 @@ Samply wrapper, prerequisites, and measured boundary.
 fixtures, corpora, and harnesses; update it when those implementation facts
 change.
 
+`frozen_format.md` defines the portable format-image container ABI,
+compatibility fingerprints, deterministic literal lookup-table representation,
+validation and checksum coverage, immutable/job-local split, and migration
+from schema 9.
+
 `incremental_v1.md` fixes the named-boundary schedule, editor-session
 retention, edit mapping, pruning, and schedule-relative convergence contract
 for the first incremental engine.
