@@ -2016,7 +2016,7 @@ impl Universe {
             visits: 0,
         };
         #[cfg(feature = "profiling-stats")]
-        let started = std::time::Instant::now();
+        let started = World::start_profiling_timer();
         build(&mut projection);
         let fingerprints = projection.hasher.finish_quad();
         #[cfg(feature = "profiling-stats")]
@@ -2600,7 +2600,7 @@ impl Universe {
 
     fn exact_checkpoint_identity(&mut self) -> Result<u64, StoreFormatError> {
         #[cfg(feature = "profiling-stats")]
-        let started = std::time::Instant::now();
+        let started = World::start_profiling_timer();
         #[cfg(feature = "profiling-stats")]
         let projections_before = crate::measurement::state_hash_measurement();
         let store = self.stores.semantic_identity()?;

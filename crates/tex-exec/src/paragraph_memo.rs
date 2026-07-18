@@ -18,7 +18,7 @@ struct ValidatedParagraphEntry {
 }
 
 #[cfg(feature = "profiling-stats")]
-type PhaseStart = std::time::Instant;
+type PhaseStart = tex_state::ProfilingTimer;
 #[cfg(not(feature = "profiling-stats"))]
 struct PhaseStart;
 
@@ -26,7 +26,7 @@ struct PhaseStart;
 fn start_phase() -> PhaseStart {
     #[cfg(feature = "profiling-stats")]
     {
-        std::time::Instant::now()
+        tex_state::World::start_profiling_timer()
     }
     #[cfg(not(feature = "profiling-stats"))]
     {
