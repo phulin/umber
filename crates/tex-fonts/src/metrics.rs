@@ -1631,7 +1631,17 @@ impl FontMetrics {
         left: LigKernChar,
         right: LigKernChar,
     ) -> Option<LigKernCommand> {
-        let mut index = self.lig_kern_start(left)?;
+        self.lig_kern_command_from_start(self.lig_kern_start(left)?, right)
+    }
+
+    /// Scans a ligature/kern program from a start previously resolved from
+    /// this metric table.
+    #[must_use]
+    pub fn lig_kern_command_from_start(
+        &self,
+        mut index: u16,
+        right: LigKernChar,
+    ) -> Option<LigKernCommand> {
         let right_char = match right {
             LigKernChar::Char(code) => code,
             LigKernChar::Boundary => self.right_boundary_char?,
@@ -1661,7 +1671,10 @@ impl FontMetrics {
         self.extensible_recipes.get(usize::from(index)).copied()
     }
 
-    fn lig_kern_start(&self, left: LigKernChar) -> Option<u16> {
+    /// Returns the first instruction for the left character's ligature/kern
+    /// program, including the synthetic left-boundary program.
+    #[must_use]
+    pub fn lig_kern_start(&self, left: LigKernChar) -> Option<u16> {
         match left {
             LigKernChar::Boundary => self.left_boundary_program,
             LigKernChar::Char(code) => match self.character(code)?.tag {

@@ -1575,18 +1575,22 @@ impl Stores {
         left: LigKernChar,
         right: LigKernChar,
     ) -> Option<LigKernCommand> {
-        if let LigKernChar::Char(code) = left
-            && self.pdf_font_code_with_loaded(PdfFontCode::Tag, font, code, loaded) & 1 == 0
-        {
-            return None;
+        let metrics = loaded.metrics();
+        let start = metrics.lig_kern_start(left)?;
+        if let LigKernChar::Char(code) = left {
+            let tag = self
+                .env
+                .pdf_font_code(pdf_font_code_bank(PdfFontCode::Tag), font, code)
+                .unwrap_or(1);
+            if tag & 1 == 0 {
+                return None;
+            }
         }
+        let command = metrics.lig_kern_command_from_start(start, right);
         if self.env.pdf_no_ligatures(font) {
-            return loaded
-                .metrics()
-                .lig_kern_command(left, right)
-                .filter(|command| matches!(command, LigKernCommand::Kern(_)));
+            return command.filter(|command| matches!(command, LigKernCommand::Kern(_)));
         }
-        loaded.metrics().lig_kern_command(left, right)
+        command
     }
 
     #[must_use]
