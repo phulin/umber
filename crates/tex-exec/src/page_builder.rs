@@ -33,8 +33,7 @@ pub(crate) fn build_page(stores: &mut Universe) -> Result<(), ExecError> {
         }
         return build_page_cold(stores);
     }
-    #[allow(clippy::disallowed_methods)]
-    let validation_started = std::time::Instant::now();
+    let validation_started = crate::timing::TelemetryTimer::start();
     let key = page_episode_key(stores);
     stores.record_pure_memo_timing(
         PureMemoLayer::Page,
@@ -43,8 +42,7 @@ pub(crate) fn build_page(stores: &mut Universe) -> Result<(), ExecError> {
     );
     let input_origins = stores.page_memo_origins().ok();
     if let Some(entry) = stores.lookup_pure_page(key) {
-        #[allow(clippy::disallowed_methods)]
-        let import_started = std::time::Instant::now();
+        let import_started = crate::timing::TelemetryTimer::start();
         let imported_bytes = entry.transition.retained_bytes();
         let replay_origins = input_origins.as_ref().map(|input_origins| {
             entry

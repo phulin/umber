@@ -61,6 +61,7 @@ Use this crate when behavior mutates live engine state or depends on TeX's curre
 - `src/page_builder.rs`: TeX.web page-builder accounting, insertion splitting, pending fire-up records, and detached page-episode reuse up to the output-routine barrier.
 - `src/splitting.rs`: shared vertical split helpers for insertion and `\vsplit` remainder pruning/repacking.
 - `src/transaction.rs`: lifetime-bound recursive execution transactions that restore mode and Universe roots unless explicitly committed.
+- `src/timing.rs`: process-local execution telemetry timer with an inert fallback for WASM hosts that do not provide `std::time::Instant`.
 - `src/tests.rs`: crate-internal test harness module and shared imports.
 - `src/tests/assignments.rs`: tests for registers, definitions, arithmetic, token assignments, and assignments.
 - `src/tests/core.rs`: tests for mode nest behavior, execution context, dispatch, and core errors.

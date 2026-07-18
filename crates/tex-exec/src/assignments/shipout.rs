@@ -54,8 +54,7 @@ pub(crate) fn shipout_node(
         && effect_free_shipout_graph(stores, &node)
         && stores.world().effect_records().is_empty()
         && (1..=32_768).contains(&stores.int_param(IntParam::MAG));
-    #[allow(clippy::disallowed_methods)]
-    let validation_started = std::time::Instant::now();
+    let validation_started = crate::timing::TelemetryTimer::start();
     let key = cacheable.then(|| shipout_key(stores, &node));
     if cacheable {
         stores.record_pure_memo_timing(
@@ -70,8 +69,7 @@ pub(crate) fn shipout_node(
     if let Some(key) = key
         && let Some(entry) = stores.lookup_pure_shipout(key)
     {
-        #[allow(clippy::disallowed_methods)]
-        let import_started = std::time::Instant::now();
+        let import_started = crate::timing::TelemetryTimer::start();
         let detached = entry.artifact.artifact(MemoValueLimits::default());
         if let Ok(detached) = detached {
             let imported_bytes = entry.artifact.retained_bytes();

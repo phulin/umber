@@ -632,8 +632,7 @@ pub fn cached_pretolerance_plan(
         }
         return try_line_break_without_hyphenation(stores, hlist, line_params);
     }
-    #[allow(clippy::disallowed_methods)]
-    let validation_started = std::time::Instant::now();
+    let validation_started = crate::timing::TelemetryTimer::start();
     let key = pretolerance_memo_key(stores, hlist, line_params);
     stores.record_pure_memo_timing(
         tex_state::PureMemoLayer::Pretolerance,

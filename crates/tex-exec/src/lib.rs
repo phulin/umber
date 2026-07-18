@@ -21,6 +21,7 @@ mod packing_params;
 mod page_builder;
 mod paragraph_memo;
 mod splitting;
+mod timing;
 mod transaction;
 mod vertical;
 
