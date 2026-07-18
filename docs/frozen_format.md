@@ -1,6 +1,7 @@
 # Portable Frozen Format Images
 
-Status: schema-10 container plus authoritative non-node core-store sections.
+Status: schema-10 container, authoritative non-node core-store sections, and
+portable precomputed lookup indexes.
 
 This document is the durable ABI contract for Umber format images. The outer
 container is implemented in `tex-state::format_container`. Schema 10 replaces
@@ -79,7 +80,7 @@ Section kind 1 retains the historical directory name
 reachable node-list records and environment entries. It contains no names,
 token lists, macros, glue, fonts, code tables, hyphenation data, prepared
 magnification, or last-font metadata. The schema-10 runtime requires exactly
-kinds 1, 256, 272, 288, 304, 320, 336, and 352. The following kinds are
+kinds 1, 256, 257, 272, 288, 304, 320, 336, and 352. The following kinds are
 allocated for the complete rollout:
 
 | Kind | Intended contents                        |
@@ -166,9 +167,11 @@ orders at offsets 12 and 13; and ten reserved zero bytes. Orders are 0..=3,
 record 0 is canonical zero glue, and duplicate specs are rejected.
 
 These four sections are decoded into validated dense immutable prefixes with
-their canonical record indices. Fresh generation-tagged runtime identities and
-lookup indexes are attached in bulk. Ordinary job-created values append after
-the prefix and use the existing interning, snapshot, and rollback paths. The
+their canonical record indices. Kind 257 holds the name index; the token-list
+and glue indexes follow the canonical word and record regions inside kinds 272
+and 304. Fresh generation-tagged runtime identities are attached in bulk.
+Ordinary job-created values append after the prefix and use mutable overlay
+indexes with the existing interning, snapshot, and rollback paths. The
 process-wide compact symbol registry is resolved in one batch for names;
 neither token lists, macro definitions, nor glue specs are replayed through
 their semantic interning APIs.
@@ -262,13 +265,23 @@ smallest allowed power of two satisfying `entry_count * 4 <= bucket_count *
 `fnv1a64(seed, key) & (bucket_count - 1)` and collisions use forward linear
 probing with wraparound.
 
+Each 16-byte entry record contains key offset `u32`, key length `u32`, target
+record index `u32`, and a zero reserved `u32`. Key spans are contiguous. Name
+keys are the namespace byte followed by UTF-8 name bytes, token-list keys are
+the complete sequence of canonical little-endian token words, and glue keys
+are the complete 24-byte glue record. Empty token lists therefore have an empty
+key. The target is the dense record index in the corresponding foundational
+store.
+
 The lookup-configuration fingerprint covers the algorithm, algorithm version,
 seed, capacity/load policy, empty sentinel, and probe strategy. Exact
 configuration compatibility plus full structural validation are authoritative:
 the decoder verifies bucket bounds, entry uniqueness, one bucket per entry,
 canonical insertion/probe placement, key equality, and the declared maximum
-probe. Deterministic checksum-derived spot checks may additionally exercise
-the runtime lookup implementation after validation. Those checks are
+probe. Deterministic checksum-derived spot checks additionally exercise the
+runtime lookup implementation after validation. Schema 10 selects up to eight
+entries per table from the container checksum using a fixed xorshift64*
+sequence. Those checks are
 supplementary diagnostics and can never make an incompatible fingerprint or
 invalid structure acceptable.
 

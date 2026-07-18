@@ -75,7 +75,8 @@ mod state_hash;
 
 pub(crate) use format::{
     CODE_TABLES_SECTION, FONTS_SECTION, FrozenCoreSections, FrozenNonNodeSections, GLUE_SECTION,
-    HYPHENATION_SECTION, MACROS_SECTION, NAMES_SECTION, StoreFormatError, TOKEN_LISTS_SECTION,
+    HYPHENATION_SECTION, MACROS_SECTION, NAMES_LOOKUP_SECTION, NAMES_SECTION, StoreFormatError,
+    TOKEN_LISTS_SECTION,
 };
 #[cfg(test)]
 pub(crate) use format::{
@@ -714,15 +715,18 @@ impl Stores {
     /// Interns a frozen token-list value in the owned token store.
     pub fn intern_token_list(&mut self, tokens: &[Token]) -> TokenListId {
         let semantic_id = self.token_list_semantic_id(tokens.iter().copied());
-        self.tokens.intern_with_semantic_id(tokens, semantic_id)
+        let frozen_key = self.frozen_token_lookup_key(tokens.iter().copied());
+        self.tokens
+            .intern_with_semantic_id(tokens, semantic_id, &frozen_key)
     }
 
     /// Interns the current token-list builder value and clears it for reuse.
     pub fn finish_token_list(&mut self, builder: &mut TokenListBuilder) -> TokenListId {
         let semantic_id = self.token_list_semantic_id(builder.as_slice().iter().copied());
+        let frozen_key = self.frozen_token_lookup_key(builder.as_slice().iter().copied());
         let id = self
             .tokens
-            .intern_with_semantic_id(builder.as_slice(), semantic_id);
+            .intern_with_semantic_id(builder.as_slice(), semantic_id, &frozen_key);
         builder.clear();
         id
     }
@@ -742,12 +746,16 @@ impl Stores {
             word.token()
                 .expect("validated traced token became invalid during semantic hashing")
         }));
+        let frozen_key = self.frozen_token_lookup_key(traced.iter().map(|word| {
+            word.token()
+                .expect("validated traced token became invalid during lookup encoding")
+        }));
 
         #[cfg(feature = "profiling-stats")]
         crate::measurement::record_traced_list_finish(traced.len(), 0, 0);
-        let token_list = self
-            .tokens
-            .intern_traced_with_semantic_id(traced, semantic_id);
+        let token_list =
+            self.tokens
+                .intern_traced_with_semantic_id(traced, semantic_id, &frozen_key);
         let origin_list = self.provenance.allocate_traced_list(traced);
         TracedTokenList::new(token_list, origin_list)
     }
@@ -784,6 +792,29 @@ impl Stores {
             identity.push(token, atom);
         }
         identity.finish()
+    }
+
+    fn frozen_token_lookup_key(&self, tokens: impl IntoIterator<Item = Token>) -> Vec<u8> {
+        let mut key = Vec::new();
+        for token in tokens {
+            let word = match token {
+                Token::Char { ch, cat } => u64::from(ch as u32) | (u64::from(cat as u8) << 32),
+                Token::Cs(symbol) => {
+                    let slot = self
+                        .interner
+                        .resolve_stored(symbol)
+                        .expect("token symbol is live")
+                        .raw();
+                    (1_u64 << 56) | u64::from(slot)
+                }
+                Token::Param(slot) => (2_u64 << 56) | u64::from(slot),
+                Token::Frozen(crate::token::FrozenToken::END_TEMPLATE) => 3_u64 << 56,
+                Token::Frozen(crate::token::FrozenToken::END_V) => (3_u64 << 56) | 1,
+                Token::Frozen(_) => unreachable!("invalid frozen token payload"),
+            };
+            key.extend_from_slice(&word.to_le_bytes());
+        }
+        key
     }
 
     /// Returns the reserved unknown/bootstrap provenance origin.

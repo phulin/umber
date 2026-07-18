@@ -1308,6 +1308,11 @@ impl Universe {
                 bytes: &stores.names,
             },
             crate::format_container::SectionInput {
+                kind: crate::stores::NAMES_LOOKUP_SECTION,
+                alignment: 8,
+                bytes: &stores.names_lookup,
+            },
+            crate::format_container::SectionInput {
                 kind: crate::stores::TOKEN_LISTS_SECTION,
                 alignment: 8,
                 bytes: &stores.token_lists,
@@ -1344,9 +1349,9 @@ impl Universe {
     /// Constructs a fresh timeline from a validated semantic format image.
     pub fn from_format(world: World, bytes: &[u8]) -> Result<Self, FormatError> {
         let container = crate::format_container::decode(bytes).map_err(map_container_error)?;
-        if container.sections.len() != 8 {
+        if container.sections.len() != 9 {
             return Err(FormatError::InvalidState(
-                "schema-10 core format requires exactly eight sections".to_owned(),
+                "schema-10 core format requires exactly nine sections".to_owned(),
             ));
         }
         let payload = container
@@ -1361,9 +1366,11 @@ impl Universe {
         let mode = decode_interaction_mode(format.interaction_mode)?;
         let frozen = crate::stores::FrozenCoreSections {
             names: required_format_section(&container, crate::stores::NAMES_SECTION)?,
+            names_lookup: required_format_section(&container, crate::stores::NAMES_LOOKUP_SECTION)?,
             token_lists: required_format_section(&container, crate::stores::TOKEN_LISTS_SECTION)?,
             macros: required_format_section(&container, crate::stores::MACROS_SECTION)?,
             glue: required_format_section(&container, crate::stores::GLUE_SECTION)?,
+            checksum: container.checksum,
         };
         let non_node = crate::stores::FrozenNonNodeSections {
             fonts: required_format_section(&container, crate::stores::FONTS_SECTION)?,

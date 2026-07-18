@@ -44,6 +44,7 @@ pub mod env;
 pub mod epoch;
 pub mod font;
 mod format_container;
+mod frozen_lookup;
 pub mod glue;
 pub mod hyphenation;
 pub(crate) mod identity;

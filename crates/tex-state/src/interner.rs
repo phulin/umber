@@ -133,6 +133,8 @@ pub struct Interner {
     semantic_atoms: Vec<u64>,
     symbols: Vec<Symbol>,
     symbol_slots: AHashMap<Symbol, u32>,
+    frozen_lookup: crate::frozen_lookup::FrozenLookup,
+    frozen_len: u32,
     index: AHashMap<u64, Vec<SymbolId>>,
     index_dirty: bool,
     identities: IdentityAllocator,
@@ -147,6 +149,8 @@ impl Clone for Interner {
             semantic_atoms: self.semantic_atoms.clone(),
             symbols: self.symbols.clone(),
             symbol_slots: self.symbol_slots.clone(),
+            frozen_lookup: self.frozen_lookup.clone(),
+            frozen_len: self.frozen_len,
             index: self.index.clone(),
             index_dirty: self.index_dirty,
             identities: self.identities.fork(),
@@ -165,6 +169,8 @@ impl Interner {
             semantic_atoms: Vec::new(),
             symbols: Vec::new(),
             symbol_slots: AHashMap::new(),
+            frozen_lookup: crate::frozen_lookup::FrozenLookup::empty(),
+            frozen_len: 0,
             index: AHashMap::new(),
             index_dirty: false,
             identities: IdentityAllocator::new(0),
@@ -179,6 +185,7 @@ impl Interner {
         spans: Vec<(u32, u32)>,
         kinds: Vec<ControlSequenceKind>,
         semantic_atoms: Vec<u64>,
+        frozen_lookup: crate::frozen_lookup::FrozenLookup,
     ) -> Result<Self, &'static str> {
         if spans.len() != kinds.len() || spans.len() != semantic_atoms.len() {
             return Err("frozen interner column length mismatch");
@@ -187,7 +194,7 @@ impl Interner {
         let identities = IdentityAllocator::from_frozen_len(0, count);
         let mut symbols = Vec::with_capacity(spans.len());
         let mut symbol_slots = AHashMap::with_capacity(spans.len());
-        let mut index: AHashMap<u64, Vec<SymbolId>> = AHashMap::with_capacity(spans.len());
+        let index: AHashMap<u64, Vec<SymbolId>> = AHashMap::new();
         for slot in 0..spans.len() {
             let (start, len) = spans[slot];
             let start = start as usize;
@@ -211,11 +218,6 @@ impl Interner {
             if symbol_slots.insert(stored, slot as u32).is_some() {
                 return Err("duplicate frozen interner name");
             }
-            let identity = identities
-                .identity_at(slot as u32)
-                .expect("validated frozen identity slot");
-            let id = SymbolId::from_identity(identity, stored);
-            index.entry(content_hash(kind, name)).or_default().push(id);
             symbols.push(stored);
         }
         Ok(Self {
@@ -225,6 +227,8 @@ impl Interner {
             semantic_atoms,
             symbols,
             symbol_slots,
+            frozen_lookup,
+            frozen_len: count,
             index,
             index_dirty: false,
             identities,
@@ -252,6 +256,15 @@ impl Interner {
     ) -> Result<SymbolId, InternerError> {
         if self.index_dirty {
             self.rebuild_index();
+        }
+
+        if let Some(slot) = self.frozen_lookup.get(&lookup_key(kind, name)) {
+            let stored = self.symbols[slot as usize];
+            let identity = self
+                .identities
+                .identity_at(slot)
+                .expect("frozen symbol is live");
+            return Ok(SymbolId::from_identity(identity, stored));
         }
 
         let hash = content_hash(kind, name);
@@ -302,6 +315,11 @@ impl Interner {
     }
 
     fn get_key(&self, kind: ControlSequenceKind, name: &str) -> Option<SymbolId> {
+        if let Some(slot) = self.frozen_lookup.get(&lookup_key(kind, name)) {
+            let stored = *self.symbols.get(slot as usize)?;
+            let identity = self.identities.identity_at(slot)?;
+            return Some(SymbolId::from_identity(identity, stored));
+        }
         let hash = content_hash(kind, name);
         self.index.get(&hash).and_then(|candidates| {
             candidates.iter().copied().find(|&symbol| {
@@ -438,7 +456,7 @@ impl Interner {
 
     fn rebuild_index(&mut self) {
         self.index.clear();
-        for raw in 0..self.spans.len() {
+        for raw in self.frozen_len as usize..self.spans.len() {
             let stored = self.symbols[raw];
             let identity = self
                 .identities
@@ -450,6 +468,16 @@ impl Interner {
         }
         self.index_dirty = false;
     }
+}
+
+fn lookup_key(kind: ControlSequenceKind, name: &str) -> Vec<u8> {
+    let mut key = Vec::with_capacity(name.len() + 1);
+    key.push(match kind {
+        ControlSequenceKind::Named => 0,
+        ControlSequenceKind::ActiveCharacter => 1,
+    });
+    key.extend_from_slice(name.as_bytes());
+    key
 }
 
 pub(crate) fn semantic_atom(kind: ControlSequenceKind, name: &str) -> u64 {

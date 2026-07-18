@@ -190,6 +190,8 @@ pub struct TokenStore {
     arena: Vec<Token>,
     spans: Vec<(u32, u32)>,
     semantic_ids: Vec<TokenSemanticId>,
+    frozen_lookup: crate::frozen_lookup::FrozenLookup,
+    frozen_len: u32,
     index: TokenIndex,
     #[cfg(test)]
     hash_state: RandomState,
@@ -203,6 +205,8 @@ impl Clone for TokenStore {
             arena: self.arena.clone(),
             spans: self.spans.clone(),
             semantic_ids: self.semantic_ids.clone(),
+            frozen_lookup: self.frozen_lookup.clone(),
+            frozen_len: self.frozen_len,
             index: self.index.clone(),
             #[cfg(test)]
             hash_state: self.hash_state.clone(),
@@ -220,6 +224,8 @@ impl TokenStore {
             arena: Vec::new(),
             spans: vec![(0, 0)],
             semantic_ids: vec![TokenSemanticIdBuilder::new().finish()],
+            frozen_lookup: crate::frozen_lookup::FrozenLookup::empty(),
+            frozen_len: 0,
             index: TokenIndex::default(),
             #[cfg(test)]
             hash_state: RandomState::new(),
@@ -240,6 +246,7 @@ impl TokenStore {
         arena: Vec<Token>,
         spans: Vec<(u32, u32)>,
         semantic_ids: Vec<TokenSemanticId>,
+        frozen_lookup: crate::frozen_lookup::FrozenLookup,
     ) -> Result<Self, &'static str> {
         if spans.len() != semantic_ids.len() {
             return Err("frozen token column length mismatch");
@@ -249,29 +256,13 @@ impl TokenStore {
         }
         let count = u32::try_from(spans.len()).map_err(|_| "frozen token-list capacity")?;
         let identities = IdentityAllocator::from_frozen_len(1, count);
-        let mut index = TokenIndex::default();
-        for raw in 0..count {
-            let id = TokenListId::from_identity(
-                identities
-                    .identity_at(raw)
-                    .expect("validated frozen token-list slot"),
-            );
-            let (start, len) = spans[raw as usize];
-            let value = &arena[start as usize..(start + len) as usize];
-            let candidates = index.entry(semantic_ids[raw as usize]).or_default();
-            if candidates.iter().copied().any(|candidate| {
-                let (candidate_start, candidate_len) = spans[candidate.raw() as usize];
-                arena[candidate_start as usize..(candidate_start + candidate_len) as usize]
-                    == *value
-            }) {
-                return Err("duplicate frozen token list");
-            }
-            candidates.push(id);
-        }
+        let index = TokenIndex::default();
         Ok(Self {
             arena,
             spans,
             semantic_ids,
+            frozen_lookup,
+            frozen_len: count,
             index,
             #[cfg(test)]
             hash_state: RandomState::new(),
@@ -296,7 +287,7 @@ impl TokenStore {
     #[cfg(test)]
     pub(crate) fn intern(&mut self, tokens: &[Token]) -> TokenListId {
         let hash = self.content_hash(tokens);
-        self.intern_with_semantic_id(tokens, TokenSemanticId(hash))
+        self.intern_with_semantic_id(tokens, TokenSemanticId(hash), &[])
     }
 
     /// Interns tokens using their aggregate-computed canonical semantic identity.
@@ -304,6 +295,7 @@ impl TokenStore {
         &mut self,
         tokens: &[Token],
         semantic_id: TokenSemanticId,
+        frozen_key: &[u8],
     ) -> TokenListId {
         #[cfg(feature = "profiling-stats")]
         let capacity_before = self.arena.capacity();
@@ -317,6 +309,13 @@ impl TokenStore {
 
         if self.index_dirty {
             self.rebuild_index();
+        }
+
+        if let Some(raw) = self.frozen_lookup.get(frozen_key) {
+            let id = self.id_at(raw);
+            if self.get(id) == tokens {
+                return id;
+            }
         }
 
         if let Some(candidates) = self.index.get(&semantic_id) {
@@ -360,7 +359,7 @@ impl TokenStore {
     #[cfg(test)]
     pub(crate) fn intern_traced(&mut self, traced: &[TracedTokenWord]) -> TokenListId {
         let hash = self.hash_state.hash_one(TracedTokenProjection(traced));
-        self.intern_traced_with_semantic_id(traced, TokenSemanticId(hash))
+        self.intern_traced_with_semantic_id(traced, TokenSemanticId(hash), &[])
     }
 
     /// Interns traced tokens using their aggregate-computed canonical semantic identity.
@@ -368,6 +367,7 @@ impl TokenStore {
         &mut self,
         traced: &[TracedTokenWord],
         semantic_id: TokenSemanticId,
+        frozen_key: &[u8],
     ) -> TokenListId {
         #[cfg(feature = "profiling-stats")]
         let capacity_before = self.arena.capacity();
@@ -381,6 +381,19 @@ impl TokenStore {
 
         if self.index_dirty {
             self.rebuild_index();
+        }
+
+        if let Some(raw) = self.frozen_lookup.get(frozen_key) {
+            let id = self.id_at(raw);
+            let candidate = self.get(id);
+            if candidate.len() == traced.len()
+                && candidate
+                    .iter()
+                    .zip(traced)
+                    .all(|(&token, &word)| word.token() == Some(token))
+            {
+                return id;
+            }
         }
 
         if let Some(candidates) = self.index.get(&semantic_id) {
@@ -511,7 +524,7 @@ impl TokenStore {
 
     fn rebuild_index(&mut self) {
         self.index.clear();
-        for raw in 0..self.spans.len() {
+        for raw in self.frozen_len as usize..self.spans.len() {
             let id = self.id_at(u32_len(raw, "token-list spans exceed u32 entries"));
             let semantic_id = self.semantic_id(id);
             self.index.entry(semantic_id).or_default().push(id);

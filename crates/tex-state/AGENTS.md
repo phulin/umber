@@ -29,6 +29,8 @@ All production mutation of live TeX state should pass through `Universe` or simi
 - `src/font.rs`: Stateful loaded-font store, font handles, null font, missing-character records, and rollback marks.
 - `src/format_container.rs`: Portable schema-10 format-image header, section directory, compatibility fingerprints, checksum, and structural validation.
 - `src/format_container/tests.rs`: Focused frozen-container header, directory, checksum-coverage, fingerprint, and geometry tests.
+- `src/frozen_lookup.rs`: Versioned portable literal bucket/index codec and immutable runtime lookup for format-backed store prefixes.
+- `src/frozen_lookup/tests.rs`: Deterministic generation, lookup equivalence, and malformed literal-table validation tests.
 - `src/glue.rs`: Immutable hash-consed glue-spec storage and rollback watermarks.
 - `src/glue/tests.rs`: Unit tests for glue interning, canonical zero glue, rollback, and hash-index rebuilds.
 - `src/hyphenation.rs`: Hyphenation pattern trie and exception table implementing Liang-style position lookup.

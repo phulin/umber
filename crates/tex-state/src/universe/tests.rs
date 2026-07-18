@@ -601,6 +601,7 @@ fn frozen_foundational_sections_restore_ids_and_accept_job_local_additions() {
         [
             crate::format_container::TRANSITIONAL_SEMANTIC_SECTION,
             crate::stores::NAMES_SECTION,
+            crate::stores::NAMES_LOOKUP_SECTION,
             crate::stores::TOKEN_LISTS_SECTION,
             crate::stores::MACROS_SECTION,
             crate::stores::GLUE_SECTION,
@@ -711,6 +712,7 @@ fn checksum_valid_foundational_section_corruption_fails_structural_validation() 
 
     for (kind, offset, expected) in [
         (crate::stores::NAMES_SECTION, 24 + 16, "semantic atom"),
+        (crate::stores::NAMES_LOOKUP_SECTION, 0, "lookup header"),
         (
             crate::stores::TOKEN_LISTS_SECTION,
             24 + 8,

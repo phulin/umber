@@ -14,7 +14,8 @@ mod tests;
 pub(crate) use font_validation::{TestingFontFormatCorruption, testing_corrupt_font_format};
 
 pub(crate) use frozen_core::{
-    FrozenCoreSections, GLUE_SECTION, MACROS_SECTION, NAMES_SECTION, TOKEN_LISTS_SECTION,
+    FrozenCoreSections, GLUE_SECTION, MACROS_SECTION, NAMES_LOOKUP_SECTION, NAMES_SECTION,
+    TOKEN_LISTS_SECTION,
 };
 pub(crate) use frozen_non_node::{
     CODE_TABLES_SECTION, FONTS_SECTION, FrozenNonNodeSections, HYPHENATION_SECTION,
@@ -66,6 +67,7 @@ pub(crate) fn testing_corrupt_overlay_macro_reference(payload: &[u8]) -> Vec<u8>
 pub(crate) struct EncodedStoreFormat {
     pub overlay: Vec<u8>,
     pub names: Vec<u8>,
+    pub names_lookup: Vec<u8>,
     pub token_lists: Vec<u8>,
     pub macros: Vec<u8>,
     pub glue: Vec<u8>,
@@ -79,6 +81,7 @@ impl EncodedStoreFormat {
         self.overlay
             .len()
             .saturating_add(self.names.len())
+            .saturating_add(self.names_lookup.len())
             .saturating_add(self.token_lists.len())
             .saturating_add(self.macros.len())
             .saturating_add(self.glue.len())
@@ -299,6 +302,7 @@ impl Stores {
         Ok(EncodedStoreFormat {
             overlay,
             names: frozen.names,
+            names_lookup: frozen.names_lookup,
             token_lists: frozen.token_lists,
             macros: frozen.macros,
             glue: frozen.glue,

@@ -53,6 +53,8 @@ pub(crate) struct GlueStoreMark {
 #[derive(Debug)]
 pub struct GlueStore {
     specs: Vec<GlueSpec>,
+    frozen_lookup: crate::frozen_lookup::FrozenLookup,
+    frozen_len: u32,
     index: AHashMap<u64, Vec<GlueId>>,
     index_dirty: bool,
     identities: IdentityAllocator,
@@ -62,6 +64,8 @@ impl Clone for GlueStore {
     fn clone(&self) -> Self {
         Self {
             specs: self.specs.clone(),
+            frozen_lookup: self.frozen_lookup.clone(),
+            frozen_len: self.frozen_len,
             index: self.index.clone(),
             index_dirty: self.index_dirty,
             identities: self.identities.fork(),
@@ -75,6 +79,8 @@ impl GlueStore {
     pub(crate) fn new() -> Self {
         let mut store = Self {
             specs: vec![GlueSpec::ZERO],
+            frozen_lookup: crate::frozen_lookup::FrozenLookup::empty(),
+            frozen_len: 0,
             index: AHashMap::new(),
             index_dirty: false,
             identities: IdentityAllocator::new(1),
@@ -89,31 +95,20 @@ impl GlueStore {
 
     /// Installs a validated frozen dense prefix and builds its lookup index
     /// directly, without replaying semantic interning.
-    pub(crate) fn from_frozen(specs: Vec<GlueSpec>) -> Result<Self, &'static str> {
+    pub(crate) fn from_frozen(
+        specs: Vec<GlueSpec>,
+        frozen_lookup: crate::frozen_lookup::FrozenLookup,
+    ) -> Result<Self, &'static str> {
         if specs.first().copied() != Some(GlueSpec::ZERO) {
             return Err("missing frozen canonical zero glue");
         }
         let count = u32::try_from(specs.len()).map_err(|_| "frozen glue capacity")?;
         let identities = IdentityAllocator::from_frozen_len(1, count);
-        let mut index: AHashMap<u64, Vec<GlueId>> = AHashMap::with_capacity(specs.len());
-        for (raw, spec) in specs.iter().enumerate() {
-            let id = GlueId::from_identity(
-                identities
-                    .identity_at(raw as u32)
-                    .expect("validated frozen glue slot"),
-            );
-            let candidates = index.entry(content_hash(spec)).or_default();
-            if candidates
-                .iter()
-                .copied()
-                .any(|candidate| specs[candidate.raw() as usize] == *spec)
-            {
-                return Err("duplicate frozen glue spec");
-            }
-            candidates.push(id);
-        }
+        let index = AHashMap::new();
         Ok(Self {
             specs,
+            frozen_lookup,
+            frozen_len: count,
             index,
             index_dirty: false,
             identities,
@@ -128,6 +123,14 @@ impl GlueStore {
 
         if self.index_dirty {
             self.rebuild_index();
+        }
+
+        if let Some(raw) = self.frozen_lookup.get(&lookup_key(&spec)) {
+            return GlueId::from_identity(
+                self.identities
+                    .identity_at(raw)
+                    .expect("frozen glue id is live"),
+            );
         }
 
         let hash = content_hash(&spec);
@@ -220,7 +223,7 @@ impl GlueStore {
 
     fn rebuild_index(&mut self) {
         self.index.clear();
-        for raw in 0..self.specs.len() {
+        for raw in self.frozen_len as usize..self.specs.len() {
             let id = GlueId::from_identity(
                 self.identities
                     .identity_at(u32_len(raw, "glue specs exceed u32 entries"))
@@ -231,6 +234,16 @@ impl GlueStore {
         }
         self.index_dirty = false;
     }
+}
+
+fn lookup_key(spec: &GlueSpec) -> [u8; 24] {
+    let mut key = [0; 24];
+    key[0..4].copy_from_slice(&spec.width.raw().to_le_bytes());
+    key[4..8].copy_from_slice(&spec.stretch.raw().to_le_bytes());
+    key[8..12].copy_from_slice(&spec.shrink.raw().to_le_bytes());
+    key[12] = spec.stretch_order as u8;
+    key[13] = spec.shrink_order as u8;
+    key
 }
 
 fn content_hash(spec: &GlueSpec) -> u64 {
