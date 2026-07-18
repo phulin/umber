@@ -100,6 +100,7 @@ fn finalize_run(
         output,
         finalization,
         input_path_map,
+        resolved_inputs,
         main_input,
     } = accepted;
     let mut stores = finalization.stores;
@@ -309,7 +310,12 @@ fn finalize_run(
     if let Some(output) = &opts.input_records_out {
         driver_files.push(DriverFile::new(
             output.clone(),
-            input_record_receipt(stores.world(), &input_path_map, Some(main_input))?,
+            input_record_receipt(
+                stores.world(),
+                &input_path_map,
+                &resolved_inputs,
+                Some(main_input),
+            )?,
         ));
     }
     let effect_pos = stores.world().effect_pos();
@@ -576,30 +582,22 @@ impl RunCliOptions {
 fn input_record_receipt(
     world: &World,
     path_map: &BTreeMap<PathBuf, PathBuf>,
+    resolved_inputs: &[(PathBuf, usize)],
     main_input: Option<(PathBuf, usize)>,
 ) -> Result<Vec<u8>, CliError> {
     let mut records = BTreeMap::<PathBuf, usize>::new();
+    for (path, len) in resolved_inputs {
+        insert_input_record(&mut records, path.clone(), *len)?;
+    }
     for record in world.input_records() {
         let path = path_map
             .get(record.path())
             .cloned()
             .unwrap_or_else(|| record.path().to_owned());
-        match records.entry(path) {
-            std::collections::btree_map::Entry::Vacant(entry) => {
-                entry.insert(record.len());
-            }
-            std::collections::btree_map::Entry::Occupied(entry) => {
-                if *entry.get() != record.len() {
-                    return Err(CliError::InputReceipt(format!(
-                        "input changed length while the job was running: {}",
-                        record.path().display()
-                    )));
-                }
-            }
-        }
+        insert_input_record(&mut records, path, record.len())?;
     }
     if let Some((path, len)) = main_input {
-        records.insert(path, len);
+        insert_input_record(&mut records, path, len)?;
     }
 
     let mut receipt = Vec::new();
@@ -621,6 +619,27 @@ fn input_record_receipt(
         receipt.push(b'\n');
     }
     Ok(receipt)
+}
+
+fn insert_input_record(
+    records: &mut BTreeMap<PathBuf, usize>,
+    path: PathBuf,
+    len: usize,
+) -> Result<(), CliError> {
+    match records.entry(path) {
+        std::collections::btree_map::Entry::Vacant(entry) => {
+            entry.insert(len);
+        }
+        std::collections::btree_map::Entry::Occupied(entry) => {
+            if *entry.get() != len {
+                return Err(CliError::InputReceipt(format!(
+                    "input changed length while the job was running: {}",
+                    entry.key().display()
+                )));
+            }
+        }
+    }
+    Ok(())
 }
 
 fn format_token(token: Token, stores: &Universe) -> String {

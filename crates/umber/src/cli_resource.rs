@@ -114,6 +114,7 @@ pub struct NativeAcceptedRun {
     pub output: MemoryRunOutput,
     pub finalization: AcceptedFinalization,
     pub input_path_map: BTreeMap<PathBuf, PathBuf>,
+    pub resolved_inputs: Vec<(PathBuf, usize)>,
     pub main_input: (PathBuf, usize),
 }
 
@@ -124,6 +125,7 @@ pub fn run_for_finalization(
     let mut session = NativeCompileSession::new(options, &cancellation)?;
     let output = session.compile(&cancellation)?;
     let input_path_map = session.local.input_path_map();
+    let resolved_inputs = session.local.resolved_inputs();
     let main_input = (options.input.clone(), session.source.len());
     let mut finalization = session.into_accepted_finalization()?;
     finalization
@@ -135,6 +137,7 @@ pub fn run_for_finalization(
         output,
         finalization,
         input_path_map,
+        resolved_inputs,
         main_input,
     })
 }
@@ -339,6 +342,7 @@ struct LocalResolver {
     input: TexInputSearchPath,
     font: TexFontSearchPath,
     input_paths: RefCell<BTreeMap<PathBuf, PathBuf>>,
+    resolved_inputs: RefCell<Vec<(PathBuf, usize)>>,
 }
 
 impl LocalResolver {
@@ -358,6 +362,7 @@ impl LocalResolver {
             input: TexInputSearchPath::new(&base, areas("TEXINPUTS")),
             font: TexFontSearchPath::new(base, areas("TEXFONTS")),
             input_paths: RefCell::new(BTreeMap::new()),
+            resolved_inputs: RefCell::new(Vec::new()),
         }
     }
 
@@ -380,6 +385,9 @@ impl LocalResolver {
         }
         .ok()?;
         let bytes = content.bytes().to_vec();
+        self.resolved_inputs
+            .borrow_mut()
+            .push((content.path().to_owned(), bytes.len()));
         let digest = FileContentId::for_bytes(&bytes);
         let virtual_path = PathBuf::from(format!("/texlive/local/{digest}"));
         self.input_paths
@@ -411,6 +419,9 @@ impl LocalResolver {
         .ok()?;
         let path = content.path().to_owned();
         let bytes = content.bytes().to_vec();
+        self.resolved_inputs
+            .borrow_mut()
+            .push((path.clone(), bytes.len()));
         let digest = FileContentId::for_bytes(&bytes);
         let virtual_path = PathBuf::from(format!("/texlive/local/{digest}"));
         self.input_paths
@@ -426,6 +437,10 @@ impl LocalResolver {
 
     fn input_path_map(&self) -> BTreeMap<PathBuf, PathBuf> {
         self.input_paths.borrow().clone()
+    }
+
+    fn resolved_inputs(&self) -> Vec<(PathBuf, usize)> {
+        self.resolved_inputs.borrow().clone()
     }
 }
 

@@ -83,6 +83,8 @@ cache I/O remain above the session and engine boundaries in `umber-fetch`.
 Native CLI discovery permits up to the validated hard ceiling of 128 compile
 attempts so a large local TeX closure can be discovered incrementally; the
 host-neutral session default remains 32, and both paths reject unbounded retry.
+The CLI input receipt accumulates successfully resolved required local files
+across those attempts, rather than reporting only the final resumed suffix.
 
 `umber-vfs` owns file request identity, required-versus-hint file batches,
 generic response validation, request-bound resolved origins, layered session

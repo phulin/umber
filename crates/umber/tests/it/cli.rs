@@ -1297,11 +1297,14 @@ fn run_writes_a_sorted_deduplicated_input_record_receipt() {
     let temp_dir = tempfile::tempdir().expect("create input receipt temp dir");
     let source = temp_dir.path().join("main.tex");
     let helper = temp_dir.path().join("helper.tex");
+    let nested = temp_dir.path().join("nested.tex");
     let receipt = temp_dir.path().join("inputs.tsv");
     let source_bytes = b"\\input helper \\input helper \\end\n";
-    let helper_bytes = b"\\relax\n";
+    let helper_bytes = b"\\input nested \\relax\n";
+    let nested_bytes = b"\\relax\n";
     fs::write(&source, source_bytes).expect("write principal input");
     fs::write(&helper, helper_bytes).expect("write included input");
+    fs::write(&nested, nested_bytes).expect("write nested input");
 
     let output = Command::new(env!("CARGO_BIN_EXE_umber"))
         .env("SOURCE_DATE_EPOCH", PINNED_SOURCE_DATE_EPOCH)
@@ -1318,11 +1321,13 @@ fn run_writes_a_sorted_deduplicated_input_record_receipt() {
         String::from_utf8_lossy(&output.stderr)
     );
     let expected = format!(
-        "{}\t{}\n{}\t{}\n",
+        "{}\t{}\n{}\t{}\n{}\t{}\n",
         helper_bytes.len(),
         helper.display(),
         source_bytes.len(),
-        source.display()
+        source.display(),
+        nested_bytes.len(),
+        nested.display()
     );
     assert_eq!(
         fs::read_to_string(receipt).expect("read input receipt"),
