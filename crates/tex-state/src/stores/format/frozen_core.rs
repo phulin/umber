@@ -347,10 +347,14 @@ fn decode_tokens(
     Ok((tokens, rows))
 }
 
+type SemanticAtom = (u64, ContentHash);
+type EncodedToken = (u64, Token, Option<SemanticAtom>);
+type DecodedToken = (FormatToken, Token, Option<SemanticAtom>);
+
 fn encode_token(
     token: &FormatToken,
     names: &[FormatName],
-) -> Result<(u64, Token, Option<(u64, ContentHash)>), StoreFormatError> {
+) -> Result<EncodedToken, StoreFormatError> {
     const TAG_SHIFT: u32 = 56;
     Ok(match *token {
         FormatToken::Char { ch, cat } => {
@@ -396,10 +400,7 @@ fn encode_token(
     })
 }
 
-fn decode_token(
-    word: u64,
-    interner: &Interner,
-) -> Result<(FormatToken, Token, Option<(u64, ContentHash)>), StoreFormatError> {
+fn decode_token(word: u64, interner: &Interner) -> Result<DecodedToken, StoreFormatError> {
     let tag = word >> 56;
     let payload = word & 0x00ff_ffff_ffff_ffff;
     match tag {
@@ -461,7 +462,7 @@ fn strong_semantic_atom(kind: ControlSequenceKind, name: &str) -> (u64, ContentH
     bytes.extend_from_slice(name.as_bytes());
     (
         semantic_atom(kind, name),
-        crate::state_hash::strong_identity_bytes(b"umber-control-sequence-v1", &bytes),
+        crate::state_hash::semantic_identity_bytes(b"umber-control-sequence-v1", &bytes),
     )
 }
 

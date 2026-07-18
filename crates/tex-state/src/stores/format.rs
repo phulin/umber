@@ -1474,7 +1474,9 @@ fn install_frozen_sections(
         if semantic_id.value() != expected_fingerprint {
             return Err(StoreFormatError::Invalid("frozen node semantic identity"));
         }
-        stores.survivors.set_frozen_semantic_id(id, semantic_id);
+        if id.len() != 0 {
+            stores.survivors.set_frozen_semantic_id(id, semantic_id);
+        }
     }
     let mut base = Vec::with_capacity(format.env.len());
     for entry in format.env {

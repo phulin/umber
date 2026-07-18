@@ -316,7 +316,7 @@ impl SurvivorArena {
                 semantic_id,
             })
             .collect();
-        self.allocate_root(root, storage, spans);
+        self.allocate_root(root, storage, spans, Vec::new());
     }
 
     pub(crate) fn retained_payload_bytes(&self) -> usize {
