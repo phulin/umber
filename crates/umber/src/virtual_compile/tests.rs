@@ -234,6 +234,12 @@ fn parent_relative_paths_are_opaque_requests_and_missing_main_is_typed() {
         CompileAttemptResult::Error(CompileError::InvalidRequestedPath { .. })
     ));
 
+    let mut foreign_platform_area = session("\\input :texsys.aux \\end");
+    assert!(matches!(
+        foreign_platform_area.compile_attempt(),
+        CompileAttemptResult::Error(CompileError::InvalidRequestedPath { .. })
+    ));
+
     let mut absolute = session("\\input /job/secret \\end");
     assert!(matches!(
         absolute.compile_attempt(),
@@ -1519,19 +1525,30 @@ fn format_macro_reads_same_run_output_after_an_authoritative_missing_probe() {
 }
 
 #[test]
-fn invalid_openin_probe_uses_tex_missing_file_semantics() {
-    let mut session = session(
-        "\\openin0=:texsys.aux \\ifeof0 \\message{INVALID-PROBE-MISSING}\\else \\errmessage{unexpected invalid probe}\\fi \\end",
+fn legacy_platform_openin_probes_are_not_found_without_weakening_vfs_paths() {
+    let mut bracket = session(
+        "\\openin0=[]texsys.aux \\ifeof0 \\message{BRACKET-MISSING}\\else \\errmessage{unexpected bracket file}\\fi \\end",
     );
-    let CompileAttemptResult::Complete(output) = session.compile_attempt() else {
-        panic!("invalid openin probe should complete without requesting a resource");
+    let missing = probes(bracket.compile_attempt());
+    assert_eq!(missing.len(), 1);
+    assert_eq!(missing[0].original_name(), "[]texsys.aux");
+    bracket
+        .provide_resources(vec![ResourceResponse::FileUnavailable(
+            missing[0].key().clone(),
+        )])
+        .expect("negative bracket-area response");
+    let CompileAttemptResult::Complete(output) = bracket.compile_attempt() else {
+        panic!("negative bracket-area probe should leave the stream closed");
     };
-    assert!(
-        output
-            .terminal
-            .windows(b"INVALID-PROBE-MISSING".len())
-            .any(|window| window == b"INVALID-PROBE-MISSING")
+    assert!(String::from_utf8_lossy(&output.terminal).contains("BRACKET-MISSING"));
+
+    let mut colon = session(
+        "\\openin0=:texsys.aux \\ifeof0 \\message{COLON-MISSING}\\else \\errmessage{unexpected colon file}\\fi \\end",
     );
+    let CompileAttemptResult::Complete(output) = colon.compile_attempt() else {
+        panic!("foreign-platform colon probe should be an immediate miss");
+    };
+    assert!(String::from_utf8_lossy(&output.terminal).contains("COLON-MISSING"));
 }
 
 #[test]
@@ -1599,6 +1616,30 @@ fn invalid_and_absolute_file_enquiries_are_missing_without_host_access() {
                 .any(|window| window == expected)
         );
     }
+}
+
+#[test]
+fn invalid_legacy_platform_filesize_probe_expands_to_nothing() {
+    let mut stores = Universe::with_world(World::memory());
+    prepare_run_stores(&mut stores);
+    tex_expand::install_latex_expandable_primitives(&mut stores);
+    let format = stores.dump_format().expect("dump format");
+    let mut session = VirtualCompileSession::new(SessionOptions {
+        format: Some(format),
+        ..SessionOptions::default()
+    })
+    .expect("formatted session");
+    session
+        .add_user_file(
+            "main.tex",
+            b"\\message{COLON-SIZE=[\\filesize{:texsys.aux}]}\\end".to_vec(),
+        )
+        .expect("main source");
+
+    let CompileAttemptResult::Complete(output) = session.compile_attempt() else {
+        panic!("foreign-platform file-size probe should be an immediate miss");
+    };
+    assert!(String::from_utf8_lossy(&output.terminal).contains("COLON-SIZE=[]"));
 }
 
 #[test]
