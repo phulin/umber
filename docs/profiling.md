@@ -1260,3 +1260,48 @@ path-separated check retained 863/873 hits and 101,166 skipped commands, with
 DVI and schedules. The change is accepted because it removes duplicated
 semantic values and most retained metadata without moving validation or cold
 time in the wrong direction.
+
+### Post-main vfqs release gate
+
+After rebasing the completed series onto `main` at `c1fefbc0`, the final
+uninstrumented release gate used twenty balanced AB/BA runs after two warmups:
+
+```bash
+cargo run -q --profile profiling -p umber --bin gentle-profile \
+  --features profiling-runner -- \
+  --repo-root /path/to/umber2 --incremental-edit --iterations 20 --warmups 2
+```
+
+Paragraph-enabled minus disabled results were:
+
+| Path                                        |       Mean |     Median |
+| ------------------------------------------- | ---------: | ---------: |
+| Slow pagination-changing edits              | -35.842 ms | -35.793 ms |
+| Slow edits plus complete one-time priming   | -15.761 ms | -16.515 ms |
+| Cross-generation interaction                |  -1.989 ms |  -2.147 ms |
+| Independent fast suffix adoption            |  +0.362 ms |  +0.541 ms |
+| Forced line-result rebreak                  |  +1.923 ms |  +3.841 ms |
+| Priming plus the complete five-edit history | -15.465 ms | -16.958 ms |
+
+Memo-disabled and paragraph-enabled priming means were 131.239 and 151.319 ms.
+Each slow edit replayed 863 of 865 eligible paragraphs, skipped 101,166
+commands, and reduced executed commands from 41,334 to 11,113. The stricter
+eligible count reflects the final group-transition correctness barrier: eight
+macro-started records that cannot reproduce entry-frame ownership are no
+longer published. The only remaining slow-path validation miss is one retained
+result. The fast path independently retained 14 pages, re-shipped three, and
+adopted the 83-page suffix as one subtree. Every policy/revision combination
+kept the same named-boundary schedule and emitted the cold oracle's exact DVI.
+
+Samply failed before recording with macOS error 1100, so matching ten-second
+native `sample` captures were taken from 100-advance profiling builds. The slow
+capture contained 8,226 main-thread samples. Aligned paragraph replay had 590
+inclusive samples (7.17%), while the replay-specific retained-line mount had
+10 (0.12%). The dominant structural subtrees remained ordinary downstream
+work: alignment had 1,255 samples (15.26%), output draining 1,091 (13.26%),
+shipout 709 (8.62%), and direct shipout staging 464 (5.64%). Allocator,
+reallocation, and memory-movement frames were distributed throughout those
+subtrees. The corresponding isolated slow run averaged 144.747 ms with 120.396
+ms in the executor; 863 paragraph hits per advance skipped 101,166 commands.
+This confirms that paragraph replay now saves material work and that its next
+roofline is page/output reconstruction, not another replay-cache layer.
