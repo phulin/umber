@@ -107,16 +107,30 @@ pub(super) fn list_keys<'a>(result: &'a BibResult, section: u32, list_id: &str) 
 }
 
 pub(super) fn output_entry(result: &BibResult, key: &str) -> Option<String> {
+    output_entry_nth(result, key, 0)
+}
+
+pub(super) fn output_entry_nth(result: &BibResult, key: &str, occurrence: usize) -> Option<String> {
     let bytes = result
         .files()
         .find(|file| file.path().as_str().ends_with(".bbl"))?
         .bytes();
     let output = std::str::from_utf8(bytes).expect("native BBL is UTF-8");
     let marker = format!("    \\entry{{{key}}}");
-    let start = output.find(&marker)?;
+    let start = output.match_indices(&marker).nth(occurrence)?.0;
     let relative_end = output[start..].find("    \\endentry\n")?;
     let end = start + relative_end + "    \\endentry\n".len();
     Some(output[start..end].to_owned())
+}
+
+pub(super) fn section_entry_keys(result: &BibResult, section: u32) -> Vec<&str> {
+    result
+        .document()
+        .section(SectionId::new(section))
+        .expect("upstream section")
+        .entries()
+        .map(|entry| entry.id().as_str())
+        .collect()
 }
 
 #[test]
