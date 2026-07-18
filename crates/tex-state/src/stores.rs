@@ -1551,6 +1551,30 @@ impl Stores {
         right: LigKernChar,
     ) -> Option<LigKernCommand> {
         let loaded = self.font(font);
+        self.lig_kern_command_with_loaded(font, loaded, left, right)
+    }
+
+    #[must_use]
+    pub fn tfm_lig_kern_command(
+        &self,
+        font: FontId,
+        left: LigKernChar,
+        right: LigKernChar,
+    ) -> Option<LigKernCommand> {
+        let loaded = self.font(font);
+        if !loaded.uses_tfm_metrics() {
+            return None;
+        }
+        self.lig_kern_command_with_loaded(font, loaded, left, right)
+    }
+
+    fn lig_kern_command_with_loaded(
+        &self,
+        font: FontId,
+        loaded: &LoadedFont,
+        left: LigKernChar,
+        right: LigKernChar,
+    ) -> Option<LigKernCommand> {
         if let LigKernChar::Char(code) = left
             && self.pdf_font_code_with_loaded(PdfFontCode::Tag, font, code, loaded) & 1 == 0
         {

@@ -938,9 +938,8 @@ fn reconstitution_step(
     next: PendingHRunChar,
 ) -> ReconstitutionStep {
     if current.font == next.font
-        && stores.font_uses_tfm_metrics(current.font)
         && let (Ok(left), Ok(right)) = (font_code(current.ch), font_code(next.ch))
-        && let Some(command) = stores.lig_kern_command(
+        && let Some(command) = stores.tfm_lig_kern_command(
             current.font,
             LigKernChar::Char(left),
             LigKernChar::Char(right),
@@ -1025,14 +1024,11 @@ fn boundary_command_node(
     current: crate::mode::PendingHChar,
     left: bool,
 ) -> Option<Node> {
-    if !stores.font_uses_tfm_metrics(current.font) {
-        return None;
-    }
     let code = font_code(current.ch).ok()?;
     let command = if left {
-        stores.lig_kern_command(current.font, LigKernChar::Boundary, LigKernChar::Char(code))?
+        stores.tfm_lig_kern_command(current.font, LigKernChar::Boundary, LigKernChar::Char(code))?
     } else {
-        stores.lig_kern_command(current.font, LigKernChar::Char(code), LigKernChar::Boundary)?
+        stores.tfm_lig_kern_command(current.font, LigKernChar::Char(code), LigKernChar::Boundary)?
     };
     match command {
         LigKernCommand::Kern(amount) => Some(Node::Kern {
@@ -1049,11 +1045,12 @@ fn boundary_command_node(
 }
 
 fn right_boundary_kern(stores: &Universe, current: &PendingHRunChar) -> Option<Node> {
-    if !stores.font_uses_tfm_metrics(current.font) {
-        return None;
-    }
     let code = font_code(current.ch).ok()?;
-    match stores.lig_kern_command(current.font, LigKernChar::Char(code), LigKernChar::Boundary)? {
+    match stores.tfm_lig_kern_command(
+        current.font,
+        LigKernChar::Char(code),
+        LigKernChar::Boundary,
+    )? {
         LigKernCommand::Kern(amount) => Some(Node::Kern {
             amount,
             kind: KernKind::Font,

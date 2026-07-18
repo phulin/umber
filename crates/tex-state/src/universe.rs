@@ -4598,6 +4598,16 @@ impl Universe {
     }
 
     #[must_use]
+    pub fn tfm_lig_kern_command(
+        &self,
+        font: FontId,
+        left: LigKernChar,
+        right: LigKernChar,
+    ) -> Option<LigKernCommand> {
+        self.stores.tfm_lig_kern_command(font, left, right)
+    }
+
+    #[must_use]
     pub fn pdf_font_code(&self, table: crate::font::PdfFontCode, font: FontId, code: u8) -> i32 {
         self.stores.pdf_font_code(table, font, code)
     }
