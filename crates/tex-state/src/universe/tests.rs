@@ -856,7 +856,7 @@ fn format_with_box_glue_set(glue_set: GlueSetRatio) -> Vec<u8> {
 }
 
 #[test]
-fn format_v9_round_trips_tex_web_box_shift_and_rejects_v8() {
+fn format_v10_round_trips_tex_web_box_shift_and_rejects_legacy_v9() {
     let mut universe = Universe::with_world(World::memory());
     let children = universe.freeze_node_list(&[]);
     let root = universe.freeze_node_list(&[Node::HList(BoxNode::new(BoxNodeFields {
@@ -873,55 +873,62 @@ fn format_v9_round_trips_tex_web_box_shift_and_rejects_v8() {
     universe.set_box_reg(19, root);
 
     let bytes = universe.dump_format().expect("format encodes");
-    assert_eq!(&bytes[8..12], &9_u32.to_le_bytes());
-    let restored = Universe::from_format(World::memory(), &bytes).expect("v9 format restores");
+    assert_eq!(&bytes[8..12], &10_u32.to_le_bytes());
+    let restored = Universe::from_format(World::memory(), &bytes).expect("v10 format restores");
     let restored_root = restored.box_reg(19).expect("box register restores");
     let [Node::HList(boxed)] = restored.nodes(restored_root).testing_decoded() else {
         panic!("box register should contain an hlist");
     };
     assert_eq!(boxed.shift, Scaled::from_raw(-4));
 
-    let mut v8 = bytes;
-    v8[8..12].copy_from_slice(&8_u32.to_le_bytes());
+    let mut v9 = bytes;
+    v9[8..12].copy_from_slice(&9_u32.to_le_bytes());
     assert!(matches!(
-        Universe::from_format(World::memory(), &v8),
-        Err(super::FormatError::UnsupportedVersion(8))
+        Universe::from_format(World::memory(), &v9),
+        Err(super::FormatError::UnsupportedVersion(9))
     ));
 }
 
 fn replace_format_ratio(bytes: &mut [u8], old: (i32, i32), new: (i32, i32)) {
-    const HEADER: usize = 29;
+    let section = crate::format_container::decode(bytes)
+        .expect("decode test container")
+        .section(crate::format_container::TRANSITIONAL_SEMANTIC_SECTION)
+        .expect("semantic section");
+    let range = section.offset..section.offset + section.bytes.len();
     let old = [old.0.to_le_bytes(), old.1.to_le_bytes()].concat();
     let replacement = [new.0.to_le_bytes(), new.1.to_le_bytes()].concat();
-    let offsets: Vec<_> = bytes[HEADER..]
+    let offsets: Vec<_> = bytes[range.clone()]
         .windows(old.len())
         .enumerate()
-        .filter_map(|(offset, window)| (window == old).then_some(HEADER + offset))
+        .filter_map(|(offset, window)| (window == old).then_some(range.start + offset))
         .collect();
     assert_eq!(offsets.len(), 1, "ratio wire must occur exactly once");
     bytes[offsets[0]..offsets[0] + replacement.len()].copy_from_slice(&replacement);
 }
 
 fn refresh_format_checksum(bytes: &mut [u8]) {
-    const HEADER: usize = 29;
-    let checksum = super::format_checksum(bytes[12], &bytes[HEADER..]);
-    bytes[21..29].copy_from_slice(&checksum.to_le_bytes());
+    crate::format_container::refresh_checksum(bytes);
 }
 
 fn replace_store_format_payload(bytes: &mut Vec<u8>, payload: Vec<u8>) {
-    const HEADER: usize = 29;
-    bytes.truncate(HEADER);
-    bytes[13..21].copy_from_slice(&(payload.len() as u64).to_le_bytes());
-    bytes.extend_from_slice(&payload);
-    refresh_format_checksum(bytes);
+    *bytes = crate::format_container::encode(&[crate::format_container::SectionInput {
+        kind: crate::format_container::TRANSITIONAL_SEMANTIC_SECTION,
+        alignment: 8,
+        bytes: &payload,
+    }])
+    .expect("re-encode test container");
 }
 
 fn corrupt_font_store_payload(
     bytes: &[u8],
     corruption: crate::stores::TestingFontFormatCorruption,
 ) -> Vec<u8> {
+    let container = crate::format_container::decode(bytes).expect("decode test container");
+    let section = container
+        .section(crate::format_container::TRANSITIONAL_SEMANTIC_SECTION)
+        .expect("semantic section");
     let mut format: super::UniverseFormatPayload =
-        bincode::deserialize(&bytes[29..]).expect("test universe format payload");
+        bincode::deserialize(section.bytes).expect("test universe format payload");
     format.stores = crate::stores::testing_corrupt_font_format(&format.stores, corruption);
     bincode::serialize(&format).expect("corrupted universe format payload")
 }

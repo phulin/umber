@@ -898,12 +898,15 @@ pub enum FormatError {
     Truncated,
     TrailingBytes,
     Checksum,
+    IncompatibleAbi(u64),
+    IncompatibleLookupConfiguration(u64),
     InvalidInteractionMode(u8),
     InvalidState(String),
 }
 
 #[derive(Deserialize, Serialize)]
 struct UniverseFormatPayload {
+    interaction_mode: u8,
     stores: Vec<u8>,
     pdf: PdfFormatState,
 }
@@ -924,6 +927,13 @@ impl std::fmt::Display for FormatError {
             Self::Truncated => f.write_str("truncated Umber format file"),
             Self::TrailingBytes => f.write_str("trailing bytes in Umber format file"),
             Self::Checksum => f.write_str("Umber format checksum mismatch"),
+            Self::IncompatibleAbi(found) => {
+                write!(f, "incompatible Umber format ABI fingerprint {found:#018x}")
+            }
+            Self::IncompatibleLookupConfiguration(found) => write!(
+                f,
+                "incompatible Umber format lookup configuration {found:#018x}"
+            ),
             Self::InvalidInteractionMode(mode) => {
                 write!(f, "invalid format interaction mode {mode}")
             }
@@ -1133,8 +1143,7 @@ impl Default for Universe {
 }
 
 impl Universe {
-    const FORMAT_MAGIC: [u8; 8] = *b"UMBRFMT\0";
-    pub const FORMAT_SCHEMA_VERSION: u32 = 9;
+    pub const FORMAT_SCHEMA_VERSION: u32 = crate::format_container::SCHEMA_VERSION;
 
     /// Creates an isolated TeX state timeline.
     #[must_use]
@@ -1263,7 +1272,9 @@ impl Universe {
     ///
     /// Host effects, provenance, checkpoints, journals, caches, and input
     /// cursors are intentionally absent. The image is deterministic for one
-    /// semantic state and carries an explicit schema version and checksum.
+    /// semantic state in the transitional section of the portable schema-10
+    /// container. Later schemas can replace that section with frozen stores
+    /// without changing the fixed-width outer ABI.
     pub fn dump_format(&self) -> Result<Vec<u8>, FormatError> {
         if !self.input_summary.is_empty() {
             return Err(FormatError::NonEmptyInput);
@@ -1279,51 +1290,38 @@ impl Universe {
             .stores
             .encode_format()
             .map_err(map_store_format_error)?;
-        let payload = bincode::serialize(&UniverseFormatPayload { stores, pdf })
-            .map_err(|error| FormatError::InvalidState(error.to_string()))?;
-        let mode = encode_interaction_mode(self.interaction_mode);
-        let checksum = format_checksum(mode, &payload);
-        let mut bytes = Vec::with_capacity(29 + payload.len());
-        bytes.extend_from_slice(&Self::FORMAT_MAGIC);
-        bytes.extend_from_slice(&Self::FORMAT_SCHEMA_VERSION.to_le_bytes());
-        bytes.push(mode);
-        bytes.extend_from_slice(&(payload.len() as u64).to_le_bytes());
-        bytes.extend_from_slice(&checksum.to_le_bytes());
-        bytes.extend_from_slice(&payload);
-        Ok(bytes)
+        let payload = bincode::serialize(&UniverseFormatPayload {
+            interaction_mode: encode_interaction_mode(self.interaction_mode),
+            stores,
+            pdf,
+        })
+        .map_err(|error| FormatError::InvalidState(error.to_string()))?;
+        crate::format_container::encode(&[crate::format_container::SectionInput {
+            kind: crate::format_container::TRANSITIONAL_SEMANTIC_SECTION,
+            alignment: 8,
+            bytes: &payload,
+        }])
+        .map_err(map_container_error)
     }
 
     /// Constructs a fresh timeline from a validated semantic format image.
     pub fn from_format(world: World, bytes: &[u8]) -> Result<Self, FormatError> {
-        const HEADER: usize = 29;
-        if bytes.len() < HEADER {
-            return Err(FormatError::Truncated);
+        let container = crate::format_container::decode(bytes).map_err(map_container_error)?;
+        if container.sections.len() != 1 {
+            return Err(FormatError::InvalidState(
+                "schema-10 transition requires exactly one semantic section".to_owned(),
+            ));
         }
-        if bytes[..8] != Self::FORMAT_MAGIC {
-            return Err(FormatError::BadMagic);
-        }
-        let version = u32::from_le_bytes(bytes[8..12].try_into().expect("fixed header slice"));
-        if version != Self::FORMAT_SCHEMA_VERSION {
-            return Err(FormatError::UnsupportedVersion(version));
-        }
-        let mode_byte = bytes[12];
-        let mode = decode_interaction_mode(mode_byte)?;
-        let length = u64::from_le_bytes(bytes[13..21].try_into().expect("fixed header slice"));
-        let length = usize::try_from(length).map_err(|_| FormatError::Truncated)?;
-        let expected = HEADER.checked_add(length).ok_or(FormatError::Truncated)?;
-        if bytes.len() < expected {
-            return Err(FormatError::Truncated);
-        }
-        if bytes.len() > expected {
-            return Err(FormatError::TrailingBytes);
-        }
-        let checksum = u64::from_le_bytes(bytes[21..29].try_into().expect("fixed header slice"));
-        let payload = &bytes[HEADER..];
-        if checksum != format_checksum(mode_byte, payload) {
-            return Err(FormatError::Checksum);
-        }
-        let format: UniverseFormatPayload = bincode::deserialize(payload)
+        let payload = container
+            .section(crate::format_container::TRANSITIONAL_SEMANTIC_SECTION)
+            .ok_or_else(|| {
+                FormatError::InvalidState(
+                    "schema-10 transition is missing its semantic section".to_owned(),
+                )
+            })?;
+        let format: UniverseFormatPayload = bincode::deserialize(payload.bytes)
             .map_err(|error| FormatError::InvalidState(error.to_string()))?;
+        let mode = decode_interaction_mode(format.interaction_mode)?;
         let mut stores = Stores::decode_format(&format.stores).map_err(map_store_format_error)?;
         let clock = world.job_clock();
         install_job_clock_params(
@@ -1342,7 +1340,7 @@ impl Universe {
             interaction_mode: mode,
             page: page.state_hash_cursor(),
             pdf: pdf.cursor(),
-            checkpoint_hash: checksum,
+            checkpoint_hash: container.checksum,
         };
         Ok(Self {
             owner: UniverseOwner::new(),
@@ -5909,6 +5907,25 @@ fn map_store_format_error(error: StoreFormatError) -> FormatError {
     }
 }
 
+fn map_container_error(error: crate::format_container::ContainerError) -> FormatError {
+    use crate::format_container::ContainerError;
+
+    match error {
+        ContainerError::BadMagic => FormatError::BadMagic,
+        ContainerError::UnsupportedVersion(version) => FormatError::UnsupportedVersion(version),
+        ContainerError::Truncated => FormatError::Truncated,
+        ContainerError::TrailingBytes => FormatError::TrailingBytes,
+        ContainerError::Checksum => FormatError::Checksum,
+        ContainerError::IncompatibleAbi(found) => FormatError::IncompatibleAbi(found),
+        ContainerError::IncompatibleLookupConfiguration(found) => {
+            FormatError::IncompatibleLookupConfiguration(found)
+        }
+        ContainerError::Invalid(message) => {
+            FormatError::InvalidState(format!("invalid portable container: {message}"))
+        }
+    }
+}
+
 const fn encode_interaction_mode(mode: InteractionMode) -> u8 {
     match mode {
         InteractionMode::Batch => 0,
@@ -5926,15 +5943,6 @@ fn decode_interaction_mode(mode: u8) -> Result<InteractionMode, FormatError> {
         3 => Ok(InteractionMode::ErrorStop),
         _ => Err(FormatError::InvalidInteractionMode(mode)),
     }
-}
-
-fn format_checksum(mode: u8, payload: &[u8]) -> u64 {
-    let mut hash = 0xcbf2_9ce4_8422_2325_u64 ^ u64::from(mode);
-    for byte in payload {
-        hash ^= u64::from(*byte);
-        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
-    }
-    hash
 }
 
 fn source_line_starts(bytes: &[u8]) -> Arc<[usize]> {
