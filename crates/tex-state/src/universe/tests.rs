@@ -19,6 +19,7 @@ use crate::provenance::{
     InsertedOriginKind, OriginRecord, SourceOrigin, SynthesizedOriginKind, SyntheticOriginKind,
 };
 use crate::scaled::{GlueSetRatio, Scaled};
+use crate::source_fragments::{EditorLayout, FragmentStore, LayoutGeneration, Piece};
 use crate::source_map::{SourceDescriptor, SourceMapError};
 use crate::token::{Catcode, OriginId, Token, TracedTokenWord};
 use crate::world::{
@@ -118,6 +119,39 @@ fn inserted_origin_classification_skips_direct_source_resolution() {
 
     assert!(!universe.origin_is_inserted_kind(direct, InsertedOriginKind::NoExpand));
     assert!(universe.origin_is_inserted_kind(noexpand, InsertedOriginKind::NoExpand));
+}
+
+#[test]
+fn editor_fragment_origin_remains_live_across_universe_rollback() {
+    let mut fragments = FragmentStore::new();
+    let (fragment, registration) = fragments
+        .testing_append_at(Arc::from(&b"editor"[..]), 1, 100)
+        .expect("fragment append");
+    let layout = EditorLayout::new(
+        "root.tex",
+        LayoutGeneration::new(1),
+        vec![Piece::new(fragment, 0, 6)],
+        &fragments,
+    )
+    .expect("editor layout");
+    let mut universe = Universe::new();
+    universe
+        .install_editor_fragments(&fragments, &layout)
+        .expect("fragment installation");
+    let origin = registration
+        .direct_origin(1, 2)
+        .expect("direct fragment origin");
+    let expected = registration.span(1, 2).expect("fragment span");
+    let snapshot = universe.snapshot();
+
+    let _discarded = universe.synthetic_origin(SyntheticOriginKind::Test);
+    universe.rollback(&snapshot);
+
+    assert_eq!(
+        universe.origin_if_live(origin),
+        Some(OriginRecord::SourceSpan(expected))
+    );
+    assert_eq!(universe.origin(origin), OriginRecord::SourceSpan(expected));
 }
 
 #[test]

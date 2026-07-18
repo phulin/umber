@@ -55,7 +55,7 @@ use crate::provenance::{
     SynthesizedOriginKind, SyntheticOrigin, SyntheticOriginKind,
 };
 use crate::scaled::Scaled;
-use crate::source_fragments::FragmentStore;
+use crate::source_fragments::{FragmentStore, direct_fragment_span};
 use crate::source_map::{
     GeneratedSource, SourceBacking, SourceDescriptor, SourceMap, SourceMapError, SourceMapMark,
     SourcePos, SourceRegion, SourceSpan,
@@ -1215,6 +1215,11 @@ impl Stores {
             source = source.with_input_record(record);
         }
         Some(source)
+    }
+
+    /// Resolves a direct origin minted by the installed editor fragment store.
+    pub(crate) fn direct_fragment_origin_span(&self, origin: OriginId) -> Option<SourceSpan> {
+        direct_fragment_span(origin, &self.source_fragments)
     }
 
     fn direct_source_span(&self, position: SourcePos) -> SourceSpan {

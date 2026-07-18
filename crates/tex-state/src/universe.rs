@@ -4178,6 +4178,9 @@ impl Universe {
     #[must_use]
     pub fn origin_if_live(&self, id: OriginId) -> Option<OriginRecord> {
         if let crate::token::OriginEncoding::DirectSource(position) = id.decode() {
+            if let Some(span) = self.stores.direct_fragment_origin_span(id) {
+                return Some(OriginRecord::SourceSpan(span));
+            }
             let source = self.stores.source_origin_at_position(position)?;
             let region = self.stores.source_region(source.source())?;
             let bytes = self.source_backing_bytes(region)?;
