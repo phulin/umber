@@ -445,8 +445,9 @@ fn semantic_format_is_deterministic_validated_and_world_independent() {
         .node_semantic_id(universe.box_reg(7).expect("promoted box register"));
 
     let first = universe.dump_format().expect("format encode");
+    let _retained_checkpoint = universe.snapshot();
     let second = universe.dump_format().expect("deterministic format encode");
-    assert_eq!(first, second);
+    assert_eq!(first, second, "retained checkpoints are not format state");
 
     let restored = Universe::from_format(World::memory(), &first).expect("format decode");
     let restored_name = restored.symbol("answer").expect("restored name");
@@ -619,12 +620,16 @@ fn frozen_foundational_sections_restore_ids_and_accept_job_local_additions() {
     let env_entries = crate::stores::testing_frozen_environment_shape(environment.bytes);
     assert!(env_entries > 0);
 
-    let _ = crate::stores::testing_take_legacy_restore_count();
+    let _ = crate::stores::testing_take_transitional_format_work();
     let mut loaded = Universe::from_format(World::memory(), &image).expect("load frozen core");
     assert_eq!(
-        crate::stores::testing_take_legacy_restore_count(),
-        0,
-        "normal schema-10 loading must not enter legacy semantic reinterning"
+        crate::stores::testing_take_transitional_format_work(),
+        crate::stores::TestingFormatLoadWork {
+            graph_key_remaps: 0,
+            semantic_reseals: 0,
+            assignment_replays: 0,
+        },
+        "normal schema-10 loading must not remap graphs, reseal semantic identities, or replay environment assignments"
     );
     assert_eq!(loaded.dump_format().expect("canonical redump"), image);
     let immutable_base = loaded.stores.env().testing_format_base().to_vec();

@@ -261,6 +261,14 @@ save-stack journaling, grouping, snapshot, and rollback behavior. The retained
 base cells are immutable and shared across environment clones; job mutation
 changes only overlay storage.
 
+The production installation step is separate from the test-only transitional
+DTO restorer. Test instrumentation covers the three prohibited reconstruction
+operations: detached graph-key remapping, node semantic resealing, and raw
+environment assignment replay. The isolated compatibility oracle demonstrates
+that those counters detect its old reconstruction work; an ordinary
+`Universe::from_format` load of the same node/environment classes leaves every
+counter at zero.
+
 ## References and structural validation
 
 Within a section, a reference is either a fixed-width record index or an

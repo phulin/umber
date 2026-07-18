@@ -194,6 +194,8 @@ and frozen node graphs. Loading validates and directly installs immutable
 bases plus mutable job overlays; it never restores host pointers, hash-table
 layout, allocation capacities, journals, checkpoints, input cursors,
 provenance caches, or `World` effects. The official two-phase TRIP workload
-exercises this format path before DVI comparison. Schema 9 images are rejected
+exercises this format path before DVI comparison, while state tests instrument
+the loader to reject regressions into graph remapping, semantic resealing, or
+environment assignment replay. Schema 9 images are rejected
 and regenerated from source; the durable container and frozen-store migration are specified in
 [frozen_format.md](frozen_format.md).

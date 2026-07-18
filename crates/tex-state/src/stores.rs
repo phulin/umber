@@ -81,10 +81,10 @@ pub(crate) use format::{
 };
 #[cfg(test)]
 pub(crate) use format::{
-    TestingFontFormatCorruption, testing_corrupt_environment_box_reference,
+    TestingFontFormatCorruption, TestingFormatLoadWork, testing_corrupt_environment_box_reference,
     testing_corrupt_environment_global_cell, testing_corrupt_environment_macro_reference,
     testing_corrupt_font_format, testing_frozen_environment_shape,
-    testing_take_legacy_restore_count,
+    testing_take_transitional_format_work,
 };
 
 pub use crate::env::group::{GroupKind, GroupMismatch};

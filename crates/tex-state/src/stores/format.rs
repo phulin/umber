@@ -27,12 +27,39 @@ pub(crate) use frozen_non_node::{
 
 #[cfg(test)]
 std::thread_local! {
-    static LEGACY_RESTORE_COUNT: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static TRANSITIONAL_FORMAT_WORK: std::cell::Cell<TestingFormatLoadWork> =
+        const { std::cell::Cell::new(TestingFormatLoadWork::ZERO) };
 }
 
 #[cfg(test)]
-pub(crate) fn testing_take_legacy_restore_count() -> usize {
-    LEGACY_RESTORE_COUNT.with(|count| count.replace(0))
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct TestingFormatLoadWork {
+    pub(crate) graph_key_remaps: usize,
+    pub(crate) semantic_reseals: usize,
+    pub(crate) assignment_replays: usize,
+}
+
+#[cfg(test)]
+impl TestingFormatLoadWork {
+    const ZERO: Self = Self {
+        graph_key_remaps: 0,
+        semantic_reseals: 0,
+        assignment_replays: 0,
+    };
+}
+
+#[cfg(test)]
+fn record_transitional_format_work(update: impl FnOnce(&mut TestingFormatLoadWork)) {
+    TRANSITIONAL_FORMAT_WORK.with(|work| {
+        let mut current = work.get();
+        update(&mut current);
+        work.set(current);
+    });
+}
+
+#[cfg(test)]
+pub(crate) fn testing_take_transitional_format_work() -> TestingFormatLoadWork {
+    TRANSITIONAL_FORMAT_WORK.with(|work| work.replace(TestingFormatLoadWork::ZERO))
 }
 
 #[cfg(test)]
@@ -356,7 +383,7 @@ impl Stores {
         };
         format.validate_references()?;
         format.validate_font_state()?;
-        format.restore_frozen(core, non_node, node_lists.semantic_ids)
+        install_frozen_sections(format, core, non_node, node_lists.semantic_ids)
     }
 }
 
@@ -493,7 +520,6 @@ impl StoreFormat {
     fn restore(self) -> Result<Stores, StoreFormatError> {
         self.validate_references()?;
         self.validate_font_state()?;
-        LEGACY_RESTORE_COUNT.with(|count| count.set(count.get() + 1));
         self.restore_with_core(None, None)
     }
 
@@ -599,6 +625,7 @@ impl StoreFormat {
                 .map(|node| node.restore(&stores, &node_ids))
                 .collect::<Result<Vec<_>, _>>()?;
             let semantic_id = stores.compute_and_seal_node_semantic_id(&nodes);
+            record_transitional_format_work(|work| work.semantic_reseals += 1);
             let id = stores.nodes.append_with_semantic_id(&nodes, semantic_id);
             node_ids.push((list.key, id));
         }
@@ -636,103 +663,111 @@ impl StoreFormat {
                     return Err(StoreFormatError::Invalid("box value in non-box bank"));
                 }
             };
+            record_transitional_format_work(|work| work.assignment_replays += 1);
             stores.env.restore_raw(cell, word);
         }
         Ok(stores)
     }
+}
 
-    fn restore_frozen(
-        self,
-        frozen: frozen_core::DecodedFrozenCore,
-        non_node: frozen_non_node::DecodedFrozenNonNode,
-        semantic_ids: Vec<crate::node_arena::NodeSemanticId>,
-    ) -> Result<Stores, StoreFormatError> {
-        let mut stores = Stores::new();
-        stores.interner = frozen.interner;
-        stores.tokens = frozen.tokens;
-        stores.macros = frozen.macros;
-        stores.glue = frozen.glue;
-        stores.fonts = non_node.fonts;
-        stores.code_tables = non_node.code_tables;
-        stores.hyphenation = self.hyphenation.into();
-        stores.prepared_mag = non_node.prepared_mag;
-        stores.last_loaded_font = non_node.last_loaded_font;
+/// Publishes the already decoded and cross-section-validated schema-10 bases.
+///
+/// This is deliberately separate from the test-only transitional DTO restore
+/// above. The production loader installs one frozen node root and one immutable
+/// environment base; it never re-enters ordinary node sealing or Env writes.
+fn install_frozen_sections(
+    format: StoreFormat,
+    frozen: frozen_core::DecodedFrozenCore,
+    non_node: frozen_non_node::DecodedFrozenNonNode,
+    semantic_ids: Vec<crate::node_arena::NodeSemanticId>,
+) -> Result<Stores, StoreFormatError> {
+    let mut stores = Stores::new();
+    stores.interner = frozen.interner;
+    stores.tokens = frozen.tokens;
+    stores.macros = frozen.macros;
+    stores.glue = frozen.glue;
+    stores.fonts = non_node.fonts;
+    stores.code_tables = non_node.code_tables;
+    stores.hyphenation = format.hyphenation.into();
+    stores.prepared_mag = non_node.prepared_mag;
+    stores.last_loaded_font = non_node.last_loaded_font;
 
-        if semantic_ids.len() != self.node_lists.len() {
-            return Err(StoreFormatError::Invalid("frozen node identity count"));
-        }
-        let expected_semantic_ids = semantic_ids.clone();
-        let root = stores.survivors.reserve_frozen_root();
-        let mut next_start = 0_u32;
-        let node_ids: Vec<_> = self
-            .node_lists
-            .iter()
-            .map(|list| {
-                let len = u32::try_from(list.nodes.len())
-                    .map_err(|_| StoreFormatError::Invalid("frozen node list exceeds u32"))?;
-                let id = NodeListId::new_survivor(root, next_start, len);
-                next_start = next_start
-                    .checked_add(len)
-                    .ok_or(StoreFormatError::Invalid("frozen node arena exceeds u32"))?;
-                Ok((list.key, id))
-            })
-            .collect::<Result<_, StoreFormatError>>()?;
-        let mut storage = crate::node_arena::NodeStorage::default();
-        let mut spans = Vec::with_capacity(self.node_lists.len());
-        for ((list, expected_id), (_, id)) in self
-            .node_lists
-            .into_iter()
-            .zip(semantic_ids)
-            .zip(node_ids.iter().copied())
-        {
-            let nodes = list
-                .nodes
-                .into_iter()
-                .map(|node| node.restore(&stores, &node_ids))
-                .collect::<Result<Vec<_>, _>>()?;
-            let (start, len) = storage.append(&nodes);
-            if start != id.start() || len != id.len() {
-                return Err(StoreFormatError::Invalid("frozen node span metadata"));
-            }
-            spans.push((start, len, expected_id));
-        }
-        stores.survivors.publish_frozen_root(root, storage, spans);
-        for ((_, id), expected_id) in node_ids.iter().zip(expected_semantic_ids) {
-            let nodes = stores.nodes(*id).to_vec();
-            if stores.compute_node_semantic_id(&nodes) != expected_id {
-                return Err(StoreFormatError::Invalid("frozen node semantic identity"));
-            }
-        }
-        let mut base = Vec::with_capacity(self.env.len());
-        for entry in self.env {
-            let dto_cell = crate::cell::CellId::from_raw(entry.cell)
-                .ok_or(StoreFormatError::Invalid("unknown environment cell"))?;
-            let cell = crate::cell::CellId::new(dto_cell.bank(), dto_cell.index());
-            let word = match (cell.bank(), entry.value) {
-                (crate::cell::BankTag::Box, FormatEnvValue::Box(key)) => {
-                    let id = node_ids
-                        .iter()
-                        .find_map(|(stored, id)| (*stored == key).then_some(*id))
-                        .ok_or(StoreFormatError::Invalid("missing box node list"))?;
-                    NodeListId::encode_box_word(Some(stores.prepare_box_value(id)))
-                }
-                (crate::cell::BankTag::Box, FormatEnvValue::Raw(_)) => {
-                    return Err(StoreFormatError::Invalid("raw box environment value"));
-                }
-                (crate::cell::BankTag::CurrentFont, FormatEnvValue::Raw(word)) => {
-                    restore_current_font_word(&stores, word)?
-                }
-                (_, FormatEnvValue::Raw(word)) => word,
-                (_, FormatEnvValue::Box(_)) => {
-                    return Err(StoreFormatError::Invalid("box value in non-box bank"));
-                }
-            };
-            base.push(crate::env::FormatBaseCell { cell, word });
-        }
-        stores.env.install_format_base(base);
-        Ok(stores)
+    if semantic_ids.len() != format.node_lists.len() {
+        return Err(StoreFormatError::Invalid("frozen node identity count"));
     }
+    let expected_semantic_ids = semantic_ids.clone();
+    let root = stores.survivors.reserve_frozen_root();
+    let mut next_start = 0_u32;
+    let node_ids: Vec<_> = format
+        .node_lists
+        .iter()
+        .map(|list| {
+            let len = u32::try_from(list.nodes.len())
+                .map_err(|_| StoreFormatError::Invalid("frozen node list exceeds u32"))?;
+            let id = NodeListId::new_survivor(root, next_start, len);
+            next_start = next_start
+                .checked_add(len)
+                .ok_or(StoreFormatError::Invalid("frozen node arena exceeds u32"))?;
+            Ok((list.key, id))
+        })
+        .collect::<Result<_, StoreFormatError>>()?;
+    let mut storage = crate::node_arena::NodeStorage::default();
+    let mut spans = Vec::with_capacity(format.node_lists.len());
+    for ((list, expected_id), (_, id)) in format
+        .node_lists
+        .into_iter()
+        .zip(semantic_ids)
+        .zip(node_ids.iter().copied())
+    {
+        let nodes = list
+            .nodes
+            .into_iter()
+            .map(|node| node.restore(&stores, &node_ids))
+            .collect::<Result<Vec<_>, _>>()?;
+        let (start, len) = storage.append(&nodes);
+        if start != id.start() || len != id.len() {
+            return Err(StoreFormatError::Invalid("frozen node span metadata"));
+        }
+        spans.push((start, len, expected_id));
+    }
+    stores.survivors.publish_frozen_root(root, storage, spans);
+    for ((_, id), expected_id) in node_ids.iter().zip(expected_semantic_ids) {
+        let nodes = stores.nodes(*id).to_vec();
+        if stores.compute_node_semantic_id(&nodes) != expected_id {
+            return Err(StoreFormatError::Invalid("frozen node semantic identity"));
+        }
+    }
+    let mut base = Vec::with_capacity(format.env.len());
+    for entry in format.env {
+        let dto_cell = crate::cell::CellId::from_raw(entry.cell)
+            .ok_or(StoreFormatError::Invalid("unknown environment cell"))?;
+        let cell = crate::cell::CellId::new(dto_cell.bank(), dto_cell.index());
+        let word = match (cell.bank(), entry.value) {
+            (crate::cell::BankTag::Box, FormatEnvValue::Box(key)) => {
+                let id = node_ids
+                    .iter()
+                    .find_map(|(stored, id)| (*stored == key).then_some(*id))
+                    .ok_or(StoreFormatError::Invalid("missing box node list"))?;
+                NodeListId::encode_box_word(Some(stores.prepare_box_value(id)))
+            }
+            (crate::cell::BankTag::Box, FormatEnvValue::Raw(_)) => {
+                return Err(StoreFormatError::Invalid("raw box environment value"));
+            }
+            (crate::cell::BankTag::CurrentFont, FormatEnvValue::Raw(word)) => {
+                restore_current_font_word(&stores, word)?
+            }
+            (_, FormatEnvValue::Raw(word)) => word,
+            (_, FormatEnvValue::Box(_)) => {
+                return Err(StoreFormatError::Invalid("box value in non-box bank"));
+            }
+        };
+        base.push(crate::env::FormatBaseCell { cell, word });
+    }
+    stores.env.install_format_base(base);
+    Ok(stores)
+}
 
+impl StoreFormat {
     fn validate_references(&self) -> Result<(), StoreFormatError> {
         if self
             .token_lists
@@ -901,6 +936,8 @@ fn canonicalize_node_list_keys(node_lists: &mut [FormatNodeList], env: &mut [For
     for list in node_lists {
         for node in &mut list.nodes {
             node.remap_list_keys(&keys);
+            #[cfg(test)]
+            record_transitional_format_work(|work| work.graph_key_remaps += 1);
         }
         list.key = keys[&list.key];
     }

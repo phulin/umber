@@ -79,6 +79,27 @@ fn environment_dto_codec_preserves_full_30_bit_cell_indices() {
 }
 
 #[test]
+fn isolated_transitional_restore_instrumentation_observes_prohibited_load_work() {
+    let mut stores = Stores::new();
+    let child = stores.freeze_node_list(&[Node::Penalty(7)]);
+    let root = stores.freeze_node_list(&[Node::Adjust(child)]);
+    stores.set_box_reg(0, root);
+    stores.set_count(0, 17);
+
+    let _ = super::testing_take_transitional_format_work();
+    let bytes = stores
+        .encode_format()
+        .expect("encode transitional test DTO");
+    let capture_work = super::testing_take_transitional_format_work();
+    assert!(capture_work.graph_key_remaps > 0);
+
+    Stores::decode_format(&bytes).expect("restore transitional test DTO");
+    let restore_work = super::testing_take_transitional_format_work();
+    assert!(restore_work.semantic_reseals > 0);
+    assert!(restore_work.assignment_replays > 0);
+}
+
+#[test]
 fn reserved_environment_cell_key_fails_before_store_publication() {
     let stores = Stores::new();
     let mut format = StoreFormat::capture(&stores).expect("capture valid format");

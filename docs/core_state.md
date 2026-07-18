@@ -135,6 +135,12 @@ duplicated there nor reconstructed through their ordinary mutation APIs.
 Environment references are checked against the decoded frozen prefixes before
 either the base or its stores are published.
 
+The schema-10 publisher is structurally separate from the test-only legacy DTO
+restorer. Operation-level test instrumentation proves that normal loading does
+not remap detached graph keys, reseal node semantic identities, or replay raw
+environment assignments. Loaded-base mutation remains ordinary groupable and
+checkpointed overlay work; rollback exposes the unchanged immutable base.
+
 Provenance is diagnostic metadata and does not affect semantic identity.
 Packed origins refer to immutable input records or editor fragments. The
 current editor layout maps fragment positions to revision coordinates; deleted
