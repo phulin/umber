@@ -1,53 +1,8 @@
-// Direct xfail translation of upstream t/related-entries.t at commit 74252e6.
-// Keep `UPSTREAM_SOURCE` byte-for-byte equivalent when editing expectations.
+//! Native translations of upstream `t/related-entries.t` at commit 74252e6.
 
-use super::pass_upstream;
+use super::maps::{list_keys, output_entry, run_fixture};
 
-const UPSTREAM_SOURCE: &str = r#"# -*- cperl -*-
-use strict;
-use warnings;
-use utf8;
-no warnings 'utf8';
-
-use Test::More tests => 15;
-use Test::Differences;
-unified_diff;
-
-use Biber;
-use Biber::Output::bbl;
-use Log::Log4perl;
-chdir("t/tdata") ;
-
-# Set up Biber object
-my $biber = Biber->new(noconf => 1);
-my $LEVEL = 'ERROR';
-my $l4pconf = qq|
-    log4perl.category.main                             = $LEVEL, Screen
-    log4perl.category.screen                           = $LEVEL, Screen
-    log4perl.appender.Screen                           = Log::Log4perl::Appender::Screen
-    log4perl.appender.Screen.utf8                      = 1
-    log4perl.appender.Screen.Threshold                 = $LEVEL
-    log4perl.appender.Screen.stderr                    = 0
-    log4perl.appender.Screen.layout                    = Log::Log4perl::Layout::SimpleLayout
-|;
-Log::Log4perl->init(\$l4pconf);
-
-$biber->parse_ctrlfile('related.bcf');
-$biber->set_output_obj(Biber::Output::bbl->new());
-
-# Options - we could set these in the control file but it's nice to see what we're
-# relying on here for tests
-
-# Biber options
-Biber::Config->setoption('sortlocale', 'en_GB.UTF-8');
-
-# Now generate the information
-$biber->prepare;
-my $out = $biber->get_output_obj;
-my $main = $biber->datalists->get_list('none/global//global/global/global');
-my $shs = $biber->datalists->get_list('shorthand/global//global/global/global', 0, 'list');
-
-my $k1 = q|    \entry{key1}{article}{}{}
+const EXPECTED_K1: &str = r#"    \entry{key1}{article}{}{}
       \name{author}{1}{}{%
         {{un=0,uniquepart=base,hash=a517747c3d12f99244ae598910d979c5}{%
            family={Author},
@@ -80,9 +35,9 @@ my $k1 = q|    \entry{key1}{article}{}{}
       \field{pages}{125\bibrangedash 150}
       \range{pages}{26}
     \endentry
-|;
+"#;
 
-my $k2 = q|    \entry{key2}{inbook}{}{}
+const EXPECTED_K2: &str = r#"    \entry{key2}{inbook}{}{}
       \name{author}{1}{}{%
         {{un=0,uniquepart=base,hash=a517747c3d12f99244ae598910d979c5}{%
            family={Author},
@@ -122,10 +77,9 @@ my $k2 = q|    \entry{key2}{inbook}{}{}
       \field{pages}{34\bibrangedash 60}
       \range{pages}{27}
     \endentry
-|;
+"#;
 
-
-my $kck1 = q|    \entry{c2add694bf942dc77b376592d9c862cd}{article}{skipbib=true,skipbiblist=true,skiplab=true,uniquelist=false,uniquename=false}{}
+const EXPECTED_KCK1: &str = r#"    \entry{c2add694bf942dc77b376592d9c862cd}{article}{skipbib=true,skipbiblist=true,skiplab=true,uniquelist=false,uniquename=false}{}
       \name{author}{1}{}{%
         {{hash=a517747c3d12f99244ae598910d979c5}{%
            family={Author},
@@ -155,9 +109,9 @@ my $kck1 = q|    \entry{c2add694bf942dc77b376592d9c862cd}{article}{skipbib=true,
       \field{pages}{125\bibrangedash 150}
       \range{pages}{26}
     \endentry
-|;
+"#;
 
-my $kck2 = q|    \entry{78f825aaa0103319aaa1a30bf4fe3ada}{inbook}{skipbib=true,skipbiblist=true,skiplab=true,uniquelist=false,uniquename=false}{}
+const EXPECTED_KCK2: &str = r#"    \entry{78f825aaa0103319aaa1a30bf4fe3ada}{inbook}{skipbib=true,skipbiblist=true,skiplab=true,uniquelist=false,uniquename=false}{}
       \name{author}{1}{}{%
         {{hash=a517747c3d12f99244ae598910d979c5}{%
            family={Author},
@@ -194,9 +148,9 @@ my $kck2 = q|    \entry{78f825aaa0103319aaa1a30bf4fe3ada}{inbook}{skipbib=true,s
       \field{pages}{34\bibrangedash 60}
       \range{pages}{27}
     \endentry
-|;
+"#;
 
-my $kck3 = q|    \entry{3631578538a2d6ba5879b31a9a42f290}{inbook}{skipbib=true,skipbiblist=true,skiplab=true,uniquelist=false,uniquename=false}{}
+const EXPECTED_KCK3: &str = r#"    \entry{3631578538a2d6ba5879b31a9a42f290}{inbook}{skipbib=true,skipbiblist=true,skiplab=true,uniquelist=false,uniquename=false}{}
       \name{author}{1}{}{%
         {{hash=a517747c3d12f99244ae598910d979c5}{%
            family={Author},
@@ -232,9 +186,9 @@ my $kck3 = q|    \entry{3631578538a2d6ba5879b31a9a42f290}{inbook}{skipbib=true,s
       \field{pages}{33\bibrangedash 57}
       \range{pages}{25}
     \endentry
-|;
+"#;
 
-my $kck4 = q|    \entry{caf8e34be07426ae7127c1b4829983c1}{inbook}{skipbib=true,skipbiblist=true,skiplab=true,uniquelist=false,uniquename=false,useeditor=false}{}
+const EXPECTED_KCK4: &str = r#"    \entry{caf8e34be07426ae7127c1b4829983c1}{inbook}{skipbib=true,skipbiblist=true,skiplab=true,uniquelist=false,uniquename=false,useeditor=false}{}
       \name{author}{1}{}{%
         {{hash=a517747c3d12f99244ae598910d979c5}{%
            family={Author},
@@ -267,28 +221,28 @@ my $kck4 = q|    \entry{caf8e34be07426ae7127c1b4829983c1}{inbook}{skipbib=true,s
       \field{pages}{33\bibrangedash 57}
       \range{pages}{25}
     \endentry
-|;
+"#;
 
-my $c1 = q|    \entry{c1}{book}{}{}
+const EXPECTED_C1: &str = r#"    \entry{c1}{book}{}{}
       \field{sortinit}{3}
       \field{sortinithash}{ad6fe7482ffbd7b9f99c9e8b5dccd3d7}
       \field{related}{9ab62b5ef34a985438bfdf7ee0102229}
     \endentry
-|;
+"#;
 
-my $c2k = q|    \entry{9ab62b5ef34a985438bfdf7ee0102229}{book}{skipbib=true,skipbiblist=true,skiplab=true,uniquelist=false,uniquename=false}{}
+const EXPECTED_C2K: &str = r#"    \entry{9ab62b5ef34a985438bfdf7ee0102229}{book}{skipbib=true,skipbiblist=true,skiplab=true,uniquelist=false,uniquename=false}{}
       \field{clonesourcekey}{c2}
       \field{related}{0a3d72134fb3d6c024db4c510bc1605b}
     \endentry
-|;
+"#;
 
-my $c3k = q|    \entry{0a3d72134fb3d6c024db4c510bc1605b}{book}{skipbib=true,skipbiblist=true,skiplab=true,uniquelist=false,uniquename=false}{}
+const EXPECTED_C3K: &str = r#"    \entry{0a3d72134fb3d6c024db4c510bc1605b}{book}{skipbib=true,skipbiblist=true,skiplab=true,uniquelist=false,uniquename=false}{}
       \field{clonesourcekey}{c3}
       \field{related}{9ab62b5ef34a985438bfdf7ee0102229}
     \endentry
-|;
+"#;
 
-my $s1 = q|    \entry{8ddf878039b70767c4a5bcf4f0c4f65e}{book}{skipbib=false,skipbiblist=true,skiplab=true,uniquelist=false,uniquename=false,usecustom=false}{}
+const EXPECTED_S1: &str = r#"    \entry{8ddf878039b70767c4a5bcf4f0c4f65e}{book}{skipbib=false,skipbiblist=true,skiplab=true,uniquelist=false,uniquename=false,usecustom=false}{}
       \name{author}{1}{}{%
         {{hash=a517747c3d12f99244ae598910d979c5}{%
            family={Author},
@@ -307,37 +261,9 @@ my $s1 = q|    \entry{8ddf878039b70767c4a5bcf4f0c4f65e}{book}{skipbib=false,skip
       \field{clonesourcekey}{s1}
       \field{title}{Title 1}
     \endentry
-|;
+"#;
 
-eq_or_diff( $out->get_output_entry('key1', $main), $k1, 'Related entry test 1' ) ;
-eq_or_diff( $out->get_output_entry('key2', $main), $k2, 'Related entry test 2' ) ;
-# Key k3 is used only to create a related entry clone but since it isn't cited itself
-# it shouldn't be in the .bbl
-eq_or_diff( $out->get_output_entry('key3', $main), undef, 'Related entry test 3' ) ;
-eq_or_diff( $out->get_output_entry('c2add694bf942dc77b376592d9c862cd', $main), $kck1, 'Related entry test 4' ) ;
-eq_or_diff( $out->get_output_entry('78f825aaa0103319aaa1a30bf4fe3ada', $main), $kck2, 'Related entry test 5' ) ;
-eq_or_diff( $out->get_output_entry('3631578538a2d6ba5879b31a9a42f290', $main), $kck3, 'Related entry test 6' ) ;
-eq_or_diff( $out->get_output_entry('caf8e34be07426ae7127c1b4829983c1', $main), $kck4, 'Related entry test 7' ) ;
-# Key k4 is used only to create a related entry clone but since it isn't cited itself
-# it shouldn't be in the .bbl
-eq_or_diff( $out->get_output_entry('key4', $main), undef, 'Related entry test 8' ) ;
-is_deeply($shs->get_keys, [
-                             "key1",
-                             "key2",
-                             "caf8e34be07426ae7127c1b4829983c1",
-                             "78f825aaa0103319aaa1a30bf4fe3ada",
-                             "3631578538a2d6ba5879b31a9a42f290",
-                             "c2add694bf942dc77b376592d9c862cd",
-  ], 'Related entry test 9');
-# Testing circular dependencies
-eq_or_diff( $out->get_output_entry('c1', $main), $c1, 'Related entry test 10' ) ;
-eq_or_diff( $out->get_output_entry('9ab62b5ef34a985438bfdf7ee0102229', $main), $c2k, 'Related entry test 11' ) ;
-eq_or_diff( $out->get_output_entry('0a3d72134fb3d6c024db4c510bc1605b', $main), $c3k, 'Related entry test 12' ) ;
-
-# Testing custom relatedoptions
-eq_or_diff( $out->get_output_entry('8ddf878039b70767c4a5bcf4f0c4f65e', $main), $s1, 'Custom options - 1' ) ;
-
-my $un1 = q|    \entry{kullback}{book}{}{}
+const EXPECTED_UN1: &str = r#"    \entry{kullback}{book}{}{}
       \name{author}{1}{}{%
         {{un=0,uniquepart=base,hash=34c5bbf9876c37127c3abe4e7d7a7198}{%
            family={Kullback},
@@ -372,9 +298,9 @@ my $un1 = q|    \entry{kullback}{book}{}{}
       \field{title}{Information Theory and Statistics}
       \field{year}{1959}
     \\endentry
-|;
+"#;
 
-my $un2 = q|    \entry{kullback:related}{book}{}{}
+const EXPECTED_UN2: &str = r#"    \entry{kullback:related}{book}{}{}
       \name{author}{1}{}{%
         {{un=0,uniquepart=base,hash=34c5bbf9876c37127c3abe4e7d7a7198}{%
            family={Kullback},
@@ -412,218 +338,146 @@ my $un2 = q|    \entry{kullback:related}{book}{}{}
       \field{year}{1997}
       \field{related}{7963607e635f427aafeffbf28942c3bb}
     \endentry
-|;
-
-# uniquename in related entries
-eq_or_diff($out->get_output_entry('kullback', $main), $un1, 'Related uniquename - 1');
-eq_or_diff($out->get_output_entry('kullback:related', $main), $un2, 'Related uniquename - 2');
 "#;
 
 #[test]
-#[ignore = "xfail: public bib-engine lacks exact Biber related-entry output parity"]
+#[ignore = "xfail: Biber related-entry output is not implemented by bib-engine"]
 fn assertion_001_related_entry_test_1() {
-    pass_upstream(
-        "Related entry test 1",
-        r"$out->get_output_entry('key1', $main)",
-        r"$k1",
-        r"eq_or_diff( $out->get_output_entry('key1', $main), $k1, 'Related entry test 1' ) ;",
-        UPSTREAM_SOURCE,
-    );
-    panic!("xfail: public bib-engine lacks exact Biber related-entry output parity");
+    let result = run_fixture("related");
+    assert_eq!(output_entry(&result, "key1").as_deref(), Some(EXPECTED_K1));
 }
 
 #[test]
-#[ignore = "xfail: public bib-engine lacks exact Biber related-entry output parity"]
+#[ignore = "xfail: Biber related-entry output is not implemented by bib-engine"]
 fn assertion_002_related_entry_test_2() {
-    pass_upstream(
-        "Related entry test 2",
-        r"$out->get_output_entry('key2', $main)",
-        r"$k2",
-        r"eq_or_diff( $out->get_output_entry('key2', $main), $k2, 'Related entry test 2' ) ;",
-        UPSTREAM_SOURCE,
-    );
-    panic!("xfail: public bib-engine lacks exact Biber related-entry output parity");
+    let result = run_fixture("related");
+    assert_eq!(output_entry(&result, "key2").as_deref(), Some(EXPECTED_K2));
 }
 
 #[test]
-#[ignore = "xfail: public bib-engine lacks exact Biber related-entry output parity"]
+#[ignore = "xfail: Biber omits related-entry clone sources from output"]
 fn assertion_003_related_entry_test_3() {
-    pass_upstream(
-        "Related entry test 3",
-        r"$out->get_output_entry('key3', $main)",
-        r"undef",
-        r"eq_or_diff( $out->get_output_entry('key3', $main), undef, 'Related entry test 3' ) ;",
-        UPSTREAM_SOURCE,
-    );
-    panic!("xfail: public bib-engine lacks exact Biber related-entry output parity");
+    let result = run_fixture("related");
+    assert_eq!(output_entry(&result, "key3"), None);
 }
 
 #[test]
-#[ignore = "xfail: public bib-engine lacks exact Biber related-entry output parity"]
+#[ignore = "xfail: Biber related-entry output is not implemented by bib-engine"]
 fn assertion_004_related_entry_test_4() {
-    pass_upstream(
-        "Related entry test 4",
-        r"$out->get_output_entry('c2add694bf942dc77b376592d9c862cd', $main)",
-        r"$kck1",
-        r"eq_or_diff( $out->get_output_entry('c2add694bf942dc77b376592d9c862cd', $main), $kck1, 'Related entry test 4' ) ;",
-        UPSTREAM_SOURCE,
+    let result = run_fixture("related");
+    assert_eq!(
+        output_entry(&result, "c2add694bf942dc77b376592d9c862cd").as_deref(),
+        Some(EXPECTED_KCK1)
     );
-    panic!("xfail: public bib-engine lacks exact Biber related-entry output parity");
 }
 
 #[test]
-#[ignore = "xfail: public bib-engine lacks exact Biber related-entry output parity"]
+#[ignore = "xfail: Biber related-entry output is not implemented by bib-engine"]
 fn assertion_005_related_entry_test_5() {
-    pass_upstream(
-        "Related entry test 5",
-        r"$out->get_output_entry('78f825aaa0103319aaa1a30bf4fe3ada', $main)",
-        r"$kck2",
-        r"eq_or_diff( $out->get_output_entry('78f825aaa0103319aaa1a30bf4fe3ada', $main), $kck2, 'Related entry test 5' ) ;",
-        UPSTREAM_SOURCE,
+    let result = run_fixture("related");
+    assert_eq!(
+        output_entry(&result, "78f825aaa0103319aaa1a30bf4fe3ada").as_deref(),
+        Some(EXPECTED_KCK2)
     );
-    panic!("xfail: public bib-engine lacks exact Biber related-entry output parity");
 }
 
 #[test]
-#[ignore = "xfail: public bib-engine lacks exact Biber related-entry output parity"]
+#[ignore = "xfail: Biber related-entry output is not implemented by bib-engine"]
 fn assertion_006_related_entry_test_6() {
-    pass_upstream(
-        "Related entry test 6",
-        r"$out->get_output_entry('3631578538a2d6ba5879b31a9a42f290', $main)",
-        r"$kck3",
-        r"eq_or_diff( $out->get_output_entry('3631578538a2d6ba5879b31a9a42f290', $main), $kck3, 'Related entry test 6' ) ;",
-        UPSTREAM_SOURCE,
+    let result = run_fixture("related");
+    assert_eq!(
+        output_entry(&result, "3631578538a2d6ba5879b31a9a42f290").as_deref(),
+        Some(EXPECTED_KCK3)
     );
-    panic!("xfail: public bib-engine lacks exact Biber related-entry output parity");
 }
 
 #[test]
-#[ignore = "xfail: public bib-engine lacks exact Biber related-entry output parity"]
+#[ignore = "xfail: Biber related-entry output is not implemented by bib-engine"]
 fn assertion_007_related_entry_test_7() {
-    pass_upstream(
-        "Related entry test 7",
-        r"$out->get_output_entry('caf8e34be07426ae7127c1b4829983c1', $main)",
-        r"$kck4",
-        r"eq_or_diff( $out->get_output_entry('caf8e34be07426ae7127c1b4829983c1', $main), $kck4, 'Related entry test 7' ) ;",
-        UPSTREAM_SOURCE,
+    let result = run_fixture("related");
+    assert_eq!(
+        output_entry(&result, "caf8e34be07426ae7127c1b4829983c1").as_deref(),
+        Some(EXPECTED_KCK4)
     );
-    panic!("xfail: public bib-engine lacks exact Biber related-entry output parity");
 }
 
 #[test]
-#[ignore = "xfail: public bib-engine lacks exact Biber related-entry output parity"]
+#[ignore = "xfail: Biber omits related-entry clone sources from output"]
 fn assertion_008_related_entry_test_8() {
-    pass_upstream(
-        "Related entry test 8",
-        r"$out->get_output_entry('key4', $main)",
-        r"undef",
-        r"eq_or_diff( $out->get_output_entry('key4', $main), undef, 'Related entry test 8' ) ;",
-        UPSTREAM_SOURCE,
-    );
-    panic!("xfail: public bib-engine lacks exact Biber related-entry output parity");
+    let result = run_fixture("related");
+    assert_eq!(output_entry(&result, "key4"), None);
 }
 
 #[test]
-#[ignore = "xfail: public bib-engine lacks exact Biber related-entry output parity"]
+#[ignore = "xfail: Biber related-entry shorthand lists are not implemented by bib-engine"]
 fn assertion_009_related_entry_test_9() {
-    pass_upstream(
-        "Related entry test 9",
-        r"$shs->get_keys",
-        r#"[
-                             "key1",
-                             "key2",
-                             "caf8e34be07426ae7127c1b4829983c1",
-                             "78f825aaa0103319aaa1a30bf4fe3ada",
-                             "3631578538a2d6ba5879b31a9a42f290",
-                             "c2add694bf942dc77b376592d9c862cd",
-  ]"#,
-        r#"is_deeply($shs->get_keys, [
-                             "key1",
-                             "key2",
-                             "caf8e34be07426ae7127c1b4829983c1",
-                             "78f825aaa0103319aaa1a30bf4fe3ada",
-                             "3631578538a2d6ba5879b31a9a42f290",
-                             "c2add694bf942dc77b376592d9c862cd",
-  ], 'Related entry test 9');"#,
-        UPSTREAM_SOURCE,
+    let result = run_fixture("related");
+    assert_eq!(
+        list_keys(&result, 0, "shorthand/global//global/global/global"),
+        [
+            "key1",
+            "key2",
+            "caf8e34be07426ae7127c1b4829983c1",
+            "78f825aaa0103319aaa1a30bf4fe3ada",
+            "3631578538a2d6ba5879b31a9a42f290",
+            "c2add694bf942dc77b376592d9c862cd"
+        ]
     );
-    panic!("xfail: public bib-engine lacks exact Biber related-entry output parity");
 }
 
 #[test]
-#[ignore = "xfail: public bib-engine lacks exact Biber related-entry output parity"]
+#[ignore = "xfail: Biber related-entry output is not implemented by bib-engine"]
 fn assertion_010_related_entry_test_10() {
-    pass_upstream(
-        "Related entry test 10",
-        r"$out->get_output_entry('c1', $main)",
-        r"$c1",
-        r"eq_or_diff( $out->get_output_entry('c1', $main), $c1, 'Related entry test 10' ) ;",
-        UPSTREAM_SOURCE,
-    );
-    panic!("xfail: public bib-engine lacks exact Biber related-entry output parity");
+    let result = run_fixture("related");
+    assert_eq!(output_entry(&result, "c1").as_deref(), Some(EXPECTED_C1));
 }
 
 #[test]
-#[ignore = "xfail: public bib-engine lacks exact Biber related-entry output parity"]
+#[ignore = "xfail: Biber related-entry output is not implemented by bib-engine"]
 fn assertion_011_related_entry_test_11() {
-    pass_upstream(
-        "Related entry test 11",
-        r"$out->get_output_entry('9ab62b5ef34a985438bfdf7ee0102229', $main)",
-        r"$c2k",
-        r"eq_or_diff( $out->get_output_entry('9ab62b5ef34a985438bfdf7ee0102229', $main), $c2k, 'Related entry test 11' ) ;",
-        UPSTREAM_SOURCE,
+    let result = run_fixture("related");
+    assert_eq!(
+        output_entry(&result, "9ab62b5ef34a985438bfdf7ee0102229").as_deref(),
+        Some(EXPECTED_C2K)
     );
-    panic!("xfail: public bib-engine lacks exact Biber related-entry output parity");
 }
 
 #[test]
-#[ignore = "xfail: public bib-engine lacks exact Biber related-entry output parity"]
+#[ignore = "xfail: Biber related-entry output is not implemented by bib-engine"]
 fn assertion_012_related_entry_test_12() {
-    pass_upstream(
-        "Related entry test 12",
-        r"$out->get_output_entry('0a3d72134fb3d6c024db4c510bc1605b', $main)",
-        r"$c3k",
-        r"eq_or_diff( $out->get_output_entry('0a3d72134fb3d6c024db4c510bc1605b', $main), $c3k, 'Related entry test 12' ) ;",
-        UPSTREAM_SOURCE,
+    let result = run_fixture("related");
+    assert_eq!(
+        output_entry(&result, "0a3d72134fb3d6c024db4c510bc1605b").as_deref(),
+        Some(EXPECTED_C3K)
     );
-    panic!("xfail: public bib-engine lacks exact Biber related-entry output parity");
 }
 
 #[test]
-#[ignore = "xfail: public bib-engine lacks exact Biber related-entry output parity"]
+#[ignore = "xfail: Biber related-entry output is not implemented by bib-engine"]
 fn assertion_013_custom_options_1() {
-    pass_upstream(
-        "Custom options - 1",
-        r"$out->get_output_entry('8ddf878039b70767c4a5bcf4f0c4f65e', $main)",
-        r"$s1",
-        r"eq_or_diff( $out->get_output_entry('8ddf878039b70767c4a5bcf4f0c4f65e', $main), $s1, 'Custom options - 1' ) ;",
-        UPSTREAM_SOURCE,
+    let result = run_fixture("related");
+    assert_eq!(
+        output_entry(&result, "8ddf878039b70767c4a5bcf4f0c4f65e").as_deref(),
+        Some(EXPECTED_S1)
     );
-    panic!("xfail: public bib-engine lacks exact Biber related-entry output parity");
 }
 
 #[test]
-#[ignore = "xfail: public bib-engine lacks exact Biber related-entry output parity"]
+#[ignore = "xfail: Biber related-entry output is not implemented by bib-engine"]
 fn assertion_014_related_uniquename_1() {
-    pass_upstream(
-        "Related uniquename - 1",
-        r"$out->get_output_entry('kullback', $main)",
-        r"$un1",
-        r"eq_or_diff($out->get_output_entry('kullback', $main), $un1, 'Related uniquename - 1');",
-        UPSTREAM_SOURCE,
+    let result = run_fixture("related");
+    assert_eq!(
+        output_entry(&result, "kullback").as_deref(),
+        Some(EXPECTED_UN1)
     );
-    panic!("xfail: public bib-engine lacks exact Biber related-entry output parity");
 }
 
 #[test]
-#[ignore = "xfail: public bib-engine lacks exact Biber related-entry output parity"]
+#[ignore = "xfail: Biber related-entry output is not implemented by bib-engine"]
 fn assertion_015_related_uniquename_2() {
-    pass_upstream(
-        "Related uniquename - 2",
-        r"$out->get_output_entry('kullback:related', $main)",
-        r"$un2",
-        r"eq_or_diff($out->get_output_entry('kullback:related', $main), $un2, 'Related uniquename - 2');",
-        UPSTREAM_SOURCE,
+    let result = run_fixture("related");
+    assert_eq!(
+        output_entry(&result, "kullback:related").as_deref(),
+        Some(EXPECTED_UN2)
     );
-    panic!("xfail: public bib-engine lacks exact Biber related-entry output parity");
 }
