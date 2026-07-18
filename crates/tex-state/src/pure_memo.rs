@@ -446,6 +446,15 @@ pub struct RecordedParagraphRegion {
     pub mutations: Arc<[PureParagraphMutation]>,
     pub effects: Arc<[crate::DetachedVirtualEffect]>,
     pub ending_input: InputSummary,
+    /// Accepted common prefix between the starting and ending input stacks.
+    /// Replay reuses this proof instead of comparing revision-local handles.
+    pub input_transition_common_frames: u32,
+    /// Stable current-revision rebinding recipe for provenance owned by input
+    /// frames introduced by this paragraph's stack transition.
+    pub input_provenance: ParagraphProvenanceRecipe,
+    /// Origin-list lengths for stored token-list frames in the introduced
+    /// suffix, in frame order. Empty lists remain empty after rebinding.
+    pub input_origin_list_lengths: Arc<[u32]>,
     pub barriers: Arc<[ParagraphBarrierReason]>,
     /// Dependencies observed by horizontal-list construction, line breaking,
     /// materialization, and packing. A mismatch invalidates finished lines and
@@ -1523,6 +1532,15 @@ fn recorded_paragraph_retained_bytes(region: &RecordedParagraphRegion) -> usize 
                 .map_or(0, InputSummary::retained_bytes),
         )
         .saturating_add(region.ending_input.retained_bytes())
+        .saturating_add(paragraph_provenance_retained_bytes(
+            &region.input_provenance,
+        ))
+        .saturating_add(
+            region
+                .input_origin_list_lengths
+                .len()
+                .saturating_mul(std::mem::size_of::<u32>()),
+        )
         .saturating_add(
             region
                 .lines

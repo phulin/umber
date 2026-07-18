@@ -92,7 +92,14 @@ pub(crate) fn try_reuse_aligned_paragraph(
     else {
         return Ok(false);
     };
-    let transition_applied = input.apply_paragraph_transition(stores, prepared_input)?;
+    let input_origins = resolve_paragraph_provenance(stores, &entry.input_provenance);
+    let transition_applied = input.apply_paragraph_transition(
+        stores,
+        prepared_input,
+        &input_origins,
+        &entry.input_provenance.origin_slots,
+        &entry.input_origin_list_lengths,
+    )?;
     assert!(
         transition_applied,
         "validated paragraph source transition must apply"
@@ -159,10 +166,13 @@ fn validate_paragraph_entry(
                         consumed: &entry.consumed_spans,
                         ending: end,
                     },
-                    entry.starting_input.as_ref(),
-                    entry.starting_input_identity,
+                    tex_lex::RecordedParagraphTransition::new(
+                        entry.starting_input.as_ref(),
+                        entry.starting_input_identity,
+                        entry.input_transition_common_frames,
+                        &entry.ending_input,
+                    ),
                     current_starting_input_identity,
-                    &entry.ending_input,
                 )
             });
     let mutation_entry_class_changed = !same_mutation_entry_class(
@@ -441,6 +451,109 @@ fn resolve_paragraph_provenance(
         .collect()
 }
 
+#[derive(Default)]
+struct ParagraphProvenanceBuilder {
+    piece_anchors: Vec<tex_state::RootSpanId>,
+    root_spans: Vec<tex_state::ParagraphProvenanceSpan>,
+    origin_slots: Vec<u32>,
+    root_ordinals: ahash::AHashMap<tex_state::RootSpanId, u32>,
+    piece_ordinals: ahash::AHashMap<tex_state::PieceId, u32>,
+}
+
+impl ParagraphProvenanceBuilder {
+    fn push_origin(&mut self, stores: &Universe, origin: tex_state::token::OriginId) {
+        let Some(span) = stores.root_span_for_origin(origin) else {
+            self.origin_slots.push(u32::MAX);
+            return;
+        };
+        let ordinal = if let Some(&ordinal) = self.root_ordinals.get(&span) {
+            ordinal
+        } else {
+            let Ok(ordinal) = u32::try_from(self.root_spans.len()) else {
+                self.origin_slots.push(u32::MAX);
+                return;
+            };
+            let piece = span.piece();
+            let piece_ordinal = if let Some(&piece_ordinal) = self.piece_ordinals.get(&piece) {
+                piece_ordinal
+            } else {
+                let Ok(piece_ordinal) = u32::try_from(self.piece_anchors.len()) else {
+                    self.origin_slots.push(u32::MAX);
+                    return;
+                };
+                self.piece_anchors.push(span.start_anchor());
+                self.piece_ordinals.insert(piece, piece_ordinal);
+                piece_ordinal
+            };
+            self.root_spans.push(tex_state::ParagraphProvenanceSpan {
+                piece: piece_ordinal,
+                start: span.start(),
+                end: span.end(),
+            });
+            self.root_ordinals.insert(span, ordinal);
+            ordinal
+        };
+        self.origin_slots.push(ordinal);
+    }
+
+    fn finish(self) -> tex_state::ParagraphProvenanceRecipe {
+        tex_state::ParagraphProvenanceRecipe {
+            piece_anchors: self.piece_anchors.into(),
+            root_spans: self.root_spans.into(),
+            origin_slots: self.origin_slots.into(),
+        }
+    }
+}
+
+fn paragraph_input_provenance(
+    stores: &Universe,
+    frames: &[tex_state::InputFrameSummary],
+) -> (tex_state::ParagraphProvenanceRecipe, Vec<u32>) {
+    let mut recipe = ParagraphProvenanceBuilder::default();
+    let mut origin_list_lengths = Vec::new();
+    for frame in frames {
+        match frame {
+            tex_state::InputFrameSummary::TokenList {
+                origin_list,
+                macro_arguments,
+                macro_invocation,
+                parent_macro_invocation,
+                ..
+            } => {
+                let origins = stores.origin_list(*origin_list);
+                origin_list_lengths.push(u32::try_from(origins.len()).unwrap_or(u32::MAX));
+                for &origin in origins {
+                    recipe.push_origin(stores, origin);
+                }
+                for &word in macro_arguments.tokens().iter() {
+                    recipe.push_origin(stores, word.origin());
+                }
+                recipe.push_origin(stores, *macro_invocation);
+                recipe.push_origin(stores, *parent_macro_invocation);
+            }
+            tex_state::InputFrameSummary::TransientTokenList {
+                tokens,
+                macro_invocation,
+                parent_macro_invocation,
+                ..
+            } => {
+                for &word in tokens.iter() {
+                    recipe.push_origin(stores, word.origin());
+                }
+                recipe.push_origin(stores, *macro_invocation);
+                recipe.push_origin(stores, *parent_macro_invocation);
+            }
+            tex_state::InputFrameSummary::Condition { condition, .. } => {
+                recipe.push_origin(stores, condition.context().origin());
+            }
+            tex_state::InputFrameSummary::Source { .. } => {
+                unreachable!("paragraph input transition suffix cannot contain a source frame")
+            }
+        }
+    }
+    (recipe.finish(), origin_list_lengths)
+}
+
 pub(crate) fn publish_prepared_hlist(
     input: &mut InputStack,
     stores: &mut Universe,
@@ -557,10 +670,11 @@ fn publish_recorded_region(
             .barriers
             .insert(tex_state::ParagraphBarrierReason::UnsupportedGroupTransition);
     }
-    if recording.starting_input.as_ref().map_or_else(
-        || ending_input.frames().len() != 1,
-        |starting| !starting.supports_paragraph_cursor_transition_to(&ending_input),
-    ) {
+    let input_transition_prefix = recording.starting_input.as_ref().map_or_else(
+        || (ending_input.frames().len() == 1).then_some(1),
+        |starting| starting.paragraph_cursor_transition_prefix_to(&ending_input),
+    );
+    if input_transition_prefix.is_none() {
         recording
             .barriers
             .insert(tex_state::ParagraphBarrierReason::UnsupportedInputTransition);
@@ -583,6 +697,9 @@ fn publish_recorded_region(
         stores.record_pure_paragraph_barriers(&barriers);
         return;
     }
+    let input_transition_prefix = input_transition_prefix.expect("barrier-free input transition");
+    let (input_provenance, input_origin_list_lengths) =
+        paragraph_input_provenance(stores, &ending_input.frames()[input_transition_prefix..]);
     let dependency_started = start_phase();
     keys.extend([
         tex_state::DependencyKey::Cell {
@@ -641,6 +758,10 @@ fn publish_recorded_region(
         mutations: mutation_summary.mutations.into(),
         effects: effects.into(),
         ending_input,
+        input_transition_common_frames: u32::try_from(input_transition_prefix)
+            .expect("input frame count must fit u32"),
+        input_provenance,
+        input_origin_list_lengths: input_origin_list_lengths.into(),
         barriers: recording.barriers.into_iter().collect::<Vec<_>>().into(),
         break_dependencies: Vec::new().into(),
         break_prev_graf: None,
@@ -707,79 +828,25 @@ fn paragraph_graph_provenance(
     stores: &Universe,
     root: tex_state::ids::NodeListId,
 ) -> tex_state::ParagraphProvenanceRecipe {
-    #[derive(Default)]
-    struct RecipeBuilder {
-        piece_anchors: Vec<tex_state::RootSpanId>,
-        root_spans: Vec<tex_state::ParagraphProvenanceSpan>,
-        origin_slots: Vec<u32>,
-    }
-
-    fn push_origin(
-        stores: &Universe,
-        origin: tex_state::token::OriginId,
-        root_ordinals: &mut ahash::AHashMap<tex_state::RootSpanId, u32>,
-        piece_ordinals: &mut ahash::AHashMap<tex_state::PieceId, u32>,
-        recipe: &mut RecipeBuilder,
-    ) {
-        let Some(span) = stores.root_span_for_origin(origin) else {
-            recipe.origin_slots.push(u32::MAX);
-            return;
-        };
-        let ordinal = if let Some(&ordinal) = root_ordinals.get(&span) {
-            ordinal
-        } else {
-            let Ok(ordinal) = u32::try_from(recipe.root_spans.len()) else {
-                recipe.origin_slots.push(u32::MAX);
-                return;
-            };
-            let piece = span.piece();
-            let piece_ordinal = if let Some(&piece_ordinal) = piece_ordinals.get(&piece) {
-                piece_ordinal
-            } else {
-                let Ok(piece_ordinal) = u32::try_from(recipe.piece_anchors.len()) else {
-                    recipe.origin_slots.push(u32::MAX);
-                    return;
-                };
-                recipe.piece_anchors.push(span.start_anchor());
-                piece_ordinals.insert(piece, piece_ordinal);
-                piece_ordinal
-            };
-            recipe.root_spans.push(tex_state::ParagraphProvenanceSpan {
-                piece: piece_ordinal,
-                start: span.start(),
-                end: span.end(),
-            });
-            root_ordinals.insert(span, ordinal);
-            ordinal
-        };
-        recipe.origin_slots.push(ordinal);
-    }
-
     fn visit(
         stores: &Universe,
         list: tex_state::ids::NodeListId,
-        root_ordinals: &mut ahash::AHashMap<tex_state::RootSpanId, u32>,
-        piece_ordinals: &mut ahash::AHashMap<tex_state::PieceId, u32>,
-        recipe: &mut RecipeBuilder,
+        recipe: &mut ParagraphProvenanceBuilder,
     ) {
         for node in stores.nodes(list) {
             match node {
                 tex_state::node_arena::NodeRef::Char { origin, .. } => {
-                    push_origin(stores, origin, root_ordinals, piece_ordinals, recipe);
+                    recipe.push_origin(stores, origin);
                 }
                 tex_state::node_arena::NodeRef::Lig { origins, .. } => {
                     for &origin in origins {
-                        push_origin(stores, origin, root_ordinals, piece_ordinals, recipe);
+                        recipe.push_origin(stores, origin);
                     }
                 }
                 tex_state::node_arena::NodeRef::HList(box_node)
-                | tex_state::node_arena::NodeRef::VList(box_node) => visit(
-                    stores,
-                    box_node.children,
-                    root_ordinals,
-                    piece_ordinals,
-                    recipe,
-                ),
+                | tex_state::node_arena::NodeRef::VList(box_node) => {
+                    visit(stores, box_node.children, recipe)
+                }
                 tex_state::node_arena::NodeRef::Glue {
                     leader:
                         Some(
@@ -787,50 +854,26 @@ fn paragraph_graph_provenance(
                             | tex_state::node::LeaderPayload::VList(box_node),
                         ),
                     ..
-                } => visit(
-                    stores,
-                    box_node.children,
-                    root_ordinals,
-                    piece_ordinals,
-                    recipe,
-                ),
-                tex_state::node_arena::NodeRef::Unset(unset) => visit(
-                    stores,
-                    unset.children,
-                    root_ordinals,
-                    piece_ordinals,
-                    recipe,
-                ),
+                } => visit(stores, box_node.children, recipe),
+                tex_state::node_arena::NodeRef::Unset(unset) => {
+                    visit(stores, unset.children, recipe)
+                }
                 tex_state::node_arena::NodeRef::Disc {
                     pre, post, replace, ..
                 } => {
-                    visit(stores, pre, root_ordinals, piece_ordinals, recipe);
-                    visit(stores, post, root_ordinals, piece_ordinals, recipe);
-                    visit(stores, replace, root_ordinals, piece_ordinals, recipe);
+                    visit(stores, pre, recipe);
+                    visit(stores, post, recipe);
+                    visit(stores, replace, recipe);
                 }
                 tex_state::node_arena::NodeRef::Ins { content, .. }
-                | tex_state::node_arena::NodeRef::Adjust(content) => {
-                    visit(stores, content, root_ordinals, piece_ordinals, recipe)
-                }
+                | tex_state::node_arena::NodeRef::Adjust(content) => visit(stores, content, recipe),
                 _ => {}
             }
         }
     }
-    let mut recipe = RecipeBuilder::default();
-    let mut root_ordinals = ahash::AHashMap::new();
-    let mut piece_ordinals = ahash::AHashMap::new();
-    visit(
-        stores,
-        root,
-        &mut root_ordinals,
-        &mut piece_ordinals,
-        &mut recipe,
-    );
-    tex_state::ParagraphProvenanceRecipe {
-        piece_anchors: recipe.piece_anchors.into(),
-        root_spans: recipe.root_spans.into(),
-        origin_slots: recipe.origin_slots.into(),
-    }
+    let mut recipe = ParagraphProvenanceBuilder::default();
+    visit(stores, root, &mut recipe);
+    recipe.finish()
 }
 
 fn paragraph_break_dependencies(

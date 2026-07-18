@@ -320,6 +320,12 @@ impl ConditionFrameSummary {
     }
 
     #[must_use]
+    pub const fn with_context(mut self, context: TracedTokenWord) -> Self {
+        self.context = context;
+        self
+    }
+
+    #[must_use]
     pub const fn limb(self) -> ConditionLimb {
         self.limb
     }
@@ -532,53 +538,63 @@ impl InputSummary {
             }
     }
 
-    /// Returns whether a paragraph may advance this live frame stack to
-    /// `ending` by changing only stored token-list cursors and the root source
-    /// continuation. Runtime provenance stays attached to the live frames.
+    /// Returns the common live-frame prefix that can retain current-revision
+    /// provenance while a paragraph advances to `ending`.
     #[must_use]
-    pub fn supports_paragraph_cursor_transition_to(&self, ending: &Self) -> bool {
+    pub fn paragraph_cursor_transition_prefix_to(&self, ending: &Self) -> Option<usize> {
         let starting_frames = self.frames();
         let ending_frames = ending.frames();
-        ending_frames.len() == starting_frames.len()
-            && starting_frames
+        let common = starting_frames
+            .iter()
+            .zip(ending_frames)
+            .take_while(|(starting, ending)| match (starting, ending) {
+                (InputFrameSummary::Source { .. }, InputFrameSummary::Source { .. }) => true,
+                (
+                    InputFrameSummary::TokenList {
+                        token_list: starting_list,
+                        replay_kind: starting_kind,
+                        index: starting_index,
+                        macro_arguments: starting_arguments,
+                        ..
+                    },
+                    InputFrameSummary::TokenList {
+                        token_list: ending_list,
+                        replay_kind: ending_kind,
+                        index: ending_index,
+                        macro_arguments: ending_arguments,
+                        ..
+                    },
+                ) => {
+                    starting_list == ending_list
+                        && starting_kind == ending_kind
+                        && ending_index >= starting_index
+                        && macro_arguments_semantic_eq(starting_arguments, ending_arguments)
+                }
+                (
+                    InputFrameSummary::Condition {
+                        condition: starting_condition,
+                        ..
+                    },
+                    InputFrameSummary::Condition {
+                        condition: ending_condition,
+                        ..
+                    },
+                ) => condition_frame_semantic_eq(*starting_condition, *ending_condition),
+                (_, _) => false,
+            })
+            .count();
+        (common > 0
+            && matches!(
+                starting_frames.first(),
+                Some(InputFrameSummary::Source { .. })
+            )
+            && !starting_frames[common..]
                 .iter()
-                .take(ending_frames.len())
-                .zip(ending_frames)
-                .all(|(starting, ending)| match (starting, ending) {
-                    (InputFrameSummary::Source { .. }, InputFrameSummary::Source { .. }) => true,
-                    (
-                        InputFrameSummary::TokenList {
-                            token_list: starting_list,
-                            replay_kind: starting_kind,
-                            index: starting_index,
-                            macro_arguments: starting_arguments,
-                            ..
-                        },
-                        InputFrameSummary::TokenList {
-                            token_list: ending_list,
-                            replay_kind: ending_kind,
-                            index: ending_index,
-                            macro_arguments: ending_arguments,
-                            ..
-                        },
-                    ) => {
-                        starting_list == ending_list
-                            && starting_kind == ending_kind
-                            && ending_index >= starting_index
-                            && macro_arguments_semantic_eq(starting_arguments, ending_arguments)
-                    }
-                    (
-                        InputFrameSummary::Condition {
-                            condition: starting_condition,
-                            ..
-                        },
-                        InputFrameSummary::Condition {
-                            condition: ending_condition,
-                            ..
-                        },
-                    ) => starting_condition == ending_condition,
-                    (_, _) => false,
-                })
+                .any(|frame| matches!(frame, InputFrameSummary::Source { .. }))
+            && !ending_frames[common..]
+                .iter()
+                .any(|frame| matches!(frame, InputFrameSummary::Source { .. })))
+        .then_some(common)
     }
 
     pub(crate) fn retained_bytes(&self) -> usize {
@@ -1101,6 +1117,11 @@ fn traced_tokens_semantic_eq(left: &[TracedTokenWord], right: &[TracedTokenWord]
             .iter()
             .zip(right)
             .all(|(&left, &right)| left.token() == right.token())
+}
+
+fn condition_frame_semantic_eq(left: ConditionFrameSummary, right: ConditionFrameSummary) -> bool {
+    left.context().token() == right.context().token()
+        && left.with_context(left.context()) == right.with_context(left.context())
 }
 
 fn macro_arguments_semantic_eq(left: &MacroArguments, right: &MacroArguments) -> bool {

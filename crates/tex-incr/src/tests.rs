@@ -1239,6 +1239,79 @@ fn paragraph_front_end_keys_macro_paragraphs_before_expansion() {
 }
 
 #[test]
+fn paragraph_macro_frame_transitions_replay_across_carried_generations() {
+    let mut universe = template();
+    universe.enable_pure_memo(tex_state::PureMemoConfig::default());
+    let source = concat!(
+        "\\def\\body{first macro paragraph\\par second macro paragraph\\par third macro paragraph\\par}\n",
+        "\\body\\vfill\\eject\\end",
+    );
+    let mut session = Session::start(
+        universe,
+        "paragraph-macro-frame-transition",
+        RevisionId::new(1),
+        source.to_owned(),
+        usize::MAX,
+    )
+    .expect("session starts");
+    session.cold().expect("cold revision");
+
+    let first_prefix = "% first prefix edit\n";
+    let before_first = session.pure_memo_stats();
+    session
+        .advance(
+            RevisionId::new(2),
+            Edit {
+                base_revision: RevisionId::new(1),
+                expected_hash: ContentHash::from_bytes(source.as_bytes()),
+                range: 0..0,
+                replacement: first_prefix.to_owned(),
+            },
+        )
+        .expect("first header edit");
+    let after_first = session.pure_memo_stats();
+    assert!(
+        after_first.paragraph_hits >= before_first.paragraph_hits + 2,
+        "the unchanged macro-body suffix should replay: {after_first:?}"
+    );
+
+    let second_source = format!("{first_prefix}{source}");
+    let second_prefix = "% second prefix edit\n";
+    let before_second = session.pure_memo_stats();
+    let incremental = session
+        .advance(
+            RevisionId::new(3),
+            Edit {
+                base_revision: RevisionId::new(2),
+                expected_hash: ContentHash::from_bytes(second_source.as_bytes()),
+                range: 0..0,
+                replacement: second_prefix.to_owned(),
+            },
+        )
+        .expect("second header edit");
+    let after_second = session.pure_memo_stats();
+    assert!(
+        after_second.paragraph_hits >= before_second.paragraph_hits + 2,
+        "carried input recipes must ignore revision-local token-list handles: {after_second:?}"
+    );
+
+    let third_source = format!("{second_prefix}{second_source}");
+    let mut cold_universe = template();
+    cold_universe.enable_pure_memo(tex_state::PureMemoConfig::default());
+    let mut cold = Session::start(
+        cold_universe,
+        "paragraph-macro-frame-transition",
+        RevisionId::new(3),
+        third_source,
+        usize::MAX,
+    )
+    .expect("cold comparison starts");
+    let expected = cold.cold().expect("cold comparison");
+    assert_eq!(incremental.dvi_bytes(), expected.dvi_bytes());
+    assert_eq!(incremental.effects, expected.effects);
+}
+
+#[test]
 fn paragraph_front_end_rejects_changed_raw_span_before_reusing_later_macros() {
     let mut universe = template();
     universe.enable_pure_memo(all_memo_layers());

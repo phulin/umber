@@ -1481,11 +1481,13 @@ pub struct DirectSourceDelivery {
 ///
 /// Construction proves stable editor-fragment coverage without changing the
 /// live stack. The private fields prevent callers from manufacturing a skip.
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct PreparedParagraphTransition {
     frame_index: usize,
     ending: SourceFrameSummary,
     token_list_indices: Vec<(usize, usize)>,
+    common_frame_count: usize,
+    ending_suffix: Vec<InputFrameSummary>,
     document_line_start: usize,
     document_content_end: usize,
     document_terminator_start: usize,
@@ -1499,6 +1501,34 @@ pub struct ParagraphSourceCoverage<'a> {
     pub starting: RootSpanId,
     pub consumed: &'a [RootSpanId],
     pub ending: RootSpanId,
+}
+
+/// Accepted input-stack facts paired with one paragraph source-coverage
+/// recipe. The common prefix is recorded while all handles are live, so later
+/// carried revisions never need to compare revision-local identities.
+#[derive(Clone, Copy, Debug)]
+pub struct RecordedParagraphTransition<'a> {
+    starting_input: Option<&'a InputSummary>,
+    starting_identity: Option<u64>,
+    common_frame_count: u32,
+    ending_input: &'a InputSummary,
+}
+
+impl<'a> RecordedParagraphTransition<'a> {
+    #[must_use]
+    pub const fn new(
+        starting_input: Option<&'a InputSummary>,
+        starting_identity: Option<u64>,
+        common_frame_count: u32,
+        ending_input: &'a InputSummary,
+    ) -> Self {
+        Self {
+            starting_input,
+            starting_identity,
+            common_frame_count,
+            ending_input,
+        }
+    }
 }
 
 /// Stable class of immutable non-editor input.
@@ -2995,11 +3025,15 @@ impl InputStack {
         &self,
         stores: &impl ExpansionState,
         coverage: ParagraphSourceCoverage<'_>,
-        recorded_starting_input: Option<&InputSummary>,
-        recorded_starting_identity: Option<u64>,
+        recorded: RecordedParagraphTransition<'_>,
         current_starting_identity: Option<u64>,
-        ending_input: &InputSummary,
     ) -> Option<PreparedParagraphTransition> {
+        let RecordedParagraphTransition {
+            starting_input: recorded_starting_input,
+            starting_identity: recorded_starting_identity,
+            common_frame_count: recorded_common_frame_count,
+            ending_input,
+        } = recorded;
         if self.source_frame_count != 1 {
             return None;
         }
@@ -3008,16 +3042,49 @@ impl InputStack {
             .iter_indexed_from(0)
             .map(|(index, _)| index)
             .collect::<Vec<_>>();
-        let token_list_indices = match recorded_starting_input {
+        let (common_frame_count, token_list_indices, ending_suffix) = match recorded_starting_input
+        {
             Some(recorded)
                 if recorded_starting_identity == current_starting_identity
-                    && recorded_starting_identity.is_some()
-                    && recorded.supports_paragraph_cursor_transition_to(ending_input) =>
+                    && recorded_starting_identity.is_some() =>
             {
-                recorded
+                let common = usize::try_from(recorded_common_frame_count).ok()?;
+                if common == 0
+                    || common > recorded.frames().len()
+                    || common > ending_input.frames().len()
+                    || common > live_frame_indices.len()
+                    || !recorded.frames()[..common]
+                        .iter()
+                        .zip(&ending_input.frames()[..common])
+                        .all(|(starting, ending)| {
+                            matches!(
+                                (starting, ending),
+                                (
+                                    InputFrameSummary::Source { .. },
+                                    InputFrameSummary::Source { .. }
+                                ) | (
+                                    InputFrameSummary::TokenList { .. },
+                                    InputFrameSummary::TokenList { .. }
+                                ) | (
+                                    InputFrameSummary::Condition { .. },
+                                    InputFrameSummary::Condition { .. }
+                                )
+                            )
+                        })
+                    || recorded.frames()[common..]
+                        .iter()
+                        .any(|frame| matches!(frame, InputFrameSummary::Source { .. }))
+                    || ending_input.frames()[common..]
+                        .iter()
+                        .any(|frame| matches!(frame, InputFrameSummary::Source { .. }))
+                {
+                    return None;
+                }
+                let token_list_indices = recorded
                     .frames()
                     .iter()
                     .zip(ending_input.frames())
+                    .take(common)
                     .enumerate()
                     .filter_map(|(position, (starting, ending))| match (starting, ending) {
                         (
@@ -3029,9 +3096,16 @@ impl InputStack {
                         ) => Some((live_frame_indices[position], *ending_index)),
                         _ => None,
                     })
-                    .collect()
+                    .collect();
+                let ending_suffix = ending_input.frames()[common..].to_vec();
+                (common, token_list_indices, ending_suffix)
             }
-            None if self.frames.len() == 1 && ending_input.frames().len() == 1 => Vec::new(),
+            None if recorded_common_frame_count == 1
+                && self.frames.len() == 1
+                && ending_input.frames().len() == 1 =>
+            {
+                (1, Vec::new(), Vec::new())
+            }
             _ => return None,
         };
         let frame_index = self
@@ -3134,6 +3208,8 @@ impl InputStack {
             frame_index,
             ending: ending.clone(),
             token_list_indices,
+            common_frame_count,
+            ending_suffix,
             document_line_start,
             document_content_end: rebase(ending.physical_content_end())?,
             document_terminator_start: rebase(ending.terminator_start())?,
@@ -3147,9 +3223,50 @@ impl InputStack {
     /// No bytes are tokenized and no catcodes are observed.
     pub fn apply_paragraph_transition(
         &mut self,
-        stores: &impl ExpansionState,
+        stores: &mut impl ExpansionState,
         transition: PreparedParagraphTransition,
+        resolved_input_origins: &[OriginId],
+        input_origin_slots: &[u32],
+        input_origin_list_lengths: &[u32],
     ) -> Result<bool, LexError> {
+        let stored_suffix_frames = transition
+            .ending_suffix
+            .iter()
+            .filter(|frame| matches!(frame, InputFrameSummary::TokenList { .. }));
+        assert_eq!(
+            stored_suffix_frames.count(),
+            input_origin_list_lengths.len(),
+            "recorded input provenance list shape must match its frame suffix"
+        );
+        let expected_origin_slots = transition
+            .ending_suffix
+            .iter()
+            .scan(
+                input_origin_list_lengths.iter().copied(),
+                |lengths, frame| {
+                    let count = match frame {
+                        InputFrameSummary::TokenList {
+                            macro_arguments, ..
+                        } => usize::try_from(lengths.next()?)
+                            .ok()?
+                            .checked_add(macro_arguments.tokens().len())?
+                            .checked_add(2)?,
+                        InputFrameSummary::TransientTokenList { tokens, .. } => {
+                            tokens.len().checked_add(2)?
+                        }
+                        InputFrameSummary::Condition { .. } => 1,
+                        InputFrameSummary::Source { .. } => return None,
+                    };
+                    Some(count)
+                },
+            )
+            .try_fold(0_usize, usize::checked_add)
+            .expect("recorded input provenance slot count must fit usize");
+        assert_eq!(
+            expected_origin_slots,
+            input_origin_slots.len(),
+            "recorded input provenance slots must match their frame suffix"
+        );
         let InputFrame::Source(source) = &mut self.frames[transition.frame_index] else {
             return Ok(false);
         };
@@ -3238,6 +3355,152 @@ impl InputStack {
             };
             frame.index = ending_index;
         }
+        while self.frames.len() > transition.common_frame_count {
+            let Some((frame_index, frame)) = self.frames.iter_indexed_from(0).next_back() else {
+                return Ok(false);
+            };
+            match frame {
+                InputFrame::TokenList(_) => {
+                    let frame = self.discard_token_list_frame(frame_index);
+                    self.retire_token_list_frame(frame);
+                }
+                InputFrame::Condition { .. } => {
+                    let _ = self.remove_frame(frame_index);
+                }
+                InputFrame::Source(_) => return Ok(false),
+            }
+        }
+        let mut origin_slots = input_origin_slots.iter().copied();
+        let mut origin_list_lengths = input_origin_list_lengths.iter().copied();
+        let next_origin = |origin_slots: &mut std::iter::Copied<std::slice::Iter<'_, u32>>| {
+            let ordinal = origin_slots
+                .next()
+                .expect("recorded input provenance shape must match its frame suffix");
+            usize::try_from(ordinal)
+                .ok()
+                .and_then(|index| resolved_input_origins.get(index))
+                .copied()
+                .unwrap_or(OriginId::UNKNOWN)
+        };
+        for frame in transition.ending_suffix {
+            let frame = match frame {
+                InputFrameSummary::TokenList {
+                    token_list,
+                    origin_list: _,
+                    replay_kind,
+                    index,
+                    macro_arguments,
+                    macro_invocation: _,
+                    parent_macro_invocation: _,
+                } => {
+                    let origin_count = usize::try_from(
+                        origin_list_lengths
+                            .next()
+                            .expect("stored input frame must retain its origin-list length"),
+                    )
+                    .expect("stored input origin-list length must fit usize");
+                    let origin_list = if origin_count == 0 {
+                        OriginListId::EMPTY
+                    } else {
+                        let mut origins = stores.origin_list_builder();
+                        origins.reserve(origin_count);
+                        for _ in 0..origin_count {
+                            origins.push(next_origin(&mut origin_slots));
+                        }
+                        stores.finish_origin_list(&mut origins)
+                    };
+                    let argument_tokens = macro_arguments
+                        .tokens()
+                        .iter()
+                        .map(|word| {
+                            TracedTokenWord::pack(
+                                word.token().expect("summary token"),
+                                next_origin(&mut origin_slots),
+                            )
+                        })
+                        .collect();
+                    InputFrame::TokenList(TokenListInputFrame {
+                        payload: ReplayPayload::Stored {
+                            token_list,
+                            origin_list,
+                        },
+                        replay_kind,
+                        index,
+                        macro_arguments: MacroArguments::from_parts(
+                            argument_tokens,
+                            *macro_arguments.ranges(),
+                        ),
+                        macro_invocation: next_origin(&mut origin_slots),
+                        parent_macro_invocation: next_origin(&mut origin_slots),
+                        replay_marker: None,
+                    })
+                }
+                InputFrameSummary::TransientTokenList {
+                    tokens,
+                    replay_kind,
+                    macro_invocation: _,
+                    parent_macro_invocation: _,
+                } => InputFrame::TokenList(TokenListInputFrame {
+                    payload: ReplayPayload::Transient {
+                        tokens: tokens
+                            .iter()
+                            .map(|word| {
+                                TracedTokenWord::pack(
+                                    word.token().expect("summary token"),
+                                    next_origin(&mut origin_slots),
+                                )
+                            })
+                            .collect(),
+                    },
+                    replay_kind,
+                    index: 0,
+                    macro_arguments: MacroArguments::new(),
+                    macro_invocation: next_origin(&mut origin_slots),
+                    parent_macro_invocation: next_origin(&mut origin_slots),
+                    replay_marker: None,
+                }),
+                InputFrameSummary::Condition { token, condition } => InputFrame::Condition {
+                    token,
+                    condition: condition.with_context(TracedTokenWord::pack(
+                        condition.context().token().expect("summary token"),
+                        next_origin(&mut origin_slots),
+                    )),
+                },
+                InputFrameSummary::Source { .. } => {
+                    unreachable!("validated paragraph suffix cannot introduce a source frame")
+                }
+            };
+            self.push_frame(frame);
+        }
+        assert!(
+            origin_slots.next().is_none() && origin_list_lengths.next().is_none(),
+            "recorded input provenance must be consumed exactly"
+        );
+        self.active_macro_invocation = self
+            .frames
+            .iter()
+            .rev()
+            .find_map(|frame| match frame {
+                InputFrame::TokenList(frame) if frame.macro_invocation != OriginId::UNKNOWN => {
+                    Some(frame.macro_invocation)
+                }
+                InputFrame::Source(_) | InputFrame::TokenList(_) | InputFrame::Condition { .. } => {
+                    None
+                }
+            })
+            .unwrap_or(OriginId::UNKNOWN);
+        self.recently_popped_invocation = None;
+        self.next_condition_token = self
+            .frames
+            .iter()
+            .filter_map(|frame| match frame {
+                InputFrame::Condition { token, .. } => Some(token.raw()),
+                InputFrame::Source(_) | InputFrame::TokenList(_) => None,
+            })
+            .max()
+            .map_or(self.next_condition_token, |token| {
+                self.next_condition_token.max(token.saturating_add(1))
+            });
         Ok(true)
     }
 
