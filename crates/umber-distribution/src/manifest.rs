@@ -5,9 +5,13 @@ use std::fmt;
 use crate::json::{self, Value};
 
 pub const MANIFEST_SCHEMA: u32 = 1;
-pub const SHARDED_ROOT_SCHEMA: u32 = 2;
+pub const LEGACY_SHARDED_ROOT_SCHEMA: u32 = 2;
+pub const SHARDED_ROOT_SCHEMA: u32 = 3;
 pub const INDEX_SHARD_SCHEMA: u32 = 1;
 pub const MAX_SHARD_BITS: u8 = 16;
+pub const FORMAT_INPUT_CLOSURE_SCHEMA: u32 = 1;
+pub const MAX_FORMAT_INPUTS: usize = 256;
+pub const MAX_REQUEST_KEY_BYTES: usize = 1024;
 const MAX_OBJECT_BYTES: u64 = 128 * 1024 * 1024;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -93,6 +97,13 @@ pub struct ManifestFormat {
     pub source_distribution: String,
     pub source_manifest_sha256: String,
     pub source_date_epoch: u64,
+    pub input_closure: Option<FormatInputClosure>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FormatInputClosure {
+    pub schema: u32,
+    pub keys: Vec<String>,
 }
 
 impl ManifestFile {
@@ -233,9 +244,9 @@ impl ShardedManifestRoot {
             json::parse(text).map_err(|error| ManifestParseError::new(error.to_string()))?;
         let mut root = object(value, "root manifest")?;
         let schema = u32_value(take(&mut root, "schema", "root manifest")?, "schema")?;
-        if schema != SHARDED_ROOT_SCHEMA {
+        if !matches!(schema, LEGACY_SHARDED_ROOT_SCHEMA | SHARDED_ROOT_SCHEMA) {
             return Err(ManifestParseError::new(format!(
-                "unsupported root manifest schema {schema}; expected {SHARDED_ROOT_SCHEMA}"
+                "unsupported root manifest schema {schema}; expected {LEGACY_SHARDED_ROOT_SCHEMA} or {SHARDED_ROOT_SCHEMA}"
             )));
         }
         let distribution = string(
@@ -273,6 +284,15 @@ impl ShardedManifestRoot {
             .map(parse_formats)
             .transpose()?
             .unwrap_or_default();
+        if schema == LEGACY_SHARDED_ROOT_SCHEMA
+            && formats
+                .values()
+                .any(|format| format.input_closure.is_some())
+        {
+            return Err(ManifestParseError::new(
+                "format input closures require root manifest schema 3",
+            ));
+        }
         finish(root, "root manifest")?;
         validate_cross_references(&BTreeMap::new(), &BTreeMap::new(), &formats)?;
         Ok(Self {
@@ -495,6 +515,10 @@ fn parse_formats(value: Value) -> Result<BTreeMap<String, ManifestFormat>, Manif
             take(&mut entry, "sourceDateEpoch", &name)?,
             "sourceDateEpoch",
         )?;
+        let input_closure = entry
+            .remove("inputClosure")
+            .map(|value| parse_format_input_closure(value, &name))
+            .transpose()?;
         finish(entry, &format!("format {name}"))?;
         formats.insert(
             name,
@@ -508,10 +532,33 @@ fn parse_formats(value: Value) -> Result<BTreeMap<String, ManifestFormat>, Manif
                 source_distribution,
                 source_manifest_sha256,
                 source_date_epoch,
+                input_closure,
             },
         );
     }
     Ok(formats)
+}
+
+fn parse_format_input_closure(
+    value: Value,
+    format_name: &str,
+) -> Result<FormatInputClosure, ManifestParseError> {
+    let mut fields = object(value, &format!("input closure for format {format_name}"))?;
+    let schema = u32_value(
+        take(&mut fields, "schema", format_name)?,
+        "input closure schema",
+    )?;
+    if schema != FORMAT_INPUT_CLOSURE_SCHEMA {
+        return Err(ManifestParseError::new(format!(
+            "unsupported format input closure schema {schema}; expected {FORMAT_INPUT_CLOSURE_SCHEMA}"
+        )));
+    }
+    let keys = bounded_request_key_array(
+        take(&mut fields, "keys", format_name)?,
+        &format!("input closure for format {format_name}"),
+    )?;
+    finish(fields, &format!("input closure for format {format_name}"))?;
+    Ok(FormatInputClosure { schema, keys })
 }
 
 fn parse_object_entry(
@@ -559,6 +606,15 @@ fn validate_cross_references(
         check_digest_length(&mut digest_lengths, &entry.sha256, entry.bytes)?;
     }
     for entry in formats.values() {
+        if let Some(closure) = &entry.input_closure {
+            for key in &closure.keys {
+                if !files.contains_key(key) && !files.is_empty() {
+                    return Err(ManifestParseError::new(format!(
+                        "format input {key} is absent"
+                    )));
+                }
+            }
+        }
         check_digest_length(&mut digest_lengths, &entry.sha256, entry.bytes)?;
     }
     Ok(())
@@ -611,6 +667,11 @@ fn validate_base_url(value: &str) -> Result<(), ManifestParseError> {
 }
 
 pub(crate) fn validate_file_key(key: &str) -> Result<(), ManifestParseError> {
+    if key.len() > MAX_REQUEST_KEY_BYTES {
+        return Err(ManifestParseError::new(format!(
+            "lookup key exceeds the {MAX_REQUEST_KEY_BYTES}-byte manifest limit"
+        )));
+    }
     let Some((kind, name)) = key.split_once(':') else {
         return Err(ManifestParseError::new(format!("invalid lookup key {key}")));
     };
@@ -767,6 +828,31 @@ fn string_array(value: Value, label: &str) -> Result<Vec<String>, ManifestParseE
     Ok(output)
 }
 
+fn bounded_request_key_array(value: Value, label: &str) -> Result<Vec<String>, ManifestParseError> {
+    let Value::Array(values) = value else {
+        return Err(ManifestParseError::new(format!("{label} must be an array")));
+    };
+    if values.is_empty() || values.len() > MAX_FORMAT_INPUTS {
+        return Err(ManifestParseError::new(format!(
+            "{label} must contain between 1 and {MAX_FORMAT_INPUTS} keys"
+        )));
+    }
+    let mut output = Vec::with_capacity(values.len());
+    let mut previous: Option<String> = None;
+    for value in values {
+        let key = string(value, label)?;
+        validate_file_key(&key)?;
+        if previous.as_ref().is_some_and(|value| value >= &key) {
+            return Err(ManifestParseError::new(format!(
+                "{label} keys must be unique and strictly sorted"
+            )));
+        }
+        previous = Some(key.clone());
+        output.push(key);
+    }
+    Ok(output)
+}
+
 fn digest_array(value: Value, label: &str) -> Result<Vec<String>, ManifestParseError> {
     let values = string_array(value, label)?;
     for digest in &values {
@@ -838,6 +924,30 @@ fn write_format(out: &mut String, entry: &ManifestFormat, indent: usize) {
         false,
     );
     field_number(out, "sourceDateEpoch", entry.source_date_epoch, indent);
+    if let Some(closure) = &entry.input_closure {
+        out.push_str(",\n");
+        out.push_str(&" ".repeat(indent));
+        json_string(out, "inputClosure");
+        out.push_str(": {");
+        out.push('\n');
+        out.push_str(&" ".repeat(indent + 2));
+        json_string(out, "schema");
+        out.push_str(": ");
+        out.push_str(&closure.schema.to_string());
+        out.push_str(",\n");
+        out.push_str(&" ".repeat(indent + 2));
+        json_string(out, "keys");
+        out.push_str(": [");
+        for (index, key) in closure.keys.iter().enumerate() {
+            if index > 0 {
+                out.push_str(", ");
+            }
+            json_string(out, key);
+        }
+        out.push_str("]\n");
+        out.push_str(&" ".repeat(indent));
+        out.push('}');
+    }
 }
 
 fn write_object_fields(out: &mut String, entry: &ObjectEntry, indent: usize, first: bool) {

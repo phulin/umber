@@ -5,9 +5,12 @@ use std::path::Path;
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use umber_distribution::{Manifest, ManifestFile, ManifestFormat};
+use umber_distribution::{
+    FORMAT_INPUT_CLOSURE_SCHEMA, FileRequestKey, FormatInputClosure, MAX_FORMAT_INPUTS, Manifest,
+    ManifestFile, ManifestFormat,
+};
 
-pub const ROOT_SCHEMA: u32 = 2;
+pub const ROOT_SCHEMA: u32 = 3;
 pub const SHARD_SCHEMA: u32 = 1;
 pub const MAX_SHARD_BITS: u8 = 16;
 
@@ -74,6 +77,15 @@ pub struct RootFormat {
     pub source_distribution: String,
     pub source_manifest_sha256: String,
     pub source_date_epoch: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub input_closure: Option<RootFormatInputClosure>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct RootFormatInputClosure {
+    pub schema: u32,
+    pub keys: Vec<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -247,6 +259,11 @@ pub fn verify_sharded_snapshot(output: &Path) -> Result<ShardedPublication> {
             Ok((name.clone(), ManifestFormat::from(format)))
         })
         .collect::<Result<BTreeMap<_, _>>>()?;
+    for (name, format) in &formats {
+        if let Some(closure) = &format.input_closure {
+            validate_format_input_closure(name, closure, &files)?;
+        }
+    }
     Ok(ShardedPublication {
         root,
         shards,
@@ -328,6 +345,33 @@ fn validate_fetch_entry(entry: &FetchEntry, label: &str) -> Result<()> {
     Ok(())
 }
 
+fn validate_format_input_closure(
+    format_name: &str,
+    closure: &FormatInputClosure,
+    files: &BTreeMap<String, ShardFile>,
+) -> Result<()> {
+    if closure.schema != FORMAT_INPUT_CLOSURE_SCHEMA
+        || closure.keys.is_empty()
+        || closure.keys.len() > MAX_FORMAT_INPUTS
+    {
+        bail!("invalid input closure metadata for format {format_name}");
+    }
+    let mut previous: Option<&str> = None;
+    for key in &closure.keys {
+        FileRequestKey::from_manifest_key(key).with_context(|| {
+            format!("invalid input closure key {key:?} for format {format_name}")
+        })?;
+        if previous.is_some_and(|value| value >= key) {
+            bail!("input closure keys for format {format_name} are not strictly sorted");
+        }
+        if !files.contains_key(key) {
+            bail!("input closure key {key} for format {format_name} is absent");
+        }
+        previous = Some(key.as_str());
+    }
+    Ok(())
+}
+
 fn validate_digest(digest: &str, label: &str) -> Result<()> {
     if digest.len() != 64
         || !digest
@@ -381,6 +425,13 @@ impl From<&ManifestFormat> for RootFormat {
             source_distribution: value.source_distribution.clone(),
             source_manifest_sha256: value.source_manifest_sha256.clone(),
             source_date_epoch: value.source_date_epoch,
+            input_closure: value
+                .input_closure
+                .as_ref()
+                .map(|closure| RootFormatInputClosure {
+                    schema: closure.schema,
+                    keys: closure.keys.clone(),
+                }),
         }
     }
 }
@@ -397,6 +448,13 @@ impl From<&RootFormat> for ManifestFormat {
             source_distribution: value.source_distribution.clone(),
             source_manifest_sha256: value.source_manifest_sha256.clone(),
             source_date_epoch: value.source_date_epoch,
+            input_closure: value
+                .input_closure
+                .as_ref()
+                .map(|closure| FormatInputClosure {
+                    schema: closure.schema,
+                    keys: closure.keys.clone(),
+                }),
         }
     }
 }

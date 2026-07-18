@@ -27,7 +27,7 @@ fn root(name: &str, path: &Path) -> Result<RootConfig> {
 
 fn config(roots: Vec<RootConfig>) -> PublishConfig {
     PublishConfig {
-        schema: 2,
+        schema: 3,
         distribution: "texlive-fixture-2026".to_owned(),
         objects_base_url: "https://cdn.example.test/texlive/objects/".to_owned(),
         shard_bits: 3,
@@ -92,11 +92,115 @@ fn fixture_publication_is_byte_stable_and_content_addressed() -> Result<()> {
     assert_eq!(inline.sha256, manifest.files["tfm:cmr10.tfm"].sha256);
     let format = manifest.formats.get("plain").expect("plain format");
     assert_eq!(format.engine, "umber");
-    assert_eq!(format.format_schema, 9);
+    assert_eq!(format.format_schema, 10);
     assert_eq!(
         objects_a.get(&format.object).map(Vec::len),
         Some(format.bytes as usize)
     );
+    Ok(())
+}
+
+#[test]
+fn format_input_closures_are_canonical_and_verified() -> Result<()> {
+    let fixture = TempDir::new()?;
+    let root_path = fixture.path().join("root");
+    fs::create_dir_all(&root_path)?;
+    write(&root_path, "tex/plain.tex", b"plain")?;
+    write(&root_path, "fonts/tfm/public/cm/cmr10.tfm", b"tfm")?;
+    let assets = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../crates/umber-wasm/assets");
+    let mut metadata: serde_json::Value =
+        serde_json::from_slice(&fs::read(assets.join("plain-format.json"))?)?;
+    metadata["schema"] = 2.into();
+    metadata["inputClosure"] = serde_json::json!({
+        "schema": 1,
+        "keys": ["tfm:cmr10.tfm", "tex:plain.tex"]
+    });
+    let metadata_path = fixture.path().join("plain-format.json");
+    fs::write(&metadata_path, serde_json::to_vec_pretty(&metadata)?)?;
+    let mut config = config(vec![root("runtime", &root_path)?]);
+    config.dependencies.clear();
+    config.formats.push(FormatConfig {
+        path: assets.join("plain.fmt"),
+        metadata: metadata_path,
+    });
+
+    let output = fixture.path().join("out");
+    let publication = publish(&config, &output)?;
+    assert_eq!(
+        publication.formats["plain"]
+            .input_closure
+            .as_ref()
+            .expect("input closure")
+            .keys,
+        ["tex:plain.tex", "tfm:cmr10.tfm"]
+    );
+
+    metadata["inputClosure"]["keys"] = serde_json::json!(["tex:plain.tex", "tfm:cmr10.tfm"]);
+    let sorted_metadata_path = fixture.path().join("plain-format-sorted.json");
+    fs::write(&sorted_metadata_path, serde_json::to_vec(&metadata)?)?;
+    let mut sorted_config = config.clone();
+    sorted_config.formats[0].metadata = sorted_metadata_path;
+    let sorted_output = fixture.path().join("out-sorted");
+    publish(&sorted_config, &sorted_output)?;
+    assert_eq!(
+        fs::read(output.join("manifest.json"))?,
+        fs::read(sorted_output.join("manifest.json"))?
+    );
+    assert_eq!(
+        directory_bytes(&output.join("objects"))?,
+        directory_bytes(&sorted_output.join("objects"))?
+    );
+
+    let mut corrupt_root: super::RootManifest =
+        serde_json::from_slice(&fs::read(output.join("manifest.json"))?)?;
+    corrupt_root
+        .formats
+        .get_mut("plain")
+        .unwrap()
+        .input_closure
+        .as_mut()
+        .unwrap()
+        .keys
+        .insert(0, "tex:missing.tex".to_owned());
+    let mut bytes = serde_json::to_vec(&corrupt_root)?;
+    bytes.push(b'\n');
+    fs::write(output.join("manifest.json"), bytes)?;
+    let error = verify_sharded_snapshot(&output).expect_err("absent closure key must fail");
+    assert!(error.to_string().contains("is absent"));
+    Ok(())
+}
+
+#[test]
+fn rejects_duplicate_and_oversized_format_input_closures() -> Result<()> {
+    let fixture = TempDir::new()?;
+    let root_path = fixture.path().join("root");
+    fs::create_dir_all(&root_path)?;
+    write(&root_path, "tex/plain.tex", b"plain")?;
+    let assets = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../crates/umber-wasm/assets");
+    let base: serde_json::Value =
+        serde_json::from_slice(&fs::read(assets.join("plain-format.json"))?)?;
+    for (label, keys) in [
+        ("duplicate", vec!["tex:plain.tex".to_owned(); 2]),
+        (
+            "oversized",
+            (0..=umber_distribution::MAX_FORMAT_INPUTS)
+                .map(|index| format!("tex:{index}.tex"))
+                .collect(),
+        ),
+    ] {
+        let mut metadata = base.clone();
+        metadata["schema"] = 2.into();
+        metadata["inputClosure"] = serde_json::json!({"schema": 1, "keys": keys});
+        let metadata_path = fixture.path().join(format!("{label}.json"));
+        fs::write(&metadata_path, serde_json::to_vec(&metadata)?)?;
+        let mut config = config(vec![root("runtime", &root_path)?]);
+        config.dependencies.clear();
+        config.formats.push(FormatConfig {
+            path: assets.join("plain.fmt"),
+            metadata: metadata_path,
+        });
+        assert!(publish(&config, &fixture.path().join(format!("out-{label}"))).is_err());
+    }
     Ok(())
 }
 

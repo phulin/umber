@@ -139,3 +139,39 @@ fn rejects_inconsistent_roots_and_mismatched_shard_identity() {
         .expect("structurally valid shard");
     assert!(shard.validate_identity(&root, 0).is_err());
 }
+
+#[test]
+fn parses_versioned_bounded_format_input_closures() {
+    let root = ShardedManifestRoot::parse(
+        r#"{"schema":3,"distribution":"test","objectsBaseUrl":"https://example.test/objects/","shardBits":0,"shardCount":1,"shards":["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"],"formats":{"latex":{"object":"sha256-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","sha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","bytes":10,"engine":"umber","engineVersion":"0.1.0","formatSchema":10,"sourceDistribution":"test","sourceManifestSha256":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc","sourceDateEpoch":0,"inputClosure":{"schema":1,"keys":["tex:latex.ltx","tfm:cmr10.tfm"]}}}}"#,
+    )
+    .expect("root manifest with input closure");
+    let closure = root.formats["latex"]
+        .input_closure
+        .as_ref()
+        .expect("format input closure");
+    assert_eq!(closure.schema, FORMAT_INPUT_CLOSURE_SCHEMA);
+    assert_eq!(closure.keys, ["tex:latex.ltx", "tfm:cmr10.tfm"]);
+    let schema_two = r#"{"schema":2,"distribution":"test","objectsBaseUrl":"https://example.test/objects/","shardBits":0,"shardCount":1,"shards":["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"],"formats":{"latex":{"object":"sha256-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","sha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","bytes":10,"engine":"umber","engineVersion":"0.1.0","formatSchema":10,"sourceDistribution":"test","sourceManifestSha256":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc","sourceDateEpoch":0,"inputClosure":{"schema":1,"keys":["tex:latex.ltx"]}}}}"#;
+    assert!(ShardedManifestRoot::parse(schema_two).is_err());
+}
+
+#[test]
+fn rejects_corrupt_duplicate_and_oversized_format_input_closures() {
+    let prefix = r#"{"schema":3,"distribution":"test","objectsBaseUrl":"https://example.test/objects/","shardBits":0,"shardCount":1,"shards":["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"],"formats":{"latex":{"object":"sha256-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","sha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","bytes":10,"engine":"umber","engineVersion":"0.1.0","formatSchema":10,"sourceDistribution":"test","sourceManifestSha256":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc","sourceDateEpoch":0,"inputClosure":{"schema":1,"keys":["#;
+    let suffix = r#"]}}}}"#;
+    for keys in [
+        r#"tex:latex.ltx","tex:latex.ltx"#,
+        r#"tfm:cmr10.tfm","tex:latex.ltx"#,
+        r#"invalid"#,
+    ] {
+        assert!(ShardedManifestRoot::parse(&format!("{prefix}{keys}{suffix}")).is_err());
+    }
+    let long_key = format!("tex:{}", "a".repeat(MAX_REQUEST_KEY_BYTES));
+    assert!(ShardedManifestRoot::parse(&format!("{prefix}{long_key}\"{suffix}")).is_err());
+    let too_many = (0..=MAX_FORMAT_INPUTS)
+        .map(|index| format!(r#"tex:{index:03}.tex"#))
+        .collect::<Vec<_>>()
+        .join("\",\"");
+    assert!(ShardedManifestRoot::parse(&format!("{prefix}{too_many}\"{suffix}")).is_err());
+}

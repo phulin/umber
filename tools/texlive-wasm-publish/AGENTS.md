@@ -6,6 +6,12 @@ All accepted source paths are normalized relative POSIX paths. Reject symlinks, 
 
 Object names are derived solely from SHA-256. Manifest serialization uses ordered maps and one trailing newline. Dependency entries are hints and must refer to valid logical keys, but are not required to be transitively complete.
 
+Schema-3 format entries may carry schema-1 input closures. Canonicalize their
+request keys, enforce the shared count/key-size bounds, reject duplicates, and
+verify every key against the complete published file map before writing. Keep
+schema-1 format metadata as the legacy no-closure form; schema-2 format
+metadata requires a closure.
+
 Production TeX lookup objects include every file below `tex/`, TFM metrics,
 and the runtime font areas `afm`, `enc`, `map`, `opentype`, `pk`, `type1`,
 `truetype`, and `vf`. Documentation and source trees are never publishable.

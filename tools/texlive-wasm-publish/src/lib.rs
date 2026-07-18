@@ -13,7 +13,10 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result, bail};
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
-use umber_distribution::{ManifestFile, ManifestFormat};
+use umber_distribution::{
+    FORMAT_INPUT_CLOSURE_SCHEMA, FileRequestKey, FormatInputClosure, MAX_FORMAT_INPUTS,
+    ManifestFile, ManifestFormat,
+};
 
 pub use sharded::{
     IndexShard, RootManifest, ShardedPublication, prune_unreferenced_objects, shard_index,
@@ -80,6 +83,15 @@ struct FormatMetadata {
     source_distribution: String,
     source_manifest_sha256: String,
     source_date_epoch: u64,
+    #[serde(default)]
+    input_closure: Option<FormatInputClosureMetadata>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct FormatInputClosureMetadata {
+    schema: u32,
+    keys: Vec<String>,
 }
 
 pub fn publish(config: &PublishConfig, output: &Path) -> Result<ShardedPublication> {
@@ -203,8 +215,14 @@ fn load_format(config: &FormatConfig) -> Result<(String, ManifestFormat, Vec<u8>
         .with_context(|| format!("read format metadata {}", config.metadata.display()))?;
     let metadata: FormatMetadata =
         serde_json::from_slice(&metadata_bytes).context("parse format metadata")?;
-    if metadata.schema != 1 || metadata.engine != "umber" {
-        bail!("format metadata must describe schema 1 for engine umber");
+    if !matches!(metadata.schema, 1 | 2) || metadata.engine != "umber" {
+        bail!("format metadata must describe schema 1 or 2 for engine umber");
+    }
+    if metadata.schema == 1 && metadata.input_closure.is_some() {
+        bail!("format metadata schema 1 cannot contain an input closure");
+    }
+    if metadata.schema == 2 && metadata.input_closure.is_none() {
+        bail!("format metadata schema 2 requires an input closure");
     }
     if metadata.engine_version.is_empty()
         || metadata.format_schema == 0
@@ -244,6 +262,10 @@ fn load_format(config: &FormatConfig) -> Result<(String, ManifestFormat, Vec<u8>
     if schema != metadata.format_schema {
         bail!("format image schema does not match its metadata");
     }
+    let input_closure = metadata
+        .input_closure
+        .map(|closure| canonicalize_format_input_closure(closure, &metadata.name))
+        .transpose()?;
     let published = ManifestFormat {
         object: metadata.object,
         sha256: metadata.sha256,
@@ -254,8 +276,41 @@ fn load_format(config: &FormatConfig) -> Result<(String, ManifestFormat, Vec<u8>
         source_distribution: metadata.source_distribution,
         source_manifest_sha256: metadata.source_manifest_sha256,
         source_date_epoch: metadata.source_date_epoch,
+        input_closure,
     };
     Ok((metadata.name, published, bytes))
+}
+
+fn canonicalize_format_input_closure(
+    mut closure: FormatInputClosureMetadata,
+    format_name: &str,
+) -> Result<FormatInputClosure> {
+    if closure.schema != FORMAT_INPUT_CLOSURE_SCHEMA {
+        bail!(
+            "unsupported input closure schema {} for format {format_name}; expected {FORMAT_INPUT_CLOSURE_SCHEMA}",
+            closure.schema
+        );
+    }
+    if closure.keys.is_empty() || closure.keys.len() > MAX_FORMAT_INPUTS {
+        bail!(
+            "input closure for format {format_name} must contain between 1 and {MAX_FORMAT_INPUTS} keys"
+        );
+    }
+    for key in &closure.keys {
+        FileRequestKey::from_manifest_key(key).with_context(|| {
+            format!("invalid input closure key {key:?} for format {format_name}")
+        })?;
+    }
+    let original_len = closure.keys.len();
+    closure.keys.sort();
+    closure.keys.dedup();
+    if closure.keys.len() != original_len {
+        bail!("input closure for format {format_name} contains duplicate keys");
+    }
+    Ok(FormatInputClosure {
+        schema: closure.schema,
+        keys: closure.keys,
+    })
 }
 
 fn validate_sha256(value: &str, label: &str) -> Result<()> {
