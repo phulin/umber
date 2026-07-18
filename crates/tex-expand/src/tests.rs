@@ -778,6 +778,54 @@ fn get_x_token_pushes_macro_body_frame_and_continues() {
 }
 
 #[test]
+fn expansion_fuel_stops_a_self_recursive_macro() {
+    let mut stores = Universe::new();
+    let recursive = stores.intern("loop");
+    let params = stores.intern_token_list(&[]);
+    let body = stores.intern_token_list(&[Token::Cs(recursive.symbol())]);
+    stores.set_macro_meaning(
+        recursive,
+        MacroMeaning::new(MeaningFlags::EMPTY, params, body),
+    );
+    let mut input = InputStack::new(MemoryInput::new("\\loop"));
+    let mut expansion = ExpansionContext::new("texput").with_fuel(8);
+
+    let error = crate::get_x_token_with_context(
+        &mut input,
+        &mut tex_state::ExpansionContext::new(&mut stores),
+        &mut expansion,
+    )
+    .expect_err("recursive expansion must exhaust its fuel");
+
+    assert_eq!(
+        error.to_string(),
+        "expansion work limit of 8 steps exceeded"
+    );
+    assert!(matches!(
+        error,
+        crate::ExpandError::Captured { error, .. }
+            if matches!(
+                *error,
+                crate::ExpandError::ExpansionWorkLimitExceeded { limit: 8 }
+            )
+    ));
+}
+
+#[test]
+fn nested_expansion_consumes_the_parent_fuel_budget() {
+    let mut expansion = ExpansionContext::new("texput").with_fuel(2);
+    expansion.burn_fuel().expect("parent fuel");
+    expansion
+        .with_nested(ExpansionContext::burn_fuel)
+        .expect("nested fuel");
+
+    assert!(matches!(
+        expansion.burn_fuel(),
+        Err(crate::ExpandError::ExpansionWorkLimitExceeded { limit: 2 })
+    ));
+}
+
+#[test]
 fn get_x_token_expands_protected_macros_during_normal_execution() {
     let mut stores = Universe::new();
     let macro_cs = stores.intern("protectedmacro");

@@ -845,6 +845,9 @@ pub enum ExpandError {
     ForbiddenOuterTokenInAlignment {
         context: TracedTokenWord,
     },
+    ExpansionWorkLimitExceeded {
+        limit: u64,
+    },
 }
 
 impl fmt::Display for ExpandError {
@@ -937,6 +940,9 @@ impl fmt::Display for ExpandError {
             Self::ForbiddenOuterTokenInAlignment { .. } => {
                 f.write_str("Forbidden control sequence found while scanning an alignment")
             }
+            Self::ExpansionWorkLimitExceeded { limit } => {
+                write!(f, "expansion work limit of {limit} steps exceeded")
+            }
         }
     }
 }
@@ -971,8 +977,9 @@ impl std::error::Error for ExpandError {
             | Self::InvalidConditionalRelation { .. }
             | Self::IncompleteIf { .. }
             | Self::ExtraConditionalControl { .. }
-            | Self::ForbiddenOuterTokenInSkippedConditional { .. } => None,
-            Self::ForbiddenOuterTokenInAlignment { .. } => None,
+            | Self::ForbiddenOuterTokenInSkippedConditional { .. }
+            | Self::ForbiddenOuterTokenInAlignment { .. }
+            | Self::ExpansionWorkLimitExceeded { .. } => None,
         }
     }
 }
@@ -1012,6 +1019,7 @@ impl ExpandError {
             Self::ScanGeneralText(err) => err.primary_origin(),
             Self::MacroCall(err) => err.primary_origin(),
             Self::Lex(err) => err.diagnostic_site().primary_origin(),
+            Self::ExpansionWorkLimitExceeded { .. } => None,
         }
     }
 
@@ -1108,7 +1116,13 @@ pub struct ExpansionContext<'a> {
     last_macro_replay_site: Option<MacroReplaySite>,
     csname_depth: u32,
     recoverable_diagnostics: Vec<RecoverableExpansionDiagnostic>,
+    fuel_limit: u64,
+    remaining_fuel: u64,
 }
+
+/// Default number of expansion-loop steps available to one persistent
+/// expansion session.
+pub const DEFAULT_EXPANSION_FUEL: u64 = 250_000;
 
 impl<'a> ExpansionContext<'a> {
     #[must_use]
@@ -1124,6 +1138,8 @@ impl<'a> ExpansionContext<'a> {
             last_macro_replay_site: None,
             csname_depth: 0,
             recoverable_diagnostics: Vec::new(),
+            fuel_limit: DEFAULT_EXPANSION_FUEL,
+            remaining_fuel: DEFAULT_EXPANSION_FUEL,
         }
     }
 
@@ -1143,7 +1159,26 @@ impl<'a> ExpansionContext<'a> {
             last_macro_replay_site: None,
             csname_depth: 0,
             recoverable_diagnostics: Vec::new(),
+            fuel_limit: DEFAULT_EXPANSION_FUEL,
+            remaining_fuel: DEFAULT_EXPANSION_FUEL,
         }
+    }
+
+    /// Replaces the expansion work budget for this session.
+    #[must_use]
+    pub fn with_fuel(mut self, fuel: u64) -> Self {
+        self.fuel_limit = fuel;
+        self.remaining_fuel = fuel;
+        self
+    }
+
+    #[inline(always)]
+    fn burn_fuel(&mut self) -> Result<(), ExpandError> {
+        if self.remaining_fuel == 0 {
+            return expansion_work_limit_exceeded(self.fuel_limit);
+        }
+        self.remaining_fuel -= 1;
+        Ok(())
     }
 
     /// Installs an erased read recorder for this expansion session.
@@ -1243,11 +1278,14 @@ impl<'a> ExpansionContext<'a> {
             last_macro_replay_site: None,
             csname_depth: self.csname_depth,
             recoverable_diagnostics: Vec::new(),
+            fuel_limit: self.fuel_limit,
+            remaining_fuel: self.remaining_fuel,
         };
         let output = operation(&mut nested);
         self.input_resolver = nested.input_resolver.take();
         self.recorder = nested.recorder.take();
         self.resolution_index = nested.resolution_index;
+        self.remaining_fuel = nested.remaining_fuel;
         self.recoverable_diagnostics
             .append(&mut nested.recoverable_diagnostics);
         output
@@ -1700,6 +1738,7 @@ fn get_x_token_with_context_inner(
 ) -> Result<Option<TracedTokenWord>, ExpandError> {
     let mut first = first;
     loop {
+        expansion.burn_fuel()?;
         let (read, alignment_prepared) = if let Some(prepared) = first.take() {
             (prepared.0, true)
         } else {
@@ -1804,6 +1843,12 @@ fn get_x_token_with_context_inner(
             }
         }
     }
+}
+
+#[cold]
+#[inline(never)]
+fn expansion_work_limit_exceeded(limit: u64) -> Result<(), ExpandError> {
+    Err(ExpandError::ExpansionWorkLimitExceeded { limit })
 }
 
 /// Reads one token under the semantic `get_next` rules needed before TeX82's
