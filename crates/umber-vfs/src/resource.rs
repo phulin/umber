@@ -550,7 +550,9 @@ impl FileProvisioner {
         if self.files.contains_key(&request) {
             return Err(ProvisionError::AvailabilityConflict { request });
         }
-        self.require_expected(&request)?;
+        if !self.required.contains(&request) {
+            return Err(ProvisionError::UnexpectedRequest(request));
+        }
         self.limits.check(
             VfsLimitKind::ResolvedFiles,
             self.files

@@ -335,8 +335,10 @@ Registration validates:
 The VFS performs generic validation and stores the object only after the
 requesting subsystem accepts its structure. Re-registering the same request,
 path, and bytes is a no-op. Any different binding is a typed conflict.
-Registering `FileUnavailable` instead binds the request key to an absent marker
-in the resolved-resource layer. The marker has no path or bytes, consumes one
+Registering `FileUnavailable` for a required request instead binds the request
+key to an absent marker in the resolved-resource layer. Prefetch hints authorize
+positive files only: a negative response for a hint is unexpected and cannot
+create an unavailable binding. The marker has no path or bytes, consumes one
 resolved binding slot, and is retained across attempts and revisions. Repeating
 the same negative answer is a no-op; changing a key between available and
 unavailable is a typed conflict.

@@ -428,6 +428,32 @@ fn retry_requires_progress_on_required_requests_not_hints() {
 }
 
 #[test]
+fn prefetch_hints_accept_positive_files_but_reject_unavailable_bindings() {
+    let required = key(FileKind::TexInput, "required.tex");
+    let hint = key(FileKind::TexInput, "hint.tex");
+    let batch = FileRequestBatch::new(
+        [FileRequest::new(required, "required.tex")],
+        [FileRequest::new(hint.clone(), "hint.tex")],
+    );
+    let mut registry = FileProvisioner::new(VfsLimits::default()).expect("registry");
+    registry.expect(&batch);
+
+    assert!(matches!(
+        registry.provision_unavailable(hint.clone()),
+        Err(ProvisionError::UnexpectedRequest(request)) if request == hint
+    ));
+    assert!(!registry.is_unavailable(&hint));
+    registry
+        .provision(response(
+            FileKind::TexInput,
+            "hint.tex",
+            "/texlive/hint.tex",
+            b"hint",
+        ))
+        .expect("positive hint response");
+}
+
+#[test]
 fn unavailable_bindings_are_progress_idempotent_and_immutable() {
     let required = key(FileKind::TexInput, "optional.cfg");
     let batch = FileRequestBatch::new([FileRequest::new(required.clone(), "optional.cfg")], []);

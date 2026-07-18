@@ -845,19 +845,11 @@ impl VirtualCompileSession {
             .into_iter()
             .try_for_each(|response| match response {
                 ResourceResponse::File(file) => self.provide_file_inner(file, true, false),
-                ResourceResponse::FileUnavailable(request) => {
-                    if !self.awaiting.as_ref().is_some_and(|required| {
-                        required.contains(&ResourceRequestKey::File(request.clone()))
-                    }) {
-                        return Err(CompileError::UnexpectedResourceResponse(
-                            request.name().to_owned(),
-                        ));
-                    }
-                    self.files
-                        .provision_unavailable(request)
-                        .map(|_| ())
-                        .map_err(map_provision)
-                }
+                ResourceResponse::FileUnavailable(request) => self
+                    .files
+                    .provision_unavailable(request)
+                    .map(|_| ())
+                    .map_err(map_provision),
                 ResourceResponse::Font(font) => self.provide_resolved_font(font),
                 ResourceResponse::FontUnavailable(request) => {
                     self.provide_unavailable_font(request)
