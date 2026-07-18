@@ -171,6 +171,66 @@ impl Interner {
         }
     }
 
+    /// Installs an already structurally validated frozen dense prefix without
+    /// replaying ordinary interning. Process-wide compact symbols are resolved
+    /// in one batch while local slots and lookup indexes are built directly.
+    pub(crate) fn from_frozen(
+        arena: String,
+        spans: Vec<(u32, u32)>,
+        kinds: Vec<ControlSequenceKind>,
+        semantic_atoms: Vec<u64>,
+    ) -> Result<Self, &'static str> {
+        if spans.len() != kinds.len() || spans.len() != semantic_atoms.len() {
+            return Err("frozen interner column length mismatch");
+        }
+        let count = u32::try_from(spans.len()).map_err(|_| "frozen interner capacity")?;
+        let identities = IdentityAllocator::from_frozen_len(0, count);
+        let mut symbols = Vec::with_capacity(spans.len());
+        let mut symbol_slots = AHashMap::with_capacity(spans.len());
+        let mut index: AHashMap<u64, Vec<SymbolId>> = AHashMap::with_capacity(spans.len());
+        for slot in 0..spans.len() {
+            let (start, len) = spans[slot];
+            let start = start as usize;
+            let end = start
+                .checked_add(len as usize)
+                .ok_or("frozen interner span overflow")?;
+            let name = arena
+                .get(start..end)
+                .ok_or("frozen interner span is not UTF-8 aligned")?;
+            let kind = kinds[slot];
+            if semantic_atoms[slot] != semantic_atom(kind, name) {
+                return Err("frozen interner semantic atom mismatch");
+            }
+            if kind == ControlSequenceKind::ActiveCharacter {
+                let mut chars = name.chars();
+                if chars.next().is_none() || chars.next().is_some() {
+                    return Err("frozen active name is not one character");
+                }
+            }
+            let stored = global_symbol(kind, name).map_err(|_| "frozen interner capacity")?;
+            if symbol_slots.insert(stored, slot as u32).is_some() {
+                return Err("duplicate frozen interner name");
+            }
+            let identity = identities
+                .identity_at(slot as u32)
+                .expect("validated frozen identity slot");
+            let id = SymbolId::from_identity(identity, stored);
+            index.entry(content_hash(kind, name)).or_default().push(id);
+            symbols.push(stored);
+        }
+        Ok(Self {
+            arena,
+            spans,
+            kinds,
+            semantic_atoms,
+            symbols,
+            symbol_slots,
+            index,
+            index_dirty: false,
+            identities,
+        })
+    }
+
     /// Interns `name`, returning its live capability and compact stored key.
     pub(crate) fn intern(&mut self, name: &str) -> Result<SymbolId, InternerError> {
         self.intern_key(ControlSequenceKind::Named, name)
@@ -392,7 +452,7 @@ impl Interner {
     }
 }
 
-fn semantic_atom(kind: ControlSequenceKind, name: &str) -> u64 {
+pub(crate) fn semantic_atom(kind: ControlSequenceKind, name: &str) -> u64 {
     let mut hasher = StateHasher::new(0x6373_5f61_746f_6d31);
     hasher.u8(match kind {
         ControlSequenceKind::Named => 0,

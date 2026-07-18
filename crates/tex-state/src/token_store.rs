@@ -30,6 +30,11 @@ impl TokenSemanticId {
     pub(crate) const fn value(self) -> u64 {
         self.0
     }
+
+    #[must_use]
+    pub(crate) const fn from_value(value: u64) -> Self {
+        Self(value)
+    }
 }
 
 /// Current token semantic-identity scheme. Changing token tags, symbol-atom
@@ -227,6 +232,52 @@ impl TokenStore {
             .or_default()
             .push(Self::empty_id());
         store
+    }
+
+    /// Installs a validated frozen token arena and its canonical dense list
+    /// ids directly, preserving ordinary hash-cons lookup for later additions.
+    pub(crate) fn from_frozen(
+        arena: Vec<Token>,
+        spans: Vec<(u32, u32)>,
+        semantic_ids: Vec<TokenSemanticId>,
+    ) -> Result<Self, &'static str> {
+        if spans.len() != semantic_ids.len() {
+            return Err("frozen token column length mismatch");
+        }
+        if spans.first().copied() != Some((0, 0)) || semantic_ids.is_empty() {
+            return Err("missing frozen canonical empty token list");
+        }
+        let count = u32::try_from(spans.len()).map_err(|_| "frozen token-list capacity")?;
+        let identities = IdentityAllocator::from_frozen_len(1, count);
+        let mut index = TokenIndex::default();
+        for raw in 0..count {
+            let id = TokenListId::from_identity(
+                identities
+                    .identity_at(raw)
+                    .expect("validated frozen token-list slot"),
+            );
+            let (start, len) = spans[raw as usize];
+            let value = &arena[start as usize..(start + len) as usize];
+            let candidates = index.entry(semantic_ids[raw as usize]).or_default();
+            if candidates.iter().copied().any(|candidate| {
+                let (candidate_start, candidate_len) = spans[candidate.raw() as usize];
+                arena[candidate_start as usize..(candidate_start + candidate_len) as usize]
+                    == *value
+            }) {
+                return Err("duplicate frozen token list");
+            }
+            candidates.push(id);
+        }
+        Ok(Self {
+            arena,
+            spans,
+            semantic_ids,
+            index,
+            #[cfg(test)]
+            hash_state: RandomState::new(),
+            index_dirty: false,
+            identities,
+        })
     }
 
     /// Creates a fresh owned scratch builder.

@@ -73,7 +73,10 @@ mod handles;
 mod node_semantic;
 mod state_hash;
 
-pub(crate) use format::StoreFormatError;
+pub(crate) use format::{
+    FrozenCoreSections, GLUE_SECTION, MACROS_SECTION, NAMES_SECTION, StoreFormatError,
+    TOKEN_LISTS_SECTION,
+};
 #[cfg(test)]
 pub(crate) use format::{TestingFontFormatCorruption, testing_corrupt_font_format};
 
@@ -2060,7 +2063,8 @@ impl Stores {
         // contract. Use the serialized-size proxy only when that contract is
         // satisfied instead of turning retention accounting into a panic.
         let serialized = if self.survivor_pins.is_empty() {
-            self.encode_format().map_or(0, |format| format.len())
+            self.encode_frozen_format()
+                .map_or(0, |format| format.payload_len())
         } else {
             0
         };

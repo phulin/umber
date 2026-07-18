@@ -215,6 +215,24 @@ impl MacroStore {
         }
     }
 
+    /// Installs validated frozen definitions directly over already-restored
+    /// token-list ids. Diagnostic provenance is job-local and starts absent.
+    pub(crate) fn from_frozen(
+        definitions: Vec<MacroMeaning>,
+        parameter_patterns: Vec<MacroParameterPattern>,
+    ) -> Result<Self, &'static str> {
+        if definitions.len() != parameter_patterns.len() {
+            return Err("frozen macro column length mismatch");
+        }
+        let count = u32::try_from(definitions.len()).map_err(|_| "frozen macro capacity")?;
+        Ok(Self {
+            provenance: vec![None; definitions.len()],
+            definitions,
+            parameter_patterns,
+            identities: IdentityAllocator::from_frozen_len(0, count),
+        })
+    }
+
     pub(crate) fn intern_with_provenance(
         &mut self,
         meaning: MacroMeaning,

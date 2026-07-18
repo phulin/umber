@@ -130,6 +130,24 @@ impl IdentityAllocator {
         Self::with_namespace(builtin_slots, fresh_namespace())
     }
 
+    /// Creates one fresh timeline whose validated immutable prefix already
+    /// contains `total_slots` dense entries.
+    ///
+    /// Frozen-format decoders use this after validating every record. It
+    /// avoids replaying ordinary allocation while leaving subsequent job-local
+    /// allocations and rollback on the same generation-safe path.
+    pub(crate) fn from_frozen_len(builtin_slots: u32, total_slots: u32) -> Self {
+        assert!(
+            total_slots >= builtin_slots,
+            "frozen identity prefix omits builtin slots"
+        );
+        let mut allocator = Self::with_namespace(builtin_slots, fresh_namespace());
+        allocator
+            .slots
+            .resize(total_slots as usize, allocator.active);
+        allocator
+    }
+
     fn with_namespace(builtin_slots: u32, namespace: NonZeroU64) -> Self {
         assert_ne!(
             namespace, BUILTIN_NAMESPACE,

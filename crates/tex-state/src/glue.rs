@@ -87,6 +87,39 @@ impl GlueStore {
         store
     }
 
+    /// Installs a validated frozen dense prefix and builds its lookup index
+    /// directly, without replaying semantic interning.
+    pub(crate) fn from_frozen(specs: Vec<GlueSpec>) -> Result<Self, &'static str> {
+        if specs.first().copied() != Some(GlueSpec::ZERO) {
+            return Err("missing frozen canonical zero glue");
+        }
+        let count = u32::try_from(specs.len()).map_err(|_| "frozen glue capacity")?;
+        let identities = IdentityAllocator::from_frozen_len(1, count);
+        let mut index: AHashMap<u64, Vec<GlueId>> = AHashMap::with_capacity(specs.len());
+        for (raw, spec) in specs.iter().enumerate() {
+            let id = GlueId::from_identity(
+                identities
+                    .identity_at(raw as u32)
+                    .expect("validated frozen glue slot"),
+            );
+            let candidates = index.entry(content_hash(spec)).or_default();
+            if candidates
+                .iter()
+                .copied()
+                .any(|candidate| specs[candidate.raw() as usize] == *spec)
+            {
+                return Err("duplicate frozen glue spec");
+            }
+            candidates.push(id);
+        }
+        Ok(Self {
+            specs,
+            index,
+            index_dirty: false,
+            identities,
+        })
+    }
+
     /// Interns `spec`, returning a dense id for the live glue-spec content.
     pub(crate) fn intern(&mut self, spec: GlueSpec) -> GlueId {
         if spec == GlueSpec::ZERO {

@@ -4,11 +4,36 @@ use serde::{Deserialize, Serialize};
 mod node;
 use node::FormatNode;
 
+mod frozen_core;
+
 mod font_validation;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]
 pub(crate) use font_validation::{TestingFontFormatCorruption, testing_corrupt_font_format};
+
+pub(crate) use frozen_core::{
+    FrozenCoreSections, GLUE_SECTION, MACROS_SECTION, NAMES_SECTION, TOKEN_LISTS_SECTION,
+};
+
+pub(crate) struct EncodedStoreFormat {
+    pub transitional: Vec<u8>,
+    pub names: Vec<u8>,
+    pub token_lists: Vec<u8>,
+    pub macros: Vec<u8>,
+    pub glue: Vec<u8>,
+}
+
+impl EncodedStoreFormat {
+    pub(crate) fn payload_len(&self) -> usize {
+        self.transitional
+            .len()
+            .saturating_add(self.names.len())
+            .saturating_add(self.token_lists.len())
+            .saturating_add(self.macros.len())
+            .saturating_add(self.glue.len())
+    }
+}
 
 #[derive(Debug)]
 pub(crate) enum StoreFormatError {
@@ -48,13 +73,13 @@ enum FormatEnvValue {
     Box(FormatListKey),
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 struct FormatName {
     active: bool,
     text: String,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 enum FormatToken {
     Char { ch: char, cat: u8 },
     Cs(u32),
@@ -62,14 +87,14 @@ enum FormatToken {
     Frozen(u8),
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 struct FormatMacro {
     flags: u8,
     parameter_text: u32,
     replacement_text: u32,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 struct FormatGlue {
     width: i32,
     stretch: i32,
@@ -183,6 +208,7 @@ fn restore_current_font_word(stores: &Stores, word: u64) -> Result<u64, StoreFor
 }
 
 impl Stores {
+    #[allow(dead_code)]
     pub(crate) fn encode_format(&self) -> Result<Vec<u8>, StoreFormatError> {
         if self.env.group_depth() != 0 {
             return Err(StoreFormatError::OpenGroups(self.env.group_depth()));
@@ -195,10 +221,40 @@ impl Stores {
         bincode::serialize(&format).map_err(|error| StoreFormatError::Codec(error.to_string()))
     }
 
+    #[allow(dead_code)]
     pub(crate) fn decode_format(bytes: &[u8]) -> Result<Self, StoreFormatError> {
         let format: StoreFormat = bincode::deserialize(bytes)
             .map_err(|error| StoreFormatError::Codec(error.to_string()))?;
         format.restore()
+    }
+
+    pub(crate) fn encode_frozen_format(&self) -> Result<EncodedStoreFormat, StoreFormatError> {
+        if self.env.group_depth() != 0 {
+            return Err(StoreFormatError::OpenGroups(self.env.group_depth()));
+        }
+        let format = StoreFormat::capture(self)?;
+        let frozen = frozen_core::encode(&format)?;
+        let transitional = bincode::serialize(&format)
+            .map_err(|error| StoreFormatError::Codec(error.to_string()))?;
+        Ok(EncodedStoreFormat {
+            transitional,
+            names: frozen.names,
+            token_lists: frozen.token_lists,
+            macros: frozen.macros,
+            glue: frozen.glue,
+        })
+    }
+
+    pub(crate) fn decode_frozen_format(
+        bytes: &[u8],
+        sections: FrozenCoreSections<'_>,
+    ) -> Result<Self, StoreFormatError> {
+        let format: StoreFormat = bincode::deserialize(bytes)
+            .map_err(|error| StoreFormatError::Codec(error.to_string()))?;
+        format.validate_references()?;
+        format.validate_font_state()?;
+        let core = frozen_core::decode(sections, &format)?;
+        format.restore_with_core(Some(core))
     }
 }
 
@@ -329,50 +385,65 @@ impl StoreFormat {
         })
     }
 
+    #[allow(dead_code)]
     fn restore(self) -> Result<Stores, StoreFormatError> {
         self.validate_references()?;
         self.validate_font_state()?;
+        self.restore_with_core(None)
+    }
+
+    fn restore_with_core(
+        self,
+        frozen: Option<frozen_core::DecodedFrozenCore>,
+    ) -> Result<Stores, StoreFormatError> {
         let mut stores = Stores::new();
-        for (raw, name) in self.names.into_iter().enumerate() {
-            let symbol = if name.active {
-                let mut chars = name.text.chars();
-                let ch = chars
-                    .next()
-                    .ok_or(StoreFormatError::Invalid("empty active name"))?;
-                if chars.next().is_some() {
-                    return Err(StoreFormatError::Invalid("multi-character active name"));
+        if let Some(frozen) = frozen {
+            stores.interner = frozen.interner;
+            stores.tokens = frozen.tokens;
+            stores.macros = frozen.macros;
+            stores.glue = frozen.glue;
+        } else {
+            for (raw, name) in self.names.into_iter().enumerate() {
+                let symbol = if name.active {
+                    let mut chars = name.text.chars();
+                    let ch = chars
+                        .next()
+                        .ok_or(StoreFormatError::Invalid("empty active name"))?;
+                    if chars.next().is_some() {
+                        return Err(StoreFormatError::Invalid("multi-character active name"));
+                    }
+                    stores.interner.intern_active(ch)
+                } else {
+                    stores.interner.intern(&name.text)
                 }
-                stores.interner.intern_active(ch)
-            } else {
-                stores.interner.intern(&name.text)
+                .map_err(|_| StoreFormatError::Invalid("symbol capacity"))?;
+                if symbol.raw() as usize != raw {
+                    return Err(StoreFormatError::Invalid("non-canonical symbol order"));
+                }
             }
-            .map_err(|_| StoreFormatError::Invalid("symbol capacity"))?;
-            if symbol.raw() as usize != raw {
-                return Err(StoreFormatError::Invalid("non-canonical symbol order"));
+            for (raw, tokens) in self.token_lists.into_iter().enumerate().skip(1) {
+                let tokens = tokens
+                    .into_iter()
+                    .map(|token| token.restore(&stores.interner))
+                    .collect::<Result<Vec<_>, _>>()?;
+                if stores.intern_token_list(&tokens).raw() as usize != raw {
+                    return Err(StoreFormatError::Invalid("non-canonical token-list order"));
+                }
             }
-        }
-        for (raw, tokens) in self.token_lists.into_iter().enumerate().skip(1) {
-            let tokens = tokens
-                .into_iter()
-                .map(|token| token.restore(&stores.interner))
-                .collect::<Result<Vec<_>, _>>()?;
-            if stores.intern_token_list(&tokens).raw() as usize != raw {
-                return Err(StoreFormatError::Invalid("non-canonical token-list order"));
+            for (raw, definition) in self.macros.into_iter().enumerate() {
+                let meaning = MacroMeaning::new(
+                    crate::meaning::MeaningFlags::from_bits(definition.flags),
+                    stores.resolve_stored_token_list(TokenListId::new(definition.parameter_text)),
+                    stores.resolve_stored_token_list(TokenListId::new(definition.replacement_text)),
+                );
+                if stores.intern_macro(meaning).raw() as usize != raw {
+                    return Err(StoreFormatError::Invalid("macro order"));
+                }
             }
-        }
-        for (raw, definition) in self.macros.into_iter().enumerate() {
-            let meaning = MacroMeaning::new(
-                crate::meaning::MeaningFlags::from_bits(definition.flags),
-                stores.resolve_stored_token_list(TokenListId::new(definition.parameter_text)),
-                stores.resolve_stored_token_list(TokenListId::new(definition.replacement_text)),
-            );
-            if stores.intern_macro(meaning).raw() as usize != raw {
-                return Err(StoreFormatError::Invalid("macro order"));
-            }
-        }
-        for (raw, glue) in self.glue.into_iter().enumerate().skip(1) {
-            if stores.glue.intern(glue.restore()?).raw() as usize != raw {
-                return Err(StoreFormatError::Invalid("non-canonical glue order"));
+            for (raw, glue) in self.glue.into_iter().enumerate().skip(1) {
+                if stores.glue.intern(glue.restore()?).raw() as usize != raw {
+                    return Err(StoreFormatError::Invalid("non-canonical glue order"));
+                }
             }
         }
         for (raw, font) in self.fonts.into_iter().enumerate() {

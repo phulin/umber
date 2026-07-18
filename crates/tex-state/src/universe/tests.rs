@@ -503,6 +503,165 @@ fn semantic_format_round_trips_sparse_unicode_code_tables() {
 }
 
 #[test]
+fn frozen_foundational_sections_restore_ids_and_accept_job_local_additions() {
+    let mut universe = Universe::new();
+    let base = universe.intern("frozen-base");
+    let base_tokens = universe.intern_token_list(&[
+        Token::Cs(base.symbol()),
+        Token::Char {
+            ch: 'x',
+            cat: Catcode::Letter,
+        },
+    ]);
+    let base_macro = universe.intern_macro(MacroMeaning::new(
+        MeaningFlags::LONG,
+        crate::ids::TokenListId::EMPTY,
+        base_tokens,
+    ));
+    universe.set_meaning(
+        base,
+        Meaning::Macro {
+            flags: MeaningFlags::LONG,
+            definition: base_macro,
+        },
+    );
+    let base_glue = universe.intern_glue(GlueSpec {
+        width: Scaled::from_raw(11),
+        stretch: Scaled::from_raw(22),
+        stretch_order: Order::Fil,
+        shrink: Scaled::from_raw(33),
+        shrink_order: Order::Normal,
+    });
+
+    let image = universe.dump_format().expect("frozen core format");
+    let container = crate::format_container::decode(&image).expect("decode container");
+    assert_eq!(
+        container
+            .sections
+            .iter()
+            .map(|section| section.kind)
+            .collect::<Vec<_>>(),
+        [
+            crate::format_container::TRANSITIONAL_SEMANTIC_SECTION,
+            crate::stores::NAMES_SECTION,
+            crate::stores::TOKEN_LISTS_SECTION,
+            crate::stores::MACROS_SECTION,
+            crate::stores::GLUE_SECTION,
+        ]
+    );
+
+    let mut loaded = Universe::from_format(World::memory(), &image).expect("load frozen core");
+    assert_eq!(loaded.dump_format().expect("canonical redump"), image);
+    let restored_base = loaded.symbol("frozen-base").expect("restored name");
+    assert_eq!(restored_base.raw(), base.raw());
+    assert_eq!(
+        loaded
+            .intern_token_list(&[
+                Token::Cs(restored_base.symbol()),
+                Token::Char {
+                    ch: 'x',
+                    cat: Catcode::Letter,
+                },
+            ])
+            .raw(),
+        base_tokens.raw()
+    );
+    let restored_glue = crate::ids::GlueId::testing_new(base_glue.raw());
+    assert_eq!(
+        loaded.intern_glue(loaded.glue(restored_glue)).raw(),
+        base_glue.raw()
+    );
+    let Meaning::Macro {
+        definition: restored_macro,
+        ..
+    } = loaded.meaning(restored_base)
+    else {
+        panic!("restored macro meaning");
+    };
+    assert_eq!(restored_macro.raw(), base_macro.raw());
+
+    let baseline = loaded.snapshot();
+    let added = loaded.intern("job-local-name");
+    let added_tokens = loaded.intern_token_list(&[Token::Cs(added.symbol())]);
+    let added_macro = loaded.intern_macro(MacroMeaning::new(
+        MeaningFlags::EMPTY,
+        crate::ids::TokenListId::EMPTY,
+        added_tokens,
+    ));
+    loaded.set_meaning(
+        added,
+        Meaning::Macro {
+            flags: MeaningFlags::EMPTY,
+            definition: added_macro,
+        },
+    );
+    let added_glue = loaded.intern_glue(GlueSpec {
+        width: Scaled::from_raw(-7),
+        stretch: Scaled::from_raw(0),
+        stretch_order: Order::Normal,
+        shrink: Scaled::from_raw(4),
+        shrink_order: Order::Fill,
+    });
+    assert_eq!(loaded.resolve(added), "job-local-name");
+    assert_eq!(loaded.tokens(added_tokens), [Token::Cs(added.symbol())]);
+    assert_eq!(
+        loaded.macro_definition(added_macro).replacement_text(),
+        added_tokens
+    );
+    assert_eq!(loaded.glue(added_glue).width, Scaled::from_raw(-7));
+
+    loaded.rollback(&baseline);
+    assert!(loaded.symbol("job-local-name").is_none());
+    assert_eq!(loaded.dump_format().expect("rollback redump"), image);
+}
+
+#[test]
+fn checksum_valid_foundational_section_corruption_fails_structural_validation() {
+    let mut universe = Universe::new();
+    let name = universe.intern("corrupt-me");
+    let tokens = universe.intern_token_list(&[Token::Cs(name.symbol())]);
+    universe.intern_macro(MacroMeaning::new(
+        MeaningFlags::EMPTY,
+        crate::ids::TokenListId::EMPTY,
+        tokens,
+    ));
+    universe.intern_glue(GlueSpec {
+        width: Scaled::from_raw(1),
+        stretch: Scaled::from_raw(2),
+        stretch_order: Order::Normal,
+        shrink: Scaled::from_raw(3),
+        shrink_order: Order::Fil,
+    });
+    let valid = universe.dump_format().expect("valid frozen core");
+
+    for (kind, offset, expected) in [
+        (crate::stores::NAMES_SECTION, 24 + 16, "semantic atom"),
+        (
+            crate::stores::TOKEN_LISTS_SECTION,
+            24 + 8,
+            "semantic identity",
+        ),
+        (crate::stores::MACROS_SECTION, 16 + 4, "parameter reference"),
+        (crate::stores::GLUE_SECTION, 16 + 14, "reserved bytes"),
+    ] {
+        let mut bytes = valid.clone();
+        replace_format_section(&mut bytes, kind, |section| {
+            if kind == crate::stores::MACROS_SECTION {
+                section[offset..offset + 4].copy_from_slice(&u32::MAX.to_le_bytes());
+            } else {
+                section[offset] ^= 1;
+            }
+        });
+        let error = Universe::from_format(World::memory(), &bytes)
+            .expect_err("checksum-valid malformed frozen section");
+        assert!(
+            matches!(error, FormatError::InvalidState(ref message) if message.contains(expected)),
+            "section {kind} returned {error:?}"
+        );
+    }
+}
+
+#[test]
 fn pdf_font_codes_round_trip_and_change_checkpoint_identity() {
     use crate::font::{NULL_FONT, PdfFontCode};
 
@@ -911,12 +1070,72 @@ fn refresh_format_checksum(bytes: &mut [u8]) {
 }
 
 fn replace_store_format_payload(bytes: &mut Vec<u8>, payload: Vec<u8>) {
-    *bytes = crate::format_container::encode(&[crate::format_container::SectionInput {
-        kind: crate::format_container::TRANSITIONAL_SEMANTIC_SECTION,
-        alignment: 8,
-        bytes: &payload,
-    }])
+    let container = crate::format_container::decode(bytes).expect("decode test container");
+    let names = container
+        .section(crate::stores::NAMES_SECTION)
+        .expect("names section");
+    let token_lists = container
+        .section(crate::stores::TOKEN_LISTS_SECTION)
+        .expect("token-list section");
+    let macros = container
+        .section(crate::stores::MACROS_SECTION)
+        .expect("macro section");
+    let glue = container
+        .section(crate::stores::GLUE_SECTION)
+        .expect("glue section");
+    *bytes = crate::format_container::encode(&[
+        crate::format_container::SectionInput {
+            kind: crate::format_container::TRANSITIONAL_SEMANTIC_SECTION,
+            alignment: 8,
+            bytes: &payload,
+        },
+        crate::format_container::SectionInput {
+            kind: crate::stores::NAMES_SECTION,
+            alignment: names.alignment,
+            bytes: names.bytes,
+        },
+        crate::format_container::SectionInput {
+            kind: crate::stores::TOKEN_LISTS_SECTION,
+            alignment: token_lists.alignment,
+            bytes: token_lists.bytes,
+        },
+        crate::format_container::SectionInput {
+            kind: crate::stores::MACROS_SECTION,
+            alignment: macros.alignment,
+            bytes: macros.bytes,
+        },
+        crate::format_container::SectionInput {
+            kind: crate::stores::GLUE_SECTION,
+            alignment: glue.alignment,
+            bytes: glue.bytes,
+        },
+    ])
     .expect("re-encode test container");
+}
+
+fn replace_format_section(bytes: &mut Vec<u8>, kind: u32, mutate: impl FnOnce(&mut Vec<u8>)) {
+    let container = crate::format_container::decode(bytes).expect("decode test container");
+    let mut sections: Vec<_> = container
+        .sections
+        .iter()
+        .map(|section| (section.kind, section.alignment, section.bytes.to_vec()))
+        .collect();
+    let section = sections
+        .iter_mut()
+        .find(|section| section.0 == kind)
+        .expect("target format section");
+    mutate(&mut section.2);
+    let inputs: Vec<_> = sections
+        .iter()
+        .map(
+            |(kind, alignment, bytes)| crate::format_container::SectionInput {
+                kind: *kind,
+                alignment: *alignment,
+                bytes,
+            },
+        )
+        .collect();
+    *bytes = crate::format_container::encode(&inputs).expect("re-encode test container");
 }
 
 fn corrupt_font_store_payload(

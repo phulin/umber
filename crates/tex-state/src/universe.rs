@@ -1288,28 +1288,50 @@ impl Universe {
         };
         let stores = self
             .stores
-            .encode_format()
+            .encode_frozen_format()
             .map_err(map_store_format_error)?;
         let payload = bincode::serialize(&UniverseFormatPayload {
             interaction_mode: encode_interaction_mode(self.interaction_mode),
-            stores,
+            stores: stores.transitional,
             pdf,
         })
         .map_err(|error| FormatError::InvalidState(error.to_string()))?;
-        crate::format_container::encode(&[crate::format_container::SectionInput {
-            kind: crate::format_container::TRANSITIONAL_SEMANTIC_SECTION,
-            alignment: 8,
-            bytes: &payload,
-        }])
+        crate::format_container::encode(&[
+            crate::format_container::SectionInput {
+                kind: crate::format_container::TRANSITIONAL_SEMANTIC_SECTION,
+                alignment: 8,
+                bytes: &payload,
+            },
+            crate::format_container::SectionInput {
+                kind: crate::stores::NAMES_SECTION,
+                alignment: 8,
+                bytes: &stores.names,
+            },
+            crate::format_container::SectionInput {
+                kind: crate::stores::TOKEN_LISTS_SECTION,
+                alignment: 8,
+                bytes: &stores.token_lists,
+            },
+            crate::format_container::SectionInput {
+                kind: crate::stores::MACROS_SECTION,
+                alignment: 8,
+                bytes: &stores.macros,
+            },
+            crate::format_container::SectionInput {
+                kind: crate::stores::GLUE_SECTION,
+                alignment: 8,
+                bytes: &stores.glue,
+            },
+        ])
         .map_err(map_container_error)
     }
 
     /// Constructs a fresh timeline from a validated semantic format image.
     pub fn from_format(world: World, bytes: &[u8]) -> Result<Self, FormatError> {
         let container = crate::format_container::decode(bytes).map_err(map_container_error)?;
-        if container.sections.len() != 1 {
+        if container.sections.len() != 5 {
             return Err(FormatError::InvalidState(
-                "schema-10 transition requires exactly one semantic section".to_owned(),
+                "schema-10 foundational format requires exactly five sections".to_owned(),
             ));
         }
         let payload = container
@@ -1322,7 +1344,14 @@ impl Universe {
         let format: UniverseFormatPayload = bincode::deserialize(payload.bytes)
             .map_err(|error| FormatError::InvalidState(error.to_string()))?;
         let mode = decode_interaction_mode(format.interaction_mode)?;
-        let mut stores = Stores::decode_format(&format.stores).map_err(map_store_format_error)?;
+        let frozen = crate::stores::FrozenCoreSections {
+            names: required_format_section(&container, crate::stores::NAMES_SECTION)?,
+            token_lists: required_format_section(&container, crate::stores::TOKEN_LISTS_SECTION)?,
+            macros: required_format_section(&container, crate::stores::MACROS_SECTION)?,
+            glue: required_format_section(&container, crate::stores::GLUE_SECTION)?,
+        };
+        let mut stores =
+            Stores::decode_frozen_format(&format.stores, frozen).map_err(map_store_format_error)?;
         let clock = world.job_clock();
         install_job_clock_params(
             &mut |param, value| stores.set_int_param(param, value),
@@ -5924,6 +5953,16 @@ fn map_container_error(error: crate::format_container::ContainerError) -> Format
             FormatError::InvalidState(format!("invalid portable container: {message}"))
         }
     }
+}
+
+fn required_format_section<'a>(
+    container: &crate::format_container::DecodedContainer<'a>,
+    kind: u32,
+) -> Result<&'a [u8], FormatError> {
+    container
+        .section(kind)
+        .map(|section| section.bytes)
+        .ok_or_else(|| FormatError::InvalidState(format!("missing format section {kind}")))
 }
 
 const fn encode_interaction_mode(mode: InteractionMode) -> u8 {
