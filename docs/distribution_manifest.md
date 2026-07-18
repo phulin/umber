@@ -40,10 +40,13 @@ requests. The compile session emits the deduplicated closure once in
 Schema-2 roots simply contribute no hints.
 
 Hints remain optional transport advice. Resolvers fetch the authenticated
-closure in one bounded speculative batch, return responses only for the
-engine's required requests, and ignore stale closure keys or failed speculative
-objects. A later required lookup still follows ordinary user-file precedence,
-authoritative distribution absence, VFS validation, and session limits.
+closure in one bounded speculative batch and may return positive responses for
+the exact file hints emitted by the session. The session authorizes only that
+one-shot set, validates and installs the complete response batch atomically,
+and still measures retry progress from required requests only. User files are
+removed before hint emission, native local search has first refusal, and stale,
+absent, failed, or over-budget hints produce neither responses nor unavailable
+bindings. Transitive dependency prefetches remain cache-only transport work.
 
 ## Partition and shard schema
 
@@ -102,27 +105,23 @@ this new immutable contract and retains the manifest-last upload order.
 
 ### Format-closure retry verification receipt
 
-The 2026-07-18 verification for `umber2-pbxv.8.3` used the focused
-`format_closure_batch_is_cached_once_but_not_published_to_the_retry` native
-host test. It constructs canonical schema-3 distributions with runtime-created
+The focused
+`format_closure_batch_is_installed_for_an_exactly_two_attempt_retry` native
+host test constructs canonical schema-3 distributions with runtime-created
 schema-10 LaTeX and pdfLaTeX formats and nested closures at the production
 cardinalities. Run it with:
 
 ```bash
 cargo test -q -p umber \
-  format_closure_batch_is_cached_once_but_not_published_to_the_retry \
+  format_closure_batch_is_installed_for_an_exactly_two_attempt_retry \
   -- --nocapture
 ```
 
-On the warmed release workspace, the LaTeX case fetched and authenticated all
-57 objects in its first host batch in 276,832 microseconds; the pdfLaTeX case
-fetched all 60 in 284,806 microseconds. The transport batch therefore works.
-The host returned only the one required response, however, so the nested jobs
-still took 58 and 61 compile attempts respectively. Finishing the remaining
-cached lookups took 344,091 and 423,542 microseconds, and the complete focused
-test took 1.43 seconds. Closure prefetch reduced neither attempt count from the
-one-file-per-retry baseline nor made source bootstrap a two-attempt operation.
-`umber2-pbxv.8.5` tracks the required safe VFS handoff separately.
+Both cases fetch and authenticate the full 57- or 60-key closure in the first
+host batch, publish its validated positive file responses atomically, and
+reach the synthetic bootstrap terminal state on compile attempt two. Separate
+tests cover local and user precedence, stale hints without negative bindings,
+resource budgets, and the equivalent browser resolver handoff.
 
 The same verification exercised the repository-local pinned
 `third_party/texlive-2026/texmf-dist`. The LaTeX builder produced no format or

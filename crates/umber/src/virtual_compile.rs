@@ -1135,8 +1135,6 @@ impl VirtualCompileSession {
         if !file_misses.is_empty() || !font_misses.is_empty() {
             stage.discard();
             build.discard();
-            self.files
-                .expect(&FileRequestBatch::new(file_misses.clone(), []));
             for request in &font_misses {
                 self.font_requests
                     .entry(request.key.clone())
@@ -1204,6 +1202,16 @@ impl VirtualCompileSession {
             } else {
                 Vec::new()
             };
+            self.files.expect(&FileRequestBatch::new(
+                required.iter().filter_map(|request| match request {
+                    ResourceRequest::File(request) => Some(request.clone()),
+                    ResourceRequest::Font(_) => None,
+                }),
+                prefetch_hints.iter().filter_map(|request| match request {
+                    ResourceRequest::File(request) => Some(request.clone()),
+                    ResourceRequest::Font(_) => None,
+                }),
+            ));
             return Ok(CompileAttemptResult::NeedResources(NeedResources {
                 required,
                 prefetch_hints,

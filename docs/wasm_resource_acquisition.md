@@ -178,10 +178,12 @@ Required requests are authoritative. Hints may be absent, incomplete,
 overinclusive, stale, or ignored.
 
 A trusted application manifest or format description may hint likely input and
-font resources. The coordinator may begin those transfers concurrently. If a
-later required request matches a verified cached or in-flight object, it joins
-that work. An unused hinted resource never becomes live engine state or enters
-HTML output.
+font resources. The coordinator may begin those transfers concurrently. For a
+validated format input closure, the session authorizes positive file responses
+for the exact emitted hints and installs the response batch through the same
+atomic VFS validation as required files. Other speculative dependencies remain
+cache-only. Missing hints never create unavailable bindings, and retry progress
+still depends only on required requests.
 
 Aggregate packs are a client transport optimization. They do not create a new
 engine identity or allow one response to satisfy a mismatched typed request.
@@ -230,9 +232,12 @@ A schema-3 format entry may also carry a validated schema-1 input closure. The
 worker converts those canonical file keys to the ordinary typed request wire
 form and supplies them with the format bytes. Rust sorts, deduplicates, bounds,
 and emits them exactly once as `prefetchHints` on the first real resource miss.
-The JavaScript resolver warms verified shards and objects concurrently but
-returns only required responses, so hints cannot register files, override user
-inputs, create unavailable bindings, or affect retry progress.
+The JavaScript resolver warms verified shards and objects concurrently and
+returns positive responses for top-level closure hints, but not their
+transitive dependency prefetches. Rust has already removed registered and user
+inputs from the authorized set; the resolver omits absent, failed, and
+over-budget speculation. Hints therefore cannot override user inputs, create
+unavailable bindings, or affect retry progress.
 
 ## Client-owned distribution
 

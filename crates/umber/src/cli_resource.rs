@@ -545,7 +545,18 @@ impl DistributionResolver {
                 }
             }
         }
-        if unresolved.is_empty() {
+        let mut unresolved_hints = Vec::new();
+        for request in &batch.prefetch_hints {
+            let ResourceRequest::File(request) = request else {
+                continue;
+            };
+            if let Some(file) = local.resolve(request) {
+                responses.push(ResourceResponse::File(file));
+            } else {
+                unresolved_hints.push(request.clone());
+            }
+        }
+        if unresolved.is_empty() && unresolved_hints.is_empty() {
             return Ok(responses);
         }
         let root = self.load(cancellation)?.root.clone();
@@ -572,10 +583,8 @@ impl DistributionResolver {
                 .push(key.clone());
         }
         let mut hinted_keys = BTreeMap::<u32, Vec<String>>::new();
-        for request in &batch.prefetch_hints {
-            let ResourceRequest::File(request) = request else {
-                continue;
-            };
+        let mut original_hints = BTreeMap::new();
+        for request in &unresolved_hints {
             let Some(key) = distribution_file_key(request)? else {
                 continue;
             };
@@ -583,6 +592,7 @@ impl DistributionResolver {
             if original_files.contains_key(&key) {
                 continue;
             }
+            original_hints.insert(key.clone(), request.key().clone());
             hinted_keys
                 .entry(shard_index(&key, root.shard_bits))
                 .or_default()
@@ -679,6 +689,20 @@ impl DistributionResolver {
                 request: key,
                 expected_digest: Some(FileContentId::for_bytes(&data)),
                 virtual_path: entry.virtual_path,
+                bytes: data,
+            }));
+        }
+        for (manifest_key, key) in original_hints {
+            let Some(data) = bytes.remove(&manifest_key) else {
+                continue;
+            };
+            let entry = hints
+                .get(&manifest_key)
+                .expect("fetched closure hint has manifest metadata");
+            responses.push(ResourceResponse::File(ResolvedFile {
+                request: key,
+                expected_digest: Some(FileContentId::for_bytes(&data)),
+                virtual_path: entry.virtual_path.clone(),
                 bytes: data,
             }));
         }

@@ -310,7 +310,7 @@ fn inline_hint_fetches_without_loading_the_dependency_shard() {
 }
 
 #[test]
-fn schema_three_format_closure_warms_one_bounded_batch_and_ignores_stale_hints() {
+fn schema_three_format_closure_publishes_local_overrides_and_ignores_stale_hints() {
     let directory = TempDir::new().expect("distribution tempdir");
     let objects = directory.path().join("objects");
     std::fs::create_dir_all(&objects).expect("objects directory");
@@ -347,6 +347,8 @@ fn schema_three_format_closure_warms_one_bounded_batch_and_ignores_stale_hints()
         "1".repeat(64)
     );
     std::fs::write(directory.path().join("manifest-v3.json"), root).expect("root");
+    let local_closure = b"local closure";
+    std::fs::write(directory.path().join("latex.ltx"), local_closure).expect("local override");
     let cache = ObjectCache::new(directory.path().join("cache"));
     let mut resolver = DistributionResolver::new(
         cache.clone(),
@@ -373,17 +375,30 @@ fn schema_three_format_closure_warms_one_bounded_batch_and_ignores_stale_hints()
             &FetchCancellation::new(),
         )
         .expect("closure batch");
-    assert!(matches!(responses.as_slice(), [ResourceResponse::File(_)]));
+    assert_eq!(responses.len(), 2);
+    let closure = responses
+        .iter()
+        .find_map(|response| match response {
+            ResourceResponse::File(file) if file.request.name() == "latex.ltx" => Some(file),
+            _ => None,
+        })
+        .expect("positive closure response");
+    assert_eq!(closure.bytes, local_closure);
+    assert!(responses.iter().all(|response| !matches!(
+        response,
+        ResourceResponse::FileUnavailable(key) if key.name() == "stale.tex"
+    )));
     assert_eq!(
         cache
             .load_object(&closure_digest, closure_bytes.len() as u64)
             .expect("closure cache"),
-        Some(closure_bytes.to_vec())
+        None,
+        "the local closure must take precedence over distribution speculation"
     );
 }
 
 #[test]
-fn format_closure_batch_is_cached_once_but_not_published_to_the_retry() {
+fn format_closure_batch_is_installed_for_an_exactly_two_attempt_retry() {
     for (engine, closure_len) in [(EngineMode::Latex, 57), (EngineMode::PdfLatex, 60)] {
         let directory = TempDir::new().expect("distribution tempdir");
         let distribution = directory.path().join("distribution");
@@ -464,7 +479,7 @@ fn format_closure_batch_is_cached_once_but_not_published_to_the_retry() {
             .resolve_batch(&session.local, &first, &cancellation)
             .expect("closure batch");
         let batch_elapsed = batch_started.elapsed();
-        assert_eq!(responses.len(), 1, "only required files enter the VFS");
+        assert_eq!(responses.len(), closure_len);
         for (digest, bytes) in &closure_objects {
             assert!(
                 cache
@@ -479,24 +494,11 @@ fn format_closure_batch_is_cached_once_but_not_published_to_the_retry() {
             .provide_resources(responses)
             .expect("provide closure head");
 
-        let CompileAttemptResult::NeedResources(second) = session.session.compile_attempt() else {
-            panic!("the second attempt currently rediscovers the next cached closure file");
-        };
-        assert_eq!(second.required.len(), 1);
-        assert!(second.prefetch_hints.is_empty());
-        let responses = session
-            .distribution
-            .resolve_batch(&session.local, &second, &cancellation)
-            .expect("second required response");
-        session
-            .session
-            .provide_resources(responses)
-            .expect("provide second closure file");
         let compile_started = Instant::now();
         session.compile(&cancellation).expect("complete chain");
         let compile_elapsed = compile_started.elapsed();
 
-        assert_eq!(session.session.attempts(), closure_len as u32 + 1);
+        assert_eq!(session.session.attempts(), 2);
         eprintln!(
             "format-prefetch-characterization engine={} closure={closure_len} first_batch_us={} attempts={} remaining_compile_us={}",
             engine.name(),

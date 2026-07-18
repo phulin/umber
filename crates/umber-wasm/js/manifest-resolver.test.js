@@ -364,7 +364,7 @@ test("formats remain inline and download through the verified object cache", asy
 	);
 });
 
-test("schema three format closures become speculative resolver hints", async () => {
+test("schema three format closures return validated positive responses", async () => {
 	const data = await fixture();
 	data.root = {
 		...data.root,
@@ -390,11 +390,16 @@ test("schema three format closures become speculative resolver hints", async () 
 	);
 	const downloads = await resolver.resolve(
 		[{ type: "file", kind: "tex", name: "alias.tex" }],
-		{ prefetchHints: hints },
+		{
+			prefetchHints: [
+				...hints,
+				{ type: "file", kind: "tex", name: "absent.cfg" },
+			],
+		},
 	);
 	assert.deepEqual(
 		downloads.map(({ name }) => name),
-		["alias.tex"],
+		["alias.tex", "hint.tex", "plain.tex"],
 	);
 	assert(
 		calls.some(({ url }) => url.endsWith(data.files["tex:hint.tex"].object)),
@@ -404,7 +409,28 @@ test("schema three format closures become speculative resolver hints", async () 
 	);
 });
 
-test("prefetches dependency closures without returning unrequested responses", async () => {
+test("format closure responses fit the speculative resource budget", async () => {
+	const data = await fixture();
+	const { resolver } = resolverFor(data, { maxFiles: 1 });
+	const downloads = await resolver.resolve(
+		[{ type: "file", kind: "tex", name: "absent.cfg" }],
+		{
+			prefetchHints: [
+				{ type: "file", kind: "tex", name: "hint.tex" },
+				{ type: "file", kind: "tex", name: "plain.tex" },
+			],
+		},
+	);
+	assert.deepEqual(
+		downloads.map(({ type, name }) => ({ type, name })),
+		[
+			{ type: "file-unavailable", name: "absent.cfg" },
+			{ type: "file", name: "hint.tex" },
+		],
+	);
+});
+
+test("prefetches dependency closures without returning dependency responses", async () => {
 	const data = await fixture();
 	const requestedObject = data.files["tex:plain.tex"].object;
 	const dependencyObjects = new Set([

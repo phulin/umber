@@ -182,8 +182,13 @@ export class HttpManifestResolver {
 			...request,
 			type: `${type}-unavailable`,
 		}));
-		const jobs = mergeJobs(required.jobs, hinted.jobs);
-		validateJobBudget(jobs, this.maxFiles, this.maxBytes);
+		validateJobBudget(required.jobs, this.maxFiles, this.maxBytes);
+		const jobs = mergeJobs(
+			required.jobs,
+			hinted.jobs,
+			this.maxFiles,
+			this.maxBytes,
+		);
 		const groups = groupByObject(jobs);
 		const results = new Map();
 		let next = 0;
@@ -496,23 +501,33 @@ export class HttpManifestResolver {
 	}
 }
 
-function mergeJobs(required, hinted) {
+function mergeJobs(required, hinted, maxFiles, maxBytes) {
 	const jobs = [];
 	const indexes = new Map();
+	const paths = new Set();
+	let bytes = 0;
 	for (const [source, blocking] of [
 		[required, true],
 		[hinted, false],
 	]) {
 		for (const job of source) {
 			const existing = indexes.get(job.key);
-			const requested = blocking && job.requested;
+			const requested = job.requested;
 			if (existing !== undefined) {
-				jobs[existing].blocking ||= requested;
+				jobs[existing].blocking ||= blocking && requested;
 				jobs[existing].requested ||= requested;
 				continue;
 			}
+			const pathBytes = paths.has(job.entry.virtualPath) ? 0 : job.entry.bytes;
+			if (
+				!blocking &&
+				(jobs.length >= maxFiles || bytes + pathBytes > maxBytes)
+			)
+				continue;
 			indexes.set(job.key, jobs.length);
-			jobs.push({ ...job, requested, blocking: requested });
+			jobs.push({ ...job, requested, blocking: blocking && requested });
+			paths.add(job.entry.virtualPath);
+			bytes += pathBytes;
 		}
 	}
 	return jobs;

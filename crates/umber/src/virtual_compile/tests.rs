@@ -689,7 +689,7 @@ fn formatted_session_starts_with_fresh_clock_everyjob_and_checkpoint_state() {
 }
 
 #[test]
-fn formatted_session_emits_validated_prefetch_hints_once_after_first_miss() {
+fn formatted_session_installs_positive_prefetch_responses_for_the_next_attempt() {
     let mut stores = Universe::with_world(World::memory());
     prepare_run_stores(&mut stores);
     let format = stores.dump_format().expect("format");
@@ -734,18 +734,35 @@ fn formatted_session_emits_validated_prefetch_hints_once_after_first_miss() {
     let ResourceRequest::File(required) = first.required[0].clone() else {
         unreachable!();
     };
-    formatted
-        .provide_resources(vec![ResourceResponse::File(ResolvedFile {
-            request: required.key().clone(),
-            virtual_path: "/texlive/required.tex".into(),
-            bytes: b"\\input later \\endinput".to_vec(),
-            expected_digest: None,
-        })])
-        .expect("required response");
-    let CompileAttemptResult::NeedResources(second) = formatted.compile_attempt() else {
-        panic!("second format miss should request resources");
+    let ResourceRequest::File(remote) = first.prefetch_hints[0].clone() else {
+        unreachable!();
     };
-    assert!(second.prefetch_hints.is_empty());
+    assert!(matches!(
+        formatted.provide_resources(vec![ResourceResponse::FileUnavailable(
+            remote.key().clone()
+        )]),
+        Err(CompileError::UnexpectedResourceResponse(name)) if name == "remote.tex"
+    ));
+    formatted
+        .provide_resources(vec![
+            ResourceResponse::File(ResolvedFile {
+                request: required.key().clone(),
+                virtual_path: "/texlive/required.tex".into(),
+                bytes: b"\\input remote \\endinput".to_vec(),
+                expected_digest: None,
+            }),
+            ResourceResponse::File(ResolvedFile {
+                request: remote.key().clone(),
+                virtual_path: "/texlive/remote.tex".into(),
+                bytes: b"prefetched".to_vec(),
+                expected_digest: None,
+            }),
+        ])
+        .expect("required response");
+    let CompileAttemptResult::Complete(_) = formatted.compile_attempt() else {
+        panic!("the prefetched closure should complete on attempt two");
+    };
+    assert_eq!(formatted.attempts(), 2);
 }
 
 #[test]

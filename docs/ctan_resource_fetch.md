@@ -175,16 +175,18 @@ does not publish logical OpenType font entries, so a verified root answers
 those requests as `FontUnavailable`. Complete inline dependency metadata is
 sent straight to the object fetch batch without consulting the dependency's
 own shard. A batch is still published to the VFS only after every required
-object succeeds; failed speculative objects are omitted and never become
-session responses.
+object succeeds; failed speculative objects are omitted.
 
 Schema-3 roots add format input closures without changing schema-2 behavior.
 After the selected pinned format reaches its first actual input miss, the
 session forwards its validated closure as a one-shot hint batch. Native and
 browser resolvers deduplicate it with required work, enforce the existing file
-and byte budgets, warm verified closure objects concurrently, and publish only
-required responses. Missing, stale, oversized, or failed speculative entries
-are ignored; required acquisition retains its existing typed failure behavior.
+and byte budgets, warm verified closure objects concurrently, and return
+positive responses for the exact top-level closure hints. The session installs
+those responses atomically while keeping required-only retry progress. Missing,
+stale, oversized, or failed speculative entries are ignored without
+unavailable bindings; required acquisition retains its existing typed failure
+behavior.
 
 ### 6. Snapshots are immutable Cloudflare R2 prefixes
 
@@ -293,9 +295,9 @@ policy, not architecture:
 ## Advance-pipeline integration semantics
 
 - **Batching.** The resolver answers one deterministic batch per attempt.
-  Required requests are authoritative; dependency hints from the manifest
-  are transport-only prefetch and never become engine state unless later
-  required.
+  Required requests are authoritative. Exact format-closure hints may become
+  validated VFS inputs for the next retry; transitive manifest dependencies
+  remain transport-only prefetch.
 - **Progress.** Every response — bytes or unavailable — that satisfies an
   outstanding required request is progress. Network failure (HTTP error,
   timeout, abort) satisfies nothing: the CLI surfaces a typed fetch
