@@ -95,6 +95,17 @@ pub(super) fn text_field<'a>(entry: &'a Entry, field: &str) -> Option<&'a str> {
     }
 }
 
+pub(super) fn list_keys<'a>(result: &'a BibResult, section: u32, list_id: &str) -> Vec<&'a str> {
+    result
+        .document()
+        .section(SectionId::new(section))
+        .expect("upstream section")
+        .lists()
+        .find(|list| list.id().as_str() == list_id)
+        .map(|list| list.entries().map(EntryId::as_str).collect())
+        .unwrap_or_default()
+}
+
 #[test]
 fn assertion_001_maps_test_1() {
     let result = run_fixture("maps");
