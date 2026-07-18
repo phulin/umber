@@ -1930,7 +1930,6 @@ dependencies = [
  "chrono",
  "proptest",
  "serde",
- "sha2 0.10.9",
  "tempfile",
  "test-support",
  "tex-arith",

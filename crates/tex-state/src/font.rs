@@ -670,7 +670,7 @@ fn exact_immutable_font_identity(font: &LoadedFont) -> ContentHash {
     let mut framed = Vec::with_capacity(32 + encoded.len());
     framed.extend_from_slice(b"umber-exact-immutable-font-v1");
     framed.extend_from_slice(&encoded);
-    crate::state_hash::strong_identity_bytes(b"umber-exact-immutable-font-v2", &framed)
+    crate::state_hash::semantic_identity_bytes(b"umber-exact-immutable-font-v2", &framed)
 }
 
 fn font_hash_fragment(font: &LoadedFont) -> StateHashFragment {

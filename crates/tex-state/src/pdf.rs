@@ -2896,7 +2896,7 @@ mod tests {
     fn test_identity(value: u8) -> StateHashFragment {
         StateHashFragment::from_parts(
             u64::from(value),
-            crate::state_hash::strong_identity_bytes(b"umber-pdf-test-identity", &[value]),
+            crate::state_hash::semantic_identity_bytes(b"umber-pdf-test-identity", &[value]),
         )
     }
 

@@ -123,8 +123,13 @@ publish only complete values.
 
 Durable token lists are hash-consed and carry one canonical semantic identity.
 Control sequences contribute interner semantic atoms, so allocation order does
-not affect identity. Execution-transient token flows stay in pooled lexer
-buffers and enter the token store only when crossing a durable boundary.
+not affect identity. Token and node semantic identities use versioned,
+domain-separated, fixed-seed 64-bit aHash. Equality is probabilistic and a rare
+collision may alias immutable engine content; this is the same explicitly
+accepted performance tradeoff as session convergence, not a cryptographic or
+external content-verification contract. Execution-transient token flows stay in
+pooled lexer buffers and enter the token store only when crossing a durable
+boundary.
 
 Schema-10 format loading installs names, token lists, macro definitions, glue,
 fonts, sparse code-table roots, and hyphenation tries as validated frozen

@@ -24,7 +24,7 @@ impl NodeSemanticId {
 
     pub(crate) fn apply(self, hasher: &mut StateHasher) {
         hasher.u64(self.fingerprint);
-        hasher.strong_identity(self.identity);
+        hasher.semantic_identity(self.identity);
     }
 
     /// Temporary identity used only while a frozen graph is being installed.
@@ -47,7 +47,7 @@ impl NodeSemanticId {
     pub(super) fn testing(value: u64) -> Self {
         Self {
             fingerprint: value,
-            identity: crate::state_hash::strong_identity_bytes(
+            identity: crate::state_hash::semantic_identity_bytes(
                 b"umber-testing-node-id",
                 &value.to_le_bytes(),
             ),
@@ -57,9 +57,9 @@ impl NodeSemanticId {
 
 /// Current node semantic-identity scheme. Changing node tags, dependency
 /// framing, or child-identity semantics requires a version migration.
-pub(crate) const NODE_SEMANTIC_ID_VERSION: u8 = 1;
-const NODE_STREAM_V1_DOMAIN: u64 = 0x6e6f_6431_5f73_7472;
-const NODE_ID_V1_DOMAIN: u64 = 0x6e6f_6431_5f69_6465;
+pub(crate) const NODE_SEMANTIC_ID_VERSION: u8 = 2;
+const NODE_STREAM_V2_DOMAIN: u64 = 0x6e6f_6432_5f73_7472;
+const NODE_ID_V2_DOMAIN: u64 = 0x6e6f_6432_5f69_6465;
 
 pub(crate) struct NodeSemanticIdBuilder {
     stream: StateHasher,
@@ -70,7 +70,7 @@ impl NodeSemanticIdBuilder {
     #[must_use]
     pub(crate) fn new() -> Self {
         Self {
-            stream: StateHasher::new(NODE_STREAM_V1_DOMAIN),
+            stream: StateHasher::new(NODE_STREAM_V2_DOMAIN),
             len: 0,
         }
     }
@@ -82,7 +82,7 @@ impl NodeSemanticIdBuilder {
 
     #[must_use]
     pub(crate) fn finish(self) -> NodeSemanticId {
-        let mut hasher = StateHasher::new(NODE_ID_V1_DOMAIN);
+        let mut hasher = StateHasher::new(NODE_ID_V2_DOMAIN);
         hasher.u8(NODE_SEMANTIC_ID_VERSION);
         hasher.usize(self.len);
         self.stream.finish_fragment().apply(&mut hasher);

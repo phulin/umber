@@ -39,14 +39,14 @@ impl TokenSemanticId {
 
     pub(crate) fn apply(self, hasher: &mut StateHasher) {
         hasher.u64(self.fingerprint);
-        hasher.strong_identity(self.identity);
+        hasher.semantic_identity(self.identity);
     }
 
     #[cfg(test)]
     fn testing(fingerprint: u64) -> Self {
         Self {
             fingerprint,
-            identity: crate::state_hash::strong_identity_bytes(
+            identity: crate::state_hash::semantic_identity_bytes(
                 b"umber-testing-token-id",
                 &fingerprint.to_le_bytes(),
             ),
@@ -63,9 +63,9 @@ impl Hash for TokenSemanticId {
 /// Current token semantic-identity scheme. Changing token tags, symbol-atom
 /// semantics, or the hash framing requires a new version and checkpoint-hash
 /// migration notes.
-pub(crate) const TOKEN_SEMANTIC_ID_VERSION: u8 = 1;
-const TOKEN_STREAM_V1_DOMAIN: u64 = 0x746f_6b31_5f73_7472;
-const TOKEN_ID_V1_DOMAIN: u64 = 0x746f_6b31_5f69_6465;
+pub(crate) const TOKEN_SEMANTIC_ID_VERSION: u8 = 2;
+const TOKEN_STREAM_V2_DOMAIN: u64 = 0x746f_6b32_5f73_7472;
+const TOKEN_ID_V2_DOMAIN: u64 = 0x746f_6b32_5f69_6465;
 
 pub(crate) struct TokenSemanticIdBuilder {
     stream: StateHasher,
@@ -76,7 +76,7 @@ impl TokenSemanticIdBuilder {
     #[must_use]
     pub(crate) fn new() -> Self {
         Self {
-            stream: StateHasher::new(TOKEN_STREAM_V1_DOMAIN),
+            stream: StateHasher::new(TOKEN_STREAM_V2_DOMAIN),
             len: 0,
         }
     }
@@ -93,7 +93,7 @@ impl TokenSemanticIdBuilder {
                 let (fingerprint, identity) =
                     symbol_atom.expect("control-sequence token requires semantic atom");
                 self.stream.u64(fingerprint);
-                self.stream.strong_identity(identity);
+                self.stream.semantic_identity(identity);
             }
             Token::Param(slot) => {
                 self.stream.tag(2);
@@ -108,7 +108,7 @@ impl TokenSemanticIdBuilder {
 
     #[must_use]
     pub(crate) fn finish(self) -> TokenSemanticId {
-        let mut hasher = StateHasher::new(TOKEN_ID_V1_DOMAIN);
+        let mut hasher = StateHasher::new(TOKEN_ID_V2_DOMAIN);
         hasher.u8(TOKEN_SEMANTIC_ID_VERSION);
         hasher.usize(self.len);
         self.stream.finish_fragment().apply(&mut hasher);

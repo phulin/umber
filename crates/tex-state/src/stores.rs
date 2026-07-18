@@ -845,7 +845,7 @@ impl Stores {
                     bytes.extend_from_slice(self.interner.resolve_id(symbol).as_bytes());
                     Some((
                         fingerprint,
-                        crate::state_hash::strong_identity_bytes(
+                        crate::state_hash::semantic_identity_bytes(
                             b"umber-control-sequence-v1",
                             &bytes,
                         ),
