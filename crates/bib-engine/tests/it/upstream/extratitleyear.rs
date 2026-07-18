@@ -1,4 +1,4 @@
-// Direct passing translation of upstream t/extratitleyear.t at commit 74252e6.
+// Direct translation of upstream t/extratitleyear.t at commit 74252e6.
 // Keep `UPSTREAM_SOURCE` byte-for-byte equivalent when editing expectations.
 
 fn pass_upstream(

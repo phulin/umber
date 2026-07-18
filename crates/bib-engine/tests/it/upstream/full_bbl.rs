@@ -1,4 +1,4 @@
-// Direct passing translation of upstream t/full-bbl.t at commit 74252e6.
+// Direct translation of upstream t/full-bbl.t at commit 74252e6.
 // Keep `UPSTREAM_SOURCE` byte-for-byte equivalent when editing expectations.
 
 use super::pass_upstream as audit_upstream;
