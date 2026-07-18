@@ -460,13 +460,15 @@ where
         }
         let token = traced_semantic_token(traced);
         let traced = normalize_stored_noexpand_origin(stores, traced, token);
+        let stored_unexpanded = prepared.suppress_expansion()
+            || stores.origin_is_inserted_kind(traced.origin(), InsertedOriginKind::Unexpanded);
 
         // e-TeX's `\unexpanded` contributes its token list through TeX's
         // `the_toks` path. Parameter characters from that list are copied
         // verbatim; they are not reinterpreted as definition parameters.
         // `\noexpand` gives a parameter character the same one-token
         // suppression semantics.
-        if prepared.suppress_expansion()
+        if stored_unexpanded
             && matches!(
                 token,
                 Token::Char {

@@ -551,6 +551,35 @@ fn expanded_definition_copies_parameter_tokens_from_token_register() {
 }
 
 #[test]
+fn expanded_definition_copies_literal_hash_from_token_register() {
+    let mut stores = Universe::new();
+    let the = stores.intern("the");
+    let toks = stores.intern("toks");
+    stores.set_meaning(the, Meaning::ExpandablePrimitive(ExpandablePrimitive::The));
+    stores.set_meaning(
+        toks,
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Toks),
+    );
+    let hash = char_token('#', Catcode::Parameter);
+    let contents = stores.intern_token_list(&[hash]);
+    stores.set_toks(4, contents);
+    let mut input = InputStack::new(MemoryInput::new("{\\the\\toks4}"));
+    let context =
+        TracedTokenWord::pack(Token::Cs(stores.intern("xdef").symbol()), OriginId::UNKNOWN);
+
+    let scanned = scan_toks_expanded_with_driver(
+        &mut input,
+        &mut tex_state::ExpansionContext::new(&mut stores),
+        MeaningFlags::EMPTY,
+        context,
+        &mut ExpansionContext::new("texput"),
+    )
+    .expect("a literal hash from a token register should not start a parameter reference");
+
+    assert_eq!(stores.tokens(scanned.replacement_text()), &[hash]);
+}
+
+#[test]
 fn definition_accepts_internal_parameter_after_parameter_marker() {
     let mut stores = Universe::new();
     let replay = stores.intern_token_list(&[
