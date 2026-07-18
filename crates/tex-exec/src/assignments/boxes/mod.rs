@@ -75,16 +75,13 @@ pub(crate) fn scan_math_box(
         UnexpandablePrimitive::VSplit => scan_vsplit_node(input, stores, execution, context)?,
         UnexpandablePrimitive::Box | UnexpandablePrimitive::Copy => {
             let index = scan_register_index(input, stores, execution, context)?;
-            if !execution.paragraph_box_is_source_proven(index) {
-                execution.mark_paragraph_barrier(
-                    tex_state::ParagraphBarrierReason::UnsupportedEscapingWrite,
-                );
-            }
+            let source_proven = execution.paragraph_box_is_source_proven(index);
             let id = if primitive == UnexpandablePrimitive::Box {
                 stores.take_box_reg_same_level(index)
             } else {
                 stores.box_reg(index)
             };
+            account_external_box_access(execution, index, source_proven, primitive, id.is_some());
             if primitive == UnexpandablePrimitive::Copy
                 && let Some(id) = id
             {
@@ -165,16 +162,13 @@ pub(super) fn execute_box_list_command(
     match primitive {
         UnexpandablePrimitive::Box | UnexpandablePrimitive::Copy => {
             let index = scan_register_index(input, stores, execution, context)?;
-            if !execution.paragraph_box_is_source_proven(index) {
-                execution.mark_paragraph_barrier(
-                    tex_state::ParagraphBarrierReason::UnsupportedEscapingWrite,
-                );
-            }
+            let source_proven = execution.paragraph_box_is_source_proven(index);
             let id = if primitive == UnexpandablePrimitive::Box {
                 stores.take_box_reg_same_level(index)
             } else {
                 stores.box_reg(index)
             };
+            account_external_box_access(execution, index, source_proven, primitive, id.is_some());
             if primitive == UnexpandablePrimitive::Copy
                 && let Some(id) = id
             {
@@ -188,6 +182,9 @@ pub(super) fn execute_box_list_command(
         | UnexpandablePrimitive::UnVCopy => {
             let index = scan_register_index(input, stores, execution, context)?;
             let source_proven = execution.paragraph_box_is_source_proven(index);
+            if !source_proven {
+                execution.record_paragraph_box_read(index);
+            }
             let source = if matches!(
                 primitive,
                 UnexpandablePrimitive::UnHBox | UnexpandablePrimitive::UnVBox
@@ -222,11 +219,6 @@ pub(super) fn execute_box_list_command(
                 let Some(node) = first_box_node(stores, id) else {
                     return Ok(());
                 };
-                if !source_proven {
-                    execution.mark_paragraph_barrier(
-                        tex_state::ParagraphBarrierReason::UnsupportedEscapingWrite,
-                    );
-                }
                 if !unbox_kind_matches(primitive, &node) {
                     report_incompatible_unbox(stores);
                     return Ok(());
@@ -285,6 +277,23 @@ pub(super) fn execute_box_list_command(
         build_page_if_outer_vertical(nest, stores)?;
     }
     Ok(())
+}
+
+fn account_external_box_access(
+    execution: &mut crate::ExecutionContext<'_>,
+    index: u16,
+    source_proven: bool,
+    primitive: UnexpandablePrimitive,
+    present: bool,
+) {
+    if source_proven {
+        return;
+    }
+    execution.record_paragraph_box_read(index);
+    if present && primitive == UnexpandablePrimitive::Box {
+        execution
+            .mark_paragraph_barrier(tex_state::ParagraphBarrierReason::UnsupportedEscapingWrite);
+    }
 }
 
 pub(super) fn execute_kern_or_skip(

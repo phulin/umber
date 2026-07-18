@@ -652,6 +652,7 @@ fn publish_recorded_region(
         return;
     };
     let (mut keys, expansion_barriers) = execution.finish_paragraph_expansion_recording();
+    keys.append(&mut recording.dependencies);
     keys.retain(|key| {
         let tex_state::DependencyKey::Query { domain, .. } = key else {
             return true;

@@ -88,19 +88,27 @@ pub(super) fn scan_box_value(
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Box)
         | Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Copy) => {
             let index = scan_register_index(input, stores, execution, traced)?;
-            if !execution.paragraph_box_is_source_proven(index) {
-                execution.mark_paragraph_barrier(
-                    tex_state::ParagraphBarrierReason::UnsupportedEscapingWrite,
-                );
-            }
-            let id = if matches!(
+            let source_proven = execution.paragraph_box_is_source_proven(index);
+            let destructive = matches!(
                 stores.meaning(symbol),
                 Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Box)
-            ) {
+            );
+            let id = if destructive {
                 stores.take_box_reg_same_level(index)
             } else {
                 stores.box_reg(index)
             };
+            super::account_external_box_access(
+                execution,
+                index,
+                source_proven,
+                if destructive {
+                    UnexpandablePrimitive::Box
+                } else {
+                    UnexpandablePrimitive::Copy
+                },
+                id.is_some(),
+            );
             if !matches!(
                 stores.meaning(symbol),
                 Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Box)

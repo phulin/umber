@@ -116,6 +116,8 @@ pub(crate) struct ColdParagraphRecording {
     /// Box registers first supplied by this paragraph below its entry group.
     /// Their contents remain source-proven only while that group is active.
     pub(crate) local_boxes: Vec<(u16, u32)>,
+    /// Stomach-side reads which do not pass through expansion scanners.
+    pub(crate) dependencies: Vec<tex_state::DependencyKey>,
     pub(crate) barriers: std::collections::BTreeSet<ParagraphBarrierReason>,
 }
 
@@ -256,6 +258,7 @@ impl<'a> ExecutionContext<'a> {
             delivered_tokens: 0,
             inline_math: None,
             local_boxes: Vec::new(),
+            dependencies: Vec::new(),
             barriers: std::collections::BTreeSet::new(),
         });
         true
@@ -344,6 +347,15 @@ impl<'a> ExecutionContext<'a> {
                     .rev()
                     .any(|&(local_index, _)| local_index == index)
             })
+    }
+
+    pub(crate) fn record_paragraph_box_read(&mut self, index: u16) {
+        if let Some(recording) = &mut self.cold_paragraph_recording {
+            recording.dependencies.push(tex_state::DependencyKey::Cell {
+                bank: tex_state::DependencyBank::Box,
+                index: u32::from(index),
+            });
+        }
     }
 
     pub(crate) fn paragraph_group_exited(&mut self, stores: &Universe) {

@@ -1061,6 +1061,147 @@ fn paragraph_with_source_proven_local_unboxing_replays() {
 }
 
 #[test]
+fn paragraph_read_only_external_box_replays_and_invalidates() {
+    let mut universe = template();
+    universe.enable_pure_memo(tex_state::PureMemoConfig::default());
+    let source = concat!(
+        "\\setbox0=\\hbox{old box}\n",
+        "changed prefix paragraph text\\par\n",
+        "external box \\copy0 and \\unhcopy0 paragraph\\par\n",
+        "\\vfill\\eject\\end",
+    );
+    let mut session = Session::start(
+        universe,
+        "paragraph-read-only-external-box",
+        RevisionId::new(1),
+        source,
+        usize::MAX,
+    )
+    .expect("session starts");
+    session.cold().expect("cold revision");
+    assert_eq!(
+        session
+            .pure_memo_stats()
+            .paragraph_unsupported_write_barriers,
+        0,
+        "read-only external boxes should be dependencies, not write barriers"
+    );
+
+    let changed = source.find("changed").expect("changed word");
+    let edited = format!(
+        "{}altered{}",
+        &source[..changed],
+        &source[changed + "changed".len()..]
+    );
+    let before_reuse = session.pure_memo_stats();
+    session
+        .advance(
+            RevisionId::new(2),
+            Edit {
+                base_revision: RevisionId::new(1),
+                expected_hash: ContentHash::from_bytes(source.as_bytes()),
+                range: changed..changed + "changed".len(),
+                replacement: "altered".to_owned(),
+            },
+        )
+        .expect("prefix edit");
+    assert!(
+        session.pure_memo_stats().paragraph_line_hits > before_reuse.paragraph_line_hits,
+        "unchanged external box reads should replay"
+    );
+
+    let old = edited.find("old box").expect("old box text");
+    let replacement = "new wider box";
+    let redefined = format!(
+        "{}{replacement}{}",
+        &edited[..old],
+        &edited[old + "old box".len()..]
+    );
+    let before_invalidation = session.pure_memo_stats();
+    let incremental = session
+        .advance(
+            RevisionId::new(3),
+            Edit {
+                base_revision: RevisionId::new(2),
+                expected_hash: ContentHash::from_bytes(edited.as_bytes()),
+                range: old..old + "old box".len(),
+                replacement: replacement.to_owned(),
+            },
+        )
+        .expect("box content edit");
+    assert!(
+        session.pure_memo_stats().paragraph_validation_misses
+            > before_invalidation.paragraph_validation_misses,
+        "changing an external box must invalidate retained readers"
+    );
+
+    let mut cold_universe = template();
+    cold_universe.enable_pure_memo(tex_state::PureMemoConfig::default());
+    let mut cold = Session::start(
+        cold_universe,
+        "paragraph-read-only-external-box",
+        RevisionId::new(3),
+        redefined,
+        usize::MAX,
+    )
+    .expect("cold comparison starts");
+    let expected = cold.cold().expect("cold comparison");
+    assert_eq!(incremental.dvi_bytes(), expected.dvi_bytes());
+    assert_eq!(incremental.effects, expected.effects);
+}
+
+#[test]
+fn paragraph_void_box_read_invalidates_when_filled() {
+    let mut universe = template();
+    universe.enable_pure_memo(tex_state::PureMemoConfig::default());
+    let source = concat!(
+        "changed prefix paragraph text\\par\n",
+        "void external box \\unhcopy0 paragraph\\par\n",
+        "\\vfill\\eject\\end",
+    );
+    let mut session = Session::start(
+        universe,
+        "paragraph-void-external-box",
+        RevisionId::new(1),
+        source,
+        usize::MAX,
+    )
+    .expect("session starts");
+    session.cold().expect("cold revision");
+    let before = session.pure_memo_stats();
+    let prefix = "\\setbox0=\\hbox{now present}\n";
+    let incremental = session
+        .advance(
+            RevisionId::new(2),
+            Edit {
+                base_revision: RevisionId::new(1),
+                expected_hash: ContentHash::from_bytes(source.as_bytes()),
+                range: 0..0,
+                replacement: prefix.to_owned(),
+            },
+        )
+        .expect("fill box before unchanged paragraph");
+    assert!(
+        session.pure_memo_stats().paragraph_validation_misses > before.paragraph_validation_misses,
+        "filling a previously void box must invalidate retained readers"
+    );
+
+    let mut cold_universe = template();
+    cold_universe.enable_pure_memo(tex_state::PureMemoConfig::default());
+    let mut cold = Session::start(
+        cold_universe,
+        "paragraph-void-external-box",
+        RevisionId::new(2),
+        format!("{prefix}{source}"),
+        usize::MAX,
+    )
+    .expect("cold comparison starts");
+    let expected = cold.cold().expect("cold comparison");
+    assert_eq!(incremental.dvi_bytes(), expected.dvi_bytes());
+    assert_eq!(incremental.effects, expected.effects);
+}
+
+#[test]
 fn paragraph_with_vadjust_replays_and_tracks_payload_meanings() {
     let mut universe = template();
     universe.enable_pure_memo(tex_state::PureMemoConfig::default());
@@ -1171,16 +1312,12 @@ fn paragraph_box_reads_without_an_active_local_definition_remain_barriered() {
         );
     };
     assert_barrier(
-        "paragraph-outer-box-read",
-        "\\setbox0=\\hbox{outer}\nouter box \\copy0 paragraph\\par\n\\vfill\\eject\\end",
+        "paragraph-outer-box-consumption",
+        "\\setbox0=\\hbox{outer}\nouter box \\box0 paragraph\\par\n\\vfill\\eject\\end",
     );
     assert_barrier(
         "paragraph-outer-box-unbox",
         "\\setbox0=\\hbox{outer}\nouter box \\unhbox0 paragraph\\par\n\\vfill\\eject\\end",
-    );
-    assert_barrier(
-        "paragraph-post-group-box-read",
-        "\\setbox0=\\hbox{outer}\npost-group box {\\setbox0=\\hbox{local}} \\copy0 paragraph\\par\n\\vfill\\eject\\end",
     );
     assert_barrier(
         "paragraph-global-box-definition",
