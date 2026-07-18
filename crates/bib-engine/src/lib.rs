@@ -23,8 +23,8 @@ pub use bib_model::{
     BibConfigurationBuilder, BibDiagnostic, BibDiagnosticCode, BibSeverity, BibSourceLocation,
     COMPATIBILITY_VERSION, CompatibilityVersion, DataList, DataListId, DataListKind,
     DiagnosticError, Entry, EntryBuilder, EntryId, EntryType, Field, FieldId, FieldProvenance,
-    FieldValue, FieldValueStage, GeneratedFile, Literal, NameBuilder, NameList, NamePartValue,
-    OutputFormat, OutputNewline, OutputRequest, ProcessedBibliography,
+    FieldValue, FieldValueStage, GeneratedFile, Literal, Name, NameBuilder, NameList,
+    NamePartValue, OutputFormat, OutputNewline, OutputRequest, ProcessedBibliography,
     ProcessedBibliographyBuilder, ProcessedSection, ProcessedSectionBuilder, SectionId, SourceSpan,
     VirtualPath,
 };

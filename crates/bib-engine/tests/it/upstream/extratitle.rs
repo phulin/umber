@@ -1,254 +1,411 @@
-// Direct translation of upstream t/extratitle.t at commit 74252e6.
-// Keep `UPSTREAM_SOURCE` byte-for-byte equivalent when editing expectations.
+// Native Rust translation of the corresponding upstream Biber test at commit 74252e6.
 
-fn pass_upstream(
-    assertion: &str,
-    actual_expression: &str,
-    expected_expression: &str,
-    upstream_call: &str,
-    upstream_source: &str,
-) {
-    super::pass_upstream(
-        assertion,
-        actual_expression,
-        expected_expression,
-        upstream_call,
-        upstream_source,
-    );
-    panic!("xfail: bib-engine has no public extra-title metadata query API");
+use std::path::PathBuf;
+
+use bib_engine::{
+    BibAttempt, BibJob, BibOptionsBuilder, BibSession, EntryId, FieldId, FieldValue,
+    FileProvisioner, OutputFormat, OutputRequest, ProcessedBibliography, ResolvedFile, SectionId,
+    VfsLimits, VirtualPath,
+};
+
+#[allow(dead_code)]
+struct FixtureResult {
+    document: ProcessedBibliography,
+    bbl: String,
 }
 
-const UPSTREAM_SOURCE: &str = r####"# -*- cperl -*-
-use strict;
-use warnings;
-use utf8;
-no warnings 'utf8';
+fn override_scalar_option(control: &mut String, key: &str, value: &str) {
+    let key_tag = format!("<bcf:key>{key}</bcf:key>");
+    let key_at = control
+        .find(&key_tag)
+        .expect("option exists in committed BCF");
+    let value_start = control[key_at..]
+        .find("<bcf:value>")
+        .map(|offset| key_at + offset + "<bcf:value>".len())
+        .expect("option has a value");
+    let value_end = control[value_start..]
+        .find("</bcf:value>")
+        .map(|offset| value_start + offset)
+        .expect("option value is terminated");
+    control.replace_range(value_start..value_end, value);
+}
 
-use Test::More tests => 14;
-use Test::Differences;
-unified_diff;
+fn process_fixture(control_name: &str, option_overrides: &[(&str, &str)]) -> FixtureResult {
+    let fixture_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../tests/corpus/bib/upstream-2.22/tdata");
+    let control = VirtualPath::user(control_name).expect("valid control path");
+    let mut control_bytes = String::from_utf8(
+        std::fs::read(fixture_dir.join(control_name)).expect("committed BCF fixture"),
+    )
+    .expect("BCF is UTF-8");
+    for &(key, value) in option_overrides {
+        override_scalar_option(&mut control_bytes, key, value);
+    }
+    let mut provisioner = FileProvisioner::new(VfsLimits::default()).expect("valid VFS limits");
+    provisioner
+        .register_user(control.clone(), control_bytes.into_bytes())
+        .expect("unique control file");
+    let output_path = VirtualPath::user("native.bbl").expect("valid output path");
+    let mut options = BibOptionsBuilder::new();
+    options
+        .output(OutputRequest::new(output_path, OutputFormat::Bbl))
+        .expect("unique output");
+    let job = BibJob::new(control, options.freeze());
+    let mut session = BibSession::default();
+    loop {
+        match session.process(&job, &provisioner.snapshot()) {
+            BibAttempt::Complete(result) => {
+                let bbl = result
+                    .files()
+                    .find(|file| file.path().as_str().ends_with("native.bbl"))
+                    .map(|file| String::from_utf8_lossy(file.bytes()).into_owned())
+                    .unwrap_or_default();
+                return FixtureResult {
+                    document: result.document().as_ref().clone(),
+                    bbl,
+                };
+            }
+            BibAttempt::NeedResources(requests) => {
+                provisioner.expect(&requests);
+                for request in requests
+                    .required
+                    .iter()
+                    .chain(requests.prefetch_hints.iter())
+                {
+                    let path = fixture_dir.join(request.key().name());
+                    if !path.is_file() {
+                        continue;
+                    }
+                    provisioner
+                        .provision(ResolvedFile {
+                            request: request.key().clone(),
+                            virtual_path: format!("/texlive/bib/{}", request.key().name()).into(),
+                            bytes: std::fs::read(path).expect("committed requested fixture"),
+                            expected_digest: None,
+                        })
+                        .expect("requested fixture is valid");
+                }
+            }
+            BibAttempt::Failed(failure) => panic!("fixture processing failed: {failure:?}"),
+        }
+    }
+}
 
-use Biber;
-use Biber::Utils;
-use Biber::Output::bbl;
-use Log::Log4perl;
-chdir("t/tdata");
+fn field_text(
+    control: &str,
+    option_overrides: &[(&str, &str)],
+    entry_key: &str,
+    field_name: &str,
+) -> Option<String> {
+    let fixture = process_fixture(control, option_overrides);
+    let entry = fixture
+        .document
+        .section(SectionId::new(0))?
+        .entry(&EntryId::new(entry_key).expect("valid entry key"))?;
+    match entry
+        .fields()
+        .get(&FieldId::new(field_name).expect("valid field name"))?
+    {
+        FieldValue::Literal(value) => Some(value.as_str().to_owned()),
+        FieldValue::Verbatim(value) => Some(value.as_str().to_owned()),
+        FieldValue::Integer(value) => Some(value.to_string()),
+        FieldValue::Boolean(value) => Some(if *value { "1" } else { "0" }.to_owned()),
+        _ => None,
+    }
+}
 
-# Set up Biber object
-my $biber = Biber->new(noconf => 1);
-my $LEVEL = 'ERROR';
-my $l4pconf = qq|
-    log4perl.category.main                             = $LEVEL, Screen
-    log4perl.category.screen                           = $LEVEL, Screen
-    log4perl.appender.Screen                           = Log::Log4perl::Appender::Screen
-    log4perl.appender.Screen.utf8                      = 1
-    log4perl.appender.Screen.Threshold                 = $LEVEL
-    log4perl.appender.Screen.stderr                    = 0
-    log4perl.appender.Screen.layout                    = Log::Log4perl::Layout::SimpleLayout
-|;
-Log::Log4perl->init(\$l4pconf);
+#[allow(dead_code)]
+fn name_assignment(
+    control: &str,
+    option_overrides: &[(&str, &str)],
+    entry_key: &str,
+    name_index: usize,
+    assignment_key: &str,
+) -> Option<String> {
+    let fixture = process_fixture(control, option_overrides);
+    let entry = fixture
+        .document
+        .section(SectionId::new(0))?
+        .entry(&EntryId::new(entry_key).expect("valid entry key"))?;
+    let source = match entry
+        .fields()
+        .get(&FieldId::new("labelnamesource").expect("valid field name"))?
+    {
+        FieldValue::Literal(value) => value.as_str(),
+        _ => return None,
+    };
+    let names = match entry
+        .fields()
+        .get(&FieldId::new(source).expect("valid name-list field"))?
+    {
+        FieldValue::NameList(names) => names,
+        _ => return None,
+    };
+    names
+        .iter()
+        .nth(name_index.checked_sub(1)?)?
+        .assignments()
+        .find(|assignment| assignment.key() == assignment_key)
+        .map(|assignment| assignment.value().to_owned())
+}
 
-$biber->parse_ctrlfile('extratitle.bcf');
-$biber->set_output_obj(Biber::Output::bbl->new());
-
-# Options - we could set these in the control file but it's nice to see what we're
-# relying on here for tests
-
-# Biber options
-Biber::Config->setoption('sortlocale', 'en_GB.UTF-8');
-
-# Biblatex options
-Biber::Config->setblxoption(undef,'maxcitenames', 1);
-Biber::Config->setblxoption(undef,'maxbibnames', 1);
-
-# Now generate the information
-$biber->prepare;
-my $section = $biber->sections->get_section(0);
-my $main = $biber->datalists->get_list('custom/global//global/global/global');
-
-my $bibentries = $section->bibentries;
-
-# Don't forget that the extratitle data is inserted after sorting
-eq_or_diff($main->get_extratitledata_for_key('L1'), '1', 'Same name, same title - 1');
-eq_or_diff($main->get_extratitledata_for_key('L2'), '2', 'Same name, same title - 2');
-eq_or_diff($main->get_extratitledata_for_key('L3'), '1', 'No name, same title - 1');
-eq_or_diff($main->get_extratitledata_for_key('L4'), '2', 'No name, same title - 2');
-ok(is_undef($main->get_extratitledata_for_key('L5')), 'No name, same title as with name - 1');
-eq_or_diff($main->get_extratitledata_for_key('L6'), '1', 'No name, same shorttitle/title - 1');
-eq_or_diff($main->get_extratitledata_for_key('L7'), '2', 'No name, same shorttitle/title - 2');
-ok(is_undef($main->get_entryfield('L8', 'singletitle')), 'Singletitle test - 1');
-ok(is_undef($main->get_entryfield('L9', 'singletitle')), 'Singletitle test - 2');
-eq_or_diff($main->get_entryfield('L10', 'singletitle'), '1', 'Singletitle test - 3');
-ok(is_undef($main->get_entryfield('L11', 'singletitle')), 'Singletitle test - 4');
-ok(is_undef($main->get_entryfield('L12', 'singletitle')), 'Singletitle test - 5');
-ok(is_undef($main->get_entryfield('L1', 'singletitle')), 'Singletitle test - 6');
-ok(is_undef($main->get_entryfield('L5', 'singletitle')), 'Singletitle test - 7');
-"####;
+#[allow(dead_code)]
+fn output_entry(control: &str, option_overrides: &[(&str, &str)], entry_key: &str) -> String {
+    let fixture = process_fixture(control, option_overrides);
+    let marker = format!("\\\\entry{{{entry_key}}}");
+    let marker_at = fixture
+        .bbl
+        .find(&marker)
+        .expect("entry is present in generated BBL");
+    let start = fixture.bbl[..marker_at].rfind("    ").unwrap_or(marker_at);
+    let end = fixture.bbl[marker_at..]
+        .find("\\\\endentry")
+        .map(|offset| marker_at + offset + "\\\\endentry".len())
+        .expect("entry is terminated");
+    fixture.bbl[start..end].to_owned()
+}
 
 #[test]
-#[ignore = "xfail: bib-engine has no public extra-title metadata query API"]
+#[ignore = "xfail: extra-title metadata differs from the Biber 2.22 expectation"]
 fn assertion_001_same_name_same_title_1() {
-    pass_upstream(
-        "Same name, same title - 1",
-        r####"$main->get_extratitledata_for_key('L1')"####,
-        r####"'1'"####,
-        r####"eq_or_diff($main->get_extratitledata_for_key('L1'), '1', 'Same name, same title - 1');"####,
-        UPSTREAM_SOURCE,
+    assert_eq!(
+        field_text(
+            r#####"extratitle.bcf"#####,
+            &[
+                (r#####"maxcitenames"#####, r#####"1"#####),
+                (r#####"maxbibnames"#####, r#####"1"#####)
+            ],
+            r#####"L1"#####,
+            r#####"extratitle"#####
+        )
+        .as_deref(),
+        Some(r#####"1"#####)
     );
 }
 
 #[test]
-#[ignore = "xfail: bib-engine has no public extra-title metadata query API"]
+#[ignore = "xfail: extra-title metadata differs from the Biber 2.22 expectation"]
 fn assertion_002_same_name_same_title_2() {
-    pass_upstream(
-        "Same name, same title - 2",
-        r####"$main->get_extratitledata_for_key('L2')"####,
-        r####"'2'"####,
-        r####"eq_or_diff($main->get_extratitledata_for_key('L2'), '2', 'Same name, same title - 2');"####,
-        UPSTREAM_SOURCE,
+    assert_eq!(
+        field_text(
+            r#####"extratitle.bcf"#####,
+            &[
+                (r#####"maxcitenames"#####, r#####"1"#####),
+                (r#####"maxbibnames"#####, r#####"1"#####)
+            ],
+            r#####"L2"#####,
+            r#####"extratitle"#####
+        )
+        .as_deref(),
+        Some(r#####"2"#####)
     );
 }
 
 #[test]
-#[ignore = "xfail: bib-engine has no public extra-title metadata query API"]
+#[ignore = "xfail: extra-title metadata differs from the Biber 2.22 expectation"]
 fn assertion_003_no_name_same_title_1() {
-    pass_upstream(
-        "No name, same title - 1",
-        r####"$main->get_extratitledata_for_key('L3')"####,
-        r####"'1'"####,
-        r####"eq_or_diff($main->get_extratitledata_for_key('L3'), '1', 'No name, same title - 1');"####,
-        UPSTREAM_SOURCE,
+    assert_eq!(
+        field_text(
+            r#####"extratitle.bcf"#####,
+            &[
+                (r#####"maxcitenames"#####, r#####"1"#####),
+                (r#####"maxbibnames"#####, r#####"1"#####)
+            ],
+            r#####"L3"#####,
+            r#####"extratitle"#####
+        )
+        .as_deref(),
+        Some(r#####"1"#####)
     );
 }
 
 #[test]
-#[ignore = "xfail: bib-engine has no public extra-title metadata query API"]
+#[ignore = "xfail: extra-title metadata differs from the Biber 2.22 expectation"]
 fn assertion_004_no_name_same_title_2() {
-    pass_upstream(
-        "No name, same title - 2",
-        r####"$main->get_extratitledata_for_key('L4')"####,
-        r####"'2'"####,
-        r####"eq_or_diff($main->get_extratitledata_for_key('L4'), '2', 'No name, same title - 2');"####,
-        UPSTREAM_SOURCE,
+    assert_eq!(
+        field_text(
+            r#####"extratitle.bcf"#####,
+            &[
+                (r#####"maxcitenames"#####, r#####"1"#####),
+                (r#####"maxbibnames"#####, r#####"1"#####)
+            ],
+            r#####"L4"#####,
+            r#####"extratitle"#####
+        )
+        .as_deref(),
+        Some(r#####"2"#####)
     );
 }
 
 #[test]
-#[ignore = "xfail: bib-engine has no public extra-title metadata query API"]
 fn assertion_005_no_name_same_title_as_with_name_1() {
-    pass_upstream(
-        "No name, same title as with name - 1",
-        r####"is_undef($main->get_extratitledata_for_key('L5'))"####,
-        r####"true"####,
-        r####"ok(is_undef($main->get_extratitledata_for_key('L5')), 'No name, same title as with name - 1');"####,
-        UPSTREAM_SOURCE,
+    assert_eq!(
+        field_text(
+            r#####"extratitle.bcf"#####,
+            &[
+                (r#####"maxcitenames"#####, r#####"1"#####),
+                (r#####"maxbibnames"#####, r#####"1"#####)
+            ],
+            r#####"L5"#####,
+            r#####"extratitle"#####
+        )
+        .as_deref(),
+        None
     );
 }
 
 #[test]
-#[ignore = "xfail: bib-engine has no public extra-title metadata query API"]
+#[ignore = "xfail: extra-title metadata differs from the Biber 2.22 expectation"]
 fn assertion_006_no_name_same_shorttitle_title_1() {
-    pass_upstream(
-        "No name, same shorttitle/title - 1",
-        r####"$main->get_extratitledata_for_key('L6')"####,
-        r####"'1'"####,
-        r####"eq_or_diff($main->get_extratitledata_for_key('L6'), '1', 'No name, same shorttitle/title - 1');"####,
-        UPSTREAM_SOURCE,
+    assert_eq!(
+        field_text(
+            r#####"extratitle.bcf"#####,
+            &[
+                (r#####"maxcitenames"#####, r#####"1"#####),
+                (r#####"maxbibnames"#####, r#####"1"#####)
+            ],
+            r#####"L6"#####,
+            r#####"extratitle"#####
+        )
+        .as_deref(),
+        Some(r#####"1"#####)
     );
 }
 
 #[test]
-#[ignore = "xfail: bib-engine has no public extra-title metadata query API"]
+#[ignore = "xfail: extra-title metadata differs from the Biber 2.22 expectation"]
 fn assertion_007_no_name_same_shorttitle_title_2() {
-    pass_upstream(
-        "No name, same shorttitle/title - 2",
-        r####"$main->get_extratitledata_for_key('L7')"####,
-        r####"'2'"####,
-        r####"eq_or_diff($main->get_extratitledata_for_key('L7'), '2', 'No name, same shorttitle/title - 2');"####,
-        UPSTREAM_SOURCE,
+    assert_eq!(
+        field_text(
+            r#####"extratitle.bcf"#####,
+            &[
+                (r#####"maxcitenames"#####, r#####"1"#####),
+                (r#####"maxbibnames"#####, r#####"1"#####)
+            ],
+            r#####"L7"#####,
+            r#####"extratitle"#####
+        )
+        .as_deref(),
+        Some(r#####"2"#####)
     );
 }
 
 #[test]
-#[ignore = "xfail: bib-engine has no public extra-title metadata query API"]
 fn assertion_008_singletitle_test_1() {
-    pass_upstream(
-        "Singletitle test - 1",
-        r####"is_undef($main->get_entryfield('L8', 'singletitle'))"####,
-        r####"true"####,
-        r####"ok(is_undef($main->get_entryfield('L8', 'singletitle')), 'Singletitle test - 1');"####,
-        UPSTREAM_SOURCE,
+    assert_eq!(
+        field_text(
+            r#####"extratitle.bcf"#####,
+            &[
+                (r#####"maxcitenames"#####, r#####"1"#####),
+                (r#####"maxbibnames"#####, r#####"1"#####)
+            ],
+            r#####"L8"#####,
+            r#####"singletitle"#####
+        )
+        .as_deref(),
+        None
     );
 }
 
 #[test]
-#[ignore = "xfail: bib-engine has no public extra-title metadata query API"]
 fn assertion_009_singletitle_test_2() {
-    pass_upstream(
-        "Singletitle test - 2",
-        r####"is_undef($main->get_entryfield('L9', 'singletitle'))"####,
-        r####"true"####,
-        r####"ok(is_undef($main->get_entryfield('L9', 'singletitle')), 'Singletitle test - 2');"####,
-        UPSTREAM_SOURCE,
+    assert_eq!(
+        field_text(
+            r#####"extratitle.bcf"#####,
+            &[
+                (r#####"maxcitenames"#####, r#####"1"#####),
+                (r#####"maxbibnames"#####, r#####"1"#####)
+            ],
+            r#####"L9"#####,
+            r#####"singletitle"#####
+        )
+        .as_deref(),
+        None
     );
 }
 
 #[test]
-#[ignore = "xfail: bib-engine has no public extra-title metadata query API"]
+#[ignore = "xfail: extra-title metadata differs from the Biber 2.22 expectation"]
 fn assertion_010_singletitle_test_3() {
-    pass_upstream(
-        "Singletitle test - 3",
-        r####"$main->get_entryfield('L10', 'singletitle')"####,
-        r####"'1'"####,
-        r####"eq_or_diff($main->get_entryfield('L10', 'singletitle'), '1', 'Singletitle test - 3');"####,
-        UPSTREAM_SOURCE,
+    assert_eq!(
+        field_text(
+            r#####"extratitle.bcf"#####,
+            &[
+                (r#####"maxcitenames"#####, r#####"1"#####),
+                (r#####"maxbibnames"#####, r#####"1"#####)
+            ],
+            r#####"L10"#####,
+            r#####"singletitle"#####
+        )
+        .as_deref(),
+        Some(r#####"1"#####)
     );
 }
 
 #[test]
-#[ignore = "xfail: bib-engine has no public extra-title metadata query API"]
 fn assertion_011_singletitle_test_4() {
-    pass_upstream(
-        "Singletitle test - 4",
-        r####"is_undef($main->get_entryfield('L11', 'singletitle'))"####,
-        r####"true"####,
-        r####"ok(is_undef($main->get_entryfield('L11', 'singletitle')), 'Singletitle test - 4');"####,
-        UPSTREAM_SOURCE,
+    assert_eq!(
+        field_text(
+            r#####"extratitle.bcf"#####,
+            &[
+                (r#####"maxcitenames"#####, r#####"1"#####),
+                (r#####"maxbibnames"#####, r#####"1"#####)
+            ],
+            r#####"L11"#####,
+            r#####"singletitle"#####
+        )
+        .as_deref(),
+        None
     );
 }
 
 #[test]
-#[ignore = "xfail: bib-engine has no public extra-title metadata query API"]
 fn assertion_012_singletitle_test_5() {
-    pass_upstream(
-        "Singletitle test - 5",
-        r####"is_undef($main->get_entryfield('L12', 'singletitle'))"####,
-        r####"true"####,
-        r####"ok(is_undef($main->get_entryfield('L12', 'singletitle')), 'Singletitle test - 5');"####,
-        UPSTREAM_SOURCE,
+    assert_eq!(
+        field_text(
+            r#####"extratitle.bcf"#####,
+            &[
+                (r#####"maxcitenames"#####, r#####"1"#####),
+                (r#####"maxbibnames"#####, r#####"1"#####)
+            ],
+            r#####"L12"#####,
+            r#####"singletitle"#####
+        )
+        .as_deref(),
+        None
     );
 }
 
 #[test]
-#[ignore = "xfail: bib-engine has no public extra-title metadata query API"]
 fn assertion_013_singletitle_test_6() {
-    pass_upstream(
-        "Singletitle test - 6",
-        r####"is_undef($main->get_entryfield('L1', 'singletitle'))"####,
-        r####"true"####,
-        r####"ok(is_undef($main->get_entryfield('L1', 'singletitle')), 'Singletitle test - 6');"####,
-        UPSTREAM_SOURCE,
+    assert_eq!(
+        field_text(
+            r#####"extratitle.bcf"#####,
+            &[
+                (r#####"maxcitenames"#####, r#####"1"#####),
+                (r#####"maxbibnames"#####, r#####"1"#####)
+            ],
+            r#####"L1"#####,
+            r#####"singletitle"#####
+        )
+        .as_deref(),
+        None
     );
 }
 
 #[test]
-#[ignore = "xfail: bib-engine has no public extra-title metadata query API"]
 fn assertion_014_singletitle_test_7() {
-    pass_upstream(
-        "Singletitle test - 7",
-        r####"is_undef($main->get_entryfield('L5', 'singletitle'))"####,
-        r####"true"####,
-        r####"ok(is_undef($main->get_entryfield('L5', 'singletitle')), 'Singletitle test - 7');"####,
-        UPSTREAM_SOURCE,
+    assert_eq!(
+        field_text(
+            r#####"extratitle.bcf"#####,
+            &[
+                (r#####"maxcitenames"#####, r#####"1"#####),
+                (r#####"maxbibnames"#####, r#####"1"#####)
+            ],
+            r#####"L5"#####,
+            r#####"singletitle"#####
+        )
+        .as_deref(),
+        None
     );
 }
