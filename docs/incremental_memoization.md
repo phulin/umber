@@ -63,8 +63,9 @@ The repository already provides the required correctness substrate:
 - retained logical effects and page artifacts;
 - accepted-history-owned finished-line mounts;
 - shared immutable survivor payloads with mount-owned glue closures, ordinary
-  rollback-local root pins, and deferred provenance recipes;
-- compact output-reachable, current-revision provenance rebinding recipes;
+  rollback-local root pins, and lazy provenance resolvers;
+- immutable chunked origin-record snapshots, attached only when paragraph
+  history is accepted and decoded only for a diagnostic query;
 - typed dependency keys, semantic observations, changed-at stamps, and
   backdating; and
 - explicit paragraph mutation, effect, input-transition, and barrier records.
@@ -122,7 +123,7 @@ ParagraphRecord {
     replay barriers,
     retained finished lines,
     line count,
-    compact finished-line output-provenance recipe,
+    opaque finished-line origins plus an accepted-history provenance resolver,
 }
 ```
 
@@ -192,8 +193,8 @@ For each candidate record, in order:
 5. atomically apply the prepared input transition and replay the supported
    ordered mutations/effects;
 6. mount the accepted finished lines;
-7. attach the shared stable provenance recipe without resolving editor roots
-   or allocating live origins;
+7. attach the accepted generation's shared provenance resolver without walking
+   the line graph, resolving editor roots, or allocating live origins;
 8. install the result through the ordinary vertical/page-builder boundary;
    and
 9. publish the same `ShipoutComplete` and `OuterParagraphEnd` events as cold
@@ -345,7 +346,7 @@ zero-overhead finished-line replay with page rebuilding has an approximate
 129.5 ms floor, or a 1.62x whole-document ceiling. Hlist-only replay has an
 approximate 159.7 ms floor, or a 1.32x ceiling.
 
-These are absolute rooflines, not release targets: the changed paragraph,
+These are absolute cold-work rooflines, not release targets: the changed paragraph,
 restart prefix, validation, mount/provenance installation, and misses remain.
 Fast-path suffix adoption has a different cost model and must never be averaged
 with slow-path paragraph economics.
@@ -356,13 +357,33 @@ memo-enabled slow-path loss. It remains default-disabled. The new plan must win
 by removing discovery, recording, and lifecycle work, not by weakening the
 read-set or provenance contract.
 
+The completed accepted-history path changes the practical roofline. On the
+2026-07-18 Gentle slow edit, 863 of 873 eligible paragraphs mount retained
+finished lines, 101,166 commands are skipped, and only nine candidates miss
+validation. Across all 912 paragraph executions, including output-routine
+paragraphs, 94.6% replay. In an optimized 50-iteration isolated slow-path
+sample, `try_reuse_aligned_paragraph` owns only 0.07% of weighted samples. The
+remaining executor work is dominated by the ordinary page pipeline:
+`drain_pending_output` owns 20.55%, alignment 19.21%, shipout 16.86%, and
+`stage_shipout` 11.58% of samples; direct output emission contributes roughly
+another 8%. Line breaking itself is 1.78% and is limited to misses and
+output-routine paragraphs.
+
+An optimized ten-pair path-separated run measured the representative slow
+edits at -44.832 ms enabled-minus-disabled, or -21.081 ms after charging the
+one-time accepted-history priming cost. The independent fast path was
++1.118 ms and forced rebreak was +4.729 ms. This means further provenance,
+read-set, or replay-loop tuning cannot yield a large slow-path improvement:
+the next material ceiling is page/output reuse, which remains deliberately
+outside this paragraph design.
+
 ### Mountable finished-line ownership experiment
 
 The accepted-history implementation now owns cloneable retained-root handles
 whose immutable survivor payload and glue closure are shared between related
 Universes. A finished-line hit validates the handle before mutation, installs
 its payload under the restarted Universe's ordinary rollback pin log, mounts a
-shared diagnostic recipe, restores its glue closure, and returns the unchanged
+shared lazy diagnostic resolver, restores its glue closure, and returns the unchanged
 `NodeListId`. It does not resolve editor roots, allocate live origins, import,
 promote, re-freeze, rehash, or recursively rewrite semantic nodes. The existing reused-paragraph
 installation still materializes only the mounted top-level contributions and
@@ -393,27 +414,29 @@ semantic promotion volume nor survivor recycling work.
 
 ### Output-provenance closure
 
-Paragraph recording no longer keeps the expanded-token trace. At finished-line
-publication it traverses the ordinary node graph, follows only
-reachable char and ligature origins to stable editor roots, and builds a
-compact recipe. Each referenced editor piece contributes one full
-`RootSpanId` anchor; distinct output ranges use `(piece ordinal, start, end)`
-records, depth-first origin slots use `u32` indexes, and sparse survivor-word
-entries identify only character-bearing nodes. Unknown or non-rooted output
-origins use the reserved unknown slot. Token values and origins that produced
-no accepted node are not retained.
+Paragraph recording no longer keeps the expanded-token trace or constructs a
+stable-span recipe. Retained line nodes keep the raw `OriginId`s they already
+carry. While recording is provisional this provenance is `Pending`; accepting
+paragraph history attaches one shared `ParagraphOriginResolver` to the
+accepted generation without traversing a line graph.
 
-On a finished-line hit, replay prepares and validates the ordinary input
-transition, then attaches the shared recipe to the survivor mount. Page
-promotion rebases only sparse survivor-word entries; the stable piece, span,
-and slot columns remain shared. Direct shipout advances a monotonic provenance
-cursor beside each already-required node-list traversal and emits compact
-stable references. Shipout-memo hits retain one recipe directly. Committed
-artifacts distinguish eager, deferred, and mixed provenance, and decode a
-single stable `RootSpanId` only when a diagnostic requests that rendered
-source. Current/deleted editor-layout resolution likewise occurs only for the
-queried source. Replay therefore keeps the accepted semantic graph while
-making unused diagnostic provenance nearly free.
+The resolver owns an immutable origin-record snapshot and metadata-only
+fragment store. Origin records use a persistent chunked archive: sealed chunks
+are shared by `Arc`, the bounded tail is copied at snapshot time, and rollback
+truncates only the live archive. Snapshot construction is therefore O(1) in
+the sealed history plus a bounded tail copy, and it replaces rather than
+duplicates the live record vector. It follows an origin chain to a stable
+`RootSpanId` only when a diagnostic consumes that origin.
+
+On a finished-line hit, replay attaches the resolver to the survivor mount.
+Page promotion remaps only the lazy resolver range. Direct shipout stores one
+packed lazy reference containing the resolver ordinal and raw 32-bit
+`OriginId`; it does not decode an origin or resolve an editor root. A committed
+artifact performs that resolution in `render_origin` only when queried, then
+returns the same stable source identity used by current/deleted editor-layout
+resolution. Existing eager and stable-recipe representations remain for live
+input provenance and shipout memo, but paragraph replay does not construct
+either.
 
 The focused scaling regression expands 4,096 `\relax` tokens after paragraph
 entry but produces only two characters; both retained recipes contain at most
@@ -423,7 +446,7 @@ separately. Thus retained metadata scales with reachable output provenance,
 while replay performs no origin allocation and the scalar delivered-token
 count remains only avoided-work telemetry.
 
-On the 2026-07-18 stable 721-hit Gentle run, deferral reduced paragraph import
+On the 2026-07-18 stable 721-hit Gentle run, the earlier recipe deferral reduced paragraph import
 from 2.565 to 0.209 ms on the forward slow edit and from 1.793 to 0.203 ms on
 the inverse edit. A rejected first implementation performed a survivor lookup
 and binary search for every glyph: that function alone was 2.59% of samples
@@ -444,6 +467,17 @@ were 267.313/282.726 ms. A separate instrumented telemetry pass charged
 0.65--0.75 ms total import/mount work to each 132-hit slow edit. These costs
 preserve the default-disabled decision; the evidence establishes bounded
 output-scaled provenance rather than a new enablement claim.
+
+The final opaque-resolver implementation eliminates this remaining cold graph
+walk. In the representative 863-hit run, `line_provenance_ns` is zero during
+both priming and replay, where the previous matched priming run charged
+111.215 ms and the slow edit charged 14.457 ms. Accepted metadata fell from
+9,959,318 to 7,773,494 bytes. The focused snapshot budget reports a 542 ns
+median for both small and multi-chunk histories with zero retained allocation;
+focused current-layout, deleted-layout, and rollback-survival tests preserve
+diagnostic behavior. This is the intended policy for rarely consumed
+diagnostic provenance: retain enough immutable information cheaply and decode
+only the requested origin.
 
 ### Direct root-state delta recording
 

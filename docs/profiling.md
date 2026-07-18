@@ -1142,3 +1142,51 @@ were neutral-to-favorable, and cold ordering reversed the apparent result.
 Identical replay counts and DVI, the exact direct-call disappearance, and the
 absence of a new production operation are the acceptance evidence; no precise
 end-to-end gain is claimed under this host load.
+
+### Accepted-history replay roofline and lazy diagnostic provenance
+
+The completed q02h.67 paragraph-admission work replays 863 of 873 eligible
+Gentle paragraphs on each representative pagination-changing edit. The nine
+validation misses comprise eight real entry-cell differences (five current
+font and three `\fam`) and one retained-result miss. Including output-routine
+paragraphs, 863 of 912 paragraph executions replay, or 94.6%, and each slow
+edit skips 101,166 commands. DVI bytes and named-boundary schedules remain
+identical to paragraph-disabled execution.
+
+Diagnostic provenance is no longer constructed as a stable-span recipe during
+line publication. Accepted lines retain raw `OriginId`s and share an immutable
+chunked origin-record snapshot plus metadata-only fragment store. Replay and
+shipout carry packed lazy resolver references; `CommittedArtifact::render_origin`
+follows the origin chain and resolves the stable source only for a diagnostic
+query. The focused snapshot budget reports the same 542 ns median for small
+and multi-chunk histories and zero retained allocation. In the matched Gentle
+run, `line_provenance_ns` fell from 111.215 ms to zero during priming and from
+14.457 ms to zero on the slow edit; accepted paragraph metadata fell from
+9,959,318 to 7,773,494 bytes.
+
+The optimized ten-pair release-profile run reports:
+
+| Path                             | Paragraph enabled minus disabled |
+| -------------------------------- | -------------------------------: |
+| Slow edits                       |                       -44.832 ms |
+| Slow edits plus one-time priming |                       -21.081 ms |
+| Independent fast suffix adoption |                        +1.118 ms |
+| Forced line-result rebreak       |                        +4.729 ms |
+
+An isolated 50-iteration memoized slow-path Samply capture places
+`try_reuse_aligned_paragraph` at four weighted samples, 0.07% of the whole
+capture. The remaining executor is dominated by page/output work that
+finished-line replay intentionally recomputes: `drain_pending_output` is
+20.55%, alignment 19.21%, shipout 16.86%, `stage_shipout` 11.58%, and direct
+emission approximately 8%. Line breaking is 1.78% and occurs only for misses
+and output-routine paragraphs. Allocator runtime is 19.52%, platform/memory
+movement 8.23%, and kernel work 4.04%; profiling-only payload measurement is
+4.12% self time.
+
+The conclusion is architectural rather than a request for more replay-loop
+micro-optimization. Almost every ordinary paragraph already replays, and the
+replay algorithm is below the sampling floor. The next material slow-path
+ceiling is page/output reuse or a cheaper rebuild representation. Input-frame
+provenance deferral and first-read entry-font tracking remain valid narrow
+cleanups, but neither can materially move this profile and neither is required
+for paragraph replay's release gate.
