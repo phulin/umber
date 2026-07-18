@@ -8,7 +8,7 @@ use tex_expand::InputResolver;
 use tex_lex::{InputStack, WorldInput};
 use tex_state::{InputReadState, JobClock, Universe, World};
 
-use umber::{EngineSession, dvi_from_page_plans, prepare_etex_run_stores, prepare_run_stores};
+use umber::{EngineMode, EngineSession, dvi_from_page_plans};
 
 fn repo_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -117,7 +117,7 @@ impl InProcessResolvers {
 fn run_file_in_process(
     path: &Path,
     format: Option<&[u8]>,
-    etex: bool,
+    engine: EngineMode,
 ) -> Result<InProcessRun, String> {
     let path = path
         .canonicalize()
@@ -149,19 +149,14 @@ fn run_file_in_process(
     }
 
     let mut stores = if let Some(format) = format {
-        Universe::from_format(world, format).map_err(|error| error.to_string())?
+        let mut stores = Universe::from_format(world, format).map_err(|error| error.to_string())?;
+        engine.install_after_format(&mut stores);
+        stores
     } else {
         let mut stores = Universe::with_world(world);
-        if etex {
-            prepare_etex_run_stores(&mut stores);
-        } else {
-            prepare_run_stores(&mut stores);
-        }
+        engine.prepare_fresh(&mut stores);
         stores
     };
-    if etex && format.is_some() {
-        tex_exec::install_etex_unexpandable_primitives(&mut stores);
-    }
     let content = stores
         .world_mut()
         .read_file(&path)
@@ -212,7 +207,7 @@ fn run_plain_fixture_case(document: &str, fixture_name: &str) {
         return;
     }
     run_named_fixture_document(&root, document, &fixture, |path| {
-        run_file_in_process(path, None, false)?
+        run_file_in_process(path, None, EngineMode::Tex82)?
             .dvi
             .ok_or_else(|| "Umber did not produce DVI".to_owned())
     })
@@ -261,12 +256,17 @@ fn run_two_phase_fixture(source_name: &str, local_name: &str, fixture_name: &str
     fs::write(&input, source_bytes).expect("stage conformance source");
     fs::copy(&tfm, temp.path().join(format!("{fixture_name}.tfm"))).expect("stage conformance TFM");
 
-    let initial = run_file_in_process(&input, None, etex)
+    let engine = if etex {
+        EngineMode::ETex
+    } else {
+        EngineMode::Tex82
+    };
+    let initial = run_file_in_process(&input, None, engine)
         .unwrap_or_else(|error| panic!("{fixture_name} format creation failed: {error}"));
     let format = initial
         .format
         .unwrap_or_else(|| panic!("{fixture_name} did not dump a format"));
-    let loaded = run_file_in_process(&input, Some(&format), etex)
+    let loaded = run_file_in_process(&input, Some(&format), engine)
         .unwrap_or_else(|error| panic!("{fixture_name} format-loaded run failed: {error}"));
     let dvi = loaded
         .dvi

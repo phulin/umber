@@ -544,26 +544,55 @@ fn failed_patch_restores_the_complete_accepted_build() {
 }
 
 #[test]
-fn format_and_fresh_initialization_both_complete() {
-    let mut stores = Universe::with_world(World::memory());
-    prepare_run_stores(&mut stores);
-    let format = stores.dump_format().expect("dump format");
-    let mut formatted = VirtualCompileSession::new(SessionOptions {
-        format: Some(format),
-        ..SessionOptions::default()
-    })
-    .expect("formatted session");
-    formatted
-        .add_user_file("main.tex", b"\\end".to_vec())
-        .expect("main");
-    assert!(matches!(
-        formatted.compile_attempt(),
-        CompileAttemptResult::Complete(_)
-    ));
-    assert!(matches!(
-        session("\\end").compile_attempt(),
-        CompileAttemptResult::Complete(_)
-    ));
+fn every_engine_mode_has_source_and_schema_10_format_artifact_equivalence() {
+    let source = b"\\shipout\\hbox{}\\end";
+    for engine in [
+        EngineMode::Tex82,
+        EngineMode::ETex,
+        EngineMode::PdfTex,
+        EngineMode::Latex,
+        EngineMode::PdfLatex,
+    ] {
+        let mut stores = Universe::with_world(World::memory());
+        engine.prepare_fresh(&mut stores);
+        let format = stores.dump_format().expect("dump schema-10 format");
+        assert_eq!(
+            u32::from_le_bytes(format[8..12].try_into().expect("schema bytes")),
+            10
+        );
+
+        let mut formatted = VirtualCompileSession::new(SessionOptions {
+            format: Some(format),
+            engine,
+            ..SessionOptions::default()
+        })
+        .expect("formatted session");
+        formatted
+            .add_user_file("main.tex", source.to_vec())
+            .expect("formatted main");
+
+        let mut fresh = VirtualCompileSession::new(SessionOptions {
+            engine,
+            ..SessionOptions::default()
+        })
+        .expect("fresh session");
+        fresh
+            .add_user_file("main.tex", source.to_vec())
+            .expect("fresh main");
+
+        let CompileAttemptResult::Complete(formatted) = formatted.compile_attempt() else {
+            panic!("{} formatted session did not complete", engine.name());
+        };
+        let CompileAttemptResult::Complete(fresh) = fresh.compile_attempt() else {
+            panic!("{} fresh session did not complete", engine.name());
+        };
+        assert_eq!(formatted, fresh, "{} output differs", engine.name());
+        assert!(
+            !formatted.dvi.is_empty(),
+            "{} emitted no DVI",
+            engine.name()
+        );
+    }
 }
 
 #[test]
