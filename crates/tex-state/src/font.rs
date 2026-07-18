@@ -191,6 +191,87 @@ impl FontStore {
         }
     }
 
+    pub(crate) fn from_frozen(
+        rows: Vec<(LoadedFont, Option<SymbolId>, Option<FontExpansion>)>,
+        interner: &crate::interner::Interner,
+    ) -> Result<Self, &'static str> {
+        let count = u32::try_from(rows.len()).map_err(|_| "frozen font count exceeds u32")?;
+        if rows.is_empty() || rows.len() > MAX_FONT_COUNT {
+            return Err("frozen font count is outside bank capacity");
+        }
+        let identities = IdentityAllocator::from_frozen_len(1, count);
+        let mut fonts = Vec::with_capacity(rows.len());
+        let mut identifiers = Vec::with_capacity(rows.len());
+        let mut expansion_specs = Vec::with_capacity(rows.len());
+        let mut by_key = BTreeMap::new();
+        let mut hash_fragments = Vec::new();
+        let mut hash_fragments_by_key = BTreeMap::new();
+        let mut font_hash_fragments = Vec::with_capacity(rows.len());
+        let mut complete_hash_fragments = Vec::with_capacity(rows.len());
+        for (raw, (font, identifier, expansion)) in rows.into_iter().enumerate() {
+            if expansion.is_some()
+                && matches!(font.construction(), FontConstruction::Expanded { .. })
+            {
+                return Err("frozen expanded font has an expansion specification");
+            }
+            let fragment_key = FontHashFragmentKey::from(&font);
+            let fragment = match hash_fragments_by_key.get(&fragment_key).copied() {
+                Some(fragment) => fragment,
+                None => {
+                    let fragment = hash_fragments.len();
+                    hash_fragments.push(font_hash_fragment(&font));
+                    hash_fragments_by_key.insert(fragment_key, fragment);
+                    fragment
+                }
+            };
+            let identifier_text = match identifier {
+                Some(symbol) if interner.contains_id(symbol) => {
+                    Some((interner.kind_id(symbol), interner.resolve_id(symbol)))
+                }
+                Some(_) => return Err("frozen font identifier is not live"),
+                None => None,
+            };
+            complete_hash_fragments.push(complete_font_hash_fragment(
+                hash_fragments[fragment],
+                identifier_text,
+            ));
+            if raw != 0 && matches!(font.construction(), FontConstruction::Loaded) {
+                let key = FontKey {
+                    name: font.name().to_owned(),
+                    size: font.size(),
+                    content_hash: font.content_hash(),
+                };
+                let id = FontId::from_identity(
+                    identities
+                        .identity_at(raw as u32)
+                        .expect("frozen font slot is live"),
+                );
+                if by_key.insert(key, id).is_some() {
+                    return Err("duplicate frozen loaded-font key");
+                }
+            }
+            fonts.push(font);
+            identifiers.push(identifier);
+            expansion_specs.push(expansion);
+            font_hash_fragments.push(fragment);
+        }
+        Ok(Self {
+            semantic_sealed: vec![false; fonts.len()],
+            fonts,
+            identifiers,
+            identifier_writes: Vec::new(),
+            semantic_seal_writes: Vec::new(),
+            expansion_specs,
+            expansion_writes: Vec::new(),
+            by_key,
+            hash_fragments,
+            hash_fragments_by_key,
+            font_hash_fragments,
+            complete_hash_fragments,
+            identities,
+        })
+    }
+
     pub(crate) fn intern(&mut self, font: LoadedFont) -> Result<FontId, FontStoreCapacityError> {
         let deduplicate = matches!(font.construction(), FontConstruction::Loaded);
         let key = FontKey {

@@ -74,11 +74,13 @@ mod node_semantic;
 mod state_hash;
 
 pub(crate) use format::{
-    FrozenCoreSections, GLUE_SECTION, MACROS_SECTION, NAMES_SECTION, StoreFormatError,
-    TOKEN_LISTS_SECTION,
+    CODE_TABLES_SECTION, FONTS_SECTION, FrozenCoreSections, FrozenNonNodeSections, GLUE_SECTION,
+    HYPHENATION_SECTION, MACROS_SECTION, NAMES_SECTION, StoreFormatError, TOKEN_LISTS_SECTION,
 };
 #[cfg(test)]
-pub(crate) use format::{TestingFontFormatCorruption, testing_corrupt_font_format};
+pub(crate) use format::{
+    TestingFontFormatCorruption, testing_corrupt_font_format, testing_encode_frozen_fonts,
+};
 
 pub use crate::env::group::{GroupKind, GroupMismatch};
 pub(crate) use state_hash::StoreStateHashCursor;

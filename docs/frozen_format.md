@@ -171,6 +171,47 @@ process-wide compact symbol registry is resolved in one batch for names;
 neither token lists, macro definitions, nor glue specs are replayed through
 their semantic interning APIs.
 
+### Fonts and font metadata (kind 320)
+
+The 32-byte header contains version, font count, payload offset and length,
+an optional-prepared-`mag` tag and signed value, the last-loaded font index,
+and a reserved `u32`. The payload is the canonical fixed-integer schema-10
+encoding of detached font records: names and content hashes, immutable and
+source parameters, character metrics, lig/kern instructions, extensible
+recipes, derivation identity, control-sequence identifier index, and pdfTeX
+expansion settings.
+
+The decoder first requires exact equality with the still-present transitional
+records, whose full metric, derivation-order, identifier, parameter-bank, and
+last-font validation runs before any store is published. It then constructs
+the dense font prefix in bulk, attaches fresh runtime identities, and rebuilds
+loaded-font lookup keys and immutable/complete semantic hash fragments without
+calling the ordinary font interning or mutable identifier/expansion paths.
+
+### Code tables (kind 336)
+
+The 16-byte header is `(version, count, records_offset, reserved)` as `u32`;
+`records_offset` is 16. Each 32-byte record contains code point `u32`, catcode
+`u8`, three reserved bytes, lc- and uccode `u32`, sfcode `u16`, two reserved
+bytes, mathcode `u32`, signed delcode `i32`, and four reserved bytes. Records
+are strictly code-point ordered, contain valid Unicode scalars and catcodes,
+and must differ from INITEX defaults in at least one column. Validated rows are
+materialized directly as sparse radix roots with zero job-local generations
+and no assignment or group history.
+
+### Hyphenation (kind 352)
+
+The 16-byte header contains version, payload offset and length, and a reserved
+`u32`. Its canonical fixed-integer schema-10 payload stores language-indexed
+runtime tries, exception maps, and saved hyphen-code maps. Validation requires
+one root per language, strictly sorted unique edges, live edge targets, exactly
+one incoming edge for every non-root node, and nonempty exception words whose
+positions do not exceed the character count. Endpoint and repeated exception
+positions remain representable because TeX's exception scanner accepts leading,
+trailing, and adjacent hyphens. The validated trie is installed as the immutable
+format base; later job mutations retain the existing copy-on-write `Arc`
+snapshot behavior.
+
 ## References and structural validation
 
 Within a section, a reference is either a fixed-width record index or an
@@ -254,9 +295,10 @@ boundary: the loader rejects schema 9 with `UnsupportedVersion(9)`. Users
 regenerate format images from their source under the schema-10 engine; Umber
 does not reinterpret an old image heuristically.
 
-During the transition, schema 10 writes section 1 for unmigrated state and
-restores names, token lists, macros, and glue directly from sections 256, 272,
-288, and 304. Epic phases replace the remaining semantic reconstruction with
-the other allocated frozen sections, literal lookup arrays, immutable graph
-stores, and mutable overlays. Once those sections are integrated across all
-drivers, section 1 is removed under another explicit schema bump.
+During the transition, schema 10 writes section 1 for unmigrated state and as
+a validation mirror. It restores names, token lists, macros, glue, fonts, code
+tables, and hyphenation directly from sections 256 through 352. Epic phases
+replace the remaining node/environment reconstruction with allocated frozen
+sections, immutable graph stores, and mutable overlays. Once those sections
+are integrated across all drivers, section 1 is removed under another explicit
+schema bump.

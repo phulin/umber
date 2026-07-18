@@ -117,13 +117,14 @@ Control sequences contribute interner semantic atoms, so allocation order does
 not affect identity. Execution-transient token flows stay in pooled lexer
 buffers and enter the token store only when crossing a durable boundary.
 
-Schema-10 format loading installs names, token lists, macro definitions, and
-glue as validated dense immutable prefixes. It attaches fresh runtime identity
-tags and builds ordinary lookup indexes in bulk rather than replaying the
-semantic interning APIs. Dense record indices remain the canonical raw ids.
-Job-created content appends after the prefix and follows the same lookup,
-snapshot, generation, and rollback rules as a cold store; no format byte is
-mutated.
+Schema-10 format loading installs names, token lists, macro definitions, glue,
+fonts, sparse code-table roots, and hyphenation tries as validated frozen
+bases. It attaches fresh runtime identity tags and builds ordinary lookup and
+semantic-hash indexes in bulk rather than replaying semantic interning or
+assignment APIs. Dense record indices remain the canonical raw ids. Job-created
+content and code-table/hyphenation mutations extend those bases and follow the
+same lookup, snapshot, generation, and rollback rules as a cold store; no
+format byte is mutated.
 
 Provenance is diagnostic metadata and does not affect semantic identity.
 Packed origins refer to immutable input records or editor fragments. The

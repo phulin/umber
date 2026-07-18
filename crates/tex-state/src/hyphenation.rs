@@ -54,6 +54,40 @@ impl HyphenationTable {
         }
     }
 
+    pub(crate) fn validate_frozen(&self) -> Result<(), &'static str> {
+        for table in self.languages.values() {
+            if table.nodes.is_empty() {
+                return Err("frozen hyphenation language has no root");
+            }
+            let mut incoming = vec![0_u32; table.nodes.len()];
+            for node in &table.nodes {
+                let mut previous = None;
+                for &(ch, target) in &node.edges {
+                    if previous.is_some_and(|prior| prior >= ch) {
+                        return Err("non-canonical frozen hyphenation edges");
+                    }
+                    previous = Some(ch);
+                    let count = incoming
+                        .get_mut(target)
+                        .ok_or("frozen hyphenation edge target is not live")?;
+                    *count = count
+                        .checked_add(1)
+                        .ok_or("frozen hyphenation edge count overflow")?;
+                }
+            }
+            if incoming[0] != 0 || incoming[1..].iter().any(|count| *count != 1) {
+                return Err("frozen hyphenation trie is not a rooted tree");
+            }
+            for (word, positions) in &table.exceptions {
+                let len = word.chars().count();
+                if word.is_empty() || positions.iter().any(|position| *position > len) {
+                    return Err("invalid frozen hyphenation exception");
+                }
+            }
+        }
+        Ok(())
+    }
+
     pub fn add_pattern(&mut self, pattern: PatternSpec) {
         self.add_pattern_for_language(0, pattern);
     }

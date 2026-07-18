@@ -1322,6 +1322,21 @@ impl Universe {
                 alignment: 8,
                 bytes: &stores.glue,
             },
+            crate::format_container::SectionInput {
+                kind: crate::stores::FONTS_SECTION,
+                alignment: 8,
+                bytes: &stores.fonts,
+            },
+            crate::format_container::SectionInput {
+                kind: crate::stores::CODE_TABLES_SECTION,
+                alignment: 8,
+                bytes: &stores.code_tables,
+            },
+            crate::format_container::SectionInput {
+                kind: crate::stores::HYPHENATION_SECTION,
+                alignment: 8,
+                bytes: &stores.hyphenation,
+            },
         ])
         .map_err(map_container_error)
     }
@@ -1329,9 +1344,9 @@ impl Universe {
     /// Constructs a fresh timeline from a validated semantic format image.
     pub fn from_format(world: World, bytes: &[u8]) -> Result<Self, FormatError> {
         let container = crate::format_container::decode(bytes).map_err(map_container_error)?;
-        if container.sections.len() != 5 {
+        if container.sections.len() != 8 {
             return Err(FormatError::InvalidState(
-                "schema-10 foundational format requires exactly five sections".to_owned(),
+                "schema-10 core format requires exactly eight sections".to_owned(),
             ));
         }
         let payload = container
@@ -1350,8 +1365,13 @@ impl Universe {
             macros: required_format_section(&container, crate::stores::MACROS_SECTION)?,
             glue: required_format_section(&container, crate::stores::GLUE_SECTION)?,
         };
-        let mut stores =
-            Stores::decode_frozen_format(&format.stores, frozen).map_err(map_store_format_error)?;
+        let non_node = crate::stores::FrozenNonNodeSections {
+            fonts: required_format_section(&container, crate::stores::FONTS_SECTION)?,
+            code_tables: required_format_section(&container, crate::stores::CODE_TABLES_SECTION)?,
+            hyphenation: required_format_section(&container, crate::stores::HYPHENATION_SECTION)?,
+        };
+        let mut stores = Stores::decode_frozen_format(&format.stores, frozen, non_node)
+            .map_err(map_store_format_error)?;
         let clock = world.job_clock();
         install_job_clock_params(
             &mut |param, value| stores.set_int_param(param, value),

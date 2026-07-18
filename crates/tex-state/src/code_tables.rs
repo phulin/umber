@@ -207,6 +207,61 @@ impl CodeTables {
         }
     }
 
+    pub(crate) fn from_frozen(rows: &[(char, CodeTableValues)]) -> Result<Self, &'static str> {
+        let mut tables = Self::new();
+        let mut previous = None;
+        for &(ch, values) in rows {
+            if previous.is_some_and(|prior| prior >= ch) {
+                return Err("non-canonical frozen code-table order");
+            }
+            previous = Some(ch);
+            let code = ch as u32;
+            if values
+                == (CodeTableValues {
+                    catcode: CatcodeDefaults::default_for(code),
+                    lccode: LcCodeDefaults::default_for(code),
+                    uccode: UcCodeDefaults::default_for(code),
+                    sfcode: SfCodeDefaults::default_for(code),
+                    mathcode: MathCodeDefaults::default_for(code),
+                    delcode: DelCodeDefaults::default_for(code),
+                })
+            {
+                return Err("default frozen code-table row");
+            }
+            tables.catcodes.root = PagedTable::<Catcode, CatcodeDefaults>::root_with_value(
+                &tables.catcodes.root,
+                ch,
+                values.catcode,
+            );
+            tables.lccodes.root = PagedTable::<LcCode, LcCodeDefaults>::root_with_value(
+                &tables.lccodes.root,
+                ch,
+                values.lccode,
+            );
+            tables.uccodes.root = PagedTable::<UcCode, UcCodeDefaults>::root_with_value(
+                &tables.uccodes.root,
+                ch,
+                values.uccode,
+            );
+            tables.sfcodes.root = PagedTable::<SfCode, SfCodeDefaults>::root_with_value(
+                &tables.sfcodes.root,
+                ch,
+                values.sfcode,
+            );
+            tables.mathcodes.root = PagedTable::<MathCode, MathCodeDefaults>::root_with_value(
+                &tables.mathcodes.root,
+                ch,
+                values.mathcode,
+            );
+            tables.delcodes.root = PagedTable::<DelCode, DelCodeDefaults>::root_with_value(
+                &tables.delcodes.root,
+                ch,
+                values.delcode,
+            );
+        }
+        Ok(tables)
+    }
+
     pub(crate) fn checkpoint(&self) -> CodeTablesSnapshot {
         CodeTablesSnapshot {
             catcodes: self.catcodes.checkpoint(),

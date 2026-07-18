@@ -503,6 +503,63 @@ fn semantic_format_round_trips_sparse_unicode_code_tables() {
 }
 
 #[test]
+fn frozen_non_node_sections_are_deterministic_and_keep_mutable_overlays() {
+    let mut universe = Universe::new();
+    universe.set_catcode('\u{1f642}', Catcode::Active);
+    universe.add_hyphenation_pattern(PatternSpec {
+        letters: "alpha".chars().collect(),
+        values: vec![0, 0, 1, 0, 0, 0],
+    });
+    universe.add_hyphenation_exception(ExceptionSpec {
+        word: "hyphen".to_owned(),
+        positions: vec![2],
+    });
+    universe.add_hyphenation_exception(ExceptionSpec {
+        word: "edge".to_owned(),
+        positions: vec![0, 4, 4],
+    });
+    let image = universe.dump_format().expect("frozen non-node format");
+    assert_eq!(universe.dump_format().expect("deterministic redump"), image);
+
+    let mut loaded = Universe::from_format(World::memory(), &image).expect("direct frozen load");
+    assert_eq!(loaded.catcode('\u{1f642}'), Catcode::Active);
+    assert_eq!(loaded.hyphen_positions("alpha", 1, 1), vec![2]);
+    assert_eq!(loaded.hyphenation_exception("hyphen"), Some(&[2][..]));
+    assert_eq!(loaded.hyphenation_exception("edge"), Some(&[0, 4, 4][..]));
+    let baseline = loaded.snapshot();
+    loaded.set_catcode('\u{1f642}', Catcode::Letter);
+    loaded.add_hyphenation_exception(ExceptionSpec {
+        word: "overlay".to_owned(),
+        positions: vec![3],
+    });
+    assert_eq!(loaded.catcode('\u{1f642}'), Catcode::Letter);
+    assert_eq!(loaded.hyphenation_exception("overlay"), Some(&[3][..]));
+    loaded.rollback(&baseline);
+    assert_eq!(loaded.catcode('\u{1f642}'), Catcode::Active);
+    assert_eq!(loaded.hyphenation_exception("overlay"), None);
+    assert_eq!(loaded.dump_format().expect("rollback redump"), image);
+}
+
+#[test]
+fn checksum_valid_non_node_section_corruption_fails_closed() {
+    let valid = Universe::new().dump_format().expect("valid core format");
+    for (kind, offset, expected) in [
+        (crate::stores::FONTS_SECTION, 28, "font header"),
+        (crate::stores::CODE_TABLES_SECTION, 12, "code-table header"),
+        (crate::stores::HYPHENATION_SECTION, 12, "hyphenation header"),
+    ] {
+        let mut bytes = valid.clone();
+        replace_format_section(&mut bytes, kind, |section| section[offset] ^= 1);
+        let error = Universe::from_format(World::memory(), &bytes)
+            .expect_err("checksum-valid frozen corruption");
+        assert!(
+            matches!(error, FormatError::InvalidState(ref message) if message.contains(expected)),
+            "section {kind} returned {error:?}"
+        );
+    }
+}
+
+#[test]
 fn frozen_foundational_sections_restore_ids_and_accept_job_local_additions() {
     let mut universe = Universe::new();
     let base = universe.intern("frozen-base");
@@ -547,6 +604,9 @@ fn frozen_foundational_sections_restore_ids_and_accept_job_local_additions() {
             crate::stores::TOKEN_LISTS_SECTION,
             crate::stores::MACROS_SECTION,
             crate::stores::GLUE_SECTION,
+            crate::stores::FONTS_SECTION,
+            crate::stores::CODE_TABLES_SECTION,
+            crate::stores::HYPHENATION_SECTION,
         ]
     );
 
@@ -956,6 +1016,7 @@ fn checksum_valid_font_formats_accept_both_lig_kern_cursor_length_edges() {
             &mut bytes,
             corrupt_font_store_payload(&valid, Corruption::LigKernProgramLength { len, start }),
         );
+        synchronize_frozen_font_section(&mut bytes);
         let restored = Universe::from_format(World::memory(), &bytes)
             .expect("addressable lig/kern program restores");
         assert_eq!(restored.dump_format().expect("format redumps"), bytes);
@@ -1071,46 +1132,30 @@ fn refresh_format_checksum(bytes: &mut [u8]) {
 
 fn replace_store_format_payload(bytes: &mut Vec<u8>, payload: Vec<u8>) {
     let container = crate::format_container::decode(bytes).expect("decode test container");
-    let names = container
-        .section(crate::stores::NAMES_SECTION)
-        .expect("names section");
-    let token_lists = container
-        .section(crate::stores::TOKEN_LISTS_SECTION)
-        .expect("token-list section");
-    let macros = container
-        .section(crate::stores::MACROS_SECTION)
-        .expect("macro section");
-    let glue = container
-        .section(crate::stores::GLUE_SECTION)
-        .expect("glue section");
-    *bytes = crate::format_container::encode(&[
-        crate::format_container::SectionInput {
-            kind: crate::format_container::TRANSITIONAL_SEMANTIC_SECTION,
-            alignment: 8,
-            bytes: &payload,
-        },
-        crate::format_container::SectionInput {
-            kind: crate::stores::NAMES_SECTION,
-            alignment: names.alignment,
-            bytes: names.bytes,
-        },
-        crate::format_container::SectionInput {
-            kind: crate::stores::TOKEN_LISTS_SECTION,
-            alignment: token_lists.alignment,
-            bytes: token_lists.bytes,
-        },
-        crate::format_container::SectionInput {
-            kind: crate::stores::MACROS_SECTION,
-            alignment: macros.alignment,
-            bytes: macros.bytes,
-        },
-        crate::format_container::SectionInput {
-            kind: crate::stores::GLUE_SECTION,
-            alignment: glue.alignment,
-            bytes: glue.bytes,
-        },
-    ])
-    .expect("re-encode test container");
+    let owned: Vec<_> = container
+        .sections
+        .iter()
+        .map(|section| {
+            let section_bytes =
+                if section.kind == crate::format_container::TRANSITIONAL_SEMANTIC_SECTION {
+                    payload.clone()
+                } else {
+                    section.bytes.to_vec()
+                };
+            (section.kind, section.alignment, section_bytes)
+        })
+        .collect();
+    let inputs: Vec<_> = owned
+        .iter()
+        .map(
+            |(kind, alignment, section_bytes)| crate::format_container::SectionInput {
+                kind: *kind,
+                alignment: *alignment,
+                bytes: section_bytes,
+            },
+        )
+        .collect();
+    *bytes = crate::format_container::encode(&inputs).expect("re-encode test container");
 }
 
 fn replace_format_section(bytes: &mut Vec<u8>, kind: u32, mutate: impl FnOnce(&mut Vec<u8>)) {
@@ -1150,6 +1195,19 @@ fn corrupt_font_store_payload(
         bincode::deserialize(section.bytes).expect("test universe format payload");
     format.stores = crate::stores::testing_corrupt_font_format(&format.stores, corruption);
     bincode::serialize(&format).expect("corrupted universe format payload")
+}
+
+fn synchronize_frozen_font_section(bytes: &mut Vec<u8>) {
+    let container = crate::format_container::decode(bytes).expect("decode test container");
+    let section = container
+        .section(crate::format_container::TRANSITIONAL_SEMANTIC_SECTION)
+        .expect("semantic section");
+    let format: super::UniverseFormatPayload =
+        bincode::deserialize(section.bytes).expect("test universe format payload");
+    let frozen = crate::stores::testing_encode_frozen_fonts(&format.stores);
+    replace_format_section(bytes, crate::stores::FONTS_SECTION, |section| {
+        *section = frozen;
+    });
 }
 
 #[cfg(feature = "profiling-stats")]

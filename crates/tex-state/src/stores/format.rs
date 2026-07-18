@@ -5,6 +5,7 @@ mod node;
 use node::FormatNode;
 
 mod frozen_core;
+mod frozen_non_node;
 
 mod font_validation;
 #[cfg(test)]
@@ -15,6 +16,15 @@ pub(crate) use font_validation::{TestingFontFormatCorruption, testing_corrupt_fo
 pub(crate) use frozen_core::{
     FrozenCoreSections, GLUE_SECTION, MACROS_SECTION, NAMES_SECTION, TOKEN_LISTS_SECTION,
 };
+pub(crate) use frozen_non_node::{
+    CODE_TABLES_SECTION, FONTS_SECTION, FrozenNonNodeSections, HYPHENATION_SECTION,
+};
+
+#[cfg(test)]
+pub(crate) fn testing_encode_frozen_fonts(payload: &[u8]) -> Vec<u8> {
+    let format: StoreFormat = bincode::deserialize(payload).expect("test store format payload");
+    frozen_non_node::encode_fonts(&format).expect("test frozen font section")
+}
 
 pub(crate) struct EncodedStoreFormat {
     pub transitional: Vec<u8>,
@@ -22,6 +32,9 @@ pub(crate) struct EncodedStoreFormat {
     pub token_lists: Vec<u8>,
     pub macros: Vec<u8>,
     pub glue: Vec<u8>,
+    pub fonts: Vec<u8>,
+    pub code_tables: Vec<u8>,
+    pub hyphenation: Vec<u8>,
 }
 
 impl EncodedStoreFormat {
@@ -32,6 +45,9 @@ impl EncodedStoreFormat {
             .saturating_add(self.token_lists.len())
             .saturating_add(self.macros.len())
             .saturating_add(self.glue.len())
+            .saturating_add(self.fonts.len())
+            .saturating_add(self.code_tables.len())
+            .saturating_add(self.hyphenation.len())
     }
 }
 
@@ -139,7 +155,7 @@ enum FormatFontConstruction {
     },
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 struct FormatCodeTables {
     code: u32,
     catcode: u8,
@@ -234,6 +250,7 @@ impl Stores {
         }
         let format = StoreFormat::capture(self)?;
         let frozen = frozen_core::encode(&format)?;
+        let non_node = frozen_non_node::encode(&format)?;
         let transitional = bincode::serialize(&format)
             .map_err(|error| StoreFormatError::Codec(error.to_string()))?;
         Ok(EncodedStoreFormat {
@@ -242,19 +259,24 @@ impl Stores {
             token_lists: frozen.token_lists,
             macros: frozen.macros,
             glue: frozen.glue,
+            fonts: non_node.fonts,
+            code_tables: non_node.code_tables,
+            hyphenation: non_node.hyphenation,
         })
     }
 
     pub(crate) fn decode_frozen_format(
         bytes: &[u8],
         sections: FrozenCoreSections<'_>,
+        non_node_sections: FrozenNonNodeSections<'_>,
     ) -> Result<Self, StoreFormatError> {
         let format: StoreFormat = bincode::deserialize(bytes)
             .map_err(|error| StoreFormatError::Codec(error.to_string()))?;
         format.validate_references()?;
         format.validate_font_state()?;
         let core = frozen_core::decode(sections, &format)?;
-        format.restore_with_core(Some(core))
+        let non_node = frozen_non_node::decode(non_node_sections, &format, &core.interner)?;
+        format.restore_with_core(Some(core), Some(non_node))
     }
 }
 
@@ -389,12 +411,13 @@ impl StoreFormat {
     fn restore(self) -> Result<Stores, StoreFormatError> {
         self.validate_references()?;
         self.validate_font_state()?;
-        self.restore_with_core(None)
+        self.restore_with_core(None, None)
     }
 
     fn restore_with_core(
         self,
         frozen: Option<frozen_core::DecodedFrozenCore>,
+        non_node: Option<frozen_non_node::DecodedFrozenNonNode>,
     ) -> Result<Stores, StoreFormatError> {
         let mut stores = Stores::new();
         if let Some(frozen) = frozen {
@@ -446,34 +469,42 @@ impl StoreFormat {
                 }
             }
         }
-        for (raw, font) in self.fonts.into_iter().enumerate() {
-            let identifier = font.identifier;
-            let expansion = font.expansion;
-            let id = if raw == 0 {
-                NULL_FONT
-            } else {
-                let id = stores
-                    .fonts
-                    .intern(font.restore())
-                    .map_err(|_| StoreFormatError::Invalid("font count exceeds bank capacity"))?;
-                if id.raw() as usize != raw {
-                    return Err(StoreFormatError::Invalid("non-canonical font order"));
+        let has_frozen_non_node = non_node.is_some();
+        if let Some(non_node) = non_node {
+            stores.fonts = non_node.fonts;
+            stores.code_tables = non_node.code_tables;
+            stores.hyphenation = non_node.hyphenation;
+            stores.prepared_mag = non_node.prepared_mag;
+            stores.last_loaded_font = non_node.last_loaded_font;
+        } else {
+            for (raw, font) in self.fonts.into_iter().enumerate() {
+                let identifier = font.identifier;
+                let expansion = font.expansion;
+                let id = if raw == 0 {
+                    NULL_FONT
+                } else {
+                    let id = stores.fonts.intern(font.restore()).map_err(|_| {
+                        StoreFormatError::Invalid("font count exceeds bank capacity")
+                    })?;
+                    if id.raw() as usize != raw {
+                        return Err(StoreFormatError::Invalid("non-canonical font order"));
+                    }
+                    id
+                };
+                if let Some(symbol) = identifier {
+                    let symbol = stores
+                        .interner
+                        .symbol_at_slot(symbol)
+                        .and_then(|symbol| stores.interner.resolve_stored(symbol))
+                        .ok_or(StoreFormatError::Invalid("font identifier symbol"))?;
+                    stores.set_resolved_font_identifier(id, symbol);
                 }
-                id
-            };
-            if let Some(symbol) = identifier {
-                let symbol = stores
-                    .interner
-                    .symbol_at_slot(symbol)
-                    .and_then(|symbol| stores.interner.resolve_stored(symbol))
-                    .ok_or(StoreFormatError::Invalid("font identifier symbol"))?;
-                stores.set_resolved_font_identifier(id, symbol);
-            }
-            if let Some(expansion) = expansion {
-                stores
-                    .fonts
-                    .set_expansion(id, expansion)
-                    .map_err(|_| StoreFormatError::Invalid("font expansion configuration"))?;
+                if let Some(expansion) = expansion {
+                    stores
+                        .fonts
+                        .set_expansion(id, expansion)
+                        .map_err(|_| StoreFormatError::Invalid("font expansion configuration"))?;
+                }
             }
         }
         let mut node_ids = std::collections::BTreeMap::new();
@@ -487,12 +518,15 @@ impl StoreFormat {
             let id = stores.nodes.append_with_semantic_id(&nodes, semantic_id);
             node_ids.insert(list.key, id);
         }
-        for entry in self.code_tables {
-            entry.restore(&mut stores.code_tables)?;
+        if !has_frozen_non_node {
+            for entry in self.code_tables {
+                entry.restore(&mut stores.code_tables)?;
+            }
+            stores.hyphenation = self.hyphenation.into();
+            stores.prepared_mag = self.prepared_mag;
+            stores.last_loaded_font =
+                stores.resolve_stored_font(FontId::new(self.last_loaded_font));
         }
-        stores.hyphenation = self.hyphenation.into();
-        stores.prepared_mag = self.prepared_mag;
-        stores.last_loaded_font = stores.resolve_stored_font(FontId::new(self.last_loaded_font));
         for entry in self.env {
             let dto_cell = crate::cell::CellId::from_raw(entry.cell)
                 .ok_or(StoreFormatError::Invalid("unknown environment cell"))?;
