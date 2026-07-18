@@ -16,6 +16,8 @@ pub(crate) fn attempt_result(result: CompileAttemptResult) -> Result<JsAttemptRe
             set(&object, "kind", &JsValue::from_str("need-resources"))?;
             let required = resource_requests(resources.required)?;
             set(&object, "required", &required)?;
+            let probes = resource_requests(resources.probes)?;
+            set(&object, "probes", &probes)?;
             let hints = resource_requests(resources.prefetch_hints)?;
             set(&object, "prefetchHints", &hints)?;
         }
@@ -40,6 +42,8 @@ pub(crate) fn project_attempt_result(
             set(&object, "kind", &JsValue::from_str("need-resources"))?;
             let required = resource_requests(resources.required)?;
             set(&object, "required", &required)?;
+            let probes = resource_requests(resources.probes)?;
+            set(&object, "probes", &probes)?;
             let hints = resource_requests(resources.prefetch_hints)?;
             set(&object, "prefetchHints", &hints)?;
         }
@@ -64,6 +68,8 @@ pub(crate) fn project_attempt_result_v2(
             set(&object, "kind", &JsValue::from_str("need-resources"))?;
             let required = resource_requests(resources.required)?;
             set(&object, "required", required.as_ref())?;
+            let probes = resource_requests(resources.probes)?;
+            set(&object, "probes", probes.as_ref())?;
             let hints = resource_requests(resources.prefetch_hints)?;
             set(&object, "prefetchHints", hints.as_ref())?;
         }

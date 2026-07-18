@@ -251,6 +251,7 @@ impl FileRequest {
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct FileRequestBatch {
     pub required: Vec<FileRequest>,
+    pub probes: Vec<FileRequest>,
     pub prefetch_hints: Vec<FileRequest>,
 }
 
@@ -260,24 +261,44 @@ impl FileRequestBatch {
         required: impl IntoIterator<Item = FileRequest>,
         prefetch_hints: impl IntoIterator<Item = FileRequest>,
     ) -> Self {
+        Self::with_probes(required, [], prefetch_hints)
+    }
+
+    #[must_use]
+    pub fn with_probes(
+        required: impl IntoIterator<Item = FileRequest>,
+        probes: impl IntoIterator<Item = FileRequest>,
+        prefetch_hints: impl IntoIterator<Item = FileRequest>,
+    ) -> Self {
         let required = canonical_requests(required);
         let required_keys = required
             .iter()
             .map(|request| request.key.clone())
             .collect::<BTreeSet<_>>();
-        let prefetch_hints = canonical_requests(prefetch_hints)
+        let probes = canonical_requests(probes)
             .into_iter()
             .filter(|request| !required_keys.contains(request.key()))
+            .collect::<Vec<_>>();
+        let blocking_keys = required
+            .iter()
+            .chain(&probes)
+            .map(|request| request.key.clone())
+            .collect::<BTreeSet<_>>();
+        let prefetch_hints = canonical_requests(prefetch_hints)
+            .into_iter()
+            .filter(|request| !blocking_keys.contains(request.key()))
             .collect();
         Self {
             required,
+            probes,
             prefetch_hints,
         }
     }
 
-    fn required_keys(&self) -> BTreeSet<FileRequestKey> {
+    fn blocking_keys(&self) -> BTreeSet<FileRequestKey> {
         self.required
             .iter()
+            .chain(&self.probes)
             .map(|request| request.key.clone())
             .collect()
     }
@@ -285,6 +306,7 @@ impl FileRequestBatch {
     fn all_keys(&self) -> BTreeSet<FileRequestKey> {
         self.required
             .iter()
+            .chain(&self.probes)
             .chain(&self.prefetch_hints)
             .map(|request| request.key.clone())
             .collect()
@@ -522,7 +544,7 @@ impl FileProvisioner {
 
     pub fn expect(&mut self, batch: &FileRequestBatch) {
         self.expected = batch.all_keys();
-        self.required = batch.required_keys();
+        self.required = batch.blocking_keys();
         self.required_at_batch_start = self
             .required
             .iter()

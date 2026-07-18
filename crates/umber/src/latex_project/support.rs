@@ -141,6 +141,11 @@ pub(super) fn file_needs(batch: FileRequestBatch) -> NeedResources {
             .into_iter()
             .map(ResourceRequest::File)
             .collect(),
+        probes: batch
+            .probes
+            .into_iter()
+            .map(ResourceRequest::File)
+            .collect(),
         prefetch_hints: batch
             .prefetch_hints
             .into_iter()

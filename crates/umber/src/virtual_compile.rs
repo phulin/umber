@@ -47,6 +47,7 @@ pub enum ResourceResponse {
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct NeedResources {
     pub required: Vec<ResourceRequest>,
+    pub probes: Vec<ResourceRequest>,
     pub prefetch_hints: Vec<ResourceRequest>,
 }
 
@@ -1130,9 +1131,9 @@ impl VirtualCompileSession {
                 .map(Box::new);
             CandidateExecution::Initial { session, accepted }
         };
-        let (file_misses, font_misses, fatal) = resolvers.finish();
+        let (file_misses, file_probes, font_misses, fatal) = resolvers.finish();
 
-        if !file_misses.is_empty() || !font_misses.is_empty() {
+        if !file_misses.is_empty() || !file_probes.is_empty() || !font_misses.is_empty() {
             stage.discard();
             build.discard();
             for request in &font_misses {
@@ -1147,9 +1148,21 @@ impl VirtualCompileSession {
                 .collect::<Vec<_>>();
             required.sort_by_key(resource_sort_key);
             required.dedup();
+            let required_keys = required
+                .iter()
+                .map(resource_request_key)
+                .collect::<BTreeSet<_>>();
+            let mut probes = file_probes
+                .into_iter()
+                .map(ResourceRequest::File)
+                .filter(|request| !required_keys.contains(&resource_request_key(request)))
+                .collect::<Vec<_>>();
+            probes.sort_by_key(resource_sort_key);
+            probes.dedup();
             self.awaiting = Some(
                 required
                     .iter()
+                    .chain(&probes)
                     .map(|request| match request {
                         ResourceRequest::File(request) => {
                             ResourceRequestKey::File(request.key().clone())
@@ -1163,6 +1176,7 @@ impl VirtualCompileSession {
             let prefetch_hints = if let Some(hints) = self.format_prefetch_hints.take() {
                 let required_keys = required
                     .iter()
+                    .chain(&probes)
                     .map(|request| match request {
                         ResourceRequest::File(request) => {
                             ResourceRequestKey::File(request.key().clone())
@@ -1202,8 +1216,12 @@ impl VirtualCompileSession {
             } else {
                 Vec::new()
             };
-            self.files.expect(&FileRequestBatch::new(
+            self.files.expect(&FileRequestBatch::with_probes(
                 required.iter().filter_map(|request| match request {
+                    ResourceRequest::File(request) => Some(request.clone()),
+                    ResourceRequest::Font(_) => None,
+                }),
+                probes.iter().filter_map(|request| match request {
                     ResourceRequest::File(request) => Some(request.clone()),
                     ResourceRequest::Font(_) => None,
                 }),
@@ -1214,6 +1232,7 @@ impl VirtualCompileSession {
             ));
             return Ok(CompileAttemptResult::NeedResources(NeedResources {
                 required,
+                probes,
                 prefetch_hints,
             }));
         }
@@ -1406,6 +1425,13 @@ fn resource_sort_key(request: &ResourceRequest) -> (u8, String) {
             format!("{:?}:{}", request.key().kind(), request.key().name()),
         ),
         ResourceRequest::Font(request) => (1, request.key.logical_name().to_owned()),
+    }
+}
+
+fn resource_request_key(request: &ResourceRequest) -> ResourceRequestKey {
+    match request {
+        ResourceRequest::File(request) => ResourceRequestKey::File(request.key().clone()),
+        ResourceRequest::Font(request) => ResourceRequestKey::Font(request.key.clone()),
     }
 }
 

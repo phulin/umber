@@ -142,6 +142,7 @@ fn file_request(name: &str) -> ResourceRequest {
 fn needs(required: Vec<ResourceRequest>) -> NeedResources {
     NeedResources {
         required,
+        probes: Vec::new(),
         prefetch_hints: Vec::new(),
     }
 }
@@ -370,6 +371,7 @@ fn schema_three_format_closure_publishes_local_overrides_and_ignores_stale_hints
             &local_resolver(directory.path()),
             &NeedResources {
                 required: vec![file_request("article.cls")],
+                probes: Vec::new(),
                 prefetch_hints: format.prefetch_hints,
             },
             &FetchCancellation::new(),

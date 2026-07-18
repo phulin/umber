@@ -487,6 +487,24 @@ fn unavailable_bindings_are_progress_idempotent_and_immutable() {
 }
 
 #[test]
+fn blocking_probe_authorizes_positive_or_negative_progress() {
+    let probe = key(FileKind::TexInput, "optional.cfg");
+    let batch =
+        FileRequestBatch::with_probes([], [FileRequest::new(probe.clone(), "optional.cfg")], []);
+    let mut registry = FileProvisioner::new(VfsLimits::default()).expect("registry");
+    registry.expect(&batch);
+
+    assert_eq!(
+        registry
+            .provision_unavailable(probe.clone())
+            .expect("authoritative negative probe response"),
+        ProvisionOutcome::Inserted
+    );
+    assert!(registry.is_unavailable(&probe));
+    assert_eq!(registry.retry(), Ok(()));
+}
+
+#[test]
 fn available_binding_rejects_later_unavailable_answer() {
     let required = key(FileKind::TexInput, "present.tex");
     let batch = FileRequestBatch::new([FileRequest::new(required.clone(), "present.tex")], []);

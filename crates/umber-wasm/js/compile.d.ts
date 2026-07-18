@@ -13,6 +13,7 @@ export interface ResourceResolver {
 		requests: readonly ResourceRequest[],
 		options?: {
 			signal?: AbortSignal;
+			probes?: readonly ResourceRequest[];
 			prefetchHints?: readonly ResourceRequest[];
 		},
 	): Promise<readonly ResourceResponse[]>;

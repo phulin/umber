@@ -430,6 +430,24 @@ test("format closure responses fit the speculative resource budget", async () =>
 	);
 });
 
+test("resolves blocking probes positively or with authoritative absence", async () => {
+	const data = await fixture();
+	const { resolver } = resolverFor(data);
+	const downloads = await resolver.resolve([], {
+		probes: [
+			{ type: "file", kind: "tex", name: "plain.tex" },
+			{ type: "file", kind: "tex", name: "absent.cfg" },
+		],
+	});
+	assert.deepEqual(
+		downloads.map(({ type, name }) => ({ type, name })),
+		[
+			{ type: "file-unavailable", name: "absent.cfg" },
+			{ type: "file", name: "plain.tex" },
+		],
+	);
+});
+
 test("prefetches dependency closures without returning dependency responses", async () => {
 	const data = await fixture();
 	const requestedObject = data.files["tex:plain.tex"].object;

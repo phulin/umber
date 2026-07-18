@@ -187,7 +187,7 @@ export type RenderedSourceResult =
   | { kind: "output-mismatch"; acceptedOutput: string };
 
 export type AttemptResult =
-  | { kind: "need-resources"; required: ResourceRequest[]; prefetchHints: ResourceRequest[] }
+  | { kind: "need-resources"; required: ResourceRequest[]; probes: ResourceRequest[]; prefetchHints: ResourceRequest[] }
   | { kind: "complete"; output: CompileOutput | ProjectCompileOutput }
   | { kind: "error"; diagnostic: Diagnostic & { bibliographyDiagnostics?: Array<{ code: string; message: string }> } };
 "#;

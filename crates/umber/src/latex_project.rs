@@ -589,6 +589,7 @@ impl LatexProjectSession {
                 CompileAttemptResult::NeedResources(needs) => {
                     let mut supplied = Vec::new();
                     let mut missing = Vec::new();
+                    let mut missing_probes = Vec::new();
                     for request in needs.required {
                         match &request {
                             ResourceRequest::File(file) => {
@@ -618,9 +619,27 @@ impl LatexProjectSession {
                             }
                         }
                     }
-                    if !missing.is_empty() {
+                    for request in needs.probes {
+                        let ResourceRequest::File(file) = &request else {
+                            missing.push(request);
+                            continue;
+                        };
+                        if let Some(response) = self.file_responses.get(file.key()) {
+                            supplied.push(ResourceResponse::File(response.clone()));
+                        } else if self
+                            .files
+                            .unavailable_keys()
+                            .any(|missing| missing == file.key())
+                        {
+                            supplied.push(ResourceResponse::FileUnavailable(file.key().clone()));
+                        } else {
+                            missing_probes.push(request);
+                        }
+                    }
+                    if !missing.is_empty() || !missing_probes.is_empty() {
                         return Err(CandidateStop::Need(NeedResources {
                             required: missing,
+                            probes: missing_probes,
                             prefetch_hints: needs.prefetch_hints,
                         }));
                     }
@@ -709,13 +728,18 @@ impl LatexProjectSession {
         self.awaiting = needs
             .required
             .iter()
+            .chain(&needs.probes)
             .map(|request| match request {
                 ResourceRequest::File(file) => ProjectRequestKey::File(file.key().clone()),
                 ResourceRequest::Font(font) => ProjectRequestKey::Font(font.key.clone()),
             })
             .collect();
-        let file_batch = FileRequestBatch::new(
+        let file_batch = FileRequestBatch::with_probes(
             needs.required.iter().filter_map(|request| match request {
+                ResourceRequest::File(file) => Some(file.clone()),
+                ResourceRequest::Font(_) => None,
+            }),
+            needs.probes.iter().filter_map(|request| match request {
                 ResourceRequest::File(file) => Some(file.clone()),
                 ResourceRequest::Font(_) => None,
             }),
@@ -1155,6 +1179,7 @@ impl LatexProjectSessionV2 {
                 CompileAttemptResult::NeedResources(needs) => {
                     let mut supplied = Vec::new();
                     let mut missing = Vec::new();
+                    let mut missing_probes = Vec::new();
                     for request in needs.required {
                         match &request {
                             ResourceRequest::File(file) => {
@@ -1181,9 +1206,23 @@ impl LatexProjectSessionV2 {
                             }
                         }
                     }
-                    if !missing.is_empty() {
+                    for request in needs.probes {
+                        let ResourceRequest::File(file) = &request else {
+                            missing.push(request);
+                            continue;
+                        };
+                        if let Some(response) = self.file_responses.get(file.key()) {
+                            supplied.push(ResourceResponse::File(response.clone()));
+                        } else if self.files.unavailable_keys().any(|key| key == file.key()) {
+                            supplied.push(ResourceResponse::FileUnavailable(file.key().clone()));
+                        } else {
+                            missing_probes.push(request);
+                        }
+                    }
+                    if !missing.is_empty() || !missing_probes.is_empty() {
                         return Err(CandidateStop::Need(NeedResources {
                             required: missing,
+                            probes: missing_probes,
                             prefetch_hints: needs.prefetch_hints,
                         }));
                     }
@@ -1278,13 +1317,18 @@ impl LatexProjectSessionV2 {
         self.awaiting = needs
             .required
             .iter()
+            .chain(&needs.probes)
             .map(|request| match request {
                 ResourceRequest::File(file) => ProjectRequestKey::File(file.key().clone()),
                 ResourceRequest::Font(font) => ProjectRequestKey::Font(font.key.clone()),
             })
             .collect();
-        self.files.expect(&FileRequestBatch::new(
+        self.files.expect(&FileRequestBatch::with_probes(
             needs.required.iter().filter_map(|request| match request {
+                ResourceRequest::File(file) => Some(file.clone()),
+                ResourceRequest::Font(_) => None,
+            }),
+            needs.probes.iter().filter_map(|request| match request {
                 ResourceRequest::File(file) => Some(file.clone()),
                 ResourceRequest::Font(_) => None,
             }),

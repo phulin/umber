@@ -163,6 +163,15 @@ export class HttpManifestResolver {
 		const prefetchHints = Object.hasOwn(options ?? {}, "prefetchHints")
 			? options.prefetchHints
 			: [];
+		const probes = Object.hasOwn(options ?? {}, "probes")
+			? options.probes
+			: [];
+		if (!Array.isArray(probes)) {
+			throw new ManifestResolverError(
+				"invalid-options",
+				"probes must be an array",
+			);
+		}
 		if (!Array.isArray(prefetchHints)) {
 			throw new ManifestResolverError(
 				"invalid-options",
@@ -170,7 +179,7 @@ export class HttpManifestResolver {
 			);
 		}
 		throwIfAborted(signal);
-		const required = await this.#select(requests, signal, true);
+		const required = await this.#select(requests.concat(probes), signal, true);
 		let hinted = { jobs: [], misses: [] };
 		try {
 			hinted = await this.#select(prefetchHints, signal, false);

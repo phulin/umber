@@ -89,6 +89,26 @@ fn resources(result: CompileAttemptResult) -> Vec<ResourceRequest> {
     }
 }
 
+fn probes(result: CompileAttemptResult) -> Vec<FileRequest> {
+    match result {
+        CompileAttemptResult::NeedResources(resources) => {
+            assert!(
+                resources.required.is_empty(),
+                "probe was promoted to required"
+            );
+            resources
+                .probes
+                .into_iter()
+                .filter_map(|request| match request {
+                    ResourceRequest::File(request) => Some(request),
+                    ResourceRequest::Font(_) => None,
+                })
+                .collect()
+        }
+        other => panic!("expected missing file probes, got {other:#?}"),
+    }
+}
+
 fn provide_cmu_font(session: &mut VirtualCompileSession, request: FontRequest) {
     session
         .provide_resolved_font(ResolvedFont {
@@ -221,6 +241,30 @@ fn extensions_are_normalized_and_requests_are_deduplicated() {
     assert_eq!(missing[0].key().kind(), FileKind::TexInput);
     assert_eq!(missing[0].key().name(), "alpha.tex");
     assert_eq!(missing[0].original_name(), "alpha");
+}
+
+#[test]
+fn unavailable_probe_retries_through_dump_instead_of_accepting_end_of_input() {
+    let mut session = session(
+        "\\openin0=optional.cfg \\ifeof0 \\message{OPTIONAL-MISSING}\\else \\errmessage{unexpected optional file}\\fi \\dump\\endinput",
+    );
+    let missing = probes(session.compile_attempt());
+    assert_eq!(missing.len(), 1);
+    session
+        .provide_resources(vec![ResourceResponse::FileUnavailable(
+            missing[0].key().clone(),
+        )])
+        .expect("authoritative negative probe response");
+    assert!(matches!(
+        session.compile_attempt(),
+        CompileAttemptResult::Complete(_)
+    ));
+    assert!(
+        session
+            .into_accepted_finalization()
+            .expect("accepted format finalization")
+            .dumped_format
+    );
 }
 
 #[test]
@@ -947,7 +991,7 @@ fn unavailable_openin_retries_into_tex_missing_file_semantics() {
     let mut session = session(
         "\\openin0=optional.cfg \\ifeof0 \\message{OPTIONAL-MISSING}\\else \\errmessage{unexpected optional file}\\fi \\end",
     );
-    let missing = requests(session.compile_attempt());
+    let missing = probes(session.compile_attempt());
     assert_eq!(missing.len(), 1);
     let key = missing[0].key().clone();
     session

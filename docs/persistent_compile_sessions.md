@@ -24,6 +24,13 @@ return `NeedResources`; the caller provides those resources and calls
 `advance()` again. Missing-resource execution never accepts or partially
 publishes a revision.
 
+Ordinary `\input` misses and blocking `\openin`/existence probes use distinct
+request channels. A probe suspends until the host supplies verified bytes or
+an authoritative unavailable response; absence then resumes as TeX's normal
+false probe result without promoting the lookup to a required input. Both
+answers count as retry progress, while speculative prefetch hints remain
+positive-only and never create negative bindings.
+
 `Complete` means that the initial or pending revision was accepted. Calling
 `advance()` again without a patch returns the accepted output without
 re-executing TeX. Native and WASM callers observe the same result variants.

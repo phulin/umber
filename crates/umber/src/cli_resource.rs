@@ -524,7 +524,7 @@ impl DistributionResolver {
         check_cancelled(cancellation)?;
         let mut responses = Vec::new();
         let mut unresolved = Vec::new();
-        for request in &batch.required {
+        for request in batch.required.iter().chain(&batch.probes) {
             match request {
                 ResourceRequest::File(request) => {
                     if let Some(file) = local.resolve(request) {

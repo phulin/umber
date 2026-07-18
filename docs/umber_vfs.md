@@ -335,8 +335,8 @@ Registration validates:
 The VFS performs generic validation and stores the object only after the
 requesting subsystem accepts its structure. Re-registering the same request,
 path, and bytes is a no-op. Any different binding is a typed conflict.
-Registering `FileUnavailable` for a required request instead binds the request
-key to an absent marker in the resolved-resource layer. Prefetch hints authorize
+Registering `FileUnavailable` for a required request or blocking probe instead
+binds the request key to an absent marker in the resolved-resource layer. Prefetch hints authorize
 positive files only: a negative response for a hint is unexpected and cannot
 create an unavailable binding. The marker has no path or bytes, consumes one
 resolved binding slot, and is retained across attempts and revisions. Repeating
@@ -344,14 +344,15 @@ the same negative answer is a no-op; changing a key between available and
 unavailable is a typed conflict.
 
 `FileRequestBatch` stores outstanding requests in sorted sets, deduplicates by
-the complete domain/kind/name key, and lets a required request dominate the
-same prefetch hint. `FileProvisioner` accepts partial and permuted responses
+the complete domain/kind/name key, lets a required request dominate the same
+probe, and lets either blocking class dominate the same prefetch hint.
+`FileProvisioner` accepts partial and permuted responses
 atomically, retains identical duplicate registrations as no-ops, and exposes
 typed unexpected-request, kind, path, digest, conflict, path-conflict, limit,
 and no-progress failures. The combined compile session retains the existing
-`NeedResources` required-versus-hint model around this file-only boundary.
-Both positive and negative answers to outstanding required keys count as retry
-progress. Resolvers suppress new requests for negative keys and report the
+`NeedResources` required/probe/prefetch model around this file-only boundary.
+Both positive and negative answers to outstanding required or probe keys count
+as retry progress. Resolvers suppress new requests for negative keys and report the
 ordinary domain-level missing-file result instead.
 
 ## Root editor buffer

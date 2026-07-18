@@ -43,6 +43,7 @@ function need(kind, name) {
 	return {
 		kind: "need-resources",
 		required: [{ type: "file", kind, name, originalName: name }],
+		probes: [],
 		prefetchHints: [],
 	};
 }
@@ -111,8 +112,14 @@ test("drives file and font resources through one client-owned resolver API", asy
 		name: "next.tex",
 		originalName: "next",
 	};
+	const probe = {
+		type: "file",
+		kind: "tex",
+		name: "optional.cfg",
+		originalName: "optional.cfg",
+	};
 	const wasm = bindings([
-		{ kind: "need-resources", required: [font], prefetchHints: [hint] },
+		{ kind: "need-resources", required: [font], probes: [probe], prefetchHints: [hint] },
 		{ kind: "complete", output: output() },
 	]);
 	let resolverOptions;
@@ -134,6 +141,7 @@ test("drives file and font resources through one client-owned resolver API", asy
 		wasm,
 	);
 	assert.deepEqual(resolverOptions.prefetchHints, [hint]);
+	assert.deepEqual(resolverOptions.probes, [probe]);
 	assert.equal(wasm.CompilerSession.instances[0].resolved[0].type, "font");
 });
 
@@ -148,7 +156,7 @@ test("forwards shared Rust resource wire values without a JavaScript kind table"
 	let forwarded;
 	const wasm = bindings(
 		[
-			{ kind: "need-resources", required: [request], prefetchHints: [] },
+			{ kind: "need-resources", required: [request], probes: [], prefetchHints: [] },
 			{ kind: "complete", output: output() },
 		],
 		{
@@ -186,7 +194,7 @@ test("selects the in-WASM project session while keeping acquisition generic", as
 	};
 	const compiled = { revision: 1, passes: 3, generatedFiles: [] };
 	const wasm = bindings([
-		{ kind: "need-resources", required: [request], prefetchHints: [] },
+		{ kind: "need-resources", required: [request], probes: [], prefetchHints: [] },
 		{ kind: "complete", output: compiled },
 	]);
 	let acquired;
@@ -470,6 +478,7 @@ test("enforces attempt, file, and byte ceilings outside custom resolvers", async
 						originalName: "path/a",
 					},
 				],
+				probes: [],
 				prefetchHints: [],
 			},
 			{ kind: "complete", output: output() },

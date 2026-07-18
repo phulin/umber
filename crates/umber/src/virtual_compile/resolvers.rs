@@ -28,6 +28,7 @@ struct VirtualFileResolver<'a> {
     resolved_paths: &'a BTreeMap<FileRequestKey, VirtualPath>,
     unavailable: &'a BTreeSet<FileRequestKey>,
     misses: Vec<(u64, FileRequest)>,
+    probes: Vec<(u64, FileRequest)>,
     seen: BTreeSet<FileRequestKey>,
     fatal: Option<CompileError>,
 }
@@ -69,13 +70,25 @@ impl<'a> VirtualRunResolvers<'a> {
         (&mut self.input, &mut self.font, &mut self.image)
     }
 
-    pub(super) fn finish(self) -> (Vec<FileRequest>, Vec<FontRequest>, Option<CompileError>) {
+    pub(super) fn finish(
+        self,
+    ) -> (
+        Vec<FileRequest>,
+        Vec<FileRequest>,
+        Vec<FontRequest>,
+        Option<CompileError>,
+    ) {
         let mut misses = self.input.misses;
         misses.extend(self.font.files.misses);
         misses.extend(self.image.files.misses);
         misses.sort_by_key(|(request_index, _)| *request_index);
+        let mut probes = self.input.probes;
+        probes.extend(self.font.files.probes);
+        probes.extend(self.image.files.probes);
+        probes.sort_by_key(|(request_index, _)| *request_index);
         (
             misses.into_iter().map(|(_, request)| request).collect(),
+            probes.into_iter().map(|(_, request)| request).collect(),
             self.font.font_misses.into_values().collect(),
             self.input
                 .fatal
@@ -339,6 +352,7 @@ impl<'a> VirtualFileResolver<'a> {
             resolved_paths,
             unavailable,
             misses: Vec::new(),
+            probes: Vec::new(),
             seen: BTreeSet::new(),
             fatal: None,
         }
@@ -350,6 +364,17 @@ impl<'a> VirtualFileResolver<'a> {
         kind: FileKind,
         original_name: &str,
         request_index: u64,
+    ) -> Result<FileContent, String> {
+        self.open_classified(input, kind, original_name, request_index, false)
+    }
+
+    fn open_classified(
+        &mut self,
+        input: &mut dyn InputReadState,
+        kind: FileKind,
+        original_name: &str,
+        request_index: u64,
+        probe: bool,
     ) -> Result<FileContent, String> {
         let requested = match RequestedFile::parse(kind, original_name) {
             Ok(requested) => requested,
@@ -391,9 +416,21 @@ impl<'a> VirtualFileResolver<'a> {
                 if self.unavailable.contains(&key) {
                     return Err(format!("{kind} file {original_name} is unavailable"));
                 }
+                let request = FileRequest::new(key.clone(), original_name);
                 if self.seen.insert(key.clone()) {
-                    self.misses
-                        .push((request_index, FileRequest::new(key, original_name)));
+                    if probe {
+                        self.probes.push((request_index, request));
+                    } else {
+                        self.misses.push((request_index, request));
+                    }
+                } else if !probe
+                    && let Some(position) = self
+                        .probes
+                        .iter()
+                        .position(|(_, existing)| existing.key() == &key)
+                {
+                    self.probes.swap_remove(position);
+                    self.misses.push((request_index, request));
                 }
                 Err(format!("{kind} file {original_name} is not cached"))
             }
@@ -489,7 +526,7 @@ impl InputResolver for VirtualFileResolver<'_> {
         if self.request_is_unavailable(FileKind::TexInput, name) {
             return Ok(None);
         }
-        self.open(input, FileKind::TexInput, name, request_index)
+        self.open_classified(input, FileKind::TexInput, name, request_index, true)
             .map(Some)
     }
 }

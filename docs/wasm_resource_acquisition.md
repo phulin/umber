@@ -16,7 +16,7 @@ and deployment policy.
 The completed design must:
 
 - report every currently knowable missing resource as one deterministic batch;
-- distinguish required resources from optional prefetch hints;
+- distinguish required resources, blocking existence probes, and optional prefetch hints;
 - fetch independent objects concurrently under host-selected limits;
 - accept OTF/TTF fonts natively and WOFF2 fonts in WebAssembly;
 - use one acquired font for engine layout and later HTML output;
@@ -60,6 +60,7 @@ pub enum ResourceRequest {
 
 pub struct NeedResources {
     pub required: Vec<ResourceRequest>,
+    pub probes: Vec<ResourceRequest>,
     pub prefetch_hints: Vec<ResourceRequest>,
 }
 
@@ -80,8 +81,10 @@ pub enum ResourceResponse {
 Requests are sorted and deduplicated by complete typed identity and contain no
 URLs. Responses repeat their request keys, may arrive in any order, and may
 satisfy only part of a batch. Another `advance` without any newly satisfied
-required request fails with a typed no-progress error.
-An unavailable response satisfies its required key for progress purposes and
+required request or blocking probe fails with a typed no-progress error. A
+probe represents `\openin`/existence lookup: the host must answer with verified
+bytes or authoritative absence, while actual `\input` remains required.
+An unavailable response satisfies its required or probe key for progress purposes and
 stores an immutable negative binding. On the next attempt the resolver reports
 the ordinary TeX missing-file or missing-font condition without requesting the
 key again. Duplicate negative answers are idempotent, while changing a key
@@ -136,7 +139,7 @@ The authored JavaScript facade may accept a client implementation:
 interface ResourceResolver {
   resolve(
     requests: readonly ResourceRequest[],
-    options?: { signal?: AbortSignal },
+    options?: { signal?: AbortSignal; probes?: readonly ResourceRequest[] },
   ): Promise<readonly ResourceResponse[]>;
 }
 ```
@@ -145,7 +148,7 @@ The facade is an ergonomic driver over `advance` and `provideResources`; it is
 not the engine protocol. For each batch it:
 
 1. forwards Rust-serialized required requests to the client resolver;
-2. optionally forwards or schedules prefetch hints;
+2. forwards blocking probes separately and optionally schedules prefetch hints;
 3. checks only that the resolver returned an iterable transport batch;
 4. transfers the complete batch, including empty and duplicate responses, into
    Rust without maintaining a JavaScript request or path registry; and
@@ -174,7 +177,7 @@ downloaded or partially verified response reaches Rust.
 
 ## Prefetch without correctness coupling
 
-Required requests are authoritative. Hints may be absent, incomplete,
+Required requests and probes are authoritative. Hints may be absent, incomplete,
 overinclusive, stale, or ignored.
 
 A trusted application manifest or format description may hint likely input and
@@ -183,7 +186,7 @@ validated format input closure, the session authorizes positive file responses
 for the exact emitted hints and installs the response batch through the same
 atomic VFS validation as required files. Other speculative dependencies remain
 cache-only. Missing hints never create unavailable bindings, and retry progress
-still depends only on required requests.
+depends only on required requests and probes.
 
 Aggregate packs are a client transport optimization. They do not create a new
 engine identity or allow one response to satisfy a mismatched typed request.

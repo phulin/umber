@@ -59,6 +59,7 @@ export async function compile(options, userFiles, resolver, signal, bindings) {
 			if (
 				attempt?.kind !== "need-resources" ||
 				!Array.isArray(attempt.required) ||
+				!Array.isArray(attempt.probes) ||
 				!Array.isArray(attempt.prefetchHints)
 			) {
 				throw new CompileFacadeError(
@@ -71,6 +72,7 @@ export async function compile(options, userFiles, resolver, signal, bindings) {
 			try {
 				downloads = await resolver.resolve(attempt.required, {
 					signal,
+					probes: attempt.probes,
 					prefetchHints: attempt.prefetchHints,
 				});
 			} catch (error) {
