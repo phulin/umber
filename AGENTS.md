@@ -21,7 +21,7 @@ The project also uses bd (beads) for issue tracking; see below for full instruct
 
 ## Directory Map
 
-- `.cargo/`: target-specific Cargo configuration; browser randomness selection must remain scoped to `wasm32-unknown-unknown`.
+- `.cargo/`: target-specific Cargo configuration; browser randomness selection and the 4 MiB engine stack must remain scoped to `wasm32-unknown-unknown`.
 - `.agents/`: project-local agent skills and coordination workflow guidance.
 - `crates/`: Rust workspace crates.
 - `crates/tex-arith`: shared TeX scaled-point and TFM arithmetic.

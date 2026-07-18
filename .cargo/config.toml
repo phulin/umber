@@ -2,4 +2,9 @@
 run-dev = "run --profile test"
 
 [target.wasm32-unknown-unknown]
-rustflags = ["--cfg", 'getrandom_backend="wasm_js"']
+rustflags = [
+  "--cfg",
+  'getrandom_backend="wasm_js"',
+  "-C",
+  "link-arg=-zstack-size=4194304",
+]

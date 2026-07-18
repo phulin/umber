@@ -766,6 +766,25 @@ fn persistent_session_applies_revision_checked_patches() {
 fn rendered_queries_track_length_changes_before_a_reused_page() {
     let original =
         "\\font\\tenrm=cmr10\\relax\\tenrm %a\n\\shipout\\hbox{\\char65}\\shipout\\hbox{B}\\end";
+    let fixture = rendered_query_fixture(original);
+    assert_current_rendered_query(&fixture);
+    remint_and_assert_deleted_rendered_query(fixture);
+}
+
+struct RenderedQueryFixture {
+    session: CompilerSession,
+    revision_three: String,
+    b_event: u32,
+    output_id: String,
+}
+
+fn rendered_query_fixture(original: &str) -> RenderedQueryFixture {
+    let mut session = initial_rendered_query_session(original);
+    let revision_two = apply_same_length_rendered_query_patch(&mut session, original);
+    apply_length_changing_rendered_query_patch(session, revision_two)
+}
+
+fn initial_rendered_query_session(original: &str) -> CompilerSession {
     let options = options("main.tex");
     set(&options, "html", Object::new().as_ref());
     let mut session =
@@ -784,7 +803,10 @@ fn rendered_queries_track_length_changes_before_a_reused_page() {
     provide_requested_html_font(&mut session);
     let initial = session.advance().expect("initial compile");
     assert_eq!(string_field(initial.as_ref(), "kind"), "complete");
+    session
+}
 
+fn apply_same_length_rendered_query_patch(session: &mut CompilerSession, original: &str) -> String {
     let comment = original.find("%a").expect("comment") + 1;
     let first_hash = session
         .accepted_content_hash()
@@ -799,6 +821,13 @@ fn rendered_queries_track_length_changes_before_a_reused_page() {
 
     let mut revision_two = original.to_owned();
     revision_two.replace_range(comment..comment + 1, "b");
+    revision_two
+}
+
+fn apply_length_changing_rendered_query_patch(
+    mut session: CompilerSession,
+    revision_two: String,
+) -> RenderedQueryFixture {
     let insert_at = revision_two.find('\n').expect("comment newline");
     let inserted = " longer";
     let second_hash = session
@@ -820,9 +849,19 @@ fn rendered_queries_track_length_changes_before_a_reused_page() {
     let output_id = rendered_output_id(&third_html);
     let mut revision_three = revision_two;
     revision_three.insert_str(insert_at, inserted);
-    let b_offset = revision_three.find("{B}").expect("B box") + 1;
-    let current = session
-        .rendered_source_location(2, b_event, Some(0), output_id.clone(), 3)
+    RenderedQueryFixture {
+        session,
+        revision_three,
+        b_event,
+        output_id,
+    }
+}
+
+fn assert_current_rendered_query(fixture: &RenderedQueryFixture) {
+    let b_offset = fixture.revision_three.find("{B}").expect("B box") + 1;
+    let current = fixture
+        .session
+        .rendered_source_location(2, fixture.b_event, Some(0), fixture.output_id.clone(), 3)
         .expect("current query")
         .expect("current result");
     assert_eq!(string_field(current.as_ref(), "kind"), "current");
@@ -830,27 +869,33 @@ fn rendered_queries_track_length_changes_before_a_reused_page() {
         field(current.as_ref(), "start").as_f64(),
         Some(b_offset as f64)
     );
+}
 
-    let line_start = revision_three
+fn remint_and_assert_deleted_rendered_query(mut fixture: RenderedQueryFixture) {
+    let line_start = fixture
+        .revision_three
         .find("\\shipout\\hbox{\\char65}")
         .expect("char line");
-    let line_end = revision_three[line_start..]
+    let line_end = fixture.revision_three[line_start..]
         .find("\\shipout\\hbox{B}")
         .map(|offset| line_start + offset)
         .expect("second shipout");
-    let replacement = &revision_three[line_start..line_end];
-    let third_hash = session
+    let replacement = &fixture.revision_three[line_start..line_end];
+    let third_hash = fixture
+        .session
         .accepted_content_hash()
         .expect("content hash")
         .expect("accepted revision");
     let remint = source_patch(4, 3, &third_hash, line_start, line_end, replacement);
-    session
+    fixture
+        .session
         .apply_patch(remint.unchecked_ref::<JsSourcePatch>())
         .expect("equivalent remint patch");
-    let fourth = session.advance().expect("fourth revision");
+    let fourth = fixture.session.advance().expect("fourth revision");
     assert_eq!(string_field(fourth.as_ref(), "kind"), "complete");
-    let deleted = session
-        .rendered_source_location(2, b_event, Some(0), output_id, 4)
+    let deleted = fixture
+        .session
+        .rendered_source_location(2, fixture.b_event, Some(0), fixture.output_id, 4)
         .expect("deleted query")
         .expect("deleted result");
     assert_eq!(string_field(deleted.as_ref(), "kind"), "deleted");

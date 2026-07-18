@@ -21,6 +21,9 @@ scripts/check-and-test.sh
 These commands use the root workspace's default native correctness members.
 Run `scripts/check-wasm.sh` for the browser adapter and `scripts/check-tools.sh`
 for opt-in regeneration, profiling, and triage tools.
+The WASM target reserves a 4 MiB linear-memory stack because retained compile
+sessions exceed wasm-ld's 1 MiB default during Firefox retry and incremental
+HTML coverage; native targets keep their platform stack policy.
 
 The warmed `cargo test --tests` target is under 10 seconds on the current
 macOS development workspace; investigate a sustained run above 15 seconds or
