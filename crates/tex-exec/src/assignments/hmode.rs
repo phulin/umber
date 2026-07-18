@@ -462,9 +462,18 @@ fn append_hchar(nest: &mut ModeNest, stores: &mut Universe, ch: char, origin: Or
         }
     }
     let font = stores.current_font();
-    if stores.font_character_exists(font, ch) {
+    let (character_exists, font_is_ltr_shaping) = {
+        let loaded = stores.font(font);
+        (
+            loaded.character_exists(ch),
+            loaded.shaping_font().is_some()
+                && loaded.shaping_direction() == Some(tex_fonts::WritingDirection::LeftToRight),
+        )
+    };
+    if character_exists {
         let flush_incompatible_run = nest.current_list().pending_hchars().is_some_and(|pending| {
-            (is_ltr_shaping_font(stores, font) || is_ltr_shaping_font(stores, pending.first.font))
+            (font_is_ltr_shaping
+                || (pending.first.font != font && is_ltr_shaping_font(stores, pending.first.font)))
                 && (pending.first.font != font
                     || !scripts_compatible(pending.script, tex_shape::character_script(ch)))
         });
@@ -472,7 +481,7 @@ fn append_hchar(nest: &mut ModeNest, stores: &mut Universe, ch: char, origin: Or
             let insert_hyphen_discs = nest.current_mode() == Mode::Horizontal;
             flush_pending_hchar_run(nest, stores, insert_hyphen_discs);
         }
-        append_pending_hchar(nest, stores, font, ch, origin);
+        append_pending_hchar(nest, stores, font, font_is_ltr_shaping, ch, origin);
         update_space_factor(nest, stores, ch);
         return;
     }
@@ -483,6 +492,7 @@ fn append_pending_hchar(
     nest: &mut ModeNest,
     stores: &mut Universe,
     font: FontId,
+    font_is_ltr_shaping: bool,
     ch: char,
     origin: OriginId,
 ) {
@@ -494,7 +504,7 @@ fn append_pending_hchar(
             .begin_pending_hchars(font, ch, origin);
         return;
     };
-    if is_ltr_shaping_font(stores, font)
+    if font_is_ltr_shaping
         && is_supported_script(pending.script)
         && is_supported_script(tex_shape::character_script(ch))
     {
@@ -575,8 +585,9 @@ fn is_supported_script(script: tex_shape::Script) -> bool {
 }
 
 fn is_ltr_shaping_font(stores: &Universe, font: FontId) -> bool {
-    stores.font(font).shaping_font().is_some()
-        && stores.font(font).shaping_direction() == Some(tex_fonts::WritingDirection::LeftToRight)
+    let font = stores.font(font);
+    font.shaping_font().is_some()
+        && font.shaping_direction() == Some(tex_fonts::WritingDirection::LeftToRight)
 }
 
 fn shape_open_type_chars(
