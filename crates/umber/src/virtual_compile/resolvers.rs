@@ -11,7 +11,7 @@ use tex_lex::WorldInput;
 use tex_state::scaled::Scaled;
 use tex_state::{
     FileContent, InputReadState, PdfExternalImageMetadata, PdfExternalImageSource, PdfPageBox,
-    PdfRasterColorSpace, PdfRasterFormat, PdfRasterImageMetadata,
+    PdfPageRotation, PdfRasterColorSpace, PdfRasterFormat, PdfRasterImageMetadata,
 };
 
 use super::path::RequestedFile;
@@ -235,19 +235,41 @@ fn parse_pdf_image(
         .get_dictionary(page_id)
         .map_err(|error| error.to_string())?;
     let has_page_group = page_dictionary.get(b"Group").is_ok();
+    let rotation = match inherited_integer(&document, page_id, b"Rotate")?
+        .unwrap_or(0)
+        .rem_euclid(360)
+    {
+        0 => PdfPageRotation::None,
+        90 => PdfPageRotation::Clockwise90,
+        180 => PdfPageRotation::UpsideDown,
+        270 => PdfPageRotation::Clockwise270,
+        rotation => {
+            return Err(format!(
+                "PDF page rotation {rotation} is not a multiple of 90"
+            ));
+        }
+    };
     let total_pages = u32::try_from(document.get_pages().len())
         .map_err(|_| "external PDF page count exceeds u32".to_owned())?;
+    let box_width = page_box.right - page_box.left;
+    let box_height = page_box.top - page_box.bottom;
+    let (natural_width, natural_height) = if rotation.swaps_axes() {
+        (box_height, box_width)
+    } else {
+        (box_width, box_height)
+    };
     Ok(PdfExternalImageSource {
         identity: content.hash(),
         metadata: PdfExternalImageMetadata::PdfPage {
             page_box,
+            rotation,
             page: request.page,
             total_pages,
             has_page_group,
             pdf_version,
         },
-        natural_width: page_box.right - page_box.left,
-        natural_height: page_box.top - page_box.bottom,
+        natural_width,
+        natural_height,
         bytes: content.shared_bytes(),
     })
 }
@@ -311,6 +333,28 @@ fn inherited_box(
                 *slot = f64::from(value.as_float().map_err(|error| error.to_string())?);
             }
             return Ok(Some(result));
+        }
+        let Ok(parent) = dictionary.get(b"Parent") else {
+            return Ok(None);
+        };
+        id = parent.as_reference().map_err(|error| error.to_string())?;
+    }
+}
+
+fn inherited_integer(
+    document: &lopdf::Document,
+    mut id: lopdf::ObjectId,
+    key: &[u8],
+) -> Result<Option<i64>, String> {
+    loop {
+        let dictionary = document
+            .get_dictionary(id)
+            .map_err(|error| error.to_string())?;
+        if let Ok(value) = dictionary.get(key) {
+            let (_, value) = document
+                .dereference(value)
+                .map_err(|error| error.to_string())?;
+            return value.as_i64().map(Some).map_err(|error| error.to_string());
         }
         let Ok(parent) = dictionary.get(b"Parent") else {
             return Ok(None);
@@ -700,13 +744,17 @@ impl FontResolver for VirtualFontResolver<'_> {
 mod tests {
     use std::collections::{BTreeMap, BTreeSet};
 
-    use super::{FileOpenIntent, VirtualFileResolver, pixels_to_scaled};
+    use super::{FileOpenIntent, VirtualFileResolver, parse_pdf_image, pixels_to_scaled};
     use crate::{
         CompileAttemptResult, EngineMode, FileKind, ResolvedFile, ResourceRequest,
         ResourceResponse, SessionOptions, VirtualCompileSession,
     };
     use tex_expand::{ResourceLookup, ResourceNeed};
-    use tex_state::{InputOpenState, Universe, World};
+    use lopdf::dictionary;
+    use tex_exec::{PdfImagePageBox, PdfImageRequest};
+    use tex_state::{
+        InputOpenState, PdfExternalImageMetadata, PdfPageRotation, Universe, World,
+    };
     use umber_vfs::{VfsLimits, VirtualFs};
 
     #[test]
@@ -819,5 +867,66 @@ mod tests {
             panic!("only the earliest unresolved probe may escape the attempt");
         };
         assert_eq!(probe.key().name(), "first.cfg");
+    }
+
+    #[test]
+    fn inherited_quarter_turn_swaps_pdf_page_natural_dimensions() {
+        let mut document = lopdf::Document::with_version("1.5");
+        let pages = document.new_object_id();
+        let page = document.new_object_id();
+        let contents = document.add_object(lopdf::Stream::new(lopdf::dictionary! {}, Vec::new()));
+        document.objects.insert(
+            page,
+            lopdf::dictionary! {
+                "Type" => "Page",
+                "Parent" => pages,
+                "MediaBox" => vec![0.into(), 0.into(), 10.into(), 20.into()],
+                "Resources" => lopdf::dictionary! {},
+                "Contents" => contents,
+            }
+            .into(),
+        );
+        document.objects.insert(
+            pages,
+            lopdf::dictionary! {
+                "Type" => "Pages",
+                "Kids" => vec![page.into()],
+                "Count" => 1,
+                "Rotate" => 90,
+            }
+            .into(),
+        );
+        let catalog = document.add_object(lopdf::dictionary! {
+            "Type" => "Catalog",
+            "Pages" => pages,
+        });
+        document.trailer.set("Root", catalog);
+        let mut bytes = Vec::new();
+        document.save_to(&mut bytes).expect("serialize rotated PDF");
+
+        let mut world = World::default();
+        world
+            .set_memory_file("rotated.pdf", bytes)
+            .expect("seed rotated PDF");
+        let content = world.read_file("rotated.pdf").expect("read rotated PDF");
+        let source = parse_pdf_image(
+            &content,
+            &PdfImageRequest {
+                name: "rotated.pdf".to_owned(),
+                page: 1,
+                page_box: PdfImagePageBox::Media,
+                resolution: 0,
+            },
+        )
+        .expect("parse rotated PDF");
+        let PdfExternalImageMetadata::PdfPage {
+            page_box, rotation, ..
+        } = source.metadata
+        else {
+            panic!("expected PDF-page metadata");
+        };
+        assert_eq!(rotation, PdfPageRotation::Clockwise90);
+        assert_eq!(source.natural_width, page_box.top - page_box.bottom);
+        assert_eq!(source.natural_height, page_box.right - page_box.left);
     }
 }

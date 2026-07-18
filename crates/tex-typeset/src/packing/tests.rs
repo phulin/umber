@@ -2,7 +2,7 @@ use super::*;
 use tex_fonts::metrics::CharTag;
 use tex_fonts::{CharMetrics, FontMetrics, LoadedFont};
 use tex_state::Universe;
-use tex_state::node::{GlueKind, KernKind, LeaderPayload};
+use tex_state::node::{GlueKind, KernKind, LeaderPayload, Whatsit};
 
 fn sp(raw: i32) -> Scaled {
     Scaled::from_raw(raw)
@@ -523,6 +523,63 @@ fn hpack_measures_shifted_child_boxes() {
 
     assert_eq!(packed.node.height, sp(14));
     assert_eq!(packed.node.depth, sp(9));
+}
+
+#[test]
+fn pdf_image_reference_contributes_its_declared_box_dimensions() {
+    let mut universe = Universe::new();
+    let image = Node::Whatsit(Whatsit::PdfRefXImage {
+        object: 1,
+        width: sp(30),
+        height: sp(20),
+        depth: sp(5),
+    });
+
+    let hplan = plan_hpack_nodes(
+        &universe,
+        std::slice::from_ref(&image),
+        PackSpec::Natural,
+        HpackParams {
+            hbadness: INF_BAD,
+            hfuzz: sp(0),
+            overfull_rule: sp(0),
+        },
+    );
+    assert_eq!(
+        (hplan.width, hplan.height, hplan.depth),
+        (sp(30), sp(20), sp(5))
+    );
+
+    let list = universe.freeze_node_list(&[image]);
+    let hbox = hpack(
+        &universe,
+        list,
+        PackSpec::Natural,
+        HpackParams {
+            hbadness: INF_BAD,
+            hfuzz: sp(0),
+            overfull_rule: sp(0),
+        },
+    );
+    assert_eq!(
+        (hbox.node.width, hbox.node.height, hbox.node.depth),
+        (sp(30), sp(20), sp(5))
+    );
+
+    let vbox = vpack(
+        &universe,
+        list,
+        PackSpec::Natural,
+        VpackParams {
+            vbadness: INF_BAD,
+            vfuzz: sp(0),
+            box_max_depth: sp(100),
+        },
+    );
+    assert_eq!(
+        (vbox.node.width, vbox.node.height, vbox.node.depth),
+        (sp(30), sp(20), sp(5))
+    );
 }
 
 #[test]

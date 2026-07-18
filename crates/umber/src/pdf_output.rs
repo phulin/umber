@@ -293,8 +293,13 @@ pub fn pdf_from_committed_artifacts_at_dpi(
                     });
                 }
             }
-            PdfExternalImageMetadata::PdfPage { page_box, page, .. } => {
-                let imported = import_pdf_page(image, page, page_box, &mut next_object)?;
+            PdfExternalImageMetadata::PdfPage {
+                page_box,
+                rotation,
+                page,
+                ..
+            } => {
+                let imported = import_pdf_page(image, page, page_box, rotation, &mut next_object)?;
                 pdf_image_groups.insert(image.id().raw(), imported.group);
                 objects.extend(imported.dependencies);
                 objects.push(imported.form);
@@ -650,19 +655,25 @@ pub fn pdf_from_committed_artifacts_at_dpi(
                             let y = page_height
                                 .checked_sub(graphics.y)
                                 .and_then(|value| value.checked_sub(record.v_origin()))
-                                .and_then(|value| value.checked_sub(total_height))
+                                .and_then(|value| value.checked_sub(depth))
                                 .ok_or(PdfBuildError::PageGeometryOverflow)?;
                             let (placed_width, placed_height) = match image.metadata() {
-                                PdfExternalImageMetadata::PdfPage { page_box, .. } => {
-                                    let natural_width =
-                                        page_box
-                                            .right
-                                            .checked_sub(page_box.left)
-                                            .ok_or(PdfBuildError::PageGeometryOverflow)?;
-                                    let natural_height = page_box
+                                PdfExternalImageMetadata::PdfPage {
+                                    page_box, rotation, ..
+                                } => {
+                                    let box_width = page_box
+                                        .right
+                                        .checked_sub(page_box.left)
+                                        .ok_or(PdfBuildError::PageGeometryOverflow)?;
+                                    let box_height = page_box
                                         .top
                                         .checked_sub(page_box.bottom)
                                         .ok_or(PdfBuildError::PageGeometryOverflow)?;
+                                    let (natural_width, natural_height) = if rotation.swaps_axes() {
+                                        (box_height, box_width)
+                                    } else {
+                                        (box_width, box_height)
+                                    };
                                     (
                                         scaled_to_bp_f32(width, parameters.decimal_digits)
                                             / scaled_to_bp_f32(
@@ -3473,6 +3484,7 @@ fn import_pdf_page(
     image: &tex_state::PdfExternalImageRecord,
     page: u32,
     page_box: tex_state::PdfPageBox,
+    rotation: tex_state::PdfPageRotation,
     next_object: &mut u32,
 ) -> Result<ImportedPdfPage, PdfBuildError> {
     let document = lopdf::Document::load_mem(image.bytes())
@@ -3564,6 +3576,42 @@ fn import_pdf_page(
     }
     let left_bp = scaled_to_bp_f32(page_box.left, 4);
     let bottom_bp = scaled_to_bp_f32(page_box.bottom, 4);
+    let (form_width, form_height, matrix) = match rotation {
+        tex_state::PdfPageRotation::None => {
+            (width, height, [1.0, 0.0, 0.0, 1.0, -left_bp, -bottom_bp])
+        }
+        tex_state::PdfPageRotation::Clockwise90 => (
+            height,
+            width,
+            [0.0, 1.0, -1.0, 0.0, height_bp + bottom_bp, -left_bp],
+        ),
+        tex_state::PdfPageRotation::UpsideDown => (
+            width,
+            height,
+            [
+                -1.0,
+                0.0,
+                0.0,
+                -1.0,
+                width_bp + left_bp,
+                height_bp + bottom_bp,
+            ],
+        ),
+        tex_state::PdfPageRotation::Clockwise270 => (
+            height,
+            width,
+            [0.0, -1.0, 1.0, 0.0, -bottom_bp, width_bp + left_bp],
+        ),
+    };
+    let [a, b, c, d, e, f] = matrix;
+    let matrix = [
+        pdf_number_from_f32(a)?,
+        pdf_number_from_f32(b)?,
+        pdf_number_from_f32(c)?,
+        pdf_number_from_f32(d)?,
+        pdf_number_from_f32(e)?,
+        pdf_number_from_f32(f)?,
+    ];
     Ok(ImportedPdfPage {
         form: PdfIndirectObject {
             id: object_id(image.id().raw())?,
@@ -3573,18 +3621,10 @@ fn import_pdf_page(
                 bbox: [
                     zero,
                     zero,
-                    scaled_to_bp_number(width, 4)?,
-                    scaled_to_bp_number(height, 4)?,
+                    scaled_to_bp_number(form_width, 4)?,
+                    scaled_to_bp_number(form_height, 4)?,
                 ],
-                matrix: Some([
-                    one,
-                    zero,
-                    zero,
-                    one,
-                    pdf_number_from_f32(-left_bp)?,
-                    pdf_number_from_f32(-bottom_bp)?,
-                ])
-                .filter(|matrix| *matrix != [one, zero, zero, one, zero, zero]),
+                matrix: Some(matrix).filter(|matrix| *matrix != [one, zero, zero, one, zero, zero]),
             },
         },
         dependencies,
@@ -4298,6 +4338,7 @@ mod tests {
             identity: ContentHash::from_bytes(&bytes),
             metadata: PdfExternalImageMetadata::PdfPage {
                 page_box,
+                rotation: tex_state::PdfPageRotation::None,
                 page: 1,
                 total_pages: 1,
                 has_page_group: has_group,
@@ -4307,6 +4348,81 @@ mod tests {
             natural_height: page_box.top,
             bytes: bytes.into(),
         }
+    }
+
+    #[test]
+    fn imported_pdf_page_applies_clockwise_quarter_turn_to_form_geometry() {
+        let mut source = test_pdf_page_source(false);
+        let PdfExternalImageMetadata::PdfPage {
+            page_box,
+            page,
+            total_pages,
+            has_page_group,
+            pdf_version,
+            ..
+        } = source.metadata
+        else {
+            unreachable!();
+        };
+        source.metadata = PdfExternalImageMetadata::PdfPage {
+            page_box,
+            rotation: tex_state::PdfPageRotation::Clockwise90,
+            page,
+            total_pages,
+            has_page_group,
+            pdf_version,
+        };
+        source.natural_width = page_box.top;
+        source.natural_height = page_box.right;
+        let mut stores = Universe::default();
+        stores.enable_pdf_output();
+        stores
+            .allocate_pdf_external_image(
+                source,
+                tex_state::PdfExternalImageDimensions {
+                    width: page_box.top,
+                    height: page_box.right,
+                    depth: Scaled::from_raw(0),
+                },
+            )
+            .expect("allocate rotated PDF page");
+        let image = stores
+            .pdf_external_images()
+            .first()
+            .expect("allocated image record");
+        let mut next_object = 100;
+        let imported = import_pdf_page(
+            image,
+            1,
+            page_box,
+            tex_state::PdfPageRotation::Clockwise90,
+            &mut next_object,
+        )
+        .expect("import rotated PDF page");
+        let PdfObject::FormXObject { bbox, matrix, .. } = imported.form.object else {
+            panic!("expected imported form XObject");
+        };
+        assert_eq!(
+            bbox,
+            [
+                PdfNumber::new(0, 0).expect("zero is a valid PDF number"),
+                PdfNumber::new(0, 0).expect("zero is a valid PDF number"),
+                scaled_to_bp_number(page_box.top, 4).expect("fixture height is representable"),
+                scaled_to_bp_number(page_box.right, 4).expect("fixture width is representable"),
+            ]
+        );
+        assert_eq!(
+            matrix,
+            Some([
+                PdfNumber::new(0, 0).expect("zero is a valid PDF number"),
+                PdfNumber::new(1, 0).expect("one is a valid PDF number"),
+                PdfNumber::new(-1, 0).expect("negative one is a valid PDF number"),
+                PdfNumber::new(0, 0).expect("zero is a valid PDF number"),
+                pdf_number_from_f32(scaled_to_bp_f32(page_box.top, 4))
+                    .expect("fixture height is representable"),
+                PdfNumber::new(0, 0).expect("zero is a valid PDF number"),
+            ])
+        );
     }
 
     #[test]

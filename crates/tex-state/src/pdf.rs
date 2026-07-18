@@ -141,11 +141,29 @@ pub struct PdfPageBox {
     pub top: Scaled,
 }
 
+/// The inherited clockwise rotation of an imported PDF page.
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
+pub enum PdfPageRotation {
+    #[default]
+    None,
+    Clockwise90,
+    UpsideDown,
+    Clockwise270,
+}
+
+impl PdfPageRotation {
+    #[must_use]
+    pub const fn swaps_axes(self) -> bool {
+        matches!(self, Self::Clockwise90 | Self::Clockwise270)
+    }
+}
+
 /// Metadata retained after host-neutral external-image validation.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum PdfExternalImageMetadata {
     PdfPage {
         page_box: PdfPageBox,
+        rotation: PdfPageRotation,
         page: u32,
         total_pages: u32,
         has_page_group: bool,
@@ -2772,6 +2790,7 @@ fn external_image_fingerprint(images: &[PdfExternalImageRecord]) -> StateHashFra
         match record.metadata {
             PdfExternalImageMetadata::PdfPage {
                 page_box,
+                rotation,
                 page,
                 total_pages,
                 has_page_group,
@@ -2782,6 +2801,7 @@ fn external_image_fingerprint(images: &[PdfExternalImageRecord]) -> StateHashFra
                 hasher.i32(page_box.bottom.raw());
                 hasher.i32(page_box.right.raw());
                 hasher.i32(page_box.top.raw());
+                hasher.u8(rotation as u8);
                 hasher.u32(page);
                 hasher.u32(total_pages);
                 hasher.bool(has_page_group);
@@ -3455,6 +3475,7 @@ mod tests {
                 right: Scaled::from_raw(40),
                 top: Scaled::from_raw(50),
             },
+            rotation: PdfPageRotation::Clockwise90,
             page: 1,
             total_pages: 3,
             has_page_group: false,

@@ -1173,6 +1173,7 @@ mod tests {
                     identity: tex_state::ContentHash::from_bytes(b"pdf"),
                     metadata: tex_state::PdfExternalImageMetadata::PdfPage {
                         page_box,
+                        rotation: tex_state::PdfPageRotation::None,
                         page: 2,
                         total_pages: 3,
                         has_page_group: false,
@@ -2440,6 +2441,7 @@ mod tests {
                         right: Scaled::from_raw(655_384),
                         top: Scaled::from_raw(327_659),
                     },
+                    rotation: tex_state::PdfPageRotation::None,
                     page: 1,
                     total_pages: 1,
                     has_page_group: false,

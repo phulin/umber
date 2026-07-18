@@ -191,7 +191,10 @@ pub(super) fn node_width_at<S: TypesetState>(state: &S, nodes: &[Node], index: u
                 state.nodes(*replace).len(),
             ));
         }
-        Node::Whatsit(tex_state::node::Whatsit::PdfRefXForm { width, .. }) => {
+        Node::Whatsit(
+            tex_state::node::Whatsit::PdfRefXForm { width, .. }
+            | tex_state::node::Whatsit::PdfRefXImage { width, .. },
+        ) => {
             widths.natural = add_scaled(widths.natural, *width);
         }
         Node::Penalty(_)
@@ -243,6 +246,10 @@ fn node_width_ref_at<S: TypesetState>(state: &S, nodes: NodeList<'_>, index: usi
             let list = state.nodes(replace);
             widths.add_assign(line_widths_view(state, list, 0, list.len()));
         }
+        NodeRef::Whatsit(
+            tex_state::node::Whatsit::PdfRefXForm { width, .. }
+            | tex_state::node::Whatsit::PdfRefXImage { width, .. },
+        ) => widths.natural = add_scaled(widths.natural, *width),
         _ => {}
     }
     widths

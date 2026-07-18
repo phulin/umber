@@ -1,7 +1,7 @@
 use super::*;
 use tex_state::Universe;
 use tex_state::glue::{GlueSpec, Order};
-use tex_state::node::{DiscKind, GlueKind, KernKind, Node};
+use tex_state::node::{DiscKind, GlueKind, KernKind, Node, Whatsit};
 use tex_state::scaled::Scaled;
 use tex_state::token::{Catcode, Token};
 
@@ -30,6 +30,24 @@ fn params(width: i32) -> LineBreakParams {
         par_fill_skip: GlueSpec::ZERO,
         shape: LineShape::natural(sp(width)),
     }
+}
+
+#[test]
+fn pdf_image_reference_contributes_width_to_line_measurement() {
+    let mut universe = Universe::new();
+    let image = Node::Whatsit(Whatsit::PdfRefXImage {
+        object: 1,
+        width: sp(30),
+        height: sp(20),
+        depth: sp(5),
+    });
+
+    let decoded = line_widths_nodes(&universe, std::slice::from_ref(&image));
+    assert_eq!(decoded.natural, tex_arith::WideScaled::from_scaled(sp(30)));
+
+    let list = universe.freeze_node_list(&[image]);
+    let compact = line_widths_view(&universe, universe.nodes(list), 0, 1);
+    assert_eq!(compact.natural, tex_arith::WideScaled::from_scaled(sp(30)));
 }
 
 #[test]

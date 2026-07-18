@@ -88,8 +88,9 @@ pub use pdf::{
     PdfFormArtifact, PdfFormColorRollback, PdfFormRecord, PdfGlyphToUnicode, PdfLinkRecord,
     PdfObjectCapacityError, PdfOpenLink, PdfOutlineRecord, PdfOutputParameters, PdfPageBox,
     PdfPageGroupInclusion, PdfPageGroupSelector, PdfPageGroupWarning, PdfPageRecord,
-    PdfRasterColorSpace, PdfRasterFormat, PdfRasterImageMetadata, PdfRawObjectData, PdfRawObjectId,
-    PdfRawObjectInitializeError, PdfRawObjectRecord, PdfThreadBeadRecord, PdfThreadRecord,
+    PdfPageRotation, PdfRasterColorSpace, PdfRasterFormat, PdfRasterImageMetadata,
+    PdfRawObjectData, PdfRawObjectId, PdfRawObjectInitializeError, PdfRawObjectRecord,
+    PdfThreadBeadRecord, PdfThreadRecord,
 };
 pub mod world;
 
