@@ -2036,6 +2036,16 @@ impl InputStack {
         }
     }
 
+    /// Accounts for TeX.web §403's recovery-inserted compulsory left brace.
+    ///
+    /// The brace is not read from an input frame, so ordinary token delivery
+    /// cannot perform this `align_state` increment on the scanner's behalf.
+    pub fn account_inserted_alignment_left_brace(&mut self) {
+        if let Some(alignment) = self.alignment_inputs.last_mut() {
+            alignment.align_state += 1;
+        }
+    }
+
     #[must_use]
     pub fn alignment_state_is(&self, state: i32) -> bool {
         self.alignment_inputs

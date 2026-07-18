@@ -191,6 +191,17 @@ fn active_alignment_predicate_tracks_scanner_levels_not_only_cells() {
 }
 
 #[test]
+fn recovery_inserted_left_brace_updates_active_alignment_state() {
+    let mut input = InputStack::new(MemoryInput::new(""));
+    input.begin_alignment();
+    input.set_alignment_state(0);
+
+    input.account_inserted_alignment_left_brace();
+
+    assert!(input.alignment_state_is(1));
+}
+
+#[test]
 fn alignment_undo_bookkeeping_ignores_ordinary_deliveries() {
     let mut input = InputStack::new(MemoryInput::new(""));
     input.begin_alignment();

@@ -397,6 +397,34 @@ fn token_register_assignments_scan_balanced_text_and_copy_variables() {
 }
 
 #[test]
+fn token_register_assignment_uses_tex_scan_left_brace_recovery() {
+    let mut stores = Universe::new();
+    tex_expand::install_expandable_primitives(&mut stores);
+    install_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(concat!(
+        "\\let\\open={ ",
+        "\\toks0=\\relax\\relax\\open a{b}c} ",
+        "\\toks1=x} ",
+        "\\count0=7",
+    )));
+
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("token assignments follow scan_left_brace semantics");
+
+    assert_eq!(stores.tokens(stores.toks(0)).len(), 5);
+    assert_eq!(
+        stores.tokens(stores.toks(1)),
+        &[Token::Char {
+            ch: 'x',
+            cat: Catcode::Letter,
+        }]
+    );
+    assert_eq!(stores.count(0), 7);
+    assert!(terminal_effect_text(&stores).contains("Missing { inserted"));
+}
+
+#[test]
 fn noexpand_in_edef_preserves_a_token_register_assignment() {
     let mut stores = Universe::new();
     tex_expand::install_expandable_primitives(&mut stores);

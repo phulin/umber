@@ -227,26 +227,52 @@ pub(super) fn scan_token_list_assignment(
     execution: &mut crate::ExecutionContext<'_>,
     context: TracedTokenWord,
 ) -> Result<tex_state::ids::TokenListId, ExecError> {
-    let traced = next_non_space_traced_x(input, stores, execution)?
-        .ok_or(ExecError::MissingTracedToken { context })?;
-    let token = tex_expand::semantic_token(traced);
-    if let Token::Cs(symbol) = token {
-        match stores.meaning(symbol) {
-            Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Toks) => {
-                let index = scan_register_index(input, stores, execution, traced)?;
-                return Ok(stores.toks(index));
-            }
-            Meaning::ToksRegister(index) => return Ok(stores.toks(index)),
-            Meaning::TokParam(index) => return Ok(stores.tok_param(TokParam::new(index))),
-            _ => {}
+    // TeX.web §§403--404 and §1226 route this case through
+    // `scan_left_brace`: expansion continues while spaces and commands whose
+    // current meaning is `relax` are discarded.
+    let traced = loop {
+        let traced = next_non_space_traced_x(input, stores, execution)?
+            .ok_or(ExecError::MissingTracedToken { context })?;
+        if token_meaning(stores, tex_expand::semantic_token(traced)) != Meaning::Relax {
+            break traced;
         }
+    };
+    let token = tex_expand::semantic_token(traced);
+    match token_meaning(stores, token) {
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Toks) => {
+            let index = scan_register_index(input, stores, execution, traced)?;
+            return Ok(stores.toks(index));
+        }
+        Meaning::ToksRegister(index) => return Ok(stores.toks(index)),
+        Meaning::TokParam(index) => return Ok(stores.tok_param(TokParam::new(index))),
+        _ => {}
     }
-    if !is_begin_group(token) {
-        return Err(ExecError::MissingToken {
-            context: "token-list assignment group",
-        });
+    if !has_catcode_meaning(stores, token, Catcode::BeginGroup) {
+        // TeX.web §403 backs up the rejected token, inserts the missing
+        // opening brace, and lets the absorbing scan continue to a later
+        // right brace.
+        push_traced_tokens(input, stores, [traced]);
+        input.account_inserted_alignment_left_brace();
+        stores.world_mut().write_text(
+            tex_state::PrintSink::TerminalAndLog,
+            "\n! Missing { inserted.\nA left brace was mandatory here, so I've put one in.\n",
+        );
     }
     scan_balanced_text_after_open_group(input, stores)
+}
+
+fn token_meaning(stores: &mut Universe, token: Token) -> Meaning {
+    match token {
+        Token::Cs(symbol) => stores.meaning(symbol),
+        Token::Char {
+            ch,
+            cat: Catcode::Active,
+        } => {
+            let symbol = active_character_symbol(stores, ch);
+            stores.meaning(symbol)
+        }
+        _ => Meaning::Undefined,
+    }
 }
 
 fn scan_balanced_text_after_open_group(
@@ -259,29 +285,34 @@ fn scan_balanced_text_after_open_group(
         tex_expand::next_semantic_raw_token(input, &mut tex_state::ExpansionContext::new(stores))?
     {
         let token = tex_expand::semantic_token(traced);
-        let meaning = match token {
-            Token::Cs(symbol) => stores.meaning(symbol),
-            Token::Char {
-                ch,
-                cat: Catcode::Active,
-            } => {
-                let symbol = active_character_symbol(stores, ch);
-                stores.meaning(symbol)
-            }
-            _ => Meaning::Undefined,
-        };
+        let meaning = token_meaning(stores, token);
         if matches!(
             meaning,
             Meaning::Macro { flags, .. } if flags.contains(MeaningFlags::OUTER)
         ) {
-            // TeX.web §336's absorbing scanner inserts a right brace and
-            // backs up the forbidden outer token for ordinary expansion.
-            crate::insert_traced_tokens(input, stores, [traced]);
+            // TeX.web §336's absorbing scanner backs up the forbidden outer
+            // token and inserts a right brace. Let ordinary semantic delivery
+            // consume that brace so alignment accounting and replay ordering
+            // remain identical to physical input.
+            let right_brace = Token::Char {
+                ch: '}',
+                cat: Catcode::EndGroup,
+            };
+            let inserted = stores.inserted_origin(
+                InsertedOriginKind::ErrorRecovery,
+                right_brace,
+                traced.origin(),
+            );
+            crate::insert_traced_tokens(
+                input,
+                stores,
+                [TracedTokenWord::pack(right_brace, inserted), traced],
+            );
             stores.world_mut().write_text(
                 tex_state::PrintSink::TerminalAndLog,
                 "\n! Forbidden control sequence found while scanning text.\nI've inserted a closing brace and will continue.\n",
             );
-            return Ok(stores.finish_token_list(&mut builder));
+            continue;
         }
         match token {
             token if is_begin_group(token) => {

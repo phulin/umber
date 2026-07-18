@@ -128,6 +128,17 @@ fn lowercase_raw_text_closer_restores_alignment_brace_depth() {
     assert!(!output.contains("Misplaced \\cr"), "{output}");
 }
 
+#[test]
+fn recovered_token_assignment_brace_preserves_alignment_cell_boundaries() {
+    let stores = run_boxed_alignment_source(r"\halign{#&#\cr \toks0=x}&y\cr}");
+    let rows = vlist_rows(&stores, box_zero_vlist(&stores));
+    let cells = row_cells(&stores, rows[0]);
+
+    assert_eq!(cells.len(), 2);
+    assert_eq!(cell_text(&stores, cells[1]), "y");
+    assert!(support::terminal_effect_text(&stores).contains("Missing { inserted"));
+}
+
 fn nested_shipout_checkpoints(source: &str) -> Vec<EngineCheckpoint> {
     let mut stores = support::stores_with_fonts();
     let mut input = InputStack::new(MemoryInput::new(format!(
