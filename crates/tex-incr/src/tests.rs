@@ -781,7 +781,10 @@ fn paragraph_with_discharged_nested_assignments_replays() {
     universe.enable_pure_memo(tex_state::PureMemoConfig::default());
     let source = concat!(
         "changed prefix paragraph text\\par\n",
-        "nested assignments {\\dimen0=5pt \\def\\local{local words} ",
+        "nested assignments {\\count0=8 \\multiply\\count0 by 2 \\divide\\count0 by 4 ",
+        "\\dimen0=5pt \\advance\\dimen0 by 2pt ",
+        "\\skip0=1pt plus 1fil \\advance\\skip0 by 2pt ",
+        "\\muskip0=1mu \\advance\\muskip0 by 2mu \\def\\local{local words} ",
         "\\catcode`\\@=11 \\setbox0=\\hbox{temporary box} \\local} after group\\par\n",
         "\\ifvoid0 stable suffix paragraph\\else leaked box\\fi\\par\n",
         "\\vfill\\eject\\end",
@@ -959,12 +962,41 @@ fn box_local_definition_does_not_hide_a_later_outer_meaning_read() {
 }
 
 #[test]
+fn paragraph_with_entry_depth_arithmetic_remains_barriered() {
+    let mut universe = template();
+    universe.enable_pure_memo(tex_state::PureMemoConfig::default());
+    let source = concat!(
+        "\\dimen0=3pt\n",
+        "changed prefix paragraph text\\par\n",
+        "entry arithmetic \\advance\\dimen0 by 2pt paragraph\\par\n",
+        "\\hrule height\\dimen0\n",
+        "\\vfill\\eject\\end",
+    );
+    let mut session = Session::start(
+        universe,
+        "paragraph-entry-depth-arithmetic",
+        RevisionId::new(1),
+        source,
+        usize::MAX,
+    )
+    .expect("session starts");
+    session.cold().expect("cold revision");
+    assert!(
+        session
+            .pure_memo_stats()
+            .paragraph_unsupported_write_barriers
+            > 0,
+        "entry-depth arithmetic must remain an escaping-write barrier"
+    );
+}
+
+#[test]
 fn paragraph_with_global_assignment_inside_nested_group_remains_barriered() {
     let mut universe = template();
     universe.enable_pure_memo(tex_state::PureMemoConfig::default());
     let source = concat!(
         "changed prefix paragraph text\\par\n",
-        "nested global {\\global\\dimen0=5pt} assignment paragraph\\par\n",
+        "nested global {\\global\\advance\\dimen0 by 5pt} assignment paragraph\\par\n",
         "\\hrule height\\dimen0\n",
         "\\vfill\\eject\\end",
     );
