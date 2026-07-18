@@ -65,10 +65,18 @@ pub(super) fn execute_pdf_font_output_action(
             stores.include_pdf_font_chars(font.expect("font action scanned a font"), bytes);
         }
         UnexpandablePrimitive::PdfMapFile => {
-            let file = tex_fonts::PdfFontMapFile::parse(&bytes)?;
-            stores.push_pdf_font_map(tex_state::PdfFontMapOperation::File(file));
+            if bytes.iter().all(u8::is_ascii_whitespace) {
+                stores.push_pdf_font_map(tex_state::PdfFontMapOperation::BlockDefault);
+            } else {
+                let file = tex_fonts::PdfFontMapFile::parse(&bytes)?;
+                stores.push_pdf_font_map(tex_state::PdfFontMapOperation::File(file));
+            }
         }
         UnexpandablePrimitive::PdfMapLine => {
+            if bytes.iter().all(u8::is_ascii_whitespace) {
+                stores.push_pdf_font_map(tex_state::PdfFontMapOperation::BlockDefault);
+                return Ok(());
+            }
             let line = tex_fonts::PdfFontMapEntry::parse(&bytes)?;
             let duplicate_count = stores.pdf_font_map_duplicate_names().len();
             stores.push_pdf_font_map(tex_state::PdfFontMapOperation::Line(line));

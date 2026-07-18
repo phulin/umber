@@ -424,6 +424,9 @@ impl PdfFontResourceRecord {
 /// A host-neutral font-map mutation recorded by a pdfTeX action primitive.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum PdfFontMapOperation {
+    /// An empty first `\pdfmapfile{}` or `\pdfmapline{}` suppresses the
+    /// implicit default map without adding an entry.
+    BlockDefault,
     File(tex_fonts::PdfFontMapFile),
     Line(tex_fonts::PdfFontMapEntry),
 }
@@ -1745,6 +1748,7 @@ impl PdfState {
         }
         for operation in maps {
             match operation {
+                PdfFontMapOperation::BlockDefault => {}
                 PdfFontMapOperation::Line(entry) => {
                     Self::apply_font_map_entry(entry.clone(), &mut entries, &mut duplicates);
                 }
@@ -1791,6 +1795,7 @@ impl PdfState {
         operation: &PdfFontMapOperation,
     ) -> tex_fonts::PdfFontMapDirective {
         match operation {
+            PdfFontMapOperation::BlockDefault => tex_fonts::PdfFontMapDirective::Default,
             PdfFontMapOperation::File(file) => file.directive,
             PdfFontMapOperation::Line(line) => line.directive,
         }
@@ -2835,6 +2840,9 @@ fn append_font_fingerprint(
     let mut hasher = StateHasher::new_exact(PDF_FONT_DOMAIN);
     previous.apply(&mut hasher);
     match operation {
+        PdfFontOperation::Map(PdfFontMapOperation::BlockDefault) => {
+            hasher.tag(12);
+        }
         PdfFontOperation::Map(PdfFontMapOperation::File(file)) => {
             hasher.tag(0);
             hasher.tag(file.directive as u8);
@@ -3423,6 +3431,14 @@ mod tests {
             additive.font_map_file_requests(),
             [b"custom.map".to_vec(), b"pdftex.map".to_vec()]
         );
+    }
+
+    #[test]
+    fn empty_map_primitive_blocks_the_implicit_default_map() {
+        let mut state = PdfState::default();
+        state.push_font_map(PdfFontMapOperation::BlockDefault);
+        assert!(state.font_map_file_requests().is_empty());
+        assert!(state.resolved_font_map_lines().is_empty());
     }
 
     #[test]

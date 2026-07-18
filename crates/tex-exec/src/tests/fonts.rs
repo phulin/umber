@@ -69,6 +69,36 @@ fn pdf_font_output_actions_record_host_neutral_checkpointed_state() {
 }
 
 #[test]
+fn empty_pdf_map_primitives_block_the_implicit_default_map() {
+    for (name, primitive, source) in [
+        (
+            "pdfmapfile",
+            UnexpandablePrimitive::PdfMapFile,
+            "\\pdfmapfile{} \\end",
+        ),
+        (
+            "pdfmapline",
+            UnexpandablePrimitive::PdfMapLine,
+            "\\pdfmapline{   } \\end",
+        ),
+    ] {
+        let mut stores = stores_with_fonts();
+        tex_expand::install_expandable_primitives(&mut stores);
+        let symbol = stores.intern(name);
+        stores.set_meaning(symbol, Meaning::UnexpandablePrimitive(primitive));
+        let mut input = InputStack::new(MemoryInput::new(source));
+        Executor::new()
+            .run(&mut input, &mut stores)
+            .expect("empty map primitive executes");
+        assert!(matches!(
+            stores.pdf_font_maps().next(),
+            Some(tex_state::PdfFontMapOperation::BlockDefault)
+        ));
+        assert!(stores.pdf_font_map_file_requests().is_empty());
+    }
+}
+
+#[test]
 fn pdf_glyph_to_unicode_rejects_non_scalar_diagnostics() {
     let mut stores = stores_with_fonts();
     tex_expand::install_expandable_primitives(&mut stores);
