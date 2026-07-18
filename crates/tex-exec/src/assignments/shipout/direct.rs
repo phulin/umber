@@ -231,27 +231,37 @@ pub(super) fn stage_shipout(
         .finish(&emission.fonts, &overlay.effects)
         .map_err(invalid_artifact)?;
     let streamed_dvi_plan = dvi.finish(&emission.fonts).map_err(invalid_artifact)?;
-    let artifact = tex_out::PageArtifact::from_bytes(&artifact_bytes).map_err(invalid_artifact)?;
-    let positioned =
-        tex_out::positioned::lower_page_for_shipout(&artifact, 0).map_err(invalid_artifact)?;
-    let snapping = overlay.effects.iter().any(|effect| {
-        matches!(
-            effect,
-            PageEffect::PdfSnapRefPoint
-                | PageEffect::PdfSnapY { .. }
-                | PageEffect::PdfSnapYComp { .. }
-        )
-    });
-    let dvi_plan = if snapping {
-        DviPagePlan::compile(&artifact).map_err(invalid_artifact)?
+    let dvi_plan = if needs_positioned_shipout(&overlay.effects) {
+        let artifact =
+            tex_out::PageArtifact::from_bytes(&artifact_bytes).map_err(invalid_artifact)?;
+        let positioned =
+            tex_out::positioned::lower_page_for_shipout(&artifact, 0).map_err(invalid_artifact)?;
+        let snapping = overlay.effects.iter().any(|effect| {
+            matches!(
+                effect,
+                PageEffect::PdfSnapRefPoint
+                    | PageEffect::PdfSnapY { .. }
+                    | PageEffect::PdfSnapYComp { .. }
+            )
+        });
+        let dvi_plan = if snapping {
+            DviPagePlan::compile(&artifact).map_err(invalid_artifact)?
+        } else {
+            streamed_dvi_plan
+        };
+        let last_position = positioned
+            .last_saved_position
+            .map(|position| saved_position(stores, &root, position))
+            .transpose()?;
+        stores.publish_pdf_traversal_positions(last_position, positioned.snap_reference);
+        dvi_plan
     } else {
+        // The direct emitter has already built the artifact bytes and DVI
+        // plan. A positioned traversal can only change live engine state for
+        // save-position or snapping effects, so ordinary pages need no
+        // serialize -> parse -> lower round trip.
         streamed_dvi_plan
     };
-    let last_position = positioned
-        .last_saved_position
-        .map(|position| saved_position(stores, &root, position))
-        .transpose()?;
-    stores.publish_pdf_traversal_positions(last_position, positioned.snap_reference);
 
     let input_summary = input.publication_summary(stores);
     stores.set_input_summary(input_summary);
@@ -263,6 +273,18 @@ pub(super) fn stage_shipout(
         dvi_plan,
         effect_pos,
         retained_diagnostics,
+    })
+}
+
+fn needs_positioned_shipout(effects: &[PageEffect]) -> bool {
+    effects.iter().any(|effect| {
+        matches!(
+            effect,
+            PageEffect::PdfSavePosition
+                | PageEffect::PdfSnapRefPoint
+                | PageEffect::PdfSnapY { .. }
+                | PageEffect::PdfSnapYComp { .. }
+        )
     })
 }
 
@@ -342,6 +364,8 @@ fn invalid_artifact(error: impl ToString) -> ExecError {
 mod lower;
 mod materialize;
 mod normalize;
+#[cfg(test)]
+mod tests;
 
 use lower::*;
 use materialize::{emitted_list_is_empty, materialize_node_list};
