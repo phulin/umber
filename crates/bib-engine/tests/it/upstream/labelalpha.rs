@@ -1,7 +1,22 @@
 // Direct passing translation of upstream t/labelalpha.t at commit 74252e6.
 // Keep `UPSTREAM_SOURCE` byte-for-byte equivalent when editing expectations.
 
-use super::pass_upstream;
+fn pass_upstream(
+    assertion: &str,
+    actual_expression: &str,
+    expected_expression: &str,
+    upstream_call: &str,
+    upstream_source: &str,
+) {
+    super::pass_upstream(
+        assertion,
+        actual_expression,
+        expected_expression,
+        upstream_call,
+        upstream_source,
+    );
+    panic!("xfail: bib-engine has no public label-alpha data query API");
+}
 
 const UPSTREAM_SOURCE: &str = r####"# -*- cperl -*-
 use strict;
@@ -680,6 +695,7 @@ eq_or_diff($main->get_entryfield('rangetest1', 'sortlabelalpha'), 'VWXYZ..V/W/X/
 "####;
 
 #[test]
+#[ignore = "xfail: bib-engine has no public label-alpha data query API"]
 fn assertion_001_useprefix_0_so_not_in_label() {
     pass_upstream(
         "useprefix=0 so not in label",
@@ -691,6 +707,7 @@ fn assertion_001_useprefix_0_so_not_in_label() {
 }
 
 #[test]
+#[ignore = "xfail: bib-engine has no public label-alpha data query API"]
 fn assertion_002_default_prefix_settings_entry_prefix1_labelalpha() {
     pass_upstream(
         "Default prefix settings entry prefix1 labelalpha",
@@ -702,6 +719,7 @@ fn assertion_002_default_prefix_settings_entry_prefix1_labelalpha() {
 }
 
 #[test]
+#[ignore = "xfail: bib-engine has no public label-alpha data query API"]
 fn assertion_003_maxalphanames_1_minalphanames_1_entry_l1_labelalpha() {
     pass_upstream(
         "maxalphanames=1 minalphanames=1 entry L1 labelalpha",
@@ -713,6 +731,7 @@ fn assertion_003_maxalphanames_1_minalphanames_1_entry_l1_labelalpha() {
 }
 
 #[test]
+#[ignore = "xfail: bib-engine has no public label-alpha data query API"]
 fn assertion_004_maxalphanames_1_minalphanames_1_entry_l1_extraalpha() {
     pass_upstream(
         "maxalphanames=1 minalphanames=1 entry L1 extraalpha",
@@ -724,6 +743,7 @@ fn assertion_004_maxalphanames_1_minalphanames_1_entry_l1_extraalpha() {
 }
 
 #[test]
+#[ignore = "xfail: bib-engine has no public label-alpha data query API"]
 fn assertion_005_maxalphanames_1_minalphanames_1_entry_l2_labelalpha() {
     pass_upstream(
         "maxalphanames=1 minalphanames=1 entry L2 labelalpha",
@@ -735,6 +755,7 @@ fn assertion_005_maxalphanames_1_minalphanames_1_entry_l2_labelalpha() {
 }
 
 #[test]
+#[ignore = "xfail: bib-engine has no public label-alpha data query API"]
 fn assertion_006_maxalphanames_1_minalphanames_1_entry_l2_extraalpha() {
     pass_upstream(
         "maxalphanames=1 minalphanames=1 entry L2 extraalpha",
@@ -746,6 +767,7 @@ fn assertion_006_maxalphanames_1_minalphanames_1_entry_l2_extraalpha() {
 }
 
 #[test]
+#[ignore = "xfail: bib-engine has no public label-alpha data query API"]
 fn assertion_007_maxalphanames_1_minalphanames_1_entry_l3_labelalpha() {
     pass_upstream(
         "maxalphanames=1 minalphanames=1 entry L3 labelalpha",
@@ -757,6 +779,7 @@ fn assertion_007_maxalphanames_1_minalphanames_1_entry_l3_labelalpha() {
 }
 
 #[test]
+#[ignore = "xfail: bib-engine has no public label-alpha data query API"]
 fn assertion_008_maxalphanames_1_minalphanames_1_entry_l3_extraalpha() {
     pass_upstream(
         "maxalphanames=1 minalphanames=1 entry L3 extraalpha",
@@ -768,6 +791,7 @@ fn assertion_008_maxalphanames_1_minalphanames_1_entry_l3_extraalpha() {
 }
 
 #[test]
+#[ignore = "xfail: bib-engine has no public label-alpha data query API"]
 fn assertion_009_maxalphanames_1_minalphanames_1_entry_l4_labelalpha() {
     pass_upstream(
         "maxalphanames=1 minalphanames=1 entry L4 labelalpha",
@@ -779,6 +803,7 @@ fn assertion_009_maxalphanames_1_minalphanames_1_entry_l4_labelalpha() {
 }
 
 #[test]
+#[ignore = "xfail: bib-engine has no public label-alpha data query API"]
 fn assertion_010_maxalphanames_1_minalphanames_1_entry_l4_extraalpha() {
     pass_upstream(
         "maxalphanames=1 minalphanames=1 entry L4 extraalpha",
@@ -790,6 +815,7 @@ fn assertion_010_maxalphanames_1_minalphanames_1_entry_l4_extraalpha() {
 }
 
 #[test]
+#[ignore = "xfail: bib-engine has no public label-alpha data query API"]
 fn assertion_011_maxalphanames_1_minalphanames_1_entry_l5_labelalpha() {
     pass_upstream(
         "maxalphanames=1 minalphanames=1 entry L5 labelalpha",
@@ -801,6 +827,7 @@ fn assertion_011_maxalphanames_1_minalphanames_1_entry_l5_labelalpha() {
 }
 
 #[test]
+#[ignore = "xfail: bib-engine has no public label-alpha data query API"]
 fn assertion_012_maxalphanames_1_minalphanames_1_entry_l5_extraalpha() {
     pass_upstream(
         "maxalphanames=1 minalphanames=1 entry L5 extraalpha",
@@ -812,6 +839,7 @@ fn assertion_012_maxalphanames_1_minalphanames_1_entry_l5_extraalpha() {
 }
 
 #[test]
+#[ignore = "xfail: bib-engine has no public label-alpha data query API"]
 fn assertion_013_maxalphanames_1_minalphanames_1_entry_l6_labelalpha() {
     pass_upstream(
         "maxalphanames=1 minalphanames=1 entry L6 labelalpha",
@@ -823,6 +851,7 @@ fn assertion_013_maxalphanames_1_minalphanames_1_entry_l6_labelalpha() {
 }
 
 #[test]
+#[ignore = "xfail: bib-engine has no public label-alpha data query API"]
 fn assertion_014_maxalphanames_1_minalphanames_1_entry_l6_extraalpha() {
     pass_upstream(
         "maxalphanames=1 minalphanames=1 entry L6 extraalpha",
@@ -834,6 +863,7 @@ fn assertion_014_maxalphanames_1_minalphanames_1_entry_l6_extraalpha() {
 }
 
 #[test]
+#[ignore = "xfail: bib-engine has no public label-alpha data query API"]
 fn assertion_015_maxalphanames_1_minalphanames_1_entry_l7_labelalpha() {
     pass_upstream(
         "maxalphanames=1 minalphanames=1 entry L7 labelalpha",
@@ -845,6 +875,7 @@ fn assertion_015_maxalphanames_1_minalphanames_1_entry_l7_labelalpha() {
 }
 
 #[test]
+#[ignore = "xfail: bib-engine has no public label-alpha data query API"]
 fn assertion_016_maxalphanames_1_minalphanames_1_entry_l7_extraalpha() {
     pass_upstream(
         "maxalphanames=1 minalphanames=1 entry L7 extraalpha",
@@ -856,6 +887,7 @@ fn assertion_016_maxalphanames_1_minalphanames_1_entry_l7_extraalpha() {
 }
 
 #[test]
+#[ignore = "xfail: bib-engine has no public label-alpha data query API"]
 fn assertion_017_maxalphanames_1_minalphanames_1_entry_l8_labelalpha() {
     pass_upstream(
         "maxalphanames=1 minalphanames=1 entry L8 labelalpha",
@@ -867,6 +899,7 @@ fn assertion_017_maxalphanames_1_minalphanames_1_entry_l8_labelalpha() {
 }
 
 #[test]
+#[ignore = "xfail: bib-engine has no public label-alpha data query API"]
 fn assertion_018_maxalphanames_1_minalphanames_1_entry_l8_extraalpha() {
     pass_upstream(
         "maxalphanames=1 minalphanames=1 entry L8 extraalpha",
@@ -878,6 +911,7 @@ fn assertion_018_maxalphanames_1_minalphanames_1_entry_l8_extraalpha() {
 }
 
 #[test]
+#[ignore = "xfail: bib-engine has no public label-alpha data query API"]
 fn assertion_019_l9_extraalpha_unset_due_to_shorthand() {
     pass_upstream(
         "L9 extraalpha unset due to shorthand",
@@ -889,6 +923,7 @@ fn assertion_019_l9_extraalpha_unset_due_to_shorthand() {
 }
 
 #[test]
+#[ignore = "xfail: bib-engine has no public label-alpha data query API"]
 fn assertion_020_l10_extraalpha_unset_due_to_shorthand() {
     pass_upstream(
         "L10 extraalpha unset due to shorthand",
@@ -900,6 +935,7 @@ fn assertion_020_l10_extraalpha_unset_due_to_shorthand() {
 }
 
 #[test]
+#[ignore = "xfail: bib-engine has no public label-alpha data query API"]
 fn assertion_021_year_with_range_needs_label_differentiating_from_individual_volumes_1() {
     pass_upstream(
         "YEAR with range needs label differentiating from individual volumes - 1",
@@ -911,6 +947,7 @@ fn assertion_021_year_with_range_needs_label_differentiating_from_individual_vol
 }
 
 #[test]
+#[ignore = "xfail: bib-engine has no public label-alpha data query API"]
 fn assertion_022_year_with_range_needs_label_differentiating_from_individual_volumes_2() {
     pass_upstream(
         "YEAR with range needs label differentiating from individual volumes - 2",
@@ -922,6 +959,7 @@ fn assertion_022_year_with_range_needs_label_differentiating_from_individual_vol
 }
 
 #[test]
+#[ignore = "xfail: bib-engine has no public label-alpha data query API"]
 fn assertion_023_year_with_range_needs_label_differentiating_from_individual_volumes_3() {
     pass_upstream(
         "YEAR with range needs label differentiating from individual volumes - 3",
@@ -933,6 +971,7 @@ fn assertion_023_year_with_range_needs_label_differentiating_from_individual_vol
 }
 
 #[test]
+#[ignore = "xfail: bib-engine has no public label-alpha data query API"]
 fn assertion_024_year_with_range_needs_label_differentiating_from_individual_volumes_4() {
     pass_upstream(
         "YEAR with range needs label differentiating from individual volumes - 4",
@@ -944,6 +983,7 @@ fn assertion_024_year_with_range_needs_label_differentiating_from_individual_vol
 }
 
 #[test]
+#[ignore = "xfail: bib-engine has no public label-alpha data query API"]
 fn assertion_025_default_ignore() {
     pass_upstream(
         "Default ignore",
@@ -955,6 +995,7 @@ fn assertion_025_default_ignore() {
 }
 
 #[test]
+#[ignore = "xfail: bib-engine has no public label-alpha data query API"]
 fn assertion_026_default_no_ignore_spaces() {
     pass_upstream(
         "Default no ignore spaces",
@@ -966,6 +1007,7 @@ fn assertion_026_default_no_ignore_spaces() {
 }
 
 #[test]
+#[ignore = "xfail: bib-engine has no public label-alpha data query API"]
 fn assertion_027_maxalphanames_2_minalphanames_1_entry_l1_labelalpha() {
     pass_upstream(
         "maxalphanames=2 minalphanames=1 entry L1 labelalpha",
@@ -977,6 +1019,7 @@ fn assertion_027_maxalphanames_2_minalphanames_1_entry_l1_labelalpha() {
 }
 
 #[test]
+#[ignore = "xfail: bib-engine has no public label-alpha data query API"]
 fn assertion_028_maxalphanames_2_minalphanames_1_entry_l1_extraalpha() {
     pass_upstream(
         "maxalphanames=2 minalphanames=1 entry L1 extraalpha",
@@ -988,6 +1031,7 @@ fn assertion_028_maxalphanames_2_minalphanames_1_entry_l1_extraalpha() {
 }
 
 #[test]
+#[ignore = "xfail: bib-engine has no public label-alpha data query API"]
 fn assertion_029_maxalphanames_2_minalphanames_1_entry_l2_labelalpha() {
     pass_upstream(
         "maxalphanames=2 minalphanames=1 entry L2 labelalpha",
@@ -999,6 +1043,7 @@ fn assertion_029_maxalphanames_2_minalphanames_1_entry_l2_labelalpha() {
 }
 
 #[test]
+#[ignore = "xfail: bib-engine has no public label-alpha data query API"]
 fn assertion_030_maxalphanames_2_minalphanames_1_entry_l2_extraalpha() {
     pass_upstream(
         "maxalphanames=2 minalphanames=1 entry L2 extraalpha",
@@ -1010,6 +1055,7 @@ fn assertion_030_maxalphanames_2_minalphanames_1_entry_l2_extraalpha() {
 }
 
 #[test]
+#[ignore = "xfail: bib-engine has no public label-alpha data query API"]
 fn assertion_031_maxalphanames_2_minalphanames_1_entry_l3_labelalpha() {
     pass_upstream(
         "maxalphanames=2 minalphanames=1 entry L3 labelalpha",
@@ -1021,6 +1067,7 @@ fn assertion_031_maxalphanames_2_minalphanames_1_entry_l3_labelalpha() {
 }
 
 #[test]
+#[ignore = "xfail: bib-engine has no public label-alpha data query API"]
 fn assertion_032_maxalphanames_2_minalphanames_1_entry_l3_extraalpha() {
     pass_upstream(
         "maxalphanames=2 minalphanames=1 entry L3 extraalpha",
@@ -1032,6 +1079,7 @@ fn assertion_032_maxalphanames_2_minalphanames_1_entry_l3_extraalpha() {
 }
 
 #[test]
+#[ignore = "xfail: bib-engine has no public label-alpha data query API"]
 fn assertion_033_maxalphanames_2_minalphanames_1_entry_l4_labelalpha() {
     pass_upstream(
         "maxalphanames=2 minalphanames=1 entry L4 labelalpha",
@@ -1043,6 +1091,7 @@ fn assertion_033_maxalphanames_2_minalphanames_1_entry_l4_labelalpha() {
 }
 
 #[test]
+#[ignore = "xfail: bib-engine has no public label-alpha data query API"]
 fn assertion_034_maxalphanames_2_minalphanames_1_entry_l4_extraalpha() {
     pass_upstream(
         "maxalphanames=2 minalphanames=1 entry L4 extraalpha",
@@ -1054,6 +1103,7 @@ fn assertion_034_maxalphanames_2_minalphanames_1_entry_l4_extraalpha() {
 }
 
 #[test]
+#[ignore = "xfail: bib-engine has no public label-alpha data query API"]
 fn assertion_035_maxalphanames_2_minalphanames_1_entry_l5_labelalpha() {
     pass_upstream(
         "maxalphanames=2 minalphanames=1 entry L5 labelalpha",
@@ -1065,6 +1115,7 @@ fn assertion_035_maxalphanames_2_minalphanames_1_entry_l5_labelalpha() {
 }
 
 #[test]
+#[ignore = "xfail: bib-engine has no public label-alpha data query API"]
 fn assertion_036_maxalphanames_2_minalphanames_1_entry_l5_extraalpha() {
     pass_upstream(
         "maxalphanames=2 minalphanames=1 entry L5 extraalpha",
@@ -1076,6 +1127,7 @@ fn assertion_036_maxalphanames_2_minalphanames_1_entry_l5_extraalpha() {
 }
 
 #[test]
+#[ignore = "xfail: bib-engine has no public label-alpha data query API"]
 fn assertion_037_maxalphanames_2_minalphanames_1_entry_l6_labelalpha() {
     pass_upstream(
         "maxalphanames=2 minalphanames=1 entry L6 labelalpha",
@@ -1087,6 +1139,7 @@ fn assertion_037_maxalphanames_2_minalphanames_1_entry_l6_labelalpha() {
 }
 
 #[test]
+#[ignore = "xfail: bib-engine has no public label-alpha data query API"]
 fn assertion_038_maxalphanames_2_minalphanames_1_entry_l6_extraalpha() {
     pass_upstream(
         "maxalphanames=2 minalphanames=1 entry L6 extraalpha",
@@ -1098,6 +1151,7 @@ fn assertion_038_maxalphanames_2_minalphanames_1_entry_l6_extraalpha() {
 }
 
 #[test]
+#[ignore = "xfail: bib-engine has no public label-alpha data query API"]
 fn assertion_039_maxalphanames_2_minalphanames_1_entry_l7_labelalpha() {
     pass_upstream(
         "maxalphanames=2 minalphanames=1 entry L7 labelalpha",
@@ -1109,6 +1163,7 @@ fn assertion_039_maxalphanames_2_minalphanames_1_entry_l7_labelalpha() {
 }
 
 #[test]
+#[ignore = "xfail: bib-engine has no public label-alpha data query API"]
 fn assertion_040_maxalphanames_2_minalphanames_1_entry_l7_extraalpha() {
     pass_upstream(
         "maxalphanames=2 minalphanames=1 entry L7 extraalpha",
@@ -1120,6 +1175,7 @@ fn assertion_040_maxalphanames_2_minalphanames_1_entry_l7_extraalpha() {
 }
 
 #[test]
+#[ignore = "xfail: bib-engine has no public label-alpha data query API"]
 fn assertion_041_maxalphanames_2_minalphanames_1_entry_l8_labelalpha() {
     pass_upstream(
         "maxalphanames=2 minalphanames=1 entry L8 labelalpha",
@@ -1131,6 +1187,7 @@ fn assertion_041_maxalphanames_2_minalphanames_1_entry_l8_labelalpha() {
 }
 
 #[test]
+#[ignore = "xfail: bib-engine has no public label-alpha data query API"]
 fn assertion_042_maxalphanames_2_minalphanames_1_entry_l8_extraalpha() {
     pass_upstream(
         "maxalphanames=2 minalphanames=1 entry L8 extraalpha",
@@ -1142,6 +1199,7 @@ fn assertion_042_maxalphanames_2_minalphanames_1_entry_l8_extraalpha() {
 }
 
 #[test]
+#[ignore = "xfail: bib-engine has no public label-alpha data query API"]
 fn assertion_043_maxalphanames_2_minalphanames_2_entry_l1_labelalpha() {
     pass_upstream(
         "maxalphanames=2 minalphanames=2 entry L1 labelalpha",
@@ -1153,6 +1211,7 @@ fn assertion_043_maxalphanames_2_minalphanames_2_entry_l1_labelalpha() {
 }
 
 #[test]
+#[ignore = "xfail: bib-engine has no public label-alpha data query API"]
 fn assertion_044_maxalphanames_2_minalphanames_2_entry_l1_extraalpha() {
     pass_upstream(
         "maxalphanames=2 minalphanames=2 entry L1 extraalpha",
@@ -1164,6 +1223,7 @@ fn assertion_044_maxalphanames_2_minalphanames_2_entry_l1_extraalpha() {
 }
 
 #[test]
+#[ignore = "xfail: bib-engine has no public label-alpha data query API"]
 fn assertion_045_maxalphanames_2_minalphanames_2_entry_l2_labelalpha() {
     pass_upstream(
         "maxalphanames=2 minalphanames=2 entry L2 labelalpha",
@@ -1175,6 +1235,7 @@ fn assertion_045_maxalphanames_2_minalphanames_2_entry_l2_labelalpha() {
 }
 
 #[test]
+#[ignore = "xfail: bib-engine has no public label-alpha data query API"]
 fn assertion_046_maxalphanames_2_minalphanames_2_entry_l2_extraalpha() {
     pass_upstream(
         "maxalphanames=2 minalphanames=2 entry L2 extraalpha",
@@ -1186,6 +1247,7 @@ fn assertion_046_maxalphanames_2_minalphanames_2_entry_l2_extraalpha() {
 }
 
 #[test]
+#[ignore = "xfail: bib-engine has no public label-alpha data query API"]
 fn assertion_047_maxalphanames_2_minalphanames_2_entry_l3_labelalpha() {
     pass_upstream(
         "maxalphanames=2 minalphanames=2 entry L3 labelalpha",
@@ -1197,6 +1259,7 @@ fn assertion_047_maxalphanames_2_minalphanames_2_entry_l3_labelalpha() {
 }
 
 #[test]
+#[ignore = "xfail: bib-engine has no public label-alpha data query API"]
 fn assertion_048_maxalphanames_2_minalphanames_2_entry_l3_extraalpha() {
     pass_upstream(
         "maxalphanames=2 minalphanames=2 entry L3 extraalpha",
@@ -1208,6 +1271,7 @@ fn assertion_048_maxalphanames_2_minalphanames_2_entry_l3_extraalpha() {
 }
 
 #[test]
+#[ignore = "xfail: bib-engine has no public label-alpha data query API"]
 fn assertion_049_maxalphanames_2_minalphanames_2_entry_l4_labelalpha() {
     pass_upstream(
         "maxalphanames=2 minalphanames=2 entry L4 labelalpha",
@@ -1219,6 +1283,7 @@ fn assertion_049_maxalphanames_2_minalphanames_2_entry_l4_labelalpha() {
 }
 
 #[test]
+#[ignore = "xfail: bib-engine has no public label-alpha data query API"]
 fn assertion_050_maxalphanames_2_minalphanames_2_entry_l4_extraalpha() {
     pass_upstream(
         "maxalphanames=2 minalphanames=2 entry L4 extraalpha",
@@ -1230,6 +1295,7 @@ fn assertion_050_maxalphanames_2_minalphanames_2_entry_l4_extraalpha() {
 }
 
 #[test]
+#[ignore = "xfail: bib-engine has no public label-alpha data query API"]
 fn assertion_051_maxalphanames_2_minalphanames_2_entry_l5_labelalpha() {
     pass_upstream(
         "maxalphanames=2 minalphanames=2 entry L5 labelalpha",
@@ -1241,6 +1307,7 @@ fn assertion_051_maxalphanames_2_minalphanames_2_entry_l5_labelalpha() {
 }
 
 #[test]
+#[ignore = "xfail: bib-engine has no public label-alpha data query API"]
 fn assertion_052_maxalphanames_2_minalphanames_2_entry_l5_extraalpha() {
     pass_upstream(
         "maxalphanames=2 minalphanames=2 entry L5 extraalpha",
@@ -1252,6 +1319,7 @@ fn assertion_052_maxalphanames_2_minalphanames_2_entry_l5_extraalpha() {
 }
 
 #[test]
+#[ignore = "xfail: bib-engine has no public label-alpha data query API"]
 fn assertion_053_maxalphanames_2_minalphanames_2_entry_l6_labelalpha() {
     pass_upstream(
         "maxalphanames=2 minalphanames=2 entry L6 labelalpha",
@@ -1263,6 +1331,7 @@ fn assertion_053_maxalphanames_2_minalphanames_2_entry_l6_labelalpha() {
 }
 
 #[test]
+#[ignore = "xfail: bib-engine has no public label-alpha data query API"]
 fn assertion_054_maxalphanames_2_minalphanames_2_entry_l6_extraalpha() {
     pass_upstream(
         "maxalphanames=2 minalphanames=2 entry L6 extraalpha",
@@ -1274,6 +1343,7 @@ fn assertion_054_maxalphanames_2_minalphanames_2_entry_l6_extraalpha() {
 }
 
 #[test]
+#[ignore = "xfail: bib-engine has no public label-alpha data query API"]
 fn assertion_055_maxalphanames_2_minalphanames_2_entry_l7_labelalpha() {
     pass_upstream(
         "maxalphanames=2 minalphanames=2 entry L7 labelalpha",
@@ -1285,6 +1355,7 @@ fn assertion_055_maxalphanames_2_minalphanames_2_entry_l7_labelalpha() {
 }
 
 #[test]
+#[ignore = "xfail: bib-engine has no public label-alpha data query API"]
 fn assertion_056_maxalphanames_2_minalphanames_2_entry_l7_extraalpha() {
     pass_upstream(
         "maxalphanames=2 minalphanames=2 entry L7 extraalpha",
@@ -1296,6 +1367,7 @@ fn assertion_056_maxalphanames_2_minalphanames_2_entry_l7_extraalpha() {
 }
 
 #[test]
+#[ignore = "xfail: bib-engine has no public label-alpha data query API"]
 fn assertion_057_maxalphanames_2_minalphanames_2_entry_l8_labelalpha() {
     pass_upstream(
         "maxalphanames=2 minalphanames=2 entry L8 labelalpha",
@@ -1307,6 +1379,7 @@ fn assertion_057_maxalphanames_2_minalphanames_2_entry_l8_labelalpha() {
 }
 
 #[test]
+#[ignore = "xfail: bib-engine has no public label-alpha data query API"]
 fn assertion_058_maxalphanames_2_minalphanames_2_entry_l8_extraalpha() {
     pass_upstream(
         "maxalphanames=2 minalphanames=2 entry L8 extraalpha",
@@ -1318,6 +1391,7 @@ fn assertion_058_maxalphanames_2_minalphanames_2_entry_l8_extraalpha() {
 }
 
 #[test]
+#[ignore = "xfail: bib-engine has no public label-alpha data query API"]
 fn assertion_059_maxalphanames_3_minalphanames_1_entry_l1_labelalpha() {
     pass_upstream(
         "maxalphanames=3 minalphanames=1 entry L1 labelalpha",
@@ -1329,6 +1403,7 @@ fn assertion_059_maxalphanames_3_minalphanames_1_entry_l1_labelalpha() {
 }
 
 #[test]
+#[ignore = "xfail: bib-engine has no public label-alpha data query API"]
 fn assertion_060_maxalphanames_3_minalphanames_1_entry_l1_extraalpha() {
     pass_upstream(
         "maxalphanames=3 minalphanames=1 entry L1 extraalpha",
@@ -1340,6 +1415,7 @@ fn assertion_060_maxalphanames_3_minalphanames_1_entry_l1_extraalpha() {
 }
 
 #[test]
+#[ignore = "xfail: bib-engine has no public label-alpha data query API"]
 fn assertion_061_maxalphanames_3_minalphanames_1_entry_l2_labelalpha() {
     pass_upstream(
         "maxalphanames=3 minalphanames=1 entry L2 labelalpha",
@@ -1351,6 +1427,7 @@ fn assertion_061_maxalphanames_3_minalphanames_1_entry_l2_labelalpha() {
 }
 
 #[test]
+#[ignore = "xfail: bib-engine has no public label-alpha data query API"]
 fn assertion_062_maxalphanames_3_minalphanames_1_entry_l2_extraalpha() {
     pass_upstream(
         "maxalphanames=3 minalphanames=1 entry L2 extraalpha",
@@ -1362,6 +1439,7 @@ fn assertion_062_maxalphanames_3_minalphanames_1_entry_l2_extraalpha() {
 }
 
 #[test]
+#[ignore = "xfail: bib-engine has no public label-alpha data query API"]
 fn assertion_063_maxalphanames_3_minalphanames_1_entry_l3_labelalpha() {
     pass_upstream(
         "maxalphanames=3 minalphanames=1 entry L3 labelalpha",
@@ -1373,6 +1451,7 @@ fn assertion_063_maxalphanames_3_minalphanames_1_entry_l3_labelalpha() {
 }
 
 #[test]
+#[ignore = "xfail: bib-engine has no public label-alpha data query API"]
 fn assertion_064_maxalphanames_3_minalphanames_1_entry_l3_extraalpha() {
     pass_upstream(
         "maxalphanames=3 minalphanames=1 entry L3 extraalpha",
@@ -1384,6 +1463,7 @@ fn assertion_064_maxalphanames_3_minalphanames_1_entry_l3_extraalpha() {
 }
 
 #[test]
+#[ignore = "xfail: bib-engine has no public label-alpha data query API"]
 fn assertion_065_maxalphanames_3_minalphanames_1_entry_l4_labelalpha() {
     pass_upstream(
         "maxalphanames=3 minalphanames=1 entry L4 labelalpha",
@@ -1395,6 +1475,7 @@ fn assertion_065_maxalphanames_3_minalphanames_1_entry_l4_labelalpha() {
 }
 
 #[test]
+#[ignore = "xfail: bib-engine has no public label-alpha data query API"]
 fn assertion_066_maxalphanames_3_minalphanames_1_entry_l4_extraalpha() {
     pass_upstream(
         "maxalphanames=3 minalphanames=1 entry L4 extraalpha",
@@ -1406,6 +1487,7 @@ fn assertion_066_maxalphanames_3_minalphanames_1_entry_l4_extraalpha() {
 }
 
 #[test]
+#[ignore = "xfail: bib-engine has no public label-alpha data query API"]
 fn assertion_067_maxalphanames_3_minalphanames_1_entry_l5_labelalpha() {
     pass_upstream(
         "maxalphanames=3 minalphanames=1 entry L5 labelalpha",
@@ -1417,6 +1499,7 @@ fn assertion_067_maxalphanames_3_minalphanames_1_entry_l5_labelalpha() {
 }
 
 #[test]
+#[ignore = "xfail: bib-engine has no public label-alpha data query API"]
 fn assertion_068_maxalphanames_3_minalphanames_1_entry_l5_extraalpha() {
     pass_upstream(
         "maxalphanames=3 minalphanames=1 entry L5 extraalpha",
@@ -1428,6 +1511,7 @@ fn assertion_068_maxalphanames_3_minalphanames_1_entry_l5_extraalpha() {
 }
 
 #[test]
+#[ignore = "xfail: bib-engine has no public label-alpha data query API"]
 fn assertion_069_maxalphanames_3_minalphanames_1_entry_l6_labelalpha() {
     pass_upstream(
         "maxalphanames=3 minalphanames=1 entry L6 labelalpha",
@@ -1439,6 +1523,7 @@ fn assertion_069_maxalphanames_3_minalphanames_1_entry_l6_labelalpha() {
 }
 
 #[test]
+#[ignore = "xfail: bib-engine has no public label-alpha data query API"]
 fn assertion_070_maxalphanames_3_minalphanames_1_entry_l6_extraalpha() {
     pass_upstream(
         "maxalphanames=3 minalphanames=1 entry L6 extraalpha",
@@ -1450,6 +1535,7 @@ fn assertion_070_maxalphanames_3_minalphanames_1_entry_l6_extraalpha() {
 }
 
 #[test]
+#[ignore = "xfail: bib-engine has no public label-alpha data query API"]
 fn assertion_071_maxalphanames_3_minalphanames_1_entry_l7_labelalpha() {
     pass_upstream(
         "maxalphanames=3 minalphanames=1 entry L7 labelalpha",
@@ -1461,6 +1547,7 @@ fn assertion_071_maxalphanames_3_minalphanames_1_entry_l7_labelalpha() {
 }
 
 #[test]
+#[ignore = "xfail: bib-engine has no public label-alpha data query API"]
 fn assertion_072_maxalphanames_3_minalphanames_1_entry_l7_extraalpha() {
     pass_upstream(
         "maxalphanames=3 minalphanames=1 entry L7 extraalpha",
@@ -1472,6 +1559,7 @@ fn assertion_072_maxalphanames_3_minalphanames_1_entry_l7_extraalpha() {
 }
 
 #[test]
+#[ignore = "xfail: bib-engine has no public label-alpha data query API"]
 fn assertion_073_maxalphanames_3_minalphanames_1_entry_l8_labelalpha() {
     pass_upstream(
         "maxalphanames=3 minalphanames=1 entry L8 labelalpha",
@@ -1483,6 +1571,7 @@ fn assertion_073_maxalphanames_3_minalphanames_1_entry_l8_labelalpha() {
 }
 
 #[test]
+#[ignore = "xfail: bib-engine has no public label-alpha data query API"]
 fn assertion_074_maxalphanames_3_minalphanames_1_entry_l8_extraalpha() {
     pass_upstream(
         "maxalphanames=3 minalphanames=1 entry L8 extraalpha",
@@ -1494,6 +1583,7 @@ fn assertion_074_maxalphanames_3_minalphanames_1_entry_l8_extraalpha() {
 }
 
 #[test]
+#[ignore = "xfail: bib-engine has no public label-alpha data query API"]
 fn assertion_075_testing_compound_lastnames_1() {
     pass_upstream(
         "Testing compound lastnames 1",
@@ -1505,6 +1595,7 @@ fn assertion_075_testing_compound_lastnames_1() {
 }
 
 #[test]
+#[ignore = "xfail: bib-engine has no public label-alpha data query API"]
 fn assertion_076_testing_compound_lastnames_2() {
     pass_upstream(
         "Testing compound lastnames 2",
@@ -1516,6 +1607,7 @@ fn assertion_076_testing_compound_lastnames_2() {
 }
 
 #[test]
+#[ignore = "xfail: bib-engine has no public label-alpha data query API"]
 fn assertion_077_testing_with_multiple_pre_and_main_and_width_side_override() {
     pass_upstream(
         "Testing with multiple pre and main and width/side override",
@@ -1527,6 +1619,7 @@ fn assertion_077_testing_with_multiple_pre_and_main_and_width_side_override() {
 }
 
 #[test]
+#[ignore = "xfail: bib-engine has no public label-alpha data query API"]
 fn assertion_078_prefix_labelalpha_1() {
     pass_upstream(
         "prefix labelalpha 1",
@@ -1538,6 +1631,7 @@ fn assertion_078_prefix_labelalpha_1() {
 }
 
 #[test]
+#[ignore = "xfail: bib-engine has no public label-alpha data query API"]
 fn assertion_079_prefix_labelalpha_2() {
     pass_upstream(
         "prefix labelalpha 2",
@@ -1549,6 +1643,7 @@ fn assertion_079_prefix_labelalpha_2() {
 }
 
 #[test]
+#[ignore = "xfail: bib-engine has no public label-alpha data query API"]
 fn assertion_080_per_type_labelalpha_1() {
     pass_upstream(
         "per-type labelalpha 1",
@@ -1560,6 +1655,7 @@ fn assertion_080_per_type_labelalpha_1() {
 }
 
 #[test]
+#[ignore = "xfail: bib-engine has no public label-alpha data query API"]
 fn assertion_081_per_type_labelalpha_2() {
     pass_upstream(
         "per-type labelalpha 2",
@@ -1571,6 +1667,7 @@ fn assertion_081_per_type_labelalpha_2() {
 }
 
 #[test]
+#[ignore = "xfail: bib-engine has no public label-alpha data query API"]
 fn assertion_082_labelalpha_disambiguation_1() {
     pass_upstream(
         "labelalpha disambiguation 1",
@@ -1582,6 +1679,7 @@ fn assertion_082_labelalpha_disambiguation_1() {
 }
 
 #[test]
+#[ignore = "xfail: bib-engine has no public label-alpha data query API"]
 fn assertion_083_labelalpha_disambiguation_2() {
     pass_upstream(
         "labelalpha disambiguation 2",
@@ -1593,6 +1691,7 @@ fn assertion_083_labelalpha_disambiguation_2() {
 }
 
 #[test]
+#[ignore = "xfail: bib-engine has no public label-alpha data query API"]
 fn assertion_084_labelalpha_disambiguation_2a() {
     pass_upstream(
         "labelalpha disambiguation 2a",
@@ -1604,6 +1703,7 @@ fn assertion_084_labelalpha_disambiguation_2a() {
 }
 
 #[test]
+#[ignore = "xfail: bib-engine has no public label-alpha data query API"]
 fn assertion_085_labelalpha_disambiguation_2c() {
     pass_upstream(
         "labelalpha disambiguation 2c",
@@ -1615,6 +1715,7 @@ fn assertion_085_labelalpha_disambiguation_2c() {
 }
 
 #[test]
+#[ignore = "xfail: bib-engine has no public label-alpha data query API"]
 fn assertion_086_labelalpha_disambiguation_2d() {
     pass_upstream(
         "labelalpha disambiguation 2d",
@@ -1626,6 +1727,7 @@ fn assertion_086_labelalpha_disambiguation_2d() {
 }
 
 #[test]
+#[ignore = "xfail: bib-engine has no public label-alpha data query API"]
 fn assertion_087_labelalpha_disambiguation_3() {
     pass_upstream(
         "labelalpha disambiguation 3",
@@ -1637,6 +1739,7 @@ fn assertion_087_labelalpha_disambiguation_3() {
 }
 
 #[test]
+#[ignore = "xfail: bib-engine has no public label-alpha data query API"]
 fn assertion_088_custom_labelalpha_extradate_1() {
     pass_upstream(
         "custom labelalpha extradate 1",
@@ -1648,6 +1751,7 @@ fn assertion_088_custom_labelalpha_extradate_1() {
 }
 
 #[test]
+#[ignore = "xfail: bib-engine has no public label-alpha data query API"]
 fn assertion_089_labelalpha_disambiguation_4() {
     pass_upstream(
         "labelalpha disambiguation 4",
@@ -1659,6 +1763,7 @@ fn assertion_089_labelalpha_disambiguation_4() {
 }
 
 #[test]
+#[ignore = "xfail: bib-engine has no public label-alpha data query API"]
 fn assertion_090_labelalpha_disambiguation_5() {
     pass_upstream(
         "labelalpha disambiguation 5",
@@ -1670,6 +1775,7 @@ fn assertion_090_labelalpha_disambiguation_5() {
 }
 
 #[test]
+#[ignore = "xfail: bib-engine has no public label-alpha data query API"]
 fn assertion_091_labelalpha_disambiguation_6() {
     pass_upstream(
         "labelalpha disambiguation 6",
@@ -1681,6 +1787,7 @@ fn assertion_091_labelalpha_disambiguation_6() {
 }
 
 #[test]
+#[ignore = "xfail: bib-engine has no public label-alpha data query API"]
 fn assertion_092_labelalpha_disambiguation_7() {
     pass_upstream(
         "labelalpha disambiguation 7",
@@ -1692,6 +1799,7 @@ fn assertion_092_labelalpha_disambiguation_7() {
 }
 
 #[test]
+#[ignore = "xfail: bib-engine has no public label-alpha data query API"]
 fn assertion_093_labelalpha_disambiguation_8() {
     pass_upstream(
         "labelalpha disambiguation 8",
@@ -1703,6 +1811,7 @@ fn assertion_093_labelalpha_disambiguation_8() {
 }
 
 #[test]
+#[ignore = "xfail: bib-engine has no public label-alpha data query API"]
 fn assertion_094_labelalpha_disambiguation_9() {
     pass_upstream(
         "labelalpha disambiguation 9",
@@ -1714,6 +1823,7 @@ fn assertion_094_labelalpha_disambiguation_9() {
 }
 
 #[test]
+#[ignore = "xfail: bib-engine has no public label-alpha data query API"]
 fn assertion_095_labelalpha_disambiguation_10() {
     pass_upstream(
         "labelalpha disambiguation 10",
@@ -1725,6 +1835,7 @@ fn assertion_095_labelalpha_disambiguation_10() {
 }
 
 #[test]
+#[ignore = "xfail: bib-engine has no public label-alpha data query API"]
 fn assertion_096_labelalpha_disambiguation_11() {
     pass_upstream(
         "labelalpha disambiguation 11",
@@ -1736,6 +1847,7 @@ fn assertion_096_labelalpha_disambiguation_11() {
 }
 
 #[test]
+#[ignore = "xfail: bib-engine has no public label-alpha data query API"]
 fn assertion_097_labelalpha_disambiguation_12() {
     pass_upstream(
         "labelalpha disambiguation 12",
@@ -1747,6 +1859,7 @@ fn assertion_097_labelalpha_disambiguation_12() {
 }
 
 #[test]
+#[ignore = "xfail: bib-engine has no public label-alpha data query API"]
 fn assertion_098_labelalpha_list_disambiguation_1() {
     pass_upstream(
         "labelalpha list disambiguation 1",
@@ -1758,6 +1871,7 @@ fn assertion_098_labelalpha_list_disambiguation_1() {
 }
 
 #[test]
+#[ignore = "xfail: bib-engine has no public label-alpha data query API"]
 fn assertion_099_labelalpha_list_disambiguation_2() {
     pass_upstream(
         "labelalpha list disambiguation 2",
@@ -1769,6 +1883,7 @@ fn assertion_099_labelalpha_list_disambiguation_2() {
 }
 
 #[test]
+#[ignore = "xfail: bib-engine has no public label-alpha data query API"]
 fn assertion_100_labelalpha_list_disambiguation_3() {
     pass_upstream(
         "labelalpha list disambiguation 3",
@@ -1780,6 +1895,7 @@ fn assertion_100_labelalpha_list_disambiguation_3() {
 }
 
 #[test]
+#[ignore = "xfail: bib-engine has no public label-alpha data query API"]
 fn assertion_101_labelalpha_list_disambiguation_4() {
     pass_upstream(
         "labelalpha list disambiguation 4",
@@ -1791,6 +1907,7 @@ fn assertion_101_labelalpha_list_disambiguation_4() {
 }
 
 #[test]
+#[ignore = "xfail: bib-engine has no public label-alpha data query API"]
 fn assertion_102_labelalpha_list_disambiguation_5() {
     pass_upstream(
         "labelalpha list disambiguation 5",
@@ -1802,6 +1919,7 @@ fn assertion_102_labelalpha_list_disambiguation_5() {
 }
 
 #[test]
+#[ignore = "xfail: bib-engine has no public label-alpha data query API"]
 fn assertion_103_labelalpha_list_disambiguation_6() {
     pass_upstream(
         "labelalpha list disambiguation 6",
@@ -1813,6 +1931,7 @@ fn assertion_103_labelalpha_list_disambiguation_6() {
 }
 
 #[test]
+#[ignore = "xfail: bib-engine has no public label-alpha data query API"]
 fn assertion_104_labelalpha_list_disambiguation_7() {
     pass_upstream(
         "labelalpha list disambiguation 7",
@@ -1824,6 +1943,7 @@ fn assertion_104_labelalpha_list_disambiguation_7() {
 }
 
 #[test]
+#[ignore = "xfail: bib-engine has no public label-alpha data query API"]
 fn assertion_105_labelalpha_list_disambiguation_8() {
     pass_upstream(
         "labelalpha list disambiguation 8",
@@ -1835,6 +1955,7 @@ fn assertion_105_labelalpha_list_disambiguation_8() {
 }
 
 #[test]
+#[ignore = "xfail: bib-engine has no public label-alpha data query API"]
 fn assertion_106_title_in_braces_with_utf_8_char_1() {
     pass_upstream(
         "Title in braces with UTF-8 char - 1",
@@ -1846,6 +1967,7 @@ fn assertion_106_title_in_braces_with_utf_8_char_1() {
 }
 
 #[test]
+#[ignore = "xfail: bib-engine has no public label-alpha data query API"]
 fn assertion_107_extraalpha_ne_extradate_1() {
     pass_upstream(
         "extraalpha ne extradate 1",
@@ -1857,6 +1979,7 @@ fn assertion_107_extraalpha_ne_extradate_1() {
 }
 
 #[test]
+#[ignore = "xfail: bib-engine has no public label-alpha data query API"]
 fn assertion_108_extraalpha_ne_extradate_2() {
     pass_upstream(
         "extraalpha ne extradate 2",
@@ -1868,6 +1991,7 @@ fn assertion_108_extraalpha_ne_extradate_2() {
 }
 
 #[test]
+#[ignore = "xfail: bib-engine has no public label-alpha data query API"]
 fn assertion_109_extraalpha_ne_extradate_3() {
     pass_upstream(
         "extraalpha ne extradate 3",
@@ -1879,6 +2003,7 @@ fn assertion_109_extraalpha_ne_extradate_3() {
 }
 
 #[test]
+#[ignore = "xfail: bib-engine has no public label-alpha data query API"]
 fn assertion_110_extraalpha_ne_extradate_4() {
     pass_upstream(
         "extraalpha ne extradate 4",
@@ -1890,6 +2015,7 @@ fn assertion_110_extraalpha_ne_extradate_4() {
 }
 
 #[test]
+#[ignore = "xfail: bib-engine has no public label-alpha data query API"]
 fn assertion_111_extraalpha_ne_extradate_5() {
     pass_upstream(
         "extraalpha ne extradate 5",
@@ -1901,6 +2027,7 @@ fn assertion_111_extraalpha_ne_extradate_5() {
 }
 
 #[test]
+#[ignore = "xfail: bib-engine has no public label-alpha data query API"]
 fn assertion_112_extraalpha_ne_extradate_6() {
     pass_upstream(
         "extraalpha ne extradate 6",
@@ -1912,6 +2039,7 @@ fn assertion_112_extraalpha_ne_extradate_6() {
 }
 
 #[test]
+#[ignore = "xfail: bib-engine has no public label-alpha data query API"]
 fn assertion_113_extraalpha_ne_extradate_7() {
     pass_upstream(
         "extraalpha ne extradate 7",
@@ -1923,6 +2051,7 @@ fn assertion_113_extraalpha_ne_extradate_7() {
 }
 
 #[test]
+#[ignore = "xfail: bib-engine has no public label-alpha data query API"]
 fn assertion_114_extraalpha_ne_extradate_8() {
     pass_upstream(
         "extraalpha ne extradate 8",
@@ -1934,6 +2063,7 @@ fn assertion_114_extraalpha_ne_extradate_8() {
 }
 
 #[test]
+#[ignore = "xfail: bib-engine has no public label-alpha data query API"]
 fn assertion_115_entrykey_label_1() {
     pass_upstream(
         "entrykey label 1",
@@ -1945,6 +2075,7 @@ fn assertion_115_entrykey_label_1() {
 }
 
 #[test]
+#[ignore = "xfail: bib-engine has no public label-alpha data query API"]
 fn assertion_116_labeldate_test_1() {
     pass_upstream(
         "labeldate test - 1",
@@ -1956,6 +2087,7 @@ fn assertion_116_labeldate_test_1() {
 }
 
 #[test]
+#[ignore = "xfail: bib-engine has no public label-alpha data query API"]
 fn assertion_117_pad_test_1() {
     pass_upstream(
         "pad test - 1",
@@ -1967,6 +2099,7 @@ fn assertion_117_pad_test_1() {
 }
 
 #[test]
+#[ignore = "xfail: bib-engine has no public label-alpha data query API"]
 fn assertion_118_pad_test_2() {
     pass_upstream(
         "pad test - 2",
@@ -1978,6 +2111,7 @@ fn assertion_118_pad_test_2() {
 }
 
 #[test]
+#[ignore = "xfail: bib-engine has no public label-alpha data query API"]
 fn assertion_119_skip_width_test_1() {
     pass_upstream(
         "Skip width test - 1",
@@ -1989,6 +2123,7 @@ fn assertion_119_skip_width_test_1() {
 }
 
 #[test]
+#[ignore = "xfail: bib-engine has no public label-alpha data query API"]
 fn assertion_120_compound_and_string_length_entry_prefix1_labelalpha() {
     pass_upstream(
         "compound and string length entry prefix1 labelalpha",
@@ -2000,6 +2135,7 @@ fn assertion_120_compound_and_string_length_entry_prefix1_labelalpha() {
 }
 
 #[test]
+#[ignore = "xfail: bib-engine has no public label-alpha data query API"]
 fn assertion_121_name_range_test_1() {
     pass_upstream(
         "Name range test - 1",
@@ -2011,6 +2147,7 @@ fn assertion_121_name_range_test_1() {
 }
 
 #[test]
+#[ignore = "xfail: bib-engine has no public label-alpha data query API"]
 fn assertion_122_name_range_test_2() {
     pass_upstream(
         "Name range test - 2",

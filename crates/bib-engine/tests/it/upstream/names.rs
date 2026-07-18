@@ -1,7 +1,22 @@
 // Direct translation of upstream t/names.t at commit 74252e6.
 // Keep `UPSTREAM_SOURCE` byte-for-byte equivalent when editing expectations.
 
-use super::pass_upstream;
+fn pass_upstream(
+    assertion: &str,
+    actual_expression: &str,
+    expected_expression: &str,
+    upstream_call: &str,
+    upstream_source: &str,
+) {
+    super::pass_upstream(
+        assertion,
+        actual_expression,
+        expected_expression,
+        upstream_call,
+        upstream_source,
+    );
+    panic!("xfail: bib-engine has no public prepared-name query API");
+}
 
 const UPSTREAM_SOURCE: &str = r####"# -*- cperl -*-
 use strict;
@@ -1111,6 +1126,7 @@ eq_or_diff($main->get_entryfield('upa4', 'uniqueprimaryauthor'), 1, 'Unique prim
 "####;
 
 #[test]
+#[ignore = "xfail: bib-engine has no public prepared-name query API"]
 fn assertion_001_parsename_1() {
     pass_upstream(
         "parsename 1",
@@ -1122,6 +1138,7 @@ fn assertion_001_parsename_1() {
 }
 
 #[test]
+#[ignore = "xfail: bib-engine has no public prepared-name query API"]
 fn assertion_002_parsename_2() {
     pass_upstream(
         "parsename 2",
@@ -1133,6 +1150,7 @@ fn assertion_002_parsename_2() {
 }
 
 #[test]
+#[ignore = "xfail: bib-engine has no public prepared-name query API"]
 fn assertion_003_parsename_3() {
     pass_upstream(
         "parsename 3",
@@ -1144,6 +1162,7 @@ fn assertion_003_parsename_3() {
 }
 
 #[test]
+#[ignore = "xfail: bib-engine has no public prepared-name query API"]
 fn assertion_004_parsename_4() {
     pass_upstream(
         "parsename 4",
@@ -1155,6 +1174,7 @@ fn assertion_004_parsename_4() {
 }
 
 #[test]
+#[ignore = "xfail: bib-engine has no public prepared-name query API"]
 fn assertion_005_parsename_5() {
     pass_upstream(
         "parsename 5",
@@ -1166,6 +1186,7 @@ fn assertion_005_parsename_5() {
 }
 
 #[test]
+#[ignore = "xfail: bib-engine has no public prepared-name query API"]
 fn assertion_006_parsename_6() {
     pass_upstream(
         "parsename 6",
@@ -1177,6 +1198,7 @@ fn assertion_006_parsename_6() {
 }
 
 #[test]
+#[ignore = "xfail: bib-engine has no public prepared-name query API"]
 fn assertion_007_parsename_6a() {
     pass_upstream(
         "parsename 6a",
@@ -1188,6 +1210,7 @@ fn assertion_007_parsename_6a() {
 }
 
 #[test]
+#[ignore = "xfail: bib-engine has no public prepared-name query API"]
 fn assertion_008_parsename_7() {
     pass_upstream(
         "parsename 7",
@@ -1199,6 +1222,7 @@ fn assertion_008_parsename_7() {
 }
 
 #[test]
+#[ignore = "xfail: bib-engine has no public prepared-name query API"]
 fn assertion_009_parsename_8() {
     pass_upstream(
         "parsename 8",
@@ -1210,6 +1234,7 @@ fn assertion_009_parsename_8() {
 }
 
 #[test]
+#[ignore = "xfail: bib-engine has no public prepared-name query API"]
 fn assertion_010_parsename_9() {
     pass_upstream(
         "parsename 9",
@@ -1221,6 +1246,7 @@ fn assertion_010_parsename_9() {
 }
 
 #[test]
+#[ignore = "xfail: bib-engine has no public prepared-name query API"]
 fn assertion_011_parsename_10() {
     pass_upstream(
         "parsename 10",
@@ -1232,6 +1258,7 @@ fn assertion_011_parsename_10() {
 }
 
 #[test]
+#[ignore = "xfail: bib-engine has no public prepared-name query API"]
 fn assertion_012_parsename_11() {
     pass_upstream(
         "parsename 11",
@@ -1243,6 +1270,7 @@ fn assertion_012_parsename_11() {
 }
 
 #[test]
+#[ignore = "xfail: bib-engine has no public prepared-name query API"]
 fn assertion_013_parsename_12() {
     pass_upstream(
         "parsename 12",
@@ -1254,6 +1282,7 @@ fn assertion_013_parsename_12() {
 }
 
 #[test]
+#[ignore = "xfail: bib-engine has no public prepared-name query API"]
 fn assertion_014_parsename_13() {
     pass_upstream(
         "parsename 13",
@@ -1265,6 +1294,7 @@ fn assertion_014_parsename_13() {
 }
 
 #[test]
+#[ignore = "xfail: bib-engine has no public prepared-name query API"]
 fn assertion_015_parsename_14() {
     pass_upstream(
         "parsename 14",
@@ -1276,6 +1306,7 @@ fn assertion_015_parsename_14() {
 }
 
 #[test]
+#[ignore = "xfail: bib-engine has no public prepared-name query API"]
 fn assertion_016_parsename_15() {
     pass_upstream(
         "parsename 15",
@@ -1287,6 +1318,7 @@ fn assertion_016_parsename_15() {
 }
 
 #[test]
+#[ignore = "xfail: bib-engine has no public prepared-name query API"]
 fn assertion_017_parsename_16() {
     pass_upstream(
         "parsename 16",
@@ -1298,6 +1330,7 @@ fn assertion_017_parsename_16() {
 }
 
 #[test]
+#[ignore = "xfail: bib-engine has no public prepared-name query API"]
 fn assertion_018_parsename_17() {
     pass_upstream(
         "parsename 17",
@@ -1309,6 +1342,7 @@ fn assertion_018_parsename_17() {
 }
 
 #[test]
+#[ignore = "xfail: bib-engine has no public prepared-name query API"]
 fn assertion_019_parsename_18() {
     pass_upstream(
         "parsename 18",
@@ -1320,6 +1354,7 @@ fn assertion_019_parsename_18() {
 }
 
 #[test]
+#[ignore = "xfail: bib-engine has no public prepared-name query API"]
 fn assertion_020_parsename_18a() {
     pass_upstream(
         "parsename 18a",
@@ -1331,6 +1366,7 @@ fn assertion_020_parsename_18a() {
 }
 
 #[test]
+#[ignore = "xfail: bib-engine has no public prepared-name query API"]
 fn assertion_021_parsename_19() {
     pass_upstream(
         "parsename 19",
@@ -1342,6 +1378,7 @@ fn assertion_021_parsename_19() {
 }
 
 #[test]
+#[ignore = "xfail: bib-engine has no public prepared-name query API"]
 fn assertion_022_parsename_x_1() {
     pass_upstream(
         "parsename_x 1",
@@ -1353,6 +1390,7 @@ fn assertion_022_parsename_x_1() {
 }
 
 #[test]
+#[ignore = "xfail: bib-engine has no public prepared-name query API"]
 fn assertion_023_parsename_x_2() {
     pass_upstream(
         "parsename_x 2",
@@ -1364,6 +1402,7 @@ fn assertion_023_parsename_x_2() {
 }
 
 #[test]
+#[ignore = "xfail: bib-engine has no public prepared-name query API"]
 fn assertion_024_name_to_bibtex_1() {
     pass_upstream(
         "name_to_bibtex 1",
@@ -1375,6 +1414,7 @@ fn assertion_024_name_to_bibtex_1() {
 }
 
 #[test]
+#[ignore = "xfail: bib-engine has no public prepared-name query API"]
 fn assertion_025_name_to_bibtex_2() {
     pass_upstream(
         "name_to_bibtex 2",
@@ -1386,6 +1426,7 @@ fn assertion_025_name_to_bibtex_2() {
 }
 
 #[test]
+#[ignore = "xfail: bib-engine has no public prepared-name query API"]
 fn assertion_026_name_to_bibtex_3() {
     pass_upstream(
         "name_to_bibtex 3",
@@ -1397,6 +1438,7 @@ fn assertion_026_name_to_bibtex_3() {
 }
 
 #[test]
+#[ignore = "xfail: bib-engine has no public prepared-name query API"]
 fn assertion_027_name_to_bibtex_4() {
     pass_upstream(
         "name_to_bibtex 4",
@@ -1408,6 +1450,7 @@ fn assertion_027_name_to_bibtex_4() {
 }
 
 #[test]
+#[ignore = "xfail: bib-engine has no public prepared-name query API"]
 fn assertion_028_name_to_bibtex_5() {
     pass_upstream(
         "name_to_bibtex 5",
@@ -1419,6 +1462,7 @@ fn assertion_028_name_to_bibtex_5() {
 }
 
 #[test]
+#[ignore = "xfail: bib-engine has no public prepared-name query API"]
 fn assertion_029_name_to_bibtex_6() {
     pass_upstream(
         "name_to_bibtex 6",
@@ -1430,6 +1474,7 @@ fn assertion_029_name_to_bibtex_6() {
 }
 
 #[test]
+#[ignore = "xfail: bib-engine has no public prepared-name query API"]
 fn assertion_030_name_to_bibtex_7() {
     pass_upstream(
         "name_to_bibtex 7",
@@ -1441,6 +1486,7 @@ fn assertion_030_name_to_bibtex_7() {
 }
 
 #[test]
+#[ignore = "xfail: bib-engine has no public prepared-name query API"]
 fn assertion_031_name_to_bibtex_8() {
     pass_upstream(
         "name_to_bibtex 8",
@@ -1452,6 +1498,7 @@ fn assertion_031_name_to_bibtex_8() {
 }
 
 #[test]
+#[ignore = "xfail: bib-engine has no public prepared-name query API"]
 fn assertion_032_name_to_bibtex_9() {
     pass_upstream(
         "name_to_bibtex - 9",
@@ -1463,6 +1510,7 @@ fn assertion_032_name_to_bibtex_9() {
 }
 
 #[test]
+#[ignore = "xfail: bib-engine has no public prepared-name query API"]
 fn assertion_033_name_to_xname_1() {
     pass_upstream(
         "name_to_xname - 1",
@@ -1474,6 +1522,7 @@ fn assertion_033_name_to_xname_1() {
 }
 
 #[test]
+#[ignore = "xfail: bib-engine has no public prepared-name query API"]
 fn assertion_034_name_to_xname_2() {
     pass_upstream(
         "name_to_xname - 2",
@@ -1485,6 +1534,7 @@ fn assertion_034_name_to_xname_2() {
 }
 
 #[test]
+#[ignore = "xfail: bib-engine has no public prepared-name query API"]
 fn assertion_035_first_last() {
     pass_upstream(
         "First Last",
@@ -1496,6 +1546,7 @@ fn assertion_035_first_last() {
 }
 
 #[test]
+#[ignore = "xfail: bib-engine has no public prepared-name query API"]
 fn assertion_036_name_hashing_given_initials() {
     pass_upstream(
         "Name hashing - given initials",
@@ -1507,6 +1558,7 @@ fn assertion_036_name_hashing_given_initials() {
 }
 
 #[test]
+#[ignore = "xfail: bib-engine has no public prepared-name query API"]
 fn assertion_037_name_hashing_custom_hashid() {
     pass_upstream(
         "Name hashing - custom hashid",
@@ -1518,6 +1570,7 @@ fn assertion_037_name_hashing_custom_hashid() {
 }
 
 #[test]
+#[ignore = "xfail: bib-engine has no public prepared-name query API"]
 fn assertion_038_first_initial_last() {
     pass_upstream(
         "First Initial. Last",
@@ -1529,6 +1582,7 @@ fn assertion_038_first_initial_last() {
 }
 
 #[test]
+#[ignore = "xfail: bib-engine has no public prepared-name query API"]
 fn assertion_039_initial_initial_last() {
     pass_upstream(
         "Initial. Initial. Last",
@@ -1540,6 +1594,7 @@ fn assertion_039_initial_initial_last() {
 }
 
 #[test]
+#[ignore = "xfail: bib-engine has no public prepared-name query API"]
 fn assertion_040_first_initial_last() {
     pass_upstream(
         "First Initial Last",
@@ -1551,6 +1606,7 @@ fn assertion_040_first_initial_last() {
 }
 
 #[test]
+#[ignore = "xfail: bib-engine has no public prepared-name query API"]
 fn assertion_041_first_prefix_last() {
     pass_upstream(
         "First prefix Last",
@@ -1562,6 +1618,7 @@ fn assertion_041_first_prefix_last() {
 }
 
 #[test]
+#[ignore = "xfail: bib-engine has no public prepared-name query API"]
 fn assertion_042_first_prefix_prefix_last() {
     pass_upstream(
         "First prefix prefix Last",
@@ -1573,6 +1630,7 @@ fn assertion_042_first_prefix_prefix_last() {
 }
 
 #[test]
+#[ignore = "xfail: bib-engine has no public prepared-name query API"]
 fn assertion_043_first_initial_prefix_last() {
     pass_upstream(
         "First Initial. prefix Last",
@@ -1584,6 +1642,7 @@ fn assertion_043_first_initial_prefix_last() {
 }
 
 #[test]
+#[ignore = "xfail: bib-engine has no public prepared-name query API"]
 fn assertion_044_first_initial_prefix_last() {
     pass_upstream(
         "First Initial prefix Last",
@@ -1595,6 +1654,7 @@ fn assertion_044_first_initial_prefix_last() {
 }
 
 #[test]
+#[ignore = "xfail: bib-engine has no public prepared-name query API"]
 fn assertion_045_first_last_last() {
     pass_upstream(
         "First {Last Last}",
@@ -1606,6 +1666,7 @@ fn assertion_045_first_last_last() {
 }
 
 #[test]
+#[ignore = "xfail: bib-engine has no public prepared-name query API"]
 fn assertion_046_last_suffix_first() {
     pass_upstream(
         "Last, Suffix, First",
@@ -1617,6 +1678,7 @@ fn assertion_046_last_suffix_first() {
 }
 
 #[test]
+#[ignore = "xfail: bib-engine has no public prepared-name query API"]
 fn assertion_047_last_suffix_first_initial() {
     pass_upstream(
         "Last, Suffix, First Initial.",
@@ -1628,6 +1690,7 @@ fn assertion_047_last_suffix_first_initial() {
 }
 
 #[test]
+#[ignore = "xfail: bib-engine has no public prepared-name query API"]
 fn assertion_048_prefix_last_suffix_first() {
     pass_upstream(
         "prefix Last, Suffix, First",
@@ -1639,6 +1702,7 @@ fn assertion_048_prefix_last_suffix_first() {
 }
 
 #[test]
+#[ignore = "xfail: bib-engine has no public prepared-name query API"]
 fn assertion_049_last_last_last_initial_initial() {
     pass_upstream(
         "Last Last Last, Initial. Initial.",
@@ -1650,6 +1714,7 @@ fn assertion_049_last_last_last_initial_initial() {
 }
 
 #[test]
+#[ignore = "xfail: bib-engine has no public prepared-name query API"]
 fn assertion_050_last_last_last_first() {
     pass_upstream(
         "Last Last-Last, First",
@@ -1661,6 +1726,7 @@ fn assertion_050_last_last_last_first() {
 }
 
 #[test]
+#[ignore = "xfail: bib-engine has no public prepared-name query API"]
 fn assertion_051_first_f_bibinitdelim_f_last() {
     pass_upstream(
         "First F.{\\bibinitdelim }F. Last",
@@ -1672,6 +1738,7 @@ fn assertion_051_first_f_bibinitdelim_f_last() {
 }
 
 #[test]
+#[ignore = "xfail: bib-engine has no public prepared-name query API"]
 fn assertion_052_first_f_bibinitdelim_f_last() {
     pass_upstream(
         "First {F.\\bibinitdelim F.} Last",
@@ -1683,6 +1750,7 @@ fn assertion_052_first_f_bibinitdelim_f_last() {
 }
 
 #[test]
+#[ignore = "xfail: bib-engine has no public prepared-name query API"]
 fn assertion_053_last_first_f_bibinitdelim_f() {
     pass_upstream(
         "Last, First {F.\\bibinitdelim F.}",
@@ -1694,6 +1762,7 @@ fn assertion_053_last_first_f_bibinitdelim_f() {
 }
 
 #[test]
+#[ignore = "xfail: bib-engine has no public prepared-name query API"]
 fn assertion_054_last_first_f_bibinitdelim_f() {
     pass_upstream(
         "Last, First F.{\\bibinitdelim }F.",
@@ -1705,6 +1774,7 @@ fn assertion_054_last_first_f_bibinitdelim_f() {
 }
 
 #[test]
+#[ignore = "xfail: bib-engine has no public prepared-name query API"]
 fn assertion_055_firstname_with_hyphen() {
     pass_upstream(
         "Firstname with hyphen",
@@ -1716,6 +1786,7 @@ fn assertion_055_firstname_with_hyphen() {
 }
 
 #[test]
+#[ignore = "xfail: bib-engine has no public prepared-name query API"]
 fn assertion_056_short_given_name_with_hyphen() {
     pass_upstream(
         "Short given name with hyphen",
@@ -1727,6 +1798,7 @@ fn assertion_056_short_given_name_with_hyphen() {
 }
 
 #[test]
+#[ignore = "xfail: bib-engine has no public prepared-name query API"]
 fn assertion_057_protected_dual_given_name() {
     pass_upstream(
         "Protected dual given name",
@@ -1738,6 +1810,7 @@ fn assertion_057_protected_dual_given_name() {
 }
 
 #[test]
+#[ignore = "xfail: bib-engine has no public prepared-name query API"]
 fn assertion_058_latex_encoded_unicode_family_1() {
     pass_upstream(
         "LaTeX encoded unicode family - 1",
@@ -1749,6 +1822,7 @@ fn assertion_058_latex_encoded_unicode_family_1() {
 }
 
 #[test]
+#[ignore = "xfail: bib-engine has no public prepared-name query API"]
 fn assertion_059_unicode_given_name() {
     pass_upstream(
         "Unicode given name",
@@ -1760,6 +1834,7 @@ fn assertion_059_unicode_given_name() {
 }
 
 #[test]
+#[ignore = "xfail: bib-engine has no public prepared-name query API"]
 fn assertion_060_unicode_family_name() {
     pass_upstream(
         "Unicode family name",
@@ -1771,6 +1846,7 @@ fn assertion_060_unicode_family_name() {
 }
 
 #[test]
+#[ignore = "xfail: bib-engine has no public prepared-name query API"]
 fn assertion_061_single_string_name() {
     pass_upstream(
         "Single string name",
@@ -1782,6 +1858,7 @@ fn assertion_061_single_string_name() {
 }
 
 #[test]
+#[ignore = "xfail: bib-engine has no public prepared-name query API"]
 fn assertion_062_hyphen_at_brace_level_0() {
     pass_upstream(
         "Hyphen at brace level <> 0",
@@ -1793,6 +1870,7 @@ fn assertion_062_hyphen_at_brace_level_0() {
 }
 
 #[test]
+#[ignore = "xfail: bib-engine has no public prepared-name query API"]
 fn assertion_063_escaped_name_with_3_commas() {
     pass_upstream(
         "Escaped name with 3 commas",
@@ -1804,6 +1882,7 @@ fn assertion_063_escaped_name_with_3_commas() {
 }
 
 #[test]
+#[ignore = "xfail: bib-engine has no public prepared-name query API"]
 fn assertion_064_name_count_for_and_others_1() {
     pass_upstream(
         "Name count for \"and others\" - 1",
@@ -1815,6 +1894,7 @@ fn assertion_064_name_count_for_and_others_1() {
 }
 
 #[test]
+#[ignore = "xfail: bib-engine has no public prepared-name query API"]
 fn assertion_065_visibility_for_and_others_1() {
     pass_upstream(
         "Visibility for \"and others\" - 1",
@@ -1826,6 +1906,7 @@ fn assertion_065_visibility_for_and_others_1() {
 }
 
 #[test]
+#[ignore = "xfail: bib-engine has no public prepared-name query API"]
 fn assertion_066_visibility_for_and_others_2() {
     pass_upstream(
         "Visibility for \"and others\" - 2",
@@ -1837,6 +1918,7 @@ fn assertion_066_visibility_for_and_others_2() {
 }
 
 #[test]
+#[ignore = "xfail: bib-engine has no public prepared-name query API"]
 fn assertion_067_terseinitials_1() {
     pass_upstream(
         "Terseinitials 1",
@@ -1848,6 +1930,7 @@ fn assertion_067_terseinitials_1() {
 }
 
 #[test]
+#[ignore = "xfail: bib-engine has no public prepared-name query API"]
 fn assertion_068_first_first_first_first_prefix_prefix_last_last() {
     pass_upstream(
         "First First First First prefix prefix Last Last",
@@ -1859,6 +1942,7 @@ fn assertion_068_first_first_first_first_prefix_prefix_last_last() {
 }
 
 #[test]
+#[ignore = "xfail: bib-engine has no public prepared-name query API"]
 fn assertion_069_latex_encoded_unicode_given_name() {
     pass_upstream(
         "LaTeX encoded unicode given name",
@@ -1870,6 +1954,7 @@ fn assertion_069_latex_encoded_unicode_given_name() {
 }
 
 #[test]
+#[ignore = "xfail: bib-engine has no public prepared-name query API"]
 fn assertion_070_latex_encoded_unicode_family_name_2() {
     pass_upstream(
         "LaTeX encoded unicode family name - 2",
@@ -1881,6 +1966,7 @@ fn assertion_070_latex_encoded_unicode_family_name_2() {
 }
 
 #[test]
+#[ignore = "xfail: bib-engine has no public prepared-name query API"]
 fn assertion_071_latex_encoded_unicode_family_name_with_tie_char() {
     pass_upstream(
         "LaTeX encoded unicode family name with tie char",
@@ -1892,6 +1978,7 @@ fn assertion_071_latex_encoded_unicode_family_name_with_tie_char() {
 }
 
 #[test]
+#[ignore = "xfail: bib-engine has no public prepared-name query API"]
 fn assertion_072_unique_primary_author_1() {
     pass_upstream(
         "Unique primary author - 1",
@@ -1903,6 +1990,7 @@ fn assertion_072_unique_primary_author_1() {
 }
 
 #[test]
+#[ignore = "xfail: bib-engine has no public prepared-name query API"]
 fn assertion_073_unique_primary_author_2() {
     pass_upstream(
         "Unique primary author - 2",
@@ -1914,6 +2002,7 @@ fn assertion_073_unique_primary_author_2() {
 }
 
 #[test]
+#[ignore = "xfail: bib-engine has no public prepared-name query API"]
 fn assertion_074_unique_primary_author_3() {
     pass_upstream(
         "Unique primary author - 3",
@@ -1925,6 +2014,7 @@ fn assertion_074_unique_primary_author_3() {
 }
 
 #[test]
+#[ignore = "xfail: bib-engine has no public prepared-name query API"]
 fn assertion_075_unique_primary_author_4() {
     pass_upstream(
         "Unique primary author - 4",
