@@ -1169,6 +1169,22 @@ fn v_template_ending_in_macro_delivers_frozen_endv_after_frame_retirement() {
 }
 
 #[test]
+fn frozen_endv_recovers_open_box_groups_before_finishing_cell() {
+    let stores = run_boxed_alignment_source(
+        "\\let\\bgroup={\\let\\egroup=}\\def\\open{\\hbox\\bgroup\\begingroup\\bgroup}\\halign{\\open#\\cr x\\cr}",
+    );
+    let vbox = box_zero_vlist(&stores);
+    let rows = vlist_rows(&stores, vbox);
+    let cells = row_cells(&stores, rows[0]);
+
+    assert_eq!(rows.len(), 1);
+    assert_eq!(cells.len(), 1);
+    let output = support::terminal_effect_text(&stores);
+    assert!(output.contains("Missing \\endgroup inserted"), "{output}");
+    assert!(output.contains("Missing } inserted"), "{output}");
+}
+
+#[test]
 fn user_endtemplate_control_sequence_cannot_alias_frozen_sentinel() {
     let stores = run_boxed_alignment_source("\\def\\endtemplate{BAD}\\halign{#\\cr x\\cr}");
     let vbox = box_zero_vlist(&stores);

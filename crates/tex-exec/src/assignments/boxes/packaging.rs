@@ -356,6 +356,15 @@ pub(crate) fn scan_box_group(
                 context: "box closing brace",
             })?;
             let semantic = tex_expand::semantic_token(token);
+            if semantic.is_frozen_endv() {
+                // TeX.web §1131 routes every end-v marker through
+                // `do_endv`. A box group cannot finish an alignment entry, so
+                // `do_endv` takes §1064's `off_save` branch: back up end-v,
+                // insert the token that closes the current box group, and let
+                // main control retry end-v at the alignment entry level.
+                crate::assignments::off_save_alignment(token, input, stores)?;
+                continue;
+            }
             // TeX.web §1084 packages on the right brace for the active box
             // save-stack group. Scanners such as \message consume their own
             // balanced braces, so delivered-token brace counting is insufficient.
