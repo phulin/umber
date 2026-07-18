@@ -1,51 +1,8 @@
-// Direct xfail translation of upstream t/skipsg.t at commit 74252e6.
-// Keep `UPSTREAM_SOURCE` byte-for-byte equivalent when editing expectations.
+//! Native translations of upstream `t/skipsg.t` at commit 74252e6.
 
-use super::pass_upstream;
+use super::maps::{output_entry, run_fixture};
 
-const UPSTREAM_SOURCE: &str = r####"# -*- cperl -*-
-use strict;
-use warnings;
-use utf8;
-no warnings 'utf8';
-
-use Test::More tests => 3;
-use Test::Differences;
-unified_diff;
-
-use Biber;
-use Biber::Utils;
-use Biber::Output::bbl;
-use Log::Log4perl;
-chdir("t/tdata");
-
-my $biber = Biber->new(noconf => 1);
-my $LEVEL = 'ERROR';
-my $l4pconf = qq|
-    log4perl.category.main                             = $LEVEL, Screen
-    log4perl.category.screen                           = $LEVEL, Screen
-    log4perl.appender.Screen                           = Log::Log4perl::Appender::Screen
-    log4perl.appender.Screen.utf8                      = 1
-    log4perl.appender.Screen.Threshold                 = $LEVEL
-    log4perl.appender.Screen.stderr                    = 0
-    log4perl.appender.Screen.layout                    = Log::Log4perl::Layout::SimpleLayout
-|;
-Log::Log4perl->init(\$l4pconf);
-
-$biber->parse_ctrlfile('skipsg.bcf');
-$biber->set_output_obj(Biber::Output::bbl->new());
-
-# Options - we could set these in the control file but it's nice to see what we're
-# relying on here for tests
-Biber::Config->setblxoption(undef, 'skiplab', 'true');
-Biber::Config->setblxoption(undef, 'skibib', 'true');
-Biber::Config->setblxoption(undef, 'skipbiblist', 'true');
-
-# Biber options
-Biber::Config->setoption('sortlocale', 'en_GB.UTF-8');
-
-
-my $S1 = q|    \entry{S1}{book}{skipbib=false,skipbiblist=false,skiplab=false}{}
+const EXPECTED_S1: &str = r#"    \entry{S1}{book}{skipbib=false,skipbiblist=false,skiplab=false}{}
       \name{author}{2}{}{%
         {{hash=bd051a2f7a5f377e3a62581b0e0f8577}{%
            family={Doe},
@@ -82,9 +39,9 @@ my $S1 = q|    \entry{S1}{book}{skipbib=false,skipbiblist=false,skiplab=false}{}
       \field{title}{Title 1}
       \field{year}{1995}
     \endentry
-|;
+"#;
 
-my $S2 = q|    \entry{S2}{book}{skipbib=false,skiplab=false}{}
+const EXPECTED_S2: &str = r#"    \entry{S2}{book}{skipbib=false,skiplab=false}{}
       \name{author}{2}{}{%
         {{hash=bd051a2f7a5f377e3a62581b0e0f8577}{%
            family={Doe},
@@ -121,9 +78,9 @@ my $S2 = q|    \entry{S2}{book}{skipbib=false,skiplab=false}{}
       \field{title}{Title 2}
       \field{year}{1995}
     \endentry
-|;
+"#;
 
-my $S3 = q|    \entry{S3}{book}{}{}
+const EXPECTED_S3: &str = r#"    \entry{S3}{book}{}{}
       \name{author}{2}{}{%
         {{hash=bd051a2f7a5f377e3a62581b0e0f8577}{%
            family={Doe},
@@ -155,56 +112,25 @@ my $S3 = q|    \entry{S3}{book}{}{}
       \field{title}{Title 3}
       \field{year}{1995}
     \endentry
-|;
-
-# Now generate the information
-$biber->prepare;
-my $out = $biber->get_output_obj;
-my $section = $biber->sections->get_section(0);
-my $main = $biber->datalists->get_list('custom/global//global/global/global');
-# labels as per-entry dataonly=false
-eq_or_diff( $out->get_output_entry('S1', $main), $S1, 'Global skips with entry override - 1') ;
-# labels as per-entry skpiplab=false
-eq_or_diff( $out->get_output_entry('S2', $main), $S2, 'Global skips with entry override - 2') ;
-# no labels as global skip*=true
-eq_or_diff( $out->get_output_entry('S3', $main), $S3, 'Global skips with entry override - 3') ;
-"####;
+"#;
 
 #[test]
-#[ignore = "xfail: public bib-engine lacks exact Biber skipword processing parity"]
+#[ignore = "xfail: global Biber skip options are not implemented by bib-engine"]
 fn assertion_001_global_skips_with_entry_override_1() {
-    pass_upstream(
-        "Global skips with entry override - 1",
-        r####"$out->get_output_entry('S1', $main)"####,
-        r####"$S1"####,
-        r####"eq_or_diff( $out->get_output_entry('S1', $main), $S1, 'Global skips with entry override - 1') ;"####,
-        UPSTREAM_SOURCE,
-    );
-    panic!("xfail: public bib-engine lacks exact Biber skipword processing parity");
+    let result = run_fixture("skipsg");
+    assert_eq!(output_entry(&result, "S1").as_deref(), Some(EXPECTED_S1));
 }
 
 #[test]
-#[ignore = "xfail: public bib-engine lacks exact Biber skipword processing parity"]
+#[ignore = "xfail: global Biber skip options are not implemented by bib-engine"]
 fn assertion_002_global_skips_with_entry_override_2() {
-    pass_upstream(
-        "Global skips with entry override - 2",
-        r####"$out->get_output_entry('S2', $main)"####,
-        r####"$S2"####,
-        r####"eq_or_diff( $out->get_output_entry('S2', $main), $S2, 'Global skips with entry override - 2') ;"####,
-        UPSTREAM_SOURCE,
-    );
-    panic!("xfail: public bib-engine lacks exact Biber skipword processing parity");
+    let result = run_fixture("skipsg");
+    assert_eq!(output_entry(&result, "S2").as_deref(), Some(EXPECTED_S2));
 }
 
 #[test]
-#[ignore = "xfail: public bib-engine lacks exact Biber skipword processing parity"]
+#[ignore = "xfail: global Biber skip options are not implemented by bib-engine"]
 fn assertion_003_global_skips_with_entry_override_3() {
-    pass_upstream(
-        "Global skips with entry override - 3",
-        r####"$out->get_output_entry('S3', $main)"####,
-        r####"$S3"####,
-        r####"eq_or_diff( $out->get_output_entry('S3', $main), $S3, 'Global skips with entry override - 3') ;"####,
-        UPSTREAM_SOURCE,
-    );
-    panic!("xfail: public bib-engine lacks exact Biber skipword processing parity");
+    let result = run_fixture("skipsg");
+    assert_eq!(output_entry(&result, "S3").as_deref(), Some(EXPECTED_S3));
 }

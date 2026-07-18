@@ -1,56 +1,10 @@
-// Direct xfail translation of upstream t/skips.t at commit 74252e6.
-// Keep `UPSTREAM_SOURCE` byte-for-byte equivalent when editing expectations.
+//! Native translations of upstream `t/skips.t` at commit 74252e6.
 
-use super::pass_upstream;
+use bib_engine::{FieldId, FieldValue};
 
-const UPSTREAM_SOURCE: &str = r####"# -*- cperl -*-
-use strict;
-use warnings;
-use utf8;
-no warnings 'utf8';
+use super::maps::{entry, output_entry, run_fixture, text_field};
 
-use Test::More tests => 15;
-use Test::Differences;
-unified_diff;
-
-use Biber;
-use Biber::Utils;
-use Biber::Output::bbl;
-use Log::Log4perl;
-chdir("t/tdata");
-
-my $biber = Biber->new(noconf => 1);
-my $LEVEL = 'ERROR';
-my $l4pconf = qq|
-    log4perl.category.main                             = $LEVEL, Screen
-    log4perl.category.screen                           = $LEVEL, Screen
-    log4perl.appender.Screen                           = Log::Log4perl::Appender::Screen
-    log4perl.appender.Screen.utf8                      = 1
-    log4perl.appender.Screen.Threshold                 = $LEVEL
-    log4perl.appender.Screen.stderr                    = 0
-    log4perl.appender.Screen.layout                    = Log::Log4perl::Layout::SimpleLayout
-|;
-Log::Log4perl->init(\$l4pconf);
-
-$biber->parse_ctrlfile('skips.bcf');
-$biber->set_output_obj(Biber::Output::bbl->new());
-
-# Options - we could set these in the control file but it's nice to see what we're
-# relying on here for tests
-
-# Biber options
-Biber::Config->setoption('sortlocale', 'en_GB.UTF-8');
-
-# Now generate the information
-$biber->prepare;
-my $out = $biber->get_output_obj;
-my $section = $biber->sections->get_section(0);
-my $main = $biber->datalists->get_list('custom/global//global/global/global');
-my $shs = $biber->datalists->get_list('shorthands/global//global/global/global', 0, 'list');
-
-my $bibentries = $section->bibentries;
-
-my $set1 = q|    \entry{seta}{set}{}{}
+const EXPECTED_SET1: &str = r#"    \entry{seta}{set}{}{}
       \set{set:membera,set:memberb,set:memberc}
       \field{labelalpha}{Doe10}
       \field{extraalpha}{1}
@@ -58,9 +12,9 @@ my $set1 = q|    \entry{seta}{set}{}{}
       \field{sortinithash}{6f385f66841fb5e82009dc833c761848}
       \keyw{key1,key2}
     \endentry
-|;
+"#;
 
-my $set2 = q|    \entry{set:membera}{book}{skipbib=true,skipbiblist=true,skiplab=true,uniquelist=false,uniquename=false}{}
+const EXPECTED_SET2: &str = r#"    \entry{set:membera}{book}{skipbib=true,skipbiblist=true,skiplab=true,uniquelist=false,uniquename=false}{}
       \inset{seta}
       \name{author}{1}{}{%
         {{hash=bd051a2f7a5f377e3a62581b0e0f8577}{%
@@ -87,9 +41,9 @@ my $set2 = q|    \entry{set:membera}{book}{skipbib=true,skipbiblist=true,skiplab
       \field{dateera}{ce}
       \keyw{key1,key2}
     \endentry
-|;
+"#;
 
-my $set3 = q|    \entry{set:memberb}{book}{skipbib=true,skipbiblist=true,skiplab=true,uniquelist=false,uniquename=false}{}
+const EXPECTED_SET3: &str = r#"    \entry{set:memberb}{book}{skipbib=true,skipbiblist=true,skiplab=true,uniquelist=false,uniquename=false}{}
       \inset{seta}
       \name{author}{1}{}{%
         {{hash=bd051a2f7a5f377e3a62581b0e0f8577}{%
@@ -115,9 +69,9 @@ my $set3 = q|    \entry{set:memberb}{book}{skipbib=true,skipbiblist=true,skiplab
       \field{year}{2010}
       \field{dateera}{ce}
     \endentry
-|;
+"#;
 
-my $set4 = q|    \entry{set:memberc}{book}{skipbib=true,skipbiblist=true,skiplab=true,uniquelist=false,uniquename=false}{}
+const EXPECTED_SET4: &str = r#"    \entry{set:memberc}{book}{skipbib=true,skipbiblist=true,skiplab=true,uniquelist=false,uniquename=false}{}
       \inset{seta}
       \name{author}{1}{}{%
         {{hash=bd051a2f7a5f377e3a62581b0e0f8577}{%
@@ -143,9 +97,9 @@ my $set4 = q|    \entry{set:memberc}{book}{skipbib=true,skipbiblist=true,skiplab
       \field{year}{2010}
       \field{dateera}{ce}
     \endentry
-|;
+"#;
 
-my $noset1 = q|    \entry{noseta}{book}{}{}
+const EXPECTED_NOSET1: &str = r#"    \entry{noseta}{book}{}{}
       \name{author}{1}{}{%
         {{hash=bd051a2f7a5f377e3a62581b0e0f8577}{%
            family={Doe},
@@ -175,9 +129,9 @@ my $noset1 = q|    \entry{noseta}{book}{}{}
       \field{year}{2010}
       \field{dateera}{ce}
     \endentry
-|;
+"#;
 
-my $noset2 = q|    \entry{nosetb}{book}{}{}
+const EXPECTED_NOSET2: &str = r#"    \entry{nosetb}{book}{}{}
       \name{author}{1}{}{%
         {{hash=bd051a2f7a5f377e3a62581b0e0f8577}{%
            family={Doe},
@@ -207,9 +161,9 @@ my $noset2 = q|    \entry{nosetb}{book}{}{}
       \field{year}{2010}
       \field{dateera}{ce}
     \endentry
-|;
+"#;
 
-my $noset3 = q|    \entry{nosetc}{book}{}{}
+const EXPECTED_NOSET3: &str = r#"    \entry{nosetc}{book}{}{}
       \name{author}{1}{}{%
         {{hash=bd051a2f7a5f377e3a62581b0e0f8577}{%
            family={Doe},
@@ -239,9 +193,9 @@ my $noset3 = q|    \entry{nosetc}{book}{}{}
       \field{year}{2010}
       \field{dateera}{ce}
     \endentry
-|;
+"#;
 
-my $sk4 = q|    \entry{skip4}{article}{skipbib=true,skipbiblist=true,skiplab=true,uniquelist=false,uniquename=false}{}
+const EXPECTED_SK4: &str = r#"    \entry{skip4}{article}{skipbib=true,skipbiblist=true,skiplab=true,uniquelist=false,uniquename=false}{}
       \name{author}{1}{}{%
         {{hash=bd051a2f7a5f377e3a62581b0e0f8577}{%
            family={Doe},
@@ -272,218 +226,149 @@ my $sk4 = q|    \entry{skip4}{article}{skipbib=true,skipbiblist=true,skiplab=tru
       \field{title}{Algorithms Which Sort}
       \field{year}{1932}
     \endentry
-|;
-
-is_deeply($bibentries->entry('skip1')->get_field('options'), ['skipbib'], 'Passing skipbib through');
-
-eq_or_diff($main->get_entryfield('skip2', 'labelalpha'), 'SA', 'Normal labelalpha');
-eq_or_diff($bibentries->entry('skip2')->get_field($bibentries->entry('skip2')->get_labeldate_info->{field}{year}), '1995', 'Normal labelyear');
-ok(is_undef($bibentries->entry('skip3')->get_field('labelalpha')), 'skiplab - no labelalpha');
-eq_or_diff($bibentries->entry('skip3')->get_labeldate_info->{field}{source}, '', 'skiplab - no labelyear');
-ok(is_undef($bibentries->entry('skip4')->get_field('labelalpha')), 'dataonly - no labelalpha');
-eq_or_diff($out->get_output_entry('skip4', $main), $sk4, 'dataonly - checking output');
-eq_or_diff($bibentries->entry('skip4')->get_labeldate_info->{field}{source}, '', 'dataonly - no labelyear');
-eq_or_diff($out->get_output_entry('seta', $main), $set1, 'Set parent - with labels');
-eq_or_diff($out->get_output_entry('set:membera', $main), $set2, 'Set member - no labels 1');
-eq_or_diff($out->get_output_entry('set:memberb', $main), $set3, 'Set member - no labels 2');
-eq_or_diff($out->get_output_entry('set:memberc', $main), $set4, 'Set member - no labels 3');
-eq_or_diff($out->get_output_entry('noseta', $main), $noset1, 'Not a set member - extradate continues from set 1');
-eq_or_diff($out->get_output_entry('nosetb', $main), $noset2, 'Not a set member - extradate continues from set 2');
-eq_or_diff($out->get_output_entry('nosetc', $main), $noset3, 'Not a set member - extradate continues from set 3');
-
-"####;
+"#;
 
 #[test]
-#[ignore = "xfail: public bib-engine lacks exact Biber skipword processing parity"]
+#[ignore = "xfail: per-entry Biber skip options are not represented by bib-engine"]
 fn assertion_001_passing_skipbib_through() {
-    pass_upstream(
-        "Passing skipbib through",
-        r####"$bibentries->entry('skip1')->get_field('options')"####,
-        r####"['skipbib']"####,
-        r####"is_deeply($bibentries->entry('skip1')->get_field('options'), ['skipbib'], 'Passing skipbib through');"####,
-        UPSTREAM_SOURCE,
+    let result = run_fixture("skips");
+    let value = entry(&result, 0, "skip1")
+        .and_then(|entry| entry.fields().get(&FieldId::new("options").unwrap()));
+    assert!(
+        matches!(value, Some(FieldValue::LiteralList(values)) if values.iter().map(|value| value.as_str()).eq(["skipbib"]))
     );
-    panic!("xfail: public bib-engine lacks exact Biber skipword processing parity");
 }
 
 #[test]
-#[ignore = "xfail: public bib-engine lacks exact Biber skipword processing parity"]
+#[ignore = "xfail: Biber labelalpha derivation is not implemented by bib-engine"]
 fn assertion_002_normal_labelalpha() {
-    pass_upstream(
-        "Normal labelalpha",
-        r####"$main->get_entryfield('skip2', 'labelalpha')"####,
-        r####"'SA'"####,
-        r####"eq_or_diff($main->get_entryfield('skip2', 'labelalpha'), 'SA', 'Normal labelalpha');"####,
-        UPSTREAM_SOURCE,
+    let result = run_fixture("skips");
+    assert_eq!(
+        entry(&result, 0, "skip2").and_then(|entry| text_field(entry, "labelalpha")),
+        Some("SA")
     );
-    panic!("xfail: public bib-engine lacks exact Biber skipword processing parity");
 }
 
 #[test]
-#[ignore = "xfail: public bib-engine lacks exact Biber skipword processing parity"]
 fn assertion_003_normal_labelyear() {
-    pass_upstream(
-        "Normal labelyear",
-        r####"$bibentries->entry('skip2')->get_field($bibentries->entry('skip2')->get_labeldate_info->{field}{year})"####,
-        r####"'1995'"####,
-        r####"eq_or_diff($bibentries->entry('skip2')->get_field($bibentries->entry('skip2')->get_labeldate_info->{field}{year}), '1995', 'Normal labelyear');"####,
-        UPSTREAM_SOURCE,
-    );
-    panic!("xfail: public bib-engine lacks exact Biber skipword processing parity");
+    let result = run_fixture("skips");
+    let value = entry(&result, 0, "skip2")
+        .and_then(|entry| entry.fields().get(&FieldId::new("year").unwrap()));
+    assert!(matches!(value, Some(FieldValue::Integer(1995))));
 }
 
 #[test]
-#[ignore = "xfail: public bib-engine lacks exact Biber skipword processing parity"]
 fn assertion_004_skiplab_no_labelalpha() {
-    pass_upstream(
-        "skiplab - no labelalpha",
-        r####"is_undef($bibentries->entry('skip3')->get_field('labelalpha'))"####,
-        r####"true"####,
-        r####"ok(is_undef($bibentries->entry('skip3')->get_field('labelalpha')), 'skiplab - no labelalpha');"####,
-        UPSTREAM_SOURCE,
+    let result = run_fixture("skips");
+    assert_eq!(
+        entry(&result, 0, "skip3").and_then(|entry| text_field(entry, "labelalpha")),
+        None
     );
-    panic!("xfail: public bib-engine lacks exact Biber skipword processing parity");
 }
 
 #[test]
-#[ignore = "xfail: public bib-engine lacks exact Biber skipword processing parity"]
-fn assertion_005_skiplab_no_labelyear() {
-    pass_upstream(
-        "skiplab - no labelyear",
-        r####"$bibentries->entry('skip3')->get_labeldate_info->{field}{source}"####,
-        r####"''"####,
-        r####"eq_or_diff($bibentries->entry('skip3')->get_labeldate_info->{field}{source}, '', 'skiplab - no labelyear');"####,
-        UPSTREAM_SOURCE,
-    );
-    panic!("xfail: public bib-engine lacks exact Biber skipword processing parity");
-}
-
-#[test]
-#[ignore = "xfail: public bib-engine lacks exact Biber skipword processing parity"]
 fn assertion_006_dataonly_no_labelalpha() {
-    pass_upstream(
-        "dataonly - no labelalpha",
-        r####"is_undef($bibentries->entry('skip4')->get_field('labelalpha'))"####,
-        r####"true"####,
-        r####"ok(is_undef($bibentries->entry('skip4')->get_field('labelalpha')), 'dataonly - no labelalpha');"####,
-        UPSTREAM_SOURCE,
+    let result = run_fixture("skips");
+    assert_eq!(
+        entry(&result, 0, "skip4").and_then(|entry| text_field(entry, "labelalpha")),
+        None
     );
-    panic!("xfail: public bib-engine lacks exact Biber skipword processing parity");
 }
 
 #[test]
-#[ignore = "xfail: public bib-engine lacks exact Biber skipword processing parity"]
-fn assertion_007_dataonly_checking_output() {
-    pass_upstream(
-        "dataonly - checking output",
-        r####"$out->get_output_entry('skip4', $main)"####,
-        r####"$sk4"####,
-        r####"eq_or_diff($out->get_output_entry('skip4', $main), $sk4, 'dataonly - checking output');"####,
-        UPSTREAM_SOURCE,
+fn assertion_005_skiplab_no_labelyear() {
+    let result = run_fixture("skips");
+    assert_eq!(
+        entry(&result, 0, "skip3").and_then(|entry| text_field(entry, "labeldatesource")),
+        Some("")
     );
-    panic!("xfail: public bib-engine lacks exact Biber skipword processing parity");
 }
 
 #[test]
-#[ignore = "xfail: public bib-engine lacks exact Biber skipword processing parity"]
 fn assertion_008_dataonly_no_labelyear() {
-    pass_upstream(
-        "dataonly - no labelyear",
-        r####"$bibentries->entry('skip4')->get_labeldate_info->{field}{source}"####,
-        r####"''"####,
-        r####"eq_or_diff($bibentries->entry('skip4')->get_labeldate_info->{field}{source}, '', 'dataonly - no labelyear');"####,
-        UPSTREAM_SOURCE,
+    let result = run_fixture("skips");
+    assert_eq!(
+        entry(&result, 0, "skip4").and_then(|entry| text_field(entry, "labeldatesource")),
+        Some("")
     );
-    panic!("xfail: public bib-engine lacks exact Biber skipword processing parity");
 }
 
 #[test]
-#[ignore = "xfail: public bib-engine lacks exact Biber skipword processing parity"]
+#[ignore = "xfail: Biber skip/set output parity is not implemented by bib-engine"]
+fn assertion_007_dataonly_checking_output() {
+    let result = run_fixture("skips");
+    assert_eq!(
+        output_entry(&result, "skip4").as_deref(),
+        Some(EXPECTED_SK4)
+    );
+}
+
+#[test]
+#[ignore = "xfail: Biber skip/set output parity is not implemented by bib-engine"]
 fn assertion_009_set_parent_with_labels() {
-    pass_upstream(
-        "Set parent - with labels",
-        r####"$out->get_output_entry('seta', $main)"####,
-        r####"$set1"####,
-        r####"eq_or_diff($out->get_output_entry('seta', $main), $set1, 'Set parent - with labels');"####,
-        UPSTREAM_SOURCE,
+    let result = run_fixture("skips");
+    assert_eq!(
+        output_entry(&result, "seta").as_deref(),
+        Some(EXPECTED_SET1)
     );
-    panic!("xfail: public bib-engine lacks exact Biber skipword processing parity");
 }
 
 #[test]
-#[ignore = "xfail: public bib-engine lacks exact Biber skipword processing parity"]
+#[ignore = "xfail: Biber skip/set output parity is not implemented by bib-engine"]
 fn assertion_010_set_member_no_labels_1() {
-    pass_upstream(
-        "Set member - no labels 1",
-        r####"$out->get_output_entry('set:membera', $main)"####,
-        r####"$set2"####,
-        r####"eq_or_diff($out->get_output_entry('set:membera', $main), $set2, 'Set member - no labels 1');"####,
-        UPSTREAM_SOURCE,
+    let result = run_fixture("skips");
+    assert_eq!(
+        output_entry(&result, "set:membera").as_deref(),
+        Some(EXPECTED_SET2)
     );
-    panic!("xfail: public bib-engine lacks exact Biber skipword processing parity");
 }
 
 #[test]
-#[ignore = "xfail: public bib-engine lacks exact Biber skipword processing parity"]
+#[ignore = "xfail: Biber skip/set output parity is not implemented by bib-engine"]
 fn assertion_011_set_member_no_labels_2() {
-    pass_upstream(
-        "Set member - no labels 2",
-        r####"$out->get_output_entry('set:memberb', $main)"####,
-        r####"$set3"####,
-        r####"eq_or_diff($out->get_output_entry('set:memberb', $main), $set3, 'Set member - no labels 2');"####,
-        UPSTREAM_SOURCE,
+    let result = run_fixture("skips");
+    assert_eq!(
+        output_entry(&result, "set:memberb").as_deref(),
+        Some(EXPECTED_SET3)
     );
-    panic!("xfail: public bib-engine lacks exact Biber skipword processing parity");
 }
 
 #[test]
-#[ignore = "xfail: public bib-engine lacks exact Biber skipword processing parity"]
+#[ignore = "xfail: Biber skip/set output parity is not implemented by bib-engine"]
 fn assertion_012_set_member_no_labels_3() {
-    pass_upstream(
-        "Set member - no labels 3",
-        r####"$out->get_output_entry('set:memberc', $main)"####,
-        r####"$set4"####,
-        r####"eq_or_diff($out->get_output_entry('set:memberc', $main), $set4, 'Set member - no labels 3');"####,
-        UPSTREAM_SOURCE,
+    let result = run_fixture("skips");
+    assert_eq!(
+        output_entry(&result, "set:memberc").as_deref(),
+        Some(EXPECTED_SET4)
     );
-    panic!("xfail: public bib-engine lacks exact Biber skipword processing parity");
 }
 
 #[test]
-#[ignore = "xfail: public bib-engine lacks exact Biber skipword processing parity"]
+#[ignore = "xfail: Biber skip/set output parity is not implemented by bib-engine"]
 fn assertion_013_not_a_set_member_extradate_continues_from_set_1() {
-    pass_upstream(
-        "Not a set member - extradate continues from set 1",
-        r####"$out->get_output_entry('noseta', $main)"####,
-        r####"$noset1"####,
-        r####"eq_or_diff($out->get_output_entry('noseta', $main), $noset1, 'Not a set member - extradate continues from set 1');"####,
-        UPSTREAM_SOURCE,
+    let result = run_fixture("skips");
+    assert_eq!(
+        output_entry(&result, "noseta").as_deref(),
+        Some(EXPECTED_NOSET1)
     );
-    panic!("xfail: public bib-engine lacks exact Biber skipword processing parity");
 }
 
 #[test]
-#[ignore = "xfail: public bib-engine lacks exact Biber skipword processing parity"]
+#[ignore = "xfail: Biber skip/set output parity is not implemented by bib-engine"]
 fn assertion_014_not_a_set_member_extradate_continues_from_set_2() {
-    pass_upstream(
-        "Not a set member - extradate continues from set 2",
-        r####"$out->get_output_entry('nosetb', $main)"####,
-        r####"$noset2"####,
-        r####"eq_or_diff($out->get_output_entry('nosetb', $main), $noset2, 'Not a set member - extradate continues from set 2');"####,
-        UPSTREAM_SOURCE,
+    let result = run_fixture("skips");
+    assert_eq!(
+        output_entry(&result, "nosetb").as_deref(),
+        Some(EXPECTED_NOSET2)
     );
-    panic!("xfail: public bib-engine lacks exact Biber skipword processing parity");
 }
 
 #[test]
-#[ignore = "xfail: public bib-engine lacks exact Biber skipword processing parity"]
+#[ignore = "xfail: Biber skip/set output parity is not implemented by bib-engine"]
 fn assertion_015_not_a_set_member_extradate_continues_from_set_3() {
-    pass_upstream(
-        "Not a set member - extradate continues from set 3",
-        r####"$out->get_output_entry('nosetc', $main)"####,
-        r####"$noset3"####,
-        r####"eq_or_diff($out->get_output_entry('nosetc', $main), $noset3, 'Not a set member - extradate continues from set 3');"####,
-        UPSTREAM_SOURCE,
+    let result = run_fixture("skips");
+    assert_eq!(
+        output_entry(&result, "nosetc").as_deref(),
+        Some(EXPECTED_NOSET3)
     );
-    panic!("xfail: public bib-engine lacks exact Biber skipword processing parity");
 }

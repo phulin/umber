@@ -1,163 +1,204 @@
-// Direct xfail translation of upstream t/maps.t at commit 74252e6.
-// Keep `UPSTREAM_SOURCE` byte-for-byte equivalent when editing expectations.
+//! Native translations of upstream `t/maps.t` at commit 74252e6.
 
-use super::pass_upstream;
+use std::fs;
+use std::path::{Path, PathBuf};
 
-const UPSTREAM_SOURCE: &str = r#"# -*- cperl -*-
-use strict;
-use warnings;
-use utf8;
-no warnings 'utf8';
+use bib_engine::{
+    BibAttempt, BibFailure, BibJob, BibOptionsBuilder, BibResult, BibSession, Entry, EntryId,
+    FieldId, FieldValue, FileProvisioner, OutputFormat, OutputRequest, ResolvedFile, SectionId,
+    VfsLimits, VirtualPath,
+};
 
-use Test::More tests => 8;
-use Test::Differences;
-unified_diff;
+pub(super) fn run_fixture(stem: &str) -> BibResult {
+    try_run_fixture(stem)
+        .unwrap_or_else(|failure| panic!("native fixture processing failed: {failure:?}"))
+}
 
-use Biber;
-use Biber::Utils;
-use Biber::Output::bbl;
-use Log::Log4perl;
-use Unicode::Normalize;
-chdir("t/tdata");
+pub(super) fn try_run_fixture(stem: &str) -> Result<BibResult, BibFailure> {
+    let corpus =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/corpus/bib/upstream-2.22/tdata");
+    let control_name = format!("{stem}.bcf");
+    let control_path = VirtualPath::user(&control_name).expect("valid fixture control path");
+    let mut provisioner = FileProvisioner::new(VfsLimits::default()).expect("fixture limits");
+    provisioner
+        .register_user(
+            control_path.clone(),
+            fs::read(corpus.join(&control_name)).expect("committed upstream control fixture"),
+        )
+        .expect("register control fixture");
 
-# Set up Biber object
-my $biber = Biber->new(noconf => 1);
-my $LEVEL = 'ERROR';
-my $l4pconf = qq|
-    log4perl.category.main                             = $LEVEL, Screen
-    log4perl.category.screen                           = $LEVEL, Screen
-    log4perl.appender.Screen                           = Log::Log4perl::Appender::Screen
-    log4perl.appender.Screen.utf8                      = 1
-    log4perl.appender.Screen.Threshold                 = $LEVEL
-    log4perl.appender.Screen.stderr                    = 0
-    log4perl.appender.Screen.layout                    = Log::Log4perl::Layout::SimpleLayout
-|;
-Log::Log4perl->init(\$l4pconf);
+    let output_name = format!("{stem}.bbl");
+    let output_path = VirtualPath::user(&output_name).expect("valid output path");
+    let mut options = BibOptionsBuilder::new();
+    options
+        .output(OutputRequest::new(output_path, OutputFormat::Bbl))
+        .expect("unique output path");
+    let job = BibJob::new(control_path, options.freeze());
+    let mut session = BibSession::default();
 
-$biber->parse_ctrlfile('maps.bcf');
-$biber->set_output_obj(Biber::Output::bbl->new());
+    for _ in 0..16 {
+        match session.process(&job, &provisioner.snapshot()) {
+            BibAttempt::Complete(result) => return Ok(result),
+            BibAttempt::NeedResources(batch) => {
+                provisioner.expect(&batch);
+                for request in &batch.required {
+                    let fixture = fixture_for_request(&corpus, request.original_name());
+                    provisioner
+                        .provision(ResolvedFile {
+                            request: request.key().clone(),
+                            virtual_path: format!(
+                                "/texlive/bib/{}",
+                                fixture.file_name().unwrap().to_string_lossy()
+                            ),
+                            bytes: fs::read(&fixture).unwrap_or_else(|error| {
+                                panic!("read requested fixture {}: {error}", fixture.display())
+                            }),
+                            expected_digest: None,
+                        })
+                        .expect("provision committed fixture");
+                }
+            }
+            BibAttempt::Failed(failure) => return Err(failure),
+        }
+    }
+    panic!("native fixture processing did not converge")
+}
 
-# Now generate the information
-$biber->prepare;
-my $out = $biber->get_output_obj;
-my $section = $biber->sections->get_section(0);
-my $bibentries = $section->bibentries;
+fn fixture_for_request(corpus: &Path, original_name: &str) -> PathBuf {
+    let without_query = original_name.split('?').next().unwrap_or(original_name);
+    let name = without_query
+        .rsplit(['/', '\\'])
+        .next()
+        .unwrap_or(without_query);
+    let direct = corpus.join(name);
+    if direct.is_file() {
+        return direct;
+    }
+    for extension in ["bib", "bcf", "conf", "dbx", "rnc", "bltxml"] {
+        let candidate = corpus.join(format!("{name}.{extension}"));
+        if candidate.is_file() {
+            return candidate;
+        }
+    }
+    panic!("no committed fixture satisfies native request {original_name:?}")
+}
 
-# Explicitly cited ARTICLE, not deleted by map
-ok(defined($bibentries->entry('maps1')), 'Maps test - 1' );
-# \nocite{*} ARTICLE, deleted by map
-ok(is_undef($bibentries->entry('maps2')), 'Maps test - 2' );
-# \nocite{*} COLLECTION, not deleted by map
-ok(defined($bibentries->entry('maps3')), 'Maps test - 3' );
-# \nocited{*} BOOK, deleted by map
-ok(is_undef($bibentries->entry('maps4')), 'Maps test - 4' );
-# Specifically cited ARTICLE, field set
-eq_or_diff($bibentries->entry('maps1')->get_field('verba'), 'somevalue', 'Maps test - 5' );
-ok(is_undef($bibentries->entry('maps3')->get_field('verba')), 'Maps test - 6' );
-eq_or_diff($bibentries->entry('maps1')->get_field('verbb'), 'somevalue1', 'Maps test - 7' );
-ok(is_undef($bibentries->entry('maps3')->get_field('verbb')), 'Maps test - 8' );
-"#;
+pub(super) fn entry<'a>(result: &'a BibResult, section: u32, key: &str) -> Option<&'a Entry> {
+    let id = EntryId::new(key).expect("valid upstream entry id");
+    result
+        .document()
+        .section(SectionId::new(section))
+        .and_then(|section| section.entry(&id))
+}
+
+pub(super) fn text_field<'a>(entry: &'a Entry, field: &str) -> Option<&'a str> {
+    let id = FieldId::new(field).expect("valid upstream field id");
+    match entry.fields().get(&id) {
+        Some(FieldValue::Literal(value)) => Some(value.as_str()),
+        Some(FieldValue::Verbatim(value)) => Some(value.as_str()),
+        _ => None,
+    }
+}
+
+pub(super) fn list_keys<'a>(result: &'a BibResult, section: u32, list_id: &str) -> Vec<&'a str> {
+    result
+        .document()
+        .section(SectionId::new(section))
+        .expect("upstream section")
+        .lists()
+        .find(|list| list.id().as_str() == list_id)
+        .map(|list| list.entries().map(EntryId::as_str).collect())
+        .unwrap_or_default()
+}
+
+pub(super) fn output_entry(result: &BibResult, key: &str) -> Option<String> {
+    output_entry_nth(result, key, 0)
+}
+
+pub(super) fn output_text(result: &BibResult) -> &str {
+    let bytes = result
+        .files()
+        .find(|file| file.path().as_str().ends_with(".bbl"))
+        .expect("native BBL output")
+        .bytes();
+    std::str::from_utf8(bytes).expect("native BBL is UTF-8")
+}
+
+pub(super) fn output_entry_nth(result: &BibResult, key: &str, occurrence: usize) -> Option<String> {
+    let bytes = result
+        .files()
+        .find(|file| file.path().as_str().ends_with(".bbl"))?
+        .bytes();
+    let output = std::str::from_utf8(bytes).expect("native BBL is UTF-8");
+    let marker = format!("    \\entry{{{key}}}");
+    let start = output.match_indices(&marker).nth(occurrence)?.0;
+    let relative_end = output[start..].find("    \\endentry\n")?;
+    let end = start + relative_end + "    \\endentry\n".len();
+    Some(output[start..end].to_owned())
+}
+
+pub(super) fn section_entry_keys(result: &BibResult, section: u32) -> Vec<&str> {
+    result
+        .document()
+        .section(SectionId::new(section))
+        .expect("upstream section")
+        .entries()
+        .map(|entry| entry.id().as_str())
+        .collect()
+}
 
 #[test]
-#[ignore = "xfail: public bib-engine lacks exact Biber source-map parity"]
 fn assertion_001_maps_test_1() {
-    pass_upstream(
-        "Maps test - 1",
-        r"defined($bibentries->entry('maps1'))",
-        r"true",
-        r"ok(defined($bibentries->entry('maps1')), 'Maps test - 1' );",
-        UPSTREAM_SOURCE,
-    );
-    panic!("xfail: public bib-engine lacks exact Biber source-map parity");
+    let result = run_fixture("maps");
+    assert!(entry(&result, 0, "maps1").is_some());
 }
 
 #[test]
-#[ignore = "xfail: public bib-engine lacks exact Biber source-map parity"]
+#[ignore = "xfail: source-map deletion is not implemented by bib-engine"]
 fn assertion_002_maps_test_2() {
-    pass_upstream(
-        "Maps test - 2",
-        r"is_undef($bibentries->entry('maps2'))",
-        r"true",
-        r"ok(is_undef($bibentries->entry('maps2')), 'Maps test - 2' );",
-        UPSTREAM_SOURCE,
-    );
-    panic!("xfail: public bib-engine lacks exact Biber source-map parity");
+    let result = run_fixture("maps");
+    assert!(entry(&result, 0, "maps2").is_none());
 }
 
 #[test]
-#[ignore = "xfail: public bib-engine lacks exact Biber source-map parity"]
 fn assertion_003_maps_test_3() {
-    pass_upstream(
-        "Maps test - 3",
-        r"defined($bibentries->entry('maps3'))",
-        r"true",
-        r"ok(defined($bibentries->entry('maps3')), 'Maps test - 3' );",
-        UPSTREAM_SOURCE,
-    );
-    panic!("xfail: public bib-engine lacks exact Biber source-map parity");
+    let result = run_fixture("maps");
+    assert!(entry(&result, 0, "maps3").is_some());
 }
 
 #[test]
-#[ignore = "xfail: public bib-engine lacks exact Biber source-map parity"]
+#[ignore = "xfail: source-map deletion is not implemented by bib-engine"]
 fn assertion_004_maps_test_4() {
-    pass_upstream(
-        "Maps test - 4",
-        r"is_undef($bibentries->entry('maps4'))",
-        r"true",
-        r"ok(is_undef($bibentries->entry('maps4')), 'Maps test - 4' );",
-        UPSTREAM_SOURCE,
-    );
-    panic!("xfail: public bib-engine lacks exact Biber source-map parity");
+    let result = run_fixture("maps");
+    assert!(entry(&result, 0, "maps4").is_none());
 }
 
 #[test]
-#[ignore = "xfail: public bib-engine lacks exact Biber source-map parity"]
+#[ignore = "xfail: source-map field assignment is not implemented by bib-engine"]
 fn assertion_005_maps_test_5() {
-    pass_upstream(
-        "Maps test - 5",
-        r"$bibentries->entry('maps1')->get_field('verba')",
-        r"'somevalue'",
-        r"eq_or_diff($bibentries->entry('maps1')->get_field('verba'), 'somevalue', 'Maps test - 5' );",
-        UPSTREAM_SOURCE,
-    );
-    panic!("xfail: public bib-engine lacks exact Biber source-map parity");
+    let result = run_fixture("maps");
+    let mapped = entry(&result, 0, "maps1").expect("explicitly cited entry");
+    assert_eq!(text_field(mapped, "verba"), Some("somevalue"));
 }
 
 #[test]
-#[ignore = "xfail: public bib-engine lacks exact Biber source-map parity"]
 fn assertion_006_maps_test_6() {
-    pass_upstream(
-        "Maps test - 6",
-        r"is_undef($bibentries->entry('maps3')->get_field('verba'))",
-        r"true",
-        r"ok(is_undef($bibentries->entry('maps3')->get_field('verba')), 'Maps test - 6' );",
-        UPSTREAM_SOURCE,
-    );
-    panic!("xfail: public bib-engine lacks exact Biber source-map parity");
+    let result = run_fixture("maps");
+    let unmapped = entry(&result, 0, "maps3").expect("collection entry");
+    assert_eq!(text_field(unmapped, "verba"), None);
 }
 
 #[test]
-#[ignore = "xfail: public bib-engine lacks exact Biber source-map parity"]
+#[ignore = "xfail: source-map field assignment is not implemented by bib-engine"]
 fn assertion_007_maps_test_7() {
-    pass_upstream(
-        "Maps test - 7",
-        r"$bibentries->entry('maps1')->get_field('verbb')",
-        r"'somevalue1'",
-        r"eq_or_diff($bibentries->entry('maps1')->get_field('verbb'), 'somevalue1', 'Maps test - 7' );",
-        UPSTREAM_SOURCE,
-    );
-    panic!("xfail: public bib-engine lacks exact Biber source-map parity");
+    let result = run_fixture("maps");
+    let mapped = entry(&result, 0, "maps1").expect("explicitly cited entry");
+    assert_eq!(text_field(mapped, "verbb"), Some("somevalue1"));
 }
 
 #[test]
-#[ignore = "xfail: public bib-engine lacks exact Biber source-map parity"]
 fn assertion_008_maps_test_8() {
-    pass_upstream(
-        "Maps test - 8",
-        r"is_undef($bibentries->entry('maps3')->get_field('verbb'))",
-        r"true",
-        r"ok(is_undef($bibentries->entry('maps3')->get_field('verbb')), 'Maps test - 8' );",
-        UPSTREAM_SOURCE,
-    );
-    panic!("xfail: public bib-engine lacks exact Biber source-map parity");
+    let result = run_fixture("maps");
+    let unmapped = entry(&result, 0, "maps3").expect("collection entry");
+    assert_eq!(text_field(unmapped, "verbb"), None);
 }

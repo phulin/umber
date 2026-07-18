@@ -1,67 +1,8 @@
-// Direct xfail translation of upstream t/xdata.t at commit 74252e6.
-// Keep `UPSTREAM_SOURCE` byte-for-byte equivalent when editing expectations.
+//! Native translations of upstream `t/xdata.t` at commit 74252e6.
 
-use super::pass_upstream;
+use super::maps::{output_entry, try_run_fixture};
 
-const UPSTREAM_SOURCE: &str = r#"# -*- cperl -*-
-use strict;
-use warnings;
-use utf8;
-no warnings 'utf8';
-
-use Test::More tests => 13;
-use Test::Differences;
-use List::AllUtils qw( first );
-unified_diff;
-
-use Biber;
-use Biber::Output::bbl;
-use Log::Log4perl;
-use Capture::Tiny qw(capture);
-use Encode;
-
-chdir("t/tdata") ;
-
-# USING CAPTURE - DEBUGGING PRINTS, DUMPS WON'T BE VISIBLE UNLESS YOU PRINT $stderr
-# AT THE END!
-
-# Set up Biber object
-my $biber = Biber->new(noconf => 1);
-
-# Note stderr is output here so we can capture it and do a cyclic crossref test
-my $LEVEL = 'ERROR';
-my $l4pconf = qq|
-    log4perl.category.main                             = $LEVEL, Screen
-    log4perl.category.screen                           = $LEVEL, Screen
-    log4perl.appender.Screen                           = Log::Log4perl::Appender::Screen
-    log4perl.appender.Screen.utf8                      = 1
-    log4perl.appender.Screen.Threshold                 = $LEVEL
-    log4perl.appender.Screen.stderr                    = 1
-    log4perl.appender.Screen.layout                    = Log::Log4perl::Layout::SimpleLayout
-|;
-
-Log::Log4perl->init(\$l4pconf);
-
-$biber->parse_ctrlfile('xdata.bcf');
-$biber->set_output_obj(Biber::Output::bbl->new());
-
-# Options - we could set these in the control file but it's nice to see what we're
-# relying on here for tests
-
-# Biber options
-Biber::Config->setoption('sortlocale', 'en_GB.UTF-8');
-Biber::Config->setoption('nodieonerror', 1); # because there is a cyclic xdata check
-Biber::Config->setoption('no_bltxml_schema', 1);
-
-# Now generate the information
-my ($stdout, $stderr) = capture { $biber->prepare };
-#my ($stdout, $stderr); $biber->prepare; # For debugging
-my $section = $biber->sections->get_section(0);
-my $bibentries = $section->bibentries;
-my $main = $biber->datalists->get_list('nty/global//global/global/global');
-my $out = $biber->get_output_obj;
-
-my $xd1 = q|    \entry{xd1}{book}{}{}
+const EXPECTED_XD1: &str = r#"    \entry{xd1}{book}{}{}
       \name{author}{1}{}{%
         {{hash=51db4bfd331cba22959ce2d224c517cd}{%
            family={Ellington},
@@ -95,9 +36,9 @@ my $xd1 = q|    \entry{xd1}{book}{}{}
       \field{dateera}{ce}
       \warn{\item book entry 'xd1' references XDATA entry 'missingxd' which does not exist, not resolving (section 0)}
     \endentry
-|;
+"#;
 
-my $xd2 = q|    \entry{xd2}{book}{}{}
+const EXPECTED_XD2: &str = r#"    \entry{xd2}{book}{}{}
       \name{author}{1}{}{%
         {{hash=68539e0ce4922cc4957c6cabf35e6fc8}{%
            family={Pillington},
@@ -132,9 +73,9 @@ my $xd2 = q|    \entry{xd2}{book}{}{}
       \field{year}{2003}
       \field{dateera}{ce}
     \endentry
-|;
+"#;
 
-my $gxd1 = q|    \entry{gxd1}{book}{}{}
+const EXPECTED_GXD1: &str = r#"    \entry{gxd1}{book}{}{}
       \name{author}{2}{}{%
         {{hash=6b3653417f9aa97391c37cff5dfda7fa}{%
            family={Smith},
@@ -210,9 +151,9 @@ my $gxd1 = q|    \entry{gxd1}{book}{}{}
       \warn{\item Field 'organization' in book entry 'gxd1' which xdata references field 'author' in entry 'gxd2' are not the same types, not resolving (section 0)}
       \warn{\item book entry 'gxd1' references XDATA entry 'lxd1' which is not an XDATA entry, not resolving (section 0)}
     \endentry
-|;
+"#;
 
-my $gxd1g = q|    \entry{gxd1g}{book}{}{}
+const EXPECTED_GXD1G: &str = r#"    \entry{gxd1g}{book}{}{}
       \name{author}{3}{}{%
         {{hash=6b3653417f9aa97391c37cff5dfda7fa}{%
            family={Smith},
@@ -294,9 +235,9 @@ my $gxd1g = q|    \entry{gxd1g}{book}{}{}
       \warn{\item Field 'organization' in book entry 'gxd1g' which xdata references field 'author' in entry 'gxd2' are not the same types, not resolving (section 0)}
       \warn{\item book entry 'gxd1g' references XDATA entry 'lxd1' which is not an XDATA entry, not resolving (section 0)}
     \endentry
-|;
+"#;
 
-my $bltxgxd1 = q|    \entry{bltxgxd1}{book}{}{}
+const EXPECTED_BLTXGXD1: &str = r#"    \entry{bltxgxd1}{book}{}{}
       \name{author}{2}{}{%
         {{hash=ecc4a87e596c582a09b19d4ab187d8c2}{%
            family={Brian},
@@ -363,9 +304,9 @@ my $bltxgxd1 = q|    \entry{bltxgxd1}{book}{}{}
       \warn{\item Field 'organization' in book entry 'bltxgxd1' which xdata references field 'author' in entry 'bltxgxd2' are not the same types, not resolving (section 0)}
       \warn{\item Field 'note' in book entry 'bltxgxd1' references XDATA field 'note' in entry 'bltxgxd2' and this field does not exist, not resolving (section 0)}
     \endentry
-|;
+"#;
 
-my $xdann1 = q|    \entry{xdann1}{book}{}{}
+const EXPECTED_XDANN1: &str = r#"    \entry{xdann1}{book}{}{}
       \name{author}{4}{}{%
         {{hash=9c855075c7ab53ad38ec38086eda2029}{%
            family={Smith},
@@ -457,209 +398,228 @@ my $xdann1 = q|    \entry{xdann1}{book}{}{}
       \annotation{item}{location}{default}{3}{}{0}{bigloc}
       \annotation{item}{publisher}{default}{1}{}{0}{bigpublisher}
     \endentry
-|;
-
-# Test::Differences doesn't like utf8 unless it's encoded here
-eq_or_diff($out->get_output_entry('xd1', $main), $xd1, 'xdata test - 1');
-eq_or_diff(encode_utf8($out->get_output_entry('xd2', $main)), encode_utf8($xd2), 'xdata test - 2');
-# XDATA entries should not be output at all
-eq_or_diff($out->get_output_entry('macmillan', $main), undef, 'xdata test - 3');
-eq_or_diff($out->get_output_entry('macmillan:pub', $main), undef, 'xdata test - 4');
-eq_or_diff($out->get_output_entry('gxd1', $main), $gxd1, 'xdata granular test - 1');
-eq_or_diff($out->get_output_entry('gxd1g', $main), $gxd1g, 'xdata granular test - 2');
-eq_or_diff($out->get_output_entry('bltxgxd1', $main), $bltxgxd1, 'xdata granular test - 3');
-eq_or_diff($out->get_output_entry('xdann1', $main), $xdann1, 'xdata annotation test - 1');
-chomp $stderr;
-ok((first {$_ eq "ERROR - Circular XDATA inheritance between 'lxd1:loop'<->'lxd2:loop'"} split("\n",$stderr)), 'Cyclic xdata error check - 1');
-ok((first {$_ eq "ERROR - Circular XDATA inheritance between 'lxd4:loop'<->'lxd4:loop'"} split("\n",$stderr)), 'Cyclic xdata error check - 2');
-ok((first {$_ eq "ERROR - Circular XDATA inheritance between 'loop'<->'loop:3'"} split("\n",$stderr)), 'Cyclic xdata error check - 3');
-
-# granular warnings
-my $w1 = [ "book entry 'gxd1' has XDATA reference from field 'publisher' that contains no source field (section 0)",
-          "book entry 'gxd1' has XDATA reference from field 'addendum' that contains no source field (section 0)",
-          "Field 'note' in book entry 'gxd1' references XDATA field 'note' in entry 'gxd2' and this field does not exist, not resolving (section 0)",
-          "Field 'translator' in book entry 'gxd1' references field 'author' position 3 in entry 'gxd2' and this position does not exist, not resolving (section 0)",
-          "Field 'lista' in book entry 'gxd1' references field 'location' position 5 in entry 'gxd3' and this position does not exist, not resolving (section 0)",
-           "Field 'organization' in book entry 'gxd1' which xdata references field 'author' in entry 'gxd2' are not the same types, not resolving (section 0)",
-           "book entry 'gxd1' references XDATA entry 'lxd1' which is not an XDATA entry, not resolving (section 0)"];
-is_deeply($bibentries->entry('gxd1')->get_field('warnings'), $w1, 'Granular XDATA resolution warnings - bibtex' );
-
-my $w2 = [ "book entry 'bltxgxd1' has XDATA reference from field 'publisher' that contains no source field (section 0)",
-           "book entry 'bltxgxd1' has XDATA reference from field 'addendum' that contains no source field (section 0)",
-           "Field 'translator' in book entry 'bltxgxd1' references field 'author' position 3 in entry 'bltxgxd2' and this position does not exist, not resolving (section 0)",
-           "Field 'lista' in book entry 'bltxgxd1' references field 'location' position 5 in entry 'bltxgxd3' and this position does not exist, not resolving (section 0)",
-           "Field 'organization' in book entry 'bltxgxd1' which xdata references field 'author' in entry 'bltxgxd2' are not the same types, not resolving (section 0)",
-           "Field 'note' in book entry 'bltxgxd1' references XDATA field 'note' in entry 'bltxgxd2' and this field does not exist, not resolving (section 0)"];
-is_deeply($bibentries->entry('bltxgxd1')->get_field('warnings'), $w2, 'Granular XDATA resolution warnings - biblatexml' );
-# print $stdout;
-# print $stderr;
 "#;
 
+const EXPECTED_W1: &[&str] = &[
+    r#"book entry 'gxd1' has XDATA reference from field 'publisher' that contains no source field (section 0)"#,
+    r#"book entry 'gxd1' has XDATA reference from field 'addendum' that contains no source field (section 0)"#,
+    r#"Field 'note' in book entry 'gxd1' references XDATA field 'note' in entry 'gxd2' and this field does not exist, not resolving (section 0)"#,
+    r#"Field 'translator' in book entry 'gxd1' references field 'author' position 3 in entry 'gxd2' and this position does not exist, not resolving (section 0)"#,
+    r#"Field 'lista' in book entry 'gxd1' references field 'location' position 5 in entry 'gxd3' and this position does not exist, not resolving (section 0)"#,
+    r#"Field 'organization' in book entry 'gxd1' which xdata references field 'author' in entry 'gxd2' are not the same types, not resolving (section 0)"#,
+    r#"book entry 'gxd1' references XDATA entry 'lxd1' which is not an XDATA entry, not resolving (section 0)"#,
+];
+
+const EXPECTED_W2: &[&str] = &[
+    r#"book entry 'bltxgxd1' has XDATA reference from field 'publisher' that contains no source field (section 0)"#,
+    r#"book entry 'bltxgxd1' has XDATA reference from field 'addendum' that contains no source field (section 0)"#,
+    r#"Field 'translator' in book entry 'bltxgxd1' references field 'author' position 3 in entry 'bltxgxd2' and this position does not exist, not resolving (section 0)"#,
+    r#"Field 'lista' in book entry 'bltxgxd1' references field 'location' position 5 in entry 'bltxgxd3' and this position does not exist, not resolving (section 0)"#,
+    r#"Field 'organization' in book entry 'bltxgxd1' which xdata references field 'author' in entry 'bltxgxd2' are not the same types, not resolving (section 0)"#,
+    r#"Field 'note' in book entry 'bltxgxd1' references XDATA field 'note' in entry 'bltxgxd2' and this field does not exist, not resolving (section 0)"#,
+];
+
+fn entry_diagnostics<'a>(result: &'a bib_engine::BibResult, key: &str) -> Vec<&'a str> {
+    result
+        .diagnostics()
+        .filter(|diagnostic| {
+            diagnostic
+                .entry()
+                .is_some_and(|entry| entry.as_str() == key)
+        })
+        .map(|diagnostic| diagnostic.message())
+        .collect()
+}
+
+fn rendered_diagnostics(result: &bib_engine::BibResult) -> Vec<String> {
+    result
+        .diagnostics()
+        .map(|diagnostic| {
+            format!("{:?} - {}", diagnostic.severity(), diagnostic.message()).to_uppercase()
+        })
+        .collect()
+}
+
 #[test]
-#[ignore = "xfail: public bib-engine lacks exact Biber xdata inheritance parity"]
+#[ignore = "xfail: Biber XDATA inheritance/output is not implemented by bib-engine"]
 fn assertion_001_xdata_test_1() {
-    pass_upstream(
-        "xdata test - 1",
-        r"$out->get_output_entry('xd1', $main)",
-        r"$xd1",
-        r"eq_or_diff($out->get_output_entry('xd1', $main), $xd1, 'xdata test - 1');",
-        UPSTREAM_SOURCE,
+    let result = try_run_fixture("xdata");
+    assert_eq!(
+        result
+            .as_ref()
+            .ok()
+            .and_then(|result| output_entry(result, "xd1"))
+            .as_deref(),
+        Some(EXPECTED_XD1)
     );
-    panic!("xfail: public bib-engine lacks exact Biber xdata inheritance parity");
 }
 
 #[test]
-#[ignore = "xfail: public bib-engine lacks exact Biber xdata inheritance parity"]
+#[ignore = "xfail: Biber XDATA inheritance/output is not implemented by bib-engine"]
 fn assertion_002_xdata_test_2() {
-    pass_upstream(
-        "xdata test - 2",
-        r"encode_utf8($out->get_output_entry('xd2', $main))",
-        r"encode_utf8($xd2)",
-        r"eq_or_diff(encode_utf8($out->get_output_entry('xd2', $main)), encode_utf8($xd2), 'xdata test - 2');",
-        UPSTREAM_SOURCE,
+    let result = try_run_fixture("xdata");
+    assert_eq!(
+        result
+            .as_ref()
+            .ok()
+            .and_then(|result| output_entry(result, "xd2"))
+            .as_deref(),
+        Some(EXPECTED_XD2)
     );
-    panic!("xfail: public bib-engine lacks exact Biber xdata inheritance parity");
 }
 
 #[test]
-#[ignore = "xfail: public bib-engine lacks exact Biber xdata inheritance parity"]
 fn assertion_003_xdata_test_3() {
-    pass_upstream(
-        "xdata test - 3",
-        r"$out->get_output_entry('macmillan', $main)",
-        r"undef",
-        r"eq_or_diff($out->get_output_entry('macmillan', $main), undef, 'xdata test - 3');",
-        UPSTREAM_SOURCE,
+    let result = try_run_fixture("xdata");
+    assert_eq!(
+        result
+            .as_ref()
+            .ok()
+            .and_then(|result| output_entry(result, "macmillan")),
+        None
     );
-    panic!("xfail: public bib-engine lacks exact Biber xdata inheritance parity");
 }
 
 #[test]
-#[ignore = "xfail: public bib-engine lacks exact Biber xdata inheritance parity"]
 fn assertion_004_xdata_test_4() {
-    pass_upstream(
-        "xdata test - 4",
-        r"$out->get_output_entry('macmillan:pub', $main)",
-        r"undef",
-        r"eq_or_diff($out->get_output_entry('macmillan:pub', $main), undef, 'xdata test - 4');",
-        UPSTREAM_SOURCE,
+    let result = try_run_fixture("xdata");
+    assert_eq!(
+        result
+            .as_ref()
+            .ok()
+            .and_then(|result| output_entry(result, "macmillan:pub")),
+        None
     );
-    panic!("xfail: public bib-engine lacks exact Biber xdata inheritance parity");
 }
 
 #[test]
-#[ignore = "xfail: public bib-engine lacks exact Biber xdata inheritance parity"]
+#[ignore = "xfail: Biber XDATA inheritance/output is not implemented by bib-engine"]
 fn assertion_005_xdata_granular_test_1() {
-    pass_upstream(
-        "xdata granular test - 1",
-        r"$out->get_output_entry('gxd1', $main)",
-        r"$gxd1",
-        r"eq_or_diff($out->get_output_entry('gxd1', $main), $gxd1, 'xdata granular test - 1');",
-        UPSTREAM_SOURCE,
+    let result = try_run_fixture("xdata");
+    assert_eq!(
+        result
+            .as_ref()
+            .ok()
+            .and_then(|result| output_entry(result, "gxd1"))
+            .as_deref(),
+        Some(EXPECTED_GXD1)
     );
-    panic!("xfail: public bib-engine lacks exact Biber xdata inheritance parity");
 }
 
 #[test]
-#[ignore = "xfail: public bib-engine lacks exact Biber xdata inheritance parity"]
+#[ignore = "xfail: Biber XDATA inheritance/output is not implemented by bib-engine"]
 fn assertion_006_xdata_granular_test_2() {
-    pass_upstream(
-        "xdata granular test - 2",
-        r"$out->get_output_entry('gxd1g', $main)",
-        r"$gxd1g",
-        r"eq_or_diff($out->get_output_entry('gxd1g', $main), $gxd1g, 'xdata granular test - 2');",
-        UPSTREAM_SOURCE,
+    let result = try_run_fixture("xdata");
+    assert_eq!(
+        result
+            .as_ref()
+            .ok()
+            .and_then(|result| output_entry(result, "gxd1g"))
+            .as_deref(),
+        Some(EXPECTED_GXD1G)
     );
-    panic!("xfail: public bib-engine lacks exact Biber xdata inheritance parity");
 }
 
 #[test]
-#[ignore = "xfail: public bib-engine lacks exact Biber xdata inheritance parity"]
+#[ignore = "xfail: Biber XDATA inheritance/output is not implemented by bib-engine"]
 fn assertion_007_xdata_granular_test_3() {
-    pass_upstream(
-        "xdata granular test - 3",
-        r"$out->get_output_entry('bltxgxd1', $main)",
-        r"$bltxgxd1",
-        r"eq_or_diff($out->get_output_entry('bltxgxd1', $main), $bltxgxd1, 'xdata granular test - 3');",
-        UPSTREAM_SOURCE,
+    let result = try_run_fixture("xdata");
+    assert_eq!(
+        result
+            .as_ref()
+            .ok()
+            .and_then(|result| output_entry(result, "bltxgxd1"))
+            .as_deref(),
+        Some(EXPECTED_BLTXGXD1)
     );
-    panic!("xfail: public bib-engine lacks exact Biber xdata inheritance parity");
 }
 
 #[test]
-#[ignore = "xfail: public bib-engine lacks exact Biber xdata inheritance parity"]
+#[ignore = "xfail: Biber XDATA inheritance/output is not implemented by bib-engine"]
 fn assertion_008_xdata_annotation_test_1() {
-    pass_upstream(
-        "xdata annotation test - 1",
-        r"$out->get_output_entry('xdann1', $main)",
-        r"$xdann1",
-        r"eq_or_diff($out->get_output_entry('xdann1', $main), $xdann1, 'xdata annotation test - 1');",
-        UPSTREAM_SOURCE,
+    let result = try_run_fixture("xdata");
+    assert_eq!(
+        result
+            .as_ref()
+            .ok()
+            .and_then(|result| output_entry(result, "xdann1"))
+            .as_deref(),
+        Some(EXPECTED_XDANN1)
     );
-    panic!("xfail: public bib-engine lacks exact Biber xdata inheritance parity");
 }
 
 #[test]
-#[ignore = "xfail: public bib-engine lacks exact Biber xdata inheritance parity"]
+#[ignore = "xfail: Biber circular-XDATA diagnostics are not implemented by bib-engine"]
 fn assertion_009_cyclic_xdata_error_check_1() {
-    pass_upstream(
-        "Cyclic xdata error check - 1",
-        r#"(first {$_ eq "ERROR - Circular XDATA inheritance between 'lxd1:loop'<->'lxd2:loop'"} split("\n",$stderr))"#,
-        r"true",
-        r#"ok((first {$_ eq "ERROR - Circular XDATA inheritance between 'lxd1:loop'<->'lxd2:loop'"} split("\n",$stderr)), 'Cyclic xdata error check - 1');"#,
-        UPSTREAM_SOURCE,
+    let result = try_run_fixture("xdata");
+    assert!(
+        result
+            .as_ref()
+            .ok()
+            .map(rendered_diagnostics)
+            .unwrap_or_default()
+            .iter()
+            .any(|diagnostic| diagnostic
+                == "ERROR - CIRCULAR XDATA INHERITANCE BETWEEN 'LXD1:LOOP'<->'LXD2:LOOP'")
     );
-    panic!("xfail: public bib-engine lacks exact Biber xdata inheritance parity");
 }
 
 #[test]
-#[ignore = "xfail: public bib-engine lacks exact Biber xdata inheritance parity"]
+#[ignore = "xfail: Biber circular-XDATA diagnostics are not implemented by bib-engine"]
 fn assertion_010_cyclic_xdata_error_check_2() {
-    pass_upstream(
-        "Cyclic xdata error check - 2",
-        r#"(first {$_ eq "ERROR - Circular XDATA inheritance between 'lxd4:loop'<->'lxd4:loop'"} split("\n",$stderr))"#,
-        r"true",
-        r#"ok((first {$_ eq "ERROR - Circular XDATA inheritance between 'lxd4:loop'<->'lxd4:loop'"} split("\n",$stderr)), 'Cyclic xdata error check - 2');"#,
-        UPSTREAM_SOURCE,
+    let result = try_run_fixture("xdata");
+    assert!(
+        result
+            .as_ref()
+            .ok()
+            .map(rendered_diagnostics)
+            .unwrap_or_default()
+            .iter()
+            .any(|diagnostic| diagnostic
+                == "ERROR - CIRCULAR XDATA INHERITANCE BETWEEN 'LXD4:LOOP'<->'LXD4:LOOP'")
     );
-    panic!("xfail: public bib-engine lacks exact Biber xdata inheritance parity");
 }
 
 #[test]
-#[ignore = "xfail: public bib-engine lacks exact Biber xdata inheritance parity"]
+#[ignore = "xfail: Biber circular-XDATA diagnostics are not implemented by bib-engine"]
 fn assertion_011_cyclic_xdata_error_check_3() {
-    pass_upstream(
-        "Cyclic xdata error check - 3",
-        r#"(first {$_ eq "ERROR - Circular XDATA inheritance between 'loop'<->'loop:3'"} split("\n",$stderr))"#,
-        r"true",
-        r#"ok((first {$_ eq "ERROR - Circular XDATA inheritance between 'loop'<->'loop:3'"} split("\n",$stderr)), 'Cyclic xdata error check - 3');"#,
-        UPSTREAM_SOURCE,
+    let result = try_run_fixture("xdata");
+    assert!(
+        result
+            .as_ref()
+            .ok()
+            .map(rendered_diagnostics)
+            .unwrap_or_default()
+            .iter()
+            .any(|diagnostic| diagnostic
+                == "ERROR - CIRCULAR XDATA INHERITANCE BETWEEN 'LOOP'<->'LOOP:3'")
     );
-    panic!("xfail: public bib-engine lacks exact Biber xdata inheritance parity");
 }
 
 #[test]
-#[ignore = "xfail: public bib-engine lacks exact Biber xdata inheritance parity"]
+#[ignore = "xfail: Biber granular-XDATA diagnostics are not implemented by bib-engine"]
 fn assertion_012_granular_xdata_resolution_warnings_bibtex() {
-    pass_upstream(
-        "Granular XDATA resolution warnings - bibtex",
-        r"$bibentries->entry('gxd1')->get_field('warnings')",
-        r"$w1",
-        r"is_deeply($bibentries->entry('gxd1')->get_field('warnings'), $w1, 'Granular XDATA resolution warnings - bibtex' );",
-        UPSTREAM_SOURCE,
+    let result = try_run_fixture("xdata");
+    assert_eq!(
+        result
+            .as_ref()
+            .ok()
+            .map(|result| entry_diagnostics(result, "gxd1"))
+            .unwrap_or_default(),
+        EXPECTED_W1
     );
-    panic!("xfail: public bib-engine lacks exact Biber xdata inheritance parity");
 }
 
 #[test]
-#[ignore = "xfail: public bib-engine lacks exact Biber xdata inheritance parity"]
+#[ignore = "xfail: Biber granular-XDATA diagnostics are not implemented by bib-engine"]
 fn assertion_013_granular_xdata_resolution_warnings_biblatexml() {
-    pass_upstream(
-        "Granular XDATA resolution warnings - biblatexml",
-        r"$bibentries->entry('bltxgxd1')->get_field('warnings')",
-        r"$w2",
-        r"is_deeply($bibentries->entry('bltxgxd1')->get_field('warnings'), $w2, 'Granular XDATA resolution warnings - biblatexml' );",
-        UPSTREAM_SOURCE,
+    let result = try_run_fixture("xdata");
+    assert_eq!(
+        result
+            .as_ref()
+            .ok()
+            .map(|result| entry_diagnostics(result, "bltxgxd1"))
+            .unwrap_or_default(),
+        EXPECTED_W2
     );
-    panic!("xfail: public bib-engine lacks exact Biber xdata inheritance parity");
 }

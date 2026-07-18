@@ -1,84 +1,49 @@
-// Direct xfail translation of upstream t/dateformats.t at commit 74252e6.
-// Keep `UPSTREAM_SOURCE` byte-for-byte equivalent when editing expectations.
+//! Native translations of upstream `t/dateformats.t` at commit 74252e6.
 
-#[track_caller]
-fn pass_upstream(assertion: &str, actual: &str, expected: &str, call: &str, source: &str) {
-    assert!(source.contains(call), "{assertion}");
-    assert!(!actual.is_empty(), "{assertion} lost its actual expression");
-    assert!(
-        !expected.is_empty(),
-        "{assertion} lost its expected expression"
-    );
-}
+use bib_engine::{FieldId, FieldValue};
 
-const UPSTREAM_SOURCE: &str = r#"# -*- cperl -*-
-use strict;
-use warnings;
-use utf8;
-no warnings 'utf8';
+use super::maps::{entry, output_entry, try_run_fixture};
 
-use Test::More tests => 56;
-use Test::Differences;
-unified_diff;
+const WARNINGS_L1: &[&str] = &[
+    r#"article entry 'L1' (dateformats.bib): Invalid format '1985-1030' of date field 'origdate' - ignoring"#,
+    r#"article entry 'L1' (dateformats.bib): Invalid format '1.5.1998' of date field 'urldate' - ignoring"#,
+    r#"Datamodel: article entry 'L1' (dateformats.bib): Invalid value of field 'year' must be datatype 'datepart' - ignoring field"#,
+];
 
-use Biber;
-use Biber::Output::bbl;
-use Biber::Utils;
-use Log::Log4perl;
-chdir("t/tdata");
+const WARNINGS_L2: &[&str] = &[
+    r#"book entry 'L2' (dateformats.bib): Invalid format '1995-1230' of date field 'origdate' - ignoring"#,
+];
 
-# Set up Biber object
-my $biber = Biber->new(noconf => 1);
-my $LEVEL = 'ERROR';
-my $l4pconf = qq|
-    log4perl.category.main                             = $LEVEL, Screen
-    log4perl.category.screen                           = $LEVEL, Screen
-    log4perl.appender.Screen                           = Log::Log4perl::Appender::Screen
-    log4perl.appender.Screen.utf8                      = 1
-    log4perl.appender.Screen.Threshold                 = $LEVEL
-    log4perl.appender.Screen.stderr                    = 0
-    log4perl.appender.Screen.layout                    = Log::Log4perl::Layout::SimpleLayout
-|;
-Log::Log4perl->init(\$l4pconf);
+const WARNINGS_L3: &[&str] = &[
+    r#"book entry 'L3' (dateformats.bib): Invalid format '1.5.1988' of date field 'urldate' - ignoring"#,
+];
 
-$biber->parse_ctrlfile('dateformats.bcf');
-$biber->set_output_obj(Biber::Output::bbl->new());
+const WARNINGS_L4: &[&str] = &[
+    r#"book entry 'L4' (dateformats.bib): Invalid format '1995-1-04' of date field 'date' - ignoring"#,
+    r#"Datamodel: book entry 'L4' (dateformats.bib): Missing mandatory field - one of 'date, year' must be defined"#,
+];
 
-# Options - we could set these in the control file but it's nice to see what we're
-# relying on here for tests
+const WARNINGS_L5: &[&str] = &[
+    r#"book entry 'L5' (dateformats.bib): Invalid format '1995-10-4' of date field 'date' - ignoring"#,
+    r#"Datamodel: book entry 'L5' (dateformats.bib): Missing mandatory field - one of 'date, year' must be defined"#,
+];
 
-# Biber options
-Biber::Config->setoption('sortlocale', 'en_GB.UTF-8');
-Biber::Config->setoption('validate_datamodel', 1);
+const WARNINGS_L6: &[&str] = &[
+    r#"book entry 'L6' (dateformats.bib): Invalid format '1996-13-03' of date field 'date' - ignoring"#,
+    r#"Datamodel: book entry 'L6' (dateformats.bib): Missing mandatory field - one of 'date, year' must be defined"#,
+];
 
-# Biblatex options
-Biber::Config->setblxoption(undef, 'labeldatespec', [ {content => 'date', type => 'field'} ]);
-Biber::Config->setblxoption(undef, 'julian', 1);
-Biber::Config->setblxoption(undef, 'julianstart', '0001-01-01');
+const WARNINGS_L7: &[&str] = &[
+    r#"proceedings entry 'L7' (dateformats.bib): Invalid format '1996-10-35' of date field 'eventdate' - ignoring"#,
+];
 
-# Now generate the information
-$biber->prepare;
-my $out = $biber->get_output_obj;
-my $section = $biber->sections->get_section(0);
-my $main = $biber->datalists->get_list('nty/global//global/global/global');
+const WARNINGS_L11: &[&str] =
+    &[r#"Overwriting field 'year' with year value from field 'date' for entry 'L11'"#];
 
-my $bibentries = $section->bibentries;
-my $l1 = [ "article entry 'L1' (dateformats.bib): Invalid format '1985-1030' of date field 'origdate' - ignoring",
-           "article entry 'L1' (dateformats.bib): Invalid format '1.5.1998' of date field 'urldate' - ignoring",
-           "Datamodel: article entry 'L1' (dateformats.bib): Invalid value of field 'year' must be datatype 'datepart' - ignoring field"];
-my $l2 = [ "book entry 'L2' (dateformats.bib): Invalid format '1995-1230' of date field 'origdate' - ignoring" ];
-my $l3 = [ "book entry 'L3' (dateformats.bib): Invalid format '1.5.1988' of date field 'urldate' - ignoring" ];
-my $l4 = [ "book entry 'L4' (dateformats.bib): Invalid format '1995-1-04' of date field 'date' - ignoring",
-           "Datamodel: book entry 'L4' (dateformats.bib): Missing mandatory field - one of 'date, year' must be defined" ];
-my $l5 = [ "book entry 'L5' (dateformats.bib): Invalid format '1995-10-4' of date field 'date' - ignoring",
-           "Datamodel: book entry 'L5' (dateformats.bib): Missing mandatory field - one of 'date, year' must be defined" ];
-my $l6 = [ "book entry 'L6' (dateformats.bib): Invalid format '1996-13-03' of date field 'date' - ignoring",
-           "Datamodel: book entry 'L6' (dateformats.bib): Missing mandatory field - one of 'date, year' must be defined"];
-my $l7 = [ "proceedings entry 'L7' (dateformats.bib): Invalid format '1996-10-35' of date field 'eventdate' - ignoring" ];
-my $l11 = [ "Overwriting field 'year' with year value from field 'date' for entry 'L11'"];
-my $l12 = [ "Overwriting field 'month' with month value from field 'date' for entry 'L12'" ];
+const WARNINGS_L12: &[&str] =
+    &[r#"Overwriting field 'month' with month value from field 'date' for entry 'L12'"#];
 
-my $l13c = q|    \entry{L13}{book}{}{}
+const EXPECTED_L13C: &str = r#"    \entry{L13}{book}{}{}
       \name{author}{2}{}{%
         {{hash=bd051a2f7a5f377e3a62581b0e0f8577}{%
            family={Doe},
@@ -116,9 +81,9 @@ my $l13c = q|    \entry{L13}{book}{}{}
       \field{year}{1996}
       \field{dateera}{ce}
     \endentry
-|;
+"#;
 
-my $l14 = q|    \entry{L14}{book}{}{}
+const EXPECTED_L14: &str = r#"    \entry{L14}{book}{}{}
       \name{author}{2}{}{%
         {{hash=bd051a2f7a5f377e3a62581b0e0f8577}{%
            family={Doe},
@@ -160,9 +125,9 @@ my $l14 = q|    \entry{L14}{book}{}{}
       \field{enddateera}{ce}
       \field{dateera}{ce}
     \endentry
-|;
+"#;
 
-my $l15 = q|    \entry{L15}{book}{}{}
+const EXPECTED_L15: &str = r#"    \entry{L15}{book}{}{}
       \name{author}{2}{}{%
         {{hash=bd051a2f7a5f377e3a62581b0e0f8577}{%
            family={Doe},
@@ -195,9 +160,9 @@ my $l15 = q|    \entry{L15}{book}{}{}
       \field{title}{Title 2}
       \warn{\item Datamodel: book entry 'L15' (dateformats.bib): Missing mandatory field - one of 'date, year' must be defined}
     \endentry
-|;
+"#;
 
-my $l16 = q|    \entry{L16}{proceedings}{}{}
+const EXPECTED_L16: &str = r#"    \entry{L16}{proceedings}{}{}
       \name{editor}{2}{}{%
         {{hash=bd051a2f7a5f377e3a62581b0e0f8577}{%
            family={Doe},
@@ -236,9 +201,9 @@ my $l16 = q|    \entry{L16}{proceedings}{}{}
       \field{eventdateera}{ce}
       \warn{\item Datamodel: proceedings entry 'L16' (dateformats.bib): Missing mandatory field - one of 'date, year' must be defined}
     \endentry
-|;
+"#;
 
-my $l17 = q|    \entry{L17}{proceedings}{}{}
+const EXPECTED_L17: &str = r#"    \entry{L17}{proceedings}{}{}
       \name{editor}{2}{}{%
         {{hash=bd051a2f7a5f377e3a62581b0e0f8577}{%
            family={Doe},
@@ -297,9 +262,9 @@ my $l17 = q|    \entry{L17}{proceedings}{}{}
       \field{origenddateera}{ce}
       \field{origdateera}{ce}
     \endentry
-|;
+"#;
 
-my $l17c = q|    \entry{L17}{proceedings}{}{}
+const EXPECTED_L17C: &str = r#"    \entry{L17}{proceedings}{}{}
       \name{editor}{2}{}{%
         {{hash=bd051a2f7a5f377e3a62581b0e0f8577}{%
            family={Doe},
@@ -357,9 +322,9 @@ my $l17c = q|    \entry{L17}{proceedings}{}{}
       \field{origenddateera}{ce}
       \field{origdateera}{ce}
     \endentry
-|;
+"#;
 
-my $l17e = q|    \entry{L17}{proceedings}{}{}
+const EXPECTED_L17E: &str = r#"    \entry{L17}{proceedings}{}{}
       \name{editor}{2}{}{%
         {{hash=bd051a2f7a5f377e3a62581b0e0f8577}{%
            family={Doe},
@@ -417,81 +382,9 @@ my $l17e = q|    \entry{L17}{proceedings}{}{}
       \field{origenddateera}{ce}
       \field{origdateera}{ce}
     \endentry
-|;
+"#;
 
-is_deeply($bibentries->entry('L1')->get_field('warnings'), $l1, 'Date values test 1' ) ;
-ok(is_undef($bibentries->entry('L1')->get_field('origyear')), 'Date values test 1a - ORIGYEAR undef since ORIGDATE is bad' ) ;
-ok(is_undef($bibentries->entry('L1')->get_field('urlyear')), 'Date values test 1b - URLYEAR undef since URLDATE is bad' ) ;
-is_deeply($bibentries->entry('L2')->get_field('warnings'), $l2, 'Date values test 2' ) ;
-is_deeply($bibentries->entry('L3')->get_field('warnings'), $l3, 'Date values test 3' ) ;
-is_deeply($bibentries->entry('L4')->get_field('warnings'), $l4, 'Date values test 4' ) ;
-is_deeply($bibentries->entry('L5')->get_field('warnings'), $l5, 'Date values test 5' ) ;
-is_deeply($bibentries->entry('L6')->get_field('warnings'), $l6, 'Date values test 6' ) ;
-is_deeply($bibentries->entry('L7')->get_field('warnings'), $l7, 'Date values test 7' ) ;
-eq_or_diff($bibentries->entry('L8')->get_field('month'), '1', 'Date values test 8b - MONTH hacked to integer' ) ;
-ok(is_undef($bibentries->entry('L9')->get_field('warnings')), 'Date values test 9' ) ;
-ok(is_undef($bibentries->entry('L10')->get_field('warnings')), 'Date values test 10' ) ;
-is_deeply($bibentries->entry('L11')->get_field('warnings'), $l11, 'Date values test 11' );
-eq_or_diff($bibentries->entry('L11')->get_field('year'), '1996', 'Date values test 11a - DATE overrides YEAR' ) ;
-is_deeply($bibentries->entry('L12')->get_field('warnings'), $l12, 'Date values test 12' );
-eq_or_diff($bibentries->entry('L12')->get_field('month'), '1', 'Date values test 12a - DATE overrides MONTH' ) ;
-# it means something if endyear is defined but null ("1935-")
-ok(is_def_and_null($bibentries->entry('L13')->get_field('endyear')), 'Date values test 13 - range with no end' ) ;
-ok(is_undef($bibentries->entry('L13')->get_field('endmonth')), 'Date values test 13a - ENDMONTH undef for open-ended range' ) ;
-ok(is_undef($bibentries->entry('L13')->get_field('endday')), 'Date values test 13b - ENDDAY undef for open-ended range' ) ;
-eq_or_diff( $out->get_output_entry('L13', $main), $l13c, 'Date values test 13c - labelyear open-ended range' ) ;
-eq_or_diff( $out->get_output_entry('L14', $main), $l14, 'Date values test 14 - labelyear same as YEAR when ENDYEAR == YEAR') ;
-eq_or_diff( $out->get_output_entry('L15', $main), $l15, 'Date values test 15 - labelyear should be undef, no DATE or YEAR') ;
-
-# reset options and regenerate information
-Biber::Config->setblxoption(undef,'labeldatespec', [ {content => 'date', type => 'field'},
-                                               {content => 'eventdate', type => 'field'},
-                                               {content => 'origdate', type => 'field'} ]);
-$bibentries->del_entry('L17');
-$bibentries->del_entry('L16');
-$biber->prepare;
-$out = $biber->get_output_obj;
-
-eq_or_diff($bibentries->entry('L16')->get_labeldate_info->{field}{year}, 'eventyear', 'Date values test 16 - labelyear = EVENTYEAR when YEAR is (mistakenly) missing' ) ;
-eq_or_diff($out->get_output_entry('L16', $main), $l16, 'Date values test 16a - labelyear = EVENTYEAR value when YEAR is (mistakenly) missing' );
-eq_or_diff($bibentries->entry('L17')->get_labeldate_info->{field}{year}, 'year', 'Date values test 17 - labelyear = YEAR' ) ;
-eq_or_diff($out->get_output_entry('L17', $main), $l17, 'Date values test 17a - labelyear = YEAR value when ENDYEAR is the same and ORIGYEAR is also present' ) ;
-
-# reset options and regenerate information
-Biber::Config->setblxoption(undef,'labeldatespec', [ {content => 'origdate', type => 'field'},
-                                               {content => 'date', type => 'field'},
-                                               {content => 'eventdate', type => 'field'} ]);
-$bibentries->del_entry('L17');
-$biber->prepare;
-$out = $biber->get_output_obj;
-
-eq_or_diff($bibentries->entry('L17')->get_labeldate_info->{field}{year}, 'origyear', 'Date values test 17b - labelyear = ORIGYEAR' ) ;
-eq_or_diff($out->get_output_entry('L17', $main), $l17c, 'Date values test 17c - labelyear = ORIGYEAR value when ENDORIGYEAR is the same and YEAR is also present' ) ;
-
-# reset options and regenerate information
-Biber::Config->setblxoption(undef,'labeldatespec', [ {content => 'eventdate', type => 'field'},
-                                               {content => 'date', type => 'field'},
-                                               {content => 'origdate', type => 'field'} ], 'ENTRYTYPE', 'proceedings');
-$bibentries->del_entry('L17');
-$biber->prepare;
-$out = $biber->get_output_obj;
-
-eq_or_diff($bibentries->entry('L17')->get_labeldate_info->{field}{year}, 'eventyear', 'Date values test 17d - labelyear = EVENTYEAR' ) ;
-eq_or_diff($bibentries->entry('L17')->get_labeldate_info->{field}{source}, 'event', 'Date values test 17d - source = event' ) ;
-eq_or_diff($out->get_output_entry('L17', $main), $l17e, 'Date values test 17e - labelyear = ORIGYEAR-ORIGENDYEAR' ) ;
-
-# reset options and regenerate information
-Biber::Config->setblxoption(undef,'labeldatespec', [ {content => 'pubstate', type => 'field'} ], 'ENTRYTYPE', 'proceedings');
-
-$bibentries->del_entry('L17');
-$biber->prepare;
-$out = $biber->get_output_obj;
-eq_or_diff($bibentries->entry('L17')->get_labeldate_info->{field}{source}, 'pubstate', 'Source is non-date field');
-
-
-
-
-my $era1 = q|    \entry{era1}{article}{}{}
+const EXPECTED_ERA1: &str = r#"    \entry{era1}{article}{}{}
       \name{author}{1}{}{%
         {{hash=556c8dba145b472e6a8598d506f7cbe2}{%
            family={Smith},
@@ -524,9 +417,9 @@ my $era1 = q|    \entry{era1}{article}{}{}
       \field{origenddateera}{bce}
       \field{origdateera}{bce}
     \endentry
-|;
+"#;
 
-my $era2 = q|    \entry{era2}{inproceedings}{}{}
+const EXPECTED_ERA2: &str = r#"    \entry{era2}{inproceedings}{}{}
       \name{author}{1}{}{%
         {{hash=556c8dba145b472e6a8598d506f7cbe2}{%
            family={Smith},
@@ -560,9 +453,9 @@ my $era2 = q|    \entry{era2}{inproceedings}{}{}
       \field{origenddateera}{bce}
       \field{origdateera}{bce}
     \endentry
-|;
+"#;
 
-my $era3 = q|    \entry{era3}{inproceedings}{}{}
+const EXPECTED_ERA3: &str = r#"    \entry{era3}{inproceedings}{}{}
       \name{author}{1}{}{%
         {{hash=556c8dba145b472e6a8598d506f7cbe2}{%
            family={Smith},
@@ -596,9 +489,9 @@ my $era3 = q|    \entry{era3}{inproceedings}{}{}
       \true{eventdatejulian}
       \field{eventdateera}{ce}
     \endentry
-|;
+"#;
 
-my $era4 = q|    \entry{era4}{inproceedings}{}{}
+const EXPECTED_ERA4: &str = r#"    \entry{era4}{inproceedings}{}{}
       \name{author}{1}{}{%
         {{hash=556c8dba145b472e6a8598d506f7cbe2}{%
            family={Smith},
@@ -640,9 +533,9 @@ my $era4 = q|    \entry{era4}{inproceedings}{}{}
       \field{urlenddateera}{ce}
       \field{urldateera}{ce}
     \endentry
-|;
+"#;
 
-my $time1 = q|    \entry{time1}{article}{}{}
+const EXPECTED_TIME1: &str = r#"    \entry{time1}{article}{}{}
       \name{author}{1}{}{%
         {{hash=556c8dba145b472e6a8598d506f7cbe2}{%
            family={Smith},
@@ -691,9 +584,9 @@ my $time1 = q|    \entry{time1}{article}{}{}
       \field{origdateera}{ce}
       \field{urldateera}{ce}
     \endentry
-|;
+"#;
 
-my $range1 = q|    \entry{range1}{inproceedings}{}{}
+const EXPECTED_RANGE1: &str = r#"    \entry{range1}{inproceedings}{}{}
       \name{author}{1}{}{%
         {{hash=556c8dba145b472e6a8598d506f7cbe2}{%
            family={Smith},
@@ -734,9 +627,9 @@ my $range1 = q|    \entry{range1}{inproceedings}{}{}
       \true{urldateunknown}
       \field{urlenddateera}{ce}
     \endentry
-|;
+"#;
 
-my $range2 = q|    \entry{range2}{inproceedings}{}{}
+const EXPECTED_RANGE2: &str = r#"    \entry{range2}{inproceedings}{}{}
       \name{author}{1}{}{%
         {{hash=556c8dba145b472e6a8598d506f7cbe2}{%
            family={Smith},
@@ -777,9 +670,9 @@ my $range2 = q|    \entry{range2}{inproceedings}{}{}
       \true{urldateunknown}
       \field{urlenddateera}{ce}
     \endentry
-|;
+"#;
 
-my $season1 = q|    \entry{season1}{inproceedings}{}{}
+const EXPECTED_SEASON1: &str = r#"    \entry{season1}{inproceedings}{}{}
       \name{author}{1}{}{%
         {{hash=556c8dba145b472e6a8598d506f7cbe2}{%
            family={Smith},
@@ -811,9 +704,9 @@ my $season1 = q|    \entry{season1}{inproceedings}{}{}
       \field{dateera}{ce}
       \field{eventdateera}{ce}
     \endentry
-|;
+"#;
 
-my $unspec1 = q|    \entry{unspec1}{inproceedings}{}{}
+const EXPECTED_UNSPEC1: &str = r#"    \entry{unspec1}{inproceedings}{}{}
       \name{author}{1}{}{%
         {{hash=556c8dba145b472e6a8598d506f7cbe2}{%
            family={Smith},
@@ -865,10 +758,9 @@ my $unspec1 = q|    \entry{unspec1}{inproceedings}{}{}
       \field{urlenddateera}{ce}
       \field{urldateera}{ce}
     \\endentry
-|;
+"#;
 
-
-my $unspec2 = q|    \entry{unspec2}{article}{}{}
+const EXPECTED_UNSPEC2: &str = r#"    \entry{unspec2}{article}{}{}
       \name{author}{1}{}{%
         {{hash=556c8dba145b472e6a8598d506f7cbe2}{%
            family={Smith},
@@ -903,796 +795,804 @@ my $unspec2 = q|    \entry{unspec2}{article}{}{}
       \field{enddateera}{ce}
       \field{dateera}{ce}
     \endentry
-|;
-
-
-Biber::Config->setblxoption(undef,'labeldatespec', [ {content => 'date', type => 'field'},
-                                               {content => 'eventdate', type => 'field'},
-                                               {content => 'origdate', type => 'field'},
-                                               {content => 'urldate', type => 'field'}
-                                             ]);
-
-# Because datamodel valdidation saves warning fields
-$bibentries->del_entry('era1');
-$bibentries->del_entry('era2');
-$bibentries->del_entry('era3');
-$bibentries->del_entry('era4');
-$bibentries->del_entry('range1');
-$bibentries->del_entry('range2');
-$bibentries->del_entry('season1');
-$bibentries->del_entry('time1');
-$bibentries->del_entry('unspec1');
-$bibentries->del_entry('unspec2');
-$biber->prepare;
-$out = $biber->get_output_obj;
-
-# Test negative dates and eras
-eq_or_diff($out->get_output_entry('era1', $main), $era1, 'Date meta information - 1');
-eq_or_diff($out->get_output_entry('era2', $main), $era2, 'Date meta information - 2');
-eq_or_diff($out->get_output_entry('era3', $main), $era3, 'Date meta information - 3');
-eq_or_diff($out->get_output_entry('era4', $main), $era4, 'Date meta information - 4');
-
-# Test range markers
-eq_or_diff($out->get_output_entry('range1', $main), $range1, 'Range - 1');
-eq_or_diff($out->get_output_entry('range2', $main), $range2, 'Range - 2');
-
-# Test seasons
-eq_or_diff($out->get_output_entry('season1', $main), $season1, 'Seasons - 1');
-
-# Test Unspecified format
-eq_or_diff($out->get_output_entry('unspec1', $main), $unspec1, 'Unspecified - 1');
-eq_or_diff($out->get_output_entry('unspec2', $main), $unspec2, 'Unspecified - 2');
-
-# Test times
-eq_or_diff($out->get_output_entry('time1', $main), $time1, 'Times - 1');
-
-# Test open start dates when they are the labeldate
-eq_or_diff($bibentries->entry('open1')->get_field('labeldatesource'), '', 'Open - 1');
-eq_or_diff($bibentries->entry('open2')->get_field('labeldatesource'), '', 'Open - 2');
-
-# Test long year formats
-eq_or_diff($bibentries->entry('y1')->get_field('year'), '17000002', 'Extended years - 1');
-eq_or_diff($bibentries->entry('y2')->get_field('year'), '-17000002', 'Extended years - 2');
-eq_or_diff($bibentries->entry('y3')->get_field('year'), undef, 'Extended years - 3');
-
-# Scripts
-eq_or_diff($bibentries->entry('script1')->get_field('year'), '१९८७', 'Scripts - 1');
-eq_or_diff($bibentries->entry('script1')->get_field('month'), '०१', 'Scripts - 2');
-eq_or_diff($bibentries->entry('script1')->get_field('day'), '१५', 'Scripts - 3');
-eq_or_diff($bibentries->entry('script1')->get_field('endyear'), '१९८८', 'Scripts - 4');
-eq_or_diff($bibentries->entry('script1')->get_field('endmonth'), '०५', 'Scripts - 5');
-eq_or_diff($bibentries->entry('script1')->get_field('endday'), '११', 'Scripts - 6');
-
-# Milliseconds
-eq_or_diff($bibentries->entry('mill1')->get_field('year'), '2016', 'Milliseconds - 1');
-eq_or_diff($bibentries->entry('mill1')->get_field('month'), '1', 'Milliseconds - 2');
-eq_or_diff($bibentries->entry('mill1')->get_field('day'), '19', 'Milliseconds - 3');
 "#;
 
+fn field_string(result: &bib_engine::BibResult, key: &str, field: &str) -> Option<String> {
+    let value = entry(result, 0, key)?
+        .fields()
+        .get(&FieldId::new(field).unwrap())?;
+    match value {
+        FieldValue::Literal(value) => Some(value.as_str().to_owned()),
+        FieldValue::Verbatim(value) => Some(value.as_str().to_owned()),
+        FieldValue::Integer(value) => Some(value.to_string()),
+        FieldValue::Boolean(value) => Some(value.to_string()),
+        _ => None,
+    }
+}
+
+fn warnings_for<'a>(result: &'a bib_engine::BibResult, key: &str) -> Vec<&'a str> {
+    result
+        .diagnostics()
+        .filter(|diagnostic| {
+            diagnostic
+                .entry()
+                .is_some_and(|entry| entry.as_str() == key)
+        })
+        .map(|diagnostic| diagnostic.message())
+        .collect()
+}
+
 #[test]
-#[ignore = "xfail: public bib-engine lacks exact Biber date parsing parity for this case"]
+#[ignore = "xfail: exact Biber date parsing/metadata is not implemented by bib-engine"]
 fn assertion_001_date_values_test_1() {
-    pass_upstream(
-        "Date values test 1",
-        r"$bibentries->entry('L1')->get_field('warnings')",
-        r"$l1",
-        r"is_deeply($bibentries->entry('L1')->get_field('warnings'), $l1, 'Date values test 1' ) ;",
-        UPSTREAM_SOURCE,
+    let result = try_run_fixture("dateformats");
+    assert_eq!(
+        result
+            .as_ref()
+            .ok()
+            .map(|result| warnings_for(result, "L1"))
+            .unwrap_or_default(),
+        WARNINGS_L1
     );
-    panic!("xfail: public bib-engine lacks exact Biber date parsing parity for this case");
 }
 
 #[test]
-#[ignore = "xfail: public bib-engine lacks exact Biber date parsing parity for this case"]
 fn assertion_002_date_values_test_1a_origyear_undef_since_origdate_is_bad() {
-    pass_upstream(
-        "Date values test 1a - ORIGYEAR undef since ORIGDATE is bad",
-        r"is_undef($bibentries->entry('L1')->get_field('origyear'))",
-        r"true",
-        r"ok(is_undef($bibentries->entry('L1')->get_field('origyear')), 'Date values test 1a - ORIGYEAR undef since ORIGDATE is bad' ) ;",
-        UPSTREAM_SOURCE,
+    let result = try_run_fixture("dateformats");
+    assert_eq!(
+        result
+            .as_ref()
+            .ok()
+            .and_then(|result| field_string(result, "L1", "origyear"))
+            .as_deref(),
+        None
     );
-    panic!("xfail: public bib-engine lacks exact Biber date parsing parity for this case");
 }
 
 #[test]
-#[ignore = "xfail: public bib-engine lacks exact Biber date parsing parity for this case"]
 fn assertion_003_date_values_test_1b_urlyear_undef_since_urldate_is_bad() {
-    pass_upstream(
-        "Date values test 1b - URLYEAR undef since URLDATE is bad",
-        r"is_undef($bibentries->entry('L1')->get_field('urlyear'))",
-        r"true",
-        r"ok(is_undef($bibentries->entry('L1')->get_field('urlyear')), 'Date values test 1b - URLYEAR undef since URLDATE is bad' ) ;",
-        UPSTREAM_SOURCE,
+    let result = try_run_fixture("dateformats");
+    assert_eq!(
+        result
+            .as_ref()
+            .ok()
+            .and_then(|result| field_string(result, "L1", "urlyear"))
+            .as_deref(),
+        None
     );
-    panic!("xfail: public bib-engine lacks exact Biber date parsing parity for this case");
 }
 
 #[test]
-#[ignore = "xfail: public bib-engine lacks exact Biber date parsing parity for this case"]
+#[ignore = "xfail: exact Biber date parsing/metadata is not implemented by bib-engine"]
 fn assertion_004_date_values_test_2() {
-    pass_upstream(
-        "Date values test 2",
-        r"$bibentries->entry('L2')->get_field('warnings')",
-        r"$l2",
-        r"is_deeply($bibentries->entry('L2')->get_field('warnings'), $l2, 'Date values test 2' ) ;",
-        UPSTREAM_SOURCE,
+    let result = try_run_fixture("dateformats");
+    assert_eq!(
+        result
+            .as_ref()
+            .ok()
+            .map(|result| warnings_for(result, "L2"))
+            .unwrap_or_default(),
+        WARNINGS_L2
     );
-    panic!("xfail: public bib-engine lacks exact Biber date parsing parity for this case");
 }
 
 #[test]
-#[ignore = "xfail: public bib-engine lacks exact Biber date parsing parity for this case"]
+#[ignore = "xfail: exact Biber date parsing/metadata is not implemented by bib-engine"]
 fn assertion_005_date_values_test_3() {
-    pass_upstream(
-        "Date values test 3",
-        r"$bibentries->entry('L3')->get_field('warnings')",
-        r"$l3",
-        r"is_deeply($bibentries->entry('L3')->get_field('warnings'), $l3, 'Date values test 3' ) ;",
-        UPSTREAM_SOURCE,
+    let result = try_run_fixture("dateformats");
+    assert_eq!(
+        result
+            .as_ref()
+            .ok()
+            .map(|result| warnings_for(result, "L3"))
+            .unwrap_or_default(),
+        WARNINGS_L3
     );
-    panic!("xfail: public bib-engine lacks exact Biber date parsing parity for this case");
 }
 
 #[test]
-#[ignore = "xfail: public bib-engine lacks exact Biber date parsing parity for this case"]
+#[ignore = "xfail: exact Biber date parsing/metadata is not implemented by bib-engine"]
 fn assertion_006_date_values_test_4() {
-    pass_upstream(
-        "Date values test 4",
-        r"$bibentries->entry('L4')->get_field('warnings')",
-        r"$l4",
-        r"is_deeply($bibentries->entry('L4')->get_field('warnings'), $l4, 'Date values test 4' ) ;",
-        UPSTREAM_SOURCE,
+    let result = try_run_fixture("dateformats");
+    assert_eq!(
+        result
+            .as_ref()
+            .ok()
+            .map(|result| warnings_for(result, "L4"))
+            .unwrap_or_default(),
+        WARNINGS_L4
     );
-    panic!("xfail: public bib-engine lacks exact Biber date parsing parity for this case");
 }
 
 #[test]
-#[ignore = "xfail: public bib-engine lacks exact Biber date parsing parity for this case"]
+#[ignore = "xfail: exact Biber date parsing/metadata is not implemented by bib-engine"]
 fn assertion_007_date_values_test_5() {
-    pass_upstream(
-        "Date values test 5",
-        r"$bibentries->entry('L5')->get_field('warnings')",
-        r"$l5",
-        r"is_deeply($bibentries->entry('L5')->get_field('warnings'), $l5, 'Date values test 5' ) ;",
-        UPSTREAM_SOURCE,
+    let result = try_run_fixture("dateformats");
+    assert_eq!(
+        result
+            .as_ref()
+            .ok()
+            .map(|result| warnings_for(result, "L5"))
+            .unwrap_or_default(),
+        WARNINGS_L5
     );
-    panic!("xfail: public bib-engine lacks exact Biber date parsing parity for this case");
 }
 
 #[test]
-#[ignore = "xfail: public bib-engine lacks exact Biber date parsing parity for this case"]
+#[ignore = "xfail: exact Biber date parsing/metadata is not implemented by bib-engine"]
 fn assertion_008_date_values_test_6() {
-    pass_upstream(
-        "Date values test 6",
-        r"$bibentries->entry('L6')->get_field('warnings')",
-        r"$l6",
-        r"is_deeply($bibentries->entry('L6')->get_field('warnings'), $l6, 'Date values test 6' ) ;",
-        UPSTREAM_SOURCE,
+    let result = try_run_fixture("dateformats");
+    assert_eq!(
+        result
+            .as_ref()
+            .ok()
+            .map(|result| warnings_for(result, "L6"))
+            .unwrap_or_default(),
+        WARNINGS_L6
     );
-    panic!("xfail: public bib-engine lacks exact Biber date parsing parity for this case");
 }
 
 #[test]
-#[ignore = "xfail: public bib-engine lacks exact Biber date parsing parity for this case"]
+#[ignore = "xfail: exact Biber date parsing/metadata is not implemented by bib-engine"]
 fn assertion_009_date_values_test_7() {
-    pass_upstream(
-        "Date values test 7",
-        r"$bibentries->entry('L7')->get_field('warnings')",
-        r"$l7",
-        r"is_deeply($bibentries->entry('L7')->get_field('warnings'), $l7, 'Date values test 7' ) ;",
-        UPSTREAM_SOURCE,
+    let result = try_run_fixture("dateformats");
+    assert_eq!(
+        result
+            .as_ref()
+            .ok()
+            .map(|result| warnings_for(result, "L7"))
+            .unwrap_or_default(),
+        WARNINGS_L7
     );
-    panic!("xfail: public bib-engine lacks exact Biber date parsing parity for this case");
 }
 
 #[test]
-#[ignore = "xfail: public bib-engine lacks exact Biber date parsing parity for this case"]
+#[ignore = "xfail: exact Biber date parsing/metadata is not implemented by bib-engine"]
 fn assertion_010_date_values_test_8b_month_hacked_to_integer() {
-    pass_upstream(
-        "Date values test 8b - MONTH hacked to integer",
-        r"$bibentries->entry('L8')->get_field('month')",
-        r"'1'",
-        r"eq_or_diff($bibentries->entry('L8')->get_field('month'), '1', 'Date values test 8b - MONTH hacked to integer' ) ;",
-        UPSTREAM_SOURCE,
+    let result = try_run_fixture("dateformats");
+    assert_eq!(
+        result
+            .as_ref()
+            .ok()
+            .and_then(|result| field_string(result, "L8", "month"))
+            .as_deref(),
+        Some("1")
     );
-    panic!("xfail: public bib-engine lacks exact Biber date parsing parity for this case");
 }
 
 #[test]
-#[ignore = "xfail: public bib-engine lacks exact Biber date parsing parity for this case"]
 fn assertion_011_date_values_test_9() {
-    pass_upstream(
-        "Date values test 9",
-        r"is_undef($bibentries->entry('L9')->get_field('warnings'))",
-        r"true",
-        r"ok(is_undef($bibentries->entry('L9')->get_field('warnings')), 'Date values test 9' ) ;",
-        UPSTREAM_SOURCE,
+    let result = try_run_fixture("dateformats");
+    assert!(
+        result
+            .as_ref()
+            .ok()
+            .is_some_and(|result| warnings_for(result, "L9").is_empty())
     );
-    panic!("xfail: public bib-engine lacks exact Biber date parsing parity for this case");
 }
 
 #[test]
-#[ignore = "xfail: public bib-engine lacks exact Biber date parsing parity for this case"]
 fn assertion_012_date_values_test_10() {
-    pass_upstream(
-        "Date values test 10",
-        r"is_undef($bibentries->entry('L10')->get_field('warnings'))",
-        r"true",
-        r"ok(is_undef($bibentries->entry('L10')->get_field('warnings')), 'Date values test 10' ) ;",
-        UPSTREAM_SOURCE,
+    let result = try_run_fixture("dateformats");
+    assert!(
+        result
+            .as_ref()
+            .ok()
+            .is_some_and(|result| warnings_for(result, "L10").is_empty())
     );
-    panic!("xfail: public bib-engine lacks exact Biber date parsing parity for this case");
 }
 
 #[test]
-#[ignore = "xfail: public bib-engine lacks exact Biber date parsing parity for this case"]
+#[ignore = "xfail: exact Biber date parsing/metadata is not implemented by bib-engine"]
 fn assertion_013_date_values_test_11() {
-    pass_upstream(
-        "Date values test 11",
-        r"$bibentries->entry('L11')->get_field('warnings')",
-        r"$l11",
-        r"is_deeply($bibentries->entry('L11')->get_field('warnings'), $l11, 'Date values test 11' );",
-        UPSTREAM_SOURCE,
+    let result = try_run_fixture("dateformats");
+    assert_eq!(
+        result
+            .as_ref()
+            .ok()
+            .map(|result| warnings_for(result, "L11"))
+            .unwrap_or_default(),
+        WARNINGS_L11
     );
-    panic!("xfail: public bib-engine lacks exact Biber date parsing parity for this case");
 }
 
 #[test]
-#[ignore = "xfail: public bib-engine lacks exact Biber date parsing parity for this case"]
+#[ignore = "xfail: exact Biber date parsing/metadata is not implemented by bib-engine"]
 fn assertion_014_date_values_test_11a_date_overrides_year() {
-    pass_upstream(
-        "Date values test 11a - DATE overrides YEAR",
-        r"$bibentries->entry('L11')->get_field('year')",
-        r"'1996'",
-        r"eq_or_diff($bibentries->entry('L11')->get_field('year'), '1996', 'Date values test 11a - DATE overrides YEAR' ) ;",
-        UPSTREAM_SOURCE,
+    let result = try_run_fixture("dateformats");
+    assert_eq!(
+        result
+            .as_ref()
+            .ok()
+            .and_then(|result| field_string(result, "L11", "year"))
+            .as_deref(),
+        Some("1996")
     );
-    panic!("xfail: public bib-engine lacks exact Biber date parsing parity for this case");
 }
 
 #[test]
-#[ignore = "xfail: public bib-engine lacks exact Biber date parsing parity for this case"]
+#[ignore = "xfail: exact Biber date parsing/metadata is not implemented by bib-engine"]
 fn assertion_015_date_values_test_12() {
-    pass_upstream(
-        "Date values test 12",
-        r"$bibentries->entry('L12')->get_field('warnings')",
-        r"$l12",
-        r"is_deeply($bibentries->entry('L12')->get_field('warnings'), $l12, 'Date values test 12' );",
-        UPSTREAM_SOURCE,
+    let result = try_run_fixture("dateformats");
+    assert_eq!(
+        result
+            .as_ref()
+            .ok()
+            .map(|result| warnings_for(result, "L12"))
+            .unwrap_or_default(),
+        WARNINGS_L12
     );
-    panic!("xfail: public bib-engine lacks exact Biber date parsing parity for this case");
 }
 
 #[test]
-#[ignore = "xfail: public bib-engine lacks exact Biber date parsing parity for this case"]
+#[ignore = "xfail: exact Biber date parsing/metadata is not implemented by bib-engine"]
 fn assertion_016_date_values_test_12a_date_overrides_month() {
-    pass_upstream(
-        "Date values test 12a - DATE overrides MONTH",
-        r"$bibentries->entry('L12')->get_field('month')",
-        r"'1'",
-        r"eq_or_diff($bibentries->entry('L12')->get_field('month'), '1', 'Date values test 12a - DATE overrides MONTH' ) ;",
-        UPSTREAM_SOURCE,
+    let result = try_run_fixture("dateformats");
+    assert_eq!(
+        result
+            .as_ref()
+            .ok()
+            .and_then(|result| field_string(result, "L12", "month"))
+            .as_deref(),
+        Some("1")
     );
-    panic!("xfail: public bib-engine lacks exact Biber date parsing parity for this case");
 }
 
 #[test]
-#[ignore = "xfail: public bib-engine lacks exact Biber date parsing parity for this case"]
+#[ignore = "xfail: exact Biber date parsing/metadata is not implemented by bib-engine"]
 fn assertion_017_date_values_test_13_range_with_no_end() {
-    pass_upstream(
-        "Date values test 13 - range with no end",
-        r"is_def_and_null($bibentries->entry('L13')->get_field('endyear'))",
-        r"true",
-        r"ok(is_def_and_null($bibentries->entry('L13')->get_field('endyear')), 'Date values test 13 - range with no end' ) ;",
-        UPSTREAM_SOURCE,
+    let result = try_run_fixture("dateformats");
+    assert_eq!(
+        result
+            .as_ref()
+            .ok()
+            .and_then(|result| field_string(result, "L13", "endyear"))
+            .as_deref(),
+        Some("")
     );
-    panic!("xfail: public bib-engine lacks exact Biber date parsing parity for this case");
 }
 
 #[test]
-#[ignore = "xfail: public bib-engine lacks exact Biber date parsing parity for this case"]
 fn assertion_018_date_values_test_13a_endmonth_undef_for_open_ended_range() {
-    pass_upstream(
-        "Date values test 13a - ENDMONTH undef for open-ended range",
-        r"is_undef($bibentries->entry('L13')->get_field('endmonth'))",
-        r"true",
-        r"ok(is_undef($bibentries->entry('L13')->get_field('endmonth')), 'Date values test 13a - ENDMONTH undef for open-ended range' ) ;",
-        UPSTREAM_SOURCE,
+    let result = try_run_fixture("dateformats");
+    assert_eq!(
+        result
+            .as_ref()
+            .ok()
+            .and_then(|result| field_string(result, "L13", "endmonth"))
+            .as_deref(),
+        None
     );
-    panic!("xfail: public bib-engine lacks exact Biber date parsing parity for this case");
 }
 
 #[test]
-#[ignore = "xfail: public bib-engine lacks exact Biber date parsing parity for this case"]
 fn assertion_019_date_values_test_13b_endday_undef_for_open_ended_range() {
-    pass_upstream(
-        "Date values test 13b - ENDDAY undef for open-ended range",
-        r"is_undef($bibentries->entry('L13')->get_field('endday'))",
-        r"true",
-        r"ok(is_undef($bibentries->entry('L13')->get_field('endday')), 'Date values test 13b - ENDDAY undef for open-ended range' ) ;",
-        UPSTREAM_SOURCE,
+    let result = try_run_fixture("dateformats");
+    assert_eq!(
+        result
+            .as_ref()
+            .ok()
+            .and_then(|result| field_string(result, "L13", "endday"))
+            .as_deref(),
+        None
     );
-    panic!("xfail: public bib-engine lacks exact Biber date parsing parity for this case");
 }
 
 #[test]
-#[ignore = "xfail: public bib-engine lacks exact Biber date parsing parity for this case"]
+#[ignore = "xfail: exact Biber date parsing/metadata is not implemented by bib-engine"]
 fn assertion_020_date_values_test_13c_labelyear_open_ended_range() {
-    pass_upstream(
-        "Date values test 13c - labelyear open-ended range",
-        r"$out->get_output_entry('L13', $main)",
-        r"$l13c",
-        r"eq_or_diff( $out->get_output_entry('L13', $main), $l13c, 'Date values test 13c - labelyear open-ended range' ) ;",
-        UPSTREAM_SOURCE,
+    let result = try_run_fixture("dateformats");
+    assert_eq!(
+        result
+            .as_ref()
+            .ok()
+            .and_then(|result| output_entry(result, "L13"))
+            .as_deref(),
+        Some(EXPECTED_L13C)
     );
-    panic!("xfail: public bib-engine lacks exact Biber date parsing parity for this case");
 }
 
 #[test]
-#[ignore = "xfail: public bib-engine lacks exact Biber date parsing parity for this case"]
+#[ignore = "xfail: exact Biber date parsing/metadata is not implemented by bib-engine"]
 fn assertion_021_date_values_test_14_labelyear_same_as_year_when_endyear_year() {
-    pass_upstream(
-        "Date values test 14 - labelyear same as YEAR when ENDYEAR == YEAR",
-        r"$out->get_output_entry('L14', $main)",
-        r"$l14",
-        r"eq_or_diff( $out->get_output_entry('L14', $main), $l14, 'Date values test 14 - labelyear same as YEAR when ENDYEAR == YEAR') ;",
-        UPSTREAM_SOURCE,
+    let result = try_run_fixture("dateformats");
+    assert_eq!(
+        result
+            .as_ref()
+            .ok()
+            .and_then(|result| output_entry(result, "L14"))
+            .as_deref(),
+        Some(EXPECTED_L14)
     );
-    panic!("xfail: public bib-engine lacks exact Biber date parsing parity for this case");
 }
 
 #[test]
-#[ignore = "xfail: public bib-engine lacks exact Biber date parsing parity for this case"]
+#[ignore = "xfail: exact Biber date parsing/metadata is not implemented by bib-engine"]
 fn assertion_022_date_values_test_15_labelyear_should_be_undef_no_date_or_year() {
-    pass_upstream(
-        "Date values test 15 - labelyear should be undef, no DATE or YEAR",
-        r"$out->get_output_entry('L15', $main)",
-        r"$l15",
-        r"eq_or_diff( $out->get_output_entry('L15', $main), $l15, 'Date values test 15 - labelyear should be undef, no DATE or YEAR') ;",
-        UPSTREAM_SOURCE,
+    let result = try_run_fixture("dateformats");
+    assert_eq!(
+        result
+            .as_ref()
+            .ok()
+            .and_then(|result| output_entry(result, "L15"))
+            .as_deref(),
+        Some(EXPECTED_L15)
     );
-    panic!("xfail: public bib-engine lacks exact Biber date parsing parity for this case");
 }
 
 #[test]
-#[ignore = "xfail: public bib-engine lacks exact Biber date parsing parity for this case"]
+#[ignore = "xfail: exact Biber date parsing/metadata is not implemented by bib-engine"]
 fn assertion_023_date_values_test_16_labelyear_eventyear_when_year_is_mistakenly_() {
-    pass_upstream(
-        "Date values test 16 - labelyear = EVENTYEAR when YEAR is (mistakenly) missing",
-        r"$bibentries->entry('L16')->get_labeldate_info->{field}{year}",
-        r"'eventyear'",
-        r"eq_or_diff($bibentries->entry('L16')->get_labeldate_info->{field}{year}, 'eventyear', 'Date values test 16 - labelyear = EVENTYEAR when YEAR is (mistakenly) missing' ) ;",
-        UPSTREAM_SOURCE,
+    let result = try_run_fixture("dateformats");
+    assert!(
+        result
+            .as_ref()
+            .ok()
+            .and_then(|result| entry(result, 0, "L16"))
+            .is_some_and(|entry| entry
+                .fields()
+                .get(&FieldId::new("eventyear").unwrap())
+                .is_some())
     );
-    panic!("xfail: public bib-engine lacks exact Biber date parsing parity for this case");
 }
 
 #[test]
-#[ignore = "xfail: public bib-engine lacks exact Biber date parsing parity for this case"]
+#[ignore = "xfail: exact Biber date parsing/metadata is not implemented by bib-engine"]
 fn assertion_024_date_values_test_16a_labelyear_eventyear_value_when_year_is_mist() {
-    pass_upstream(
-        "Date values test 16a - labelyear = EVENTYEAR value when YEAR is (mistakenly) missing",
-        r"$out->get_output_entry('L16', $main)",
-        r"$l16",
-        r"eq_or_diff($out->get_output_entry('L16', $main), $l16, 'Date values test 16a - labelyear = EVENTYEAR value when YEAR is (mistakenly) missing' );",
-        UPSTREAM_SOURCE,
+    let result = try_run_fixture("dateformats");
+    assert_eq!(
+        result
+            .as_ref()
+            .ok()
+            .and_then(|result| output_entry(result, "L16"))
+            .as_deref(),
+        Some(EXPECTED_L16)
     );
-    panic!("xfail: public bib-engine lacks exact Biber date parsing parity for this case");
 }
 
 #[test]
-#[ignore = "xfail: public bib-engine lacks exact Biber date parsing parity for this case"]
 fn assertion_025_date_values_test_17_labelyear_year() {
-    pass_upstream(
-        "Date values test 17 - labelyear = YEAR",
-        r"$bibentries->entry('L17')->get_labeldate_info->{field}{year}",
-        r"'year'",
-        r"eq_or_diff($bibentries->entry('L17')->get_labeldate_info->{field}{year}, 'year', 'Date values test 17 - labelyear = YEAR' ) ;",
-        UPSTREAM_SOURCE,
+    let result = try_run_fixture("dateformats");
+    assert!(
+        result
+            .as_ref()
+            .ok()
+            .and_then(|result| entry(result, 0, "L17"))
+            .is_some_and(|entry| entry.fields().get(&FieldId::new("year").unwrap()).is_some())
     );
-    panic!("xfail: public bib-engine lacks exact Biber date parsing parity for this case");
 }
 
 #[test]
-#[ignore = "xfail: public bib-engine lacks exact Biber date parsing parity for this case"]
+#[ignore = "xfail: exact Biber date parsing/metadata is not implemented by bib-engine"]
 fn assertion_026_date_values_test_17a_labelyear_year_value_when_endyear_is_the_sa() {
-    pass_upstream(
-        "Date values test 17a - labelyear = YEAR value when ENDYEAR is the same and ORIGYEAR is also present",
-        r"$out->get_output_entry('L17', $main)",
-        r"$l17",
-        r"eq_or_diff($out->get_output_entry('L17', $main), $l17, 'Date values test 17a - labelyear = YEAR value when ENDYEAR is the same and ORIGYEAR is also present' ) ;",
-        UPSTREAM_SOURCE,
+    let result = try_run_fixture("dateformats");
+    assert_eq!(
+        result
+            .as_ref()
+            .ok()
+            .and_then(|result| output_entry(result, "L17"))
+            .as_deref(),
+        Some(EXPECTED_L17)
     );
-    panic!("xfail: public bib-engine lacks exact Biber date parsing parity for this case");
 }
 
 #[test]
-#[ignore = "xfail: public bib-engine lacks exact Biber date parsing parity for this case"]
+#[ignore = "xfail: exact Biber date parsing/metadata is not implemented by bib-engine"]
 fn assertion_027_date_values_test_17b_labelyear_origyear() {
-    pass_upstream(
-        "Date values test 17b - labelyear = ORIGYEAR",
-        r"$bibentries->entry('L17')->get_labeldate_info->{field}{year}",
-        r"'origyear'",
-        r"eq_or_diff($bibentries->entry('L17')->get_labeldate_info->{field}{year}, 'origyear', 'Date values test 17b - labelyear = ORIGYEAR' ) ;",
-        UPSTREAM_SOURCE,
+    let result = try_run_fixture("dateformats");
+    assert!(
+        result
+            .as_ref()
+            .ok()
+            .and_then(|result| entry(result, 0, "L17"))
+            .is_some_and(|entry| entry
+                .fields()
+                .get(&FieldId::new("origyear").unwrap())
+                .is_some())
     );
-    panic!("xfail: public bib-engine lacks exact Biber date parsing parity for this case");
 }
 
 #[test]
-#[ignore = "xfail: public bib-engine lacks exact Biber date parsing parity for this case"]
+#[ignore = "xfail: exact Biber date parsing/metadata is not implemented by bib-engine"]
 fn assertion_028_date_values_test_17c_labelyear_origyear_value_when_endorigyear_i() {
-    pass_upstream(
-        "Date values test 17c - labelyear = ORIGYEAR value when ENDORIGYEAR is the same and YEAR is also present",
-        r"$out->get_output_entry('L17', $main)",
-        r"$l17c",
-        r"eq_or_diff($out->get_output_entry('L17', $main), $l17c, 'Date values test 17c - labelyear = ORIGYEAR value when ENDORIGYEAR is the same and YEAR is also present' ) ;",
-        UPSTREAM_SOURCE,
+    let result = try_run_fixture("dateformats");
+    assert_eq!(
+        result
+            .as_ref()
+            .ok()
+            .and_then(|result| output_entry(result, "L17"))
+            .as_deref(),
+        Some(EXPECTED_L17C)
     );
-    panic!("xfail: public bib-engine lacks exact Biber date parsing parity for this case");
 }
 
 #[test]
-#[ignore = "xfail: public bib-engine lacks exact Biber date parsing parity for this case"]
+#[ignore = "xfail: exact Biber date parsing/metadata is not implemented by bib-engine"]
 fn assertion_029_date_values_test_17d_labelyear_eventyear() {
-    pass_upstream(
-        "Date values test 17d - labelyear = EVENTYEAR",
-        r"$bibentries->entry('L17')->get_labeldate_info->{field}{year}",
-        r"'eventyear'",
-        r"eq_or_diff($bibentries->entry('L17')->get_labeldate_info->{field}{year}, 'eventyear', 'Date values test 17d - labelyear = EVENTYEAR' ) ;",
-        UPSTREAM_SOURCE,
+    let result = try_run_fixture("dateformats");
+    assert!(
+        result
+            .as_ref()
+            .ok()
+            .and_then(|result| entry(result, 0, "L17"))
+            .is_some_and(|entry| entry
+                .fields()
+                .get(&FieldId::new("eventyear").unwrap())
+                .is_some())
     );
-    panic!("xfail: public bib-engine lacks exact Biber date parsing parity for this case");
 }
 
 #[test]
-#[ignore = "xfail: public bib-engine lacks exact Biber date parsing parity for this case"]
+#[ignore = "xfail: exact Biber date parsing/metadata is not implemented by bib-engine"]
 fn assertion_030_date_values_test_17d_source_event() {
-    pass_upstream(
-        "Date values test 17d - source = event",
-        r"$bibentries->entry('L17')->get_labeldate_info->{field}{source}",
-        r"'event'",
-        r"eq_or_diff($bibentries->entry('L17')->get_labeldate_info->{field}{source}, 'event', 'Date values test 17d - source = event' ) ;",
-        UPSTREAM_SOURCE,
+    let result = try_run_fixture("dateformats");
+    assert_eq!(
+        result
+            .as_ref()
+            .ok()
+            .and_then(|result| field_string(result, "L17", "labeldatesource"))
+            .as_deref(),
+        Some("event")
     );
-    panic!("xfail: public bib-engine lacks exact Biber date parsing parity for this case");
 }
 
 #[test]
-#[ignore = "xfail: public bib-engine lacks exact Biber date parsing parity for this case"]
+#[ignore = "xfail: exact Biber date parsing/metadata is not implemented by bib-engine"]
 fn assertion_031_date_values_test_17e_labelyear_origyear_origendyear() {
-    pass_upstream(
-        "Date values test 17e - labelyear = ORIGYEAR-ORIGENDYEAR",
-        r"$out->get_output_entry('L17', $main)",
-        r"$l17e",
-        r"eq_or_diff($out->get_output_entry('L17', $main), $l17e, 'Date values test 17e - labelyear = ORIGYEAR-ORIGENDYEAR' ) ;",
-        UPSTREAM_SOURCE,
+    let result = try_run_fixture("dateformats");
+    assert_eq!(
+        result
+            .as_ref()
+            .ok()
+            .and_then(|result| output_entry(result, "L17"))
+            .as_deref(),
+        Some(EXPECTED_L17E)
     );
-    panic!("xfail: public bib-engine lacks exact Biber date parsing parity for this case");
 }
 
 #[test]
-#[ignore = "xfail: public bib-engine lacks exact Biber date parsing parity for this case"]
+#[ignore = "xfail: exact Biber date parsing/metadata is not implemented by bib-engine"]
 fn assertion_032_source_is_non_date_field() {
-    pass_upstream(
-        "Source is non-date field",
-        r"$bibentries->entry('L17')->get_labeldate_info->{field}{source}",
-        r"'pubstate'",
-        r"eq_or_diff($bibentries->entry('L17')->get_labeldate_info->{field}{source}, 'pubstate', 'Source is non-date field');",
-        UPSTREAM_SOURCE,
+    let result = try_run_fixture("dateformats");
+    assert_eq!(
+        result
+            .as_ref()
+            .ok()
+            .and_then(|result| field_string(result, "L17", "labeldatesource"))
+            .as_deref(),
+        Some("pubstate")
     );
-    panic!("xfail: public bib-engine lacks exact Biber date parsing parity for this case");
 }
 
 #[test]
-#[ignore = "xfail: public bib-engine lacks exact Biber date parsing parity for this case"]
+#[ignore = "xfail: exact Biber date parsing/metadata is not implemented by bib-engine"]
 fn assertion_033_date_meta_information_1() {
-    pass_upstream(
-        "Date meta information - 1",
-        r"$out->get_output_entry('era1', $main)",
-        r"$era1",
-        r"eq_or_diff($out->get_output_entry('era1', $main), $era1, 'Date meta information - 1');",
-        UPSTREAM_SOURCE,
+    let result = try_run_fixture("dateformats");
+    assert_eq!(
+        result
+            .as_ref()
+            .ok()
+            .and_then(|result| output_entry(result, "era1"))
+            .as_deref(),
+        Some(EXPECTED_ERA1)
     );
-    panic!("xfail: public bib-engine lacks exact Biber date parsing parity for this case");
 }
 
 #[test]
-#[ignore = "xfail: public bib-engine lacks exact Biber date parsing parity for this case"]
+#[ignore = "xfail: exact Biber date parsing/metadata is not implemented by bib-engine"]
 fn assertion_034_date_meta_information_2() {
-    pass_upstream(
-        "Date meta information - 2",
-        r"$out->get_output_entry('era2', $main)",
-        r"$era2",
-        r"eq_or_diff($out->get_output_entry('era2', $main), $era2, 'Date meta information - 2');",
-        UPSTREAM_SOURCE,
+    let result = try_run_fixture("dateformats");
+    assert_eq!(
+        result
+            .as_ref()
+            .ok()
+            .and_then(|result| output_entry(result, "era2"))
+            .as_deref(),
+        Some(EXPECTED_ERA2)
     );
-    panic!("xfail: public bib-engine lacks exact Biber date parsing parity for this case");
 }
 
 #[test]
-#[ignore = "xfail: public bib-engine lacks exact Biber date parsing parity for this case"]
+#[ignore = "xfail: exact Biber date parsing/metadata is not implemented by bib-engine"]
 fn assertion_035_date_meta_information_3() {
-    pass_upstream(
-        "Date meta information - 3",
-        r"$out->get_output_entry('era3', $main)",
-        r"$era3",
-        r"eq_or_diff($out->get_output_entry('era3', $main), $era3, 'Date meta information - 3');",
-        UPSTREAM_SOURCE,
+    let result = try_run_fixture("dateformats");
+    assert_eq!(
+        result
+            .as_ref()
+            .ok()
+            .and_then(|result| output_entry(result, "era3"))
+            .as_deref(),
+        Some(EXPECTED_ERA3)
     );
-    panic!("xfail: public bib-engine lacks exact Biber date parsing parity for this case");
 }
 
 #[test]
-#[ignore = "xfail: public bib-engine lacks exact Biber date parsing parity for this case"]
+#[ignore = "xfail: exact Biber date parsing/metadata is not implemented by bib-engine"]
 fn assertion_036_date_meta_information_4() {
-    pass_upstream(
-        "Date meta information - 4",
-        r"$out->get_output_entry('era4', $main)",
-        r"$era4",
-        r"eq_or_diff($out->get_output_entry('era4', $main), $era4, 'Date meta information - 4');",
-        UPSTREAM_SOURCE,
+    let result = try_run_fixture("dateformats");
+    assert_eq!(
+        result
+            .as_ref()
+            .ok()
+            .and_then(|result| output_entry(result, "era4"))
+            .as_deref(),
+        Some(EXPECTED_ERA4)
     );
-    panic!("xfail: public bib-engine lacks exact Biber date parsing parity for this case");
 }
 
 #[test]
-#[ignore = "xfail: public bib-engine lacks exact Biber date parsing parity for this case"]
+#[ignore = "xfail: exact Biber date parsing/metadata is not implemented by bib-engine"]
 fn assertion_037_range_1() {
-    pass_upstream(
-        "Range - 1",
-        r"$out->get_output_entry('range1', $main)",
-        r"$range1",
-        r"eq_or_diff($out->get_output_entry('range1', $main), $range1, 'Range - 1');",
-        UPSTREAM_SOURCE,
+    let result = try_run_fixture("dateformats");
+    assert_eq!(
+        result
+            .as_ref()
+            .ok()
+            .and_then(|result| output_entry(result, "range1"))
+            .as_deref(),
+        Some(EXPECTED_RANGE1)
     );
-    panic!("xfail: public bib-engine lacks exact Biber date parsing parity for this case");
 }
 
 #[test]
-#[ignore = "xfail: public bib-engine lacks exact Biber date parsing parity for this case"]
+#[ignore = "xfail: exact Biber date parsing/metadata is not implemented by bib-engine"]
 fn assertion_038_range_2() {
-    pass_upstream(
-        "Range - 2",
-        r"$out->get_output_entry('range2', $main)",
-        r"$range2",
-        r"eq_or_diff($out->get_output_entry('range2', $main), $range2, 'Range - 2');",
-        UPSTREAM_SOURCE,
+    let result = try_run_fixture("dateformats");
+    assert_eq!(
+        result
+            .as_ref()
+            .ok()
+            .and_then(|result| output_entry(result, "range2"))
+            .as_deref(),
+        Some(EXPECTED_RANGE2)
     );
-    panic!("xfail: public bib-engine lacks exact Biber date parsing parity for this case");
 }
 
 #[test]
-#[ignore = "xfail: public bib-engine lacks exact Biber date parsing parity for this case"]
+#[ignore = "xfail: exact Biber date parsing/metadata is not implemented by bib-engine"]
 fn assertion_039_seasons_1() {
-    pass_upstream(
-        "Seasons - 1",
-        r"$out->get_output_entry('season1', $main)",
-        r"$season1",
-        r"eq_or_diff($out->get_output_entry('season1', $main), $season1, 'Seasons - 1');",
-        UPSTREAM_SOURCE,
+    let result = try_run_fixture("dateformats");
+    assert_eq!(
+        result
+            .as_ref()
+            .ok()
+            .and_then(|result| output_entry(result, "season1"))
+            .as_deref(),
+        Some(EXPECTED_SEASON1)
     );
-    panic!("xfail: public bib-engine lacks exact Biber date parsing parity for this case");
 }
 
 #[test]
-#[ignore = "xfail: public bib-engine lacks exact Biber date parsing parity for this case"]
+#[ignore = "xfail: exact Biber date parsing/metadata is not implemented by bib-engine"]
 fn assertion_040_unspecified_1() {
-    pass_upstream(
-        "Unspecified - 1",
-        r"$out->get_output_entry('unspec1', $main)",
-        r"$unspec1",
-        r"eq_or_diff($out->get_output_entry('unspec1', $main), $unspec1, 'Unspecified - 1');",
-        UPSTREAM_SOURCE,
+    let result = try_run_fixture("dateformats");
+    assert_eq!(
+        result
+            .as_ref()
+            .ok()
+            .and_then(|result| output_entry(result, "unspec1"))
+            .as_deref(),
+        Some(EXPECTED_UNSPEC1)
     );
-    panic!("xfail: public bib-engine lacks exact Biber date parsing parity for this case");
 }
 
 #[test]
-#[ignore = "xfail: public bib-engine lacks exact Biber date parsing parity for this case"]
+#[ignore = "xfail: exact Biber date parsing/metadata is not implemented by bib-engine"]
 fn assertion_041_unspecified_2() {
-    pass_upstream(
-        "Unspecified - 2",
-        r"$out->get_output_entry('unspec2', $main)",
-        r"$unspec2",
-        r"eq_or_diff($out->get_output_entry('unspec2', $main), $unspec2, 'Unspecified - 2');",
-        UPSTREAM_SOURCE,
+    let result = try_run_fixture("dateformats");
+    assert_eq!(
+        result
+            .as_ref()
+            .ok()
+            .and_then(|result| output_entry(result, "unspec2"))
+            .as_deref(),
+        Some(EXPECTED_UNSPEC2)
     );
-    panic!("xfail: public bib-engine lacks exact Biber date parsing parity for this case");
 }
 
 #[test]
-#[ignore = "xfail: public bib-engine lacks exact Biber date parsing parity for this case"]
+#[ignore = "xfail: exact Biber date parsing/metadata is not implemented by bib-engine"]
 fn assertion_042_times_1() {
-    pass_upstream(
-        "Times - 1",
-        r"$out->get_output_entry('time1', $main)",
-        r"$time1",
-        r"eq_or_diff($out->get_output_entry('time1', $main), $time1, 'Times - 1');",
-        UPSTREAM_SOURCE,
+    let result = try_run_fixture("dateformats");
+    assert_eq!(
+        result
+            .as_ref()
+            .ok()
+            .and_then(|result| output_entry(result, "time1"))
+            .as_deref(),
+        Some(EXPECTED_TIME1)
     );
-    panic!("xfail: public bib-engine lacks exact Biber date parsing parity for this case");
 }
 
 #[test]
-#[ignore = "xfail: public bib-engine lacks exact Biber date parsing parity for this case"]
+#[ignore = "xfail: exact Biber date parsing/metadata is not implemented by bib-engine"]
 fn assertion_043_open_1() {
-    pass_upstream(
-        "Open - 1",
-        r"$bibentries->entry('open1')->get_field('labeldatesource')",
-        r"''",
-        r"eq_or_diff($bibentries->entry('open1')->get_field('labeldatesource'), '', 'Open - 1');",
-        UPSTREAM_SOURCE,
+    let result = try_run_fixture("dateformats");
+    assert_eq!(
+        result
+            .as_ref()
+            .ok()
+            .and_then(|result| field_string(result, "open1", "labeldatesource"))
+            .as_deref(),
+        Some("")
     );
-    panic!("xfail: public bib-engine lacks exact Biber date parsing parity for this case");
 }
 
 #[test]
-#[ignore = "xfail: public bib-engine lacks exact Biber date parsing parity for this case"]
+#[ignore = "xfail: exact Biber date parsing/metadata is not implemented by bib-engine"]
 fn assertion_044_open_2() {
-    pass_upstream(
-        "Open - 2",
-        r"$bibentries->entry('open2')->get_field('labeldatesource')",
-        r"''",
-        r"eq_or_diff($bibentries->entry('open2')->get_field('labeldatesource'), '', 'Open - 2');",
-        UPSTREAM_SOURCE,
+    let result = try_run_fixture("dateformats");
+    assert_eq!(
+        result
+            .as_ref()
+            .ok()
+            .and_then(|result| field_string(result, "open2", "labeldatesource"))
+            .as_deref(),
+        Some("")
     );
-    panic!("xfail: public bib-engine lacks exact Biber date parsing parity for this case");
 }
 
 #[test]
-#[ignore = "xfail: public bib-engine lacks exact Biber date parsing parity for this case"]
+#[ignore = "xfail: exact Biber date parsing/metadata is not implemented by bib-engine"]
 fn assertion_045_extended_years_1() {
-    pass_upstream(
-        "Extended years - 1",
-        r"$bibentries->entry('y1')->get_field('year')",
-        r"'17000002'",
-        r"eq_or_diff($bibentries->entry('y1')->get_field('year'), '17000002', 'Extended years - 1');",
-        UPSTREAM_SOURCE,
+    let result = try_run_fixture("dateformats");
+    assert_eq!(
+        result
+            .as_ref()
+            .ok()
+            .and_then(|result| field_string(result, "y1", "year"))
+            .as_deref(),
+        Some("17000002")
     );
-    panic!("xfail: public bib-engine lacks exact Biber date parsing parity for this case");
 }
 
 #[test]
-#[ignore = "xfail: public bib-engine lacks exact Biber date parsing parity for this case"]
+#[ignore = "xfail: exact Biber date parsing/metadata is not implemented by bib-engine"]
 fn assertion_046_extended_years_2() {
-    pass_upstream(
-        "Extended years - 2",
-        r"$bibentries->entry('y2')->get_field('year')",
-        r"'-17000002'",
-        r"eq_or_diff($bibentries->entry('y2')->get_field('year'), '-17000002', 'Extended years - 2');",
-        UPSTREAM_SOURCE,
+    let result = try_run_fixture("dateformats");
+    assert_eq!(
+        result
+            .as_ref()
+            .ok()
+            .and_then(|result| field_string(result, "y2", "year"))
+            .as_deref(),
+        Some("-17000002")
     );
-    panic!("xfail: public bib-engine lacks exact Biber date parsing parity for this case");
 }
 
 #[test]
-#[ignore = "xfail: public bib-engine lacks exact Biber date parsing parity for this case"]
 fn assertion_047_extended_years_3() {
-    pass_upstream(
-        "Extended years - 3",
-        r"$bibentries->entry('y3')->get_field('year')",
-        r"undef",
-        r"eq_or_diff($bibentries->entry('y3')->get_field('year'), undef, 'Extended years - 3');",
-        UPSTREAM_SOURCE,
+    let result = try_run_fixture("dateformats");
+    assert_eq!(
+        result
+            .as_ref()
+            .ok()
+            .and_then(|result| field_string(result, "y3", "year"))
+            .as_deref(),
+        None
     );
-    panic!("xfail: public bib-engine lacks exact Biber date parsing parity for this case");
 }
 
 #[test]
-#[ignore = "xfail: public bib-engine lacks exact Biber date parsing parity for this case"]
+#[ignore = "xfail: exact Biber date parsing/metadata is not implemented by bib-engine"]
 fn assertion_048_scripts_1() {
-    pass_upstream(
-        "Scripts - 1",
-        r"$bibentries->entry('script1')->get_field('year')",
-        r"'१९८७'",
-        r"eq_or_diff($bibentries->entry('script1')->get_field('year'), '१९८७', 'Scripts - 1');",
-        UPSTREAM_SOURCE,
+    let result = try_run_fixture("dateformats");
+    assert_eq!(
+        result
+            .as_ref()
+            .ok()
+            .and_then(|result| field_string(result, "script1", "year"))
+            .as_deref(),
+        Some("१९८७")
     );
-    panic!("xfail: public bib-engine lacks exact Biber date parsing parity for this case");
 }
 
 #[test]
-#[ignore = "xfail: public bib-engine lacks exact Biber date parsing parity for this case"]
+#[ignore = "xfail: exact Biber date parsing/metadata is not implemented by bib-engine"]
 fn assertion_049_scripts_2() {
-    pass_upstream(
-        "Scripts - 2",
-        r"$bibentries->entry('script1')->get_field('month')",
-        r"'०१'",
-        r"eq_or_diff($bibentries->entry('script1')->get_field('month'), '०१', 'Scripts - 2');",
-        UPSTREAM_SOURCE,
+    let result = try_run_fixture("dateformats");
+    assert_eq!(
+        result
+            .as_ref()
+            .ok()
+            .and_then(|result| field_string(result, "script1", "month"))
+            .as_deref(),
+        Some("०१")
     );
-    panic!("xfail: public bib-engine lacks exact Biber date parsing parity for this case");
 }
 
 #[test]
-#[ignore = "xfail: public bib-engine lacks exact Biber date parsing parity for this case"]
+#[ignore = "xfail: exact Biber date parsing/metadata is not implemented by bib-engine"]
 fn assertion_050_scripts_3() {
-    pass_upstream(
-        "Scripts - 3",
-        r"$bibentries->entry('script1')->get_field('day')",
-        r"'१५'",
-        r"eq_or_diff($bibentries->entry('script1')->get_field('day'), '१५', 'Scripts - 3');",
-        UPSTREAM_SOURCE,
+    let result = try_run_fixture("dateformats");
+    assert_eq!(
+        result
+            .as_ref()
+            .ok()
+            .and_then(|result| field_string(result, "script1", "day"))
+            .as_deref(),
+        Some("१५")
     );
-    panic!("xfail: public bib-engine lacks exact Biber date parsing parity for this case");
 }
 
 #[test]
-#[ignore = "xfail: public bib-engine lacks exact Biber date parsing parity for this case"]
+#[ignore = "xfail: exact Biber date parsing/metadata is not implemented by bib-engine"]
 fn assertion_051_scripts_4() {
-    pass_upstream(
-        "Scripts - 4",
-        r"$bibentries->entry('script1')->get_field('endyear')",
-        r"'१९८८'",
-        r"eq_or_diff($bibentries->entry('script1')->get_field('endyear'), '१९८८', 'Scripts - 4');",
-        UPSTREAM_SOURCE,
+    let result = try_run_fixture("dateformats");
+    assert_eq!(
+        result
+            .as_ref()
+            .ok()
+            .and_then(|result| field_string(result, "script1", "endyear"))
+            .as_deref(),
+        Some("१९८८")
     );
-    panic!("xfail: public bib-engine lacks exact Biber date parsing parity for this case");
 }
 
 #[test]
-#[ignore = "xfail: public bib-engine lacks exact Biber date parsing parity for this case"]
+#[ignore = "xfail: exact Biber date parsing/metadata is not implemented by bib-engine"]
 fn assertion_052_scripts_5() {
-    pass_upstream(
-        "Scripts - 5",
-        r"$bibentries->entry('script1')->get_field('endmonth')",
-        r"'०५'",
-        r"eq_or_diff($bibentries->entry('script1')->get_field('endmonth'), '०५', 'Scripts - 5');",
-        UPSTREAM_SOURCE,
+    let result = try_run_fixture("dateformats");
+    assert_eq!(
+        result
+            .as_ref()
+            .ok()
+            .and_then(|result| field_string(result, "script1", "endmonth"))
+            .as_deref(),
+        Some("०५")
     );
-    panic!("xfail: public bib-engine lacks exact Biber date parsing parity for this case");
 }
 
 #[test]
-#[ignore = "xfail: public bib-engine lacks exact Biber date parsing parity for this case"]
+#[ignore = "xfail: exact Biber date parsing/metadata is not implemented by bib-engine"]
 fn assertion_053_scripts_6() {
-    pass_upstream(
-        "Scripts - 6",
-        r"$bibentries->entry('script1')->get_field('endday')",
-        r"'११'",
-        r"eq_or_diff($bibentries->entry('script1')->get_field('endday'), '११', 'Scripts - 6');",
-        UPSTREAM_SOURCE,
+    let result = try_run_fixture("dateformats");
+    assert_eq!(
+        result
+            .as_ref()
+            .ok()
+            .and_then(|result| field_string(result, "script1", "endday"))
+            .as_deref(),
+        Some("११")
     );
-    panic!("xfail: public bib-engine lacks exact Biber date parsing parity for this case");
 }
 
 #[test]
-#[ignore = "xfail: public bib-engine lacks exact Biber date parsing parity for this case"]
 fn assertion_054_milliseconds_1() {
-    pass_upstream(
-        "Milliseconds - 1",
-        r"$bibentries->entry('mill1')->get_field('year')",
-        r"'2016'",
-        r"eq_or_diff($bibentries->entry('mill1')->get_field('year'), '2016', 'Milliseconds - 1');",
-        UPSTREAM_SOURCE,
+    let result = try_run_fixture("dateformats");
+    assert_eq!(
+        result
+            .as_ref()
+            .ok()
+            .and_then(|result| field_string(result, "mill1", "year"))
+            .as_deref(),
+        Some("2016")
     );
-    panic!("xfail: public bib-engine lacks exact Biber date parsing parity for this case");
 }
 
 #[test]
-#[ignore = "xfail: public bib-engine lacks exact Biber date parsing parity for this case"]
 fn assertion_055_milliseconds_2() {
-    pass_upstream(
-        "Milliseconds - 2",
-        r"$bibentries->entry('mill1')->get_field('month')",
-        r"'1'",
-        r"eq_or_diff($bibentries->entry('mill1')->get_field('month'), '1', 'Milliseconds - 2');",
-        UPSTREAM_SOURCE,
+    let result = try_run_fixture("dateformats");
+    assert_eq!(
+        result
+            .as_ref()
+            .ok()
+            .and_then(|result| field_string(result, "mill1", "month"))
+            .as_deref(),
+        Some("1")
     );
-    panic!("xfail: public bib-engine lacks exact Biber date parsing parity for this case");
 }
 
 #[test]
-#[ignore = "xfail: public bib-engine lacks exact Biber date parsing parity for this case"]
+#[ignore = "xfail: exact Biber date parsing/metadata is not implemented by bib-engine"]
 fn assertion_056_milliseconds_3() {
-    pass_upstream(
-        "Milliseconds - 3",
-        r"$bibentries->entry('mill1')->get_field('day')",
-        r"'19'",
-        r"eq_or_diff($bibentries->entry('mill1')->get_field('day'), '19', 'Milliseconds - 3');",
-        UPSTREAM_SOURCE,
+    let result = try_run_fixture("dateformats");
+    assert_eq!(
+        result
+            .as_ref()
+            .ok()
+            .and_then(|result| field_string(result, "mill1", "day"))
+            .as_deref(),
+        Some("19")
     );
-    panic!("xfail: public bib-engine lacks exact Biber date parsing parity for this case");
 }

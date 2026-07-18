@@ -1,58 +1,13 @@
-// Direct xfail translation of upstream t/sort-names.t at commit 74252e6.
-// Keep `UPSTREAM_SOURCE` byte-for-byte equivalent when editing expectations.
+//! Native translation of upstream `t/sort-names.t` at commit 74252e6.
 
-use super::pass_upstream;
-
-const UPSTREAM_SOURCE: &str = r####"# -*- cperl -*-
-use strict;
-use warnings;
-use utf8;
-no warnings 'utf8';
-
-use Test::More tests => 1;
-
-use Biber;
-use Biber::Output::bbl;
-use Log::Log4perl;
-chdir("t/tdata");
-
-# Set up Biber object
-my $biber = Biber->new(noconf => 1);
-my $LEVEL = 'ERROR';
-my $l4pconf = qq|
-    log4perl.category.main                             = $LEVEL, Screen
-    log4perl.category.screen                           = $LEVEL, Screen
-    log4perl.appender.Screen                           = Log::Log4perl::Appender::Screen
-    log4perl.appender.Screen.utf8                      = 1
-    log4perl.appender.Screen.Threshold                 = $LEVEL
-    log4perl.appender.Screen.stderr                    = 0
-    log4perl.appender.Screen.layout                    = Log::Log4perl::Layout::SimpleLayout
-|;
-Log::Log4perl->init(\$l4pconf);
-
-$biber->parse_ctrlfile('sort-names.bcf');
-$biber->set_output_obj(Biber::Output::bbl->new());
-
-# Options - we could set these in the control file but it's nice to see what we're
-# relying on here for tests
-Biber::Config->setoption('sortlocale', 'en_GB.UTF-8');
-
-# (re)generate information based on option settings
-$biber->prepare;
-my $section = $biber->sections->get_section(0);
-my $main = $biber->datalists->get_list('none/global//global/global/global');
-is_deeply($main->get_keys, ['N4', 'N1', 'N2', 'N3'], 'names order');
-"####;
+use super::maps::{list_keys, run_fixture};
 
 #[test]
-#[ignore = "xfail: public bib-engine lacks exact Biber sorting parity for this case"]
+#[ignore = "xfail: Biber name sorting is not implemented by bib-engine"]
 fn assertion_001_names_order() {
-    pass_upstream(
-        "names order",
-        r####"$main->get_keys"####,
-        r####"['N4', 'N1', 'N2', 'N3']"####,
-        r####"is_deeply($main->get_keys, ['N4', 'N1', 'N2', 'N3'], 'names order');"####,
-        UPSTREAM_SOURCE,
+    let result = run_fixture("sort-names");
+    assert_eq!(
+        list_keys(&result, 0, "none/global//global/global/global"),
+        ["N4", "N1", "N2", "N3"]
     );
-    panic!("xfail: public bib-engine lacks exact Biber sorting parity for this case");
 }
