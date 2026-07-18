@@ -1,699 +1,227 @@
-// Direct translation of upstream t/bcfvalidation.t at commit 74252e6.
-// Keep `UPSTREAM_SOURCE` byte-for-byte equivalent when editing expectations.
+// Native Rust translation of upstream t/bcfvalidation.t at commit 74252e6.
 
 use bib_input::{XmlLimits, validate_control_bytes};
 
-#[track_caller]
-#[allow(
-    clippy::disallowed_methods,
-    reason = "the hermetic compatibility test reads only committed corpus fixtures"
-)]
-fn pass_upstream(assertion: &str, actual: &str, _: &str, call: &str, source: &str) {
-    assert!(source.contains(call), "{assertion}");
-    let fixture = actual
-        .strip_prefix("validate_fixture(\"")
-        .and_then(|value| value.strip_suffix("\")"))
-        .expect("translated validation expression");
-    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../tests/corpus/bib/upstream-2.22")
-        .join(fixture.strip_prefix("tdata/").map_or(fixture, |path| path));
-    let path = if path.exists() {
-        path
-    } else {
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../tests/corpus/bib/upstream-2.22/tdata")
-            .join(fixture.strip_prefix("tdata/").unwrap_or(fixture))
+macro_rules! validates {
+    ($name:ident, $fixture:literal) => {
+        #[test]
+        fn $name() {
+            let bytes = include_bytes!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../../tests/corpus/bib/upstream-2.22/",
+                $fixture
+            ));
+            validate_control_bytes(bytes, XmlLimits::default()).expect($fixture);
+        }
     };
-    let bytes = std::fs::read(path).expect("committed BCF fixture");
-    validate_control_bytes(&bytes, XmlLimits::default()).expect(assertion);
-    panic!("xfail: Rust validation does not implement the upstream Relax NG assertion");
 }
 
-const UPSTREAM_SOURCE: &str = r#"# -*- cperl -*-
-use strict;
-use warnings;
-use utf8;
-no warnings 'utf8';
-
-use Test::More tests => 53;
-use XML::LibXML;
-use Biber;
-chdir('t');
-
-# Validate all .bcfs used in tests
-
-# Set up schema
-my $CFxmlschema = XML::LibXML::RelaxNG->new(location => '../data/schemata/bcf.rng');
-
-foreach my $bcf (<tdata/*.bcf>) {
-# Set up XML parser
-  my $CFxmlparser = XML::LibXML->new();
-
-  # basic parse and XInclude processing
-  my $CFxp = $CFxmlparser->parse_file($bcf);
-
-  # XPath context
-  my $CFxpc = XML::LibXML::XPathContext->new($CFxp);
-  $CFxpc->registerNs('bcf', 'https://sourceforge.net/projects/biblatex');
-
-  # Validate against schema. Dies if it fails.
-  $CFxmlschema->validate($CFxp);
-  is($@, '', "Validation of $bcf");
-}
-"#;
-
-#[test]
-#[ignore = "xfail: exact upstream end-to-end behavior is not exposed by the public Rust API"]
-fn assertion_001_validation_of_tdata_annotations_bcf() {
-    pass_upstream(
-        "Validation of tdata/annotations.bcf",
-        r#"validate_fixture("tdata/annotations.bcf")"#,
-        r"''",
-        r#"is($@, '', "Validation of $bcf");"#,
-        UPSTREAM_SOURCE,
-    );
-}
-
-#[test]
-#[ignore = "xfail: exact upstream end-to-end behavior is not exposed by the public Rust API"]
-fn assertion_002_validation_of_tdata_basic_misc_bcf() {
-    pass_upstream(
-        "Validation of tdata/basic-misc.bcf",
-        r#"validate_fixture("tdata/basic-misc.bcf")"#,
-        r"''",
-        r#"is($@, '', "Validation of $bcf");"#,
-        UPSTREAM_SOURCE,
-    );
-}
-
-#[test]
-#[ignore = "xfail: exact upstream end-to-end behavior is not exposed by the public Rust API"]
-fn assertion_003_validation_of_tdata_biblatexml_bcf() {
-    pass_upstream(
-        "Validation of tdata/biblatexml.bcf",
-        r#"validate_fixture("tdata/biblatexml.bcf")"#,
-        r"''",
-        r#"is($@, '', "Validation of $bcf");"#,
-        UPSTREAM_SOURCE,
-    );
-}
-
-#[test]
-#[ignore = "xfail: exact upstream end-to-end behavior is not exposed by the public Rust API"]
-fn assertion_004_validation_of_tdata_bibtex_aliases_bcf() {
-    pass_upstream(
-        "Validation of tdata/bibtex-aliases.bcf",
-        r#"validate_fixture("tdata/bibtex-aliases.bcf")"#,
-        r"''",
-        r#"is($@, '', "Validation of $bcf");"#,
-        UPSTREAM_SOURCE,
-    );
-}
-
-#[test]
-#[ignore = "xfail: exact upstream end-to-end behavior is not exposed by the public Rust API"]
-fn assertion_005_validation_of_tdata_bibtex_output_bcf() {
-    pass_upstream(
-        "Validation of tdata/bibtex-output.bcf",
-        r#"validate_fixture("tdata/bibtex-output.bcf")"#,
-        r"''",
-        r#"is($@, '', "Validation of $bcf");"#,
-        UPSTREAM_SOURCE,
-    );
-}
-
-#[test]
-#[ignore = "xfail: exact upstream end-to-end behavior is not exposed by the public Rust API"]
-fn assertion_006_validation_of_tdata_crossrefs_bcf() {
-    pass_upstream(
-        "Validation of tdata/crossrefs.bcf",
-        r#"validate_fixture("tdata/crossrefs.bcf")"#,
-        r"''",
-        r#"is($@, '', "Validation of $bcf");"#,
-        UPSTREAM_SOURCE,
-    );
-}
-
-#[test]
-#[ignore = "xfail: exact upstream end-to-end behavior is not exposed by the public Rust API"]
-fn assertion_007_validation_of_tdata_datalists_bcf() {
-    pass_upstream(
-        "Validation of tdata/datalists.bcf",
-        r#"validate_fixture("tdata/datalists.bcf")"#,
-        r"''",
-        r#"is($@, '', "Validation of $bcf");"#,
-        UPSTREAM_SOURCE,
-    );
-}
-
-#[test]
-#[ignore = "xfail: exact upstream end-to-end behavior is not exposed by the public Rust API"]
-fn assertion_008_validation_of_tdata_dateformats_bcf() {
-    pass_upstream(
-        "Validation of tdata/dateformats.bcf",
-        r#"validate_fixture("tdata/dateformats.bcf")"#,
-        r"''",
-        r#"is($@, '', "Validation of $bcf");"#,
-        UPSTREAM_SOURCE,
-    );
-}
-
-#[test]
-#[ignore = "xfail: exact upstream end-to-end behavior is not exposed by the public Rust API"]
-fn assertion_009_validation_of_tdata_dm_constraints_bcf() {
-    pass_upstream(
-        "Validation of tdata/dm-constraints.bcf",
-        r#"validate_fixture("tdata/dm-constraints.bcf")"#,
-        r"''",
-        r#"is($@, '', "Validation of $bcf");"#,
-        UPSTREAM_SOURCE,
-    );
-}
-
-#[test]
-#[ignore = "xfail: exact upstream end-to-end behavior is not exposed by the public Rust API"]
-fn assertion_010_validation_of_tdata_encoding1_bcf() {
-    pass_upstream(
-        "Validation of tdata/encoding1.bcf",
-        r#"validate_fixture("tdata/encoding1.bcf")"#,
-        r"''",
-        r#"is($@, '', "Validation of $bcf");"#,
-        UPSTREAM_SOURCE,
-    );
-}
-
-#[test]
-#[ignore = "xfail: exact upstream end-to-end behavior is not exposed by the public Rust API"]
-fn assertion_011_validation_of_tdata_encoding2_bcf() {
-    pass_upstream(
-        "Validation of tdata/encoding2.bcf",
-        r#"validate_fixture("tdata/encoding2.bcf")"#,
-        r"''",
-        r#"is($@, '', "Validation of $bcf");"#,
-        UPSTREAM_SOURCE,
-    );
-}
-
-#[test]
-#[ignore = "xfail: exact upstream end-to-end behavior is not exposed by the public Rust API"]
-fn assertion_012_validation_of_tdata_encoding3_bcf() {
-    pass_upstream(
-        "Validation of tdata/encoding3.bcf",
-        r#"validate_fixture("tdata/encoding3.bcf")"#,
-        r"''",
-        r#"is($@, '', "Validation of $bcf");"#,
-        UPSTREAM_SOURCE,
-    );
-}
-
-#[test]
-#[ignore = "xfail: exact upstream end-to-end behavior is not exposed by the public Rust API"]
-fn assertion_013_validation_of_tdata_encoding4_bcf() {
-    pass_upstream(
-        "Validation of tdata/encoding4.bcf",
-        r#"validate_fixture("tdata/encoding4.bcf")"#,
-        r"''",
-        r#"is($@, '', "Validation of $bcf");"#,
-        UPSTREAM_SOURCE,
-    );
-}
-
-#[test]
-#[ignore = "xfail: exact upstream end-to-end behavior is not exposed by the public Rust API"]
-fn assertion_014_validation_of_tdata_encoding5_bcf() {
-    pass_upstream(
-        "Validation of tdata/encoding5.bcf",
-        r#"validate_fixture("tdata/encoding5.bcf")"#,
-        r"''",
-        r#"is($@, '', "Validation of $bcf");"#,
-        UPSTREAM_SOURCE,
-    );
-}
-
-#[test]
-#[ignore = "xfail: exact upstream end-to-end behavior is not exposed by the public Rust API"]
-fn assertion_015_validation_of_tdata_encoding6_bcf() {
-    pass_upstream(
-        "Validation of tdata/encoding6.bcf",
-        r#"validate_fixture("tdata/encoding6.bcf")"#,
-        r"''",
-        r#"is($@, '', "Validation of $bcf");"#,
-        UPSTREAM_SOURCE,
-    );
-}
-
-#[test]
-#[ignore = "xfail: exact upstream end-to-end behavior is not exposed by the public Rust API"]
-fn assertion_016_validation_of_tdata_extradate_bcf() {
-    pass_upstream(
-        "Validation of tdata/extradate.bcf",
-        r#"validate_fixture("tdata/extradate.bcf")"#,
-        r"''",
-        r#"is($@, '', "Validation of $bcf");"#,
-        UPSTREAM_SOURCE,
-    );
-}
-
-#[test]
-#[ignore = "xfail: exact upstream end-to-end behavior is not exposed by the public Rust API"]
-fn assertion_017_validation_of_tdata_extratitle_bcf() {
-    pass_upstream(
-        "Validation of tdata/extratitle.bcf",
-        r#"validate_fixture("tdata/extratitle.bcf")"#,
-        r"''",
-        r#"is($@, '', "Validation of $bcf");"#,
-        UPSTREAM_SOURCE,
-    );
-}
-
-#[test]
-#[ignore = "xfail: exact upstream end-to-end behavior is not exposed by the public Rust API"]
-fn assertion_018_validation_of_tdata_extratitleyear_bcf() {
-    pass_upstream(
-        "Validation of tdata/extratitleyear.bcf",
-        r#"validate_fixture("tdata/extratitleyear.bcf")"#,
-        r"''",
-        r#"is($@, '', "Validation of $bcf");"#,
-        UPSTREAM_SOURCE,
-    );
-}
-
-#[test]
-#[ignore = "xfail: exact upstream end-to-end behavior is not exposed by the public Rust API"]
-fn assertion_019_validation_of_tdata_full_bbl_bcf() {
-    pass_upstream(
-        "Validation of tdata/full-bbl.bcf",
-        r#"validate_fixture("tdata/full-bbl.bcf")"#,
-        r"''",
-        r#"is($@, '', "Validation of $bcf");"#,
-        UPSTREAM_SOURCE,
-    );
-}
-
-#[test]
-#[ignore = "xfail: exact upstream end-to-end behavior is not exposed by the public Rust API"]
-fn assertion_020_validation_of_tdata_full_bibtex_bcf() {
-    pass_upstream(
-        "Validation of tdata/full-bibtex.bcf",
-        r#"validate_fixture("tdata/full-bibtex.bcf")"#,
-        r"''",
-        r#"is($@, '', "Validation of $bcf");"#,
-        UPSTREAM_SOURCE,
-    );
-}
-
-#[test]
-#[ignore = "xfail: exact upstream end-to-end behavior is not exposed by the public Rust API"]
-fn assertion_021_validation_of_tdata_full_dot_bcf() {
-    pass_upstream(
-        "Validation of tdata/full-dot.bcf",
-        r#"validate_fixture("tdata/full-dot.bcf")"#,
-        r"''",
-        r#"is($@, '', "Validation of $bcf");"#,
-        UPSTREAM_SOURCE,
-    );
-}
-
-#[test]
-#[ignore = "xfail: exact upstream end-to-end behavior is not exposed by the public Rust API"]
-fn assertion_022_validation_of_tdata_general_bcf() {
-    pass_upstream(
-        "Validation of tdata/general.bcf",
-        r#"validate_fixture("tdata/general.bcf")"#,
-        r"''",
-        r#"is($@, '', "Validation of $bcf");"#,
-        UPSTREAM_SOURCE,
-    );
-}
-
-#[test]
-#[ignore = "xfail: exact upstream end-to-end behavior is not exposed by the public Rust API"]
-fn assertion_023_validation_of_tdata_labelalpha_bcf() {
-    pass_upstream(
-        "Validation of tdata/labelalpha.bcf",
-        r#"validate_fixture("tdata/labelalpha.bcf")"#,
-        r"''",
-        r#"is($@, '', "Validation of $bcf");"#,
-        UPSTREAM_SOURCE,
-    );
-}
-
-#[test]
-#[ignore = "xfail: exact upstream end-to-end behavior is not exposed by the public Rust API"]
-fn assertion_024_validation_of_tdata_labelalphaname_bcf() {
-    pass_upstream(
-        "Validation of tdata/labelalphaname.bcf",
-        r#"validate_fixture("tdata/labelalphaname.bcf")"#,
-        r"''",
-        r#"is($@, '', "Validation of $bcf");"#,
-        UPSTREAM_SOURCE,
-    );
-}
-
-#[test]
-#[ignore = "xfail: exact upstream end-to-end behavior is not exposed by the public Rust API"]
-fn assertion_025_validation_of_tdata_maps_bcf() {
-    pass_upstream(
-        "Validation of tdata/maps.bcf",
-        r#"validate_fixture("tdata/maps.bcf")"#,
-        r"''",
-        r#"is($@, '', "Validation of $bcf");"#,
-        UPSTREAM_SOURCE,
-    );
-}
-
-#[test]
-#[ignore = "xfail: exact upstream end-to-end behavior is not exposed by the public Rust API"]
-fn assertion_026_validation_of_tdata_names_bcf() {
-    pass_upstream(
-        "Validation of tdata/names.bcf",
-        r#"validate_fixture("tdata/names.bcf")"#,
-        r"''",
-        r#"is($@, '', "Validation of $bcf");"#,
-        UPSTREAM_SOURCE,
-    );
-}
-
-#[test]
-#[ignore = "xfail: exact upstream end-to-end behavior is not exposed by the public Rust API"]
-fn assertion_027_validation_of_tdata_names_x_bcf() {
-    pass_upstream(
-        "Validation of tdata/names_x.bcf",
-        r#"validate_fixture("tdata/names_x.bcf")"#,
-        r"''",
-        r#"is($@, '', "Validation of $bcf");"#,
-        UPSTREAM_SOURCE,
-    );
-}
-
-#[test]
-#[ignore = "xfail: exact upstream end-to-end behavior is not exposed by the public Rust API"]
-fn assertion_028_validation_of_tdata_options_bcf() {
-    pass_upstream(
-        "Validation of tdata/options.bcf",
-        r#"validate_fixture("tdata/options.bcf")"#,
-        r"''",
-        r#"is($@, '', "Validation of $bcf");"#,
-        UPSTREAM_SOURCE,
-    );
-}
-
-#[test]
-#[ignore = "xfail: exact upstream end-to-end behavior is not exposed by the public Rust API"]
-fn assertion_029_validation_of_tdata_related_bcf() {
-    pass_upstream(
-        "Validation of tdata/related.bcf",
-        r#"validate_fixture("tdata/related.bcf")"#,
-        r"''",
-        r#"is($@, '', "Validation of $bcf");"#,
-        UPSTREAM_SOURCE,
-    );
-}
-
-#[test]
-#[ignore = "xfail: exact upstream end-to-end behavior is not exposed by the public Rust API"]
-fn assertion_030_validation_of_tdata_remote_files_bcf() {
-    pass_upstream(
-        "Validation of tdata/remote-files.bcf",
-        r#"validate_fixture("tdata/remote-files.bcf")"#,
-        r"''",
-        r#"is($@, '', "Validation of $bcf");"#,
-        UPSTREAM_SOURCE,
-    );
-}
-
-#[test]
-#[ignore = "xfail: exact upstream end-to-end behavior is not exposed by the public Rust API"]
-fn assertion_031_validation_of_tdata_sections_complex_bcf() {
-    pass_upstream(
-        "Validation of tdata/sections-complex.bcf",
-        r#"validate_fixture("tdata/sections-complex.bcf")"#,
-        r"''",
-        r#"is($@, '', "Validation of $bcf");"#,
-        UPSTREAM_SOURCE,
-    );
-}
-
-#[test]
-#[ignore = "xfail: exact upstream end-to-end behavior is not exposed by the public Rust API"]
-fn assertion_032_validation_of_tdata_sections_bcf() {
-    pass_upstream(
-        "Validation of tdata/sections.bcf",
-        r#"validate_fixture("tdata/sections.bcf")"#,
-        r"''",
-        r#"is($@, '', "Validation of $bcf");"#,
-        UPSTREAM_SOURCE,
-    );
-}
-
-#[test]
-#[ignore = "xfail: exact upstream end-to-end behavior is not exposed by the public Rust API"]
-fn assertion_033_validation_of_tdata_set_dynamic_bcf() {
-    pass_upstream(
-        "Validation of tdata/set-dynamic.bcf",
-        r#"validate_fixture("tdata/set-dynamic.bcf")"#,
-        r"''",
-        r#"is($@, '', "Validation of $bcf");"#,
-        UPSTREAM_SOURCE,
-    );
-}
-
-#[test]
-#[ignore = "xfail: exact upstream end-to-end behavior is not exposed by the public Rust API"]
-fn assertion_034_validation_of_tdata_set_legacy_bcf() {
-    pass_upstream(
-        "Validation of tdata/set-legacy.bcf",
-        r#"validate_fixture("tdata/set-legacy.bcf")"#,
-        r"''",
-        r#"is($@, '', "Validation of $bcf");"#,
-        UPSTREAM_SOURCE,
-    );
-}
-
-#[test]
-#[ignore = "xfail: exact upstream end-to-end behavior is not exposed by the public Rust API"]
-fn assertion_035_validation_of_tdata_set_static_bcf() {
-    pass_upstream(
-        "Validation of tdata/set-static.bcf",
-        r#"validate_fixture("tdata/set-static.bcf")"#,
-        r"''",
-        r#"is($@, '', "Validation of $bcf");"#,
-        UPSTREAM_SOURCE,
-    );
-}
-
-#[test]
-#[ignore = "xfail: exact upstream end-to-end behavior is not exposed by the public Rust API"]
-fn assertion_036_validation_of_tdata_skips_bcf() {
-    pass_upstream(
-        "Validation of tdata/skips.bcf",
-        r#"validate_fixture("tdata/skips.bcf")"#,
-        r"''",
-        r#"is($@, '', "Validation of $bcf");"#,
-        UPSTREAM_SOURCE,
-    );
-}
-
-#[test]
-#[ignore = "xfail: exact upstream end-to-end behavior is not exposed by the public Rust API"]
-fn assertion_037_validation_of_tdata_skipsg_bcf() {
-    pass_upstream(
-        "Validation of tdata/skipsg.bcf",
-        r#"validate_fixture("tdata/skipsg.bcf")"#,
-        r"''",
-        r#"is($@, '', "Validation of $bcf");"#,
-        UPSTREAM_SOURCE,
-    );
-}
-
-#[test]
-#[ignore = "xfail: exact upstream end-to-end behavior is not exposed by the public Rust API"]
-fn assertion_038_validation_of_tdata_sort_case_bcf() {
-    pass_upstream(
-        "Validation of tdata/sort-case.bcf",
-        r#"validate_fixture("tdata/sort-case.bcf")"#,
-        r"''",
-        r#"is($@, '', "Validation of $bcf");"#,
-        UPSTREAM_SOURCE,
-    );
-}
-
-#[test]
-#[ignore = "xfail: exact upstream end-to-end behavior is not exposed by the public Rust API"]
-fn assertion_039_validation_of_tdata_sort_complex_bcf() {
-    pass_upstream(
-        "Validation of tdata/sort-complex.bcf",
-        r#"validate_fixture("tdata/sort-complex.bcf")"#,
-        r"''",
-        r#"is($@, '', "Validation of $bcf");"#,
-        UPSTREAM_SOURCE,
-    );
-}
-
-#[test]
-#[ignore = "xfail: exact upstream end-to-end behavior is not exposed by the public Rust API"]
-fn assertion_040_validation_of_tdata_sort_names_bcf() {
-    pass_upstream(
-        "Validation of tdata/sort-names.bcf",
-        r#"validate_fixture("tdata/sort-names.bcf")"#,
-        r"''",
-        r#"is($@, '', "Validation of $bcf");"#,
-        UPSTREAM_SOURCE,
-    );
-}
-
-#[test]
-#[ignore = "xfail: exact upstream end-to-end behavior is not exposed by the public Rust API"]
-fn assertion_041_validation_of_tdata_sort_order_bcf() {
-    pass_upstream(
-        "Validation of tdata/sort-order.bcf",
-        r#"validate_fixture("tdata/sort-order.bcf")"#,
-        r"''",
-        r#"is($@, '', "Validation of $bcf");"#,
-        UPSTREAM_SOURCE,
-    );
-}
-
-#[test]
-#[ignore = "xfail: exact upstream end-to-end behavior is not exposed by the public Rust API"]
-fn assertion_042_validation_of_tdata_sort_uc_bcf() {
-    pass_upstream(
-        "Validation of tdata/sort-uc.bcf",
-        r#"validate_fixture("tdata/sort-uc.bcf")"#,
-        r"''",
-        r#"is($@, '', "Validation of $bcf");"#,
-        UPSTREAM_SOURCE,
-    );
-}
-
-#[test]
-#[ignore = "xfail: exact upstream end-to-end behavior is not exposed by the public Rust API"]
-fn assertion_043_validation_of_tdata_translit_bcf() {
-    pass_upstream(
-        "Validation of tdata/translit.bcf",
-        r#"validate_fixture("tdata/translit.bcf")"#,
-        r"''",
-        r#"is($@, '', "Validation of $bcf");"#,
-        UPSTREAM_SOURCE,
-    );
-}
-
-#[test]
-#[ignore = "xfail: exact upstream end-to-end behavior is not exposed by the public Rust API"]
-fn assertion_044_validation_of_tdata_truncation_bcf() {
-    pass_upstream(
-        "Validation of tdata/truncation.bcf",
-        r#"validate_fixture("tdata/truncation.bcf")"#,
-        r"''",
-        r#"is($@, '', "Validation of $bcf");"#,
-        UPSTREAM_SOURCE,
-    );
-}
-
-#[test]
-#[ignore = "xfail: exact upstream end-to-end behavior is not exposed by the public Rust API"]
-fn assertion_045_validation_of_tdata_uniqueness_nameparts_bcf() {
-    pass_upstream(
-        "Validation of tdata/uniqueness-nameparts.bcf",
-        r#"validate_fixture("tdata/uniqueness-nameparts.bcf")"#,
-        r"''",
-        r#"is($@, '', "Validation of $bcf");"#,
-        UPSTREAM_SOURCE,
-    );
-}
-
-#[test]
-#[ignore = "xfail: exact upstream end-to-end behavior is not exposed by the public Rust API"]
-fn assertion_046_validation_of_tdata_uniqueness1_bcf() {
-    pass_upstream(
-        "Validation of tdata/uniqueness1.bcf",
-        r#"validate_fixture("tdata/uniqueness1.bcf")"#,
-        r"''",
-        r#"is($@, '', "Validation of $bcf");"#,
-        UPSTREAM_SOURCE,
-    );
-}
-
-#[test]
-#[ignore = "xfail: exact upstream end-to-end behavior is not exposed by the public Rust API"]
-fn assertion_047_validation_of_tdata_uniqueness2_bcf() {
-    pass_upstream(
-        "Validation of tdata/uniqueness2.bcf",
-        r#"validate_fixture("tdata/uniqueness2.bcf")"#,
-        r"''",
-        r#"is($@, '', "Validation of $bcf");"#,
-        UPSTREAM_SOURCE,
-    );
-}
-
-#[test]
-#[ignore = "xfail: exact upstream end-to-end behavior is not exposed by the public Rust API"]
-fn assertion_048_validation_of_tdata_uniqueness3_bcf() {
-    pass_upstream(
-        "Validation of tdata/uniqueness3.bcf",
-        r#"validate_fixture("tdata/uniqueness3.bcf")"#,
-        r"''",
-        r#"is($@, '', "Validation of $bcf");"#,
-        UPSTREAM_SOURCE,
-    );
-}
-
-#[test]
-#[ignore = "xfail: exact upstream end-to-end behavior is not exposed by the public Rust API"]
-fn assertion_049_validation_of_tdata_uniqueness4_bcf() {
-    pass_upstream(
-        "Validation of tdata/uniqueness4.bcf",
-        r#"validate_fixture("tdata/uniqueness4.bcf")"#,
-        r"''",
-        r#"is($@, '', "Validation of $bcf");"#,
-        UPSTREAM_SOURCE,
-    );
-}
-
-#[test]
-#[ignore = "xfail: exact upstream end-to-end behavior is not exposed by the public Rust API"]
-fn assertion_050_validation_of_tdata_uniqueness5_bcf() {
-    pass_upstream(
-        "Validation of tdata/uniqueness5.bcf",
-        r#"validate_fixture("tdata/uniqueness5.bcf")"#,
-        r"''",
-        r#"is($@, '', "Validation of $bcf");"#,
-        UPSTREAM_SOURCE,
-    );
-}
-
-#[test]
-#[ignore = "xfail: exact upstream end-to-end behavior is not exposed by the public Rust API"]
-fn assertion_051_validation_of_tdata_uniqueness6_bcf() {
-    pass_upstream(
-        "Validation of tdata/uniqueness6.bcf",
-        r#"validate_fixture("tdata/uniqueness6.bcf")"#,
-        r"''",
-        r#"is($@, '', "Validation of $bcf");"#,
-        UPSTREAM_SOURCE,
-    );
-}
-
-#[test]
-#[ignore = "xfail: exact upstream end-to-end behavior is not exposed by the public Rust API"]
-fn assertion_052_validation_of_tdata_uniqueness7_bcf() {
-    pass_upstream(
-        "Validation of tdata/uniqueness7.bcf",
-        r#"validate_fixture("tdata/uniqueness7.bcf")"#,
-        r"''",
-        r#"is($@, '', "Validation of $bcf");"#,
-        UPSTREAM_SOURCE,
-    );
-}
-
-#[test]
-#[ignore = "xfail: exact upstream end-to-end behavior is not exposed by the public Rust API"]
-fn assertion_053_validation_of_tdata_xdata_bcf() {
-    pass_upstream(
-        "Validation of tdata/xdata.bcf",
-        r#"validate_fixture("tdata/xdata.bcf")"#,
-        r"''",
-        r#"is($@, '', "Validation of $bcf");"#,
-        UPSTREAM_SOURCE,
-    );
-}
+validates!(
+    assertion_001_validation_of_tdata_annotations_bcf,
+    "tdata/annotations.bcf"
+);
+validates!(
+    assertion_002_validation_of_tdata_basic_misc_bcf,
+    "tdata/basic-misc.bcf"
+);
+validates!(
+    assertion_003_validation_of_tdata_biblatexml_bcf,
+    "tdata/biblatexml.bcf"
+);
+validates!(
+    assertion_004_validation_of_tdata_bibtex_aliases_bcf,
+    "tdata/bibtex-aliases.bcf"
+);
+validates!(
+    assertion_005_validation_of_tdata_bibtex_output_bcf,
+    "tdata/bibtex-output.bcf"
+);
+validates!(
+    assertion_006_validation_of_tdata_crossrefs_bcf,
+    "tdata/crossrefs.bcf"
+);
+validates!(
+    assertion_007_validation_of_tdata_datalists_bcf,
+    "tdata/datalists.bcf"
+);
+validates!(
+    assertion_008_validation_of_tdata_dateformats_bcf,
+    "tdata/dateformats.bcf"
+);
+validates!(
+    assertion_009_validation_of_tdata_dm_constraints_bcf,
+    "tdata/dm-constraints.bcf"
+);
+validates!(
+    assertion_010_validation_of_tdata_encoding1_bcf,
+    "tdata/encoding1.bcf"
+);
+validates!(
+    assertion_011_validation_of_tdata_encoding2_bcf,
+    "tdata/encoding2.bcf"
+);
+validates!(
+    assertion_012_validation_of_tdata_encoding3_bcf,
+    "tdata/encoding3.bcf"
+);
+validates!(
+    assertion_013_validation_of_tdata_encoding4_bcf,
+    "tdata/encoding4.bcf"
+);
+validates!(
+    assertion_014_validation_of_tdata_encoding5_bcf,
+    "tdata/encoding5.bcf"
+);
+validates!(
+    assertion_015_validation_of_tdata_encoding6_bcf,
+    "tdata/encoding6.bcf"
+);
+validates!(
+    assertion_016_validation_of_tdata_extradate_bcf,
+    "tdata/extradate.bcf"
+);
+validates!(
+    assertion_017_validation_of_tdata_extratitle_bcf,
+    "tdata/extratitle.bcf"
+);
+validates!(
+    assertion_018_validation_of_tdata_extratitleyear_bcf,
+    "tdata/extratitleyear.bcf"
+);
+validates!(
+    assertion_019_validation_of_tdata_full_bbl_bcf,
+    "tdata/full-bbl.bcf"
+);
+validates!(
+    assertion_020_validation_of_tdata_full_bibtex_bcf,
+    "tdata/full-bibtex.bcf"
+);
+validates!(
+    assertion_021_validation_of_tdata_full_dot_bcf,
+    "tdata/full-dot.bcf"
+);
+validates!(
+    assertion_022_validation_of_tdata_general_bcf,
+    "tdata/general.bcf"
+);
+validates!(
+    assertion_023_validation_of_tdata_labelalpha_bcf,
+    "tdata/labelalpha.bcf"
+);
+validates!(
+    assertion_024_validation_of_tdata_labelalphaname_bcf,
+    "tdata/labelalphaname.bcf"
+);
+validates!(assertion_025_validation_of_tdata_maps_bcf, "tdata/maps.bcf");
+validates!(
+    assertion_026_validation_of_tdata_names_bcf,
+    "tdata/names.bcf"
+);
+validates!(
+    assertion_027_validation_of_tdata_names_x_bcf,
+    "tdata/names_x.bcf"
+);
+validates!(
+    assertion_028_validation_of_tdata_options_bcf,
+    "tdata/options.bcf"
+);
+validates!(
+    assertion_029_validation_of_tdata_related_bcf,
+    "tdata/related.bcf"
+);
+validates!(
+    assertion_030_validation_of_tdata_remote_files_bcf,
+    "tdata/remote-files.bcf"
+);
+validates!(
+    assertion_031_validation_of_tdata_sections_complex_bcf,
+    "tdata/sections-complex.bcf"
+);
+validates!(
+    assertion_032_validation_of_tdata_sections_bcf,
+    "tdata/sections.bcf"
+);
+validates!(
+    assertion_033_validation_of_tdata_set_dynamic_bcf,
+    "tdata/set-dynamic.bcf"
+);
+validates!(
+    assertion_034_validation_of_tdata_set_legacy_bcf,
+    "tdata/set-legacy.bcf"
+);
+validates!(
+    assertion_035_validation_of_tdata_set_static_bcf,
+    "tdata/set-static.bcf"
+);
+validates!(
+    assertion_036_validation_of_tdata_skips_bcf,
+    "tdata/skips.bcf"
+);
+validates!(
+    assertion_037_validation_of_tdata_skipsg_bcf,
+    "tdata/skipsg.bcf"
+);
+validates!(
+    assertion_038_validation_of_tdata_sort_case_bcf,
+    "tdata/sort-case.bcf"
+);
+validates!(
+    assertion_039_validation_of_tdata_sort_complex_bcf,
+    "tdata/sort-complex.bcf"
+);
+validates!(
+    assertion_040_validation_of_tdata_sort_names_bcf,
+    "tdata/sort-names.bcf"
+);
+validates!(
+    assertion_041_validation_of_tdata_sort_order_bcf,
+    "tdata/sort-order.bcf"
+);
+validates!(
+    assertion_042_validation_of_tdata_sort_uc_bcf,
+    "tdata/sort-uc.bcf"
+);
+validates!(
+    assertion_043_validation_of_tdata_translit_bcf,
+    "tdata/translit.bcf"
+);
+validates!(
+    assertion_044_validation_of_tdata_truncation_bcf,
+    "tdata/truncation.bcf"
+);
+validates!(
+    assertion_045_validation_of_tdata_uniqueness_nameparts_bcf,
+    "tdata/uniqueness-nameparts.bcf"
+);
+validates!(
+    assertion_046_validation_of_tdata_uniqueness1_bcf,
+    "tdata/uniqueness1.bcf"
+);
+validates!(
+    assertion_047_validation_of_tdata_uniqueness2_bcf,
+    "tdata/uniqueness2.bcf"
+);
+validates!(
+    assertion_048_validation_of_tdata_uniqueness3_bcf,
+    "tdata/uniqueness3.bcf"
+);
+validates!(
+    assertion_049_validation_of_tdata_uniqueness4_bcf,
+    "tdata/uniqueness4.bcf"
+);
+validates!(
+    assertion_050_validation_of_tdata_uniqueness5_bcf,
+    "tdata/uniqueness5.bcf"
+);
+validates!(
+    assertion_051_validation_of_tdata_uniqueness6_bcf,
+    "tdata/uniqueness6.bcf"
+);
+validates!(
+    assertion_052_validation_of_tdata_uniqueness7_bcf,
+    "tdata/uniqueness7.bcf"
+);
+validates!(
+    assertion_053_validation_of_tdata_xdata_bcf,
+    "tdata/xdata.bcf"
+);
