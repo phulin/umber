@@ -99,7 +99,7 @@ fn empty_pdf_map_primitives_block_the_implicit_default_map() {
 }
 
 #[test]
-fn pdf_glyph_to_unicode_rejects_non_scalar_diagnostics() {
+fn pdf_glyph_to_unicode_warns_and_continues_for_out_of_range_value() {
     let mut stores = stores_with_fonts();
     tex_expand::install_expandable_primitives(&mut stores);
     let primitive = stores.intern("pdfglyphtounicode");
@@ -107,13 +107,22 @@ fn pdf_glyph_to_unicode_rejects_non_scalar_diagnostics() {
         primitive,
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::PdfGlyphToUnicode),
     );
-    let mut input = InputStack::new(MemoryInput::new("\\pdfglyphtounicode{A}{D800}\\end"));
-    let error = Executor::new()
+    let mut input = InputStack::new(MemoryInput::new(concat!(
+        "\\def\\legacyvalue{00740074}",
+        "\\pdfglyphtounicode{t_t}{\\legacyvalue}",
+        "\\pdfglyphtounicode{A}{0041}\\end"
+    )));
+    Executor::new()
         .run(&mut input, &mut stores)
-        .expect_err("surrogate is not a Unicode scalar");
+        .expect("an invalid mapping is a recoverable pdfTeX warning");
+    assert!(
+        terminal_effect_text(&stores)
+            .contains("pdfTeX warning: pdftex: ToUnicode: value out of range [0,10FFFF]: 740074")
+    );
+    assert_eq!(stores.pdf_glyph_to_unicode(b"cmr10", b"t_t"), None);
     assert_eq!(
-        error.to_string(),
-        "pdfTeX error (\\pdfglyphtounicode): Unicode value is not a scalar value"
+        stores.pdf_glyph_to_unicode(b"cmr10", b"A"),
+        Some([0x41].as_slice())
     );
 }
 
