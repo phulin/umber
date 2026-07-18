@@ -159,7 +159,11 @@ unpack_source() {
 
 entrypoint() {
   local directory=$1 candidate
-  local documentclass='^[[:space:]]*\\documentclass([[:space:]]*\[[^]]*\])?[[:space:]]*\{'
+  # A live declaration can span physical lines (most commonly its option
+  # list), so identify the control sequence rather than requiring its opening
+  # class-name brace on this line. Requiring the command at the start after
+  # whitespace still excludes commented examples.
+  local documentclass='^[[:space:]]*\\documentclass([[:space:]]|\[|\{|$)'
   for candidate in main.tex manuscript.tex arxiv_version.tex paper.tex; do
     if [[ -f "$directory/$candidate" ]] && rg -q "$documentclass" "$directory/$candidate"; then
       printf '%s\n' "$directory/$candidate"
@@ -183,6 +187,14 @@ check_entrypoint() {
   if [[ "$selected" != "$fixture/z-document.tex" ]]; then
     rm -rf -- "$fixture"
     echo "entrypoint check selected ${selected:-nothing}, expected z-document.tex" >&2
+    return 1
+  fi
+  printf '\\documentclass[\n  twocolumn,\n  draft\n]{article}\n' \
+    >"$fixture/z-document.tex"
+  selected="$(entrypoint "$fixture")"
+  if [[ "$selected" != "$fixture/z-document.tex" ]]; then
+    rm -rf -- "$fixture"
+    echo "entrypoint check rejected a live multiline declaration" >&2
     return 1
   fi
   printf '\\documentclass{article}\n' >"$fixture/paper.tex"
