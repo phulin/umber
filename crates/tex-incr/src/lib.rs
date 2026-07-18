@@ -905,6 +905,7 @@ impl Session {
         let same_history_hash_mismatches = advance.same_history_hash_mismatches;
         let trace_validation_latency = advance.trace_validation_latency;
         let same_history_stop = advance.same_history_stop;
+        let roots = tex_exec::RootRehomeContext::new(&old_source, &next);
         let paragraph_history_transition_started = Timer::start();
         if advance.convergence_old_index.is_some() {
             self.pure_memo.discard_paragraph_history();
@@ -943,10 +944,9 @@ impl Session {
                     restart_index + 1 + old_history.len().saturating_sub(old_index),
                 );
                 for mut record in old_history[..=restart_index].iter().cloned() {
-                    record.checkpoint =
-                        record
-                            .checkpoint
-                            .rehome_unchanged_prefix(substrate, &old_source, &next)?;
+                    record.checkpoint = record
+                        .checkpoint
+                        .rehome_unchanged_prefix(substrate, &roots)?;
                     history.push(record);
                 }
                 for mut record in old_history[old_index..].iter().cloned() {
@@ -956,8 +956,7 @@ impl Session {
                     record.key.position = mapped_position;
                     record.checkpoint = record.checkpoint.rehome_converged_root(
                         substrate,
-                        &old_source,
-                        &next,
+                        &roots,
                         mapped_position,
                     )?;
                     record.revision = next_revision;
@@ -1013,12 +1012,9 @@ impl Session {
                 let mut history = Vec::with_capacity(restart_index + 1 + advance.new_records.len());
                 for record in &old_history[..=restart_index] {
                     let mut record = record.clone();
-                    record.checkpoint = record.checkpoint.retarget_prefix(
-                        &target,
-                        substrate,
-                        &old_source,
-                        &next,
-                    )?;
+                    record.checkpoint = record
+                        .checkpoint
+                        .retarget_prefix(&target, substrate, &roots)?;
                     record.revision = next_revision;
                     history.push(record);
                 }
@@ -1080,7 +1076,7 @@ impl Session {
         };
         let history = retain_restorable_history(history, retained_substrate)?;
         reuse.trace_retained_bytes = std::mem::size_of_val(history.as_slice());
-        let content_hash = ContentHash::from_bytes(next.as_bytes());
+        let content_hash = roots.new_content_hash();
         reuse.splice_latency = splice_started.elapsed();
         reuse.trace_replay_latency = reuse.splice_latency;
         Ok(PendingRevision {

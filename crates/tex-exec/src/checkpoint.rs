@@ -43,6 +43,38 @@ pub struct EngineCheckpoint {
     artifact_prefix: usize,
 }
 
+/// Revision roots and their precomputed content identities for checkpoint
+/// rehoming.
+///
+/// Construction binds each identity to the source bytes that produced it, so
+/// checkpoint rewrite APIs cannot accidentally validate one revision while
+/// installing another revision's identity. One context is intended to be
+/// shared by every checkpoint rewritten for an incremental edit.
+#[doc(hidden)]
+pub struct RootRehomeContext<'a> {
+    old_source: &'a str,
+    new_source: &'a str,
+    old_content_hash: ContentHash,
+    new_content_hash: ContentHash,
+}
+
+impl<'a> RootRehomeContext<'a> {
+    #[must_use]
+    pub fn new(old_source: &'a str, new_source: &'a str) -> Self {
+        Self {
+            old_source,
+            new_source,
+            old_content_hash: ContentHash::from_bytes(old_source.as_bytes()),
+            new_content_hash: ContentHash::from_bytes(new_source.as_bytes()),
+        }
+    }
+
+    #[must_use]
+    pub const fn new_content_hash(&self) -> ContentHash {
+        self.new_content_hash
+    }
+}
+
 impl EngineCheckpoint {
     /// Verifies that this checkpoint still names restorable roots in `substrate`.
     #[doc(hidden)]
@@ -117,51 +149,48 @@ impl EngineCheckpoint {
     pub fn rehome_converged_root(
         &self,
         substrate: &GenerationSubstrate,
-        old_source: &str,
-        new_source: &str,
+        roots: &RootRehomeContext<'_>,
         mapped_anchor: usize,
     ) -> Result<Self, GenerationForkError> {
         substrate.validate_checkpoint_snapshot(&self.universe)?;
-        if self.root_content_hash != Some(tex_state::ContentHash::from_bytes(old_source.as_bytes()))
-        {
+        if self.root_content_hash != Some(roots.old_content_hash) {
             return Err(GenerationForkError::RootRevisionMismatch);
         }
-        if mapped_anchor > new_source.len() || !new_source.is_char_boundary(mapped_anchor) {
+        if mapped_anchor > roots.new_source.len()
+            || !roots.new_source.is_char_boundary(mapped_anchor)
+        {
             return Err(GenerationForkError::InvalidMappedAnchor);
         }
-        if self.root_anchor > old_source.len()
-            || old_source.as_bytes()[self.root_anchor..] != new_source.as_bytes()[mapped_anchor..]
+        if self.root_anchor > roots.old_source.len()
+            || roots.old_source.as_bytes()[self.root_anchor..]
+                != roots.new_source.as_bytes()[mapped_anchor..]
         {
             return Err(GenerationForkError::ChangedRootInterval);
         }
         let mut checkpoint = self.clone();
         checkpoint.root_anchor = mapped_anchor;
-        checkpoint.root_content_hash =
-            Some(tex_state::ContentHash::from_bytes(new_source.as_bytes()));
+        checkpoint.root_content_hash = Some(roots.new_content_hash);
         Ok(checkpoint)
     }
 
     pub fn rehome_unchanged_prefix(
         &self,
         substrate: &GenerationSubstrate,
-        old_source: &str,
-        new_source: &str,
+        roots: &RootRehomeContext<'_>,
     ) -> Result<Self, GenerationForkError> {
         substrate.validate_checkpoint_snapshot(&self.universe)?;
-        if self.root_content_hash != Some(tex_state::ContentHash::from_bytes(old_source.as_bytes()))
-        {
+        if self.root_content_hash != Some(roots.old_content_hash) {
             return Err(GenerationForkError::RootRevisionMismatch);
         }
-        if self.root_anchor > old_source.len()
-            || self.root_anchor > new_source.len()
-            || old_source.as_bytes()[..self.root_anchor]
-                != new_source.as_bytes()[..self.root_anchor]
+        if self.root_anchor > roots.old_source.len()
+            || self.root_anchor > roots.new_source.len()
+            || roots.old_source.as_bytes()[..self.root_anchor]
+                != roots.new_source.as_bytes()[..self.root_anchor]
         {
             return Err(GenerationForkError::ChangedRootInterval);
         }
         let mut checkpoint = self.clone();
-        checkpoint.root_content_hash =
-            Some(tex_state::ContentHash::from_bytes(new_source.as_bytes()));
+        checkpoint.root_content_hash = Some(roots.new_content_hash);
         Ok(checkpoint)
     }
 
@@ -171,24 +200,21 @@ impl EngineCheckpoint {
         &self,
         target: &GenerationSubstrate,
         source: &GenerationSubstrate,
-        old_source: &str,
-        new_source: &str,
+        roots: &RootRehomeContext<'_>,
     ) -> Result<Self, GenerationForkError> {
-        if self.root_content_hash != Some(tex_state::ContentHash::from_bytes(old_source.as_bytes()))
-        {
+        if self.root_content_hash != Some(roots.old_content_hash) {
             return Err(GenerationForkError::RootRevisionMismatch);
         }
-        if self.root_anchor > old_source.len()
-            || self.root_anchor > new_source.len()
-            || old_source.as_bytes()[..self.root_anchor]
-                != new_source.as_bytes()[..self.root_anchor]
+        if self.root_anchor > roots.old_source.len()
+            || self.root_anchor > roots.new_source.len()
+            || roots.old_source.as_bytes()[..self.root_anchor]
+                != roots.new_source.as_bytes()[..self.root_anchor]
         {
             return Err(GenerationForkError::ChangedRootInterval);
         }
         let mut checkpoint = self.clone();
         checkpoint.universe = target.retarget_prefix_from(source, &self.universe)?;
-        checkpoint.root_content_hash =
-            Some(tex_state::ContentHash::from_bytes(new_source.as_bytes()));
+        checkpoint.root_content_hash = Some(roots.new_content_hash);
         Ok(checkpoint)
     }
 }

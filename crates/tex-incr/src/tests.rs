@@ -3141,16 +3141,25 @@ fn record_rehome_rejects_a_changed_suffix_and_stale_root_revision() {
     session.cold().expect("cold run");
     let substrate = session.substrate.as_ref().expect("accepted substrate");
     let job_start = session.history.first().expect("job start").checkpoint();
+    let changed = tex_exec::RootRehomeContext::new(&original, "changed");
 
     assert_eq!(
         job_start
-            .rehome_converged_root(substrate, &original, "changed", 0)
+            .rehome_converged_root(substrate, &changed, 0)
             .expect_err("changed adopted interval is rejected"),
         GenerationForkError::ChangedRootInterval
     );
+    let unchanged = tex_exec::RootRehomeContext::new(&original, &original);
     assert_eq!(
         job_start
-            .rehome_unchanged_prefix(substrate, "stale revision", &original)
+            .rehome_converged_root(substrate, &unchanged, usize::MAX)
+            .expect_err("invalid mapped anchor is rejected"),
+        GenerationForkError::InvalidMappedAnchor
+    );
+    let stale = tex_exec::RootRehomeContext::new("stale revision", &original);
+    assert_eq!(
+        job_start
+            .rehome_unchanged_prefix(substrate, &stale)
             .expect_err("stale root revision is rejected"),
         GenerationForkError::RootRevisionMismatch
     );
