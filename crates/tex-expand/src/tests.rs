@@ -916,6 +916,15 @@ fn expansion_fuel_resets_after_a_token_is_delivered() {
 }
 
 #[test]
+fn default_expansion_fuel_allows_two_million_interpreter_steps() {
+    let expansion = ExpansionContext::new("texput");
+
+    assert_eq!(crate::DEFAULT_EXPANSION_FUEL, 2_000_000);
+    assert_eq!(expansion.fuel_limit, 2_000_000);
+    assert_eq!(expansion.remaining_fuel, 2_000_000);
+}
+
+#[test]
 fn nested_expansion_consumes_the_parent_fuel_budget() {
     let mut expansion = ExpansionContext::new("texput").with_fuel(2);
     expansion.begin_fuel_scope();

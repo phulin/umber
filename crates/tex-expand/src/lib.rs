@@ -1217,7 +1217,10 @@ pub struct ExpansionSessionState {
 pub struct ExpansionSessionSnapshot(ExpansionSessionState);
 
 /// Default number of expansion-loop steps available to one expansion request.
-pub const DEFAULT_EXPANSION_FUEL: u64 = 250_000;
+///
+/// This is an Umber host-safety bound around TeX.web's unbounded
+/// `get_x_token`/`expand` interpreter loop, not a TeX language limit.
+pub const DEFAULT_EXPANSION_FUEL: u64 = 2_000_000;
 
 impl Default for ExpansionSessionState {
     fn default() -> Self {
