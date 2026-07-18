@@ -295,6 +295,7 @@ fn successful_pretolerance_does_not_allocate_hyphenation_nodes() {
         looseness: 0,
         last_line_fit: 0,
         pdf_adjust_spacing: 0,
+        expansion_steps: None,
         pdf_protrude_chars: 0,
         left_skip: stores.glue(stores.glue_param(GlueParam::LEFT_SKIP)),
         right_skip: stores.glue(stores.glue_param(GlueParam::RIGHT_SKIP)),
@@ -325,6 +326,7 @@ fn pretolerance_memo_hits_and_every_explicit_parameter_changes_its_strong_key() 
     ];
     let base = tex_typeset::linebreak::LineBreakParams {
         pdf_adjust_spacing: 0,
+        expansion_steps: None,
         pdf_protrude_chars: 0,
         pretolerance: 10_000,
         tolerance: 9_999,
@@ -368,6 +370,9 @@ fn pretolerance_memo_hits_and_every_explicit_parameter_changes_its_strong_key() 
     changed!(emergency_stretch, Scaled::from_raw(65));
     changed!(looseness, 1);
     changed!(last_line_fit, 66);
+    changed!(pdf_adjust_spacing, 2);
+    changed!(pdf_protrude_chars, 2);
+    changed!(expansion_steps, Some((10, 5)));
     changed!(
         left_skip,
         GlueSpec {
@@ -436,6 +441,7 @@ fn malformed_pretolerance_entry_is_rejected_and_recomputed() {
     let nodes = vec![Node::Penalty(-10_000)];
     let params = tex_typeset::linebreak::LineBreakParams {
         pdf_adjust_spacing: 0,
+        expansion_steps: None,
         pdf_protrude_chars: 0,
         pretolerance: 10_000,
         tolerance: 10_000,
@@ -734,6 +740,7 @@ fn randomized_pretolerance_cache_differential_matches_disabled_kernel() {
         nodes.push(Node::Penalty(-10_000));
         let params = tex_typeset::linebreak::LineBreakParams {
             pdf_adjust_spacing: 0,
+            expansion_steps: None,
             pdf_protrude_chars: 0,
             pretolerance: 10_000,
             tolerance: 1_000 + (seed % 9_000) as i32,

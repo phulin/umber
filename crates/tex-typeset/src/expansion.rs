@@ -144,6 +144,16 @@ impl ParagraphExpansion {
         }
         Ok(())
     }
+
+    /// Validated paragraph-wide expansion steps used during line breaking.
+    #[must_use]
+    pub fn steps(self) -> Option<(i32, i32)> {
+        let step = i32::from(self.step?);
+        Some((
+            i32::from(self.stretch.unwrap_or(0)) / step,
+            i32::from(self.shrink.unwrap_or(0)) / step,
+        ))
+    }
 }
 
 fn observe_equal<T: Copy + Eq>(
@@ -316,6 +326,7 @@ mod tests {
         paragraph
             .observe(spec(0, 50, 10))
             .expect("compatible shrink specification");
+        assert_eq!(paragraph.steps(), Some((10, 5)));
         assert_eq!(
             paragraph.observe(spec(100, 50, 20)),
             Err(FontExpansionError::DifferentStep)

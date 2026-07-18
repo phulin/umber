@@ -5,7 +5,7 @@ use tex_state::node_arena::{NodeList, NodeRef};
 use tex_state::scaled::Scaled;
 
 use crate::TypesetState;
-use crate::expansion::{ExpansionCapacity, FontExpansionSpec};
+use crate::expansion::ExpansionCapacity;
 
 #[derive(Clone, Copy, Debug)]
 pub(super) struct Widths {
@@ -14,9 +14,6 @@ pub(super) struct Widths {
     shrink: [WideScaled; 4],
     pub(super) font_stretch: WideScaled,
     pub(super) font_shrink: WideScaled,
-    pub(super) expansion_step: Option<i32>,
-    pub(super) expansion_stretch_limit: Option<i32>,
-    pub(super) expansion_shrink_limit: Option<i32>,
 }
 
 impl Widths {
@@ -27,9 +24,6 @@ impl Widths {
             shrink: [WideScaled::ZERO; 4],
             font_stretch: WideScaled::ZERO,
             font_shrink: WideScaled::ZERO,
-            expansion_step: None,
-            expansion_stretch_limit: None,
-            expansion_shrink_limit: None,
         }
     }
 
@@ -41,7 +35,6 @@ impl Widths {
         }
         self.font_stretch = wide_add(self.font_stretch, other.font_stretch);
         self.font_shrink = wide_add(self.font_shrink, other.font_shrink);
-        merge_expansion_metadata(self, other);
     }
 
     pub(super) fn from_glue(spec: GlueSpec) -> Self {
@@ -59,11 +52,6 @@ impl Widths {
         }
         out.font_stretch = wide_sub(self.font_stretch, other.font_stretch);
         out.font_shrink = wide_sub(self.font_shrink, other.font_shrink);
-        out.expansion_step = self.expansion_step.or(other.expansion_step);
-        out.expansion_stretch_limit = self
-            .expansion_stretch_limit
-            .or(other.expansion_stretch_limit);
-        out.expansion_shrink_limit = self.expansion_shrink_limit.or(other.expansion_shrink_limit);
         out
     }
 
@@ -298,7 +286,6 @@ fn add_char_expansion<S: TypesetState>(
     let Some(spec) = state.font_expansion_spec(font) else {
         return;
     };
-    observe_expansion_metadata(widths, spec);
     let capacity = ExpansionCapacity::for_metric(
         natural,
         spec,
@@ -339,7 +326,6 @@ fn add_font_kern_capacity<S: TypesetState>(
     let Some(spec) = state.font_expansion_spec(left_font) else {
         return;
     };
-    observe_expansion_metadata(widths, spec);
     let efcode = state.pdf_font_code(tex_state::font::PdfFontCode::Ef, left_font, left);
     let endpoint = state.font_kern(left_font, left, right).unwrap_or(natural);
     let stretched = crate::expansion::scaled_at_ratio(endpoint, spec.stretch());
@@ -380,26 +366,6 @@ fn rounded_positive_ratio(value: i32, efcode: i32) -> Scaled {
     Scaled::from_raw(
         i32::try_from((value * efcode + 500) / 1000).expect("font kern capacity fits i32"),
     )
-}
-
-fn observe_expansion_metadata(widths: &mut Widths, spec: FontExpansionSpec) {
-    widths.expansion_step.get_or_insert(spec.step());
-    if spec.stretch() != 0 {
-        widths.expansion_stretch_limit.get_or_insert(spec.stretch());
-    }
-    if spec.shrink() != 0 {
-        widths.expansion_shrink_limit.get_or_insert(spec.shrink());
-    }
-}
-
-fn merge_expansion_metadata(target: &mut Widths, other: Widths) {
-    target.expansion_step = target.expansion_step.or(other.expansion_step);
-    target.expansion_stretch_limit = target
-        .expansion_stretch_limit
-        .or(other.expansion_stretch_limit);
-    target.expansion_shrink_limit = target
-        .expansion_shrink_limit
-        .or(other.expansion_shrink_limit);
 }
 
 pub(super) fn line_badness(

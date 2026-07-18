@@ -36,6 +36,9 @@ pub struct LineBreakParams {
     /// pdfTeX's `\pdfadjustspacing`: positive values expand finalized lines;
     /// values greater than one also affect breakpoint feasibility.
     pub pdf_adjust_spacing: i32,
+    /// Paragraph-wide validated font-expansion step counts. Ignored unless
+    /// `pdf_adjust_spacing > 1`.
+    pub expansion_steps: Option<(i32, i32)>,
     /// pdfTeX's `\pdfprotrudechars`: positive values materialize margin
     /// kerns; values greater than one also affect breakpoint feasibility.
     pub pdf_protrude_chars: i32,
@@ -257,9 +260,10 @@ use widths::{Widths, line_badness, line_widths_nodes, line_widths_view, node_wid
 pub fn validate_paragraph_expansion<S: TypesetState>(
     state: &S,
     nodes: &[Node],
-) -> Result<(), crate::expansion::FontExpansionError> {
+) -> Result<Option<(i32, i32)>, crate::expansion::FontExpansionError> {
     let mut paragraph = crate::expansion::ParagraphExpansion::default();
-    observe_expansion_fonts(state, nodes, &mut paragraph)
+    observe_expansion_fonts(state, nodes, &mut paragraph)?;
+    Ok(paragraph.steps())
 }
 
 fn observe_expansion_fonts<S: TypesetState>(
@@ -393,6 +397,9 @@ fn run_pass<S: TypesetState>(
     let mut next_serial = 1;
     let last_line_fit = LastLineFit::new(params, background);
     let easy_line = tex_easy_line(params);
+    let expansion_steps = (params.pdf_adjust_spacing > 1)
+        .then_some(params.expansion_steps)
+        .flatten();
 
     for bp in LegalBreakpoints::new(state, nodes, params) {
         // Background and discretionary material depend only on this
@@ -436,12 +443,8 @@ fn run_pass<S: TypesetState>(
             } else {
                 target
             };
-            let normal_b = line_badness(
-                widths,
-                scoring_target,
-                Scaled::from_raw(0),
-                (params.pdf_adjust_spacing > 1).then_some(expansion_steps(widths)),
-            );
+            let normal_b =
+                line_badness(widths, scoring_target, Scaled::from_raw(0), expansion_steps);
             let fitted = terminal
                 .then(|| last_line_fit.badness(&active_candidate, widths, scoring_target))
                 .flatten();
@@ -931,14 +934,6 @@ impl<'a, S: TypesetState> LegalBreakpoints<'a, S> {
             next_width,
         }
     }
-}
-
-fn expansion_steps(widths: Widths) -> (i32, i32) {
-    let step = widths.expansion_step.unwrap_or(1).max(1);
-    (
-        widths.expansion_stretch_limit.unwrap_or(0) / step,
-        widths.expansion_shrink_limit.unwrap_or(0) / step,
-    )
 }
 
 impl<S: TypesetState> Iterator for LegalBreakpoints<'_, S> {

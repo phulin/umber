@@ -333,9 +333,10 @@ fn break_current_paragraph(
     });
     let mut level = nest.pop()?;
     let hlist = crate::math::finish_math_lists_owned(stores, level.list_mut().take_nodes(), true);
-    let line_params = line_break_params(stores, &params);
+    let mut line_params = line_break_params(stores, &params);
     if line_params.pdf_adjust_spacing > 1 {
-        tex_typeset::linebreak::validate_paragraph_expansion(stores, &hlist)?;
+        line_params.expansion_steps =
+            tex_typeset::linebreak::validate_paragraph_expansion(stores, &hlist)?;
     }
     let mut decisions = break_hlist(stores, hlist, line_params);
     if let Some(spec) = decisions.last_line_fill {
@@ -607,7 +608,7 @@ pub fn cached_pretolerance_plan(
 }
 
 const PRETOLERANCE_MEMO_DOMAIN: u32 = 1;
-const PRETOLERANCE_PLAN_SCHEMA: u32 = 1;
+const PRETOLERANCE_PLAN_SCHEMA: u32 = 2;
 const PRETOLERANCE_HASH_DOMAINS: [u64; 4] = [
     0x6c62_7072_6574_0001,
     0x6c62_7072_6574_0002,
@@ -668,8 +669,18 @@ fn encode_line_break_params(params: &LineBreakParams, out: &mut Vec<u8>) {
         params.emergency_stretch.raw(),
         params.looseness,
         params.last_line_fit,
+        params.pdf_adjust_spacing,
+        params.pdf_protrude_chars,
     ] {
         out.extend_from_slice(&value.to_le_bytes());
+    }
+    match params.expansion_steps {
+        Some((stretch, shrink)) => {
+            out.push(1);
+            out.extend_from_slice(&stretch.to_le_bytes());
+            out.extend_from_slice(&shrink.to_le_bytes());
+        }
+        None => out.push(0),
     }
     encode_glue_spec(params.left_skip, out);
     encode_glue_spec(params.right_skip, out);
@@ -758,6 +769,7 @@ fn line_break_params(stores: &Universe, params: &ParagraphParams) -> LineBreakPa
         final_hyphen_demerits: params.final_hyphen_demerits,
         last_line_fit: params.last_line_fit,
         pdf_adjust_spacing: stores.int_param(IntParam::PDF_ADJUST_SPACING),
+        expansion_steps: None,
         pdf_protrude_chars: stores.int_param(IntParam::PDF_PROTRUDE_CHARS),
         emergency_stretch: params.emergency_stretch,
         looseness: params.looseness,

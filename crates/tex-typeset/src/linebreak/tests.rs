@@ -23,6 +23,7 @@ fn params(width: i32) -> LineBreakParams {
         looseness: 0,
         last_line_fit: 0,
         pdf_adjust_spacing: 0,
+        expansion_steps: None,
         pdf_protrude_chars: 0,
         left_skip: GlueSpec::ZERO,
         right_skip: GlueSpec::ZERO,
