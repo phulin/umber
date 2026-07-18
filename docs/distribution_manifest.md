@@ -100,6 +100,39 @@ format closures in the schema-3 root. Two clean publications must still be
 byte-identical. `scripts/publish-texlive-r2.sh` reserves `manifest-v3.json` for
 this new immutable contract and retains the manifest-last upload order.
 
+### Format-closure retry verification receipt
+
+The 2026-07-18 verification for `umber2-pbxv.8.3` used the focused
+`format_closure_batch_is_cached_once_but_not_published_to_the_retry` native
+host test. It constructs canonical schema-3 distributions with runtime-created
+schema-10 LaTeX and pdfLaTeX formats and nested closures at the production
+cardinalities. Run it with:
+
+```bash
+cargo test -q -p umber \
+  format_closure_batch_is_cached_once_but_not_published_to_the_retry \
+  -- --nocapture
+```
+
+On the warmed release workspace, the LaTeX case fetched and authenticated all
+57 objects in its first host batch in 276,832 microseconds; the pdfLaTeX case
+fetched all 60 in 284,806 microseconds. The transport batch therefore works.
+The host returned only the one required response, however, so the nested jobs
+still took 58 and 61 compile attempts respectively. Finishing the remaining
+cached lookups took 344,091 and 423,542 microseconds, and the complete focused
+test took 1.43 seconds. Closure prefetch reduced neither attempt count from the
+one-file-per-retry baseline nor made source bootstrap a two-attempt operation.
+`umber2-pbxv.8.5` tracks the required safe VFS handoff separately.
+
+The same verification exercised the repository-local pinned
+`third_party/texlive-2026/texmf-dist`. The LaTeX builder produced no format or
+terminal diagnostic before it was stopped after 689.50 seconds; the pdfLaTeX
+builder likewise produced no format or diagnostic during a bounded 69.70-second
+observation (including a 19.33-second release rebuild). This is the independent
+early-completion/bootstrap path tracked by `umber2-pbxv.5.4.1`; it prevents the
+schema-10 determinism, source-versus-format, corpus, and live WASM gates from
+reaching their comparison phases and is not hidden by weakening those gates.
+
 ### Production shard selection and publication evidence
 
 The 2026 snapshot uses 256 shards (`shardBits = 8`). Candidate layouts were

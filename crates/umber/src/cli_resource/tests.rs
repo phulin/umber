@@ -1,5 +1,6 @@
 #![allow(clippy::disallowed_methods)] // Host-side resource/cache integration fixtures.
 
+use std::time::Instant;
 use tempfile::TempDir;
 use tex_fonts::{FontFeaturePolicy, FontPurposes, FontRequest, FontRequestKey, VariationSelection};
 use tex_incr::RevisionId;
@@ -379,6 +380,131 @@ fn schema_three_format_closure_warms_one_bounded_batch_and_ignores_stale_hints()
             .expect("closure cache"),
         Some(closure_bytes.to_vec())
     );
+}
+
+#[test]
+fn format_closure_batch_is_cached_once_but_not_published_to_the_retry() {
+    for (engine, closure_len) in [(EngineMode::Latex, 57), (EngineMode::PdfLatex, 60)] {
+        let directory = TempDir::new().expect("distribution tempdir");
+        let distribution = directory.path().join("distribution");
+        let objects = distribution.join("objects");
+        std::fs::create_dir_all(&objects).expect("objects directory");
+
+        let mut initex = tex_state::Universe::with_world(World::memory());
+        engine.prepare_fresh(&mut initex);
+        let format = initex.dump_format().expect("schema-10 format");
+        let format_digest = hex_digest(&format);
+        std::fs::write(objects.join(format!("sha256-{format_digest}")), &format)
+            .expect("format object");
+
+        let mut closure_keys = Vec::new();
+        let mut shard_entries = Vec::new();
+        let mut closure_objects = Vec::new();
+        for index in 0..closure_len {
+            let name = format!("closure-{index:02}.tex");
+            let key = format!("tex:{name}");
+            let bytes = if index + 1 == closure_len {
+                b"\\end".to_vec()
+            } else {
+                format!("\\input closure-{:02}\n", index + 1).into_bytes()
+            };
+            let digest = hex_digest(&bytes);
+            std::fs::write(objects.join(format!("sha256-{digest}")), &bytes)
+                .expect("closure object");
+            closure_keys.push(format!("\"{key}\""));
+            shard_entries.push(format!(
+            "\"{key}\":{{\"virtualPath\":\"/texlive/{name}\",\"object\":\"sha256-{digest}\",\"sha256\":\"{digest}\",\"bytes\":{}}}",
+            bytes.len()
+        ));
+            closure_objects.push((digest, bytes.len() as u64));
+        }
+        let shard = format!(
+            "{{\"schema\":1,\"distribution\":\"closure-attempts\",\"index\":0,\"files\":{{{}}}}}\n",
+            shard_entries.join(",")
+        );
+        let shard_digest = hex_digest(shard.as_bytes());
+        std::fs::write(objects.join(format!("sha256-{shard_digest}")), shard)
+            .expect("shard object");
+        let root = format!(
+            "{{\"schema\":3,\"distribution\":\"closure-attempts\",\"objectsBaseUrl\":\"https://example.invalid/objects/\",\"shardBits\":0,\"shardCount\":1,\"shards\":[\"{shard_digest}\"],\"formats\":{{\"probe\":{{\"object\":\"sha256-{format_digest}\",\"sha256\":\"{format_digest}\",\"bytes\":{},\"engine\":\"umber\",\"engineVersion\":\"{}\",\"formatSchema\":10,\"sourceDistribution\":\"closure-attempts\",\"sourceManifestSha256\":\"{}\",\"sourceDateEpoch\":0,\"inputClosure\":{{\"schema\":1,\"keys\":[{}]}}}}}}}}\n",
+            format.len(),
+            crate::PACKAGE_VERSION,
+            "1".repeat(64),
+            closure_keys.join(",")
+        );
+        std::fs::write(distribution.join("manifest-v3.json"), root).expect("root manifest");
+
+        let input = directory.path().join("main.tex");
+        std::fs::write(&input, b"\\input closure-00\n").expect("main input");
+        let cache = ObjectCache::new(directory.path().join("cache"));
+        let cancellation = FetchCancellation::new();
+        let mut session = NativeCompileSession::new_with_cache(
+            &NativeRunOptions {
+                input,
+                format: Some(PathBuf::from("probe.fmt")),
+                engine,
+                html: false,
+                distribution: Some(distribution.to_string_lossy().into_owned()),
+                distribution_sha256: None,
+                offline: false,
+            },
+            &cancellation,
+            cache.clone(),
+        )
+        .expect("native session");
+
+        let CompileAttemptResult::NeedResources(first) = session.session.compile_attempt() else {
+            panic!("first attempt must miss the closure head");
+        };
+        assert_eq!(first.required.len(), 1);
+        assert_eq!(first.prefetch_hints.len(), closure_len - 1);
+        let batch_started = Instant::now();
+        let responses = session
+            .distribution
+            .resolve_batch(&session.local, &first, &cancellation)
+            .expect("closure batch");
+        let batch_elapsed = batch_started.elapsed();
+        assert_eq!(responses.len(), 1, "only required files enter the VFS");
+        for (digest, bytes) in &closure_objects {
+            assert!(
+                cache
+                    .load_object(digest, *bytes)
+                    .expect("closure cache lookup")
+                    .is_some(),
+                "the complete closure must be cached by the first host batch"
+            );
+        }
+        session
+            .session
+            .provide_resources(responses)
+            .expect("provide closure head");
+
+        let CompileAttemptResult::NeedResources(second) = session.session.compile_attempt() else {
+            panic!("the second attempt currently rediscovers the next cached closure file");
+        };
+        assert_eq!(second.required.len(), 1);
+        assert!(second.prefetch_hints.is_empty());
+        let responses = session
+            .distribution
+            .resolve_batch(&session.local, &second, &cancellation)
+            .expect("second required response");
+        session
+            .session
+            .provide_resources(responses)
+            .expect("provide second closure file");
+        let compile_started = Instant::now();
+        session.compile(&cancellation).expect("complete chain");
+        let compile_elapsed = compile_started.elapsed();
+
+        assert_eq!(session.session.attempts(), closure_len as u32 + 1);
+        eprintln!(
+            "format-prefetch-characterization engine={} closure={closure_len} first_batch_us={} attempts={} remaining_compile_us={}",
+            engine.name(),
+            batch_elapsed.as_micros(),
+            session.session.attempts(),
+            compile_elapsed.as_micros()
+        );
+    }
 }
 
 #[test]
