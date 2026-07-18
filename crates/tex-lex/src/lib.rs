@@ -5889,14 +5889,14 @@ fn normalize_line(line: &PhysicalLine, endlinechar: i32) -> NormalizedLine {
         stripped.len()
     };
     let normalized_end_anchor = line.start + cursor_len;
-    let mut normalized = stripped.to_owned();
-    let mut synthetic_endline_start = None;
-    if let Ok(value) = u32::try_from(endlinechar)
-        && let Some(ch) = char::from_u32(value)
-    {
-        synthetic_endline_start = Some(cursor_len);
+    let endline = u32::try_from(endlinechar).ok().and_then(char::from_u32);
+    let mut normalized =
+        String::with_capacity(stripped.len() + endline.map(char::len_utf8).unwrap_or_default());
+    normalized.push_str(stripped);
+    let synthetic_endline_start = endline.map(|ch| {
         normalized.push(ch);
-    }
+        cursor_len
+    });
     NormalizedLine {
         text: normalized,
         bytes_as_chars: line.bytes_as_chars,
