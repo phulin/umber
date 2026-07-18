@@ -176,7 +176,7 @@ common_flags=(
   --stats 30s
 )
 remote_objects="umber_r2:${bucket}/${snapshot}/objects"
-remote_manifest="umber_r2:${bucket}/${snapshot}/manifest-v2.json"
+remote_manifest="umber_r2:${bucket}/${snapshot}/manifest-v3.json"
 
 printf 'Validated staging: objects=%s bytes=%s manifest_sha256=%s\n' \
   "$local_objects" "$local_bytes" "$actual_manifest_sha256"
@@ -225,7 +225,7 @@ public_manifest="$tmp_root/manifest.json"
   --retry 10 --retry-all-errors --retry-delay 5 \
   --header 'Origin: https://browser.example' \
   --dump-header "$headers" \
-  "$public_prefix/manifest-v2.json" \
+  "$public_prefix/manifest-v3.json" \
   --output "$public_manifest"
 public_manifest_sha256="$(sha256 "$public_manifest")"
 [[ "$public_manifest_sha256" == "$expected_manifest_sha256" ]] || fail "public manifest digest $public_manifest_sha256 does not match expected $expected_manifest_sha256"
@@ -249,4 +249,4 @@ for line in "${representative_lines[@]}"; do
 done
 
 printf 'Published %s: objects=%s bytes=%s manifest=%s digest=%s\n' \
-  "$snapshot" "$remote_count" "$remote_bytes" "$public_prefix/manifest-v2.json" "$expected_manifest_sha256"
+  "$snapshot" "$remote_count" "$remote_bytes" "$public_prefix/manifest-v3.json" "$expected_manifest_sha256"

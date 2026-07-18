@@ -1,10 +1,10 @@
 # Sharded Distribution Manifest
 
-Status: publisher contract plus browser and native shard resolution implemented.
+Status: schema-2 browser/native resolution and schema-3 format-closure publishing implemented.
 
 ## Trust root
 
-The release pin names `manifest-v2.json` and its SHA-256 digest. The file is a
+The deployed release pin names `manifest-v2.json` and its SHA-256 digest. The file is a
 compact, canonical JSON object with schema 2. It contains the distribution and
 object-base identities, inline format entries, `shardBits`, `shardCount`, and
 an ordered `shards` array of lowercase SHA-256 digests.
@@ -19,6 +19,22 @@ Canonical JSON has no insignificant whitespace, preserves schema field order,
 sorts every map by raw UTF-8 key order, and ends with one newline. For the
 256-shard production layout the root is 17,743 bytes; roughly 16 KiB is the
 irreducible payload of 256 SHA-256 hex digests.
+
+Schema 3 preserves the shard and object contract while adding an optional
+`inputClosure` to inline format entries. The old schema-2 key remains immutable:
+schema-2 parsing explicitly rejects closures, and new closure-bearing snapshots
+publish as `manifest-v3.json`. Each closure is independently versioned with
+schema 1 and contains 1 through 256 unique canonical file request keys in raw
+UTF-8 sort order. Keys use the same `kind:name` vocabulary as shard lookup and
+are limited to 1,024 UTF-8 bytes. Unknown closure versions, invalid or duplicate
+keys, unsorted arrays, and oversized closures fail parsing.
+
+Format metadata schema 1 remains the legacy no-closure form. Publisher metadata
+schema 2 requires a schema-1 input closure; it validates and canonicalizes the
+keys, then requires every key to resolve to the authoritative published file
+map. The staged verifier repeats the bounds, order, syntax, and existence checks
+against the complete authenticated shard set. Closures are producer metadata in
+this phase; runtime prefetch consumption is a separate contract.
 
 ## Partition and shard schema
 
@@ -53,7 +69,7 @@ Thus the root digest transitively pins every shard and every fetchable object.
 
 ## Publisher and release workflow
 
-`tools/texlive-wasm-publish` emits schema-2 roots directly. The production
+`tools/texlive-wasm-publish` emits schema-3 roots directly. The production
 builder accepts `--shard-bits` (default 8), performs two clean builds, and
 requires byte-identical directory trees. `--shard-existing STAGING
 --shard-bits BITS` converts a verified schema-1 staging bundle without
@@ -63,9 +79,17 @@ offline integrity check used by the R2 publication script.
 The production `texlive-2026-r79639` 8-bit output has 154,153 unique objects,
 3,672,643,852 object bytes, and root digest
 `7c2784bca891844d37465083b93466b78429c7282d7ba915f40a08d150651fd0`.
-The new immutable public key is `manifest-v2.json`; the already cached
+The deployed immutable public key is `manifest-v2.json`; the already cached
 schema-1 `manifest.json` is not overwritten. Publication remains manifest-last:
 all content and shard objects are uploaded and checked before that root key.
+
+`scripts/build-texlive-snapshot.sh` now performs verified builds for both
+`latex.fmt` and `pdflatex.fmt`. It derives their 57-key common and 60-key PDF
+closures from `tests/latex-source.lock`, stages the two repository-local
+configuration inputs as a pinned auxiliary TEXMF root, and publishes both
+format closures in the schema-3 root. Two clean publications must still be
+byte-identical. `scripts/publish-texlive-r2.sh` reserves `manifest-v3.json` for
+this new immutable contract and retains the manifest-last upload order.
 
 ### Production shard selection and publication evidence
 

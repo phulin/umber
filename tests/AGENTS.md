@@ -14,7 +14,10 @@ SHA-256 identities opened while building the Umber-native `latex.fmt` and
 `pdflatex.fmt`. Common `source`/`local` records apply to both modes;
 `pdflatex-source`/`pdflatex-local` records extend only the PDF format closure.
 The explicit LaTeX format builder verifies the selected closure before every
-build. `tests/latex/language.dat` keeps the
+build. With `--publish-input-closure`, it also emits the canonical request-key
+closure consumed by the schema-3 TeX Live snapshot publisher; LaTeX has 57
+keys and pdfLaTeX has those same keys plus its three mode-specific records.
+`tests/latex/language.dat` keeps the
 format's English language slot and hyphenation minima deterministic without
 depending on generated TeX Live `texmf-var` state.
 

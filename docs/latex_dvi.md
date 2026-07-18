@@ -116,6 +116,14 @@ format PDF and auxiliary-file equivalence. Cross-engine pdfTeX parity uses
 normalized structure and rendered pages rather than requiring serializer-byte
 identity.
 
+The full TeX Live snapshot builder invokes both modes with
+`--publish-input-closure`. That opt-in upgrades the generated format metadata
+to schema 2 and records the exact canonical request-key closure verified from
+`tests/latex-source.lock`: 57 common keys for LaTeX and three additional keys
+for pdfLaTeX. The schema-3 distribution root carries those sorted, bounded
+closures beside each format. This producer contract does not itself change
+runtime retry or prefetch behavior.
+
 ### Rust library
 
 Source initialization selects the extension contract explicitly with

@@ -137,6 +137,13 @@ builder reads the common and mode-specific TeX Live input closure from
 `tests/latex-source.lock`; its pdfLaTeX configuration is pinned locally in
 `tests/latex/pdftexconfig.tex`. Generated formats and comparison artifacts
 remain under `target/` rather than becoming repository fixtures.
+With `--publish-input-closure`, format metadata schema 2 also records the
+canonical sorted request keys derived from that already verified trace. The
+production snapshot builder uses this mode for both engines, stages local
+configuration inputs into a pinned auxiliary root, and requires two complete
+schema-3 publications to be byte-identical. Publisher tests cover closure
+canonicalization, duplicate and size rejection, missing-key corruption, and
+deterministic output without invoking live TeX tools.
 
 ## Committed DVI Corpora
 

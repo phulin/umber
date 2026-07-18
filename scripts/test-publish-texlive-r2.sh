@@ -83,7 +83,7 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 printf 'HTTP/2 200\r\nAccess-Control-Allow-Origin: *\r\n\r\n' > "$headers"
-if [[ "$url" == */manifest-v2.json ]]; then
+if [[ "$url" == */manifest-v3.json ]]; then
   cp "$MOCK_REMOTE/manifest.json" "$output"
 else
   cp "$MOCK_REMOTE/objects/${url##*/}" "$output"

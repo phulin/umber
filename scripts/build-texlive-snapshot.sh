@@ -63,21 +63,42 @@ cleanup() {
 }
 trap cleanup EXIT
 
-format_dir="$tmp_root/format"
+format_dir="$tmp_root/formats"
 "$repo_root/scripts/build-latex-format.sh" \
+  --engine latex \
+  --publish-input-closure \
   --texmf-dist "$texmf_dist" \
-  --output-dir "$format_dir"
+  --output-dir "$format_dir/latex"
+"$repo_root/scripts/build-latex-format.sh" \
+  --engine pdflatex \
+  --publish-input-closure \
+  --texmf-dist "$texmf_dist" \
+  --output-dir "$format_dir/pdflatex"
+
+# Repository-local configuration inputs are part of the verified format traces,
+# but not the pinned TeX Live tree. Stage them as a second deterministic TEXMF
+# root so every published closure key resolves to authenticated snapshot bytes.
+local_root="$tmp_root/local-format-inputs"
+mkdir -p "$local_root/tex"
+while read -r kind relative _; do
+  case "$kind" in
+    local|pdflatex-local)
+      cp "$repo_root/$relative" "$local_root/tex/${relative##*/}"
+      ;;
+  esac
+done < "$repo_root/tests/latex-source.lock"
 
 cd "$repo_root"
 cargo build -q --release --manifest-path tools/texlive-wasm-publish/Cargo.toml
 publisher="${CARGO_TARGET_DIR:-${repo_root}/tools/texlive-wasm-publish/target}/release/texlive-wasm-publish"
 tree_hash="$($publisher --tree-sha256 "$texmf_dist")"
+local_tree_hash="$($publisher --tree-sha256 "$local_root")"
 distribution="$(awk '$1 == "distribution" { print $2 }' tests/latex-source.lock)"
 
 config="$tmp_root/publish.json"
 cat > "$config" <<EOF
 {
-  "schema": 2,
+  "schema": 3,
   "distribution": "${distribution}",
   "objectsBaseUrl": "${objects_base_url}",
   "shardBits": ${shard_bits},
@@ -86,6 +107,11 @@ cat > "$config" <<EOF
       "name": "texlive-runtime",
       "path": "${texmf_dist}",
       "treeSha256": "${tree_hash}"
+    },
+    {
+      "name": "format-local-inputs",
+      "path": "${local_root}",
+      "treeSha256": "${local_tree_hash}"
     }
   ],
   "packageDatabase": "${package_database}",
@@ -96,8 +122,12 @@ cat > "$config" <<EOF
   },
   "formats": [
     {
-      "path": "${format_dir}/latex.fmt",
-      "metadata": "${format_dir}/latex-format.json"
+      "path": "${format_dir}/latex/latex.fmt",
+      "metadata": "${format_dir}/latex/latex-format.json"
+    },
+    {
+      "path": "${format_dir}/pdflatex/pdflatex.fmt",
+      "metadata": "${format_dir}/pdflatex/pdflatex-format.json"
     }
   ]
 }

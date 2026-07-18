@@ -6,11 +6,13 @@ lock_file="${repo_root}/tests/latex-source.lock"
 engine="latex"
 output_dir=""
 texmf_dist="${UMBER_TEXMF_DIST:-/usr/local/texlive/2026/texmf-dist}"
+publish_input_closure=0
 
 usage() {
   cat <<'EOF'
 usage: scripts/build-latex-format.sh [--engine latex|pdflatex]
                                      [--texmf-dist PATH] [--output-dir PATH]
+                                     [--publish-input-closure]
 
 Builds one pinned Umber-native LaTeX format twice, requires byte identity and
 the exact mode-specific locked input closure, then compares a source-initialized
@@ -35,6 +37,10 @@ while [[ $# -gt 0 ]]; do
       [[ $# -ge 2 ]] || { printf '%s\n' 'missing path after --output-dir' >&2; exit 2; }
       output_dir="$2"
       shift 2
+      ;;
+    --publish-input-closure)
+      publish_input_closure=1
+      shift
       ;;
     --help|-h)
       usage
@@ -106,7 +112,9 @@ cleanup() {
 trap cleanup EXIT
 expected_receipt="${tmp_root}/expected.inputs"
 expected_index="${tmp_root}/expected.index"
+closure_index="${tmp_root}/input-closure.index"
 : > "$expected_index"
+: > "$closure_index"
 
 while read -r kind relative expected_bytes expected_hash extra; do
   [[ -z "${kind:-}" || "$kind" == \#* ]] && continue
@@ -140,8 +148,17 @@ while read -r kind relative expected_bytes expected_hash extra; do
   [[ "$actual_hash" == "$expected_hash" ]] || \
     fail "hash mismatch for $relative: expected $expected_hash, got $actual_hash"
   printf '%s\t%s\n' "$source" "$expected_bytes" >> "$expected_index"
+  request_name="${relative##*/}"
+  [[ "$request_name" =~ ^[A-Za-z0-9._/-]+$ ]] || \
+    fail "source lock path has no canonical request key: $relative"
+  if [[ "$request_name" == *.tfm ]]; then
+    printf 'tfm:%s\n' "$request_name" >> "$closure_index"
+  else
+    printf 'tex:%s\n' "$request_name" >> "$closure_index"
+  fi
 done < "$lock_file"
 LC_ALL=C sort -k1,1 "$expected_index" | awk -F '\t' '{ print $2 "\t" $1 }' > "$expected_receipt"
+LC_ALL=C sort -u "$closure_index" -o "$closure_index"
 
 texinputs="${repo_root}/tests/latex:${texmf_dist}/tex/latex/base:${texmf_dist}/tex/latex/l3kernel:${texmf_dist}/tex/latex/l3backend:${texmf_dist}/tex/generic/unicode-data:${texmf_dist}/tex/generic/babel:${texmf_dist}/tex/generic/hyphen:${texmf_dist}/tex/generic/pdftex"
 texfonts="${texmf_dist}/fonts/tfm/public/cm:${texmf_dist}/fonts/tfm/public/latex-fonts:${texmf_dist}/fonts/tfm/jknappen/ec"
@@ -228,10 +245,21 @@ format_bytes="$(wc -c < "$format_file" | tr -d ' ')"
 source_manifest_sha256="$(sha256 "$lock_file")"
 package_id="$(cargo pkgid -p umber)"
 engine_version="${package_id##*#}"
+metadata_schema=1
+closure_metadata=""
+if [[ "$publish_input_closure" -eq 1 ]]; then
+  metadata_schema=2
+  input_closure_json="$(awk '
+    BEGIN { print "    \"keys\": [" }
+    { printf "%s      \"%s\"", NR == 1 ? "" : ",\n", $0 }
+    END { print "\n    ]" }
+  ' "$closure_index")"
+  closure_metadata="$(printf ',\n  "inputClosure": {\n    "schema": 1,\n%s\n  }' "$input_closure_json")"
+fi
 
 cat > "${tmp_root}/${format_name}-format.json" <<EOF
 {
-  "schema": 1,
+  "schema": ${metadata_schema},
   "name": "${format_name}",
   "object": "sha256-${format_sha256}",
   "sha256": "${format_sha256}",
@@ -241,7 +269,7 @@ cat > "${tmp_root}/${format_name}-format.json" <<EOF
   "formatSchema": ${format_schema},
   "sourceDistribution": "${distribution}",
   "sourceManifestSha256": "${source_manifest_sha256}",
-  "sourceDateEpoch": ${source_date_epoch}
+  "sourceDateEpoch": ${source_date_epoch}${closure_metadata}
 }
 EOF
 
