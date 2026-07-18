@@ -303,6 +303,53 @@ fn aggregate_region_validates_after_change_and_restore() {
 }
 
 #[test]
+fn readonly_region_combines_stamp_fast_path_and_semantic_fallback() {
+    let key = DependencyKey::Cell {
+        bank: DependencyBank::Count,
+        index: 12,
+    };
+    let mut universe = crate::Universe::new();
+    universe.begin_dependency_region();
+    universe.record_dependency(key, DependencyValue::Integer(0));
+    let observations = universe.finish_dependency_region();
+
+    let mut reads = 0;
+    assert_eq!(
+        universe.validate_dependencies_with_failure_readonly(&observations, |_| {
+            reads += 1;
+            DependencyValue::Integer(0)
+        }),
+        None
+    );
+    assert_eq!(reads, 0, "matching stamps must not read semantic state");
+
+    universe.set_count(12, 5);
+    assert_eq!(
+        universe.validate_dependencies_with_failure_readonly(&observations, |_| {
+            reads += 1;
+            DependencyValue::Integer(5)
+        }),
+        Some(key)
+    );
+    assert_eq!(reads, 1);
+
+    universe.set_count(12, 0);
+    assert_eq!(
+        universe.validate_dependencies_with_failure_readonly(&observations, |_| {
+            reads += 1;
+            DependencyValue::Integer(0)
+        }),
+        None
+    );
+    assert_eq!(reads, 2);
+    assert_ne!(
+        observations[0].changed_at,
+        universe.dependency_changed_at(key),
+        "read-only validation must not backdate shared observations"
+    );
+}
+
+#[test]
 fn aggregate_mutation_barriers_advance_exact_registered_facts() {
     use crate::page::PageDimension;
     use crate::scaled::Scaled;

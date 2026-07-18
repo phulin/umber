@@ -149,14 +149,11 @@ fn validate_paragraph_entry(
                 &entry.ending_input,
             )
         });
-    let exact_entry = entry
-        .entry_identity
-        .matches(&entry.dependencies, |key| stores.dependency_changed_at(key));
     let mutation_entry_class_changed = !same_mutation_entry_class(
         entry.mutation_entry_in_group,
         tex_state::ExpansionState::execution_group_depth(stores),
     );
-    let dependency_failure = (!mutation_entry_class_changed && !exact_entry)
+    let dependency_failure = (!mutation_entry_class_changed)
         .then(|| {
             stores.validate_dependencies_with_failure_readonly(&entry.dependencies, |key| {
                 paragraph_validation_value(stores, execution, key)
@@ -215,22 +212,14 @@ fn validate_finished_lines(
 ) -> bool {
     #[allow(clippy::disallowed_methods)]
     let line_validation_started = std::time::Instant::now();
-    let exact = entry
-        .break_identity
-        .matches(&entry.break_dependencies, |key| {
-            stores.dependency_changed_at(key)
+    let semantic_failure = stores
+        .validate_dependencies_with_failure_readonly(&entry.break_dependencies, |key| {
+            projected_break_validation_value(stores, execution, &entry.mutations, key)
         });
-    let semantic_failure = (!exact)
-        .then(|| {
-            stores.validate_dependencies_with_failure_readonly(&entry.break_dependencies, |key| {
-                projected_break_validation_value(stores, execution, &entry.mutations, key)
-            })
-        })
-        .flatten();
     let valid = entry
         .break_prev_graf
         .is_none_or(|expected| current_prev_graf == expected)
-        && (exact || semantic_failure.is_none());
+        && semantic_failure.is_none();
     stores.record_pure_memo_timing(
         PureMemoLayer::Paragraph,
         MemoTimingPhase::Validation,
@@ -568,7 +557,6 @@ fn publish_recorded_region(
         );
         return;
     };
-    let entry_identity = tex_state::ParagraphEntryIdentity::new(&dependencies);
     finish_phase(
         stores,
         ParagraphRecordingPhase::FrontEndDependencies,
@@ -580,7 +568,6 @@ fn publish_recorded_region(
         ending_span,
         consumed_spans: consumed_spans.into(),
         delivered_tokens: recording.delivered_tokens,
-        entry_identity,
         dependencies: dependencies.into(),
         mutation_entry_in_group: mutation_summary.entry_in_group,
         mutations: mutation_summary.mutations.into(),
@@ -588,7 +575,6 @@ fn publish_recorded_region(
         ending_input,
         barriers: recording.barriers.into_iter().collect::<Vec<_>>().into(),
         break_dependencies: Vec::new().into(),
-        break_identity: tex_state::ParagraphReadIdentity::default(),
         break_prev_graf: None,
         lines: None,
         line_count: 0,

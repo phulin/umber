@@ -421,8 +421,6 @@ pub struct RecordedParagraphRegion {
     /// Delivered-token count retained only for avoided-work telemetry. No
     /// token values or origins are recorded.
     pub delivered_tokens: usize,
-    /// Exact paragraph-relevant read identity.
-    pub entry_identity: ParagraphEntryIdentity,
     pub dependencies: Arc<[ObservedDependency]>,
     /// Root and live-group mutation scripts use different compaction rules.
     pub mutation_entry_in_group: bool,
@@ -434,8 +432,6 @@ pub struct RecordedParagraphRegion {
     /// materialization, and packing. A mismatch invalidates finished lines and
     /// sends the revision down the ordinary cold path.
     pub break_dependencies: Arc<[ObservedDependency]>,
-    /// Exact identity of the post-redo facts used by line breaking.
-    pub break_identity: ParagraphReadIdentity,
     /// Enclosing vertical-list line offset consumed by `line_shape`, when a
     /// non-natural paragraph shape can observe it.
     pub break_prev_graf: Option<i32>,
@@ -445,80 +441,6 @@ pub struct RecordedParagraphRegion {
     /// `\badness` left by packing the final materialized line.
     pub line_last_badness: i32,
     pub line_provenance: ParagraphProvenanceRecipe,
-}
-
-/// Exact same-timeline identity for one typed semantic read set.
-///
-/// Keys live in the observations; this compact parallel stamp vector is valid
-/// only when its length matches that canonical observation order. A mismatch
-/// falls back to semantic observation validation and then refreshes the
-/// identity after successful backdating.
-#[derive(Clone, Debug, Default)]
-pub struct ParagraphReadIdentity {
-    stamps: Arc<[crate::ChangedAt]>,
-}
-
-impl ParagraphReadIdentity {
-    #[must_use]
-    pub fn from_observations(observations: &[ObservedDependency]) -> Self {
-        Self {
-            stamps: observations
-                .iter()
-                .map(|observation| observation.changed_at)
-                .collect::<Vec<_>>()
-                .into(),
-        }
-    }
-
-    #[must_use]
-    pub fn matches(
-        &self,
-        observations: &[ObservedDependency],
-        mut changed_at: impl FnMut(DependencyKey) -> crate::ChangedAt,
-    ) -> bool {
-        self.stamps.len() == observations.len()
-            && self
-                .stamps
-                .iter()
-                .zip(observations)
-                .all(|(&stamp, observation)| stamp == changed_at(observation.key))
-    }
-
-    pub fn refresh(&mut self, observations: &[ObservedDependency]) {
-        self.stamps = observations
-            .iter()
-            .map(|observation| observation.changed_at)
-            .collect::<Vec<_>>()
-            .into();
-    }
-}
-
-/// Exact common-path identity for the paragraph's typed semantic read set.
-#[derive(Clone, Debug, Default)]
-pub struct ParagraphEntryIdentity {
-    reads: ParagraphReadIdentity,
-}
-
-impl ParagraphEntryIdentity {
-    #[must_use]
-    pub fn new(observations: &[ObservedDependency]) -> Self {
-        Self {
-            reads: ParagraphReadIdentity::from_observations(observations),
-        }
-    }
-
-    #[must_use]
-    pub fn matches(
-        &self,
-        observations: &[ObservedDependency],
-        changed_at: impl FnMut(DependencyKey) -> crate::ChangedAt,
-    ) -> bool {
-        self.reads.matches(observations, changed_at)
-    }
-
-    pub fn refresh(&mut self, observations: &[ObservedDependency]) {
-        self.reads.refresh(observations);
-    }
 }
 
 #[derive(Clone, Debug)]
@@ -995,7 +917,6 @@ impl PureMemoRuntime {
             return;
         };
         if region.barriers.is_empty() && region.lines.is_none() {
-            region.break_identity = ParagraphReadIdentity::from_observations(&dependencies);
             region.break_dependencies = dependencies.into();
             region.break_prev_graf = prev_graf;
             region.lines = Some(lines);

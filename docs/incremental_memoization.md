@@ -460,6 +460,13 @@ prepared first. The common same-timeline path compares the canonical
 front-end read set's changed-at stamps. This identity is not a full-`Universe`
 hash and excludes page state that the slow path rebuilds.
 
+Each changed-at stamp lives directly beside its typed observation. There is no
+parallel paragraph stamp vector: one ordered pass accepts exact stamps without
+projecting semantic state and projects only observations whose stamps changed.
+Read-only validation deliberately leaves accepted-history observations at
+their recording stamps, so a restored value may take that semantic path again
+without copying shared metadata.
+
 If a stamp differs, validation falls back only to the typed semantic
 observations for the recorded read set. Mutation admission separately checks
 the compact touched-cell preconditions. Paragraph history's large immutable

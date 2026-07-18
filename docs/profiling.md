@@ -1096,3 +1096,29 @@ has exactly one. All revisions
 preserved the disabled named-boundary schedule and emitted cold-identical
 100-page, 279,176-byte DVI. The durable command, gate, and review record is in
 [`profiling_q02h66_release_receipt.md`](profiling_q02h66_release_receipt.md).
+
+### Post-acceptance replay-loop cleanup
+
+The first q02h.67 child removed `ParagraphEntryIdentity` and
+`ParagraphReadIdentity`. Every `ObservedDependency` already stores its
+recording-time changed-at stamp, and read-only region validation already checks
+that stamp before projecting a semantic value. The parallel identities
+therefore duplicated both retained memory and the stamp scan: an exact match
+scanned the identity, while a mismatch scanned the identity and then the
+observations. Replay now validates the observation slice once. Matching stamps
+still perform no semantic reads; changed stamps still compare the recorded
+typed value; and restored values remain sound without backdating shared
+history.
+
+The change removes 14,400 reported bytes from a 450-paragraph Gentle history;
+the deleted identity allocations themselves were not included in that
+accounting. In production sampled profiles, `DependencyTracker::changed_at`
+under aligned paragraph replay fell from 72 to 55 weighted samples (24%), and
+read-only dependency validation fell from 210 to 197 samples (6%). The
+candidate executor mean was 0.417 ms lower across 200 isolated slow edits, but
+total time was 0.457 ms higher because non-executor stages varied in the other
+direction. Four alternating 60-edit blocks measured 117.242 ms candidate mean
+versus 117.382 ms baseline mean. Cold and height/page-preserving fast-path
+comparisons were likewise neutral within host-order noise. This is accepted as
+a smaller single-pass validation architecture with measured inner-loop and
+memory reductions, not as an end-to-end timing win.
