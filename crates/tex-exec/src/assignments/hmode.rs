@@ -14,7 +14,7 @@ use tex_typeset::{INF_BAD, PackSpec, VpackParams};
 use super::paragraph::{end_paragraph, ensure_horizontal_for_character, normal_paragraph};
 use super::*;
 use crate::dispatch::dispatch_delivered_token_with_context;
-use crate::mode::PendingHRunChar;
+use crate::mode::{ModeList, PendingHRunChar};
 use crate::packing_params::vpack;
 use crate::vertical::{append_vertical_contribution, build_page_if_outer_vertical};
 use crate::{DispatchAction, ExecError, Mode, ModeNest, push_traced_tokens};
@@ -444,7 +444,8 @@ fn append_control_space(
 }
 
 fn append_hchar(nest: &mut ModeNest, stores: &mut Universe, ch: char, origin: OriginId) {
-    if nest.current_mode() == Mode::Horizontal {
+    let mode = nest.current_mode();
+    if mode == Mode::Horizontal {
         let language = u8::try_from(stores.int_param(IntParam::LANGUAGE)).unwrap_or(0);
         if language != nest.current_list().hyphen_language() {
             // tex.web's fix_language flushes the current ligature word before
@@ -478,30 +479,31 @@ fn append_hchar(nest: &mut ModeNest, stores: &mut Universe, ch: char, origin: Or
                     || !scripts_compatible(pending.script, tex_shape::character_script(ch)))
         });
         if flush_incompatible_run {
-            let insert_hyphen_discs = nest.current_mode() == Mode::Horizontal;
+            let insert_hyphen_discs = mode == Mode::Horizontal;
             flush_pending_hchar_run(nest, stores, insert_hyphen_discs);
         }
-        append_pending_hchar(nest, stores, font, font_is_ltr_shaping, ch, origin);
-        update_space_factor(nest, stores, ch);
+        let list = nest.current_list_mut();
+        append_pending_hchar(list, stores, mode, font, font_is_ltr_shaping, ch, origin);
+        update_space_factor(list, stores, ch);
         return;
     }
     report_missing_character(stores, font, ch);
 }
 
 fn append_pending_hchar(
-    nest: &mut ModeNest,
+    list: &mut ModeList,
     stores: &mut Universe,
+    mode: Mode,
     font: FontId,
     font_is_ltr_shaping: bool,
     ch: char,
     origin: OriginId,
 ) {
-    let Some(mut pending) = nest.current_list_mut().take_pending_hchars() else {
+    let Some(mut pending) = list.take_pending_hchars() else {
         if let Some(kern) = auto_kern(stores, &PendingHRunChar::new(font, ch, origin), Some(true)) {
-            nest.current_list_mut().push(kern);
+            list.push(kern);
         }
-        nest.current_list_mut()
-            .begin_pending_hchars(font, ch, origin);
+        list.begin_pending_hchars(font, ch, origin);
         return;
     };
     if font_is_ltr_shaping
@@ -516,7 +518,7 @@ fn append_pending_hchar(
             .source
             .push(crate::mode::PendingHChar { font, ch, origin });
         pending.current = PendingHRunChar::new(font, ch, origin);
-        nest.current_list_mut().set_pending_hchars(pending);
+        list.set_pending_hchars(pending);
         return;
     }
     let next = PendingHRunChar::new(font, ch, origin);
@@ -530,7 +532,7 @@ fn append_pending_hchar(
             next,
             kern,
         } => {
-            let insert_hyphen_discs = nest.current_mode() == Mode::Horizontal;
+            let insert_hyphen_discs = mode == Mode::Horizontal;
             let disc = literal_hyphen_disc(stores, &current, insert_hyphen_discs);
             let auto = auto_kern_between(stores, &current, &next);
             let font_kern = kern.map(|amount| Node::Kern {
@@ -541,7 +543,6 @@ fn append_pending_hchar(
             Some((rechar_node(current), disc, auto, font_kern))
         }
     };
-    let list = nest.current_list_mut();
     if let Some((current, disc, auto, font_kern)) = emitted {
         list.push(current);
         if let Some(disc) = disc {
@@ -1059,18 +1060,18 @@ fn right_boundary_kern(stores: &Universe, current: &PendingHRunChar) -> Option<N
     }
 }
 
-fn update_space_factor(nest: &mut ModeNest, stores: &Universe, ch: char) {
+fn update_space_factor(list: &mut ModeList, stores: &Universe, ch: char) {
     let sf = i32::from(stores.sfcode(ch));
     if sf == 0 {
         return;
     }
-    let current = nest.current_list().space_factor();
+    let current = list.space_factor();
     let next = if sf > 1000 && current < 1000 {
         1000
     } else {
         sf
     };
-    nest.current_list_mut().set_space_factor(next);
+    list.set_space_factor(next);
 }
 
 fn nonzero_glue_param_or_font_space(
