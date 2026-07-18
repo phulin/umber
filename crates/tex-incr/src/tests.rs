@@ -935,6 +935,102 @@ fn paragraph_with_source_proven_local_box_consumption_replays() {
 }
 
 #[test]
+fn paragraph_with_vadjust_replays_and_tracks_payload_meanings() {
+    let mut universe = template();
+    universe.enable_pure_memo(tex_state::PureMemoConfig::default());
+    let source = concat!(
+        "\\def\\payload{old}\n",
+        "\\def\\marginref#1{\\vadjust{\\setbox0=\\hbox{#1}",
+        "\\dimen16=\\ht0 \\advance\\dimen16 by \\dp0 ",
+        "\\kern-\\dimen16 \\vbox to \\dimen16{\\hbox to 100pt{\\hfil\\box0}\\vss}}}\n",
+        "changed prefix paragraph text\\par\n",
+        "paragraph with \\marginref{\\payload} migrating material\\par\n",
+        "stable suffix paragraph\\par\n",
+        "\\vfill\\eject\\end",
+    );
+    let mut session = Session::start(
+        universe,
+        "paragraph-vadjust-replay",
+        RevisionId::new(1),
+        source,
+        usize::MAX,
+    )
+    .expect("session starts");
+    session.cold().expect("cold revision");
+
+    let changed = source.find("changed").expect("changed word");
+    let edited = format!(
+        "{}altered{}",
+        &source[..changed],
+        &source[changed + "changed".len()..]
+    );
+    let before_replay = session.pure_memo_stats();
+    let replayed = session
+        .advance(
+            RevisionId::new(2),
+            Edit {
+                base_revision: RevisionId::new(1),
+                expected_hash: ContentHash::from_bytes(source.as_bytes()),
+                range: changed..changed + "changed".len(),
+                replacement: "altered".to_owned(),
+            },
+        )
+        .expect("prefix edit");
+    assert!(
+        session.pure_memo_stats().paragraph_line_hits > before_replay.paragraph_line_hits,
+        "paragraph containing migrating adjust material should replay"
+    );
+
+    let mut replay_cold_universe = template();
+    replay_cold_universe.enable_pure_memo(tex_state::PureMemoConfig::default());
+    let mut replay_cold = Session::start(
+        replay_cold_universe,
+        "paragraph-vadjust-replay",
+        RevisionId::new(2),
+        edited.clone(),
+        usize::MAX,
+    )
+    .expect("replay cold comparison starts");
+    let replay_expected = replay_cold.cold().expect("replay cold comparison");
+    assert_eq!(replayed.dvi_bytes(), replay_expected.dvi_bytes());
+    assert_eq!(replayed.effects, replay_expected.effects);
+
+    let old = source.find("old").expect("old payload body");
+    let invalidation_before = session.pure_memo_stats();
+    let incremental = session
+        .advance(
+            RevisionId::new(3),
+            Edit {
+                base_revision: RevisionId::new(2),
+                expected_hash: ContentHash::from_bytes(edited.as_bytes()),
+                range: old..old + "old".len(),
+                replacement: "new".to_owned(),
+            },
+        )
+        .expect("payload meaning edit");
+    assert!(
+        session.pure_memo_stats().paragraph_validation_misses
+            > invalidation_before.paragraph_validation_misses,
+        "changing the meaning used to construct vadjust must invalidate reuse"
+    );
+
+    let redefined = format!("{}new{}", &edited[..old], &edited[old + "old".len()..]);
+    let mut cold_universe = template();
+    cold_universe.enable_pure_memo(tex_state::PureMemoConfig::default());
+    let mut cold = Session::start(
+        cold_universe,
+        "paragraph-vadjust-replay",
+        RevisionId::new(3),
+        redefined,
+        usize::MAX,
+    )
+    .expect("cold comparison starts");
+    let expected = cold.cold().expect("cold comparison");
+    assert_eq!(incremental.dvi_bytes(), expected.dvi_bytes());
+    assert_eq!(incremental.effects, expected.effects);
+}
+
+#[test]
 fn paragraph_box_reads_without_an_active_local_definition_remain_barriered() {
     let assert_barrier = |name: &str, source: &str| {
         let mut universe = template();

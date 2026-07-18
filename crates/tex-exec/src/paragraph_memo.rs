@@ -1205,9 +1205,12 @@ fn collect_break_graph_facts(
                     return true;
                 }
             }
+            // `\vadjust` payloads migrate out before line construction. Their
+            // already-built graph is retained with the finished result, but
+            // it contributes no horizontal break facts.
+            tex_state::node::Node::Adjust(_) => {}
             tex_state::node::Node::VList(_)
             | tex_state::node::Node::Ins { .. }
-            | tex_state::node::Node::Adjust(_)
             | tex_state::node::Node::Unset(_) => return true,
             tex_state::node::Node::Glue {
                 leader: Some(_), ..

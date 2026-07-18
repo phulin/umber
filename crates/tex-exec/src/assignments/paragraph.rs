@@ -253,7 +253,18 @@ pub(crate) fn install_reused_paragraph_hlist(
     });
     let _ = nest.pop()?;
     for node in finished {
-        append_node_to_current_list(nest, stores, node)?;
+        match node {
+            Node::Adjust(list) => {
+                let adjusted = stores.nodes(list).to_vec();
+                for node in adjusted {
+                    append_migrated_contribution(nest, stores, node);
+                }
+            }
+            node @ (Node::Mark { .. } | Node::Ins { .. }) => {
+                append_migrated_contribution(nest, stores, node);
+            }
+            node => append_node_to_current_list(nest, stores, node)?,
+        }
     }
     let prev_graf = nest.enclosing_vertical_prev_graf();
     nest.current_list_mut()
@@ -387,6 +398,7 @@ fn break_current_paragraph(
     let mut materializer = LineMaterializer::new(decisions.nodes, decisions.breaks, post_params);
     let mut line_nodes = Vec::new();
     let mut migrated = Vec::new();
+    let mut retained_migrated = Vec::new();
     let mut finished_nodes = Vec::new();
     while let Some(mut broken) = materializer.materialize_next(stores, line_nodes) {
         super::hmode::reshape_open_type_runs(stores, &mut broken.nodes);
@@ -396,7 +408,12 @@ fn break_current_paragraph(
         if protrudes_chars {
             tex_typeset::protrusion::insert_margin_kerns(stores, &mut broken.nodes);
         }
-        extract_migrating_material(stores, &mut broken.nodes, &mut migrated);
+        extract_migrating_material(
+            stores,
+            &mut broken.nodes,
+            &mut migrated,
+            &mut retained_migrated,
+        );
         let line = hpack_owned_with_overfull_rule(
             stores,
             &mut broken.nodes,
@@ -413,9 +430,9 @@ fn break_current_paragraph(
         finished_nodes.push(line_node.clone());
         append_node_to_current_list(nest, stores, line_node)?;
         for node in migrated.drain(..) {
-            finished_nodes.push(node.clone());
             append_migrated_contribution(nest, stores, node);
         }
+        finished_nodes.append(&mut retained_migrated);
         if let Some(penalty) = broken.penalty_after {
             let penalty = Node::Penalty(penalty);
             finished_nodes.push(penalty.clone());
@@ -727,15 +744,25 @@ fn encode_glue_spec(spec: tex_state::glue::GlueSpec, out: &mut Vec<u8>) {
     out.push(spec.shrink_order as u8);
 }
 
-fn extract_migrating_material(stores: &Universe, nodes: &mut Vec<Node>, migrated: &mut Vec<Node>) {
+fn extract_migrating_material(
+    stores: &Universe,
+    nodes: &mut Vec<Node>,
+    migrated: &mut Vec<Node>,
+    retained: &mut Vec<Node>,
+) {
     migrated.clear();
+    retained.clear();
     for node in nodes.extract_if(.., |node| {
         matches!(node, Node::Mark { .. } | Node::Ins { .. } | Node::Adjust(_))
     }) {
         match node {
-            Node::Mark { .. } | Node::Ins { .. } => migrated.push(node),
+            node @ (Node::Mark { .. } | Node::Ins { .. }) => {
+                migrated.push(node.clone());
+                retained.push(node);
+            }
             Node::Adjust(list) => {
-                migrated.extend(stores.nodes(list).into_iter().map(|node| node.to_owned()))
+                migrated.extend(stores.nodes(list).into_iter().map(|node| node.to_owned()));
+                retained.push(Node::Adjust(list));
             }
             _ => unreachable!("extract predicate restricts migrating node kinds"),
         }
