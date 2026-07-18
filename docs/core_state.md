@@ -234,11 +234,12 @@ identity is stored with that checkpoint. Later convergence compares the two
 retained identities directly. It never forks or rolls an accepted generation
 back merely to reconstruct an earlier identity. Its store projection separates
 append-only interned content from mutable state. Names, token lists, macros,
-glue, and fonts contribute canonical leaf identities to per-store deterministic
-Merkle collections. Collection shape and root depend only on the set of content
-identities, never runtime slot or insertion order. The current append watermark
-retains a persistent collection root, so growth hashes only new leaves and
-logarithmic collection paths. Token leaves bind canonical control-sequence-name identities,
+glue, and fonts contribute canonical leaf identities to per-store probabilistic
+set fingerprints. A membership set suppresses duplicates, while independently
+mixed commutative accumulators make the fingerprint depend only on the set of
+content identities, never runtime slot or insertion order. The current append
+watermark retains this derived set fingerprint, so growth hashes each new leaf
+and updates the collection in expected O(1) time. Token leaves bind canonical control-sequence-name identities,
 macro leaves bind parameter and replacement token-list identities, and font
 annotations bind canonical identifier-name identities rather than runtime
 handles.
@@ -246,8 +247,9 @@ Loaded fonts retain their immutable durable identity at load, while the small
 rollback-coupled identifier and expansion projection is composed separately.
 The derived collection caches are shared across related generation forks. Each
 immutable store kind retains a small bounded set of allocator lineages, so the
-accepted generation and its scratch fork extend independent persistent roots
-instead of evicting one another. Every extension validates allocator ancestry
+accepted generation and its scratch fork can extend independent fingerprints
+instead of evicting one another. A reusable lineage cache is moved into its
+successor rather than cloned. Every extension validates allocator ancestry
 and falls back to canonical reconstruction after divergent rollback allocation.
 The caches are not semantic state. Environment
 cells also maintain a persistent deterministic Merkle treap keyed by canonical

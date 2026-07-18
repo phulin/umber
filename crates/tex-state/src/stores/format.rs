@@ -1,4 +1,4 @@
-use super::exact_collection::CanonicalCollectionRoot;
+use super::exact_collection::CanonicalCollectionIdentity;
 use super::*;
 use serde::{Deserialize, Serialize};
 
@@ -195,7 +195,7 @@ struct ImmutableStoreMarks {
     fonts: FontStoreMark,
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Debug, Default)]
 pub(super) struct ExactIdentityCache {
     names: LineageIdentityCache<InternerMark>,
     tokens: LineageIdentityCache<TokenStoreMark>,
@@ -210,7 +210,7 @@ pub(super) struct ExactIdentityCache {
 
 const EXACT_IDENTITY_CACHE_BRANCHES: usize = 4;
 
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 struct LineageIdentityCache<M> {
     branches: Vec<(M, AppendOnlyIdentityCache)>,
 }
@@ -223,9 +223,9 @@ impl<M> Default for LineageIdentityCache<M> {
     }
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Debug, Default)]
 struct AppendOnlyIdentityCache {
-    root: CanonicalCollectionRoot,
+    identity: CanonicalCollectionIdentity,
     logical_len: usize,
 }
 
@@ -237,19 +237,20 @@ impl AppendOnlyIdentityCache {
         mut leaf: impl FnMut(usize) -> Result<u64, StoreFormatError>,
     ) -> Result<(), StoreFormatError> {
         if !can_extend || self.logical_len > len {
-            self.root = CanonicalCollectionRoot::default();
+            self.identity = CanonicalCollectionIdentity::default();
             self.logical_len = 0;
         }
+        self.identity.reserve(len.saturating_sub(self.logical_len));
         for raw in self.logical_len..len {
             let identity = leaf(raw)?;
-            self.root.insert(identity);
+            self.identity.insert(identity);
         }
         self.logical_len = len;
         Ok(())
     }
 
-    fn identity(&self) -> u64 {
-        self.root.identity()
+    fn identity(&mut self) -> u64 {
+        self.identity.identity()
     }
 }
 
@@ -268,12 +269,12 @@ impl<M: Copy + Eq> LineageIdentityCache<M> {
         retains: impl Fn(M) -> bool,
         leaf: impl FnMut(usize) -> Result<u64, StoreFormatError>,
     ) -> Result<u64, StoreFormatError> {
-        if let Some((_, cache)) = self
+        if let Some(index) = self
             .branches
             .iter()
-            .find(|(cached_mark, _)| *cached_mark == mark)
+            .position(|(cached_mark, _)| *cached_mark == mark)
         {
-            return Ok(cache.identity());
+            return Ok(self.branches[index].1.identity());
         }
         let reusable = self
             .branches
@@ -283,13 +284,11 @@ impl<M: Copy + Eq> LineageIdentityCache<M> {
             .max_by_key(|(_, (_, cache))| cache.logical_len)
             .map(|(index, _)| index);
         let mut cache = reusable
-            .map(|index| self.branches[index].1.clone())
+            .map(|index| self.branches.swap_remove(index).1)
             .unwrap_or_default();
         cache.update(len, reusable.is_some(), leaf)?;
         let identity = cache.identity();
-        if let Some(index) = reusable {
-            self.branches[index] = (mark, cache);
-        } else if self.branches.len() < EXACT_IDENTITY_CACHE_BRANCHES {
+        if reusable.is_some() || self.branches.len() < EXACT_IDENTITY_CACHE_BRANCHES {
             self.branches.push((mark, cache));
         } else {
             self.branches[0] = (mark, cache);

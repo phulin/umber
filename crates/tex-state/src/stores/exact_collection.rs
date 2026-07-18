@@ -1,116 +1,75 @@
 use crate::state_hash::exact_identity_bytes;
-use std::sync::Arc;
+use ahash::{AHashSet, RandomState};
 
-const EMPTY_DOMAIN: &[u8] = b"umber-exact-canonical-collection-empty-v1";
-const NODE_DOMAIN: &[u8] = b"umber-exact-canonical-collection-node-v1";
+const COLLECTION_DOMAIN: &[u8] = b"umber-exact-canonical-collection-v2";
+const MIX_SALT_A: u64 = 0x6a09_e667_f3bc_c909;
+const MIX_SALT_B: u64 = 0xbb67_ae85_84ca_a73b;
 
-/// Persistent deterministic treap over canonical content identities.
+/// Order-independent probabilistic identity for a set of content identities.
 ///
-/// Its shape depends only on the identities, never their insertion order.
-/// Cloning a root is O(1), and inserting one new identity path-copies an
-/// expected logarithmic number of nodes.
-#[derive(Clone, Debug, Default)]
-pub(super) struct CanonicalCollectionRoot(Option<Arc<Node>>);
-
-impl CanonicalCollectionRoot {
-    pub(super) fn insert(&mut self, key: u64) {
-        self.0 = insert(self.0.take(), key);
-    }
-
-    pub(super) fn identity(&self) -> u64 {
-        self.0.as_ref().map_or_else(
-            || exact_identity_bytes(EMPTY_DOMAIN, &[]),
-            |root| root.identity,
-        )
-    }
-}
-
+/// Membership suppresses duplicate content, while the commutative accumulators
+/// make each distinct insertion expected O(1) and independent of allocation or
+/// insertion order. The cache is derived acceleration state: callers rebuild it
+/// from canonical leaves whenever allocator ancestry cannot prove extension.
 #[derive(Debug)]
-struct Node {
-    key: u64,
-    priority: u64,
-    left: Option<Arc<Self>>,
-    right: Option<Arc<Self>>,
-    len: usize,
-    identity: u64,
+pub(super) struct CanonicalCollectionIdentity {
+    members: AHashSet<u64>,
+    sum_a: u64,
+    sum_b: u64,
+    xor: u64,
+    cached_identity: Option<u64>,
 }
 
-impl Node {
-    fn new(key: u64, left: Option<Arc<Self>>, right: Option<Arc<Self>>) -> Arc<Self> {
-        let len = 1 + node_len(&left) + node_len(&right);
-        let priority = priority(key);
-        let mut framed = Vec::with_capacity(144);
-        framed.extend_from_slice(NODE_DOMAIN);
-        framed.extend_from_slice(&key.to_le_bytes());
-        framed.extend_from_slice(&node_identity(&left).to_le_bytes());
-        framed.extend_from_slice(&node_identity(&right).to_le_bytes());
-        framed.extend_from_slice(&(len as u64).to_le_bytes());
-        Arc::new(Self {
-            key,
-            priority,
-            left,
-            right,
-            len,
-            identity: exact_identity_bytes(NODE_DOMAIN, &framed),
+impl Default for CanonicalCollectionIdentity {
+    fn default() -> Self {
+        Self {
+            members: AHashSet::with_hasher(RandomState::with_seeds(
+                0x756d_6265_725f_636f,
+                0x6c6c_6563_7469_6f6e,
+                0x5f6d_656d_6265_7273,
+                0x5f76_325f_6669_7865,
+            )),
+            sum_a: 0,
+            sum_b: 0,
+            xor: 0,
+            cached_identity: None,
+        }
+    }
+}
+
+impl CanonicalCollectionIdentity {
+    pub(super) fn reserve(&mut self, additional: usize) {
+        self.members.reserve(additional);
+    }
+
+    pub(super) fn insert(&mut self, key: u64) {
+        if !self.members.insert(key) {
+            return;
+        }
+        self.sum_a = self.sum_a.wrapping_add(mix(key ^ MIX_SALT_A));
+        self.sum_b = self.sum_b.wrapping_add(mix(key ^ MIX_SALT_B));
+        self.xor ^= mix(key);
+        self.cached_identity = None;
+    }
+
+    pub(super) fn identity(&mut self) -> u64 {
+        *self.cached_identity.get_or_insert_with(|| {
+            let mut framed = [0; 32];
+            framed[..8].copy_from_slice(&(self.members.len() as u64).to_le_bytes());
+            framed[8..16].copy_from_slice(&self.sum_a.to_le_bytes());
+            framed[16..24].copy_from_slice(&self.sum_b.to_le_bytes());
+            framed[24..].copy_from_slice(&self.xor.to_le_bytes());
+            exact_identity_bytes(COLLECTION_DOMAIN, &framed)
         })
     }
 }
 
-fn priority(key: u64) -> u64 {
-    let mut priority = key;
-    priority ^= priority >> 30;
-    priority = priority.wrapping_mul(0xbf58_476d_1ce4_e5b9);
-    priority ^= priority >> 27;
-    priority = priority.wrapping_mul(0x94d0_49bb_1331_11eb);
-    priority ^ (priority >> 31)
-}
-
-fn node_len(node: &Option<Arc<Node>>) -> usize {
-    node.as_ref().map_or(0, |node| node.len)
-}
-
-fn node_identity(node: &Option<Arc<Node>>) -> u64 {
-    node.as_ref().map_or(0, |node| node.identity)
-}
-
-fn insert(root: Option<Arc<Node>>, key: u64) -> Option<Arc<Node>> {
-    let Some(root) = root else {
-        return Some(Node::new(key, None, None));
-    };
-    if key == root.key {
-        return Some(root);
-    }
-    let priority = priority(key);
-    if priority < root.priority || (priority == root.priority && key < root.key) {
-        let (left, right) = split(Some(root), key);
-        return Some(Node::new(key, left, right));
-    }
-    if key < root.key {
-        Some(Node::new(
-            root.key,
-            insert(root.left.clone(), key),
-            root.right.clone(),
-        ))
-    } else {
-        Some(Node::new(
-            root.key,
-            root.left.clone(),
-            insert(root.right.clone(), key),
-        ))
-    }
-}
-
-fn split(root: Option<Arc<Node>>, key: u64) -> (Option<Arc<Node>>, Option<Arc<Node>>) {
-    let Some(root) = root else {
-        return (None, None);
-    };
-    if root.key < key {
-        let (middle, right) = split(root.right.clone(), key);
-        (Some(Node::new(root.key, root.left.clone(), middle)), right)
-    } else {
-        let (left, middle) = split(root.left.clone(), key);
-        (left, Some(Node::new(root.key, middle, root.right.clone())))
-    }
+fn mix(mut value: u64) -> u64 {
+    value ^= value >> 30;
+    value = value.wrapping_mul(0xbf58_476d_1ce4_e5b9);
+    value ^= value >> 27;
+    value = value.wrapping_mul(0x94d0_49bb_1331_11eb);
+    value ^ (value >> 31)
 }
 
 #[cfg(test)]
@@ -123,8 +82,8 @@ mod tests {
 
     #[test]
     fn insertion_order_does_not_change_identity() {
-        let mut forward = CanonicalCollectionRoot::default();
-        let mut reverse = CanonicalCollectionRoot::default();
+        let mut forward = CanonicalCollectionIdentity::default();
+        let mut reverse = CanonicalCollectionIdentity::default();
         for value in 1..=32 {
             forward.insert(hash(value));
         }
@@ -136,10 +95,21 @@ mod tests {
 
     #[test]
     fn duplicate_content_does_not_change_set_identity() {
-        let mut identity = CanonicalCollectionRoot::default();
+        let mut identity = CanonicalCollectionIdentity::default();
         identity.insert(hash(1));
         let once = identity.identity();
         identity.insert(hash(1));
         assert_eq!(identity.identity(), once);
+    }
+
+    #[test]
+    fn different_sets_have_different_test_identities() {
+        let mut first = CanonicalCollectionIdentity::default();
+        let mut second = CanonicalCollectionIdentity::default();
+        for value in 1..=32 {
+            first.insert(hash(value));
+            second.insert(hash(value + 1));
+        }
+        assert_ne!(first.identity(), second.identity());
     }
 }
