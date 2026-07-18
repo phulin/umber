@@ -461,6 +461,77 @@ fn easy_line_active_nodes_accumulate_in_source_order() {
 }
 
 #[test]
+fn incremental_active_merge_matches_full_total_order() {
+    let candidate = |serial, line, position| Candidate {
+        serial,
+        position,
+        width_position: position,
+        start_width: Widths::zero(),
+        penalty: 0,
+        line,
+        fitness: Fitness::Decent,
+        path_demerits: 0,
+        passive: None,
+        previous: None,
+        hyphenated: false,
+        line_shortfall: sp(0),
+        line_glue: sp(0),
+    };
+    let p = params(100);
+    let easy_line = tex_easy_line(&p);
+    let mut seed = 0x9e37_79b9_u64;
+    for case in 0..256 {
+        seed = seed.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1);
+        let survivor_count = (seed as usize >> 8) % 32;
+        seed = seed.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1);
+        let winner_count = (seed as usize >> 8) % 12;
+        let mut next_candidate = |serial| {
+            seed = seed.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1);
+            let line = 1 + (seed as usize >> 16) % 12;
+            seed = seed.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1);
+            let position = (seed as usize >> 16) % 500;
+            candidate(serial, line, position)
+        };
+        let mut survivors = (0..survivor_count)
+            .map(&mut next_candidate)
+            .collect::<Vec<_>>();
+        sort_active_candidates(&mut survivors, &p, easy_line);
+        let winners = (0..winner_count)
+            .map(|index| next_candidate(10_000 + case * 16 + index))
+            .collect::<Vec<_>>();
+
+        let mut expected = survivors.clone();
+        expected.extend_from_slice(&winners);
+        sort_active_candidates(&mut expected, &p, easy_line);
+
+        let mut actual = survivors;
+        let winner_start = actual.len();
+        actual.extend_from_slice(&winners);
+        let mut scratch = Vec::new();
+        merge_active_candidates(
+            &mut actual,
+            survivor_count,
+            winner_start,
+            winner_count,
+            &mut scratch,
+            &p,
+            easy_line,
+        );
+        assert_eq!(
+            actual
+                .iter()
+                .map(|candidate| candidate.serial)
+                .collect::<Vec<_>>(),
+            expected
+                .iter()
+                .map(|candidate| candidate.serial)
+                .collect::<Vec<_>>(),
+            "partition {case}"
+        );
+    }
+}
+
+#[test]
 fn parshape_repeats_last_line_and_overrides_hanging() {
     let shape = LineShape {
         hsize: sp(100),

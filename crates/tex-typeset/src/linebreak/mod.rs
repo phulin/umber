@@ -388,6 +388,7 @@ fn run_pass<S: TypesetState>(
         line_shortfall: Scaled::from_raw(0),
         line_glue: Scaled::from_raw(0),
     }];
+    let mut next_active = Vec::new();
     let mut passive = Vec::new();
     let mut next_serial = 1;
     let last_line_fit = LastLineFit::new(params, background);
@@ -519,12 +520,15 @@ fn run_pass<S: TypesetState>(
             });
             candidate.passive = Some(passive_id);
         }
-        active.copy_within(
-            prior_active_len..prior_active_len + winner_count,
+        merge_active_candidates(
+            &mut active,
             survivor_count,
+            prior_active_len,
+            winner_count,
+            &mut next_active,
+            params,
+            easy_line,
         );
-        active.truncate(survivor_count + winner_count);
-        sort_active_candidates(&mut active, params, easy_line);
     }
 
     let chosen = choose_final(&active, params.looseness)?;
@@ -574,27 +578,84 @@ fn sort_active_candidates(active: &mut [Candidate], params: &LineBreakParams, ea
     // all equal-width lines form one deferred class and new breaks instead
     // accumulate in source order. The visit order is observable because an
     // equal demerit replaces the route recorded earlier in `try_break`.
-    active.sort_unstable_by(|left, right| {
-        left.line
-            .cmp(&right.line)
-            .then_with(|| {
-                let effective_line = left
-                    .line
-                    .checked_add(1)
-                    .and_then(|line| line.checked_add(params.shape.line_offset))
-                    .expect("line number exceeds usize");
-                if effective_line > easy_line {
-                    left.position.cmp(&right.position)
-                } else {
-                    right.position.cmp(&left.position)
-                }
-            })
-            // Candidate serials encode insertion/visit order. This makes the
-            // comparator total while preserving stable-sort behavior for
-            // routes with the same TeX active-list key, without allocating a
-            // temporary merge buffer at every breakpoint.
-            .then_with(|| left.serial.cmp(&right.serial))
-    });
+    active.sort_unstable_by(|left, right| active_candidate_order(left, right, params, easy_line));
+}
+
+fn active_candidate_order(
+    left: &Candidate,
+    right: &Candidate,
+    params: &LineBreakParams,
+    easy_line: usize,
+) -> core::cmp::Ordering {
+    left.line
+        .cmp(&right.line)
+        .then_with(|| {
+            let effective_line = left
+                .line
+                .checked_add(1)
+                .and_then(|line| line.checked_add(params.shape.line_offset))
+                .expect("line number exceeds usize");
+            if effective_line > easy_line {
+                left.position.cmp(&right.position)
+            } else {
+                right.position.cmp(&left.position)
+            }
+        })
+        // Candidate serials encode insertion/visit order. This makes the
+        // comparator total while preserving stable-sort behavior for routes
+        // with the same TeX active-list key.
+        .then_with(|| left.serial.cmp(&right.serial))
+}
+
+fn merge_active_candidates(
+    active: &mut Vec<Candidate>,
+    survivor_count: usize,
+    winner_start: usize,
+    winner_count: usize,
+    scratch: &mut Vec<Candidate>,
+    params: &LineBreakParams,
+    easy_line: usize,
+) {
+    if winner_count == 0 {
+        active.truncate(survivor_count);
+        return;
+    }
+    let winner_end = winner_start + winner_count;
+    sort_active_candidates(&mut active[winner_start..winner_end], params, easy_line);
+    if survivor_count == 0 {
+        active.copy_within(winner_start..winner_end, 0);
+        active.truncate(winner_count);
+        return;
+    }
+
+    // Buffer only the small winner tail. Merging backward leaves every
+    // unread survivor in place, so the much larger survivor run need not be
+    // copied into scratch and back at every legal breakpoint.
+    scratch.clear();
+    scratch.extend_from_slice(&active[winner_start..winner_end]);
+    let (mut survivor, mut winner) = (survivor_count, winner_count);
+    let mut output = survivor_count + winner_count;
+    while survivor > 0 && winner > 0 {
+        output -= 1;
+        if active_candidate_order(
+            &active[survivor - 1],
+            &scratch[winner - 1],
+            params,
+            easy_line,
+        )
+        .is_gt()
+        {
+            survivor -= 1;
+            active[output] = active[survivor];
+        } else {
+            winner -= 1;
+            active[output] = scratch[winner];
+        }
+    }
+    if winner > 0 {
+        active[..winner].copy_from_slice(&scratch[..winner]);
+    }
+    active.truncate(survivor_count + winner_count);
 }
 
 #[derive(Clone, Copy)]
