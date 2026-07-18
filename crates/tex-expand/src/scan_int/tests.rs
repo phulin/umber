@@ -698,3 +698,30 @@ fn glue_order_enquiries_report_exact_etex_order_codes() {
         0
     );
 }
+
+#[test]
+fn glue_component_enquiries_coerce_scaled_dimensions_to_integers() {
+    let mut stores = Universe::new();
+    for (name, primitive) in [
+        ("gluestretch", UnexpandablePrimitive::GlueStretch),
+        ("glueshrink", UnexpandablePrimitive::GlueShrink),
+    ] {
+        let symbol = stores.intern(name);
+        stores.set_meaning(symbol, Meaning::UnexpandablePrimitive(primitive));
+    }
+
+    assert_eq!(
+        scan_with_stores(
+            "\\gluestretch 0pt plus 2fill X",
+            &mut tex_state::ExpansionContext::new(&mut stores)
+        ),
+        (2 * Scaled::UNITY, Some(char_token('X', Catcode::Letter)))
+    );
+    assert_eq!(
+        scan_with_stores(
+            "\\glueshrink 0pt minus 1.5fil X",
+            &mut tex_state::ExpansionContext::new(&mut stores)
+        ),
+        (98_304, Some(char_token('X', Catcode::Letter)))
+    );
+}

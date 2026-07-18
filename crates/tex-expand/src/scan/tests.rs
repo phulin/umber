@@ -216,6 +216,40 @@ fn expanded_general_text_stops_after_a_nested_conditional() {
 }
 
 #[test]
+fn expanded_definition_ifcase_consumes_a_glue_component_selector() {
+    let mut stores = Universe::new();
+    crate::install_expandable_primitives(&mut stores);
+    let gluestretch = stores.intern("gluestretch");
+    stores.set_meaning(
+        gluestretch,
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::GlueStretch),
+    );
+    let context =
+        TracedTokenWord::pack(Token::Cs(stores.intern("edef").symbol()), OriginId::UNKNOWN);
+    let mut input = InputStack::new(MemoryInput::new(
+        "{\\ifcase\\gluestretch 0pt plus 1sp A\\or B\\else C\\fi}Z",
+    ));
+
+    let scanned = scan_toks_expanded_with_driver(
+        &mut input,
+        &mut tex_state::ExpansionContext::new(&mut stores),
+        MeaningFlags::EMPTY,
+        context,
+        &mut ExpansionContext::new("texput"),
+    )
+    .expect("the selected limb should not consume the definition terminator");
+
+    assert_eq!(
+        stores.tokens(scanned.replacement_text()),
+        &[char_token('B', Catcode::Letter)]
+    );
+    assert_eq!(
+        input.next_token(&mut stores).expect("read caller token"),
+        Some(char_token('Z', Catcode::Letter))
+    );
+}
+
+#[test]
 fn expanded_general_text_copies_the_token_register_without_expanding_it() {
     let mut stores = Universe::new();
     crate::install_expandable_primitives(&mut stores);

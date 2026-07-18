@@ -656,6 +656,24 @@ where
             scan_num_expr(input, stores, expansion, mode, token)
         }
         Meaning::UnexpandablePrimitive(
+            primitive @ (UnexpandablePrimitive::GlueStretch | UnexpandablePrimitive::GlueShrink),
+        ) => {
+            // pdfTeX.web §1801 makes these enquiries dimension-valued;
+            // TeX.web §429 then lowers a dimension requested as an integer
+            // without changing its raw scaled-point value.
+            let scanned = crate::scan_glue::scan_glue_with_mode_and_context(
+                input, stores, expansion, mode, false, token,
+            )
+            .map_err(|error| ScanIntError::Expand(error.into()))?;
+            let spec = stores.glue(scanned.id());
+            let value = if primitive == UnexpandablePrimitive::GlueStretch {
+                spec.stretch
+            } else {
+                spec.shrink
+            };
+            Ok(ScannedInt::new(value.raw(), token))
+        }
+        Meaning::UnexpandablePrimitive(
             primitive @ (UnexpandablePrimitive::GlueStretchOrder
             | UnexpandablePrimitive::GlueShrinkOrder),
         ) => {
