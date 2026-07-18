@@ -114,18 +114,22 @@ pub(crate) fn shipout_node(
     let mut transaction = stores.begin_shipout();
     let staged = direct::stage_shipout(node, input, &mut transaction, execution)?;
     let retained_diagnostics = staged.retained_diagnostics.clone();
-    let artifact_bytes = staged.artifact.bytes().to_vec();
-    let artifact_origins = staged
-        .artifact
-        .render_origins_for_memo()
-        .iter()
-        .map(|origins| origins.to_vec())
-        .collect::<Vec<_>>();
+    let memo_payload = (key.is_some() && input_origins.is_some()).then(|| {
+        let artifact_bytes = staged.artifact.bytes().to_vec();
+        let artifact_origins = staged
+            .artifact
+            .render_origins_for_memo()
+            .iter()
+            .map(|origins| origins.to_vec())
+            .collect::<Vec<_>>();
+        (artifact_bytes, artifact_origins)
+    });
     let hash = transaction.commit(staged.artifact, staged.effect_pos)?;
     for (sink, text) in retained_diagnostics {
         stores.world_mut().write_text(sink, &text);
     }
-    if let (Some(key), Some(input_origins)) = (key, input_origins)
+    if let (Some(key), Some(input_origins), Some((artifact_bytes, artifact_origins))) =
+        (key, input_origins, memo_payload)
         && stores.world().effect_records().len() == effect_start
         && let Ok(artifact) = tex_state::DetachedMemoValue::from_artifact(&DetachedArtifact {
             artifact_schema: 10,
