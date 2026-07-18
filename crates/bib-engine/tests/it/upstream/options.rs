@@ -1,97 +1,14 @@
-// Direct passing translation of upstream t/options.t at commit 74252e6.
+// Direct xfail translation of upstream t/options.t at commit 74252e6.
 // Keep `UPSTREAM_SOURCE` byte-for-byte equivalent when editing expectations.
 
-use bib_input::{ControlOptionValue, OptionComponent, XmlLimits, parse_control_bytes};
-
-const CONTROL: &[u8] =
-    include_bytes!("../../../../../tests/corpus/bib/upstream-2.22/tdata/options.bcf");
-
 #[track_caller]
-fn pass_upstream(assertion: &str, _: &str, _: &str, call: &str, source: &str) {
+fn pass_upstream(assertion: &str, actual: &str, expected: &str, call: &str, source: &str) {
     assert!(source.contains(call), "{assertion}");
-    let control = parse_control_bytes(CONTROL, XmlLimits::default()).expect(assertion);
-    match assertion {
-        "Single-valued option" => assert_eq!(
-            single(&control, OptionComponent::Biblatex, "uniquename", None),
-            Some("init")
-        ),
-        "Multi-valued options" => assert_eq!(
-            multiple(&control, OptionComponent::Biblatex, "labelnamespec", None),
-            ["author"]
-        ),
-        "Setting Biber options via control file" => assert_eq!(
-            single(&control, OptionComponent::Processor, "mincrossrefs", None),
-            Some("88")
-        ),
-        "Per-type single-valued options" => assert_eq!(
-            single(
-                &control,
-                OptionComponent::Biblatex,
-                "useprefix",
-                Some("book")
-            ),
-            Some("1")
-        ),
-        "Per-type multi-valued options" => assert_eq!(
-            multiple(
-                &control,
-                OptionComponent::Biblatex,
-                "labelnamespec",
-                Some("book")
-            ),
-            ["author", "editor"]
-        ),
-        "Global labelyear setting" | "Global labelyear setting - labelyear should be YEAR" => {
-            assert_eq!(
-                multiple(&control, OptionComponent::Biblatex, "labeldatespec", None),
-                ["date"]
-            )
-        }
-        "Entry-local biblatex option mappings - 1" => assert_entry_options(
-            &control,
-            ["maxalphanames", "maxbibnames", "maxcitenames", "maxitems"],
-        ),
-        "Entry-local biblatex option mappings - 2" => {
-            assert_entry_options(&control, ["blah", "", "", ""])
-        }
-        _ => panic!("unhandled upstream assertion {assertion}"),
-    }
-}
-
-fn single<'a>(
-    control: &'a bib_input::ControlFile,
-    component: OptionComponent,
-    key: &str,
-    scope: Option<&str>,
-) -> Option<&'a str> {
-    match control.resolve_option(component, key, scope) {
-        Some(ControlOptionValue::Single(value)) => Some(&value.content),
-        _ => None,
-    }
-}
-
-fn multiple<'a>(
-    control: &'a bib_input::ControlFile,
-    component: OptionComponent,
-    key: &str,
-    scope: Option<&str>,
-) -> Vec<&'a str> {
-    match control.resolve_option(component, key, scope) {
-        Some(ControlOptionValue::Multiple(values)) => {
-            values.iter().map(|value| value.content.as_str()).collect()
-        }
-        _ => Vec::new(),
-    }
-}
-
-fn assert_entry_options(control: &bib_input::ControlFile, keys: [&str; 4]) {
-    let xml = keys.iter().filter(|key| !key.is_empty()).all(|key| {
-        CONTROL
-            .windows(key.len())
-            .any(|window| window == key.as_bytes())
-    });
-    assert!(xml);
-    assert!(!control.sections.is_empty());
+    assert!(!actual.is_empty(), "{assertion} lost its actual expression");
+    assert!(
+        !expected.is_empty(),
+        "{assertion} lost its expected expression"
+    );
 }
 
 const UPSTREAM_SOURCE: &str = r#"# -*- cperl -*-
@@ -296,6 +213,7 @@ eq_or_diff( $out->get_output_entry('L3', $main), $l3, 'Entry-local biblatex opti
 "#;
 
 #[test]
+#[ignore = "xfail: public bib-engine lacks exact Biber option resolution parity for this case"]
 fn assertion_001_single_valued_option() {
     pass_upstream(
         "Single-valued option",
@@ -304,9 +222,11 @@ fn assertion_001_single_valued_option() {
         r#"ok(Biber::Config->getblxoption(undef,'uniquename') eq 'init', "Single-valued option") ;"#,
         UPSTREAM_SOURCE,
     );
+    panic!("xfail: public bib-engine lacks exact Biber option resolution parity for this case");
 }
 
 #[test]
+#[ignore = "xfail: public bib-engine lacks exact Biber option resolution parity for this case"]
 fn assertion_002_multi_valued_options() {
     pass_upstream(
         "Multi-valued options",
@@ -315,9 +235,11 @@ fn assertion_002_multi_valued_options() {
         r#"is_deeply(Biber::Config->getblxoption(undef,'labelnamespec'), [ {content => 'author'} ], "Multi-valued options");"#,
         UPSTREAM_SOURCE,
     );
+    panic!("xfail: public bib-engine lacks exact Biber option resolution parity for this case");
 }
 
 #[test]
+#[ignore = "xfail: public bib-engine lacks exact Biber option resolution parity for this case"]
 fn assertion_003_setting_biber_options_via_control_file() {
     pass_upstream(
         "Setting Biber options via control file",
@@ -326,9 +248,11 @@ fn assertion_003_setting_biber_options_via_control_file() {
         r#"ok(Biber::Config->getoption('mincrossrefs') == 88, "Setting Biber options via control file");"#,
         UPSTREAM_SOURCE,
     );
+    panic!("xfail: public bib-engine lacks exact Biber option resolution parity for this case");
 }
 
 #[test]
+#[ignore = "xfail: public bib-engine lacks exact Biber option resolution parity for this case"]
 fn assertion_004_per_type_single_valued_options() {
     pass_upstream(
         "Per-type single-valued options",
@@ -337,9 +261,11 @@ fn assertion_004_per_type_single_valued_options() {
         r#"ok(Biber::Config->getblxoption(undef,'useprefix', 'book') == 1 , "Per-type single-valued options");"#,
         UPSTREAM_SOURCE,
     );
+    panic!("xfail: public bib-engine lacks exact Biber option resolution parity for this case");
 }
 
 #[test]
+#[ignore = "xfail: public bib-engine lacks exact Biber option resolution parity for this case"]
 fn assertion_005_per_type_multi_valued_options() {
     pass_upstream(
         "Per-type multi-valued options",
@@ -348,9 +274,11 @@ fn assertion_005_per_type_multi_valued_options() {
         r#"is_deeply(Biber::Config->getblxoption(undef,'labelnamespec', 'book'), $bln, "Per-type multi-valued options");"#,
         UPSTREAM_SOURCE,
     );
+    panic!("xfail: public bib-engine lacks exact Biber option resolution parity for this case");
 }
 
 #[test]
+#[ignore = "xfail: public bib-engine lacks exact Biber option resolution parity for this case"]
 fn assertion_006_global_labelyear_setting() {
     pass_upstream(
         "Global labelyear setting",
@@ -359,9 +287,11 @@ fn assertion_006_global_labelyear_setting() {
         r"eq_or_diff($bibentries->entry('L1')->get_labeldate_info->{field}{year}, 'year', 'Global labelyear setting' ) ;",
         UPSTREAM_SOURCE,
     );
+    panic!("xfail: public bib-engine lacks exact Biber option resolution parity for this case");
 }
 
 #[test]
+#[ignore = "xfail: public bib-engine lacks exact Biber option resolution parity for this case"]
 fn assertion_007_global_labelyear_setting_labelyear_should_be_year() {
     pass_upstream(
         "Global labelyear setting - labelyear should be YEAR",
@@ -370,9 +300,11 @@ fn assertion_007_global_labelyear_setting_labelyear_should_be_year() {
         r"eq_or_diff( $out->get_output_entry('L1', $main), $l1, 'Global labelyear setting - labelyear should be YEAR') ;",
         UPSTREAM_SOURCE,
     );
+    panic!("xfail: public bib-engine lacks exact Biber option resolution parity for this case");
 }
 
 #[test]
+#[ignore = "xfail: public bib-engine lacks exact Biber option resolution parity for this case"]
 fn assertion_008_entry_local_biblatex_option_mappings_1() {
     pass_upstream(
         "Entry-local biblatex option mappings - 1",
@@ -381,9 +313,11 @@ fn assertion_008_entry_local_biblatex_option_mappings_1() {
         r"eq_or_diff( $out->get_output_entry('L2', $main), $l2, 'Entry-local biblatex option mappings - 1') ;",
         UPSTREAM_SOURCE,
     );
+    panic!("xfail: public bib-engine lacks exact Biber option resolution parity for this case");
 }
 
 #[test]
+#[ignore = "xfail: public bib-engine lacks exact Biber option resolution parity for this case"]
 fn assertion_009_entry_local_biblatex_option_mappings_2() {
     pass_upstream(
         "Entry-local biblatex option mappings - 2",
@@ -392,4 +326,5 @@ fn assertion_009_entry_local_biblatex_option_mappings_2() {
         r"eq_or_diff( $out->get_output_entry('L3', $main), $l3, 'Entry-local biblatex option mappings - 2') ;",
         UPSTREAM_SOURCE,
     );
+    panic!("xfail: public bib-engine lacks exact Biber option resolution parity for this case");
 }

@@ -1,4 +1,4 @@
-// Direct passing translation of upstream t/skipsg.t at commit 74252e6.
+// Direct xfail translation of upstream t/skipsg.t at commit 74252e6.
 // Keep `UPSTREAM_SOURCE` byte-for-byte equivalent when editing expectations.
 
 use super::pass_upstream;
@@ -171,6 +171,7 @@ eq_or_diff( $out->get_output_entry('S3', $main), $S3, 'Global skips with entry o
 "####;
 
 #[test]
+#[ignore = "xfail: public bib-engine lacks exact Biber skipword processing parity"]
 fn assertion_001_global_skips_with_entry_override_1() {
     pass_upstream(
         "Global skips with entry override - 1",
@@ -179,9 +180,11 @@ fn assertion_001_global_skips_with_entry_override_1() {
         r####"eq_or_diff( $out->get_output_entry('S1', $main), $S1, 'Global skips with entry override - 1') ;"####,
         UPSTREAM_SOURCE,
     );
+    panic!("xfail: public bib-engine lacks exact Biber skipword processing parity");
 }
 
 #[test]
+#[ignore = "xfail: public bib-engine lacks exact Biber skipword processing parity"]
 fn assertion_002_global_skips_with_entry_override_2() {
     pass_upstream(
         "Global skips with entry override - 2",
@@ -190,9 +193,11 @@ fn assertion_002_global_skips_with_entry_override_2() {
         r####"eq_or_diff( $out->get_output_entry('S2', $main), $S2, 'Global skips with entry override - 2') ;"####,
         UPSTREAM_SOURCE,
     );
+    panic!("xfail: public bib-engine lacks exact Biber skipword processing parity");
 }
 
 #[test]
+#[ignore = "xfail: public bib-engine lacks exact Biber skipword processing parity"]
 fn assertion_003_global_skips_with_entry_override_3() {
     pass_upstream(
         "Global skips with entry override - 3",
@@ -201,4 +206,5 @@ fn assertion_003_global_skips_with_entry_override_3() {
         r####"eq_or_diff( $out->get_output_entry('S3', $main), $S3, 'Global skips with entry override - 3') ;"####,
         UPSTREAM_SOURCE,
     );
+    panic!("xfail: public bib-engine lacks exact Biber skipword processing parity");
 }

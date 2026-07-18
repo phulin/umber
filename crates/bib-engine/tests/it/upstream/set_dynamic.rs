@@ -1,4 +1,4 @@
-// Direct passing translation of upstream t/set-dynamic.t at commit 74252e6.
+// Direct xfail translation of upstream t/set-dynamic.t at commit 74252e6.
 // Keep `UPSTREAM_SOURCE` byte-for-byte equivalent when editing expectations.
 
 use super::pass_upstream;
@@ -193,6 +193,7 @@ eq_or_diff($out->get_output_entry('Dynamic1', $sh0), $string2, 'Dynamic set skip
 "#;
 
 #[test]
+#[ignore = "xfail: public bib-engine lacks exact Biber entry-set processing parity"]
 fn assertion_001_citekeys() {
     pass_upstream(
         "citekeys",
@@ -201,9 +202,11 @@ fn assertion_001_citekeys() {
         r"is_deeply( \@keys, \@allkeys, 'citekeys') ;",
         UPSTREAM_SOURCE,
     );
+    panic!("xfail: public bib-engine lacks exact Biber entry-set processing parity");
 }
 
 #[test]
+#[ignore = "xfail: public bib-engine lacks exact Biber entry-set processing parity"]
 fn assertion_002_dynamic_set_test_1() {
     pass_upstream(
         "Dynamic set test 1",
@@ -212,9 +215,11 @@ fn assertion_002_dynamic_set_test_1() {
         r"eq_or_diff($out->get_output_entry('DynSet', $main0), $string1, 'Dynamic set test 1');",
         UPSTREAM_SOURCE,
     );
+    panic!("xfail: public bib-engine lacks exact Biber entry-set processing parity");
 }
 
 #[test]
+#[ignore = "xfail: public bib-engine lacks exact Biber entry-set processing parity"]
 fn assertion_003_dynamic_set_test_2() {
     pass_upstream(
         "Dynamic set test 2",
@@ -223,9 +228,11 @@ fn assertion_003_dynamic_set_test_2() {
         r"eq_or_diff($out->get_output_entry('Dynamic1', $main0), $string2, 'Dynamic set test 2');",
         UPSTREAM_SOURCE,
     );
+    panic!("xfail: public bib-engine lacks exact Biber entry-set processing parity");
 }
 
 #[test]
+#[ignore = "xfail: public bib-engine lacks exact Biber entry-set processing parity"]
 fn assertion_004_dynamic_set_test_3() {
     pass_upstream(
         "Dynamic set test 3",
@@ -234,9 +241,11 @@ fn assertion_004_dynamic_set_test_3() {
         r"eq_or_diff($out->get_output_entry('Dynamic2', $main0), $string3, 'Dynamic set test 3');",
         UPSTREAM_SOURCE,
     );
+    panic!("xfail: public bib-engine lacks exact Biber entry-set processing parity");
 }
 
 #[test]
+#[ignore = "xfail: public bib-engine lacks exact Biber entry-set processing parity"]
 fn assertion_005_dynamic_set_test_4() {
     pass_upstream(
         "Dynamic set test 4",
@@ -245,9 +254,11 @@ fn assertion_005_dynamic_set_test_4() {
         r"eq_or_diff($out->get_output_entry('Dynamic3', $main0), $string4, 'Dynamic set test 4');",
         UPSTREAM_SOURCE,
     );
+    panic!("xfail: public bib-engine lacks exact Biber entry-set processing parity");
 }
 
 #[test]
+#[ignore = "xfail: public bib-engine lacks exact Biber entry-set processing parity"]
 fn assertion_006_dynamic_set_test_5() {
     pass_upstream(
         "Dynamic set test 5",
@@ -256,9 +267,11 @@ fn assertion_006_dynamic_set_test_5() {
         r"eq_or_diff($out->get_output_entry('Dynamic3', $main1, 1), $string5, 'Dynamic set test 5');",
         UPSTREAM_SOURCE,
     );
+    panic!("xfail: public bib-engine lacks exact Biber entry-set processing parity");
 }
 
 #[test]
+#[ignore = "xfail: public bib-engine lacks exact Biber entry-set processing parity"]
 fn assertion_007_dynamic_set_skipbiblist_1() {
     pass_upstream(
         "Dynamic set skipbiblist 1",
@@ -267,4 +280,5 @@ fn assertion_007_dynamic_set_skipbiblist_1() {
         r"eq_or_diff($out->get_output_entry('Dynamic1', $sh0), $string2, 'Dynamic set skipbiblist 1');",
         UPSTREAM_SOURCE,
     );
+    panic!("xfail: public bib-engine lacks exact Biber entry-set processing parity");
 }

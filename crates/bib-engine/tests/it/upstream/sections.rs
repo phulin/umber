@@ -1,4 +1,4 @@
-// Direct passing translation of upstream t/sections.t at commit 74252e6.
+// Direct xfail translation of upstream t/sections.t at commit 74252e6.
 // Keep `UPSTREAM_SOURCE` byte-for-byte equivalent when editing expectations.
 
 use super::pass_upstream;
@@ -123,6 +123,7 @@ eq_or_diff($out->get_output_head, $head, 'Preamble output check with output_safe
 "#;
 
 #[test]
+#[ignore = "xfail: public bib-engine lacks exact Biber section processing parity"]
 fn assertion_001_preamble_for_all_sections() {
     pass_upstream(
         "Preamble for all sections",
@@ -131,9 +132,11 @@ fn assertion_001_preamble_for_all_sections() {
         r"is_deeply($biber->get_preamble, $preamble, 'Preamble for all sections');",
         UPSTREAM_SOURCE,
     );
+    panic!("xfail: public bib-engine lacks exact Biber section processing parity");
 }
 
 #[test]
+#[ignore = "xfail: public bib-engine lacks exact Biber section processing parity"]
 fn assertion_002_section_0_macro_test() {
     pass_upstream(
         "Section 0 macro test",
@@ -142,9 +145,11 @@ fn assertion_002_section_0_macro_test() {
         r"eq_or_diff($section0->bibentry('sect1')->get_field('note'), 'value1', 'Section 0 macro test');",
         UPSTREAM_SOURCE,
     );
+    panic!("xfail: public bib-engine lacks exact Biber section processing parity");
 }
 
 #[test]
+#[ignore = "xfail: public bib-engine lacks exact Biber section processing parity"]
 fn assertion_003_section_1_macro_test() {
     pass_upstream(
         "Section 1 macro test",
@@ -153,9 +158,11 @@ fn assertion_003_section_1_macro_test() {
         r"eq_or_diff($section1->bibentry('sect4')->get_field('note'), 'value2', 'Section 1 macro test');",
         UPSTREAM_SOURCE,
     );
+    panic!("xfail: public bib-engine lacks exact Biber section processing parity");
 }
 
 #[test]
+#[ignore = "xfail: public bib-engine lacks exact Biber section processing parity"]
 fn assertion_004_section_0_citekeys() {
     pass_upstream(
         "Section 0 citekeys",
@@ -164,9 +171,11 @@ fn assertion_004_section_0_citekeys() {
         r"is_deeply($main0->get_keys, ['sect1', 'sect2', 'sect3', 'sect8'], 'Section 0 citekeys');",
         UPSTREAM_SOURCE,
     );
+    panic!("xfail: public bib-engine lacks exact Biber section processing parity");
 }
 
 #[test]
+#[ignore = "xfail: public bib-engine lacks exact Biber section processing parity"]
 fn assertion_005_section_0_shorthands() {
     pass_upstream(
         "Section 0 shorthands",
@@ -175,9 +184,11 @@ fn assertion_005_section_0_shorthands() {
         r"is_deeply($shs0->get_keys, ['sect1', 'sect2', 'sect8'], 'Section 0 shorthands');",
         UPSTREAM_SOURCE,
     );
+    panic!("xfail: public bib-engine lacks exact Biber section processing parity");
 }
 
 #[test]
+#[ignore = "xfail: public bib-engine lacks exact Biber section processing parity"]
 fn assertion_006_section_1_citekeys() {
     pass_upstream(
         "Section 1 citekeys",
@@ -186,9 +197,11 @@ fn assertion_006_section_1_citekeys() {
         r"is_deeply($main1->get_keys, ['sect4', 'sect5'], 'Section 1 citekeys');",
         UPSTREAM_SOURCE,
     );
+    panic!("xfail: public bib-engine lacks exact Biber section processing parity");
 }
 
 #[test]
+#[ignore = "xfail: public bib-engine lacks exact Biber section processing parity"]
 fn assertion_007_section_1_shorthands() {
     pass_upstream(
         "Section 1 shorthands",
@@ -197,9 +210,11 @@ fn assertion_007_section_1_shorthands() {
         r"is_deeply($shs1->get_keys, ['sect4', 'sect5'], 'Section 1 shorthands');",
         UPSTREAM_SOURCE,
     );
+    panic!("xfail: public bib-engine lacks exact Biber section processing parity");
 }
 
 #[test]
+#[ignore = "xfail: public bib-engine lacks exact Biber section processing parity"]
 fn assertion_008_section_2_citekeys() {
     pass_upstream(
         "Section 2 citekeys",
@@ -208,9 +223,11 @@ fn assertion_008_section_2_citekeys() {
         r"is_deeply($main2->get_keys, ['sect1', 'sect6', 'sect7'], 'Section 2 citekeys');",
         UPSTREAM_SOURCE,
     );
+    panic!("xfail: public bib-engine lacks exact Biber section processing parity");
 }
 
 #[test]
+#[ignore = "xfail: public bib-engine lacks exact Biber section processing parity"]
 fn assertion_009_section_2_shorthands() {
     pass_upstream(
         "Section 2 shorthands",
@@ -219,9 +236,11 @@ fn assertion_009_section_2_shorthands() {
         r"is_deeply($shs2->get_keys, ['sect1', 'sect6', 'sect7'], 'Section 2 shorthands');",
         UPSTREAM_SOURCE,
     );
+    panic!("xfail: public bib-engine lacks exact Biber section processing parity");
 }
 
 #[test]
+#[ignore = "xfail: public bib-engine lacks exact Biber section processing parity"]
 fn assertion_010_section_3_citekeys() {
     pass_upstream(
         "Section 3 citekeys",
@@ -230,9 +249,11 @@ fn assertion_010_section_3_citekeys() {
         r"is_deeply([$section3->get_orig_order_citekeys], ['sect1', 'sect2', 'sectall1'], 'Section 3 citekeys');",
         UPSTREAM_SOURCE,
     );
+    panic!("xfail: public bib-engine lacks exact Biber section processing parity");
 }
 
 #[test]
+#[ignore = "xfail: public bib-engine lacks exact Biber section processing parity"]
 fn assertion_011_checking_output_sections_1() {
     pass_upstream(
         "Checking output sections - 1",
@@ -241,9 +262,11 @@ fn assertion_011_checking_output_sections_1() {
         r"eq_or_diff($out->get_output_section(0)->number, '0', 'Checking output sections - 1');",
         UPSTREAM_SOURCE,
     );
+    panic!("xfail: public bib-engine lacks exact Biber section processing parity");
 }
 
 #[test]
+#[ignore = "xfail: public bib-engine lacks exact Biber section processing parity"]
 fn assertion_012_checking_output_sections_2() {
     pass_upstream(
         "Checking output sections - 2",
@@ -252,9 +275,11 @@ fn assertion_012_checking_output_sections_2() {
         r"eq_or_diff($out->get_output_section(1)->number, '1', 'Checking output sections - 2');",
         UPSTREAM_SOURCE,
     );
+    panic!("xfail: public bib-engine lacks exact Biber section processing parity");
 }
 
 #[test]
+#[ignore = "xfail: public bib-engine lacks exact Biber section processing parity"]
 fn assertion_013_checking_output_sections_3() {
     pass_upstream(
         "Checking output sections - 3",
@@ -263,9 +288,11 @@ fn assertion_013_checking_output_sections_3() {
         r"eq_or_diff($out->get_output_section(2)->number, '2', 'Checking output sections - 3');",
         UPSTREAM_SOURCE,
     );
+    panic!("xfail: public bib-engine lacks exact Biber section processing parity");
 }
 
 #[test]
+#[ignore = "xfail: public bib-engine lacks exact Biber section processing parity"]
 fn assertion_014_preamble_output_check_with_output_safechars() {
     pass_upstream(
         "Preamble output check with output_safechars",
@@ -274,4 +301,5 @@ fn assertion_014_preamble_output_check_with_output_safechars() {
         r"eq_or_diff($out->get_output_head, $head, 'Preamble output check with output_safechars');",
         UPSTREAM_SOURCE,
     );
+    panic!("xfail: public bib-engine lacks exact Biber section processing parity");
 }

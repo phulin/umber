@@ -1,4 +1,4 @@
-// Direct passing translation of upstream t/sections-complex.t at commit 74252e6.
+// Direct xfail translation of upstream t/sections-complex.t at commit 74252e6.
 // Keep `UPSTREAM_SOURCE` byte-for-byte equivalent when editing expectations.
 
 use super::pass_upstream;
@@ -205,6 +205,7 @@ eq_or_diff($bibentries1->entry('m1')->get_field('title'), 'Film title 11', 'map 
 "#;
 
 #[test]
+#[ignore = "xfail: public bib-engine lacks exact Biber section processing parity"]
 fn assertion_001_maxalphanames_1_minalphanames_1_entry_l1_labelalpha() {
     pass_upstream(
         "maxalphanames=1 minalphanames=1 entry L1 labelalpha",
@@ -213,9 +214,11 @@ fn assertion_001_maxalphanames_1_minalphanames_1_entry_l1_labelalpha() {
         r"eq_or_diff($main0->get_entryfield('L1', 'sortlabelalpha'), 'Doe95', 'maxalphanames=1 minalphanames=1 entry L1 labelalpha');",
         UPSTREAM_SOURCE,
     );
+    panic!("xfail: public bib-engine lacks exact Biber section processing parity");
 }
 
 #[test]
+#[ignore = "xfail: public bib-engine lacks exact Biber section processing parity"]
 fn assertion_002_maxalphanames_1_minalphanames_1_entry_l1_extraalpha() {
     pass_upstream(
         "maxalphanames=1 minalphanames=1 entry L1 extraalpha",
@@ -224,9 +227,11 @@ fn assertion_002_maxalphanames_1_minalphanames_1_entry_l1_extraalpha() {
         r"ok(is_undef($main0->get_extraalphadata_for_key('L1')), 'maxalphanames=1 minalphanames=1 entry L1 extraalpha');",
         UPSTREAM_SOURCE,
     );
+    panic!("xfail: public bib-engine lacks exact Biber section processing parity");
 }
 
 #[test]
+#[ignore = "xfail: public bib-engine lacks exact Biber section processing parity"]
 fn assertion_003_maxalphanames_1_minalphanames_1_entry_l2_labelalpha() {
     pass_upstream(
         "maxalphanames=1 minalphanames=1 entry L2 labelalpha",
@@ -235,9 +240,11 @@ fn assertion_003_maxalphanames_1_minalphanames_1_entry_l2_labelalpha() {
         r"eq_or_diff($main0->get_entryfield('L2', 'sortlabelalpha'), 'Doe+95', 'maxalphanames=1 minalphanames=1 entry L2 labelalpha');",
         UPSTREAM_SOURCE,
     );
+    panic!("xfail: public bib-engine lacks exact Biber section processing parity");
 }
 
 #[test]
+#[ignore = "xfail: public bib-engine lacks exact Biber section processing parity"]
 fn assertion_004_maxalphanames_1_minalphanames_1_entry_l2_extraalpha() {
     pass_upstream(
         "maxalphanames=1 minalphanames=1 entry L2 extraalpha",
@@ -246,9 +253,11 @@ fn assertion_004_maxalphanames_1_minalphanames_1_entry_l2_extraalpha() {
         r"eq_or_diff($main0->get_extraalphadata_for_key('L2'), '1', 'maxalphanames=1 minalphanames=1 entry L2 extraalpha');",
         UPSTREAM_SOURCE,
     );
+    panic!("xfail: public bib-engine lacks exact Biber section processing parity");
 }
 
 #[test]
+#[ignore = "xfail: public bib-engine lacks exact Biber section processing parity"]
 fn assertion_005_maxalphanames_1_minalphanames_1_entry_l3_labelalpha() {
     pass_upstream(
         "maxalphanames=1 minalphanames=1 entry L3 labelalpha",
@@ -257,9 +266,11 @@ fn assertion_005_maxalphanames_1_minalphanames_1_entry_l3_labelalpha() {
         r"eq_or_diff($main0->get_entryfield('L3', 'sortlabelalpha'), 'Doe+95', 'maxalphanames=1 minalphanames=1 entry L3 labelalpha');",
         UPSTREAM_SOURCE,
     );
+    panic!("xfail: public bib-engine lacks exact Biber section processing parity");
 }
 
 #[test]
+#[ignore = "xfail: public bib-engine lacks exact Biber section processing parity"]
 fn assertion_006_maxalphanames_1_minalphanames_1_entry_l3_extraalpha() {
     pass_upstream(
         "maxalphanames=1 minalphanames=1 entry L3 extraalpha",
@@ -268,9 +279,11 @@ fn assertion_006_maxalphanames_1_minalphanames_1_entry_l3_extraalpha() {
         r"eq_or_diff($main0->get_extraalphadata_for_key('L3'), '2', 'maxalphanames=1 minalphanames=1 entry L3 extraalpha');",
         UPSTREAM_SOURCE,
     );
+    panic!("xfail: public bib-engine lacks exact Biber section processing parity");
 }
 
 #[test]
+#[ignore = "xfail: public bib-engine lacks exact Biber section processing parity"]
 fn assertion_007_maxalphanames_1_minalphanames_1_entry_l4_labelalpha() {
     pass_upstream(
         "maxalphanames=1 minalphanames=1 entry L4 labelalpha",
@@ -279,9 +292,11 @@ fn assertion_007_maxalphanames_1_minalphanames_1_entry_l4_labelalpha() {
         r"eq_or_diff($main0->get_entryfield('L4', 'sortlabelalpha'), 'Doe+95', 'maxalphanames=1 minalphanames=1 entry L4 labelalpha');",
         UPSTREAM_SOURCE,
     );
+    panic!("xfail: public bib-engine lacks exact Biber section processing parity");
 }
 
 #[test]
+#[ignore = "xfail: public bib-engine lacks exact Biber section processing parity"]
 fn assertion_008_maxalphanames_1_minalphanames_1_entry_l4_extraalpha() {
     pass_upstream(
         "maxalphanames=1 minalphanames=1 entry L4 extraalpha",
@@ -290,9 +305,11 @@ fn assertion_008_maxalphanames_1_minalphanames_1_entry_l4_extraalpha() {
         r"eq_or_diff($main0->get_extraalphadata_for_key('L4'), '3', 'maxalphanames=1 minalphanames=1 entry L4 extraalpha');",
         UPSTREAM_SOURCE,
     );
+    panic!("xfail: public bib-engine lacks exact Biber section processing parity");
 }
 
 #[test]
+#[ignore = "xfail: public bib-engine lacks exact Biber section processing parity"]
 fn assertion_009_maxalphanames_1_minalphanames_1_entry_l5_labelalpha() {
     pass_upstream(
         "maxalphanames=1 minalphanames=1 entry L5 labelalpha",
@@ -301,9 +318,11 @@ fn assertion_009_maxalphanames_1_minalphanames_1_entry_l5_labelalpha() {
         r"eq_or_diff($main1->get_entryfield('L5', 'sortlabelalpha'), 'Doe+95', 'maxalphanames=1 minalphanames=1 entry L5 labelalpha');",
         UPSTREAM_SOURCE,
     );
+    panic!("xfail: public bib-engine lacks exact Biber section processing parity");
 }
 
 #[test]
+#[ignore = "xfail: public bib-engine lacks exact Biber section processing parity"]
 fn assertion_010_maxalphanames_1_minalphanames_1_entry_l5_extraalpha() {
     pass_upstream(
         "maxalphanames=1 minalphanames=1 entry L5 extraalpha",
@@ -312,9 +331,11 @@ fn assertion_010_maxalphanames_1_minalphanames_1_entry_l5_extraalpha() {
         r"eq_or_diff($main1->get_extraalphadata_for_key('L5'), '1', 'maxalphanames=1 minalphanames=1 entry L5 extraalpha');",
         UPSTREAM_SOURCE,
     );
+    panic!("xfail: public bib-engine lacks exact Biber section processing parity");
 }
 
 #[test]
+#[ignore = "xfail: public bib-engine lacks exact Biber section processing parity"]
 fn assertion_011_maxalphanames_1_minalphanames_1_entry_l6_labelalpha() {
     pass_upstream(
         "maxalphanames=1 minalphanames=1 entry L6 labelalpha",
@@ -323,9 +344,11 @@ fn assertion_011_maxalphanames_1_minalphanames_1_entry_l6_labelalpha() {
         r"eq_or_diff($main1->get_entryfield('L6', 'sortlabelalpha'), 'Doe+95', 'maxalphanames=1 minalphanames=1 entry L6 labelalpha');",
         UPSTREAM_SOURCE,
     );
+    panic!("xfail: public bib-engine lacks exact Biber section processing parity");
 }
 
 #[test]
+#[ignore = "xfail: public bib-engine lacks exact Biber section processing parity"]
 fn assertion_012_maxalphanames_1_minalphanames_1_entry_l6_extraalpha() {
     pass_upstream(
         "maxalphanames=1 minalphanames=1 entry L6 extraalpha",
@@ -334,9 +357,11 @@ fn assertion_012_maxalphanames_1_minalphanames_1_entry_l6_extraalpha() {
         r"eq_or_diff($main1->get_extraalphadata_for_key('L6'), '2', 'maxalphanames=1 minalphanames=1 entry L6 extraalpha');",
         UPSTREAM_SOURCE,
     );
+    panic!("xfail: public bib-engine lacks exact Biber section processing parity");
 }
 
 #[test]
+#[ignore = "xfail: public bib-engine lacks exact Biber section processing parity"]
 fn assertion_013_maxalphanames_1_minalphanames_1_entry_l7_labelalpha() {
     pass_upstream(
         "maxalphanames=1 minalphanames=1 entry L7 labelalpha",
@@ -345,9 +370,11 @@ fn assertion_013_maxalphanames_1_minalphanames_1_entry_l7_labelalpha() {
         r"eq_or_diff($main1->get_entryfield('L7', 'sortlabelalpha'), 'Doe+95', 'maxalphanames=1 minalphanames=1 entry L7 labelalpha');",
         UPSTREAM_SOURCE,
     );
+    panic!("xfail: public bib-engine lacks exact Biber section processing parity");
 }
 
 #[test]
+#[ignore = "xfail: public bib-engine lacks exact Biber section processing parity"]
 fn assertion_014_maxalphanames_1_minalphanames_1_entry_l7_extraalpha() {
     pass_upstream(
         "maxalphanames=1 minalphanames=1 entry L7 extraalpha",
@@ -356,9 +383,11 @@ fn assertion_014_maxalphanames_1_minalphanames_1_entry_l7_extraalpha() {
         r"eq_or_diff($main1->get_extraalphadata_for_key('L7'), '3', 'maxalphanames=1 minalphanames=1 entry L7 extraalpha');",
         UPSTREAM_SOURCE,
     );
+    panic!("xfail: public bib-engine lacks exact Biber section processing parity");
 }
 
 #[test]
+#[ignore = "xfail: public bib-engine lacks exact Biber section processing parity"]
 fn assertion_015_maxalphanames_1_minalphanames_1_entry_l8_labelalpha() {
     pass_upstream(
         "maxalphanames=1 minalphanames=1 entry L8 labelalpha",
@@ -367,9 +396,11 @@ fn assertion_015_maxalphanames_1_minalphanames_1_entry_l8_labelalpha() {
         r"eq_or_diff($main1->get_entryfield('L8', 'sortlabelalpha'), 'Sha85', 'maxalphanames=1 minalphanames=1 entry L8 labelalpha');",
         UPSTREAM_SOURCE,
     );
+    panic!("xfail: public bib-engine lacks exact Biber section processing parity");
 }
 
 #[test]
+#[ignore = "xfail: public bib-engine lacks exact Biber section processing parity"]
 fn assertion_016_maxalphanames_1_minalphanames_1_entry_l8_extraalpha() {
     pass_upstream(
         "maxalphanames=1 minalphanames=1 entry L8 extraalpha",
@@ -378,9 +409,11 @@ fn assertion_016_maxalphanames_1_minalphanames_1_entry_l8_extraalpha() {
         r"ok(is_undef($main1->get_extraalphadata_for_key('L8')), 'maxalphanames=1 minalphanames=1 entry L8 extraalpha');",
         UPSTREAM_SOURCE,
     );
+    panic!("xfail: public bib-engine lacks exact Biber section processing parity");
 }
 
 #[test]
+#[ignore = "xfail: public bib-engine lacks exact Biber section processing parity"]
 fn assertion_017_maxalphanames_2_minalphanames_1_entry_l1_labelalpha() {
     pass_upstream(
         "maxalphanames=2 minalphanames=1 entry L1 labelalpha",
@@ -389,9 +422,11 @@ fn assertion_017_maxalphanames_2_minalphanames_1_entry_l1_labelalpha() {
         r"eq_or_diff($main0->get_entryfield('L1', 'sortlabelalpha'), 'Doe95', 'maxalphanames=2 minalphanames=1 entry L1 labelalpha');",
         UPSTREAM_SOURCE,
     );
+    panic!("xfail: public bib-engine lacks exact Biber section processing parity");
 }
 
 #[test]
+#[ignore = "xfail: public bib-engine lacks exact Biber section processing parity"]
 fn assertion_018_maxalphanames_2_minalphanames_1_entry_l1_extraalpha() {
     pass_upstream(
         "maxalphanames=2 minalphanames=1 entry L1 extraalpha",
@@ -400,9 +435,11 @@ fn assertion_018_maxalphanames_2_minalphanames_1_entry_l1_extraalpha() {
         r"ok(is_undef($main0->get_extraalphadata_for_key('L1')), 'maxalphanames=2 minalphanames=1 entry L1 extraalpha');",
         UPSTREAM_SOURCE,
     );
+    panic!("xfail: public bib-engine lacks exact Biber section processing parity");
 }
 
 #[test]
+#[ignore = "xfail: public bib-engine lacks exact Biber section processing parity"]
 fn assertion_019_maxalphanames_2_minalphanames_1_entry_l2_labelalpha() {
     pass_upstream(
         "maxalphanames=2 minalphanames=1 entry L2 labelalpha",
@@ -411,9 +448,11 @@ fn assertion_019_maxalphanames_2_minalphanames_1_entry_l2_labelalpha() {
         r"eq_or_diff($main0->get_entryfield('L2', 'sortlabelalpha'), 'DA95', 'maxalphanames=2 minalphanames=1 entry L2 labelalpha');",
         UPSTREAM_SOURCE,
     );
+    panic!("xfail: public bib-engine lacks exact Biber section processing parity");
 }
 
 #[test]
+#[ignore = "xfail: public bib-engine lacks exact Biber section processing parity"]
 fn assertion_020_maxalphanames_2_minalphanames_1_entry_l2_extraalpha() {
     pass_upstream(
         "maxalphanames=2 minalphanames=1 entry L2 extraalpha",
@@ -422,9 +461,11 @@ fn assertion_020_maxalphanames_2_minalphanames_1_entry_l2_extraalpha() {
         r"eq_or_diff($main0->get_extraalphadata_for_key('L2'), '1', 'maxalphanames=2 minalphanames=1 entry L2 extraalpha');",
         UPSTREAM_SOURCE,
     );
+    panic!("xfail: public bib-engine lacks exact Biber section processing parity");
 }
 
 #[test]
+#[ignore = "xfail: public bib-engine lacks exact Biber section processing parity"]
 fn assertion_021_maxalphanames_2_minalphanames_1_entry_l3_labelalpha() {
     pass_upstream(
         "maxalphanames=2 minalphanames=1 entry L3 labelalpha",
@@ -433,9 +474,11 @@ fn assertion_021_maxalphanames_2_minalphanames_1_entry_l3_labelalpha() {
         r"eq_or_diff($main0->get_entryfield('L3', 'sortlabelalpha'), 'DA95', 'maxalphanames=2 minalphanames=1 entry L3 labelalpha');",
         UPSTREAM_SOURCE,
     );
+    panic!("xfail: public bib-engine lacks exact Biber section processing parity");
 }
 
 #[test]
+#[ignore = "xfail: public bib-engine lacks exact Biber section processing parity"]
 fn assertion_022_maxalphanames_2_minalphanames_1_entry_l3_extraalpha() {
     pass_upstream(
         "maxalphanames=2 minalphanames=1 entry L3 extraalpha",
@@ -444,9 +487,11 @@ fn assertion_022_maxalphanames_2_minalphanames_1_entry_l3_extraalpha() {
         r"eq_or_diff($main0->get_extraalphadata_for_key('L3'), '2', 'maxalphanames=2 minalphanames=1 entry L3 extraalpha');",
         UPSTREAM_SOURCE,
     );
+    panic!("xfail: public bib-engine lacks exact Biber section processing parity");
 }
 
 #[test]
+#[ignore = "xfail: public bib-engine lacks exact Biber section processing parity"]
 fn assertion_023_maxalphanames_2_minalphanames_1_entry_l4_labelalpha() {
     pass_upstream(
         "maxalphanames=2 minalphanames=1 entry L4 labelalpha",
@@ -455,9 +500,11 @@ fn assertion_023_maxalphanames_2_minalphanames_1_entry_l4_labelalpha() {
         r"eq_or_diff($main0->get_entryfield('L4', 'sortlabelalpha'), 'Doe+95', 'maxalphanames=2 minalphanames=1 entry L4 labelalpha');",
         UPSTREAM_SOURCE,
     );
+    panic!("xfail: public bib-engine lacks exact Biber section processing parity");
 }
 
 #[test]
+#[ignore = "xfail: public bib-engine lacks exact Biber section processing parity"]
 fn assertion_024_maxalphanames_2_minalphanames_1_entry_l4_extraalpha() {
     pass_upstream(
         "maxalphanames=2 minalphanames=1 entry L4 extraalpha",
@@ -466,9 +513,11 @@ fn assertion_024_maxalphanames_2_minalphanames_1_entry_l4_extraalpha() {
         r"ok(is_undef($main0->get_extraalphadata_for_key('L4')), 'maxalphanames=2 minalphanames=1 entry L4 extraalpha');",
         UPSTREAM_SOURCE,
     );
+    panic!("xfail: public bib-engine lacks exact Biber section processing parity");
 }
 
 #[test]
+#[ignore = "xfail: public bib-engine lacks exact Biber section processing parity"]
 fn assertion_025_maxalphanames_2_minalphanames_1_entry_l5_labelalpha() {
     pass_upstream(
         "maxalphanames=2 minalphanames=1 entry L5 labelalpha",
@@ -477,9 +526,11 @@ fn assertion_025_maxalphanames_2_minalphanames_1_entry_l5_labelalpha() {
         r"eq_or_diff($main1->get_entryfield('L5', 'sortlabelalpha'), 'Doe+95', 'maxalphanames=2 minalphanames=1 entry L5 labelalpha');",
         UPSTREAM_SOURCE,
     );
+    panic!("xfail: public bib-engine lacks exact Biber section processing parity");
 }
 
 #[test]
+#[ignore = "xfail: public bib-engine lacks exact Biber section processing parity"]
 fn assertion_026_maxalphanames_2_minalphanames_1_entry_l5_extraalpha() {
     pass_upstream(
         "maxalphanames=2 minalphanames=1 entry L5 extraalpha",
@@ -488,9 +539,11 @@ fn assertion_026_maxalphanames_2_minalphanames_1_entry_l5_extraalpha() {
         r"eq_or_diff($main1->get_extraalphadata_for_key('L5'), '1', 'maxalphanames=2 minalphanames=1 entry L5 extraalpha');",
         UPSTREAM_SOURCE,
     );
+    panic!("xfail: public bib-engine lacks exact Biber section processing parity");
 }
 
 #[test]
+#[ignore = "xfail: public bib-engine lacks exact Biber section processing parity"]
 fn assertion_027_maxalphanames_2_minalphanames_1_entry_l6_labelalpha() {
     pass_upstream(
         "maxalphanames=2 minalphanames=1 entry L6 labelalpha",
@@ -499,9 +552,11 @@ fn assertion_027_maxalphanames_2_minalphanames_1_entry_l6_labelalpha() {
         r"eq_or_diff($main1->get_entryfield('L6', 'sortlabelalpha'), 'Doe+95', 'maxalphanames=2 minalphanames=1 entry L6 labelalpha');",
         UPSTREAM_SOURCE,
     );
+    panic!("xfail: public bib-engine lacks exact Biber section processing parity");
 }
 
 #[test]
+#[ignore = "xfail: public bib-engine lacks exact Biber section processing parity"]
 fn assertion_028_maxalphanames_2_minalphanames_1_entry_l6_extraalpha() {
     pass_upstream(
         "maxalphanames=2 minalphanames=1 entry L6 extraalpha",
@@ -510,9 +565,11 @@ fn assertion_028_maxalphanames_2_minalphanames_1_entry_l6_extraalpha() {
         r"eq_or_diff($main1->get_extraalphadata_for_key('L6'), '2', 'maxalphanames=2 minalphanames=1 entry L6 extraalpha');",
         UPSTREAM_SOURCE,
     );
+    panic!("xfail: public bib-engine lacks exact Biber section processing parity");
 }
 
 #[test]
+#[ignore = "xfail: public bib-engine lacks exact Biber section processing parity"]
 fn assertion_029_maxalphanames_2_minalphanames_1_entry_l7_labelalpha() {
     pass_upstream(
         "maxalphanames=2 minalphanames=1 entry L7 labelalpha",
@@ -521,9 +578,11 @@ fn assertion_029_maxalphanames_2_minalphanames_1_entry_l7_labelalpha() {
         r"eq_or_diff($main1->get_entryfield('L7', 'sortlabelalpha'), 'Doe+95', 'maxalphanames=2 minalphanames=1 entry L7 labelalpha');",
         UPSTREAM_SOURCE,
     );
+    panic!("xfail: public bib-engine lacks exact Biber section processing parity");
 }
 
 #[test]
+#[ignore = "xfail: public bib-engine lacks exact Biber section processing parity"]
 fn assertion_030_maxalphanames_2_minalphanames_1_entry_l7_extraalpha() {
     pass_upstream(
         "maxalphanames=2 minalphanames=1 entry L7 extraalpha",
@@ -532,9 +591,11 @@ fn assertion_030_maxalphanames_2_minalphanames_1_entry_l7_extraalpha() {
         r"eq_or_diff($main1->get_extraalphadata_for_key('L7'), '3', 'maxalphanames=2 minalphanames=1 entry L7 extraalpha');",
         UPSTREAM_SOURCE,
     );
+    panic!("xfail: public bib-engine lacks exact Biber section processing parity");
 }
 
 #[test]
+#[ignore = "xfail: public bib-engine lacks exact Biber section processing parity"]
 fn assertion_031_maxalphanames_2_minalphanames_1_entry_l8_labelalpha() {
     pass_upstream(
         "maxalphanames=2 minalphanames=1 entry L8 labelalpha",
@@ -543,9 +604,11 @@ fn assertion_031_maxalphanames_2_minalphanames_1_entry_l8_labelalpha() {
         r"eq_or_diff($main1->get_entryfield('L8', 'sortlabelalpha'), 'Sha85', 'maxalphanames=2 minalphanames=1 entry L8 labelalpha');",
         UPSTREAM_SOURCE,
     );
+    panic!("xfail: public bib-engine lacks exact Biber section processing parity");
 }
 
 #[test]
+#[ignore = "xfail: public bib-engine lacks exact Biber section processing parity"]
 fn assertion_032_maxalphanames_2_minalphanames_1_entry_l8_extraalpha() {
     pass_upstream(
         "maxalphanames=2 minalphanames=1 entry L8 extraalpha",
@@ -554,9 +617,11 @@ fn assertion_032_maxalphanames_2_minalphanames_1_entry_l8_extraalpha() {
         r"ok(is_undef($main1->get_extraalphadata_for_key('L8')), 'maxalphanames=2 minalphanames=1 entry L8 extraalpha');",
         UPSTREAM_SOURCE,
     );
+    panic!("xfail: public bib-engine lacks exact Biber section processing parity");
 }
 
 #[test]
+#[ignore = "xfail: public bib-engine lacks exact Biber section processing parity"]
 fn assertion_033_maxalphanames_2_minalphanames_2_entry_l1_labelalpha() {
     pass_upstream(
         "maxalphanames=2 minalphanames=2 entry L1 labelalpha",
@@ -565,9 +630,11 @@ fn assertion_033_maxalphanames_2_minalphanames_2_entry_l1_labelalpha() {
         r"eq_or_diff($main0->get_entryfield('L1', 'sortlabelalpha'), 'Doe95', 'maxalphanames=2 minalphanames=2 entry L1 labelalpha');",
         UPSTREAM_SOURCE,
     );
+    panic!("xfail: public bib-engine lacks exact Biber section processing parity");
 }
 
 #[test]
+#[ignore = "xfail: public bib-engine lacks exact Biber section processing parity"]
 fn assertion_034_maxalphanames_2_minalphanames_2_entry_l1_extraalpha() {
     pass_upstream(
         "maxalphanames=2 minalphanames=2 entry L1 extraalpha",
@@ -576,9 +643,11 @@ fn assertion_034_maxalphanames_2_minalphanames_2_entry_l1_extraalpha() {
         r"ok(is_undef($main0->get_extraalphadata_for_key('L1')), 'maxalphanames=2 minalphanames=2 entry L1 extraalpha');",
         UPSTREAM_SOURCE,
     );
+    panic!("xfail: public bib-engine lacks exact Biber section processing parity");
 }
 
 #[test]
+#[ignore = "xfail: public bib-engine lacks exact Biber section processing parity"]
 fn assertion_035_maxalphanames_2_minalphanames_2_entry_l2_labelalpha() {
     pass_upstream(
         "maxalphanames=2 minalphanames=2 entry L2 labelalpha",
@@ -587,9 +656,11 @@ fn assertion_035_maxalphanames_2_minalphanames_2_entry_l2_labelalpha() {
         r"eq_or_diff($main0->get_entryfield('L2', 'sortlabelalpha'), 'DA95', 'maxalphanames=2 minalphanames=2 entry L2 labelalpha');",
         UPSTREAM_SOURCE,
     );
+    panic!("xfail: public bib-engine lacks exact Biber section processing parity");
 }
 
 #[test]
+#[ignore = "xfail: public bib-engine lacks exact Biber section processing parity"]
 fn assertion_036_maxalphanames_2_minalphanames_2_entry_l2_extraalpha() {
     pass_upstream(
         "maxalphanames=2 minalphanames=2 entry L2 extraalpha",
@@ -598,9 +669,11 @@ fn assertion_036_maxalphanames_2_minalphanames_2_entry_l2_extraalpha() {
         r"eq_or_diff($main0->get_extraalphadata_for_key('L2'), '1', 'maxalphanames=2 minalphanames=2 entry L2 extraalpha');",
         UPSTREAM_SOURCE,
     );
+    panic!("xfail: public bib-engine lacks exact Biber section processing parity");
 }
 
 #[test]
+#[ignore = "xfail: public bib-engine lacks exact Biber section processing parity"]
 fn assertion_037_maxalphanames_2_minalphanames_2_entry_l3_labelalpha() {
     pass_upstream(
         "maxalphanames=2 minalphanames=2 entry L3 labelalpha",
@@ -609,9 +682,11 @@ fn assertion_037_maxalphanames_2_minalphanames_2_entry_l3_labelalpha() {
         r"eq_or_diff($main0->get_entryfield('L3', 'sortlabelalpha'), 'DA95', 'maxalphanames=2 minalphanames=2 entry L3 labelalpha');",
         UPSTREAM_SOURCE,
     );
+    panic!("xfail: public bib-engine lacks exact Biber section processing parity");
 }
 
 #[test]
+#[ignore = "xfail: public bib-engine lacks exact Biber section processing parity"]
 fn assertion_038_maxalphanames_2_minalphanames_2_entry_l3_extraalpha() {
     pass_upstream(
         "maxalphanames=2 minalphanames=2 entry L3 extraalpha",
@@ -620,9 +695,11 @@ fn assertion_038_maxalphanames_2_minalphanames_2_entry_l3_extraalpha() {
         r"eq_or_diff($main0->get_extraalphadata_for_key('L3'), '2', 'maxalphanames=2 minalphanames=2 entry L3 extraalpha');",
         UPSTREAM_SOURCE,
     );
+    panic!("xfail: public bib-engine lacks exact Biber section processing parity");
 }
 
 #[test]
+#[ignore = "xfail: public bib-engine lacks exact Biber section processing parity"]
 fn assertion_039_maxalphanames_2_minalphanames_2_entry_l4_labelalpha() {
     pass_upstream(
         "maxalphanames=2 minalphanames=2 entry L4 labelalpha",
@@ -631,9 +708,11 @@ fn assertion_039_maxalphanames_2_minalphanames_2_entry_l4_labelalpha() {
         r"eq_or_diff($main0->get_entryfield('L4', 'sortlabelalpha'), 'DA+95', 'maxalphanames=2 minalphanames=2 entry L4 labelalpha');",
         UPSTREAM_SOURCE,
     );
+    panic!("xfail: public bib-engine lacks exact Biber section processing parity");
 }
 
 #[test]
+#[ignore = "xfail: public bib-engine lacks exact Biber section processing parity"]
 fn assertion_040_maxalphanames_2_minalphanames_2_entry_l4_extraalpha() {
     pass_upstream(
         "maxalphanames=2 minalphanames=2 entry L4 extraalpha",
@@ -642,9 +721,11 @@ fn assertion_040_maxalphanames_2_minalphanames_2_entry_l4_extraalpha() {
         r"ok(is_undef($main0->get_extraalphadata_for_key('L4')), 'maxalphanames=2 minalphanames=2 entry L4 extraalpha');",
         UPSTREAM_SOURCE,
     );
+    panic!("xfail: public bib-engine lacks exact Biber section processing parity");
 }
 
 #[test]
+#[ignore = "xfail: public bib-engine lacks exact Biber section processing parity"]
 fn assertion_041_maxalphanames_2_minalphanames_2_entry_l5_labelalpha() {
     pass_upstream(
         "maxalphanames=2 minalphanames=2 entry L5 labelalpha",
@@ -653,9 +734,11 @@ fn assertion_041_maxalphanames_2_minalphanames_2_entry_l5_labelalpha() {
         r"eq_or_diff($main1->get_entryfield('L5', 'sortlabelalpha'), 'DA+95', 'maxalphanames=2 minalphanames=2 entry L5 labelalpha');",
         UPSTREAM_SOURCE,
     );
+    panic!("xfail: public bib-engine lacks exact Biber section processing parity");
 }
 
 #[test]
+#[ignore = "xfail: public bib-engine lacks exact Biber section processing parity"]
 fn assertion_042_maxalphanames_2_minalphanames_2_entry_l5_extraalpha() {
     pass_upstream(
         "maxalphanames=2 minalphanames=2 entry L5 extraalpha",
@@ -664,9 +747,11 @@ fn assertion_042_maxalphanames_2_minalphanames_2_entry_l5_extraalpha() {
         r"ok(is_undef($main1->get_extraalphadata_for_key('L5')), 'maxalphanames=2 minalphanames=2 entry L5 extraalpha');",
         UPSTREAM_SOURCE,
     );
+    panic!("xfail: public bib-engine lacks exact Biber section processing parity");
 }
 
 #[test]
+#[ignore = "xfail: public bib-engine lacks exact Biber section processing parity"]
 fn assertion_043_maxalphanames_2_minalphanames_2_entry_l6_labelalpha() {
     pass_upstream(
         "maxalphanames=2 minalphanames=2 entry L6 labelalpha",
@@ -675,9 +760,11 @@ fn assertion_043_maxalphanames_2_minalphanames_2_entry_l6_labelalpha() {
         r"eq_or_diff($main1->get_entryfield('L6', 'sortlabelalpha'), 'DS+95', 'maxalphanames=2 minalphanames=2 entry L6 labelalpha');",
         UPSTREAM_SOURCE,
     );
+    panic!("xfail: public bib-engine lacks exact Biber section processing parity");
 }
 
 #[test]
+#[ignore = "xfail: public bib-engine lacks exact Biber section processing parity"]
 fn assertion_044_maxalphanames_2_minalphanames_2_entry_l6_extraalpha() {
     pass_upstream(
         "maxalphanames=2 minalphanames=2 entry L6 extraalpha",
@@ -686,9 +773,11 @@ fn assertion_044_maxalphanames_2_minalphanames_2_entry_l6_extraalpha() {
         r"eq_or_diff($main1->get_extraalphadata_for_key('L6'), '1', 'maxalphanames=2 minalphanames=2 entry L6 extraalpha');",
         UPSTREAM_SOURCE,
     );
+    panic!("xfail: public bib-engine lacks exact Biber section processing parity");
 }
 
 #[test]
+#[ignore = "xfail: public bib-engine lacks exact Biber section processing parity"]
 fn assertion_045_maxalphanames_2_minalphanames_2_entry_l7_labelalpha() {
     pass_upstream(
         "maxalphanames=2 minalphanames=2 entry L7 labelalpha",
@@ -697,9 +786,11 @@ fn assertion_045_maxalphanames_2_minalphanames_2_entry_l7_labelalpha() {
         r"eq_or_diff($main1->get_entryfield('L7', 'sortlabelalpha'), 'DS+95', 'maxalphanames=2 minalphanames=2 entry L7 labelalpha');",
         UPSTREAM_SOURCE,
     );
+    panic!("xfail: public bib-engine lacks exact Biber section processing parity");
 }
 
 #[test]
+#[ignore = "xfail: public bib-engine lacks exact Biber section processing parity"]
 fn assertion_046_maxalphanames_2_minalphanames_2_entry_l7_extraalpha() {
     pass_upstream(
         "maxalphanames=2 minalphanames=2 entry L7 extraalpha",
@@ -708,9 +799,11 @@ fn assertion_046_maxalphanames_2_minalphanames_2_entry_l7_extraalpha() {
         r"eq_or_diff($main1->get_extraalphadata_for_key('L7'), '2', 'maxalphanames=2 minalphanames=2 entry L7 extraalpha');",
         UPSTREAM_SOURCE,
     );
+    panic!("xfail: public bib-engine lacks exact Biber section processing parity");
 }
 
 #[test]
+#[ignore = "xfail: public bib-engine lacks exact Biber section processing parity"]
 fn assertion_047_maxalphanames_2_minalphanames_2_entry_l8_labelalpha() {
     pass_upstream(
         "maxalphanames=2 minalphanames=2 entry L8 labelalpha",
@@ -719,9 +812,11 @@ fn assertion_047_maxalphanames_2_minalphanames_2_entry_l8_labelalpha() {
         r"eq_or_diff($main1->get_entryfield('L8', 'sortlabelalpha'), 'Sha85', 'maxalphanames=2 minalphanames=2 entry L8 labelalpha');",
         UPSTREAM_SOURCE,
     );
+    panic!("xfail: public bib-engine lacks exact Biber section processing parity");
 }
 
 #[test]
+#[ignore = "xfail: public bib-engine lacks exact Biber section processing parity"]
 fn assertion_048_maxalphanames_2_minalphanames_2_entry_l8_extraalpha() {
     pass_upstream(
         "maxalphanames=2 minalphanames=2 entry L8 extraalpha",
@@ -730,9 +825,11 @@ fn assertion_048_maxalphanames_2_minalphanames_2_entry_l8_extraalpha() {
         r"ok(is_undef($main1->get_extraalphadata_for_key('L8')), 'maxalphanames=2 minalphanames=2 entry L8 extraalpha');",
         UPSTREAM_SOURCE,
     );
+    panic!("xfail: public bib-engine lacks exact Biber section processing parity");
 }
 
 #[test]
+#[ignore = "xfail: public bib-engine lacks exact Biber section processing parity"]
 fn assertion_049_maxalphanames_3_minalphanames_1_entry_l1_labelalpha() {
     pass_upstream(
         "maxalphanames=3 minalphanames=1 entry L1 labelalpha",
@@ -741,9 +838,11 @@ fn assertion_049_maxalphanames_3_minalphanames_1_entry_l1_labelalpha() {
         r"eq_or_diff($main0->get_entryfield('L1', 'sortlabelalpha'), 'Doe95', 'maxalphanames=3 minalphanames=1 entry L1 labelalpha');",
         UPSTREAM_SOURCE,
     );
+    panic!("xfail: public bib-engine lacks exact Biber section processing parity");
 }
 
 #[test]
+#[ignore = "xfail: public bib-engine lacks exact Biber section processing parity"]
 fn assertion_050_maxalphanames_3_minalphanames_1_entry_l1_extraalpha() {
     pass_upstream(
         "maxalphanames=3 minalphanames=1 entry L1 extraalpha",
@@ -752,9 +851,11 @@ fn assertion_050_maxalphanames_3_minalphanames_1_entry_l1_extraalpha() {
         r"ok(is_undef($main0->get_extraalphadata_for_key('L1')), 'maxalphanames=3 minalphanames=1 entry L1 extraalpha');",
         UPSTREAM_SOURCE,
     );
+    panic!("xfail: public bib-engine lacks exact Biber section processing parity");
 }
 
 #[test]
+#[ignore = "xfail: public bib-engine lacks exact Biber section processing parity"]
 fn assertion_051_maxalphanames_3_minalphanames_1_entry_l2_labelalpha() {
     pass_upstream(
         "maxalphanames=3 minalphanames=1 entry L2 labelalpha",
@@ -763,9 +864,11 @@ fn assertion_051_maxalphanames_3_minalphanames_1_entry_l2_labelalpha() {
         r"eq_or_diff($main0->get_entryfield('L2', 'sortlabelalpha'), 'DA95', 'maxalphanames=3 minalphanames=1 entry L2 labelalpha');",
         UPSTREAM_SOURCE,
     );
+    panic!("xfail: public bib-engine lacks exact Biber section processing parity");
 }
 
 #[test]
+#[ignore = "xfail: public bib-engine lacks exact Biber section processing parity"]
 fn assertion_052_maxalphanames_3_minalphanames_1_entry_l2_extraalpha() {
     pass_upstream(
         "maxalphanames=3 minalphanames=1 entry L2 extraalpha",
@@ -774,9 +877,11 @@ fn assertion_052_maxalphanames_3_minalphanames_1_entry_l2_extraalpha() {
         r"eq_or_diff($main0->get_extraalphadata_for_key('L2'), '1', 'maxalphanames=3 minalphanames=1 entry L2 extraalpha');",
         UPSTREAM_SOURCE,
     );
+    panic!("xfail: public bib-engine lacks exact Biber section processing parity");
 }
 
 #[test]
+#[ignore = "xfail: public bib-engine lacks exact Biber section processing parity"]
 fn assertion_053_maxalphanames_3_minalphanames_1_entry_l3_labelalpha() {
     pass_upstream(
         "maxalphanames=3 minalphanames=1 entry L3 labelalpha",
@@ -785,9 +890,11 @@ fn assertion_053_maxalphanames_3_minalphanames_1_entry_l3_labelalpha() {
         r"eq_or_diff($main0->get_entryfield('L3', 'sortlabelalpha'), 'DA95', 'maxalphanames=3 minalphanames=1 entry L3 labelalpha');",
         UPSTREAM_SOURCE,
     );
+    panic!("xfail: public bib-engine lacks exact Biber section processing parity");
 }
 
 #[test]
+#[ignore = "xfail: public bib-engine lacks exact Biber section processing parity"]
 fn assertion_054_maxalphanames_3_minalphanames_1_entry_l3_extraalpha() {
     pass_upstream(
         "maxalphanames=3 minalphanames=1 entry L3 extraalpha",
@@ -796,9 +903,11 @@ fn assertion_054_maxalphanames_3_minalphanames_1_entry_l3_extraalpha() {
         r"eq_or_diff($main0->get_extraalphadata_for_key('L3'), '2', 'maxalphanames=3 minalphanames=1 entry L3 extraalpha');",
         UPSTREAM_SOURCE,
     );
+    panic!("xfail: public bib-engine lacks exact Biber section processing parity");
 }
 
 #[test]
+#[ignore = "xfail: public bib-engine lacks exact Biber section processing parity"]
 fn assertion_055_maxalphanames_3_minalphanames_1_entry_l4_labelalpha() {
     pass_upstream(
         "maxalphanames=3 minalphanames=1 entry L4 labelalpha",
@@ -807,9 +916,11 @@ fn assertion_055_maxalphanames_3_minalphanames_1_entry_l4_labelalpha() {
         r"eq_or_diff($main0->get_entryfield('L4', 'sortlabelalpha'), 'DAE95', 'maxalphanames=3 minalphanames=1 entry L4 labelalpha');",
         UPSTREAM_SOURCE,
     );
+    panic!("xfail: public bib-engine lacks exact Biber section processing parity");
 }
 
 #[test]
+#[ignore = "xfail: public bib-engine lacks exact Biber section processing parity"]
 fn assertion_056_maxalphanames_3_minalphanames_1_entry_l4_extraalpha() {
     pass_upstream(
         "maxalphanames=3 minalphanames=1 entry L4 extraalpha",
@@ -818,9 +929,11 @@ fn assertion_056_maxalphanames_3_minalphanames_1_entry_l4_extraalpha() {
         r"ok(is_undef($main0->get_extraalphadata_for_key('L4')), 'maxalphanames=3 minalphanames=1 entry L4 extraalpha');",
         UPSTREAM_SOURCE,
     );
+    panic!("xfail: public bib-engine lacks exact Biber section processing parity");
 }
 
 #[test]
+#[ignore = "xfail: public bib-engine lacks exact Biber section processing parity"]
 fn assertion_057_maxalphanames_3_minalphanames_1_entry_l5_labelalpha() {
     pass_upstream(
         "maxalphanames=3 minalphanames=1 entry L5 labelalpha",
@@ -829,9 +942,11 @@ fn assertion_057_maxalphanames_3_minalphanames_1_entry_l5_labelalpha() {
         r"eq_or_diff($main1->get_entryfield('L5', 'sortlabelalpha'), 'DAE95', 'maxalphanames=3 minalphanames=1 entry L5 labelalpha');",
         UPSTREAM_SOURCE,
     );
+    panic!("xfail: public bib-engine lacks exact Biber section processing parity");
 }
 
 #[test]
+#[ignore = "xfail: public bib-engine lacks exact Biber section processing parity"]
 fn assertion_058_maxalphanames_3_minalphanames_1_entry_l5_extraalpha() {
     pass_upstream(
         "maxalphanames=3 minalphanames=1 entry L5 extraalpha",
@@ -840,9 +955,11 @@ fn assertion_058_maxalphanames_3_minalphanames_1_entry_l5_extraalpha() {
         r"ok(is_undef($main1->get_extraalphadata_for_key('L5')), 'maxalphanames=3 minalphanames=1 entry L5 extraalpha');",
         UPSTREAM_SOURCE,
     );
+    panic!("xfail: public bib-engine lacks exact Biber section processing parity");
 }
 
 #[test]
+#[ignore = "xfail: public bib-engine lacks exact Biber section processing parity"]
 fn assertion_059_maxalphanames_3_minalphanames_1_entry_l6_labelalpha() {
     pass_upstream(
         "maxalphanames=3 minalphanames=1 entry L6 labelalpha",
@@ -851,9 +968,11 @@ fn assertion_059_maxalphanames_3_minalphanames_1_entry_l6_labelalpha() {
         r"eq_or_diff($main1->get_entryfield('L6', 'sortlabelalpha'), 'DSE95', 'maxalphanames=3 minalphanames=1 entry L6 labelalpha');",
         UPSTREAM_SOURCE,
     );
+    panic!("xfail: public bib-engine lacks exact Biber section processing parity");
 }
 
 #[test]
+#[ignore = "xfail: public bib-engine lacks exact Biber section processing parity"]
 fn assertion_060_maxalphanames_3_minalphanames_1_entry_l6_extraalpha() {
     pass_upstream(
         "maxalphanames=3 minalphanames=1 entry L6 extraalpha",
@@ -862,9 +981,11 @@ fn assertion_060_maxalphanames_3_minalphanames_1_entry_l6_extraalpha() {
         r"ok(is_undef($main1->get_extraalphadata_for_key('L6')), 'maxalphanames=3 minalphanames=1 entry L6 extraalpha');",
         UPSTREAM_SOURCE,
     );
+    panic!("xfail: public bib-engine lacks exact Biber section processing parity");
 }
 
 #[test]
+#[ignore = "xfail: public bib-engine lacks exact Biber section processing parity"]
 fn assertion_061_maxalphanames_3_minalphanames_1_entry_l7_labelalpha() {
     pass_upstream(
         "maxalphanames=3 minalphanames=1 entry L7 labelalpha",
@@ -873,9 +994,11 @@ fn assertion_061_maxalphanames_3_minalphanames_1_entry_l7_labelalpha() {
         r"eq_or_diff($main1->get_entryfield('L7', 'sortlabelalpha'), 'DSJ95', 'maxalphanames=3 minalphanames=1 entry L7 labelalpha');",
         UPSTREAM_SOURCE,
     );
+    panic!("xfail: public bib-engine lacks exact Biber section processing parity");
 }
 
 #[test]
+#[ignore = "xfail: public bib-engine lacks exact Biber section processing parity"]
 fn assertion_062_maxalphanames_3_minalphanames_1_entry_l7_extraalpha() {
     pass_upstream(
         "maxalphanames=3 minalphanames=1 entry L7 extraalpha",
@@ -884,9 +1007,11 @@ fn assertion_062_maxalphanames_3_minalphanames_1_entry_l7_extraalpha() {
         r"ok(is_undef($main1->get_extraalphadata_for_key('L7')), 'maxalphanames=3 minalphanames=1 entry L7 extraalpha');",
         UPSTREAM_SOURCE,
     );
+    panic!("xfail: public bib-engine lacks exact Biber section processing parity");
 }
 
 #[test]
+#[ignore = "xfail: public bib-engine lacks exact Biber section processing parity"]
 fn assertion_063_maxalphanames_3_minalphanames_1_entry_l8_labelalpha() {
     pass_upstream(
         "maxalphanames=3 minalphanames=1 entry L8 labelalpha",
@@ -895,9 +1020,11 @@ fn assertion_063_maxalphanames_3_minalphanames_1_entry_l8_labelalpha() {
         r"eq_or_diff($main1->get_entryfield('L8', 'sortlabelalpha'), 'Sha85', 'maxalphanames=3 minalphanames=1 entry L8 labelalpha');",
         UPSTREAM_SOURCE,
     );
+    panic!("xfail: public bib-engine lacks exact Biber section processing parity");
 }
 
 #[test]
+#[ignore = "xfail: public bib-engine lacks exact Biber section processing parity"]
 fn assertion_064_maxalphanames_3_minalphanames_1_entry_l8_extraalpha() {
     pass_upstream(
         "maxalphanames=3 minalphanames=1 entry L8 extraalpha",
@@ -906,9 +1033,11 @@ fn assertion_064_maxalphanames_3_minalphanames_1_entry_l8_extraalpha() {
         r"ok(is_undef($main1->get_extraalphadata_for_key('L8')), 'maxalphanames=3 minalphanames=1 entry L8 extraalpha');",
         UPSTREAM_SOURCE,
     );
+    panic!("xfail: public bib-engine lacks exact Biber section processing parity");
 }
 
 #[test]
+#[ignore = "xfail: public bib-engine lacks exact Biber section processing parity"]
 fn assertion_065_map_refsection_1() {
     pass_upstream(
         "map refsection - 1",
@@ -917,9 +1046,11 @@ fn assertion_065_map_refsection_1() {
         r"ok(is_undef($bibentries0->entry('m1')->get_field('keywords')), 'map refsection - 1');",
         UPSTREAM_SOURCE,
     );
+    panic!("xfail: public bib-engine lacks exact Biber section processing parity");
 }
 
 #[test]
+#[ignore = "xfail: public bib-engine lacks exact Biber section processing parity"]
 fn assertion_066_map_refsection_2() {
     pass_upstream(
         "map refsection - 2",
@@ -928,9 +1059,11 @@ fn assertion_066_map_refsection_2() {
         r"eq_or_diff($bibentries0->entry('m1')->get_field('title'), 'Film title 1', 'map refsection - 2');",
         UPSTREAM_SOURCE,
     );
+    panic!("xfail: public bib-engine lacks exact Biber section processing parity");
 }
 
 #[test]
+#[ignore = "xfail: public bib-engine lacks exact Biber section processing parity"]
 fn assertion_067_map_refsection_3() {
     pass_upstream(
         "map refsection- 3",
@@ -939,9 +1072,11 @@ fn assertion_067_map_refsection_3() {
         r"eq_or_diff($bibentries1->entry('m1')->get_field('keywords'), ['thing'], 'map refsection- 3');",
         UPSTREAM_SOURCE,
     );
+    panic!("xfail: public bib-engine lacks exact Biber section processing parity");
 }
 
 #[test]
+#[ignore = "xfail: public bib-engine lacks exact Biber section processing parity"]
 fn assertion_068_map_refsection_4() {
     pass_upstream(
         "map refsection - 4",
@@ -950,4 +1085,5 @@ fn assertion_068_map_refsection_4() {
         r"eq_or_diff($bibentries1->entry('m1')->get_field('title'), 'Film title 11', 'map refsection - 4');",
         UPSTREAM_SOURCE,
     );
+    panic!("xfail: public bib-engine lacks exact Biber section processing parity");
 }

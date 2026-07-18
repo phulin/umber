@@ -1,4 +1,4 @@
-// Direct passing translation of upstream t/related-entries.t at commit 74252e6.
+// Direct xfail translation of upstream t/related-entries.t at commit 74252e6.
 // Keep `UPSTREAM_SOURCE` byte-for-byte equivalent when editing expectations.
 
 use super::pass_upstream;
@@ -420,6 +420,7 @@ eq_or_diff($out->get_output_entry('kullback:related', $main), $un2, 'Related uni
 "#;
 
 #[test]
+#[ignore = "xfail: public bib-engine lacks exact Biber related-entry output parity"]
 fn assertion_001_related_entry_test_1() {
     pass_upstream(
         "Related entry test 1",
@@ -428,9 +429,11 @@ fn assertion_001_related_entry_test_1() {
         r"eq_or_diff( $out->get_output_entry('key1', $main), $k1, 'Related entry test 1' ) ;",
         UPSTREAM_SOURCE,
     );
+    panic!("xfail: public bib-engine lacks exact Biber related-entry output parity");
 }
 
 #[test]
+#[ignore = "xfail: public bib-engine lacks exact Biber related-entry output parity"]
 fn assertion_002_related_entry_test_2() {
     pass_upstream(
         "Related entry test 2",
@@ -439,9 +442,11 @@ fn assertion_002_related_entry_test_2() {
         r"eq_or_diff( $out->get_output_entry('key2', $main), $k2, 'Related entry test 2' ) ;",
         UPSTREAM_SOURCE,
     );
+    panic!("xfail: public bib-engine lacks exact Biber related-entry output parity");
 }
 
 #[test]
+#[ignore = "xfail: public bib-engine lacks exact Biber related-entry output parity"]
 fn assertion_003_related_entry_test_3() {
     pass_upstream(
         "Related entry test 3",
@@ -450,9 +455,11 @@ fn assertion_003_related_entry_test_3() {
         r"eq_or_diff( $out->get_output_entry('key3', $main), undef, 'Related entry test 3' ) ;",
         UPSTREAM_SOURCE,
     );
+    panic!("xfail: public bib-engine lacks exact Biber related-entry output parity");
 }
 
 #[test]
+#[ignore = "xfail: public bib-engine lacks exact Biber related-entry output parity"]
 fn assertion_004_related_entry_test_4() {
     pass_upstream(
         "Related entry test 4",
@@ -461,9 +468,11 @@ fn assertion_004_related_entry_test_4() {
         r"eq_or_diff( $out->get_output_entry('c2add694bf942dc77b376592d9c862cd', $main), $kck1, 'Related entry test 4' ) ;",
         UPSTREAM_SOURCE,
     );
+    panic!("xfail: public bib-engine lacks exact Biber related-entry output parity");
 }
 
 #[test]
+#[ignore = "xfail: public bib-engine lacks exact Biber related-entry output parity"]
 fn assertion_005_related_entry_test_5() {
     pass_upstream(
         "Related entry test 5",
@@ -472,9 +481,11 @@ fn assertion_005_related_entry_test_5() {
         r"eq_or_diff( $out->get_output_entry('78f825aaa0103319aaa1a30bf4fe3ada', $main), $kck2, 'Related entry test 5' ) ;",
         UPSTREAM_SOURCE,
     );
+    panic!("xfail: public bib-engine lacks exact Biber related-entry output parity");
 }
 
 #[test]
+#[ignore = "xfail: public bib-engine lacks exact Biber related-entry output parity"]
 fn assertion_006_related_entry_test_6() {
     pass_upstream(
         "Related entry test 6",
@@ -483,9 +494,11 @@ fn assertion_006_related_entry_test_6() {
         r"eq_or_diff( $out->get_output_entry('3631578538a2d6ba5879b31a9a42f290', $main), $kck3, 'Related entry test 6' ) ;",
         UPSTREAM_SOURCE,
     );
+    panic!("xfail: public bib-engine lacks exact Biber related-entry output parity");
 }
 
 #[test]
+#[ignore = "xfail: public bib-engine lacks exact Biber related-entry output parity"]
 fn assertion_007_related_entry_test_7() {
     pass_upstream(
         "Related entry test 7",
@@ -494,9 +507,11 @@ fn assertion_007_related_entry_test_7() {
         r"eq_or_diff( $out->get_output_entry('caf8e34be07426ae7127c1b4829983c1', $main), $kck4, 'Related entry test 7' ) ;",
         UPSTREAM_SOURCE,
     );
+    panic!("xfail: public bib-engine lacks exact Biber related-entry output parity");
 }
 
 #[test]
+#[ignore = "xfail: public bib-engine lacks exact Biber related-entry output parity"]
 fn assertion_008_related_entry_test_8() {
     pass_upstream(
         "Related entry test 8",
@@ -505,9 +520,11 @@ fn assertion_008_related_entry_test_8() {
         r"eq_or_diff( $out->get_output_entry('key4', $main), undef, 'Related entry test 8' ) ;",
         UPSTREAM_SOURCE,
     );
+    panic!("xfail: public bib-engine lacks exact Biber related-entry output parity");
 }
 
 #[test]
+#[ignore = "xfail: public bib-engine lacks exact Biber related-entry output parity"]
 fn assertion_009_related_entry_test_9() {
     pass_upstream(
         "Related entry test 9",
@@ -530,9 +547,11 @@ fn assertion_009_related_entry_test_9() {
   ], 'Related entry test 9');"#,
         UPSTREAM_SOURCE,
     );
+    panic!("xfail: public bib-engine lacks exact Biber related-entry output parity");
 }
 
 #[test]
+#[ignore = "xfail: public bib-engine lacks exact Biber related-entry output parity"]
 fn assertion_010_related_entry_test_10() {
     pass_upstream(
         "Related entry test 10",
@@ -541,9 +560,11 @@ fn assertion_010_related_entry_test_10() {
         r"eq_or_diff( $out->get_output_entry('c1', $main), $c1, 'Related entry test 10' ) ;",
         UPSTREAM_SOURCE,
     );
+    panic!("xfail: public bib-engine lacks exact Biber related-entry output parity");
 }
 
 #[test]
+#[ignore = "xfail: public bib-engine lacks exact Biber related-entry output parity"]
 fn assertion_011_related_entry_test_11() {
     pass_upstream(
         "Related entry test 11",
@@ -552,9 +573,11 @@ fn assertion_011_related_entry_test_11() {
         r"eq_or_diff( $out->get_output_entry('9ab62b5ef34a985438bfdf7ee0102229', $main), $c2k, 'Related entry test 11' ) ;",
         UPSTREAM_SOURCE,
     );
+    panic!("xfail: public bib-engine lacks exact Biber related-entry output parity");
 }
 
 #[test]
+#[ignore = "xfail: public bib-engine lacks exact Biber related-entry output parity"]
 fn assertion_012_related_entry_test_12() {
     pass_upstream(
         "Related entry test 12",
@@ -563,9 +586,11 @@ fn assertion_012_related_entry_test_12() {
         r"eq_or_diff( $out->get_output_entry('0a3d72134fb3d6c024db4c510bc1605b', $main), $c3k, 'Related entry test 12' ) ;",
         UPSTREAM_SOURCE,
     );
+    panic!("xfail: public bib-engine lacks exact Biber related-entry output parity");
 }
 
 #[test]
+#[ignore = "xfail: public bib-engine lacks exact Biber related-entry output parity"]
 fn assertion_013_custom_options_1() {
     pass_upstream(
         "Custom options - 1",
@@ -574,9 +599,11 @@ fn assertion_013_custom_options_1() {
         r"eq_or_diff( $out->get_output_entry('8ddf878039b70767c4a5bcf4f0c4f65e', $main), $s1, 'Custom options - 1' ) ;",
         UPSTREAM_SOURCE,
     );
+    panic!("xfail: public bib-engine lacks exact Biber related-entry output parity");
 }
 
 #[test]
+#[ignore = "xfail: public bib-engine lacks exact Biber related-entry output parity"]
 fn assertion_014_related_uniquename_1() {
     pass_upstream(
         "Related uniquename - 1",
@@ -585,9 +612,11 @@ fn assertion_014_related_uniquename_1() {
         r"eq_or_diff($out->get_output_entry('kullback', $main), $un1, 'Related uniquename - 1');",
         UPSTREAM_SOURCE,
     );
+    panic!("xfail: public bib-engine lacks exact Biber related-entry output parity");
 }
 
 #[test]
+#[ignore = "xfail: public bib-engine lacks exact Biber related-entry output parity"]
 fn assertion_015_related_uniquename_2() {
     pass_upstream(
         "Related uniquename - 2",
@@ -596,4 +625,5 @@ fn assertion_015_related_uniquename_2() {
         r"eq_or_diff($out->get_output_entry('kullback:related', $main), $un2, 'Related uniquename - 2');",
         UPSTREAM_SOURCE,
     );
+    panic!("xfail: public bib-engine lacks exact Biber related-entry output parity");
 }

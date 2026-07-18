@@ -1,92 +1,14 @@
-// Direct passing translation of upstream t/dateformats.t at commit 74252e6.
+// Direct xfail translation of upstream t/dateformats.t at commit 74252e6.
 // Keep `UPSTREAM_SOURCE` byte-for-byte equivalent when editing expectations.
 
-use bib_unicode::{DateError, ExtendedDate, Uncertainty, YearDivision};
-
 #[track_caller]
-fn pass_upstream(assertion: &str, _: &str, expected: &str, call: &str, source: &str) {
+fn pass_upstream(assertion: &str, actual: &str, expected: &str, call: &str, source: &str) {
     assert!(source.contains(call), "{assertion}");
-    if assertion.contains("Date values test 1") && assertion.contains("bad") {
-        assert!(ExtendedDate::parse("1985-1030").is_err());
-    } else if assertion.starts_with("Date values test") && expected.starts_with("$l") {
-        let invalid = match expected {
-            "$l2" => "1995-1230",
-            "$l3" => "1.5.1988",
-            "$l4" => "1995-1-04",
-            "$l5" => "1995-10-4",
-            "$l6" => "1996-13-03",
-            "$l7" => "1996-10-35",
-            _ => "1985-1030",
-        };
-        assert!(ExtendedDate::parse(invalid).is_err(), "{assertion}");
-    } else if assertion.starts_with("Date meta") {
-        assert_eq!(
-            ExtendedDate::parse("-0044-03-15")
-                .expect(assertion)
-                .start
-                .expect("compatibility value")
-                .year,
-            "-0044"
-        );
-    } else if assertion.starts_with("Range") || assertion.contains("range") {
-        let date = ExtendedDate::parse("1996-01-01/..").expect(assertion);
-        assert!(date.start.is_some() && date.end.is_none());
-    } else if assertion.starts_with("Seasons") {
-        assert_eq!(
-            ExtendedDate::parse("2003-21")
-                .expect(assertion)
-                .start
-                .expect("compatibility value")
-                .division,
-            Some(YearDivision::Spring)
-        );
-    } else if assertion.starts_with("Unspecified") {
-        assert!(
-            ExtendedDate::parse("199X-XX")
-                .expect(assertion)
-                .start
-                .expect("compatibility value")
-                .open
-        );
-    } else if assertion.starts_with("Times") {
-        assert_eq!(
-            ExtendedDate::parse("2016-01-19T12:30:15.123Z")
-                .expect(assertion)
-                .time
-                .expect("compatibility value")
-                .millisecond,
-            123
-        );
-    } else if assertion.starts_with("Extended years") {
-        assert!(ExtendedDate::parse("17000002").is_ok());
-        assert!(ExtendedDate::parse("-17000002").is_ok());
-    } else if assertion.starts_with("Scripts") {
-        assert_eq!(
-            ExtendedDate::parse("१९८७-०१-१५")
-                .expect(assertion)
-                .start
-                .expect("compatibility value")
-                .year,
-            "१९८७"
-        );
-    } else if assertion.starts_with("Milliseconds") {
-        let date = ExtendedDate::parse("2016-01-19T00:00:00.001").expect(assertion);
-        assert_eq!(date.start.expect("compatibility value").year, "2016");
-    } else {
-        let date = ExtendedDate::parse("1996-01-01?").expect(assertion);
-        assert_eq!(
-            date.start
-                .as_ref()
-                .expect("compatibility value")
-                .uncertainty,
-            Uncertainty::Uncertain
-        );
-        assert_ne!(ExtendedDate::parse("1996-13-03"), Ok(date));
-        assert_eq!(
-            ExtendedDate::parse("1995-1-04"),
-            Err(DateError::InvalidFormat)
-        );
-    }
+    assert!(!actual.is_empty(), "{assertion} lost its actual expression");
+    assert!(
+        !expected.is_empty(),
+        "{assertion} lost its expected expression"
+    );
 }
 
 const UPSTREAM_SOURCE: &str = r#"# -*- cperl -*-
@@ -1048,6 +970,7 @@ eq_or_diff($bibentries->entry('mill1')->get_field('day'), '19', 'Milliseconds - 
 "#;
 
 #[test]
+#[ignore = "xfail: public bib-engine lacks exact Biber date parsing parity for this case"]
 fn assertion_001_date_values_test_1() {
     pass_upstream(
         "Date values test 1",
@@ -1056,9 +979,11 @@ fn assertion_001_date_values_test_1() {
         r"is_deeply($bibentries->entry('L1')->get_field('warnings'), $l1, 'Date values test 1' ) ;",
         UPSTREAM_SOURCE,
     );
+    panic!("xfail: public bib-engine lacks exact Biber date parsing parity for this case");
 }
 
 #[test]
+#[ignore = "xfail: public bib-engine lacks exact Biber date parsing parity for this case"]
 fn assertion_002_date_values_test_1a_origyear_undef_since_origdate_is_bad() {
     pass_upstream(
         "Date values test 1a - ORIGYEAR undef since ORIGDATE is bad",
@@ -1067,9 +992,11 @@ fn assertion_002_date_values_test_1a_origyear_undef_since_origdate_is_bad() {
         r"ok(is_undef($bibentries->entry('L1')->get_field('origyear')), 'Date values test 1a - ORIGYEAR undef since ORIGDATE is bad' ) ;",
         UPSTREAM_SOURCE,
     );
+    panic!("xfail: public bib-engine lacks exact Biber date parsing parity for this case");
 }
 
 #[test]
+#[ignore = "xfail: public bib-engine lacks exact Biber date parsing parity for this case"]
 fn assertion_003_date_values_test_1b_urlyear_undef_since_urldate_is_bad() {
     pass_upstream(
         "Date values test 1b - URLYEAR undef since URLDATE is bad",
@@ -1078,9 +1005,11 @@ fn assertion_003_date_values_test_1b_urlyear_undef_since_urldate_is_bad() {
         r"ok(is_undef($bibentries->entry('L1')->get_field('urlyear')), 'Date values test 1b - URLYEAR undef since URLDATE is bad' ) ;",
         UPSTREAM_SOURCE,
     );
+    panic!("xfail: public bib-engine lacks exact Biber date parsing parity for this case");
 }
 
 #[test]
+#[ignore = "xfail: public bib-engine lacks exact Biber date parsing parity for this case"]
 fn assertion_004_date_values_test_2() {
     pass_upstream(
         "Date values test 2",
@@ -1089,9 +1018,11 @@ fn assertion_004_date_values_test_2() {
         r"is_deeply($bibentries->entry('L2')->get_field('warnings'), $l2, 'Date values test 2' ) ;",
         UPSTREAM_SOURCE,
     );
+    panic!("xfail: public bib-engine lacks exact Biber date parsing parity for this case");
 }
 
 #[test]
+#[ignore = "xfail: public bib-engine lacks exact Biber date parsing parity for this case"]
 fn assertion_005_date_values_test_3() {
     pass_upstream(
         "Date values test 3",
@@ -1100,9 +1031,11 @@ fn assertion_005_date_values_test_3() {
         r"is_deeply($bibentries->entry('L3')->get_field('warnings'), $l3, 'Date values test 3' ) ;",
         UPSTREAM_SOURCE,
     );
+    panic!("xfail: public bib-engine lacks exact Biber date parsing parity for this case");
 }
 
 #[test]
+#[ignore = "xfail: public bib-engine lacks exact Biber date parsing parity for this case"]
 fn assertion_006_date_values_test_4() {
     pass_upstream(
         "Date values test 4",
@@ -1111,9 +1044,11 @@ fn assertion_006_date_values_test_4() {
         r"is_deeply($bibentries->entry('L4')->get_field('warnings'), $l4, 'Date values test 4' ) ;",
         UPSTREAM_SOURCE,
     );
+    panic!("xfail: public bib-engine lacks exact Biber date parsing parity for this case");
 }
 
 #[test]
+#[ignore = "xfail: public bib-engine lacks exact Biber date parsing parity for this case"]
 fn assertion_007_date_values_test_5() {
     pass_upstream(
         "Date values test 5",
@@ -1122,9 +1057,11 @@ fn assertion_007_date_values_test_5() {
         r"is_deeply($bibentries->entry('L5')->get_field('warnings'), $l5, 'Date values test 5' ) ;",
         UPSTREAM_SOURCE,
     );
+    panic!("xfail: public bib-engine lacks exact Biber date parsing parity for this case");
 }
 
 #[test]
+#[ignore = "xfail: public bib-engine lacks exact Biber date parsing parity for this case"]
 fn assertion_008_date_values_test_6() {
     pass_upstream(
         "Date values test 6",
@@ -1133,9 +1070,11 @@ fn assertion_008_date_values_test_6() {
         r"is_deeply($bibentries->entry('L6')->get_field('warnings'), $l6, 'Date values test 6' ) ;",
         UPSTREAM_SOURCE,
     );
+    panic!("xfail: public bib-engine lacks exact Biber date parsing parity for this case");
 }
 
 #[test]
+#[ignore = "xfail: public bib-engine lacks exact Biber date parsing parity for this case"]
 fn assertion_009_date_values_test_7() {
     pass_upstream(
         "Date values test 7",
@@ -1144,9 +1083,11 @@ fn assertion_009_date_values_test_7() {
         r"is_deeply($bibentries->entry('L7')->get_field('warnings'), $l7, 'Date values test 7' ) ;",
         UPSTREAM_SOURCE,
     );
+    panic!("xfail: public bib-engine lacks exact Biber date parsing parity for this case");
 }
 
 #[test]
+#[ignore = "xfail: public bib-engine lacks exact Biber date parsing parity for this case"]
 fn assertion_010_date_values_test_8b_month_hacked_to_integer() {
     pass_upstream(
         "Date values test 8b - MONTH hacked to integer",
@@ -1155,9 +1096,11 @@ fn assertion_010_date_values_test_8b_month_hacked_to_integer() {
         r"eq_or_diff($bibentries->entry('L8')->get_field('month'), '1', 'Date values test 8b - MONTH hacked to integer' ) ;",
         UPSTREAM_SOURCE,
     );
+    panic!("xfail: public bib-engine lacks exact Biber date parsing parity for this case");
 }
 
 #[test]
+#[ignore = "xfail: public bib-engine lacks exact Biber date parsing parity for this case"]
 fn assertion_011_date_values_test_9() {
     pass_upstream(
         "Date values test 9",
@@ -1166,9 +1109,11 @@ fn assertion_011_date_values_test_9() {
         r"ok(is_undef($bibentries->entry('L9')->get_field('warnings')), 'Date values test 9' ) ;",
         UPSTREAM_SOURCE,
     );
+    panic!("xfail: public bib-engine lacks exact Biber date parsing parity for this case");
 }
 
 #[test]
+#[ignore = "xfail: public bib-engine lacks exact Biber date parsing parity for this case"]
 fn assertion_012_date_values_test_10() {
     pass_upstream(
         "Date values test 10",
@@ -1177,9 +1122,11 @@ fn assertion_012_date_values_test_10() {
         r"ok(is_undef($bibentries->entry('L10')->get_field('warnings')), 'Date values test 10' ) ;",
         UPSTREAM_SOURCE,
     );
+    panic!("xfail: public bib-engine lacks exact Biber date parsing parity for this case");
 }
 
 #[test]
+#[ignore = "xfail: public bib-engine lacks exact Biber date parsing parity for this case"]
 fn assertion_013_date_values_test_11() {
     pass_upstream(
         "Date values test 11",
@@ -1188,9 +1135,11 @@ fn assertion_013_date_values_test_11() {
         r"is_deeply($bibentries->entry('L11')->get_field('warnings'), $l11, 'Date values test 11' );",
         UPSTREAM_SOURCE,
     );
+    panic!("xfail: public bib-engine lacks exact Biber date parsing parity for this case");
 }
 
 #[test]
+#[ignore = "xfail: public bib-engine lacks exact Biber date parsing parity for this case"]
 fn assertion_014_date_values_test_11a_date_overrides_year() {
     pass_upstream(
         "Date values test 11a - DATE overrides YEAR",
@@ -1199,9 +1148,11 @@ fn assertion_014_date_values_test_11a_date_overrides_year() {
         r"eq_or_diff($bibentries->entry('L11')->get_field('year'), '1996', 'Date values test 11a - DATE overrides YEAR' ) ;",
         UPSTREAM_SOURCE,
     );
+    panic!("xfail: public bib-engine lacks exact Biber date parsing parity for this case");
 }
 
 #[test]
+#[ignore = "xfail: public bib-engine lacks exact Biber date parsing parity for this case"]
 fn assertion_015_date_values_test_12() {
     pass_upstream(
         "Date values test 12",
@@ -1210,9 +1161,11 @@ fn assertion_015_date_values_test_12() {
         r"is_deeply($bibentries->entry('L12')->get_field('warnings'), $l12, 'Date values test 12' );",
         UPSTREAM_SOURCE,
     );
+    panic!("xfail: public bib-engine lacks exact Biber date parsing parity for this case");
 }
 
 #[test]
+#[ignore = "xfail: public bib-engine lacks exact Biber date parsing parity for this case"]
 fn assertion_016_date_values_test_12a_date_overrides_month() {
     pass_upstream(
         "Date values test 12a - DATE overrides MONTH",
@@ -1221,9 +1174,11 @@ fn assertion_016_date_values_test_12a_date_overrides_month() {
         r"eq_or_diff($bibentries->entry('L12')->get_field('month'), '1', 'Date values test 12a - DATE overrides MONTH' ) ;",
         UPSTREAM_SOURCE,
     );
+    panic!("xfail: public bib-engine lacks exact Biber date parsing parity for this case");
 }
 
 #[test]
+#[ignore = "xfail: public bib-engine lacks exact Biber date parsing parity for this case"]
 fn assertion_017_date_values_test_13_range_with_no_end() {
     pass_upstream(
         "Date values test 13 - range with no end",
@@ -1232,9 +1187,11 @@ fn assertion_017_date_values_test_13_range_with_no_end() {
         r"ok(is_def_and_null($bibentries->entry('L13')->get_field('endyear')), 'Date values test 13 - range with no end' ) ;",
         UPSTREAM_SOURCE,
     );
+    panic!("xfail: public bib-engine lacks exact Biber date parsing parity for this case");
 }
 
 #[test]
+#[ignore = "xfail: public bib-engine lacks exact Biber date parsing parity for this case"]
 fn assertion_018_date_values_test_13a_endmonth_undef_for_open_ended_range() {
     pass_upstream(
         "Date values test 13a - ENDMONTH undef for open-ended range",
@@ -1243,9 +1200,11 @@ fn assertion_018_date_values_test_13a_endmonth_undef_for_open_ended_range() {
         r"ok(is_undef($bibentries->entry('L13')->get_field('endmonth')), 'Date values test 13a - ENDMONTH undef for open-ended range' ) ;",
         UPSTREAM_SOURCE,
     );
+    panic!("xfail: public bib-engine lacks exact Biber date parsing parity for this case");
 }
 
 #[test]
+#[ignore = "xfail: public bib-engine lacks exact Biber date parsing parity for this case"]
 fn assertion_019_date_values_test_13b_endday_undef_for_open_ended_range() {
     pass_upstream(
         "Date values test 13b - ENDDAY undef for open-ended range",
@@ -1254,9 +1213,11 @@ fn assertion_019_date_values_test_13b_endday_undef_for_open_ended_range() {
         r"ok(is_undef($bibentries->entry('L13')->get_field('endday')), 'Date values test 13b - ENDDAY undef for open-ended range' ) ;",
         UPSTREAM_SOURCE,
     );
+    panic!("xfail: public bib-engine lacks exact Biber date parsing parity for this case");
 }
 
 #[test]
+#[ignore = "xfail: public bib-engine lacks exact Biber date parsing parity for this case"]
 fn assertion_020_date_values_test_13c_labelyear_open_ended_range() {
     pass_upstream(
         "Date values test 13c - labelyear open-ended range",
@@ -1265,9 +1226,11 @@ fn assertion_020_date_values_test_13c_labelyear_open_ended_range() {
         r"eq_or_diff( $out->get_output_entry('L13', $main), $l13c, 'Date values test 13c - labelyear open-ended range' ) ;",
         UPSTREAM_SOURCE,
     );
+    panic!("xfail: public bib-engine lacks exact Biber date parsing parity for this case");
 }
 
 #[test]
+#[ignore = "xfail: public bib-engine lacks exact Biber date parsing parity for this case"]
 fn assertion_021_date_values_test_14_labelyear_same_as_year_when_endyear_year() {
     pass_upstream(
         "Date values test 14 - labelyear same as YEAR when ENDYEAR == YEAR",
@@ -1276,9 +1239,11 @@ fn assertion_021_date_values_test_14_labelyear_same_as_year_when_endyear_year() 
         r"eq_or_diff( $out->get_output_entry('L14', $main), $l14, 'Date values test 14 - labelyear same as YEAR when ENDYEAR == YEAR') ;",
         UPSTREAM_SOURCE,
     );
+    panic!("xfail: public bib-engine lacks exact Biber date parsing parity for this case");
 }
 
 #[test]
+#[ignore = "xfail: public bib-engine lacks exact Biber date parsing parity for this case"]
 fn assertion_022_date_values_test_15_labelyear_should_be_undef_no_date_or_year() {
     pass_upstream(
         "Date values test 15 - labelyear should be undef, no DATE or YEAR",
@@ -1287,9 +1252,11 @@ fn assertion_022_date_values_test_15_labelyear_should_be_undef_no_date_or_year()
         r"eq_or_diff( $out->get_output_entry('L15', $main), $l15, 'Date values test 15 - labelyear should be undef, no DATE or YEAR') ;",
         UPSTREAM_SOURCE,
     );
+    panic!("xfail: public bib-engine lacks exact Biber date parsing parity for this case");
 }
 
 #[test]
+#[ignore = "xfail: public bib-engine lacks exact Biber date parsing parity for this case"]
 fn assertion_023_date_values_test_16_labelyear_eventyear_when_year_is_mistakenly_() {
     pass_upstream(
         "Date values test 16 - labelyear = EVENTYEAR when YEAR is (mistakenly) missing",
@@ -1298,9 +1265,11 @@ fn assertion_023_date_values_test_16_labelyear_eventyear_when_year_is_mistakenly
         r"eq_or_diff($bibentries->entry('L16')->get_labeldate_info->{field}{year}, 'eventyear', 'Date values test 16 - labelyear = EVENTYEAR when YEAR is (mistakenly) missing' ) ;",
         UPSTREAM_SOURCE,
     );
+    panic!("xfail: public bib-engine lacks exact Biber date parsing parity for this case");
 }
 
 #[test]
+#[ignore = "xfail: public bib-engine lacks exact Biber date parsing parity for this case"]
 fn assertion_024_date_values_test_16a_labelyear_eventyear_value_when_year_is_mist() {
     pass_upstream(
         "Date values test 16a - labelyear = EVENTYEAR value when YEAR is (mistakenly) missing",
@@ -1309,9 +1278,11 @@ fn assertion_024_date_values_test_16a_labelyear_eventyear_value_when_year_is_mis
         r"eq_or_diff($out->get_output_entry('L16', $main), $l16, 'Date values test 16a - labelyear = EVENTYEAR value when YEAR is (mistakenly) missing' );",
         UPSTREAM_SOURCE,
     );
+    panic!("xfail: public bib-engine lacks exact Biber date parsing parity for this case");
 }
 
 #[test]
+#[ignore = "xfail: public bib-engine lacks exact Biber date parsing parity for this case"]
 fn assertion_025_date_values_test_17_labelyear_year() {
     pass_upstream(
         "Date values test 17 - labelyear = YEAR",
@@ -1320,9 +1291,11 @@ fn assertion_025_date_values_test_17_labelyear_year() {
         r"eq_or_diff($bibentries->entry('L17')->get_labeldate_info->{field}{year}, 'year', 'Date values test 17 - labelyear = YEAR' ) ;",
         UPSTREAM_SOURCE,
     );
+    panic!("xfail: public bib-engine lacks exact Biber date parsing parity for this case");
 }
 
 #[test]
+#[ignore = "xfail: public bib-engine lacks exact Biber date parsing parity for this case"]
 fn assertion_026_date_values_test_17a_labelyear_year_value_when_endyear_is_the_sa() {
     pass_upstream(
         "Date values test 17a - labelyear = YEAR value when ENDYEAR is the same and ORIGYEAR is also present",
@@ -1331,9 +1304,11 @@ fn assertion_026_date_values_test_17a_labelyear_year_value_when_endyear_is_the_s
         r"eq_or_diff($out->get_output_entry('L17', $main), $l17, 'Date values test 17a - labelyear = YEAR value when ENDYEAR is the same and ORIGYEAR is also present' ) ;",
         UPSTREAM_SOURCE,
     );
+    panic!("xfail: public bib-engine lacks exact Biber date parsing parity for this case");
 }
 
 #[test]
+#[ignore = "xfail: public bib-engine lacks exact Biber date parsing parity for this case"]
 fn assertion_027_date_values_test_17b_labelyear_origyear() {
     pass_upstream(
         "Date values test 17b - labelyear = ORIGYEAR",
@@ -1342,9 +1317,11 @@ fn assertion_027_date_values_test_17b_labelyear_origyear() {
         r"eq_or_diff($bibentries->entry('L17')->get_labeldate_info->{field}{year}, 'origyear', 'Date values test 17b - labelyear = ORIGYEAR' ) ;",
         UPSTREAM_SOURCE,
     );
+    panic!("xfail: public bib-engine lacks exact Biber date parsing parity for this case");
 }
 
 #[test]
+#[ignore = "xfail: public bib-engine lacks exact Biber date parsing parity for this case"]
 fn assertion_028_date_values_test_17c_labelyear_origyear_value_when_endorigyear_i() {
     pass_upstream(
         "Date values test 17c - labelyear = ORIGYEAR value when ENDORIGYEAR is the same and YEAR is also present",
@@ -1353,9 +1330,11 @@ fn assertion_028_date_values_test_17c_labelyear_origyear_value_when_endorigyear_
         r"eq_or_diff($out->get_output_entry('L17', $main), $l17c, 'Date values test 17c - labelyear = ORIGYEAR value when ENDORIGYEAR is the same and YEAR is also present' ) ;",
         UPSTREAM_SOURCE,
     );
+    panic!("xfail: public bib-engine lacks exact Biber date parsing parity for this case");
 }
 
 #[test]
+#[ignore = "xfail: public bib-engine lacks exact Biber date parsing parity for this case"]
 fn assertion_029_date_values_test_17d_labelyear_eventyear() {
     pass_upstream(
         "Date values test 17d - labelyear = EVENTYEAR",
@@ -1364,9 +1343,11 @@ fn assertion_029_date_values_test_17d_labelyear_eventyear() {
         r"eq_or_diff($bibentries->entry('L17')->get_labeldate_info->{field}{year}, 'eventyear', 'Date values test 17d - labelyear = EVENTYEAR' ) ;",
         UPSTREAM_SOURCE,
     );
+    panic!("xfail: public bib-engine lacks exact Biber date parsing parity for this case");
 }
 
 #[test]
+#[ignore = "xfail: public bib-engine lacks exact Biber date parsing parity for this case"]
 fn assertion_030_date_values_test_17d_source_event() {
     pass_upstream(
         "Date values test 17d - source = event",
@@ -1375,9 +1356,11 @@ fn assertion_030_date_values_test_17d_source_event() {
         r"eq_or_diff($bibentries->entry('L17')->get_labeldate_info->{field}{source}, 'event', 'Date values test 17d - source = event' ) ;",
         UPSTREAM_SOURCE,
     );
+    panic!("xfail: public bib-engine lacks exact Biber date parsing parity for this case");
 }
 
 #[test]
+#[ignore = "xfail: public bib-engine lacks exact Biber date parsing parity for this case"]
 fn assertion_031_date_values_test_17e_labelyear_origyear_origendyear() {
     pass_upstream(
         "Date values test 17e - labelyear = ORIGYEAR-ORIGENDYEAR",
@@ -1386,9 +1369,11 @@ fn assertion_031_date_values_test_17e_labelyear_origyear_origendyear() {
         r"eq_or_diff($out->get_output_entry('L17', $main), $l17e, 'Date values test 17e - labelyear = ORIGYEAR-ORIGENDYEAR' ) ;",
         UPSTREAM_SOURCE,
     );
+    panic!("xfail: public bib-engine lacks exact Biber date parsing parity for this case");
 }
 
 #[test]
+#[ignore = "xfail: public bib-engine lacks exact Biber date parsing parity for this case"]
 fn assertion_032_source_is_non_date_field() {
     pass_upstream(
         "Source is non-date field",
@@ -1397,9 +1382,11 @@ fn assertion_032_source_is_non_date_field() {
         r"eq_or_diff($bibentries->entry('L17')->get_labeldate_info->{field}{source}, 'pubstate', 'Source is non-date field');",
         UPSTREAM_SOURCE,
     );
+    panic!("xfail: public bib-engine lacks exact Biber date parsing parity for this case");
 }
 
 #[test]
+#[ignore = "xfail: public bib-engine lacks exact Biber date parsing parity for this case"]
 fn assertion_033_date_meta_information_1() {
     pass_upstream(
         "Date meta information - 1",
@@ -1408,9 +1395,11 @@ fn assertion_033_date_meta_information_1() {
         r"eq_or_diff($out->get_output_entry('era1', $main), $era1, 'Date meta information - 1');",
         UPSTREAM_SOURCE,
     );
+    panic!("xfail: public bib-engine lacks exact Biber date parsing parity for this case");
 }
 
 #[test]
+#[ignore = "xfail: public bib-engine lacks exact Biber date parsing parity for this case"]
 fn assertion_034_date_meta_information_2() {
     pass_upstream(
         "Date meta information - 2",
@@ -1419,9 +1408,11 @@ fn assertion_034_date_meta_information_2() {
         r"eq_or_diff($out->get_output_entry('era2', $main), $era2, 'Date meta information - 2');",
         UPSTREAM_SOURCE,
     );
+    panic!("xfail: public bib-engine lacks exact Biber date parsing parity for this case");
 }
 
 #[test]
+#[ignore = "xfail: public bib-engine lacks exact Biber date parsing parity for this case"]
 fn assertion_035_date_meta_information_3() {
     pass_upstream(
         "Date meta information - 3",
@@ -1430,9 +1421,11 @@ fn assertion_035_date_meta_information_3() {
         r"eq_or_diff($out->get_output_entry('era3', $main), $era3, 'Date meta information - 3');",
         UPSTREAM_SOURCE,
     );
+    panic!("xfail: public bib-engine lacks exact Biber date parsing parity for this case");
 }
 
 #[test]
+#[ignore = "xfail: public bib-engine lacks exact Biber date parsing parity for this case"]
 fn assertion_036_date_meta_information_4() {
     pass_upstream(
         "Date meta information - 4",
@@ -1441,9 +1434,11 @@ fn assertion_036_date_meta_information_4() {
         r"eq_or_diff($out->get_output_entry('era4', $main), $era4, 'Date meta information - 4');",
         UPSTREAM_SOURCE,
     );
+    panic!("xfail: public bib-engine lacks exact Biber date parsing parity for this case");
 }
 
 #[test]
+#[ignore = "xfail: public bib-engine lacks exact Biber date parsing parity for this case"]
 fn assertion_037_range_1() {
     pass_upstream(
         "Range - 1",
@@ -1452,9 +1447,11 @@ fn assertion_037_range_1() {
         r"eq_or_diff($out->get_output_entry('range1', $main), $range1, 'Range - 1');",
         UPSTREAM_SOURCE,
     );
+    panic!("xfail: public bib-engine lacks exact Biber date parsing parity for this case");
 }
 
 #[test]
+#[ignore = "xfail: public bib-engine lacks exact Biber date parsing parity for this case"]
 fn assertion_038_range_2() {
     pass_upstream(
         "Range - 2",
@@ -1463,9 +1460,11 @@ fn assertion_038_range_2() {
         r"eq_or_diff($out->get_output_entry('range2', $main), $range2, 'Range - 2');",
         UPSTREAM_SOURCE,
     );
+    panic!("xfail: public bib-engine lacks exact Biber date parsing parity for this case");
 }
 
 #[test]
+#[ignore = "xfail: public bib-engine lacks exact Biber date parsing parity for this case"]
 fn assertion_039_seasons_1() {
     pass_upstream(
         "Seasons - 1",
@@ -1474,9 +1473,11 @@ fn assertion_039_seasons_1() {
         r"eq_or_diff($out->get_output_entry('season1', $main), $season1, 'Seasons - 1');",
         UPSTREAM_SOURCE,
     );
+    panic!("xfail: public bib-engine lacks exact Biber date parsing parity for this case");
 }
 
 #[test]
+#[ignore = "xfail: public bib-engine lacks exact Biber date parsing parity for this case"]
 fn assertion_040_unspecified_1() {
     pass_upstream(
         "Unspecified - 1",
@@ -1485,9 +1486,11 @@ fn assertion_040_unspecified_1() {
         r"eq_or_diff($out->get_output_entry('unspec1', $main), $unspec1, 'Unspecified - 1');",
         UPSTREAM_SOURCE,
     );
+    panic!("xfail: public bib-engine lacks exact Biber date parsing parity for this case");
 }
 
 #[test]
+#[ignore = "xfail: public bib-engine lacks exact Biber date parsing parity for this case"]
 fn assertion_041_unspecified_2() {
     pass_upstream(
         "Unspecified - 2",
@@ -1496,9 +1499,11 @@ fn assertion_041_unspecified_2() {
         r"eq_or_diff($out->get_output_entry('unspec2', $main), $unspec2, 'Unspecified - 2');",
         UPSTREAM_SOURCE,
     );
+    panic!("xfail: public bib-engine lacks exact Biber date parsing parity for this case");
 }
 
 #[test]
+#[ignore = "xfail: public bib-engine lacks exact Biber date parsing parity for this case"]
 fn assertion_042_times_1() {
     pass_upstream(
         "Times - 1",
@@ -1507,9 +1512,11 @@ fn assertion_042_times_1() {
         r"eq_or_diff($out->get_output_entry('time1', $main), $time1, 'Times - 1');",
         UPSTREAM_SOURCE,
     );
+    panic!("xfail: public bib-engine lacks exact Biber date parsing parity for this case");
 }
 
 #[test]
+#[ignore = "xfail: public bib-engine lacks exact Biber date parsing parity for this case"]
 fn assertion_043_open_1() {
     pass_upstream(
         "Open - 1",
@@ -1518,9 +1525,11 @@ fn assertion_043_open_1() {
         r"eq_or_diff($bibentries->entry('open1')->get_field('labeldatesource'), '', 'Open - 1');",
         UPSTREAM_SOURCE,
     );
+    panic!("xfail: public bib-engine lacks exact Biber date parsing parity for this case");
 }
 
 #[test]
+#[ignore = "xfail: public bib-engine lacks exact Biber date parsing parity for this case"]
 fn assertion_044_open_2() {
     pass_upstream(
         "Open - 2",
@@ -1529,9 +1538,11 @@ fn assertion_044_open_2() {
         r"eq_or_diff($bibentries->entry('open2')->get_field('labeldatesource'), '', 'Open - 2');",
         UPSTREAM_SOURCE,
     );
+    panic!("xfail: public bib-engine lacks exact Biber date parsing parity for this case");
 }
 
 #[test]
+#[ignore = "xfail: public bib-engine lacks exact Biber date parsing parity for this case"]
 fn assertion_045_extended_years_1() {
     pass_upstream(
         "Extended years - 1",
@@ -1540,9 +1551,11 @@ fn assertion_045_extended_years_1() {
         r"eq_or_diff($bibentries->entry('y1')->get_field('year'), '17000002', 'Extended years - 1');",
         UPSTREAM_SOURCE,
     );
+    panic!("xfail: public bib-engine lacks exact Biber date parsing parity for this case");
 }
 
 #[test]
+#[ignore = "xfail: public bib-engine lacks exact Biber date parsing parity for this case"]
 fn assertion_046_extended_years_2() {
     pass_upstream(
         "Extended years - 2",
@@ -1551,9 +1564,11 @@ fn assertion_046_extended_years_2() {
         r"eq_or_diff($bibentries->entry('y2')->get_field('year'), '-17000002', 'Extended years - 2');",
         UPSTREAM_SOURCE,
     );
+    panic!("xfail: public bib-engine lacks exact Biber date parsing parity for this case");
 }
 
 #[test]
+#[ignore = "xfail: public bib-engine lacks exact Biber date parsing parity for this case"]
 fn assertion_047_extended_years_3() {
     pass_upstream(
         "Extended years - 3",
@@ -1562,9 +1577,11 @@ fn assertion_047_extended_years_3() {
         r"eq_or_diff($bibentries->entry('y3')->get_field('year'), undef, 'Extended years - 3');",
         UPSTREAM_SOURCE,
     );
+    panic!("xfail: public bib-engine lacks exact Biber date parsing parity for this case");
 }
 
 #[test]
+#[ignore = "xfail: public bib-engine lacks exact Biber date parsing parity for this case"]
 fn assertion_048_scripts_1() {
     pass_upstream(
         "Scripts - 1",
@@ -1573,9 +1590,11 @@ fn assertion_048_scripts_1() {
         r"eq_or_diff($bibentries->entry('script1')->get_field('year'), '१९८७', 'Scripts - 1');",
         UPSTREAM_SOURCE,
     );
+    panic!("xfail: public bib-engine lacks exact Biber date parsing parity for this case");
 }
 
 #[test]
+#[ignore = "xfail: public bib-engine lacks exact Biber date parsing parity for this case"]
 fn assertion_049_scripts_2() {
     pass_upstream(
         "Scripts - 2",
@@ -1584,9 +1603,11 @@ fn assertion_049_scripts_2() {
         r"eq_or_diff($bibentries->entry('script1')->get_field('month'), '०१', 'Scripts - 2');",
         UPSTREAM_SOURCE,
     );
+    panic!("xfail: public bib-engine lacks exact Biber date parsing parity for this case");
 }
 
 #[test]
+#[ignore = "xfail: public bib-engine lacks exact Biber date parsing parity for this case"]
 fn assertion_050_scripts_3() {
     pass_upstream(
         "Scripts - 3",
@@ -1595,9 +1616,11 @@ fn assertion_050_scripts_3() {
         r"eq_or_diff($bibentries->entry('script1')->get_field('day'), '१५', 'Scripts - 3');",
         UPSTREAM_SOURCE,
     );
+    panic!("xfail: public bib-engine lacks exact Biber date parsing parity for this case");
 }
 
 #[test]
+#[ignore = "xfail: public bib-engine lacks exact Biber date parsing parity for this case"]
 fn assertion_051_scripts_4() {
     pass_upstream(
         "Scripts - 4",
@@ -1606,9 +1629,11 @@ fn assertion_051_scripts_4() {
         r"eq_or_diff($bibentries->entry('script1')->get_field('endyear'), '१९८८', 'Scripts - 4');",
         UPSTREAM_SOURCE,
     );
+    panic!("xfail: public bib-engine lacks exact Biber date parsing parity for this case");
 }
 
 #[test]
+#[ignore = "xfail: public bib-engine lacks exact Biber date parsing parity for this case"]
 fn assertion_052_scripts_5() {
     pass_upstream(
         "Scripts - 5",
@@ -1617,9 +1642,11 @@ fn assertion_052_scripts_5() {
         r"eq_or_diff($bibentries->entry('script1')->get_field('endmonth'), '०५', 'Scripts - 5');",
         UPSTREAM_SOURCE,
     );
+    panic!("xfail: public bib-engine lacks exact Biber date parsing parity for this case");
 }
 
 #[test]
+#[ignore = "xfail: public bib-engine lacks exact Biber date parsing parity for this case"]
 fn assertion_053_scripts_6() {
     pass_upstream(
         "Scripts - 6",
@@ -1628,9 +1655,11 @@ fn assertion_053_scripts_6() {
         r"eq_or_diff($bibentries->entry('script1')->get_field('endday'), '११', 'Scripts - 6');",
         UPSTREAM_SOURCE,
     );
+    panic!("xfail: public bib-engine lacks exact Biber date parsing parity for this case");
 }
 
 #[test]
+#[ignore = "xfail: public bib-engine lacks exact Biber date parsing parity for this case"]
 fn assertion_054_milliseconds_1() {
     pass_upstream(
         "Milliseconds - 1",
@@ -1639,9 +1668,11 @@ fn assertion_054_milliseconds_1() {
         r"eq_or_diff($bibentries->entry('mill1')->get_field('year'), '2016', 'Milliseconds - 1');",
         UPSTREAM_SOURCE,
     );
+    panic!("xfail: public bib-engine lacks exact Biber date parsing parity for this case");
 }
 
 #[test]
+#[ignore = "xfail: public bib-engine lacks exact Biber date parsing parity for this case"]
 fn assertion_055_milliseconds_2() {
     pass_upstream(
         "Milliseconds - 2",
@@ -1650,9 +1681,11 @@ fn assertion_055_milliseconds_2() {
         r"eq_or_diff($bibentries->entry('mill1')->get_field('month'), '1', 'Milliseconds - 2');",
         UPSTREAM_SOURCE,
     );
+    panic!("xfail: public bib-engine lacks exact Biber date parsing parity for this case");
 }
 
 #[test]
+#[ignore = "xfail: public bib-engine lacks exact Biber date parsing parity for this case"]
 fn assertion_056_milliseconds_3() {
     pass_upstream(
         "Milliseconds - 3",
@@ -1661,4 +1694,5 @@ fn assertion_056_milliseconds_3() {
         r"eq_or_diff($bibentries->entry('mill1')->get_field('day'), '19', 'Milliseconds - 3');",
         UPSTREAM_SOURCE,
     );
+    panic!("xfail: public bib-engine lacks exact Biber date parsing parity for this case");
 }
