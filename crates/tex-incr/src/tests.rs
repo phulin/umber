@@ -204,6 +204,70 @@ fn paragraph_recording_keeps_line_provenance_opaque() {
 }
 
 #[test]
+fn paragraph_history_interns_changed_observations_per_generation() {
+    let mut universe = template();
+    universe.enable_pure_memo(tex_state::PureMemoConfig::default());
+    let source = concat!(
+        "\\font\\tenrm=cmr10\\relax\\tenrm\n",
+        "\\count0=1 \\ifnum\\count0=1 first paragraph\\fi\\par\n",
+        "\\count0=2 \\ifnum\\count0=2 second paragraph\\fi\\par\n",
+        "\\vfill\\eject\\end",
+    );
+    let mut session = Session::start(
+        universe,
+        "paragraph-observation-interning",
+        RevisionId::new(1),
+        source,
+        usize::MAX,
+    )
+    .expect("session starts");
+    session
+        .register_input_file(Path::new("cmr10.tfm"), CMR10.to_vec())
+        .expect("font fixture");
+    session.cold().expect("cold revision");
+
+    let regions = session
+        .pure_memo
+        .accepted_paragraphs()
+        .iter()
+        .filter(|region| region.lines.is_some())
+        .collect::<Vec<_>>();
+    assert!(regions.len() >= 2, "both paragraphs should be retained");
+    let first_table = regions[0]
+        .dependency_observations
+        .as_ref()
+        .expect("accepted region has an observation table");
+    assert!(regions.iter().all(|region| {
+        std::sync::Arc::ptr_eq(
+            first_table,
+            region
+                .dependency_observations
+                .as_ref()
+                .expect("accepted region has an observation table"),
+        )
+    }));
+
+    let count_key = tex_state::DependencyKey::Cell {
+        bank: tex_state::DependencyBank::Count,
+        index: 0,
+    };
+    let stamps = regions
+        .iter()
+        .filter_map(|region| {
+            region
+                .dependencies()
+                .find(|dependency| dependency.key == count_key)
+                .map(|dependency| dependency.changed_at)
+        })
+        .collect::<Vec<_>>();
+    assert!(stamps.len() >= 2, "both count reads should be observed");
+    assert_ne!(
+        stamps[0], stamps[1],
+        "a real intervening write needs a distinct generation-table observation"
+    );
+}
+
+#[test]
 fn replayed_paragraph_provenance_tracks_current_then_deleted_layout() {
     let mut universe = template();
     universe.enable_pure_memo(tex_state::PureMemoConfig::default());
@@ -390,6 +454,91 @@ fn paragraph_front_end_hit_survives_prefix_shift_and_unrelated_register_write() 
         schedule(&cold_output),
         "paragraph replay must publish the same named-boundary schedule as cold execution"
     );
+}
+
+#[test]
+fn cold_middle_paragraph_and_carried_suffix_keep_generation_observation_tables() {
+    let mut universe = template();
+    universe.enable_pure_memo(tex_state::PureMemoConfig::default());
+    let source = concat!(
+        "\\font\\tenrm=cmr10\\relax\\tenrm\n",
+        "first literal paragraph text\\par\n",
+        "changed middle paragraph text\\par\n",
+        "stable suffix paragraph text\\par\n",
+        "\\vfill\\eject\\end",
+    );
+    let mut session = Session::start(
+        universe,
+        "paragraph-observation-generations",
+        RevisionId::new(1),
+        source.to_owned(),
+        usize::MAX,
+    )
+    .expect("session starts");
+    session
+        .register_input_file(Path::new("cmr10.tfm"), CMR10.to_vec())
+        .expect("font fixture");
+    session.cold().expect("cold revision");
+    let original_table = std::sync::Arc::as_ptr(
+        session.pure_memo.accepted_paragraphs()[0]
+            .dependency_observations
+            .as_ref()
+            .expect("cold observation table"),
+    ) as *const tex_state::ObservedDependency as usize;
+
+    let changed = source.find("changed").expect("changed paragraph");
+    let before = session.pure_memo_stats();
+    session
+        .advance(
+            RevisionId::new(2),
+            Edit {
+                base_revision: RevisionId::new(1),
+                expected_hash: ContentHash::from_bytes(source.as_bytes()),
+                range: changed..changed + "changed".len(),
+                replacement: "altered".to_owned(),
+            },
+        )
+        .expect("middle paragraph edit");
+    assert!(
+        session.pure_memo_stats().paragraph_hits > before.paragraph_hits,
+        "the unchanged suffix must be carried"
+    );
+    let accepted = session
+        .pure_memo
+        .accepted_paragraphs()
+        .iter()
+        .filter(|region| region.lines.is_some())
+        .collect::<Vec<_>>();
+    let tables = accepted
+        .iter()
+        .map(|region| {
+            std::sync::Arc::as_ptr(
+                region
+                    .dependency_observations
+                    .as_ref()
+                    .expect("accepted region has an observation table"),
+            ) as *const tex_state::ObservedDependency as usize
+        })
+        .collect::<Vec<_>>();
+    assert!(
+        accepted.windows(2).any(|pair| {
+            !std::sync::Arc::ptr_eq(
+                pair[0]
+                    .dependency_observations
+                    .as_ref()
+                    .expect("accepted region has an observation table"),
+                pair[1]
+                    .dependency_observations
+                    .as_ref()
+                    .expect("accepted region has an observation table"),
+            )
+        }),
+        "a newly cold paragraph and carried suffix must retain distinct generation tables: original={original_table} accepted={tables:?}"
+    );
+    assert!(accepted.iter().all(|region| {
+        region.dependencies().count() == region.dependency_ordinals.len()
+            && region.break_dependencies().count() == region.break_dependency_ordinals.len()
+    }));
 }
 
 #[test]
@@ -1114,7 +1263,6 @@ fn paragraph_read_only_external_box_replays_and_invalidates() {
         session.pure_memo_stats().paragraph_line_hits > before_reuse.paragraph_line_hits,
         "unchanged external box reads should replay"
     );
-
     let old = edited.find("old box").expect("old box text");
     let replacement = "new wider box";
     let redefined = format!(
@@ -1852,7 +2000,7 @@ fn paragraph_with_inline_math_replays_with_explicit_math_dependencies() {
         .accepted_paragraphs()
         .iter()
         .find(|region| {
-            region.dependencies.iter().any(|dependency| {
+            region.dependencies().any(|dependency| {
                 matches!(
                     dependency.key,
                     tex_state::DependencyKey::Code {
@@ -1863,7 +2011,7 @@ fn paragraph_with_inline_math_replays_with_explicit_math_dependencies() {
             })
         })
         .expect("inline paragraph records exact math-code reads");
-    assert!(inline_region.dependencies.iter().all(|dependency| {
+    assert!(inline_region.dependencies().all(|dependency| {
         !matches!(
             dependency.key,
             tex_state::DependencyKey::CodeGeneration(
@@ -1872,8 +2020,7 @@ fn paragraph_with_inline_math_replays_with_explicit_math_dependencies() {
         )
     }));
     let family_dependencies = inline_region
-        .dependencies
-        .iter()
+        .dependencies()
         .filter(|dependency| {
             matches!(
                 dependency.key,
@@ -2025,7 +2172,7 @@ fn inline_math_family_binding_change_rejects_retained_lines() {
         .accepted_paragraphs()
         .iter()
         .find(|region| {
-            region.dependencies.iter().any(|dependency| {
+            region.dependencies().any(|dependency| {
                 matches!(
                     dependency.key,
                     tex_state::DependencyKey::Cell {
@@ -2992,6 +3139,14 @@ fn paragraph_entry_validation_rejects_changed_indent_then_backdates_equal_state(
     assert!(
         after_changed.paragraph_validation_misses > before_changed.paragraph_validation_misses,
         "changed parindent must be reported as a typed validation miss"
+    );
+    assert!(
+        session
+            .pure_memo
+            .accepted_paragraphs()
+            .iter()
+            .all(|region| region.dependencies().count() == region.dependency_ordinals.len()),
+        "cold fallback after a changed stamp must re-intern every observation ordinal"
     );
 
     let before_equal = after_changed;

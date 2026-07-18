@@ -1875,6 +1875,11 @@ impl Universe {
     }
 
     #[doc(hidden)]
+    pub fn record_paragraph_observation(&mut self, observation: crate::ObservedDependency) -> u32 {
+        self.pure_memo.record_paragraph_observation(observation)
+    }
+
+    #[doc(hidden)]
     pub fn preserve_prior_paragraph_history(&mut self) {
         self.pure_memo.preserve_prior_paragraph_history();
     }

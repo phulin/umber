@@ -481,6 +481,17 @@ diagnostic behavior. This is the intended policy for rarely consumed
 diagnostic provenance: retain enough immutable information cheaply and decode
 only the requested origin.
 
+Accepted dependency observations are likewise generation-owned. One append-only
+table stores each `(key, changed_at, value)` observation once per speculative
+history; paragraph front-end and break read sets retain only canonical `u32`
+ordinals. Acceptance freezes the table into one shared `Arc`. Carried regions
+continue to reference their prior generation's table, while newly executed
+regions receive the new table. This keeps exact stamp/value validation but
+reduces Gentle metadata from 8,500,706 to 3,101,194 bytes after cold priming and
+from 7,773,494 to 2,960,838 bytes after a slow edit. Clean cold timings were
+neutral to about 1 ms favorable; the representation is accepted for its 62--64%
+retained-memory reduction, not as a claimed latency breakthrough.
+
 ### Direct root-state delta recording
 
 Paragraph mutation recording no longer opens a rollback epoch or derives redo

@@ -93,7 +93,7 @@ pub enum FontSource {
 /// [`tex_expand::ExpansionContext`]; font resolution remains an execution-only
 /// operation and is invoked solely by `\font` assignment.
 pub(crate) struct PendingParagraphMemo {
-    pub(crate) break_dependencies: Vec<tex_state::ObservedDependency>,
+    pub(crate) break_dependency_ordinals: Vec<u32>,
     pub(crate) prev_graf: Option<i32>,
     pub(crate) continuation: ParagraphContinuation,
 }
@@ -129,6 +129,15 @@ pub(crate) struct InlineMathReads {
     pub(crate) family_mask: u64,
 }
 
+#[derive(Clone)]
+pub(crate) struct CachedParagraphDependency {
+    pub(crate) observation: tex_state::ObservedDependency,
+    /// Ordinal in the speculative history currently being recorded. A cache
+    /// entry populated by validation receives an ordinal only if execution
+    /// later falls back to cold publication.
+    pub(crate) recorded_ordinal: Option<u32>,
+}
+
 pub struct ExecutionContext<'a> {
     expansion: tex_expand::ExpansionContext<'a>,
     font_resolver: Option<&'a mut dyn FontResolver>,
@@ -143,7 +152,7 @@ pub struct ExecutionContext<'a> {
     /// Detached paragraph observations reusable only while their authoritative
     /// changed-at stamps remain equal during this execution run.
     pub(crate) paragraph_dependency_cache:
-        ahash::AHashMap<tex_state::DependencyKey, tex_state::ObservedDependency>,
+        ahash::AHashMap<tex_state::DependencyKey, CachedParagraphDependency>,
 }
 
 impl<'a> ExecutionContext<'a> {

@@ -73,7 +73,7 @@ pub(crate) fn try_reuse_aligned_paragraph(
     debug_assert!(entry.barriers.is_empty());
     let validation_started = start_phase();
     let validated = validate_paragraph_entry(
-        &mut entry,
+        &entry,
         input,
         stores,
         execution,
@@ -172,13 +172,17 @@ pub(crate) fn try_reuse_aligned_paragraph(
 /// state-delta preconditions, effects, and retained line liveness are all
 /// established before the caller advances input or replays state.
 fn validate_paragraph_entry(
-    entry: &mut tex_state::RecordedParagraphRegion,
+    entry: &tex_state::RecordedParagraphRegion,
     input: &InputStack,
     stores: &mut Universe,
     execution: &mut ExecutionContext<'_>,
     current_starting_input_identity: Option<u64>,
     current_prev_graf: i32,
 ) -> Option<ValidatedParagraphEntry> {
+    let Some(observations) = entry.dependency_observations.as_deref() else {
+        stores.record_pure_paragraph_validation_failure(ParagraphValidationFailure::RetainedResult);
+        return None;
+    };
     let prepared_input =
         entry
             .starting_root_span
@@ -206,9 +210,12 @@ fn validate_paragraph_entry(
     );
     let dependency_failure = (!mutation_entry_class_changed)
         .then(|| {
-            stores.validate_dependencies_with_failure_readonly(&entry.dependencies, |key| {
-                paragraph_validation_value(stores, execution, key)
-            })
+            validate_paragraph_dependencies(
+                stores,
+                observations,
+                &entry.dependency_ordinals,
+                |key| paragraph_validation_value(stores, execution, key),
+            )
         })
         .flatten();
     let validation_failure = mutation_entry_class_changed
@@ -230,7 +237,7 @@ fn validate_paragraph_entry(
         stores.record_pure_paragraph_validation_failure(failure);
         return None;
     }
-    if !validate_finished_lines(entry, stores, execution, current_prev_graf) {
+    if !validate_finished_lines(entry, observations, stores, execution, current_prev_graf) {
         return None;
     }
     let Some(lines) = entry.lines.clone() else {
@@ -266,16 +273,19 @@ pub(crate) const fn same_mutation_entry_class(
 }
 
 fn validate_finished_lines(
-    entry: &mut tex_state::RecordedParagraphRegion,
+    entry: &tex_state::RecordedParagraphRegion,
+    observations: &[tex_state::ObservedDependency],
     stores: &mut Universe,
     execution: &mut ExecutionContext<'_>,
     current_prev_graf: i32,
 ) -> bool {
     let line_validation_started = start_phase();
-    let semantic_failure = stores
-        .validate_dependencies_with_failure_readonly(&entry.break_dependencies, |key| {
-            projected_break_validation_value(stores, execution, &entry.mutations, key)
-        });
+    let semantic_failure = validate_paragraph_dependencies(
+        stores,
+        observations,
+        &entry.break_dependency_ordinals,
+        |key| projected_break_validation_value(stores, execution, &entry.mutations, key),
+    );
     let valid = entry
         .break_prev_graf
         .is_none_or(|expected| current_prev_graf == expected)
@@ -298,6 +308,22 @@ fn validate_finished_lines(
         execution.paragraph_memo_disabled_for_run = true;
     }
     valid
+}
+
+fn validate_paragraph_dependencies(
+    stores: &Universe,
+    observations: &[tex_state::ObservedDependency],
+    ordinals: &[u32],
+    mut read_current: impl FnMut(tex_state::DependencyKey) -> tex_state::DependencyValue,
+) -> Option<tex_state::DependencyKey> {
+    ordinals.iter().find_map(|&ordinal| {
+        let observation = observations
+            .get(ordinal as usize)
+            .expect("accepted paragraph observation ordinal is valid");
+        let stamp_changed = stores.dependency_changed_at(observation.key) != observation.changed_at;
+        (stamp_changed && read_current(observation.key) != observation.value)
+            .then_some(observation.key)
+    })
 }
 
 fn projected_break_validation_value(
@@ -614,7 +640,8 @@ pub(crate) fn publish_prepared_hlist(
         return;
     }
     let dependencies_started = start_phase();
-    let Some(break_dependencies) = paragraph_break_dependencies(stores, execution, nodes) else {
+    let Some(break_dependency_ordinals) = paragraph_break_dependencies(stores, execution, nodes)
+    else {
         execution.pending_paragraph_memo = None;
         return;
     };
@@ -627,7 +654,7 @@ pub(crate) fn publish_prepared_hlist(
         || stores.dimen_param(DimenParam::HANG_INDENT).raw() != 0)
         .then_some(prev_graf);
     execution.pending_paragraph_memo = Some(crate::executor::PendingParagraphMemo {
-        break_dependencies,
+        break_dependency_ordinals,
         prev_graf,
         continuation,
     });
@@ -823,7 +850,8 @@ fn publish_recorded_region(
         ending_span,
         consumed_spans: consumed_spans.into(),
         delivered_tokens: recording.delivered_tokens,
-        dependencies: dependencies.into(),
+        dependency_ordinals: dependencies.into(),
+        dependency_observations: None,
         mutation_entry_in_group: mutation_summary.entry_in_group,
         mutations: mutation_summary.mutations.into(),
         effects: effects.into(),
@@ -834,7 +862,7 @@ fn publish_recorded_region(
         input_origin_list_lengths: input_origin_list_lengths.into(),
         input_suffix_token_lists: input_suffix_token_lists.into(),
         barriers: recording.barriers.into_iter().collect::<Vec<_>>().into(),
-        break_dependencies: Vec::new().into(),
+        break_dependency_ordinals: Vec::new().into(),
         break_prev_graf: None,
         lines: None,
         line_count: 0,
@@ -851,7 +879,7 @@ fn publish_recorded_region(
     );
     if execution.pending_paragraph_memo.is_none() {
         execution.pending_paragraph_memo = Some(crate::executor::PendingParagraphMemo {
-            break_dependencies: Vec::new(),
+            break_dependency_ordinals: Vec::new(),
             prev_graf: None,
             continuation,
         });
@@ -883,7 +911,7 @@ pub(crate) fn publish_finished_lines(
         crate::executor::ParagraphContinuation::Display => Some(active_directions.into()),
     };
     stores.finish_recorded_paragraph_lines(tex_state::RecordedParagraphLines {
-        dependencies: pending.break_dependencies,
+        dependency_ordinals: pending.break_dependency_ordinals,
         prev_graf: pending.prev_graf,
         lines: retained,
         line_count,
@@ -993,7 +1021,7 @@ fn paragraph_break_dependencies(
     stores: &mut Universe,
     execution: &mut ExecutionContext<'_>,
     nodes: &[tex_state::node::Node],
-) -> Option<Vec<tex_state::ObservedDependency>> {
+) -> Option<Vec<u32>> {
     use tex_state::{
         DependencyBank as Bank, DependencyCodeTable as Code, DependencyEngineField as Engine,
         DependencyFontField as Font, DependencyKey as Key,
@@ -1116,22 +1144,7 @@ fn paragraph_break_dependencies(
     let dependencies = tracked
         .into_iter()
         .map(|(key, changed_at)| {
-            if let Some(cached) = execution.paragraph_dependency_cache.get(&key)
-                && cached.changed_at == changed_at
-            {
-                return Some(cached.clone());
-            }
-            let observed = tex_state::ObservedDependency {
-                key,
-                changed_at,
-                value: stores.semantic_dependency_value(key)?,
-            };
-            if execution.paragraph_dependency_cache.len() < MAX_PARAGRAPH_DEPENDENCY_CACHE_ENTRIES {
-                execution
-                    .paragraph_dependency_cache
-                    .insert(key, observed.clone());
-            }
-            Some(observed)
+            paragraph_observation_for_stamp(stores, execution, key, changed_at)
         })
         .collect();
     finish_phase(
@@ -1250,19 +1263,22 @@ fn paragraph_validation_value(
 ) -> tex_state::DependencyValue {
     let changed_at = stores.dependency_changed_at(key);
     if let Some(cached) = execution.paragraph_dependency_cache.get(&key)
-        && cached.changed_at == changed_at
+        && cached.observation.changed_at == changed_at
     {
-        return cached.value.clone();
+        return cached.observation.value.clone();
     }
     let value = paragraph_semantic_dependency_value(stores, key)
         .unwrap_or(tex_state::DependencyValue::Absent);
     if execution.paragraph_dependency_cache.len() < MAX_PARAGRAPH_DEPENDENCY_CACHE_ENTRIES {
         execution.paragraph_dependency_cache.insert(
             key,
-            tex_state::ObservedDependency {
-                key,
-                changed_at,
-                value: value.clone(),
+            crate::executor::CachedParagraphDependency {
+                observation: tex_state::ObservedDependency {
+                    key,
+                    changed_at,
+                    value: value.clone(),
+                },
+                recorded_ordinal: None,
             },
         );
     }
@@ -1273,25 +1289,63 @@ fn paragraph_observed_dependency(
     stores: &mut Universe,
     execution: &mut ExecutionContext<'_>,
     key: tex_state::DependencyKey,
-) -> Option<tex_state::ObservedDependency> {
+) -> Option<u32> {
     let changed_at = stores.track_dependency(key);
+    paragraph_observation_for_stamp(stores, execution, key, changed_at)
+}
+
+fn paragraph_observation_for_stamp(
+    stores: &mut Universe,
+    execution: &mut ExecutionContext<'_>,
+    key: tex_state::DependencyKey,
+    changed_at: tex_state::ChangedAt,
+) -> Option<u32> {
     if let Some(cached) = execution.paragraph_dependency_cache.get(&key)
-        && cached.changed_at == changed_at
+        && cached.observation.changed_at == changed_at
     {
-        return Some(cached.clone());
+        if let Some(ordinal) = cached.recorded_ordinal {
+            return Some(ordinal);
+        }
+        return Some(intern_paragraph_observation(
+            stores,
+            execution,
+            cached.observation.clone(),
+        ));
     }
-    let value = paragraph_semantic_dependency_value(stores, key);
     let observed = tex_state::ObservedDependency {
         key,
         changed_at,
-        value: value?,
+        value: paragraph_semantic_dependency_value(stores, key)?,
     };
-    if execution.paragraph_dependency_cache.len() < MAX_PARAGRAPH_DEPENDENCY_CACHE_ENTRIES {
-        execution
-            .paragraph_dependency_cache
-            .insert(key, observed.clone());
+    Some(intern_paragraph_observation(stores, execution, observed))
+}
+
+fn intern_paragraph_observation(
+    stores: &mut Universe,
+    execution: &mut ExecutionContext<'_>,
+    observed: tex_state::ObservedDependency,
+) -> u32 {
+    if let Some(cached) = execution.paragraph_dependency_cache.get(&observed.key)
+        && cached.observation.changed_at == observed.changed_at
+        && let Some(ordinal) = cached.recorded_ordinal
+    {
+        return ordinal;
     }
-    Some(observed)
+    let ordinal = stores.record_paragraph_observation(observed.clone());
+    if let Some(cached) = execution.paragraph_dependency_cache.get_mut(&observed.key)
+        && cached.observation.changed_at == observed.changed_at
+    {
+        cached.recorded_ordinal = Some(ordinal);
+    } else if execution.paragraph_dependency_cache.len() < MAX_PARAGRAPH_DEPENDENCY_CACHE_ENTRIES {
+        execution.paragraph_dependency_cache.insert(
+            observed.key,
+            crate::executor::CachedParagraphDependency {
+                observation: observed,
+                recorded_ordinal: Some(ordinal),
+            },
+        );
+    }
+    ordinal
 }
 
 fn paragraph_semantic_dependency_value(

@@ -484,7 +484,11 @@ pub struct RecordedParagraphRegion {
     /// Delivered-token count retained only for avoided-work telemetry. No
     /// token values or origins are recorded.
     pub delivered_tokens: usize,
-    pub dependencies: Arc<[ObservedDependency]>,
+    /// Generation-local ordinals into `dependency_observations`.
+    pub dependency_ordinals: Arc<[u32]>,
+    /// One immutable observation table shared by every newly accepted region
+    /// in a paragraph history generation. `None` exists only while recording.
+    pub dependency_observations: Option<Arc<[ObservedDependency]>>,
     /// Root and live-group mutation scripts use different compaction rules.
     pub mutation_entry_in_group: bool,
     pub mutations: Arc<[PureParagraphMutation]>,
@@ -506,7 +510,7 @@ pub struct RecordedParagraphRegion {
     /// Dependencies observed by horizontal-list construction, line breaking,
     /// materialization, and packing. A mismatch invalidates finished lines and
     /// sends the revision down the ordinary cold path.
-    pub break_dependencies: Arc<[ObservedDependency]>,
+    pub break_dependency_ordinals: Arc<[u32]>,
     /// Enclosing vertical-list line offset consumed by `line_shape`, when a
     /// non-natural paragraph shape can observe it.
     pub break_prev_graf: Option<i32>,
@@ -525,12 +529,34 @@ pub struct RecordedParagraphRegion {
 /// Finished line-breaking payload attached to the most recently recorded
 /// paragraph region.
 pub struct RecordedParagraphLines {
-    pub dependencies: Vec<ObservedDependency>,
+    pub dependency_ordinals: Vec<u32>,
     pub prev_graf: Option<i32>,
     pub lines: RetainedNodeList,
     pub line_count: i32,
     pub last_badness: i32,
     pub display_active_directions: Option<Arc<[crate::node::Direction]>>,
+}
+
+impl RecordedParagraphRegion {
+    /// Front-end observations in canonical paragraph order.
+    pub fn dependencies(&self) -> impl ExactSizeIterator<Item = &ObservedDependency> {
+        let observations = self.dependency_observations.as_deref().unwrap_or_default();
+        self.dependency_ordinals.iter().map(|&ordinal| {
+            observations
+                .get(ordinal as usize)
+                .expect("accepted paragraph observation ordinal is valid")
+        })
+    }
+
+    /// Line-result observations in canonical paragraph order.
+    pub fn break_dependencies(&self) -> impl ExactSizeIterator<Item = &ObservedDependency> {
+        let observations = self.dependency_observations.as_deref().unwrap_or_default();
+        self.break_dependency_ordinals.iter().map(|&ordinal| {
+            observations
+                .get(ordinal as usize)
+                .expect("accepted paragraph observation ordinal is valid")
+        })
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -647,6 +673,7 @@ pub struct PureMemoRuntime {
     /// First accepted paragraph that may still align with the new execution.
     prior_paragraph_cursor: usize,
     recorded_paragraphs: Vec<RecordedParagraphRegion>,
+    recorded_paragraph_observations: Vec<ObservedDependency>,
     reuse_prior_paragraphs: bool,
     preserve_prior_paragraphs: bool,
     paragraph_barrier_reasons: BTreeMap<ParagraphBarrierReason, u64>,
@@ -1022,7 +1049,7 @@ impl PureMemoRuntime {
             return;
         };
         if region.barriers.is_empty() && region.lines.is_none() {
-            region.break_dependencies = result.dependencies.into();
+            region.break_dependency_ordinals = result.dependency_ordinals.into();
             region.break_prev_graf = result.prev_graf;
             region.lines = Some(result.lines);
             region.line_count = result.line_count;
@@ -1198,6 +1225,7 @@ impl PureMemoRuntime {
     /// accepted substrate may resolve the retained node handles.
     pub fn begin_paragraph_history(&mut self, reuse_prior: bool) {
         self.recorded_paragraphs.clear();
+        self.recorded_paragraph_observations.clear();
         self.reuse_prior_paragraphs = reuse_prior;
         self.preserve_prior_paragraphs = false;
         self.prior_paragraph_cursor = 0;
@@ -1210,6 +1238,7 @@ impl PureMemoRuntime {
     /// here only adds deallocation and future priming work.
     pub(crate) fn preserve_prior_paragraph_history(&mut self) {
         self.recorded_paragraphs.clear();
+        self.recorded_paragraph_observations.clear();
         self.preserve_prior_paragraphs = true;
         self.reuse_prior_paragraphs = false;
         self.prior_paragraph_cursor = 0;
@@ -1220,13 +1249,19 @@ impl PureMemoRuntime {
     pub fn accept_paragraph_history(&mut self, resolver: Arc<crate::ParagraphOriginResolver>) {
         if self.preserve_prior_paragraphs {
             self.recorded_paragraphs.clear();
+            self.recorded_paragraph_observations.clear();
             self.preserve_prior_paragraphs = false;
             self.prior_paragraph_cursor = 0;
             self.prior_paragraph_input_cursors.clear();
             self.reuse_prior_paragraphs = false;
             return;
         }
+        let observations: Arc<[ObservedDependency]> =
+            std::mem::take(&mut self.recorded_paragraph_observations).into();
         for region in &mut self.recorded_paragraphs {
+            if region.dependency_observations.is_none() {
+                region.dependency_observations = Some(Arc::clone(&observations));
+            }
             if region.lines.is_some()
                 && matches!(region.line_provenance, ParagraphLineProvenance::Pending)
             {
@@ -1258,6 +1293,7 @@ impl PureMemoRuntime {
     /// Drops all trace metadata produced by an abandoned execution branch.
     pub fn discard_paragraph_history(&mut self) {
         self.recorded_paragraphs.clear();
+        self.recorded_paragraph_observations.clear();
         self.preserve_prior_paragraphs = false;
         self.reuse_prior_paragraphs = false;
         self.prior_paragraph_cursor = 0;
@@ -1266,6 +1302,14 @@ impl PureMemoRuntime {
 
     pub fn recorded_paragraphs(&self) -> &[RecordedParagraphRegion] {
         &self.recorded_paragraphs
+    }
+
+    /// Interns one observation into the speculative history generation.
+    pub(crate) fn record_paragraph_observation(&mut self, observation: ObservedDependency) -> u32 {
+        let ordinal = u32::try_from(self.recorded_paragraph_observations.len())
+            .expect("paragraph observation generation exceeds u32");
+        self.recorded_paragraph_observations.push(observation);
+        ordinal
     }
 
     /// Returns the currently accepted ordered paragraph history.
@@ -1435,11 +1479,31 @@ impl PureMemoRuntime {
     }
 
     fn paragraph_metadata_bytes(&self) -> usize {
-        self.prior_paragraphs
+        let regions = self
+            .prior_paragraphs
             .iter()
-            .chain(&self.recorded_paragraphs)
+            .chain(&self.recorded_paragraphs);
+        let region_bytes = regions
+            .clone()
             .map(recorded_paragraph_retained_bytes)
+            .sum::<usize>();
+        let mut tables = HashSet::new();
+        let observation_bytes = regions
+            .filter_map(|region| region.dependency_observations.as_ref())
+            .filter(|table| tables.insert(Arc::as_ptr(table) as *const ObservedDependency as usize))
+            .map(|table| {
+                table
+                    .len()
+                    .saturating_mul(std::mem::size_of::<ObservedDependency>())
+            })
             .sum::<usize>()
+            .saturating_add(
+                self.recorded_paragraph_observations
+                    .capacity()
+                    .saturating_mul(std::mem::size_of::<ObservedDependency>()),
+            );
+        region_bytes
+            .saturating_add(observation_bytes)
             .saturating_add(
                 self.prior_paragraph_starts
                     .capacity()
@@ -1614,9 +1678,9 @@ fn recorded_paragraph_retained_bytes(region: &RecordedParagraphRegion) -> usize 
         )
         .saturating_add(
             region
-                .dependencies
+                .dependency_ordinals
                 .len()
-                .saturating_mul(std::mem::size_of::<ObservedDependency>()),
+                .saturating_mul(std::mem::size_of::<u32>()),
         )
         .saturating_add(
             region
@@ -1651,9 +1715,9 @@ fn recorded_paragraph_retained_bytes(region: &RecordedParagraphRegion) -> usize 
         )
         .saturating_add(
             region
-                .break_dependencies
+                .break_dependency_ordinals
                 .len()
-                .saturating_mul(std::mem::size_of::<ObservedDependency>()),
+                .saturating_mul(std::mem::size_of::<u32>()),
         )
         .saturating_add(
             region

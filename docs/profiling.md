@@ -1235,6 +1235,19 @@ cost. The final uninstrumented twenty-pair path-separated run reported:
 
 All schedules and DVI bytes remain cold-identical. Paragraph recording is
 therefore a net win for the representative edit history even after its entire
-one-time cold cost is charged. The remaining 8.5 MB accepted history and cold
+one-time cold cost is charged. The remaining 3.1 MB accepted history and cold
 construction cost are explicit product tradeoffs, not blockers for enabling
 the now-profitable incremental path.
+
+The follow-up q02h.67.32 representation interns typed dependency observations
+once per accepted history generation and stores `u32` ordinals in each region.
+It reduces cold Gentle history from 8,500,706 to 3,101,194 bytes (63.5%) and
+slow-edit history from 7,773,494 to 2,960,838 bytes (61.9%). A clean reversed
+40-run cold pair measured 133.280 ms with recording and 113.467 ms disabled;
+the previous balanced candidate mean was 134.443 ms, so latency is neutral to
+roughly 1 ms favorable rather than a resolved large win. A ten-pair
+path-separated check retained 863/873 hits and 101,166 skipped commands, with
+-30.721 ms slow, -11.457 ms slow-plus-priming, +1.023 ms fast, and cold-identical
+DVI and schedules. The change is accepted because it removes duplicated
+semantic values and most retained metadata without moving validation or cold
+time in the wrong direction.
