@@ -1206,3 +1206,35 @@ ceiling is page/output reuse or a cheaper rebuild representation. Input-frame
 provenance deferral and first-read entry-font tracking remain valid narrow
 cleanups, but neither can materially move this profile and neither is required
 for paragraph replay's release gate.
+
+The q02h.67.31 isolated cold mode then separated memo-runtime activation from
+paragraph-history construction. In the 50-run instrumented captures, the
+memo-disabled median was 129.289 ms, enabling the runtime with no recording was
+129.705 ms (+0.416 ms), and paragraph recording was 152.791 ms (+23.502 ms).
+The recorded phase counters account for 11.781 ms: 2.072 ms of front-end
+dependencies, 0.557 ms of input transition, 0.753 ms of region publication,
+4.813 ms of break dependencies, and 3.585 ms of retained-line construction.
+Line provenance remains zero. The sampled remainder is distributed through
+recording-time line promotion and semantic copying, dependency vector
+construction/sorting, and their allocation traffic; it is not memo-runtime
+control overhead.
+
+Production builds compile those phase timers and profiling-only payload scans
+out. Two balanced-order 40-run cold blocks averaged 114.590 ms disabled and
+134.443 ms with paragraph recording, a 19.853 ms (17.3%) history-construction
+cost. The final uninstrumented twenty-pair path-separated run reported:
+
+| Path                                        | Enabled minus disabled |
+| ------------------------------------------- | ---------------------: |
+| Slow edits                                  |             -29.703 ms |
+| Slow edits plus one-time priming            |              -7.846 ms |
+| Cross-generation interaction                |              -0.988 ms |
+| Independent fast suffix adoption            |              +1.006 ms |
+| Forced line-result rebreak                  |              +3.918 ms |
+| Priming plus the complete five-edit history |              -3.909 ms |
+
+All schedules and DVI bytes remain cold-identical. Paragraph recording is
+therefore a net win for the representative edit history even after its entire
+one-time cold cost is charged. The remaining 8.5 MB accepted history and cold
+construction cost are explicit product tradeoffs, not blockers for enabling
+the now-profitable incremental path.

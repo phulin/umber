@@ -369,13 +369,15 @@ remaining executor work is dominated by the ordinary page pipeline:
 another 8%. Line breaking itself is 1.78% and is limited to misses and
 output-routine paragraphs.
 
-An optimized ten-pair path-separated run measured the representative slow
-edits at -44.832 ms enabled-minus-disabled, or -21.081 ms after charging the
-one-time accepted-history priming cost. The independent fast path was
-+1.118 ms and forced rebreak was +4.729 ms. This means further provenance,
-read-set, or replay-loop tuning cannot yield a large slow-path improvement:
-the next material ceiling is page/output reuse, which remains deliberately
-outside this paragraph design.
+An instrumented optimized ten-pair path-separated run measured the
+representative slow edits at -44.832 ms enabled-minus-disabled, or -21.081 ms
+after charging the one-time accepted-history priming cost. A final
+uninstrumented twenty-pair release run measured -29.703 ms for the slow edits
+and -7.846 ms with priming charged. The independent fast path was +1.006 ms,
+forced rebreak was +3.918 ms, and priming plus the complete five-edit history
+was -3.909 ms. This means further provenance, read-set, or replay-loop tuning
+cannot yield a large slow-path improvement: the next material ceiling is
+page/output reuse, which remains deliberately outside this paragraph design.
 
 ### Mountable finished-line ownership experiment
 
