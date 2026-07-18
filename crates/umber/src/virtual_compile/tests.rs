@@ -900,6 +900,52 @@ fn unavailable_openin_retries_into_tex_missing_file_semantics() {
 }
 
 #[test]
+fn invalid_openin_probe_uses_tex_missing_file_semantics() {
+    let mut session = session(
+        "\\openin0=:texsys.aux \\ifeof0 \\message{INVALID-PROBE-MISSING}\\else \\errmessage{unexpected invalid probe}\\fi \\end",
+    );
+    let CompileAttemptResult::Complete(output) = session.compile_attempt() else {
+        panic!("invalid openin probe should complete without requesting a resource");
+    };
+    assert!(
+        output
+            .terminal
+            .windows(b"INVALID-PROBE-MISSING".len())
+            .any(|window| window == b"INVALID-PROBE-MISSING")
+    );
+}
+
+#[test]
+fn invalid_and_absolute_file_enquiries_are_missing_without_host_access() {
+    let mut session = VirtualCompileSession::new(SessionOptions {
+        engine: EngineMode::PdfTex,
+        ..SessionOptions::default()
+    })
+    .expect("pdfTeX session");
+    session
+        .add_user_file(
+            "main.tex",
+            b"\\message{COLON=[\\pdffilesize{nul:}]}\\message{ABS=[\\pdffilesize{/dev/null}]}\\end"
+                .to_vec(),
+        )
+        .expect("main source");
+    let attempt = session.compile_attempt();
+    let CompileAttemptResult::Complete(output) = attempt else {
+        panic!(
+            "file enquiries should treat invalid and unavailable host paths as missing: {attempt:?}"
+        );
+    };
+    for expected in [b"COLON=[]".as_slice(), b"ABS=[]".as_slice()] {
+        assert!(
+            output
+                .terminal
+                .windows(expected.len())
+                .any(|window| window == expected)
+        );
+    }
+}
+
+#[test]
 fn unavailable_font_answers_are_idempotent_and_conflict_with_bytes() {
     let mut session = VirtualCompileSession::new(SessionOptions {
         html: true,

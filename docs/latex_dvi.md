@@ -67,6 +67,12 @@ must match the pinned reference engine byte-for-byte in DVI after the existing
 preamble-comment normalization and exactly in required multi-pass auxiliary
 files.
 
+The host-neutral resolver treats unsuccessful file probes as missing without
+turning them into resource requests or host access. This includes the 2026
+kernel's `:texsys.aux` `\openin` probe, `nul:` file enquiry, and unavailable
+absolute-device enquiry; an invalid path used by `\input` remains a
+deterministic error.
+
 The TeX82 TRIP, Plain TeX, and e-TeX/e-TRIP gates remain mandatory. LaTeX-only
 meanings must not leak into either earlier mode.
 

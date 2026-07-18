@@ -447,12 +447,45 @@ impl InputResolver for VirtualFileResolver<'_> {
             .map(|source| Box::new(source) as Box<dyn tex_lex::InputSource>)
     }
 
+    fn input_file_size(
+        &mut self,
+        input: &mut dyn InputReadState,
+        name: &str,
+        request_index: u64,
+    ) -> Result<Option<u64>, String> {
+        let requested = match RequestedFile::parse(FileKind::TexInput, name) {
+            Ok(requested) => requested,
+            Err(_) => return Ok(None),
+        };
+        if let RequestedFile::UserOnly(path) = requested {
+            let Some(file) = self.snapshot_file(&path)? else {
+                return Ok(None);
+            };
+            return self
+                .read_snapshot(input, file)
+                .map(|content| Some(u64::try_from(content.bytes().len()).unwrap_or(u64::MAX)));
+        }
+        if self.request_is_unavailable(FileKind::TexInput, name) {
+            return Ok(None);
+        }
+        self.open(input, FileKind::TexInput, name, request_index)
+            .map(|content| Some(u64::try_from(content.bytes().len()).unwrap_or(u64::MAX)))
+    }
+
     fn open_stream_input(
         &mut self,
         input: &mut dyn InputReadState,
         name: &str,
         request_index: u64,
     ) -> Result<Option<FileContent>, String> {
+        // `\openin` is a probe: an invalid host-neutral path is unavailable,
+        // just like a valid path with no matching file.  In particular, the
+        // LaTeX kernel intentionally probes `:texsys.aux` while detecting the
+        // filesystem.  Do not turn that probe into a fatal compile error or a
+        // resource request, while keeping invalid `\input` paths fatal.
+        if RequestedFile::parse(FileKind::TexInput, name).is_err() {
+            return Ok(None);
+        }
         if self.request_is_unavailable(FileKind::TexInput, name) {
             return Ok(None);
         }
