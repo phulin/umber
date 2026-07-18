@@ -27,7 +27,9 @@ export async function runCompileMessage(message, dependencies = {}) {
 			engineVersion: bindings.packageVersion(),
 			formatSchema: bindings.formatSchemaVersion(),
 		});
-		options = { ...options, format };
+		const formatPrefetchHints =
+			resolver.formatPrefetchHints?.(message.resolver.format) ?? [];
+		options = { ...options, format, formatPrefetchHints };
 	}
 	return compile(
 		options,

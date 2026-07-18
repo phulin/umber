@@ -310,6 +310,15 @@ test("controller forwards a named manifest format without transferring bytes", a
 
 test("worker runtime selects a compatible manifest format", async () => {
 	const format = new Uint8Array([9, 0, 8]);
+	const formatPrefetchHints = [
+		{
+			type: "file",
+			domain: "tex",
+			kind: "tex",
+			name: "plain.tex",
+			originalName: "plain.tex",
+		},
+	];
 	let receivedOptions;
 	class Session {
 		constructor(options) {
@@ -351,11 +360,15 @@ test("worker runtime selects a compatible manifest format", async () => {
 					compatibility.push({ name, expected });
 					return format;
 				},
+				formatPrefetchHints() {
+					return formatPrefetchHints;
+				},
 			},
 		},
 	);
 
 	assert.equal(receivedOptions.format, format);
+	assert.equal(receivedOptions.formatPrefetchHints, formatPrefetchHints);
 	assert.deepEqual(compatibility, [
 		{
 			name: "plain",

@@ -364,6 +364,46 @@ test("formats remain inline and download through the verified object cache", asy
 	);
 });
 
+test("schema three format closures become speculative resolver hints", async () => {
+	const data = await fixture();
+	data.root = {
+		...data.root,
+		schema: 3,
+		formats: {
+			plain: {
+				...data.root.formats.plain,
+				inputClosure: {
+					schema: 1,
+					keys: ["tex:hint.tex", "tex:plain.tex"],
+				},
+			},
+		},
+	};
+	const { resolver, calls } = resolverFor(data);
+	const hints = resolver.formatPrefetchHints("plain");
+	assert.deepEqual(
+		hints.map(({ type, domain, kind, name }) => ({ type, domain, kind, name })),
+		[
+			{ type: "file", domain: "tex", kind: "tex", name: "hint.tex" },
+			{ type: "file", domain: "tex", kind: "tex", name: "plain.tex" },
+		],
+	);
+	const downloads = await resolver.resolve(
+		[{ type: "file", kind: "tex", name: "alias.tex" }],
+		{ prefetchHints: hints },
+	);
+	assert.deepEqual(
+		downloads.map(({ name }) => name),
+		["alias.tex"],
+	);
+	assert(
+		calls.some(({ url }) => url.endsWith(data.files["tex:hint.tex"].object)),
+	);
+	assert(
+		calls.some(({ url }) => url.endsWith(data.files["tex:plain.tex"].object)),
+	);
+});
+
 test("prefetches dependency closures without returning unrequested responses", async () => {
 	const data = await fixture();
 	const requestedObject = data.files["tex:plain.tex"].object;

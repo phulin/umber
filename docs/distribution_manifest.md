@@ -1,6 +1,6 @@
 # Sharded Distribution Manifest
 
-Status: schema-2 browser/native resolution and schema-3 format-closure publishing implemented.
+Status: schema-2 browser/native resolution and schema-3 format-closure publishing and runtime prefetch consumption implemented.
 
 ## Trust root
 
@@ -33,8 +33,17 @@ Format metadata schema 1 remains the legacy no-closure form. Publisher metadata
 schema 2 requires a schema-1 input closure; it validates and canonicalizes the
 keys, then requires every key to resolve to the authoritative published file
 map. The staged verifier repeats the bounds, order, syntax, and existence checks
-against the complete authenticated shard set. Closures are producer metadata in
-this phase; runtime prefetch consumption is a separate contract.
+against the complete authenticated shard set. After a compatible pinned format
+is selected, native and browser hosts translate its closure into typed file
+requests. The compile session emits the deduplicated closure once in
+`NeedResources.prefetch_hints`, alongside the first actual format-input miss.
+Schema-2 roots simply contribute no hints.
+
+Hints remain optional transport advice. Resolvers fetch the authenticated
+closure in one bounded speculative batch, return responses only for the
+engine's required requests, and ignore stale closure keys or failed speculative
+objects. A later required lookup still follows ordinary user-file precedence,
+authoritative distribution absence, VFS validation, and session limits.
 
 ## Partition and shard schema
 
@@ -193,6 +202,11 @@ without loading the dependency's shard. Shards and payloads remain immutable
 and reusable across compiler sessions. The browser package exports the pinned
 production `manifest-v2.json` URL and digest as
 `TEXLIVE_2026_MANIFEST_URL` and `TEXLIVE_2026_MANIFEST_SHA256`.
+
+For schema 3, format closure keys use the same canonical shard selection. The
+resolver may load those shards concurrently after the first miss, but hinted
+misses and transport failures are non-blocking; only the current required
+selection can produce unavailable responses or actionable acquisition errors.
 
 `umber-distribution` strictly parses the pinned root and individual index
 shards without performing I/O. The native CLI verifies the root pin, hashes

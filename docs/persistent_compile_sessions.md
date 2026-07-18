@@ -84,6 +84,10 @@ error categories are serialized through direct and worker browser APIs.
 Manifest dependency closures are resolver-private prefetches: they may warm the
 verified object cache, but `resolve()` returns responses only for keys in the
 current required batch. This preserves the engine's unexpected-response check.
+Validated schema-3 format closures enter the session with the selected format
+and are emitted once through the same hint channel after the first format-input
+miss. Already required, registered, unavailable, or user-supplied keys are
+removed before emission; stale or ignored hints do not affect correctness.
 `FileProvisioner` also owns the session's layered user and resolved-resource
 storage plus its accepted generated layer. Each TeX attempt reads inputs and
 TFM files from one immutable stage snapshot; the resolver passes selected

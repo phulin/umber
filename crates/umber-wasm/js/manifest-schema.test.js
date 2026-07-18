@@ -58,3 +58,51 @@ test("root validation requires a consistent power-of-two shard table", () => {
 		/inconsistent/,
 	);
 });
+
+test("schema three validates bounded canonical format closures", () => {
+	const format = {
+		object: `sha256-${"3".repeat(64)}`,
+		sha256: "3".repeat(64),
+		bytes: 4,
+		engine: "umber",
+		engineVersion: "0.1.0",
+		formatSchema: 10,
+		sourceDistribution: "fixture",
+		sourceManifestSha256: "4".repeat(64),
+		sourceDateEpoch: 0,
+		inputClosure: { schema: 1, keys: ["tex:latex.ltx", "tfm:cmr10.tfm"] },
+	};
+	const root = {
+		schema: 3,
+		distribution: "fixture",
+		objectsBaseUrl: "https://cdn.example.test/objects/",
+		shardBits: 0,
+		shardCount: 1,
+		shards: ["1".repeat(64)],
+		formats: { latex: format },
+	};
+	assert.deepEqual(validateRootManifest(root).formats.latex.inputClosure.keys, [
+		"tex:latex.ltx",
+		"tfm:cmr10.tfm",
+	]);
+	assert.throws(
+		() => validateRootManifest({ ...root, schema: 2 }),
+		/require root manifest schema 3/,
+	);
+	assert.throws(
+		() =>
+			validateRootManifest({
+				...root,
+				formats: {
+					latex: {
+						...format,
+						inputClosure: {
+							schema: 1,
+							keys: ["tfm:cmr10.tfm", "tex:latex.ltx"],
+						},
+					},
+				},
+			}),
+		/not strictly sorted/,
+	);
+});

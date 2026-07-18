@@ -138,6 +138,13 @@ fn file_request(name: &str) -> ResourceRequest {
     ))
 }
 
+fn needs(required: Vec<ResourceRequest>) -> NeedResources {
+    NeedResources {
+        required,
+        prefetch_hints: Vec::new(),
+    }
+}
+
 fn local_resolver(root: &Path) -> LocalResolver {
     LocalResolver {
         base: root.to_owned(),
@@ -212,7 +219,7 @@ fn verified_shard_absence_returns_typed_unavailable() {
     let responses = resolver
         .resolve_batch(
             &local_resolver(directory.path()),
-            &[file_request("missing.sty")],
+            &needs(vec![file_request("missing.sty")]),
             &FetchCancellation::new(),
         )
         .expect("authoritative absence");
@@ -243,11 +250,11 @@ fn verified_schema_v2_root_returns_typed_font_unavailable() {
     let responses = resolver
         .resolve_batch(
             &local_resolver(directory.path()),
-            &[ResourceRequest::Font(FontRequest {
+            &needs(vec![ResourceRequest::Font(FontRequest {
                 key: key.clone(),
                 accepted_containers: AcceptedFontContainers::NATIVE_WITH_COLLECTIONS,
                 purposes: FontPurposes::LAYOUT,
-            })],
+            })]),
             &FetchCancellation::new(),
         )
         .expect("authoritative font absence");
@@ -288,7 +295,7 @@ fn inline_hint_fetches_without_loading_the_dependency_shard() {
     let responses = resolver
         .resolve_batch(
             &local_resolver(directory.path()),
-            &[file_request("article.cls")],
+            &needs(vec![file_request("article.cls")]),
             &FetchCancellation::new(),
         )
         .expect("inline dependency hint");
@@ -298,6 +305,79 @@ fn inline_hint_fetches_without_loading_the_dependency_shard() {
             .load_object(&dependency_digest, dependency_bytes.len() as u64)
             .expect("hint cache read"),
         Some(dependency_bytes.to_vec())
+    );
+}
+
+#[test]
+fn schema_three_format_closure_warms_one_bounded_batch_and_ignores_stale_hints() {
+    let directory = TempDir::new().expect("distribution tempdir");
+    let objects = directory.path().join("objects");
+    std::fs::create_dir_all(&objects).expect("objects directory");
+    let format_bytes = b"format";
+    let required_bytes = b"required";
+    let closure_bytes = b"closure";
+    let format_digest = hex_digest(format_bytes);
+    let required_digest = hex_digest(required_bytes);
+    let closure_digest = hex_digest(closure_bytes);
+    for (digest, bytes) in [
+        (&format_digest, format_bytes.as_slice()),
+        (&required_digest, required_bytes.as_slice()),
+        (&closure_digest, closure_bytes.as_slice()),
+    ] {
+        std::fs::write(objects.join(format!("sha256-{digest}")), bytes).expect("object");
+    }
+    let required_entry = format!(
+        "{{\"virtualPath\":\"/texlive/article.cls\",\"object\":\"sha256-{required_digest}\",\"sha256\":\"{required_digest}\",\"bytes\":{}}}",
+        required_bytes.len()
+    );
+    let closure_entry = format!(
+        "{{\"virtualPath\":\"/texlive/latex.ltx\",\"object\":\"sha256-{closure_digest}\",\"sha256\":\"{closure_digest}\",\"bytes\":{}}}",
+        closure_bytes.len()
+    );
+    let shard = format!(
+        "{{\"schema\":1,\"distribution\":\"closure\",\"index\":0,\"files\":{{\"tex:article.cls\":{required_entry},\"tex:latex.ltx\":{closure_entry}}}}}\n"
+    );
+    let shard_digest = hex_digest(shard.as_bytes());
+    std::fs::write(objects.join(format!("sha256-{shard_digest}")), shard).expect("shard");
+    let root = format!(
+        "{{\"schema\":3,\"distribution\":\"closure\",\"objectsBaseUrl\":\"https://example.invalid/objects/\",\"shardBits\":0,\"shardCount\":1,\"shards\":[\"{shard_digest}\"],\"formats\":{{\"latex\":{{\"object\":\"sha256-{format_digest}\",\"sha256\":\"{format_digest}\",\"bytes\":{},\"engine\":\"umber\",\"engineVersion\":\"{}\",\"formatSchema\":10,\"sourceDistribution\":\"closure\",\"sourceManifestSha256\":\"{}\",\"sourceDateEpoch\":0,\"inputClosure\":{{\"schema\":1,\"keys\":[\"tex:latex.ltx\",\"tex:stale.tex\"]}}}}}}}}\n",
+        format_bytes.len(),
+        crate::PACKAGE_VERSION,
+        "1".repeat(64)
+    );
+    std::fs::write(directory.path().join("manifest-v3.json"), root).expect("root");
+    let cache = ObjectCache::new(directory.path().join("cache"));
+    let mut resolver = DistributionResolver::new(
+        cache.clone(),
+        Some(directory.path().to_string_lossy().into_owned()),
+        None,
+        false,
+    );
+    let format = resolver
+        .resolve_format(
+            Path::new("latex.fmt"),
+            EngineMode::Latex,
+            &FetchCancellation::new(),
+        )
+        .expect("format resolution");
+    assert_eq!(format.bytes, format_bytes);
+    assert_eq!(format.prefetch_hints.len(), 2);
+    let responses = resolver
+        .resolve_batch(
+            &local_resolver(directory.path()),
+            &NeedResources {
+                required: vec![file_request("article.cls")],
+                prefetch_hints: format.prefetch_hints,
+            },
+            &FetchCancellation::new(),
+        )
+        .expect("closure batch");
+    assert!(matches!(responses.as_slice(), [ResourceResponse::File(_)]));
+    assert_eq!(
+        cache
+            .load_object(&closure_digest, closure_bytes.len() as u64)
+            .expect("closure cache"),
+        Some(closure_bytes.to_vec())
     );
 }
 
@@ -327,7 +407,7 @@ fn warm_root_shard_and_object_cache_resolve_offline() {
     online
         .resolve_batch(
             &local_resolver(directory.path()),
-            &[file_request("cached.sty")],
+            &needs(vec![file_request("cached.sty")]),
             &FetchCancellation::new(),
         )
         .expect("warm caches");
@@ -340,7 +420,7 @@ fn warm_root_shard_and_object_cache_resolve_offline() {
     let responses = offline
         .resolve_batch(
             &local_resolver(directory.path()),
-            &[file_request("cached.sty")],
+            &needs(vec![file_request("cached.sty")]),
             &FetchCancellation::new(),
         )
         .expect("offline cache resolution");
@@ -369,7 +449,7 @@ fn rejects_tampered_shard_and_observes_cancellation() {
     assert!(matches!(
         resolver.resolve_batch(
             &local_resolver(directory.path()),
-            &[file_request("missing.sty")],
+            &needs(vec![file_request("missing.sty")]),
             &FetchCancellation::new(),
         ),
         Err(NativeRunError::ManifestDigestMismatch { .. })
@@ -380,7 +460,7 @@ fn rejects_tampered_shard_and_observes_cancellation() {
     assert!(matches!(
         resolver.resolve_batch(
             &local_resolver(directory.path()),
-            &[file_request("missing.sty")],
+            &needs(vec![file_request("missing.sty")]),
             &cancellation,
         ),
         Err(NativeRunError::Cancelled)

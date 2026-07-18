@@ -131,6 +131,9 @@ pub struct SessionOptions {
     pub main_path: String,
     pub job_name: Option<String>,
     pub format: Option<Vec<u8>>,
+    /// Validated, transport-only requests likely to be needed by this format.
+    /// They are emitted once, with the first required resource batch.
+    pub format_prefetch_hints: Option<Box<[ResourceRequest]>>,
     pub engine: EngineMode,
     pub clock: JobClock,
     pub limits: SessionLimits,
@@ -146,6 +149,7 @@ impl Default for SessionOptions {
             main_path: "/job/main.tex".to_owned(),
             job_name: None,
             format: None,
+            format_prefetch_hints: None,
             engine: EngineMode::Tex82,
             clock: JobClock::DEFAULT,
             limits: SessionLimits::default(),
@@ -437,6 +441,7 @@ pub struct VirtualCompileSession {
     main_path: VirtualPath,
     job_name: String,
     format: Option<Vec<u8>>,
+    format_prefetch_hints: Option<Box<[ResourceRequest]>>,
     engine: EngineMode,
     clock: JobClock,
     limits: SessionLimits,
@@ -546,10 +551,26 @@ impl VirtualCompileSession {
                 .unwrap_or("texput")
                 .to_owned()
         });
+        let mut format_prefetch_hints = if options.format.is_some() {
+            options
+                .format_prefetch_hints
+                .map_or_else(Vec::new, |hints| hints.into_vec())
+        } else {
+            Vec::new()
+        };
+        format_prefetch_hints.sort_by_key(resource_sort_key);
+        format_prefetch_hints.dedup();
+        check_limit(
+            "format prefetch hints",
+            format_prefetch_hints.len(),
+            limits.resolved_files,
+        )?;
         Ok(Self {
             main_path,
             job_name,
             format: options.format,
+            format_prefetch_hints: (!format_prefetch_hints.is_empty())
+                .then(|| format_prefetch_hints.into_boxed_slice()),
             engine: options.engine,
             clock: options.clock,
             limits,
@@ -1141,9 +1162,51 @@ impl VirtualCompileSession {
                     })
                     .collect(),
             );
+            let prefetch_hints = if let Some(hints) = self.format_prefetch_hints.take() {
+                let required_keys = required
+                    .iter()
+                    .map(|request| match request {
+                        ResourceRequest::File(request) => {
+                            ResourceRequestKey::File(request.key().clone())
+                        }
+                        ResourceRequest::Font(request) => {
+                            ResourceRequestKey::Font(request.key.clone())
+                        }
+                    })
+                    .collect::<BTreeSet<_>>();
+                hints
+                    .into_vec()
+                    .into_iter()
+                    .filter(|request| {
+                        let key = match request {
+                            ResourceRequest::File(request) => {
+                                if self.files.get(request.key()).is_some()
+                                    || self.files.is_unavailable(request.key())
+                                    || user_path_for_key(request.key())
+                                        .is_ok_and(|path| self.files.contains_user(&path))
+                                {
+                                    return false;
+                                }
+                                ResourceRequestKey::File(request.key().clone())
+                            }
+                            ResourceRequest::Font(request) => {
+                                if self.resolved_fonts.contains_key(&request.key)
+                                    || self.unavailable_fonts.contains(&request.key)
+                                {
+                                    return false;
+                                }
+                                ResourceRequestKey::Font(request.key.clone())
+                            }
+                        };
+                        !required_keys.contains(&key)
+                    })
+                    .collect()
+            } else {
+                Vec::new()
+            };
             return Ok(CompileAttemptResult::NeedResources(NeedResources {
                 required,
-                prefetch_hints: Vec::new(),
+                prefetch_hints,
             }));
         }
         if let Some(fatal) = fatal {

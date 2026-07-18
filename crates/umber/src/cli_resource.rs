@@ -23,7 +23,7 @@ use umber_fetch::{
 
 use crate::{
     AcceptedFinalization, CompileAttemptResult, EngineMode, FileContentId, FileKind, FileRequest,
-    MemoryRunOutput, ResolvedFile, ResourceRequest, ResourceResponse, SessionLimits,
+    MemoryRunOutput, NeedResources, ResolvedFile, ResourceRequest, ResourceResponse, SessionLimits,
     SessionOptions, SourcePatch, TexFontSearchPath, TexInputSearchPath, VirtualCompileSession,
 };
 
@@ -174,10 +174,13 @@ impl NativeCompileSession {
             options.distribution_sha256.clone(),
             options.offline,
         );
-        let format = match &options.format {
-            Some(path) if path.exists() => Some(read(path)?),
-            Some(path) => Some(distribution.resolve_format(path, options.engine, cancellation)?),
-            None => None,
+        let (format, format_prefetch_hints) = match &options.format {
+            Some(path) if path.exists() => (Some(read(path)?), Vec::new()),
+            Some(path) => {
+                let resolved = distribution.resolve_format(path, options.engine, cancellation)?;
+                (Some(resolved.bytes), resolved.prefetch_hints)
+            }
+            None => (None, Vec::new()),
         };
         let clock = World::real().job_clock();
         let name = options
@@ -195,6 +198,8 @@ impl NativeCompileSession {
             main_path: format!("/job/{name}"),
             job_name: Some(job_name),
             format,
+            format_prefetch_hints: (!format_prefetch_hints.is_empty())
+                .then(|| format_prefetch_hints.into_boxed_slice()),
             engine: options.engine,
             clock,
             limits: SessionLimits {
@@ -246,11 +251,9 @@ impl NativeCompileSession {
                     return Err(NativeRunError::Compile(error.to_string()));
                 }
                 CompileAttemptResult::NeedResources(batch) => {
-                    let responses = self.distribution.resolve_batch(
-                        &self.local,
-                        &batch.required,
-                        cancellation,
-                    )?;
+                    let responses =
+                        self.distribution
+                            .resolve_batch(&self.local, &batch, cancellation)?;
                     if cancellation.is_cancelled() {
                         return Err(NativeRunError::Cancelled);
                     }
@@ -483,6 +486,11 @@ struct LoadedDistribution {
     shards: BTreeMap<u32, ManifestShard>,
 }
 
+struct ResolvedFormat {
+    bytes: Vec<u8>,
+    prefetch_hints: Vec<ResourceRequest>,
+}
+
 struct DistributionResolver {
     cache: ObjectCache,
     source: Option<String>,
@@ -510,13 +518,13 @@ impl DistributionResolver {
     fn resolve_batch(
         &mut self,
         local: &LocalResolver,
-        requests: &[ResourceRequest],
+        batch: &NeedResources,
         cancellation: &FetchCancellation,
     ) -> Result<Vec<ResourceResponse>, NativeRunError> {
         check_cancelled(cancellation)?;
         let mut responses = Vec::new();
         let mut unresolved = Vec::new();
-        for request in requests {
+        for request in &batch.required {
             match request {
                 ResourceRequest::File(request) => {
                     if let Some(file) = local.resolve(request) {
@@ -543,23 +551,15 @@ impl DistributionResolver {
         let root = self.load(cancellation)?.root.clone();
         let mut original_files = BTreeMap::new();
         for request in &unresolved {
-            let kind = match request.key().kind() {
-                FileKind::TexInput => DistributionFileKind::Tex,
-                FileKind::Tfm => DistributionFileKind::Tfm,
-                FileKind::BibAux => DistributionFileKind::BibAux,
-                FileKind::ClassicBibData => DistributionFileKind::ClassicBib,
-                FileKind::BibStyle => DistributionFileKind::BibStyle,
-                FileKind::GenericAsset => continue,
-                _ => {
+            let Some(key) = distribution_file_key(request)? else {
+                if request.key().kind() != FileKind::GenericAsset {
                     responses.push(ResourceResponse::FileUnavailable(request.key().clone()));
-                    continue;
                 }
+                continue;
             };
-            let key = DistributionFileRequestKey::new(kind, request.key().name())
-                .map_err(|error| NativeRunError::Selection(error.to_string()))?;
             original_files.insert(key.manifest_key().to_string(), request.key().clone());
         }
-        for request in requests {
+        for request in &batch.required {
             if let ResourceRequest::Font(request) = request {
                 responses.push(ResourceResponse::FontUnavailable(request.key.clone()));
             }
@@ -570,6 +570,23 @@ impl DistributionResolver {
                 .entry(shard_index(key, root.shard_bits))
                 .or_default()
                 .push(key.clone());
+        }
+        let mut hinted_keys = BTreeMap::<u32, Vec<String>>::new();
+        for request in &batch.prefetch_hints {
+            let ResourceRequest::File(request) = request else {
+                continue;
+            };
+            let Some(key) = distribution_file_key(request)? else {
+                continue;
+            };
+            let key = key.manifest_key().to_string();
+            if original_files.contains_key(&key) {
+                continue;
+            }
+            hinted_keys
+                .entry(shard_index(&key, root.shard_bits))
+                .or_default()
+                .push(key);
         }
         let mut required = BTreeMap::<String, ShardFile>::new();
         let mut hints = BTreeMap::<String, DependencyHint>::new();
@@ -590,8 +607,18 @@ impl DistributionResolver {
                         .or_insert_with(|| dependency.clone());
                 }
             }
+            if let Some(keys) = hinted_keys.remove(&index) {
+                collect_closure_hints(&shard, keys, &required, &mut hints);
+            }
         }
-        let mut fetch_requests = required
+        for (index, keys) in hinted_keys {
+            match self.load_shard(index, cancellation) {
+                Ok(shard) => collect_closure_hints(&shard, keys, &required, &mut hints),
+                Err(NativeRunError::Cancelled) => return Err(NativeRunError::Cancelled),
+                Err(_) => {}
+            }
+        }
+        let required_fetches = required
             .iter()
             .map(|(key, entry)| FetchRequest {
                 request_key: key.clone(),
@@ -599,17 +626,41 @@ impl DistributionResolver {
                 max_bytes: crate::SessionLimits::default().one_file_bytes as u64,
             })
             .collect::<Vec<_>>();
-        fetch_requests.extend(
-            hints
-                .iter()
-                .filter(|(key, _)| !required.contains_key(*key))
-                .map(|(key, entry)| FetchRequest {
-                    request_key: key.clone(),
-                    object: entry.object_entry(),
-                    max_bytes: crate::SessionLimits::default().one_file_bytes as u64,
-                }),
-        );
-        let fetched = self.fetch_objects(&root, &fetch_requests, cancellation)?;
+        let limits = crate::SessionLimits::default();
+        let mut hinted_files = required_fetches.len();
+        let mut hinted_bytes = required_fetches
+            .iter()
+            .map(|request| request.object.bytes)
+            .sum::<u64>();
+        let mut hint_fetches = Vec::new();
+        for (key, entry) in hints.iter().filter(|(key, _)| !required.contains_key(*key)) {
+            let Some(next_files) = hinted_files.checked_add(1) else {
+                break;
+            };
+            let Some(next_bytes) = hinted_bytes.checked_add(entry.bytes) else {
+                break;
+            };
+            if next_files > limits.resolved_files || next_bytes > limits.cached_file_bytes as u64 {
+                continue;
+            }
+            hinted_files = next_files;
+            hinted_bytes = next_bytes;
+            hint_fetches.push(FetchRequest {
+                request_key: key.clone(),
+                object: entry.object_entry(),
+                max_bytes: limits.one_file_bytes as u64,
+            });
+        }
+        let mut fetch_requests = required_fetches.clone();
+        fetch_requests.extend(hint_fetches);
+        let fetched = match self.fetch_objects(&root, &fetch_requests, cancellation) {
+            Ok(fetched) => fetched,
+            Err(NativeRunError::Cancelled) => return Err(NativeRunError::Cancelled),
+            Err(_) if fetch_requests.len() > required_fetches.len() => {
+                self.fetch_objects(&root, &required_fetches, cancellation)?
+            }
+            Err(error) => return Err(error),
+        };
         if fetched.iter().any(|(_, _, cache_hit)| !cache_hit) {
             eprintln!("umber: acquired {} distribution resource(s)", fetched.len());
         }
@@ -639,7 +690,7 @@ impl DistributionResolver {
         path: &Path,
         engine: EngineMode,
         cancellation: &FetchCancellation,
-    ) -> Result<Vec<u8>, NativeRunError> {
+    ) -> Result<ResolvedFormat, NativeRunError> {
         let name = path
             .file_stem()
             .and_then(|name| name.to_str())
@@ -665,12 +716,31 @@ impl DistributionResolver {
                 engine.name()
             )));
         }
+        let prefetch_hints = entry
+            .input_closure
+            .as_ref()
+            .map(|closure| {
+                closure
+                    .keys
+                    .iter()
+                    .map(|key| {
+                        let key = DistributionFileRequestKey::from_manifest_key(key)
+                            .map_err(|error| NativeRunError::Selection(error.to_string()))?;
+                        distribution_request(key)
+                    })
+                    .collect::<Result<Vec<_>, NativeRunError>>()
+            })
+            .transpose()?
+            .unwrap_or_default();
         if let Some(bytes) = self
             .cache
             .load_object(&entry.sha256, entry.bytes)
             .map_err(|error| NativeRunError::Cache(error.to_string()))?
         {
-            return Ok(bytes);
+            return Ok(ResolvedFormat {
+                bytes,
+                prefetch_hints,
+            });
         }
         if self.offline {
             return Err(NativeRunError::DistributionUnavailable(vec![format!(
@@ -689,7 +759,10 @@ impl DistributionResolver {
                 .store_object(&object.sha256, object.bytes, &bytes)
                 .map_err(|error| NativeRunError::Cache(error.to_string()))?;
             eprintln!("umber: acquired 1 distribution resource(s)");
-            return Ok(bytes);
+            return Ok(ResolvedFormat {
+                bytes,
+                prefetch_hints,
+            });
         }
         let request = FetchRequest {
             request_key: format!("format:{name}"),
@@ -710,7 +783,10 @@ impl DistributionResolver {
         if !object.cache_hit {
             eprintln!("umber: acquired 1 distribution resource(s)");
         }
-        Ok(object.bytes)
+        Ok(ResolvedFormat {
+            bytes: object.bytes,
+            prefetch_hints,
+        })
     }
 
     fn fetch_objects(
@@ -853,9 +929,12 @@ impl DistributionResolver {
             let explicit = self.source.is_some();
             let path = PathBuf::from(&source);
             let local_path = if path.is_dir() {
-                let versioned = path.join("manifest-v2.json");
-                if versioned.exists() {
-                    versioned
+                let schema_three = path.join("manifest-v3.json");
+                let schema_two = path.join("manifest-v2.json");
+                if schema_three.exists() {
+                    schema_three
+                } else if schema_two.exists() {
+                    schema_two
                 } else {
                     path.join("manifest.json")
                 }
@@ -921,6 +1000,67 @@ impl DistributionResolver {
             });
         }
         Ok(self.loaded.as_ref().expect("distribution loaded"))
+    }
+}
+
+fn distribution_file_key(
+    request: &FileRequest,
+) -> Result<Option<DistributionFileRequestKey>, NativeRunError> {
+    let kind = match request.key().kind() {
+        FileKind::TexInput => DistributionFileKind::Tex,
+        FileKind::Tfm => DistributionFileKind::Tfm,
+        FileKind::BibAux => DistributionFileKind::BibAux,
+        FileKind::ClassicBibData => DistributionFileKind::ClassicBib,
+        FileKind::BibStyle => DistributionFileKind::BibStyle,
+        _ => return Ok(None),
+    };
+    DistributionFileRequestKey::new(kind, request.key().name())
+        .map(Some)
+        .map_err(|error| NativeRunError::Selection(error.to_string()))
+}
+
+fn distribution_request(
+    request: DistributionFileRequestKey,
+) -> Result<ResourceRequest, NativeRunError> {
+    let kind = match request.kind() {
+        DistributionFileKind::Tex => FileKind::TexInput,
+        DistributionFileKind::Tfm => FileKind::Tfm,
+        DistributionFileKind::BibAux => FileKind::BibAux,
+        DistributionFileKind::ClassicBib => FileKind::ClassicBibData,
+        DistributionFileKind::BibStyle => FileKind::BibStyle,
+    };
+    let name = request.normalized_name();
+    let key = crate::FileRequestKey::new(kind, name)
+        .map_err(|error| NativeRunError::Selection(error.to_string()))?;
+    Ok(ResourceRequest::File(FileRequest::new(key, name)))
+}
+
+fn collect_closure_hints(
+    shard: &ManifestShard,
+    keys: Vec<String>,
+    required: &BTreeMap<String, ShardFile>,
+    hints: &mut BTreeMap<String, DependencyHint>,
+) {
+    for key in keys {
+        let Some(entry) = shard.files.get(&key) else {
+            continue;
+        };
+        if !required.contains_key(&key) {
+            hints.entry(key.clone()).or_insert_with(|| DependencyHint {
+                key: key.clone(),
+                virtual_path: entry.virtual_path.clone(),
+                object: entry.object.clone(),
+                sha256: entry.sha256.clone(),
+                bytes: entry.bytes,
+            });
+        }
+        for dependency in &entry.dependencies {
+            if !required.contains_key(&dependency.key) {
+                hints
+                    .entry(dependency.key.clone())
+                    .or_insert_with(|| dependency.clone());
+            }
+        }
     }
 }
 

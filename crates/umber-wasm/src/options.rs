@@ -1,11 +1,11 @@
 use bib_engine::{BibJob, BibOptionsBuilder, BibliographyMode, OutputFormat, OutputRequest};
 use js_sys::{Array, Reflect, Uint8Array};
 use umber::{
-    BibliographyProjectOptions, EngineMode, FeatureSetting, FileContentId, FileKind,
+    BibliographyProjectOptions, EngineMode, FeatureSetting, FileContentId, FileKind, FileRequest,
     FileRequestKey, FontContainer, FontFeaturePolicy, FontObjectIdentity, FontProgramIdentity,
     FontRequestKey, LatexProjectLimits, LatexProjectOptions, LatexProjectOptionsV2, OpenTypeTag,
-    ResolvedFile, ResolvedFont, ResourceDomain, ResourceResponse, SessionLimits, SessionOptions,
-    SessionWebFont, SourcePatch, VariationCoordinate, VariationSelection,
+    ResolvedFile, ResolvedFont, ResourceDomain, ResourceRequest, ResourceResponse, SessionLimits,
+    SessionOptions, SessionWebFont, SourcePatch, VariationCoordinate, VariationSelection,
 };
 use wasm_bindgen::{JsCast, JsValue};
 
@@ -19,6 +19,28 @@ pub(crate) fn parse_options(value: &JsValue) -> Result<SessionOptions, JsValue> 
     };
     options.job_name = optional_string(value, "jobName")?;
     options.format = optional_bytes(value, "format")?;
+    let hints = field(value, "formatPrefetchHints")?;
+    if !absent(&hints) {
+        if !Array::is_array(&hints) {
+            return Err(js_error("formatPrefetchHints must be an array"));
+        }
+        options.format_prefetch_hints = Some(
+            Array::from(&hints)
+                .iter()
+                .map(|hint| {
+                    require_object(&hint, "format prefetch hint")?;
+                    if required_string(&hint, "type")? != "file" {
+                        return Err(js_error("format prefetch hints must be file requests"));
+                    }
+                    let key = parse_request_key(&hint)?;
+                    let original_name = optional_string(&hint, "originalName")?
+                        .unwrap_or_else(|| key.name().to_owned());
+                    Ok(ResourceRequest::File(FileRequest::new(key, original_name)))
+                })
+                .collect::<Result<Vec<_>, JsValue>>()?
+                .into_boxed_slice(),
+        );
+    }
     if let Some(engine) = optional_string(value, "engine")? {
         options.engine = match engine.as_str() {
             "tex82" => EngineMode::Tex82,

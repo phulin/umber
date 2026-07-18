@@ -68,6 +68,8 @@ export interface SessionOptions {
   mainPath: string;
   jobName?: string;
   format?: Uint8Array;
+  /** Authenticated format-closure requests, consumed as one-shot cache hints. */
+  formatPrefetchHints?: FileRequest[];
   engine?: "tex82" | "etex" | "pdftex" | "latex" | "pdflatex";
   clock?: { year: number; month: number; day: number; minutes: number };
   limits?: Partial<SessionLimits>;

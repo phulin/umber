@@ -174,8 +174,17 @@ treats a missing key in that verified shard as `FileUnavailable`. Schema v2
 does not publish logical OpenType font entries, so a verified root answers
 those requests as `FontUnavailable`. Complete inline dependency metadata is
 sent straight to the object fetch batch without consulting the dependency's
-own shard. A batch is still published to the VFS only after every required and
-hint object succeeds.
+own shard. A batch is still published to the VFS only after every required
+object succeeds; failed speculative objects are omitted and never become
+session responses.
+
+Schema-3 roots add format input closures without changing schema-2 behavior.
+After the selected pinned format reaches its first actual input miss, the
+session forwards its validated closure as a one-shot hint batch. Native and
+browser resolvers deduplicate it with required work, enforce the existing file
+and byte budgets, warm verified closure objects concurrently, and publish only
+required responses. Missing, stale, oversized, or failed speculative entries
+are ignored; required acquisition retains its existing typed failure behavior.
 
 ### 6. Snapshots are immutable Cloudflare R2 prefixes
 

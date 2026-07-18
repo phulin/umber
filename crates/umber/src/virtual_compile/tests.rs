@@ -689,6 +689,66 @@ fn formatted_session_starts_with_fresh_clock_everyjob_and_checkpoint_state() {
 }
 
 #[test]
+fn formatted_session_emits_validated_prefetch_hints_once_after_first_miss() {
+    let mut stores = Universe::with_world(World::memory());
+    prepare_run_stores(&mut stores);
+    let format = stores.dump_format().expect("format");
+    let request = |name: &str| {
+        ResourceRequest::File(FileRequest::new(
+            FileRequestKey::new(FileKind::TexInput, name).expect("request key"),
+            name,
+        ))
+    };
+    let mut formatted = VirtualCompileSession::new(SessionOptions {
+        format: Some(format),
+        format_prefetch_hints: Some(
+            vec![
+                request("remote.tex"),
+                request("required.tex"),
+                request("local.tex"),
+                request("remote.tex"),
+            ]
+            .into_boxed_slice(),
+        ),
+        ..SessionOptions::default()
+    })
+    .expect("formatted session");
+    formatted
+        .add_user_file("main.tex", b"\\input required \\end".to_vec())
+        .expect("main");
+    formatted
+        .add_user_file("local.tex", b"local".to_vec())
+        .expect("local closure override");
+
+    let CompileAttemptResult::NeedResources(first) = formatted.compile_attempt() else {
+        panic!("first format miss should request resources");
+    };
+    assert_eq!(first.required.len(), 1);
+    let ResourceRequest::File(required) = &first.required[0] else {
+        unreachable!();
+    };
+    assert_eq!(required.key().name(), "required.tex");
+    assert_eq!(required.original_name(), "required");
+    assert_eq!(first.prefetch_hints, vec![request("remote.tex")]);
+
+    let ResourceRequest::File(required) = first.required[0].clone() else {
+        unreachable!();
+    };
+    formatted
+        .provide_resources(vec![ResourceResponse::File(ResolvedFile {
+            request: required.key().clone(),
+            virtual_path: "/texlive/required.tex".into(),
+            bytes: b"\\input later \\endinput".to_vec(),
+            expected_digest: None,
+        })])
+        .expect("required response");
+    let CompileAttemptResult::NeedResources(second) = formatted.compile_attempt() else {
+        panic!("second format miss should request resources");
+    };
+    assert!(second.prefetch_hints.is_empty());
+}
+
+#[test]
 fn formatted_session_reports_unsupported_schema_version() {
     let mut stores = Universe::with_world(World::memory());
     prepare_run_stores(&mut stores);

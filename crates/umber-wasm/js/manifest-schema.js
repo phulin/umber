@@ -3,6 +3,8 @@ const DIGEST_PATTERN = /^[0-9a-f]{64}$/;
 const FORMAT_NAME_PATTERN = /^[A-Za-z0-9._-]+$/;
 const MAX_OBJECT_BYTES = 128 * 1024 * 1024;
 const MAX_SHARD_BITS = 16;
+const MAX_FORMAT_INPUTS = 256;
+const MAX_REQUEST_KEY_BYTES = 1024;
 
 export class ManifestResolverError extends Error {
 	constructor(code, message, options) {
@@ -13,8 +15,8 @@ export class ManifestResolverError extends Error {
 }
 
 export function validateRootManifest(value) {
-	if (!isRecord(value) || value.schema !== 2) {
-		throw invalidManifest("root manifest schema 2 is required");
+	if (!isRecord(value) || (value.schema !== 2 && value.schema !== 3)) {
+		throw invalidManifest("root manifest schema 2 or 3 is required");
 	}
 	const distribution = validateDistribution(value.distribution);
 	const objectsBaseUrl = validateObjectsBaseUrl(value.objectsBaseUrl);
@@ -60,10 +62,19 @@ export function validateRootManifest(value) {
 				`invalid compatibility metadata for format ${name}`,
 			);
 		}
-		formats[name] = Object.freeze({ ...entry });
+		if (value.schema === 2 && entry.inputClosure !== undefined) {
+			throw invalidManifest(
+				"format input closures require root manifest schema 3",
+			);
+		}
+		const inputClosure =
+			entry.inputClosure === undefined
+				? undefined
+				: validateFormatInputClosure(entry.inputClosure, name);
+		formats[name] = Object.freeze({ ...entry, inputClosure });
 	}
 	return Object.freeze({
-		schema: 2,
+		schema: value.schema,
 		distribution,
 		objectsBaseUrl,
 		shardBits: value.shardBits,
@@ -71,6 +82,35 @@ export function validateRootManifest(value) {
 		shards: Object.freeze([...value.shards]),
 		formats: Object.freeze(formats),
 	});
+}
+
+function validateFormatInputClosure(value, formatName) {
+	if (
+		!isRecord(value) ||
+		value.schema !== 1 ||
+		!Array.isArray(value.keys) ||
+		value.keys.length === 0 ||
+		value.keys.length > MAX_FORMAT_INPUTS
+	) {
+		throw invalidManifest(`invalid input closure for format ${formatName}`);
+	}
+	let previous;
+	const keys = value.keys.map((key) => {
+		validateKey(key);
+		if (new TextEncoder().encode(key).byteLength > MAX_REQUEST_KEY_BYTES) {
+			throw invalidManifest(
+				`input closure key for format ${formatName} is too long`,
+			);
+		}
+		if (previous !== undefined && previous >= key) {
+			throw invalidManifest(
+				`input closure for format ${formatName} is not strictly sorted`,
+			);
+		}
+		previous = key;
+		return key;
+	});
+	return Object.freeze({ schema: 1, keys: Object.freeze(keys) });
 }
 
 export function validateIndexShard(value, root, index) {

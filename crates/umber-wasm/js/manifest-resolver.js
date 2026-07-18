@@ -380,6 +380,21 @@ export class HttpManifestResolver {
 		return entry;
 	}
 
+	formatPrefetchHints(name) {
+		const closure = this.formatMetadata(name).inputClosure;
+		return (
+			closure?.keys.map((key) => {
+				const decoded = decodeKey(key);
+				return {
+					type: "file",
+					domain: resourceDomain(decoded.kind),
+					...decoded,
+					originalName: decoded.name,
+				};
+			}) ?? []
+		);
+	}
+
 	#object(entry, signal, limits = {}) {
 		let pending = this.objectCache.get(entry.sha256);
 		if (pending === undefined) {
@@ -490,13 +505,14 @@ function mergeJobs(required, hinted) {
 	]) {
 		for (const job of source) {
 			const existing = indexes.get(job.key);
-			const jobBlocks = blocking && job.requested;
+			const requested = blocking && job.requested;
 			if (existing !== undefined) {
-				jobs[existing].blocking ||= jobBlocks;
+				jobs[existing].blocking ||= requested;
+				jobs[existing].requested ||= requested;
 				continue;
 			}
 			indexes.set(job.key, jobs.length);
-			jobs.push({ ...job, blocking: jobBlocks });
+			jobs.push({ ...job, requested, blocking: requested });
 		}
 	}
 	return jobs;

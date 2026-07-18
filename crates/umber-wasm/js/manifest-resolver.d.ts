@@ -63,6 +63,7 @@ export interface ManifestFormat {
 	sourceDistribution: string;
 	sourceManifestSha256: string;
 	sourceDateEpoch: number;
+	inputClosure?: { schema: 1; keys: readonly string[] };
 }
 
 export interface FormatCompatibility {
@@ -71,7 +72,7 @@ export interface FormatCompatibility {
 }
 
 export interface TexLiveManifest {
-	schema: 2;
+	schema: 2 | 3;
 	distribution: string;
 	objectsBaseUrl: string;
 	shardBits: number;
@@ -111,4 +112,5 @@ export class HttpManifestResolver {
 		signal?: AbortSignal,
 	): Promise<Uint8Array>;
 	formatMetadata(name: string): ManifestFormat;
+	formatPrefetchHints(name: string): readonly ResourceRequest[];
 }

@@ -226,6 +226,14 @@ Plain image and `plain-format.json` are regenerated together from
 `plain-source.lock`, and browser acceptance tests cover both schema mismatch
 before acquisition and checksum failure after byte transport.
 
+A schema-3 format entry may also carry a validated schema-1 input closure. The
+worker converts those canonical file keys to the ordinary typed request wire
+form and supplies them with the format bytes. Rust sorts, deduplicates, bounds,
+and emits them exactly once as `prefetchHints` on the first real resource miss.
+The JavaScript resolver warms verified shards and objects concurrently but
+returns only required responses, so hints cannot register files, override user
+inputs, create unavailable bindings, or affect retry progress.
+
 ## Client-owned distribution
 
 The client maps logical requests to resources. Valid implementations include:
