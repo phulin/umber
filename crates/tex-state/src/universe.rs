@@ -1876,6 +1876,11 @@ impl Universe {
     }
 
     #[doc(hidden)]
+    pub fn record_pure_paragraph_cold_start(&mut self, anchored: Option<bool>) {
+        self.pure_memo.record_paragraph_cold_start(anchored);
+    }
+
+    #[doc(hidden)]
     pub fn finish_recorded_paragraph_lines(
         &mut self,
         dependencies: Vec<crate::ObservedDependency>,

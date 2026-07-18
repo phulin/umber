@@ -1151,12 +1151,15 @@ fn print_incremental_work(
         print_memo_layer(name, edit, layer_name, current.saturating_since(previous));
     }
     println!(
-        "gentle-profile paragraph detail: {name}: edit={edit} eligible={} barriers={} validation_misses={} line_hits={} commands_skipped={} barrier_display_math={} barrier_scantokens={} barrier_input_open={} barrier_endinput={} barrier_world={} barrier_output={} barrier_unsupported_write={} barrier_unsupported_input_transition={} barrier_unsupported_group_transition={} validation_reasons={}",
+        "gentle-profile paragraph detail: {name}: edit={edit} eligible={} barriers={} validation_misses={} line_hits={} commands_skipped={} cold_starts_anchored={} cold_starts_unanchored={} cold_starts_blocked={} barrier_display_math={} barrier_scantokens={} barrier_input_open={} barrier_endinput={} barrier_world={} barrier_output={} barrier_unsupported_write={} barrier_unsupported_input_transition={} barrier_unsupported_group_transition={} validation_reasons={}",
         memo_delta!(paragraph_eligible_regions),
         memo_delta!(paragraph_barriers),
         memo_delta!(paragraph_validation_misses),
         memo_delta!(paragraph_line_hits),
         memo_delta!(paragraph_commands_skipped),
+        memo_delta!(paragraph_anchored_cold_starts),
+        memo_delta!(paragraph_unanchored_cold_starts),
+        memo_delta!(paragraph_blocked_cold_starts),
         memo_delta!(paragraph_display_math_barriers),
         memo_delta!(paragraph_scantokens_barriers),
         memo_delta!(paragraph_input_open_barriers),

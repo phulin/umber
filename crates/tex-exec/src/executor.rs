@@ -563,6 +563,8 @@ where
 {
     let mut macro_text = Vec::new();
     loop {
+        #[cfg(feature = "profiling-stats")]
+        let mut paragraph_probe_anchor = None;
         abandon_stale_vertical_paragraph_probe(nest, stores, execution);
         report_recoverable_expansion_diagnostics(execution, stores);
         if should_stop(input, stores) {
@@ -582,6 +584,10 @@ where
             && stores.int_param(tex_state::env::banks::IntParam::PDF_PROTRUDE_CHARS) == 0
         {
             let starting_span = input.current_root_delivery_anchor(stores)?;
+            #[cfg(feature = "profiling-stats")]
+            {
+                paragraph_probe_anchor = Some(starting_span.is_some());
+            }
             if let Some(starting_span) = starting_span {
                 if execution.cold_paragraph_recording.is_none()
                     && execution.begin_cold_paragraph_recording(
@@ -888,6 +894,20 @@ where
             DispatchAction::NotConsumed => {
                 return Ok(MainControlExit::NotConsumed { token });
             }
+        }
+        #[cfg(feature = "profiling-stats")]
+        if before_mode == crate::Mode::Vertical
+            && before_depth == 1
+            && nest.current_mode() == crate::Mode::Horizontal
+            && nest.depth() == 2
+            && stores.paragraph_memo_enabled()
+        {
+            let anchored = execution
+                .cold_paragraph_recording
+                .is_some()
+                .then_some(true)
+                .or(paragraph_probe_anchor);
+            stores.record_pure_paragraph_cold_start(anchored);
         }
         // Paragraph alignment is probed while the engine is still in outer
         // vertical mode so expansion reads made by the paragraph-starting

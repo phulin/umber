@@ -326,6 +326,15 @@ pub struct PureMemoStats {
     /// unchanged source and read dependencies establish the same write script.
     pub paragraph_line_hits: u64,
     pub paragraph_validation_misses: u64,
+    /// Cold outer paragraphs whose starting token had a stable root anchor and
+    /// therefore began dependency recording.
+    pub paragraph_anchored_cold_starts: u64,
+    /// Cold outer paragraphs whose starting token came from a frame without a
+    /// stable root anchor.
+    pub paragraph_unanchored_cold_starts: u64,
+    /// Cold outer paragraphs for which another admission guard prevented a
+    /// paragraph-history probe.
+    pub paragraph_blocked_cold_starts: u64,
     pub paragraph_barriers: u64,
     pub paragraph_eligible_regions: u64,
     pub paragraph_display_math_barriers: u64,
@@ -902,6 +911,18 @@ impl PureMemoRuntime {
             return;
         };
         cache.stats.paragraph_line_hits = cache.stats.paragraph_line_hits.saturating_add(1);
+    }
+
+    pub(crate) fn record_paragraph_cold_start(&mut self, anchored: Option<bool>) {
+        let Some(cache) = &mut self.cache else {
+            return;
+        };
+        let target = match anchored {
+            Some(true) => &mut cache.stats.paragraph_anchored_cold_starts,
+            Some(false) => &mut cache.stats.paragraph_unanchored_cold_starts,
+            None => &mut cache.stats.paragraph_blocked_cold_starts,
+        };
+        *target = target.saturating_add(1);
     }
 
     pub(crate) fn finish_recorded_paragraph_lines(
