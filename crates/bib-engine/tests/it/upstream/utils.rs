@@ -1376,7 +1376,6 @@ fn assertion_085_split_xsv_2() {
 }
 
 #[test]
-#[ignore = "xfail: strip_noinit retains braces introduced by a braced texttt command"]
 fn assertion_086_name_strip_1() {
     pass_upstream(
         "Name strip - 1",
