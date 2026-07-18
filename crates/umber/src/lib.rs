@@ -588,6 +588,29 @@ mod primitive_mode_tests {
     use tex_state::token::{Catcode, Token};
 
     #[test]
+    fn latex_format_restores_frozen_base_primitives_without_rebinding_live_names() {
+        let mut stores = Universe::with_world(World::memory());
+        let relax = stores.intern("relax");
+        stores.set_meaning(relax, Meaning::ExpandablePrimitive(ExpandablePrimitive::Fi));
+
+        install_latex_format_primitives(&mut stores);
+
+        assert_eq!(
+            stores.meaning(relax),
+            Meaning::ExpandablePrimitive(ExpandablePrimitive::Fi),
+            "format restoration must preserve the live meaning"
+        );
+        let frozen_relax = stores
+            .primitive_token("relax")
+            .expect("base primitive registry is reconstructed");
+        assert_eq!(
+            stores.frozen_primitive_meaning(frozen_relax),
+            Some(Meaning::Relax)
+        );
+        assert!(stores.primitive_token("ifcsname").is_some());
+    }
+
+    #[test]
     fn protected_is_hidden_in_tex82_compatibility_mode() {
         let mut stores = Universe::default();
         prepare_run_stores(&mut stores);

@@ -1,5 +1,6 @@
 use tex_lex::{
     ConditionFrameSummary, ConditionFrameToken, ConditionKind, ConditionLimb, InputStack,
+    TokenListReplayKind,
 };
 use tex_state::ExpansionState;
 use tex_state::meaning::{ExpandablePrimitive, Meaning, MeaningFlags};
@@ -233,19 +234,19 @@ fn insert_relax_before_token(
     input: &mut InputStack,
     stores: &mut tex_state::ExpansionContext<'_>,
 ) {
-    let relax = stores.intern_relaxed_control_sequence("relax");
-    push_inserted_token(
-        input,
-        stores,
-        TracedTokenWord::pack(token, origin),
-        InsertedOriginKind::Unread,
-    );
-    push_inserted_token(
-        input,
-        stores,
-        TracedTokenWord::pack(Token::Cs(relax.symbol()), origin),
-        InsertedOriginKind::ErrorRecovery,
-    );
+    // TeX inserts its inaccessible `frozen_relax` here. Using the live
+    // `\relax` control sequence is not equivalent: it may be temporarily
+    // rebound, including to the conditional token that triggered recovery,
+    // which would make this path reinsert itself forever.
+    let relax = stores
+        .primitive_token("relax")
+        .unwrap_or_else(|| Token::Cs(stores.intern_relaxed_control_sequence("relax")));
+    let unread_origin = stores.inserted_origin(InsertedOriginKind::Unread, token, origin);
+    let relax_origin = stores.inserted_origin(InsertedOriginKind::ErrorRecovery, relax, origin);
+    let mut replay = input.take_transient_token_buffer();
+    replay.push(TracedTokenWord::pack(relax, relax_origin));
+    replay.push(TracedTokenWord::pack(token, unread_origin));
+    input.push_transient_tokens(replay, TokenListReplayKind::Inserted);
 }
 
 fn skip_false_limb(

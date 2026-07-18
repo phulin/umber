@@ -2076,6 +2076,23 @@ fn ifdefined_and_ifcsname_test_without_creating_missing_names() {
 }
 
 #[test]
+fn failed_ifcsname_scan_does_not_leak_an_evaluating_condition() {
+    let mut stores = Universe::new();
+    install_expandable_primitives(&mut stores);
+    crate::install_etex_expandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new("\\ifcsname missing"));
+
+    let error = crate::get_x_token(
+        &mut input,
+        &mut tex_state::ExpansionContext::new(&mut stores),
+    )
+    .expect_err("unterminated ifcsname must fail");
+
+    assert!(matches!(error, crate::ExpandError::MissingEndCsName { .. }));
+    assert_eq!(input.condition_depth(), 0);
+}
+
+#[test]
 fn ifincsname_tracks_only_live_csname_scans() {
     let mut stores = Universe::new();
     install_expandable_primitives(&mut stores);
@@ -5368,6 +5385,93 @@ fn else_or_fi_report_extra_without_open_conditional() {
             Err(crate::ExpandError::ExtraConditionalControl { name: found, .. }) if found == expected
         ));
     }
+}
+
+#[test]
+fn conditional_recovery_uses_frozen_relax_when_live_relax_is_rebound() {
+    let mut stores = Universe::new();
+    stores.register_primitive_meaning("relax", Meaning::Relax);
+    let live_relax = stores.intern("relax");
+    let fi = expandable_primitive(&mut stores, "fi", ExpandablePrimitive::Fi);
+    stores.set_meaning(
+        live_relax,
+        Meaning::ExpandablePrimitive(ExpandablePrimitive::Fi),
+    );
+    let mut input = InputStack::new(MemoryInput::new(""));
+    crate::conditionals::begin_if_evaluation(
+        &mut input,
+        TracedTokenWord::pack(Token::Cs(fi), OriginId::UNKNOWN),
+        crate::conditionals::ConditionMetadata::new(0, false),
+    );
+
+    crate::conditionals::handle_fi(
+        Token::Cs(fi),
+        OriginId::UNKNOWN,
+        &mut input,
+        &mut tex_state::ExpansionContext::new(&mut stores),
+    )
+    .expect("conditional recovery");
+
+    let inserted_relax = input
+        .next_traced_token(&mut stores)
+        .expect("read inserted relax")
+        .expect("inserted relax token");
+    let inserted_relax = semantic_token(inserted_relax);
+    assert_eq!(
+        stores.frozen_primitive_meaning(inserted_relax),
+        Some(Meaning::Relax)
+    );
+    assert_ne!(inserted_relax, Token::Cs(live_relax.symbol()));
+    assert_eq!(
+        input
+            .next_traced_token(&mut stores)
+            .expect("read replayed fi")
+            .map(semantic_token),
+        Some(Token::Cs(fi))
+    );
+}
+
+#[test]
+fn conditional_recovery_orders_relax_before_unread_token_from_active_replay() {
+    let mut stores = Universe::new();
+    stores.register_primitive_meaning("relax", Meaning::Relax);
+    let fi = expandable_primitive(&mut stores, "fi", ExpandablePrimitive::Fi);
+    let fi_token = TracedTokenWord::pack(Token::Cs(fi), OriginId::UNKNOWN);
+    let mut input = InputStack::new(MemoryInput::new(""));
+    input.push_transient_tokens(vec![fi_token], TokenListReplayKind::Inserted);
+    let triggering = input
+        .next_traced_token(&mut stores)
+        .expect("read triggering replay")
+        .expect("fi token");
+    crate::conditionals::begin_if_evaluation(
+        &mut input,
+        fi_token,
+        crate::conditionals::ConditionMetadata::new(19, false),
+    );
+
+    crate::conditionals::handle_fi(
+        semantic_token(triggering),
+        triggering.origin(),
+        &mut input,
+        &mut tex_state::ExpansionContext::new(&mut stores),
+    )
+    .expect("conditional recovery");
+
+    let relax = input
+        .next_traced_token(&mut stores)
+        .expect("read inserted relax")
+        .expect("inserted relax");
+    assert_eq!(
+        stores.frozen_primitive_meaning(semantic_token(relax)),
+        Some(Meaning::Relax)
+    );
+    assert_eq!(
+        input
+            .next_traced_token(&mut stores)
+            .expect("read unread fi")
+            .map(semantic_token),
+        Some(Token::Cs(fi))
+    );
 }
 
 #[test]

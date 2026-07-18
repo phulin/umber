@@ -2904,6 +2904,24 @@ impl InputStack {
         }
     }
 
+    /// Removes one identified conditional frame without disturbing newer
+    /// frames. Operand scanners use this when a provisional evaluating frame
+    /// must be abandoned while propagating an error.
+    pub fn remove_condition(
+        &mut self,
+        token: ConditionFrameToken,
+    ) -> Option<ConditionFrameSummary> {
+        let index = self.condition_frame_indices.iter().rev().copied().find(|index| {
+            matches!(self.frames[*index], InputFrame::Condition { token: frame_token, .. } if frame_token == token)
+        })?;
+        match self.remove_frame(index) {
+            InputFrame::Condition { condition, .. } => Some(condition),
+            InputFrame::Source(_) | InputFrame::TokenList(_) => {
+                unreachable!("condition token matched")
+            }
+        }
+    }
+
     #[must_use]
     pub fn summary(&self) -> InputSummary {
         InputSummary::new_with_resume_state(

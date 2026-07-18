@@ -1150,7 +1150,15 @@ macro_rules! dispatch_match {
             }
             Meaning::ExpandablePrimitive(ExpandablePrimitive::IfCsName) => {
                 let frame_token = begin_if_evaluation(input, call_context, ConditionMetadata::new(19, $invert));
-                let name = scan_csname(input, stores, expansion, call_context)?;
+                let name = match scan_csname(input, stores, expansion, call_context) {
+                    Ok(name) => name,
+                    Err(error) => {
+                        input
+                            .remove_condition(frame_token)
+                            .expect("the failed ifcsname evaluation frame remains live");
+                        return Err(error);
+                    }
+                };
                 let defined = stores.symbol(&name).is_some_and(|symbol| {
                     let meaning = stores.meaning(symbol);
                     expansion.record_meaning(symbol, meaning);
