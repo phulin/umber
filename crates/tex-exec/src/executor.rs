@@ -92,13 +92,15 @@ pub enum FontSource {
 /// Expansion scanners see this only through its concrete dereference to
 /// [`tex_expand::ExpansionContext`]; font resolution remains an execution-only
 /// operation and is invoked solely by `\font` assignment.
-pub(crate) struct PendingParagraphMemo;
+pub(crate) struct PendingParagraphMemo {
+    pub(crate) break_dependencies: Vec<tex_state::ObservedDependency>,
+    pub(crate) prev_graf: Option<i32>,
+}
 
 pub(crate) struct ColdParagraphRecording {
     pub(crate) effect_start: usize,
     pub(crate) starting_span: Option<tex_state::RootSpanId>,
     pub(crate) starting_group_depth: u32,
-    pub(crate) starting_group_changed_at: tex_state::ChangedAt,
     pub(crate) delivered_tokens: usize,
     pub(crate) barriers: std::collections::BTreeSet<ParagraphBarrierReason>,
 }
@@ -109,11 +111,15 @@ pub struct ExecutionContext<'a> {
     image_resolver: Option<&'a mut dyn PdfImageResolver>,
     pub(crate) pending_paragraph_memo: Option<PendingParagraphMemo>,
     pub(crate) paragraph_memo_barrier: bool,
+    /// A changed line-breaking dependency invalidates finished-line artifacts
+    /// for the revision. Once observed, run cold instead of rediscovering the
+    /// same miss and rebuilding memo history for every following paragraph.
+    pub(crate) paragraph_memo_disabled_for_run: bool,
     pub(crate) cold_paragraph_recording: Option<ColdParagraphRecording>,
     /// Detached paragraph observations reusable only while their authoritative
     /// changed-at stamps remain equal during this execution run.
     pub(crate) paragraph_dependency_cache:
-        BTreeMap<tex_state::DependencyKey, tex_state::ObservedDependency>,
+        ahash::AHashMap<tex_state::DependencyKey, tex_state::ObservedDependency>,
 }
 
 impl<'a> ExecutionContext<'a> {
@@ -125,8 +131,9 @@ impl<'a> ExecutionContext<'a> {
             image_resolver: None,
             pending_paragraph_memo: None,
             paragraph_memo_barrier: false,
+            paragraph_memo_disabled_for_run: false,
             cold_paragraph_recording: None,
-            paragraph_dependency_cache: BTreeMap::new(),
+            paragraph_dependency_cache: ahash::AHashMap::new(),
         }
     }
 
@@ -142,8 +149,9 @@ impl<'a> ExecutionContext<'a> {
             image_resolver: None,
             pending_paragraph_memo: None,
             paragraph_memo_barrier: false,
+            paragraph_memo_disabled_for_run: false,
             cold_paragraph_recording: None,
-            paragraph_dependency_cache: BTreeMap::new(),
+            paragraph_dependency_cache: ahash::AHashMap::new(),
         }
     }
 
@@ -160,8 +168,9 @@ impl<'a> ExecutionContext<'a> {
             image_resolver: Some(image_resolver),
             pending_paragraph_memo: None,
             paragraph_memo_barrier: false,
+            paragraph_memo_disabled_for_run: false,
             cold_paragraph_recording: None,
-            paragraph_dependency_cache: BTreeMap::new(),
+            paragraph_dependency_cache: ahash::AHashMap::new(),
         }
     }
 
@@ -207,7 +216,6 @@ impl<'a> ExecutionContext<'a> {
         effect_start: usize,
         starting_span: Option<tex_state::RootSpanId>,
         starting_group_depth: u32,
-        starting_group_changed_at: tex_state::ChangedAt,
     ) -> bool {
         if self.cold_paragraph_recording.is_some() {
             return false;
@@ -217,7 +225,6 @@ impl<'a> ExecutionContext<'a> {
             effect_start,
             starting_span,
             starting_group_depth,
-            starting_group_changed_at,
             delivered_tokens: 0,
             barriers: std::collections::BTreeSet::new(),
         });
@@ -236,14 +243,12 @@ impl<'a> ExecutionContext<'a> {
         &mut self,
         starting_span: Option<tex_state::RootSpanId>,
         starting_group_depth: u32,
-        starting_group_changed_at: tex_state::ChangedAt,
     ) {
         if let Some(recording) = &mut self.cold_paragraph_recording
             && starting_span.is_some()
         {
             recording.starting_span = starting_span;
             recording.starting_group_depth = starting_group_depth;
-            recording.starting_group_changed_at = starting_group_changed_at;
         }
     }
 
@@ -255,6 +260,7 @@ impl<'a> ExecutionContext<'a> {
     pub(crate) fn mark_paragraph_barrier(&mut self, reason: ParagraphBarrierReason) {
         if let Some(recording) = &mut self.cold_paragraph_recording {
             recording.barriers.insert(reason);
+            self.expansion.stop_paragraph_read_tracking();
         }
     }
 
@@ -567,19 +573,21 @@ where
             && nest.current_mode() == crate::Mode::Vertical
             && execution.pending_paragraph_memo.is_none()
             && !execution.paragraph_memo_barrier
+            && !execution.paragraph_memo_disabled_for_run
             && stores.paragraph_memo_enabled()
+            // PDF microtype consults mutable per-font expansion and character
+            // code tables which are not part of the finished-line dependency
+            // vocabulary. Keep those paragraphs on the ordinary cold path.
+            && stores.int_param(tex_state::env::banks::IntParam::PDF_ADJUST_SPACING) == 0
+            && stores.int_param(tex_state::env::banks::IntParam::PDF_PROTRUDE_CHARS) == 0
         {
             let starting_span = input.current_root_delivery_anchor(stores)?;
             if let Some(starting_span) = starting_span {
-                let group_key =
-                    tex_state::DependencyKey::Engine(tex_state::DependencyEngineField::GroupLevel);
-                let starting_group_changed_at = stores.track_dependency(group_key);
                 if execution.cold_paragraph_recording.is_none()
                     && execution.begin_cold_paragraph_recording(
                         stores.world().effect_records().len(),
                         Some(starting_span),
                         tex_state::ExpansionState::execution_group_depth(stores),
-                        starting_group_changed_at,
                     )
                 {
                     stores.begin_pure_paragraph_recording();
@@ -587,7 +595,6 @@ where
                 execution.update_cold_paragraph_start(
                     Some(starting_span),
                     tex_state::ExpansionState::execution_group_depth(stores),
-                    starting_group_changed_at,
                 );
                 if execution.cold_paragraph_recording.is_some() {
                     let before_artifacts = stores.world().artifact_commits().len();

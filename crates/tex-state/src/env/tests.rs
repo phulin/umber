@@ -818,23 +818,6 @@ fn group_exit_bumps_epoch_so_outer_undo_slice_records_rewrite() {
 }
 
 #[test]
-fn count_int_fingerprint_is_lazy_and_restores_after_local_group() {
-    let mut env = Env::new();
-    let initial = env.count_int_fingerprint();
-    assert_eq!(env.count_int_fingerprint(), initial);
-
-    env.enter_group();
-    env.set_count(300, -17);
-    env.set_int_param(IntParam::GLOBAL_DEFS, 1);
-    assert_ne!(env.count_int_fingerprint(), initial);
-    assert_eq!(env.leave_group(), Vec::<Token>::new());
-
-    assert_eq!(env.count_int_fingerprint(), initial);
-    env.set_count_global(3, 42);
-    assert_ne!(env.count_int_fingerprint(), initial);
-}
-
-#[test]
 fn paragraph_mutations_keep_only_compacted_root_survivors() {
     let mut env = Env::new();
     let entry_epoch = env.epoch();
@@ -852,8 +835,8 @@ fn paragraph_mutations_keep_only_compacted_root_survivors() {
     env.set_count(300, -17);
 
     let summary = env.finish_paragraph_mutations(checkpoint);
+    assert!(!summary.entry_in_group);
     assert!(!summary.unsupported_group_ownership);
-    assert_ne!(summary.entry_fingerprint, summary.exit_fingerprint);
     assert_eq!(
         summary.mutations,
         vec![
@@ -887,7 +870,6 @@ fn paragraph_mutations_omit_restored_root_values_and_nested_locals() {
     env.set_count(4, 0);
 
     let summary = env.finish_paragraph_mutations(checkpoint);
-    assert_eq!(summary.entry_fingerprint, summary.exit_fingerprint);
     assert!(summary.mutations.is_empty());
 }
 
@@ -914,15 +896,36 @@ fn paragraph_mutations_record_global_writes_at_nested_depth() {
 }
 
 #[test]
-fn paragraph_mutations_keep_nonzero_entry_group_ownership_conservative() {
+fn paragraph_mutations_record_live_group_scripts_and_reject_frame_changes() {
     let mut env = Env::new();
     env.enter_group();
     let checkpoint = env.begin_paragraph_mutations();
     env.set_count(7, 0);
 
     let summary = env.finish_paragraph_mutations(checkpoint);
+    assert!(summary.entry_in_group);
+    assert!(!summary.unsupported_group_ownership);
+    assert_eq!(summary.mutations.len(), 1);
+
+    let checkpoint = env.begin_paragraph_mutations();
+    env.set_count(7, 1);
+    let summary = env.finish_paragraph_mutations(checkpoint);
+    assert!(!summary.unsupported_group_ownership);
+    assert_eq!(summary.mutations.len(), 1);
+
+    env.set_count_global(7, 0);
+    let checkpoint = env.begin_paragraph_mutations();
+    env.set_count_global(7, 1);
+    env.set_count(7, 0);
+    let summary = env.finish_paragraph_mutations(checkpoint);
+    assert!(!summary.unsupported_group_ownership);
+    assert_eq!(summary.mutations.len(), 2);
+
+    let checkpoint = env.begin_paragraph_mutations();
+    let _ = env.leave_group();
+    env.enter_group();
+    let summary = env.finish_paragraph_mutations(checkpoint);
     assert!(summary.unsupported_group_ownership);
-    assert!(summary.mutations.is_empty());
 }
 
 #[test]

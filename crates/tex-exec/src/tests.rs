@@ -14,6 +14,15 @@ mod fonts;
 mod grouping_parity;
 mod groups;
 mod hyphenation;
+
+#[test]
+fn paragraph_mutation_entry_class_distinguishes_root_from_live_groups() {
+    assert!(crate::paragraph_memo::same_mutation_entry_class(false, 0));
+    assert!(crate::paragraph_memo::same_mutation_entry_class(true, 1));
+    assert!(crate::paragraph_memo::same_mutation_entry_class(true, 9));
+    assert!(!crate::paragraph_memo::same_mutation_entry_class(false, 1));
+    assert!(!crate::paragraph_memo::same_mutation_entry_class(true, 0));
+}
 mod io;
 mod math;
 pub(crate) mod support;

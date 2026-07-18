@@ -3060,7 +3060,7 @@ fn the_renders_assignable_registers_parameters_and_code_tables() {
 }
 
 #[test]
-fn the_records_value_and_code_generation_dependencies_that_mutations_invalidate() {
+fn the_records_exact_code_dependencies_that_table_mutations_invalidate() {
     let mut stores = Universe::new();
     expandable_primitive(&mut stores, "the", ExpandablePrimitive::The);
     let catcode = stores.intern("catcode");
@@ -3088,7 +3088,7 @@ fn the_records_value_and_code_generation_dependencies_that_mutations_invalidate(
         index: 7,
     }));
     assert!(
-        dependencies.contains(&crate::ReadDependency::CodeGeneration(
+        !dependencies.contains(&crate::ReadDependency::CodeGeneration(
             crate::ReadCodeTable::Catcode,
         ))
     );

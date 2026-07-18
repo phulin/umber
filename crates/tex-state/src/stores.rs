@@ -1856,9 +1856,21 @@ impl Stores {
         root_origins: &[OriginId],
         origin_slots: &[u32],
     ) -> Option<NodeListId> {
-        if !self.can_mount_retained_paragraph_result(retained)
-            || !self.glue.restore_retained(retained.glues())
-        {
+        if !self.can_mount_retained_paragraph_result(retained) {
+            return None;
+        }
+        self.mount_prevalidated_paragraph_result(retained, root_origins, origin_slots)
+    }
+
+    /// Mounts a retained paragraph graph whose complete closure was validated
+    /// earlier in the same fail-before-mutation transaction.
+    pub fn mount_prevalidated_paragraph_result(
+        &mut self,
+        retained: &RetainedNodeList,
+        root_origins: &[OriginId],
+        origin_slots: &[u32],
+    ) -> Option<NodeListId> {
+        if !self.glue.restore_retained(retained.glues()) {
             return None;
         }
         let id = retained.id();
@@ -2019,10 +2031,6 @@ impl Stores {
 
     pub fn set_count_global(&mut self, index: u16, value: i32) {
         self.env.set_count_global(index, value);
-    }
-
-    pub(crate) fn count_int_fingerprint(&mut self) -> u64 {
-        self.env.count_int_fingerprint()
     }
 
     pub(crate) fn begin_paragraph_mutations(

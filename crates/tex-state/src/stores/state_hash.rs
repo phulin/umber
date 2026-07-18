@@ -1552,6 +1552,22 @@ impl Stores {
         visits
     }
 
+    pub(crate) fn hash_dependency_code_table(
+        &self,
+        table: crate::DependencyCodeTable,
+        hasher: &mut StateHasher,
+    ) {
+        let index = match table {
+            crate::DependencyCodeTable::Catcode => 0,
+            crate::DependencyCodeTable::Lccode => 1,
+            crate::DependencyCodeTable::Uccode => 2,
+            crate::DependencyCodeTable::Sfcode => 3,
+            crate::DependencyCodeTable::Mathcode => 4,
+            crate::DependencyCodeTable::Delcode => 5,
+        };
+        let _ = self.hash_code_table(index, hasher);
+    }
+
     #[cfg(test)]
     fn hash_node_tree_from_node(&self, node: Node, hasher: &mut StateHasher) -> usize {
         let mut stack = Vec::new();

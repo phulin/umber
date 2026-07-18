@@ -10,6 +10,7 @@ use crate::glue::GlueSpec;
 use crate::survivor::RetainedNodeList;
 use crate::{ContentHash, DetachedMemoValue, InputSummary, ObservedDependency, RootSpanId};
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
+use std::sync::Arc;
 use std::time::Duration;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -132,8 +133,6 @@ pub enum MemoTimingPhase {
 pub enum ParagraphRecordingPhase {
     FrontEndDependencies,
     InputTransition,
-    FrontEndProvenance,
-    HlistRetention,
     RegionPublication,
     BreakDependencies,
     BreakKeyDiscovery,
@@ -187,8 +186,6 @@ pub struct ParagraphRecordingStats {
     pub timer_samples: u64,
     pub front_end_dependency_nanos: u64,
     pub input_transition_nanos: u64,
-    pub front_end_provenance_nanos: u64,
-    pub hlist_retention_nanos: u64,
     pub region_publication_nanos: u64,
     pub break_dependency_nanos: u64,
     pub break_key_discovery_nanos: u64,
@@ -209,12 +206,6 @@ impl ParagraphRecordingStats {
             input_transition_nanos: self
                 .input_transition_nanos
                 .saturating_sub(earlier.input_transition_nanos),
-            front_end_provenance_nanos: self
-                .front_end_provenance_nanos
-                .saturating_sub(earlier.front_end_provenance_nanos),
-            hlist_retention_nanos: self
-                .hlist_retention_nanos
-                .saturating_sub(earlier.hlist_retention_nanos),
             region_publication_nanos: self
                 .region_publication_nanos
                 .saturating_sub(earlier.region_publication_nanos),
@@ -243,8 +234,6 @@ impl ParagraphRecordingStats {
         let target = match phase {
             ParagraphRecordingPhase::FrontEndDependencies => &mut self.front_end_dependency_nanos,
             ParagraphRecordingPhase::InputTransition => &mut self.input_transition_nanos,
-            ParagraphRecordingPhase::FrontEndProvenance => &mut self.front_end_provenance_nanos,
-            ParagraphRecordingPhase::HlistRetention => &mut self.hlist_retention_nanos,
             ParagraphRecordingPhase::RegionPublication => &mut self.region_publication_nanos,
             ParagraphRecordingPhase::BreakDependencies => &mut self.break_dependency_nanos,
             ParagraphRecordingPhase::BreakKeyDiscovery => &mut self.break_key_discovery_nanos,
@@ -335,9 +324,7 @@ pub struct PureMemoStats {
     pub paragraph_mutations_replayed: u64,
     /// Hits whose incoming count/int fingerprint differed, admitted because
     /// unchanged source and read dependencies establish the same write script.
-    pub paragraph_relaxed_state_replays: u64,
     pub paragraph_line_hits: u64,
-    pub paragraph_hlist_fallbacks: u64,
     pub paragraph_validation_misses: u64,
     pub paragraph_barriers: u64,
     pub paragraph_eligible_regions: u64,
@@ -410,9 +397,9 @@ pub enum ParagraphBarrierReason {
 /// `u32::MAX` denotes provenance which cannot be represented by a stable root.
 #[derive(Clone, Debug, Default)]
 pub struct ParagraphProvenanceRecipe {
-    pub piece_anchors: Vec<RootSpanId>,
-    pub root_spans: Vec<ParagraphProvenanceSpan>,
-    pub origin_slots: Vec<u32>,
+    pub piece_anchors: Arc<[RootSpanId]>,
+    pub root_spans: Arc<[ParagraphProvenanceSpan]>,
+    pub origin_slots: Arc<[u32]>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -430,32 +417,33 @@ pub struct RecordedParagraphRegion {
     pub starting_span: Option<RootSpanId>,
     /// Stable raw cursor reached after the paragraph terminator.
     pub ending_span: Option<RootSpanId>,
-    pub consumed_spans: Vec<RootSpanId>,
+    pub consumed_spans: Arc<[RootSpanId]>,
     /// Delivered-token count retained only for avoided-work telemetry. No
     /// token values or origins are recorded.
     pub delivered_tokens: usize,
-    /// Exact paragraph-relevant entry identity. Matching dependency stamps and
-    /// count/integer state admit the common path without semantic projection.
+    /// Exact paragraph-relevant read identity.
     pub entry_identity: ParagraphEntryIdentity,
-    pub dependencies: Vec<ObservedDependency>,
-    /// Complete count/int state required before applying `mutations`.
-    pub mutation_entry_fingerprint: u64,
-    /// Complete count/int state after applying `mutations`.
-    pub mutation_exit_fingerprint: u64,
-    pub mutations: Vec<PureParagraphMutation>,
-    pub effects: Vec<crate::DetachedVirtualEffect>,
+    pub dependencies: Arc<[ObservedDependency]>,
+    /// Root and live-group mutation scripts use different compaction rules.
+    pub mutation_entry_in_group: bool,
+    pub mutations: Arc<[PureParagraphMutation]>,
+    pub effects: Arc<[crate::DetachedVirtualEffect]>,
     pub ending_input: InputSummary,
-    pub barriers: Vec<ParagraphBarrierReason>,
-    pub hlist: Option<RetainedNodeList>,
-    pub hlist_provenance: ParagraphProvenanceRecipe,
-    /// Dependencies observed only by line breaking, materialization, and
-    /// horizontal packing. A mismatch here still permits prepared-hlist reuse.
-    pub break_dependencies: Vec<ObservedDependency>,
+    pub barriers: Arc<[ParagraphBarrierReason]>,
+    /// Dependencies observed by horizontal-list construction, line breaking,
+    /// materialization, and packing. A mismatch invalidates finished lines and
+    /// sends the revision down the ordinary cold path.
+    pub break_dependencies: Arc<[ObservedDependency]>,
     /// Exact identity of the post-redo facts used by line breaking.
     pub break_identity: ParagraphReadIdentity,
+    /// Enclosing vertical-list line offset consumed by `line_shape`, when a
+    /// non-natural paragraph shape can observe it.
+    pub break_prev_graf: Option<i32>,
     /// Finished line boxes interleaved with migrating material and penalties.
     pub lines: Option<RetainedNodeList>,
     pub line_count: i32,
+    /// `\badness` left by packing the final materialized line.
+    pub line_last_badness: i32,
     pub line_provenance: ParagraphProvenanceRecipe,
 }
 
@@ -467,7 +455,7 @@ pub struct RecordedParagraphRegion {
 /// identity after successful backdating.
 #[derive(Clone, Debug, Default)]
 pub struct ParagraphReadIdentity {
-    stamps: Vec<crate::ChangedAt>,
+    stamps: Arc<[crate::ChangedAt]>,
 }
 
 impl ParagraphReadIdentity {
@@ -477,7 +465,8 @@ impl ParagraphReadIdentity {
             stamps: observations
                 .iter()
                 .map(|observation| observation.changed_at)
-                .collect(),
+                .collect::<Vec<_>>()
+                .into(),
         }
     }
 
@@ -496,29 +485,25 @@ impl ParagraphReadIdentity {
     }
 
     pub fn refresh(&mut self, observations: &[ObservedDependency]) {
-        self.stamps.clear();
-        self.stamps.extend(
-            observations
-                .iter()
-                .map(|observation| observation.changed_at),
-        );
+        self.stamps = observations
+            .iter()
+            .map(|observation| observation.changed_at)
+            .collect::<Vec<_>>()
+            .into();
     }
 }
 
-/// Exact common-path paragraph entry identity plus the semantic fallback's
-/// complete count/integer pre-state discriminator.
+/// Exact common-path identity for the paragraph's typed semantic read set.
 #[derive(Clone, Debug, Default)]
 pub struct ParagraphEntryIdentity {
     reads: ParagraphReadIdentity,
-    count_int_fingerprint: u64,
 }
 
 impl ParagraphEntryIdentity {
     #[must_use]
-    pub fn new(observations: &[ObservedDependency], count_int_fingerprint: u64) -> Self {
+    pub fn new(observations: &[ObservedDependency]) -> Self {
         Self {
             reads: ParagraphReadIdentity::from_observations(observations),
-            count_int_fingerprint,
         }
     }
 
@@ -526,16 +511,13 @@ impl ParagraphEntryIdentity {
     pub fn matches(
         &self,
         observations: &[ObservedDependency],
-        count_int_fingerprint: u64,
         changed_at: impl FnMut(DependencyKey) -> crate::ChangedAt,
     ) -> bool {
-        self.count_int_fingerprint == count_int_fingerprint
-            && self.reads.matches(observations, changed_at)
+        self.reads.matches(observations, changed_at)
     }
 
-    pub fn refresh(&mut self, observations: &[ObservedDependency], count_int_fingerprint: u64) {
+    pub fn refresh(&mut self, observations: &[ObservedDependency]) {
         self.reads.refresh(observations);
-        self.count_int_fingerprint = count_int_fingerprint;
     }
 }
 
@@ -571,8 +553,7 @@ pub enum PureParagraphMutation {
 /// Cold paragraph root-transition accounting observed directly by setters.
 #[derive(Clone, Debug)]
 pub struct PureParagraphMutationSummary {
-    pub entry_fingerprint: u64,
-    pub exit_fingerprint: u64,
+    pub entry_in_group: bool,
     pub unsupported_group_ownership: bool,
     pub mutations: Vec<PureParagraphMutation>,
 }
@@ -641,6 +622,7 @@ pub struct PureMemoRuntime {
     prior_paragraph_cursor: usize,
     recorded_paragraphs: Vec<RecordedParagraphRegion>,
     reuse_prior_paragraphs: bool,
+    preserve_prior_paragraphs: bool,
     paragraph_barrier_reasons: BTreeMap<ParagraphBarrierReason, u64>,
 }
 
@@ -976,12 +958,7 @@ impl PureMemoRuntime {
         self.paragraph_recording.take()
     }
 
-    pub(crate) fn record_paragraph_hit(
-        &mut self,
-        commands: usize,
-        mutations: usize,
-        relaxed_state: bool,
-    ) {
+    pub(crate) fn record_paragraph_hit(&mut self, commands: usize, mutations: usize) {
         let Some(cache) = &mut self.cache else {
             return;
         };
@@ -996,29 +973,22 @@ impl PureMemoRuntime {
             .stats
             .paragraph_mutations_replayed
             .saturating_add(mutations as u64);
-        cache.stats.paragraph_relaxed_state_replays = cache
-            .stats
-            .paragraph_relaxed_state_replays
-            .saturating_add(u64::from(relaxed_state));
     }
 
-    pub(crate) fn record_paragraph_line_hit(&mut self, fallback: bool) {
+    pub(crate) fn record_paragraph_line_hit(&mut self) {
         let Some(cache) = &mut self.cache else {
             return;
         };
-        if fallback {
-            cache.stats.paragraph_hlist_fallbacks =
-                cache.stats.paragraph_hlist_fallbacks.saturating_add(1);
-        } else {
-            cache.stats.paragraph_line_hits = cache.stats.paragraph_line_hits.saturating_add(1);
-        }
+        cache.stats.paragraph_line_hits = cache.stats.paragraph_line_hits.saturating_add(1);
     }
 
     pub(crate) fn finish_recorded_paragraph_lines(
         &mut self,
         dependencies: Vec<ObservedDependency>,
+        prev_graf: Option<i32>,
         lines: RetainedNodeList,
         line_count: i32,
+        last_badness: i32,
         provenance: ParagraphProvenanceRecipe,
     ) {
         let Some(region) = self.recorded_paragraphs.last_mut() else {
@@ -1026,9 +996,11 @@ impl PureMemoRuntime {
         };
         if region.barriers.is_empty() && region.lines.is_none() {
             region.break_identity = ParagraphReadIdentity::from_observations(&dependencies);
-            region.break_dependencies = dependencies;
+            region.break_dependencies = dependencies.into();
+            region.break_prev_graf = prev_graf;
             region.lines = Some(lines);
             region.line_count = line_count;
+            region.line_last_badness = last_badness;
             region.line_provenance = provenance;
         }
     }
@@ -1186,12 +1158,31 @@ impl PureMemoRuntime {
     pub fn begin_paragraph_history(&mut self, reuse_prior: bool) {
         self.recorded_paragraphs.clear();
         self.reuse_prior_paragraphs = reuse_prior;
+        self.preserve_prior_paragraphs = false;
+        self.prior_paragraph_cursor = 0;
+    }
+
+    /// Keeps the last accepted trace when a run-wide dependency mismatch makes
+    /// every candidate unusable for the current revision. The trace may become
+    /// valid again after a later inverse edit, and dropping its retained graphs
+    /// here only adds deallocation and future priming work.
+    pub(crate) fn preserve_prior_paragraph_history(&mut self) {
+        self.recorded_paragraphs.clear();
+        self.preserve_prior_paragraphs = true;
+        self.reuse_prior_paragraphs = false;
         self.prior_paragraph_cursor = 0;
     }
 
     /// Publishes the speculative trace wholesale after its owning Universe is
     /// accepted as the new retained generation.
     pub fn accept_paragraph_history(&mut self) {
+        if self.preserve_prior_paragraphs {
+            self.recorded_paragraphs.clear();
+            self.preserve_prior_paragraphs = false;
+            self.prior_paragraph_cursor = 0;
+            self.reuse_prior_paragraphs = false;
+            return;
+        }
         self.prior_paragraphs = std::mem::take(&mut self.recorded_paragraphs);
         self.prior_paragraph_starts.clear();
         for (index, region) in self.prior_paragraphs.iter().enumerate() {
@@ -1206,6 +1197,7 @@ impl PureMemoRuntime {
     /// Drops all trace metadata produced by an abandoned execution branch.
     pub fn discard_paragraph_history(&mut self) {
         self.recorded_paragraphs.clear();
+        self.preserve_prior_paragraphs = false;
         self.reuse_prior_paragraphs = false;
         self.prior_paragraph_cursor = 0;
     }
@@ -1532,12 +1524,6 @@ fn recorded_paragraph_retained_bytes(region: &RecordedParagraphRegion) -> usize 
     std::mem::size_of::<RecordedParagraphRegion>()
         .saturating_add(
             region
-                .hlist
-                .as_ref()
-                .map_or(0, RetainedNodeList::resource_retained_bytes),
-        )
-        .saturating_add(
-            region
                 .lines
                 .as_ref()
                 .map_or(0, RetainedNodeList::resource_retained_bytes),
@@ -1545,19 +1531,19 @@ fn recorded_paragraph_retained_bytes(region: &RecordedParagraphRegion) -> usize 
         .saturating_add(
             region
                 .consumed_spans
-                .capacity()
+                .len()
                 .saturating_mul(std::mem::size_of::<RootSpanId>()),
         )
         .saturating_add(
             region
                 .dependencies
-                .capacity()
+                .len()
                 .saturating_mul(std::mem::size_of::<ObservedDependency>()),
         )
         .saturating_add(
             region
                 .mutations
-                .capacity()
+                .len()
                 .saturating_mul(std::mem::size_of::<PureParagraphMutation>()),
         )
         .saturating_add(
@@ -1575,16 +1561,13 @@ fn recorded_paragraph_retained_bytes(region: &RecordedParagraphRegion) -> usize 
         .saturating_add(
             region
                 .barriers
-                .capacity()
+                .len()
                 .saturating_mul(std::mem::size_of::<ParagraphBarrierReason>()),
         )
-        .saturating_add(paragraph_provenance_retained_bytes(
-            &region.hlist_provenance,
-        ))
         .saturating_add(
             region
                 .break_dependencies
-                .capacity()
+                .len()
                 .saturating_mul(std::mem::size_of::<ObservedDependency>()),
         )
         .saturating_add(paragraph_provenance_retained_bytes(&region.line_provenance))
@@ -1593,18 +1576,18 @@ fn recorded_paragraph_retained_bytes(region: &RecordedParagraphRegion) -> usize 
 fn paragraph_provenance_retained_bytes(recipe: &ParagraphProvenanceRecipe) -> usize {
     recipe
         .piece_anchors
-        .capacity()
+        .len()
         .saturating_mul(std::mem::size_of::<RootSpanId>())
         .saturating_add(
             recipe
                 .root_spans
-                .capacity()
+                .len()
                 .saturating_mul(std::mem::size_of::<ParagraphProvenanceSpan>()),
         )
         .saturating_add(
             recipe
                 .origin_slots
-                .capacity()
+                .len()
                 .saturating_mul(std::mem::size_of::<u32>()),
         )
 }

@@ -5,6 +5,7 @@
 //! but the recorded value is always a scalar or canonical content identity.
 
 use crate::world::ContentHash;
+use ahash::AHashMap;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
@@ -59,10 +60,14 @@ pub enum DependencyFontField {
     Name,
     Parameter,
     ParameterCount,
+    /// Aggregate identity of the mutable font-parameter vector.
+    Parameters,
     HyphenChar,
     SkewChar,
     Metrics,
     PdfCode,
+    /// Aggregate identity of unconditional PDF lig/kern shaping state.
+    PdfShaping,
 }
 
 /// Executor-owned state that is not stored in an environment cell.
@@ -230,13 +235,15 @@ pub enum DependencyValidation {
 #[derive(Clone, Debug, Default)]
 pub struct DependencyTracker {
     revision: u64,
-    changed: Arc<BTreeMap<DependencyKey, ChangedAt>>,
+    invalidated_at: ChangedAt,
+    changed: Arc<AHashMap<DependencyKey, ChangedAt>>,
 }
 
 /// O(1) rollback root for changed-at metadata.
 #[derive(Clone, Debug, Default)]
 pub(crate) struct DependencyTrackerSnapshot {
-    changed: Arc<BTreeMap<DependencyKey, ChangedAt>>,
+    invalidated_at: ChangedAt,
+    changed: Arc<AHashMap<DependencyKey, ChangedAt>>,
 }
 
 /// Optional recording state installed around one interpreter computation.
@@ -247,6 +254,7 @@ pub(crate) struct DependencyTrackerSnapshot {
 pub struct DependencyRuntime {
     tracker: DependencyTracker,
     active: Option<DependencyRegion>,
+    tracking_enabled: bool,
 }
 
 impl DependencyRuntime {
@@ -254,6 +262,7 @@ impl DependencyRuntime {
     /// [`DependencyKey::Query`] in their parent.
     pub fn begin_region(&mut self) {
         assert!(self.active.is_none(), "dependency region already active");
+        self.tracking_enabled = true;
         self.active = Some(DependencyRegion::default());
     }
 
@@ -279,20 +288,27 @@ impl DependencyRuntime {
     }
 
     pub fn mark_changed(&mut self, key: DependencyKey) -> ChangedAt {
+        if !self.tracking_enabled {
+            return ChangedAt::NEVER;
+        }
         self.tracker.mark_changed(key)
     }
 
     /// Registers a key for changed-at tracking without opening a region.
     pub fn track(&mut self, key: DependencyKey) -> ChangedAt {
+        self.tracking_enabled = true;
         self.tracker.track(key)
     }
 
     pub fn invalidate_all(&mut self) {
-        self.tracker.invalidate_all();
+        if self.tracking_enabled {
+            self.tracker.invalidate_all();
+        }
     }
 
     pub(crate) fn snapshot_tracker(&self) -> DependencyTrackerSnapshot {
         DependencyTrackerSnapshot {
+            invalidated_at: self.tracker.invalidated_at,
             changed: Arc::clone(&self.tracker.changed),
         }
     }
@@ -309,50 +325,51 @@ impl DependencyRuntime {
 
 impl DependencyTracker {
     pub fn track(&mut self, key: DependencyKey) -> ChangedAt {
-        *Arc::make_mut(&mut self.changed)
-            .entry(key)
-            .or_insert(ChangedAt::NEVER)
+        self.changed_at(key)
     }
 
     #[must_use]
     pub fn changed_at(&self, key: DependencyKey) -> ChangedAt {
-        self.changed.get(&key).copied().unwrap_or(ChangedAt::NEVER)
+        // Scalar code-table reads share one mutation clock per table. This
+        // keeps the stamp table bounded while validation still compares the
+        // exact scalar value recorded by the reader.
+        let key = match key {
+            DependencyKey::Code { table, .. } => DependencyKey::CodeGeneration(table),
+            key => key,
+        };
+        self.changed
+            .get(&key)
+            .copied()
+            .unwrap_or(ChangedAt::NEVER)
+            .max(self.invalidated_at)
     }
 
     /// Marks a fact after its aggregate mutation barrier has run.
     pub fn mark_changed(&mut self, key: DependencyKey) -> ChangedAt {
-        let Some(changed_at) = Arc::make_mut(&mut self.changed).get_mut(&key) else {
-            return ChangedAt::NEVER;
+        let key = match key {
+            DependencyKey::Code { table, .. } => DependencyKey::CodeGeneration(table),
+            key => key,
         };
         self.revision = self
             .revision
             .checked_add(1)
             .expect("dependency revision exhausted");
         let stamp = ChangedAt(self.revision);
-        *changed_at = stamp;
+        Arc::make_mut(&mut self.changed).insert(key, stamp);
         stamp
     }
 
     /// Advances every fact observed by this runtime after an aggregate restore.
     pub fn invalidate_all(&mut self) {
-        if self.changed.is_empty() {
-            return;
-        }
         self.revision = self
             .revision
             .checked_add(1)
             .expect("dependency revision exhausted");
-        let stamp = ChangedAt(self.revision);
-        for changed_at in Arc::make_mut(&mut self.changed).values_mut() {
-            *changed_at = stamp;
-        }
+        self.invalidated_at = ChangedAt(self.revision);
     }
 
     #[must_use]
     pub fn observe(&mut self, key: DependencyKey, value: DependencyValue) -> ObservedDependency {
-        Arc::make_mut(&mut self.changed)
-            .entry(key)
-            .or_insert(ChangedAt::NEVER);
         ObservedDependency {
             key,
             changed_at: self.changed_at(key),
@@ -361,7 +378,9 @@ impl DependencyTracker {
     }
 
     fn restore(&mut self, snapshot: &DependencyTrackerSnapshot) {
-        if Arc::ptr_eq(&self.changed, &snapshot.changed) {
+        if Arc::ptr_eq(&self.changed, &snapshot.changed)
+            && self.invalidated_at == snapshot.invalidated_at
+        {
             return;
         }
         let mut restored = (*snapshot.changed).clone();
@@ -379,16 +398,22 @@ impl DependencyTracker {
                     .filter(|key| !self.changed.contains_key(key)),
             )
             .collect::<Vec<_>>();
-        if !changed_keys.is_empty() {
+        let global_changed = self.invalidated_at != snapshot.invalidated_at;
+        let mut restored_invalidated_at = snapshot.invalidated_at;
+        if global_changed || !changed_keys.is_empty() {
             self.revision = self
                 .revision
                 .checked_add(1)
                 .expect("dependency revision exhausted");
             let stamp = ChangedAt(self.revision);
+            if global_changed {
+                restored_invalidated_at = stamp;
+            }
             for key in changed_keys {
                 restored.insert(key, stamp);
             }
         }
+        self.invalidated_at = restored_invalidated_at;
         self.changed = Arc::new(restored);
     }
 
@@ -427,6 +452,23 @@ impl DependencyTracker {
     ) -> Option<DependencyKey> {
         observations.iter_mut().find_map(|observation| {
             (self.validate(observation, &mut read_current) == DependencyValidation::Changed)
+                .then_some(observation.key)
+        })
+    }
+
+    /// Validates a deterministic region without backdating its stamps.
+    ///
+    /// This is useful for immutable shared memo payloads that are consumed at
+    /// most once per execution. Their next accepted incarnation may retain the
+    /// old stamps and take the semantic path again without cloning the payload.
+    pub fn validate_region_failure_readonly(
+        &self,
+        observations: &[ObservedDependency],
+        mut read_current: impl FnMut(DependencyKey) -> DependencyValue,
+    ) -> Option<DependencyKey> {
+        observations.iter().find_map(|observation| {
+            let stamp_changed = self.changed_at(observation.key) != observation.changed_at;
+            (stamp_changed && read_current(observation.key) != observation.value)
                 .then_some(observation.key)
         })
     }

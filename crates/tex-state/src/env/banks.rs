@@ -132,6 +132,9 @@ impl IntParam {
     /// TeX's `\globaldefs` integer parameter.
     pub const GLOBAL_DEFS: Self = Self::new(32);
 
+    /// TeX's missing-character diagnostic level.
+    pub const TRACING_LOST_CHARS: Self = Self::new(36);
+
     /// TeX's `\uchyph` uppercase-start hyphenation gate.
     pub const UC_HYPH: Self = Self::new(39);
 

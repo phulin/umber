@@ -52,14 +52,15 @@ same named-boundary schedule and retain/re-ship/adopt the same page counts
 after earlier paragraph hits. The equal-width substitution is the fast path:
 both policies must preserve the same schedule, reconverge at shipout, re-ship
 the pinned three changed pages, and adopt every page in the unchanged suffix.
-The final rebreak path must install accepted-history shared hlist mounts, run
-the ordinary current-state line breaker, and keep cold-identical output and the
-same named-boundary schedule as the disabled control. Paragraph replay has no
-semantic graph import path or imported-byte counter.
+The final rebreak path must report exactly one typed break-dependency miss,
+disable paragraph replay for the remainder of the revision, and keep
+cold-identical output and the same named-boundary schedule as the disabled
+control. Paragraph replay retains finished lines only; it has no prepared-hlist
+fallback, semantic graph import path, or imported-byte counter.
 Both modes must also produce the exact DVI bytes of a fresh cold compile for
 every revision. The summary reports steady-state slow, interaction, and fast
 and rebreak paired totals, a priming-inclusive slow total, boundary-schedule
-equivalence, page reuse, trace hits, hlist hits, and incremental-to-cold latency
+equivalence, page reuse, trace hits, the one-shot cold fallback, and incremental-to-cold latency
 ratios:
 
 ```bash
@@ -931,13 +932,14 @@ continues to keep paragraph recording default-disabled.
 ### Central paragraph validation contract
 
 Issue `umber2-q02h.61` made paragraph validation an explicit executor-owned
-transaction boundary. The common path compares the exact changed-at vector for
-the paragraph's typed read set together with the complete count/integer entry
-fingerprint. Only divergence projects semantic values and checks recorded
+transaction boundary. At that stage the common path compared the exact
+changed-at vector for the paragraph's typed read set together with the complete
+count/integer entry fingerprint. Only divergence projected semantic values and checked recorded
 root-delta preconditions; successful semantic equality backdates the accepted
 identity. The read-set audit also moved prepared-hlist font metrics and
 hyphen-character facts into front-end validation and added the previously
 missing `\parindent`, `\spaceskip`, and `\xspaceskip` observations.
+The q02h.66 follow-up below removes the whole-state fingerprint.
 
 A two-pair optimized AB/BA gate retained 132 finished-line hits and 42,183
 skipped commands on each slow edit, with no validation misses or import
@@ -1052,3 +1054,45 @@ focused priming/acceptance blocker. Current counters cannot weight barrier
 classes by per-paragraph cold work or graph size, so `umber2-q02h.65` owns
 profiling-only work-weighted distributions; the release decision does not
 assume uniform paragraph savings.
+
+### Priming and acceptance follow-up
+
+Issue `umber2-q02h.66` converted the paragraph layer to a single
+finished-line-only reuse tier. Prepared hlists and their parallel provenance,
+dependency, ownership, and accounting paths were removed. Paragraph records
+share immutable dependency/provenance slices, validate them without
+copy-on-write backdating, and use canonical aggregate roots for the complete
+`\sfcode` and lowercase-code tables and each font's mutable parameter vector.
+Balanced child groups are reusable at every entry depth. Surviving live-group
+count/integer writes retain their exact ordered local/global setter sequence
+and validate only the touched entry scalars; no whole count/int fingerprint or
+journal-ownership scan remains. Dependency observations never mutate the
+changed-at table: absent keys read as `NEVER`, and after tracking activates real
+mutations insert into the shared `AHashMap`; broad invalidation uses one scalar
+stamp. Scalar code
+facts share a per-table clock and compare their exact recorded values after a
+stamp change, preventing Unicode initialization from populating one entry per
+scalar. The runtime stays dormant until dependency recording or explicit
+tracking begins, preserving the zero-map memo-disabled cold path. Recorded read
+sets remain canonically sorted.
+
+The final uninstrumented twenty-pair AB/BA run, after one warmup, reported
+paragraph-enabled minus disabled deltas of -15.299 ms mean/-15.004 ms median
+for the two representative slow edits. Including the complete one-time history
+priming cost remained a win at -2.005 ms mean/-3.492 ms median. Interaction was
+-0.217 ms median and the independent height/page-preserving fast path was
++0.898 ms median. Disabled/enabled priming means were 241.260/254.554 ms. The
+complete five-edit baseline-inclusive result was +0.365 ms mean/+1.310 ms
+median, so this is a slow-path release result rather than evidence to enable the
+layer unconditionally. The line-breaking-state edit was +2.680 ms median: its first typed dependency
+mismatch switches the revision to the ordinary cold executor, but the prior
+accepted history is retained instead of needlessly freed.
+
+Each slow edit mounted 450 finished-line results, skipped 24,896 commands, and
+reduced executed tokens from 129,370 to 104,472 and commands from 41,334 to
+33,874. Accepted paragraph history retains approximately 3,029,160 bytes.
+Normal slow replay has zero typed line-result misses; the explicit rebreak edit
+has exactly one. All revisions
+preserved the disabled named-boundary schedule and emitted cold-identical
+100-page, 279,176-byte DVI. The durable command, gate, and review record is in
+[`profiling_q02h66_release_receipt.md`](profiling_q02h66_release_receipt.md).

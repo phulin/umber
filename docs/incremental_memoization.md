@@ -18,9 +18,9 @@ The design deliberately has two paths and two reuse tests:
    checkpoint, and paragraph suffix.
 2. **Slow path — aligned paragraph replay.** Full state differs, usually
    because pagination changed, but later paragraph inputs and the semantic
-   values they read remain valid. The executor mounts their retained hlists or
-   finished lines in accepted order and feeds them through ordinary line
-   breaking, page building, and shipout.
+   values they read remain valid. The executor mounts retained finished lines
+   in accepted order and feeds them through ordinary page building and
+   shipout.
 
 There is no reverse paragraph-suffix hash. Stable source mapping determines
 alignment, and dependency validation determines semantic validity. A suffix
@@ -41,8 +41,9 @@ The design must:
   DVI bytes, and final state;
 - keep paragraph artifacts tied to accepted-history handles that own their
   shared node roots, resource closures, and provenance recipes;
-- make failure local: a red paragraph executes normally and later mapped
-  paragraphs may re-align; and
+- make front-end failure local so later mapped paragraphs may re-align, while
+  a changed line-breaking dependency switches the revision to one cold pass;
+  and
 - measure height/page-preserving and pagination-changing edits separately.
 
 This phase does not design page-artifact patching, output/shipout reuse,
@@ -60,7 +61,7 @@ The repository already provides the required correctness substrate:
   checkpoints;
 - immutable accepted-generation substrates and one validated restart fork;
 - retained logical effects and page artifacts;
-- accepted-history-owned paragraph hlist and finished-line mounts;
+- accepted-history-owned finished-line mounts;
 - shared immutable survivor payloads with mount-owned glue closures, ordinary
   rollback-local root pins, and local provenance overlays;
 - compact output-reachable, current-revision provenance rebinding recipes;
@@ -119,9 +120,9 @@ ParagraphRecord {
     line-breaking dependency observations,
     supported ordered mutations and virtual effects,
     replay barriers,
-    retained hlist and finished lines,
+    retained finished lines,
     line count,
-    compact hlist and finished-line output-provenance recipes,
+    compact finished-line output-provenance recipe,
 }
 ```
 
@@ -150,21 +151,24 @@ Validation is red/green:
 
 1. an unchanged stamp validates without rereading the value;
 2. an advanced stamp rereads the semantic value;
-3. an equal value backdates the observation; and
+3. an equal value validates the observation; mutable observations may also
+   backdate their stamp; and
 4. a different value makes the paragraph miss.
 
 Front-end dependencies are recorded dynamically during expansion and
-supplemented with the known horizontal-mode facts such as current font,
-`\everypar`, and used `\sfcode` values. Break dependencies are recorded
-separately from the actual hlist and cover line parameters, shape and penalty
-arrays, font metrics, language-local hyphenation state, and used lowercase
-codes. This separation supports three outcomes:
+supplemented with the known horizontal-mode facts such as current font and
+`\everypar`. Line-result dependencies cover line parameters, shape and penalty
+arrays, font metrics, language-local hyphenation state, the complete mutable
+font-parameter vector, and canonical roots for the complete `\sfcode` and
+lowercase-code tables. The aggregate roots make the common validation path
+constant-size; they conservatively invalidate paragraphs after an unrelated
+change in the same code table. This separation supports two outcomes:
 
 ```text
 front-end red       -> execute the paragraph
 front end green,
-break set red       -> mount hlist and re-break
-both green          -> mount finished lines
+line result green   -> mount finished lines
+line result red     -> disable paragraph replay and execute the revision cold
 ```
 
 Source identity and input transition are validated separately from the read
@@ -183,13 +187,12 @@ For each candidate record, in order:
 2. prepare, but do not yet apply, its ending input transition;
 3. validate its front-end dependencies, count/integer mutation state, and
    virtual effects;
-4. prove that its retained hlist graph and complete resource closure are
-   mountable before applying any mutation;
+4. validate line-result dependencies and prove that the retained finished-line
+   graph and complete resource closure are mountable;
 5. atomically apply the prepared input transition and replay the supported
    ordered mutations/effects;
-6. validate the separate post-redo break dependencies and mount finished lines
-   when green, otherwise mount and line-break the accepted hlist;
-7. resolve only the stable editor roots named by reachable hlist or line
+6. mount the accepted finished lines;
+7. resolve only the stable editor roots named by reachable line
    origins and bind them through the mount-local origin overlay;
 8. install the result through the ordinary vertical/page-builder boundary;
    and
@@ -200,10 +203,13 @@ The next old record is then the only candidate. There is no token preflight,
 content-key bucket search, paragraph census, probabilistic admission, or
 per-paragraph discovery map on this aligned path.
 
-If mapping, transition preparation, dependency validation, mount validation, or a
-barrier fails, the candidate leaves live state untouched and executes cold.
-The cursor may resynchronize at a later accepted paragraph whose start maps
-unambiguously; one miss does not invalidate the entire source suffix.
+If mapping, transition preparation, front-end dependency validation, mount
+validation, or a barrier fails, the candidate leaves live state untouched and
+executes cold. The cursor may resynchronize at a later accepted paragraph
+whose start maps unambiguously. A true line-result dependency change is
+different: there is no cheaper retained artifact below finished lines, so the
+executor abandons recording and replay for the remainder of that revision
+after the first typed miss.
 
 Read sets are validated just in time. Validating a union of every future read
 at suffix entry would be unsound when paragraph mutations or ordinary page
@@ -215,37 +221,39 @@ new cache or correctness identity.
 
 The implemented paragraph subset may replay count-register and
 integer-parameter survivors plus supported detached stream text. Cold setters
-feed an Env-owned recorder while paragraph recording is active. Paragraph
-entry captures a lazy 64-bit aHash fingerprint of the complete count/integer
-state without advancing the rollback epoch. On the first observed setter for a
-cell, the recorder saves its paragraph-entry value. Global writes escape at
-every group depth; local writes escape only at depth zero. At paragraph exit,
-one final-value redo is retained for each escaping cell whose root value differs
-from entry. Balanced-group locals and root writes restored to their entry value
-therefore disappear without inspecting or depending on journal storage.
+feed an Env-owned recorder while paragraph recording is active, without
+advancing the rollback epoch or scanning its journal. At root group depth, the
+recorder retains one final-value redo for each escaping cell whose root value
+differs from entry. Balanced-group locals and root writes restored to their
+entry value disappear.
 
-The common replay path compares the incoming fingerprint once and applies the
-compact redo. If the fingerprint differs, only the surviving cells' recorded
-entry values are checked before reuse. This admits the same root write script
-after unrelated count/integer changes while keeping cold setter overhead to
-cache invalidation. A rare 64-bit collision is an accepted performance tradeoff
-for this experimental replay layer.
+Inside a live entry group, the recorder instead retains the exact ordered
+sequence of local and global setters that affect the entry frame. Local writes
+inside a deeper balanced child group are omitted because they are fully
+discharged; deeper global writes remain in the sequence. Admission checks the
+paragraph-entry scalar only for each touched cell, then replays the same setter
+sequence against the current group. Unrelated count/integer divergence is
+irrelevant. This operation-log rule reproduces both values and local/global
+ownership without a whole-state fingerprint or journal-ownership scan.
 
-Unsupported writes, changed nonzero entry groups, input continuations, output
-routines, display math, `\scantokens`, mid-paragraph input opening,
-`\endinput`, and untracked World access remain explicit barriers. A paragraph
-that starts and finishes at group depth zero may contain fully discharged
-groups, including local count/integer writes: there is no entry frame to
-replace, and the direct recorder omits writes that do not escape to the root.
-Inside an open group, any surviving count/integer write remains conservative
-because final values alone cannot reproduce assignment ownership.
+Unsupported writes, entry-frame replacement or `\aftergroup` payload changes,
+input continuations, output routines, inline or display math, `\scantokens`,
+mid-paragraph input opening, `\endinput`, box-register reads/consumption,
+unsupported nested vertical construction, and untracked World access remain
+explicit barriers. Balanced child groups are permitted at every entry depth;
+entering and leaving them does not mutate the entry frame. Shifted fresh boxes
+remain eligible, while a nested `\box`, `\copy`, `\vsplit`, or `\lastbox`
+marks the containing paragraph at the scanner that observes it.
 
-Paragraph recording begins provisionally in outer vertical mode so expansion
+Recording begins provisionally in outer vertical mode at every group depth so expansion
 reads made by the paragraph-starting token are captured. If the delivered
 command leaves the engine in vertical mode, its recording and mutation
 checkpoint are discarded immediately. Only the command that actually enters
 horizontal mode owns the paragraph region. This keeps vertical glue,
-penalties, assignments, and macro setup out of retained hlists. When a scanner
+penalties, assignments, and macro setup out of retained lines. Once an
+explicit barrier is observed, expansion read tracking stops immediately; the
+rest of the paragraph executes normally without accumulating a doomed read
+set. When a scanner
 has read one source token ahead, input alignment uses that pending token's
 rooted start anchor and validates the full raw source transition before
 discarding the token on a hit.
@@ -365,8 +373,8 @@ semantic promotion volume nor survivor recycling work.
 
 ### Output-provenance closure
 
-Paragraph recording no longer keeps the expanded-token trace. At hlist and
-finished-line publication it traverses the ordinary node graph, follows only
+Paragraph recording no longer keeps the expanded-token trace. At finished-line
+publication it traverses the ordinary node graph, follows only
 reachable char and ligature origins to stable editor roots, and builds a
 compact recipe. Each referenced editor piece contributes one full
 `RootSpanId` anchor; distinct output ranges use `(piece ordinal, start, end)`
@@ -374,13 +382,13 @@ records, and depth-first origin slots use `u32` indexes. Unknown or non-rooted
 output origins use the reserved unknown slot. Token values and origins that
 produced no accepted node are not retained.
 
-On a finished-line or hlist-only hit, replay prepares and validates the ordinary
+On a finished-line hit, replay prepares and validates the ordinary
 input transition first, recreates origins only for the recipe's distinct output
 ranges, and installs them in the existing survivor mount overlay. Every
 ordinary `Universe::nodes` traversal therefore observes current-revision
-provenance immediately, including line breaking, page building, output-routine
-inspection, node diagnostics, and shipout. Both tiers keep the accepted
-`NodeListId`; neither copies child graphs into the active epoch. There is no
+provenance immediately during page building, output-routine inspection, node
+diagnostics, and shipout. Replay keeps the accepted `NodeListId` and does not
+copy child graphs into the active epoch. There is no
 shipout-only map and no second node model.
 
 The focused scaling regression expands 4,096 `\relax` tokens after paragraph
@@ -408,101 +416,102 @@ output-scaled provenance rather than a new enablement claim.
 Paragraph mutation recording no longer opens a rollback epoch or derives redo
 from a journal suffix. The count-register and integer-parameter setters record
 entry values only while a paragraph recorder is active; final root equality
-removes no-op and restored cells. The complete count/int fingerprint remains
-the common replay validation. Only a fingerprint mismatch reads the compact
-recorded entry preconditions before replaying final values.
+removes no-op and restored root cells. A live-group paragraph records its exact
+ordered entry-frame/global setter sequence. Replay validates only the touched
+cells' entry scalars, so unrelated count/int state does not force semantic
+fallback or invalidate an otherwise identical setter script.
 
 The focused state tests prove that starting a recorder leaves the Env epoch
 unchanged, nested globals survive, balanced nested locals disappear, root
 writes restored to entry disappear, abandonment releases recorder state, and
-writes made by a paragraph entering inside an open group remain conservative.
+local/global writes inside an open group retain exact order and ownership.
 The incremental balanced-depth-zero group regression records zero group
 barriers and produces a later line hit; it verifies an actual replay candidate,
 not just mutation counts.
 
-The 2026-07-17 instrumented two-pair Gentle pass found identical priming
-state-hash journal work with paragraph recording disabled and enabled: 1,084
-hash calls examined 11,822 journal entries and projected 2,212 changed cells in
-both modes. On each slow edit, replay examined 9,104 entries versus 9,180 for
-disabled execution. Thus recording adds no journal-scan volume, while reuse
-avoids 76 examined entries. The Gentle corpus recovered no additional group
-candidates: its 420 group barriers are unchanged conservative nonzero-entry
-ownership cases, rather than journal-rewind rejection. Slow edits still mounted
-132 finished-line hits, skipped 42,183 commands, and retained 1,997,576 bytes
-of paragraph metadata.
+Instrumented Gentle runs found no additional state-hash journal work from
+paragraph recording. Dependency observations are read-only: an absent stamp is
+`NEVER`, and after tracking activates only a real mutation inserts into the
+shared `AHashMap`. Broad
+invalidation advances one scalar stamp, while scalar code-table facts share one
+mutation clock per table and retain exact values for semantic fallback. This
+tracker stays dormant until a dependency region or explicit tracked read is
+opened, so memo-disabled cold execution retains the old zero-stamp-map path. It
+also avoids both read-side copy-on-write and one stamp entry per Unicode scalar;
+recorded read sets remain canonically sorted. Per-slow-edit paragraph
+validation is approximately 2.7 ms. The final slow edits mount 450 finished-line
+results, skip 24,896 commands, and retain 3,029,160 bytes of accepted paragraph
+metadata.
 
-A six-pair optimized AB/BA run preserved every named-boundary schedule and cold
-DVI. Paragraph-enabled minus disabled medians were -9.292 ms for the combined
-slow edits, +25.577 ms including priming, -1.005 ms for interaction, and
--0.160 ms for the independent fast path. Disabled/enabled priming medians were
-240.270/278.726 ms. This keeps the layer default-disabled: the steady slow path
-won in this run, but priming remains a net cost.
+The final twenty-pair optimized AB/BA run preserved every named-boundary
+schedule and cold DVI. Paragraph-enabled minus disabled deltas were -15.299 ms
+mean/-15.004 ms median for the combined slow edits and -2.005/-3.492 ms after
+charging the complete one-time priming cost. Interaction was -0.217 ms median;
+the independent fast path was +0.898 ms and the forced cold rebreak path was
++2.680 ms. The complete five-edit baseline-inclusive median was +1.310 ms, so
+the follow-on optimization work must reduce priming and non-replay overhead
+rather than treating the slow-path result as whole-session enablement.
 
 ### Central paragraph validation boundary
 
 An aligned candidate now crosses one executor-owned, fail-before-mutation
 entry boundary. Source anchors and the complete raw input transition are
-prepared first. The common same-timeline path then compares an exact
-paragraph-relevant identity: the canonical front-end read order's changed-at
-stamps plus the complete count/integer entry fingerprint. This identity is not
-a full-`Universe` hash and excludes page state that the slow path rebuilds.
+prepared first. The common same-timeline path compares the canonical
+front-end read set's changed-at stamps. This identity is not a full-`Universe`
+hash and excludes page state that the slow path rebuilds.
 
-If either component differs, validation falls back only to the typed semantic
-observations for the recorded read set and, when count/integer state differs,
-the compact surviving-cell preconditions. Semantically equal observations are
-backdated and refresh the exact identity carried into the new accepted
-generation. Detached effects and retained hlist liveness are checked at the
-same boundary. Only after all checks succeed may replay advance input, apply
-the root delta, reproduce effects, or mount provenance.
+If a stamp differs, validation falls back only to the typed semantic
+observations for the recorded read set. Mutation admission separately checks
+the compact touched-cell preconditions. Paragraph history's large immutable
+shared read sets validate read-only: they retain their old stamps and may take
+the semantic path again, avoiding copy-on-write merely to refresh metadata.
+Detached effects, line-result dependencies, and retained
+finished-line liveness are checked at the same boundary. Only after all checks
+succeed may replay advance input, apply the root delta, reproduce effects, or
+mount provenance.
 
 The audited treatment of future-relevant state is:
 
-| State                                                                                                                                              | Treatment on a hit                                                                                                                 |
-| -------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
-| Raw source coverage and ending input stack                                                                                                         | Validated, then advanced atomically                                                                                                |
-| Expansion reads, current font, `\everypar`, used `\sfcode`, `\parindent`, `\spaceskip`, and `\xspaceskip`                                          | Exact-stamp match or typed semantic fallback                                                                                       |
-| Metrics and hyphen character of fonts reachable from the prepared hlist                                                                            | Front-end validation, because they affect character existence, ligature/kern construction, and materialized spaces before breaking |
-| Surviving count-register and integer-parameter writes                                                                                              | Entry preconditions validated on divergence; final root values replayed in order                                                   |
-| Detached stream text                                                                                                                               | Shape validated, then replayed in original order                                                                                   |
-| Line parameters, shapes, penalty arrays, font/hyphenation facts, and used lowercase codes                                                          | Post-redo exact-stamp match or typed semantic fallback; mismatch recomputes lines from the validated hlist                         |
-| Baseline/interline glue, `prev_graf`, normal-paragraph reset, page building, output routines, and shipout                                          | Recomputed by the ordinary paragraph epilogue and page pipeline                                                                    |
-| Nonzero-entry group ownership, unsupported writes/input transitions, display math, `\scantokens`, input opening/ending, and untracked World access | Explicit barrier; the 420 measured Gentle open-group cases remain ineligible                                                       |
+| State                                                                                                                                                                     | Treatment on a hit                                                                                             |
+| ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| Raw source coverage and ending input stack                                                                                                                                | Validated, then advanced atomically                                                                            |
+| Expansion reads, current font, `\everypar`, `\parindent`, `\spaceskip`, and `\xspaceskip`                                                                                 | Exact-stamp match or typed semantic fallback                                                                   |
+| Surviving count-register and integer-parameter writes                                                                                                                     | Touched entry scalars validated; compact root redo or exact live-group setter sequence replayed                |
+| Detached stream text                                                                                                                                                      | Shape validated, then replayed in original order                                                               |
+| Aggregate `\sfcode`/lowercase-code roots, line parameters, shapes, penalty arrays, conditional `prev_graf`, font/hyphenation facts, and aggregate mutable font parameters | Pre-redo exact-stamp match or typed semantic fallback; a real mismatch switches the revision to cold execution |
+| Baseline/interline glue, normal-paragraph reset, page building, output routines, and shipout                                                                              | Recomputed by the ordinary paragraph epilogue and page pipeline                                                |
+| Entry-frame replacement, unsupported writes/input transitions, math, box-register scans, `\scantokens`, input opening/ending, and untracked World access                  | Explicit barrier; balanced child groups and their discharged local writes remain reusable                      |
 
-Finished-line failure therefore remains an hlist fallback rather than a whole
-transaction failure. No conservative whole-state identity is added: facts are
-named at their actual read tier, and missing seams use typed observations.
+No conservative whole-state identity is added: facts are named at their actual
+read tier, and missing seams use typed observations. Pre-redo line validation
+is sound because supported paragraph mutations are checked for overlap with
+the line-result read set before reuse.
 
-### Mountable prepared-hlist experiment
+### Superseded prepared-hlist experiment
 
-Accepted prepared hlists now use the same shared survivor payload, captured
-glue closure, font liveness checks, and mount-local provenance overlay as
-finished lines. Entry validation proves the complete hlist closure before the
-input transition, mutation redo, or effects are applied. A break-dependency
-failure then mounts the unchanged accepted `NodeListId`, materializes only the
-ordinary top-level line-break input, and runs the existing current-state
-paragraph breaker and epilogue. It performs no recursive epoch import,
-semantic graph copy, refreeze, rehash, or promotion. Handle-free language
-whatsits are supported because they are ordinary line-break input; marks,
-leaders, unset nodes, effectful/handle-bearing whatsits, and unresolved child,
-font, or glue closures remain conservative retained-result misses.
+The prepared-hlist fallback was implemented and measured, but it was not an
+economic reuse tier. Rebreaking mounted hlists saved too little executor work
+to pay for retaining a second graph, a second provenance recipe, validation,
+and accepted-history publication. It also forced every cold paragraph to build
+two artifacts. The q02h.66 implementation therefore removes prepared hlists
+from `RecordedParagraphRegion` and keeps only finished lines.
 
-The Gentle profiler now appends a fifth `\tolerance=201` revision after the
-unchanged four-path matrix. In the final four-pair optimized AB/BA run, that
-edit produced 132 hlist-only hits, 132 typed break-dependency fallbacks, 42,183
-skipped commands, zero imported semantic bytes, and the unchanged 420
-nonzero-entry group barriers. Both policies published the same 499 named
-boundaries and emitted the cold-identical 100-page, 279,176-byte DVI. The
-memo-enabled-minus-disabled rebreak delta was +7.293 ms mean/+7.546 ms median;
-the executor-only mean delta was +0.117 ms while acceptance and generation
-publication retained their known recording cost. This establishes the
-zero-copy hlist mount and its executor work reduction, not default enablement.
+The fifth Gentle revision still changes `\tolerance`, but now verifies the
+fallback policy: the first aligned paragraph reports one typed
+`BreakDependency` miss, abandons its provisional recording checkpoint, and
+disables paragraph replay and recording for the rest of that execution. The
+revision then follows the ordinary cold executor and publishes no doomed
+paragraph history. It preserves the previous accepted history instead of
+freeing its retained graphs; a later inverse edit may make that history valid
+again. This is intentionally a conservative whole-revision fallback for a rare
+changed-linebreaking-state edit, not another cache tier.
 
 ### Retained-root lifecycle cleanup
 
 Issue `umber2-q02h.63` made the shared mount the ownership boundary rather than
 an adapter over the earlier paragraph-generation machinery. Each accepted
-`RecordedParagraphRegion` now owns cloneable hlist and finished-line mount
-handles. A handle contains the immutable survivor payload and its deduplicated
+`RecordedParagraphRegion` now owns a cloneable finished-line mount handle. The
+handle contains the immutable survivor payload and its deduplicated
 glue closure; cloning or dropping it is O(1) in graph size. Mounting installs a
 local survivor root plus one ordinary rollback pin and restores only the small
 resource closure. Scratch rollback therefore treats paragraph consumers like
@@ -518,15 +527,8 @@ page and shipout experiments; it owns handle-free DTO reconstruction and is not
 part of paragraph replay. Compact piece/root ordinals also remain because they
 encode the live output-provenance recipe, not the removed import lifecycle.
 
-The post-cleanup four-pair optimized Gentle gate retained 132 finished-line
-hits on both slow edits and 132 shared-hlist mounts on the break-dependency
-edit, with identical 499-boundary schedules and cold-identical 100-page DVI.
-Paragraph-history publication/drop averaged 0.289--0.429 ms across those
-graph-heavy edits. Retained history measured 2,091,680 bytes after priming,
-2,126,680 bytes after slow replay, and 1,788,468 bytes after hlist rebreaking;
-these totals now include the mount-owned glue closures. Timing samples spanned
-both signs, so the result validates the lifecycle simplification without
-changing the default-disabled release decision.
+The earlier dual-artifact measurements in this section are historical. The
+current finished-line-only result and release decision are recorded below.
 
 ## Implementation sequence
 
@@ -551,18 +553,18 @@ changing the default-disabled release decision.
    preserves exact cold DVI across the full four-edit Gentle matrix.
 5. **Cleanup and release decision.** The paragraph graph generation/import
    lifecycle has been removed in favor of accepted-history-owned shared mounts;
-   generic detached page/shipout import remains isolated. The final ten-pair
-   balanced release measurement keeps the accepted-history layer
-   default-disabled. Finished-line replay won the combined slow path by 10.177
-   ms mean/10.252 ms median and the fast path stayed flat, but cold priming
-   regressed by 36.437 ms mean (14.87%), slow plus priming lost 26.260 ms mean,
-   and hlist rebreak lost 1.729 ms mean. Issue `umber2-q02h.66` owns the focused
-   remaining priming/acceptance blocker. In the
-   corrected Gentle run, 132 regions replay and 525 recorded regions hit
-   barriers; macro-generated paragraph starts that have no clean root-source
-   alignment after vertical setup are not recorded. Recovering those requires
-   a separate late-alignment design with an explicit cold-prefix identity, not
-   a weaker vertical/paragraph boundary.
+   generic detached page/shipout import remains isolated. The q02h.66 follow-up
+   removes the uneconomic prepared-hlist tier, shares immutable metadata,
+   validates aggregate code-table and mutable-font-parameter roots, and replays
+   exact live-group setter sequences. The final twenty-pair balanced run
+   replays 450 finished-line paragraphs and skips 24,896 commands on each
+   representative slow edit. The combined slow path wins by 18.244 ms
+   mean/15.800 ms median, and still wins by 6.917 ms mean/5.976 ms median after
+   charging the complete one-time priming cost. The independent fast path
+   remains noise-level. A true
+   line-result dependency change deliberately falls back to cold execution for
+   the rest of that revision; prepared-hlist rebreaking is not retained as a
+   second cache tier.
 6. **Deferred page work.** Design direct page/shipout artifact patching only
    after paragraph replay reaches its measured slow-path ceiling. It is not a
    blocker for this plan.

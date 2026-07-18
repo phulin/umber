@@ -189,7 +189,7 @@ struct IncrementalFixture {
     edit_names: Vec<&'static str>,
     edit_paths: Vec<IncrementalPath>,
     suffix_adoption_edit: usize,
-    hlist_rebreak_edit: usize,
+    break_dependency_edit: usize,
     body_offset: usize,
     body_len: usize,
     inserted_bytes: usize,
@@ -604,6 +604,16 @@ fn run_incremental_edit(options: &Options, template: &World) -> Result<(), Strin
             sample.priming_state_hash.changed_cells,
             sample.priming_state_hash.peak_changed_cell_scratch_bytes,
         );
+        let phases = sample.priming_memo.paragraph_recording;
+        println!(
+            "gentle-profile priming paragraph phases: {name}: front_end_dependency_ns={} input_transition_ns={} region_publication_ns={} break_dependency_ns={} line_provenance_ns={} line_retention_ns={}",
+            phases.front_end_dependency_nanos,
+            phases.input_transition_nanos,
+            phases.region_publication_nanos,
+            phases.break_dependency_nanos,
+            phases.line_provenance_nanos,
+            phases.line_retention_nanos,
+        );
     }
     for index in 0..edit_count {
         let disabled_stats = duration_stats(&disabled[index]);
@@ -678,20 +688,29 @@ fn run_incremental_edit(options: &Options, template: &World) -> Result<(), Strin
         disabled_fast.mean / cold_fast.mean,
         enabled_fast.mean / cold_fast.mean,
     );
-    let rebreak = fixture.hlist_rebreak_edit;
+    let rebreak = fixture.break_dependency_edit;
     let rebreak_step = &enabled_sample.steps[rebreak];
-    let hlist_hits = rebreak_step
+    let line_hits = rebreak_step
         .memo
-        .paragraph_hlist_fallbacks
-        .saturating_sub(rebreak_step.previous_memo.paragraph_hlist_fallbacks);
-    if hlist_hits == 0 {
-        return Err("mounted hlist rebreak edit reported no hits".to_owned());
+        .paragraph_line_hits
+        .saturating_sub(rebreak_step.previous_memo.paragraph_line_hits);
+    let break_index = tex_state::ParagraphValidationFailure::BreakDependency as usize;
+    let break_misses = rebreak_step.memo.paragraph_validation_failure_reasons[break_index]
+        .saturating_sub(
+            rebreak_step
+                .previous_memo
+                .paragraph_validation_failure_reasons[break_index],
+        );
+    if line_hits != 0 || break_misses != 1 {
+        return Err(format!(
+            "line-breaking dependency edit must take one cold-fallback miss: line_hits={line_hits} break_misses={break_misses}"
+        ));
     }
     println!(
-        "gentle-profile hlist rebreak verified: edit={} ({}) shared_mount_hits={}",
+        "gentle-profile break-dependency cold fallback verified: edit={} ({}) misses={}",
         rebreak + 1,
         fixture.edit_names[rebreak],
-        hlist_hits,
+        break_misses,
     );
     Ok(())
 }
@@ -917,12 +936,11 @@ fn print_incremental_work(
         print_memo_layer(name, edit, layer_name, current.saturating_since(previous));
     }
     println!(
-        "gentle-profile paragraph detail: {name}: edit={edit} eligible={} barriers={} validation_misses={} line_hits={} hlist_fallbacks={} commands_skipped={} barrier_display_math={} barrier_scantokens={} barrier_input_open={} barrier_endinput={} barrier_world={} barrier_output={} barrier_unsupported_write={} barrier_unsupported_input_transition={} barrier_unsupported_group_transition={} validation_reasons={}",
+        "gentle-profile paragraph detail: {name}: edit={edit} eligible={} barriers={} validation_misses={} line_hits={} commands_skipped={} barrier_display_math={} barrier_scantokens={} barrier_input_open={} barrier_endinput={} barrier_world={} barrier_output={} barrier_unsupported_write={} barrier_unsupported_input_transition={} barrier_unsupported_group_transition={} validation_reasons={}",
         memo_delta!(paragraph_eligible_regions),
         memo_delta!(paragraph_barriers),
         memo_delta!(paragraph_validation_misses),
         memo_delta!(paragraph_line_hits),
-        memo_delta!(paragraph_hlist_fallbacks),
         memo_delta!(paragraph_commands_skipped),
         memo_delta!(paragraph_display_math_barriers),
         memo_delta!(paragraph_scantokens_barriers),
@@ -946,14 +964,12 @@ fn print_incremental_work(
             .paragraph_recording
             .saturating_since(sample.previous_memo.paragraph_recording);
         println!(
-            "gentle-profile paragraph recording phases: {name}: edit={edit} timer_samples={} calibrated_timer_pair_floor_ns={} estimated_measurement_floor_ns={} front_end_dependency_ns={} input_transition_ns={} hlist_provenance_ns={} hlist_retention_ns={} region_publication_ns={} break_dependency_ns={} break_key_discovery_ns={} break_stamp_registration_ns={} break_value_projection_ns={} line_provenance_ns={} line_retention_ns={}",
+            "gentle-profile paragraph recording phases: {name}: edit={edit} timer_samples={} calibrated_timer_pair_floor_ns={} estimated_measurement_floor_ns={} front_end_dependency_ns={} input_transition_ns={} region_publication_ns={} break_dependency_ns={} break_key_discovery_ns={} break_stamp_registration_ns={} break_value_projection_ns={} line_provenance_ns={} line_retention_ns={}",
             phases.timer_samples,
             _timer_pair_floor_ns,
             phases.timer_samples.saturating_mul(_timer_pair_floor_ns),
             phases.front_end_dependency_nanos,
             phases.input_transition_nanos,
-            phases.front_end_provenance_nanos,
-            phases.hlist_retention_nanos,
             phases.region_publication_nanos,
             phases.break_dependency_nanos,
             phases.break_key_discovery_nanos,
@@ -1128,7 +1144,7 @@ fn incremental_fixture(repo_root: &Path) -> Result<IncrementalFixture, String> {
             IncrementalPath::Rebreak,
         ],
         suffix_adoption_edit: 3,
-        hlist_rebreak_edit: 4,
+        break_dependency_edit: 4,
         body_offset,
         body_len: body.len(),
         inserted_bytes: insertion.len() + 1,
@@ -1584,7 +1600,7 @@ fn print_help() {
          named executor checkpoint through a bounded profiling sink.\n\
          --incremental-edit compares a memo baseline, memo candidate, and cold compilation\n\
          five accepted edits/session using balanced AB/BA pairs and DVI parity verification;\n\
-         the fifth changes a line-breaking dependency to exercise mounted hlist rebreaking.\n\
+         the fifth changes a line-breaking dependency to verify one-shot cold fallback.\n\
          --memo-layers configures enabled recording layers; the default is paragraph.\n\
          --baseline-memo-layers replaces the disabled control with an explicit recording\n\
          policy for direct marginal layer comparisons."

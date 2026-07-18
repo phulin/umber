@@ -16,6 +16,11 @@ release receipt: exact commands, optimized path-separated timing, sampled
 attribution, retention, long-session evidence, and the default-enablement
 decision after q02h.58--.63.
 
+`profiling_q02h66_release_receipt.md` records the follow-up finished-line-only
+release gate: exact optimized timings, replay coverage, retained metadata,
+correctness gates, and the explicit cold fallback for changed line-breaking
+state.
+
 `testing_policy.md` is forward-looking guidance for test design and placement.
 `testing_infrastructure.md` inventories the current test commands, budgets,
 fixtures, corpora, and harnesses; update it when those implementation facts
@@ -36,7 +41,7 @@ root-buffer patches and retained incremental execution.
 
 `incremental_memoization.md` defines the changed-document slow path: stable
 source alignment plus an ordered accepted-history paragraph replay cursor,
-per-paragraph dependency validation, accepted-history-owned shared hlist/line
+per-paragraph dependency validation, accepted-history-owned shared finished-line
 mounts, cold-equivalent boundary publication, simplification of the old generic
 memo layers, and path-separated rollout. It deliberately does not use a reverse
 suffix hash or hierarchical execution trace.

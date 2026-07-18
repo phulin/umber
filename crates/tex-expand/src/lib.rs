@@ -517,7 +517,6 @@ pub(crate) fn record_code_dependency(
     table: ReadCodeTable,
     ch: char,
 ) {
-    crate::record_dependency!(expansion, ReadDependency::CodeGeneration(table));
     crate::record_dependency!(
         expansion,
         ReadDependency::Code {
@@ -1055,11 +1054,13 @@ pub struct ExpansionContext<'a> {
     fuel_limit: u64,
     remaining_fuel: u64,
     fuel_scope_depth: u32,
-    // Paragraph reads are a batch: execution only consumes them when the
-    // paragraph closes. Keep the hot recording path append-only, then sort
-    // and deduplicate once at publication instead of allocating a B-tree
-    // node and searching the set for every expansion read.
+    // Meanings use generation-marked dense deduplication below. The remaining
+    // read kinds stay append-only here and are sorted once at publication.
     paragraph_reads: Option<Vec<ReadDependency>>,
+    paragraph_read_tracking: bool,
+    paragraph_meanings: Vec<u32>,
+    paragraph_meaning_marks: Vec<u32>,
+    paragraph_recording_generation: u32,
     paragraph_barriers: BTreeSet<ParagraphExpansionBarrier>,
 }
 
@@ -1084,6 +1085,10 @@ impl<'a> ExpansionContext<'a> {
             remaining_fuel: DEFAULT_EXPANSION_FUEL,
             fuel_scope_depth: 0,
             paragraph_reads: None,
+            paragraph_read_tracking: false,
+            paragraph_meanings: Vec::new(),
+            paragraph_meaning_marks: Vec::new(),
+            paragraph_recording_generation: 0,
             paragraph_barriers: BTreeSet::new(),
         }
     }
@@ -1108,6 +1113,10 @@ impl<'a> ExpansionContext<'a> {
             remaining_fuel: DEFAULT_EXPANSION_FUEL,
             fuel_scope_depth: 0,
             paragraph_reads: None,
+            paragraph_read_tracking: false,
+            paragraph_meanings: Vec::new(),
+            paragraph_meaning_marks: Vec::new(),
+            paragraph_recording_generation: 0,
             paragraph_barriers: BTreeSet::new(),
         }
     }
@@ -1157,6 +1166,13 @@ impl<'a> ExpansionContext<'a> {
     pub fn begin_paragraph_recording(&mut self) {
         debug_assert!(self.paragraph_reads.is_none());
         self.paragraph_reads = Some(Vec::new());
+        self.paragraph_read_tracking = true;
+        self.paragraph_meanings.clear();
+        self.paragraph_recording_generation = self.paragraph_recording_generation.wrapping_add(1);
+        if self.paragraph_recording_generation == 0 {
+            self.paragraph_meaning_marks.fill(0);
+            self.paragraph_recording_generation = 1;
+        }
         self.paragraph_barriers.clear();
     }
 
@@ -1165,6 +1181,12 @@ impl<'a> ExpansionContext<'a> {
         &mut self,
     ) -> (Vec<ReadDependency>, Vec<ParagraphExpansionBarrier>) {
         let mut reads = self.paragraph_reads.take().unwrap_or_default();
+        self.paragraph_read_tracking = false;
+        reads.extend(
+            self.paragraph_meanings
+                .drain(..)
+                .map(ReadDependency::Meaning),
+        );
         reads.sort_unstable();
         reads.dedup();
         let barriers = std::mem::take(&mut self.paragraph_barriers)
@@ -1176,7 +1198,17 @@ impl<'a> ExpansionContext<'a> {
     pub(crate) fn mark_paragraph_barrier(&mut self, barrier: ParagraphExpansionBarrier) {
         if self.paragraph_reads.is_some() {
             self.paragraph_barriers.insert(barrier);
+            self.stop_paragraph_read_tracking();
         }
+    }
+
+    #[doc(hidden)]
+    pub fn stop_paragraph_read_tracking(&mut self) {
+        self.paragraph_read_tracking = false;
+        if let Some(reads) = &mut self.paragraph_reads {
+            reads.clear();
+        }
+        self.paragraph_meanings.clear();
     }
 
     #[inline(always)]
@@ -1184,7 +1216,9 @@ impl<'a> ExpansionContext<'a> {
         if let Some(recorder) = self.recorder.as_deref_mut() {
             recorder.record_dependency(dependency);
         }
-        if let Some(recorder) = &mut self.paragraph_reads {
+        if self.paragraph_read_tracking
+            && let Some(recorder) = &mut self.paragraph_reads
+        {
             recorder.push(dependency);
         }
     }
@@ -1283,6 +1317,10 @@ impl<'a> ExpansionContext<'a> {
             remaining_fuel: self.remaining_fuel,
             fuel_scope_depth: self.fuel_scope_depth,
             paragraph_reads: self.paragraph_reads.take(),
+            paragraph_read_tracking: self.paragraph_read_tracking,
+            paragraph_meanings: std::mem::take(&mut self.paragraph_meanings),
+            paragraph_meaning_marks: std::mem::take(&mut self.paragraph_meaning_marks),
+            paragraph_recording_generation: self.paragraph_recording_generation,
             paragraph_barriers: std::mem::take(&mut self.paragraph_barriers),
         };
         let output = operation(&mut nested);
@@ -1293,6 +1331,10 @@ impl<'a> ExpansionContext<'a> {
         self.recoverable_diagnostics
             .append(&mut nested.recoverable_diagnostics);
         self.paragraph_reads = nested.paragraph_reads.take();
+        self.paragraph_read_tracking = nested.paragraph_read_tracking;
+        self.paragraph_meanings = std::mem::take(&mut nested.paragraph_meanings);
+        self.paragraph_meaning_marks = std::mem::take(&mut nested.paragraph_meaning_marks);
+        self.paragraph_recording_generation = nested.paragraph_recording_generation;
         self.paragraph_barriers = std::mem::take(&mut nested.paragraph_barriers);
         output
     }
@@ -1328,8 +1370,15 @@ impl<'a> ExpansionContext<'a> {
         if let Some(recorder) = self.recorder.as_deref_mut() {
             recorder.record_meaning(symbol, meaning);
         }
-        if let Some(recorder) = &mut self.paragraph_reads {
-            recorder.push(ReadDependency::Meaning(symbol.raw()));
+        if self.paragraph_read_tracking {
+            let index = symbol.raw() as usize;
+            if self.paragraph_meaning_marks.len() <= index {
+                self.paragraph_meaning_marks.resize(index + 1, 0);
+            }
+            if self.paragraph_meaning_marks[index] != self.paragraph_recording_generation {
+                self.paragraph_meaning_marks[index] = self.paragraph_recording_generation;
+                self.paragraph_meanings.push(symbol.raw());
+            }
         }
     }
 

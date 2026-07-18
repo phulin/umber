@@ -47,6 +47,50 @@ fn key_matrix() -> Vec<DependencyKey> {
 }
 
 #[test]
+fn observations_are_read_only_and_mutations_register_stamps() {
+    let observed_key = DependencyKey::Meaning(7);
+    let changed_key = DependencyKey::Meaning(8);
+    let mut tracker = DependencyTracker::default();
+    let shared = Arc::clone(&tracker.changed);
+
+    assert_eq!(tracker.track(observed_key), ChangedAt::NEVER);
+    let observation = tracker.observe(observed_key, DependencyValue::Absent);
+    assert_eq!(observation.changed_at, ChangedAt::NEVER);
+    assert!(tracker.changed.is_empty());
+    assert!(Arc::ptr_eq(&shared, &tracker.changed));
+
+    let stamp = tracker.mark_changed(changed_key);
+    assert!(stamp > ChangedAt::NEVER);
+    assert_eq!(tracker.changed_at(changed_key), stamp);
+    assert_eq!(tracker.changed.len(), 1);
+
+    let before_global = tracker.changed_at(observed_key);
+    tracker.invalidate_all();
+    assert!(tracker.changed_at(observed_key) > before_global);
+    assert_eq!(tracker.changed.len(), 1);
+}
+
+#[test]
+fn scalar_code_stamps_share_one_table_generation_entry() {
+    let mut tracker = DependencyTracker::default();
+    let first = DependencyKey::Code {
+        table: DependencyCodeTable::Catcode,
+        scalar: 'a' as u32,
+    };
+    let second = DependencyKey::Code {
+        table: DependencyCodeTable::Catcode,
+        scalar: 'z' as u32,
+    };
+    let generation = DependencyKey::CodeGeneration(DependencyCodeTable::Catcode);
+
+    let stamp = tracker.mark_changed(first);
+    assert_eq!(tracker.changed_at(first), stamp);
+    assert_eq!(tracker.changed_at(second), stamp);
+    assert_eq!(tracker.changed_at(generation), stamp);
+    assert_eq!(tracker.changed.len(), 1);
+}
+
+#[test]
 fn every_key_variant_is_independently_invalidated_and_backdated() {
     for key in key_matrix() {
         let unrelated = DependencyKey::Query {
@@ -128,12 +172,19 @@ fn disabled_runtime_does_not_retain_reads_or_allocate_a_region() {
     let mut runtime = DependencyRuntime::default();
     assert!(!runtime.is_recording());
     runtime.record(DependencyKey::Meaning(1), DependencyValue::Integer(2));
+    assert_eq!(
+        runtime.mark_changed(DependencyKey::Meaning(1)),
+        ChangedAt::NEVER
+    );
+    assert!(runtime.tracker.changed.is_empty());
     assert!(!runtime.is_recording());
 
     runtime.begin_region();
     runtime.record(DependencyKey::Meaning(1), DependencyValue::Integer(2));
     runtime.record(DependencyKey::Meaning(1), DependencyValue::Integer(2));
     assert_eq!(runtime.finish_region().len(), 1);
+    assert!(runtime.mark_changed(DependencyKey::Meaning(1)) > ChangedAt::NEVER);
+    assert_eq!(runtime.tracker.changed.len(), 1);
     assert!(!runtime.is_recording());
 }
 

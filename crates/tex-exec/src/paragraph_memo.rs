@@ -13,8 +13,7 @@ const MAX_PARAGRAPH_DEPENDENCY_CACHE_ENTRIES: usize = 4_096;
 
 struct ValidatedParagraphEntry {
     input: tex_lex::PreparedParagraphTransition,
-    retained: tex_state::survivor::RetainedNodeList,
-    relaxed_state: bool,
+    lines: tex_state::survivor::RetainedNodeList,
 }
 
 #[cfg(feature = "profiling-stats")]
@@ -58,7 +57,15 @@ pub(crate) fn try_reuse_aligned_paragraph(
     debug_assert!(entry.barriers.is_empty());
     #[allow(clippy::disallowed_methods)]
     let validation_started = std::time::Instant::now();
-    let validated = validate_paragraph_entry(&mut entry, input, stores, execution);
+    let validated = validate_paragraph_entry(
+        &mut entry, input, stores, execution,
+        // Every recorded outer paragraph crosses `start_paragraph`, which
+        // resets the enclosing vertical prev_graf before line construction.
+        // Validation runs just before that transition, so compare against the
+        // value the cold path will actually observe rather than the stale
+        // pre-start vertical value.
+        0,
+    );
     stores.record_pure_memo_timing(
         PureMemoLayer::Paragraph,
         MemoTimingPhase::Validation,
@@ -66,17 +73,11 @@ pub(crate) fn try_reuse_aligned_paragraph(
     );
     let Some(ValidatedParagraphEntry {
         input: prepared_input,
-        retained,
-        relaxed_state,
+        lines: retained_lines,
     }) = validated
     else {
         return Ok(false);
     };
-    let mountable_lines = entry
-        .lines
-        .as_ref()
-        .filter(|lines| stores.can_mount_retained_paragraph_result(lines))
-        .cloned();
     let transition_applied = input.apply_paragraph_transition(stores, prepared_input)?;
     assert!(
         transition_applied,
@@ -85,43 +86,18 @@ pub(crate) fn try_reuse_aligned_paragraph(
     let current_input = input.publication_summary(stores);
     let _ = stores.finish_pure_paragraph_recording();
     replay_mutations(stores, &entry.mutations);
-    if !relaxed_state {
-        debug_assert_eq!(
-            stores.count_int_fingerprint(),
-            entry.mutation_exit_fingerprint,
-            "paragraph survivor redo must reproduce the recorded count/int state"
-        );
-    }
     replay_effects(stores, &entry.effects);
-    let lines_valid =
-        validate_finished_lines(&mut entry, mountable_lines.is_some(), stores, execution);
     #[allow(clippy::disallowed_methods)]
     let mount_started = std::time::Instant::now();
-    let mounted_lines = lines_valid.then(|| {
-        let origins = resolve_paragraph_provenance(stores, &entry.line_provenance);
-        stores
-            .mount_retained_paragraph_result(
-                mountable_lines.as_ref().expect("validated mounted lines"),
-                &origins,
-                &entry.line_provenance.origin_slots,
-            )
-            .expect("prevalidated paragraph mount must remain valid")
-    });
-    let (nodes, retained_hlist) = if lines_valid {
-        (Vec::new(), retained.clone())
-    } else {
-        let origins = resolve_paragraph_provenance(stores, &entry.hlist_provenance);
-        let mounted = stores
-            .mount_retained_paragraph_result(
-                &retained,
-                &origins,
-                &entry.hlist_provenance.origin_slots,
-            )
-            .expect("prevalidated paragraph hlist mount must remain valid");
-        let nodes = stores.nodes(mounted).to_vec();
-        (nodes, retained.clone())
-    };
-    let lines = mounted_lines.map(|list| stores.nodes(list).to_vec());
+    let origins = resolve_paragraph_provenance(stores, &entry.line_provenance);
+    let mounted_lines = stores
+        .mount_prevalidated_paragraph_result(
+            &retained_lines,
+            &origins,
+            &entry.line_provenance.origin_slots,
+        )
+        .expect("prevalidated paragraph line mount must remain valid");
+    let lines = stores.nodes(mounted_lines).to_vec();
     stores.record_pure_memo_timing(
         PureMemoLayer::Paragraph,
         MemoTimingPhase::Import,
@@ -129,37 +105,37 @@ pub(crate) fn try_reuse_aligned_paragraph(
     );
     execution.abandon_cold_paragraph_recording();
     entry.ending_input = current_input;
-    entry.hlist = Some(retained_hlist);
-    entry.lines = lines_valid.then_some(mountable_lines).flatten();
+    entry.lines = Some(retained_lines);
     let line_count = entry.line_count;
+    let line_last_badness = entry.line_last_badness;
     let mutation_count = entry.mutations.len();
     let delivered_tokens = entry.delivered_tokens;
     stores.record_carried_paragraph(&entry);
     stores.record_paragraph_region(entry);
-    execution.pending_paragraph_memo =
-        (!lines_valid).then_some(crate::executor::PendingParagraphMemo);
+    execution.pending_paragraph_memo = None;
     crate::assignments::install_reused_paragraph_hlist(
         nest,
         input,
         stores,
         execution,
-        nodes,
-        lines.map(|lines| (lines, line_count)),
+        Vec::new(),
+        Some((lines, line_count, line_last_badness)),
     )?;
-    stores.record_pure_paragraph_hit(delivered_tokens, mutation_count, relaxed_state);
-    stores.record_pure_paragraph_line_hit(!lines_valid);
+    stores.record_pure_paragraph_hit(delivered_tokens, mutation_count);
+    stores.record_pure_paragraph_line_hit();
     Ok(true)
 }
 
 /// Central fail-before-mutation validation boundary for an accepted paragraph.
 /// Source/input alignment, exact entry identity, typed semantic fallback,
-/// state-delta preconditions, effects, and retained hlist liveness are all
+/// state-delta preconditions, effects, and retained line liveness are all
 /// established before the caller advances input or replays state.
 fn validate_paragraph_entry(
     entry: &mut tex_state::RecordedParagraphRegion,
     input: &InputStack,
     stores: &mut Universe,
     execution: &mut ExecutionContext<'_>,
+    current_prev_graf: i32,
 ) -> Option<ValidatedParagraphEntry> {
     let prepared_input = entry
         .starting_span
@@ -173,25 +149,25 @@ fn validate_paragraph_entry(
                 &entry.ending_input,
             )
         });
-    let current_count_int_fingerprint = stores.count_int_fingerprint();
-    let relaxed_state = current_count_int_fingerprint != entry.mutation_entry_fingerprint;
-    let exact_entry =
-        entry
-            .entry_identity
-            .matches(&entry.dependencies, current_count_int_fingerprint, |key| {
-                stores.dependency_changed_at(key)
-            });
-    let dependency_failure = (!exact_entry)
+    let exact_entry = entry
+        .entry_identity
+        .matches(&entry.dependencies, |key| stores.dependency_changed_at(key));
+    let mutation_entry_class_changed = !same_mutation_entry_class(
+        entry.mutation_entry_in_group,
+        tex_state::ExpansionState::execution_group_depth(stores),
+    );
+    let dependency_failure = (!mutation_entry_class_changed && !exact_entry)
         .then(|| {
-            stores.validate_dependencies_with_failure(&mut entry.dependencies, |key| {
+            stores.validate_dependencies_with_failure_readonly(&entry.dependencies, |key| {
                 paragraph_validation_value(stores, execution, key)
             })
         })
         .flatten();
-    let validation_failure = dependency_failure
-        .map(ParagraphValidationFailure::from_dependency)
+    let validation_failure = mutation_entry_class_changed
+        .then_some(ParagraphValidationFailure::Mutation)
+        .or_else(|| dependency_failure.map(ParagraphValidationFailure::from_dependency))
         .or_else(|| {
-            (!exact_entry && relaxed_state && !validate_mutations(stores, &entry.mutations))
+            (!validate_mutations(stores, &entry.mutations))
                 .then_some(ParagraphValidationFailure::Mutation)
         })
         .or_else(|| {
@@ -206,31 +182,36 @@ fn validate_paragraph_entry(
         stores.record_pure_paragraph_validation_failure(failure);
         return None;
     }
-    if !exact_entry {
-        entry
-            .entry_identity
-            .refresh(&entry.dependencies, current_count_int_fingerprint);
+    if !validate_finished_lines(entry, stores, execution, current_prev_graf) {
+        return None;
     }
-    let Some(retained) = entry.hlist.clone() else {
+    let Some(lines) = entry.lines.clone() else {
         stores.record_pure_paragraph_validation_failure(ParagraphValidationFailure::RetainedResult);
         return None;
     };
-    if !stores.can_mount_retained_paragraph_result(&retained) {
+    if !stores.can_mount_retained_paragraph_result(&lines) {
         stores.record_pure_paragraph_validation_failure(ParagraphValidationFailure::RetainedResult);
         return None;
     }
     Some(ValidatedParagraphEntry {
         input: prepared_input?,
-        retained,
-        relaxed_state,
+        lines,
     })
+}
+
+#[inline]
+pub(crate) const fn same_mutation_entry_class(
+    recorded_in_group: bool,
+    execution_group_depth: u32,
+) -> bool {
+    recorded_in_group == (execution_group_depth != 0)
 }
 
 fn validate_finished_lines(
     entry: &mut tex_state::RecordedParagraphRegion,
-    mountable: bool,
     stores: &mut Universe,
     execution: &mut ExecutionContext<'_>,
+    current_prev_graf: i32,
 ) -> bool {
     #[allow(clippy::disallowed_methods)]
     let line_validation_started = std::time::Instant::now();
@@ -239,27 +220,71 @@ fn validate_finished_lines(
         .matches(&entry.break_dependencies, |key| {
             stores.dependency_changed_at(key)
         });
-    let line_dependency_failure = (!exact)
+    let semantic_failure = (!exact)
         .then(|| {
-            stores.validate_dependencies_with_failure(&mut entry.break_dependencies, |key| {
-                paragraph_validation_value(stores, execution, key)
+            stores.validate_dependencies_with_failure_readonly(&entry.break_dependencies, |key| {
+                projected_break_validation_value(stores, execution, &entry.mutations, key)
             })
         })
         .flatten();
-    if !exact && line_dependency_failure.is_none() {
-        entry.break_identity.refresh(&entry.break_dependencies);
-    }
-    let lines_valid = mountable && line_dependency_failure.is_none();
+    let valid = entry
+        .break_prev_graf
+        .is_none_or(|expected| current_prev_graf == expected)
+        && (exact || semantic_failure.is_none());
     stores.record_pure_memo_timing(
         PureMemoLayer::Paragraph,
         MemoTimingPhase::Validation,
         line_validation_started.elapsed(),
     );
-    if line_dependency_failure.is_some() {
+    if !valid {
         stores
             .record_pure_paragraph_validation_failure(ParagraphValidationFailure::BreakDependency);
+        // Finished lines are the only retained paragraph artifact. A real
+        // line-breaking dependency change therefore makes the remainder of
+        // this revision a cold run; retrying and rerecording at every
+        // paragraph only adds linear overhead and cannot produce a hit.
+        let abandoned = stores.abandon_pure_paragraph_recording();
+        debug_assert!(
+            abandoned,
+            "paragraph validation owns a recording checkpoint"
+        );
+        execution.abandon_cold_paragraph_recording();
+        stores.preserve_prior_paragraph_history();
+        execution.paragraph_memo_disabled_for_run = true;
     }
-    lines_valid
+    valid
+}
+
+fn projected_break_validation_value(
+    stores: &Universe,
+    execution: &mut ExecutionContext<'_>,
+    mutations: &[tex_state::PureParagraphMutation],
+    key: tex_state::DependencyKey,
+) -> tex_state::DependencyValue {
+    if let Some(value) = mutations
+        .iter()
+        .rev()
+        .find_map(|mutation| match (*mutation, key) {
+            (
+                tex_state::PureParagraphMutation::Count { index, value, .. },
+                tex_state::DependencyKey::Cell {
+                    bank: tex_state::DependencyBank::Count,
+                    index: dependency_index,
+                },
+            ) if u32::from(index) == dependency_index => Some(value),
+            (
+                tex_state::PureParagraphMutation::IntParam { param, value, .. },
+                tex_state::DependencyKey::Cell {
+                    bank: tex_state::DependencyBank::IntParam,
+                    index: dependency_index,
+                },
+            ) if u32::from(param.raw()) == dependency_index => Some(value),
+            _ => None,
+        })
+    {
+        return tex_state::DependencyValue::Integer(i64::from(value));
+    }
+    paragraph_validation_value(stores, execution, key)
 }
 
 fn validate_effects(effects: &[DetachedVirtualEffect]) -> bool {
@@ -273,13 +298,27 @@ fn validate_effects(effects: &[DetachedVirtualEffect]) -> bool {
 }
 
 fn validate_mutations(stores: &Universe, mutations: &[tex_state::PureParagraphMutation]) -> bool {
-    mutations.iter().all(|mutation| match *mutation {
-        tex_state::PureParagraphMutation::Count {
-            index, expected, ..
-        } => stores.count(index) == expected,
-        tex_state::PureParagraphMutation::IntParam {
-            param, expected, ..
-        } => stores.int_param(param) == expected,
+    let mut seen = ahash::AHashSet::new();
+    mutations.iter().all(|mutation| {
+        let expected = match *mutation {
+            tex_state::PureParagraphMutation::Count { expected, .. } => expected,
+            tex_state::PureParagraphMutation::IntParam { expected, .. } => expected,
+        };
+        let key = match *mutation {
+            tex_state::PureParagraphMutation::Count { index, .. } => (0_u8, index),
+            tex_state::PureParagraphMutation::IntParam { param, .. } => (1_u8, param.raw()),
+        };
+        if !seen.insert(key) {
+            return true;
+        }
+        match *mutation {
+            tex_state::PureParagraphMutation::Count { index, .. } => {
+                stores.count(index) == expected
+            }
+            tex_state::PureParagraphMutation::IntParam { param, .. } => {
+                stores.int_param(param) == expected
+            }
+        }
     })
 }
 
@@ -356,15 +395,35 @@ pub(crate) fn publish_prepared_hlist(
     stores: &mut Universe,
     execution: &mut ExecutionContext<'_>,
     nodes: &[tex_state::node::Node],
+    prev_graf: i32,
 ) {
-    publish_recorded_region(input, stores, execution, nodes);
+    publish_recorded_region(input, stores, execution);
+    if execution.pending_paragraph_memo.is_none() {
+        return;
+    }
+    let dependencies_started = start_phase();
+    let Some(break_dependencies) = paragraph_break_dependencies(stores, execution, nodes) else {
+        execution.pending_paragraph_memo = None;
+        return;
+    };
+    finish_phase(
+        stores,
+        ParagraphRecordingPhase::BreakDependencies,
+        dependencies_started,
+    );
+    let prev_graf = (!stores.paragraph_shape().is_empty()
+        || stores.dimen_param(DimenParam::HANG_INDENT).raw() != 0)
+        .then_some(prev_graf);
+    execution.pending_paragraph_memo = Some(crate::executor::PendingParagraphMemo {
+        break_dependencies,
+        prev_graf,
+    });
 }
 
 fn publish_recorded_region(
     input: &mut InputStack,
     stores: &mut Universe,
     execution: &mut ExecutionContext<'_>,
-    nodes: &[tex_state::node::Node],
 ) {
     let Some(mut recording) = execution.cold_paragraph_recording.take() else {
         let _ = stores.finish_pure_paragraph_recording();
@@ -435,17 +494,13 @@ fn publish_recorded_region(
         }
     };
     let ending_input = input.publication_summary(stores);
-    let group_key = tex_state::DependencyKey::Engine(tex_state::DependencyEngineField::GroupLevel);
     let ending_group_depth = tex_state::ExpansionState::execution_group_depth(stores);
-    let group_transition_changed =
-        recording.starting_group_changed_at != stores.track_dependency(group_key);
-    // At depth zero the dedicated setter recorder retains only root/global
-    // transitions. Inside a live entry group, count/int writes cannot reproduce
-    // assignment ownership, so any such write remains a conservative barrier.
+    // Balanced child groups are represented by the exact live-group setter
+    // script. Replacing or attaching payload to the entry frame itself is not.
     if recording.starting_span.is_some()
         && (recording.starting_group_depth != ending_group_depth
             || (recording.starting_group_depth != 0
-                && (group_transition_changed || mutation_summary.unsupported_group_ownership)))
+                && mutation_summary.unsupported_group_ownership))
     {
         recording
             .barriers
@@ -461,6 +516,14 @@ fn publish_recorded_region(
         ParagraphRecordingPhase::InputTransition,
         input_started,
     );
+    if stores.int_param(IntParam::PDF_ADJUST_SPACING) != 0
+        || stores.int_param(IntParam::PDF_PROTRUDE_CHARS) != 0
+        || stores.int_param(IntParam::PDF_ADJUST_INTERWORD_GLUE) != 0
+        || stores.int_param(IntParam::PDF_PREPEND_KERN) != 0
+        || stores.int_param(IntParam::PDF_APPEND_KERN) != 0
+    {
+        return;
+    }
     if !recording.barriers.is_empty() {
         let barriers = recording.barriers.into_iter().collect::<Vec<_>>();
         stores.record_pure_paragraph_barriers(&barriers);
@@ -489,18 +552,11 @@ fn publish_recorded_region(
             index: u32::from(GlueParam::XSPACE_SKIP.raw()),
         },
     ]);
-    append_paragraph_hlist_dependencies(stores, nodes, &mut keys);
     keys.sort_unstable();
     keys.dedup();
     let dependencies = keys
         .into_iter()
-        .map(|key| {
-            Some(tex_state::ObservedDependency {
-                key,
-                changed_at: stores.track_dependency(key),
-                value: stores.semantic_dependency_value(key)?,
-            })
-        })
+        .map(|key| paragraph_observed_dependency(stores, execution, key))
         .collect::<Option<Vec<_>>>();
     let Some(dependencies) = dependencies else {
         let barriers = [tex_state::ParagraphBarrierReason::UnsupportedInputTransition];
@@ -512,48 +568,31 @@ fn publish_recorded_region(
         );
         return;
     };
-    let entry_identity =
-        tex_state::ParagraphEntryIdentity::new(&dependencies, mutation_summary.entry_fingerprint);
+    let entry_identity = tex_state::ParagraphEntryIdentity::new(&dependencies);
     finish_phase(
         stores,
         ParagraphRecordingPhase::FrontEndDependencies,
         dependency_started,
     );
-    let provenance_started = start_phase();
-    let hlist_provenance = paragraph_graph_provenance(stores, nodes);
-    finish_phase(
-        stores,
-        ParagraphRecordingPhase::FrontEndProvenance,
-        provenance_started,
-    );
-    let retention_started = start_phase();
-    let list = stores.freeze_node_list(nodes);
-    let hlist = Some(stores.retain_paragraph_result(list));
-    finish_phase(
-        stores,
-        ParagraphRecordingPhase::HlistRetention,
-        retention_started,
-    );
     let publication_started = start_phase();
     stores.record_paragraph_region(tex_state::RecordedParagraphRegion {
         starting_span: recording.starting_span,
         ending_span,
-        consumed_spans,
+        consumed_spans: consumed_spans.into(),
         delivered_tokens: recording.delivered_tokens,
         entry_identity,
-        dependencies,
-        mutation_entry_fingerprint: mutation_summary.entry_fingerprint,
-        mutation_exit_fingerprint: mutation_summary.exit_fingerprint,
-        mutations: mutation_summary.mutations,
-        effects,
+        dependencies: dependencies.into(),
+        mutation_entry_in_group: mutation_summary.entry_in_group,
+        mutations: mutation_summary.mutations.into(),
+        effects: effects.into(),
         ending_input,
-        barriers: recording.barriers.into_iter().collect(),
-        hlist,
-        hlist_provenance,
-        break_dependencies: Vec::new(),
+        barriers: recording.barriers.into_iter().collect::<Vec<_>>().into(),
+        break_dependencies: Vec::new().into(),
         break_identity: tex_state::ParagraphReadIdentity::default(),
+        break_prev_graf: None,
         lines: None,
         line_count: 0,
+        line_last_badness: 0,
         line_provenance: tex_state::ParagraphProvenanceRecipe::default(),
     });
     finish_phase(
@@ -562,7 +601,10 @@ fn publish_recorded_region(
         publication_started,
     );
     if execution.pending_paragraph_memo.is_none() {
-        execution.pending_paragraph_memo = Some(crate::executor::PendingParagraphMemo);
+        execution.pending_paragraph_memo = Some(crate::executor::PendingParagraphMemo {
+            break_dependencies: Vec::new(),
+            prev_graf: None,
+        });
     }
 }
 
@@ -572,20 +614,11 @@ pub(crate) fn publish_finished_lines(
     nodes: &[tex_state::node::Node],
     line_count: i32,
 ) {
-    let Some(_) = execution.pending_paragraph_memo.take() else {
+    let Some(pending) = execution.pending_paragraph_memo.take() else {
         return;
     };
-    let dependencies_started = start_phase();
-    let Some(dependencies) = paragraph_break_dependencies(stores, execution, nodes) else {
-        return;
-    };
-    finish_phase(
-        stores,
-        ParagraphRecordingPhase::BreakDependencies,
-        dependencies_started,
-    );
-    let retention_started = start_phase();
     let list = stores.freeze_node_list(nodes);
+    let retention_started = start_phase();
     let retained = stores.retain_paragraph_result(list);
     finish_phase(
         stores,
@@ -593,14 +626,22 @@ pub(crate) fn publish_finished_lines(
         retention_started,
     );
     let provenance_started = start_phase();
-    let provenance = paragraph_graph_provenance(stores, nodes);
+    let provenance = paragraph_graph_provenance(stores, list);
     finish_phase(
         stores,
         ParagraphRecordingPhase::LineProvenance,
         provenance_started,
     );
     let publication_started = start_phase();
-    stores.finish_recorded_paragraph_lines(dependencies, retained, line_count, provenance);
+    let last_badness = stores.last_badness();
+    stores.finish_recorded_paragraph_lines(
+        pending.break_dependencies,
+        pending.prev_graf,
+        retained,
+        line_count,
+        last_badness,
+        provenance,
+    );
     finish_phase(
         stores,
         ParagraphRecordingPhase::RegionPublication,
@@ -610,182 +651,131 @@ pub(crate) fn publish_finished_lines(
 
 fn paragraph_graph_provenance(
     stores: &Universe,
-    nodes: &[tex_state::node::Node],
+    root: tex_state::ids::NodeListId,
 ) -> tex_state::ParagraphProvenanceRecipe {
-    fn visit(
+    #[derive(Default)]
+    struct RecipeBuilder {
+        piece_anchors: Vec<tex_state::RootSpanId>,
+        root_spans: Vec<tex_state::ParagraphProvenanceSpan>,
+        origin_slots: Vec<u32>,
+    }
+
+    fn push_origin(
         stores: &Universe,
-        nodes: &[tex_state::node::Node],
+        origin: tex_state::token::OriginId,
         root_ordinals: &mut ahash::AHashMap<tex_state::RootSpanId, u32>,
         piece_ordinals: &mut ahash::AHashMap<tex_state::PieceId, u32>,
-        recipe: &mut tex_state::ParagraphProvenanceRecipe,
+        recipe: &mut RecipeBuilder,
     ) {
-        fn push_origin(
-            stores: &Universe,
-            origin: tex_state::token::OriginId,
-            root_ordinals: &mut ahash::AHashMap<tex_state::RootSpanId, u32>,
-            piece_ordinals: &mut ahash::AHashMap<tex_state::PieceId, u32>,
-            recipe: &mut tex_state::ParagraphProvenanceRecipe,
-        ) {
-            let Some(span) = stores.root_span_for_origin(origin) else {
+        let Some(span) = stores.root_span_for_origin(origin) else {
+            recipe.origin_slots.push(u32::MAX);
+            return;
+        };
+        let ordinal = if let Some(&ordinal) = root_ordinals.get(&span) {
+            ordinal
+        } else {
+            let Ok(ordinal) = u32::try_from(recipe.root_spans.len()) else {
                 recipe.origin_slots.push(u32::MAX);
                 return;
             };
-            let ordinal = if let Some(&ordinal) = root_ordinals.get(&span) {
-                ordinal
+            let piece = span.piece();
+            let piece_ordinal = if let Some(&piece_ordinal) = piece_ordinals.get(&piece) {
+                piece_ordinal
             } else {
-                let Ok(ordinal) = u32::try_from(recipe.root_spans.len()) else {
+                let Ok(piece_ordinal) = u32::try_from(recipe.piece_anchors.len()) else {
                     recipe.origin_slots.push(u32::MAX);
                     return;
                 };
-                let piece = span.piece();
-                let piece_ordinal = if let Some(&piece_ordinal) = piece_ordinals.get(&piece) {
-                    piece_ordinal
-                } else {
-                    let Ok(piece_ordinal) = u32::try_from(recipe.piece_anchors.len()) else {
-                        recipe.origin_slots.push(u32::MAX);
-                        return;
-                    };
-                    recipe.piece_anchors.push(span.start_anchor());
-                    piece_ordinals.insert(piece, piece_ordinal);
-                    piece_ordinal
-                };
-                recipe.root_spans.push(tex_state::ParagraphProvenanceSpan {
-                    piece: piece_ordinal,
-                    start: span.start(),
-                    end: span.end(),
-                });
-                root_ordinals.insert(span, ordinal);
-                ordinal
+                recipe.piece_anchors.push(span.start_anchor());
+                piece_ordinals.insert(piece, piece_ordinal);
+                piece_ordinal
             };
-            recipe.origin_slots.push(ordinal);
-        }
-        let child = |id,
-                     root_ordinals: &mut ahash::AHashMap<tex_state::RootSpanId, u32>,
-                     piece_ordinals: &mut ahash::AHashMap<tex_state::PieceId, u32>,
-                     recipe: &mut tex_state::ParagraphProvenanceRecipe| {
-            let nodes = stores.nodes(id).to_vec();
-            visit(stores, &nodes, root_ordinals, piece_ordinals, recipe);
+            recipe.root_spans.push(tex_state::ParagraphProvenanceSpan {
+                piece: piece_ordinal,
+                start: span.start(),
+                end: span.end(),
+            });
+            root_ordinals.insert(span, ordinal);
+            ordinal
         };
-        for node in nodes {
+        recipe.origin_slots.push(ordinal);
+    }
+
+    fn visit(
+        stores: &Universe,
+        list: tex_state::ids::NodeListId,
+        root_ordinals: &mut ahash::AHashMap<tex_state::RootSpanId, u32>,
+        piece_ordinals: &mut ahash::AHashMap<tex_state::PieceId, u32>,
+        recipe: &mut RecipeBuilder,
+    ) {
+        for node in stores.nodes(list) {
             match node {
-                tex_state::node::Node::Char { origin, .. } => {
-                    push_origin(stores, *origin, root_ordinals, piece_ordinals, recipe);
+                tex_state::node_arena::NodeRef::Char { origin, .. } => {
+                    push_origin(stores, origin, root_ordinals, piece_ordinals, recipe);
                 }
-                tex_state::node::Node::Lig { origins, .. } => {
+                tex_state::node_arena::NodeRef::Lig { origins, .. } => {
                     for &origin in origins {
                         push_origin(stores, origin, root_ordinals, piece_ordinals, recipe);
                     }
                 }
-                tex_state::node::Node::HList(box_node) | tex_state::node::Node::VList(box_node) => {
-                    child(box_node.children, root_ordinals, piece_ordinals, recipe)
-                }
-                tex_state::node::Node::Glue {
+                tex_state::node_arena::NodeRef::HList(box_node)
+                | tex_state::node_arena::NodeRef::VList(box_node) => visit(
+                    stores,
+                    box_node.children,
+                    root_ordinals,
+                    piece_ordinals,
+                    recipe,
+                ),
+                tex_state::node_arena::NodeRef::Glue {
                     leader:
                         Some(
                             tex_state::node::LeaderPayload::HList(box_node)
                             | tex_state::node::LeaderPayload::VList(box_node),
                         ),
                     ..
-                } => child(box_node.children, root_ordinals, piece_ordinals, recipe),
-                tex_state::node::Node::Unset(unset) => {
-                    child(unset.children, root_ordinals, piece_ordinals, recipe)
-                }
-                tex_state::node::Node::Disc {
+                } => visit(
+                    stores,
+                    box_node.children,
+                    root_ordinals,
+                    piece_ordinals,
+                    recipe,
+                ),
+                tex_state::node_arena::NodeRef::Unset(unset) => visit(
+                    stores,
+                    unset.children,
+                    root_ordinals,
+                    piece_ordinals,
+                    recipe,
+                ),
+                tex_state::node_arena::NodeRef::Disc {
                     pre, post, replace, ..
                 } => {
-                    child(*pre, root_ordinals, piece_ordinals, recipe);
-                    child(*post, root_ordinals, piece_ordinals, recipe);
-                    child(*replace, root_ordinals, piece_ordinals, recipe);
+                    visit(stores, pre, root_ordinals, piece_ordinals, recipe);
+                    visit(stores, post, root_ordinals, piece_ordinals, recipe);
+                    visit(stores, replace, root_ordinals, piece_ordinals, recipe);
                 }
-                tex_state::node::Node::Ins { content, .. }
-                | tex_state::node::Node::Adjust(content) => {
-                    child(*content, root_ordinals, piece_ordinals, recipe)
+                tex_state::node_arena::NodeRef::Ins { content, .. }
+                | tex_state::node_arena::NodeRef::Adjust(content) => {
+                    visit(stores, content, root_ordinals, piece_ordinals, recipe)
                 }
                 _ => {}
             }
         }
     }
-    let mut recipe = tex_state::ParagraphProvenanceRecipe::default();
+    let mut recipe = RecipeBuilder::default();
     let mut root_ordinals = ahash::AHashMap::new();
     let mut piece_ordinals = ahash::AHashMap::new();
     visit(
         stores,
-        nodes,
+        root,
         &mut root_ordinals,
         &mut piece_ordinals,
         &mut recipe,
     );
-    recipe
-}
-
-fn append_paragraph_hlist_dependencies(
-    stores: &Universe,
-    nodes: &[tex_state::node::Node],
-    keys: &mut Vec<tex_state::DependencyKey>,
-) {
-    let child = |id, keys: &mut Vec<tex_state::DependencyKey>| {
-        let nodes = stores.nodes(id).to_vec();
-        append_paragraph_hlist_dependencies(stores, &nodes, keys);
-    };
-    for node in nodes {
-        match node {
-            tex_state::node::Node::Char { font, ch, .. } => {
-                push_sfcode_dependency(*ch, keys);
-                push_hlist_font_dependencies(*font, keys);
-            }
-            tex_state::node::Node::Lig { font, orig, .. } => {
-                push_hlist_font_dependencies(*font, keys);
-                for &ch in orig {
-                    push_sfcode_dependency(ch, keys);
-                }
-            }
-            tex_state::node::Node::HList(box_node) | tex_state::node::Node::VList(box_node) => {
-                child(box_node.children, keys);
-            }
-            tex_state::node::Node::Glue {
-                leader:
-                    Some(
-                        tex_state::node::LeaderPayload::HList(box_node)
-                        | tex_state::node::LeaderPayload::VList(box_node),
-                    ),
-                ..
-            } => child(box_node.children, keys),
-            tex_state::node::Node::Unset(unset) => child(unset.children, keys),
-            tex_state::node::Node::Disc {
-                pre, post, replace, ..
-            } => {
-                child(*pre, keys);
-                child(*post, keys);
-                child(*replace, keys);
-            }
-            tex_state::node::Node::Ins { content, .. } | tex_state::node::Node::Adjust(content) => {
-                child(*content, keys)
-            }
-            _ => {}
-        }
-    }
-}
-
-fn push_sfcode_dependency(ch: char, keys: &mut Vec<tex_state::DependencyKey>) {
-    keys.push(tex_state::DependencyKey::Code {
-        table: tex_state::DependencyCodeTable::Sfcode,
-        scalar: ch as u32,
-    });
-}
-
-fn push_hlist_font_dependencies(
-    font: tex_state::ids::FontId,
-    keys: &mut Vec<tex_state::DependencyKey>,
-) {
-    for field in [
-        tex_state::DependencyFontField::Metrics,
-        tex_state::DependencyFontField::HyphenChar,
-    ] {
-        keys.push(tex_state::DependencyKey::Font {
-            field,
-            font: font.raw(),
-            index: 0,
-        });
+    tex_state::ParagraphProvenanceRecipe {
+        piece_anchors: recipe.piece_anchors.into(),
+        root_spans: recipe.root_spans.into(),
+        origin_slots: recipe.origin_slots.into(),
     }
 }
 
@@ -817,10 +807,17 @@ fn paragraph_break_dependencies(
         IntParam::WIDOW_PENALTY,
         IntParam::BROKEN_PENALTY,
         IntParam::HBADNESS,
+        IntParam::HANG_AFTER,
+        IntParam::TRACING_LOST_CHARS,
         IntParam::LANGUAGE,
         IntParam::LEFT_HYPHEN_MIN,
         IntParam::RIGHT_HYPHEN_MIN,
         IntParam::UC_HYPH,
+        IntParam::PDF_ADJUST_SPACING,
+        IntParam::PDF_PROTRUDE_CHARS,
+        IntParam::PDF_ADJUST_INTERWORD_GLUE,
+        IntParam::PDF_PREPEND_KERN,
+        IntParam::PDF_APPEND_KERN,
     ] {
         keys.push(Key::Cell {
             bank: Bank::IntParam,
@@ -833,6 +830,11 @@ fn paragraph_break_dependencies(
         DimenParam::HANG_INDENT,
         DimenParam::HFUZZ,
         DimenParam::OVERFULL_RULE,
+        DimenParam::PDF_IGNORED_DIMEN,
+        DimenParam::PDF_FIRST_LINE_HEIGHT,
+        DimenParam::PDF_LAST_LINE_DEPTH,
+        DimenParam::PDF_EACH_LINE_HEIGHT,
+        DimenParam::PDF_EACH_LINE_DEPTH,
     ] {
         keys.push(Key::Cell {
             bank: Bank::DimenParam,
@@ -854,44 +856,27 @@ fn paragraph_break_dependencies(
 
     let mut languages = vec![0_u8];
     let mut fonts = Vec::new();
-    let mut chars = Vec::new();
-    for node in nodes {
-        match node {
-            tex_state::node::Node::Char { font, ch, .. } => {
-                fonts.push(*font);
-                chars.push(*ch);
-            }
-            tex_state::node::Node::Lig { font, orig, .. } => {
-                fonts.push(*font);
-                chars.extend(orig.iter().copied());
-            }
-            tex_state::node::Node::Whatsit(tex_state::node::Whatsit::Language {
-                language, ..
-            }) => languages.push(*language),
-            _ => {}
-        }
+    if collect_break_graph_facts(stores, nodes, &mut languages, &mut fonts) {
+        return None;
     }
     fonts.sort_unstable_by_key(|font| font.raw());
     fonts.dedup();
     for font in fonts {
-        keys.push(Key::Font {
-            field: Font::Metrics,
-            font: font.raw(),
-            index: 0,
-        });
-        keys.push(Key::Font {
-            field: Font::HyphenChar,
-            font: font.raw(),
-            index: 0,
-        });
+        for (field, index) in [
+            (Font::Metrics, 0),
+            (Font::HyphenChar, 0),
+            (Font::Parameters, 0),
+            (Font::PdfShaping, 0),
+        ] {
+            keys.push(Key::Font {
+                field,
+                font: font.raw(),
+                index,
+            });
+        }
     }
-    chars.sort_unstable();
-    chars.dedup();
-    for ch in chars {
-        keys.push(Key::Code {
-            table: Code::Lccode,
-            scalar: ch as u32,
-        });
+    for table in [Code::Lccode, Code::Sfcode] {
+        keys.push(Key::CodeGeneration(table));
     }
     languages.sort_unstable();
     languages.dedup();
@@ -947,6 +932,100 @@ fn paragraph_break_dependencies(
     dependencies
 }
 
+/// Collects facts for the complete supported horizontal graph and returns
+/// true for construction whose executor-owned inputs are not modeled yet.
+fn collect_break_graph_facts(
+    stores: &Universe,
+    nodes: &[tex_state::node::Node],
+    languages: &mut Vec<u8>,
+    fonts: &mut Vec<tex_state::ids::FontId>,
+) -> bool {
+    let child = |list, languages: &mut Vec<u8>, fonts: &mut Vec<_>| {
+        collect_frozen_break_graph_facts(stores, list, languages, fonts)
+    };
+    for node in nodes {
+        match node {
+            tex_state::node::Node::Char { font, .. } => {
+                fonts.push(*font);
+            }
+            tex_state::node::Node::Lig { font, .. } => {
+                fonts.push(*font);
+            }
+            tex_state::node::Node::Whatsit(tex_state::node::Whatsit::Language {
+                language, ..
+            }) => languages.push(*language),
+            tex_state::node::Node::HList(node) => {
+                if child(node.children, languages, fonts) {
+                    return true;
+                }
+            }
+            tex_state::node::Node::VList(_)
+            | tex_state::node::Node::Ins { .. }
+            | tex_state::node::Node::Adjust(_)
+            | tex_state::node::Node::Unset(_) => return true,
+            tex_state::node::Node::Glue {
+                leader: Some(_), ..
+            } => return true,
+            tex_state::node::Node::Disc {
+                pre, post, replace, ..
+            } => {
+                for list in [pre, post, replace] {
+                    if child(*list, languages, fonts) {
+                        return true;
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    false
+}
+
+fn collect_frozen_break_graph_facts(
+    stores: &Universe,
+    list: tex_state::ids::NodeListId,
+    languages: &mut Vec<u8>,
+    fonts: &mut Vec<tex_state::ids::FontId>,
+) -> bool {
+    for node in stores.nodes(list) {
+        match node {
+            tex_state::node_arena::NodeRef::Char { font, .. } => {
+                fonts.push(font);
+            }
+            tex_state::node_arena::NodeRef::Lig { font, .. } => {
+                fonts.push(font);
+            }
+            tex_state::node_arena::NodeRef::Whatsit(tex_state::node::Whatsit::Language {
+                language,
+                ..
+            }) => languages.push(*language),
+            tex_state::node_arena::NodeRef::HList(node) => {
+                if collect_frozen_break_graph_facts(stores, node.children, languages, fonts) {
+                    return true;
+                }
+            }
+            tex_state::node_arena::NodeRef::VList(_)
+            | tex_state::node_arena::NodeRef::Ins { .. }
+            | tex_state::node_arena::NodeRef::Adjust(_)
+            | tex_state::node_arena::NodeRef::Unset(_) => return true,
+            tex_state::node_arena::NodeRef::Glue {
+                leader: Some(_), ..
+            } => return true,
+            tex_state::node_arena::NodeRef::Disc {
+                pre, post, replace, ..
+            } => {
+                for child in [pre, post, replace] {
+                    if collect_frozen_break_graph_facts(stores, child, languages, fonts) {
+                        return true;
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    false
+}
+
 fn paragraph_validation_value(
     stores: &Universe,
     execution: &mut ExecutionContext<'_>,
@@ -972,6 +1051,30 @@ fn paragraph_validation_value(
         );
     }
     value
+}
+
+fn paragraph_observed_dependency(
+    stores: &mut Universe,
+    execution: &mut ExecutionContext<'_>,
+    key: tex_state::DependencyKey,
+) -> Option<tex_state::ObservedDependency> {
+    let changed_at = stores.track_dependency(key);
+    if let Some(cached) = execution.paragraph_dependency_cache.get(&key)
+        && cached.changed_at == changed_at
+    {
+        return Some(cached.clone());
+    }
+    let observed = tex_state::ObservedDependency {
+        key,
+        changed_at,
+        value: stores.semantic_dependency_value(key)?,
+    };
+    if execution.paragraph_dependency_cache.len() < MAX_PARAGRAPH_DEPENDENCY_CACHE_ENTRIES {
+        execution
+            .paragraph_dependency_cache
+            .insert(key, observed.clone());
+    }
+    Some(observed)
 }
 
 fn detach_effects(records: &[EffectRecord]) -> Option<Vec<DetachedVirtualEffect>> {

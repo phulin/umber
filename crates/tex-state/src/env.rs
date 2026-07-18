@@ -81,9 +81,6 @@ macro_rules! register_accessors {
         }
 
         pub(crate) fn $set(&mut self, index: u16, value: $value) {
-            if matches!(BankTag::$bank, BankTag::Count) {
-                self.count_int_fingerprint = None;
-            }
             if is_dense_register(index) {
                 self.$dense.set(
                     index,
@@ -114,9 +111,6 @@ macro_rules! register_accessors {
         }
 
         pub(crate) fn $set_global(&mut self, index: u16, value: $value) {
-            if matches!(BankTag::$bank, BankTag::Count) {
-                self.count_int_fingerprint = None;
-            }
             if is_dense_register(index) {
                 self.$dense.set(
                     index,
@@ -185,8 +179,6 @@ pub struct Env {
     pdf_no_ligatures: BTreeMap<u32, WordStamp>,
     current_font: WordStamp,
     math_family_fonts: FixedBank<FontIdCodec, MATH_FAMILY_FONT_COUNT>,
-    /// Lazily derived identity for the complete count-register/int-parameter state.
-    count_int_fingerprint: Option<u64>,
     paragraph_mutations: Option<paragraph::ParagraphMutationRecorder>,
     journal: Journal,
     group_boundaries: Vec<group::GroupBoundary>,
@@ -237,7 +229,6 @@ impl Env {
             pdf_no_ligatures: BTreeMap::new(),
             current_font: WordStamp::default(),
             math_family_fonts: FixedBank::new(),
-            count_int_fingerprint: None,
             paragraph_mutations: None,
             journal: Journal::new(),
             group_boundaries: Vec::new(),
@@ -354,9 +345,9 @@ impl Env {
         self.record_paragraph_mutation(
             CellId::new(BankTag::Count, u32::from(index)),
             u64::from(old as u32),
+            u64::from(value as u32),
             global,
         );
-        self.count_int_fingerprint = None;
         let context = BankSetContext {
             journal: &mut self.journal,
             #[cfg(feature = "shadow")]
@@ -538,9 +529,9 @@ impl Env {
         self.record_paragraph_mutation(
             CellId::new(BankTag::IntParam, u32::from(param.raw())),
             u64::from(self.int_param(param) as u32),
+            u64::from(value as u32),
             false,
         );
-        self.count_int_fingerprint = None;
         self.int_params.set(
             param.raw(),
             value,
@@ -560,9 +551,9 @@ impl Env {
         self.record_paragraph_mutation(
             CellId::new(BankTag::IntParam, u32::from(param.raw())),
             u64::from(self.int_param(param) as u32),
+            u64::from(value as u32),
             true,
         );
-        self.count_int_fingerprint = None;
         self.int_params.set(
             param.raw(),
             value,

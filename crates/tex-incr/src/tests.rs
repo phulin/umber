@@ -18,6 +18,26 @@ fn template() -> Universe {
     universe
 }
 
+fn install_pdf_paragraph_test_parameters(universe: &mut Universe) {
+    for (name, meaning) in [
+        (
+            "pdfadjustspacing",
+            tex_state::meaning::Meaning::IntParam(
+                tex_state::env::banks::IntParam::PDF_ADJUST_SPACING.raw(),
+            ),
+        ),
+        (
+            "pdfeachlineheight",
+            tex_state::meaning::Meaning::DimenParam(
+                tex_state::env::banks::DimenParam::PDF_EACH_LINE_HEIGHT.raw(),
+            ),
+        ),
+    ] {
+        let symbol = universe.intern(name);
+        universe.set_meaning_global(symbol, meaning);
+    }
+}
+
 fn source(label: &str) -> String {
     format!(
         "\\shipout\\vbox{{\\hrule height 1pt width {}pt}}\\shipout\\vbox{{\\hrule height 2pt}}\\end",
@@ -174,8 +194,6 @@ fn paragraph_recording_retains_only_output_provenance() {
         .find(|region| region.lines.is_some())
         .expect("literal paragraph is retained");
     assert!(region.delivered_tokens > repetitions);
-    assert!(region.hlist_provenance.root_spans.len() <= 3);
-    assert!(region.hlist_provenance.origin_slots.len() <= 3);
     assert!(region.line_provenance.root_spans.len() <= 3);
     assert!(region.line_provenance.origin_slots.len() <= 3);
 }
@@ -755,6 +773,417 @@ fn paragraph_with_group_local_mutation_replays_without_root_write() {
 }
 
 #[test]
+fn paragraph_with_unsupported_future_write_executes_cold() {
+    let mut universe = template();
+    universe.enable_pure_memo(tex_state::PureMemoConfig::default());
+    let source = concat!(
+        "changed prefix paragraph text\\par\n",
+        "future write paragraph text \\dimen0=5pt\\par\n",
+        "\\hrule height\\dimen0\n",
+        "stable suffix paragraph text\\par\n",
+        "\\vfill\\eject\\end",
+    );
+    let mut session = Session::start(
+        universe,
+        "paragraph-unsupported-future-write",
+        RevisionId::new(1),
+        source,
+        usize::MAX,
+    )
+    .expect("session starts");
+    session.cold().expect("cold revision");
+    assert!(
+        session
+            .pure_memo_stats()
+            .paragraph_unsupported_write_barriers
+            > 0
+    );
+
+    let changed = source.find("changed").expect("changed word");
+    let edited = format!(
+        "{}altered{}",
+        &source[..changed],
+        &source[changed + "changed".len()..]
+    );
+    let incremental = session
+        .advance(
+            RevisionId::new(2),
+            Edit {
+                base_revision: RevisionId::new(1),
+                expected_hash: ContentHash::from_bytes(source.as_bytes()),
+                range: changed..changed + "changed".len(),
+                replacement: "altered".to_owned(),
+            },
+        )
+        .expect("prefix edit");
+
+    let mut cold_universe = template();
+    cold_universe.enable_pure_memo(tex_state::PureMemoConfig::default());
+    let mut cold = Session::start(
+        cold_universe,
+        "paragraph-unsupported-future-write",
+        RevisionId::new(2),
+        edited,
+        usize::MAX,
+    )
+    .expect("cold comparison starts");
+    let expected = cold.cold().expect("cold comparison");
+    assert_eq!(incremental.dvi_bytes(), expected.dvi_bytes());
+    assert_eq!(incremental.effects, expected.effects);
+}
+
+#[test]
+fn paragraph_consuming_vertical_afterassignment_executes_cold() {
+    let mut universe = template();
+    universe.enable_pure_memo(tex_state::PureMemoConfig::default());
+    let source = concat!(
+        "\\def\\setfuture{\\dimen0=5pt}\n",
+        "changed prefix paragraph text\\par\n",
+        "\\afterassignment\\setfuture\n",
+        "afterassignment paragraph \\count0=1 text\\par\n",
+        "\\hrule height\\dimen0\n",
+        "stable suffix paragraph text\\par\n",
+        "\\vfill\\eject\\end",
+    );
+    let mut session = Session::start(
+        universe,
+        "paragraph-afterassignment-consumption",
+        RevisionId::new(1),
+        source,
+        usize::MAX,
+    )
+    .expect("session starts");
+    session.cold().expect("cold revision");
+    assert!(
+        session
+            .pure_memo_stats()
+            .paragraph_unsupported_write_barriers
+            > 0
+    );
+
+    let changed = source.find("changed").expect("changed word");
+    let edited = format!(
+        "{}altered{}",
+        &source[..changed],
+        &source[changed + "changed".len()..]
+    );
+    let incremental = session
+        .advance(
+            RevisionId::new(2),
+            Edit {
+                base_revision: RevisionId::new(1),
+                expected_hash: ContentHash::from_bytes(source.as_bytes()),
+                range: changed..changed + "changed".len(),
+                replacement: "altered".to_owned(),
+            },
+        )
+        .expect("prefix edit");
+
+    let mut cold_universe = template();
+    cold_universe.enable_pure_memo(tex_state::PureMemoConfig::default());
+    let mut cold = Session::start(
+        cold_universe,
+        "paragraph-afterassignment-consumption",
+        RevisionId::new(2),
+        edited,
+        usize::MAX,
+    )
+    .expect("cold comparison starts");
+    let expected = cold.cold().expect("cold comparison");
+    assert_eq!(incremental.dvi_bytes(), expected.dvi_bytes());
+    assert_eq!(incremental.effects, expected.effects);
+}
+
+#[test]
+fn paragraph_consuming_shifted_box_register_executes_cold() {
+    let mut universe = template();
+    universe.enable_pure_memo(tex_state::PureMemoConfig::default());
+    let source = concat!(
+        "\\setbox0=\\hbox{saved box}\n",
+        "changed prefix paragraph text\\par\n",
+        "box-consuming paragraph \\raise1pt\\box0 text\\par\n",
+        "\\ifvoid0 void\\else nonvoid\\fi\\par\n",
+        "\\vfill\\eject\\end",
+    );
+    let mut session = Session::start(
+        universe,
+        "paragraph-box-consumption",
+        RevisionId::new(1),
+        source,
+        usize::MAX,
+    )
+    .expect("session starts");
+    session.cold().expect("cold revision");
+    assert!(
+        session
+            .pure_memo_stats()
+            .paragraph_unsupported_write_barriers
+            > 0
+    );
+
+    let changed = source.find("changed").expect("changed word");
+    let edited = format!(
+        "{}altered{}",
+        &source[..changed],
+        &source[changed + "changed".len()..]
+    );
+    let incremental = session
+        .advance(
+            RevisionId::new(2),
+            Edit {
+                base_revision: RevisionId::new(1),
+                expected_hash: ContentHash::from_bytes(source.as_bytes()),
+                range: changed..changed + "changed".len(),
+                replacement: "altered".to_owned(),
+            },
+        )
+        .expect("prefix edit");
+
+    let mut cold_universe = template();
+    cold_universe.enable_pure_memo(tex_state::PureMemoConfig::default());
+    let mut cold = Session::start(
+        cold_universe,
+        "paragraph-box-consumption",
+        RevisionId::new(2),
+        edited,
+        usize::MAX,
+    )
+    .expect("cold comparison starts");
+    let expected = cold.cold().expect("cold comparison");
+    assert_eq!(incremental.dvi_bytes(), expected.dvi_bytes());
+    assert_eq!(incremental.effects, expected.effects);
+}
+
+#[test]
+fn paragraph_replay_restores_final_line_badness() {
+    let mut universe = template();
+    universe.enable_pure_memo(tex_state::PureMemoConfig::default());
+    let source = concat!(
+        "\\hsize=55pt\n",
+        "changed prefix with several words of changing width\\par\n",
+        "\\parfillskip=0pt x\\par\n",
+        "reported badness \\the\\badness\\par\n",
+        "\\vfill\\eject\\end",
+    );
+    let mut session = Session::start(
+        universe,
+        "paragraph-last-badness",
+        RevisionId::new(1),
+        source,
+        usize::MAX,
+    )
+    .expect("session starts");
+    session.cold().expect("cold revision");
+
+    let changed = source.find("changed").expect("changed word");
+    let edited = format!(
+        "{}altered{}",
+        &source[..changed],
+        &source[changed + "changed".len()..]
+    );
+    let before = session.pure_memo_stats().paragraph_line_hits;
+    let incremental = session
+        .advance(
+            RevisionId::new(2),
+            Edit {
+                base_revision: RevisionId::new(1),
+                expected_hash: ContentHash::from_bytes(source.as_bytes()),
+                range: changed..changed + "changed".len(),
+                replacement: "altered".to_owned(),
+            },
+        )
+        .expect("prefix edit");
+    assert!(session.pure_memo_stats().paragraph_line_hits > before);
+
+    let mut cold_universe = template();
+    cold_universe.enable_pure_memo(tex_state::PureMemoConfig::default());
+    let mut cold = Session::start(
+        cold_universe,
+        "paragraph-last-badness",
+        RevisionId::new(2),
+        edited,
+        usize::MAX,
+    )
+    .expect("cold comparison starts");
+    let expected = cold.cold().expect("cold comparison");
+    assert_eq!(incremental.dvi_bytes(), expected.dvi_bytes());
+    assert_eq!(incremental.effects, expected.effects);
+}
+
+#[test]
+fn paragraph_with_inline_math_executes_cold_until_math_dependencies_are_modeled() {
+    let mut universe = template();
+    universe.enable_pure_memo(tex_state::PureMemoConfig::default());
+    let source = concat!(
+        "changed prefix paragraph text\\par\n",
+        "inline math $x+y$ paragraph text\\par\n",
+        "stable suffix paragraph text\\par\n",
+        "\\vfill\\eject\\end",
+    );
+    let mut session = Session::start(
+        universe,
+        "paragraph-inline-math-barrier",
+        RevisionId::new(1),
+        source,
+        usize::MAX,
+    )
+    .expect("session starts");
+    session.cold().expect("cold revision");
+    assert!(session.pure_memo_stats().paragraph_display_math_barriers > 0);
+
+    let changed = source.find("changed").expect("changed word");
+    let edited = format!(
+        "{}altered{}",
+        &source[..changed],
+        &source[changed + "changed".len()..]
+    );
+    let incremental = session
+        .advance(
+            RevisionId::new(2),
+            Edit {
+                base_revision: RevisionId::new(1),
+                expected_hash: ContentHash::from_bytes(source.as_bytes()),
+                range: changed..changed + "changed".len(),
+                replacement: "altered".to_owned(),
+            },
+        )
+        .expect("prefix edit");
+
+    let mut cold_universe = template();
+    cold_universe.enable_pure_memo(tex_state::PureMemoConfig::default());
+    let mut cold = Session::start(
+        cold_universe,
+        "paragraph-inline-math-barrier",
+        RevisionId::new(2),
+        edited,
+        usize::MAX,
+    )
+    .expect("cold comparison starts");
+    let expected = cold.cold().expect("cold comparison");
+    assert_eq!(incremental.dvi_bytes(), expected.dvi_bytes());
+    assert_eq!(incremental.effects, expected.effects);
+}
+
+#[test]
+fn root_compacted_paragraph_does_not_replay_after_entering_a_live_group() {
+    let mut universe = template();
+    universe.enable_pure_memo(tex_state::PureMemoConfig::default());
+    let target = "ownership paragraph \\global\\count0=1 \\count0=0 text\\par\n";
+    let source = format!(
+        "prefix paragraph text\\par\n{target}\\endgroup\nroot value \\the\\count0\\par\n\\vfill\\eject\\end"
+    );
+    let mut session = Session::start(
+        universe,
+        "paragraph-root-to-live-group",
+        RevisionId::new(1),
+        source.clone(),
+        usize::MAX,
+    )
+    .expect("session starts");
+    session.cold().expect("cold revision");
+
+    let insertion = source.find(target).expect("target paragraph");
+    let before = session.pure_memo_stats();
+    let incremental = session
+        .advance(
+            RevisionId::new(2),
+            Edit {
+                base_revision: RevisionId::new(1),
+                expected_hash: ContentHash::from_bytes(source.as_bytes()),
+                range: insertion..insertion,
+                replacement: "\\begingroup\n".to_owned(),
+            },
+        )
+        .expect("group insertion");
+    let after = session.pure_memo_stats();
+    assert!(
+        after.paragraph_validation_misses > before.paragraph_validation_misses,
+        "the root-compacted record must be rejected at live-group entry: {after:?}"
+    );
+
+    let edited = format!(
+        "{}\\begingroup\n{}",
+        &source[..insertion],
+        &source[insertion..]
+    );
+    let mut cold_universe = template();
+    cold_universe.enable_pure_memo(tex_state::PureMemoConfig::default());
+    let mut cold = Session::start(
+        cold_universe,
+        "paragraph-root-to-live-group",
+        RevisionId::new(2),
+        edited,
+        usize::MAX,
+    )
+    .expect("cold comparison starts");
+    let expected = cold.cold().expect("cold comparison");
+    assert_eq!(incremental.dvi_bytes(), expected.dvi_bytes());
+    assert_eq!(incremental.effects, expected.effects);
+}
+
+#[test]
+fn paragraph_replays_exact_live_group_ownership_script() {
+    let mut universe = template();
+    universe.enable_pure_memo(tex_state::PureMemoConfig::default());
+    let source = concat!(
+        "\\begingroup\n",
+        "changed prefix paragraph text\\par\n",
+        "ownership paragraph \\global\\count0=1 \\count0=0 text\\par\n",
+        "\\endgroup\n",
+        "root value \\the\\count0\\par\n",
+        "\\vfill\\eject\\end",
+    );
+    let mut session = Session::start(
+        universe,
+        "paragraph-live-group-ownership",
+        RevisionId::new(1),
+        source,
+        usize::MAX,
+    )
+    .expect("session starts");
+    session.cold().expect("cold revision");
+    assert_eq!(
+        session
+            .pure_memo_stats()
+            .paragraph_unsupported_group_transition_barriers,
+        0
+    );
+
+    let changed = source.find("changed").expect("changed word");
+    let edited = format!(
+        "{}altered{}",
+        &source[..changed],
+        &source[changed + "changed".len()..]
+    );
+    let incremental = session
+        .advance(
+            RevisionId::new(2),
+            Edit {
+                base_revision: RevisionId::new(1),
+                expected_hash: ContentHash::from_bytes(source.as_bytes()),
+                range: changed..changed + "changed".len(),
+                replacement: "altered".to_owned(),
+            },
+        )
+        .expect("prefix edit");
+    assert!(session.pure_memo_stats().paragraph_line_hits > 0);
+
+    let mut cold_universe = template();
+    cold_universe.enable_pure_memo(tex_state::PureMemoConfig::default());
+    let mut cold = Session::start(
+        cold_universe,
+        "paragraph-live-group-ownership",
+        RevisionId::new(2),
+        edited,
+        usize::MAX,
+    )
+    .expect("cold comparison starts");
+    let expected = cold.cold().expect("cold comparison");
+    assert_eq!(incremental.dvi_bytes(), expected.dvi_bytes());
+    assert_eq!(incremental.effects, expected.effects);
+}
+
+#[test]
 fn paragraph_front_end_keys_macro_paragraphs_before_expansion() {
     let mut universe = template();
     universe.enable_pure_memo(tex_state::PureMemoConfig::default());
@@ -869,8 +1298,10 @@ fn paragraph_post_break_reuse_tiers_match_cold_for_layout_and_hyphenation_change
         source: &str,
         range: std::ops::Range<usize>,
         replacement: &str,
+        prepare: fn(&mut Universe),
     ) -> (tex_state::PureMemoStats, Vec<u8>) {
         let mut universe = template();
+        prepare(&mut universe);
         universe.enable_pure_memo(tex_state::PureMemoConfig::default());
         let mut session = Session::start(
             universe,
@@ -902,6 +1333,7 @@ fn paragraph_post_break_reuse_tiers_match_cold_for_layout_and_hyphenation_change
             )
             .expect("edited generation");
         let mut cold_universe = template();
+        prepare(&mut cold_universe);
         cold_universe.enable_pure_memo(tex_state::PureMemoConfig::default());
         let mut cold = Session::start(
             cold_universe,
@@ -926,22 +1358,121 @@ fn paragraph_post_break_reuse_tiers_match_cold_for_layout_and_hyphenation_change
         "\\font\\tenrm=cmr10\\relax \\tenrm \\hsize=70pt \\hyphenation{{hy-phen-a-tion}}\n{prose}\\par\n{prose}\\par\n\\end"
     );
     let hsize = source.find("70pt").expect("hsize value");
-    let (layout, _) = run_edit(&source, hsize..hsize + 2, "45");
-    assert!(layout.paragraph_hits > 0, "{layout:?}");
-    assert!(layout.paragraph_hlist_fallbacks > 0, "{layout:?}");
+    let (layout, _) = run_edit(&source, hsize..hsize + 2, "45", |_| {});
+    assert_eq!(layout.paragraph_hits, 0, "{layout:?}");
+    assert_eq!(layout.paragraph_line_hits, 0, "{layout:?}");
+    assert_eq!(
+        layout.paragraph_validation_failure_reasons
+            [tex_state::ParagraphValidationFailure::BreakDependency as usize],
+        1,
+        "{layout:?}"
+    );
 
     let hyphens = source.find("hy-phen-a-tion").expect("exception");
     let (hyphenation, _) = run_edit(
         &source,
         hyphens..hyphens + "hy-phen-a-tion".len(),
         "hyphen-ation",
+        |_| {},
     );
-    assert!(hyphenation.paragraph_hits > 0, "{hyphenation:?}");
-    assert!(hyphenation.paragraph_hlist_fallbacks > 0, "{hyphenation:?}");
+    assert_eq!(hyphenation.paragraph_hits, 0, "{hyphenation:?}");
+    assert_eq!(hyphenation.paragraph_line_hits, 0, "{hyphenation:?}");
+    assert_eq!(
+        hyphenation.paragraph_validation_failure_reasons
+            [tex_state::ParagraphValidationFailure::BreakDependency as usize],
+        1,
+        "{hyphenation:?}"
+    );
 
     let insertion = source.find(prose).expect("first paragraph");
-    let (full, _) = run_edit(&source, insertion..insertion, "\\count77=1 ");
+    let (full, _) = run_edit(&source, insertion..insertion, "\\count77=1 ", |_| {});
     assert!(full.paragraph_line_hits > 0, "{full:?}");
+
+    let font_dimen_source = format!(
+        "\\font\\tenrm=cmr10\\relax \\fontdimen2\\tenrm=3pt \\tenrm \\hsize=70pt\n{prose}\\par\n{prose}\\par\n\\end"
+    );
+    let font_dimen = font_dimen_source.find("3pt").expect("font dimension value");
+    let (font_parameter, _) = run_edit(&font_dimen_source, font_dimen..font_dimen + 1, "9", |_| {});
+    assert_eq!(font_parameter.paragraph_line_hits, 0, "{font_parameter:?}");
+    assert_eq!(
+        font_parameter.paragraph_validation_failure_reasons
+            [tex_state::ParagraphValidationFailure::BreakDependency as usize],
+        1,
+        "{font_parameter:?}"
+    );
+
+    let sfcode_source = format!(
+        "\\font\\tenrm=cmr10\\relax \\tenrm \\hsize=70pt \\sfcode`.=1000\nSentence. {prose}\\par\nSentence. {prose}\\par\n\\end"
+    );
+    let sfcode = sfcode_source.find("1000").expect("sfcode value");
+    let (code_table, _) = run_edit(&sfcode_source, sfcode..sfcode + 1, "3", |_| {});
+    assert_eq!(code_table.paragraph_line_hits, 0, "{code_table:?}");
+    assert_eq!(
+        code_table.paragraph_validation_failure_reasons
+            [tex_state::ParagraphValidationFailure::BreakDependency as usize],
+        1,
+        "{code_table:?}"
+    );
+
+    let line_dimension_source = format!(
+        "\\font\\tenrm=cmr10\\relax \\tenrm \\hsize=70pt \\pdfeachlineheight=20pt\n{prose}\\par\n{prose}\\par\n\\end"
+    );
+    let line_height = line_dimension_source.find("20pt").expect("PDF line height");
+    let (line_dimension, _) = run_edit(
+        &line_dimension_source,
+        line_height..line_height + 2,
+        "30",
+        install_pdf_paragraph_test_parameters,
+    );
+    assert_eq!(line_dimension.paragraph_line_hits, 0, "{line_dimension:?}");
+    assert_eq!(
+        line_dimension.paragraph_validation_failure_reasons
+            [tex_state::ParagraphValidationFailure::BreakDependency as usize],
+        1,
+        "{line_dimension:?}"
+    );
+
+    let prev_graf_source = format!(
+        "\\font\\tenrm=cmr10\\relax \\tenrm \\hsize=70pt \\hangindent=10pt \\hangafter=0 \\prevgraf=0\n{prose}\\par\n{prose}\\par\n\\end"
+    );
+    let prev_graf = prev_graf_source.find("prevgraf=0").expect("prevgraf") + "prevgraf=".len();
+    let (line_offset, _) = run_edit(&prev_graf_source, prev_graf..prev_graf + 1, "3", |_| {});
+    assert!(line_offset.paragraph_line_hits > 0, "{line_offset:?}");
+    assert_eq!(
+        line_offset.paragraph_validation_failure_reasons
+            [tex_state::ParagraphValidationFailure::BreakDependency as usize],
+        0,
+        "{line_offset:?}"
+    );
+}
+
+#[test]
+fn paragraph_recording_rejects_pdf_microtype_until_font_code_dependencies_are_complete() {
+    let mut universe = template();
+    install_pdf_paragraph_test_parameters(&mut universe);
+    universe.enable_pure_memo(tex_state::PureMemoConfig::default());
+    let source = concat!(
+        "\\font\\tenrm=cmr10\\relax \\tenrm \\pdfadjustspacing=1\n",
+        "microtype paragraph words microtype paragraph words\\par\n",
+        "another microtype paragraph words\\par\n",
+        "\\end",
+    );
+    let mut session = Session::start(
+        universe,
+        "paragraph-pdf-microtype-barrier",
+        RevisionId::new(1),
+        source,
+        usize::MAX,
+    )
+    .expect("session starts");
+    session
+        .register_input_file(Path::new("cmr10.tfm"), CMR10.to_vec())
+        .expect("font fixture");
+    session.cold().expect("microtype paragraphs execute");
+    assert!(
+        session.pure_memo.accepted_paragraphs().is_empty(),
+        "finished lines must not be retained until mutable PDF font-code dependencies are tracked"
+    );
 }
 
 #[test]
@@ -968,16 +1499,16 @@ fn paragraph_hlist_mount_rejects_unsupported_graph_before_replay() {
         .expect("font fixture");
     session.cold().expect("cold paragraph generation");
     let before = session.pure_memo_stats();
-    let hsize = source.find("70pt").expect("hsize value");
-    let edited = source.replacen("70pt", "45pt", 1);
+    let mark_payload = source.find("one").expect("first mark payload");
+    let edited = source.replacen("one", "uno", 1);
     let output = session
         .advance(
             RevisionId::new(2),
             Edit {
                 base_revision: RevisionId::new(1),
                 expected_hash: ContentHash::from_bytes(source.as_bytes()),
-                range: hsize..hsize + 2,
-                replacement: "45".to_owned(),
+                range: mark_payload..mark_payload + 3,
+                replacement: "uno".to_owned(),
             },
         )
         .expect("unsupported graph executes cold");
@@ -1014,8 +1545,8 @@ fn paragraph_hlist_mount_rejects_unsupported_graph_before_replay() {
 }
 
 #[test]
-fn rebroken_mounted_hlist_keeps_current_output_provenance() {
-    let prose = "stable mounted hlist words stable mounted hlist words";
+fn break_dependency_cold_fallback_keeps_current_output_provenance() {
+    let prose = "stable paragraph words stable paragraph words";
     let source = format!(
         "\\font\\tenrm=cmr10\\relax \\tenrm \\hsize=70pt \\vsize=40pt\n{prose}\\par\n{prose}\\par\n\\vfill\\eject\\end"
     );
@@ -1025,7 +1556,7 @@ fn rebroken_mounted_hlist_keeps_current_output_provenance() {
     universe.enable_pure_memo(tex_state::PureMemoConfig::default());
     let mut session = Session::start(
         universe,
-        "paragraph-mounted-hlist-provenance",
+        "paragraph-break-fallback-provenance",
         RevisionId::new(1),
         source.clone(),
         usize::MAX,
@@ -1034,18 +1565,12 @@ fn rebroken_mounted_hlist_keeps_current_output_provenance() {
     session
         .register_input_file(Path::new("cmr10.tfm"), CMR10.to_vec())
         .expect("font fixture");
-    session.cold().expect("cold paragraph generation");
-    let retained_hlists = session
-        .pure_memo
-        .accepted_paragraphs()
-        .iter()
-        .filter_map(|region| {
-            region
-                .hlist
-                .as_ref()
-                .map(tex_state::survivor::RetainedNodeList::id)
-        })
-        .collect::<Vec<_>>();
+    let initial_dvi = session
+        .cold()
+        .expect("cold paragraph generation")
+        .dvi_bytes()
+        .expect("initial DVI")
+        .to_vec();
     let before = session.pure_memo_stats();
     let hsize = source.find("70pt").expect("hsize value");
     session
@@ -1060,23 +1585,17 @@ fn rebroken_mounted_hlist_keeps_current_output_provenance() {
         )
         .expect("layout-changing edit");
     let after = session.pure_memo_stats();
-    assert!(
-        after.paragraph_hlist_fallbacks > before.paragraph_hlist_fallbacks,
-        "fixture must rebreak a mounted hlist: {after:?}"
+    let break_index = tex_state::ParagraphValidationFailure::BreakDependency as usize;
+    assert_eq!(
+        after.paragraph_validation_failure_reasons[break_index]
+            - before.paragraph_validation_failure_reasons[break_index],
+        1,
+        "a changed break dependency must disable replay after one miss: {after:?}"
     );
+    assert_eq!(after.paragraph_hits, before.paragraph_hits, "{after:?}");
     assert!(
-        session
-            .pure_memo
-            .accepted_paragraphs()
-            .iter()
-            .filter_map(|region| {
-                region
-                    .hlist
-                    .as_ref()
-                    .map(tex_state::survivor::RetainedNodeList::id)
-            })
-            .any(|hlist| retained_hlists.contains(&hlist)),
-        "hlist replay must retain the accepted survivor handle"
+        !session.pure_memo.accepted_paragraphs().is_empty(),
+        "the cold fallback must preserve, not rebuild or discard, the prior accepted history"
     );
     assert!(
         (1..=session.artifacts.len() as u32)
@@ -1092,7 +1611,26 @@ fn rebroken_mounted_hlist_keeps_current_output_provenance() {
                         && doc_offset_hi > second_start as u64
                 )
             }),
-        "ordinary line breaking and shipout must observe current mounted provenance"
+        "ordinary cold line breaking and shipout must observe current provenance"
+    );
+
+    let changed_source = source.replacen("70pt", "45pt", 1);
+    let hits_before_inverse = session.pure_memo_stats().paragraph_line_hits;
+    let inverse = session
+        .advance(
+            RevisionId::new(3),
+            Edit {
+                base_revision: RevisionId::new(2),
+                expected_hash: ContentHash::from_bytes(changed_source.as_bytes()),
+                range: hsize..hsize + 2,
+                replacement: "70".to_owned(),
+            },
+        )
+        .expect("inverse layout edit");
+    assert_eq!(inverse.dvi_bytes().expect("inverse DVI"), initial_dvi);
+    assert!(
+        session.pure_memo_stats().paragraph_line_hits > hits_before_inverse,
+        "restoring the break dependency must make preserved history reusable"
     );
 }
 

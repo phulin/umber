@@ -187,6 +187,7 @@ fn end_paragraph_with_memo(
             stores,
             execution,
             nest.current_list().nodes(),
+            nest.enclosing_vertical_prev_graf(),
         );
     } else {
         execution.pending_paragraph_memo = None;
@@ -218,14 +219,14 @@ pub(crate) fn install_reused_paragraph_hlist(
     stores: &mut Universe,
     execution: &mut crate::ExecutionContext<'_>,
     nodes: Vec<Node>,
-    finished: Option<(Vec<Node>, i32)>,
+    finished: Option<(Vec<Node>, i32, i32)>,
 ) -> Result<(), ExecError> {
     // The retained hlist already includes the recorded `everypar` execution;
     // scheduling it again would leave its tokens after the consumed paragraph.
     start_paragraph(nest, input, stores, true, false)?;
     let _ = nest.current_list_mut().take_nodes();
     nest.current_list_mut().append(nodes);
-    let Some((finished, line_count)) = finished else {
+    let Some((finished, line_count, last_badness)) = finished else {
         let final_widow_penalty = stores.int_param(IntParam::WIDOW_PENALTY);
         let final_widow_penalties = stores.penalty_array(PenaltyArrayKind::Widow);
         let _ = break_current_paragraph(
@@ -245,6 +246,7 @@ pub(crate) fn install_reused_paragraph_hlist(
     let prev_graf = nest.enclosing_vertical_prev_graf();
     nest.current_list_mut()
         .set_prev_graf(prev_graf.saturating_add(line_count));
+    stores.set_last_badness(last_badness);
     reset_after_par(nest, stores);
     build_page_if_outer_vertical(nest, stores)
 }

@@ -87,6 +87,9 @@ pub(super) fn scan_box_value(
         .map(Some),
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Box)
         | Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Copy) => {
+            execution.mark_paragraph_barrier(
+                tex_state::ParagraphBarrierReason::UnsupportedEscapingWrite,
+            );
             let index = scan_register_index(input, stores, execution, traced)?;
             let id = if matches!(
                 stores.meaning(symbol),
@@ -106,10 +109,16 @@ pub(super) fn scan_box_value(
             Ok(first_box_node(stores, id).map(ScannedBoxValue::Shared))
         }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::VSplit) => {
+            execution.mark_paragraph_barrier(
+                tex_state::ParagraphBarrierReason::UnsupportedEscapingWrite,
+            );
             scan_vsplit_node(input, stores, execution, traced)
                 .map(|value| value.map(ScannedBoxValue::Fresh))
         }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::LastBox) => {
+            execution.mark_paragraph_barrier(
+                tex_state::ParagraphBarrierReason::UnsupportedEscapingWrite,
+            );
             let nest = nest.ok_or(ExecError::MissingToken { context: "box" })?;
             take_last_box(nest, stores).map(|value| value.map(ScannedBoxValue::Shared))
         }

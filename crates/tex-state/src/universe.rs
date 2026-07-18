@@ -1146,6 +1146,11 @@ impl EngineBoundaryHasher<'_> {
         self.stores.hash_font_semantic(id, &mut self.hasher);
     }
 
+    pub fn code_table(&mut self, table: DependencyCodeTable) {
+        self.stores
+            .hash_dependency_code_table(table, &mut self.hasher);
+    }
+
     pub fn meaning(&mut self, meaning: Meaning) {
         self.stores.hash_meaning_semantic(meaning, &mut self.hasher);
     }
@@ -1382,6 +1387,17 @@ impl Universe {
             .validate_region_failure(observations, read_current)
     }
 
+    /// Validates immutable shared observations without backdating stamps.
+    pub fn validate_dependencies_with_failure_readonly(
+        &self,
+        observations: &[ObservedDependency],
+        read_current: impl FnMut(DependencyKey) -> DependencyValue,
+    ) -> Option<DependencyKey> {
+        self.dependencies
+            .tracker()
+            .validate_region_failure_readonly(observations, read_current)
+    }
+
     /// Reads one state-owned dependency as an allocation-independent value.
     ///
     /// Executor/input-stack facts return `None`; their owning layer must add
@@ -1470,10 +1486,10 @@ impl Universe {
                     DependencyCodeTable::Delcode => i64::from(self.delcode(ch)),
                 }))
             }
-            // Expansion always records the exact scalar beside a generation
-            // dependency. The scalar observation supplies semantic validity;
-            // the generation remains only a same-owner fast invalidator.
-            DependencyKey::CodeGeneration(_) => Some(DependencyValue::Unsigned(0)),
+            DependencyKey::CodeGeneration(table) => {
+                let mut build = |hash: &mut EngineBoundaryHasher<'_>| hash.code_table(table);
+                Some(projection(&mut build))
+            }
             DependencyKey::Font {
                 field,
                 font: raw,
@@ -1501,6 +1517,16 @@ impl Universe {
                     DependencyFontField::ParameterCount => {
                         DependencyValue::Unsigned(u64::from(self.font_parameter_count(id)))
                     }
+                    DependencyFontField::Parameters => {
+                        let mut build = |hash: &mut EngineBoundaryHasher<'_>| {
+                            let count = self.font_parameter_count(id);
+                            hash.u32(count);
+                            for index in 1..=count {
+                                hash.i32(self.font_parameter(id, index).raw());
+                            }
+                        };
+                        projection(&mut build)
+                    }
                     DependencyFontField::HyphenChar => {
                         DependencyValue::Integer(i64::from(self.font_hyphen_char(id)))
                     }
@@ -1509,6 +1535,19 @@ impl Universe {
                     }
                     DependencyFontField::Metrics => font(id),
                     DependencyFontField::PdfCode => return None,
+                    DependencyFontField::PdfShaping => {
+                        let mut build = |hash: &mut EngineBoundaryHasher<'_>| {
+                            hash.bool(self.pdf_font_ligatures_disabled(id));
+                            for code in 0..=u8::MAX {
+                                hash.i32(self.pdf_font_code(
+                                    crate::font::PdfFontCode::Tag,
+                                    id,
+                                    code,
+                                ));
+                            }
+                        };
+                        projection(&mut build)
+                    }
                 })
             }
             DependencyKey::InputStream(raw) => {
@@ -1805,6 +1844,11 @@ impl Universe {
     }
 
     #[doc(hidden)]
+    pub fn preserve_prior_paragraph_history(&mut self) {
+        self.pure_memo.preserve_prior_paragraph_history();
+    }
+
+    #[doc(hidden)]
     pub fn finish_pure_paragraph_recording(
         &mut self,
     ) -> Option<crate::PureParagraphMutationSummary> {
@@ -1822,36 +1866,33 @@ impl Universe {
     }
 
     #[doc(hidden)]
-    pub fn count_int_fingerprint(&mut self) -> u64 {
-        self.stores.count_int_fingerprint()
+    pub fn record_pure_paragraph_hit(&mut self, commands: usize, mutations: usize) {
+        self.pure_memo.record_paragraph_hit(commands, mutations);
     }
 
     #[doc(hidden)]
-    pub fn record_pure_paragraph_hit(
-        &mut self,
-        commands: usize,
-        mutations: usize,
-        relaxed_state: bool,
-    ) {
-        self.pure_memo
-            .record_paragraph_hit(commands, mutations, relaxed_state);
-    }
-
-    #[doc(hidden)]
-    pub fn record_pure_paragraph_line_hit(&mut self, fallback: bool) {
-        self.pure_memo.record_paragraph_line_hit(fallback);
+    pub fn record_pure_paragraph_line_hit(&mut self) {
+        self.pure_memo.record_paragraph_line_hit();
     }
 
     #[doc(hidden)]
     pub fn finish_recorded_paragraph_lines(
         &mut self,
         dependencies: Vec<crate::ObservedDependency>,
+        prev_graf: Option<i32>,
         lines: crate::survivor::RetainedNodeList,
         line_count: i32,
+        last_badness: i32,
         provenance: crate::ParagraphProvenanceRecipe,
     ) {
-        self.pure_memo
-            .finish_recorded_paragraph_lines(dependencies, lines, line_count, provenance);
+        self.pure_memo.finish_recorded_paragraph_lines(
+            dependencies,
+            prev_graf,
+            lines,
+            line_count,
+            last_badness,
+            provenance,
+        );
     }
 
     #[doc(hidden)]
@@ -1893,11 +1934,7 @@ impl Universe {
         self.pure_memo.reject(key);
     }
 
-    fn mark_code_changed(&mut self, table: DependencyCodeTable, ch: char) {
-        self.dependencies.mark_changed(DependencyKey::Code {
-            table,
-            scalar: ch as u32,
-        });
+    fn mark_code_changed(&mut self, table: DependencyCodeTable, _ch: char) {
         self.dependencies
             .mark_changed(DependencyKey::CodeGeneration(table));
     }
@@ -4394,10 +4431,22 @@ impl Universe {
         value: i32,
     ) {
         self.stores.set_pdf_font_code(table, font, code, value);
+        if table == crate::font::PdfFontCode::Tag {
+            self.dependencies.mark_changed(DependencyKey::Font {
+                field: DependencyFontField::PdfShaping,
+                font: font.raw(),
+                index: 0,
+            });
+        }
     }
 
     pub fn disable_pdf_font_ligatures(&mut self, font: FontId) {
         self.stores.disable_pdf_font_ligatures(font);
+        self.dependencies.mark_changed(DependencyKey::Font {
+            field: DependencyFontField::PdfShaping,
+            font: font.raw(),
+            index: 0,
+        });
     }
 
     #[must_use]
@@ -4489,6 +4538,11 @@ impl Universe {
         let result = self.stores.set_font_dimen(font, number, value);
         if result.is_ok() {
             self.dependencies.mark_changed(DependencyKey::Font {
+                field: DependencyFontField::Parameters,
+                font: font.raw(),
+                index: 0,
+            });
+            self.dependencies.mark_changed(DependencyKey::Font {
                 field: DependencyFontField::Parameter,
                 font: font.raw(),
                 index: number,
@@ -4567,6 +4621,20 @@ impl Universe {
     ) -> Option<NodeListId> {
         self.stores
             .mount_retained_paragraph_result(retained, root_origins, origin_slots)
+    }
+
+    /// Consumes the closure proof established by
+    /// [`Self::can_mount_retained_paragraph_result`] in the current paragraph
+    /// replay transaction, avoiding a second graph traversal.
+    #[doc(hidden)]
+    pub fn mount_prevalidated_paragraph_result(
+        &mut self,
+        retained: &crate::survivor::RetainedNodeList,
+        root_origins: &[crate::token::OriginId],
+        origin_slots: &[u32],
+    ) -> Option<NodeListId> {
+        self.stores
+            .mount_prevalidated_paragraph_result(retained, root_origins, origin_slots)
     }
 
     pub fn finish_node_list(&mut self, builder: &mut NodeListBuilder) -> NodeListId {
@@ -4741,6 +4809,13 @@ impl Universe {
         let dependency_cell = |bank, index| DependencyKey::Cell { bank, index };
         for &cell in changed_cells {
             let index = cell.index();
+            if matches!(cell.bank(), BankTag::FontDimen | BankTag::FontParamLen) {
+                self.dependencies.mark_changed(DependencyKey::Font {
+                    field: DependencyFontField::Parameters,
+                    font: index >> 17,
+                    index: 0,
+                });
+            }
             let key = match cell.bank() {
                 BankTag::Meaning => DependencyKey::Meaning(index),
                 BankTag::Count => dependency_cell(DependencyBank::Count, index),
@@ -4778,16 +4853,23 @@ impl Universe {
                         },
                     }
                 }
+                BankTag::PdfTagCode | BankTag::PdfNoLigatures => DependencyKey::Font {
+                    field: DependencyFontField::PdfShaping,
+                    font: if cell.bank() == BankTag::PdfNoLigatures {
+                        index
+                    } else {
+                        index >> 8
+                    },
+                    index: 0,
+                },
                 BankTag::PdfLpCode
                 | BankTag::PdfRpCode
                 | BankTag::PdfEfCode
-                | BankTag::PdfTagCode
                 | BankTag::PdfKnbsCode
                 | BankTag::PdfStbsCode
                 | BankTag::PdfShbsCode
                 | BankTag::PdfKnbcCode
-                | BankTag::PdfKnacCode
-                | BankTag::PdfNoLigatures => continue,
+                | BankTag::PdfKnacCode => continue,
             };
             self.dependencies.mark_changed(key);
         }
@@ -5574,12 +5656,10 @@ impl Universe {
     pub fn set_dimen_param(&mut self, param: DimenParam, value: Scaled) {
         self.stores.set_dimen_param(param, value);
         self.mark_cell_changed(DependencyBank::DimenParam, u32::from(param.raw()));
-        self.mark_cell_changed(DependencyBank::DimenParam, u32::from(param.raw()));
     }
 
     pub fn set_dimen_param_global(&mut self, param: DimenParam, value: Scaled) {
         self.stores.set_dimen_param_global(param, value);
-        self.mark_cell_changed(DependencyBank::DimenParam, u32::from(param.raw()));
         self.mark_cell_changed(DependencyBank::DimenParam, u32::from(param.raw()));
     }
 
@@ -5591,7 +5671,6 @@ impl Universe {
     pub fn set_glue_param(&mut self, param: GlueParam, value: GlueId) {
         self.stores.set_glue_param(param, value);
         self.mark_cell_changed(DependencyBank::GlueParam, u32::from(param.raw()));
-        self.mark_cell_changed(DependencyBank::GlueParam, u32::from(param.raw()));
     }
 
     #[must_use]
@@ -5602,12 +5681,10 @@ impl Universe {
     pub fn set_glue_param_global(&mut self, param: GlueParam, value: GlueId) {
         self.stores.set_glue_param_global(param, value);
         self.mark_cell_changed(DependencyBank::GlueParam, u32::from(param.raw()));
-        self.mark_cell_changed(DependencyBank::GlueParam, u32::from(param.raw()));
     }
 
     pub fn set_tok_param(&mut self, param: TokParam, value: TokenListId) {
         self.stores.set_tok_param(param, value);
-        self.mark_cell_changed(DependencyBank::TokParam, u32::from(param.raw()));
         self.mark_cell_changed(DependencyBank::TokParam, u32::from(param.raw()));
     }
 
@@ -5618,7 +5695,6 @@ impl Universe {
 
     pub fn set_tok_param_global(&mut self, param: TokParam, value: TokenListId) {
         self.stores.set_tok_param_global(param, value);
-        self.mark_cell_changed(DependencyBank::TokParam, u32::from(param.raw()));
         self.mark_cell_changed(DependencyBank::TokParam, u32::from(param.raw()));
     }
 

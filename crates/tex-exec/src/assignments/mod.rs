@@ -178,7 +178,16 @@ pub(crate) fn execute_unexpandable_with_context(
         reject_all_prefixes(prefixes)?;
         let outcome = execute_immediate(input, stores, execution)?;
         if outcome.assigned {
-            fire_afterassignment(input, stores);
+            if !outcome.paragraph_replayable_assignment {
+                execution.mark_paragraph_barrier(
+                    tex_state::ParagraphBarrierReason::UnsupportedEscapingWrite,
+                );
+            }
+            if fire_afterassignment(input, stores) {
+                execution.mark_paragraph_barrier(
+                    tex_state::ParagraphBarrierReason::UnsupportedEscapingWrite,
+                );
+            }
         }
         return Ok(outcome.action);
     }
@@ -214,7 +223,16 @@ pub(crate) fn execute_unexpandable_with_context(
         Err(error) => return Err(error),
     };
     if outcome.assigned {
-        fire_afterassignment(input, stores);
+        if !outcome.paragraph_replayable_assignment {
+            execution.mark_paragraph_barrier(
+                tex_state::ParagraphBarrierReason::UnsupportedEscapingWrite,
+            );
+        }
+        if fire_afterassignment(input, stores) {
+            execution.mark_paragraph_barrier(
+                tex_state::ParagraphBarrierReason::UnsupportedEscapingWrite,
+            );
+        }
     }
     Ok(outcome.action)
 }
@@ -1304,7 +1322,16 @@ pub(crate) fn execute_assignment_meaning(
     let mut nest = ModeNest::new();
     let outcome = execute_prefixed_command(command, prefixes, &mut nest, input, stores, execution)?;
     if outcome.assigned {
-        fire_afterassignment(input, stores);
+        if !outcome.paragraph_replayable_assignment {
+            execution.mark_paragraph_barrier(
+                tex_state::ParagraphBarrierReason::UnsupportedEscapingWrite,
+            );
+        }
+        if fire_afterassignment(input, stores) {
+            execution.mark_paragraph_barrier(
+                tex_state::ParagraphBarrierReason::UnsupportedEscapingWrite,
+            );
+        }
     }
     Ok(outcome.action)
 }
@@ -1341,6 +1368,7 @@ impl Default for Prefixes {
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct CommandOutcome {
     assigned: bool,
+    paragraph_replayable_assignment: bool,
     action: DispatchAction,
 }
 
@@ -1348,6 +1376,15 @@ impl CommandOutcome {
     const fn assigned() -> Self {
         Self {
             assigned: true,
+            paragraph_replayable_assignment: false,
+            action: DispatchAction::Continue,
+        }
+    }
+
+    const fn paragraph_replayable_assignment() -> Self {
+        Self {
+            assigned: true,
+            paragraph_replayable_assignment: true,
             action: DispatchAction::Continue,
         }
     }
@@ -1355,6 +1392,7 @@ impl CommandOutcome {
     const fn assigned_if(assigned: bool) -> Self {
         Self {
             assigned,
+            paragraph_replayable_assignment: false,
             action: DispatchAction::Continue,
         }
     }
@@ -1362,6 +1400,7 @@ impl CommandOutcome {
     const fn continue_only() -> Self {
         Self {
             assigned: false,
+            paragraph_replayable_assignment: false,
             action: DispatchAction::Continue,
         }
     }
@@ -1369,6 +1408,7 @@ impl CommandOutcome {
     fn shipout(page: crate::dispatch::PreparedDviPage) -> Self {
         Self {
             assigned: false,
+            paragraph_replayable_assignment: false,
             action: DispatchAction::Shipout(page),
         }
     }
@@ -1580,6 +1620,9 @@ fn execute_prefixed_command(
             }
             UnexpandablePrimitive::AfterAssignment => {
                 reject_all_prefixes(prefixes)?;
+                execution.mark_paragraph_barrier(
+                    tex_state::ParagraphBarrierReason::UnsupportedEscapingWrite,
+                );
                 execute_afterassignment(input, stores)?;
                 Ok(CommandOutcome::continue_only())
             }
@@ -1596,7 +1639,11 @@ fn execute_prefixed_command(
                     stores,
                     execution,
                 )?;
-                Ok(CommandOutcome::assigned())
+                Ok(if primitive == UnexpandablePrimitive::Count {
+                    CommandOutcome::paragraph_replayable_assignment()
+                } else {
+                    CommandOutcome::assigned()
+                })
             }
             UnexpandablePrimitive::CountDef
             | UnexpandablePrimitive::DimenDef
@@ -1844,6 +1891,11 @@ fn execute_prefixed_command(
             | UnexpandablePrimitive::VTop
             | UnexpandablePrimitive::VSplit => {
                 reject_macro_prefixes(prefixes)?;
+                if primitive == UnexpandablePrimitive::VSplit {
+                    execution.mark_paragraph_barrier(
+                        tex_state::ParagraphBarrierReason::UnsupportedEscapingWrite,
+                    );
+                }
                 execute_make_box(
                     primitive,
                     command.traced,
@@ -1881,6 +1933,22 @@ fn execute_prefixed_command(
             | UnexpandablePrimitive::MoveLeft
             | UnexpandablePrimitive::MoveRight => {
                 reject_all_prefixes(prefixes)?;
+                if matches!(
+                    primitive,
+                    UnexpandablePrimitive::Box
+                        | UnexpandablePrimitive::Copy
+                        | UnexpandablePrimitive::UnHBox
+                        | UnexpandablePrimitive::UnHCopy
+                        | UnexpandablePrimitive::UnVBox
+                        | UnexpandablePrimitive::UnVCopy
+                        | UnexpandablePrimitive::PageDiscards
+                        | UnexpandablePrimitive::SplitDiscards
+                        | UnexpandablePrimitive::LastBox
+                ) {
+                    execution.mark_paragraph_barrier(
+                        tex_state::ParagraphBarrierReason::UnsupportedEscapingWrite,
+                    );
+                }
                 if matches!(
                     primitive,
                     UnexpandablePrimitive::UnHBox | UnexpandablePrimitive::UnHCopy
@@ -2575,6 +2643,7 @@ fn execute_prefixed_command(
             reject_macro_prefixes(prefixes)?;
             let target =
                 variable_from_meaning(meaning).ok_or(ExecError::UnsupportedAssignmentTarget)?;
+            let replayable = matches!(target, Variable::IntRegister(_) | Variable::IntParam(_));
             execute_assignment_to_target(
                 target,
                 prefixes,
@@ -2583,7 +2652,11 @@ fn execute_prefixed_command(
                 stores,
                 execution,
             )?;
-            Ok(CommandOutcome::assigned())
+            Ok(if replayable {
+                CommandOutcome::paragraph_replayable_assignment()
+            } else {
+                CommandOutcome::assigned()
+            })
         }
     }
 }

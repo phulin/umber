@@ -108,13 +108,16 @@ pub(crate) fn enter_math(
     ) {
         assignments::flush_pending_hchars(nest, stores)?;
     }
+    // Math construction observes a broad family/code/style parameter surface
+    // that is not yet represented in finished-line paragraph dependencies.
+    execution.mark_paragraph_barrier(tex_state::ParagraphBarrierReason::DisplayMath);
     let interrupt = if display {
-        execution.mark_paragraph_barrier(tex_state::ParagraphBarrierReason::DisplayMath);
         crate::paragraph_memo::publish_prepared_hlist(
             input,
             stores,
             execution,
             nest.current_list().nodes(),
+            nest.enclosing_vertical_prev_graf(),
         );
         let paragraph = assignments::interrupt_paragraph_for_display(nest, stores)?;
         let dimensions = assignments::display_line_dimensions(nest, stores);
@@ -560,6 +563,13 @@ fn dispatch_math_control(
             assignments::execute_assignment_meaning(meaning, traced, input, stores, execution)
         }
         Meaning::Font(id) => {
+            if stores.current_font() != id
+                || stores.current_font_symbol().map(|id| id.symbol()) != Some(symbol)
+            {
+                execution.mark_paragraph_barrier(
+                    tex_state::ParagraphBarrierReason::UnsupportedEscapingWrite,
+                );
+            }
             stores.set_current_font_selector(symbol, id);
             Ok(DispatchAction::Continue)
         }

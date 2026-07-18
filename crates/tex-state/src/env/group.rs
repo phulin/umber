@@ -288,6 +288,7 @@ impl Env {
     /// Pushes an opaque `\aftergroup` payload for the current group.
     pub(crate) fn push_aftergroup(&mut self, payload: Token) {
         if self.group_depth != 0 {
+            self.record_paragraph_group_frame_mutation();
             self.aftergroup.push(payload);
         }
     }
@@ -350,6 +351,7 @@ impl Env {
     }
 
     fn leave_group_unchecked(&mut self) -> (Vec<Token>, bool, Vec<crate::cell::CellId>) {
+        self.record_paragraph_group_frame_mutation();
         let Some(boundary) = self.group_boundaries.pop() else {
             panic!("leave_group without matching group marker");
         };

@@ -22,9 +22,12 @@ pub(super) fn execute_afterassignment(
     Ok(())
 }
 
-pub(super) fn fire_afterassignment(input: &mut InputStack, stores: &mut Universe) {
+pub(super) fn fire_afterassignment(input: &mut InputStack, stores: &mut Universe) -> bool {
     if let Some(token) = stores.take_afterassignment() {
         push_tokens(input, stores, [token]);
+        true
+    } else {
+        false
     }
 }
 

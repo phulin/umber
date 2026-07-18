@@ -20,9 +20,6 @@ impl Env {
     /// single write path records history.
     #[allow(dead_code)]
     pub(crate) fn restore_raw(&mut self, cell: CellId, word: u64) {
-        if matches!(cell.bank(), BankTag::Count | BankTag::IntParam) {
-            self.count_int_fingerprint = None;
-        }
         match cell.bank() {
             BankTag::Meaning => self.restore_meaning_word(cell.index(), word),
             BankTag::Count => self.restore_register(cell.index(), word, RegisterBank::Count),
