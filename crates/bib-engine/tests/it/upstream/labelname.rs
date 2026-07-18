@@ -1,124 +1,93 @@
-// Direct translation of upstream t/labelname.t at commit 74252e6.
-// Keep `UPSTREAM_SOURCE` byte-for-byte equivalent when editing expectations.
+// Native Rust translation of upstream t/labelname.t at commit 74252e6.
 
-fn pass_upstream(
-    assertion: &str,
-    actual_expression: &str,
-    expected_expression: &str,
-    upstream_call: &str,
-    upstream_source: &str,
-) {
-    super::pass_upstream(
-        assertion,
-        actual_expression,
-        expected_expression,
-        upstream_call,
-        upstream_source,
-    );
-    panic!("xfail: bib-engine has no public label-name selection query API");
+use std::path::PathBuf;
+
+use bib_engine::{
+    BibAttempt, BibJob, BibOptionsBuilder, BibSession, EntryId, FieldId, FieldValue,
+    FileProvisioner, ResolvedFile, SectionId, VfsLimits, VirtualPath,
+};
+
+fn process_fixture(control_name: &str) -> bib_engine::ProcessedBibliography {
+    let fixture_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../tests/corpus/bib/upstream-2.22/tdata");
+    let control = VirtualPath::user(control_name).expect("valid control path");
+    let mut provisioner = FileProvisioner::new(VfsLimits::default()).expect("valid VFS limits");
+    provisioner
+        .register_user(
+            control.clone(),
+            std::fs::read(fixture_dir.join(control_name)).expect("committed BCF fixture"),
+        )
+        .expect("unique control file");
+    let job = BibJob::new(control, BibOptionsBuilder::new().freeze());
+    let mut session = BibSession::default();
+    loop {
+        match session.process(&job, &provisioner.snapshot()) {
+            BibAttempt::Complete(result) => return result.document().as_ref().clone(),
+            BibAttempt::NeedResources(requests) => {
+                provisioner.expect(&requests);
+                for request in requests
+                    .required
+                    .iter()
+                    .chain(requests.prefetch_hints.iter())
+                {
+                    let path = fixture_dir.join(request.key().name());
+                    if !path.is_file() {
+                        continue;
+                    }
+                    provisioner
+                        .provision(ResolvedFile {
+                            request: request.key().clone(),
+                            virtual_path: format!("/texlive/bib/{}", request.key().name()).into(),
+                            bytes: std::fs::read(path).expect("committed requested fixture"),
+                            expected_digest: None,
+                        })
+                        .expect("requested fixture is valid");
+                }
+            }
+            BibAttempt::Failed(failure) => panic!("fixture processing failed: {failure:?}"),
+        }
+    }
 }
 
-const UPSTREAM_SOURCE: &str = r####"# -*- cperl -*-
-use strict;
-use warnings;
-use utf8;
-no warnings 'utf8';
-
-use Test::More tests => 4;
-use Test::Differences;
-unified_diff;
-
-use Biber;
-use Biber::Output::bbl;
-use Log::Log4perl;
-chdir("t/tdata");
-
-# Set up Biber object
-my $biber = Biber->new(noconf => 1);
-my $LEVEL = 'ERROR';
-my $l4pconf = qq|
-    log4perl.category.main                             = $LEVEL, Screen
-    log4perl.category.screen                           = $LEVEL, Screen
-    log4perl.appender.Screen                           = Log::Log4perl::Appender::Screen
-    log4perl.appender.Screen.utf8                      = 1
-    log4perl.appender.Screen.Threshold                 = $LEVEL
-    log4perl.appender.Screen.stderr                    = 0
-    log4perl.appender.Screen.layout                    = Log::Log4perl::Layout::SimpleLayout
-|;
-Log::Log4perl->init(\$l4pconf);
-
-Biber::Config->setoption('sortlocale', 'en_GB.UTF-8');
-$biber->parse_ctrlfile("general.bcf");
-$biber->set_output_obj(Biber::Output::bbl->new());
-
-# Options - we could set these in the control file but it's nice to see what we're
-# relying on here for tests
-
-# Biblatex options
-Biber::Config->setblxoption(undef,'labelnamespec', [ {content => 'shortauthor'},
-                                               {content => 'author'},
-                                               {content => 'shorteditor'},
-                                               {content => 'editor'},
-                                               {content => 'translator'}]);
-Biber::Config->setblxoption(undef,'labelnamespec', [ {content => 'editor'},
-                                               {content => 'translator'}], 'ENTRYTYPE', 'book');
-Biber::Config->setblxoption(undef,'labelnamespec', [ {content => 'namea'},
-                                               {content => 'author' }], 'ENTRYTYPE', 'misc');
-
-# Now generate the information
-$biber->prepare;
-my $bibentries = $biber->sections->get_section(0)->bibentries;
-
-eq_or_diff($bibentries->entry('angenendtsa')->get_labelname_info, 'shortauthor', 'global shortauthor' );
-eq_or_diff($bibentries->entry('stdmodel')->get_labelname_info, 'author', 'global author' );
-eq_or_diff($bibentries->entry('aristotle:anima')->get_labelname_info, 'editor', 'type-specific editor' );
-eq_or_diff($bibentries->entry('lne1')->get_labelname_info, 'namea', 'type-specific exotic name' );
-"####;
+fn label_name_source(entry_key: &str) -> Option<String> {
+    let document = process_fixture("general.bcf");
+    let entry = document
+        .section(SectionId::new(0))
+        .and_then(|section| section.entry(&EntryId::new(entry_key).expect("valid entry key")))?;
+    let value = entry
+        .fields()
+        .get(&FieldId::new("labelnamesource").expect("valid field name"))?;
+    match value {
+        FieldValue::Literal(value) => Some(value.as_str().to_owned()),
+        _ => None,
+    }
+}
 
 #[test]
-#[ignore = "xfail: bib-engine has no public label-name selection query API"]
+#[ignore = "xfail: label-name source metadata is not exposed on processed entries"]
 fn assertion_001_global_shortauthor() {
-    pass_upstream(
-        "global shortauthor",
-        r####"$bibentries->entry('angenendtsa')->get_labelname_info"####,
-        r####"'shortauthor'"####,
-        r####"eq_or_diff($bibentries->entry('angenendtsa')->get_labelname_info, 'shortauthor', 'global shortauthor' );"####,
-        UPSTREAM_SOURCE,
+    assert_eq!(
+        label_name_source("angenendtsa").as_deref(),
+        Some("shortauthor")
     );
 }
 
 #[test]
-#[ignore = "xfail: bib-engine has no public label-name selection query API"]
 fn assertion_002_global_author() {
-    pass_upstream(
-        "global author",
-        r####"$bibentries->entry('stdmodel')->get_labelname_info"####,
-        r####"'author'"####,
-        r####"eq_or_diff($bibentries->entry('stdmodel')->get_labelname_info, 'author', 'global author' );"####,
-        UPSTREAM_SOURCE,
-    );
+    assert_eq!(label_name_source("stdmodel").as_deref(), Some("author"));
 }
 
 #[test]
-#[ignore = "xfail: bib-engine has no public label-name selection query API"]
+#[ignore = "xfail: label-name source metadata is not exposed on processed entries"]
 fn assertion_003_type_specific_editor() {
-    pass_upstream(
-        "type-specific editor",
-        r####"$bibentries->entry('aristotle:anima')->get_labelname_info"####,
-        r####"'editor'"####,
-        r####"eq_or_diff($bibentries->entry('aristotle:anima')->get_labelname_info, 'editor', 'type-specific editor' );"####,
-        UPSTREAM_SOURCE,
+    assert_eq!(
+        label_name_source("aristotle:anima").as_deref(),
+        Some("editor")
     );
 }
 
 #[test]
-#[ignore = "xfail: bib-engine has no public label-name selection query API"]
+#[ignore = "xfail: label-name source metadata is not exposed on processed entries"]
 fn assertion_004_type_specific_exotic_name() {
-    pass_upstream(
-        "type-specific exotic name",
-        r####"$bibentries->entry('lne1')->get_labelname_info"####,
-        r####"'namea'"####,
-        r####"eq_or_diff($bibentries->entry('lne1')->get_labelname_info, 'namea', 'type-specific exotic name' );"####,
-        UPSTREAM_SOURCE,
-    );
+    assert_eq!(label_name_source("lne1").as_deref(), Some("namea"));
 }
