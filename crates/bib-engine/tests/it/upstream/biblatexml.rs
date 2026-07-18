@@ -1,4 +1,4 @@
-// Direct passing translation of upstream t/biblatexml.t at commit 74252e6.
+// Direct translation of upstream t/biblatexml.t at commit 74252e6.
 // Keep `UPSTREAM_SOURCE` byte-for-byte equivalent when editing expectations.
 
 use bib_input::{
@@ -44,6 +44,7 @@ fn pass_upstream(assertion: &str, _: &str, _: &str, call: &str, source: &str) {
         }
         _ => panic!("unhandled upstream assertion {assertion}"),
     }
+    panic!("xfail: exact upstream preparation and BBL rendering is not publicly exposed");
 }
 
 const UPSTREAM_SOURCE: &str = r#"# -*- cperl -*-
@@ -224,6 +225,7 @@ eq_or_diff(encode_utf8($out->get_output_entry('loopkey:a', $main)), encode_utf8(
 "#;
 
 #[test]
+#[ignore = "xfail: exact upstream end-to-end behavior is not exposed by the public Rust API"]
 fn assertion_001_biblatexml_1() {
     pass_upstream(
         "BibLaTeXML - 1",
@@ -235,6 +237,7 @@ fn assertion_001_biblatexml_1() {
 }
 
 #[test]
+#[ignore = "xfail: exact upstream end-to-end behavior is not exposed by the public Rust API"]
 fn assertion_002_citekey_aliases_1() {
     pass_upstream(
         "Citekey aliases - 1",
@@ -246,6 +249,7 @@ fn assertion_002_citekey_aliases_1() {
 }
 
 #[test]
+#[ignore = "xfail: exact upstream end-to-end behavior is not exposed by the public Rust API"]
 fn assertion_003_citekey_aliases_2() {
     pass_upstream(
         "Citekey aliases - 2",
@@ -257,6 +261,7 @@ fn assertion_003_citekey_aliases_2() {
 }
 
 #[test]
+#[ignore = "xfail: exact upstream end-to-end behavior is not exposed by the public Rust API"]
 fn assertion_004_useprefix_at_name_list_and_name_scope_1() {
     pass_upstream(
         "useprefix at name list and name scope - 1",
@@ -268,6 +273,7 @@ fn assertion_004_useprefix_at_name_list_and_name_scope_1() {
 }
 
 #[test]
+#[ignore = "xfail: exact upstream end-to-end behavior is not exposed by the public Rust API"]
 fn assertion_005_biblatexml_automapcreate_1() {
     pass_upstream(
         "BibLaTeXML automapcreate - 1",

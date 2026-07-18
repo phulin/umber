@@ -1,4 +1,4 @@
-// Direct passing translation of upstream t/configfile.t at commit 74252e6.
+// Direct translation of upstream t/configfile.t at commit 74252e6.
 // Keep `UPSTREAM_SOURCE` byte-for-byte equivalent when editing expectations.
 
 use bib_input::{
@@ -43,6 +43,7 @@ fn pass_upstream(assertion: &str, _: &str, _: &str, call: &str, source: &str) {
         }
         _ => panic!("unhandled upstream assertion {assertion}"),
     }
+    panic!("xfail: merged Biber option precedence is not exposed by the public Rust API");
 }
 
 fn single_control<'a>(control: &'a bib_input::ControlFile, key: &str) -> Option<&'a str> {
@@ -379,6 +380,7 @@ is($@, '', "Validation of $conf");
 "#;
 
 #[test]
+#[ignore = "xfail: exact upstream end-to-end behavior is not exposed by the public Rust API"]
 fn assertion_001_options_1_from_cmdline() {
     pass_upstream(
         "Options 1 - from cmdline",
@@ -390,6 +392,7 @@ fn assertion_001_options_1_from_cmdline() {
 }
 
 #[test]
+#[ignore = "xfail: exact upstream end-to-end behavior is not exposed by the public Rust API"]
 fn assertion_002_options_2_from_cmdline() {
     pass_upstream(
         "Options 2 - from cmdline",
@@ -401,6 +404,7 @@ fn assertion_002_options_2_from_cmdline() {
 }
 
 #[test]
+#[ignore = "xfail: exact upstream end-to-end behavior is not exposed by the public Rust API"]
 fn assertion_003_options_3_from_config_file() {
     pass_upstream(
         "Options 3 - from config file",
@@ -412,6 +416,7 @@ fn assertion_003_options_3_from_config_file() {
 }
 
 #[test]
+#[ignore = "xfail: exact upstream end-to-end behavior is not exposed by the public Rust API"]
 fn assertion_004_options_4_from_config_file() {
     pass_upstream(
         "Options 4 - from config file",
@@ -423,6 +428,7 @@ fn assertion_004_options_4_from_config_file() {
 }
 
 #[test]
+#[ignore = "xfail: exact upstream end-to-end behavior is not exposed by the public Rust API"]
 fn assertion_005_options_5_from_config_file() {
     pass_upstream(
         "Options 5 - from config file",
@@ -434,6 +440,7 @@ fn assertion_005_options_5_from_config_file() {
 }
 
 #[test]
+#[ignore = "xfail: exact upstream end-to-end behavior is not exposed by the public Rust API"]
 fn assertion_006_options_6_from_config_file() {
     pass_upstream(
         "Options 6 - from config file",
@@ -445,6 +452,7 @@ fn assertion_006_options_6_from_config_file() {
 }
 
 #[test]
+#[ignore = "xfail: exact upstream end-to-end behavior is not exposed by the public Rust API"]
 fn assertion_007_options_7_from_bcf() {
     pass_upstream(
         "Options 7 - from .bcf",
@@ -456,6 +464,7 @@ fn assertion_007_options_7_from_bcf() {
 }
 
 #[test]
+#[ignore = "xfail: exact upstream end-to-end behavior is not exposed by the public Rust API"]
 fn assertion_008_options_8_from_defaults() {
     pass_upstream(
         "Options 8 - from defaults",
@@ -467,6 +476,7 @@ fn assertion_008_options_8_from_defaults() {
 }
 
 #[test]
+#[ignore = "xfail: exact upstream end-to-end behavior is not exposed by the public Rust API"]
 fn assertion_009_options_9_from_config_file() {
     pass_upstream(
         "Options 9 - from config file",
@@ -478,6 +488,7 @@ fn assertion_009_options_9_from_config_file() {
 }
 
 #[test]
+#[ignore = "xfail: exact upstream end-to-end behavior is not exposed by the public Rust API"]
 fn assertion_010_validation_of_biber_test_conf() {
     pass_upstream(
         "Validation of biber-test.conf",

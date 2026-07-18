@@ -1,4 +1,4 @@
-// Direct passing translation of upstream t/encoding.t at commit 74252e6.
+// Direct translation of upstream t/encoding.t at commit 74252e6.
 // Keep `UPSTREAM_SOURCE` byte-for-byte equivalent when editing expectations.
 
 use bib_unicode::{LegacyEncoding, RecodeSet, TexRecoder, decode_legacy, encode_legacy};
@@ -34,6 +34,7 @@ fn pass_upstream(assertion: &str, _: &str, _: &str, call: &str, source: &str) {
                 .contains('Š')
         );
     }
+    panic!("xfail: exact encoded BBL output is not exposed by the public Rust API");
 }
 
 const UPSTREAM_SOURCE: &str = r#"# -*- cperl -*-
@@ -598,6 +599,7 @@ eq_or_diff($outvar, encode(Biber::Config->getoption('output_encoding'), $encode2
 "#;
 
 #[test]
+#[ignore = "xfail: exact upstream end-to-end behavior is not exposed by the public Rust API"]
 fn assertion_001_latin9_bib_utf_8_bbl() {
     pass_upstream(
         "latin9 .bib -> UTF-8 .bbl",
@@ -609,6 +611,7 @@ fn assertion_001_latin9_bib_utf_8_bbl() {
 }
 
 #[test]
+#[ignore = "xfail: exact upstream end-to-end behavior is not exposed by the public Rust API"]
 fn assertion_002_utf_8_bib_utf_8_bbl() {
     pass_upstream(
         "UTF-8 .bib -> UTF-8 .bbl",
@@ -620,6 +623,7 @@ fn assertion_002_utf_8_bib_utf_8_bbl() {
 }
 
 #[test]
+#[ignore = "xfail: exact upstream end-to-end behavior is not exposed by the public Rust API"]
 fn assertion_003_utf_8_bib_latin1_bbl() {
     pass_upstream(
         "UTF-8 .bib -> latin1 .bbl",
@@ -631,6 +635,7 @@ fn assertion_003_utf_8_bib_latin1_bbl() {
 }
 
 #[test]
+#[ignore = "xfail: exact upstream end-to-end behavior is not exposed by the public Rust API"]
 fn assertion_004_utf_8_bib_utf_8_bbl_safechars() {
     pass_upstream(
         "UTF-8 .bib -> UTF-8 .bbl, safechars",
@@ -642,6 +647,7 @@ fn assertion_004_utf_8_bib_utf_8_bbl_safechars() {
 }
 
 #[test]
+#[ignore = "xfail: exact upstream end-to-end behavior is not exposed by the public Rust API"]
 fn assertion_005_utf_8_bib_utf_8_bbl_output_safecharsset_full() {
     pass_upstream(
         "UTF-8 .bib -> UTF-8 .bbl, output_safecharsset=full",
@@ -653,6 +659,7 @@ fn assertion_005_utf_8_bib_utf_8_bbl_output_safecharsset_full() {
 }
 
 #[test]
+#[ignore = "xfail: exact upstream end-to-end behavior is not exposed by the public Rust API"]
 fn assertion_006_utf_8_bib_latin9_bbl() {
     pass_upstream(
         "UTF-8 .bib -> latin9 .bbl",
@@ -664,6 +671,7 @@ fn assertion_006_utf_8_bib_latin9_bbl() {
 }
 
 #[test]
+#[ignore = "xfail: exact upstream end-to-end behavior is not exposed by the public Rust API"]
 fn assertion_007_latin1_bib_cp1252_bbl() {
     pass_upstream(
         "latin1 .bib -> CP1252 .bbl",
@@ -675,6 +683,7 @@ fn assertion_007_latin1_bib_cp1252_bbl() {
 }
 
 #[test]
+#[ignore = "xfail: exact upstream end-to-end behavior is not exposed by the public Rust API"]
 fn assertion_008_latin2_bib_latin3_bbl() {
     pass_upstream(
         "latin2 .bib -> latin3 .bbl",
@@ -686,6 +695,7 @@ fn assertion_008_latin2_bib_latin3_bbl() {
 }
 
 #[test]
+#[ignore = "xfail: exact upstream end-to-end behavior is not exposed by the public Rust API"]
 fn assertion_009_latin2_bib_latin1_bbl_failure() {
     pass_upstream(
         "latin2 .bib -> latin1 .bbl failure",
@@ -697,6 +707,7 @@ fn assertion_009_latin2_bib_latin1_bbl_failure() {
 }
 
 #[test]
+#[ignore = "xfail: exact upstream end-to-end behavior is not exposed by the public Rust API"]
 fn assertion_010_latin1_bib_applemacce_custom_alias_bbl() {
     pass_upstream(
         "latin1 .bib -> applemacce (custom alias) .bbl",

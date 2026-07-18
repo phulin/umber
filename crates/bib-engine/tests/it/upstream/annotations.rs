@@ -1,4 +1,4 @@
-// Direct passing translation of upstream t/annotations.t at commit 74252e6.
+// Direct translation of upstream t/annotations.t at commit 74252e6.
 // Keep `UPSTREAM_SOURCE` byte-for-byte equivalent when editing expectations.
 
 use bib_unicode::{Annotation, AnnotationKind, AnnotationMap};
@@ -41,6 +41,7 @@ fn pass_upstream(assertion: &str, _: &str, expected: &str, call: &str, source: &
     } else {
         assert!(values.contains(&"ann2, ann3") || values.contains(&"ann2"));
     }
+    panic!("xfail: exact BBL annotation output is not exposed by the public Rust API");
 }
 
 const UPSTREAM_SOURCE: &str = r#"# -*- cperl -*-
@@ -188,6 +189,7 @@ eq_or_diff( $out->get_output_entry('ann2', $main), $ann2, 'Annotations - 2' );
 "#;
 
 #[test]
+#[ignore = "xfail: exact upstream end-to-end behavior is not exposed by the public Rust API"]
 fn assertion_001_annotations_1() {
     pass_upstream(
         "Annotations - 1",
@@ -199,6 +201,7 @@ fn assertion_001_annotations_1() {
 }
 
 #[test]
+#[ignore = "xfail: exact upstream end-to-end behavior is not exposed by the public Rust API"]
 fn assertion_002_annotations_2() {
     pass_upstream(
         "Annotations - 2",
