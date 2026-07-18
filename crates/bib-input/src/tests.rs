@@ -219,6 +219,30 @@ fn expands_vfs_includes_and_rejects_cycles() {
     ));
 }
 
+#[test]
+fn maps_biber_boolean_text_and_numbers() {
+    assert_eq!(
+        map_boolean(BooleanInput::Text("true"), BooleanOutput::Number),
+        Some(MappedBoolean::Number(1))
+    );
+    assert_eq!(
+        map_boolean(BooleanInput::Text("False"), BooleanOutput::Number),
+        Some(MappedBoolean::Number(0))
+    );
+    assert_eq!(
+        map_boolean(BooleanInput::Number(1), BooleanOutput::Text),
+        Some(MappedBoolean::Text("true"))
+    );
+    assert_eq!(
+        map_boolean(BooleanInput::Number(0), BooleanOutput::Text),
+        Some(MappedBoolean::Text("false"))
+    );
+    assert_eq!(
+        map_boolean(BooleanInput::Text("neither"), BooleanOutput::Number),
+        None
+    );
+}
+
 fn single(value: Option<&ControlOptionValue>) -> &str {
     match value {
         Some(ControlOptionValue::Single(value)) => &value.content,

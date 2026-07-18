@@ -14,6 +14,43 @@ pub enum ConfigValue {
     Tree(Vec<TemplateElement>),
 }
 
+/// Input accepted by Biber-compatible boolean option conversion.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum BooleanInput<'a> {
+    Text(&'a str),
+    Number(i64),
+}
+
+/// Representation requested from Biber-compatible boolean option conversion.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum BooleanOutput {
+    Number,
+    Text,
+}
+
+/// Result of converting a boolean configuration value.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum MappedBoolean {
+    Number(u8),
+    Text(&'static str),
+}
+
+/// Convert the textual and numeric boolean forms accepted by Biber.
+#[must_use]
+pub fn map_boolean(input: BooleanInput<'_>, output: BooleanOutput) -> Option<MappedBoolean> {
+    let value = match input {
+        BooleanInput::Text(value) if value.eq_ignore_ascii_case("true") => true,
+        BooleanInput::Text(value) if value.eq_ignore_ascii_case("false") => false,
+        BooleanInput::Number(1) => true,
+        BooleanInput::Number(0) => false,
+        BooleanInput::Text(_) | BooleanInput::Number(_) => return None,
+    };
+    Some(match output {
+        BooleanOutput::Number => MappedBoolean::Number(u8::from(value)),
+        BooleanOutput::Text => MappedBoolean::Text(if value { "true" } else { "false" }),
+    })
+}
+
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct ConfigurationFile {
     values: BTreeMap<String, ConfigValue>,
