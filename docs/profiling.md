@@ -1305,3 +1305,47 @@ subtrees. The corresponding isolated slow run averaged 144.747 ms with 120.396
 ms in the executor; 863 paragraph hits per advance skipped 101,166 commands.
 This confirms that paragraph replay now saves material work and that its next
 roofline is page/output reconstruction, not another replay-cache layer.
+
+### Final paragraph-start ordering gate
+
+The adversarial release review found one cross-revision ordering hole after
+the first post-main receipt: replay advanced input and applied paragraph-body
+mutations before reproducing the paragraph start. A changed prefix could make
+that start's `\parskip` fire the output routine, exposing paragraph-end input
+and post-body state instead of the cold path's paragraph-start input and
+pre-body state.
+
+The final implementation starts a validated reused paragraph before advancing
+input or replaying its body. The start runs behind a lightweight, non-hashing
+semantic rollback guard; a newly pending page fire-up or start-time effect
+restores the page, store, World, dependency, and mode roots and returns to cold
+dispatch. A focused pagination-change regression forces this case and proves
+that the output routine observes `count0=0`, with exact cold effects,
+artifacts, and DVI. `ParagraphStart` validation telemetry makes this rare
+deoptimization explicit.
+
+After the final rebase onto `main` at `21048b8d`, twenty balanced AB/BA runs
+after two warmups measured:
+
+| Path                                        |       Mean |     Median |
+| ------------------------------------------- | ---------: | ---------: |
+| Slow pagination-changing edits              | -34.819 ms | -32.063 ms |
+| Slow edits plus complete one-time priming   | -11.767 ms |  -5.303 ms |
+| Cross-generation interaction                |  -1.350 ms |  -0.781 ms |
+| Independent fast suffix adoption            |  +1.034 ms |  +1.032 ms |
+| Forced line-result rebreak                  |  +4.354 ms |  +4.080 ms |
+| Priming plus the complete five-edit history |  -7.729 ms |  -1.129 ms |
+
+Memo-disabled and paragraph-enabled priming means were 143.839 and 166.891 ms.
+Both slow edits still replayed 863 of 865 eligible paragraphs, skipped 101,166
+commands, and reduced executed commands from 41,334 to 11,113. Neither slow
+edit required a `ParagraphStart` deopt. Every path retained the exact cold DVI
+and an equivalent named-boundary schedule. The fast path remained independent:
+14 prefix pages retained, three re-shipped, and 83 adopted as one suffix
+subtree.
+
+The final native correctness/static gate, snapshot allocation and latency
+budgets, 1,000-edit cold differential fuzz tier, Gentle end-to-end conformance,
+and host-tools gate all pass on that base. The ordering guard therefore closes
+the soundness hole without changing the replay rate or the slow path's material
+end-to-end win.
