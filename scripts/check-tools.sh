@@ -9,6 +9,9 @@ scripts/profile-pdftex-arxiv.sh check-entrypoint
 # Explicit gate for host-side regeneration, profiling, and triage tools that
 # are intentionally absent from the routine native correctness build.
 
+scripts/profile-pdftex-arxiv.sh check-sample
+scripts/profile-pdftex-arxiv.sh check-entrypoint
+
 cargo test -q -p profile-analyzer --tests
 cargo test -q -p refexec --tests
 cargo test -q -p parity-harness --tests --features reference-tools
