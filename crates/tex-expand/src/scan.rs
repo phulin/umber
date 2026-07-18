@@ -389,6 +389,27 @@ where
                 crate::push_dispatch_result(input, stores, dispatch);
                 continue;
             }
+            if meaning == Meaning::ExpandablePrimitive(ExpandablePrimitive::The) {
+                expansion.record_meaning(symbol, meaning);
+                let dispatch = match crate::dispatch::dispatch_with_context(
+                    traced_semantic_token(raw),
+                    raw.origin(),
+                    input,
+                    stores,
+                    expansion,
+                    meaning,
+                ) {
+                    Ok(dispatch) => dispatch,
+                    Err(error) => {
+                        record_undefined_diagnostic(error, diagnostics)?;
+                        continue;
+                    }
+                };
+                if !append_the_toks_output(stores, &mut builder, &mut origins, &dispatch) {
+                    crate::push_dispatch_result(input, stores, dispatch);
+                }
+                continue;
+            }
             let needs_suppressed_replay =
                 meaning == Meaning::ExpandablePrimitive(ExpandablePrimitive::NoExpand);
             if needs_suppressed_replay
@@ -561,7 +582,8 @@ fn take_undefined_control_sequence(
     }
 }
 
-/// Scans TeX general text as a raw balanced group, then expands it.
+/// Scans TeX general text while expanding its compulsory opening brace and
+/// balanced contents.
 ///
 /// This matches `scan_toks(macro_def = false, xpand = true)` callers such as
 /// TeX82 `\mark`: parameter tokens are ordinary tokens while scanning the
@@ -574,14 +596,12 @@ pub fn scan_general_text_expanded_with_driver(
 ) -> Result<TokenListId, ScanToksError>
 where
 {
-    let raw_text = scan_general_text(input, stores, context)?;
-    Ok(expand_replacement_text(
+    Ok(scan_general_text_expanded_with_expanded_open(
         input,
         stores,
-        raw_text.token_list(),
-        raw_text.origin_list(),
         expansion,
         &mut DriverExpansionMode,
+        context,
     )?
     .token_list())
 }
@@ -597,13 +617,7 @@ pub(crate) fn scan_general_text_expanded_with_expanded_open(
         let token = mode
             .next_expanded_token(input, stores, expansion)?
             .ok_or(ScanToksError::EndOfInputInReplacementText { context })?;
-        if !matches!(
-            traced_semantic_token(token),
-            Token::Char {
-                cat: Catcode::Space,
-                ..
-            }
-        ) {
+        if !is_space_or_relax(stores, traced_semantic_token(token)) {
             break token;
         }
     };
@@ -816,6 +830,14 @@ fn collect_expanded_text_inner(
             continue;
         }
 
+        if meaning == Meaning::ExpandablePrimitive(ExpandablePrimitive::The) {
+            let dispatch = mode.dispatch_raw_token(traced, input, stores, expansion)?;
+            if !append_the_toks_output(stores, &mut builder, &mut origins, &dispatch) {
+                crate::push_dispatch_result(input, stores, dispatch);
+            }
+            continue;
+        }
+
         if meaning == Meaning::ExpandablePrimitive(ExpandablePrimitive::ExpandAfter) {
             // In an `\edef`, `\expandafter` performs exactly one expansion
             // step on its target, then returns control to the protected-aware
@@ -900,6 +922,37 @@ fn append_collected_token(
     }
     push_scanned_token(builder, origins, traced, token);
     false
+}
+
+/// Implements TeX.web's `scan_toks` `the_toks` splice.
+///
+/// Token-register contents are attached directly to an expanding scanner's
+/// output, so their control sequences are not expanded and their braces do
+/// not participate in the scanner's outer balance. Outside `scan_toks`, the
+/// same `\the` result remains ordinary expandable input.
+fn append_the_toks_output(
+    stores: &impl ExpansionState,
+    builder: &mut TokenListBuilder,
+    origins: &mut OriginListBuilder,
+    dispatch: &Dispatch,
+) -> bool {
+    let Dispatch::Push {
+        replay_kind: crate::ExpansionReplayKind::TheToksOutput,
+        token_list,
+        origin_list,
+        ..
+    } = dispatch
+    else {
+        return false;
+    };
+    let tokens = stores.tokens(*token_list);
+    builder.extend_from_slice(tokens);
+    if *origin_list == OriginListId::EMPTY {
+        origins.extend_repeated(tex_state::token::OriginId::UNKNOWN, tokens.len());
+    } else {
+        origins.extend_from_slice(stores.origin_list(*origin_list));
+    }
+    true
 }
 
 fn unread_token(
@@ -1143,20 +1196,6 @@ fn scan_replacement_text(
     }
 }
 
-pub(crate) fn scan_general_text(
-    input: &mut InputStack,
-    stores: &mut tex_state::ExpansionContext<'_>,
-    context: TracedTokenWord,
-) -> Result<TracedTokenList, ScanToksError> {
-    let open = next_non_space_token(input, stores)?
-        .ok_or(ScanToksError::EndOfInputInReplacementText { context })?;
-    if !has_begin_group_meaning(stores, traced_semantic_token(open)) {
-        return Err(ScanToksError::MissingGeneralTextBeginGroup { context: open });
-    }
-
-    scan_general_text_body(input, stores, context)
-}
-
 fn scan_general_text_body(
     input: &mut InputStack,
     stores: &mut tex_state::ExpansionContext<'_>,
@@ -1213,13 +1252,7 @@ where
         let token = mode
             .next_expanded_token(input, stores, expansion)?
             .ok_or(ScanToksError::EndOfInputInReplacementText { context })?;
-        if !matches!(
-            traced_semantic_token(token),
-            Token::Char {
-                cat: Catcode::Space,
-                ..
-            }
-        ) {
+        if !is_space_or_relax(stores, traced_semantic_token(token)) {
             break token;
         }
     };
@@ -1246,6 +1279,16 @@ fn has_begin_group_meaning(stores: &impl ExpansionState, token: Token) -> bool {
     }
 }
 
+fn is_space_or_relax(stores: &impl ExpansionState, token: Token) -> bool {
+    matches!(
+        token,
+        Token::Char {
+            cat: Catcode::Space,
+            ..
+        }
+    ) || matches!(token, Token::Cs(symbol) if stores.meaning(symbol) == Meaning::Relax)
+}
+
 fn is_outer_macro(stores: &impl ExpansionState, token: Token) -> bool {
     let Token::Cs(symbol) = token else {
         return false;
@@ -1254,26 +1297,6 @@ fn is_outer_macro(stores: &impl ExpansionState, token: Token) -> bool {
         stores.meaning(symbol),
         Meaning::Macro { flags, .. } if flags.contains(MeaningFlags::OUTER)
     )
-}
-
-fn next_non_space_token(
-    input: &mut InputStack,
-    stores: &mut tex_state::ExpansionContext<'_>,
-) -> Result<Option<TracedTokenWord>, ScanToksError> {
-    loop {
-        let Some(token) = crate::next_semantic_raw_token(input, stores)? else {
-            return Ok(None);
-        };
-        if !matches!(
-            traced_semantic_token(token),
-            Token::Char {
-                cat: Catcode::Space,
-                ..
-            }
-        ) {
-            return Ok(Some(token));
-        }
-    }
 }
 
 fn token_digit(token: Token) -> Option<u8> {

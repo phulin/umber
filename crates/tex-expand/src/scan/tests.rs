@@ -216,6 +216,63 @@ fn expanded_general_text_stops_after_a_nested_conditional() {
 }
 
 #[test]
+fn expanded_general_text_copies_the_token_register_without_expanding_it() {
+    let mut stores = Universe::new();
+    crate::install_expandable_primitives(&mut stores);
+    let toks = stores.intern("toks");
+    stores.set_meaning(
+        toks,
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Toks),
+    );
+    let macro_cs = stores.intern("macro");
+    let empty = stores.intern_token_list(&[]);
+    let body = stores.intern_token_list(&[char_token('x', Catcode::Letter)]);
+    stores.set_macro_meaning(
+        macro_cs,
+        MacroMeaning::new(MeaningFlags::EMPTY, empty, body),
+    );
+    let contents = stores.intern_token_list(&[Token::Cs(macro_cs.symbol())]);
+    stores.set_toks(4, contents);
+    let context = TracedTokenWord::pack(
+        Token::Cs(stores.intern("pdfobj").symbol()),
+        OriginId::UNKNOWN,
+    );
+    let mut input = InputStack::new(MemoryInput::new("{\\the\\toks4}"));
+
+    let expanded = super::scan_general_text_expanded_with_driver(
+        &mut input,
+        &mut tex_state::ExpansionContext::new(&mut stores),
+        &mut ExpansionContext::new("texput"),
+        context,
+    )
+    .expect("expanded general text");
+
+    assert_eq!(stores.tokens(expanded), &[Token::Cs(macro_cs.symbol())]);
+}
+
+#[test]
+fn expanded_general_text_skips_relax_before_its_opening_brace() {
+    let mut stores = Universe::new();
+    let relax = stores.intern("relax");
+    stores.set_meaning(relax, Meaning::Relax);
+    let context = TracedTokenWord::pack(
+        Token::Cs(stores.intern("pdfobj").symbol()),
+        OriginId::UNKNOWN,
+    );
+    let mut input = InputStack::new(MemoryInput::new("\\relax {x}"));
+
+    let expanded = super::scan_general_text_expanded_with_driver(
+        &mut input,
+        &mut tex_state::ExpansionContext::new(&mut stores),
+        &mut ExpansionContext::new("texput"),
+        context,
+    )
+    .expect("expanded general text");
+
+    assert_eq!(stores.tokens(expanded), &[char_token('x', Catcode::Letter)]);
+}
+
+#[test]
 fn expanded_definition_preserves_protected_macro_tokens() {
     let mut stores = Universe::new();
     let protected = stores.intern("protectedmacro");

@@ -787,6 +787,7 @@ impl LineNormalizationCache {
         NormalizedLine {
             text: cached.text,
             bytes_as_chars: line.bytes_as_chars,
+            byte_projection: line.byte_projection,
             physical_start: line.start,
             physical_content_end: line.content_end,
             terminator_start: line.terminator_start,
@@ -3429,6 +3430,7 @@ impl InputStack {
             NormalizedLine {
                 text: source.frame.line.clone(),
                 bytes_as_chars: source.frame.bytes_as_chars,
+                byte_projection: source.frame.byte_projection,
                 physical_start: source.frame.physical_line_start,
                 physical_content_end: source.frame.physical_content_end,
                 terminator_start: source.frame.terminator_start,
@@ -3486,6 +3488,7 @@ impl InputStack {
             state: transition.ending.lexer_state(),
             line: normalized.text,
             bytes_as_chars: normalized.bytes_as_chars,
+            byte_projection: normalized.byte_projection,
             byte_offset: transition.ending.line_byte_offset(),
             pending: VecDeque::new(),
             physical_line_start: transition.document_line_start,

@@ -559,6 +559,10 @@ pub(crate) fn record_code_dependency(
 pub enum ExpansionReplayKind {
     MacroBody,
     TheOutput,
+    /// Tokens read from a token register by `\the`. TeX's expanding
+    /// `scan_toks` copies these directly; ordinary `get_x_token` expansion
+    /// continues expanding them.
+    TheToksOutput,
     NumberOutput,
     JobName,
     Mark,
@@ -572,6 +576,7 @@ impl ExpansionReplayKind {
         match self {
             Self::MacroBody => TokenListReplayKind::MacroBody,
             Self::TheOutput | Self::NumberOutput | Self::JobName => TokenListReplayKind::Inserted,
+            Self::TheToksOutput => TokenListReplayKind::Inserted,
             Self::Mark => TokenListReplayKind::Mark,
             Self::Unexpanded => TokenListReplayKind::Unexpanded,
             Self::Inserted => TokenListReplayKind::Inserted,

@@ -113,6 +113,37 @@ fn context() -> TracedTokenWord {
 }
 
 #[test]
+fn token_register_contents_resume_expansion_in_integer_scanners() {
+    let mut stores = Universe::new();
+    crate::install_expandable_primitives(&mut stores);
+    let toks = stores.intern("toks");
+    stores.set_meaning(
+        toks,
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Toks),
+    );
+    let object_number = stores.intern("objectnumber");
+    let empty = stores.intern_token_list(&[]);
+    let body = stores.intern_token_list(&[
+        char_token('4', Catcode::Other),
+        char_token('2', Catcode::Other),
+    ]);
+    stores.set_macro_meaning(
+        object_number,
+        MacroMeaning::new(MeaningFlags::EMPTY, empty, body),
+    );
+    let contents = stores.intern_token_list(&[Token::Cs(object_number.symbol())]);
+    stores.set_toks(4, contents);
+
+    let (value, next) = scan_with_stores(
+        "\\the\\toks4;",
+        &mut tex_state::ExpansionContext::new(&mut stores),
+    );
+
+    assert_eq!(value, 42);
+    assert_eq!(next, Some(char_token(';', Catcode::Other)));
+}
+
+#[test]
 fn scans_glue_parameter_width_as_an_internal_integer() {
     let mut stores = Universe::new();
     let tabskip = stores.intern("tabskip");
