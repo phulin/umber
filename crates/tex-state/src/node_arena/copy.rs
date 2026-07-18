@@ -100,9 +100,7 @@ impl NodeStorage {
         for word in source_words {
             count_sidecar(word.tag(), &mut needs);
         }
-        for (have, add) in self.sidecar_lengths().into_iter().zip(needs.as_array()) {
-            preflight_capacity(have, add, "node sidecar exceeds u32 entries");
-        }
+        self.preflight_sidecars(needs);
         self.words.reserve(source_words.len());
         self.origins.reserve(source_words.len());
         self.reserve_sidecars(needs);

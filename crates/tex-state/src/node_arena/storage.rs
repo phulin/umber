@@ -82,9 +82,28 @@ pub(super) struct SidecarNeeds {
 }
 
 impl SidecarNeeds {
-    fn count(&mut self, node: &Node) {
+    fn preflight_and_count(&mut self, node: &Node) {
         let target = match node {
-            Node::Lig { .. } => Some(&mut self.ligatures),
+            Node::Lig {
+                ch, orig, origins, ..
+            } => {
+                assert!(
+                    (*ch as u32) <= u8::MAX as u32,
+                    "ligature glyph exceeds TFM byte domain"
+                );
+                assert!(!orig.is_empty(), "ligature source must not be empty");
+                assert!(orig.len() <= 63, "ligature source exceeds TeX word limit");
+                assert_eq!(
+                    orig.len(),
+                    origins.len(),
+                    "ligature source/provenance length mismatch"
+                );
+                assert!(
+                    orig.iter().all(|ch| (*ch as u32) <= u8::MAX as u32),
+                    "ligature original exceeds TFM byte domain"
+                );
+                Some(&mut self.ligatures)
+            }
             Node::HList(_) | Node::VList(_) => Some(&mut self.boxes),
             Node::Unset(_) => Some(&mut self.unsets),
             Node::Rule { .. } => Some(&mut self.rules),
@@ -115,6 +134,7 @@ impl SidecarNeeds {
         }
     }
 
+    #[cfg(feature = "profiling-stats")]
     pub(super) fn as_array(self) -> [u32; 14] {
         [
             self.ligatures,
@@ -248,12 +268,9 @@ impl NodeStorage {
         // apart from process-aborting allocation failure.
         let mut needs = SidecarNeeds::default();
         for node in nodes {
-            preflight_encoding(node);
-            needs.count(node);
+            needs.preflight_and_count(node);
         }
-        for (have, add) in self.sidecar_lengths().into_iter().zip(needs.as_array()) {
-            preflight_capacity(have, add, "node sidecar exceeds u32 entries");
-        }
+        self.preflight_sidecars(needs);
         self.words.reserve(nodes.len());
         self.origins.reserve(nodes.len());
         self.reserve_sidecars(needs);
@@ -286,41 +303,56 @@ impl NodeStorage {
         (start, len)
     }
 
-    pub(super) fn sidecar_lengths(&self) -> [u32; 14] {
-        let m = self.mark();
-        [
-            m.ligatures,
-            m.boxes,
-            m.unsets,
-            m.rules,
-            m.leaders,
-            m.discs,
-            m.marks,
-            m.insertions,
-            m.whatsits,
-            m.noads,
-            m.fractions,
-            m.choices,
-            m.math_lists,
-            m.adjusts,
-        ]
+    pub(super) fn preflight_sidecars(&self, needs: SidecarNeeds) {
+        macro_rules! preflight_if_needed {
+            ($field:ident, $message:literal) => {
+                if needs.$field != 0 {
+                    preflight_capacity(
+                        checked_len(self.$field.len(), $message),
+                        needs.$field,
+                        $message,
+                    );
+                }
+            };
+        }
+        preflight_if_needed!(ligatures, "ligature sidecar exceeds u32 entries");
+        preflight_if_needed!(boxes, "box sidecar exceeds u32 entries");
+        preflight_if_needed!(unsets, "unset sidecar exceeds u32 entries");
+        preflight_if_needed!(rules, "rule sidecar exceeds u32 entries");
+        preflight_if_needed!(leaders, "leader sidecar exceeds u32 entries");
+        preflight_if_needed!(discs, "disc sidecar exceeds u32 entries");
+        preflight_if_needed!(marks, "mark sidecar exceeds u32 entries");
+        preflight_if_needed!(insertions, "insertion sidecar exceeds u32 entries");
+        preflight_if_needed!(whatsits, "whatsit sidecar exceeds u32 entries");
+        preflight_if_needed!(noads, "noad sidecar exceeds u32 entries");
+        preflight_if_needed!(fractions, "fraction sidecar exceeds u32 entries");
+        preflight_if_needed!(choices, "choice sidecar exceeds u32 entries");
+        preflight_if_needed!(math_lists, "math-list sidecar exceeds u32 entries");
+        preflight_if_needed!(adjusts, "adjust sidecar exceeds u32 entries");
     }
 
     pub(super) fn reserve_sidecars(&mut self, needs: SidecarNeeds) {
-        self.ligatures.reserve(needs.ligatures as usize);
-        self.boxes.reserve(needs.boxes as usize);
-        self.unsets.reserve(needs.unsets as usize);
-        self.rules.reserve(needs.rules as usize);
-        self.leaders.reserve(needs.leaders as usize);
-        self.discs.reserve(needs.discs as usize);
-        self.marks.reserve(needs.marks as usize);
-        self.insertions.reserve(needs.insertions as usize);
-        self.whatsits.reserve(needs.whatsits as usize);
-        self.noads.reserve(needs.noads as usize);
-        self.fractions.reserve(needs.fractions as usize);
-        self.choices.reserve(needs.choices as usize);
-        self.math_lists.reserve(needs.math_lists as usize);
-        self.adjusts.reserve(needs.adjusts as usize);
+        macro_rules! reserve_if_needed {
+            ($field:ident) => {
+                if needs.$field != 0 {
+                    self.$field.reserve(needs.$field as usize);
+                }
+            };
+        }
+        reserve_if_needed!(ligatures);
+        reserve_if_needed!(boxes);
+        reserve_if_needed!(unsets);
+        reserve_if_needed!(rules);
+        reserve_if_needed!(leaders);
+        reserve_if_needed!(discs);
+        reserve_if_needed!(marks);
+        reserve_if_needed!(insertions);
+        reserve_if_needed!(whatsits);
+        reserve_if_needed!(noads);
+        reserve_if_needed!(fractions);
+        reserve_if_needed!(choices);
+        reserve_if_needed!(math_lists);
+        reserve_if_needed!(adjusts);
     }
 
     fn encode(&mut self, node: &Node) -> NodeWord {
@@ -465,28 +497,6 @@ fn push_sidecar<T>(tag: u8, table: &mut Vec<T>, value: T) -> NodeWord {
     let i = checked_len(table.len(), "node sidecar exceeds u32 entries");
     table.push(value);
     NodeWord::sidecar(tag, i)
-}
-fn preflight_encoding(node: &Node) {
-    if let Node::Lig {
-        ch, orig, origins, ..
-    } = node
-    {
-        assert!(
-            (*ch as u32) <= u8::MAX as u32,
-            "ligature glyph exceeds TFM byte domain"
-        );
-        assert!(!orig.is_empty(), "ligature source must not be empty");
-        assert!(orig.len() <= 63, "ligature source exceeds TeX word limit");
-        assert_eq!(
-            orig.len(),
-            origins.len(),
-            "ligature source/provenance length mismatch"
-        );
-        assert!(
-            orig.iter().all(|ch| (*ch as u32) <= u8::MAX as u32),
-            "ligature original exceeds TFM byte domain"
-        );
-    }
 }
 fn kern_code(v: KernKind) -> u8 {
     match v {
