@@ -469,7 +469,6 @@ fn assertion_002_xdata_test_2() {
 }
 
 #[test]
-#[ignore = "xfail: Biber suppresses XDATA source entries from generated output"]
 fn assertion_003_xdata_test_3() {
     let result = try_run_fixture("xdata");
     assert_eq!(
@@ -482,7 +481,6 @@ fn assertion_003_xdata_test_3() {
 }
 
 #[test]
-#[ignore = "xfail: Biber suppresses XDATA source entries from generated output"]
 fn assertion_004_xdata_test_4() {
     let result = try_run_fixture("xdata");
     assert_eq!(

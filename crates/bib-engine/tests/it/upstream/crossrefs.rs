@@ -893,7 +893,6 @@ fn assertion_006_crossref_test_6() {
 }
 
 #[test]
-#[ignore = "xfail: Biber crossref/xref inheritance is not implemented by bib-engine"]
 fn assertion_007_crossref_test_7() {
     let result = try_run_fixture("crossrefs");
     assert_eq!(
@@ -1073,7 +1072,6 @@ fn assertion_019_missing_crossef_test() {
 }
 
 #[test]
-#[ignore = "xfail: Biber crossref/xref inheritance is not implemented by bib-engine"]
 fn assertion_020_mincrossrefs_reset_between_sections() {
     let result = try_run_fixture("crossrefs");
     assert_eq!(
@@ -1126,7 +1124,6 @@ fn assertion_023_cyclic_crossref_error_check() {
 }
 
 #[test]
-#[ignore = "xfail: Biber crossref/xref inheritance is not implemented by bib-engine"]
 fn assertion_024_recursive_crossref_test_1() {
     let result = try_run_fixture("crossrefs");
     assert_eq!(
@@ -1139,7 +1136,6 @@ fn assertion_024_recursive_crossref_test_1() {
 }
 
 #[test]
-#[ignore = "xfail: Biber crossref/xref inheritance is not implemented by bib-engine"]
 fn assertion_025_recursive_crossref_test_2() {
     let result = try_run_fixture("crossrefs");
     assert!(
@@ -1152,7 +1148,6 @@ fn assertion_025_recursive_crossref_test_2() {
 }
 
 #[test]
-#[ignore = "xfail: Biber crossref/xref inheritance is not implemented by bib-engine"]
 fn assertion_026_recursive_crossref_test_3() {
     let result = try_run_fixture("crossrefs");
     assert_eq!(
@@ -1178,7 +1173,6 @@ fn assertion_027_recursive_crossref_test_4() {
 }
 
 #[test]
-#[ignore = "xfail: Biber crossref/xref inheritance is not implemented by bib-engine"]
 fn assertion_028_recursive_crossref_test_5() {
     let result = try_run_fixture("crossrefs");
     assert_eq!(
@@ -1204,7 +1198,6 @@ fn assertion_029_recursive_crossref_test_6() {
 }
 
 #[test]
-#[ignore = "xfail: Biber crossref/xref inheritance is not implemented by bib-engine"]
 fn assertion_030_recursive_crossref_test_7() {
     let result = try_run_fixture("crossrefs");
     assert_eq!(
@@ -1300,7 +1293,6 @@ fn assertion_036_suppressing_singletitle_tracking_2() {
 }
 
 #[test]
-#[ignore = "xfail: Biber crossref/xref inheritance is not implemented by bib-engine"]
 fn assertion_037_mincrossref_via_alias() {
     let result = try_run_fixture("crossrefs");
     assert_eq!(
