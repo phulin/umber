@@ -1884,7 +1884,6 @@ fn execute_prefixed_command(
                                 | UnexpandablePrimitive::WidowPenalties
                                 | UnexpandablePrimitive::DisplayWidowPenalties
                         )
-                        || primitive == UnexpandablePrimitive::PrevDepth
                         || primitive == UnexpandablePrimitive::PrevGraf,
                 ))
             }
@@ -2184,9 +2183,10 @@ fn execute_prefixed_command(
                     return Ok(CommandOutcome::continue_only());
                 }
                 execute_hmode_material(command.traced, primitive, nest, input, stores, execution)?;
-                Ok(CommandOutcome::assigned_if(
-                    primitive == UnexpandablePrimitive::SpaceFactor,
-                ))
+                // `space_factor` belongs to the active horizontal list. Its
+                // only observable result is already embodied by the finished
+                // paragraph material retained for replay.
+                Ok(CommandOutcome::continue_only())
             }
             UnexpandablePrimitive::Wd | UnexpandablePrimitive::Ht | UnexpandablePrimitive::Dp => {
                 reject_macro_prefixes(prefixes)?;

@@ -388,6 +388,63 @@ fn paragraph_front_end_hit_survives_prefix_shift_and_unrelated_register_write() 
 }
 
 #[test]
+fn paragraph_list_local_assignments_do_not_block_replay() {
+    let mut universe = template();
+    universe.enable_pure_memo(tex_state::PureMemoConfig::default());
+    let paragraph = "list local \\spacefactor=2000 state \\prevdepth=5pt paragraph text";
+    let source =
+        format!("{paragraph}\\par\n{paragraph}\\par\n{paragraph}\\par\n\\vfill\\eject\\end");
+    let mut session = Session::start(
+        universe,
+        "paragraph-list-local-state",
+        RevisionId::new(1),
+        source.clone(),
+        usize::MAX,
+    )
+    .expect("session starts");
+    session.cold().expect("cold revision");
+    let before = session.pure_memo_stats();
+    assert_eq!(
+        before.paragraph_unsupported_write_barriers, 0,
+        "horizontal-list state must not escape the retained paragraph: {before:?}"
+    );
+
+    let prefix = "% retain all paragraph source spans\n";
+    let incremental = session
+        .advance(
+            RevisionId::new(2),
+            Edit {
+                base_revision: RevisionId::new(1),
+                expected_hash: ContentHash::from_bytes(source.as_bytes()),
+                range: 0..0,
+                replacement: prefix.to_owned(),
+            },
+        )
+        .expect("prefix edit");
+    let after = session.pure_memo_stats();
+    assert!(
+        after.paragraph_hits >= before.paragraph_hits + 2,
+        "unchanged list-local paragraphs should replay: {after:?}"
+    );
+
+    let mut cold_universe = template();
+    cold_universe.enable_pure_memo(tex_state::PureMemoConfig::default());
+    let mut cold = Session::start(
+        cold_universe,
+        "paragraph-list-local-state",
+        RevisionId::new(2),
+        format!("{prefix}{source}"),
+        usize::MAX,
+    )
+    .expect("cold comparison starts");
+    let cold_output = cold.cold().expect("cold edited revision");
+    assert_eq!(
+        incremental.dvi_bytes().expect("incremental DVI"),
+        cold_output.dvi_bytes().expect("cold DVI")
+    );
+}
+
+#[test]
 fn paragraph_hit_preserves_outer_paragraph_and_shipout_boundaries() {
     let paragraph = "stable paragraph words stable paragraph words stable paragraph words stable paragraph words stable paragraph words stable paragraph words";
     let source = format!(
