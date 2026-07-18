@@ -100,6 +100,15 @@ TEXFONTS=/usr/local/texlive/2026/texmf-dist/fonts/tfm/public/cm \
 Umber-generated image. The output is DVI, never PDF. Repeat the command when a
 document needs multiple AUX/TOC passes.
 
+The pinned builder first probes the validated generated-format cache. A hit
+atomically restores `latex.fmt` without opening or initializing the source
+kernel. A miss verifies and prefetches the complete locked input closure,
+performs the two clean generations and equivalence checks, and atomically
+publishes the cache entry. Use `--force` to execute that regeneration path even
+on a hit, or `--check` to regenerate and compare the valid cache plus existing
+output without changing either. `UMBER_FORMAT_CACHE_ROOT` selects an explicit
+cache root for hermetic build or acquisition workflows.
+
 Build and run the corresponding pdfLaTeX mode with the same pinned common
 source closure plus its explicitly locked PDF configuration inputs:
 
@@ -111,7 +120,8 @@ TEXFONTS=/usr/local/texlive/2026/texmf-dist/fonts/tfm/public/cm \
     --format target/pdflatex-format/pdflatex.fmt --pdf document.pdf
 ```
 
-The builder performs two clean format generations and exact source-versus-
+The pdfLaTeX builder uses the same validated cache policy and, when it
+regenerates, performs two clean format generations and exact source-versus-
 format PDF and auxiliary-file equivalence. Cross-engine pdfTeX parity uses
 normalized structure and rendered pages rather than requiring serializer-byte
 identity.

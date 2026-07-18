@@ -13,6 +13,7 @@ use umber::{DriverFile, FileSessionResolvers, PlannedFinalization};
 mod bib;
 mod classic_bib;
 mod expand_dump;
+mod format_cache_cli;
 mod watch;
 
 fn main() -> ExitCode {
@@ -48,6 +49,7 @@ fn run() -> Result<(), CliError> {
             }
             expand_dump::expand_dump(&path).map_err(CliError::ExpandDump)
         }
+        Some("format-cache") => format_cache_cli::run(args).map_err(CliError::FormatCache),
         Some("run") => {
             let opts = RunCliOptions::parse(args)?;
             run_tex(&opts)
@@ -60,7 +62,7 @@ fn run() -> Result<(), CliError> {
             Ok(())
         }
         Some(_) => Err(CliError::Usage(
-            "expected: umber <lex-dump|expand-dump|bib|bibtex|run|watch> <input>",
+            "expected: umber <lex-dump|expand-dump|format-cache|bib|bibtex|run|watch> <input>",
         )),
     }
 }
@@ -661,6 +663,7 @@ enum CliError {
     World(WorldError),
     Lex(tex_lex::LexError),
     ExpandDump(expand_dump::ExpandDumpError),
+    FormatCache(format_cache_cli::FormatCacheCliError),
     Exec(tex_exec::ExecError),
     Dvi(umber::DviBuildError),
     Html(umber::HtmlBuildError),
@@ -681,6 +684,7 @@ impl std::fmt::Display for CliError {
             Self::World(err) => write!(f, "{err}"),
             Self::Lex(err) => write!(f, "{err}"),
             Self::ExpandDump(err) => write!(f, "{err}"),
+            Self::FormatCache(err) => write!(f, "{err}"),
             Self::Exec(err) => write!(f, "{err}"),
             Self::Dvi(err) => write!(f, "{err}"),
             Self::Html(err) => write!(f, "{err}"),

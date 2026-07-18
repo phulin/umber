@@ -1,7 +1,7 @@
 # Generated format cache
 
-Status: schema-10 cache identity and validated native entry storage implemented;
-generation and CLI selection are intentionally deferred.
+Status: schema-10 cache identity, validated native entry storage, and pinned
+LaTeX/pdfLaTeX generation integration implemented.
 
 ## Identity contract
 
@@ -33,6 +33,47 @@ a different namespace without probing or heuristically upgrading old images.
 The public constructor always supplies the current build's schema and
 fingerprints; callers cannot mint an identity that labels current format bytes
 with stale compatibility metadata.
+
+## Pinned generation integration
+
+`umber format-cache restore|store` is the narrow native adapter used by
+`scripts/build-latex-format.sh`. For this local pinned-source workflow, the
+builder hashes a domain-separated distribution release name authenticated by
+the source lock, the sorted canonical request-key closure, the complete
+`tests/latex-source.lock` bytes, and a canonical build receipt containing the
+Umber version, release profile, feature set, and `rustc -Vv` identity. It takes
+the five clock fields from the same `SOURCE_DATE_EPOCH`-initialized `World` as
+the engine. Both actions accept an explicit cache root for hermetic workflows;
+otherwise they use the platform Umber cache directory. Published distribution
+workflows continue to identify snapshots from authenticated root-manifest
+bytes rather than from a mutable path.
+
+On a hit, `restore` revalidates the entry envelope, SHA-256, and full Universe
+decode, then atomically materializes the requested `.fmt` output. The builder
+does not require or open the TeX Live source tree on this path. A mismatch or
+corrupt entry is a diagnosed miss. On a miss, the builder verifies every file
+in the 57-key LaTeX or 60-key pdfLaTeX closure before source initialization,
+performs two clean byte-identical generations and the representative
+source-versus-loaded equivalence gate, then publishes the validated image with
+the cache store's no-clobber atomic protocol. The ordinary output format and
+metadata paths remain `target/<engine>-format/<engine>.fmt` and
+`<engine>-format.json`, or the caller's explicit output directory.
+
+`--force` ignores reuse for execution purposes, regenerates, and requires the
+result to equal any valid entry already stored under the same semantic key.
+`--check` requires a valid entry, regenerates twice, compares both the cache and
+published output/metadata, and changes neither. Thus neither mode can silently
+replace different bytes under an existing identity. Cache diagnostics include
+the canonical key and distinguish hit, miss, and publication.
+
+The full native TeX Live snapshot and WASM bundle builders invoke this same
+pinned builder, so they share cache selection and deterministic publication.
+Runtime distribution acquisition remains a separate object-cache workflow: a
+published schema-3 format closure is still offered as prefetch hints and is
+installed with the required input in the established two-attempt compile path.
+The cache does not mask the live-bootstrap semantic blocker tracked by
+`umber2-pbxv.5.4.1`: misses, `--force`, and `--check` all exercise source
+initialization and report that failure normally.
 
 ## Native entry and validation
 

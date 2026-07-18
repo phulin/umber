@@ -23,6 +23,77 @@ fn exits_successfully() {
 
 #[test]
 #[allow(clippy::disallowed_methods)] // CLI boundary intentionally launches the built Umber binary.
+fn format_cache_cli_stores_restores_and_reports_misses() {
+    let directory = tempfile::tempdir().expect("create format cache fixture");
+    let closure = directory.path().join("closure.index");
+    let source_lock = directory.path().join("source.lock");
+    let build_configuration = directory.path().join("build.config");
+    fs::write(&closure, b"tex:latex.ltx\n").expect("write closure identity");
+    fs::write(&source_lock, b"pinned sources\n").expect("write source lock");
+    fs::write(&build_configuration, b"profile=release\n").expect("write build config");
+    let format_path = directory.path().join("generated.fmt");
+    fs::write(
+        &format_path,
+        Universe::new().dump_format().expect("schema-10 format"),
+    )
+    .expect("write format image");
+    let cache_root = directory.path().join("cache");
+
+    let common = [
+        "--engine",
+        "latex",
+        "--distribution",
+        "texlive-test",
+        "--closure",
+        closure.to_str().expect("closure path"),
+        "--source-lock",
+        source_lock.to_str().expect("source lock path"),
+        "--build-configuration",
+        build_configuration.to_str().expect("build config path"),
+        "--cache-root",
+        cache_root.to_str().expect("cache root path"),
+    ];
+    let store = Command::new(env!("CARGO_BIN_EXE_umber"))
+        .args(["format-cache", "store"])
+        .args(common)
+        .args(["--format", format_path.to_str().expect("format path")])
+        .env("SOURCE_DATE_EPOCH", PINNED_SOURCE_DATE_EPOCH)
+        .output()
+        .expect("store generated format");
+    assert!(store.status.success());
+    assert_eq!(store.stdout, b"stored\n");
+    assert!(String::from_utf8_lossy(&store.stderr).contains("published generated format"));
+
+    let restored = directory.path().join("restored.fmt");
+    let restore = Command::new(env!("CARGO_BIN_EXE_umber"))
+        .args(["format-cache", "restore"])
+        .args(common)
+        .args(["--format-out", restored.to_str().expect("restore path")])
+        .env("SOURCE_DATE_EPOCH", PINNED_SOURCE_DATE_EPOCH)
+        .output()
+        .expect("restore generated format");
+    assert!(restore.status.success());
+    assert_eq!(restore.stdout, b"hit\n");
+    assert_eq!(
+        fs::read(restored).expect("read restored format"),
+        fs::read(format_path).expect("read source format")
+    );
+
+    let miss = Command::new(env!("CARGO_BIN_EXE_umber"))
+        .args(["format-cache", "restore"])
+        .args(common)
+        .arg("--format-out")
+        .arg(directory.path().join("miss.fmt"))
+        .env("SOURCE_DATE_EPOCH", "0")
+        .output()
+        .expect("probe changed-clock format");
+    assert!(miss.status.success());
+    assert_eq!(miss.stdout, b"miss\n");
+    assert!(!directory.path().join("miss.fmt").exists());
+}
+
+#[test]
+#[allow(clippy::disallowed_methods)] // CLI boundary intentionally launches the built Umber binary.
 fn bib_command_has_exact_native_invocation_outputs_and_statuses() {
     let fixture =
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/corpus/bib/invocation");

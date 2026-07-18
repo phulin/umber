@@ -7,17 +7,20 @@ engine="latex"
 output_dir=""
 texmf_dist="${UMBER_TEXMF_DIST:-/usr/local/texlive/2026/texmf-dist}"
 publish_input_closure=0
+force_regeneration=0
+check_only=0
 
 usage() {
   cat <<'EOF'
 usage: scripts/build-latex-format.sh [--engine latex|pdflatex]
                                      [--texmf-dist PATH] [--output-dir PATH]
-                                     [--publish-input-closure]
+                                     [--publish-input-closure] [--force|--check]
 
-Builds one pinned Umber-native LaTeX format twice, requires byte identity and
-the exact mode-specific locked input closure, then compares a source-initialized
-representative document with the format-loaded job. The default output is
-target/<engine>-format.
+Restores a validated pinned Umber-native LaTeX format from the generated-format
+cache, or verifies the exact mode-specific locked input closure, builds twice,
+checks source/loaded equivalence, and atomically publishes the miss. --force
+always regenerates. --check regenerates and compares the cache and output
+without changing either. The default output is target/<engine>-format.
 EOF
 }
 
@@ -40,6 +43,14 @@ while [[ $# -gt 0 ]]; do
       ;;
     --publish-input-closure)
       publish_input_closure=1
+      shift
+      ;;
+    --force)
+      force_regeneration=1
+      shift
+      ;;
+    --check)
+      check_only=1
       shift
       ;;
     --help|-h)
@@ -73,6 +84,10 @@ case "$engine" in
 esac
 format_name="$engine"
 output_dir="${output_dir:-${repo_root}/target/${format_name}-format}"
+[[ "$force_regeneration" -eq 0 || "$check_only" -eq 0 ]] || {
+  printf '%s\n' 'build-latex-format.sh: --force and --check are mutually exclusive' >&2
+  exit 2
+}
 
 fail() {
   printf 'build-latex-format.sh: %s\n' "$*" >&2
@@ -87,10 +102,7 @@ sha256() {
   fi
 }
 
-[[ -d "$texmf_dist" ]] || fail "missing pinned texmf-dist root: $texmf_dist"
 [[ -f "$lock_file" ]] || fail "missing source lock: $lock_file"
-[[ -f "$fixture" ]] || fail "missing equivalence fixture: $fixture"
-[[ -f "$format_input" ]] || fail "missing format entry point: $format_input"
 
 distribution="$(awk '$1 == "distribution" { print $2 }' "$lock_file")"
 format_schema="$(awk '$1 == "format_schema" { print $2 }' "$lock_file")"
@@ -113,8 +125,10 @@ trap cleanup EXIT
 expected_receipt="${tmp_root}/expected.inputs"
 expected_index="${tmp_root}/expected.index"
 closure_index="${tmp_root}/input-closure.index"
+source_index="${tmp_root}/sources.index"
 : > "$expected_index"
 : > "$closure_index"
+: > "$source_index"
 
 while read -r kind relative expected_bytes expected_hash extra; do
   [[ -z "${kind:-}" || "$kind" == \#* ]] && continue
@@ -140,14 +154,8 @@ while read -r kind relative expected_bytes expected_hash extra; do
   [[ -z "${extra:-}" ]] || fail "invalid source lock entry for $relative"
   [[ "$relative" != /* && "$relative" != *..* && "$relative" != *\\* ]] || \
     fail "unsafe source path in lock: $relative"
-  [[ -f "$source" ]] || fail "missing pinned source: $source"
-  actual_bytes="$(wc -c < "$source" | tr -d ' ')"
-  [[ "$actual_bytes" == "$expected_bytes" ]] || \
-    fail "length mismatch for $relative: expected $expected_bytes, got $actual_bytes"
-  actual_hash="$(sha256 "$source")"
-  [[ "$actual_hash" == "$expected_hash" ]] || \
-    fail "hash mismatch for $relative: expected $expected_hash, got $actual_hash"
   printf '%s\t%s\n' "$source" "$expected_bytes" >> "$expected_index"
+  printf '%s\t%s\t%s\n' "$source" "$expected_bytes" "$expected_hash" >> "$source_index"
   request_name="${relative##*/}"
   [[ "$request_name" =~ ^[A-Za-z0-9._/-]+$ ]] || \
     fail "source lock path has no canonical request key: $relative"
@@ -159,6 +167,24 @@ while read -r kind relative expected_bytes expected_hash extra; do
 done < "$lock_file"
 LC_ALL=C sort -k1,1 "$expected_index" | awk -F '\t' '{ print $2 "\t" $1 }' > "$expected_receipt"
 LC_ALL=C sort -u "$closure_index" -o "$closure_index"
+
+prefetch_source_closure() {
+  local source expected_bytes expected_hash actual_bytes actual_hash
+  [[ -d "$texmf_dist" ]] || fail "missing pinned texmf-dist root: $texmf_dist"
+  [[ -f "$fixture" ]] || fail "missing equivalence fixture: $fixture"
+  [[ -f "$format_input" ]] || fail "missing format entry point: $format_input"
+  while IFS=$'\t' read -r source expected_bytes expected_hash; do
+    [[ -f "$source" ]] || fail "missing pinned source: $source"
+    actual_bytes="$(wc -c < "$source" | tr -d ' ')"
+    [[ "$actual_bytes" == "$expected_bytes" ]] || \
+      fail "length mismatch for $source: expected $expected_bytes, got $actual_bytes"
+    actual_hash="$(sha256 "$source")"
+    [[ "$actual_hash" == "$expected_hash" ]] || \
+      fail "hash mismatch for $source: expected $expected_hash, got $actual_hash"
+  done < "$source_index"
+  printf 'build-latex-format.sh: prefetched and verified %s pinned format inputs\n' \
+    "$(wc -l < "$source_index" | tr -d ' ')" >&2
+}
 
 texinputs="${repo_root}/tests/latex:${texmf_dist}/tex/latex/base:${texmf_dist}/tex/latex/l3kernel:${texmf_dist}/tex/latex/l3backend:${texmf_dist}/tex/generic/unicode-data:${texmf_dist}/tex/generic/babel:${texmf_dist}/tex/generic/hyphen:${texmf_dist}/tex/generic/pdftex"
 texfonts="${texmf_dist}/fonts/tfm/public/cm:${texmf_dist}/fonts/tfm/public/latex-fonts:${texmf_dist}/fonts/tfm/jknappen/ec"
@@ -192,59 +218,102 @@ build_one() {
     fail "LaTeX format build opened inputs outside the locked closure"
 }
 
-build_one "${tmp_root}/first"
-build_one "${tmp_root}/second"
-cmp "${tmp_root}/first/${format_name}.fmt" "${tmp_root}/second/${format_name}.fmt" || \
-  fail "two clean ${format_name} format generations were not byte-identical"
+package_id="$(cargo pkgid -p umber)"
+engine_version="${package_id##*#}"
+build_configuration="${tmp_root}/build-configuration.txt"
+{
+  printf 'schema=1\nprofile=release\nfeatures=default\npackage=umber@%s\n' "$engine_version"
+  rustc -Vv
+} > "$build_configuration"
+cache_args=(
+  --engine "$engine"
+  --distribution "$distribution"
+  --closure "$closure_index"
+  --source-lock "$lock_file"
+  --build-configuration "$build_configuration"
+)
+if [[ -n "${UMBER_FORMAT_CACHE_ROOT:-}" ]]; then
+  cache_args+=(--cache-root "$UMBER_FORMAT_CACHE_ROOT")
+fi
+cached_format="${tmp_root}/cached/${format_name}.fmt"
+mkdir -p "$(dirname "$cached_format")"
+cache_state="$(
+  SOURCE_DATE_EPOCH="$source_date_epoch" \
+    "$umber_bin" format-cache restore "${cache_args[@]}" --format-out "$cached_format"
+)"
+[[ "$cache_state" == hit || "$cache_state" == miss ]] || \
+  fail "unexpected generated format cache result: $cache_state"
+if [[ "$check_only" -eq 1 && "$cache_state" != hit ]]; then
+  fail "--check requires an existing validated generated format cache entry"
+fi
 
-format_file="${tmp_root}/first/${format_name}.fmt"
+generated=0
+if [[ "$cache_state" == miss || "$force_regeneration" -eq 1 || "$check_only" -eq 1 ]]; then
+  prefetch_source_closure
+  build_one "${tmp_root}/first"
+  build_one "${tmp_root}/second"
+  cmp "${tmp_root}/first/${format_name}.fmt" "${tmp_root}/second/${format_name}.fmt" || \
+    fail "two clean ${format_name} format generations were not byte-identical"
+  format_file="${tmp_root}/first/${format_name}.fmt"
+  generated=1
+else
+  format_file="$cached_format"
+fi
+
+if [[ "$generated" -eq 1 ]]; then
+  source_dir="${tmp_root}/source"
+  loaded_dir="${tmp_root}/loaded"
+  mkdir -p "$source_dir" "$loaded_dir"
+  cp "$fixture" "${source_dir}/representative.tex"
+  cp "$fixture" "${loaded_dir}/representative.tex"
+  cp "$format_file" "${loaded_dir}/${format_name}.fmt"
+  awk '
+    $0 == sprintf("%c%s", 92, "dump") {
+      print sprintf("%c%s", 92, "input representative")
+      next
+    }
+    { print }
+  ' "$latex_ltx" > "${source_dir}/latex-source.ltx"
+  if [[ "$engine" == pdflatex ]]; then
+    printf '\\input pdftexconfig.tex\n\\input latex-source.ltx\n' > "${source_dir}/document.tex"
+  else
+    printf '\\input latex-source.ltx\n' > "${source_dir}/document.tex"
+  fi
+  printf '\input representative\n' > "${loaded_dir}/document.tex"
+
+  output_args=("--${output_extension}" "document.${output_extension}")
+  run_engine "$source_dir" document.tex "${output_args[@]}" \
+    > "${source_dir}/document.stdout" 2> "${source_dir}/document.stderr"
+  run_engine "$loaded_dir" document.tex --format "${format_name}.fmt" "${output_args[@]}" \
+    > "${loaded_dir}/document.stdout" 2> "${loaded_dir}/document.stderr"
+  for directory in "$source_dir" "$loaded_dir"; do
+    if grep -q '^! ' "${directory}/document.stdout"; then
+      grep -m1 '^! ' "${directory}/document.stdout" >&2
+      fail "representative LaTeX job emitted a diagnostic"
+    fi
+  done
+  cmp "${source_dir}/document.${output_extension}" "${loaded_dir}/document.${output_extension}" || \
+    fail "source-initialized and format-loaded ${format_name} ${output_extension^^} differ"
+  cmp "${source_dir}/document.aux" "${loaded_dir}/document.aux" || \
+    fail "source-initialized and format-loaded ${format_name} auxiliary effects differ"
+fi
+
 magic="$(od -An -t x1 -N 8 "$format_file" | tr -d ' \n')"
 actual_schema="$(od -An -t u4 -j 8 -N 4 "$format_file" | tr -d ' \n')"
-[[ "$magic" == 554d4252464d5400 ]] || fail "generated file lacks Umber format magic"
+[[ "$magic" == 554d4252464d5400 ]] || fail "format image lacks Umber format magic"
 [[ "$actual_schema" == "$format_schema" ]] || \
-  fail "generated schema $actual_schema does not match locked schema $format_schema"
-
-source_dir="${tmp_root}/source"
-loaded_dir="${tmp_root}/loaded"
-mkdir -p "$source_dir" "$loaded_dir"
-cp "$fixture" "${source_dir}/representative.tex"
-cp "$fixture" "${loaded_dir}/representative.tex"
-cp "$format_file" "${loaded_dir}/${format_name}.fmt"
-awk '
-  $0 == sprintf("%c%s", 92, "dump") {
-    print sprintf("%c%s", 92, "input representative")
-    next
-  }
-  { print }
-' "$latex_ltx" > "${source_dir}/latex-source.ltx"
-if [[ "$engine" == pdflatex ]]; then
-  printf '\\input pdftexconfig.tex\n\\input latex-source.ltx\n' > "${source_dir}/document.tex"
-else
-  printf '\\input latex-source.ltx\n' > "${source_dir}/document.tex"
+  fail "format schema $actual_schema does not match locked schema $format_schema"
+if [[ "$generated" -eq 1 && "$cache_state" == hit ]]; then
+  cmp "$format_file" "$cached_format" || \
+    fail "regenerated ${format_name} format differs from the validated cache entry"
+elif [[ "$generated" -eq 1 ]]; then
+  SOURCE_DATE_EPOCH="$source_date_epoch" \
+    "$umber_bin" format-cache store "${cache_args[@]}" --format "$format_file" >/dev/null
 fi
-printf '\input representative\n' > "${loaded_dir}/document.tex"
-
-output_args=("--${output_extension}" "document.${output_extension}")
-run_engine "$source_dir" document.tex "${output_args[@]}" \
-  > "${source_dir}/document.stdout" 2> "${source_dir}/document.stderr"
-run_engine "$loaded_dir" document.tex --format "${format_name}.fmt" "${output_args[@]}" \
-  > "${loaded_dir}/document.stdout" 2> "${loaded_dir}/document.stderr"
-for directory in "$source_dir" "$loaded_dir"; do
-  if grep -q '^! ' "${directory}/document.stdout"; then
-    grep -m1 '^! ' "${directory}/document.stdout" >&2
-    fail "representative LaTeX job emitted a diagnostic"
-  fi
-done
-cmp "${source_dir}/document.${output_extension}" "${loaded_dir}/document.${output_extension}" || \
-  fail "source-initialized and format-loaded ${format_name} ${output_extension^^} differ"
-cmp "${source_dir}/document.aux" "${loaded_dir}/document.aux" || \
-  fail "source-initialized and format-loaded ${format_name} auxiliary effects differ"
 
 format_sha256="$(sha256 "$format_file")"
 format_bytes="$(wc -c < "$format_file" | tr -d ' ')"
 source_manifest_sha256="$(sha256 "$lock_file")"
-package_id="$(cargo pkgid -p umber)"
-engine_version="${package_id##*#}"
 metadata_schema=1
 closure_metadata=""
 if [[ "$publish_input_closure" -eq 1 ]]; then
@@ -273,9 +342,20 @@ cat > "${tmp_root}/${format_name}-format.json" <<EOF
 }
 EOF
 
-mkdir -p "$output_dir"
-cp "$format_file" "${output_dir}/${format_name}.fmt"
-cp "${tmp_root}/${format_name}-format.json" "${output_dir}/${format_name}-format.json"
+if [[ "$check_only" -eq 1 ]]; then
+  cmp "$format_file" "${output_dir}/${format_name}.fmt" || \
+    fail "published ${format_name}.fmt differs from the reproducible cache entry"
+  cmp "${tmp_root}/${format_name}-format.json" "${output_dir}/${format_name}-format.json" || \
+    fail "published ${format_name}-format.json is stale"
+else
+  mkdir -p "$output_dir"
+  staged_format="$(mktemp "${output_dir}/.${format_name}.fmt.XXXXXX")"
+  staged_metadata="$(mktemp "${output_dir}/.${format_name}-format.json.XXXXXX")"
+  cp "$format_file" "$staged_format"
+  cp "${tmp_root}/${format_name}-format.json" "$staged_metadata"
+  mv -f "$staged_format" "${output_dir}/${format_name}.fmt"
+  mv -f "$staged_metadata" "${output_dir}/${format_name}-format.json"
+fi
 
 printf 'Umber %s format: sha256=%s bytes=%s schema=%s source=%s\n' \
   "$format_name" "$format_sha256" "$format_bytes" "$format_schema" "$distribution"
