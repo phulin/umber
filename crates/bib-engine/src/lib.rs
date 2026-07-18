@@ -24,9 +24,9 @@ pub use bib_model::{
     COMPATIBILITY_VERSION, CompatibilityVersion, DataList, DataListId, DataListKind,
     DiagnosticError, Entry, EntryBuilder, EntryId, EntryType, Field, FieldId, FieldProvenance,
     FieldValue, FieldValueStage, GeneratedFile, Literal, Name, NameBuilder, NameList,
-    NamePartValue, OutputFormat, OutputNewline, OutputRequest, ProcessedBibliography,
-    ProcessedBibliographyBuilder, ProcessedSection, ProcessedSectionBuilder, SectionId, SourceSpan,
-    VirtualPath,
+    NamePartValue, OptionId, OptionScope, OptionValue, OutputFormat, OutputNewline, OutputRequest,
+    ProcessedBibliography, ProcessedBibliographyBuilder, ProcessedSection, ProcessedSectionBuilder,
+    SectionId, SourceSpan, VirtualPath,
 };
 pub use bib_output::{
     BblOutputFailure, BblOutputFailureKind, BblSerializer, BibtexCase, BibtexMacro, BibtexOptions,
