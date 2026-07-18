@@ -1966,11 +1966,7 @@ fn execute_prefixed_command(
                 reject_all_prefixes(prefixes)?;
                 if matches!(
                     primitive,
-                    UnexpandablePrimitive::UnHBox
-                        | UnexpandablePrimitive::UnHCopy
-                        | UnexpandablePrimitive::UnVBox
-                        | UnexpandablePrimitive::UnVCopy
-                        | UnexpandablePrimitive::PageDiscards
+                    UnexpandablePrimitive::PageDiscards
                         | UnexpandablePrimitive::SplitDiscards
                         | UnexpandablePrimitive::LastBox
                 ) {

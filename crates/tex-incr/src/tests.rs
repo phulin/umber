@@ -994,6 +994,73 @@ fn paragraph_with_source_proven_local_box_consumption_replays() {
 }
 
 #[test]
+fn paragraph_with_source_proven_local_unboxing_replays() {
+    let mut universe = template();
+    universe.enable_pure_memo(tex_state::PureMemoConfig::default());
+    let source = concat!(
+        "changed prefix paragraph text\\par\n",
+        "local unbox {\\setbox0=\\hbox{source proven} ",
+        "\\unhcopy0 and \\unhbox0} paragraph\\par\n",
+        "void unbox \\unhbox250 remains replayable\\par\n",
+        "\\ifvoid0 stable suffix paragraph\\else leaked box\\fi\\par\n",
+        "\\vfill\\eject\\end",
+    );
+    let mut session = Session::start(
+        universe,
+        "paragraph-source-proven-local-unbox",
+        RevisionId::new(1),
+        source,
+        usize::MAX,
+    )
+    .expect("session starts");
+    session.cold().expect("cold revision");
+    assert_eq!(
+        session
+            .pure_memo_stats()
+            .paragraph_unsupported_write_barriers,
+        0,
+        "void and paragraph-local unboxing should not barrier"
+    );
+
+    let changed = source.find("changed").expect("changed word");
+    let edited = format!(
+        "{}altered{}",
+        &source[..changed],
+        &source[changed + "changed".len()..]
+    );
+    let before = session.pure_memo_stats();
+    let incremental = session
+        .advance(
+            RevisionId::new(2),
+            Edit {
+                base_revision: RevisionId::new(1),
+                expected_hash: ContentHash::from_bytes(source.as_bytes()),
+                range: changed..changed + "changed".len(),
+                replacement: "altered".to_owned(),
+            },
+        )
+        .expect("prefix edit");
+    assert!(
+        session.pure_memo_stats().paragraph_line_hits > before.paragraph_line_hits,
+        "void and source-proven local unbox paragraphs should replay"
+    );
+
+    let mut cold_universe = template();
+    cold_universe.enable_pure_memo(tex_state::PureMemoConfig::default());
+    let mut cold = Session::start(
+        cold_universe,
+        "paragraph-source-proven-local-unbox",
+        RevisionId::new(2),
+        edited,
+        usize::MAX,
+    )
+    .expect("cold comparison starts");
+    let expected = cold.cold().expect("cold comparison");
+    assert_eq!(incremental.dvi_bytes(), expected.dvi_bytes());
+    assert_eq!(incremental.effects, expected.effects);
+}
+
+#[test]
 fn paragraph_with_vadjust_replays_and_tracks_payload_meanings() {
     let mut universe = template();
     universe.enable_pure_memo(tex_state::PureMemoConfig::default());
@@ -1106,6 +1173,10 @@ fn paragraph_box_reads_without_an_active_local_definition_remain_barriered() {
     assert_barrier(
         "paragraph-outer-box-read",
         "\\setbox0=\\hbox{outer}\nouter box \\copy0 paragraph\\par\n\\vfill\\eject\\end",
+    );
+    assert_barrier(
+        "paragraph-outer-box-unbox",
+        "\\setbox0=\\hbox{outer}\nouter box \\unhbox0 paragraph\\par\n\\vfill\\eject\\end",
     );
     assert_barrier(
         "paragraph-post-group-box-read",

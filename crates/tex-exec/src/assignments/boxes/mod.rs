@@ -187,6 +187,7 @@ pub(super) fn execute_box_list_command(
         | UnexpandablePrimitive::UnVBox
         | UnexpandablePrimitive::UnVCopy => {
             let index = scan_register_index(input, stores, execution, context)?;
+            let source_proven = execution.paragraph_box_is_source_proven(index);
             let source = if matches!(
                 primitive,
                 UnexpandablePrimitive::UnHBox | UnexpandablePrimitive::UnVBox
@@ -199,10 +200,20 @@ pub(super) fn execute_box_list_command(
                 match stores.take_unbox_children_same_level(index, expected) {
                     TakeUnboxResult::Void => None,
                     TakeUnboxResult::Incompatible => {
+                        if !source_proven {
+                            execution.mark_paragraph_barrier(
+                                tex_state::ParagraphBarrierReason::UnsupportedEscapingWrite,
+                            );
+                        }
                         report_incompatible_unbox(stores);
                         return Ok(());
                     }
                     TakeUnboxResult::Children(children) => {
+                        if !source_proven {
+                            execution.mark_paragraph_barrier(
+                                tex_state::ParagraphBarrierReason::UnsupportedEscapingWrite,
+                            );
+                        }
                         Some(UnboxSource::PinnedSurvivor(children))
                     }
                 }
@@ -211,6 +222,11 @@ pub(super) fn execute_box_list_command(
                 let Some(node) = first_box_node(stores, id) else {
                     return Ok(());
                 };
+                if !source_proven {
+                    execution.mark_paragraph_barrier(
+                        tex_state::ParagraphBarrierReason::UnsupportedEscapingWrite,
+                    );
+                }
                 if !unbox_kind_matches(primitive, &node) {
                     report_incompatible_unbox(stores);
                     return Ok(());
