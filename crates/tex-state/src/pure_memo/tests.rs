@@ -1,5 +1,5 @@
 use super::*;
-use crate::{DependencyBank, DependencyValue};
+use crate::{ChangedAt, DependencyBank, DependencyValue};
 
 fn observation_region(ordinal: u32) -> RecordedParagraphRegion {
     RecordedParagraphRegion {
@@ -98,6 +98,66 @@ fn accepted_paragraphs_keep_generation_local_observation_tables() {
             .expect("new observation")
             .changed_at,
         changed_stamp
+    );
+}
+
+#[test]
+fn rooted_and_repeated_input_alignment_share_one_monotonic_cursor() {
+    let mut fragments = crate::FragmentStore::new();
+    let (_, registration) = fragments
+        .append(Arc::from(&b"ab"[..]), 1)
+        .expect("test fragment");
+    let first_span = fragments
+        .registered_root_span_id(registration, 0..1)
+        .expect("first root span");
+    let second_span = fragments
+        .registered_root_span_id(registration, 1..2)
+        .expect("second root span");
+    let input_identity = 17;
+
+    let mut runtime = PureMemoRuntime::default();
+    runtime.enable(PureMemoConfig::default());
+    runtime.begin_paragraph_history(false);
+    let ordinal = runtime.record_paragraph_observation(ObservedDependency {
+        key: DependencyKey::Cell {
+            bank: DependencyBank::Count,
+            index: 0,
+        },
+        changed_at: ChangedAt::NEVER,
+        value: DependencyValue::Integer(0),
+    });
+    let mut first = observation_region(ordinal);
+    first.starting_span = Some(first_span);
+    first.starting_root_span = Some(first_span);
+    first.starting_input_identity = Some(input_identity);
+    runtime.record_paragraph_region(first);
+    let mut second = observation_region(ordinal);
+    second.starting_span = Some(second_span);
+    second.starting_root_span = Some(first_span);
+    second.starting_input_identity = Some(input_identity);
+    runtime.record_paragraph_region(second);
+    runtime.accept_paragraph_history(crate::Universe::new().paragraph_origin_resolver());
+
+    runtime.begin_paragraph_history(true);
+    let first_input = runtime
+        .align_recorded_paragraph_start(None, Some(first_span), Some(input_identity))
+        .expect("first repeated input boundary aligns");
+    let second_input = runtime
+        .align_recorded_paragraph_start(None, Some(first_span), Some(input_identity))
+        .expect("second repeated input boundary aligns by direct bucket position");
+    assert_eq!(first_input.starting_span, Some(first_span));
+    assert_eq!(second_input.starting_span, Some(second_span));
+
+    runtime.begin_paragraph_history(true);
+    let aligned = runtime
+        .align_recorded_paragraph_start(Some(second_span), None, None)
+        .expect("later rooted paragraph aligns");
+    assert_eq!(aligned.starting_span, Some(second_span));
+    assert!(
+        runtime
+            .align_recorded_paragraph_start(None, Some(first_span), Some(input_identity))
+            .is_none(),
+        "input fallback must not align behind a rooted candidate already consumed"
     );
 }
 

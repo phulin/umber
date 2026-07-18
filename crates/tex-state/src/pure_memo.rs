@@ -667,8 +667,9 @@ pub struct PureMemoRuntime {
     /// Candidate buckets for paragraphs whose first delivery is not direct
     /// root source. Full input semantics verify every candidate.
     prior_paragraph_input_starts: HashMap<(RootSpanId, u64), Vec<usize>>,
-    /// Next accepted occurrence to consider independently for each semantic
-    /// replay-input boundary.
+    /// Next accepted occurrence to consider for each semantic replay-input
+    /// boundary. Positions only move forward, making skipped entries linear
+    /// over a complete revision rather than per lookup.
     prior_paragraph_input_cursors: HashMap<(RootSpanId, u64), usize>,
     /// First accepted paragraph that may still align with the new execution.
     prior_paragraph_cursor: usize,
@@ -1193,19 +1194,18 @@ impl PureMemoRuntime {
             .zip(starting_input_identity)
             .and_then(|key| {
                 let bucket = self.prior_paragraph_input_starts.get(&key)?;
-                let cursor = self
-                    .prior_paragraph_input_cursors
-                    .get(&key)
-                    .copied()
-                    .unwrap_or(0);
-                let (position, index) = bucket.iter().copied().enumerate().nth(cursor)?;
-                self.prior_paragraph_input_cursors
-                    .insert(key, position.saturating_add(1));
-                Some(index)
+                let position = self.prior_paragraph_input_cursors.entry(key).or_default();
+                while bucket
+                    .get(*position)
+                    .is_some_and(|&index| index < self.prior_paragraph_cursor)
+                {
+                    *position = position.saturating_add(1);
+                }
+                bucket.get(*position).copied()
             });
         let aligned_index = aligned_by_root.or(aligned_by_input);
         let result = aligned_index.and_then(|index| self.prior_paragraphs.get(index).cloned());
-        if let Some(index) = aligned_by_root {
+        if let Some(index) = aligned_index {
             self.prior_paragraph_cursor = index.saturating_add(1);
         }
         if result.is_none() {
