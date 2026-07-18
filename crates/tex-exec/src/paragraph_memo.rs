@@ -733,7 +733,11 @@ fn publish_recorded_region(
             .insert(tex_state::ParagraphBarrierReason::UnsupportedGroupTransition);
     }
     let input_transition_prefix = recording.starting_input.as_ref().map_or_else(
-        || (ending_input.frames().len() == 1).then_some(1),
+        // An anchored probe starts in the sole root source frame. Physical
+        // root coverage above proves that frame's cursor transition; any
+        // additional ending frames were introduced by the paragraph and are
+        // handled by the existing suffix detachment/rebinding path.
+        || Some(1),
         |starting| starting.paragraph_cursor_transition_prefix_to(&ending_input),
     );
     if input_transition_prefix.is_none() {

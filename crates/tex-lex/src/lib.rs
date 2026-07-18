@@ -3102,9 +3102,15 @@ impl InputStack {
             }
             None if recorded_common_frame_count == 1
                 && self.frames.len() == 1
-                && ending_input.frames().len() == 1 =>
+                && matches!(
+                    ending_input.frames().first(),
+                    Some(InputFrameSummary::Source { .. })
+                )
+                && !ending_input.frames()[1..]
+                    .iter()
+                    .any(|frame| matches!(frame, InputFrameSummary::Source { .. })) =>
             {
-                (1, Vec::new(), Vec::new())
+                (1, Vec::new(), ending_input.frames()[1..].to_vec())
             }
             _ => return None,
         };
@@ -3128,7 +3134,6 @@ impl InputStack {
             .filter(|frame| matches!(frame, InputFrameSummary::Source { .. }))
             .count()
             != 1
-            || (recorded_starting_input.is_none() && ending_input.frames().len() != 1)
         {
             return None;
         }

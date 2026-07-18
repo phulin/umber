@@ -2358,6 +2358,59 @@ fn paragraph_macro_frame_transitions_replay_across_carried_generations() {
 }
 
 #[test]
+fn rooted_paragraph_replays_with_a_live_macro_suffix() {
+    let mut universe = template();
+    universe.enable_pure_memo(tex_state::PureMemoConfig::default());
+    let source = concat!(
+        "\\def\\tail{macro ending text\\par second macro paragraph\\par}\n",
+        "root paragraph begins here \\tail",
+        "\\vfill\\eject\\end",
+    );
+    let mut session = Session::start(
+        universe,
+        "rooted-paragraph-macro-suffix",
+        RevisionId::new(1),
+        source.to_owned(),
+        usize::MAX,
+    )
+    .expect("session starts");
+    session.cold().expect("cold revision");
+
+    let prefix = "% preserve rooted paragraph pieces\n";
+    let before = session.pure_memo_stats();
+    let incremental = session
+        .advance(
+            RevisionId::new(2),
+            Edit {
+                base_revision: RevisionId::new(1),
+                expected_hash: ContentHash::from_bytes(source.as_bytes()),
+                range: 0..0,
+                replacement: prefix.to_owned(),
+            },
+        )
+        .expect("prefix edit");
+    let after = session.pure_memo_stats();
+    assert!(
+        after.paragraph_line_hits >= before.paragraph_line_hits + 2,
+        "both the rooted paragraph and its live macro suffix should replay: {after:?}"
+    );
+
+    let mut cold_universe = template();
+    cold_universe.enable_pure_memo(tex_state::PureMemoConfig::default());
+    let mut cold = Session::start(
+        cold_universe,
+        "rooted-paragraph-macro-suffix",
+        RevisionId::new(2),
+        format!("{prefix}{source}"),
+        usize::MAX,
+    )
+    .expect("cold comparison starts");
+    let expected = cold.cold().expect("cold comparison");
+    assert_eq!(incremental.dvi_bytes(), expected.dvi_bytes());
+    assert_eq!(incremental.effects, expected.effects);
+}
+
+#[test]
 fn paragraph_front_end_rejects_changed_raw_span_before_reusing_later_macros() {
     let mut universe = template();
     universe.enable_pure_memo(all_memo_layers());
