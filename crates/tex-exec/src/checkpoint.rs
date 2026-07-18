@@ -459,9 +459,12 @@ impl crate::Executor {
             ModeNest::from_summary(checkpoint.modes.clone()).map_err(EditorRestoreError::Mode)?;
         let mut restored_input = InputStack::from_summary(&summary, |source_id, record, frame| {
             if source_id == root_source {
-                return Ok::<Box<dyn InputSource>, EditorRestoreError>(Box::new(
-                    MemoryInput::from_offset(source, checkpoint.root_anchor),
-                ));
+                let source = if frame.byte_projection() {
+                    MemoryInput::byte_projection_from_offset(source, checkpoint.root_anchor)
+                } else {
+                    MemoryInput::from_offset(source, checkpoint.root_anchor)
+                };
+                return Ok::<Box<dyn InputSource>, EditorRestoreError>(Box::new(source));
             }
             let Some(record) = record else {
                 return Err(EditorRestoreError::IncludedInputUnavailable(source_id));

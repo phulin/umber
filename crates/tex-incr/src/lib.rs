@@ -515,6 +515,7 @@ pub struct Session {
     accepted_retention: Option<RetentionMetrics>,
     dumped_format: bool,
     utf8_input_as_bytes: bool,
+    root_source_is_byte_projection: bool,
     expansion_stats: tex_lex::ExpansionStats,
     render_maps: RefCell<RenderMapCache>,
 }
@@ -545,7 +546,58 @@ impl Session {
         source: impl Into<String>,
         checkpoint_budget: usize,
     ) -> Result<Self, SessionError> {
-        let source = source.into();
+        Self::start_with_prepared_source(
+            template,
+            job_name,
+            source_path,
+            revision,
+            source.into(),
+            false,
+            checkpoint_budget,
+        )
+    }
+
+    /// Starts a session from arbitrary physical file bytes.
+    ///
+    /// Valid UTF-8 remains ordinary editor text. Invalid UTF-8 is projected
+    /// losslessly so every original byte becomes the same-valued Unicode
+    /// scalar; the lexer recognizes that representation and does not split
+    /// its UTF-8 backing encoding again in classic byte-input mode.
+    pub fn start_with_source_bytes(
+        template: Universe,
+        job_name: impl Into<String>,
+        source_path: impl Into<String>,
+        revision: RevisionId,
+        bytes: Vec<u8>,
+        checkpoint_budget: usize,
+    ) -> Result<Self, SessionError> {
+        let (source, byte_projection) = match String::from_utf8(bytes) {
+            Ok(source) => (source, false),
+            Err(error) => (
+                error.into_bytes().into_iter().map(char::from).collect(),
+                true,
+            ),
+        };
+        Self::start_with_prepared_source(
+            template,
+            job_name,
+            source_path,
+            revision,
+            source,
+            byte_projection,
+            checkpoint_budget,
+        )
+    }
+
+    fn start_with_prepared_source(
+        template: Universe,
+        job_name: impl Into<String>,
+        source_path: impl Into<String>,
+        revision: RevisionId,
+        source: String,
+        root_source_is_byte_projection: bool,
+        checkpoint_budget: usize,
+    ) -> Result<Self, SessionError> {
         let source_path = source_path.into();
         let mut fragments = FragmentStore::new();
         let (fragment, _) = fragments.append(Arc::from(source.as_bytes()), revision.raw())?;
@@ -582,6 +634,7 @@ impl Session {
             accepted_retention: None,
             dumped_format: false,
             utf8_input_as_bytes: false,
+            root_source_is_byte_projection,
             expansion_stats: tex_lex::ExpansionStats::default(),
             render_maps: RefCell::default(),
         })
@@ -617,6 +670,26 @@ impl Session {
     #[must_use]
     pub fn source(&self) -> &str {
         &self.source
+    }
+
+    /// Encodes an editor representation back to physical main-file bytes.
+    /// Legacy byte projections map U+0000..U+00FF back to their original byte;
+    /// newly inserted larger scalars retain their ordinary UTF-8 encoding.
+    #[must_use]
+    pub fn source_file_bytes(&self, source: &str) -> Vec<u8> {
+        if !self.root_source_is_byte_projection {
+            return source.as_bytes().to_vec();
+        }
+        let mut bytes = Vec::with_capacity(source.len());
+        for ch in source.chars() {
+            if let Ok(byte) = u8::try_from(u32::from(ch)) {
+                bytes.push(byte);
+            } else {
+                let mut encoded = [0; 4];
+                bytes.extend_from_slice(ch.encode_utf8(&mut encoded).as_bytes());
+            }
+        }
+        bytes
     }
 
     #[must_use]
@@ -1174,6 +1247,7 @@ impl Session {
             &self.fragments,
             &self.layout,
             self.utf8_input_as_bytes,
+            self.root_source_is_byte_projection,
             input_resolver,
             font_resolver,
             image_resolver,
@@ -2138,13 +2212,19 @@ fn execute_revision(
     fragments: &FragmentStore,
     layout: &EditorLayout,
     utf8_input_as_bytes: bool,
+    root_source_is_byte_projection: bool,
     input_resolver: &mut dyn InputResolver,
     font_resolver: &mut dyn tex_exec::FontResolver,
     image_resolver: Option<&mut dyn tex_exec::PdfImageResolver>,
 ) -> Result<RevisionRun, SessionError> {
     let mut universe = template.clone();
     universe.begin_retained_session()?;
-    let mut input = InputStack::new(MemoryInput::new(source));
+    let root = if root_source_is_byte_projection {
+        MemoryInput::byte_projection(source)
+    } else {
+        MemoryInput::new(source)
+    };
+    let mut input = InputStack::new(root);
     input.set_utf8_input_as_bytes(utf8_input_as_bytes);
     universe.install_editor_fragments(fragments, layout)?;
     universe.set_root_editor_content_hash(ContentHash::from_bytes(source.as_bytes()));

@@ -1216,9 +1216,7 @@ impl VirtualCompileSession {
                 .get(&self.main_path)
                 .map_err(|error| CompileError::World(error.to_string()))?
                 .ok_or_else(|| CompileError::MissingMainFile(self.main_path.to_string()))?;
-            let source = String::from_utf8(source.bytes().to_vec()).map_err(|_| {
-                CompileError::Incremental("the editable main file must be valid UTF-8".to_owned())
-            })?;
+            let source = source.bytes().to_vec();
             let world = World::memory_with_clock(self.clock);
             let template = if let Some(format) = &self.format {
                 let mut template = Universe::from_format(world, format)
@@ -1231,7 +1229,7 @@ impl VirtualCompileSession {
                 template
             };
             let session = Box::new({
-                let mut session = tex_incr::Session::start_with_source_path(
+                let mut session = tex_incr::Session::start_with_source_bytes(
                     template,
                     &self.job_name,
                     self.main_path.as_str(),
@@ -1265,8 +1263,9 @@ impl VirtualCompileSession {
             let mut files = self.files.clone();
             let mut source = session.source().to_owned();
             source.replace_range(edit.range.clone(), &edit.replacement);
+            let source = session.source_file_bytes(&source);
             files
-                .register_user(self.main_path.clone(), source.into_bytes())
+                .register_user(self.main_path.clone(), source)
                 .map_err(map_user_registration)?;
             RetainedCandidate {
                 files,

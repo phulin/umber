@@ -59,6 +59,22 @@ fn finalization_rejects_a_session_without_accepted_output() {
 }
 
 #[test]
+fn initial_main_file_accepts_legacy_8_bit_bytes() {
+    let mut session = VirtualCompileSession::new(SessionOptions::default()).expect("session");
+    let mut source = b"\\catcode237=12 \\message{legacy:".to_vec();
+    source.push(0xed);
+    source.extend_from_slice(b"}\\end");
+    session
+        .add_user_file("main.tex", source)
+        .expect("main file");
+
+    let CompileAttemptResult::Complete(output) = session.compile_attempt() else {
+        panic!("legacy-byte main file should compile");
+    };
+    assert!(String::from_utf8_lossy(&output.terminal).contains("legacy:"));
+}
+
+#[test]
 fn expanded_definition_classifies_noexpand_across_editor_fragment_origins() {
     let source = "\\def\\a{A}\n\\toks0={T}\n\\edef\\e{\\noexpand\\a:\\the\\toks0:\\number7}\n\\show\\e\n\\end\n";
     let CompileAttemptResult::Complete(output) = session(source).compile_attempt() else {

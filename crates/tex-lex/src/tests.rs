@@ -1625,6 +1625,36 @@ fn classic_input_mode_delivers_utf8_bytes_and_resumes_mid_scalar() {
 }
 
 #[test]
+fn classic_input_mode_does_not_reencode_a_lossless_byte_projection() {
+    let mut stores = Universe::new();
+    stores.set_int_param(IntParam::END_LINE_CHAR, -1);
+    stores.set_catcode(char::from(0xed), Catcode::Other);
+    let projected: String = [b'a', 0xed, b'b'].into_iter().map(char::from).collect();
+    let mut input = InputStack::new(MemoryInput::byte_projection(projected));
+    input.set_utf8_input_as_bytes(true);
+
+    assert_eq!(
+        input.next_token(&mut stores).expect("ASCII token"),
+        Some(char_token('a', Catcode::Letter))
+    );
+    assert_eq!(
+        input.next_token(&mut stores).expect("projected byte token"),
+        Some(char_token(char::from(0xed), Catcode::Other))
+    );
+    let summary = input.summary();
+    let [InputFrameSummary::Source { source, .. }] = summary.frames() else {
+        panic!("expected source frame");
+    };
+    assert!(source.byte_projection());
+    assert_eq!(source.line_byte_offset(), 3);
+    assert_eq!(source.column(), 2);
+    assert_eq!(
+        input.next_token(&mut stores).expect("trailing ASCII token"),
+        Some(char_token('b', Catcode::Letter))
+    );
+}
+
+#[test]
 fn classic_input_mode_does_not_reencode_scantokens_characters() {
     let mut stores = Universe::new();
     stores.set_int_param(IntParam::END_LINE_CHAR, -1);

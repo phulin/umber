@@ -1177,6 +1177,7 @@ pub struct SourceFrameSummary {
     scantokens: bool,
     byte_oriented: bool,
     bytes_as_chars: bool,
+    byte_projection: bool,
 }
 
 impl SourceFrameSummary {
@@ -1254,6 +1255,7 @@ impl SourceFrameSummary {
             scantokens: false,
             byte_oriented: false,
             bytes_as_chars: false,
+            byte_projection: false,
         }
     }
 
@@ -1281,6 +1283,19 @@ impl SourceFrameSummary {
     pub const fn with_bytes_as_chars(mut self, bytes_as_chars: bool) -> Self {
         self.bytes_as_chars = bytes_as_chars;
         self
+    }
+
+    /// Marks a valid-Unicode editor buffer whose scalars are a lossless
+    /// one-byte-to-one-character projection of an original 8-bit file.
+    #[must_use]
+    pub const fn with_byte_projection(mut self, byte_projection: bool) -> Self {
+        self.byte_projection = byte_projection;
+        self
+    }
+
+    #[must_use]
+    pub const fn byte_projection(&self) -> bool {
+        self.byte_projection
     }
 
     /// Attaches the live aggregate source registration used by this frame.
@@ -1437,6 +1452,7 @@ impl PartialEq for SourceFrameSummary {
             && self.scantokens == other.scantokens
             && self.byte_oriented == other.byte_oriented
             && self.bytes_as_chars == other.bytes_as_chars
+            && self.byte_projection == other.byte_projection
             && traced_pending_tokens_eq(&self.pending, &other.pending)
     }
 }
@@ -1465,6 +1481,7 @@ impl Hash for SourceFrameSummary {
         self.scantokens.hash(state);
         self.byte_oriented.hash(state);
         self.bytes_as_chars.hash(state);
+        self.byte_projection.hash(state);
     }
 }
 

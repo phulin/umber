@@ -7457,6 +7457,7 @@ fn hash_input_summary_fields(
                     hash_lexer_state(source.lexer_state(), hasher);
                     hasher.str(source.normalized_line());
                     hasher.bool(source.bytes_as_chars());
+                    hasher.bool(source.byte_projection());
                     hasher.usize(source.line_char_offset());
                     hasher.usize(source.line_byte_offset());
                     hasher.usize(source.physical_content_end().saturating_sub(base));
@@ -7485,6 +7486,7 @@ fn hash_input_summary_fields(
                 hash_lexer_state(source.lexer_state(), hasher);
                 hasher.str(source.normalized_line());
                 hasher.bool(source.bytes_as_chars());
+                hasher.bool(source.byte_projection());
                 hasher.usize(source.line_char_offset());
                 hasher.usize(source.line_byte_offset());
                 hasher.usize(source.physical_content_end());

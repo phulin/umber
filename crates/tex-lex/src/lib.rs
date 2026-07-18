@@ -364,6 +364,7 @@ impl From<WorldError> for InputSourceError {
 pub struct PhysicalLine {
     text: String,
     bytes_as_chars: bool,
+    byte_projection: bool,
     start: usize,
     content_end: usize,
     terminator_start: usize,
@@ -424,6 +425,7 @@ impl PhysicalLine {
         Self {
             text,
             bytes_as_chars: false,
+            byte_projection: false,
             start,
             content_end,
             terminator_start: content_end,
@@ -477,6 +479,7 @@ pub struct MemoryInput {
     backing: Arc<[u8]>,
     next_offset: usize,
     scantokens: bool,
+    byte_projection: bool,
 }
 
 impl MemoryInput {
@@ -488,7 +491,19 @@ impl MemoryInput {
             backing,
             next_offset: 0,
             scantokens: false,
+            byte_projection: false,
         }
+    }
+
+    /// Constructs an editor buffer whose Unicode scalars each represent one
+    /// byte from a legacy 8-bit source. The backing remains valid UTF-8 for
+    /// editor layout and provenance, but classic byte mode must not split its
+    /// encoding a second time.
+    #[must_use]
+    pub fn byte_projection(input: impl Into<String>) -> Self {
+        let mut source = Self::new(input);
+        source.byte_projection = true;
+        source
     }
 
     /// Constructs the generated pseudo-file used by e-TeX `\scantokens`.
@@ -508,7 +523,16 @@ impl MemoryInput {
             backing: Arc::from(input.as_bytes()),
             next_offset,
             scantokens: false,
+            byte_projection: false,
         }
+    }
+
+    /// Reopens a lossless byte projection at a validated editor offset.
+    #[must_use]
+    pub fn byte_projection_from_offset(input: impl Into<String>, next_offset: usize) -> Self {
+        let mut source = Self::from_offset(input, next_offset);
+        source.byte_projection = true;
+        source
     }
 }
 
@@ -518,7 +542,11 @@ impl InputSource for MemoryInput {
     }
 
     fn read_line(&mut self) -> Result<Option<PhysicalLine>, InputSourceError> {
-        Ok(next_physical_line(&self.backing, &mut self.next_offset))
+        let mut line = next_physical_line(&self.backing, &mut self.next_offset);
+        if let Some(line) = &mut line {
+            line.byte_projection = self.byte_projection;
+        }
+        Ok(line)
     }
 
     fn source_descriptor(&self) -> Option<SourceDescriptor> {
@@ -775,6 +803,7 @@ pub struct SourceFrame {
     state: LexerState,
     line: String,
     bytes_as_chars: bool,
+    byte_projection: bool,
     byte_offset: usize,
     pending: VecDeque<TracedTokenWord>,
     physical_line_start: usize,
@@ -850,6 +879,7 @@ impl SourceFrame {
         .with_origin_line_start(self.origin_line_start)
         .with_byte_oriented(byte_oriented)
         .with_bytes_as_chars(self.bytes_as_chars)
+        .with_byte_projection(self.byte_projection)
     }
 
     fn from_summary(summary: &SourceFrameSummary) -> Self {
@@ -861,6 +891,7 @@ impl SourceFrame {
             state: summary.lexer_state(),
             line: summary.normalized_line().to_owned(),
             bytes_as_chars: summary.bytes_as_chars(),
+            byte_projection: summary.byte_projection(),
             byte_offset: summary.line_byte_offset(),
             pending: summary.pending().iter().copied().collect(),
             physical_line_start: summary.buffer_offset(),
@@ -4751,6 +4782,7 @@ fn load_next_line_readonly(
             install_line_coordinates(source, &line);
             source.frame.state = LexerState::NewLine;
             source.frame.bytes_as_chars = line.bytes_as_chars;
+            source.frame.byte_projection = line.byte_projection;
             source.frame.line = line.text;
             source.frame.byte_offset = 0;
             source.frame.physical_line_start = line.physical_start;
@@ -4780,6 +4812,7 @@ fn load_next_line(
             install_line_coordinates(source, &line);
             source.frame.state = LexerState::NewLine;
             source.frame.bytes_as_chars = line.bytes_as_chars;
+            source.frame.byte_projection = line.byte_projection;
             source.frame.line = line.text;
             source.frame.byte_offset = 0;
             source.frame.physical_line_start = line.physical_start;
@@ -5357,6 +5390,7 @@ fn input_char_at(
         return frame.line.chars().nth(byte_offset).map(|ch| (ch, 1));
     }
     let physical_byte = utf8_input_as_bytes
+        && !frame.byte_projection
         && frame
             .synthetic_endline_start
             .is_none_or(|synthetic| byte_offset < synthetic);
@@ -5573,6 +5607,7 @@ where
 struct NormalizedLine {
     text: String,
     bytes_as_chars: bool,
+    byte_projection: bool,
     physical_start: usize,
     physical_content_end: usize,
     terminator_start: usize,
@@ -5600,6 +5635,7 @@ fn normalize_line(line: &PhysicalLine, endlinechar: i32) -> NormalizedLine {
     NormalizedLine {
         text: normalized,
         bytes_as_chars: line.bytes_as_chars,
+        byte_projection: line.byte_projection,
         physical_start: line.start,
         physical_content_end: line.content_end,
         terminator_start: line.terminator_start,
@@ -5636,6 +5672,7 @@ fn next_physical_line(bytes: &[u8], next_offset: &mut usize) -> Option<PhysicalL
     Some(PhysicalLine {
         text,
         bytes_as_chars: false,
+        byte_projection: false,
         start,
         content_end: terminator_start,
         terminator_start,
@@ -5672,6 +5709,7 @@ fn next_physical_byte_line(bytes: &[u8], next_offset: &mut usize) -> Option<Phys
     Some(PhysicalLine {
         text,
         bytes_as_chars: true,
+        byte_projection: false,
         start,
         content_end: terminator_start,
         terminator_start,

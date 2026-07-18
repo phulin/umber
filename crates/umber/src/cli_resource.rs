@@ -245,11 +245,10 @@ impl NativeCompileSession {
             .add_user_file(name, main.clone())
             .map_err(|error| NativeRunError::Compile(error.to_string()))?;
         let local = LocalResolver::from_environment(&options.input);
-        let source = String::from_utf8(main).map_err(|error| {
-            NativeRunError::Compile(format!(
-                "the editable main file must be valid UTF-8: {error}"
-            ))
-        })?;
+        let source = match String::from_utf8(main) {
+            Ok(source) => source,
+            Err(error) => error.into_bytes().into_iter().map(char::from).collect(),
+        };
         Ok(Self {
             session,
             distribution,
