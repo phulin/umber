@@ -106,6 +106,19 @@ pub(super) fn list_keys<'a>(result: &'a BibResult, section: u32, list_id: &str) 
         .unwrap_or_default()
 }
 
+pub(super) fn output_entry(result: &BibResult, key: &str) -> Option<String> {
+    let bytes = result
+        .files()
+        .find(|file| file.path().as_str().ends_with(".bbl"))?
+        .bytes();
+    let output = std::str::from_utf8(bytes).expect("native BBL is UTF-8");
+    let marker = format!("    \\entry{{{key}}}");
+    let start = output.find(&marker)?;
+    let relative_end = output[start..].find("    \\endentry\n")?;
+    let end = start + relative_end + "    \\endentry\n".len();
+    Some(output[start..end].to_owned())
+}
+
 #[test]
 fn assertion_001_maps_test_1() {
     let result = run_fixture("maps");
