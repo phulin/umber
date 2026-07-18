@@ -201,6 +201,24 @@ fn the_renders_chardef_and_mathchardef_as_internal_integers() {
 }
 
 #[test]
+fn the_non_internal_target_reports_and_substitutes_zero() {
+    let mut stores = Universe::new();
+    tex_expand::install_expandable_primitives(&mut stores);
+    install_unexpandable_primitives(&mut stores);
+    stores.set_count(0, 7);
+    let mut input = InputStack::new(MemoryInput::new("\\count0=\\the e%"));
+
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("invalid the target is recoverable");
+
+    assert_eq!(stores.count(0), 0);
+    let output = terminal_effect_text(&stores);
+    assert!(output.contains("You can't use `the letter e' after \\the"));
+    assert!(output.contains("using zero instead"));
+}
+
+#[test]
 fn register_definition_target_terminates_its_own_number_scan() {
     let mut stores = Universe::new();
     install_unexpandable_primitives(&mut stores);

@@ -3355,6 +3355,47 @@ fn the_renders_assignable_registers_parameters_and_code_tables() {
 }
 
 #[test]
+fn the_recovers_non_internal_target_with_integer_zero() {
+    let mut stores = Universe::new();
+    expandable_primitive(&mut stores, "the", ExpandablePrimitive::The);
+    let active = stores.intern_active_character('~');
+    stores.set_meaning(active, Meaning::CountRegister(7));
+    stores.set_catcode('~', Catcode::Active);
+    stores.set_count(7, 42);
+    let relax = stores.intern("relax");
+    stores.set_meaning(relax, Meaning::Relax);
+    let mut input = InputStack::new(MemoryInput::new("\\the e\\the\\relax\\the~%"));
+    let mut expansion = ExpansionContext::new("texput");
+    let mut output = String::new();
+
+    while let Some(token) = crate::get_x_token_with_context(
+        &mut input,
+        &mut tex_state::ExpansionContext::new(&mut stores),
+        &mut expansion,
+    )
+    .expect("invalid the target recovers")
+    {
+        if let Token::Char { ch, .. } = semantic_token(token) {
+            output.push(ch);
+        }
+    }
+
+    assert_eq!(output, "0042");
+    let diagnostics = expansion.take_recoverable_diagnostics().collect::<Vec<_>>();
+    assert_eq!(diagnostics.len(), 2);
+    assert!(matches!(
+        diagnostics[0],
+        crate::RecoverableExpansionDiagnostic::InvalidTheTarget { context }
+            if crate::semantic_token(context) == char_token('e')
+    ));
+    assert!(matches!(
+        diagnostics[1],
+        crate::RecoverableExpansionDiagnostic::InvalidTheTarget { context }
+            if crate::semantic_token(context) == Token::Cs(relax.symbol())
+    ));
+}
+
+#[test]
 fn the_records_exact_code_dependencies_that_table_mutations_invalidate() {
     let mut stores = Universe::new();
     expandable_primitive(&mut stores, "the", ExpandablePrimitive::The);

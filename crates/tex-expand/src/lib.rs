@@ -718,6 +718,9 @@ pub enum RecoverableExpansionDiagnostic {
         macro_name: String,
         context: TracedTokenWord,
     },
+    InvalidTheTarget {
+        context: TracedTokenWord,
+    },
 }
 
 /// A host resource lookup that distinguishes authoritative absence from a
@@ -1709,6 +1712,11 @@ impl<'a> ExpansionContext<'a> {
             ExpandError::Captured { error, .. } => self.recover_macro_mismatch(*error),
             error => Err(error),
         }
+    }
+
+    fn report_invalid_the_target(&mut self, context: TracedTokenWord) {
+        self.recoverable_diagnostics
+            .push(RecoverableExpansionDiagnostic::InvalidTheTarget { context });
     }
 
     #[inline(always)]

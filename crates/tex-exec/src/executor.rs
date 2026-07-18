@@ -40,6 +40,15 @@ fn report_recoverable_expansion_diagnostics(
                 tex_state::PrintSink::TerminalAndLog,
                 &format!("\n! Use of {macro_name} doesn't match its definition.\n"),
             ),
+            tex_expand::RecoverableExpansionDiagnostic::InvalidTheTarget { context } => {
+                let token = tex_expand::meaning_text(stores, tex_expand::semantic_token(context));
+                stores.world_mut().write_text(
+                    tex_state::PrintSink::TerminalAndLog,
+                    &format!(
+                        "\n! You can't use `{token}' after \\the.\nI'm forgetting what you said and using zero instead.\n"
+                    ),
+                );
+            }
         }
     }
 }

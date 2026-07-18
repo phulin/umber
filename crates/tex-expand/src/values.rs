@@ -71,10 +71,38 @@ where
             expansion.record_meaning(symbol, meaning);
             meaning
         }
-        Token::Frozen(_) => stores
-            .frozen_primitive_meaning(semantic)
-            .ok_or(ExpandError::UnsupportedTheTarget { context: token })?,
-        _ => return Err(ExpandError::UnsupportedTheTarget { context: token }),
+        Token::Char {
+            ch,
+            cat: Catcode::Active,
+        } => {
+            if let Some(symbol) = stores.active_character_symbol(ch) {
+                live_symbol = Some(symbol);
+                let meaning = stores.meaning(symbol);
+                expansion.record_meaning(symbol, meaning);
+                meaning
+            } else {
+                Meaning::Undefined
+            }
+        }
+        Token::Frozen(_) => match stores.frozen_primitive_meaning(semantic) {
+            Some(meaning) => meaning,
+            None => {
+                return Ok(recover_invalid_the_target(
+                    stores,
+                    expansion,
+                    token,
+                    cause_origin,
+                ));
+            }
+        },
+        _ => {
+            return Ok(recover_invalid_the_target(
+                stores,
+                expansion,
+                token,
+                cause_origin,
+            ));
+        }
     };
     record_meaning_value_dependency(expansion, meaning);
     match meaning {
@@ -916,9 +944,26 @@ where
                     cause_origin,
                 ))
             }
-            _ => Err(ExpandError::UnsupportedTheTarget { context: token }),
+            _ => Ok(recover_invalid_the_target(
+                stores,
+                expansion,
+                token,
+                cause_origin,
+            )),
         },
     }
+}
+
+fn recover_invalid_the_target(
+    stores: &mut tex_state::ExpansionContext<'_>,
+    expansion: &mut ExpansionContext<'_>,
+    context: TracedTokenWord,
+    cause_origin: OriginId,
+) -> Dispatch {
+    // TeX.web §§428 and 465 diagnose a non-internal command after
+    // `\the`, then let `the_toks` render the substituted integer zero.
+    expansion.report_invalid_the_target(context);
+    push_rendered_text(stores, ExpansionReplayKind::TheOutput, "0", cause_origin)
 }
 
 fn pdf_font_code_table(
