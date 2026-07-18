@@ -21,13 +21,50 @@ pub(crate) use frozen_non_node::{
 };
 
 #[cfg(test)]
-pub(crate) fn testing_encode_frozen_fonts(payload: &[u8]) -> Vec<u8> {
-    let format: StoreFormat = bincode::deserialize(payload).expect("test store format payload");
-    frozen_non_node::encode_fonts(&format).expect("test frozen font section")
+std::thread_local! {
+    static LEGACY_RESTORE_COUNT: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+pub(crate) fn testing_take_legacy_restore_count() -> usize {
+    LEGACY_RESTORE_COUNT.with(|count| count.replace(0))
+}
+
+#[cfg(test)]
+pub(crate) fn testing_transitional_overlay_shape(payload: &[u8]) -> (usize, usize) {
+    let format: TransitionalOverlayFormat =
+        bincode::deserialize(payload).expect("test transitional overlay payload");
+    assert_eq!(
+        bincode::serialize(&format).expect("test transitional overlay serializes"),
+        payload
+    );
+    (format.node_lists.len(), format.env.len())
+}
+
+#[cfg(test)]
+pub(crate) fn testing_corrupt_overlay_macro_reference(payload: &[u8]) -> Vec<u8> {
+    let mut format: TransitionalOverlayFormat =
+        bincode::deserialize(payload).expect("test transitional overlay payload");
+    let entry = format
+        .env
+        .iter_mut()
+        .find(|entry| {
+            crate::cell::CellId::from_raw(entry.cell)
+                .is_some_and(|cell| cell.bank() == crate::cell::BankTag::Meaning)
+        })
+        .expect("test overlay has a meaning entry");
+    entry.value = FormatEnvValue::Raw(
+        crate::meaning::Meaning::Macro {
+            flags: crate::meaning::MeaningFlags::EMPTY,
+            definition: MacroDefinitionId::new(u32::MAX),
+        }
+        .encode(),
+    );
+    bincode::serialize(&format).expect("corrupted transitional overlay serializes")
 }
 
 pub(crate) struct EncodedStoreFormat {
-    pub transitional: Vec<u8>,
+    pub overlay: Vec<u8>,
     pub names: Vec<u8>,
     pub token_lists: Vec<u8>,
     pub macros: Vec<u8>,
@@ -39,7 +76,7 @@ pub(crate) struct EncodedStoreFormat {
 
 impl EncodedStoreFormat {
     pub(crate) fn payload_len(&self) -> usize {
-        self.transitional
+        self.overlay
             .len()
             .saturating_add(self.names.len())
             .saturating_add(self.token_lists.len())
@@ -75,6 +112,12 @@ struct StoreFormat {
     hyphenation: HyphenationTable,
     prepared_mag: Option<i32>,
     last_loaded_font: u32,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+struct TransitionalOverlayFormat {
+    node_lists: Vec<FormatNodeList>,
+    env: Vec<FormatEnvEntry>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -224,7 +267,7 @@ fn restore_current_font_word(stores: &Stores, word: u64) -> Result<u64, StoreFor
 }
 
 impl Stores {
-    #[allow(dead_code)]
+    #[cfg(test)]
     pub(crate) fn encode_format(&self) -> Result<Vec<u8>, StoreFormatError> {
         if self.env.group_depth() != 0 {
             return Err(StoreFormatError::OpenGroups(self.env.group_depth()));
@@ -237,7 +280,7 @@ impl Stores {
         bincode::serialize(&format).map_err(|error| StoreFormatError::Codec(error.to_string()))
     }
 
-    #[allow(dead_code)]
+    #[cfg(test)]
     pub(crate) fn decode_format(bytes: &[u8]) -> Result<Self, StoreFormatError> {
         let format: StoreFormat = bincode::deserialize(bytes)
             .map_err(|error| StoreFormatError::Codec(error.to_string()))?;
@@ -251,10 +294,10 @@ impl Stores {
         let format = StoreFormat::capture(self)?;
         let frozen = frozen_core::encode(&format)?;
         let non_node = frozen_non_node::encode(&format)?;
-        let transitional = bincode::serialize(&format)
+        let overlay = bincode::serialize(&format.transitional_overlay())
             .map_err(|error| StoreFormatError::Codec(error.to_string()))?;
         Ok(EncodedStoreFormat {
-            transitional,
+            overlay,
             names: frozen.names,
             token_lists: frozen.token_lists,
             macros: frozen.macros,
@@ -270,17 +313,36 @@ impl Stores {
         sections: FrozenCoreSections<'_>,
         non_node_sections: FrozenNonNodeSections<'_>,
     ) -> Result<Self, StoreFormatError> {
-        let format: StoreFormat = bincode::deserialize(bytes)
+        let overlay: TransitionalOverlayFormat = bincode::deserialize(bytes)
             .map_err(|error| StoreFormatError::Codec(error.to_string()))?;
+        let mut core = frozen_core::decode(sections)?;
+        let mut non_node = frozen_non_node::decode(non_node_sections, &core.interner)?;
+        let format = StoreFormat {
+            names: std::mem::take(&mut core.names),
+            token_lists: std::mem::take(&mut core.token_lists),
+            macros: std::mem::take(&mut core.macro_rows),
+            glue: std::mem::take(&mut core.glue_rows),
+            fonts: std::mem::take(&mut non_node.font_rows),
+            node_lists: overlay.node_lists,
+            env: overlay.env,
+            code_tables: std::mem::take(&mut non_node.code_rows),
+            hyphenation: std::mem::take(&mut non_node.hyphenation),
+            prepared_mag: non_node.prepared_mag,
+            last_loaded_font: non_node.last_loaded_font.raw(),
+        };
         format.validate_references()?;
         format.validate_font_state()?;
-        let core = frozen_core::decode(sections, &format)?;
-        let non_node = frozen_non_node::decode(non_node_sections, &format, &core.interner)?;
-        format.restore_with_core(Some(core), Some(non_node))
+        format.restore_frozen(core, non_node)
     }
 }
 
 impl StoreFormat {
+    fn transitional_overlay(&self) -> TransitionalOverlayFormat {
+        TransitionalOverlayFormat {
+            node_lists: self.node_lists.clone(),
+            env: self.env.clone(),
+        }
+    }
     fn capture(stores: &Stores) -> Result<Self, StoreFormatError> {
         let names = (0..stores.interner.len())
             .map(|raw| {
@@ -407,13 +469,15 @@ impl StoreFormat {
         })
     }
 
-    #[allow(dead_code)]
+    #[cfg(test)]
     fn restore(self) -> Result<Stores, StoreFormatError> {
         self.validate_references()?;
         self.validate_font_state()?;
+        LEGACY_RESTORE_COUNT.with(|count| count.set(count.get() + 1));
         self.restore_with_core(None, None)
     }
 
+    #[cfg(test)]
     fn restore_with_core(
         self,
         frozen: Option<frozen_core::DecodedFrozenCore>,
@@ -473,7 +537,7 @@ impl StoreFormat {
         if let Some(non_node) = non_node {
             stores.fonts = non_node.fonts;
             stores.code_tables = non_node.code_tables;
-            stores.hyphenation = non_node.hyphenation;
+            stores.hyphenation = non_node.hyphenation.into();
             stores.prepared_mag = non_node.prepared_mag;
             stores.last_loaded_font = non_node.last_loaded_font;
         } else {
@@ -533,6 +597,61 @@ impl StoreFormat {
             let bank = dto_cell.bank();
             let dto_index = dto_cell.index();
             let cell = crate::cell::CellId::new(bank, dto_index);
+            let word = match (cell.bank(), entry.value) {
+                (crate::cell::BankTag::Box, FormatEnvValue::Box(key)) => {
+                    let id = node_ids
+                        .get(&key)
+                        .copied()
+                        .ok_or(StoreFormatError::Invalid("missing box node list"))?;
+                    NodeListId::encode_box_word(Some(stores.prepare_box_value(id)))
+                }
+                (crate::cell::BankTag::Box, FormatEnvValue::Raw(_)) => {
+                    return Err(StoreFormatError::Invalid("raw box environment value"));
+                }
+                (crate::cell::BankTag::CurrentFont, FormatEnvValue::Raw(word)) => {
+                    restore_current_font_word(&stores, word)?
+                }
+                (_, FormatEnvValue::Raw(word)) => word,
+                (_, FormatEnvValue::Box(_)) => {
+                    return Err(StoreFormatError::Invalid("box value in non-box bank"));
+                }
+            };
+            stores.env.restore_raw(cell, word);
+        }
+        Ok(stores)
+    }
+
+    fn restore_frozen(
+        self,
+        frozen: frozen_core::DecodedFrozenCore,
+        non_node: frozen_non_node::DecodedFrozenNonNode,
+    ) -> Result<Stores, StoreFormatError> {
+        let mut stores = Stores::new();
+        stores.interner = frozen.interner;
+        stores.tokens = frozen.tokens;
+        stores.macros = frozen.macros;
+        stores.glue = frozen.glue;
+        stores.fonts = non_node.fonts;
+        stores.code_tables = non_node.code_tables;
+        stores.hyphenation = self.hyphenation.into();
+        stores.prepared_mag = non_node.prepared_mag;
+        stores.last_loaded_font = non_node.last_loaded_font;
+
+        let mut node_ids = std::collections::BTreeMap::new();
+        for list in self.node_lists {
+            let nodes = list
+                .nodes
+                .into_iter()
+                .map(|node| node.restore(&stores, &node_ids))
+                .collect::<Result<Vec<_>, _>>()?;
+            let semantic_id = stores.compute_and_seal_node_semantic_id(&nodes);
+            let id = stores.nodes.append_with_semantic_id(&nodes, semantic_id);
+            node_ids.insert(list.key, id);
+        }
+        for entry in self.env {
+            let dto_cell = crate::cell::CellId::from_raw(entry.cell)
+                .ok_or(StoreFormatError::Invalid("unknown environment cell"))?;
+            let cell = crate::cell::CellId::new(dto_cell.bank(), dto_cell.index());
             let word = match (cell.bank(), entry.value) {
                 (crate::cell::BankTag::Box, FormatEnvValue::Box(key)) => {
                     let id = node_ids
@@ -830,6 +949,7 @@ impl FormatToken {
         }
     }
 
+    #[cfg(test)]
     fn restore(self, interner: &crate::interner::Interner) -> Result<Token, StoreFormatError> {
         Ok(match self {
             Self::Char { ch, cat } => Token::Char {
@@ -860,6 +980,7 @@ impl FormatGlue {
         }
     }
 
+    #[cfg(test)]
     fn restore(self) -> Result<GlueSpec, StoreFormatError> {
         Ok(GlueSpec {
             width: Scaled::from_raw(self.width),
@@ -973,6 +1094,7 @@ impl FormatFont {
 }
 
 impl FormatCodeTables {
+    #[cfg(test)]
     fn restore(self, tables: &mut CodeTables) -> Result<(), StoreFormatError> {
         let ch = char::from_u32(self.code).ok_or(StoreFormatError::Invalid("codepoint"))?;
         tables.set_catcode(ch, catcode(self.catcode)?);

@@ -40,6 +40,10 @@ pub(crate) struct DecodedFrozenCore {
     pub tokens: TokenStore,
     pub macros: MacroStore,
     pub glue: GlueStore,
+    pub names: Vec<FormatName>,
+    pub token_lists: Vec<Vec<FormatToken>>,
+    pub macro_rows: Vec<FormatMacro>,
+    pub glue_rows: Vec<FormatGlue>,
 }
 
 pub(crate) fn encode(format: &StoreFormat) -> Result<EncodedFrozenCore, StoreFormatError> {
@@ -53,37 +57,20 @@ pub(crate) fn encode(format: &StoreFormat) -> Result<EncodedFrozenCore, StoreFor
 
 pub(crate) fn decode(
     sections: FrozenCoreSections<'_>,
-    transitional: &StoreFormat,
 ) -> Result<DecodedFrozenCore, StoreFormatError> {
     let (interner, names) = decode_names(sections.names)?;
-    if names != transitional.names {
-        return Err(StoreFormatError::Invalid(
-            "frozen names disagree with transitional state",
-        ));
-    }
     let (tokens, token_lists) = decode_tokens(sections.token_lists, &interner)?;
-    if token_lists != transitional.token_lists {
-        return Err(StoreFormatError::Invalid(
-            "frozen token lists disagree with transitional state",
-        ));
-    }
     let (macros, macro_rows) = decode_macros(sections.macros, &tokens)?;
-    if macro_rows != transitional.macros {
-        return Err(StoreFormatError::Invalid(
-            "frozen macros disagree with transitional state",
-        ));
-    }
     let (glue, glue_rows) = decode_glue(sections.glue)?;
-    if glue_rows != transitional.glue {
-        return Err(StoreFormatError::Invalid(
-            "frozen glue disagrees with transitional state",
-        ));
-    }
     Ok(DecodedFrozenCore {
         interner,
         tokens,
         macros,
         glue,
+        names,
+        token_lists,
+        macro_rows,
+        glue_rows,
     })
 }
 

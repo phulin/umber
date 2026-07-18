@@ -1,13 +1,14 @@
 # Portable Frozen Format Images
 
-Status: schema-10 container plus foundational frozen-store sections.
+Status: schema-10 container plus authoritative non-node core-store sections.
 
 This document is the durable ABI contract for Umber format images. The outer
 container is implemented in `tex-state::format_container`. Schema 10 replaces
-the schema-9 envelope and temporarily carries the existing validated semantic
-DTO as section 1. Later phases replace that transitional section with the
-fixed-width store sections specified here; they do not serialize live Rust
-objects.
+the schema-9 envelope. Section 1 is now an isolated transitional overlay that
+contains only reachable node-list DTOs and format-visible environment entries;
+the non-node semantic stores are authoritative in the fixed sections specified
+here. Later phases replace the remaining overlay; no section serializes live
+Rust objects.
 
 ## Goals and trust boundary
 
@@ -73,12 +74,13 @@ The checksum is FNV-1a-64 over the exact complete file with header bytes
 fingerprints, the directory, alignment padding, and every payload byte. It is
 an accidental-corruption checksum, not an authenticity mechanism.
 
-Section kind 1 is `TransitionalSemanticV9`. It contains the detached semantic
-DTO for stores that have not migrated yet. During the phased rollout it also
-duplicates names, token lists, macros, and glue; the loader requires those
-values to exactly match the authoritative frozen sections before publication.
-The schema-10 runtime currently requires kinds 1, 256, 272, 288, and 304.
-The following kinds are allocated for the complete rollout:
+Section kind 1 retains the historical directory name
+`TransitionalSemanticV9`, but its schema-10 payload is restricted to detached
+reachable node-list records and environment entries. It contains no names,
+token lists, macros, glue, fonts, code tables, hyphenation data, prepared
+magnification, or last-font metadata. The schema-10 runtime requires exactly
+kinds 1, 256, 272, 288, 304, 320, 336, and 352. The following kinds are
+allocated for the complete rollout:
 
 | Kind | Intended contents                        |
 | ---: | ---------------------------------------- |
@@ -181,12 +183,12 @@ source parameters, character metrics, lig/kern instructions, extensible
 recipes, derivation identity, control-sequence identifier index, and pdfTeX
 expansion settings.
 
-The decoder first requires exact equality with the still-present transitional
-records, whose full metric, derivation-order, identifier, parameter-bank, and
-last-font validation runs before any store is published. It then constructs
-the dense font prefix in bulk, attaches fresh runtime identities, and rebuilds
-loaded-font lookup keys and immutable/complete semantic hash fragments without
-calling the ordinary font interning or mutable identifier/expansion paths.
+The decoder validates metric structure, derivation order, identifiers,
+parameter-bank references from the environment overlay, and the last-font
+index before any store is published. It then constructs the dense font prefix
+in bulk, attaches fresh runtime identities, and rebuilds loaded-font lookup
+keys and immutable/complete semantic hash fragments without calling the
+ordinary font interning or mutable identifier/expansion paths.
 
 ### Code tables (kind 336)
 
@@ -295,10 +297,12 @@ boundary: the loader rejects schema 9 with `UnsupportedVersion(9)`. Users
 regenerate format images from their source under the schema-10 engine; Umber
 does not reinterpret an old image heuristically.
 
-During the transition, schema 10 writes section 1 for unmigrated state and as
-a validation mirror. It restores names, token lists, macros, glue, fonts, code
-tables, and hyphenation directly from sections 256 through 352. Epic phases
-replace the remaining node/environment reconstruction with allocated frozen
-sections, immutable graph stores, and mutable overlays. Once those sections
-are integrated across all drivers, section 1 is removed under another explicit
+During the transition, schema 10 writes section 1 only for node graphs and the
+environment overlay. Names, token lists, macros, glue, fonts, code tables, and
+hyphenation exist only in authoritative sections 256 through 352 and are never
+reinterned during normal loading. The decoder validates overlay references
+against those frozen stores before publication. Later phases replace the
+remaining node/environment reconstruction with allocated frozen sections,
+immutable graph stores, and mutable overlays. Once those sections are
+integrated across all drivers, section 1 is removed under another explicit
 schema bump.

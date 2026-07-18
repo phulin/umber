@@ -1272,9 +1272,9 @@ impl Universe {
     ///
     /// Host effects, provenance, checkpoints, journals, caches, and input
     /// cursors are intentionally absent. The image is deterministic for one
-    /// semantic state in the transitional section of the portable schema-10
-    /// container. Later schemas can replace that section with frozen stores
-    /// without changing the fixed-width outer ABI.
+    /// semantic state across the portable schema-10 frozen stores and its
+    /// node/environment transitional overlay. Later schemas can replace that
+    /// overlay without changing the fixed-width outer ABI.
     pub fn dump_format(&self) -> Result<Vec<u8>, FormatError> {
         if !self.input_summary.is_empty() {
             return Err(FormatError::NonEmptyInput);
@@ -1292,7 +1292,7 @@ impl Universe {
             .map_err(map_store_format_error)?;
         let payload = bincode::serialize(&UniverseFormatPayload {
             interaction_mode: encode_interaction_mode(self.interaction_mode),
-            stores: stores.transitional,
+            stores: stores.overlay,
             pdf,
         })
         .map_err(|error| FormatError::InvalidState(error.to_string()))?;

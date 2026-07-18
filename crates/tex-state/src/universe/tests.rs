@@ -609,8 +609,23 @@ fn frozen_foundational_sections_restore_ids_and_accept_job_local_additions() {
             crate::stores::HYPHENATION_SECTION,
         ]
     );
+    let transitional = container
+        .section(crate::format_container::TRANSITIONAL_SEMANTIC_SECTION)
+        .expect("transitional overlay section");
+    let payload: super::UniverseFormatPayload =
+        bincode::deserialize(transitional.bytes).expect("universe format payload");
+    let (node_lists, env_entries) =
+        crate::stores::testing_transitional_overlay_shape(&payload.stores);
+    assert_eq!(node_lists, 0);
+    assert!(env_entries > 0);
 
+    let _ = crate::stores::testing_take_legacy_restore_count();
     let mut loaded = Universe::from_format(World::memory(), &image).expect("load frozen core");
+    assert_eq!(
+        crate::stores::testing_take_legacy_restore_count(),
+        0,
+        "normal schema-10 loading must not enter legacy semantic reinterning"
+    );
     assert_eq!(loaded.dump_format().expect("canonical redump"), image);
     let restored_base = loaded.symbol("frozen-base").expect("restored name");
     assert_eq!(restored_base.raw(), base.raw());
@@ -719,6 +734,43 @@ fn checksum_valid_foundational_section_corruption_fails_structural_validation() 
             "section {kind} returned {error:?}"
         );
     }
+}
+
+#[test]
+fn transitional_overlay_references_are_validated_against_frozen_stores() {
+    let mut universe = Universe::new();
+    let symbol = universe.intern("overlay-cross-store");
+    let tokens = universe.intern_token_list(&[Token::Cs(symbol.symbol())]);
+    let definition = universe.intern_macro(MacroMeaning::new(
+        MeaningFlags::EMPTY,
+        crate::ids::TokenListId::EMPTY,
+        tokens,
+    ));
+    universe.set_meaning(
+        symbol,
+        Meaning::Macro {
+            flags: MeaningFlags::EMPTY,
+            definition,
+        },
+    );
+    let mut image = universe.dump_format().expect("cross-store format");
+    let container = crate::format_container::decode(&image).expect("decode format container");
+    let transitional = container
+        .section(crate::format_container::TRANSITIONAL_SEMANTIC_SECTION)
+        .expect("transitional section");
+    let mut payload: super::UniverseFormatPayload =
+        bincode::deserialize(transitional.bytes).expect("universe format payload");
+    payload.stores = crate::stores::testing_corrupt_overlay_macro_reference(&payload.stores);
+    replace_store_format_payload(
+        &mut image,
+        bincode::serialize(&payload).expect("corrupted universe format payload"),
+    );
+    let error = Universe::from_format(World::memory(), &image)
+        .expect_err("overlay reference outside frozen macro store");
+    assert!(
+        matches!(error, FormatError::InvalidState(ref message) if message.contains("meaning macro is not live")),
+        "unexpected cross-store validation error: {error:?}"
+    );
 }
 
 #[test]
@@ -988,7 +1040,7 @@ fn checksum_valid_malformed_font_formats_fail_with_structured_errors() {
         (Corruption::LastLoadedFont, "last loaded font"),
     ] {
         let mut bytes = valid.clone();
-        replace_store_format_payload(&mut bytes, corrupt_font_store_payload(&valid, corruption));
+        corrupt_font_format(&mut bytes, corruption);
         let error = Universe::from_format(World::memory(), &bytes)
             .expect_err("malformed font format must fail closed");
         assert!(
@@ -1012,11 +1064,7 @@ fn checksum_valid_font_formats_accept_both_lig_kern_cursor_length_edges() {
         (tex_fonts::metrics::MAX_LIG_KERN_PROGRAM_LEN, u16::MAX),
     ] {
         let mut bytes = valid.clone();
-        replace_store_format_payload(
-            &mut bytes,
-            corrupt_font_store_payload(&valid, Corruption::LigKernProgramLength { len, start }),
-        );
-        synchronize_frozen_font_section(&mut bytes);
+        corrupt_font_format(&mut bytes, Corruption::LigKernProgramLength { len, start });
         let restored = Universe::from_format(World::memory(), &bytes)
             .expect("addressable lig/kern program restores");
         assert_eq!(restored.dump_format().expect("format redumps"), bytes);
@@ -1183,28 +1231,26 @@ fn replace_format_section(bytes: &mut Vec<u8>, kind: u32, mutate: impl FnOnce(&m
     *bytes = crate::format_container::encode(&inputs).expect("re-encode test container");
 }
 
-fn corrupt_font_store_payload(
-    bytes: &[u8],
+fn corrupt_font_format(
+    bytes: &mut Vec<u8>,
     corruption: crate::stores::TestingFontFormatCorruption,
-) -> Vec<u8> {
+) {
     let container = crate::format_container::decode(bytes).expect("decode test container");
     let section = container
         .section(crate::format_container::TRANSITIONAL_SEMANTIC_SECTION)
         .expect("semantic section");
     let mut format: super::UniverseFormatPayload =
         bincode::deserialize(section.bytes).expect("test universe format payload");
-    format.stores = crate::stores::testing_corrupt_font_format(&format.stores, corruption);
-    bincode::serialize(&format).expect("corrupted universe format payload")
-}
-
-fn synchronize_frozen_font_section(bytes: &mut Vec<u8>) {
-    let container = crate::format_container::decode(bytes).expect("decode test container");
-    let section = container
-        .section(crate::format_container::TRANSITIONAL_SEMANTIC_SECTION)
-        .expect("semantic section");
-    let format: super::UniverseFormatPayload =
-        bincode::deserialize(section.bytes).expect("test universe format payload");
-    let frozen = crate::stores::testing_encode_frozen_fonts(&format.stores);
+    let frozen = container
+        .section(crate::stores::FONTS_SECTION)
+        .expect("frozen font section");
+    let (transitional, frozen) =
+        crate::stores::testing_corrupt_font_format(&format.stores, frozen.bytes, corruption);
+    format.stores = transitional;
+    replace_store_format_payload(
+        bytes,
+        bincode::serialize(&format).expect("corrupted universe format payload"),
+    );
     replace_format_section(bytes, crate::stores::FONTS_SECTION, |section| {
         *section = frozen;
     });

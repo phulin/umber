@@ -79,7 +79,9 @@ pub(crate) use format::{
 };
 #[cfg(test)]
 pub(crate) use format::{
-    TestingFontFormatCorruption, testing_corrupt_font_format, testing_encode_frozen_fonts,
+    TestingFontFormatCorruption, testing_corrupt_font_format,
+    testing_corrupt_overlay_macro_reference, testing_take_legacy_restore_count,
+    testing_transitional_overlay_shape,
 };
 
 pub use crate::env::group::{GroupKind, GroupMismatch};

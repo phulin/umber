@@ -213,14 +213,16 @@ pub(crate) enum TestingFontFormatCorruption {
 
 #[cfg(test)]
 pub(crate) fn testing_corrupt_font_format(
-    payload: &[u8],
+    transitional: &[u8],
+    frozen_fonts: &[u8],
     corruption: TestingFontFormatCorruption,
-) -> Vec<u8> {
-    let mut format: StoreFormat = bincode::deserialize(payload).expect("test format payload");
-    let font = format
-        .fonts
-        .get_mut(1)
-        .expect("test format has a loaded font");
+) -> (Vec<u8>, Vec<u8>) {
+    const HEADER: usize = 32;
+    let mut format: TransitionalOverlayFormat =
+        bincode::deserialize(transitional).expect("test transitional format payload");
+    let mut fonts: Vec<FormatFont> =
+        bincode::deserialize(&frozen_fonts[HEADER..]).expect("test frozen font payload");
+    let font = fonts.get_mut(1).expect("test format has a loaded font");
     match corruption {
         TestingFontFormatCorruption::TooManyCharacters => font.characters.resize(257, None),
         TestingFontFormatCorruption::OversizedLigKernProgram => {
@@ -304,8 +306,19 @@ pub(crate) fn testing_corrupt_font_format(
             }
         }
         TestingFontFormatCorruption::LastLoadedFont => {
-            format.last_loaded_font = u32::MAX;
+            // The last-loaded font index is fixed metadata in the section header.
         }
     }
-    bincode::serialize(&format).expect("corrupted test format serializes")
+    let mut frozen = frozen_fonts[..HEADER].to_vec();
+    let font_payload = bincode::serialize(&fonts).expect("corrupted frozen fonts serialize");
+    frozen[4..8].copy_from_slice(&(fonts.len() as u32).to_le_bytes());
+    frozen[12..16].copy_from_slice(&(font_payload.len() as u32).to_le_bytes());
+    if matches!(corruption, TestingFontFormatCorruption::LastLoadedFont) {
+        frozen[24..28].copy_from_slice(&u32::MAX.to_le_bytes());
+    }
+    frozen.extend_from_slice(&font_payload);
+    (
+        bincode::serialize(&format).expect("corrupted transitional format serializes"),
+        frozen,
+    )
 }

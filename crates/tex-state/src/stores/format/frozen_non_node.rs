@@ -4,7 +4,6 @@ use crate::font::FontStore;
 use crate::hyphenation::HyphenationTable;
 use crate::ids::FontId;
 use crate::interner::Interner;
-use std::sync::Arc;
 
 pub(crate) const FONTS_SECTION: u32 = 320;
 pub(crate) const CODE_TABLES_SECTION: u32 = 336;
@@ -31,9 +30,11 @@ pub(crate) struct FrozenNonNodeSections<'a> {
 pub(crate) struct DecodedFrozenNonNode {
     pub fonts: FontStore,
     pub code_tables: CodeTables,
-    pub hyphenation: Arc<HyphenationTable>,
+    pub hyphenation: HyphenationTable,
     pub prepared_mag: Option<i32>,
     pub last_loaded_font: FontId,
+    pub font_rows: Vec<FormatFont>,
+    pub code_rows: Vec<FormatCodeTables>,
 }
 
 pub(crate) fn encode(format: &StoreFormat) -> Result<EncodedFrozenNonNode, StoreFormatError> {
@@ -46,40 +47,24 @@ pub(crate) fn encode(format: &StoreFormat) -> Result<EncodedFrozenNonNode, Store
 
 pub(crate) fn decode(
     sections: FrozenNonNodeSections<'_>,
-    transitional: &StoreFormat,
     interner: &Interner,
 ) -> Result<DecodedFrozenNonNode, StoreFormatError> {
-    let (fonts, prepared_mag, last_loaded_font) =
-        decode_fonts(sections.fonts, interner, &transitional.fonts)?;
+    let (fonts, font_rows, prepared_mag, last_loaded_font) =
+        decode_fonts(sections.fonts, interner)?;
     let (code_tables, code_rows) = decode_code_tables(sections.code_tables)?;
     let hyphenation = decode_hyphenation(sections.hyphenation)?;
-    if prepared_mag != transitional.prepared_mag
-        || last_loaded_font.raw() != transitional.last_loaded_font
-    {
-        return Err(StoreFormatError::Invalid(
-            "frozen fonts disagree with transitional state",
-        ));
-    }
-    if code_rows != transitional.code_tables {
-        return Err(StoreFormatError::Invalid(
-            "frozen code tables disagree with transitional state",
-        ));
-    }
-    if *hyphenation != transitional.hyphenation {
-        return Err(StoreFormatError::Invalid(
-            "frozen hyphenation disagrees with transitional state",
-        ));
-    }
     Ok(DecodedFrozenNonNode {
         fonts,
         code_tables,
         hyphenation,
         prepared_mag,
         last_loaded_font,
+        font_rows,
+        code_rows,
     })
 }
 
-pub(super) fn encode_fonts(format: &StoreFormat) -> Result<Vec<u8>, StoreFormatError> {
+fn encode_fonts(format: &StoreFormat) -> Result<Vec<u8>, StoreFormatError> {
     let payload = bincode::serialize(&format.fonts)
         .map_err(|error| StoreFormatError::Codec(error.to_string()))?;
     let mut out = vec![0; FONTS_HEADER + payload.len()];
@@ -103,8 +88,7 @@ pub(super) fn encode_fonts(format: &StoreFormat) -> Result<Vec<u8>, StoreFormatE
 fn decode_fonts(
     bytes: &[u8],
     interner: &Interner,
-    transitional: &[FormatFont],
-) -> Result<(FontStore, Option<i32>, FontId), StoreFormatError> {
+) -> Result<(FontStore, Vec<FormatFont>, Option<i32>, FontId), StoreFormatError> {
     if bytes.len() < FONTS_HEADER
         || read_u32(bytes, 0) != VERSION
         || read_u32(bytes, 8) as usize != FONTS_HEADER
@@ -131,13 +115,8 @@ fn decode_fonts(
             "non-canonical frozen font payload",
         ));
     }
-    if rows != transitional {
-        return Err(StoreFormatError::Invalid(
-            "frozen fonts disagree with transitional state",
-        ));
-    }
     let mut runtime = Vec::with_capacity(rows.len());
-    for row in rows {
+    for row in &rows {
         let identifier = row
             .identifier
             .map(|raw| {
@@ -150,7 +129,7 @@ fn decode_fonts(
             })
             .transpose()?;
         let expansion = row.expansion;
-        runtime.push((row.restore(), identifier, expansion));
+        runtime.push((row.clone().restore(), identifier, expansion));
     }
     let fonts = FontStore::from_frozen(runtime, interner).map_err(StoreFormatError::Invalid)?;
     let last_raw = read_u32(bytes, 24);
@@ -159,7 +138,7 @@ fn decode_fonts(
         .ok_or(StoreFormatError::Invalid(
             "frozen last loaded font is not live",
         ))?;
-    Ok((fonts, prepared_mag, last))
+    Ok((fonts, rows, prepared_mag, last))
 }
 
 fn encode_code_tables(rows: &[FormatCodeTables]) -> Result<Vec<u8>, StoreFormatError> {
@@ -260,7 +239,7 @@ fn encode_hyphenation(table: &HyphenationTable) -> Result<Vec<u8>, StoreFormatEr
     Ok(out)
 }
 
-fn decode_hyphenation(bytes: &[u8]) -> Result<Arc<HyphenationTable>, StoreFormatError> {
+fn decode_hyphenation(bytes: &[u8]) -> Result<HyphenationTable, StoreFormatError> {
     if bytes.len() < HYPHENATION_HEADER
         || read_u32(bytes, 0) != VERSION
         || read_u32(bytes, 4) as usize != HYPHENATION_HEADER
@@ -281,7 +260,7 @@ fn decode_hyphenation(bytes: &[u8]) -> Result<Arc<HyphenationTable>, StoreFormat
         ));
     }
     table.validate_frozen().map_err(StoreFormatError::Invalid)?;
-    Ok(Arc::new(table))
+    Ok(table)
 }
 
 fn u32_len(value: usize, message: &'static str) -> Result<u32, StoreFormatError> {
