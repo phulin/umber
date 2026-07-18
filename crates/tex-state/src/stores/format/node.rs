@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
 type SurvivorRoots = BTreeMap<SurvivorRootId, u32>;
-type NodeIds = BTreeMap<FormatListKey, NodeListId>;
+type NodeIds = Vec<(FormatListKey, NodeListId)>;
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub(super) enum FormatNode {
@@ -253,6 +253,57 @@ pub(super) struct FormatMathListNode {
 }
 
 impl FormatNode {
+    pub(super) fn remap_list_keys(&mut self, keys: &BTreeMap<FormatListKey, FormatListKey>) {
+        let remap = |key: &mut FormatListKey| {
+            *key = *keys.get(key).expect("captured child key must be present");
+        };
+        match self {
+            Self::Glue {
+                leader: Some(leader),
+                ..
+            } => leader.remap_list_keys(keys),
+            Self::HList(node) | Self::VList(node) => remap(&mut node.children),
+            Self::Unset(node) => remap(&mut node.children),
+            Self::Disc {
+                pre, post, replace, ..
+            } => {
+                remap(pre);
+                remap(post);
+                remap(replace);
+            }
+            Self::Ins { content, .. } | Self::Adjust(content) => remap(content),
+            Self::MathNoad(noad) => {
+                noad.nucleus.remap_list_keys(keys);
+                noad.subscript.remap_list_keys(keys);
+                noad.superscript.remap_list_keys(keys);
+            }
+            Self::FractionNoad(fraction) => {
+                remap(&mut fraction.numerator);
+                remap(&mut fraction.denominator);
+            }
+            Self::MathChoice(choice) => {
+                remap(&mut choice.display);
+                remap(&mut choice.text);
+                remap(&mut choice.script);
+                remap(&mut choice.script_script);
+            }
+            Self::MathList(list) => remap(&mut list.content),
+            Self::Char { .. }
+            | Self::Lig { .. }
+            | Self::Kern { .. }
+            | Self::Glue { leader: None, .. }
+            | Self::Penalty(_)
+            | Self::Rule { .. }
+            | Self::Mark { .. }
+            | Self::Whatsit(_)
+            | Self::MathOn(_)
+            | Self::MathOff(_)
+            | Self::Direction(_)
+            | Self::MathStyle(_)
+            | Self::Nonscript => {}
+        }
+    }
+
     pub(super) fn capture(stores: &Stores, node: Node, roots: &mut SurvivorRoots) -> Self {
         match node {
             Node::Char { font, ch, .. } => Self::Char {
@@ -407,6 +458,29 @@ impl FormatNode {
             Self::Nonscript => Node::Nonscript,
             Self::Adjust(content) => Node::Adjust(list_id(ids, content)?),
         })
+    }
+}
+
+impl FormatLeaderPayload {
+    fn remap_list_keys(&mut self, keys: &BTreeMap<FormatListKey, FormatListKey>) {
+        match self {
+            Self::HList(node) | Self::VList(node) => {
+                node.children = *keys
+                    .get(&node.children)
+                    .expect("captured leader child key must be present");
+            }
+            Self::Rule { .. } => {}
+        }
+    }
+}
+
+impl FormatMathField {
+    fn remap_list_keys(&mut self, keys: &BTreeMap<FormatListKey, FormatListKey>) {
+        if let Self::SubBox(key) | Self::SubMlist(key) = self {
+            *key = *keys
+                .get(key)
+                .expect("captured math child key must be present");
+        }
     }
 }
 
@@ -908,8 +982,8 @@ fn key(stores: &Stores, id: NodeListId, roots: &mut SurvivorRoots) -> FormatList
 }
 
 fn list_id(ids: &NodeIds, key: FormatListKey) -> Result<NodeListId, StoreFormatError> {
-    ids.get(&key)
-        .copied()
+    ids.iter()
+        .find_map(|(stored, id)| (*stored == key).then_some(*id))
         .ok_or(StoreFormatError::Invalid("node child precedes dependency"))
 }
 

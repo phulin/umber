@@ -5,6 +5,7 @@ mod node;
 use node::FormatNode;
 
 mod frozen_core;
+mod frozen_node;
 mod frozen_non_node;
 
 mod font_validation;
@@ -17,6 +18,7 @@ pub(crate) use frozen_core::{
     FrozenCoreSections, GLUE_SECTION, MACROS_SECTION, NAMES_LOOKUP_SECTION, NAMES_SECTION,
     TOKEN_LISTS_SECTION,
 };
+pub(crate) use frozen_node::{FROZEN_NODES_SECTION, FrozenNodeSection};
 pub(crate) use frozen_non_node::{
     CODE_TABLES_SECTION, FONTS_SECTION, FrozenNonNodeSections, HYPHENATION_SECTION,
 };
@@ -39,7 +41,7 @@ pub(crate) fn testing_transitional_overlay_shape(payload: &[u8]) -> (usize, usiz
         bincode::serialize(&format).expect("test transitional overlay serializes"),
         payload
     );
-    (format.node_lists.len(), format.env.len())
+    (0, format.env.len())
 }
 
 #[cfg(test)]
@@ -74,6 +76,7 @@ pub(crate) struct EncodedStoreFormat {
     pub fonts: Vec<u8>,
     pub code_tables: Vec<u8>,
     pub hyphenation: Vec<u8>,
+    pub nodes: Vec<u8>,
 }
 
 impl EncodedStoreFormat {
@@ -88,6 +91,7 @@ impl EncodedStoreFormat {
             .saturating_add(self.fonts.len())
             .saturating_add(self.code_tables.len())
             .saturating_add(self.hyphenation.len())
+            .saturating_add(self.nodes.len())
     }
 }
 
@@ -119,7 +123,6 @@ struct StoreFormat {
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 struct TransitionalOverlayFormat {
-    node_lists: Vec<FormatNodeList>,
     env: Vec<FormatEnvEntry>,
 }
 
@@ -222,6 +225,7 @@ struct FormatListKey {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 struct FormatNodeList {
     key: FormatListKey,
+    semantic_id: u64,
     nodes: Vec<FormatNode>,
 }
 
@@ -297,6 +301,7 @@ impl Stores {
         let format = StoreFormat::capture(self)?;
         let frozen = frozen_core::encode(&format)?;
         let non_node = frozen_non_node::encode(&format)?;
+        let nodes = frozen_node::encode(&format, self)?;
         let overlay = bincode::serialize(&format.transitional_overlay())
             .map_err(|error| StoreFormatError::Codec(error.to_string()))?;
         Ok(EncodedStoreFormat {
@@ -309,6 +314,7 @@ impl Stores {
             fonts: non_node.fonts,
             code_tables: non_node.code_tables,
             hyphenation: non_node.hyphenation,
+            nodes,
         })
     }
 
@@ -316,18 +322,20 @@ impl Stores {
         bytes: &[u8],
         sections: FrozenCoreSections<'_>,
         non_node_sections: FrozenNonNodeSections<'_>,
+        node_section: FrozenNodeSection<'_>,
     ) -> Result<Self, StoreFormatError> {
         let overlay: TransitionalOverlayFormat = bincode::deserialize(bytes)
             .map_err(|error| StoreFormatError::Codec(error.to_string()))?;
         let mut core = frozen_core::decode(sections)?;
         let mut non_node = frozen_non_node::decode(non_node_sections, &core.interner)?;
+        let node_lists = frozen_node::decode(node_section)?;
         let format = StoreFormat {
             names: std::mem::take(&mut core.names),
             token_lists: std::mem::take(&mut core.token_lists),
             macros: std::mem::take(&mut core.macro_rows),
             glue: std::mem::take(&mut core.glue_rows),
             fonts: std::mem::take(&mut non_node.font_rows),
-            node_lists: overlay.node_lists,
+            node_lists: node_lists.lists,
             env: overlay.env,
             code_tables: std::mem::take(&mut non_node.code_rows),
             hyphenation: std::mem::take(&mut non_node.hyphenation),
@@ -336,14 +344,13 @@ impl Stores {
         };
         format.validate_references()?;
         format.validate_font_state()?;
-        format.restore_frozen(core, non_node)
+        format.restore_frozen(core, non_node, node_lists.semantic_ids)
     }
 }
 
 impl StoreFormat {
     fn transitional_overlay(&self) -> TransitionalOverlayFormat {
         TransitionalOverlayFormat {
-            node_lists: self.node_lists.clone(),
             env: self.env.clone(),
         }
     }
@@ -430,7 +437,7 @@ impl StoreFormat {
                 &mut node_lists,
             )?;
         }
-        let env = env_words
+        let mut env: Vec<FormatEnvEntry> = env_words
             .into_iter()
             .map(|(cell, word)| {
                 let value = if cell.bank() == crate::cell::BankTag::Box {
@@ -446,6 +453,7 @@ impl StoreFormat {
                 }
             })
             .collect();
+        canonicalize_node_list_keys(&mut node_lists, &mut env);
         let mut code_tables = Vec::new();
         stores.code_tables.for_each_non_default(|ch, values| {
             code_tables.push(FormatCodeTables {
@@ -575,7 +583,7 @@ impl StoreFormat {
                 }
             }
         }
-        let mut node_ids = std::collections::BTreeMap::new();
+        let mut node_ids = Vec::with_capacity(self.node_lists.len());
         for list in self.node_lists {
             let nodes = list
                 .nodes
@@ -584,7 +592,7 @@ impl StoreFormat {
                 .collect::<Result<Vec<_>, _>>()?;
             let semantic_id = stores.compute_and_seal_node_semantic_id(&nodes);
             let id = stores.nodes.append_with_semantic_id(&nodes, semantic_id);
-            node_ids.insert(list.key, id);
+            node_ids.push((list.key, id));
         }
         if !has_frozen_non_node {
             for entry in self.code_tables {
@@ -604,8 +612,8 @@ impl StoreFormat {
             let word = match (cell.bank(), entry.value) {
                 (crate::cell::BankTag::Box, FormatEnvValue::Box(key)) => {
                     let id = node_ids
-                        .get(&key)
-                        .copied()
+                        .iter()
+                        .find_map(|(stored, id)| (*stored == key).then_some(*id))
                         .ok_or(StoreFormatError::Invalid("missing box node list"))?;
                     NodeListId::encode_box_word(Some(stores.prepare_box_value(id)))
                 }
@@ -629,6 +637,7 @@ impl StoreFormat {
         self,
         frozen: frozen_core::DecodedFrozenCore,
         non_node: frozen_non_node::DecodedFrozenNonNode,
+        semantic_ids: Vec<crate::node_arena::NodeSemanticId>,
     ) -> Result<Stores, StoreFormatError> {
         let mut stores = Stores::new();
         stores.interner = frozen.interner;
@@ -641,16 +650,50 @@ impl StoreFormat {
         stores.prepared_mag = non_node.prepared_mag;
         stores.last_loaded_font = non_node.last_loaded_font;
 
-        let mut node_ids = std::collections::BTreeMap::new();
-        for list in self.node_lists {
+        if semantic_ids.len() != self.node_lists.len() {
+            return Err(StoreFormatError::Invalid("frozen node identity count"));
+        }
+        let expected_semantic_ids = semantic_ids.clone();
+        let root = stores.survivors.reserve_frozen_root();
+        let mut next_start = 0_u32;
+        let node_ids: Vec<_> = self
+            .node_lists
+            .iter()
+            .map(|list| {
+                let len = u32::try_from(list.nodes.len())
+                    .map_err(|_| StoreFormatError::Invalid("frozen node list exceeds u32"))?;
+                let id = NodeListId::new_survivor(root, next_start, len);
+                next_start = next_start
+                    .checked_add(len)
+                    .ok_or(StoreFormatError::Invalid("frozen node arena exceeds u32"))?;
+                Ok((list.key, id))
+            })
+            .collect::<Result<_, StoreFormatError>>()?;
+        let mut storage = crate::node_arena::NodeStorage::default();
+        let mut spans = Vec::with_capacity(self.node_lists.len());
+        for ((list, expected_id), (_, id)) in self
+            .node_lists
+            .into_iter()
+            .zip(semantic_ids)
+            .zip(node_ids.iter().copied())
+        {
             let nodes = list
                 .nodes
                 .into_iter()
                 .map(|node| node.restore(&stores, &node_ids))
                 .collect::<Result<Vec<_>, _>>()?;
-            let semantic_id = stores.compute_and_seal_node_semantic_id(&nodes);
-            let id = stores.nodes.append_with_semantic_id(&nodes, semantic_id);
-            node_ids.insert(list.key, id);
+            let (start, len) = storage.append(&nodes);
+            if start != id.start() || len != id.len() {
+                return Err(StoreFormatError::Invalid("frozen node span metadata"));
+            }
+            spans.push((start, len, expected_id));
+        }
+        stores.survivors.publish_frozen_root(root, storage, spans);
+        for ((_, id), expected_id) in node_ids.iter().zip(expected_semantic_ids) {
+            let nodes = stores.nodes(*id).to_vec();
+            if stores.compute_node_semantic_id(&nodes) != expected_id {
+                return Err(StoreFormatError::Invalid("frozen node semantic identity"));
+            }
         }
         for entry in self.env {
             let dto_cell = crate::cell::CellId::from_raw(entry.cell)
@@ -659,8 +702,8 @@ impl StoreFormat {
             let word = match (cell.bank(), entry.value) {
                 (crate::cell::BankTag::Box, FormatEnvValue::Box(key)) => {
                     let id = node_ids
-                        .get(&key)
-                        .copied()
+                        .iter()
+                        .find_map(|(stored, id)| (*stored == key).then_some(*id))
                         .ok_or(StoreFormatError::Invalid("missing box node list"))?;
                     NodeListId::encode_box_word(Some(stores.prepare_box_value(id)))
                 }
@@ -830,6 +873,34 @@ impl StoreFormat {
     }
 }
 
+fn canonicalize_node_list_keys(node_lists: &mut [FormatNodeList], env: &mut [FormatEnvEntry]) {
+    let keys: std::collections::BTreeMap<_, _> = node_lists
+        .iter()
+        .enumerate()
+        .map(|(index, list)| {
+            (
+                list.key,
+                FormatListKey {
+                    survivor_root: None,
+                    start: u32::try_from(index).expect("format node-list count exceeds u32"),
+                    len: u32::try_from(list.nodes.len()).expect("format node list exceeds u32"),
+                },
+            )
+        })
+        .collect();
+    for list in node_lists {
+        for node in &mut list.nodes {
+            node.remap_list_keys(&keys);
+        }
+        list.key = keys[&list.key];
+    }
+    for entry in env {
+        if let FormatEnvValue::Box(key) = &mut entry.value {
+            *key = keys[key];
+        }
+    }
+}
+
 impl FormatListKey {
     fn capture(
         stores: &Stores,
@@ -893,6 +964,7 @@ fn capture_node_list(
         .collect();
     out.push(FormatNodeList {
         key: FormatListKey::capture(stores, id, survivor_roots),
+        semantic_id: stores.node_list_semantic_id_value(id),
         nodes,
     });
     Ok(())

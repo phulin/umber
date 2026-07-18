@@ -1,15 +1,15 @@
 # Portable Frozen Format Images
 
-Status: schema-10 container, authoritative non-node core-store sections, and
-portable precomputed lookup indexes.
+Status: schema-10 container, authoritative core-store sections, portable
+precomputed lookup indexes, and runtime-ready frozen node arena.
 
 This document is the durable ABI contract for Umber format images. The outer
 container is implemented in `tex-state::format_container`. Schema 10 replaces
 the schema-9 envelope. Section 1 is now an isolated transitional overlay that
-contains only reachable node-list DTOs and format-visible environment entries;
-the non-node semantic stores are authoritative in the fixed sections specified
-here. Later phases replace the remaining overlay; no section serializes live
-Rust objects.
+contains only format-visible environment entries. Reachable node graphs are
+authoritative in kind 512, and non-node semantic stores are authoritative in
+their fixed sections. Later phases replace the remaining environment overlay;
+no section serializes live Rust objects.
 
 ## Goals and trust boundary
 
@@ -77,10 +77,10 @@ an accidental-corruption checksum, not an authenticity mechanism.
 
 Section kind 1 retains the historical directory name
 `TransitionalSemanticV9`, but its schema-10 payload is restricted to detached
-reachable node-list records and environment entries. It contains no names,
+environment entries. It contains no node lists, names,
 token lists, macros, glue, fonts, code tables, hyphenation data, prepared
 magnification, or last-font metadata. The schema-10 runtime requires exactly
-kinds 1, 256, 257, 272, 288, 304, 320, 336, and 352. The following kinds are
+kinds 1, 256, 257, 272, 288, 304, 320, 336, 352, and 512. The following kinds are
 allocated for the complete rollout:
 
 | Kind | Intended contents                        |
@@ -217,6 +217,28 @@ trailing, and adjacent hyphens. The validated trie is installed as the immutable
 format base; later job mutations retain the existing copy-on-write `Arc`
 snapshot behavior.
 
+### Frozen node arena (kind 512)
+
+The 32-byte header contains version, list count, records offset, payload
+offset, payload length, and reserved zero words. Each 40-byte list record
+contains its canonical detached key, payload offset and length, node count,
+precomputed `u64` semantic identity, and reserved zero bytes. List keys are
+allocation-independent dense dependency indices; payload spans are contiguous
+and cover the payload exactly.
+
+Node payloads use an explicitly selected little-endian fixed-integer DTO
+vocabulary for every box, node, math field, whatsit, string, and byte vector.
+They contain store record indices and canonical list keys, never runtime
+handles or compact native node words. Lists occur bottom-up. Decoding rejects
+forward or self references, cycles, invalid store indices, malformed enum
+values, bad section geometry, reserved bytes, count mismatches, and semantic
+identities that do not recompute from the validated graph.
+
+After validation, all lists are installed into one immutable survivor-backed
+arena root with their precomputed semantic spans. No legacy key map, graph
+promotion, or semantic reseal runs on the load path. The job epoch arena starts
+empty; job-local lists may safely refer to frozen lists and allocate normally.
+
 ## References and structural validation
 
 Within a section, a reference is either a fixed-width record index or an
@@ -310,12 +332,11 @@ boundary: the loader rejects schema 9 with `UnsupportedVersion(9)`. Users
 regenerate format images from their source under the schema-10 engine; Umber
 does not reinterpret an old image heuristically.
 
-During the transition, schema 10 writes section 1 only for node graphs and the
-environment overlay. Names, token lists, macros, glue, fonts, code tables, and
+During the transition, schema 10 writes section 1 only for the environment
+overlay; node graphs are written to kind 512. Names, token lists, macros, glue, fonts, code tables, and
 hyphenation exist only in authoritative sections 256 through 352 and are never
 reinterned during normal loading. The decoder validates overlay references
-against those frozen stores before publication. Later phases replace the
-remaining node/environment reconstruction with allocated frozen sections,
-immutable graph stores, and mutable overlays. Once those sections are
-integrated across all drivers, section 1 is removed under another explicit
+against those frozen stores before publication. A later phase replaces the
+remaining environment reconstruction with a mutable overlay. Once that path
+is integrated across all drivers, section 1 is removed under another explicit
 schema bump.

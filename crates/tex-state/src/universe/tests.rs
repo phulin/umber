@@ -608,6 +608,7 @@ fn frozen_foundational_sections_restore_ids_and_accept_job_local_additions() {
             crate::stores::FONTS_SECTION,
             crate::stores::CODE_TABLES_SECTION,
             crate::stores::HYPHENATION_SECTION,
+            crate::stores::FROZEN_NODES_SECTION,
         ]
     );
     let transitional = container
@@ -689,6 +690,36 @@ fn frozen_foundational_sections_restore_ids_and_accept_job_local_additions() {
     loaded.rollback(&baseline);
     assert!(loaded.symbol("job-local-name").is_none());
     assert_eq!(loaded.dump_format().expect("rollback redump"), image);
+}
+
+#[test]
+fn frozen_node_arena_installs_outside_job_epoch_and_rejects_corrupt_metadata() {
+    let mut universe = Universe::new();
+    let child = universe.freeze_node_list(&[Node::Penalty(17)]);
+    let root = universe.freeze_node_list(&[Node::Adjust(child)]);
+    universe.set_box_reg(8, root);
+    let image = universe.dump_format().expect("frozen node format");
+
+    let mut loaded = Universe::from_format(World::memory(), &image).expect("load frozen nodes");
+    assert_eq!(loaded.testing_epoch_node_count(), 0);
+    let frozen_root = loaded.box_reg(8).expect("frozen box root");
+    let local = loaded.freeze_node_list(&[Node::Adjust(frozen_root)]);
+    assert_eq!(loaded.testing_epoch_node_count(), 1);
+    assert!(
+        matches!(loaded.nodes(local).testing_decoded(), [Node::Adjust(id)] if *id == frozen_root)
+    );
+
+    for offset in [12_usize, 32 + 24] {
+        let mut corrupt = image.clone();
+        replace_format_section(
+            &mut corrupt,
+            crate::stores::FROZEN_NODES_SECTION,
+            |section| {
+                section[offset] ^= 1;
+            },
+        );
+        assert!(Universe::from_format(World::memory(), &corrupt).is_err());
+    }
 }
 
 #[test]
@@ -1162,8 +1193,8 @@ fn format_v10_round_trips_tex_web_box_shift_and_rejects_legacy_v9() {
 fn replace_format_ratio(bytes: &mut [u8], old: (i32, i32), new: (i32, i32)) {
     let section = crate::format_container::decode(bytes)
         .expect("decode test container")
-        .section(crate::format_container::TRANSITIONAL_SEMANTIC_SECTION)
-        .expect("semantic section");
+        .section(crate::stores::FROZEN_NODES_SECTION)
+        .expect("frozen node section");
     let range = section.offset..section.offset + section.bytes.len();
     let old = [old.0.to_le_bytes(), old.1.to_le_bytes()].concat();
     let replacement = [new.0.to_le_bytes(), new.1.to_le_bytes()].concat();

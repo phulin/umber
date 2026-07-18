@@ -1273,8 +1273,7 @@ impl Universe {
     /// Host effects, provenance, checkpoints, journals, caches, and input
     /// cursors are intentionally absent. The image is deterministic for one
     /// semantic state across the portable schema-10 frozen stores and its
-    /// node/environment transitional overlay. Later schemas can replace that
-    /// overlay without changing the fixed-width outer ABI.
+    /// fixed node arena and transitional environment overlay.
     pub fn dump_format(&self) -> Result<Vec<u8>, FormatError> {
         if !self.input_summary.is_empty() {
             return Err(FormatError::NonEmptyInput);
@@ -1342,6 +1341,11 @@ impl Universe {
                 alignment: 8,
                 bytes: &stores.hyphenation,
             },
+            crate::format_container::SectionInput {
+                kind: crate::stores::FROZEN_NODES_SECTION,
+                alignment: 8,
+                bytes: &stores.nodes,
+            },
         ])
         .map_err(map_container_error)
     }
@@ -1349,9 +1353,9 @@ impl Universe {
     /// Constructs a fresh timeline from a validated semantic format image.
     pub fn from_format(world: World, bytes: &[u8]) -> Result<Self, FormatError> {
         let container = crate::format_container::decode(bytes).map_err(map_container_error)?;
-        if container.sections.len() != 9 {
+        if container.sections.len() != 10 {
             return Err(FormatError::InvalidState(
-                "schema-10 core format requires exactly nine sections".to_owned(),
+                "schema-10 core format requires exactly ten sections".to_owned(),
             ));
         }
         let payload = container
@@ -1377,7 +1381,10 @@ impl Universe {
             code_tables: required_format_section(&container, crate::stores::CODE_TABLES_SECTION)?,
             hyphenation: required_format_section(&container, crate::stores::HYPHENATION_SECTION)?,
         };
-        let mut stores = Stores::decode_frozen_format(&format.stores, frozen, non_node)
+        let nodes = crate::stores::FrozenNodeSection {
+            bytes: required_format_section(&container, crate::stores::FROZEN_NODES_SECTION)?,
+        };
+        let mut stores = Stores::decode_frozen_format(&format.stores, frozen, non_node, nodes)
             .map_err(map_store_format_error)?;
         let clock = world.job_clock();
         install_job_clock_params(

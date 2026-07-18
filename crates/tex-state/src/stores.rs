@@ -74,9 +74,9 @@ mod node_semantic;
 mod state_hash;
 
 pub(crate) use format::{
-    CODE_TABLES_SECTION, FONTS_SECTION, FrozenCoreSections, FrozenNonNodeSections, GLUE_SECTION,
-    HYPHENATION_SECTION, MACROS_SECTION, NAMES_LOOKUP_SECTION, NAMES_SECTION, StoreFormatError,
-    TOKEN_LISTS_SECTION,
+    CODE_TABLES_SECTION, FONTS_SECTION, FROZEN_NODES_SECTION, FrozenCoreSections,
+    FrozenNodeSection, FrozenNonNodeSections, GLUE_SECTION, HYPHENATION_SECTION, MACROS_SECTION,
+    NAMES_LOOKUP_SECTION, NAMES_SECTION, StoreFormatError, TOKEN_LISTS_SECTION,
 };
 #[cfg(test)]
 pub(crate) use format::{

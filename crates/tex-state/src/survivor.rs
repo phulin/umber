@@ -122,6 +122,33 @@ struct SurvivorSemanticSpan {
 }
 
 impl SurvivorArena {
+    /// Reserves a process-unique root for a fully validated frozen format
+    /// graph. The caller must publish it before exposing any derived handles.
+    pub(crate) fn reserve_frozen_root(&self) -> SurvivorRootId {
+        allocate_survivor_root()
+            .map(SurvivorRootId::new)
+            .expect("survivor root identity space exhausted")
+    }
+
+    /// Publishes a portable frozen graph as one immutable survivor root.
+    pub(crate) fn publish_frozen_root(
+        &mut self,
+        root: SurvivorRootId,
+        storage: NodeStorage,
+        spans: Vec<(u32, u32, NodeSemanticId)>,
+    ) {
+        let spans = spans
+            .into_iter()
+            .filter(|(_, len, _)| *len != 0)
+            .map(|(start, len, semantic_id)| SurvivorSemanticSpan {
+                start,
+                len,
+                semantic_id,
+            })
+            .collect();
+        self.allocate_root(root, storage, spans);
+    }
+
     pub(crate) fn retained_payload_bytes(&self) -> usize {
         let root_storage = self
             .slots

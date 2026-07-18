@@ -12,6 +12,14 @@ use crate::node_arena::{NodeSemanticId, NodeSemanticIdBuilder};
 use crate::state_hash::StateHasher;
 
 impl Stores {
+    pub(super) fn compute_node_semantic_id(&self, nodes: &[Node]) -> NodeSemanticId {
+        let mut identity = NodeSemanticIdBuilder::new();
+        for node in nodes {
+            identity.push(|hasher| self.hash_node_semantic_identity(node, hasher));
+        }
+        identity.finish()
+    }
+
     pub(super) fn validate_and_compute_node_semantic_id(
         &mut self,
         nodes: &[Node],

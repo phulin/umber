@@ -14,6 +14,13 @@ impl NodeSemanticId {
         self.0
     }
 
+    /// Constructs an identity whose bytes were independently validated by a
+    /// frozen-format decoder.
+    #[must_use]
+    pub(crate) const fn from_validated(value: u64) -> Self {
+        Self(value)
+    }
+
     #[must_use]
     pub(crate) fn empty() -> Self {
         NodeSemanticIdBuilder::new().finish()
