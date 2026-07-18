@@ -188,6 +188,7 @@ fn end_paragraph_with_memo(
             execution,
             nest.current_list().nodes(),
             nest.enclosing_vertical_prev_graf(),
+            crate::executor::ParagraphContinuation::End,
         );
     } else {
         execution.pending_paragraph_memo = None;
@@ -220,7 +221,8 @@ pub(crate) fn install_reused_paragraph_hlist(
     execution: &mut crate::ExecutionContext<'_>,
     nodes: Vec<Node>,
     finished: Option<(Vec<Node>, i32, i32)>,
-) -> Result<(), ExecError> {
+    continuation: crate::executor::ParagraphContinuation,
+) -> Result<Option<BoxNode>, ExecError> {
     // The retained hlist already includes the recorded `everypar` execution;
     // scheduling it again would leave its tokens after the consumed paragraph.
     start_paragraph(nest, input, stores, true, false)?;
@@ -237,8 +239,12 @@ pub(crate) fn install_reused_paragraph_hlist(
             true,
             Some(execution),
         )?;
-        return Ok(());
+        return Ok(None);
     };
+    let last_line = finished.iter().rev().find_map(|node| match node {
+        Node::HList(line) => Some(*line),
+        _ => None,
+    });
     let _ = nest.pop()?;
     for node in finished {
         append_node_to_current_list(nest, stores, node)?;
@@ -247,8 +253,11 @@ pub(crate) fn install_reused_paragraph_hlist(
     nest.current_list_mut()
         .set_prev_graf(prev_graf.saturating_add(line_count));
     stores.set_last_badness(last_badness);
-    reset_after_par(nest, stores);
-    build_page_if_outer_vertical(nest, stores)
+    if continuation == crate::executor::ParagraphContinuation::End {
+        reset_after_par(nest, stores);
+    }
+    build_page_if_outer_vertical(nest, stores)?;
+    Ok(last_line)
 }
 
 pub(crate) struct ParagraphBreakResult {
@@ -259,6 +268,7 @@ pub(crate) struct ParagraphBreakResult {
 pub(crate) fn interrupt_paragraph_for_display(
     nest: &mut ModeNest,
     stores: &mut Universe,
+    execution: &mut crate::ExecutionContext<'_>,
 ) -> Result<ParagraphBreakResult, ExecError> {
     flush_pending_hchars(nest, stores)?;
     if nest.current_list().is_empty() {
@@ -276,7 +286,7 @@ pub(crate) fn interrupt_paragraph_for_display(
         final_widow_penalty,
         final_widow_penalties,
         false,
-        None,
+        Some(execution),
     )
 }
 
@@ -419,6 +429,7 @@ fn break_current_paragraph(
             execution,
             &finished_nodes,
             line_count,
+            &active_directions,
         );
     }
     if reset_paragraph {

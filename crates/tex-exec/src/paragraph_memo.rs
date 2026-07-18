@@ -3,7 +3,7 @@
 use tex_lex::InputStack;
 use tex_state::env::banks::{DimenParam, GlueParam, IntParam, TokParam};
 use tex_state::{
-    DetachedVirtualEffect, EffectRecord, MemoTimingPhase, ParagraphRecordingPhase,
+    DetachedVirtualEffect, EffectRecord, MemoTimingPhase, MemoValueLimits, ParagraphRecordingPhase,
     ParagraphValidationFailure, PrintSink, Universe,
 };
 
@@ -93,9 +93,16 @@ pub(crate) fn try_reuse_aligned_paragraph(
         return Ok(false);
     };
     let input_origins = resolve_paragraph_provenance(stores, &entry.input_provenance);
+    let input_suffix_token_lists = entry
+        .input_suffix_token_lists
+        .iter()
+        .map(|tokens| stores.import_memo_token_list(tokens, MemoValueLimits::default()))
+        .collect::<Result<Vec<_>, _>>()
+        .expect("recorded paragraph input token list must remain importable");
     let transition_applied = input.apply_paragraph_transition(
         stores,
         prepared_input,
+        &input_suffix_token_lists,
         &input_origins,
         &entry.input_provenance.origin_slots,
         &entry.input_origin_list_lengths,
@@ -126,17 +133,38 @@ pub(crate) fn try_reuse_aligned_paragraph(
     let line_last_badness = entry.line_last_badness;
     let mutation_count = entry.mutations.len();
     let delivered_tokens = entry.delivered_tokens;
+    let continuation = if entry.display_active_directions.is_some() {
+        crate::executor::ParagraphContinuation::Display
+    } else {
+        crate::executor::ParagraphContinuation::End
+    };
+    let display_active_directions = entry
+        .display_active_directions
+        .as_deref()
+        .unwrap_or_default()
+        .to_vec();
     stores.record_carried_paragraph(&entry);
     stores.record_paragraph_region(entry);
     execution.pending_paragraph_memo = None;
-    crate::assignments::install_reused_paragraph_hlist(
+    let last_line = crate::assignments::install_reused_paragraph_hlist(
         nest,
         input,
         stores,
         execution,
         Vec::new(),
         Some((lines, line_count, line_last_badness)),
+        continuation,
     )?;
+    if continuation == crate::executor::ParagraphContinuation::Display {
+        crate::math::enter_display_after_reused_paragraph(
+            nest,
+            input,
+            stores,
+            execution,
+            last_line,
+            display_active_directions,
+        )?;
+    }
     stores.record_pure_paragraph_hit(delivered_tokens, mutation_count);
     stores.record_pure_paragraph_line_hit();
     Ok(true)
@@ -560,8 +588,9 @@ pub(crate) fn publish_prepared_hlist(
     execution: &mut ExecutionContext<'_>,
     nodes: &[tex_state::node::Node],
     prev_graf: i32,
+    continuation: crate::executor::ParagraphContinuation,
 ) {
-    publish_recorded_region(input, stores, execution);
+    publish_recorded_region(input, stores, execution, continuation);
     if execution.pending_paragraph_memo.is_none() {
         return;
     }
@@ -581,6 +610,7 @@ pub(crate) fn publish_prepared_hlist(
     execution.pending_paragraph_memo = Some(crate::executor::PendingParagraphMemo {
         break_dependencies,
         prev_graf,
+        continuation,
     });
 }
 
@@ -588,6 +618,7 @@ fn publish_recorded_region(
     input: &mut InputStack,
     stores: &mut Universe,
     execution: &mut ExecutionContext<'_>,
+    continuation: crate::executor::ParagraphContinuation,
 ) {
     let Some(mut recording) = execution.cold_paragraph_recording.take() else {
         let _ = stores.finish_pure_paragraph_recording();
@@ -700,6 +731,18 @@ fn publish_recorded_region(
     let input_transition_prefix = input_transition_prefix.expect("barrier-free input transition");
     let (input_provenance, input_origin_list_lengths) =
         paragraph_input_provenance(stores, &ending_input.frames()[input_transition_prefix..]);
+    let input_suffix_token_lists = ending_input.frames()[input_transition_prefix..]
+        .iter()
+        .filter_map(|frame| match frame {
+            tex_state::InputFrameSummary::TokenList { token_list, .. } => {
+                Some(stores.detach_token_list(*token_list))
+            }
+            tex_state::InputFrameSummary::Source { .. }
+            | tex_state::InputFrameSummary::TransientTokenList { .. }
+            | tex_state::InputFrameSummary::Condition { .. } => None,
+        })
+        .collect::<Result<Vec<_>, _>>()
+        .expect("live paragraph input token list must remain detachable");
     let dependency_started = start_phase();
     keys.extend([
         tex_state::DependencyKey::Cell {
@@ -762,12 +805,16 @@ fn publish_recorded_region(
             .expect("input frame count must fit u32"),
         input_provenance,
         input_origin_list_lengths: input_origin_list_lengths.into(),
+        input_suffix_token_lists: input_suffix_token_lists.into(),
         barriers: recording.barriers.into_iter().collect::<Vec<_>>().into(),
         break_dependencies: Vec::new().into(),
         break_prev_graf: None,
         lines: None,
         line_count: 0,
         line_last_badness: 0,
+        display_active_directions: (continuation
+            == crate::executor::ParagraphContinuation::Display)
+            .then(|| std::sync::Arc::from([])),
         line_provenance: tex_state::ParagraphProvenanceRecipe::default(),
     });
     finish_phase(
@@ -779,6 +826,7 @@ fn publish_recorded_region(
         execution.pending_paragraph_memo = Some(crate::executor::PendingParagraphMemo {
             break_dependencies: Vec::new(),
             prev_graf: None,
+            continuation,
         });
     }
 }
@@ -788,6 +836,7 @@ pub(crate) fn publish_finished_lines(
     execution: &mut ExecutionContext<'_>,
     nodes: &[tex_state::node::Node],
     line_count: i32,
+    active_directions: &[tex_state::node::Direction],
 ) {
     let Some(pending) = execution.pending_paragraph_memo.take() else {
         return;
@@ -809,14 +858,19 @@ pub(crate) fn publish_finished_lines(
     );
     let publication_started = start_phase();
     let last_badness = stores.last_badness();
-    stores.finish_recorded_paragraph_lines(
-        pending.break_dependencies,
-        pending.prev_graf,
-        retained,
+    let display_active_directions = match pending.continuation {
+        crate::executor::ParagraphContinuation::End => None,
+        crate::executor::ParagraphContinuation::Display => Some(active_directions.into()),
+    };
+    stores.finish_recorded_paragraph_lines(tex_state::RecordedParagraphLines {
+        dependencies: pending.break_dependencies,
+        prev_graf: pending.prev_graf,
+        lines: retained,
         line_count,
         last_badness,
+        display_active_directions,
         provenance,
-    );
+    });
     finish_phase(
         stores,
         ParagraphRecordingPhase::RegionPublication,

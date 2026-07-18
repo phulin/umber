@@ -3225,6 +3225,7 @@ impl InputStack {
         &mut self,
         stores: &mut impl ExpansionState,
         transition: PreparedParagraphTransition,
+        input_suffix_token_lists: &[TokenListId],
         resolved_input_origins: &[OriginId],
         input_origin_slots: &[u32],
         input_origin_list_lengths: &[u32],
@@ -3235,6 +3236,11 @@ impl InputStack {
             .filter(|frame| matches!(frame, InputFrameSummary::TokenList { .. }));
         assert_eq!(
             stored_suffix_frames.count(),
+            input_suffix_token_lists.len(),
+            "recorded input token lists must match their frame suffix"
+        );
+        assert_eq!(
+            input_suffix_token_lists.len(),
             input_origin_list_lengths.len(),
             "recorded input provenance list shape must match its frame suffix"
         );
@@ -3372,6 +3378,7 @@ impl InputStack {
         }
         let mut origin_slots = input_origin_slots.iter().copied();
         let mut origin_list_lengths = input_origin_list_lengths.iter().copied();
+        let mut input_suffix_token_lists = input_suffix_token_lists.iter().copied();
         let next_origin = |origin_slots: &mut std::iter::Copied<std::slice::Iter<'_, u32>>| {
             let ordinal = origin_slots
                 .next()
@@ -3385,7 +3392,7 @@ impl InputStack {
         for frame in transition.ending_suffix {
             let frame = match frame {
                 InputFrameSummary::TokenList {
-                    token_list,
+                    token_list: _,
                     origin_list: _,
                     replay_kind,
                     index,
@@ -3421,7 +3428,9 @@ impl InputStack {
                         .collect();
                     InputFrame::TokenList(TokenListInputFrame {
                         payload: ReplayPayload::Stored {
-                            token_list,
+                            token_list: input_suffix_token_lists
+                                .next()
+                                .expect("stored input frame must retain its token list"),
                             origin_list,
                         },
                         replay_kind,
@@ -3473,8 +3482,10 @@ impl InputStack {
             self.push_frame(frame);
         }
         assert!(
-            origin_slots.next().is_none() && origin_list_lengths.next().is_none(),
-            "recorded input provenance must be consumed exactly"
+            input_suffix_token_lists.next().is_none()
+                && origin_slots.next().is_none()
+                && origin_list_lengths.next().is_none(),
+            "recorded input suffix payloads must be consumed exactly"
         );
         self.active_macro_invocation = self
             .frames

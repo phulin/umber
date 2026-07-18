@@ -73,7 +73,7 @@ pub(crate) use paragraph::install_reused_paragraph_hlist;
 pub(crate) use paragraph::test_pretolerance_memo_key;
 use paragraph::*;
 pub(crate) use paragraph::{
-    display_line_dimensions, end_paragraph, ensure_horizontal_for_character,
+    ParagraphBreakResult, display_line_dimensions, end_paragraph, ensure_horizontal_for_character,
     interrupt_paragraph_for_display, make_indent_box, normal_paragraph,
 };
 use pdf_fonts::*;

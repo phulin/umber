@@ -455,6 +455,9 @@ pub struct RecordedParagraphRegion {
     /// Origin-list lengths for stored token-list frames in the introduced
     /// suffix, in frame order. Empty lists remain empty after rebinding.
     pub input_origin_list_lengths: Arc<[u32]>,
+    /// Handle-free token content for stored token-list frames introduced by
+    /// the paragraph. Common-prefix frames remain live and need no copy.
+    pub input_suffix_token_lists: Arc<[crate::DetachedMemoValue]>,
     pub barriers: Arc<[ParagraphBarrierReason]>,
     /// Dependencies observed by horizontal-list construction, line breaking,
     /// materialization, and packing. A mismatch invalidates finished lines and
@@ -468,7 +471,23 @@ pub struct RecordedParagraphRegion {
     pub line_count: i32,
     /// `\badness` left by packing the final materialized line.
     pub line_last_badness: i32,
+    /// Direction stack needed when replay must continue in display math.
+    /// `None` means ordinary paragraph termination; `Some` also identifies an
+    /// empty direction stack as a display continuation without an extra flag.
+    pub display_active_directions: Option<Arc<[crate::node::Direction]>>,
     pub line_provenance: ParagraphProvenanceRecipe,
+}
+
+/// Finished line-breaking payload attached to the most recently recorded
+/// paragraph region.
+pub struct RecordedParagraphLines {
+    pub dependencies: Vec<ObservedDependency>,
+    pub prev_graf: Option<i32>,
+    pub lines: RetainedNodeList,
+    pub line_count: i32,
+    pub last_badness: i32,
+    pub display_active_directions: Option<Arc<[crate::node::Direction]>>,
+    pub provenance: ParagraphProvenanceRecipe,
 }
 
 #[derive(Clone, Debug)]
@@ -957,25 +976,18 @@ impl PureMemoRuntime {
         *target = target.saturating_add(1);
     }
 
-    pub(crate) fn finish_recorded_paragraph_lines(
-        &mut self,
-        dependencies: Vec<ObservedDependency>,
-        prev_graf: Option<i32>,
-        lines: RetainedNodeList,
-        line_count: i32,
-        last_badness: i32,
-        provenance: ParagraphProvenanceRecipe,
-    ) {
+    pub(crate) fn finish_recorded_paragraph_lines(&mut self, result: RecordedParagraphLines) {
         let Some(region) = self.recorded_paragraphs.last_mut() else {
             return;
         };
         if region.barriers.is_empty() && region.lines.is_none() {
-            region.break_dependencies = dependencies.into();
-            region.break_prev_graf = prev_graf;
-            region.lines = Some(lines);
-            region.line_count = line_count;
-            region.line_last_badness = last_badness;
-            region.line_provenance = provenance;
+            region.break_dependencies = result.dependencies.into();
+            region.break_prev_graf = result.prev_graf;
+            region.lines = Some(result.lines);
+            region.line_count = result.line_count;
+            region.line_last_badness = result.last_badness;
+            region.display_active_directions = result.display_active_directions;
+            region.line_provenance = result.provenance;
         }
     }
 
@@ -1579,6 +1591,13 @@ fn recorded_paragraph_retained_bytes(region: &RecordedParagraphRegion) -> usize 
         )
         .saturating_add(
             region
+                .input_suffix_token_lists
+                .iter()
+                .map(crate::DetachedMemoValue::retained_bytes)
+                .sum::<usize>(),
+        )
+        .saturating_add(
+            region
                 .barriers
                 .len()
                 .saturating_mul(std::mem::size_of::<ParagraphBarrierReason>()),
@@ -1588,6 +1607,16 @@ fn recorded_paragraph_retained_bytes(region: &RecordedParagraphRegion) -> usize 
                 .break_dependencies
                 .len()
                 .saturating_mul(std::mem::size_of::<ObservedDependency>()),
+        )
+        .saturating_add(
+            region
+                .display_active_directions
+                .as_ref()
+                .map_or(0, |directions| {
+                    directions
+                        .len()
+                        .saturating_mul(std::mem::size_of::<crate::node::Direction>())
+                }),
         )
         .saturating_add(paragraph_provenance_retained_bytes(&region.line_provenance))
 }

@@ -1895,23 +1895,8 @@ impl Universe {
     }
 
     #[doc(hidden)]
-    pub fn finish_recorded_paragraph_lines(
-        &mut self,
-        dependencies: Vec<crate::ObservedDependency>,
-        prev_graf: Option<i32>,
-        lines: crate::survivor::RetainedNodeList,
-        line_count: i32,
-        last_badness: i32,
-        provenance: crate::ParagraphProvenanceRecipe,
-    ) {
-        self.pure_memo.finish_recorded_paragraph_lines(
-            dependencies,
-            prev_graf,
-            lines,
-            line_count,
-            last_badness,
-            provenance,
-        );
+    pub fn finish_recorded_paragraph_lines(&mut self, result: crate::RecordedParagraphLines) {
+        self.pure_memo.finish_recorded_paragraph_lines(result);
     }
 
     #[doc(hidden)]

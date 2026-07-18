@@ -108,18 +108,34 @@ pub(crate) fn enter_math(
     ) {
         assignments::flush_pending_hchars(nest, stores)?;
     }
-    // Math construction observes a broad family/code/style parameter surface
-    // that is not yet represented in finished-line paragraph dependencies.
-    execution.mark_paragraph_barrier(tex_state::ParagraphBarrierReason::DisplayMath);
-    let interrupt = if display {
+    if display {
         crate::paragraph_memo::publish_prepared_hlist(
             input,
             stores,
             execution,
             nest.current_list().nodes(),
             nest.enclosing_vertical_prev_graf(),
+            crate::executor::ParagraphContinuation::Display,
         );
-        let paragraph = assignments::interrupt_paragraph_for_display(nest, stores)?;
+        let paragraph = assignments::interrupt_paragraph_for_display(nest, stores, execution)?;
+        return enter_math_after_paragraph(nest, input, stores, execution, Some(paragraph));
+    }
+    // Inline math becomes paragraph material and observes a broad
+    // family/code/style parameter surface not yet represented in the
+    // finished-line dependency projection.
+    execution.mark_paragraph_barrier(tex_state::ParagraphBarrierReason::DisplayMath);
+    enter_math_after_paragraph(nest, input, stores, execution, None)
+}
+
+fn enter_math_after_paragraph(
+    nest: &mut ModeNest,
+    input: &mut InputStack,
+    stores: &mut Universe,
+    execution: &mut crate::ExecutionContext<'_>,
+    paragraph: Option<assignments::ParagraphBreakResult>,
+) -> Result<DispatchAction, ExecError> {
+    let display = paragraph.is_some();
+    let interrupt = paragraph.map(|paragraph| {
         let dimensions = assignments::display_line_dimensions(nest, stores);
         let pre_display_size = paragraph
             .last_line
@@ -127,15 +143,13 @@ pub(crate) fn enter_math(
             .map_or(Scaled::from_raw(-Scaled::MAX_DIMEN.raw()), |line| {
                 pre_display_size(stores, line)
             });
-        Some((
+        (
             pre_display_size,
             dimensions.width,
             dimensions.indent,
             paragraph.active_directions,
-        ))
-    } else {
-        None
-    };
+        )
+    });
     stores.enter_group_with_kind(tex_state::GroupKind::MathShift);
     if let Some((pre_display_size, display_width, display_indent, active_directions)) = &interrupt {
         stores.set_dimen_param(DimenParam::PRE_DISPLAY_SIZE, *pre_display_size);
@@ -172,6 +186,22 @@ pub(crate) fn enter_math(
     push_tokens(input, stores, tokens);
     sync_engine_state(execution, nest, stores);
     Ok(DispatchAction::Continue)
+}
+
+pub(crate) fn enter_display_after_reused_paragraph(
+    nest: &mut ModeNest,
+    input: &mut InputStack,
+    stores: &mut Universe,
+    execution: &mut crate::ExecutionContext<'_>,
+    last_line: Option<tex_state::node::BoxNode>,
+    active_directions: Vec<tex_state::node::Direction>,
+) -> Result<(), ExecError> {
+    let paragraph = assignments::ParagraphBreakResult {
+        last_line,
+        active_directions,
+    };
+    let _ = enter_math_after_paragraph(nest, input, stores, execution, Some(paragraph))?;
+    Ok(())
 }
 
 pub(crate) fn dispatch_math_token_with_context(

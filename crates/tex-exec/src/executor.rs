@@ -95,6 +95,13 @@ pub enum FontSource {
 pub(crate) struct PendingParagraphMemo {
     pub(crate) break_dependencies: Vec<tex_state::ObservedDependency>,
     pub(crate) prev_graf: Option<i32>,
+    pub(crate) continuation: ParagraphContinuation,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum ParagraphContinuation {
+    End,
+    Display,
 }
 
 pub(crate) struct ColdParagraphRecording {
@@ -635,12 +642,14 @@ where
                     )? {
                         output::drain_pending_output(nest, input, stores, execution, stats)?;
                         execution.paragraph_memo_barrier = false;
+                        let outer_paragraph_end =
+                            nest.current_mode() == crate::Mode::Vertical && nest.depth() == 1;
                         if observe(
                             nest,
                             input,
                             stores,
                             BoundaryEvent {
-                                outer_paragraph_end: true,
+                                outer_paragraph_end,
                                 shipout_complete: stores.world().artifact_commits().len()
                                     != before_artifacts,
                             },

@@ -1065,6 +1065,119 @@ fn paragraph_with_inline_math_executes_cold_until_math_dependencies_are_modeled(
 }
 
 #[test]
+fn paragraph_replay_enters_display_continuation_after_skipped_delimiters() {
+    let mut universe = template();
+    universe.enable_pure_memo(tex_state::PureMemoConfig::default());
+    let source = concat!(
+        "changed paragraph text\\par\n",
+        "text before display $$$$ text after display\\par\n",
+        "stable suffix paragraph\\par\n",
+        "\\vfill\\eject\\end",
+    );
+    let mut session = Session::start(
+        universe,
+        "paragraph-display-continuation",
+        RevisionId::new(1),
+        source.to_owned(),
+        usize::MAX,
+    )
+    .expect("session starts");
+    session.cold().expect("cold revision");
+    let before = session.pure_memo_stats();
+    assert_eq!(before.paragraph_display_math_barriers, 0, "{before:?}");
+
+    let changed = source.find("changed").expect("changed word");
+    let edited = format!(
+        "{}altered{}",
+        &source[..changed],
+        &source[changed + "changed".len()..]
+    );
+    let incremental = session
+        .advance(
+            RevisionId::new(2),
+            Edit {
+                base_revision: RevisionId::new(1),
+                expected_hash: ContentHash::from_bytes(source.as_bytes()),
+                range: changed..changed + "changed".len(),
+                replacement: "altered".to_owned(),
+            },
+        )
+        .expect("prefix paragraph edit");
+    let after = session.pure_memo_stats();
+    assert!(after.paragraph_hits > before.paragraph_hits, "{after:?}");
+
+    let mut cold_universe = template();
+    cold_universe.enable_pure_memo(tex_state::PureMemoConfig::default());
+    let mut cold = Session::start(
+        cold_universe,
+        "paragraph-display-continuation",
+        RevisionId::new(2),
+        edited,
+        usize::MAX,
+    )
+    .expect("cold comparison starts");
+    let expected = cold.cold().expect("cold comparison");
+    assert_eq!(incremental.dvi_bytes(), expected.dvi_bytes());
+    assert_eq!(incremental.effects, expected.effects);
+}
+
+#[test]
+fn display_continuation_replay_rebinds_introduced_macro_token_list() {
+    let mut universe = template();
+    universe.enable_pure_memo(tex_state::PureMemoConfig::default());
+    let removed = "\\def\\unused{allocation slot}\\n";
+    let source = format!(
+        "{removed}{}",
+        concat!(
+            "\\def\\showdisplay{$$$$}\n",
+            "prefix paragraph text\\par\n",
+            "text before display \\showdisplay text after display\\par\n",
+            "stable suffix paragraph\\par\n",
+            "\\vfill\\eject\\end",
+        )
+    );
+    let mut session = Session::start(
+        universe,
+        "paragraph-display-token-list-rebind",
+        RevisionId::new(1),
+        source.clone(),
+        usize::MAX,
+    )
+    .expect("session starts");
+    session.cold().expect("cold revision");
+    let before = session.pure_memo_stats();
+
+    let incremental = session
+        .advance(
+            RevisionId::new(2),
+            Edit {
+                base_revision: RevisionId::new(1),
+                expected_hash: ContentHash::from_bytes(source.as_bytes()),
+                range: 0..removed.len(),
+                replacement: String::new(),
+            },
+        )
+        .expect("token-list allocation-shifting edit");
+    let after = session.pure_memo_stats();
+    assert!(after.paragraph_hits > before.paragraph_hits, "{after:?}");
+
+    let edited = &source[removed.len()..];
+    let mut cold_universe = template();
+    cold_universe.enable_pure_memo(tex_state::PureMemoConfig::default());
+    let mut cold = Session::start(
+        cold_universe,
+        "paragraph-display-token-list-rebind",
+        RevisionId::new(2),
+        edited.to_owned(),
+        usize::MAX,
+    )
+    .expect("cold comparison starts");
+    let expected = cold.cold().expect("cold comparison");
+    assert_eq!(incremental.dvi_bytes(), expected.dvi_bytes());
+    assert_eq!(incremental.effects, expected.effects);
+}
+
+#[test]
 fn root_compacted_paragraph_does_not_replay_after_entering_a_live_group() {
     let mut universe = template();
     universe.enable_pure_memo(tex_state::PureMemoConfig::default());
