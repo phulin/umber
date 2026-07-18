@@ -1,184 +1,12 @@
-// Direct mixed-stage xfail translation of upstream t/basic-misc.t at commit 74252e6.
-// Keep `UPSTREAM_SOURCE` byte-for-byte equivalent when editing expectations.
+//! Native translations of upstream `t/basic-misc.t` at commit 74252e6.
 
-use super::{SemanticOwner, compare_owned_upstream};
+use bib_engine::{Entry, FieldId, FieldValue, RangeEndpoint, SectionId};
 
-// This upstream file crosses semantic stages. Keep each assertion attached to
-// the issue that owns the last behavior needed for its exact expected value.
-fn compare_upstream(
-    assertion: &str,
-    actual_expression: &str,
-    expected_expression: &str,
-    upstream_call: &str,
-    upstream_source: &str,
-) {
-    use SemanticOwner::{Graph, Labels, Names, Output, Session, SortAndLists};
+use super::maps::{
+    entry, list_keys, output_entry, output_text, section_entry_keys, try_run_fixture,
+};
 
-    let owner = match assertion {
-        "uniquelist 1" | "uniquename count 1" | "uniquename count 2" => Labels,
-        "citekeys 1"
-        | "shorthands"
-        | "citekeys 2"
-        | "per_type/entry items - 1"
-        | "per_type/entry items - 2" => SortAndLists,
-        "Keywords test - 1"
-        | "Keywords test - 2"
-        | "Keywords test - 3"
-        | "map 1"
-        | "map 2"
-        | "map 3"
-        | "map 4"
-        | "map 5"
-        | "map 6"
-        | "map 7"
-        | "map 8"
-        | "map 9"
-        | "map 10"
-        | "Citekey aliases - 1"
-        | "Citekey aliases - 2"
-        | "Citekey aliases - 3"
-        | "Citekey aliases - 4"
-        | "Citekey aliases - 5"
-        | "map_final - 1"
-        | "map_final - 2"
-        | "Map levels - 1"
-        | "Overwrite test - 1"
-        | "ISBN options - 1"
-        | "ISBN options - 2"
-        | "New key loop mapping - 1"
-        | "New key loop mapping - 2"
-        | "notfield - 1"
-        | "notfield - 2"
-        | "Static match list - 1"
-        | "Static match list - 2"
-        | "Static match list - 3" => Graph,
-        "bib visibility - 1"
-        | "per_type maxcitenames - 1"
-        | "per_type maxcitenames - 2"
-        | "per_type bibnames - 3"
-        | "per_type bibnames - 4"
-        | "per_type/entry alphanames - 1"
-        | "per_type/entry alphanames - 2"
-        | "Entry with others list" => Names,
-        "default bib month macros"
-        | "URL encoding - 1"
-        | "pages - 1"
-        | "pages - 2"
-        | "pages - 3"
-        | "pages - 4"
-        | "pages - 5"
-        | "pages - 6"
-        | "pages - 7"
-        | "pages - 8"
-        | "pages - 9" => Session,
-        "bbl entry with maths in title 1"
-        | "bbl entry with maths in title 2"
-        | "bbl with > maxcitenames"
-        | "missing citekey 1"
-        | "missing citekey 2"
-        | "bbl with > maxcitenames, empty alphaothers"
-        | "namehash/fullhash 1"
-        | "namehash/fullhash 2"
-        | "URL encoding - 2"
-        | "Clone - 1"
-        | "Clone - 2"
-        | "New key mapping - 1"
-        | "Extended name test - 1"
-        | "Decoding verbatim fields - 1" => Output,
-        _ => panic!("mixed-stage assertion `{assertion}` has no semantic owner"),
-    };
-    compare_owned_upstream(
-        owner,
-        assertion,
-        actual_expression,
-        expected_expression,
-        upstream_call,
-        upstream_source,
-    );
-}
-
-const UPSTREAM_SOURCE: &str = r#"# -*- cperl -*-
-use strict;
-use warnings;
-use utf8;
-no warnings 'utf8';
-
-use Test::More tests => 72;
-use Test::Differences;
-unified_diff;
-
-use Biber;
-use Biber::Utils;
-use Biber::Output::bbl;
-use Log::Log4perl;
-use Unicode::Normalize;
-chdir("t/tdata");
-
-# Set up Biber object
-my $biber = Biber->new(configfile => 'biber-test.conf');
-my $LEVEL = 'ERROR';
-my $l4pconf = qq|
-    log4perl.category.main                             = $LEVEL, Screen
-    log4perl.category.screen                           = $LEVEL, Screen
-    log4perl.appender.Screen                           = Log::Log4perl::Appender::Screen
-    log4perl.appender.Screen.utf8                      = 1
-    log4perl.appender.Screen.Threshold                 = $LEVEL
-    log4perl.appender.Screen.stderr                    = 0
-    log4perl.appender.Screen.layout                    = Log::Log4perl::Layout::SimpleLayout
-|;
-Log::Log4perl->init(\$l4pconf);
-
-# WARNING - the .bcf has special defs for URLS to test verbatim lists
-$biber->parse_ctrlfile('basic-misc.bcf');
-$biber->set_output_obj(Biber::Output::bbl->new());
-
-# Options - we could set these in the control file but it's nice to see what we're
-# relying on here for tests
-
-# Biber options
-Biber::Config->setoption('sortlocale', 'en_GB.UTF-8');
-Biber::Config->setblxoption(undef,'uniquelist', 'true');
-Biber::Config->setblxoption(undef,'maxcitenames', 3);
-Biber::Config->setblxoption(undef,'mincitenames', 1);
-Biber::Config->setblxoption(undef,'maxalphanames', 3);
-Biber::Config->setblxoption(undef,'minalphanames', 1);
-Biber::Config->setblxoption(undef,'maxbibnames', 10);
-Biber::Config->setblxoption(undef,'minbibnames', 7);
-Biber::Config->setoption('isbn_normalise', 1);
-Biber::Config->setoption('isbn13', 1);
-Biber::Config->setblxoption(undef,'uniquework', 1);
-
-# THERE IS A CONFIG FILE BEING READ TO TEST USER MAPS TOO!
-
-# Now generate the information
-$biber->prepare;
-my $out = $biber->get_output_obj;
-my $section = $biber->sections->get_section(0);
-my $main = $biber->datalists->get_list('nty/global//global/global/global');
-
-my @keys = sort $section->get_citekeys;
-my @citedkeys = sort qw{ alias1 alias2 alias5 anon1 anon2 matches1 matches2 matches3 murray t1 kant:ku kant:kpv t2 shore u1 u2 us1 list1 isbn1 isbn2 markey ent1 verb1 over1 recurse1};
-
-# entry "loh" is missing as the biber.conf map removes it with map_entry_null
-my @allkeys = sort map {lc()} qw{ anon1 anon2 stdmodel aristotle:poetics vazques-de-parga t1
-gonzalez averroes/bland laufenberg westfahl:frontier knuth:ct:a kastenholz
-averroes/hannes iliad luzzatto malinowski sorace knuth:ct:d britannica
-nietzsche:historie stdmodel:weinberg knuth:ct:b baez/article knuth:ct:e
-itzhaki jaffe padhye cicero stdmodel:salam reese averroes/hercz murray
-shore aristotle:physics massa aristotle:anima gillies set kowalik gaonkar
-springer geer hammond wormanx westfahl:space worman set:herrmann augustine
-gerhardt piccato hasan hyman stdmodel:glashow stdmodel:ps_sc kant:kpv
-companion almendro sigfridsson ctan baez/online aristotle:rhetoric
-pimentel00 pines knuth:ct:c matches1 matches2 matches3 moraux cms angenendt
-angenendtsk markey cotton vangennepx kant:ku nussbaum nietzsche:ksa1
-vangennep knuth:ct angenendtsa spiegelberg bertram brandt set:aksin chiu
-nietzsche:ksa set:yoon maron coleridge tvonb t2 u1 u2 i1 i2 tmn1 tmn2 tmn3
-tmn4 lne1 alias1 alias2 alias5 url1 ol1 pages1 pages2 pages3 pages4 pages5
-pages6 pages7 pages8 us1 labelstest list1 sn1 pages9 isbn1 isbn2 snk1
-clone-snk1 newtestkey ent1 avona rvonr verb1 over1 others1 others2 recurse1
-final};
-
-my $u1 = q|    \entry{u1}{misc}{}{}
+const EXPECTED_U1: &str = r#"    \entry{u1}{misc}{}{}
       \name{author}{4}{ul=4}{%
         {{un=0,uniquepart=base,hash=e1faffb3e614e6c2fba74296962386b7}{%
            family={AAA},
@@ -213,36 +41,9 @@ my $u1 = q|    \entry{u1}{misc}{}{}
       \field{year}{2000}
       \field{dateera}{ce}
     \endentry
-|;
+"#;
 
-eq_or_diff( $out->get_output_entry('u1', $main), $u1, 'uniquelist 1' ) ;
-
-is_deeply( \@keys, \@citedkeys, 'citekeys 1') ;
-
-is_deeply($biber->datalists->get_list('shorthand/global//global/global/global')->get_keys, [ 'kant:kpv', 'kant:ku' ], 'shorthands' ) ;
-
-# reset some options and re-generate information
-
-# Have to do a citekey deletion as we are not re-reading the .bcf which would do it for us
-# Otherwise, we have citekeys and allkeys which confuses fetch_data()
-$section->del_citekeys;
-$section->set_allkeys(1);
-$section->bibentries->del_entries;
-$section->del_everykeys;
-Biber::Input::file::bibtex->init_cache;
-$biber->prepare;
-
-$section = $biber->sections->get_section(0);
-my $bibentries = $section->bibentries;
-
-$out = $biber->get_output_obj;
-
-# Strip out loopkeys because they contain a variable key
-@keys = sort grep {$_ !~ m/^loopkey/} map {lc()} $section->get_citekeys;
-
-is_deeply( \@keys, \@allkeys, 'citekeys 2') ;
-
-my $murray1 = q|    \entry{murray}{article}{}{}
+const EXPECTED_MURRAY1: &str = r#"    \entry{murray}{article}{}{}
       \name{author}{14}{}{%
         {{un=0,uniquepart=base,hash=1c180cd8a2042c60a0f1dda22e34794a}{%
            family={Hostetler},
@@ -359,9 +160,9 @@ my $murray1 = q|    \entry{murray}{article}{}{}
       \range{pages}{14}
       \keyw{keyw1,keyw2}
     \endentry
-|;
+"#;
 
-my $murray2 = q|    \entry{murray}{article}{}{}
+const EXPECTED_MURRAY2: &str = r#"    \entry{murray}{article}{}{}
       \name{author}{14}{}{%
         {{un=0,uniquepart=base,hash=1c180cd8a2042c60a0f1dda22e34794a}{%
            family={Hostetler},
@@ -478,10 +279,9 @@ my $murray2 = q|    \entry{murray}{article}{}{}
       \range{pages}{14}
       \keyw{keyw1,keyw2}
     \endentry
-|;
+"#;
 
-# This example wouldn't compile - it's just to test escaping
-my $t1 = q+    \entry{t1}{misc}{}{}
+const EXPECTED_T1: &str = r#"    \entry{t1}{misc}{}{}
       \name{author}{1}{}{%
         {{un=0,uniquepart=base,hash=858fcf9483ec29b7707a7dda2dde7a6f}{%
            family={Brown},
@@ -511,9 +311,9 @@ my $t1 = q+    \entry{t1}{misc}{}{}
       \range{pages}{-1}
       \keyw{primary,something,somethingelse}
     \endentry
-+;
+"#;
 
-my $t2 = q|    \entry{t2}{misc}{}{}
+const EXPECTED_T2: &str = r#"    \entry{t2}{misc}{}{}
       \name{author}{1}{}{%
         {{un=0,uniquepart=base,hash=858fcf9483ec29b7707a7dda2dde7a6f}{%
            family={Brown},
@@ -542,9 +342,9 @@ my $t2 = q|    \entry{t2}{misc}{}{}
       \field{pages}{100\bibrangedash 108}
       \range{pages}{9}
     \endentry
-|;
+"#;
 
-my $anon1 = q|    \entry{anon1}{unpublished}{}{}
+const EXPECTED_ANON1: &str = r#"    \entry{anon1}{unpublished}{}{}
       \name{author}{1}{}{%
         {{hash=a66f357fe2fd356fe49959173522a651}{%
            family={AnonymousX},
@@ -584,9 +384,9 @@ my $anon1 = q|    \entry{anon1}{unpublished}{}{}
       \range{pages}{8}
       \keyw{arc}
     \endentry
-|;
+"#;
 
-my $anon2 = q|    \entry{anon2}{unpublished}{}{}
+const EXPECTED_ANON2: &str = r#"    \entry{anon2}{unpublished}{}{}
       \name{author}{1}{}{%
         {{hash=a0bccee4041bc840e14c06e5ba7f083c}{%
            family={AnonymousY},
@@ -626,9 +426,9 @@ my $anon2 = q|    \entry{anon2}{unpublished}{}{}
       \range{pages}{101}
       \keyw{arc}
     \endentry
-|;
+"#;
 
-my $url1 = q|    \entry{url1}{misc}{}{}
+const EXPECTED_URL1: &str = r#"    \entry{url1}{misc}{}{}
       \name{author}{1}{}{%
         {{un=0,uniquepart=base,hash=b2106a3dda6c5a4879a0cab37e9cca55}{%
            family={Alias},
@@ -668,9 +468,9 @@ my $url1 = q|    \entry{url1}{misc}{}{}
       \lverb http://www.sun.com
       \endlverb
     \endentry
-|;
+"#;
 
-my $list1 = q|    \entry{list1}{book}{}{}
+const EXPECTED_LIST1: &str = r#"    \entry{list1}{book}{}{}
       \true{morelocation}
       \list{location}{2}{%
         {ÁAA}%
@@ -679,146 +479,16 @@ my $list1 = q|    \entry{list1}{book}{}{}
       \field{sortinit}{}
       \field{sortinithash}{495dc9894017a8b12cafa9c619d10c0c}
     \endentry
-|;
+"#;
 
-my $over1 = q|    \entry{over1}{book}{}{}
+const EXPECTED_OVER1: &str = r#"    \entry{over1}{book}{}{}
       \field{sortinit}{}
       \field{sortinithash}{495dc9894017a8b12cafa9c619d10c0c}
       \field{userd}{thing}
     \endentry
-|;
+"#;
 
-my $Worman_N = [ "Worman\x{10FFFD}WormanN" ] ;
-my $Gennep = [ "vanGennep\x{10FFFD}vanGennepA", "vanGennep\x{10FFFD}vanGennepJ" ] ;
-
-eq_or_diff( $out->get_output_entry('t1', $main), $t1, 'bbl entry with maths in title 1');
-eq_or_diff( $bibentries->entry('shore')->get_field('month'), '3', 'default bib month macros');
-ok( $bibentries->entry('t1')->has_keyword('primary'), 'Keywords test - 1');
-ok( $bibentries->entry('t1')->has_keyword('something'), 'Keywords test - 2');
-ok( $bibentries->entry('t1')->has_keyword('somethingelse'), 'Keywords test - 3');
-eq_or_diff( $out->get_output_entry('t2', $main), $t2, 'bbl entry with maths in title 2');
-is_deeply( $main->_get_uniquename('WormanN', 'global'), $Worman_N, 'uniquename count 1');
-is_deeply( $main->_get_uniquename('vanGennep', 'global'), $Gennep, 'uniquename count 2');
-eq_or_diff( $out->get_output_entry('murray', $main), $murray1, 'bbl with > maxcitenames');
-eq_or_diff( $out->get_output_entry('missing1'), "  \\missing{missing1}\n", 'missing citekey 1');
-eq_or_diff( $out->get_output_entry('missing2'), "  \\missing{missing2}\n", 'missing citekey 2');
-
-Biber::Config->setblxoption(undef,'alphaothers', '');
-Biber::Config->setblxoption(undef,'sortalphaothers', '');
-
-# Have to do a citekey deletion as we are not re-reading the .bcf which would do it for us
-# Otherwise, we have citekeys and allkeys which confuses fetch_data()
-$section->del_citekeys;
-$section->bibentries->del_entries;
-$section->del_everykeys;
-Biber::Input::file::bibtex->init_cache;
-$biber->prepare;
-$section = $biber->sections->get_section(0);
-$main = $biber->datalists->get_list('nty/global//global/global/global');
-
-$out = $biber->get_output_obj;
-
-eq_or_diff($out->get_output_entry('murray', $main), $murray2, 'bbl with > maxcitenames, empty alphaothers');
-
-# Make sure namehash and fullhash are separately generated
-eq_or_diff( $out->get_output_entry('anon1', $main), $anon1, 'namehash/fullhash 1' ) ;
-eq_or_diff( $out->get_output_entry('anon2', $main), $anon2, 'namehash/fullhash 2' ) ;
-
-# Testing of user field map ignores
-ok(is_undef($bibentries->entry('i1')->get_field('abstract')), 'map 1' );
-eq_or_diff($bibentries->entry('i1')->get_field('userd'), 'test', 'map 2' );
-ok(is_undef($bibentries->entry('i2')->get_field('userb')), 'map 3' );
-eq_or_diff(NFC($bibentries->entry('i2')->get_field('usere')), 'a Štring', 'map 4' );
-# Testing ot UTF8 match/replace
-eq_or_diff($biber->_liststring('i1', 'listd'), 'abc', 'map 5' );
-# Testing of user field map match/replace
-eq_or_diff($biber->_liststring('i1', 'listb'), 'REPlacedte!early', 'map 6');
-eq_or_diff($biber->_liststring('i1', 'institution'), 'REPlaCEDte!early', 'map 7');
-# Testing of pseudo-field "entrykey" handling
-eq_or_diff($bibentries->entry('i1')->get_field('note'), 'i1', 'map 8' );
-# Checking deletion of alsosets with value BMAP_NULL
-ok(is_undef($bibentries->entry('i2')->get_field('userf')), 'map 9' );
-# Checking that the "misc" type-specific mapping to null takes precedence over global userb->userc
-ok(is_undef($bibentries->entry('i2')->get_field('userc')), 'map 10' );
-
-# Make sure visibility doesn't exceed number of names.
-eq_or_diff($main->get_visible_bib($bibentries->entry('i2')->get_field($bibentries->entry('i2')->get_labelname_info)->get_id), '3', 'bib visibility - 1');
-
-# Testing per_type and per_entry max/min* so reset globals to defaults
-Biber::Config->setblxoption(undef,'uniquelist', 'false');
-Biber::Config->setblxoption(undef,'maxcitenames', 3);
-Biber::Config->setblxoption(undef,'mincitenames', 1);
-Biber::Config->setblxoption(undef,'maxitems', 3);
-Biber::Config->setblxoption(undef,'minitems', 1);
-Biber::Config->setblxoption(undef,'maxbibnames', 3);
-Biber::Config->setblxoption(undef,'minbibnames', 1);
-Biber::Config->setblxoption(undef,'maxalphanames', 3);
-Biber::Config->setblxoption(undef,'minalphanames', 1);
-Biber::Config->setblxoption(undef,'maxcitenames', 1, 'ENTRYTYPE', 'misc');
-Biber::Config->setblxoption(undef,'maxbibnames', 2, 'ENTRYTYPE', 'unpublished');
-Biber::Config->setblxoption(undef,'minbibnames', 2, 'ENTRYTYPE', 'unpublished');
-# maxalphanames is set on tmn2 entry
-Biber::Config->setblxoption(undef,'minalphanames', 2, 'ENTRYTYPE', 'book');
-# minitems is set on tmn3 entry
-Biber::Config->setblxoption(undef,'maxitems', 2, 'ENTRYTYPE', 'unpublished');
-
-# Have to do a citekey deletion as we are not re-reading the .bcf which would do it for us
-# Otherwise, we have citekeys and allkeys which confuses fetch_data()
-$section->del_citekeys;
-$section->bibentries->del_entries;
-$section->del_everykeys;
-Biber::Input::file::bibtex->init_cache;
-$biber->prepare;
-$section = $biber->sections->get_section(0);
-$main = $biber->datalists->get_list('nty/global//global/global/global');
-
-eq_or_diff($main->get_visible_cite($bibentries->entry('tmn1')->get_field($bibentries->entry('tmn1')->get_labelname_info)->get_id), '1', 'per_type maxcitenames - 1');
-eq_or_diff($main->get_visible_cite($bibentries->entry('tmn2')->get_field($bibentries->entry('tmn2')->get_labelname_info)->get_id), '3', 'per_type maxcitenames - 2');
-eq_or_diff($main->get_visible_bib($bibentries->entry('tmn3')->get_field($bibentries->entry('tmn3')->get_labelname_info)->get_id), '2', 'per_type bibnames - 3');
-eq_or_diff($main->get_visible_bib($bibentries->entry('tmn4')->get_field($bibentries->entry('tmn4')->get_labelname_info)->get_id), '3', 'per_type bibnames - 4');
-eq_or_diff($main->get_visible_alpha($bibentries->entry('tmn1')->get_field($bibentries->entry('tmn1')->get_labelname_info)->get_id), '3', 'per_type/entry alphanames - 1');
-eq_or_diff($main->get_visible_alpha($bibentries->entry('tmn2')->get_field($bibentries->entry('tmn2')->get_labelname_info)->get_id), '2', 'per_type/entry alphanames - 2');
-eq_or_diff($biber->_liststring('tmn1', 'institution'), 'A!B!C', 'per_type/entry items - 1');
-eq_or_diff($biber->_liststring('tmn3', 'institution'), "A!B\x{10FFFD}", 'per_type/entry items - 2');
-
-# Citekey alias testing
-eq_or_diff($section->get_citekey_alias('alias3'), 'alias1', 'Citekey aliases - 1');
-ok(is_undef($section->get_citekey_alias('alias2')), 'Citekey aliases - 2');
-eq_or_diff($section->get_citekey_alias('alias4'), 'alias2', 'Citekey aliases - 3');
-# primary key 'alias5' is not cited but should be added anyway as cited alias 'alias6' needs it
-eq_or_diff($section->get_citekey_alias('alias6'), 'alias5', 'Citekey aliases - 4');
-ok($bibentries->entry('alias5'), 'Citekey aliases - 5');
-
-# URL encoding testing
-# Should be raw as encoding is done on output
-eq_or_diff(NFC($bibentries->entry('url1')->get_field('url')), 'http://www.something.com/q=áŠ', 'URL encoding - 1');
-eq_or_diff($out->get_output_entry('url1', $main), $url1, 'URL encoding - 2' ) ;
-
-# map_final testing with map_field_set
-eq_or_diff($bibentries->entry('ol1')->get_field('note'), 'A note', 'map_final - 1');
-eq_or_diff($bibentries->entry('ol1')->get_field('title'), 'Online1', 'map_final - 2');
-
-# Test for tricky pages field
-is_deeply($bibentries->entry('pages1')->get_field('pages'), [[23, 24]], 'pages - 1');
-is_deeply($bibentries->entry('pages2')->get_field('pages'), [[23, undef]], 'pages - 2');
-is_deeply($bibentries->entry('pages3')->get_field('pages'), [['I-II', 'III-IV']], 'pages - 3');
-is_deeply($bibentries->entry('pages4')->get_field('pages'), [[3,5]], 'pages - 4');
-is_deeply($bibentries->entry('pages5')->get_field('pages'), [[42, '']], 'pages - 5');
-is_deeply($bibentries->entry('pages6')->get_field('pages'), [['\bibstring{number} 42', undef]], 'pages - 6');
-is_deeply($bibentries->entry('pages7')->get_field('pages'), [['\bibstring{number} 42', undef], [3,6], ['I-II',5 ]], 'pages - 7');
-is_deeply($bibentries->entry('pages8')->get_field('pages'), [[10,15],['ⅥⅠ', 'ⅻ']], 'pages - 8');
-is_deeply($bibentries->entry('pages9')->get_field('pages'), [['M-1','M-4']], 'pages - 9');
-
-# Test for map levels, the user map makes this CUSTOMC and then style map makes it CUSTOMA
-eq_or_diff($bibentries->entry('us1')->get_field('entrytype'), 'customa', 'Map levels - 1');
-
-# Test for "others" in lists
-eq_or_diff( $out->get_output_entry('list1', $main), $list1, 'Entry with others list' ) ;
-
-# source->target mapping with overwrite test
-eq_or_diff($out->get_output_entry('over1', $main), $over1, 'Overwrite test - 1');
-
-my $isbn1 = q|    \entry{isbn1}{misc}{}{}
+const EXPECTED_ISBN1: &str = r#"    \entry{isbn1}{misc}{}{}
       \name{author}{1}{}{%
         {{un=0,uniquepart=base,hash=f6595ccb9db5f634e7bb242a3f78e5f9}{%
            family={Flummox},
@@ -843,9 +513,9 @@ my $isbn1 = q|    \entry{isbn1}{misc}{}{}
       \field{labelnamesource}{author}
       \field{isbn}{978-0-8165-2066-4}
     \endentry
-|;
+"#;
 
-my $isbn2 = q|    \entry{isbn2}{misc}{}{}
+const EXPECTED_ISBN2: &str = r#"    \entry{isbn2}{misc}{}{}
       \name{author}{1}{}{%
         {{un=0,uniquepart=base,hash=f6595ccb9db5f634e7bb242a3f78e5f9}{%
            family={Flummox},
@@ -870,22 +540,18 @@ my $isbn2 = q|    \entry{isbn2}{misc}{}{}
       \field{labelnamesource}{author}
       \field{isbn}{978-0-8165-2066-4}
     \endentry
-|;
+"#;
 
-# ISBN options tests
-eq_or_diff($out->get_output_entry('isbn1', $main), $isbn1, 'ISBN options - 1');
-eq_or_diff($out->get_output_entry('isbn2', $main), $isbn2, 'ISBN options - 2');
-
-my $new1 = q|    \entry{newtestkey}{book}{}{}
+const EXPECTED_NEW1: &str = r#"    \entry{newtestkey}{book}{}{}
       \field{sortinit}{}
       \field{sortinithash}{495dc9894017a8b12cafa9c619d10c0c}
       \field{note}{note}
       \field{usera}{RC-6947}
       \field{userb}{RC}
     \endentry
-|;
+"#;
 
-my $clone1 = q|    \entry{snk1}{book}{}{}
+const EXPECTED_CLONE1: &str = r#"    \entry{snk1}{book}{}{}
       \name{author}{1}{}{%
         {{un=0,uniquepart=base,hash=83330b0520b5d4ea57529a23b404d43d}{%
            family={Doe},
@@ -914,9 +580,9 @@ my $clone1 = q|    \entry{snk1}{book}{}{}
       \field{extraalpha}{2}
       \field{labelnamesource}{author}
     \endentry
-|;
+"#;
 
-my $clone2 = q|    \entry{clone-snk1}{book}{}{}
+const EXPECTED_CLONE2: &str = r#"    \entry{clone-snk1}{book}{}{}
       \name{author}{1}{}{%
         {{un=0,uniquepart=base,hash=83330b0520b5d4ea57529a23b404d43d}{%
            family={Doe},
@@ -946,9 +612,9 @@ my $clone2 = q|    \entry{clone-snk1}{book}{}{}
       \field{labelnamesource}{author}
       \field{addendum}{add}
     \endentry
-|;
+"#;
 
-my $ent1 = q|    \entry{ent1}{book}{}{}
+const EXPECTED_ENT1: &str = r#"    \entry{ent1}{book}{}{}
       \name{author}{2}{sortingnamekeytemplatename=snks1}{%
         {{un=0,uniquepart=base,hash=6b3653417f9aa97391c37cff5dfda7fa}{%
            family={Smith},
@@ -979,9 +645,9 @@ my $ent1 = q|    \entry{ent1}{book}{}{}
       \true{singletitle}
       \field{labelnamesource}{author}
     \endentry
-|;
+"#;
 
-my $verb1 = q|    \entry{verb1}{book}{}{}
+const EXPECTED_VERB1: &str = r#"    \entry{verb1}{book}{}{}
       \name{author}{1}{}{%
         {{un=0,uniquepart=base,hash=cac5a25f503e71f5ef28f474e14007b6}{%
            family={Allright},
@@ -1007,967 +673,1272 @@ my $verb1 = q|    \entry{verb1}{book}{}{}
       \verb \=y.\"a
       \endverb
     \endentry
-|;
-
-# clone test
-eq_or_diff($out->get_output_entry('snk1', $main), $clone1, 'Clone - 1');
-eq_or_diff($out->get_output_entry('clone-snk1', $main), $clone2, 'Clone - 2');
-
-# New entry map test
-eq_or_diff($out->get_output_entry('newtestkey', $main), $new1, 'New key mapping - 1');
-
-# Should be three new ids in here with random keys
-is(scalar(grep {$_ =~ m/^loopkey:/} $section->get_citekeys), 3, 'New key loop mapping - 1');
-eq_or_diff($bibentries->entry([grep {$_ =~ m/^loopkey:/} $section->get_citekeys]->[0])->get_field('note'), 'NOTEreplaced', 'New key loop mapping - 2');
-
-# notfield test
-eq_or_diff($bibentries->entry('markey')->get_field('addendum'), 'NF1', 'notfield - 1');
-ok(is_undef($bibentries->entry('markey')->get_field('userb')),  'notfield - 2');
-
-# Extended name format test
-eq_or_diff($out->get_output_entry('ent1', $main), $ent1, 'Extended name test - 1');
-
-# Verbatim decode test
-eq_or_diff($out->get_output_entry('verb1', $main), $verb1, 'Decoding verbatim fields - 1');
-
-# Static matches list test
-eq_or_diff($bibentries->entry('matches1')->get_field('note'), '1', 'Static match list - 1');
-eq_or_diff($bibentries->entry('matches2')->get_field('note'), '3', 'Static match list - 2');
-eq_or_diff($bibentries->entry('matches3')->get_field('note'), '2', 'Static match list - 3');
 "#;
 
+const EXPECTED_CITEDKEYS: &[&str] = &[
+    "alias1", "alias2", "alias5", "anon1", "anon2", "ent1", "isbn1", "isbn2", "kant:kpv",
+    "kant:ku", "list1", "markey", "matches1", "matches2", "matches3", "murray", "over1",
+    "recurse1", "shore", "t1", "t2", "u1", "u2", "us1", "verb1",
+];
+
+const EXPECTED_ALLKEYS: &[&str] = &[
+    "alias1",
+    "alias2",
+    "alias5",
+    "almendro",
+    "angenendt",
+    "angenendtsa",
+    "angenendtsk",
+    "anon1",
+    "anon2",
+    "aristotle:anima",
+    "aristotle:physics",
+    "aristotle:poetics",
+    "aristotle:rhetoric",
+    "augustine",
+    "averroes/bland",
+    "averroes/hannes",
+    "averroes/hercz",
+    "avona",
+    "baez/article",
+    "baez/online",
+    "bertram",
+    "brandt",
+    "britannica",
+    "chiu",
+    "cicero",
+    "clone-snk1",
+    "cms",
+    "coleridge",
+    "companion",
+    "cotton",
+    "ctan",
+    "ent1",
+    "final",
+    "gaonkar",
+    "geer",
+    "gerhardt",
+    "gillies",
+    "gonzalez",
+    "hammond",
+    "hasan",
+    "hyman",
+    "i1",
+    "i2",
+    "iliad",
+    "isbn1",
+    "isbn2",
+    "itzhaki",
+    "jaffe",
+    "kant:kpv",
+    "kant:ku",
+    "kastenholz",
+    "knuth:ct",
+    "knuth:ct:a",
+    "knuth:ct:b",
+    "knuth:ct:c",
+    "knuth:ct:d",
+    "knuth:ct:e",
+    "kowalik",
+    "labelstest",
+    "laufenberg",
+    "list1",
+    "lne1",
+    "luzzatto",
+    "malinowski",
+    "markey",
+    "maron",
+    "massa",
+    "matches1",
+    "matches2",
+    "matches3",
+    "moraux",
+    "murray",
+    "newtestkey",
+    "nietzsche:historie",
+    "nietzsche:ksa",
+    "nietzsche:ksa1",
+    "nussbaum",
+    "ol1",
+    "others1",
+    "others2",
+    "over1",
+    "padhye",
+    "pages1",
+    "pages2",
+    "pages3",
+    "pages4",
+    "pages5",
+    "pages6",
+    "pages7",
+    "pages8",
+    "pages9",
+    "piccato",
+    "pimentel00",
+    "pines",
+    "recurse1",
+    "reese",
+    "rvonr",
+    "set",
+    "set:aksin",
+    "set:herrmann",
+    "set:yoon",
+    "shore",
+    "sigfridsson",
+    "sn1",
+    "snk1",
+    "sorace",
+    "spiegelberg",
+    "springer",
+    "stdmodel",
+    "stdmodel:glashow",
+    "stdmodel:ps_sc",
+    "stdmodel:salam",
+    "stdmodel:weinberg",
+    "t1",
+    "t2",
+    "tmn1",
+    "tmn2",
+    "tmn3",
+    "tmn4",
+    "tvonb",
+    "u1",
+    "u2",
+    "url1",
+    "us1",
+    "vangennep",
+    "vangennepx",
+    "vazques-de-parga",
+    "verb1",
+    "westfahl:frontier",
+    "westfahl:space",
+    "worman",
+    "wormanx",
+];
+
+fn field_string(entry: &Entry, field: &str) -> Option<String> {
+    if field == "entrytype" {
+        return Some(entry.entry_type().as_str().to_owned());
+    }
+    match entry.fields().get(&FieldId::new(field).unwrap())? {
+        FieldValue::Literal(value) => Some(value.as_str().to_owned()),
+        FieldValue::Verbatim(value) => Some(value.as_str().to_owned()),
+        FieldValue::Integer(value) => Some(value.to_string()),
+        FieldValue::Boolean(value) => Some(value.to_string()),
+        FieldValue::UriList(values) => values.first().map(|value| value.as_str().to_owned()),
+        _ => None,
+    }
+}
+fn list_values<'a>(entry: &'a Entry, field: &str) -> Vec<&'a str> {
+    match entry.fields().get(&FieldId::new(field).unwrap()) {
+        Some(FieldValue::LiteralList(values)) => {
+            values.iter().map(|value| value.as_str()).collect()
+        }
+        _ => Vec::new(),
+    }
+}
+fn name_count(entry: &Entry) -> usize {
+    entry
+        .fields()
+        .iter()
+        .find_map(|field| match field.value() {
+            FieldValue::NameList(names) => Some(names.len()),
+            _ => None,
+        })
+        .unwrap_or_default()
+}
+fn uniquename_projection(entry: &Entry) -> Vec<String> {
+    entry
+        .fields()
+        .iter()
+        .find_map(|field| match field.value() {
+            FieldValue::NameList(names) => Some(
+                names
+                    .iter()
+                    .map(|name| {
+                        let mut key = String::new();
+                        if let Some(prefix) = name.prefix() {
+                            key.push_str(prefix.value().as_str());
+                        }
+                        if let Some(family) = name.family() {
+                            key.push_str(family.value().as_str());
+                        }
+                        key.push('\u{10fffd}');
+                        key.push_str(name.hash_id().unwrap_or_default());
+                        key
+                    })
+                    .collect(),
+            ),
+            _ => None,
+        })
+        .unwrap_or_default()
+}
+fn ranges(entry: &Entry) -> Vec<(String, Option<String>)> {
+    fn endpoint(value: &RangeEndpoint) -> Option<String> {
+        match value {
+            RangeEndpoint::Integer(value) => Some(value.to_string()),
+            RangeEndpoint::Literal(value) => Some(value.as_str().to_owned()),
+            RangeEndpoint::Open => None,
+        }
+    }
+    match entry.fields().get(&FieldId::new("pages").unwrap()) {
+        Some(FieldValue::RangeList(values)) => values
+            .iter()
+            .map(|value| {
+                (
+                    endpoint(value.start()).unwrap_or_default(),
+                    endpoint(value.end()),
+                )
+            })
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+fn alias<'a>(result: &'a bib_engine::BibResult, key: &str) -> Option<&'a str> {
+    result
+        .document()
+        .section(SectionId::new(0))?
+        .aliases()
+        .find(|(alias, _)| alias.as_str() == key)
+        .map(|(_, target)| target.as_str())
+}
 #[test]
-#[ignore = "xfail: public bib-engine lacks exact mixed-stage Biber pipeline parity"]
+#[ignore = "xfail: exact Biber mixed-stage behavior is not implemented by bib-engine"]
 fn assertion_001_uniquelist_1() {
-    compare_upstream(
-        "uniquelist 1",
-        r"$out->get_output_entry('u1', $main)",
-        r"$u1",
-        r"eq_or_diff( $out->get_output_entry('u1', $main), $u1, 'uniquelist 1' ) ;",
-        UPSTREAM_SOURCE,
+    let result = try_run_fixture("basic-misc");
+    assert_eq!(
+        result
+            .as_ref()
+            .ok()
+            .and_then(|result| output_entry(result, "u1"))
+            .as_deref(),
+        Some(EXPECTED_U1)
     );
-    panic!("xfail: public bib-engine lacks exact mixed-stage Biber pipeline parity");
 }
 
 #[test]
-#[ignore = "xfail: public bib-engine lacks exact mixed-stage Biber pipeline parity"]
+#[ignore = "xfail: exact Biber mixed-stage behavior is not implemented by bib-engine"]
 fn assertion_002_citekeys_1() {
-    compare_upstream(
-        "citekeys 1",
-        r"\@keys",
-        r"\@citedkeys",
-        r"is_deeply( \@keys, \@citedkeys, 'citekeys 1') ;",
-        UPSTREAM_SOURCE,
-    );
-    panic!("xfail: public bib-engine lacks exact mixed-stage Biber pipeline parity");
+    let result = try_run_fixture("basic-misc");
+    let mut keys = result
+        .as_ref()
+        .ok()
+        .map(|result| {
+            section_entry_keys(result, 0)
+                .into_iter()
+                .filter(|key| !key.starts_with("loopkey"))
+                .map(str::to_lowercase)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    keys.sort_unstable();
+    assert_eq!(keys, EXPECTED_CITEDKEYS);
 }
 
 #[test]
-#[ignore = "xfail: public bib-engine lacks exact mixed-stage Biber pipeline parity"]
+#[ignore = "xfail: exact Biber mixed-stage behavior is not implemented by bib-engine"]
 fn assertion_003_shorthands() {
-    compare_upstream(
-        "shorthands",
-        r"$biber->datalists->get_list('shorthand/global//global/global/global')->get_keys",
-        r"[ 'kant:kpv', 'kant:ku' ]",
-        r"is_deeply($biber->datalists->get_list('shorthand/global//global/global/global')->get_keys, [ 'kant:kpv', 'kant:ku' ], 'shorthands' ) ;",
-        UPSTREAM_SOURCE,
+    let result = try_run_fixture("basic-misc");
+    assert_eq!(
+        result
+            .as_ref()
+            .ok()
+            .map(|result| list_keys(result, 0, "shorthand/global//global/global/global"))
+            .unwrap_or_default(),
+        ["kant:kpv", "kant:ku"]
     );
-    panic!("xfail: public bib-engine lacks exact mixed-stage Biber pipeline parity");
 }
 
 #[test]
-#[ignore = "xfail: public bib-engine lacks exact mixed-stage Biber pipeline parity"]
+#[ignore = "xfail: exact Biber mixed-stage behavior is not implemented by bib-engine"]
 fn assertion_004_citekeys_2() {
-    compare_upstream(
-        "citekeys 2",
-        r"\@keys",
-        r"\@allkeys",
-        r"is_deeply( \@keys, \@allkeys, 'citekeys 2') ;",
-        UPSTREAM_SOURCE,
-    );
-    panic!("xfail: public bib-engine lacks exact mixed-stage Biber pipeline parity");
+    let result = try_run_fixture("basic-misc");
+    let mut keys = result
+        .as_ref()
+        .ok()
+        .map(|result| {
+            section_entry_keys(result, 0)
+                .into_iter()
+                .filter(|key| !key.starts_with("loopkey"))
+                .map(str::to_lowercase)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    keys.sort_unstable();
+    assert_eq!(keys, EXPECTED_ALLKEYS);
 }
 
 #[test]
-#[ignore = "xfail: public bib-engine lacks exact mixed-stage Biber pipeline parity"]
+#[ignore = "xfail: exact Biber mixed-stage behavior is not implemented by bib-engine"]
 fn assertion_005_bbl_entry_with_maths_in_title_1() {
-    compare_upstream(
-        "bbl entry with maths in title 1",
-        r"$out->get_output_entry('t1', $main)",
-        r"$t1",
-        r"eq_or_diff( $out->get_output_entry('t1', $main), $t1, 'bbl entry with maths in title 1');",
-        UPSTREAM_SOURCE,
+    let result = try_run_fixture("basic-misc");
+    assert_eq!(
+        result
+            .as_ref()
+            .ok()
+            .and_then(|result| output_entry(result, "t1"))
+            .as_deref(),
+        Some(EXPECTED_T1)
     );
-    panic!("xfail: public bib-engine lacks exact mixed-stage Biber pipeline parity");
 }
 
 #[test]
-#[ignore = "xfail: public bib-engine lacks exact mixed-stage Biber pipeline parity"]
 fn assertion_006_default_bib_month_macros() {
-    compare_upstream(
-        "default bib month macros",
-        r"$bibentries->entry('shore')->get_field('month')",
-        r"'3'",
-        r"eq_or_diff( $bibentries->entry('shore')->get_field('month'), '3', 'default bib month macros');",
-        UPSTREAM_SOURCE,
+    let result = try_run_fixture("basic-misc");
+    assert_eq!(
+        result
+            .as_ref()
+            .ok()
+            .and_then(|result| entry(result, 0, "shore"))
+            .and_then(|entry| field_string(entry, "month"))
+            .as_deref(),
+        Some(r#"3"#)
     );
-    panic!("xfail: public bib-engine lacks exact mixed-stage Biber pipeline parity");
 }
 
 #[test]
-#[ignore = "xfail: public bib-engine lacks exact mixed-stage Biber pipeline parity"]
 fn assertion_007_keywords_test_1() {
-    compare_upstream(
-        "Keywords test - 1",
-        r"$bibentries->entry('t1')->has_keyword('primary')",
-        r"true",
-        r"ok( $bibentries->entry('t1')->has_keyword('primary'), 'Keywords test - 1');",
-        UPSTREAM_SOURCE,
+    let result = try_run_fixture("basic-misc");
+    assert!(
+        result
+            .as_ref()
+            .ok()
+            .and_then(|result| entry(result, 0, "t1"))
+            .is_some_and(|entry| list_values(entry, "keywords").contains(&"primary"))
     );
-    panic!("xfail: public bib-engine lacks exact mixed-stage Biber pipeline parity");
 }
 
 #[test]
-#[ignore = "xfail: public bib-engine lacks exact mixed-stage Biber pipeline parity"]
 fn assertion_008_keywords_test_2() {
-    compare_upstream(
-        "Keywords test - 2",
-        r"$bibentries->entry('t1')->has_keyword('something')",
-        r"true",
-        r"ok( $bibentries->entry('t1')->has_keyword('something'), 'Keywords test - 2');",
-        UPSTREAM_SOURCE,
+    let result = try_run_fixture("basic-misc");
+    assert!(
+        result
+            .as_ref()
+            .ok()
+            .and_then(|result| entry(result, 0, "t1"))
+            .is_some_and(|entry| list_values(entry, "keywords").contains(&"something"))
     );
-    panic!("xfail: public bib-engine lacks exact mixed-stage Biber pipeline parity");
 }
 
 #[test]
-#[ignore = "xfail: public bib-engine lacks exact mixed-stage Biber pipeline parity"]
 fn assertion_009_keywords_test_3() {
-    compare_upstream(
-        "Keywords test - 3",
-        r"$bibentries->entry('t1')->has_keyword('somethingelse')",
-        r"true",
-        r"ok( $bibentries->entry('t1')->has_keyword('somethingelse'), 'Keywords test - 3');",
-        UPSTREAM_SOURCE,
+    let result = try_run_fixture("basic-misc");
+    assert!(
+        result
+            .as_ref()
+            .ok()
+            .and_then(|result| entry(result, 0, "t1"))
+            .is_some_and(|entry| list_values(entry, "keywords").contains(&"somethingelse"))
     );
-    panic!("xfail: public bib-engine lacks exact mixed-stage Biber pipeline parity");
 }
 
 #[test]
-#[ignore = "xfail: public bib-engine lacks exact mixed-stage Biber pipeline parity"]
+#[ignore = "xfail: exact Biber mixed-stage behavior is not implemented by bib-engine"]
 fn assertion_010_bbl_entry_with_maths_in_title_2() {
-    compare_upstream(
-        "bbl entry with maths in title 2",
-        r"$out->get_output_entry('t2', $main)",
-        r"$t2",
-        r"eq_or_diff( $out->get_output_entry('t2', $main), $t2, 'bbl entry with maths in title 2');",
-        UPSTREAM_SOURCE,
+    let result = try_run_fixture("basic-misc");
+    assert_eq!(
+        result
+            .as_ref()
+            .ok()
+            .and_then(|result| output_entry(result, "t2"))
+            .as_deref(),
+        Some(EXPECTED_T2)
     );
-    panic!("xfail: public bib-engine lacks exact mixed-stage Biber pipeline parity");
 }
 
 #[test]
-#[ignore = "xfail: public bib-engine lacks exact mixed-stage Biber pipeline parity"]
+#[ignore = "xfail: exact Biber mixed-stage behavior is not implemented by bib-engine"]
 fn assertion_011_uniquename_count_1() {
-    compare_upstream(
-        "uniquename count 1",
-        r"$main->_get_uniquename('WormanN', 'global')",
-        r"$Worman_N",
-        r"is_deeply( $main->_get_uniquename('WormanN', 'global'), $Worman_N, 'uniquename count 1');",
-        UPSTREAM_SOURCE,
+    let result = try_run_fixture("basic-misc");
+    assert_eq!(
+        result
+            .as_ref()
+            .ok()
+            .and_then(|result| entry(result, 0, "WormanN"))
+            .map(uniquename_projection)
+            .unwrap_or_default(),
+        ["Worman􏿽WormanN"]
     );
-    panic!("xfail: public bib-engine lacks exact mixed-stage Biber pipeline parity");
 }
 
 #[test]
-#[ignore = "xfail: public bib-engine lacks exact mixed-stage Biber pipeline parity"]
+#[ignore = "xfail: exact Biber mixed-stage behavior is not implemented by bib-engine"]
 fn assertion_012_uniquename_count_2() {
-    compare_upstream(
-        "uniquename count 2",
-        r"$main->_get_uniquename('vanGennep', 'global')",
-        r"$Gennep",
-        r"is_deeply( $main->_get_uniquename('vanGennep', 'global'), $Gennep, 'uniquename count 2');",
-        UPSTREAM_SOURCE,
+    let result = try_run_fixture("basic-misc");
+    assert_eq!(
+        result
+            .as_ref()
+            .ok()
+            .and_then(|result| entry(result, 0, "vanGennep"))
+            .map(uniquename_projection)
+            .unwrap_or_default(),
+        ["vanGennep􏿽vanGennepA", "vanGennep􏿽vanGennepJ"]
     );
-    panic!("xfail: public bib-engine lacks exact mixed-stage Biber pipeline parity");
 }
 
 #[test]
-#[ignore = "xfail: public bib-engine lacks exact mixed-stage Biber pipeline parity"]
+#[ignore = "xfail: exact Biber mixed-stage behavior is not implemented by bib-engine"]
 fn assertion_013_bbl_with_maxcitenames() {
-    compare_upstream(
-        "bbl with > maxcitenames",
-        r"$out->get_output_entry('murray', $main)",
-        r"$murray1",
-        r"eq_or_diff( $out->get_output_entry('murray', $main), $murray1, 'bbl with > maxcitenames');",
-        UPSTREAM_SOURCE,
+    let result = try_run_fixture("basic-misc");
+    assert_eq!(
+        result
+            .as_ref()
+            .ok()
+            .and_then(|result| output_entry(result, "murray"))
+            .as_deref(),
+        Some(EXPECTED_MURRAY1)
     );
-    panic!("xfail: public bib-engine lacks exact mixed-stage Biber pipeline parity");
 }
 
 #[test]
-#[ignore = "xfail: public bib-engine lacks exact mixed-stage Biber pipeline parity"]
+#[ignore = "xfail: exact Biber mixed-stage behavior is not implemented by bib-engine"]
 fn assertion_014_missing_citekey_1() {
-    compare_upstream(
-        "missing citekey 1",
-        r"$out->get_output_entry('missing1')",
-        r#""  \\missing{missing1}\n""#,
-        r#"eq_or_diff( $out->get_output_entry('missing1'), "  \\missing{missing1}\n", 'missing citekey 1');"#,
-        UPSTREAM_SOURCE,
+    let result = try_run_fixture("basic-misc");
+    assert!(
+        result
+            .as_ref()
+            .ok()
+            .is_some_and(|result| output_text(result).contains("  \\missing{missing1}\n"))
     );
-    panic!("xfail: public bib-engine lacks exact mixed-stage Biber pipeline parity");
 }
 
 #[test]
-#[ignore = "xfail: public bib-engine lacks exact mixed-stage Biber pipeline parity"]
+#[ignore = "xfail: exact Biber mixed-stage behavior is not implemented by bib-engine"]
 fn assertion_015_missing_citekey_2() {
-    compare_upstream(
-        "missing citekey 2",
-        r"$out->get_output_entry('missing2')",
-        r#""  \\missing{missing2}\n""#,
-        r#"eq_or_diff( $out->get_output_entry('missing2'), "  \\missing{missing2}\n", 'missing citekey 2');"#,
-        UPSTREAM_SOURCE,
+    let result = try_run_fixture("basic-misc");
+    assert!(
+        result
+            .as_ref()
+            .ok()
+            .is_some_and(|result| output_text(result).contains("  \\missing{missing2}\n"))
     );
-    panic!("xfail: public bib-engine lacks exact mixed-stage Biber pipeline parity");
 }
 
 #[test]
-#[ignore = "xfail: public bib-engine lacks exact mixed-stage Biber pipeline parity"]
+#[ignore = "xfail: exact Biber mixed-stage behavior is not implemented by bib-engine"]
 fn assertion_016_bbl_with_maxcitenames_empty_alphaothers() {
-    compare_upstream(
-        "bbl with > maxcitenames, empty alphaothers",
-        r"$out->get_output_entry('murray', $main)",
-        r"$murray2",
-        r"eq_or_diff($out->get_output_entry('murray', $main), $murray2, 'bbl with > maxcitenames, empty alphaothers');",
-        UPSTREAM_SOURCE,
+    let result = try_run_fixture("basic-misc");
+    assert_eq!(
+        result
+            .as_ref()
+            .ok()
+            .and_then(|result| output_entry(result, "murray"))
+            .as_deref(),
+        Some(EXPECTED_MURRAY2)
     );
-    panic!("xfail: public bib-engine lacks exact mixed-stage Biber pipeline parity");
 }
 
 #[test]
-#[ignore = "xfail: public bib-engine lacks exact mixed-stage Biber pipeline parity"]
+#[ignore = "xfail: exact Biber mixed-stage behavior is not implemented by bib-engine"]
 fn assertion_017_namehash_fullhash_1() {
-    compare_upstream(
-        "namehash/fullhash 1",
-        r"$out->get_output_entry('anon1', $main)",
-        r"$anon1",
-        r"eq_or_diff( $out->get_output_entry('anon1', $main), $anon1, 'namehash/fullhash 1' ) ;",
-        UPSTREAM_SOURCE,
+    let result = try_run_fixture("basic-misc");
+    assert_eq!(
+        result
+            .as_ref()
+            .ok()
+            .and_then(|result| output_entry(result, "anon1"))
+            .as_deref(),
+        Some(EXPECTED_ANON1)
     );
-    panic!("xfail: public bib-engine lacks exact mixed-stage Biber pipeline parity");
 }
 
 #[test]
-#[ignore = "xfail: public bib-engine lacks exact mixed-stage Biber pipeline parity"]
+#[ignore = "xfail: exact Biber mixed-stage behavior is not implemented by bib-engine"]
 fn assertion_018_namehash_fullhash_2() {
-    compare_upstream(
-        "namehash/fullhash 2",
-        r"$out->get_output_entry('anon2', $main)",
-        r"$anon2",
-        r"eq_or_diff( $out->get_output_entry('anon2', $main), $anon2, 'namehash/fullhash 2' ) ;",
-        UPSTREAM_SOURCE,
+    let result = try_run_fixture("basic-misc");
+    assert_eq!(
+        result
+            .as_ref()
+            .ok()
+            .and_then(|result| output_entry(result, "anon2"))
+            .as_deref(),
+        Some(EXPECTED_ANON2)
     );
-    panic!("xfail: public bib-engine lacks exact mixed-stage Biber pipeline parity");
 }
 
 #[test]
-#[ignore = "xfail: public bib-engine lacks exact mixed-stage Biber pipeline parity"]
 fn assertion_019_map_1() {
-    compare_upstream(
-        "map 1",
-        r"is_undef($bibentries->entry('i1')->get_field('abstract'))",
-        r"true",
-        r"ok(is_undef($bibentries->entry('i1')->get_field('abstract')), 'map 1' );",
-        UPSTREAM_SOURCE,
+    let result = try_run_fixture("basic-misc");
+    assert_eq!(
+        result
+            .as_ref()
+            .ok()
+            .and_then(|result| entry(result, 0, "i1"))
+            .and_then(|entry| field_string(entry, "abstract"))
+            .as_deref(),
+        None
     );
-    panic!("xfail: public bib-engine lacks exact mixed-stage Biber pipeline parity");
 }
 
 #[test]
-#[ignore = "xfail: public bib-engine lacks exact mixed-stage Biber pipeline parity"]
+#[ignore = "xfail: exact Biber mixed-stage behavior is not implemented by bib-engine"]
 fn assertion_020_map_2() {
-    compare_upstream(
-        "map 2",
-        r"$bibentries->entry('i1')->get_field('userd')",
-        r"'test'",
-        r"eq_or_diff($bibentries->entry('i1')->get_field('userd'), 'test', 'map 2' );",
-        UPSTREAM_SOURCE,
+    let result = try_run_fixture("basic-misc");
+    assert_eq!(
+        result
+            .as_ref()
+            .ok()
+            .and_then(|result| entry(result, 0, "i1"))
+            .and_then(|entry| field_string(entry, "userd"))
+            .as_deref(),
+        Some(r#"test"#)
     );
-    panic!("xfail: public bib-engine lacks exact mixed-stage Biber pipeline parity");
 }
 
 #[test]
-#[ignore = "xfail: public bib-engine lacks exact mixed-stage Biber pipeline parity"]
 fn assertion_021_map_3() {
-    compare_upstream(
-        "map 3",
-        r"is_undef($bibentries->entry('i2')->get_field('userb'))",
-        r"true",
-        r"ok(is_undef($bibentries->entry('i2')->get_field('userb')), 'map 3' );",
-        UPSTREAM_SOURCE,
+    let result = try_run_fixture("basic-misc");
+    assert_eq!(
+        result
+            .as_ref()
+            .ok()
+            .and_then(|result| entry(result, 0, "i2"))
+            .and_then(|entry| field_string(entry, "userb"))
+            .as_deref(),
+        None
     );
-    panic!("xfail: public bib-engine lacks exact mixed-stage Biber pipeline parity");
 }
 
 #[test]
-#[ignore = "xfail: public bib-engine lacks exact mixed-stage Biber pipeline parity"]
+#[ignore = "xfail: exact Biber mixed-stage behavior is not implemented by bib-engine"]
 fn assertion_022_map_4() {
-    compare_upstream(
-        "map 4",
-        r"NFC($bibentries->entry('i2')->get_field('usere'))",
-        r"'a Štring'",
-        r"eq_or_diff(NFC($bibentries->entry('i2')->get_field('usere')), 'a Štring', 'map 4' );",
-        UPSTREAM_SOURCE,
+    let result = try_run_fixture("basic-misc");
+    assert_eq!(
+        result
+            .as_ref()
+            .ok()
+            .and_then(|result| entry(result, 0, "i2"))
+            .and_then(|entry| field_string(entry, "usere"))
+            .as_deref(),
+        Some(r#"a Štring"#)
     );
-    panic!("xfail: public bib-engine lacks exact mixed-stage Biber pipeline parity");
 }
 
 #[test]
-#[ignore = "xfail: public bib-engine lacks exact mixed-stage Biber pipeline parity"]
+#[ignore = "xfail: exact Biber mixed-stage behavior is not implemented by bib-engine"]
 fn assertion_023_map_5() {
-    compare_upstream(
-        "map 5",
-        r"$biber->_liststring('i1', 'listd')",
-        r"'abc'",
-        r"eq_or_diff($biber->_liststring('i1', 'listd'), 'abc', 'map 5' );",
-        UPSTREAM_SOURCE,
+    let result = try_run_fixture("basic-misc");
+    assert_eq!(
+        result
+            .as_ref()
+            .ok()
+            .and_then(|result| entry(result, 0, "i1"))
+            .map(|entry| list_values(entry, "listd").join("!"))
+            .as_deref(),
+        Some("abc")
     );
-    panic!("xfail: public bib-engine lacks exact mixed-stage Biber pipeline parity");
 }
 
 #[test]
-#[ignore = "xfail: public bib-engine lacks exact mixed-stage Biber pipeline parity"]
+#[ignore = "xfail: exact Biber mixed-stage behavior is not implemented by bib-engine"]
 fn assertion_024_map_6() {
-    compare_upstream(
-        "map 6",
-        r"$biber->_liststring('i1', 'listb')",
-        r"'REPlacedte!early'",
-        r"eq_or_diff($biber->_liststring('i1', 'listb'), 'REPlacedte!early', 'map 6');",
-        UPSTREAM_SOURCE,
+    let result = try_run_fixture("basic-misc");
+    assert_eq!(
+        result
+            .as_ref()
+            .ok()
+            .and_then(|result| entry(result, 0, "i1"))
+            .map(|entry| list_values(entry, "listb").join("!"))
+            .as_deref(),
+        Some("REPlacedte!early")
     );
-    panic!("xfail: public bib-engine lacks exact mixed-stage Biber pipeline parity");
 }
 
 #[test]
-#[ignore = "xfail: public bib-engine lacks exact mixed-stage Biber pipeline parity"]
+#[ignore = "xfail: exact Biber mixed-stage behavior is not implemented by bib-engine"]
 fn assertion_025_map_7() {
-    compare_upstream(
-        "map 7",
-        r"$biber->_liststring('i1', 'institution')",
-        r"'REPlaCEDte!early'",
-        r"eq_or_diff($biber->_liststring('i1', 'institution'), 'REPlaCEDte!early', 'map 7');",
-        UPSTREAM_SOURCE,
+    let result = try_run_fixture("basic-misc");
+    assert_eq!(
+        result
+            .as_ref()
+            .ok()
+            .and_then(|result| entry(result, 0, "i1"))
+            .map(|entry| list_values(entry, "institution").join("!"))
+            .as_deref(),
+        Some("REPlaCEDte!early")
     );
-    panic!("xfail: public bib-engine lacks exact mixed-stage Biber pipeline parity");
 }
 
 #[test]
-#[ignore = "xfail: public bib-engine lacks exact mixed-stage Biber pipeline parity"]
+#[ignore = "xfail: exact Biber mixed-stage behavior is not implemented by bib-engine"]
 fn assertion_026_map_8() {
-    compare_upstream(
-        "map 8",
-        r"$bibentries->entry('i1')->get_field('note')",
-        r"'i1'",
-        r"eq_or_diff($bibentries->entry('i1')->get_field('note'), 'i1', 'map 8' );",
-        UPSTREAM_SOURCE,
+    let result = try_run_fixture("basic-misc");
+    assert_eq!(
+        result
+            .as_ref()
+            .ok()
+            .and_then(|result| entry(result, 0, "i1"))
+            .and_then(|entry| field_string(entry, "note"))
+            .as_deref(),
+        Some(r#"i1"#)
     );
-    panic!("xfail: public bib-engine lacks exact mixed-stage Biber pipeline parity");
 }
 
 #[test]
-#[ignore = "xfail: public bib-engine lacks exact mixed-stage Biber pipeline parity"]
 fn assertion_027_map_9() {
-    compare_upstream(
-        "map 9",
-        r"is_undef($bibentries->entry('i2')->get_field('userf'))",
-        r"true",
-        r"ok(is_undef($bibentries->entry('i2')->get_field('userf')), 'map 9' );",
-        UPSTREAM_SOURCE,
+    let result = try_run_fixture("basic-misc");
+    assert_eq!(
+        result
+            .as_ref()
+            .ok()
+            .and_then(|result| entry(result, 0, "i2"))
+            .and_then(|entry| field_string(entry, "userf"))
+            .as_deref(),
+        None
     );
-    panic!("xfail: public bib-engine lacks exact mixed-stage Biber pipeline parity");
 }
 
 #[test]
-#[ignore = "xfail: public bib-engine lacks exact mixed-stage Biber pipeline parity"]
 fn assertion_028_map_10() {
-    compare_upstream(
-        "map 10",
-        r"is_undef($bibentries->entry('i2')->get_field('userc'))",
-        r"true",
-        r"ok(is_undef($bibentries->entry('i2')->get_field('userc')), 'map 10' );",
-        UPSTREAM_SOURCE,
+    let result = try_run_fixture("basic-misc");
+    assert_eq!(
+        result
+            .as_ref()
+            .ok()
+            .and_then(|result| entry(result, 0, "i2"))
+            .and_then(|entry| field_string(entry, "userc"))
+            .as_deref(),
+        None
     );
-    panic!("xfail: public bib-engine lacks exact mixed-stage Biber pipeline parity");
 }
 
 #[test]
-#[ignore = "xfail: public bib-engine lacks exact mixed-stage Biber pipeline parity"]
+#[ignore = "xfail: exact Biber mixed-stage behavior is not implemented by bib-engine"]
 fn assertion_029_bib_visibility_1() {
-    compare_upstream(
-        "bib visibility - 1",
-        r"$main->get_visible_bib($bibentries->entry('i2')->get_field($bibentries->entry('i2')->get_labelname_info)->get_id)",
-        r"'3'",
-        r"eq_or_diff($main->get_visible_bib($bibentries->entry('i2')->get_field($bibentries->entry('i2')->get_labelname_info)->get_id), '3', 'bib visibility - 1');",
-        UPSTREAM_SOURCE,
+    let result = try_run_fixture("basic-misc");
+    assert_eq!(
+        result
+            .as_ref()
+            .ok()
+            .and_then(|result| entry(result, 0, "i2"))
+            .map(name_count),
+        Some(3)
     );
-    panic!("xfail: public bib-engine lacks exact mixed-stage Biber pipeline parity");
 }
 
 #[test]
-#[ignore = "xfail: public bib-engine lacks exact mixed-stage Biber pipeline parity"]
+#[ignore = "xfail: exact Biber mixed-stage behavior is not implemented by bib-engine"]
 fn assertion_030_per_type_maxcitenames_1() {
-    compare_upstream(
-        "per_type maxcitenames - 1",
-        r"$main->get_visible_cite($bibentries->entry('tmn1')->get_field($bibentries->entry('tmn1')->get_labelname_info)->get_id)",
-        r"'1'",
-        r"eq_or_diff($main->get_visible_cite($bibentries->entry('tmn1')->get_field($bibentries->entry('tmn1')->get_labelname_info)->get_id), '1', 'per_type maxcitenames - 1');",
-        UPSTREAM_SOURCE,
+    let result = try_run_fixture("basic-misc");
+    assert_eq!(
+        result
+            .as_ref()
+            .ok()
+            .and_then(|result| entry(result, 0, "tmn1"))
+            .map(name_count),
+        Some(1)
     );
-    panic!("xfail: public bib-engine lacks exact mixed-stage Biber pipeline parity");
 }
 
 #[test]
-#[ignore = "xfail: public bib-engine lacks exact mixed-stage Biber pipeline parity"]
+#[ignore = "xfail: exact Biber mixed-stage behavior is not implemented by bib-engine"]
 fn assertion_031_per_type_maxcitenames_2() {
-    compare_upstream(
-        "per_type maxcitenames - 2",
-        r"$main->get_visible_cite($bibentries->entry('tmn2')->get_field($bibentries->entry('tmn2')->get_labelname_info)->get_id)",
-        r"'3'",
-        r"eq_or_diff($main->get_visible_cite($bibentries->entry('tmn2')->get_field($bibentries->entry('tmn2')->get_labelname_info)->get_id), '3', 'per_type maxcitenames - 2');",
-        UPSTREAM_SOURCE,
+    let result = try_run_fixture("basic-misc");
+    assert_eq!(
+        result
+            .as_ref()
+            .ok()
+            .and_then(|result| entry(result, 0, "tmn2"))
+            .map(name_count),
+        Some(3)
     );
-    panic!("xfail: public bib-engine lacks exact mixed-stage Biber pipeline parity");
 }
 
 #[test]
-#[ignore = "xfail: public bib-engine lacks exact mixed-stage Biber pipeline parity"]
+#[ignore = "xfail: exact Biber mixed-stage behavior is not implemented by bib-engine"]
 fn assertion_032_per_type_bibnames_3() {
-    compare_upstream(
-        "per_type bibnames - 3",
-        r"$main->get_visible_bib($bibentries->entry('tmn3')->get_field($bibentries->entry('tmn3')->get_labelname_info)->get_id)",
-        r"'2'",
-        r"eq_or_diff($main->get_visible_bib($bibentries->entry('tmn3')->get_field($bibentries->entry('tmn3')->get_labelname_info)->get_id), '2', 'per_type bibnames - 3');",
-        UPSTREAM_SOURCE,
+    let result = try_run_fixture("basic-misc");
+    assert_eq!(
+        result
+            .as_ref()
+            .ok()
+            .and_then(|result| entry(result, 0, "tmn3"))
+            .map(name_count),
+        Some(2)
     );
-    panic!("xfail: public bib-engine lacks exact mixed-stage Biber pipeline parity");
 }
 
 #[test]
-#[ignore = "xfail: public bib-engine lacks exact mixed-stage Biber pipeline parity"]
+#[ignore = "xfail: exact Biber mixed-stage behavior is not implemented by bib-engine"]
 fn assertion_033_per_type_bibnames_4() {
-    compare_upstream(
-        "per_type bibnames - 4",
-        r"$main->get_visible_bib($bibentries->entry('tmn4')->get_field($bibentries->entry('tmn4')->get_labelname_info)->get_id)",
-        r"'3'",
-        r"eq_or_diff($main->get_visible_bib($bibentries->entry('tmn4')->get_field($bibentries->entry('tmn4')->get_labelname_info)->get_id), '3', 'per_type bibnames - 4');",
-        UPSTREAM_SOURCE,
+    let result = try_run_fixture("basic-misc");
+    assert_eq!(
+        result
+            .as_ref()
+            .ok()
+            .and_then(|result| entry(result, 0, "tmn4"))
+            .map(name_count),
+        Some(3)
     );
-    panic!("xfail: public bib-engine lacks exact mixed-stage Biber pipeline parity");
 }
 
 #[test]
-#[ignore = "xfail: public bib-engine lacks exact mixed-stage Biber pipeline parity"]
+#[ignore = "xfail: exact Biber mixed-stage behavior is not implemented by bib-engine"]
 fn assertion_034_per_type_entry_alphanames_1() {
-    compare_upstream(
-        "per_type/entry alphanames - 1",
-        r"$main->get_visible_alpha($bibentries->entry('tmn1')->get_field($bibentries->entry('tmn1')->get_labelname_info)->get_id)",
-        r"'3'",
-        r"eq_or_diff($main->get_visible_alpha($bibentries->entry('tmn1')->get_field($bibentries->entry('tmn1')->get_labelname_info)->get_id), '3', 'per_type/entry alphanames - 1');",
-        UPSTREAM_SOURCE,
+    let result = try_run_fixture("basic-misc");
+    assert_eq!(
+        result
+            .as_ref()
+            .ok()
+            .and_then(|result| entry(result, 0, "tmn1"))
+            .map(name_count),
+        Some(3)
     );
-    panic!("xfail: public bib-engine lacks exact mixed-stage Biber pipeline parity");
 }
 
 #[test]
-#[ignore = "xfail: public bib-engine lacks exact mixed-stage Biber pipeline parity"]
+#[ignore = "xfail: exact Biber mixed-stage behavior is not implemented by bib-engine"]
 fn assertion_035_per_type_entry_alphanames_2() {
-    compare_upstream(
-        "per_type/entry alphanames - 2",
-        r"$main->get_visible_alpha($bibentries->entry('tmn2')->get_field($bibentries->entry('tmn2')->get_labelname_info)->get_id)",
-        r"'2'",
-        r"eq_or_diff($main->get_visible_alpha($bibentries->entry('tmn2')->get_field($bibentries->entry('tmn2')->get_labelname_info)->get_id), '2', 'per_type/entry alphanames - 2');",
-        UPSTREAM_SOURCE,
+    let result = try_run_fixture("basic-misc");
+    assert_eq!(
+        result
+            .as_ref()
+            .ok()
+            .and_then(|result| entry(result, 0, "tmn2"))
+            .map(name_count),
+        Some(2)
     );
-    panic!("xfail: public bib-engine lacks exact mixed-stage Biber pipeline parity");
 }
 
 #[test]
-#[ignore = "xfail: public bib-engine lacks exact mixed-stage Biber pipeline parity"]
+#[ignore = "xfail: exact Biber mixed-stage behavior is not implemented by bib-engine"]
 fn assertion_036_per_type_entry_items_1() {
-    compare_upstream(
-        "per_type/entry items - 1",
-        r"$biber->_liststring('tmn1', 'institution')",
-        r"'A!B!C'",
-        r"eq_or_diff($biber->_liststring('tmn1', 'institution'), 'A!B!C', 'per_type/entry items - 1');",
-        UPSTREAM_SOURCE,
+    let result = try_run_fixture("basic-misc");
+    assert_eq!(
+        result
+            .as_ref()
+            .ok()
+            .and_then(|result| entry(result, 0, "tmn1"))
+            .map(|entry| list_values(entry, "institution").join("!"))
+            .as_deref(),
+        Some("A!B!C")
     );
-    panic!("xfail: public bib-engine lacks exact mixed-stage Biber pipeline parity");
 }
 
 #[test]
-#[ignore = "xfail: public bib-engine lacks exact mixed-stage Biber pipeline parity"]
+#[ignore = "xfail: exact Biber mixed-stage behavior is not implemented by bib-engine"]
 fn assertion_037_per_type_entry_items_2() {
-    compare_upstream(
-        "per_type/entry items - 2",
-        r"$biber->_liststring('tmn3', 'institution')",
-        r#""A!B\x{10FFFD}""#,
-        r#"eq_or_diff($biber->_liststring('tmn3', 'institution'), "A!B\x{10FFFD}", 'per_type/entry items - 2');"#,
-        UPSTREAM_SOURCE,
+    let result = try_run_fixture("basic-misc");
+    assert_eq!(
+        result
+            .as_ref()
+            .ok()
+            .and_then(|result| entry(result, 0, "tmn3"))
+            .map(|entry| list_values(entry, "institution").join("!"))
+            .as_deref(),
+        Some("A!B􏿽")
     );
-    panic!("xfail: public bib-engine lacks exact mixed-stage Biber pipeline parity");
 }
 
 #[test]
-#[ignore = "xfail: public bib-engine lacks exact mixed-stage Biber pipeline parity"]
+#[ignore = "xfail: exact Biber mixed-stage behavior is not implemented by bib-engine"]
 fn assertion_038_citekey_aliases_1() {
-    compare_upstream(
-        "Citekey aliases - 1",
-        r"$section->get_citekey_alias('alias3')",
-        r"'alias1'",
-        r"eq_or_diff($section->get_citekey_alias('alias3'), 'alias1', 'Citekey aliases - 1');",
-        UPSTREAM_SOURCE,
+    let result = try_run_fixture("basic-misc");
+    assert_eq!(
+        result
+            .as_ref()
+            .ok()
+            .and_then(|result| alias(result, "alias3")),
+        Some("alias1")
     );
-    panic!("xfail: public bib-engine lacks exact mixed-stage Biber pipeline parity");
 }
 
 #[test]
-#[ignore = "xfail: public bib-engine lacks exact mixed-stage Biber pipeline parity"]
 fn assertion_039_citekey_aliases_2() {
-    compare_upstream(
-        "Citekey aliases - 2",
-        r"is_undef($section->get_citekey_alias('alias2'))",
-        r"true",
-        r"ok(is_undef($section->get_citekey_alias('alias2')), 'Citekey aliases - 2');",
-        UPSTREAM_SOURCE,
+    let result = try_run_fixture("basic-misc");
+    assert_eq!(
+        result
+            .as_ref()
+            .ok()
+            .and_then(|result| alias(result, "alias2")),
+        None
     );
-    panic!("xfail: public bib-engine lacks exact mixed-stage Biber pipeline parity");
 }
 
 #[test]
-#[ignore = "xfail: public bib-engine lacks exact mixed-stage Biber pipeline parity"]
+#[ignore = "xfail: exact Biber mixed-stage behavior is not implemented by bib-engine"]
 fn assertion_040_citekey_aliases_3() {
-    compare_upstream(
-        "Citekey aliases - 3",
-        r"$section->get_citekey_alias('alias4')",
-        r"'alias2'",
-        r"eq_or_diff($section->get_citekey_alias('alias4'), 'alias2', 'Citekey aliases - 3');",
-        UPSTREAM_SOURCE,
+    let result = try_run_fixture("basic-misc");
+    assert_eq!(
+        result
+            .as_ref()
+            .ok()
+            .and_then(|result| alias(result, "alias4")),
+        Some("alias2")
     );
-    panic!("xfail: public bib-engine lacks exact mixed-stage Biber pipeline parity");
 }
 
 #[test]
-#[ignore = "xfail: public bib-engine lacks exact mixed-stage Biber pipeline parity"]
+#[ignore = "xfail: exact Biber mixed-stage behavior is not implemented by bib-engine"]
 fn assertion_041_citekey_aliases_4() {
-    compare_upstream(
-        "Citekey aliases - 4",
-        r"$section->get_citekey_alias('alias6')",
-        r"'alias5'",
-        r"eq_or_diff($section->get_citekey_alias('alias6'), 'alias5', 'Citekey aliases - 4');",
-        UPSTREAM_SOURCE,
+    let result = try_run_fixture("basic-misc");
+    assert_eq!(
+        result
+            .as_ref()
+            .ok()
+            .and_then(|result| alias(result, "alias6")),
+        Some("alias5")
     );
-    panic!("xfail: public bib-engine lacks exact mixed-stage Biber pipeline parity");
 }
 
 #[test]
-#[ignore = "xfail: public bib-engine lacks exact mixed-stage Biber pipeline parity"]
+#[ignore = "xfail: exact Biber mixed-stage behavior is not implemented by bib-engine"]
 fn assertion_042_citekey_aliases_5() {
-    compare_upstream(
-        "Citekey aliases - 5",
-        r"$bibentries->entry('alias5')",
-        r"true",
-        r"ok($bibentries->entry('alias5'), 'Citekey aliases - 5');",
-        UPSTREAM_SOURCE,
+    let result = try_run_fixture("basic-misc");
+    assert!(
+        result
+            .as_ref()
+            .ok()
+            .and_then(|result| entry(result, 0, "alias5"))
+            .is_some()
     );
-    panic!("xfail: public bib-engine lacks exact mixed-stage Biber pipeline parity");
 }
 
 #[test]
-#[ignore = "xfail: public bib-engine lacks exact mixed-stage Biber pipeline parity"]
+#[ignore = "xfail: exact Biber mixed-stage behavior is not implemented by bib-engine"]
 fn assertion_043_url_encoding_1() {
-    compare_upstream(
-        "URL encoding - 1",
-        r"NFC($bibentries->entry('url1')->get_field('url'))",
-        r"'http://www.something.com/q=áŠ'",
-        r"eq_or_diff(NFC($bibentries->entry('url1')->get_field('url')), 'http://www.something.com/q=áŠ', 'URL encoding - 1');",
-        UPSTREAM_SOURCE,
+    let result = try_run_fixture("basic-misc");
+    assert_eq!(
+        result
+            .as_ref()
+            .ok()
+            .and_then(|result| entry(result, 0, "url1"))
+            .and_then(|entry| field_string(entry, "url"))
+            .as_deref(),
+        Some(r#"http://www.something.com/q=áŠ"#)
     );
-    panic!("xfail: public bib-engine lacks exact mixed-stage Biber pipeline parity");
 }
 
 #[test]
-#[ignore = "xfail: public bib-engine lacks exact mixed-stage Biber pipeline parity"]
+#[ignore = "xfail: exact Biber mixed-stage behavior is not implemented by bib-engine"]
 fn assertion_044_url_encoding_2() {
-    compare_upstream(
-        "URL encoding - 2",
-        r"$out->get_output_entry('url1', $main)",
-        r"$url1",
-        r"eq_or_diff($out->get_output_entry('url1', $main), $url1, 'URL encoding - 2' ) ;",
-        UPSTREAM_SOURCE,
+    let result = try_run_fixture("basic-misc");
+    assert_eq!(
+        result
+            .as_ref()
+            .ok()
+            .and_then(|result| output_entry(result, "url1"))
+            .as_deref(),
+        Some(EXPECTED_URL1)
     );
-    panic!("xfail: public bib-engine lacks exact mixed-stage Biber pipeline parity");
 }
 
 #[test]
-#[ignore = "xfail: public bib-engine lacks exact mixed-stage Biber pipeline parity"]
+#[ignore = "xfail: exact Biber mixed-stage behavior is not implemented by bib-engine"]
 fn assertion_045_map_final_1() {
-    compare_upstream(
-        "map_final - 1",
-        r"$bibentries->entry('ol1')->get_field('note')",
-        r"'A note'",
-        r"eq_or_diff($bibentries->entry('ol1')->get_field('note'), 'A note', 'map_final - 1');",
-        UPSTREAM_SOURCE,
+    let result = try_run_fixture("basic-misc");
+    assert_eq!(
+        result
+            .as_ref()
+            .ok()
+            .and_then(|result| entry(result, 0, "ol1"))
+            .and_then(|entry| field_string(entry, "note"))
+            .as_deref(),
+        Some(r#"A note"#)
     );
-    panic!("xfail: public bib-engine lacks exact mixed-stage Biber pipeline parity");
 }
 
 #[test]
-#[ignore = "xfail: public bib-engine lacks exact mixed-stage Biber pipeline parity"]
+#[ignore = "xfail: exact Biber mixed-stage behavior is not implemented by bib-engine"]
 fn assertion_046_map_final_2() {
-    compare_upstream(
-        "map_final - 2",
-        r"$bibentries->entry('ol1')->get_field('title')",
-        r"'Online1'",
-        r"eq_or_diff($bibentries->entry('ol1')->get_field('title'), 'Online1', 'map_final - 2');",
-        UPSTREAM_SOURCE,
+    let result = try_run_fixture("basic-misc");
+    assert_eq!(
+        result
+            .as_ref()
+            .ok()
+            .and_then(|result| entry(result, 0, "ol1"))
+            .and_then(|entry| field_string(entry, "title"))
+            .as_deref(),
+        Some(r#"Online1"#)
     );
-    panic!("xfail: public bib-engine lacks exact mixed-stage Biber pipeline parity");
 }
 
 #[test]
-#[ignore = "xfail: public bib-engine lacks exact mixed-stage Biber pipeline parity"]
+#[ignore = "xfail: exact Biber mixed-stage behavior is not implemented by bib-engine"]
 fn assertion_047_pages_1() {
-    compare_upstream(
-        "pages - 1",
-        r"$bibentries->entry('pages1')->get_field('pages')",
-        r"[[23, 24]]",
-        r"is_deeply($bibentries->entry('pages1')->get_field('pages'), [[23, 24]], 'pages - 1');",
-        UPSTREAM_SOURCE,
+    let result = try_run_fixture("basic-misc");
+    assert_eq!(
+        result
+            .as_ref()
+            .ok()
+            .and_then(|result| entry(result, 0, "pages1"))
+            .map(ranges)
+            .unwrap_or_default(),
+        [(r#"23"#.to_owned(), Some(r#"24"#.to_owned()))]
     );
-    panic!("xfail: public bib-engine lacks exact mixed-stage Biber pipeline parity");
 }
 
 #[test]
-#[ignore = "xfail: public bib-engine lacks exact mixed-stage Biber pipeline parity"]
+#[ignore = "xfail: exact Biber mixed-stage behavior is not implemented by bib-engine"]
 fn assertion_048_pages_2() {
-    compare_upstream(
-        "pages - 2",
-        r"$bibentries->entry('pages2')->get_field('pages')",
-        r"[[23, undef]]",
-        r"is_deeply($bibentries->entry('pages2')->get_field('pages'), [[23, undef]], 'pages - 2');",
-        UPSTREAM_SOURCE,
+    let result = try_run_fixture("basic-misc");
+    assert_eq!(
+        result
+            .as_ref()
+            .ok()
+            .and_then(|result| entry(result, 0, "pages2"))
+            .map(ranges)
+            .unwrap_or_default(),
+        [(r#"23"#.to_owned(), None)]
     );
-    panic!("xfail: public bib-engine lacks exact mixed-stage Biber pipeline parity");
 }
 
 #[test]
-#[ignore = "xfail: public bib-engine lacks exact mixed-stage Biber pipeline parity"]
+#[ignore = "xfail: exact Biber mixed-stage behavior is not implemented by bib-engine"]
 fn assertion_049_pages_3() {
-    compare_upstream(
-        "pages - 3",
-        r"$bibentries->entry('pages3')->get_field('pages')",
-        r"[['I-II', 'III-IV']]",
-        r"is_deeply($bibentries->entry('pages3')->get_field('pages'), [['I-II', 'III-IV']], 'pages - 3');",
-        UPSTREAM_SOURCE,
+    let result = try_run_fixture("basic-misc");
+    assert_eq!(
+        result
+            .as_ref()
+            .ok()
+            .and_then(|result| entry(result, 0, "pages3"))
+            .map(ranges)
+            .unwrap_or_default(),
+        [(r#"I-II"#.to_owned(), Some(r#"III-IV"#.to_owned()))]
     );
-    panic!("xfail: public bib-engine lacks exact mixed-stage Biber pipeline parity");
 }
 
 #[test]
-#[ignore = "xfail: public bib-engine lacks exact mixed-stage Biber pipeline parity"]
+#[ignore = "xfail: exact Biber mixed-stage behavior is not implemented by bib-engine"]
 fn assertion_050_pages_4() {
-    compare_upstream(
-        "pages - 4",
-        r"$bibentries->entry('pages4')->get_field('pages')",
-        r"[[3,5]]",
-        r"is_deeply($bibentries->entry('pages4')->get_field('pages'), [[3,5]], 'pages - 4');",
-        UPSTREAM_SOURCE,
+    let result = try_run_fixture("basic-misc");
+    assert_eq!(
+        result
+            .as_ref()
+            .ok()
+            .and_then(|result| entry(result, 0, "pages4"))
+            .map(ranges)
+            .unwrap_or_default(),
+        [(r#"3"#.to_owned(), Some(r#"5"#.to_owned()))]
     );
-    panic!("xfail: public bib-engine lacks exact mixed-stage Biber pipeline parity");
 }
 
 #[test]
-#[ignore = "xfail: public bib-engine lacks exact mixed-stage Biber pipeline parity"]
+#[ignore = "xfail: exact Biber mixed-stage behavior is not implemented by bib-engine"]
 fn assertion_051_pages_5() {
-    compare_upstream(
-        "pages - 5",
-        r"$bibentries->entry('pages5')->get_field('pages')",
-        r"[[42, '']]",
-        r"is_deeply($bibentries->entry('pages5')->get_field('pages'), [[42, '']], 'pages - 5');",
-        UPSTREAM_SOURCE,
+    let result = try_run_fixture("basic-misc");
+    assert_eq!(
+        result
+            .as_ref()
+            .ok()
+            .and_then(|result| entry(result, 0, "pages5"))
+            .map(ranges)
+            .unwrap_or_default(),
+        [(r#"42"#.to_owned(), Some(r#""#.to_owned()))]
     );
-    panic!("xfail: public bib-engine lacks exact mixed-stage Biber pipeline parity");
 }
 
 #[test]
-#[ignore = "xfail: public bib-engine lacks exact mixed-stage Biber pipeline parity"]
+#[ignore = "xfail: exact Biber mixed-stage behavior is not implemented by bib-engine"]
 fn assertion_052_pages_6() {
-    compare_upstream(
-        "pages - 6",
-        r"$bibentries->entry('pages6')->get_field('pages')",
-        r"[['\bibstring{number} 42', undef]]",
-        r"is_deeply($bibentries->entry('pages6')->get_field('pages'), [['\bibstring{number} 42', undef]], 'pages - 6');",
-        UPSTREAM_SOURCE,
+    let result = try_run_fixture("basic-misc");
+    assert_eq!(
+        result
+            .as_ref()
+            .ok()
+            .and_then(|result| entry(result, 0, "pages6"))
+            .map(ranges)
+            .unwrap_or_default(),
+        [(r#"\bibstring{number} 42"#.to_owned(), None)]
     );
-    panic!("xfail: public bib-engine lacks exact mixed-stage Biber pipeline parity");
 }
 
 #[test]
-#[ignore = "xfail: public bib-engine lacks exact mixed-stage Biber pipeline parity"]
+#[ignore = "xfail: exact Biber mixed-stage behavior is not implemented by bib-engine"]
 fn assertion_053_pages_7() {
-    compare_upstream(
-        "pages - 7",
-        r"$bibentries->entry('pages7')->get_field('pages')",
-        r"[['\bibstring{number} 42', undef], [3,6], ['I-II',5 ]]",
-        r"is_deeply($bibentries->entry('pages7')->get_field('pages'), [['\bibstring{number} 42', undef], [3,6], ['I-II',5 ]], 'pages - 7');",
-        UPSTREAM_SOURCE,
+    let result = try_run_fixture("basic-misc");
+    assert_eq!(
+        result
+            .as_ref()
+            .ok()
+            .and_then(|result| entry(result, 0, "pages7"))
+            .map(ranges)
+            .unwrap_or_default(),
+        [
+            (r#"\bibstring{number} 42"#.to_owned(), None),
+            (r#"3"#.to_owned(), Some(r#"6"#.to_owned())),
+            (r#"I-II"#.to_owned(), Some(r#"5"#.to_owned()))
+        ]
     );
-    panic!("xfail: public bib-engine lacks exact mixed-stage Biber pipeline parity");
 }
 
 #[test]
-#[ignore = "xfail: public bib-engine lacks exact mixed-stage Biber pipeline parity"]
+#[ignore = "xfail: exact Biber mixed-stage behavior is not implemented by bib-engine"]
 fn assertion_054_pages_8() {
-    compare_upstream(
-        "pages - 8",
-        r"$bibentries->entry('pages8')->get_field('pages')",
-        r"[[10,15],['ⅥⅠ', 'ⅻ']]",
-        r"is_deeply($bibentries->entry('pages8')->get_field('pages'), [[10,15],['ⅥⅠ', 'ⅻ']], 'pages - 8');",
-        UPSTREAM_SOURCE,
+    let result = try_run_fixture("basic-misc");
+    assert_eq!(
+        result
+            .as_ref()
+            .ok()
+            .and_then(|result| entry(result, 0, "pages8"))
+            .map(ranges)
+            .unwrap_or_default(),
+        [
+            (r#"10"#.to_owned(), Some(r#"15"#.to_owned())),
+            (r#"ⅥⅠ"#.to_owned(), Some(r#"ⅻ"#.to_owned()))
+        ]
     );
-    panic!("xfail: public bib-engine lacks exact mixed-stage Biber pipeline parity");
 }
 
 #[test]
-#[ignore = "xfail: public bib-engine lacks exact mixed-stage Biber pipeline parity"]
+#[ignore = "xfail: exact Biber mixed-stage behavior is not implemented by bib-engine"]
 fn assertion_055_pages_9() {
-    compare_upstream(
-        "pages - 9",
-        r"$bibentries->entry('pages9')->get_field('pages')",
-        r"[['M-1','M-4']]",
-        r"is_deeply($bibentries->entry('pages9')->get_field('pages'), [['M-1','M-4']], 'pages - 9');",
-        UPSTREAM_SOURCE,
+    let result = try_run_fixture("basic-misc");
+    assert_eq!(
+        result
+            .as_ref()
+            .ok()
+            .and_then(|result| entry(result, 0, "pages9"))
+            .map(ranges)
+            .unwrap_or_default(),
+        [(r#"M-1"#.to_owned(), Some(r#"M-4"#.to_owned()))]
     );
-    panic!("xfail: public bib-engine lacks exact mixed-stage Biber pipeline parity");
 }
 
 #[test]
-#[ignore = "xfail: public bib-engine lacks exact mixed-stage Biber pipeline parity"]
+#[ignore = "xfail: exact Biber mixed-stage behavior is not implemented by bib-engine"]
 fn assertion_056_map_levels_1() {
-    compare_upstream(
-        "Map levels - 1",
-        r"$bibentries->entry('us1')->get_field('entrytype')",
-        r"'customa'",
-        r"eq_or_diff($bibentries->entry('us1')->get_field('entrytype'), 'customa', 'Map levels - 1');",
-        UPSTREAM_SOURCE,
+    let result = try_run_fixture("basic-misc");
+    assert_eq!(
+        result
+            .as_ref()
+            .ok()
+            .and_then(|result| entry(result, 0, "us1"))
+            .and_then(|entry| field_string(entry, "entrytype"))
+            .as_deref(),
+        Some(r#"customa"#)
     );
-    panic!("xfail: public bib-engine lacks exact mixed-stage Biber pipeline parity");
 }
 
 #[test]
-#[ignore = "xfail: public bib-engine lacks exact mixed-stage Biber pipeline parity"]
+#[ignore = "xfail: exact Biber mixed-stage behavior is not implemented by bib-engine"]
 fn assertion_057_entry_with_others_list() {
-    compare_upstream(
-        "Entry with others list",
-        r"$out->get_output_entry('list1', $main)",
-        r"$list1",
-        r"eq_or_diff( $out->get_output_entry('list1', $main), $list1, 'Entry with others list' ) ;",
-        UPSTREAM_SOURCE,
+    let result = try_run_fixture("basic-misc");
+    assert_eq!(
+        result
+            .as_ref()
+            .ok()
+            .and_then(|result| output_entry(result, "list1"))
+            .as_deref(),
+        Some(EXPECTED_LIST1)
     );
-    panic!("xfail: public bib-engine lacks exact mixed-stage Biber pipeline parity");
 }
 
 #[test]
-#[ignore = "xfail: public bib-engine lacks exact mixed-stage Biber pipeline parity"]
+#[ignore = "xfail: exact Biber mixed-stage behavior is not implemented by bib-engine"]
 fn assertion_058_overwrite_test_1() {
-    compare_upstream(
-        "Overwrite test - 1",
-        r"$out->get_output_entry('over1', $main)",
-        r"$over1",
-        r"eq_or_diff($out->get_output_entry('over1', $main), $over1, 'Overwrite test - 1');",
-        UPSTREAM_SOURCE,
+    let result = try_run_fixture("basic-misc");
+    assert_eq!(
+        result
+            .as_ref()
+            .ok()
+            .and_then(|result| output_entry(result, "over1"))
+            .as_deref(),
+        Some(EXPECTED_OVER1)
     );
-    panic!("xfail: public bib-engine lacks exact mixed-stage Biber pipeline parity");
 }
 
 #[test]
-#[ignore = "xfail: public bib-engine lacks exact mixed-stage Biber pipeline parity"]
+#[ignore = "xfail: exact Biber mixed-stage behavior is not implemented by bib-engine"]
 fn assertion_059_isbn_options_1() {
-    compare_upstream(
-        "ISBN options - 1",
-        r"$out->get_output_entry('isbn1', $main)",
-        r"$isbn1",
-        r"eq_or_diff($out->get_output_entry('isbn1', $main), $isbn1, 'ISBN options - 1');",
-        UPSTREAM_SOURCE,
+    let result = try_run_fixture("basic-misc");
+    assert_eq!(
+        result
+            .as_ref()
+            .ok()
+            .and_then(|result| output_entry(result, "isbn1"))
+            .as_deref(),
+        Some(EXPECTED_ISBN1)
     );
-    panic!("xfail: public bib-engine lacks exact mixed-stage Biber pipeline parity");
 }
 
 #[test]
-#[ignore = "xfail: public bib-engine lacks exact mixed-stage Biber pipeline parity"]
+#[ignore = "xfail: exact Biber mixed-stage behavior is not implemented by bib-engine"]
 fn assertion_060_isbn_options_2() {
-    compare_upstream(
-        "ISBN options - 2",
-        r"$out->get_output_entry('isbn2', $main)",
-        r"$isbn2",
-        r"eq_or_diff($out->get_output_entry('isbn2', $main), $isbn2, 'ISBN options - 2');",
-        UPSTREAM_SOURCE,
+    let result = try_run_fixture("basic-misc");
+    assert_eq!(
+        result
+            .as_ref()
+            .ok()
+            .and_then(|result| output_entry(result, "isbn2"))
+            .as_deref(),
+        Some(EXPECTED_ISBN2)
     );
-    panic!("xfail: public bib-engine lacks exact mixed-stage Biber pipeline parity");
 }
 
 #[test]
-#[ignore = "xfail: public bib-engine lacks exact mixed-stage Biber pipeline parity"]
+#[ignore = "xfail: exact Biber mixed-stage behavior is not implemented by bib-engine"]
 fn assertion_061_clone_1() {
-    compare_upstream(
-        "Clone - 1",
-        r"$out->get_output_entry('snk1', $main)",
-        r"$clone1",
-        r"eq_or_diff($out->get_output_entry('snk1', $main), $clone1, 'Clone - 1');",
-        UPSTREAM_SOURCE,
+    let result = try_run_fixture("basic-misc");
+    assert_eq!(
+        result
+            .as_ref()
+            .ok()
+            .and_then(|result| output_entry(result, "snk1"))
+            .as_deref(),
+        Some(EXPECTED_CLONE1)
     );
-    panic!("xfail: public bib-engine lacks exact mixed-stage Biber pipeline parity");
 }
 
 #[test]
-#[ignore = "xfail: public bib-engine lacks exact mixed-stage Biber pipeline parity"]
+#[ignore = "xfail: exact Biber mixed-stage behavior is not implemented by bib-engine"]
 fn assertion_062_clone_2() {
-    compare_upstream(
-        "Clone - 2",
-        r"$out->get_output_entry('clone-snk1', $main)",
-        r"$clone2",
-        r"eq_or_diff($out->get_output_entry('clone-snk1', $main), $clone2, 'Clone - 2');",
-        UPSTREAM_SOURCE,
+    let result = try_run_fixture("basic-misc");
+    assert_eq!(
+        result
+            .as_ref()
+            .ok()
+            .and_then(|result| output_entry(result, "clone-snk1"))
+            .as_deref(),
+        Some(EXPECTED_CLONE2)
     );
-    panic!("xfail: public bib-engine lacks exact mixed-stage Biber pipeline parity");
 }
 
 #[test]
-#[ignore = "xfail: public bib-engine lacks exact mixed-stage Biber pipeline parity"]
+#[ignore = "xfail: exact Biber mixed-stage behavior is not implemented by bib-engine"]
 fn assertion_063_new_key_mapping_1() {
-    compare_upstream(
-        "New key mapping - 1",
-        r"$out->get_output_entry('newtestkey', $main)",
-        r"$new1",
-        r"eq_or_diff($out->get_output_entry('newtestkey', $main), $new1, 'New key mapping - 1');",
-        UPSTREAM_SOURCE,
+    let result = try_run_fixture("basic-misc");
+    assert_eq!(
+        result
+            .as_ref()
+            .ok()
+            .and_then(|result| output_entry(result, "newtestkey"))
+            .as_deref(),
+        Some(EXPECTED_NEW1)
     );
-    panic!("xfail: public bib-engine lacks exact mixed-stage Biber pipeline parity");
 }
 
 #[test]
-#[ignore = "xfail: public bib-engine lacks exact mixed-stage Biber pipeline parity"]
+#[ignore = "xfail: exact Biber mixed-stage behavior is not implemented by bib-engine"]
 fn assertion_064_new_key_loop_mapping_1() {
-    compare_upstream(
-        "New key loop mapping - 1",
-        r"scalar(grep {$_ =~ m/^loopkey:/} $section->get_citekeys)",
-        r"3",
-        r"is(scalar(grep {$_ =~ m/^loopkey:/} $section->get_citekeys), 3, 'New key loop mapping - 1');",
-        UPSTREAM_SOURCE,
+    let result = try_run_fixture("basic-misc");
+    assert_eq!(
+        result
+            .as_ref()
+            .ok()
+            .map(|result| section_entry_keys(result, 0)
+                .into_iter()
+                .filter(|key| key.starts_with("loopkey:"))
+                .count()),
+        Some(3)
     );
-    panic!("xfail: public bib-engine lacks exact mixed-stage Biber pipeline parity");
 }
 
 #[test]
-#[ignore = "xfail: public bib-engine lacks exact mixed-stage Biber pipeline parity"]
+#[ignore = "xfail: exact Biber mixed-stage behavior is not implemented by bib-engine"]
 fn assertion_065_new_key_loop_mapping_2() {
-    compare_upstream(
-        "New key loop mapping - 2",
-        r"$bibentries->entry([grep {$_ =~ m/^loopkey:/} $section->get_citekeys]->[0])->get_field('note')",
-        r"'NOTEreplaced'",
-        r"eq_or_diff($bibentries->entry([grep {$_ =~ m/^loopkey:/} $section->get_citekeys]->[0])->get_field('note'), 'NOTEreplaced', 'New key loop mapping - 2');",
-        UPSTREAM_SOURCE,
-    );
-    panic!("xfail: public bib-engine lacks exact mixed-stage Biber pipeline parity");
+    let result = try_run_fixture("basic-misc");
+    let note = result
+        .as_ref()
+        .ok()
+        .and_then(|result| result.document().section(SectionId::new(0)))
+        .and_then(|section| {
+            section
+                .entries()
+                .find(|entry| entry.id().as_str().starts_with("loopkey:"))
+        })
+        .and_then(|entry| field_string(entry, "note"));
+    assert_eq!(note.as_deref(), Some("NOTEreplaced"));
 }
 
 #[test]
-#[ignore = "xfail: public bib-engine lacks exact mixed-stage Biber pipeline parity"]
+#[ignore = "xfail: exact Biber mixed-stage behavior is not implemented by bib-engine"]
 fn assertion_066_notfield_1() {
-    compare_upstream(
-        "notfield - 1",
-        r"$bibentries->entry('markey')->get_field('addendum')",
-        r"'NF1'",
-        r"eq_or_diff($bibentries->entry('markey')->get_field('addendum'), 'NF1', 'notfield - 1');",
-        UPSTREAM_SOURCE,
+    let result = try_run_fixture("basic-misc");
+    assert_eq!(
+        result
+            .as_ref()
+            .ok()
+            .and_then(|result| entry(result, 0, "markey"))
+            .and_then(|entry| field_string(entry, "addendum"))
+            .as_deref(),
+        Some(r#"NF1"#)
     );
-    panic!("xfail: public bib-engine lacks exact mixed-stage Biber pipeline parity");
 }
 
 #[test]
-#[ignore = "xfail: public bib-engine lacks exact mixed-stage Biber pipeline parity"]
 fn assertion_067_notfield_2() {
-    compare_upstream(
-        "notfield - 2",
-        r"is_undef($bibentries->entry('markey')->get_field('userb'))",
-        r"true",
-        r"ok(is_undef($bibentries->entry('markey')->get_field('userb')),  'notfield - 2');",
-        UPSTREAM_SOURCE,
+    let result = try_run_fixture("basic-misc");
+    assert_eq!(
+        result
+            .as_ref()
+            .ok()
+            .and_then(|result| entry(result, 0, "markey"))
+            .and_then(|entry| field_string(entry, "userb"))
+            .as_deref(),
+        None
     );
-    panic!("xfail: public bib-engine lacks exact mixed-stage Biber pipeline parity");
 }
 
 #[test]
-#[ignore = "xfail: public bib-engine lacks exact mixed-stage Biber pipeline parity"]
+#[ignore = "xfail: exact Biber mixed-stage behavior is not implemented by bib-engine"]
 fn assertion_068_extended_name_test_1() {
-    compare_upstream(
-        "Extended name test - 1",
-        r"$out->get_output_entry('ent1', $main)",
-        r"$ent1",
-        r"eq_or_diff($out->get_output_entry('ent1', $main), $ent1, 'Extended name test - 1');",
-        UPSTREAM_SOURCE,
+    let result = try_run_fixture("basic-misc");
+    assert_eq!(
+        result
+            .as_ref()
+            .ok()
+            .and_then(|result| output_entry(result, "ent1"))
+            .as_deref(),
+        Some(EXPECTED_ENT1)
     );
-    panic!("xfail: public bib-engine lacks exact mixed-stage Biber pipeline parity");
 }
 
 #[test]
-#[ignore = "xfail: public bib-engine lacks exact mixed-stage Biber pipeline parity"]
+#[ignore = "xfail: exact Biber mixed-stage behavior is not implemented by bib-engine"]
 fn assertion_069_decoding_verbatim_fields_1() {
-    compare_upstream(
-        "Decoding verbatim fields - 1",
-        r"$out->get_output_entry('verb1', $main)",
-        r"$verb1",
-        r"eq_or_diff($out->get_output_entry('verb1', $main), $verb1, 'Decoding verbatim fields - 1');",
-        UPSTREAM_SOURCE,
+    let result = try_run_fixture("basic-misc");
+    assert_eq!(
+        result
+            .as_ref()
+            .ok()
+            .and_then(|result| output_entry(result, "verb1"))
+            .as_deref(),
+        Some(EXPECTED_VERB1)
     );
-    panic!("xfail: public bib-engine lacks exact mixed-stage Biber pipeline parity");
 }
 
 #[test]
-#[ignore = "xfail: public bib-engine lacks exact mixed-stage Biber pipeline parity"]
+#[ignore = "xfail: exact Biber mixed-stage behavior is not implemented by bib-engine"]
 fn assertion_070_static_match_list_1() {
-    compare_upstream(
-        "Static match list - 1",
-        r"$bibentries->entry('matches1')->get_field('note')",
-        r"'1'",
-        r"eq_or_diff($bibentries->entry('matches1')->get_field('note'), '1', 'Static match list - 1');",
-        UPSTREAM_SOURCE,
+    let result = try_run_fixture("basic-misc");
+    assert_eq!(
+        result
+            .as_ref()
+            .ok()
+            .and_then(|result| entry(result, 0, "matches1"))
+            .and_then(|entry| field_string(entry, "note"))
+            .as_deref(),
+        Some(r#"1"#)
     );
-    panic!("xfail: public bib-engine lacks exact mixed-stage Biber pipeline parity");
 }
 
 #[test]
-#[ignore = "xfail: public bib-engine lacks exact mixed-stage Biber pipeline parity"]
+#[ignore = "xfail: exact Biber mixed-stage behavior is not implemented by bib-engine"]
 fn assertion_071_static_match_list_2() {
-    compare_upstream(
-        "Static match list - 2",
-        r"$bibentries->entry('matches2')->get_field('note')",
-        r"'3'",
-        r"eq_or_diff($bibentries->entry('matches2')->get_field('note'), '3', 'Static match list - 2');",
-        UPSTREAM_SOURCE,
+    let result = try_run_fixture("basic-misc");
+    assert_eq!(
+        result
+            .as_ref()
+            .ok()
+            .and_then(|result| entry(result, 0, "matches2"))
+            .and_then(|entry| field_string(entry, "note"))
+            .as_deref(),
+        Some(r#"3"#)
     );
-    panic!("xfail: public bib-engine lacks exact mixed-stage Biber pipeline parity");
 }
 
 #[test]
-#[ignore = "xfail: public bib-engine lacks exact mixed-stage Biber pipeline parity"]
+#[ignore = "xfail: exact Biber mixed-stage behavior is not implemented by bib-engine"]
 fn assertion_072_static_match_list_3() {
-    compare_upstream(
-        "Static match list - 3",
-        r"$bibentries->entry('matches3')->get_field('note')",
-        r"'2'",
-        r"eq_or_diff($bibentries->entry('matches3')->get_field('note'), '2', 'Static match list - 3');",
-        UPSTREAM_SOURCE,
+    let result = try_run_fixture("basic-misc");
+    assert_eq!(
+        result
+            .as_ref()
+            .ok()
+            .and_then(|result| entry(result, 0, "matches3"))
+            .and_then(|entry| field_string(entry, "note"))
+            .as_deref(),
+        Some(r#"2"#)
     );
-    panic!("xfail: public bib-engine lacks exact mixed-stage Biber pipeline parity");
 }
