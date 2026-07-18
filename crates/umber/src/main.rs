@@ -8,7 +8,7 @@ use tex_state::env::banks::IntParam;
 use tex_state::token::Token;
 use tex_state::{FormatError, Universe, World, WorldError};
 use umber::EngineMode as RunEngine;
-use umber::{DriverFile, FileSessionResolvers, PlannedFinalization};
+use umber::{DriverFile, PlannedFinalization};
 
 mod bib;
 mod classic_bib;
@@ -97,16 +97,13 @@ fn run_tex(opts: &RunCliOptions) -> Result<(), CliError> {
 
 fn finalize_run(
     opts: &RunCliOptions,
-    accepted: umber::cli_resource::NativeAcceptedRun,
+    mut accepted: umber::cli_resource::NativeAcceptedRun,
 ) -> Result<(), CliError> {
-    let umber::cli_resource::NativeAcceptedRun {
-        output,
-        finalization,
-        input_path_map,
-        resolved_inputs,
-        main_input,
-        telemetry,
-    } = accepted;
+    if opts.pdf.is_some() && !accepted.pdf_draft_mode() {
+        accepted.provide_pdf_font_programs()?;
+    }
+    let (output, finalization, input_path_map, resolved_inputs, main_input, telemetry) =
+        accepted.into_parts();
     if env::var_os("UMBER_RESOURCE_TELEMETRY").is_some_and(|value| value == "1") {
         eprintln!(
             "RESOURCE_TELEMETRY cold_starts={} suspensions={} local_step_retries={} replayed_delivered_tokens={} replayed_dispatches={} cumulative_fuel={} resource_wait_ns={} engine_ns={}",
@@ -125,7 +122,6 @@ fn finalize_run(
     #[cfg_attr(not(feature = "profiling-stats"), allow(unused_variables))]
     let expansion_stats = finalization.expansion_stats;
     let committed_artifacts = stores.world().committed_artifacts().to_vec();
-    let resolvers = FileSessionResolvers::from_environment(&opts.input);
     if opts.format_out.is_some() && !dumped_format {
         return Err(CliError::MissingFormatDump);
     }
@@ -284,9 +280,6 @@ fn finalize_run(
         {
             eprintln!("pdfTeX warning: \\pdfdraftmode enabled, not changing output pdf");
         } else {
-            resolvers
-                .provide_pdf_font_programs(&mut stores)
-                .map_err(CliError::PdfFontResource)?;
             let pdf = umber::pdf_from_committed_artifacts(&mut stores, &committed_artifacts)?;
             driver_files.push(DriverFile::new(output.clone(), pdf));
         }
@@ -692,7 +685,6 @@ enum CliError {
     Dvi(umber::DviBuildError),
     Html(umber::HtmlBuildError),
     Pdf(umber::PdfBuildError),
-    PdfFontResource(String),
     Format(FormatError),
     MissingFormatDump,
     Finalization(umber::FinalizationError),
@@ -714,7 +706,6 @@ impl std::fmt::Display for CliError {
             Self::Dvi(err) => write!(f, "{err}"),
             Self::Html(err) => write!(f, "{err}"),
             Self::Pdf(err) => write!(f, "{err}"),
-            Self::PdfFontResource(err) => write!(f, "PDF font resource error: {err}"),
             Self::Format(err) => write!(f, "{err}"),
             Self::MissingFormatDump => {
                 f.write_str("--format-out requires the input to execute \\dump")

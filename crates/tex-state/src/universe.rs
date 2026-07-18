@@ -3127,6 +3127,34 @@ impl Universe {
     }
 
     #[must_use]
+    pub fn pdf_font_map_file_requests(&self) -> Vec<Vec<u8>> {
+        self.pdf.font_map_file_requests()
+    }
+
+    pub fn provide_pdf_font_map_file(
+        &mut self,
+        logical_name: Vec<u8>,
+        bytes: &[u8],
+    ) -> Result<(), tex_fonts::PdfFontMapError> {
+        let map = tex_fonts::PdfFontMap::parse(bytes)?;
+        self.pdf.provide_font_map_file(logical_name, map);
+        Ok(())
+    }
+
+    #[must_use]
+    pub fn has_pdf_font_map_file(&self, logical_name: &[u8]) -> bool {
+        self.pdf.has_font_map_file(logical_name)
+    }
+
+    #[must_use]
+    pub fn authoritative_pdf_font_map_names(&self) -> Vec<Vec<u8>> {
+        self.pdf
+            .authoritative_font_map_names()
+            .into_keys()
+            .collect()
+    }
+
+    #[must_use]
     pub fn resolved_pdf_font_map_lines(&self) -> Vec<tex_fonts::PdfFontMapEntry> {
         self.pdf.resolved_font_map_lines()
     }

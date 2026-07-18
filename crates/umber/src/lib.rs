@@ -222,91 +222,139 @@ impl FileSessionResolvers {
         stores: &mut Universe,
         driver_dpi: i32,
     ) -> Result<(), String> {
-        let encodings = stores
-            .resolved_pdf_font_map_lines()
-            .into_iter()
-            .flat_map(|entry| entry.encoding_files)
-            .collect::<std::collections::BTreeSet<_>>();
-        for name in encodings {
-            if stores.pdf_encoding(&name).is_some() {
-                continue;
-            }
-            let logical_name = String::from_utf8_lossy(&name);
-            let content = self
-                .font
+        provide_pdf_font_resources_at_dpi(stores, driver_dpi, |stores, name| {
+            let logical_name = String::from_utf8_lossy(name);
+            self.font
                 .0
-                .read_program_from_world(stores.world_mut(), Path::new(logical_name.as_ref()))?;
-            stores
-                .provide_pdf_encoding(name, content.bytes())
-                .map_err(|error| error.to_string())?;
-        }
-        let names = stores
-            .resolved_pdf_font_map_lines()
-            .into_iter()
-            .filter_map(|entry| entry.font_file)
-            .collect::<std::collections::BTreeSet<_>>();
-        for name in names {
-            let is_truetype = name
-                .rsplit(|byte| *byte == b'.')
-                .next()
-                .is_some_and(|extension| {
-                    extension.eq_ignore_ascii_case(b"ttf")
-                        || extension.eq_ignore_ascii_case(b"woff2")
-                });
-            if (is_truetype && stores.pdf_truetype_program(&name).is_some())
-                || (!is_truetype && stores.pdf_type1_program(&name).is_some())
-            {
-                continue;
-            }
-            let logical_name = String::from_utf8_lossy(&name);
-            let content = self
-                .font
-                .0
-                .read_program_from_world(stores.world_mut(), Path::new(logical_name.as_ref()))?;
-            if is_truetype {
-                stores
-                    .provide_pdf_truetype_program(name, content.bytes())
-                    .map_err(|error| error.to_string())?;
-            } else {
-                stores
-                    .provide_pdf_type1_program(name, content.bytes())
-                    .map_err(|error| error.to_string())?;
-            }
-        }
-        let mapped_names = stores
-            .resolved_pdf_font_map_lines()
-            .into_iter()
-            .map(|entry| entry.tex_name)
-            .collect::<BTreeSet<_>>();
-        let requests = stores
-            .pdf_font_resources()
-            .filter_map(|resource| {
-                let font = stores.font(resource.font());
-                (!mapped_names.contains(font.name().as_bytes()))
-                    .then(|| pdf_output::pk_font_request(stores, resource.font(), driver_dpi))
-            })
-            .collect::<Result<BTreeSet<_>, _>>()?;
-        for request in requests {
-            if stores.pdf_pk_font(&request).is_some() {
-                continue;
-            }
-            let logical_name = request.logical_name();
-            let display_name = String::from_utf8_lossy(&logical_name);
-            let content = self
-                .font
-                .0
-                .read_program_from_world(stores.world_mut(), Path::new(display_name.as_ref()))?;
-            stores
-                .provide_pdf_pk_font(request, content.bytes())
-                .map_err(|error| error.to_string())?;
-        }
-        Ok(())
+                .read_program_from_world(stores.world_mut(), Path::new(logical_name.as_ref()))
+                .map(|content| content.bytes().to_vec())
+        })
     }
 
     /// Borrows the input and font resolvers for an incremental editor session.
     pub fn resolvers(&mut self) -> (&mut dyn InputResolver, &mut dyn FontResolver) {
         (&mut self.input, &mut self.font)
     }
+}
+
+pub(crate) fn provide_pdf_font_resources_at_dpi(
+    stores: &mut Universe,
+    driver_dpi: i32,
+    mut acquire: impl FnMut(&mut Universe, &[u8]) -> Result<Vec<u8>, String>,
+) -> Result<(), String> {
+    let used_names = stores
+        .pdf_font_resources()
+        .map(|resource| stores.font(resource.font()).name().as_bytes().to_vec())
+        .collect::<BTreeSet<_>>();
+    if used_names.is_empty() {
+        return Ok(());
+    }
+    let explicitly_requests_default = stores.pdf_font_maps().any(|operation| {
+        matches!(
+            operation,
+            tex_state::PdfFontMapOperation::File(file)
+                if file.logical_name == b"pdftex.map"
+        )
+    });
+    let mut implicit_default = false;
+    for name in stores.pdf_font_map_file_requests() {
+        if stores.has_pdf_font_map_file(&name) {
+            continue;
+        }
+        if name == b"pdftex.map" && !explicitly_requests_default {
+            implicit_default = true;
+            continue;
+        }
+        let bytes = acquire(stores, &name)?;
+        stores
+            .provide_pdf_font_map_file(name, &bytes)
+            .map_err(|error| error.to_string())?;
+    }
+    let mapped_names = stores
+        .resolved_pdf_font_map_lines()
+        .into_iter()
+        .map(|entry| entry.tex_name)
+        .collect::<BTreeSet<_>>();
+    let covered_names = mapped_names
+        .into_iter()
+        .chain(stores.authoritative_pdf_font_map_names())
+        .collect::<BTreeSet<_>>();
+    if implicit_default && !used_names.is_subset(&covered_names) {
+        let name = b"pdftex.map".to_vec();
+        let bytes = acquire(stores, &name)?;
+        stores
+            .provide_pdf_font_map_file(name, &bytes)
+            .map_err(|error| error.to_string())?;
+    }
+    let encodings = stores
+        .resolved_pdf_font_map_lines()
+        .into_iter()
+        .filter(|entry| used_names.contains(&entry.tex_name))
+        .flat_map(|entry| entry.encoding_files)
+        .collect::<std::collections::BTreeSet<_>>();
+    for name in encodings {
+        if stores.pdf_encoding(&name).is_some() {
+            continue;
+        }
+        let bytes = acquire(stores, &name)?;
+        stores
+            .provide_pdf_encoding(name, &bytes)
+            .map_err(|error| error.to_string())?;
+    }
+    let names = stores
+        .resolved_pdf_font_map_lines()
+        .into_iter()
+        .filter(|entry| used_names.contains(&entry.tex_name))
+        .filter_map(|entry| entry.font_file)
+        .collect::<std::collections::BTreeSet<_>>();
+    for name in names {
+        let is_truetype = name
+            .rsplit(|byte| *byte == b'.')
+            .next()
+            .is_some_and(|extension| {
+                extension.eq_ignore_ascii_case(b"ttf") || extension.eq_ignore_ascii_case(b"woff2")
+            });
+        if (is_truetype && stores.pdf_truetype_program(&name).is_some())
+            || (!is_truetype && stores.pdf_type1_program(&name).is_some())
+        {
+            continue;
+        }
+        let bytes = acquire(stores, &name)?;
+        if is_truetype {
+            stores
+                .provide_pdf_truetype_program(name, &bytes)
+                .map_err(|error| error.to_string())?;
+        } else {
+            stores
+                .provide_pdf_type1_program(name, &bytes)
+                .map_err(|error| error.to_string())?;
+        }
+    }
+    let mapped_names = stores
+        .resolved_pdf_font_map_lines()
+        .into_iter()
+        .filter(|entry| used_names.contains(&entry.tex_name))
+        .map(|entry| entry.tex_name)
+        .collect::<BTreeSet<_>>();
+    let requests = stores
+        .pdf_font_resources()
+        .filter_map(|resource| {
+            let font = stores.font(resource.font());
+            (!mapped_names.contains(font.name().as_bytes()))
+                .then(|| pdf_output::pk_font_request(stores, resource.font(), driver_dpi))
+        })
+        .collect::<Result<BTreeSet<_>, _>>()?;
+    for request in requests {
+        if stores.pdf_pk_font(&request).is_some() {
+            continue;
+        }
+        let logical_name = request.logical_name();
+        let bytes = acquire(stores, &logical_name)?;
+        stores
+            .provide_pdf_pk_font(request, &bytes)
+            .map_err(|error| error.to_string())?;
+    }
+    Ok(())
 }
 
 struct FileInputResolver(TexInputSearchPath);

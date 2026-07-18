@@ -448,6 +448,10 @@ pub(crate) struct PdfFormatState {
 #[derive(Clone, Debug, Eq, PartialEq)]
 enum PdfFontOperation {
     Map(PdfFontMapOperation),
+    MapFileContent {
+        logical_name: Vec<u8>,
+        map: tex_fonts::PdfFontMap,
+    },
     Attribute {
         font: FontId,
         bytes: Vec<u8>,
@@ -1164,6 +1168,26 @@ impl PdfState {
         self.push_font_operation(PdfFontOperation::Map(operation));
     }
 
+    pub(crate) fn provide_font_map_file(
+        &mut self,
+        logical_name: Vec<u8>,
+        map: tex_fonts::PdfFontMap,
+    ) {
+        self.push_font_operation(PdfFontOperation::MapFileContent { logical_name, map });
+    }
+
+    pub(crate) fn has_font_map_file(&self, logical_name: &[u8]) -> bool {
+        self.font_operations.iter().rev().any(|operation| {
+            matches!(
+                operation,
+                PdfFontOperation::MapFileContent {
+                    logical_name: candidate,
+                    ..
+                } if candidate == logical_name
+            )
+        })
+    }
+
     pub(crate) fn set_font_attribute(&mut self, font: FontId, bytes: Vec<u8>) {
         self.push_font_operation(PdfFontOperation::Attribute { font, bytes });
     }
@@ -1618,7 +1642,8 @@ impl PdfState {
             .iter()
             .filter_map(|operation| match operation {
                 PdfFontOperation::Map(map) => Some(map),
-                PdfFontOperation::Attribute { .. }
+                PdfFontOperation::MapFileContent { .. }
+                | PdfFontOperation::Attribute { .. }
                 | PdfFontOperation::IncludeChars { .. }
                 | PdfFontOperation::GlyphToUnicode(_)
                 | PdfFontOperation::NoBuiltinToUnicode { .. }
@@ -1627,6 +1652,69 @@ impl PdfState {
                 | PdfFontOperation::TrueTypeProgram { .. }
                 | PdfFontOperation::PkFont { .. } => None,
             })
+    }
+
+    #[must_use]
+    pub(crate) fn font_map_file_requests(&self) -> Vec<Vec<u8>> {
+        let maps = self.font_maps().collect::<Vec<_>>();
+        let loads_default = maps.first().is_none_or(|operation| {
+            Self::font_map_operation_directive(operation) != tex_fonts::PdfFontMapDirective::Default
+        });
+        let mut requests = BTreeMap::<Vec<u8>, ()>::new();
+        if loads_default {
+            requests.insert(b"pdftex.map".to_vec(), ());
+        }
+        for operation in maps {
+            if let PdfFontMapOperation::File(file) = operation {
+                requests.insert(file.logical_name.clone(), ());
+            }
+        }
+        requests.into_keys().collect()
+    }
+
+    #[must_use]
+    pub(crate) fn authoritative_font_map_names(&self) -> BTreeMap<Vec<u8>, ()> {
+        let mut names = BTreeMap::new();
+        for operation in self.font_maps() {
+            match operation {
+                PdfFontMapOperation::Line(entry)
+                    if matches!(
+                        entry.directive,
+                        tex_fonts::PdfFontMapDirective::Replace
+                            | tex_fonts::PdfFontMapDirective::Remove
+                    ) =>
+                {
+                    names.insert(entry.tex_name.clone(), ());
+                }
+                PdfFontMapOperation::File(file)
+                    if matches!(
+                        file.directive,
+                        tex_fonts::PdfFontMapDirective::Replace
+                            | tex_fonts::PdfFontMapDirective::Remove
+                    ) =>
+                {
+                    if let Some(map) =
+                        self.font_operations
+                            .iter()
+                            .rev()
+                            .find_map(|operation| match operation {
+                                PdfFontOperation::MapFileContent { logical_name, map }
+                                    if logical_name == &file.logical_name =>
+                                {
+                                    Some(map)
+                                }
+                                _ => None,
+                            })
+                    {
+                        for entry in map.entries() {
+                            names.insert(entry.tex_name.clone(), ());
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        names
     }
 
     #[must_use]
@@ -1644,27 +1732,90 @@ impl PdfState {
     ) -> (BTreeMap<Vec<u8>, tex_fonts::PdfFontMapEntry>, Vec<Vec<u8>>) {
         let mut entries = BTreeMap::new();
         let mut duplicates = Vec::new();
-        for operation in self.font_maps() {
-            let PdfFontMapOperation::Line(entry) = operation else {
-                continue;
-            };
-            match entry.directive {
-                tex_fonts::PdfFontMapDirective::Default | tex_fonts::PdfFontMapDirective::Add => {
-                    if entries.contains_key(&entry.tex_name) {
-                        duplicates.push(entry.tex_name.clone());
-                    } else {
-                        entries.insert(entry.tex_name.clone(), entry.clone());
-                    }
+        let maps = self.font_maps().collect::<Vec<_>>();
+        if maps.first().is_none_or(|operation| {
+            Self::font_map_operation_directive(operation) != tex_fonts::PdfFontMapDirective::Default
+        }) {
+            self.apply_font_map_file(
+                b"pdftex.map",
+                tex_fonts::PdfFontMapDirective::Default,
+                &mut entries,
+                &mut duplicates,
+            );
+        }
+        for operation in maps {
+            match operation {
+                PdfFontMapOperation::Line(entry) => {
+                    Self::apply_font_map_entry(entry.clone(), &mut entries, &mut duplicates);
                 }
-                tex_fonts::PdfFontMapDirective::Replace => {
-                    entries.insert(entry.tex_name.clone(), entry.clone());
-                }
-                tex_fonts::PdfFontMapDirective::Remove => {
-                    entries.remove(&entry.tex_name);
-                }
+                PdfFontMapOperation::File(file) => self.apply_font_map_file(
+                    &file.logical_name,
+                    file.directive,
+                    &mut entries,
+                    &mut duplicates,
+                ),
             }
         }
         (entries, duplicates)
+    }
+
+    fn apply_font_map_file(
+        &self,
+        logical_name: &[u8],
+        directive: tex_fonts::PdfFontMapDirective,
+        entries: &mut BTreeMap<Vec<u8>, tex_fonts::PdfFontMapEntry>,
+        duplicates: &mut Vec<Vec<u8>>,
+    ) {
+        let Some(map) = self
+            .font_operations
+            .iter()
+            .rev()
+            .find_map(|operation| match operation {
+                PdfFontOperation::MapFileContent {
+                    logical_name: candidate,
+                    map,
+                } if candidate == logical_name => Some(map),
+                _ => None,
+            })
+        else {
+            return;
+        };
+        for entry in map.entries() {
+            let mut entry = entry.clone();
+            entry.directive = directive;
+            Self::apply_font_map_entry(entry, entries, duplicates);
+        }
+    }
+
+    fn font_map_operation_directive(
+        operation: &PdfFontMapOperation,
+    ) -> tex_fonts::PdfFontMapDirective {
+        match operation {
+            PdfFontMapOperation::File(file) => file.directive,
+            PdfFontMapOperation::Line(line) => line.directive,
+        }
+    }
+
+    fn apply_font_map_entry(
+        entry: tex_fonts::PdfFontMapEntry,
+        entries: &mut BTreeMap<Vec<u8>, tex_fonts::PdfFontMapEntry>,
+        duplicates: &mut Vec<Vec<u8>>,
+    ) {
+        match entry.directive {
+            tex_fonts::PdfFontMapDirective::Default | tex_fonts::PdfFontMapDirective::Add => {
+                if entries.contains_key(&entry.tex_name) {
+                    duplicates.push(entry.tex_name.clone());
+                } else {
+                    entries.insert(entry.tex_name.clone(), entry);
+                }
+            }
+            tex_fonts::PdfFontMapDirective::Replace => {
+                entries.insert(entry.tex_name.clone(), entry);
+            }
+            tex_fonts::PdfFontMapDirective::Remove => {
+                entries.remove(&entry.tex_name);
+            }
+        }
     }
 
     #[must_use]
@@ -2703,11 +2854,39 @@ fn append_font_fingerprint(
             for encoding in &line.encoding_files {
                 hasher.bytes(encoding);
             }
+            for header in &line.header_files {
+                hasher.bytes(header);
+            }
             hasher.bool(line.font_file.is_some());
             if let Some(file) = &line.font_file {
                 hasher.bytes(file);
             }
             hasher.tag(line.program as u8);
+        }
+        PdfFontOperation::MapFileContent { logical_name, map } => {
+            hasher.tag(11);
+            hasher.bytes(logical_name);
+            for entry in map.entries() {
+                hasher.bytes(&entry.tex_name);
+                hasher.bool(entry.postscript_name.is_some());
+                if let Some(name) = &entry.postscript_name {
+                    hasher.bytes(name);
+                }
+                for instruction in &entry.special_instructions {
+                    hasher.bytes(instruction);
+                }
+                for encoding in &entry.encoding_files {
+                    hasher.bytes(encoding);
+                }
+                for header in &entry.header_files {
+                    hasher.bytes(header);
+                }
+                hasher.bool(entry.font_file.is_some());
+                if let Some(file) = &entry.font_file {
+                    hasher.bytes(file);
+                }
+                hasher.tag(entry.program as u8);
+            }
         }
         PdfFontOperation::Attribute { font, bytes } => {
             hasher.tag(2);
@@ -3209,6 +3388,41 @@ mod tests {
         let entries = state.resolved_font_map_lines();
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].tex_name, b"cmtt10");
+    }
+
+    #[test]
+    fn implicit_pdftex_map_is_requested_and_resolved_from_provisioned_bytes() {
+        let mut state = PdfState::default();
+        assert_eq!(state.font_map_file_requests(), [b"pdftex.map"]);
+        state.provide_font_map_file(
+            b"pdftex.map".to_vec(),
+            tex_fonts::PdfFontMap::parse(b"cmr10 CMR10 <cmr10.pfb\n").expect("default map parses"),
+        );
+        let entries = state.resolved_font_map_lines();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].tex_name, b"cmr10");
+        assert_eq!(
+            entries[0].font_file.as_deref(),
+            Some(b"cmr10.pfb".as_slice())
+        );
+    }
+
+    #[test]
+    fn first_unmodified_map_suppresses_default_but_modified_map_preserves_it() {
+        let mut replacement = PdfState::default();
+        replacement.push_font_map(PdfFontMapOperation::File(
+            tex_fonts::PdfFontMapFile::parse(b"custom.map").expect("map request parses"),
+        ));
+        assert_eq!(replacement.font_map_file_requests(), [b"custom.map"]);
+
+        let mut additive = PdfState::default();
+        additive.push_font_map(PdfFontMapOperation::File(
+            tex_fonts::PdfFontMapFile::parse(b"+custom.map").expect("map request parses"),
+        ));
+        assert_eq!(
+            additive.font_map_file_requests(),
+            [b"custom.map".to_vec(), b"pdftex.map".to_vec()]
+        );
     }
 
     #[test]

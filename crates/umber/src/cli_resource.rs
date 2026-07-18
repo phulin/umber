@@ -113,12 +113,61 @@ pub fn run(options: &NativeRunOptions) -> Result<MemoryRunOutput, NativeRunError
 }
 
 pub struct NativeAcceptedRun {
-    pub output: MemoryRunOutput,
-    pub finalization: AcceptedFinalization,
-    pub input_path_map: BTreeMap<PathBuf, PathBuf>,
-    pub resolved_inputs: Vec<(PathBuf, usize)>,
-    pub main_input: (PathBuf, usize),
-    pub telemetry: CompileTelemetry,
+    output: MemoryRunOutput,
+    finalization: AcceptedFinalization,
+    input_path_map: BTreeMap<PathBuf, PathBuf>,
+    resolved_inputs: Vec<(PathBuf, usize)>,
+    main_input: (PathBuf, usize),
+    telemetry: CompileTelemetry,
+    distribution: DistributionResolver,
+    local: LocalResolver,
+}
+
+impl NativeAcceptedRun {
+    #[must_use]
+    pub fn pdf_draft_mode(&self) -> bool {
+        self.finalization
+            .stores
+            .fixed_pdf_output_parameters()
+            .is_some_and(|parameters| parameters.draft_mode > 0)
+    }
+
+    pub fn provide_pdf_font_programs(&mut self) -> Result<(), NativeRunError> {
+        let cancellation = FetchCancellation::new();
+        let distribution = &mut self.distribution;
+        let local = &self.local;
+        crate::provide_pdf_font_resources_at_dpi(
+            &mut self.finalization.stores,
+            crate::pdf_output::DEFAULT_PDF_PK_RESOLUTION,
+            |_stores, logical_name| {
+                distribution
+                    .resolve_generic_asset(local, logical_name, &cancellation)
+                    .map_err(|error| error.to_string())
+            },
+        )
+        .map_err(NativeRunError::Compile)
+    }
+
+    #[must_use]
+    pub fn into_parts(
+        self,
+    ) -> (
+        MemoryRunOutput,
+        AcceptedFinalization,
+        BTreeMap<PathBuf, PathBuf>,
+        Vec<(PathBuf, usize)>,
+        (PathBuf, usize),
+        CompileTelemetry,
+    ) {
+        (
+            self.output,
+            self.finalization,
+            self.input_path_map,
+            self.resolved_inputs,
+            self.main_input,
+            self.telemetry,
+        )
+    }
 }
 
 pub fn run_for_finalization(
@@ -131,7 +180,15 @@ pub fn run_for_finalization(
     let resolved_inputs = session.local.resolved_inputs();
     let main_input = (options.input.clone(), session.source.len());
     let telemetry = session.session.compile_telemetry();
-    let mut finalization = session.into_accepted_finalization()?;
+    let NativeCompileSession {
+        session,
+        distribution,
+        local,
+        ..
+    } = session;
+    let mut finalization = session
+        .into_accepted_finalization()
+        .map_err(|error| NativeRunError::Compile(error.to_string()))?;
     finalization
         .stores
         .world_mut()
@@ -144,6 +201,8 @@ pub fn run_for_finalization(
         resolved_inputs,
         main_input,
         telemetry,
+        distribution,
+        local,
     })
 }
 
@@ -420,6 +479,9 @@ impl LocalResolver {
             FileKind::Tfm => self
                 .font
                 .read_from_world(&mut world, Path::new(request.original_name())),
+            FileKind::GenericAsset => self
+                .font
+                .read_program_from_world(&mut world, Path::new(request.original_name())),
             _ => return None,
         }
         .ok()?;
@@ -570,14 +632,7 @@ impl DistributionResolver {
                     }
                 }
                 ResourceRequest::Font(request) => {
-                    unresolved.push(FileRequest::new(
-                        crate::FileRequestKey::new(
-                            FileKind::GenericAsset,
-                            request.key.logical_name(),
-                        )
-                        .map_err(|error| NativeRunError::Selection(error.to_string()))?,
-                        request.key.logical_name(),
-                    ));
+                    responses.push(ResourceResponse::FontUnavailable(request.key.clone()));
                 }
             }
         }
@@ -599,17 +654,10 @@ impl DistributionResolver {
         let mut original_files = BTreeMap::new();
         for request in &unresolved {
             let Some(key) = distribution_file_key(request)? else {
-                if request.key().kind() != FileKind::GenericAsset {
-                    responses.push(ResourceResponse::FileUnavailable(request.key().clone()));
-                }
+                responses.push(ResourceResponse::FileUnavailable(request.key().clone()));
                 continue;
             };
             original_files.insert(key.manifest_key().to_string(), request.key().clone());
-        }
-        for request in &batch.required {
-            if let ResourceRequest::Font(request) = request {
-                responses.push(ResourceResponse::FontUnavailable(request.key.clone()));
-            }
         }
         let mut keys_by_shard = BTreeMap::<u32, Vec<String>>::new();
         for key in original_files.keys() {
@@ -743,6 +791,42 @@ impl DistributionResolver {
             }));
         }
         Ok(responses)
+    }
+
+    fn resolve_generic_asset(
+        &mut self,
+        local: &LocalResolver,
+        logical_name: &[u8],
+        cancellation: &FetchCancellation,
+    ) -> Result<Vec<u8>, NativeRunError> {
+        let name = std::str::from_utf8(logical_name).map_err(|_| {
+            NativeRunError::Selection("PDF resource name is not valid UTF-8".to_owned())
+        })?;
+        let key = crate::FileRequestKey::new(FileKind::GenericAsset, name)
+            .map_err(|error| NativeRunError::Selection(error.to_string()))?;
+        let responses = self.resolve_batch(
+            local,
+            &NeedResources {
+                required: vec![ResourceRequest::File(FileRequest::new(key.clone(), name))],
+                probes: Vec::new(),
+                prefetch_hints: Vec::new(),
+            },
+            cancellation,
+        )?;
+        for response in responses {
+            match response {
+                ResourceResponse::File(file) if file.request == key => return Ok(file.bytes),
+                ResourceResponse::FileUnavailable(unavailable) if unavailable == key => {
+                    return Err(NativeRunError::DistributionUnavailable(vec![format!(
+                        "tex:{name}"
+                    )]));
+                }
+                _ => {}
+            }
+        }
+        Err(NativeRunError::DistributionUnavailable(vec![format!(
+            "tex:{name}"
+        )]))
     }
 
     fn resolve_format(
@@ -1077,6 +1161,7 @@ fn distribution_file_key(
         FileKind::BibAux => DistributionFileKind::BibAux,
         FileKind::ClassicBibData => DistributionFileKind::ClassicBib,
         FileKind::BibStyle => DistributionFileKind::BibStyle,
+        FileKind::GenericAsset => DistributionFileKind::Tex,
         _ => return Ok(None),
     };
     DistributionFileRequestKey::new(kind, request.key().name())

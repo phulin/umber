@@ -37,6 +37,40 @@ pub struct PdfFontMapFile {
     pub logical_name: Vec<u8>,
 }
 
+/// Validated contents of one acquired dvips/pdfTeX map file.
+///
+/// Map files are parsed after a host supplies their bytes. Keeping this type
+/// independent of path lookup lets native and browser frontends share the
+/// same engine-state contract.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PdfFontMap {
+    entries: Vec<PdfFontMapEntry>,
+}
+
+impl PdfFontMap {
+    pub fn parse(bytes: &[u8]) -> Result<Self, PdfFontMapError> {
+        let mut entries = Vec::new();
+        for line in bytes.split(|byte| *byte == b'\n') {
+            let line = trim_ascii(line);
+            if line.is_empty() || line.starts_with(b"%") {
+                continue;
+            }
+            let mut entry = PdfFontMapEntry::parse(line)?;
+            // Prefixes are primitive update syntax, not part of a map-file
+            // entry. The enclosing \pdfmapfile operation supplies the update
+            // policy when these entries are projected into live state.
+            entry.directive = PdfFontMapDirective::Default;
+            entries.push(entry);
+        }
+        Ok(Self { entries })
+    }
+
+    #[must_use]
+    pub fn entries(&self) -> &[PdfFontMapEntry] {
+        &self.entries
+    }
+}
+
 impl PdfFontMapFile {
     pub fn parse(payload: &[u8]) -> Result<Self, PdfFontMapError> {
         let (directive, name) = PdfFontMapDirective::split(trim_ascii(payload));
@@ -73,6 +107,7 @@ pub struct PdfFontMapEntry {
     pub postscript_name: Option<Vec<u8>>,
     pub special_instructions: Vec<Vec<u8>>,
     pub encoding_files: Vec<Vec<u8>>,
+    pub header_files: Vec<Vec<u8>>,
     pub font_file: Option<Vec<u8>>,
     pub program: PdfFontMapProgram,
 }
@@ -81,7 +116,7 @@ impl PdfFontMapEntry {
     /// Parses one `\pdfmapline` payload or one non-comment map-file line.
     pub fn parse(payload: &[u8]) -> Result<Self, PdfFontMapError> {
         let (directive, body) = PdfFontMapDirective::split(trim_ascii(payload));
-        let tokens = lex_map_line(body)?;
+        let tokens = coalesce_download_markers(lex_map_line(body)?)?;
         let Some(first) = tokens.first() else {
             return Err(PdfFontMapError::MissingTexFontName);
         };
@@ -92,6 +127,7 @@ impl PdfFontMapEntry {
         let mut postscript_name = None;
         let mut special_instructions = Vec::new();
         let mut encoding_files = Vec::new();
+        let mut header_files = Vec::new();
         let mut font_file = None;
         let mut program = PdfFontMapProgram::Resident;
 
@@ -101,14 +137,19 @@ impl PdfFontMapEntry {
                 continue;
             }
             if let Some(download) = token.bytes.strip_prefix(b"<<") {
-                set_font_file(&mut font_file, download)?;
-                program = PdfFontMapProgram::Full;
+                if is_header_name(download) {
+                    header_files.push(download.to_vec());
+                } else {
+                    set_font_file(&mut font_file, download)?;
+                    program = PdfFontMapProgram::Full;
+                }
                 continue;
             }
             if let Some(download) = token.bytes.strip_prefix(b"<[") {
-                let Some(encoding) = download.strip_suffix(b"]") else {
-                    return Err(PdfFontMapError::MalformedDownloadToken(token.bytes.clone()));
-                };
+                // dvips/pdfTeX map syntax uses `<[encoding.enc`; tolerate the
+                // visually balanced spelling too because existing mapline
+                // producers emit both forms.
+                let encoding = download.strip_suffix(b"]").unwrap_or(download);
                 set_encoding(&mut encoding_files, encoding)?;
                 continue;
             }
@@ -118,6 +159,8 @@ impl PdfFontMapEntry {
                 }
                 if is_encoding_name(download) {
                     set_encoding(&mut encoding_files, download)?;
+                } else if is_header_name(download) {
+                    header_files.push(download.to_vec());
                 } else {
                     set_font_file(&mut font_file, download)?;
                     program = PdfFontMapProgram::Subset;
@@ -136,6 +179,7 @@ impl PdfFontMapEntry {
             postscript_name,
             special_instructions,
             encoding_files,
+            header_files,
             font_file,
             program,
         })
@@ -214,6 +258,24 @@ fn lex_map_line(bytes: &[u8]) -> Result<Vec<MapToken>, PdfFontMapError> {
     Ok(tokens)
 }
 
+fn coalesce_download_markers(tokens: Vec<MapToken>) -> Result<Vec<MapToken>, PdfFontMapError> {
+    let mut coalesced = Vec::with_capacity(tokens.len());
+    let mut tokens = tokens.into_iter();
+    while let Some(mut token) = tokens.next() {
+        if !token.quoted && matches!(token.bytes.as_slice(), b"<" | b"<<" | b"<[") {
+            let Some(next) = tokens.next() else {
+                return Err(PdfFontMapError::MalformedDownloadToken(token.bytes));
+            };
+            if next.quoted || next.bytes.starts_with(b"<") {
+                return Err(PdfFontMapError::MalformedDownloadToken(token.bytes));
+            }
+            token.bytes.extend_from_slice(&next.bytes);
+        }
+        coalesced.push(token);
+    }
+    Ok(coalesced)
+}
+
 fn set_font_file(slot: &mut Option<Vec<u8>>, name: &[u8]) -> Result<(), PdfFontMapError> {
     if name.is_empty() {
         return Err(PdfFontMapError::MalformedDownloadToken(Vec::new()));
@@ -234,6 +296,10 @@ fn set_encoding(encodings: &mut Vec<Vec<u8>>, name: &[u8]) -> Result<(), PdfFont
 
 fn is_encoding_name(name: &[u8]) -> bool {
     name.ends_with(b".enc")
+}
+
+fn is_header_name(name: &[u8]) -> bool {
+    name.ends_with(b".t3")
 }
 
 fn trim_ascii(mut bytes: &[u8]) -> &[u8] {
@@ -281,6 +347,23 @@ mod tests {
     }
 
     #[test]
+    fn parses_canonical_unclosed_encoding_download_marker() {
+        let entry = PdfFontMapEntry::parse(b"foo FooPS <[foo.enc <foo.pfb")
+            .expect("canonical dvips encoding marker parses");
+        assert_eq!(entry.encoding_files, [b"foo.enc"]);
+        assert_eq!(entry.font_file.as_deref(), Some(b"foo.pfb".as_slice()));
+    }
+
+    #[test]
+    fn parses_spaced_markers_and_type3_headers_before_font_programs() {
+        let entry = PdfFontMapEntry::parse(b"foo FooPS < foo.enc <<Foo-Menukad.t3 < Foo.pfb")
+            .expect("generated map entry parses");
+        assert_eq!(entry.encoding_files, [b"foo.enc"]);
+        assert_eq!(entry.header_files, [b"Foo-Menukad.t3"]);
+        assert_eq!(entry.font_file.as_deref(), Some(b"Foo.pfb".as_slice()));
+    }
+
+    #[test]
     fn map_file_request_is_a_logical_name_and_update_directive() {
         assert_eq!(
             PdfFontMapFile::parse(b" =pdftex.map ").expect("valid map file directive"),
@@ -292,6 +375,20 @@ mod tests {
         assert_eq!(
             PdfFontMapFile::parse(b"path with spaces.map"),
             Err(PdfFontMapError::WhitespaceInMapFileName)
+        );
+    }
+
+    #[test]
+    fn parses_map_file_comments_and_crlf_without_host_lookup() {
+        let map = PdfFontMap::parse(
+            b"% generated map\r\ncmr10 CMR10 <cmr10.pfb\r\n\r\ncmtt10 CMTT10 <cmtt10.pfb\n",
+        )
+        .expect("valid map file");
+        assert_eq!(map.entries().len(), 2);
+        assert_eq!(map.entries()[0].tex_name, b"cmr10");
+        assert_eq!(
+            map.entries()[1].font_file.as_deref(),
+            Some(b"cmtt10.pfb".as_slice())
         );
     }
 

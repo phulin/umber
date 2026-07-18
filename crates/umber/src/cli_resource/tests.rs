@@ -267,6 +267,37 @@ fn verified_schema_v2_root_returns_typed_font_unavailable() {
 }
 
 #[test]
+fn generic_pdf_asset_uses_the_snapshot_tex_vocabulary() {
+    let directory = TempDir::new().expect("distribution tempdir");
+    let bytes = b"cmr10 CMR10 <cmr10.pfb\n";
+    let digest = hex_digest(bytes);
+    let object = format!("sha256-{digest}");
+    let mut shard = format!(
+        "{{\"schema\":1,\"distribution\":\"pdf-assets\",\"index\":0,\"files\":{{\"tex:pdftex.map\":{{\"virtualPath\":\"/texlive/fonts/map/pdftex.map\",\"object\":\"{object}\",\"sha256\":\"{digest}\",\"bytes\":{}",
+        bytes.len()
+    );
+    shard.push_str("}}}\n");
+    write_sharded_root(directory.path(), "pdf-assets", 0, &[(&shard, true)]);
+    std::fs::write(directory.path().join("objects").join(object), bytes).expect("map object");
+    let mut resolver = DistributionResolver::new(
+        ObjectCache::new(directory.path().join("cache")),
+        Some(directory.path().to_string_lossy().into_owned()),
+        None,
+        false,
+    );
+    assert_eq!(
+        resolver
+            .resolve_generic_asset(
+                &local_resolver(directory.path()),
+                b"pdftex.map",
+                &FetchCancellation::new(),
+            )
+            .expect("generic asset resolves"),
+        bytes
+    );
+}
+
+#[test]
 fn inline_hint_fetches_without_loading_the_dependency_shard() {
     let directory = TempDir::new().expect("distribution tempdir");
     let required_bytes = b"required";
