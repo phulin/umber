@@ -433,6 +433,98 @@ fn schema_three_format_closure_publishes_local_overrides_and_ignores_stale_hints
     );
 }
 
+fn write_locally_shadowed_hint_distribution(directory: &Path) {
+    let required_bytes = b"\\message{DIST-ARTICLE}";
+    let required_digest = hex_digest(required_bytes);
+    let shadowed_bytes = b"\\message{DIST-REVTEX}";
+    let shadowed_digest = hex_digest(shadowed_bytes);
+    let required_object = format!("sha256-{required_digest}");
+    let shadowed_object = format!("sha256-{shadowed_digest}");
+    let shard = "{\"schema\":1,\"distribution\":\"shadowing\",\"index\":0,\"files\":{\"tex:article.cls\":{\"virtualPath\":\"/texlive/tex/article.cls\",\"object\":\"$REQUIRED_OBJECT\",\"sha256\":\"$REQUIRED_DIGEST\",\"bytes\":$REQUIRED_BYTES,\"dependencies\":[{\"key\":\"tex:revtex4-1.cls\",\"virtualPath\":\"/texlive/tex/revtex4-1.cls\",\"object\":\"$SHADOWED_OBJECT\",\"sha256\":\"$SHADOWED_DIGEST\",\"bytes\":$SHADOWED_BYTES}]},\"tex:revtex4-1.cls\":{\"virtualPath\":\"/texlive/tex/revtex4-1.cls\",\"object\":\"$SHADOWED_OBJECT\",\"sha256\":\"$SHADOWED_DIGEST\",\"bytes\":$SHADOWED_BYTES}}}\n"
+        .replace("$REQUIRED_OBJECT", &required_object)
+        .replace("$REQUIRED_DIGEST", &required_digest)
+        .replace("$REQUIRED_BYTES", &required_bytes.len().to_string())
+        .replace("$SHADOWED_OBJECT", &shadowed_object)
+        .replace("$SHADOWED_DIGEST", &shadowed_digest)
+        .replace("$SHADOWED_BYTES", &shadowed_bytes.len().to_string());
+    write_sharded_root(directory, "shadowing", 0, &[(&shard, true)]);
+    let objects = directory.join("objects");
+    std::fs::write(objects.join(required_object), required_bytes).expect("required object");
+    std::fs::write(objects.join(shadowed_object), shadowed_bytes).expect("shadowed object");
+}
+
+#[test]
+fn distribution_prefetch_does_not_claim_a_locally_shadowed_alias() {
+    let directory = TempDir::new().expect("distribution tempdir");
+    write_locally_shadowed_hint_distribution(directory.path());
+    std::fs::write(
+        directory.path().join("revtex4-1.cls"),
+        b"\\message{LOCAL-REVTEX}",
+    )
+    .expect("local class");
+    let mut resolver = DistributionResolver::new(
+        ObjectCache::new(directory.path().join("cache")),
+        Some(directory.path().to_string_lossy().into_owned()),
+        None,
+        false,
+    );
+
+    let resolved = resolver
+        .resolve_batch(
+            &local_resolver(directory.path()),
+            &NeedResources {
+                required: vec![file_request("article.cls")],
+                probes: Vec::new(),
+                prefetch_hints: Vec::new(),
+            },
+            &FetchCancellation::new(),
+        )
+        .expect("required distribution file");
+
+    assert!(matches!(
+        resolved.as_slice(),
+        [ResourceResponse::File(file)] if file.request.name() == "article.cls"
+    ));
+}
+
+#[test]
+fn native_compile_uses_local_file_after_shadowed_distribution_hint() {
+    let directory = TempDir::new().expect("distribution tempdir");
+    write_locally_shadowed_hint_distribution(directory.path());
+    std::fs::write(
+        directory.path().join("revtex4-1.cls"),
+        b"\\message{LOCAL-REVTEX}",
+    )
+    .expect("local class");
+    let input = directory.path().join("main.tex");
+    std::fs::write(&input, b"\\input article.cls \\input revtex4-1.cls \\end").expect("main input");
+    let options = NativeRunOptions {
+        input,
+        format: None,
+        engine: EngineMode::Tex82,
+        html: false,
+        distribution: Some(directory.path().to_string_lossy().into_owned()),
+        distribution_sha256: None,
+        offline: false,
+        initial_prefetch_keys: Vec::new(),
+    };
+    let cancellation = FetchCancellation::new();
+    let mut session = NativeCompileSession::new_with_cache(
+        &options,
+        &cancellation,
+        ObjectCache::new(directory.path().join("cache")),
+    )
+    .expect("native session");
+
+    let output = session
+        .compile(&cancellation)
+        .expect("local shadowing compile");
+    let terminal = String::from_utf8_lossy(&output.terminal);
+    assert!(terminal.contains("DIST-ARTICLE"), "{terminal}");
+    assert!(terminal.contains("LOCAL-REVTEX"), "{terminal}");
+    assert!(!terminal.contains("DIST-REVTEX"), "{terminal}");
+}
+
 #[test]
 fn incompatible_format_schema_is_rejected_before_cache_lookup_or_acquisition() {
     let directory = TempDir::new().expect("distribution tempdir");

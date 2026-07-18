@@ -1,7 +1,7 @@
 //! Native host policy for driving one CLI compile through the resource loop.
 
 use std::cell::RefCell;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::env;
 use std::error::Error;
 use std::fmt;
@@ -712,6 +712,18 @@ impl DistributionResolver {
                 Err(_) => {}
             }
         }
+        let mut locally_shadowed_hints = BTreeSet::new();
+        for manifest_key in hints.keys() {
+            let distribution_key = DistributionFileRequestKey::from_manifest_key(manifest_key)
+                .map_err(|error| NativeRunError::Selection(error.to_string()))?;
+            let ResourceRequest::File(request) = distribution_request(distribution_key)? else {
+                continue;
+            };
+            if local.resolve(&request).is_some() {
+                locally_shadowed_hints.insert(manifest_key.clone());
+            }
+        }
+        hints.retain(|key, _| !locally_shadowed_hints.contains(key));
         let required_fetches = required
             .iter()
             .map(|(key, entry)| FetchRequest {
