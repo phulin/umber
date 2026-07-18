@@ -7,7 +7,7 @@ use bib_unicode::LanguageTag;
 fn pass_upstream(
     assertion: &str,
     actual_expression: &str,
-    expected_expression: &str,
+    _expected_expression: &str,
     upstream_call: &str,
     upstream_source: &str,
 ) {
@@ -19,35 +19,74 @@ fn pass_upstream(
         .expect("tag terminator")
         + start;
     let actual = LanguageTag::parse(&actual_expression[start..end]);
-    if expected_expression == "undef" {
+    if matches!(assertion, "BCP47 - 18" | "BCP47 - 19") {
         assert!(actual.is_err(), "{assertion}");
         return;
     }
-    let actual = actual.expect(assertion);
-    for (needle, value) in [
-        ("grandfathered", actual.grandfathered.as_deref()),
-        ("language", actual.language.as_deref()),
-        ("script", actual.script.as_deref()),
-        ("region", actual.region.as_deref()),
-    ] {
-        assert_eq!(
-            expected_expression.contains(needle),
-            value.is_some(),
-            "{assertion}: {needle}"
-        );
-        if let Some(value) = value {
-            assert!(expected_expression.contains(value), "{assertion}: {value}");
+    let mut expected = LanguageTag::default();
+    match assertion {
+        "BCP47 - 1" => expected.language = Some("de".into()),
+        "BCP47 - 2" => expected.grandfathered = Some("i-enochian".into()),
+        "BCP47 - 3" => set(&mut expected, "zh", None, Some("Hant"), None),
+        "BCP47 - 4" => {
+            set(&mut expected, "zh", Some("CN"), Some("Hans"), None);
+            expected.extlang = strings(&["cmn"]);
         }
+        "BCP47 - 5" => set(&mut expected, "cmn", Some("CN"), Some("Hans"), None),
+        "BCP47 - 6" => set(&mut expected, "yue", Some("HK"), None, None),
+        "BCP47 - 7" => set(&mut expected, "sl", None, None, Some(&["rozaj"])),
+        "BCP47 - 8" => set(&mut expected, "sl", None, None, Some(&["rozaj", "biske"])),
+        "BCP47 - 9" => set(&mut expected, "de", Some("CH"), None, Some(&["1901"])),
+        "BCP47 - 10" => set(
+            &mut expected,
+            "hy",
+            Some("IT"),
+            Some("Latn"),
+            Some(&["arevela"]),
+        ),
+        "BCP47 - 11" => set(&mut expected, "de", Some("DE"), None, None),
+        "BCP47 - 12" => set(&mut expected, "es", Some("419"), None, None),
+        "BCP47 - 13" => {
+            set(&mut expected, "de", Some("CH"), None, None);
+            expected.private_use = strings(&["phonebk"]);
+        }
+        "BCP47 - 14" => {
+            set(&mut expected, "az", None, Some("Arab"), None);
+            expected.private_use = strings(&["AZE", "derbend"]);
+        }
+        "BCP47 - 15" => {
+            set(&mut expected, "en", Some("US"), None, None);
+            expected.extensions = strings(&["islamcal"]);
+        }
+        "BCP47 - 16" => {
+            set(&mut expected, "en", None, None, None);
+            expected.extensions = strings(&["myext", "another"]);
+        }
+        "BCP47 - 17" => {
+            set(&mut expected, "zh", Some("CN"), None, None);
+            expected.extensions = strings(&["myext"]);
+            expected.private_use = strings(&["private"]);
+        }
+        _ => panic!("unhandled upstream assertion {assertion}"),
     }
-    for value in actual
-        .extlang
-        .iter()
-        .chain(&actual.variants)
-        .chain(&actual.extensions)
-        .chain(&actual.private_use)
-    {
-        assert!(expected_expression.contains(value), "{assertion}: {value}");
-    }
+    assert_eq!(actual.expect(assertion), expected, "{assertion}");
+}
+
+fn strings(values: &[&str]) -> Vec<String> {
+    values.iter().map(|value| (*value).into()).collect()
+}
+
+fn set(
+    tag: &mut LanguageTag,
+    language: &str,
+    region: Option<&str>,
+    script: Option<&str>,
+    variants: Option<&[&str]>,
+) {
+    tag.language = Some(language.into());
+    tag.region = region.map(Into::into);
+    tag.script = script.map(Into::into);
+    tag.variants = variants.map(strings).unwrap_or_default();
 }
 
 const UPSTREAM_SOURCE: &str = r#"# -*- cperl -*-

@@ -1,4 +1,4 @@
-// Direct passing translation of upstream t/utils.t at commit 74252e6.
+// Direct translation of upstream t/utils.t at commit 74252e6.
 // Keep `UPSTREAM_SOURCE` byte-for-byte equivalent when editing expectations.
 
 use bib_unicode::{
@@ -11,31 +11,110 @@ use bib_unicode::{
 fn pass_upstream(assertion: &str, _: &str, _: &str, call: &str, source: &str) {
     assert!(source.contains(call), "{assertion}");
     match assertion {
-        a if a.starts_with("File location") => assert!(
-            call.contains("general.bcf")
-                || call.contains("plain.tex")
-                || call.contains("examples.bib")
+        a if a.starts_with("File location") => {
+            panic!("xfail: Biber data-file location is not exposed by the public Rust API")
+        }
+        "normalise_string" => {
+            assert_eq!(normalise_string("\"a, b–c: d\" ", true), "a bc d")
+        }
+        "normalise_string_underscore 1" => assert_eq!(
+            normalise_string_underscore(
+                &TexRecoder::new(RecodeSet::Base, RecodeSet::Base)
+                    .decode("\\c Se\\x{c}\\\"ok-\\foo{a},  N\\`i\\~no\n    $§+ :-)   "),
+                false
+            ),
+            "Şecöka_Nìño"
         ),
-        "normalise_string" => assert_eq!(normalise_string("\"a, b–c: d\" ", true), "abcd"),
-        a if a.starts_with("normalise_string_underscore") => assert_eq!(
+        "normalise_string_underscore 3" => assert_eq!(
             normalise_string_underscore("{Foo de Bar, Graf Ludwig}", true),
             "Foo_de_Bar_Graf_Ludwig"
         ),
-        a if a.starts_with("latex decode")
-            || a.starts_with("latex reversing")
-            || a == "discretionary hyphens" =>
-        {
-            let base = TexRecoder::new(RecodeSet::Base, RecodeSet::Base);
-            let full = TexRecoder::new(RecodeSet::Full, RecodeSet::Full);
-            assert_eq!(base.decode("\\textless\\textampersand"), "<&");
-            assert_eq!(full.decode("\\alpha"), "α");
-            assert_eq!(base.decode("\\DH{}and\\dj{}"), "Ðandđ");
+        "latex decode 1" => assert_decode(
+            RecodeSet::Base,
+            "Mu\\d{h}ammad ibn M\\=us\\=a al-Khw\\=arizm\\={\\i} \\r{a}",
+            "Muḥammad ibn Mūsā al-Khwārizmı̄ å",
+        ),
+        "latex decode 2" => assert_decode(RecodeSet::Base, "\\alpha", "\\alpha"),
+        "latex decode 3" => assert_decode(RecodeSet::Base, "\\textless\\textampersand", "<&"),
+        "latex decode accent 1 (with redundant explicit brace protection)" => {
+            assert_decode(RecodeSet::Base, "{M{\\'a}t{\\'e}}", "{Máté}")
         }
-        a if a.starts_with("latex encode") => {
-            let full = TexRecoder::new(RecodeSet::Full, RecodeSet::Full);
-            assert_eq!(full.encode("α"), "{$\\alpha$}");
-            assert_eq!(full.encode("–"), "--");
+        "latex decode accent 2" => assert_decode(RecodeSet::Base, "{M\\'{a}t\\'{e}}", "{Máté}"),
+        "latex decode accent 3" => assert_decode(RecodeSet::Base, "{M\\'at\\'e}", "{Máté}"),
+        "latex decode accent 4" => assert_decode(RecodeSet::Base, "R{\\'egis}", "R{égis}"),
+        "latex decode accent 5" => assert_decode(RecodeSet::Base, "\\frac{a}{b}", "\\frac{a}{b}"),
+        "latex decode accent 6" => assert_decode(
+            RecodeSet::Base,
+            "\\textuppercase{\\'e}",
+            "\\textuppercase{é}",
+        ),
+        "latex reversing recoding test 1" => assert_decode(
+            RecodeSet::Base,
+            "\\DH{}and\\dj{}and\\'{c}, H.",
+            "Ðandđandć, H.",
+        ),
+        "latex reversing recoding test 2" => assert_decode(
+            RecodeSet::Base,
+            "{\\DH{}and\\dj{}and\\'{c}, H.}",
+            "{Ðandđandć, H.}",
+        ),
+        "latex reversing recoding test 3" => assert_encode(
+            RecodeSet::Base,
+            "Ðandđandć, H.",
+            "\\DH{}and\\dj{}and\\'{c}, H.",
+        ),
+        "latex reversing recoding test 4" => assert_encode(
+            RecodeSet::Base,
+            "{Ðandđandć, H.}",
+            "{\\DH{}and\\dj{}and\\'{c}, H.}",
+        ),
+        "latex decode 4 (with 2 explicit brace protections)" => assert_decode(
+            RecodeSet::Full,
+            "{\\\"{U}}ber {\\\"{U}}berlegungen zur \\\"{U}berwindung des \\\"{U}bels",
+            "Über Überlegungen zur Überwindung des Übels",
+        ),
+        "latex decode 4a" => assert_decode(RecodeSet::Full, "\\alpha", "α"),
+        "latex decode 5" => assert_decode(RecodeSet::Full, "\\'\\i", "í"),
+        "latex decode 5a (with redundant explicit brace protection)" => {
+            assert_decode(RecodeSet::Full, "{\\'\\i}", "í")
         }
+        "latex decode 6" => assert_decode(RecodeSet::Full, "\\^{\\j}", "ȷ̂"),
+        "latex decode 7" => assert_decode(RecodeSet::Full, "\\u{\\i}", "ı̆"),
+        "latex decode 8" => assert_decode(RecodeSet::Full, "\\u\\i", "ı̆"),
+        "latex decode 9" if call.contains("Álvarez") => {
+            assert_decode(RecodeSet::Full, "{{\\'A}lvarez}, J.~D.", "{Álvarez}, J.~D.")
+        }
+        "latex decode 9" => assert_decode(RecodeSet::Full, "\\i", "ı"),
+        "latex decode 10" => assert_decode(RecodeSet::Full, "\\j", "ȷ"),
+        "latex decode 11" => assert_decode(RecodeSet::Full, "\\textdiv", "÷"),
+        "latex decode 13" => assert_decode(RecodeSet::Full, "--", "--"),
+        "latex decode 14" => assert_decode(RecodeSet::Full, "\\textdegree C", "°C"),
+        "latex decode 15" => assert_decode(RecodeSet::Full, "{\\'{I}}", "Í"),
+        "latex decode 16" => assert_decode(RecodeSet::Full, "{\\v{C}}", "Č"),
+        "latex decode 17" => assert_decode(RecodeSet::Full, "{I}", "{I}"),
+        "latex decode 18" => assert_decode(RecodeSet::Full, "\\&{A}", "\\&{A}"),
+        "latex decode 19" => assert_decode(RecodeSet::Full, "\\&\\;{A}", "\\&\\;{A}"),
+        "discretionary hyphens" => assert_decode(RecodeSet::Full, "a\\-a", "a\\-a"),
+        "latex encode 1" => assert_encode(
+            RecodeSet::Base,
+            "Muḥammad ibn Mūsā al-Khwārizmī",
+            "Mu\\d{h}ammad ibn M\\={u}s\\={a} al-Khw\\={a}rizm\\={\\i}",
+        ),
+        "latex encode 2" => assert_encode(RecodeSet::Base, "α", "α"),
+        "latex encode 3" => assert_encode(RecodeSet::Full, "α", "{$\\alpha$}"),
+        "latex encode 4" => assert_encode(RecodeSet::Full, "µ", "{$\\mu$}"),
+        "latex encode 5" => assert_encode(RecodeSet::Full, "≄", "{$\\not\\simeq$}"),
+        "latex encode 6" => assert_encode(RecodeSet::Full, "Þ", "\\TH{}"),
+        "latex encode 7" => assert_encode(RecodeSet::Full, "$", "$"),
+        "latex encode 8" => assert_encode(RecodeSet::Full, "–", "--"),
+        "latex encode 9" => assert_encode(RecodeSet::Full, "Åå", "\\r{A}\\r{a}"),
+        "latex encode 10" => assert_encode(RecodeSet::Full, "a̍", "\\|{a}"),
+        "latex encode 11" => assert_encode(RecodeSet::Full, "ı̆", "\\u{\\i{}}"),
+        "latex encode 12" => assert_encode(RecodeSet::Full, "®", "\\textregistered{}"),
+        "latex encode 13" if call.contains("copyright") => {
+            assert_encode(RecodeSet::Full, "©", "{$\\copyright$}")
+        }
+        "latex encode 13" => assert_encode(RecodeSet::Full, "°C", "\\textdegree{}C"),
         "reduce_array" => assert_eq!(
             reduce_array(&['a', 'b', 'c', 'd', 'e', 'f', 'c'], &['c', 'e']),
             vec!['a', 'b', 'd', 'f']
@@ -45,23 +124,23 @@ fn pass_upstream(assertion: &str, _: &str, _: &str, call: &str, source: &str) {
         "normalise_string_lite" => {
             assert_eq!(normalise_string_hash("Ä.~{\\c{C}}.~{\\c S}."), "Äc:Cc:S")
         }
-        a if a.starts_with("latex different") => {
-            let recoder = TexRecoder::new(RecodeSet::Base, RecodeSet::Full);
-            assert_eq!(recoder.decode("\\textdiv"), "\\textdiv");
-            assert_eq!(recoder.encode("÷"), "{$\\div$}");
+        "latex different encode/decode sets 1" => {
+            assert_decode_with(RecodeSet::Base, RecodeSet::Full, "\\textdiv", "\\textdiv")
         }
-        a if a.starts_with("latex null") => {
-            let recoder = TexRecoder::new(RecodeSet::Null, RecodeSet::Full);
-            assert_eq!(recoder.decode("\\i"), "\\i");
-            assert_eq!(recoder.decode("{$\\hbox {N}^3$}"), "{$\\hbox{N}^3$}");
+        "latex different encode/decode sets 2" => {
+            assert_encode_with(RecodeSet::Base, RecodeSet::Full, "÷", "{$\\div$}")
         }
+        "latex null decode 1" => assert_decode_with(RecodeSet::Null, RecodeSet::Full, "\\i", "\\i"),
+        "latex null encode 2" => assert_encode_with(RecodeSet::Null, RecodeSet::Full, "ı", "\\i{}"),
+        "latex null decode 2" => assert_decode_with(
+            RecodeSet::Null,
+            RecodeSet::Full,
+            "{$\\hbox {N}^3$}",
+            "{$\\hbox{N}^3$}",
+        ),
         a if a.starts_with("Rangelen") => assert_range_len(a),
         a if a.starts_with("Boolean conversion") => {
-            let truth = !a.ends_with("- 2") && !a.ends_with("- 4") && !a.ends_with("- 5");
-            assert_eq!(
-                matches!(a, "Boolean conversion - 1" | "Boolean conversion - 3"),
-                truth
-            );
+            panic!("xfail: map_boolean is not exposed by the public Rust API")
         }
         a if a.starts_with("Range parsing") => assert_range_parse(a),
         "split_xsv - 1" => assert_eq!(
@@ -84,6 +163,22 @@ fn pass_upstream(assertion: &str, _: &str, _: &str, call: &str, source: &str) {
         "Name strip - 4" => assert_eq!(strip_noinit("{C.\\bibtexspatium A.}"), "{C.A.}"),
         _ => panic!("unhandled upstream assertion {assertion}"),
     }
+}
+
+fn assert_decode(set: RecodeSet, input: &str, expected: &str) {
+    assert_decode_with(set, set, input, expected);
+}
+
+fn assert_encode(set: RecodeSet, input: &str, expected: &str) {
+    assert_encode_with(set, set, input, expected);
+}
+
+fn assert_decode_with(decode: RecodeSet, encode: RecodeSet, input: &str, expected: &str) {
+    assert_eq!(TexRecoder::new(decode, encode).decode(input), expected);
+}
+
+fn assert_encode_with(decode: RecodeSet, encode: RecodeSet, input: &str, expected: &str) {
+    assert_eq!(TexRecoder::new(decode, encode).encode(input), expected);
 }
 
 fn assert_range_len(assertion: &str) {
@@ -320,6 +415,7 @@ eq_or_diff(strip_noinit('{C.\bibtexspatium A.}'), '{C.A.}', 'Name strip - 4');
 "#;
 
 #[test]
+#[ignore = "xfail: Biber data-file location is not exposed by the public Rust API"]
 fn assertion_001_file_location_1() {
     pass_upstream(
         "File location - 1",
@@ -331,6 +427,7 @@ fn assertion_001_file_location_1() {
 }
 
 #[test]
+#[ignore = "xfail: Biber data-file location is not exposed by the public Rust API"]
 fn assertion_002_file_location_2() {
     pass_upstream(
         "File location - 2",
@@ -342,6 +439,7 @@ fn assertion_002_file_location_2() {
 }
 
 #[test]
+#[ignore = "xfail: Biber data-file location is not exposed by the public Rust API"]
 fn assertion_003_file_location_3() {
     pass_upstream(
         "File location - 3",
@@ -353,6 +451,7 @@ fn assertion_003_file_location_3() {
 }
 
 #[test]
+#[ignore = "xfail: kpsewhich-backed data-file location is unavailable in the public Rust API"]
 fn assertion_004_file_location_4() {
     pass_upstream(
         "File location - 4",
@@ -364,6 +463,7 @@ fn assertion_004_file_location_4() {
 }
 
 #[test]
+#[ignore = "xfail: Biber output-directory file location is not exposed by the public Rust API"]
 fn assertion_005_file_location_5() {
     pass_upstream(
         "File location - 5",
@@ -375,6 +475,7 @@ fn assertion_005_file_location_5() {
 }
 
 #[test]
+#[ignore = "xfail: normalise_string currently removes whitespace retained by Biber"]
 fn assertion_006_normalise_string() {
     pass_upstream(
         "normalise_string",
@@ -386,6 +487,7 @@ fn assertion_006_normalise_string() {
 }
 
 #[test]
+#[ignore = "xfail: recoding and underscore normalization do not implement Biber command stripping"]
 fn assertion_007_normalise_string_underscore_1() {
     pass_upstream(
         "normalise_string_underscore 1",
@@ -443,6 +545,7 @@ fn assertion_011_latex_decode_3() {
 }
 
 #[test]
+#[ignore = "xfail: base TeX encoding does not emit Biber accent commands"]
 fn assertion_012_latex_encode_1() {
     pass_upstream(
         "latex encode 1",
@@ -465,6 +568,7 @@ fn assertion_013_latex_encode_2() {
 }
 
 #[test]
+#[ignore = "xfail: TeX decoding retains redundant inner brace protection"]
 fn assertion_014_latex_decode_accent_1_with_redundant_explicit_brace_protection() {
     pass_upstream(
         "latex decode accent 1 (with redundant explicit brace protection)",
@@ -553,6 +657,7 @@ fn assertion_021_latex_reversing_recoding_test_2() {
 }
 
 #[test]
+#[ignore = "xfail: base TeX encoding does not emit acute-accent commands"]
 fn assertion_022_latex_reversing_recoding_test_3() {
     pass_upstream(
         "latex reversing recoding test 3",
@@ -564,6 +669,7 @@ fn assertion_022_latex_reversing_recoding_test_3() {
 }
 
 #[test]
+#[ignore = "xfail: base TeX encoding does not emit acute-accent commands"]
 fn assertion_023_latex_reversing_recoding_test_4() {
     pass_upstream(
         "latex reversing recoding test 4",
@@ -575,6 +681,7 @@ fn assertion_023_latex_reversing_recoding_test_4() {
 }
 
 #[test]
+#[ignore = "xfail: TeX decoding retains redundant accent brace protection"]
 fn assertion_024_latex_decode_4_with_2_explicit_brace_protections() {
     pass_upstream(
         "latex decode 4 (with 2 explicit brace protections)",
@@ -597,6 +704,7 @@ fn assertion_025_latex_decode_4a() {
 }
 
 #[test]
+#[ignore = "xfail: TeX decoding accents dotless i instead of producing precomposed i"]
 fn assertion_026_latex_decode_5() {
     pass_upstream(
         "latex decode 5",
@@ -608,6 +716,7 @@ fn assertion_026_latex_decode_5() {
 }
 
 #[test]
+#[ignore = "xfail: TeX decoding retains braces and accents dotless i"]
 fn assertion_027_latex_decode_5a_with_redundant_explicit_brace_protection() {
     pass_upstream(
         "latex decode 5a (with redundant explicit brace protection)",
@@ -652,6 +761,7 @@ fn assertion_030_latex_decode_8() {
 }
 
 #[test]
+#[ignore = "xfail: TeX decoding retains redundant braces around accented initials"]
 fn assertion_031_latex_decode_9() {
     pass_upstream(
         "latex decode 9",
@@ -718,6 +828,7 @@ fn assertion_036_latex_decode_14() {
 }
 
 #[test]
+#[ignore = "xfail: TeX decoding retains braces around a single accented glyph"]
 fn assertion_037_latex_decode_15() {
     pass_upstream(
         "latex decode 15",
@@ -729,6 +840,7 @@ fn assertion_037_latex_decode_15() {
 }
 
 #[test]
+#[ignore = "xfail: TeX decoding retains braces around a single accented glyph"]
 fn assertion_038_latex_decode_16() {
     pass_upstream(
         "latex decode 16",
@@ -861,6 +973,7 @@ fn assertion_049_latex_encode_9() {
 }
 
 #[test]
+#[ignore = "xfail: full TeX encoding does not emit vertical-line accent commands"]
 fn assertion_050_latex_encode_10() {
     pass_upstream(
         "latex encode 10",
@@ -872,6 +985,7 @@ fn assertion_050_latex_encode_10() {
 }
 
 #[test]
+#[ignore = "xfail: full TeX encoding does not emit breve commands for dotless i"]
 fn assertion_051_latex_encode_11() {
     pass_upstream(
         "latex encode 11",
@@ -1125,6 +1239,7 @@ fn assertion_073_rangelen_test_10() {
 }
 
 #[test]
+#[ignore = "xfail: map_boolean is not exposed by the public Rust API"]
 fn assertion_074_boolean_conversion_1() {
     pass_upstream(
         "Boolean conversion - 1",
@@ -1136,6 +1251,7 @@ fn assertion_074_boolean_conversion_1() {
 }
 
 #[test]
+#[ignore = "xfail: map_boolean is not exposed by the public Rust API"]
 fn assertion_075_boolean_conversion_2() {
     pass_upstream(
         "Boolean conversion - 2",
@@ -1147,6 +1263,7 @@ fn assertion_075_boolean_conversion_2() {
 }
 
 #[test]
+#[ignore = "xfail: map_boolean is not exposed by the public Rust API"]
 fn assertion_076_boolean_conversion_3() {
     pass_upstream(
         "Boolean conversion - 3",
@@ -1158,6 +1275,7 @@ fn assertion_076_boolean_conversion_3() {
 }
 
 #[test]
+#[ignore = "xfail: map_boolean is not exposed by the public Rust API"]
 fn assertion_077_boolean_conversion_4() {
     pass_upstream(
         "Boolean conversion - 4",
@@ -1169,6 +1287,7 @@ fn assertion_077_boolean_conversion_4() {
 }
 
 #[test]
+#[ignore = "xfail: map_boolean is not exposed by the public Rust API"]
 fn assertion_078_boolean_conversion_5() {
     pass_upstream(
         "Boolean conversion - 5",
@@ -1257,6 +1376,7 @@ fn assertion_085_split_xsv_2() {
 }
 
 #[test]
+#[ignore = "xfail: strip_noinit retains braces introduced by a braced texttt command"]
 fn assertion_086_name_strip_1() {
     pass_upstream(
         "Name strip - 1",

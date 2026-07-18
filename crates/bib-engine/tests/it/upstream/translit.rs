@@ -1,4 +1,4 @@
-// Direct passing translation of upstream t/translit.t at commit 74252e6.
+// Direct translation of upstream t/translit.t at commit 74252e6.
 // Keep `UPSTREAM_SOURCE` byte-for-byte equivalent when editing expectations.
 
 use bib_unicode::{Transliteration, transliterate};
@@ -16,6 +16,7 @@ fn pass_upstream(assertion: &str, _: &str, expected: &str, call: &str, source: &
         transliterate("क्षेत्र", Transliteration::DevanagariLatin),
         "kṣetr"
     );
+    panic!("xfail: exact transliterated BBL sorting output is not publicly exposed");
 }
 
 const UPSTREAM_SOURCE: &str = r#"# -*- cperl -*-
@@ -60,6 +61,7 @@ is_deeply([map {NFC($_)} $main->get_keys->@*], ['aachen', 'aix-en-provence', 'ar
 "#;
 
 #[test]
+#[ignore = "xfail: exact upstream end-to-end behavior is not exposed by the public Rust API"]
 fn assertion_001_translit_sorting_1() {
     pass_upstream(
         "translit sorting - 1",

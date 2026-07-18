@@ -1,4 +1,4 @@
-// Direct passing translation of upstream t/bcfvalidation.t at commit 74252e6.
+// Direct translation of upstream t/bcfvalidation.t at commit 74252e6.
 // Keep `UPSTREAM_SOURCE` byte-for-byte equivalent when editing expectations.
 
 use bib_input::{XmlLimits, validate_control_bytes};
@@ -26,6 +26,7 @@ fn pass_upstream(assertion: &str, actual: &str, _: &str, call: &str, source: &st
     };
     let bytes = std::fs::read(path).expect("committed BCF fixture");
     validate_control_bytes(&bytes, XmlLimits::default()).expect(assertion);
+    panic!("xfail: Rust validation does not implement the upstream Relax NG assertion");
 }
 
 const UPSTREAM_SOURCE: &str = r#"# -*- cperl -*-
@@ -62,6 +63,7 @@ foreach my $bcf (<tdata/*.bcf>) {
 "#;
 
 #[test]
+#[ignore = "xfail: exact upstream end-to-end behavior is not exposed by the public Rust API"]
 fn assertion_001_validation_of_tdata_annotations_bcf() {
     pass_upstream(
         "Validation of tdata/annotations.bcf",
@@ -73,6 +75,7 @@ fn assertion_001_validation_of_tdata_annotations_bcf() {
 }
 
 #[test]
+#[ignore = "xfail: exact upstream end-to-end behavior is not exposed by the public Rust API"]
 fn assertion_002_validation_of_tdata_basic_misc_bcf() {
     pass_upstream(
         "Validation of tdata/basic-misc.bcf",
@@ -84,6 +87,7 @@ fn assertion_002_validation_of_tdata_basic_misc_bcf() {
 }
 
 #[test]
+#[ignore = "xfail: exact upstream end-to-end behavior is not exposed by the public Rust API"]
 fn assertion_003_validation_of_tdata_biblatexml_bcf() {
     pass_upstream(
         "Validation of tdata/biblatexml.bcf",
@@ -95,6 +99,7 @@ fn assertion_003_validation_of_tdata_biblatexml_bcf() {
 }
 
 #[test]
+#[ignore = "xfail: exact upstream end-to-end behavior is not exposed by the public Rust API"]
 fn assertion_004_validation_of_tdata_bibtex_aliases_bcf() {
     pass_upstream(
         "Validation of tdata/bibtex-aliases.bcf",
@@ -106,6 +111,7 @@ fn assertion_004_validation_of_tdata_bibtex_aliases_bcf() {
 }
 
 #[test]
+#[ignore = "xfail: exact upstream end-to-end behavior is not exposed by the public Rust API"]
 fn assertion_005_validation_of_tdata_bibtex_output_bcf() {
     pass_upstream(
         "Validation of tdata/bibtex-output.bcf",
@@ -117,6 +123,7 @@ fn assertion_005_validation_of_tdata_bibtex_output_bcf() {
 }
 
 #[test]
+#[ignore = "xfail: exact upstream end-to-end behavior is not exposed by the public Rust API"]
 fn assertion_006_validation_of_tdata_crossrefs_bcf() {
     pass_upstream(
         "Validation of tdata/crossrefs.bcf",
@@ -128,6 +135,7 @@ fn assertion_006_validation_of_tdata_crossrefs_bcf() {
 }
 
 #[test]
+#[ignore = "xfail: exact upstream end-to-end behavior is not exposed by the public Rust API"]
 fn assertion_007_validation_of_tdata_datalists_bcf() {
     pass_upstream(
         "Validation of tdata/datalists.bcf",
@@ -139,6 +147,7 @@ fn assertion_007_validation_of_tdata_datalists_bcf() {
 }
 
 #[test]
+#[ignore = "xfail: exact upstream end-to-end behavior is not exposed by the public Rust API"]
 fn assertion_008_validation_of_tdata_dateformats_bcf() {
     pass_upstream(
         "Validation of tdata/dateformats.bcf",
@@ -150,6 +159,7 @@ fn assertion_008_validation_of_tdata_dateformats_bcf() {
 }
 
 #[test]
+#[ignore = "xfail: exact upstream end-to-end behavior is not exposed by the public Rust API"]
 fn assertion_009_validation_of_tdata_dm_constraints_bcf() {
     pass_upstream(
         "Validation of tdata/dm-constraints.bcf",
@@ -161,6 +171,7 @@ fn assertion_009_validation_of_tdata_dm_constraints_bcf() {
 }
 
 #[test]
+#[ignore = "xfail: exact upstream end-to-end behavior is not exposed by the public Rust API"]
 fn assertion_010_validation_of_tdata_encoding1_bcf() {
     pass_upstream(
         "Validation of tdata/encoding1.bcf",
@@ -172,6 +183,7 @@ fn assertion_010_validation_of_tdata_encoding1_bcf() {
 }
 
 #[test]
+#[ignore = "xfail: exact upstream end-to-end behavior is not exposed by the public Rust API"]
 fn assertion_011_validation_of_tdata_encoding2_bcf() {
     pass_upstream(
         "Validation of tdata/encoding2.bcf",
@@ -183,6 +195,7 @@ fn assertion_011_validation_of_tdata_encoding2_bcf() {
 }
 
 #[test]
+#[ignore = "xfail: exact upstream end-to-end behavior is not exposed by the public Rust API"]
 fn assertion_012_validation_of_tdata_encoding3_bcf() {
     pass_upstream(
         "Validation of tdata/encoding3.bcf",
@@ -194,6 +207,7 @@ fn assertion_012_validation_of_tdata_encoding3_bcf() {
 }
 
 #[test]
+#[ignore = "xfail: exact upstream end-to-end behavior is not exposed by the public Rust API"]
 fn assertion_013_validation_of_tdata_encoding4_bcf() {
     pass_upstream(
         "Validation of tdata/encoding4.bcf",
@@ -205,6 +219,7 @@ fn assertion_013_validation_of_tdata_encoding4_bcf() {
 }
 
 #[test]
+#[ignore = "xfail: exact upstream end-to-end behavior is not exposed by the public Rust API"]
 fn assertion_014_validation_of_tdata_encoding5_bcf() {
     pass_upstream(
         "Validation of tdata/encoding5.bcf",
@@ -216,6 +231,7 @@ fn assertion_014_validation_of_tdata_encoding5_bcf() {
 }
 
 #[test]
+#[ignore = "xfail: exact upstream end-to-end behavior is not exposed by the public Rust API"]
 fn assertion_015_validation_of_tdata_encoding6_bcf() {
     pass_upstream(
         "Validation of tdata/encoding6.bcf",
@@ -227,6 +243,7 @@ fn assertion_015_validation_of_tdata_encoding6_bcf() {
 }
 
 #[test]
+#[ignore = "xfail: exact upstream end-to-end behavior is not exposed by the public Rust API"]
 fn assertion_016_validation_of_tdata_extradate_bcf() {
     pass_upstream(
         "Validation of tdata/extradate.bcf",
@@ -238,6 +255,7 @@ fn assertion_016_validation_of_tdata_extradate_bcf() {
 }
 
 #[test]
+#[ignore = "xfail: exact upstream end-to-end behavior is not exposed by the public Rust API"]
 fn assertion_017_validation_of_tdata_extratitle_bcf() {
     pass_upstream(
         "Validation of tdata/extratitle.bcf",
@@ -249,6 +267,7 @@ fn assertion_017_validation_of_tdata_extratitle_bcf() {
 }
 
 #[test]
+#[ignore = "xfail: exact upstream end-to-end behavior is not exposed by the public Rust API"]
 fn assertion_018_validation_of_tdata_extratitleyear_bcf() {
     pass_upstream(
         "Validation of tdata/extratitleyear.bcf",
@@ -260,6 +279,7 @@ fn assertion_018_validation_of_tdata_extratitleyear_bcf() {
 }
 
 #[test]
+#[ignore = "xfail: exact upstream end-to-end behavior is not exposed by the public Rust API"]
 fn assertion_019_validation_of_tdata_full_bbl_bcf() {
     pass_upstream(
         "Validation of tdata/full-bbl.bcf",
@@ -271,6 +291,7 @@ fn assertion_019_validation_of_tdata_full_bbl_bcf() {
 }
 
 #[test]
+#[ignore = "xfail: exact upstream end-to-end behavior is not exposed by the public Rust API"]
 fn assertion_020_validation_of_tdata_full_bibtex_bcf() {
     pass_upstream(
         "Validation of tdata/full-bibtex.bcf",
@@ -282,6 +303,7 @@ fn assertion_020_validation_of_tdata_full_bibtex_bcf() {
 }
 
 #[test]
+#[ignore = "xfail: exact upstream end-to-end behavior is not exposed by the public Rust API"]
 fn assertion_021_validation_of_tdata_full_dot_bcf() {
     pass_upstream(
         "Validation of tdata/full-dot.bcf",
@@ -293,6 +315,7 @@ fn assertion_021_validation_of_tdata_full_dot_bcf() {
 }
 
 #[test]
+#[ignore = "xfail: exact upstream end-to-end behavior is not exposed by the public Rust API"]
 fn assertion_022_validation_of_tdata_general_bcf() {
     pass_upstream(
         "Validation of tdata/general.bcf",
@@ -304,6 +327,7 @@ fn assertion_022_validation_of_tdata_general_bcf() {
 }
 
 #[test]
+#[ignore = "xfail: exact upstream end-to-end behavior is not exposed by the public Rust API"]
 fn assertion_023_validation_of_tdata_labelalpha_bcf() {
     pass_upstream(
         "Validation of tdata/labelalpha.bcf",
@@ -315,6 +339,7 @@ fn assertion_023_validation_of_tdata_labelalpha_bcf() {
 }
 
 #[test]
+#[ignore = "xfail: exact upstream end-to-end behavior is not exposed by the public Rust API"]
 fn assertion_024_validation_of_tdata_labelalphaname_bcf() {
     pass_upstream(
         "Validation of tdata/labelalphaname.bcf",
@@ -326,6 +351,7 @@ fn assertion_024_validation_of_tdata_labelalphaname_bcf() {
 }
 
 #[test]
+#[ignore = "xfail: exact upstream end-to-end behavior is not exposed by the public Rust API"]
 fn assertion_025_validation_of_tdata_maps_bcf() {
     pass_upstream(
         "Validation of tdata/maps.bcf",
@@ -337,6 +363,7 @@ fn assertion_025_validation_of_tdata_maps_bcf() {
 }
 
 #[test]
+#[ignore = "xfail: exact upstream end-to-end behavior is not exposed by the public Rust API"]
 fn assertion_026_validation_of_tdata_names_bcf() {
     pass_upstream(
         "Validation of tdata/names.bcf",
@@ -348,6 +375,7 @@ fn assertion_026_validation_of_tdata_names_bcf() {
 }
 
 #[test]
+#[ignore = "xfail: exact upstream end-to-end behavior is not exposed by the public Rust API"]
 fn assertion_027_validation_of_tdata_names_x_bcf() {
     pass_upstream(
         "Validation of tdata/names_x.bcf",
@@ -359,6 +387,7 @@ fn assertion_027_validation_of_tdata_names_x_bcf() {
 }
 
 #[test]
+#[ignore = "xfail: exact upstream end-to-end behavior is not exposed by the public Rust API"]
 fn assertion_028_validation_of_tdata_options_bcf() {
     pass_upstream(
         "Validation of tdata/options.bcf",
@@ -370,6 +399,7 @@ fn assertion_028_validation_of_tdata_options_bcf() {
 }
 
 #[test]
+#[ignore = "xfail: exact upstream end-to-end behavior is not exposed by the public Rust API"]
 fn assertion_029_validation_of_tdata_related_bcf() {
     pass_upstream(
         "Validation of tdata/related.bcf",
@@ -381,6 +411,7 @@ fn assertion_029_validation_of_tdata_related_bcf() {
 }
 
 #[test]
+#[ignore = "xfail: exact upstream end-to-end behavior is not exposed by the public Rust API"]
 fn assertion_030_validation_of_tdata_remote_files_bcf() {
     pass_upstream(
         "Validation of tdata/remote-files.bcf",
@@ -392,6 +423,7 @@ fn assertion_030_validation_of_tdata_remote_files_bcf() {
 }
 
 #[test]
+#[ignore = "xfail: exact upstream end-to-end behavior is not exposed by the public Rust API"]
 fn assertion_031_validation_of_tdata_sections_complex_bcf() {
     pass_upstream(
         "Validation of tdata/sections-complex.bcf",
@@ -403,6 +435,7 @@ fn assertion_031_validation_of_tdata_sections_complex_bcf() {
 }
 
 #[test]
+#[ignore = "xfail: exact upstream end-to-end behavior is not exposed by the public Rust API"]
 fn assertion_032_validation_of_tdata_sections_bcf() {
     pass_upstream(
         "Validation of tdata/sections.bcf",
@@ -414,6 +447,7 @@ fn assertion_032_validation_of_tdata_sections_bcf() {
 }
 
 #[test]
+#[ignore = "xfail: exact upstream end-to-end behavior is not exposed by the public Rust API"]
 fn assertion_033_validation_of_tdata_set_dynamic_bcf() {
     pass_upstream(
         "Validation of tdata/set-dynamic.bcf",
@@ -425,6 +459,7 @@ fn assertion_033_validation_of_tdata_set_dynamic_bcf() {
 }
 
 #[test]
+#[ignore = "xfail: exact upstream end-to-end behavior is not exposed by the public Rust API"]
 fn assertion_034_validation_of_tdata_set_legacy_bcf() {
     pass_upstream(
         "Validation of tdata/set-legacy.bcf",
@@ -436,6 +471,7 @@ fn assertion_034_validation_of_tdata_set_legacy_bcf() {
 }
 
 #[test]
+#[ignore = "xfail: exact upstream end-to-end behavior is not exposed by the public Rust API"]
 fn assertion_035_validation_of_tdata_set_static_bcf() {
     pass_upstream(
         "Validation of tdata/set-static.bcf",
@@ -447,6 +483,7 @@ fn assertion_035_validation_of_tdata_set_static_bcf() {
 }
 
 #[test]
+#[ignore = "xfail: exact upstream end-to-end behavior is not exposed by the public Rust API"]
 fn assertion_036_validation_of_tdata_skips_bcf() {
     pass_upstream(
         "Validation of tdata/skips.bcf",
@@ -458,6 +495,7 @@ fn assertion_036_validation_of_tdata_skips_bcf() {
 }
 
 #[test]
+#[ignore = "xfail: exact upstream end-to-end behavior is not exposed by the public Rust API"]
 fn assertion_037_validation_of_tdata_skipsg_bcf() {
     pass_upstream(
         "Validation of tdata/skipsg.bcf",
@@ -469,6 +507,7 @@ fn assertion_037_validation_of_tdata_skipsg_bcf() {
 }
 
 #[test]
+#[ignore = "xfail: exact upstream end-to-end behavior is not exposed by the public Rust API"]
 fn assertion_038_validation_of_tdata_sort_case_bcf() {
     pass_upstream(
         "Validation of tdata/sort-case.bcf",
@@ -480,6 +519,7 @@ fn assertion_038_validation_of_tdata_sort_case_bcf() {
 }
 
 #[test]
+#[ignore = "xfail: exact upstream end-to-end behavior is not exposed by the public Rust API"]
 fn assertion_039_validation_of_tdata_sort_complex_bcf() {
     pass_upstream(
         "Validation of tdata/sort-complex.bcf",
@@ -491,6 +531,7 @@ fn assertion_039_validation_of_tdata_sort_complex_bcf() {
 }
 
 #[test]
+#[ignore = "xfail: exact upstream end-to-end behavior is not exposed by the public Rust API"]
 fn assertion_040_validation_of_tdata_sort_names_bcf() {
     pass_upstream(
         "Validation of tdata/sort-names.bcf",
@@ -502,6 +543,7 @@ fn assertion_040_validation_of_tdata_sort_names_bcf() {
 }
 
 #[test]
+#[ignore = "xfail: exact upstream end-to-end behavior is not exposed by the public Rust API"]
 fn assertion_041_validation_of_tdata_sort_order_bcf() {
     pass_upstream(
         "Validation of tdata/sort-order.bcf",
@@ -513,6 +555,7 @@ fn assertion_041_validation_of_tdata_sort_order_bcf() {
 }
 
 #[test]
+#[ignore = "xfail: exact upstream end-to-end behavior is not exposed by the public Rust API"]
 fn assertion_042_validation_of_tdata_sort_uc_bcf() {
     pass_upstream(
         "Validation of tdata/sort-uc.bcf",
@@ -524,6 +567,7 @@ fn assertion_042_validation_of_tdata_sort_uc_bcf() {
 }
 
 #[test]
+#[ignore = "xfail: exact upstream end-to-end behavior is not exposed by the public Rust API"]
 fn assertion_043_validation_of_tdata_translit_bcf() {
     pass_upstream(
         "Validation of tdata/translit.bcf",
@@ -535,6 +579,7 @@ fn assertion_043_validation_of_tdata_translit_bcf() {
 }
 
 #[test]
+#[ignore = "xfail: exact upstream end-to-end behavior is not exposed by the public Rust API"]
 fn assertion_044_validation_of_tdata_truncation_bcf() {
     pass_upstream(
         "Validation of tdata/truncation.bcf",
@@ -546,6 +591,7 @@ fn assertion_044_validation_of_tdata_truncation_bcf() {
 }
 
 #[test]
+#[ignore = "xfail: exact upstream end-to-end behavior is not exposed by the public Rust API"]
 fn assertion_045_validation_of_tdata_uniqueness_nameparts_bcf() {
     pass_upstream(
         "Validation of tdata/uniqueness-nameparts.bcf",
@@ -557,6 +603,7 @@ fn assertion_045_validation_of_tdata_uniqueness_nameparts_bcf() {
 }
 
 #[test]
+#[ignore = "xfail: exact upstream end-to-end behavior is not exposed by the public Rust API"]
 fn assertion_046_validation_of_tdata_uniqueness1_bcf() {
     pass_upstream(
         "Validation of tdata/uniqueness1.bcf",
@@ -568,6 +615,7 @@ fn assertion_046_validation_of_tdata_uniqueness1_bcf() {
 }
 
 #[test]
+#[ignore = "xfail: exact upstream end-to-end behavior is not exposed by the public Rust API"]
 fn assertion_047_validation_of_tdata_uniqueness2_bcf() {
     pass_upstream(
         "Validation of tdata/uniqueness2.bcf",
@@ -579,6 +627,7 @@ fn assertion_047_validation_of_tdata_uniqueness2_bcf() {
 }
 
 #[test]
+#[ignore = "xfail: exact upstream end-to-end behavior is not exposed by the public Rust API"]
 fn assertion_048_validation_of_tdata_uniqueness3_bcf() {
     pass_upstream(
         "Validation of tdata/uniqueness3.bcf",
@@ -590,6 +639,7 @@ fn assertion_048_validation_of_tdata_uniqueness3_bcf() {
 }
 
 #[test]
+#[ignore = "xfail: exact upstream end-to-end behavior is not exposed by the public Rust API"]
 fn assertion_049_validation_of_tdata_uniqueness4_bcf() {
     pass_upstream(
         "Validation of tdata/uniqueness4.bcf",
@@ -601,6 +651,7 @@ fn assertion_049_validation_of_tdata_uniqueness4_bcf() {
 }
 
 #[test]
+#[ignore = "xfail: exact upstream end-to-end behavior is not exposed by the public Rust API"]
 fn assertion_050_validation_of_tdata_uniqueness5_bcf() {
     pass_upstream(
         "Validation of tdata/uniqueness5.bcf",
@@ -612,6 +663,7 @@ fn assertion_050_validation_of_tdata_uniqueness5_bcf() {
 }
 
 #[test]
+#[ignore = "xfail: exact upstream end-to-end behavior is not exposed by the public Rust API"]
 fn assertion_051_validation_of_tdata_uniqueness6_bcf() {
     pass_upstream(
         "Validation of tdata/uniqueness6.bcf",
@@ -623,6 +675,7 @@ fn assertion_051_validation_of_tdata_uniqueness6_bcf() {
 }
 
 #[test]
+#[ignore = "xfail: exact upstream end-to-end behavior is not exposed by the public Rust API"]
 fn assertion_052_validation_of_tdata_uniqueness7_bcf() {
     pass_upstream(
         "Validation of tdata/uniqueness7.bcf",
@@ -634,6 +687,7 @@ fn assertion_052_validation_of_tdata_uniqueness7_bcf() {
 }
 
 #[test]
+#[ignore = "xfail: exact upstream end-to-end behavior is not exposed by the public Rust API"]
 fn assertion_053_validation_of_tdata_xdata_bcf() {
     pass_upstream(
         "Validation of tdata/xdata.bcf",
