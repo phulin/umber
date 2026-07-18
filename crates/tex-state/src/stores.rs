@@ -269,6 +269,15 @@ impl Stores {
         self.source_fragments = fragments;
     }
 
+    pub(crate) fn paragraph_origin_resolver(
+        &self,
+    ) -> Arc<crate::provenance::ParagraphOriginResolver> {
+        Arc::new(crate::provenance::ParagraphOriginResolver::new(
+            self.provenance.record_snapshot(),
+            self.source_fragments.metadata_snapshot(),
+        ))
+    }
+
     pub(crate) fn direct_root_span_id(
         &self,
         origin: crate::token::OriginId,
@@ -1842,12 +1851,34 @@ impl Stores {
             .then_some(id)
     }
 
+    /// Mounts semantic paragraph output and attaches one shared lazy resolver
+    /// for the raw origins already present in the immutable graph.
+    pub fn mount_prevalidated_paragraph_result_lazy(
+        &mut self,
+        retained: &RetainedNodeList,
+        resolver: Arc<crate::ParagraphOriginResolver>,
+    ) -> Option<NodeListId> {
+        if !self.glue.restore_retained(retained.glues()) {
+            return None;
+        }
+        let id = retained.id();
+        let newly_mounted = self.survivors.mount(retained)?;
+        if newly_mounted {
+            self.survivor_pins.push(id);
+        } else {
+            self.pin_survivor(id);
+        }
+        self.survivors
+            .mount_lazy_paragraph_origins(id, resolver)
+            .then_some(id)
+    }
+
     pub(crate) fn deferred_node_origins(
         &self,
         list: NodeListId,
         index: usize,
         len: usize,
-    ) -> Option<(&crate::ParagraphProvenanceRecipe, std::ops::Range<usize>)> {
+    ) -> Option<crate::survivor::DeferredNodeOrigins<'_>> {
         self.survivors.deferred_node_origins(list, index, len)
     }
 

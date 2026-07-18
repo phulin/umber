@@ -78,9 +78,9 @@ All production mutation of live TeX state should pass through `Universe` or simi
 - `src/page/sequence.rs`: Canonical persistent binary-forest sequence for growing current-page nodes.
 - `src/page/state_hash.rs`: Page semantic cursors, bounded derived projection caches, and component framing.
 - `src/page/tests.rs`: Page snapshot-root sharing and copy-on-write isolation tests.
-- `src/provenance.rs`: Diagnostic origin-record and origin-list arenas with rollback watermarks.
+- `src/provenance.rs`: Chunked diagnostic origin-record snapshots, origin-list arenas, lazy paragraph resolvers, and rollback watermarks.
 - `src/provenance/tests.rs`: Unit tests for provenance allocation, readback, and rollback marks.
-- `src/pure_memo.rs`: Optional bounded session-local pure-query experiments plus the ordered accepted paragraph history, stable-start cursor, exact paragraph read identities, validation telemetry, compact output-provenance recipes, and accepted-history-owned retained node mounts.
+- `src/pure_memo.rs`: Optional bounded session-local pure-query experiments plus the ordered accepted paragraph history, stable-start cursor, exact paragraph read identities, validation telemetry, opaque accepted-generation output provenance, and accepted-history-owned retained node mounts.
 - `src/pure_memo/tests.rs`: Collision, eviction, retention-release, and disabled-cache tests.
 - `src/scaled.rs`: Compatibility re-export for shared TeX scaled-point arithmetic.
 - `src/source_map.rs`: Rollback-coupled logical source regions, validated positions/spans, and immutable World/generated backing identities.

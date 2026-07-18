@@ -4684,6 +4684,26 @@ impl Universe {
             .mount_prevalidated_paragraph_result_deferred(retained, provenance)
     }
 
+    /// Mounts validated semantic output with an accepted-generation resolver;
+    /// raw node origins remain untouched until diagnostic consumption.
+    #[doc(hidden)]
+    pub fn mount_prevalidated_paragraph_result_lazy(
+        &mut self,
+        retained: &crate::survivor::RetainedNodeList,
+        resolver: std::sync::Arc<crate::ParagraphOriginResolver>,
+    ) -> Option<NodeListId> {
+        self.stores
+            .mount_prevalidated_paragraph_result_lazy(retained, resolver)
+    }
+
+    /// Captures one constant-time diagnostic resolver for the current
+    /// accepted paragraph generation.
+    #[doc(hidden)]
+    #[must_use]
+    pub fn paragraph_origin_resolver(&self) -> std::sync::Arc<crate::ParagraphOriginResolver> {
+        self.stores.paragraph_origin_resolver()
+    }
+
     #[doc(hidden)]
     #[must_use]
     pub fn deferred_node_origins(
@@ -4691,7 +4711,7 @@ impl Universe {
         list: NodeListId,
         index: usize,
         len: usize,
-    ) -> Option<(&crate::ParagraphProvenanceRecipe, std::ops::Range<usize>)> {
+    ) -> Option<crate::survivor::DeferredNodeOrigins<'_>> {
         self.stores.deferred_node_origins(list, index, len)
     }
 

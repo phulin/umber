@@ -438,6 +438,19 @@ impl ParagraphProvenanceRecipe {
     }
 }
 
+/// Opaque diagnostic provenance attached to retained paragraph output.
+///
+/// Cold paragraph publication leaves this pending. The accepted generation
+/// installs one shared resolver for every newly published region, so capture
+/// is constant time and raw node origins are decoded only by a diagnostic
+/// consumer.
+#[derive(Clone, Debug, Default)]
+pub enum ParagraphLineProvenance {
+    #[default]
+    Pending,
+    Accepted(Arc<crate::ParagraphOriginResolver>),
+}
+
 #[derive(Clone, Copy, Debug)]
 pub struct ParagraphProvenanceSpan {
     pub piece: u32,
@@ -506,7 +519,7 @@ pub struct RecordedParagraphRegion {
     /// `None` means ordinary paragraph termination; `Some` also identifies an
     /// empty direction stack as a display continuation without an extra flag.
     pub display_active_directions: Option<Arc<[crate::node::Direction]>>,
-    pub line_provenance: ParagraphProvenanceRecipe,
+    pub line_provenance: ParagraphLineProvenance,
 }
 
 /// Finished line-breaking payload attached to the most recently recorded
@@ -518,7 +531,6 @@ pub struct RecordedParagraphLines {
     pub line_count: i32,
     pub last_badness: i32,
     pub display_active_directions: Option<Arc<[crate::node::Direction]>>,
-    pub provenance: ParagraphProvenanceRecipe,
 }
 
 #[derive(Clone, Debug)]
@@ -1016,7 +1028,6 @@ impl PureMemoRuntime {
             region.line_count = result.line_count;
             region.line_last_badness = result.last_badness;
             region.display_active_directions = result.display_active_directions;
-            region.line_provenance = result.provenance;
         }
     }
 
@@ -1206,7 +1217,7 @@ impl PureMemoRuntime {
 
     /// Publishes the speculative trace wholesale after its owning Universe is
     /// accepted as the new retained generation.
-    pub fn accept_paragraph_history(&mut self) {
+    pub fn accept_paragraph_history(&mut self, resolver: Arc<crate::ParagraphOriginResolver>) {
         if self.preserve_prior_paragraphs {
             self.recorded_paragraphs.clear();
             self.preserve_prior_paragraphs = false;
@@ -1214,6 +1225,13 @@ impl PureMemoRuntime {
             self.prior_paragraph_input_cursors.clear();
             self.reuse_prior_paragraphs = false;
             return;
+        }
+        for region in &mut self.recorded_paragraphs {
+            if region.lines.is_some()
+                && matches!(region.line_provenance, ParagraphLineProvenance::Pending)
+            {
+                region.line_provenance = ParagraphLineProvenance::Accepted(Arc::clone(&resolver));
+            }
         }
         self.prior_paragraphs = std::mem::take(&mut self.recorded_paragraphs);
         self.prior_paragraph_starts.clear();
@@ -1647,7 +1665,12 @@ fn recorded_paragraph_retained_bytes(region: &RecordedParagraphRegion) -> usize 
                         .saturating_mul(std::mem::size_of::<crate::node::Direction>())
                 }),
         )
-        .saturating_add(paragraph_provenance_retained_bytes(&region.line_provenance))
+        .saturating_add(match &region.line_provenance {
+            ParagraphLineProvenance::Pending => 0,
+            ParagraphLineProvenance::Accepted(_) => {
+                std::mem::size_of::<Arc<crate::ParagraphOriginResolver>>()
+            }
+        })
 }
 
 fn paragraph_provenance_retained_bytes(recipe: &ParagraphProvenanceRecipe) -> usize {

@@ -67,6 +67,7 @@ pub struct CommittedArtifact {
 }
 
 const LIVE_RENDER_REF: u64 = 1 << 63;
+const SNAPSHOT_RENDER_REF: u64 = 1 << 62;
 const UNKNOWN_RENDER_REF: u64 = u64::MAX;
 
 #[derive(Clone, Debug)]
@@ -83,6 +84,7 @@ enum ArtifactRenderSources {
         live: Arc<[OriginId]>,
         refs: Arc<[u64]>,
         recipes: Arc<[crate::ParagraphProvenanceRecipe]>,
+        resolvers: Arc<[Arc<crate::ParagraphOriginResolver>]>,
     },
 }
 
@@ -104,7 +106,7 @@ impl ArtifactRenderProvenance {
     }
 
     fn built(ends: Vec<u32>, builder: RenderProvenanceBuilder) -> Self {
-        let (live, refs, recipes) = builder.into_parts();
+        let (live, refs, recipes, resolvers) = builder.into_parts();
         let flat_len = ends.last().copied().unwrap_or(0) as usize;
         let sources = if refs.is_empty() {
             assert_eq!(flat_len, live.len());
@@ -115,6 +117,7 @@ impl ArtifactRenderProvenance {
                 live: live.into(),
                 refs: refs.into(),
                 recipes: recipes.into(),
+                resolvers: resolvers.into(),
             }
         };
         Self {
@@ -145,6 +148,8 @@ pub struct RenderProvenanceBuilder {
     refs: Vec<u64>,
     recipes: Vec<crate::ParagraphProvenanceRecipe>,
     recipe_ids: ahash::AHashMap<usize, u32>,
+    resolvers: Vec<Arc<crate::ParagraphOriginResolver>>,
+    resolver_ids: ahash::AHashMap<usize, u32>,
     mixed: bool,
 }
 
@@ -192,17 +197,53 @@ impl RenderProvenanceBuilder {
         }
     }
 
+    pub fn push_lazy(
+        &mut self,
+        resolver: &Arc<crate::ParagraphOriginResolver>,
+        origins: impl IntoIterator<Item = OriginId>,
+    ) -> u32 {
+        if !self.mixed {
+            self.refs.extend((0..self.live.len()).map(|index| {
+                LIVE_RENDER_REF
+                    | u64::try_from(index).expect("artifact live provenance exceeds u63")
+            }));
+            self.mixed = true;
+        }
+        let identity = Arc::as_ptr(resolver).addr();
+        let resolver_index = if let Some(&index) = self.resolver_ids.get(&identity) {
+            index
+        } else {
+            let index = u32::try_from(self.resolvers.len())
+                .expect("artifact lazy resolver count exceeds u32");
+            self.resolvers.push(Arc::clone(resolver));
+            self.resolver_ids.insert(identity, index);
+            index
+        };
+        let mut len = 0_u32;
+        for origin in origins {
+            assert!(resolver_index < (1 << 30));
+            self.refs.push(
+                SNAPSHOT_RENDER_REF | (u64::from(resolver_index) << 32) | u64::from(origin.raw()),
+            );
+            len = len
+                .checked_add(1)
+                .expect("artifact render provenance exceeds u32");
+        }
+        len
+    }
+
     fn into_parts(
         self,
     ) -> (
         Vec<OriginId>,
         Vec<u64>,
         Vec<crate::ParagraphProvenanceRecipe>,
+        Vec<Arc<crate::ParagraphOriginResolver>>,
     ) {
         if self.mixed {
-            (self.live, self.refs, self.recipes)
+            (self.live, self.refs, self.recipes, self.resolvers)
         } else {
-            (self.live, Vec::new(), Vec::new())
+            (self.live, Vec::new(), Vec::new(), Vec::new())
         }
     }
 }
@@ -487,6 +528,7 @@ impl CommittedArtifact {
                 live,
                 refs,
                 recipes,
+                resolvers,
             } => {
                 let Some(&reference) = refs.get(flat) else {
                     return ArtifactOrigin::Unknown;
@@ -499,6 +541,14 @@ impl CommittedArtifact {
                         .get((reference & !LIVE_RENDER_REF) as usize)
                         .copied()
                         .map_or(ArtifactOrigin::Unknown, ArtifactOrigin::Live);
+                }
+                if reference & SNAPSHOT_RENDER_REF != 0 {
+                    let resolver = ((reference & !SNAPSHOT_RENDER_REF) >> 32) as usize;
+                    let origin = OriginId::from_raw(reference as u32);
+                    return resolvers
+                        .get(resolver)
+                        .and_then(|resolver| resolver.stable_span(origin))
+                        .map_or(ArtifactOrigin::Unknown, ArtifactOrigin::Stable);
                 }
                 let recipe = (reference >> 32) as usize;
                 let slot = reference as u32 as usize;
@@ -526,11 +576,16 @@ impl CommittedArtifact {
                     live,
                     refs,
                     recipes,
-                } => live
-                    .len()
-                    .saturating_mul(std::mem::size_of::<OriginId>())
-                    .saturating_add(refs.len().saturating_mul(std::mem::size_of::<u64>()))
-                    .saturating_add(recipes.iter().map(provenance_recipe_bytes).sum::<usize>()),
+                    resolvers,
+                } => {
+                    live.len()
+                        .saturating_mul(std::mem::size_of::<OriginId>())
+                        .saturating_add(refs.len().saturating_mul(std::mem::size_of::<u64>()))
+                        .saturating_add(recipes.iter().map(provenance_recipe_bytes).sum::<usize>())
+                        .saturating_add(resolvers.len().saturating_mul(std::mem::size_of::<
+                            Arc<crate::ParagraphOriginResolver>,
+                        >()))
+                }
             })
     }
 

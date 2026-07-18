@@ -424,6 +424,24 @@ impl EmissionState {
                 .expect("artifact render provenance exceeds u32 entries"),
         );
     }
+
+    fn node_lazy(
+        &mut self,
+        resolver: &std::sync::Arc<tex_state::ParagraphOriginResolver>,
+        origins: impl IntoIterator<Item = OriginId>,
+    ) {
+        let Some(ends) = &mut self.render_origin_ends else {
+            return;
+        };
+        let len = self.render_origins.push_lazy(resolver, origins);
+        ends.push(
+            ends.last()
+                .copied()
+                .unwrap_or(0)
+                .checked_add(len)
+                .expect("artifact render provenance exceeds u32 entries"),
+        );
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -532,10 +550,7 @@ fn deferred_origins_for_node(
     stores: &Universe,
     list: NodeListId,
     index: usize,
-) -> Option<(
-    &tex_state::ParagraphProvenanceRecipe,
-    std::ops::Range<usize>,
-)> {
+) -> Option<tex_state::DeferredNodeOrigins<'_>> {
     let len = match stores.nodes(list).get(index)? {
         NodeRef::Char { .. } => 1,
         NodeRef::Lig { origins, .. } => origins.len(),
@@ -550,10 +565,7 @@ fn emit_index(
     overlay: &PageOverlay,
     list: NodeListId,
     index: usize,
-    deferred: Option<(
-        &tex_state::ParagraphProvenanceRecipe,
-        std::ops::Range<usize>,
-    )>,
+    deferred: Option<tex_state::DeferredNodeOrigins<'_>>,
     output: &mut V10NodeListWriter<'_>,
     mut dvi: Option<&mut DviPagePlanBuilder>,
     emission: &mut EmissionState,
@@ -1066,20 +1078,21 @@ fn emit_glyph(
     ch: u32,
     logical_width: tex_state::scaled::Scaled,
     origins: impl IntoIterator<Item = OriginId>,
-    deferred: Option<(
-        &tex_state::ParagraphProvenanceRecipe,
-        std::ops::Range<usize>,
-    )>,
+    deferred: Option<tex_state::DeferredNodeOrigins<'_>>,
     output: &mut V10NodeListWriter<'_>,
     mut dvi: Option<&mut DviPagePlanBuilder>,
     emission: &mut EmissionState,
 ) -> Result<(), ExecError> {
     let projection = glyph_projection(stores, font, ch, logical_width, emission)?;
     emit_projection_kern(projection.left, output, dvi.as_deref_mut(), emission)?;
-    if let Some((recipe, slots)) = deferred {
-        emission.node_deferred(recipe, slots);
-    } else {
-        emission.node(origins);
+    match deferred {
+        Some(tex_state::DeferredNodeOrigins::Stable(recipe, slots)) => {
+            emission.node_deferred(recipe, slots)
+        }
+        Some(tex_state::DeferredNodeOrigins::Lazy(resolver)) => {
+            emission.node_lazy(resolver, origins)
+        }
+        None => emission.node(origins),
     }
     output.char(projection.font_id, ch, projection.width)?;
     if let Some(dvi) = dvi.as_deref_mut() {
@@ -1098,20 +1111,21 @@ fn emit_ligature(
     source: &[char],
     logical_width: tex_state::scaled::Scaled,
     origins: impl IntoIterator<Item = OriginId>,
-    deferred: Option<(
-        &tex_state::ParagraphProvenanceRecipe,
-        std::ops::Range<usize>,
-    )>,
+    deferred: Option<tex_state::DeferredNodeOrigins<'_>>,
     output: &mut V10NodeListWriter<'_>,
     mut dvi: Option<&mut DviPagePlanBuilder>,
     emission: &mut EmissionState,
 ) -> Result<(), ExecError> {
     let projection = glyph_projection(stores, font, ch, logical_width, emission)?;
     emit_projection_kern(projection.left, output, dvi.as_deref_mut(), emission)?;
-    if let Some((recipe, slots)) = deferred {
-        emission.node_deferred(recipe, slots);
-    } else {
-        emission.node(origins);
+    match deferred {
+        Some(tex_state::DeferredNodeOrigins::Stable(recipe, slots)) => {
+            emission.node_deferred(recipe, slots)
+        }
+        Some(tex_state::DeferredNodeOrigins::Lazy(resolver)) => {
+            emission.node_lazy(resolver, origins)
+        }
+        None => emission.node(origins),
     }
     output.lig(
         projection.font_id,

@@ -113,15 +113,16 @@ pub use page::{
     AWFUL_BAD, DEPLORABLE, EJECT_PENALTY, INF_PENALTY, PageBreak, PageContents, PageDimension,
     PageFireUp, PageInteger,
 };
+pub use provenance::ParagraphOriginResolver;
 pub use provenance_resolver::{ProvenanceResolver, ResolvedSourceLocation};
 pub use pure_memo::{
-    MemoLayerStats, MemoTimingPhase, ParagraphBarrierReason, ParagraphOpportunityMetric,
-    ParagraphOpportunityStats, ParagraphProvenanceNode, ParagraphProvenanceRecipe,
-    ParagraphProvenanceSpan, ParagraphRecordingPhase, ParagraphRecordingStats,
-    ParagraphValidationFailure, PureBreakDecision, PureBreakPlan, PureMemoConfig, PureMemoKey,
-    PureMemoLayer, PureMemoRecordingPolicy, PureMemoRuntime, PureMemoStats, PurePageEntry,
-    PureParagraphMutation, PureParagraphMutationSummary, PureShipoutEntry, RecordedParagraphLines,
-    RecordedParagraphRegion,
+    MemoLayerStats, MemoTimingPhase, ParagraphBarrierReason, ParagraphLineProvenance,
+    ParagraphOpportunityMetric, ParagraphOpportunityStats, ParagraphProvenanceNode,
+    ParagraphProvenanceRecipe, ParagraphProvenanceSpan, ParagraphRecordingPhase,
+    ParagraphRecordingStats, ParagraphValidationFailure, PureBreakDecision, PureBreakPlan,
+    PureMemoConfig, PureMemoKey, PureMemoLayer, PureMemoRecordingPolicy, PureMemoRuntime,
+    PureMemoStats, PurePageEntry, PureParagraphMutation, PureParagraphMutationSummary,
+    PureShipoutEntry, RecordedParagraphLines, RecordedParagraphRegion,
 };
 pub use source_fragments::{
     EditorLayout, EditorLayoutError, FragmentId, FragmentStore, LayoutGeneration,
@@ -129,7 +130,7 @@ pub use source_fragments::{
 };
 pub use stores::{FontParameterError, GroupKind, GroupMismatch, PrepareMagDiagnostic};
 #[doc(hidden)]
-pub use survivor::DeferredNodeOriginCursor;
+pub use survivor::{DeferredNodeOriginCursor, DeferredNodeOrigins};
 pub use universe::{
     BoxBuildTransaction, BoxDimension, EngineBoundaryHasher, ExpansionContext, ExpansionState,
     FormatError, GenerationForkError, GenerationSubstrate, InputOpenContext, InputOpenState,

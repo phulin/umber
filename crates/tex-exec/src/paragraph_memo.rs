@@ -14,6 +14,7 @@ const MAX_PARAGRAPH_DEPENDENCY_CACHE_ENTRIES: usize = 4_096;
 struct ValidatedParagraphEntry {
     input: tex_lex::PreparedParagraphTransition,
     lines: tex_state::survivor::RetainedNodeList,
+    provenance: std::sync::Arc<tex_state::ParagraphOriginResolver>,
 }
 
 #[cfg(feature = "profiling-stats")]
@@ -88,6 +89,7 @@ pub(crate) fn try_reuse_aligned_paragraph(
     let Some(ValidatedParagraphEntry {
         input: prepared_input,
         lines: retained_lines,
+        provenance,
     }) = validated
     else {
         return Ok(false);
@@ -117,10 +119,7 @@ pub(crate) fn try_reuse_aligned_paragraph(
     replay_effects(stores, &entry.effects);
     let mount_started = start_phase();
     let mounted_lines = stores
-        .mount_prevalidated_paragraph_result_deferred(
-            &retained_lines,
-            entry.line_provenance.clone(),
-        )
+        .mount_prevalidated_paragraph_result_lazy(&retained_lines, provenance)
         .expect("prevalidated paragraph line mount must remain valid");
     let lines = stores.nodes(mounted_lines).to_vec();
     finish_memo_phase(stores, MemoTimingPhase::Import, mount_started);
@@ -242,9 +241,19 @@ fn validate_paragraph_entry(
         stores.record_pure_paragraph_validation_failure(ParagraphValidationFailure::RetainedResult);
         return None;
     }
+    let provenance = match &entry.line_provenance {
+        tex_state::ParagraphLineProvenance::Accepted(resolver) => std::sync::Arc::clone(resolver),
+        tex_state::ParagraphLineProvenance::Pending => {
+            stores.record_pure_paragraph_validation_failure(
+                ParagraphValidationFailure::RetainedResult,
+            );
+            return None;
+        }
+    };
     Some(ValidatedParagraphEntry {
         input: prepared_input?,
         lines,
+        provenance,
     })
 }
 
@@ -493,7 +502,6 @@ struct ParagraphProvenanceBuilder {
     piece_anchors: Vec<tex_state::RootSpanId>,
     root_spans: Vec<tex_state::ParagraphProvenanceSpan>,
     origin_slots: Vec<u32>,
-    node_slots: Vec<tex_state::ParagraphProvenanceNode>,
     root_ordinals: ahash::AHashMap<tex_state::RootSpanId, u32>,
     piece_ordinals: ahash::AHashMap<tex_state::PieceId, u32>,
 }
@@ -539,23 +547,7 @@ impl ParagraphProvenanceBuilder {
             piece_anchors: self.piece_anchors.into(),
             root_spans: self.root_spans.into(),
             origin_slots: self.origin_slots.into(),
-            node_slots: self.node_slots.into(),
-        }
-    }
-
-    fn push_node_origins(
-        &mut self,
-        stores: &Universe,
-        word: u32,
-        origins: impl IntoIterator<Item = tex_state::token::OriginId>,
-    ) {
-        let Ok(slot) = u32::try_from(self.origin_slots.len()) else {
-            return;
-        };
-        self.node_slots
-            .push(tex_state::ParagraphProvenanceNode { word, slot });
-        for origin in origins {
-            self.push_origin(stores, origin);
+            node_slots: std::sync::Arc::from([]),
         }
     }
 }
@@ -850,7 +842,7 @@ fn publish_recorded_region(
         display_active_directions: (continuation
             == crate::executor::ParagraphContinuation::Display)
             .then(|| std::sync::Arc::from([])),
-        line_provenance: tex_state::ParagraphProvenanceRecipe::default(),
+        line_provenance: tex_state::ParagraphLineProvenance::Pending,
     });
     finish_phase(
         stores,
@@ -884,13 +876,6 @@ pub(crate) fn publish_finished_lines(
         ParagraphRecordingPhase::LineRetention,
         retention_started,
     );
-    let provenance_started = start_phase();
-    let provenance = paragraph_graph_provenance(stores, retained.id());
-    finish_phase(
-        stores,
-        ParagraphRecordingPhase::LineProvenance,
-        provenance_started,
-    );
     let publication_started = start_phase();
     let last_badness = stores.last_badness();
     let display_active_directions = match pending.continuation {
@@ -904,66 +889,12 @@ pub(crate) fn publish_finished_lines(
         line_count,
         last_badness,
         display_active_directions,
-        provenance,
     });
     finish_phase(
         stores,
         ParagraphRecordingPhase::RegionPublication,
         publication_started,
     );
-}
-
-fn paragraph_graph_provenance(
-    stores: &Universe,
-    root: tex_state::ids::NodeListId,
-) -> tex_state::ParagraphProvenanceRecipe {
-    fn visit(
-        stores: &Universe,
-        list: tex_state::ids::NodeListId,
-        recipe: &mut ParagraphProvenanceBuilder,
-    ) {
-        for (index, node) in stores.nodes(list).iter().enumerate() {
-            let word = stores
-                .node_word_index(list, index)
-                .expect("survivor word index fits u32");
-            match node {
-                tex_state::node_arena::NodeRef::Char { origin, .. } => {
-                    recipe.push_node_origins(stores, word, [origin]);
-                }
-                tex_state::node_arena::NodeRef::Lig { origins, .. } => {
-                    recipe.push_node_origins(stores, word, origins.iter().copied());
-                }
-                tex_state::node_arena::NodeRef::HList(box_node)
-                | tex_state::node_arena::NodeRef::VList(box_node) => {
-                    visit(stores, box_node.children, recipe)
-                }
-                tex_state::node_arena::NodeRef::Glue {
-                    leader:
-                        Some(
-                            tex_state::node::LeaderPayload::HList(box_node)
-                            | tex_state::node::LeaderPayload::VList(box_node),
-                        ),
-                    ..
-                } => visit(stores, box_node.children, recipe),
-                tex_state::node_arena::NodeRef::Unset(unset) => {
-                    visit(stores, unset.children, recipe)
-                }
-                tex_state::node_arena::NodeRef::Disc {
-                    pre, post, replace, ..
-                } => {
-                    visit(stores, pre, recipe);
-                    visit(stores, post, recipe);
-                    visit(stores, replace, recipe);
-                }
-                tex_state::node_arena::NodeRef::Ins { content, .. }
-                | tex_state::node_arena::NodeRef::Adjust(content) => visit(stores, content, recipe),
-                _ => {}
-            }
-        }
-    }
-    let mut recipe = ParagraphProvenanceBuilder::default();
-    visit(stores, root, &mut recipe);
-    recipe.finish()
 }
 
 fn append_inline_math_dependency_keys(

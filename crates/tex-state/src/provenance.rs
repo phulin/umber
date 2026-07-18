@@ -13,9 +13,154 @@ use crate::token::{OriginId, Token, TracedTokenWord};
 use crate::world::InputRecordId;
 use std::collections::HashSet;
 use std::mem;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 
 static NEXT_PACKED_ARENA_ORIGIN: AtomicU32 = AtomicU32::new(0);
+const ORIGIN_RECORD_ARCHIVE_CHUNK: usize = 1024;
+
+type ArchivedOriginRecord = (u32, OriginRecord);
+
+#[derive(Clone, Debug, Default)]
+struct OriginRecordArchive {
+    sealed: Arc<Vec<Arc<[ArchivedOriginRecord]>>>,
+    tail: Vec<ArchivedOriginRecord>,
+}
+
+impl OriginRecordArchive {
+    fn append(&mut self, key: u32, record: OriginRecord) {
+        self.tail.push((key, record));
+        if self.tail.len() == ORIGIN_RECORD_ARCHIVE_CHUNK {
+            Arc::make_mut(&mut self.sealed).push(core::mem::take(&mut self.tail).into());
+        }
+    }
+
+    fn snapshot(&self) -> OriginRecordSnapshot {
+        OriginRecordSnapshot {
+            sealed: Arc::clone(&self.sealed),
+            tail: self.tail.clone().into(),
+        }
+    }
+
+    fn len(&self) -> usize {
+        self.sealed
+            .len()
+            .saturating_mul(ORIGIN_RECORD_ARCHIVE_CHUNK)
+            .saturating_add(self.tail.len())
+    }
+
+    fn capacity(&self) -> usize {
+        self.sealed
+            .len()
+            .saturating_mul(ORIGIN_RECORD_ARCHIVE_CHUNK)
+            .saturating_add(self.tail.capacity())
+    }
+
+    fn get_slot(&self, slot: usize) -> Option<OriginRecord> {
+        let chunk = slot / ORIGIN_RECORD_ARCHIVE_CHUNK;
+        let offset = slot % ORIGIN_RECORD_ARCHIVE_CHUNK;
+        if let Some(chunk) = self.sealed.get(chunk) {
+            return chunk.get(offset).map(|(_, record)| *record);
+        }
+        (chunk == self.sealed.len())
+            .then(|| self.tail.get(offset).map(|(_, record)| *record))
+            .flatten()
+    }
+
+    fn truncate(&mut self, records: usize) {
+        let full = records / ORIGIN_RECORD_ARCHIVE_CHUNK;
+        let remainder = records % ORIGIN_RECORD_ARCHIVE_CHUNK;
+        let sealed = Arc::make_mut(&mut self.sealed);
+        if full < sealed.len() {
+            self.tail = if remainder == 0 {
+                Vec::new()
+            } else {
+                sealed[full][..remainder].to_vec()
+            };
+            sealed.truncate(full);
+        } else {
+            debug_assert_eq!(full, sealed.len());
+            self.tail.truncate(remainder);
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct OriginRecordSnapshot {
+    sealed: Arc<Vec<Arc<[ArchivedOriginRecord]>>>,
+    tail: Arc<[ArchivedOriginRecord]>,
+}
+
+impl OriginRecordSnapshot {
+    fn get(&self, origin: OriginId) -> Option<OriginRecord> {
+        let crate::token::OriginEncoding::Arena(key) = origin.decode() else {
+            return None;
+        };
+        if let Some(&(found, record)) = self
+            .tail
+            .binary_search_by_key(&key, |(key, _)| *key)
+            .ok()
+            .and_then(|index| self.tail.get(index))
+        {
+            debug_assert_eq!(found, key);
+            return Some(record);
+        }
+        let index = self
+            .sealed
+            .partition_point(|chunk| chunk.first().is_some_and(|(first, _)| *first <= key))
+            .checked_sub(1)?;
+        let chunk = &self.sealed[index];
+        let index = chunk.binary_search_by_key(&key, |(key, _)| *key).ok()?;
+        Some(chunk[index].1)
+    }
+}
+
+/// Immutable accepted-generation resolver for diagnostic-only paragraph
+/// origins. Cloning this handle is constant time; origin chains are followed
+/// only when a diagnostic consumer requests a source location.
+#[derive(Clone, Debug)]
+pub struct ParagraphOriginResolver {
+    provenance: OriginRecordSnapshot,
+    fragments: crate::source_fragments::FragmentStore,
+}
+
+impl ParagraphOriginResolver {
+    pub(crate) fn new(
+        provenance: OriginRecordSnapshot,
+        fragments: crate::source_fragments::FragmentStore,
+    ) -> Self {
+        Self {
+            provenance,
+            fragments,
+        }
+    }
+
+    /// Resolves one retained raw origin to stable editor backing without
+    /// allocating a live provenance record.
+    #[must_use]
+    pub fn stable_span(&self, origin: OriginId) -> Option<crate::RootSpanId> {
+        let mut current = origin;
+        for _ in 0..68 {
+            if let Some(span) = self.fragments.direct_root_span_id(current) {
+                return Some(span);
+            }
+            current = match current.decode() {
+                crate::token::OriginEncoding::Arena(_) => match self.provenance.get(current)? {
+                    OriginRecord::MacroInvocation(invocation) => invocation.invocation(),
+                    OriginRecord::Inserted(inserted) => inserted.parent(),
+                    OriginRecord::Synthesized(synthesized) => synthesized.parent(),
+                    OriginRecord::Source(_)
+                    | OriginRecord::SourceSpan(_)
+                    | OriginRecord::UnknownBootstrap
+                    | OriginRecord::Synthetic(_) => return None,
+                },
+                crate::token::OriginEncoding::Unknown
+                | crate::token::OriginEncoding::DirectSource(_) => return None,
+            };
+        }
+        None
+    }
+}
 
 /// A rollback watermark for the provenance store.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -691,7 +836,7 @@ impl OriginKeyRuns {
 /// Append-only origin-record and origin-list arenas.
 #[derive(Debug)]
 pub(crate) struct ProvenanceStore {
-    records: Vec<OriginRecord>,
+    records: OriginRecordArchive,
     spans: Vec<(u32, u32)>,
     origins: Vec<OriginId>,
     list_identities: IdentityAllocator,
@@ -715,7 +860,7 @@ impl ProvenanceStore {
     #[must_use]
     pub(crate) fn new() -> Self {
         Self {
-            records: Vec::new(),
+            records: OriginRecordArchive::default(),
             spans: vec![(0, 0)],
             origins: Vec::new(),
             list_identities: IdentityAllocator::new(1),
@@ -742,7 +887,7 @@ impl ProvenanceStore {
         };
         let slot = u32::try_from(self.records.len())
             .expect("global origin key capacity bounds provenance record slots");
-        self.records.push(record);
+        self.records.append(key, record);
         self.record_keys.append(key, slot);
         OriginId::arena(key).expect("global packed provenance key is representable")
     }
@@ -764,7 +909,10 @@ impl ProvenanceStore {
             let Some(slot) = fork.record_keys.slot(key) else {
                 continue;
             };
-            let record = fork.records[slot as usize];
+            let record = fork
+                .records
+                .get_slot(slot as usize)
+                .expect("fork provenance slot is live");
             match record {
                 OriginRecord::MacroInvocation(invocation) => {
                     pending.push(invocation.invocation());
@@ -781,13 +929,16 @@ impl ProvenanceStore {
             imported.push((key, record));
         }
         imported.sort_unstable_by_key(|(key, _)| *key);
-        self.records.reserve(imported.len());
         for (key, record) in imported {
             let slot = u32::try_from(self.records.len())
                 .expect("global origin key capacity bounds provenance record slots");
-            self.records.push(record);
+            self.records.append(key, record);
             self.record_keys.append(key, slot);
         }
+    }
+
+    pub(crate) fn record_snapshot(&self) -> OriginRecordSnapshot {
+        self.records.snapshot()
     }
 
     /// Allocates an origin-list span, saturating capacity overflow to empty.
@@ -875,7 +1026,9 @@ impl ProvenanceStore {
             panic!("direct source origin has no provenance arena record");
         };
         let index = self.record_keys.slot(index).expect("origin id is not live") as usize;
-        self.records[index]
+        self.records
+            .get_slot(index)
+            .expect("live provenance slot exists")
     }
 
     /// Reads a live origin-list span.

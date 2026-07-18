@@ -926,7 +926,8 @@ impl Session {
         if advance.convergence_old_index.is_some() {
             self.pure_memo.discard_paragraph_history();
         } else {
-            self.pure_memo.accept_paragraph_history();
+            self.pure_memo
+                .accept_paragraph_history(advance.scratch.paragraph_origin_resolver());
         }
         let paragraph_history_transition_latency = paragraph_history_transition_started.elapsed();
         let splice_started = Timer::start();
@@ -1462,7 +1463,7 @@ fn execute_revision(
         ..
     } = execution_result?;
     let expansion_stats = input.expansion_stats();
-    pure_memo.accept_paragraph_history();
+    pure_memo.accept_paragraph_history(universe.paragraph_origin_resolver());
     let effects = universe.world().effect_records().to_vec();
     let artifacts = universe.world().committed_artifacts().to_vec();
     let output_bytes = universe.retained_output_bytes();

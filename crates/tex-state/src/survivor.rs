@@ -128,8 +128,20 @@ struct SurvivorRoot {
 }
 
 #[derive(Clone, Debug)]
-struct DeferredParagraphOrigins {
-    recipe: crate::ParagraphProvenanceRecipe,
+enum DeferredParagraphOrigins {
+    Stable(crate::ParagraphProvenanceRecipe),
+    Lazy {
+        start: u32,
+        end: u32,
+        resolver: Arc<crate::ParagraphOriginResolver>,
+    },
+}
+
+/// Diagnostic provenance selected for one raw character or ligature node.
+#[doc(hidden)]
+pub enum DeferredNodeOrigins<'a> {
+    Stable(&'a crate::ParagraphProvenanceRecipe, std::ops::Range<usize>),
+    Lazy(&'a Arc<crate::ParagraphOriginResolver>),
 }
 
 /// Monotonic diagnostic-provenance lookup for one emitted survivor list.
@@ -161,40 +173,51 @@ impl<'a> DeferredNodeOriginCursor<'a> {
 
     /// Returns the stable recipe slots for the next provenance-bearing word.
     #[doc(hidden)]
-    pub fn node_origins(
-        &mut self,
-        index: usize,
-        len: usize,
-    ) -> Option<(&'a crate::ParagraphProvenanceRecipe, std::ops::Range<usize>)> {
+    pub fn node_origins(&mut self, index: usize, len: usize) -> Option<DeferredNodeOrigins<'a>> {
         let word = self.list_start.checked_add(u32::try_from(index).ok()?)?;
         if word >= self.list_end {
             return None;
         }
         while let Some(deferred) = self.entries.get(self.entry) {
-            let slots = &deferred.recipe.node_slots;
-            while let Some(slot) = slots.get(self.node) {
-                if slot.word >= self.list_end {
-                    return None;
+            match deferred {
+                DeferredParagraphOrigins::Lazy {
+                    start,
+                    end,
+                    resolver,
+                } => {
+                    if *end <= word {
+                        self.entry += 1;
+                        self.node = 0;
+                        continue;
+                    }
+                    if *start > word {
+                        return None;
+                    }
+                    return Some(DeferredNodeOrigins::Lazy(resolver));
                 }
-                if slot.word < word {
-                    self.node += 1;
-                    continue;
+                DeferredParagraphOrigins::Stable(recipe) => {
+                    let slots = &recipe.node_slots;
+                    while let Some(slot) = slots.get(self.node) {
+                        if slot.word >= self.list_end {
+                            return None;
+                        }
+                        if slot.word < word {
+                            self.node += 1;
+                            continue;
+                        }
+                        if slot.word > word {
+                            return None;
+                        }
+                        self.node += 1;
+                        let start = slot.slot as usize;
+                        let end = start.checked_add(len)?;
+                        return (end <= recipe.origin_slots.len())
+                            .then_some(DeferredNodeOrigins::Stable(recipe, start..end));
+                    }
                 }
-                if slot.word > word {
-                    return None;
-                }
-                self.node += 1;
-                let start = slot.slot as usize;
-                let end = start.checked_add(len)?;
-                return (end <= deferred.recipe.origin_slots.len())
-                    .then_some((&deferred.recipe, start..end));
             }
             self.entry += 1;
-            self.node = self.entries.get(self.entry).map_or(0, |next| {
-                next.recipe
-                    .node_slots
-                    .partition_point(|slot| slot.word < self.list_start)
-            });
+            self.node = 0;
         }
         None
     }
@@ -617,7 +640,33 @@ impl SurvivorArena {
         root.origin_overlay = None;
         root.deferred_origins.clear();
         root.deferred_origins
-            .push(DeferredParagraphOrigins { recipe });
+            .push(DeferredParagraphOrigins::Stable(recipe));
+        true
+    }
+
+    /// Attaches one accepted-generation resolver to the raw origins already
+    /// embedded throughout a retained paragraph graph.
+    pub(crate) fn mount_lazy_paragraph_origins(
+        &mut self,
+        id: NodeListId,
+        resolver: Arc<crate::ParagraphOriginResolver>,
+    ) -> bool {
+        let ArenaRef::Survivor(root_id) = id.arena() else {
+            return false;
+        };
+        let Some(index) = self.root_slots.get(&root_id).copied() else {
+            return false;
+        };
+        let Some(Some(root)) = self.slots.get_mut(index) else {
+            return false;
+        };
+        root.origin_overlay = None;
+        root.deferred_origins.clear();
+        root.deferred_origins.push(DeferredParagraphOrigins::Lazy {
+            start: 0,
+            end: u32::try_from(root.payload.storage.len()).unwrap_or(u32::MAX),
+            resolver,
+        });
         true
     }
 
@@ -645,18 +694,18 @@ impl SurvivorArena {
             return DeferredNodeOriginCursor::empty();
         };
         let entries = self.deferred_paragraph_origins_ref(list);
-        let entry = entries.partition_point(|deferred| {
-            deferred
-                .recipe
+        let entry = entries.partition_point(|deferred| match deferred {
+            DeferredParagraphOrigins::Stable(recipe) => recipe
                 .node_slots
                 .last()
-                .is_none_or(|slot| slot.word < list.start())
+                .is_none_or(|slot| slot.word < list.start()),
+            DeferredParagraphOrigins::Lazy { end, .. } => *end <= list.start(),
         });
-        let node = entries.get(entry).map_or(0, |deferred| {
-            deferred
-                .recipe
+        let node = entries.get(entry).map_or(0, |deferred| match deferred {
+            DeferredParagraphOrigins::Stable(recipe) => recipe
                 .node_slots
-                .partition_point(|slot| slot.word < list.start())
+                .partition_point(|slot| slot.word < list.start()),
+            DeferredParagraphOrigins::Lazy { .. } => 0,
         });
         DeferredNodeOriginCursor {
             entries,
@@ -672,7 +721,7 @@ impl SurvivorArena {
         list: NodeListId,
         index: usize,
         len: usize,
-    ) -> Option<(&crate::ParagraphProvenanceRecipe, std::ops::Range<usize>)> {
+    ) -> Option<DeferredNodeOrigins<'_>> {
         let ArenaRef::Survivor(root_id) = list.arena() else {
             return None;
         };
@@ -690,15 +739,26 @@ impl SurvivorArena {
                 else {
                     return false;
                 };
-                deferred
-                    .recipe
-                    .node_slots
-                    .binary_search_by_key(&word, |node| node.word)
-                    .is_ok()
+                match deferred {
+                    DeferredParagraphOrigins::Stable(recipe) => recipe
+                        .node_slots
+                        .binary_search_by_key(&word, |node| node.word)
+                        .is_ok(),
+                    DeferredParagraphOrigins::Lazy { start, end, .. } => {
+                        (*start..*end).contains(&word)
+                    }
+                }
             })?;
         let word = list.start().checked_add(u32::try_from(index).ok()?)?;
-        let range = deferred.recipe.node_origin_slots(word, len)?;
-        Some((&deferred.recipe, range))
+        match deferred {
+            DeferredParagraphOrigins::Stable(recipe) => {
+                let range = recipe.node_origin_slots(word, len)?;
+                Some(DeferredNodeOrigins::Stable(recipe, range))
+            }
+            DeferredParagraphOrigins::Lazy { resolver, .. } => {
+                Some(DeferredNodeOrigins::Lazy(resolver))
+            }
+        }
     }
 
     #[cfg(test)]
@@ -1041,23 +1101,38 @@ impl<'a> PromotionCopy<'a> {
                 .checked_add(id.len())
                 .expect("source survivor span fits u32");
             for deferred in self.survivor.deferred_paragraph_origins_ref(id) {
-                let node_slots = deferred
-                    .recipe
-                    .node_slots
-                    .iter()
-                    .filter(|node| (source_start..source_end).contains(&node.word))
-                    .map(|node| crate::ParagraphProvenanceNode {
-                        word: start
-                            .checked_add(node.word - source_start)
-                            .expect("promoted provenance word fits u32"),
-                        slot: node.slot,
-                    })
-                    .collect::<Vec<_>>();
-                if !node_slots.is_empty() {
-                    let mut recipe = deferred.recipe.clone();
-                    recipe.node_slots = node_slots.into();
-                    self.deferred_origins
-                        .push(DeferredParagraphOrigins { recipe });
+                match deferred {
+                    DeferredParagraphOrigins::Stable(recipe) => {
+                        let node_slots = recipe
+                            .node_slots
+                            .iter()
+                            .filter(|node| (source_start..source_end).contains(&node.word))
+                            .map(|node| crate::ParagraphProvenanceNode {
+                                word: start
+                                    .checked_add(node.word - source_start)
+                                    .expect("promoted provenance word fits u32"),
+                                slot: node.slot,
+                            })
+                            .collect::<Vec<_>>();
+                        if !node_slots.is_empty() {
+                            let mut recipe = recipe.clone();
+                            recipe.node_slots = node_slots.into();
+                            self.deferred_origins
+                                .push(DeferredParagraphOrigins::Stable(recipe));
+                        }
+                    }
+                    DeferredParagraphOrigins::Lazy {
+                        start: lazy_start,
+                        end: lazy_end,
+                        resolver,
+                    } if *lazy_start < source_end && *lazy_end > source_start => {
+                        self.deferred_origins.push(DeferredParagraphOrigins::Lazy {
+                            start,
+                            end: start.checked_add(len).expect("promoted list span fits u32"),
+                            resolver: Arc::clone(resolver),
+                        });
+                    }
+                    DeferredParagraphOrigins::Lazy { .. } => {}
                 }
             }
         }

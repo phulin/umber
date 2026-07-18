@@ -169,7 +169,7 @@ fn cold_paragraph_recording_preserves_source_batching() {
 }
 
 #[test]
-fn paragraph_recording_retains_only_output_provenance() {
+fn paragraph_recording_keeps_line_provenance_opaque() {
     let mut universe = template();
     universe.enable_pure_memo(tex_state::PureMemoConfig::default());
     let repetitions = 4_096;
@@ -197,8 +197,10 @@ fn paragraph_recording_retains_only_output_provenance() {
         .find(|region| region.lines.is_some())
         .expect("literal paragraph is retained");
     assert!(region.delivered_tokens > repetitions);
-    assert!(region.line_provenance.root_spans.len() <= 3);
-    assert!(region.line_provenance.origin_slots.len() <= 3);
+    assert!(matches!(
+        region.line_provenance,
+        tex_state::ParagraphLineProvenance::Accepted(_)
+    ));
 }
 
 #[test]
@@ -232,8 +234,11 @@ fn replayed_paragraph_provenance_tracks_current_then_deleted_layout() {
             .pure_memo
             .accepted_paragraphs()
             .iter()
-            .any(|region| !region.line_provenance.node_slots.is_empty()),
-        "cold retained lines should index character-bearing survivor words"
+            .any(|region| matches!(
+                region.line_provenance,
+                tex_state::ParagraphLineProvenance::Accepted(_)
+            )),
+        "cold retained lines should carry an opaque accepted-generation resolver"
     );
     let before = session.pure_memo_stats();
 

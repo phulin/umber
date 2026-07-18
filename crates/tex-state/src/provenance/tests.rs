@@ -87,6 +87,34 @@ fn records_and_origin_lists_allocate_and_read_back() {
 }
 
 #[test]
+fn record_snapshot_retains_rolled_back_chunks_and_tail() {
+    let mut store = ProvenanceStore::new();
+    let mark = store.watermark();
+    let mut origins = Vec::new();
+    for _ in 0..(super::ORIGIN_RECORD_ARCHIVE_CHUNK + 7) {
+        origins.push(store.allocate(OriginRecord::Synthetic(SyntheticOrigin::new(
+            SyntheticOriginKind::Test,
+        ))));
+    }
+    let snapshot = store.record_snapshot();
+    let first = origins[0];
+    let last = *origins.last().expect("snapshot has a tail record");
+
+    store.truncate_to(mark);
+    assert!(!store.contains_origin(first));
+    assert!(!store.contains_origin(last));
+    assert!(matches!(
+        snapshot.get(first),
+        Some(OriginRecord::Synthetic(_))
+    ));
+    assert!(matches!(
+        snapshot.get(last),
+        Some(OriginRecord::Synthetic(_))
+    ));
+    assert!(store.record_snapshot().get(first).is_none());
+}
+
+#[test]
 fn repeated_origin_lists_allocate_without_extra_records() {
     let mut store = ProvenanceStore::new();
     let source = store.allocate(OriginRecord::Source(SourceOrigin::new(
