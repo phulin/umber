@@ -113,6 +113,9 @@ pub(crate) struct ColdParagraphRecording {
     pub(crate) starting_group_depth: u32,
     pub(crate) delivered_tokens: usize,
     pub(crate) inline_math: Option<InlineMathReads>,
+    /// Box registers first supplied by this paragraph below its entry group.
+    /// Their contents remain source-proven only while that group is active.
+    pub(crate) local_boxes: Vec<(u16, u32)>,
     pub(crate) barriers: std::collections::BTreeSet<ParagraphBarrierReason>,
 }
 
@@ -252,6 +255,7 @@ impl<'a> ExecutionContext<'a> {
             starting_group_depth,
             delivered_tokens: 0,
             inline_math: None,
+            local_boxes: Vec::new(),
             barriers: std::collections::BTreeSet::new(),
         });
         true
@@ -320,9 +324,36 @@ impl<'a> ExecutionContext<'a> {
         }
     }
 
+    pub(crate) fn mark_paragraph_local_box(&mut self, stores: &Universe, index: u16, global: bool) {
+        let Some(recording) = &mut self.cold_paragraph_recording else {
+            return;
+        };
+        let current_depth = tex_state::ExpansionState::execution_group_depth(stores);
+        if !global && current_depth > recording.starting_group_depth {
+            recording.local_boxes.push((index, current_depth));
+        }
+    }
+
+    pub(crate) fn paragraph_box_is_source_proven(&self, index: u16) -> bool {
+        self.cold_paragraph_recording
+            .as_ref()
+            .is_some_and(|recording| {
+                recording
+                    .local_boxes
+                    .iter()
+                    .rev()
+                    .any(|&(local_index, _)| local_index == index)
+            })
+    }
+
     pub(crate) fn paragraph_group_exited(&mut self, stores: &Universe) {
-        self.expansion
-            .paragraph_group_exited(tex_state::ExpansionState::execution_group_depth(stores));
+        let remaining_depth = tex_state::ExpansionState::execution_group_depth(stores);
+        self.expansion.paragraph_group_exited(remaining_depth);
+        if let Some(recording) = &mut self.cold_paragraph_recording {
+            recording
+                .local_boxes
+                .retain(|&(_, definition_depth)| definition_depth <= remaining_depth);
+        }
     }
 
     pub(crate) fn mark_paragraph_inline_math(&mut self) {

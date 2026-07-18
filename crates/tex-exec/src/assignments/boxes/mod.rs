@@ -75,6 +75,11 @@ pub(crate) fn scan_math_box(
         UnexpandablePrimitive::VSplit => scan_vsplit_node(input, stores, execution, context)?,
         UnexpandablePrimitive::Box | UnexpandablePrimitive::Copy => {
             let index = scan_register_index(input, stores, execution, context)?;
+            if !execution.paragraph_box_is_source_proven(index) {
+                execution.mark_paragraph_barrier(
+                    tex_state::ParagraphBarrierReason::UnsupportedEscapingWrite,
+                );
+            }
             let id = if primitive == UnexpandablePrimitive::Box {
                 stores.take_box_reg_same_level(index)
             } else {
@@ -106,7 +111,7 @@ pub(super) fn execute_setbox(
     input: &mut InputStack,
     stores: &mut Universe,
     execution: &mut crate::ExecutionContext<'_>,
-) -> Result<(), ExecError> {
+) -> Result<u16, ExecError> {
     let index = scan_register_index(input, stores, execution, context)?;
     skip_optional_equals_x(input, stores, execution)?;
     let mut transaction = crate::transaction::ExecutionTransaction::begin(nest, stores);
@@ -126,7 +131,7 @@ pub(super) fn execute_setbox(
     };
     construction.finish(index, value, global);
     transaction.commit();
-    Ok(())
+    Ok(index)
 }
 
 pub(super) fn execute_box_dimension_assignment(
@@ -160,6 +165,11 @@ pub(super) fn execute_box_list_command(
     match primitive {
         UnexpandablePrimitive::Box | UnexpandablePrimitive::Copy => {
             let index = scan_register_index(input, stores, execution, context)?;
+            if !execution.paragraph_box_is_source_proven(index) {
+                execution.mark_paragraph_barrier(
+                    tex_state::ParagraphBarrierReason::UnsupportedEscapingWrite,
+                );
+            }
             let id = if primitive == UnexpandablePrimitive::Box {
                 stores.take_box_reg_same_level(index)
             } else {

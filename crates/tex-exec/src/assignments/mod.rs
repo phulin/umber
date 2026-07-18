@@ -1946,14 +1946,9 @@ fn execute_prefixed_command(
             }
             UnexpandablePrimitive::SetBox => {
                 reject_macro_prefixes(prefixes)?;
-                execute_setbox(
-                    prefixes.global,
-                    command.traced,
-                    nest,
-                    input,
-                    stores,
-                    execution,
-                )?;
+                let global = apply_globaldefs(prefixes.global, stores);
+                let index = execute_setbox(global, command.traced, nest, input, stores, execution)?;
+                execution.mark_paragraph_local_box(stores, index, global);
                 Ok(CommandOutcome::group_scoped_assignment())
             }
             UnexpandablePrimitive::Box
@@ -1972,9 +1967,7 @@ fn execute_prefixed_command(
                 reject_all_prefixes(prefixes)?;
                 if matches!(
                     primitive,
-                    UnexpandablePrimitive::Box
-                        | UnexpandablePrimitive::Copy
-                        | UnexpandablePrimitive::UnHBox
+                    UnexpandablePrimitive::UnHBox
                         | UnexpandablePrimitive::UnHCopy
                         | UnexpandablePrimitive::UnVBox
                         | UnexpandablePrimitive::UnVCopy

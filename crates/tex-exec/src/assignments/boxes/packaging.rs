@@ -87,10 +87,12 @@ pub(super) fn scan_box_value(
         .map(Some),
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Box)
         | Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Copy) => {
-            execution.mark_paragraph_barrier(
-                tex_state::ParagraphBarrierReason::UnsupportedEscapingWrite,
-            );
             let index = scan_register_index(input, stores, execution, traced)?;
+            if !execution.paragraph_box_is_source_proven(index) {
+                execution.mark_paragraph_barrier(
+                    tex_state::ParagraphBarrierReason::UnsupportedEscapingWrite,
+                );
+            }
             let id = if matches!(
                 stores.meaning(symbol),
                 Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Box)

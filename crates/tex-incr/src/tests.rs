@@ -227,6 +227,14 @@ fn replayed_paragraph_provenance_tracks_current_then_deleted_layout() {
         .register_input_file(Path::new("cmr10.tfm"), CMR10.to_vec())
         .expect("font fixture");
     session.cold().expect("cold revision");
+    assert!(
+        session
+            .pure_memo
+            .accepted_paragraphs()
+            .iter()
+            .any(|region| !region.line_provenance.node_slots.is_empty()),
+        "cold retained lines should index character-bearing survivor words"
+    );
     let before = session.pure_memo_stats();
 
     session
@@ -243,6 +251,24 @@ fn replayed_paragraph_provenance_tracks_current_then_deleted_layout() {
     assert!(
         session.pure_memo_stats().paragraph_line_hits > before.paragraph_line_hits,
         "fixture must mount at least one finished-line graph"
+    );
+    assert!(
+        session.artifacts.iter().any(|artifact| {
+            (0..artifact.render_origins().len()).any(|node| {
+                (0..16).any(|source| {
+                    matches!(
+                        artifact.render_origin(node, source),
+                        tex_state::ArtifactOrigin::Stable(_)
+                    )
+                })
+            })
+        }),
+        "replayed paragraph provenance should remain a stable lazy recipe (deferred artifacts: {})",
+        session
+            .artifacts
+            .iter()
+            .filter(|artifact| artifact.has_deferred_render_origins())
+            .count()
     );
     let stable_start_revision_two = stable_start;
     let (page, event) = (1..=session.artifacts.len() as u32)
@@ -841,6 +867,103 @@ fn paragraph_with_discharged_nested_assignments_replays() {
     let expected = cold.cold().expect("cold comparison");
     assert_eq!(incremental.dvi_bytes(), expected.dvi_bytes());
     assert_eq!(incremental.effects, expected.effects);
+}
+
+#[test]
+fn paragraph_with_source_proven_local_box_consumption_replays() {
+    let mut universe = template();
+    universe.enable_pure_memo(tex_state::PureMemoConfig::default());
+    let source = concat!(
+        "changed prefix paragraph text\\par\n",
+        "local box {\\setbox0=\\hbox{source proven} \\copy0 and \\box0} paragraph\\par\n",
+        "\\ifvoid0 stable suffix paragraph\\else leaked box\\fi\\par\n",
+        "\\vfill\\eject\\end",
+    );
+    let mut session = Session::start(
+        universe,
+        "paragraph-source-proven-local-box",
+        RevisionId::new(1),
+        source,
+        usize::MAX,
+    )
+    .expect("session starts");
+    session.cold().expect("cold revision");
+    assert_eq!(
+        session
+            .pure_memo_stats()
+            .paragraph_unsupported_write_barriers,
+        0,
+        "consuming a box supplied by the active child group should not barrier"
+    );
+
+    let changed = source.find("changed").expect("changed word");
+    let edited = format!(
+        "{}altered{}",
+        &source[..changed],
+        &source[changed + "changed".len()..]
+    );
+    let before = session.pure_memo_stats();
+    let incremental = session
+        .advance(
+            RevisionId::new(2),
+            Edit {
+                base_revision: RevisionId::new(1),
+                expected_hash: ContentHash::from_bytes(source.as_bytes()),
+                range: changed..changed + "changed".len(),
+                replacement: "altered".to_owned(),
+            },
+        )
+        .expect("prefix edit");
+    assert!(
+        session.pure_memo_stats().paragraph_line_hits > before.paragraph_line_hits,
+        "source-proven local box paragraph should replay"
+    );
+
+    let mut cold_universe = template();
+    cold_universe.enable_pure_memo(tex_state::PureMemoConfig::default());
+    let mut cold = Session::start(
+        cold_universe,
+        "paragraph-source-proven-local-box",
+        RevisionId::new(2),
+        edited,
+        usize::MAX,
+    )
+    .expect("cold comparison starts");
+    let expected = cold.cold().expect("cold comparison");
+    assert_eq!(incremental.dvi_bytes(), expected.dvi_bytes());
+    assert_eq!(incremental.effects, expected.effects);
+}
+
+#[test]
+fn paragraph_box_reads_without_an_active_local_definition_remain_barriered() {
+    let assert_barrier = |name: &str, source: &str| {
+        let mut universe = template();
+        universe.enable_pure_memo(tex_state::PureMemoConfig::default());
+        let mut session = Session::start(universe, name, RevisionId::new(1), source, usize::MAX)
+            .expect("session starts");
+        session.cold().expect("cold revision");
+        let stats = session.pure_memo_stats();
+        assert!(
+            stats.paragraph_unsupported_write_barriers > 0,
+            "{name} must remain a barrier: {stats:?}"
+        );
+    };
+    assert_barrier(
+        "paragraph-outer-box-read",
+        "\\setbox0=\\hbox{outer}\nouter box \\copy0 paragraph\\par\n\\vfill\\eject\\end",
+    );
+    assert_barrier(
+        "paragraph-post-group-box-read",
+        "\\setbox0=\\hbox{outer}\npost-group box {\\setbox0=\\hbox{local}} \\copy0 paragraph\\par\n\\vfill\\eject\\end",
+    );
+    assert_barrier(
+        "paragraph-global-box-definition",
+        "global box {\\global\\setbox1=\\hbox{global} \\box1} paragraph\\par\n\\vfill\\eject\\end",
+    );
+    assert_barrier(
+        "paragraph-entry-box-definition",
+        "entry box \\setbox2=\\hbox{entry} \\box2 paragraph\\par\n\\vfill\\eject\\end",
+    );
 }
 
 #[test]
