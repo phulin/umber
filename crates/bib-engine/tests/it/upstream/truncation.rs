@@ -1,62 +1,12 @@
-// Direct translation of upstream t/truncation.t at commit 74252e6.
-// Keep `UPSTREAM_SOURCE` byte-for-byte equivalent when editing expectations.
+// Native Rust translation of upstream t/truncation.t at commit 74252e6.
 
-use super::pass_upstream as audit_upstream;
+use bib_engine::{BibCommand, FileProvisioner, GeneratedFile, VfsLimits, VirtualPath};
 
-fn pass_upstream(assertion: &str, actual: &str, expected: &str, call: &str, source: &str) {
-    audit_upstream(assertion, actual, expected, call, source);
-    panic!("xfail: exact name-list truncation BBL output is not publicly exposed");
-}
-
-const UPSTREAM_SOURCE: &str = r####"# -*- cperl -*-
-use strict;
-use warnings;
-use utf8;
-no warnings 'utf8';
-
-use Test::More tests => 12;
-use Test::Differences;
-unified_diff;
-
-use Biber;
-use Biber::Utils;
-use Biber::Output::bbl;
-use Log::Log4perl;
-chdir("t/tdata");
-
-# Set up Biber object
-my $biber = Biber->new(noconf => 1);
-my $LEVEL = 'ERROR';
-my $l4pconf = qq|
-    log4perl.category.main                             = $LEVEL, Screen
-    log4perl.category.screen                           = $LEVEL, Screen
-    log4perl.appender.Screen                           = Log::Log4perl::Appender::Screen
-    log4perl.appender.Screen.utf8                      = 1
-    log4perl.appender.Screen.Threshold                 = $LEVEL
-    log4perl.appender.Screen.stderr                    = 0
-    log4perl.appender.Screen.layout                    = Log::Log4perl::Layout::SimpleLayout
-|;
-Log::Log4perl->init(\$l4pconf);
-
-$biber->parse_ctrlfile('truncation.bcf');
-$biber->set_output_obj(Biber::Output::bbl->new());
-
-# Options - we could set these in the control file but it's nice to see what we're
-# relying on here for tests
-
-# Biber options
-Biber::Config->setoption('sortlocale', 'en_GB.UTF-8');
-
-# Turn this off so minbibnames is always 1 (from .bcf)
-Biber::Config->setblxoption(undef, 'uniquelist', 'false');
-
-# Now generate the information
-$biber->prepare;
-my $section = $biber->sections->get_section(0);
-my $main = $biber->datalists->get_list('nty/global//global/global/global');
-my $out = $biber->get_output_obj;
-
-my $us1 = q|    \entry{us1}{book}{}{}
+const CONTROL: &[u8] =
+    include_bytes!("../../../../../tests/corpus/bib/upstream-2.22/tdata/truncation.bcf");
+const DATA: &[u8] =
+    include_bytes!("../../../../../tests/corpus/bib/upstream-2.22/tdata/truncation.bib");
+const US1: &str = r########"    \entry{us1}{book}{}{}
       \name{author}{1}{}{%
         {{un=0,uniquepart=base,hash=6a9b0705c275273262103333472cc656}{%
            family={Elk},
@@ -84,9 +34,8 @@ my $us1 = q|    \entry{us1}{book}{}{}
       \field{year}{1972}
       \field{dateera}{ce}
     \endentry
-|;
-
-my $us2a = q|    \entry{us2}{book}{}{}
+"########;
+const US2A: &str = r########"    \entry{us2}{book}{}{}
       \true{moreauthor}
       \true{morelabelname}
       \name{author}{1}{}{%
@@ -116,9 +65,8 @@ my $us2a = q|    \entry{us2}{book}{}{}
       \field{year}{1972}
       \field{dateera}{ce}
     \endentry
-|;
-
-my $us3 = q|    \entry{us3}{book}{}{}
+"########;
+const US3: &str = r########"    \entry{us3}{book}{}{}
       \name{author}{1}{}{%
         {{un=0,uniquepart=base,hash=e06f6e5a8c1d5204dea326aa5f4f8d17}{%
            family={Uthor},
@@ -146,10 +94,8 @@ my $us3 = q|    \entry{us3}{book}{}{}
       \field{year}{2000}
       \field{dateera}{ce}
     \endentry
-|;
-
-
-my $us4a = q|    \entry{us4}{book}{}{}
+"########;
+const US4A: &str = r########"    \entry{us4}{book}{}{}
       \name{author}{4}{}{%
         {{un=0,uniquepart=base,hash=e06f6e5a8c1d5204dea326aa5f4f8d17}{%
            family={Uthor},
@@ -198,9 +144,8 @@ my $us4a = q|    \entry{us4}{book}{}{}
       \field{year}{2000}
       \field{dateera}{ce}
     \endentry
-|;
-
-my $us2b = q|    \entry{us2}{book}{}{}
+"########;
+const US2B: &str = r########"    \entry{us2}{book}{}{}
       \true{moreauthor}
       \true{morelabelname}
       \name{author}{1}{}{%
@@ -232,10 +177,8 @@ my $us2b = q|    \entry{us2}{book}{}{}
       \field{year}{1972}
       \field{dateera}{ce}
     \endentry
-|;
-
-
-my $us4b = q|    \entry{us4}{book}{}{}
+"########;
+const US4B: &str = r########"    \entry{us4}{book}{}{}
       \name{author}{4}{}{%
         {{un=0,uniquepart=base,hash=e06f6e5a8c1d5204dea326aa5f4f8d17}{%
            family={Uthor},
@@ -284,9 +227,8 @@ my $us4b = q|    \entry{us4}{book}{}{}
       \field{year}{2000}
       \field{dateera}{ce}
     \endentry
-|;
-
-my $us6 = q|    \entry{us6}{book}{}{}
+"########;
+const US6: &str = r########"    \entry{us6}{book}{}{}
       \name{author}{1}{}{%
         {{un=0,uniquepart=base,hash=cbe9a5912d961199801c3fcd32356ecf}{%
            family={Red},
@@ -314,9 +256,8 @@ my $us6 = q|    \entry{us6}{book}{}{}
       \field{year}{1971}
       \field{dateera}{ce}
     \endentry
-|;
-
-my $us7 = q|    \entry{us7}{misc}{}{}
+"########;
+const US7: &str = r########"    \entry{us7}{misc}{}{}
       \true{moreauthor}
       \true{morelabelname}
       \name{author}{1}{}{%
@@ -346,9 +287,8 @@ my $us7 = q|    \entry{us7}{misc}{}{}
       \field{year}{1971}
       \field{dateera}{ce}
     \endentry
-|;
-
-my $us8 = q|    \entry{us8}{book}{}{}
+"########;
+const US8: &str = r########"    \entry{us8}{book}{}{}
       \name{author}{1}{}{%
         {{un=0,uniquepart=base,hash=a280925c093d27fe81e88f11d8f0e537}{%
            family={Sly},
@@ -378,9 +318,8 @@ my $us8 = q|    \entry{us8}{book}{}{}
       \field{year}{2000}
       \field{dateera}{ce}
     \endentry
-|;
-
-my $us9 = q|    \entry{us9}{book}{}{}
+"########;
+const US9: &str = r########"    \entry{us9}{book}{}{}
       \name{author}{4}{}{%
         {{un=0,uniquepart=base,hash=a280925c093d27fe81e88f11d8f0e537}{%
            family={Sly},
@@ -427,197 +366,121 @@ my $us9 = q|    \entry{us9}{book}{}{}
       \field{year}{2000}
       \field{dateera}{ce}
     \endentry
-|;
-
-eq_or_diff( $out->get_output_entry('us1', $main), $us1, 'Truncation - 1') ;
-eq_or_diff( $out->get_output_entry('us3', $main), $us3, 'Truncation - 2') ;
-
-# Should be different to us1 and us3 respectively with default (nohashothers=false)
-eq_or_diff( $out->get_output_entry('us2', $main), $us2a, 'Truncation - 3') ;
-eq_or_diff( $out->get_output_entry('us4', $main), $us4a, 'Truncation - 4') ;
-
-Biber::Config->setblxoption(undef,'nohashothers', 1);
-Biber::Config->setblxoption(undef,'nohashothers', 0, 'ENTRYTYPE', 'misc');
-
-$biber->prepare;
-$section = $biber->sections->get_section(0);
-$main = $biber->datalists->get_list('nty/global//global/global/global');
-$out = $biber->get_output_obj;
-
-# namehash now the same as us1 and us3 respectively with (nohashothers=true)
-eq_or_diff( $out->get_output_entry('us2', $main), $us2b, 'Truncation - 5') ;
-eq_or_diff( $out->get_output_entry('us4', $main), $us4b, 'Truncation - 6') ;
-
-
-eq_or_diff( $out->get_output_entry('us6', $main), $us6, 'Truncation - 7') ;
-eq_or_diff( $out->get_output_entry('us8', $main), $us8, 'Truncation - 8') ;
-
-# namehash not the same as for us6 and us7 due to entrytype option
-eq_or_diff( $out->get_output_entry('us7', $main), $us7, 'Truncation - 9') ;
-# namehash not the same as for us8 and us9 due to entry option
-eq_or_diff( $out->get_output_entry('us9', $main), $us9, 'Truncation - 10') ;
-
-
-# Testing nosortothers
-$biber->prepare;
-$section = $biber->sections->get_section(0);
-$main = $biber->datalists->get_list('nty/global//global/global/global');
-$out = $biber->get_output_obj;
-
-# Sorting with nosortothers=false
-is_deeply($main->get_keys, ['us1', 'us2','us6', 'us7', 'us8', 'us9', 'us10','us3', 'us4', 'us5'], 'Truncation - 11');
-
-Biber::Config->setblxoption(undef,'nosortothers', 1);
-$biber->prepare;
-$section = $biber->sections->get_section(0);
-$main = $biber->datalists->get_list('nty/global//global/global/global');
-$out = $biber->get_output_obj;
-
-# Sorting with nosortothers=true
-is_deeply($main->get_keys, ['us1', 'us2','us6', 'us7', 'us8', 'us10', 'us9','us4', 'us3', 'us5'], 'Truncation - 12');
-
-"####;
-
-#[test]
-#[ignore = "xfail: exact upstream end-to-end behavior is not exposed by the public Rust API"]
-fn assertion_001_truncation_1() {
-    pass_upstream(
-        "Truncation - 1",
-        r####"$out->get_output_entry('us1', $main)"####,
-        r####"$us1"####,
-        r####"eq_or_diff( $out->get_output_entry('us1', $main), $us1, 'Truncation - 1') ;"####,
-        UPSTREAM_SOURCE,
-    );
+"########;
+fn run() -> (Vec<u8>, Vec<String>) {
+    let mut files = FileProvisioner::new(VfsLimits::default()).unwrap();
+    files
+        .register_user(
+            VirtualPath::user("truncation.bcf").unwrap(),
+            CONTROL.to_vec(),
+        )
+        .unwrap();
+    files
+        .register_user(VirtualPath::user("truncation.bib").unwrap(), DATA.to_vec())
+        .unwrap();
+    let output = BibCommand::parse(["--noconf", "--nolog", "truncation.bcf"])
+        .unwrap()
+        .execute(&files.snapshot());
+    let order = output
+        .result()
+        .and_then(|result| result.document().sections().next())
+        .and_then(|section| section.lists().next())
+        .map(|list| {
+            list.entries()
+                .map(|entry| entry.as_str().to_owned())
+                .collect()
+        })
+        .unwrap_or_default();
+    let bytes = output
+        .result()
+        .and_then(|result| result.files().next())
+        .map(GeneratedFile::bytes)
+        .unwrap_or_default()
+        .to_vec();
+    (bytes, order)
 }
-
-#[test]
-#[ignore = "xfail: exact upstream end-to-end behavior is not exposed by the public Rust API"]
-fn assertion_002_truncation_2() {
-    pass_upstream(
-        "Truncation - 2",
-        r####"$out->get_output_entry('us3', $main)"####,
-        r####"$us3"####,
-        r####"eq_or_diff( $out->get_output_entry('us3', $main), $us3, 'Truncation - 2') ;"####,
-        UPSTREAM_SOURCE,
-    );
+fn contains(actual: &[u8], expected: &str) -> bool {
+    actual
+        .windows(expected.len())
+        .any(|window| window == expected.as_bytes())
 }
-
-#[test]
-#[ignore = "xfail: exact upstream end-to-end behavior is not exposed by the public Rust API"]
-fn assertion_003_truncation_3() {
-    pass_upstream(
-        "Truncation - 3",
-        r####"$out->get_output_entry('us2', $main)"####,
-        r####"$us2a"####,
-        r####"eq_or_diff( $out->get_output_entry('us2', $main), $us2a, 'Truncation - 3') ;"####,
-        UPSTREAM_SOURCE,
-    );
+macro_rules! xentry {
+    ($name:ident, $expected:ident, $gap:literal) => {
+        #[test]
+        #[ignore = "xfail: exact Biber truncation output is not yet reproduced"]
+        fn $name() {
+            assert!(contains(&run().0, $expected));
+        }
+    };
 }
+xentry!(
+    assertion_001_truncation_1,
+    US1,
+    "xfail: exact us1 truncation output differs"
+);
+xentry!(
+    assertion_002_truncation_2,
+    US3,
+    "xfail: exact us3 truncation output differs"
+);
+xentry!(
+    assertion_003_truncation_3,
+    US2A,
+    "xfail: exact default us2 truncation output differs"
+);
+xentry!(
+    assertion_004_truncation_4,
+    US4A,
+    "xfail: exact default us4 truncation output differs"
+);
+xentry!(
+    assertion_005_truncation_5,
+    US2B,
+    "xfail: native command does not yet expose maxcitenames mutation"
+);
+xentry!(
+    assertion_006_truncation_6,
+    US4B,
+    "xfail: native command does not yet expose maxcitenames mutation"
+);
+xentry!(
+    assertion_007_truncation_7,
+    US6,
+    "xfail: exact us6 truncation output differs"
+);
+xentry!(
+    assertion_008_truncation_8,
+    US8,
+    "xfail: exact us8 truncation output differs"
+);
+xentry!(
+    assertion_009_truncation_9,
+    US7,
+    "xfail: exact us7 truncation output differs"
+);
+xentry!(
+    assertion_010_truncation_10,
+    US9,
+    "xfail: exact us9 truncation output differs"
+);
 
 #[test]
-#[ignore = "xfail: exact upstream end-to-end behavior is not exposed by the public Rust API"]
-fn assertion_004_truncation_4() {
-    pass_upstream(
-        "Truncation - 4",
-        r####"$out->get_output_entry('us4', $main)"####,
-        r####"$us4a"####,
-        r####"eq_or_diff( $out->get_output_entry('us4', $main), $us4a, 'Truncation - 4') ;"####,
-        UPSTREAM_SOURCE,
-    );
-}
-
-#[test]
-#[ignore = "xfail: exact upstream end-to-end behavior is not exposed by the public Rust API"]
-fn assertion_005_truncation_5() {
-    pass_upstream(
-        "Truncation - 5",
-        r####"$out->get_output_entry('us2', $main)"####,
-        r####"$us2b"####,
-        r####"eq_or_diff( $out->get_output_entry('us2', $main), $us2b, 'Truncation - 5') ;"####,
-        UPSTREAM_SOURCE,
-    );
-}
-
-#[test]
-#[ignore = "xfail: exact upstream end-to-end behavior is not exposed by the public Rust API"]
-fn assertion_006_truncation_6() {
-    pass_upstream(
-        "Truncation - 6",
-        r####"$out->get_output_entry('us4', $main)"####,
-        r####"$us4b"####,
-        r####"eq_or_diff( $out->get_output_entry('us4', $main), $us4b, 'Truncation - 6') ;"####,
-        UPSTREAM_SOURCE,
-    );
-}
-
-#[test]
-#[ignore = "xfail: exact upstream end-to-end behavior is not exposed by the public Rust API"]
-fn assertion_007_truncation_7() {
-    pass_upstream(
-        "Truncation - 7",
-        r####"$out->get_output_entry('us6', $main)"####,
-        r####"$us6"####,
-        r####"eq_or_diff( $out->get_output_entry('us6', $main), $us6, 'Truncation - 7') ;"####,
-        UPSTREAM_SOURCE,
-    );
-}
-
-#[test]
-#[ignore = "xfail: exact upstream end-to-end behavior is not exposed by the public Rust API"]
-fn assertion_008_truncation_8() {
-    pass_upstream(
-        "Truncation - 8",
-        r####"$out->get_output_entry('us8', $main)"####,
-        r####"$us8"####,
-        r####"eq_or_diff( $out->get_output_entry('us8', $main), $us8, 'Truncation - 8') ;"####,
-        UPSTREAM_SOURCE,
-    );
-}
-
-#[test]
-#[ignore = "xfail: exact upstream end-to-end behavior is not exposed by the public Rust API"]
-fn assertion_009_truncation_9() {
-    pass_upstream(
-        "Truncation - 9",
-        r####"$out->get_output_entry('us7', $main)"####,
-        r####"$us7"####,
-        r####"eq_or_diff( $out->get_output_entry('us7', $main), $us7, 'Truncation - 9') ;"####,
-        UPSTREAM_SOURCE,
-    );
-}
-
-#[test]
-#[ignore = "xfail: exact upstream end-to-end behavior is not exposed by the public Rust API"]
-fn assertion_010_truncation_10() {
-    pass_upstream(
-        "Truncation - 10",
-        r####"$out->get_output_entry('us9', $main)"####,
-        r####"$us9"####,
-        r####"eq_or_diff( $out->get_output_entry('us9', $main), $us9, 'Truncation - 10') ;"####,
-        UPSTREAM_SOURCE,
-    );
-}
-
-#[test]
-#[ignore = "xfail: exact upstream end-to-end behavior is not exposed by the public Rust API"]
+#[ignore = "xfail: native uniquelist sorting does not yet reproduce Biber ordering"]
 fn assertion_011_truncation_11() {
-    pass_upstream(
-        "Truncation - 11",
-        r####"$main->get_keys"####,
-        r####"['us1', 'us2','us6', 'us7', 'us8', 'us9', 'us10','us3', 'us4', 'us5']"####,
-        r####"is_deeply($main->get_keys, ['us1', 'us2','us6', 'us7', 'us8', 'us9', 'us10','us3', 'us4', 'us5'], 'Truncation - 11');"####,
-        UPSTREAM_SOURCE,
+    assert_eq!(
+        run().1,
+        [
+            "us1", "us2", "us6", "us7", "us8", "us9", "us10", "us3", "us4", "us5"
+        ]
     );
 }
-
 #[test]
-#[ignore = "xfail: exact upstream end-to-end behavior is not exposed by the public Rust API"]
+#[ignore = "xfail: native mincrossrefs mutation is not yet exposed"]
 fn assertion_012_truncation_12() {
-    pass_upstream(
-        "Truncation - 12",
-        r####"$main->get_keys"####,
-        r####"['us1', 'us2','us6', 'us7', 'us8', 'us10', 'us9','us4', 'us3', 'us5']"####,
-        r####"is_deeply($main->get_keys, ['us1', 'us2','us6', 'us7', 'us8', 'us10', 'us9','us4', 'us3', 'us5'], 'Truncation - 12');"####,
-        UPSTREAM_SOURCE,
+    assert_eq!(
+        run().1,
+        [
+            "us1", "us2", "us6", "us7", "us8", "us10", "us9", "us4", "us3", "us5"
+        ]
     );
 }

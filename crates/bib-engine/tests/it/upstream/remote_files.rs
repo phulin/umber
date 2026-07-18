@@ -1,68 +1,15 @@
-// Direct translation of upstream t/remote-files.t at commit 74252e6.
-// Keep `UPSTREAM_SOURCE` byte-for-byte equivalent when editing expectations.
+// Native Rust translation of upstream t/remote-files.t at commit 74252e6.
 
-use super::pass_upstream as audit_upstream;
+use bib_engine::{
+    BibAttempt, BibJob, BibOptionsBuilder, BibSession, FileProvisioner, GeneratedFile,
+    OutputFormat, OutputRequest, VfsLimits, VirtualPath,
+};
 
-fn pass_upstream(assertion: &str, actual: &str, expected: &str, call: &str, source: &str) {
-    audit_upstream(assertion, actual, expected, call, source);
-    panic!("xfail: remote datasource fetching is unavailable in the hermetic public API");
-}
-
-const UPSTREAM_SOURCE: &str = r#"# -*- cperl -*-
-use strict;
-use warnings;
-use utf8;
-no warnings 'utf8' ;
-
-use Test::More;
-use Test::Differences;
-unified_diff;
-
-if ($ENV{BIBER_DEV_TESTS}) {
-  plan tests => 1;
-}
-else {
-  plan skip_all => 'BIBER_DEV_TESTS not set';
-}
-
-use Biber;
-use Biber::Output::bbl;
-use Log::Log4perl;
-chdir("t/tdata") ;
-
-# Set up Biber object
-my $biber = Biber->new(noconf => 1);
-my $LEVEL = 'ERROR';
-my $l4pconf = qq|
-    log4perl.category.main                             = $LEVEL, Screen
-    log4perl.category.screen                           = $LEVEL, Screen
-    log4perl.appender.Screen                           = Log::Log4perl::Appender::Screen
-    log4perl.appender.Screen.utf8                      = 1
-    log4perl.appender.Screen.Threshold                 = $LEVEL
-    log4perl.appender.Screen.stderr                    = 0
-    log4perl.appender.Screen.layout                    = Log::Log4perl::Layout::SimpleLayout
-|;
-Log::Log4perl->init(\$l4pconf);
-
-$biber->parse_ctrlfile('remote-files.bcf');
-$biber->set_output_obj(Biber::Output::bbl->new());
-
-# Options - we could set these in the control file but it's nice to see what we're
-# relying on here for tests
-
-# Biber options
-Biber::Config->setoption('sortlocale', 'en_GB.UTF-8');
-Biber::Config->setoption('quiet', 1);
-Biber::Config->setoption('nodieonerror', 1); # because the remote bibs might be messy
-
-# Now generate the information
-$biber->prepare;
-my $out = $biber->get_output_obj;
-my $section = $biber->sections->get_section(0);
-my $main = $biber->datalists->get_list('nty/global//global/global/global');
-my $bibentries = $section->bibentries;
-
-my $dl1 = q|    \entry{SchillerCND2010}{article}{}{}
+const CONTROL: &[u8] =
+    include_bytes!("../../../../../tests/corpus/bib/upstream-2.22/tdata/remote-files.bcf");
+const URL: &str =
+    "https://raw.githubusercontent.com/twschiller/public-bib/refs/heads/master/schiller.bib";
+const DL1: &str = r########"    \entry{SchillerCND2010}{article}{}{}
       \name{author}{4}{}{%
         {{un=0,uniquepart=base,hash=c606849f9ce94faa18c52562c39b6f92}{%
            family={Schiller},
@@ -113,19 +60,51 @@ my $dl1 = q|    \entry{SchillerCND2010}{article}{}{}
       \verb 10.1016/j.neucom.2009.09.023
       \endverb
     \endentry
-|;
+"########;
 
-eq_or_diff( $out->get_output_entry('SchillerCND2010', $main), $dl1, 'Fetch from plain bib download') ;
-"#;
+fn run() -> (String, Vec<u8>) {
+    let mut files = FileProvisioner::new(VfsLimits::default()).unwrap();
+    files
+        .register_user(
+            VirtualPath::user("remote-files.bcf").unwrap(),
+            CONTROL.to_vec(),
+        )
+        .unwrap();
+    let output_path = VirtualPath::user("remote-files.bbl").unwrap();
+    let mut options = BibOptionsBuilder::new();
+    options
+        .output(OutputRequest::new(output_path, OutputFormat::Bbl))
+        .unwrap();
+    let job = BibJob::new(
+        VirtualPath::user("remote-files.bcf").unwrap(),
+        options.freeze(),
+    );
+    match BibSession::default().process(&job, &files.snapshot()) {
+        BibAttempt::NeedResources(requests) => {
+            assert_eq!(requests.required.len(), 1);
+            (requests.required[0].original_name().to_owned(), Vec::new())
+        }
+        BibAttempt::Complete(result) => {
+            let bytes = result
+                .files()
+                .next()
+                .map(GeneratedFile::bytes)
+                .unwrap_or_default()
+                .to_vec();
+            (String::new(), bytes)
+        }
+        BibAttempt::Failed(failure) => panic!("remote control processing failed: {failure:?}"),
+    }
+}
 
 #[test]
-#[ignore = "xfail: exact upstream end-to-end behavior is not exposed by the public Rust API"]
+#[ignore = "xfail: host-neutral engine requests remote bytes instead of fetching them"]
 fn assertion_001_fetch_from_plain_bib_download() {
-    pass_upstream(
-        "Fetch from plain bib download",
-        r"$out->get_output_entry('SchillerCND2010', $main)",
-        r"$dl1",
-        r"eq_or_diff( $out->get_output_entry('SchillerCND2010', $main), $dl1, 'Fetch from plain bib download') ;",
-        UPSTREAM_SOURCE,
+    let (requested, output) = run();
+    assert_eq!(requested, URL);
+    assert!(
+        output
+            .windows(DL1.len())
+            .any(|window| window == DL1.as_bytes())
     );
 }

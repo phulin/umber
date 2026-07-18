@@ -1,96 +1,15 @@
-// Direct translation of upstream t/annotations.t at commit 74252e6.
-// Keep `UPSTREAM_SOURCE` byte-for-byte equivalent when editing expectations.
+// Native Rust translation of upstream t/annotations.t at commit 74252e6.
 
-use bib_unicode::{Annotation, AnnotationKind, AnnotationMap};
-
-#[track_caller]
-fn pass_upstream(assertion: &str, _: &str, expected: &str, call: &str, source: &str) {
-    assert!(source.contains(call), "{assertion}");
-    let mut annotations = AnnotationMap::default();
-    annotations.insert(Annotation {
-        kind: AnnotationKind::Field,
-        field: "language".into(),
-        name: "default".into(),
-        item: None,
-        part: None,
-        replace: false,
-        value: "ann4".into(),
-    });
-    annotations.insert(Annotation {
-        kind: AnnotationKind::Item,
-        field: "language".into(),
-        name: "default".into(),
-        item: Some(2),
-        part: None,
-        replace: assertion.ends_with('2'),
-        value: "ann2".into(),
-    });
-    annotations.insert(Annotation {
-        kind: AnnotationKind::Item,
-        field: "language".into(),
-        name: "default".into(),
-        item: Some(2),
-        part: None,
-        replace: false,
-        value: "ann3".into(),
-    });
-    let values: Vec<_> = annotations.iter().map(|a| a.value.as_str()).collect();
-    assert!(values.contains(&"ann4"));
-    if expected == "$ann1" {
-        assert!(values.contains(&"ann2, ann3"));
-    } else {
-        assert!(values.contains(&"ann2, ann3") || values.contains(&"ann2"));
-    }
-    panic!("xfail: exact BBL annotation output is not exposed by the public Rust API");
-}
-
-const UPSTREAM_SOURCE: &str = r#"# -*- cperl -*-
-use strict;
-use warnings;
-use utf8;
-no warnings 'utf8';
-
-use Test::More tests => 2;
-use Test::Differences;
-unified_diff;
-
-use Biber;
-use Biber::Utils;
-use Biber::Output::bbl;
-use Log::Log4perl;
-use Unicode::Normalize;
-chdir("t/tdata");
-
-# Set up Biber object
-my $biber = Biber->new(noconf => 1);
-
-my $LEVEL = 'ERROR';
-my $l4pconf = qq|
-    log4perl.category.main                             = $LEVEL, Screen
-    log4perl.category.screen                           = $LEVEL, Screen
-    log4perl.appender.Screen                           = Log::Log4perl::Appender::Screen
-    log4perl.appender.Screen.utf8                      = 1
-    log4perl.appender.Screen.Threshold                 = $LEVEL
-    log4perl.appender.Screen.stderr                    = 0
-    log4perl.appender.Screen.layout                    = Log::Log4perl::Layout::SimpleLayout
-|;
-Log::Log4perl->init(\$l4pconf);
-
-
-Biber::Config->setoption('annotation_marker', '-an');
-# This is cached at load time so we need to alter the cache too
-$Biber::Config::CONFIG_META_MARKERS{annotation} = quotemeta(Biber::Config->getoption('annotation_marker'));
-$biber->parse_ctrlfile('annotations.bcf');
-$biber->set_output_obj(Biber::Output::bbl->new());
-
-# Now generate the information
-$biber->prepare;
-my $out = $biber->get_output_obj;
-my $section = $biber->sections->get_section(0);
-my $main = $biber->datalists->get_list('nty/global//global/global/global');
-
-my $ann1 = q|    \entry{ann1}{misc}{}{1}
-      \name{author}{3}{}{%
+use bib_engine::{BibCommand, FileProvisioner, GeneratedFile, VfsLimits, VirtualPath};
+const CONTROL: &[u8] =
+    include_bytes!("../../../../../tests/corpus/bib/upstream-2.22/tdata/annotations.bcf");
+const DATA: &[u8] =
+    include_bytes!("../../../../../tests/corpus/bib/upstream-2.22/tdata/annotations.bib");
+const EXPECTED_ANN1: &str = concat!(
+    r###"    \entry{ann1}{misc}{}{1}
+"###,
+    "      \n",
+    r###"ame{author}{3}{}{%
         {{hash=89a9e5097e11e595700540379c9b3a6b}{%
            family={Last1},
            familyi={L\\bibinitperiod},
@@ -132,10 +51,13 @@ my $ann1 = q|    \entry{ann1}{misc}{}{1}
       \annotation{item}{language}{default}{2}{}{0}{ann2, ann3}
       \annotation{part}{author}{default}{1}{family}{0}{student}
     \endentry
-|;
-
-my $ann2 = q|    \entry{ann2}{misc}{}{3}
-      \name{author}{3}{}{%
+"###
+);
+const EXPECTED_ANN2: &str = concat!(
+    r###"    \entry{ann2}{misc}{}{3}
+"###,
+    "      \n",
+    r###"ame{author}{3}{}{%
         {{hash=89a9e5097e11e595700540379c9b3a6b}{%
            family={Last1},
            familyi={L\bibinitperiod},
@@ -181,33 +103,38 @@ my $ann2 = q|    \entry{ann2}{misc}{}{3}
       \annotation{item}{language}{default}{2}{}{1}{ann2}
       \annotation{part}{author}{default}{1}{family}{1}{student}
     \endentry
-|;
-
-eq_or_diff( $out->get_output_entry('ann1', $main), $ann1, 'Annotations - 1' );
-eq_or_diff( $out->get_output_entry('ann2', $main), $ann2, 'Annotations - 2' );
-
-"#;
-
-#[test]
-#[ignore = "xfail: exact upstream end-to-end behavior is not exposed by the public Rust API"]
-fn assertion_001_annotations_1() {
-    pass_upstream(
-        "Annotations - 1",
-        r"$out->get_output_entry('ann1', $main)",
-        r"$ann1",
-        r"eq_or_diff( $out->get_output_entry('ann1', $main), $ann1, 'Annotations - 1' );",
-        UPSTREAM_SOURCE,
-    );
+"###
+);
+fn output() -> Vec<u8> {
+    let mut f = FileProvisioner::new(VfsLimits::default()).unwrap();
+    f.register_user(
+        VirtualPath::user("annotations.bcf").unwrap(),
+        CONTROL.to_vec(),
+    )
+    .unwrap();
+    f.register_user(VirtualPath::user("annotations.bib").unwrap(), DATA.to_vec())
+        .unwrap();
+    let o = BibCommand::parse(["--noconf", "--nolog", "annotations.bcf"])
+        .unwrap()
+        .execute(&f.snapshot());
+    o.result()
+        .and_then(|r| r.files().next())
+        .map(GeneratedFile::bytes)
+        .unwrap_or_default()
+        .to_vec()
 }
-
+fn contains(actual: &[u8], expected: &str) -> bool {
+    actual
+        .windows(expected.len())
+        .any(|w| w == expected.as_bytes())
+}
 #[test]
-#[ignore = "xfail: exact upstream end-to-end behavior is not exposed by the public Rust API"]
+#[ignore = "xfail: exact ann1 BBL annotations differ"]
+fn assertion_001_annotations_1() {
+    assert!(contains(&output(), EXPECTED_ANN1));
+}
+#[test]
+#[ignore = "xfail: exact ann2 BBL annotations differ"]
 fn assertion_002_annotations_2() {
-    pass_upstream(
-        "Annotations - 2",
-        r"$out->get_output_entry('ann2', $main)",
-        r"$ann2",
-        r"eq_or_diff( $out->get_output_entry('ann2', $main), $ann2, 'Annotations - 2' );",
-        UPSTREAM_SOURCE,
-    );
+    assert!(contains(&output(), EXPECTED_ANN2));
 }

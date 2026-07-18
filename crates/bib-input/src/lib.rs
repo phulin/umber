@@ -22,8 +22,9 @@ pub use bibtex::{
     parse_raw_bibtex_bytes,
 };
 pub use config::{
-    ConfigError, ConfigValue, ConfigurationFile, ConfigurationLayer, ResolvedConfiguration,
-    parse_config, parse_config_bytes, validate_config_bytes,
+    BooleanInput, BooleanOutput, ConfigError, ConfigValue, ConfigurationFile, ConfigurationLayer,
+    MappedBoolean, ResolvedConfiguration, map_boolean, parse_config, parse_config_bytes,
+    validate_config_bytes,
 };
 pub use control::{
     CONTROL_NAMESPACE, CONTROL_VERSION, ControlError, ControlFile, ControlOptionSet,
