@@ -518,6 +518,17 @@ pub fn install_pdftex_format_primitives(stores: &mut Universe) {
     stores.enable_pdf_output();
 }
 
+fn register_tex_format_primitives(stores: &mut Universe) {
+    tex_expand::register_expandable_primitives(stores);
+    tex_exec::register_unexpandable_primitives(stores);
+}
+
+fn register_etex_format_primitives(stores: &mut Universe) {
+    register_tex_format_primitives(stores);
+    tex_expand::register_etex_expandable_primitives(stores);
+    tex_exec::register_etex_unexpandable_primitives(stores);
+}
+
 fn install_latex_compatibility_layer(stores: &mut Universe) {
     tex_expand::install_latex_expandable_primitives(stores);
     for ch in ['{', '}', '$', '&', '#', '^', '_'] {
@@ -525,10 +536,10 @@ fn install_latex_compatibility_layer(stores: &mut Universe) {
     }
 }
 
-/// Restores driver-selected LaTeX meanings after loading a format image.
+/// Reconstructs the driver-selected LaTeX primitive registry after loading a format image.
 pub fn install_latex_format_primitives(stores: &mut Universe) {
-    tex_exec::install_etex_unexpandable_primitives(stores);
-    tex_expand::install_latex_expandable_primitives(stores);
+    register_etex_format_primitives(stores);
+    tex_expand::register_latex_expandable_primitives(stores);
 }
 
 /// Installs the primitive/state setup used by supported LaTeX-DVI runs.
@@ -546,10 +557,10 @@ pub fn prepare_pdflatex_run_stores(stores: &mut Universe) {
     install_latex_compatibility_layer(stores);
 }
 
-/// Restores composed pdfTeX and LaTeX meanings after loading a format image.
+/// Reconstructs the composed pdfTeX and LaTeX primitive registry after format load.
 pub fn install_pdflatex_format_primitives(stores: &mut Universe) {
     install_pdftex_format_primitives(stores);
-    tex_expand::install_latex_expandable_primitives(stores);
+    tex_expand::register_latex_expandable_primitives(stores);
 }
 
 #[cfg(test)]
@@ -731,6 +742,51 @@ mod primitive_mode_tests {
         assert_eq!(stores.catcode('{'), Catcode::Other);
         assert_eq!(stores.catcode('#'), Catcode::Other);
         assert!(stores.pdf_output_enabled());
+    }
+
+    #[test]
+    fn format_startup_reconstructs_each_engine_primitive_registry_without_overwriting_meanings() {
+        for (mode, primitive) in [
+            (EngineMode::Tex82, "relax"),
+            (EngineMode::ETex, "unless"),
+            (EngineMode::PdfTex, "pdfprimitive"),
+            (EngineMode::Latex, "strcmp"),
+            (EngineMode::PdfLatex, "strcmp"),
+        ] {
+            let mut source = Universe::default();
+            mode.prepare_fresh(&mut source);
+            let original = source
+                .primitive_meaning(primitive)
+                .unwrap_or_else(|| panic!("{} must register {primitive}", mode.name()));
+            let symbol = source.intern(primitive);
+            source.set_meaning(symbol, Meaning::Undefined);
+            let format = source
+                .dump_format()
+                .expect("dump shadowed primitive format");
+
+            let mut loaded =
+                Universe::from_format(World::default(), &format).expect("load engine format");
+            assert_eq!(loaded.primitive_meaning(primitive), None);
+            mode.install_after_format(&mut loaded);
+
+            let symbol = loaded.intern(primitive);
+            assert_eq!(
+                loaded.meaning(symbol),
+                Meaning::Undefined,
+                "{}",
+                mode.name()
+            );
+            assert_eq!(
+                loaded.primitive_meaning(primitive),
+                Some(original),
+                "{}",
+                mode.name()
+            );
+            let frozen = loaded
+                .primitive_token(primitive)
+                .expect("primitive token is reconstructed");
+            assert_eq!(loaded.frozen_primitive_meaning(frozen), Some(original));
+        }
     }
 
     #[test]

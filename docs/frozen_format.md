@@ -353,6 +353,14 @@ fresh job-local state, installs the current job clock, and schedules
 `\everyjob`. Later mutable entries live in an overlay; the mapped/frozen bytes
 are never mutated and group rollback applies only to job-local state.
 
+Primitive identity tables are also driver-owned process state rather than
+format payload. After `Universe::from_format` validates and installs the frozen
+stores, the selected TeX82, e-TeX, pdfTeX, LaTeX-DVI, or pdfLaTeX driver
+reconstructs its complete original-primitive registry without replacing the
+live meanings restored by the format. This preserves deliberately shadowed
+primitives while making primitive-enquiry and frozen-primitive tokens behave
+the same as source initialization, without replaying store construction.
+
 ## Migration from schema 9
 
 Schema 9 was a deterministic semantic reconstruction format, but its outer

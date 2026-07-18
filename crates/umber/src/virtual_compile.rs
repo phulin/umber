@@ -203,8 +203,16 @@ impl EngineMode {
     /// Restores driver-owned primitive implementations after a format load.
     pub fn install_after_format(self, stores: &mut Universe) {
         match self {
-            Self::Tex82 => {}
-            Self::ETex => tex_exec::install_etex_unexpandable_primitives(stores),
+            Self::Tex82 => {
+                tex_expand::register_expandable_primitives(stores);
+                tex_exec::register_unexpandable_primitives(stores);
+            }
+            Self::ETex => {
+                tex_expand::register_expandable_primitives(stores);
+                tex_expand::register_etex_expandable_primitives(stores);
+                tex_exec::register_unexpandable_primitives(stores);
+                tex_exec::register_etex_unexpandable_primitives(stores);
+            }
             Self::PdfTex => install_pdftex_format_primitives(stores),
             Self::Latex => install_latex_format_primitives(stores),
             Self::PdfLatex => install_pdflatex_format_primitives(stores),

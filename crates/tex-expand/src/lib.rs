@@ -275,6 +275,15 @@ fn configure_etex_expandable_primitives(stores: &mut Universe, install: bool) {
 /// Installs expandable primitives required by the supported LaTeX engine
 /// contract but not provided by e-TeX V2 itself.
 pub fn install_latex_expandable_primitives(stores: &mut Universe) {
+    configure_latex_expandable_primitives(stores, true);
+}
+
+/// Reconstructs the LaTeX compatibility primitive table after format load.
+pub fn register_latex_expandable_primitives(stores: &mut Universe) {
+    configure_latex_expandable_primitives(stores, false);
+}
+
+fn configure_latex_expandable_primitives(stores: &mut Universe, install: bool) {
     for (name, primitive) in [
         (
             "expanded",
@@ -297,7 +306,12 @@ pub fn install_latex_expandable_primitives(stores: &mut Universe) {
             tex_state::meaning::ExpandablePrimitive::CreationDate,
         ),
     ] {
-        stores.install_primitive_meaning(name, Meaning::ExpandablePrimitive(primitive));
+        let meaning = Meaning::ExpandablePrimitive(primitive);
+        stores.register_primitive_meaning(name, meaning);
+        if install {
+            let symbol = stores.intern(name);
+            stores.set_meaning(symbol, meaning);
+        }
     }
 }
 

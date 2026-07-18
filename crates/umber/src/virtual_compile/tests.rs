@@ -602,6 +602,89 @@ fn format_rejection_and_job_clock_are_deterministic() {
 }
 
 #[test]
+fn formatted_session_starts_with_fresh_clock_everyjob_and_checkpoint_state() {
+    let mut initex = Universe::with_world(World::memory_with_clock(tex_state::JobClock {
+        time: 1,
+        second: 2,
+        day: 3,
+        month: 4,
+        year: 2001,
+    }));
+    prepare_run_stores(&mut initex);
+    crate::run_memory_with_stores(
+        "\\everyjob{\\count0=41\\message{everyjob}}\\dump",
+        &mut initex,
+    )
+    .expect("create format");
+    let format = initex.dump_format().expect("dump format");
+    let clock = tex_state::JobClock {
+        time: 754,
+        second: 56,
+        day: 13,
+        month: 7,
+        year: 2042,
+    };
+    let mut formatted = VirtualCompileSession::new(SessionOptions {
+        format: Some(format),
+        clock,
+        ..SessionOptions::default()
+    })
+    .expect("formatted session");
+    formatted
+        .add_user_file(
+            "main.tex",
+            b"\\message{root=\\the\\count0,\\the\\time,\\the\\day,\\the\\month,\\the\\year}\\end"
+                .to_vec(),
+        )
+        .expect("main");
+
+    let CompileAttemptResult::Complete(output) = formatted.compile_attempt() else {
+        panic!("formatted compile should complete");
+    };
+    let terminal = String::from_utf8_lossy(&output.terminal);
+    let every_job = terminal.find("everyjob").expect("everyjob output");
+    let root = terminal
+        .find("root=41,754,13,7,2042")
+        .expect("fresh job clock and everyjob mutation");
+    assert!(every_job < root, "{terminal}");
+    let history = formatted
+        .incremental
+        .as_ref()
+        .expect("incremental session")
+        .history();
+    assert_eq!(
+        history[0].key().boundary,
+        tex_exec::EngineBoundary::JobStart
+    );
+    assert_eq!(history[0].key().position, 0);
+}
+
+#[test]
+fn formatted_session_reports_unsupported_schema_version() {
+    let mut stores = Universe::with_world(World::memory());
+    prepare_run_stores(&mut stores);
+    let mut format = stores.dump_format().expect("dump format");
+    format[8..12].copy_from_slice(&9_u32.to_le_bytes());
+    let mut session = VirtualCompileSession::new(SessionOptions {
+        format: Some(format),
+        ..SessionOptions::default()
+    })
+    .expect("format fits limits");
+    session
+        .add_user_file("main.tex", b"\\end".to_vec())
+        .expect("main");
+
+    let CompileAttemptResult::Error(CompileError::Format(message)) = session.compile_attempt()
+    else {
+        panic!("schema 9 must be rejected as a format error");
+    };
+    assert!(
+        message.contains("unsupported Umber format version 9"),
+        "{message}"
+    );
+}
+
+#[test]
 fn valid_tfm_produces_a_nonempty_dvi() {
     let mut session = session("\\font\\tenrm=cmr10\\relax \\tenrm \\shipout\\hbox{A}\\end");
     let missing = resources(session.compile_attempt());

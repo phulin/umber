@@ -112,6 +112,15 @@ by a browser-specific preflight. This permits initial and patched revisions to
 use the identical request keys, virtual paths, font selection, and retry
 policy as batch compilation.
 
+When the session is configured with a schema-10 format, initial startup first
+loads its validated frozen stores into a fresh `World` carrying the requested
+job clock, then reconstructs only the selected driver's process-local
+primitive registry. Input, page and mode roots, retained checkpoint/hash
+state, effects, and document-local PDF state start fresh. The executor queues
+the format's `\everyjob` list in the input captured by `JobStart`, then executes
+it before consuming the root editor input. Resource retries clone that
+prepared template; they do not rebuild or reintern the frozen format stores.
+
 ## Output and disposal
 
 Every accepted revision returns the existing `CompileOutput` shape, while the
