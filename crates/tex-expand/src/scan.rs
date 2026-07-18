@@ -19,7 +19,7 @@ use tex_state::token_store::TokenListBuilder;
 use tex_state::{ExpansionState, TracedTokenList};
 
 use crate::{
-    DriverExpansionMode, ExpandError, ExpandableOpcode, ExpansionContext, ExpansionMode,
+    Dispatch, DriverExpansionMode, ExpandError, ExpandableOpcode, ExpansionContext, ExpansionMode,
     RestrictedExpansionMode,
 };
 
@@ -836,28 +836,37 @@ fn collect_expanded_text_inner(
             continue;
         }
 
-        if matches!(
-            meaning,
-            Meaning::ExpandablePrimitive(_) | Meaning::Undefined
-        ) {
-            // Expand exactly one operation before rechecking the replay
-            // boundary. A recursive `get_x_token` call here can run past an
-            // exhausted raw general-text replay after a trailing conditional
-            // and steal the first token belonging to the caller.
-            let dispatch = mode.dispatch_raw_token(traced, input, stores, expansion)?;
-            crate::push_dispatch_result(input, stores, dispatch);
-            continue;
-        }
-
-        if append_collected_token(
-            &mut boundary,
-            &mut builder,
-            &mut origins,
-            traced,
-            token,
-            true,
-        ) {
-            break;
+        // TeX.web's expanding `scan_toks` loop performs one `get_next` /
+        // `expand` step at a time. Returning here after each dispatch is
+        // essential: a nested conditional can exhaust this replay, and a
+        // general `get_x_token` call would continue into the caller's input.
+        match mode.dispatch_raw_token(traced, input, stores, expansion)? {
+            Dispatch::Continue => {}
+            Dispatch::Deliver(delivered) => {
+                if append_collected_token(
+                    &mut boundary,
+                    &mut builder,
+                    &mut origins,
+                    delivered,
+                    crate::semantic_token(delivered),
+                    true,
+                ) {
+                    break;
+                }
+            }
+            Dispatch::DeliverNoExpand(delivered) => {
+                append_collected_token(
+                    &mut boundary,
+                    &mut builder,
+                    &mut origins,
+                    delivered,
+                    crate::semantic_token(delivered),
+                    false,
+                );
+            }
+            push @ (Dispatch::Push { .. } | Dispatch::PushTransient { .. }) => {
+                crate::push_dispatch_result(input, stores, push);
+            }
         }
     }
     Ok(finish_traced_list(stores, &mut builder, &mut origins))

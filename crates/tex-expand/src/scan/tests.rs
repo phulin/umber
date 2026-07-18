@@ -176,6 +176,46 @@ fn expanded_preserves_unexpanded_replay_expanded_once_by_expandafter() {
 }
 
 #[test]
+fn expanded_general_text_stops_after_a_nested_conditional() {
+    let mut stores = Universe::new();
+    crate::install_expandable_primitives(&mut stores);
+    let outer = TracedTokenWord::pack(
+        Token::Cs(stores.intern("outer").symbol()),
+        OriginId::UNKNOWN,
+    );
+    let mut input = InputStack::new(MemoryInput::new("{\\iftrue x\\fi}c"));
+    let frame = crate::conditionals::begin_if_evaluation(
+        &mut input,
+        outer,
+        crate::conditionals::ConditionMetadata::new(0, false),
+    );
+    crate::conditionals::complete_if_evaluation(
+        &mut input,
+        &mut tex_state::ExpansionContext::new(&mut stores),
+        &mut ExpansionContext::new("texput"),
+        true,
+        frame,
+    )
+    .expect("complete outer condition");
+
+    let expanded = super::scan_general_text_expanded_with_driver(
+        &mut input,
+        &mut tex_state::ExpansionContext::new(&mut stores),
+        &mut ExpansionContext::new("texput"),
+        outer,
+    )
+    .expect("expand general text");
+
+    assert_eq!(stores.tokens(expanded), &[char_token('x', Catcode::Letter)]);
+    assert_eq!(
+        input
+            .next_token(&mut stores)
+            .expect("read after general text"),
+        Some(char_token('c', Catcode::Letter))
+    );
+}
+
+#[test]
 fn expanded_definition_preserves_protected_macro_tokens() {
     let mut stores = Universe::new();
     let protected = stores.intern("protectedmacro");
