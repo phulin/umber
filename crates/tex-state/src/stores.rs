@@ -1550,31 +1550,41 @@ impl Stores {
         left: LigKernChar,
         right: LigKernChar,
     ) -> Option<LigKernCommand> {
+        let loaded = self.font(font);
         if let LigKernChar::Char(code) = left
-            && self.pdf_font_code(PdfFontCode::Tag, font, code) & 1 == 0
+            && self.pdf_font_code_with_loaded(PdfFontCode::Tag, font, code, loaded) & 1 == 0
         {
             return None;
         }
         if self.env.pdf_no_ligatures(font) {
-            return self
-                .font(font)
+            return loaded
                 .metrics()
                 .lig_kern_command(left, right)
                 .filter(|command| matches!(command, LigKernCommand::Kern(_)));
         }
-        self.font(font).metrics().lig_kern_command(left, right)
+        loaded.metrics().lig_kern_command(left, right)
     }
 
     #[must_use]
     pub fn pdf_font_code(&self, table: PdfFontCode, font: FontId, code: u8) -> i32 {
-        self.assert_live_font(font);
+        self.pdf_font_code_with_loaded(table, font, code, self.font(font))
+    }
+
+    fn pdf_font_code_with_loaded(
+        &self,
+        table: PdfFontCode,
+        font: FontId,
+        code: u8,
+        loaded: &LoadedFont,
+    ) -> i32 {
         let bank = pdf_font_code_bank(table);
         self.env
             .pdf_font_code(bank, font, code)
             .unwrap_or_else(|| match table {
                 PdfFontCode::Ef => 1000,
                 PdfFontCode::Tag => {
-                    self.font_char_metrics(font, code)
+                    loaded
+                        .character_metrics(char::from(code))
                         .map_or(0, |metrics| match metrics.tag {
                             CharTag::None => 0,
                             CharTag::LigKern { .. } => 1,
