@@ -1,109 +1,19 @@
-// Direct translation of upstream t/biblatexml.t at commit 74252e6.
-// Keep `UPSTREAM_SOURCE` byte-for-byte equivalent when editing expectations.
+// Native Rust translation of upstream t/biblatexml.t at commit 74252e6.
 
-use bib_input::{
-    OptionComponent, XmlFieldValue, XmlLimits, parse_biblatexml_bytes, parse_control_bytes,
+use bib_engine::{
+    BibCommand, BibCommandOutput, FileProvisioner, GeneratedFile, VfsLimits, VirtualPath,
 };
+use bib_input::{XmlLimits, parse_biblatexml_bytes};
 
-const DATA: &[u8] =
-    include_bytes!("../../../../../tests/corpus/bib/upstream-2.22/tdata/biblatexml.bltxml");
 const CONTROL: &[u8] =
     include_bytes!("../../../../../tests/corpus/bib/upstream-2.22/tdata/biblatexml.bcf");
-
-#[track_caller]
-fn pass_upstream(assertion: &str, _: &str, _: &str, call: &str, source: &str) {
-    assert!(source.contains(call), "{assertion}");
-    let data = parse_biblatexml_bytes(DATA, XmlLimits::default()).expect(assertion);
-    let entry = data.entry("bltx1").expect("bltx1");
-    match assertion {
-        "BibLaTeXML - 1" => {
-            assert_eq!(entry.entry_type, "book");
-            assert!(
-                matches!(entry.fields.get("author"), Some(XmlFieldValue::Names { values, .. }) if values.len() == 3)
-            );
-            assert!(entry.fields.contains_key("eventdate") && entry.fields.contains_key("pages"));
-            assert_eq!(entry.annotations.len(), 9);
-        }
-        "Citekey aliases - 1" => assert_eq!(data.canonical_id("bltx1a1"), Some("bltx1")),
-        "Citekey aliases - 2" => assert_eq!(data.canonical_id("bltx1a2"), Some("bltx1")),
-        "useprefix at name list and name scope - 1" => assert!(
-            matches!(entry.fields.get("author"), Some(XmlFieldValue::Names { attributes, .. }) if attributes.get("useprefix").map(String::as_str) == Some("true"))
-        ),
-        "BibLaTeXML automapcreate - 1" => {
-            let control = parse_control_bytes(CONTROL, XmlLimits::default()).expect(assertion);
-            assert!(
-                CONTROL
-                    .windows(b"map_entry_new".len())
-                    .any(|window| window == b"map_entry_new")
-            );
-            assert!(
-                control
-                    .option_set(OptionComponent::Biblatex, "global")
-                    .is_some()
-            );
-        }
-        _ => panic!("unhandled upstream assertion {assertion}"),
-    }
-    panic!("xfail: exact upstream preparation and BBL rendering is not publicly exposed");
-}
-
-const UPSTREAM_SOURCE: &str = r#"# -*- cperl -*-
-use strict;
-use warnings;
-use utf8;
-no warnings 'utf8';
-use Text::Diff::Config;
-$Text::Diff::Config::Output_Unicode = 1;
-
-
-use Test::More tests => 5;
-use Test::Differences;
-unified_diff;
-
-use Biber;
-use Biber::Output::bbl;
-use Log::Log4perl;
-use Encode;
-
-chdir("t/tdata");
-
-# Set up Biber object
-# THERE ARE MAPS IN THE BCF
-my $biber = Biber->new(noconf => 1);
-my $LEVEL = 'ERROR';
-my $l4pconf = qq|
-    log4perl.category.main                             = $LEVEL, Screen
-    log4perl.category.screen                           = $LEVEL, Screen
-    log4perl.appender.Screen                           = Log::Log4perl::Appender::Screen
-    log4perl.appender.Screen.utf8                      = 1
-    log4perl.appender.Screen.Threshold                 = $LEVEL
-    log4perl.appender.Screen.stderr                    = 0
-    log4perl.appender.Screen.layout                    = Log::Log4perl::Layout::SimpleLayout
-|;
-
-Log::Log4perl->init(\$l4pconf);
-$biber->parse_ctrlfile('biblatexml.bcf');
-$biber->set_output_obj(Biber::Output::bbl->new());
-
-# Options - we could set these in the control file but it's nice to see what we're
-# relying on here for tests
-
-# Biber options
-Biber::Config->setoption('sortlocale', 'en_GB.UTF-8');
-Biber::Config->setoption('bcf', 'biblatexml.bcf');
-
-# Now generate the information
-$biber->prepare;
-my $out = $biber->get_output_obj;
-my $section = $biber->sections->get_section(0);
-my $main = $biber->datalists->get_list('custom/global//global/global/global');
-
-my $bibentries = $section->bibentries;
-
-my $l1 = q|    \entry{bltx1}{misc}{useprefix=false}{}
+const DATA: &[u8] =
+    include_bytes!("../../../../../tests/corpus/bib/upstream-2.22/tdata/biblatexml.bltxml");
+const EXPECTED_BLTX1: &str = r###"    \entry{bltx1}{misc}{useprefix=false}{}
       \true{moreauthor}
       \true{morelabelname}
-      \name{author}{3}{useprefix=true}{%
+      
+ame{author}{3}{useprefix=true}{%
         {{hash=bdef740dab20c2b52a3b6e0563c42bdb}{%
            family={Булгаков},
            familyi={Б\\bibinitperiod},
@@ -124,14 +34,16 @@ my $l1 = q|    \entry{bltx1}{misc}{useprefix=false}{}
            given={Ашраф\\bibnamedelima Ахмедович},
            giveni={A\\bibinitperiod\\bibinitdelim А\\bibinitperiod}}}%
       }
-      \name{foreword}{1}{}{%
+      
+ame{foreword}{1}{}{%
         {{hash=88354d4ba914f2ded2574386a2493996}{%
            family={Brown},
            familyi={B\\bibinitperiod},
            given={John},
            giveni={J\\bibinitperiod}}}%
       }
-      \name{translator}{1}{}{%
+      
+ame{translator}{1}{}{%
         {{hash=b44eba830fe9817fbe8e53c82f1cbe04}{%
            family={Smith},
            familyi={S\\bibinitperiod},
@@ -205,81 +117,82 @@ my $l1 = q|    \entry{bltx1}{misc}{useprefix=false}{}
       \annotation{part}{author}{default}{1}{given}{1}{namepart-ann1}
       \annotation{part}{author}{default}{2}{family}{0}{namepart-ann2}
     \endentry
-|;
-
-my $l2 = q|    \entry{loopkey:a}{book}{}{}
+"###;
+const EXPECTED_LOOP: &str = r###"    \entry{loopkey:a}{book}{}{}
       \field{sortinit}{0}
       \field{sortinithash}{c5602f03f17cc894ea7a6362c3cb0e13}
     \endentry
-|;
+"###;
+const EXPECTED_SORT: &str = r###"mm,,,vonБулгаков   Павел Георгиевич  РРозенфельдБорис-ZZ AбрамовичvonAхмедов    Ашраф Ахмедович   ,1980,0,Мухаммад ибн муса ал-Хорезми. Около 783 – около 850"###;
 
-
-my $bltx1 = 'mm,,,vonБулгаков   Павел Георгиевич  РРозенфельдБорис-ZZ AбрамовичvonAхмедов    Ашраф Ахмедович   ,1980,0,Мухаммад ибн муса ал-Хорезми. Около 783 – около 850';
-
-# Test::Differences doesn't like utf8 unless it's encoded here
-eq_or_diff(encode_utf8($out->get_output_entry('bltx1', $main)), encode_utf8($l1), 'BibLaTeXML - 1');
-eq_or_diff($section->get_citekey_alias('bltx1a1'), 'bltx1', 'Citekey aliases - 1');
-eq_or_diff($section->get_citekey_alias('bltx1a2'), 'bltx1', 'Citekey aliases - 2');
-eq_or_diff(encode_utf8($main->get_sortdata_for_key('bltx1')->[0]), encode_utf8($bltx1), 'useprefix at name list and name scope - 1' );
-eq_or_diff(encode_utf8($out->get_output_entry('loopkey:a', $main)), encode_utf8($l2), 'BibLaTeXML automapcreate - 1');
-"#;
+fn run() -> BibCommandOutput {
+    let mut files = FileProvisioner::new(VfsLimits::default()).unwrap();
+    files
+        .register_user(
+            VirtualPath::user("biblatexml.bcf").unwrap(),
+            CONTROL.to_vec(),
+        )
+        .unwrap();
+    files
+        .register_user(
+            VirtualPath::user("biblatexml.bltxml").unwrap(),
+            DATA.to_vec(),
+        )
+        .unwrap();
+    BibCommand::parse(["--noconf", "--nolog", "biblatexml.bcf"])
+        .unwrap()
+        .execute(&files.snapshot())
+}
+fn output() -> Vec<u8> {
+    run()
+        .result()
+        .and_then(|r| r.files().next())
+        .map(GeneratedFile::bytes)
+        .unwrap_or_default()
+        .to_vec()
+}
+fn contains(haystack: &[u8], needle: &str) -> bool {
+    haystack
+        .windows(needle.len())
+        .any(|w| w == needle.as_bytes())
+}
 
 #[test]
-#[ignore = "xfail: exact upstream end-to-end behavior is not exposed by the public Rust API"]
+#[ignore = "xfail: exact BibLaTeXML BBL serialization differs"]
 fn assertion_001_biblatexml_1() {
-    pass_upstream(
-        "BibLaTeXML - 1",
-        r"encode_utf8($out->get_output_entry('bltx1', $main))",
-        r"encode_utf8($l1)",
-        r"eq_or_diff(encode_utf8($out->get_output_entry('bltx1', $main)), encode_utf8($l1), 'BibLaTeXML - 1');",
-        UPSTREAM_SOURCE,
-    );
+    assert!(contains(&output(), EXPECTED_BLTX1));
 }
-
 #[test]
-#[ignore = "xfail: exact upstream end-to-end behavior is not exposed by the public Rust API"]
 fn assertion_002_citekey_aliases_1() {
-    pass_upstream(
-        "Citekey aliases - 1",
-        r"$section->get_citekey_alias('bltx1a1')",
-        r"'bltx1'",
-        r"eq_or_diff($section->get_citekey_alias('bltx1a1'), 'bltx1', 'Citekey aliases - 1');",
-        UPSTREAM_SOURCE,
-    );
+    let data = parse_biblatexml_bytes(DATA, XmlLimits::default()).unwrap();
+    assert_eq!(data.canonical_id("bltx1a1"), Some("bltx1"));
 }
-
 #[test]
-#[ignore = "xfail: exact upstream end-to-end behavior is not exposed by the public Rust API"]
 fn assertion_003_citekey_aliases_2() {
-    pass_upstream(
-        "Citekey aliases - 2",
-        r"$section->get_citekey_alias('bltx1a2')",
-        r"'bltx1'",
-        r"eq_or_diff($section->get_citekey_alias('bltx1a2'), 'bltx1', 'Citekey aliases - 2');",
-        UPSTREAM_SOURCE,
-    );
+    let data = parse_biblatexml_bytes(DATA, XmlLimits::default()).unwrap();
+    assert_eq!(data.canonical_id("bltx1a2"), Some("bltx1"));
 }
-
 #[test]
-#[ignore = "xfail: exact upstream end-to-end behavior is not exposed by the public Rust API"]
+#[ignore = "xfail: prepared sort data is not exposed by the public result"]
 fn assertion_004_useprefix_at_name_list_and_name_scope_1() {
-    pass_upstream(
-        "useprefix at name list and name scope - 1",
-        r"encode_utf8($main->get_sortdata_for_key('bltx1')->[0])",
-        r"encode_utf8($bltx1)",
-        r"eq_or_diff(encode_utf8($main->get_sortdata_for_key('bltx1')->[0]), encode_utf8($bltx1), 'useprefix at name list and name scope - 1' );",
-        UPSTREAM_SOURCE,
-    );
+    let result = run();
+    let first = result
+        .result()
+        .unwrap()
+        .document()
+        .sections()
+        .next()
+        .unwrap()
+        .lists()
+        .next()
+        .unwrap()
+        .entries()
+        .next()
+        .unwrap();
+    assert_eq!(first.as_str(), EXPECTED_SORT);
 }
-
 #[test]
-#[ignore = "xfail: exact upstream end-to-end behavior is not exposed by the public Rust API"]
+#[ignore = "xfail: automapcreate BBL serialization differs"]
 fn assertion_005_biblatexml_automapcreate_1() {
-    pass_upstream(
-        "BibLaTeXML automapcreate - 1",
-        r"encode_utf8($out->get_output_entry('loopkey:a', $main))",
-        r"encode_utf8($l2)",
-        r"eq_or_diff(encode_utf8($out->get_output_entry('loopkey:a', $main)), encode_utf8($l2), 'BibLaTeXML automapcreate - 1');",
-        UPSTREAM_SOURCE,
-    );
+    assert!(contains(&output(), EXPECTED_LOOP));
 }
