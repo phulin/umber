@@ -237,7 +237,6 @@ pub struct TokenStore {
     index: TokenIndex,
     #[cfg(test)]
     hash_state: RandomState,
-    index_dirty: bool,
     identities: IdentityAllocator,
 }
 
@@ -252,7 +251,6 @@ impl Clone for TokenStore {
             index: self.index.clone(),
             #[cfg(test)]
             hash_state: self.hash_state.clone(),
-            index_dirty: self.index_dirty,
             identities: self.identities.fork(),
         }
     }
@@ -284,7 +282,6 @@ impl TokenStore {
             index: TokenIndex::default(),
             #[cfg(test)]
             hash_state: RandomState::new(),
-            index_dirty: false,
             identities: IdentityAllocator::new(1),
         };
         store
@@ -321,7 +318,6 @@ impl TokenStore {
             index,
             #[cfg(test)]
             hash_state: RandomState::new(),
-            index_dirty: false,
             identities,
         })
     }
@@ -363,10 +359,6 @@ impl TokenStore {
             return Self::empty_id();
         }
 
-        if self.index_dirty {
-            self.rebuild_index();
-        }
-
         match &self.frozen_lookup {
             FrozenTokenLookup::Legacy(lookup) => {
                 if let Some(raw) = legacy_key.and_then(|key| lookup.get(key)) {
@@ -404,7 +396,7 @@ impl TokenStore {
         self.arena.extend_from_slice(tokens);
         self.spans.push((start, len));
         self.semantic_ids.push(semantic_id);
-        self.index.entry(semantic_id).or_default().push(id);
+        self.insert_index_id(semantic_id, id);
         #[cfg(feature = "profiling-stats")]
         crate::measurement::record_token_intern(
             tokens.len(),
@@ -445,10 +437,6 @@ impl TokenStore {
             #[cfg(feature = "profiling-stats")]
             crate::measurement::record_token_intern(0, true, 0, 0);
             return Self::empty_id();
-        }
-
-        if self.index_dirty {
-            self.rebuild_index();
         }
 
         let matches = |store: &Self, raw| {
@@ -503,7 +491,7 @@ impl TokenStore {
         }));
         self.spans.push((start, len));
         self.semantic_ids.push(semantic_id);
-        self.index.entry(semantic_id).or_default().push(id);
+        self.insert_index_id(semantic_id, id);
         #[cfg(feature = "profiling-stats")]
         crate::measurement::record_token_intern(
             traced.len(),
@@ -592,23 +580,56 @@ impl TokenStore {
             "token-store mark does not point to a span boundary"
         );
 
+        // tex.web §§200, 203, and 291 release only token lists whose final
+        // owner disappears; §§275--283 restore definitions and their token-list
+        // ownership through the save stack. `TokenStore` replaces those mutable
+        // reference-counted lists with immutable hash-consed spans. Rollback must
+        // therefore remove precisely the attempt-owned suffix from the derived
+        // index while leaving format-owned prefix entries in place. Clearing the
+        // whole index here would be semantically harmless but would make every
+        // host-driven resource retry rebuild the large format-derived prefix.
+        for raw in (spans..self.spans.len()).rev() {
+            let id = self.id_at(u32_len(raw, "token-list spans exceed u32 entries"));
+            self.remove_index_id(self.semantic_ids[raw], id);
+        }
+
         self.identities
             .rollback(mark.identities)
             .expect("token identity mark must name a retained ancestor");
         self.spans.truncate(spans);
         self.semantic_ids.truncate(spans);
         self.arena.truncate(tokens);
-        self.index_dirty = true;
     }
 
-    fn rebuild_index(&mut self) {
-        self.index.clear();
-        for raw in self.frozen_len as usize..self.spans.len() {
-            let id = self.id_at(u32_len(raw, "token-list spans exceed u32 entries"));
-            let semantic_id = self.semantic_id(id);
-            self.index.entry(semantic_id).or_default().push(id);
+    fn insert_index_id(&mut self, semantic_id: TokenSemanticId, id: TokenListId) {
+        let candidates = self.index.entry(semantic_id).or_default();
+        assert!(
+            !candidates.contains(&id),
+            "token-list id is already present in its semantic index bucket"
+        );
+        candidates.push(id);
+    }
+
+    fn remove_index_id(&mut self, semantic_id: TokenSemanticId, id: TokenListId) {
+        let remove_bucket = {
+            let candidates = self
+                .index
+                .get_mut(&semantic_id)
+                .expect("live token-list id is missing from its semantic index bucket");
+            let position = candidates
+                .iter()
+                .position(|&candidate| candidate == id)
+                .expect("live token-list id is missing from its semantic index bucket");
+            candidates.swap_remove(position);
+            assert!(
+                !candidates.contains(&id),
+                "token-list id appears more than once in its semantic index bucket"
+            );
+            candidates.is_empty()
+        };
+        if remove_bucket {
+            self.index.remove(&semantic_id);
         }
-        self.index_dirty = false;
     }
 
     #[cfg(test)]

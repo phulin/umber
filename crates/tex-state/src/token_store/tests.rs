@@ -173,6 +173,83 @@ fn truncate_then_reintern_reuses_dense_token_list_id() {
 }
 
 #[test]
+fn repeated_retry_rollback_preserves_prefix_index_and_bounded_capacity() {
+    const FORMAT_LISTS: u32 = 2_048;
+    const ATTEMPT_LISTS: u32 = 256;
+    const RETRIES: usize = 32;
+
+    let mut store = TokenStore::new();
+    let token_list = |raw: u32| {
+        [
+            char_token(char::from_u32(0x1_0000 + raw).expect("test character is valid")),
+            char_token('!'),
+        ]
+    };
+    for raw in 0..FORMAT_LISTS {
+        store.intern(&token_list(raw));
+    }
+    let retained = store.intern(&[char_token('k')]);
+    let retained_semantic_id = store.semantic_id(retained);
+    let mark = store.watermark();
+
+    // Warm the append-only arenas and index to the attempt high-water mark.
+    // Later retries should reuse those capacities rather than accumulating
+    // the format prefix or stale attempt identities again.
+    for raw in FORMAT_LISTS..FORMAT_LISTS + ATTEMPT_LISTS {
+        store.intern(&token_list(raw));
+    }
+    store.truncate_to(mark);
+    let warmed_capacities = (
+        store.arena.capacity(),
+        store.spans.capacity(),
+        store.semantic_ids.capacity(),
+        store.index.capacity(),
+    );
+    let retained_bucket = store
+        .index
+        .get(&retained_semantic_id)
+        .expect("retained format list remains indexed")
+        .as_ptr();
+
+    for _ in 0..RETRIES {
+        let first_attempt = store.intern(&token_list(FORMAT_LISTS));
+        for raw in FORMAT_LISTS + 1..FORMAT_LISTS + ATTEMPT_LISTS {
+            store.intern(&token_list(raw));
+        }
+
+        store.truncate_to(mark);
+
+        assert!(!store.contains(first_attempt));
+        assert_eq!(store.get(retained), &[char_token('k')]);
+        assert_eq!(store.intern(&[char_token('k')]), retained);
+        assert_eq!(
+            store.index.values().map(Vec::len).sum::<usize>(),
+            store.spans.len(),
+            "the index contains exactly one entry for every live token list"
+        );
+        assert_eq!(
+            store
+                .index
+                .get(&retained_semantic_id)
+                .expect("retained format list remains indexed")
+                .as_ptr(),
+            retained_bucket,
+            "retry rollback must not discard and rebuild retained index buckets"
+        );
+        assert_eq!(
+            (
+                store.arena.capacity(),
+                store.spans.capacity(),
+                store.semantic_ids.capacity(),
+                store.index.capacity(),
+            ),
+            warmed_capacities,
+            "repeated equal-sized retries retain only their high-water capacity"
+        );
+    }
+}
+
+#[test]
 #[should_panic(expected = "token list id is not live")]
 fn stale_token_list_panics_after_truncation() {
     let mut store = TokenStore::new();
