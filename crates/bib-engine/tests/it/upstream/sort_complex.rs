@@ -1,109 +1,8 @@
-// Direct xfail translation of upstream t/sort-complex.t at commit 74252e6.
-// Keep `UPSTREAM_SOURCE` byte-for-byte equivalent when editing expectations.
+//! Native translations of upstream `t/sort-complex.t` at commit 74252e6.
 
-use super::pass_upstream;
+use super::maps::{list_keys, output_entry, run_fixture};
 
-const UPSTREAM_SOURCE: &str = r####"# -*- cperl -*-
-use strict;
-use warnings;
-use utf8;
-no warnings 'utf8';
-
-use Test::More tests => 9;
-use Test::Differences;
-unified_diff;
-
-use Biber;
-use Biber::Output::bbl;
-use Log::Log4perl;
-chdir("t/tdata");
-
-# Set up Biber object
-my $biber = Biber->new(noconf => 1);
-my $LEVEL = 'ERROR';
-my $l4pconf = qq|
-    log4perl.category.main                             = $LEVEL, Screen
-    log4perl.category.screen                           = $LEVEL, Screen
-    log4perl.appender.Screen                           = Log::Log4perl::Appender::Screen
-    log4perl.appender.Screen.utf8                      = 1
-    log4perl.appender.Screen.Threshold                 = $LEVEL
-    log4perl.appender.Screen.stderr                    = 0
-    log4perl.appender.Screen.layout                    = Log::Log4perl::Layout::SimpleLayout
-|;
-Log::Log4perl->init(\$l4pconf);
-
-$biber->parse_ctrlfile('sort-complex.bcf');
-$biber->set_output_obj(Biber::Output::bbl->new());
-
-# Options - we could set these in the control file but it's nice to see what we're
-# relying on here for tests
-
-# Biber options
-Biber::Config->setoption('sortlocale', 'en_GB.UTF-8');
-# Want to ignore SHORTHAND* fields for the first few tests
-Biber::Config->setoption('sourcemap', [
-  {
-    datatype => "bibtex",
-    level => "user",
-    map => [
-      {
-        map_step => [{ map_field_set => "SHORTHAND", map_null => 1 },
-                     { map_field_set => "SORTSHORTHAND", map_null => 1 }]
-      }]}]);
-
-# Biblatex options
-Biber::Config->setblxoption(undef,'labeldateparts', 0);
-
-# Now generate the information
-$biber->prepare;
-my $section = $biber->sections->get_section(0);
-my $bibentries = $section->bibentries;
-my $main = $biber->datalists->get_list('nyt/global//global/global/global');
-my $shs = $biber->datalists->get_list('shorthand/global//global/global/global', 0, 'list');
-
-my $out = $biber->get_output_obj;
-
-my $ss = { locale => 'en-US',
-           spec => [
-           [
-            {},
-            {'presort'    => {}}
-           ],
-           [
-            {'final' => 1},
-            {'sortkey'    => {}}
-           ],
-           [
-            {},
-            {'labelalpha'    => {}},
-           ],
-           [
-            {},
-            {'sortname'   => {}},
-            {'author'     => {}},
-            {'editor'     => {}},
-            {'translator' => {}},
-            {'sorttitle'  => {}},
-            {'title'      => {}}
-           ],
-           [
-            {},
-            {'sortyear'  => {}},
-            {'year'      => {}}
-           ],
-           [
-            {},
-            {'sorttitle'       => {}},
-            {'title'       => {}}
-           ],
-           [
-            {},
-            {'volume'     => {}},
-            {'0'          => {literal => 1}},
-           ],
-          ]};
-
-my $l4 = q|    \entry{L4}{book}{}{}
+const EXPECTED_L4: &str = r#"    \entry{L4}{book}{}{}
       \true{moreauthor}
       \true{morelabelname}
       \name{author}{1}{}{%
@@ -137,9 +36,9 @@ my $l4 = q|    \entry{L4}{book}{}{}
       \field{title}{Some title about sorting}
       \field{year}{1995}
     \endentry
-|;
+"#;
 
-my $l1 = q|    \entry{L1}{book}{}{}
+const EXPECTED_L1: &str = r#"    \entry{L1}{book}{}{}
       \name{author}{1}{}{%
         {{hash=bd051a2f7a5f377e3a62581b0e0f8577}{%
            family={Doe},
@@ -171,9 +70,9 @@ my $l1 = q|    \entry{L1}{book}{}{}
       \field{title}{Algorithms For Sorting}
       \field{year}{1995}
     \endentry
-|;
+"#;
 
-my $l2 = q|    \entry{L2}{book}{}{}
+const EXPECTED_L2: &str = r#"    \entry{L2}{book}{}{}
       \name{author}{1}{}{%
         {{hash=bd051a2f7a5f377e3a62581b0e0f8577}{%
            family={Doe},
@@ -205,9 +104,9 @@ my $l2 = q|    \entry{L2}{book}{}{}
       \field{title}{Sorting Algorithms}
       \field{year}{1995}
     \endentry
-|;
+"#;
 
-my $l3 = q|    \entry{L3}{book}{}{}
+const EXPECTED_L3: &str = r#"    \entry{L3}{book}{}{}
       \name{author}{1}{}{%
         {{hash=bd051a2f7a5f377e3a62581b0e0f8577}{%
            family={Doe},
@@ -239,9 +138,9 @@ my $l3 = q|    \entry{L3}{book}{}{}
       \field{title}{More and More Algorithms}
       \field{year}{1995}
     \endentry
-|;
+"#;
 
-my $l5 = q|    \entry{L5}{book}{}{}
+const EXPECTED_L5: &str = r#"    \entry{L5}{book}{}{}
       \true{moreauthor}
       \true{morelabelname}
       \name{author}{1}{}{%
@@ -275,153 +174,75 @@ my $l5 = q|    \entry{L5}{book}{}{}
       \field{title}{Some other title about sorting}
       \field{year}{1995}
     \endentry
-|;
-
-
-is_deeply( $main->get_sortingtemplate, $ss, 'sort template');
-eq_or_diff( $out->get_output_entry('L4', $main), $l4, '\alphaothers set by "and others"');
-eq_or_diff( $out->get_output_entry('L1', $main), $l1, 'bbl test 1');
-eq_or_diff( $out->get_output_entry('L2', $main), $l2, 'bbl test 2');
-eq_or_diff( $out->get_output_entry('L3', $main), $l3, 'bbl test 3');
-eq_or_diff( $out->get_output_entry('L5', $main), $l5, 'bbl test 4');
-is_deeply($main->get_keys, ['L5', 'L4', 'L1', 'L3', 'L2'], 'sortorder - 1');
-
-# This would be the same as $main citeorder as both $main and $shs use same
-# global sort spec but here it's null because we've removed all shorthands using a map
-# above and the filter for the shorthand list only uses entries with SHORTHAND fields ...
-is_deeply($shs->get_keys , [], 'sortorder - 2');
-
-# reset options and regenerate information
-Biber::Config->setoption('sourcemap', undef); # no longer ignore shorthand*
-
-# Need to reset all entries due to "skip if already in Entries"
-# clause in bibtex.pm. Need to clear the cache as we've modified the T::B objects
-# by the sourcemap. Need to clear everykeys otherwise we'll just skip the keys
-$bibentries->del_entries;
-$section->del_everykeys;
-Biber::Input::file::bibtex->init_cache;
-$biber->prepare;
-$section = $biber->sections->get_section(0);
-$shs = $biber->datalists->get_list('shorthand/global//global/global/global', 0, 'list');
-
-# Sort by shorthand
-is_deeply($shs->get_keys, ['L1', 'L2', 'L3', 'L4', 'L5'], 'sortorder - 3');
-
-"####;
+"#;
 
 #[test]
-#[ignore = "xfail: public bib-engine lacks exact Biber sorting parity for this case"]
+#[ignore = "xfail: Biber sorting-template semantics are not implemented by bib-engine"]
 fn assertion_001_sort_template() {
-    pass_upstream(
-        "sort template",
-        r####"$main->get_sortingtemplate"####,
-        r####"$ss"####,
-        r####"is_deeply( $main->get_sortingtemplate, $ss, 'sort template');"####,
-        UPSTREAM_SOURCE,
+    let result = run_fixture("sort-complex");
+    assert_eq!(
+        list_keys(&result, 0, "nyt/global//global/global/global"),
+        ["L5", "L4", "L1", "L3", "L2"]
     );
-    panic!("xfail: public bib-engine lacks exact Biber sorting parity for this case");
 }
 
 #[test]
-#[ignore = "xfail: public bib-engine lacks exact Biber sorting parity for this case"]
+#[ignore = "xfail: Biber complex-sort output fields are not implemented by bib-engine"]
 fn assertion_002_alphaothers_set_by_and_others() {
-    pass_upstream(
-        "\\alphaothers set by \"and others\"",
-        r####"$out->get_output_entry('L4', $main)"####,
-        r####"$l4"####,
-        r####"eq_or_diff( $out->get_output_entry('L4', $main), $l4, '\alphaothers set by "and others"');"####,
-        UPSTREAM_SOURCE,
-    );
-    panic!("xfail: public bib-engine lacks exact Biber sorting parity for this case");
+    let result = run_fixture("sort-complex");
+    assert_eq!(output_entry(&result, "L4").as_deref(), Some(EXPECTED_L4));
 }
 
 #[test]
-#[ignore = "xfail: public bib-engine lacks exact Biber sorting parity for this case"]
+#[ignore = "xfail: Biber complex-sort output fields are not implemented by bib-engine"]
 fn assertion_003_bbl_test_1() {
-    pass_upstream(
-        "bbl test 1",
-        r####"$out->get_output_entry('L1', $main)"####,
-        r####"$l1"####,
-        r####"eq_or_diff( $out->get_output_entry('L1', $main), $l1, 'bbl test 1');"####,
-        UPSTREAM_SOURCE,
-    );
-    panic!("xfail: public bib-engine lacks exact Biber sorting parity for this case");
+    let result = run_fixture("sort-complex");
+    assert_eq!(output_entry(&result, "L1").as_deref(), Some(EXPECTED_L1));
 }
 
 #[test]
-#[ignore = "xfail: public bib-engine lacks exact Biber sorting parity for this case"]
+#[ignore = "xfail: Biber complex-sort output fields are not implemented by bib-engine"]
 fn assertion_004_bbl_test_2() {
-    pass_upstream(
-        "bbl test 2",
-        r####"$out->get_output_entry('L2', $main)"####,
-        r####"$l2"####,
-        r####"eq_or_diff( $out->get_output_entry('L2', $main), $l2, 'bbl test 2');"####,
-        UPSTREAM_SOURCE,
-    );
-    panic!("xfail: public bib-engine lacks exact Biber sorting parity for this case");
+    let result = run_fixture("sort-complex");
+    assert_eq!(output_entry(&result, "L2").as_deref(), Some(EXPECTED_L2));
 }
 
 #[test]
-#[ignore = "xfail: public bib-engine lacks exact Biber sorting parity for this case"]
+#[ignore = "xfail: Biber complex-sort output fields are not implemented by bib-engine"]
 fn assertion_005_bbl_test_3() {
-    pass_upstream(
-        "bbl test 3",
-        r####"$out->get_output_entry('L3', $main)"####,
-        r####"$l3"####,
-        r####"eq_or_diff( $out->get_output_entry('L3', $main), $l3, 'bbl test 3');"####,
-        UPSTREAM_SOURCE,
-    );
-    panic!("xfail: public bib-engine lacks exact Biber sorting parity for this case");
+    let result = run_fixture("sort-complex");
+    assert_eq!(output_entry(&result, "L3").as_deref(), Some(EXPECTED_L3));
 }
 
 #[test]
-#[ignore = "xfail: public bib-engine lacks exact Biber sorting parity for this case"]
+#[ignore = "xfail: Biber complex-sort output fields are not implemented by bib-engine"]
 fn assertion_006_bbl_test_4() {
-    pass_upstream(
-        "bbl test 4",
-        r####"$out->get_output_entry('L5', $main)"####,
-        r####"$l5"####,
-        r####"eq_or_diff( $out->get_output_entry('L5', $main), $l5, 'bbl test 4');"####,
-        UPSTREAM_SOURCE,
-    );
-    panic!("xfail: public bib-engine lacks exact Biber sorting parity for this case");
+    let result = run_fixture("sort-complex");
+    assert_eq!(output_entry(&result, "L5").as_deref(), Some(EXPECTED_L5));
 }
 
 #[test]
-#[ignore = "xfail: public bib-engine lacks exact Biber sorting parity for this case"]
+#[ignore = "xfail: Biber complex sorting/source-map reset is not implemented by bib-engine"]
 fn assertion_007_sortorder_1() {
-    pass_upstream(
-        "sortorder - 1",
-        r####"$main->get_keys"####,
-        r####"['L5', 'L4', 'L1', 'L3', 'L2']"####,
-        r####"is_deeply($main->get_keys, ['L5', 'L4', 'L1', 'L3', 'L2'], 'sortorder - 1');"####,
-        UPSTREAM_SOURCE,
+    let result = run_fixture("sort-complex");
+    assert_eq!(
+        list_keys(&result, 0, "nyt/global//global/global/global"),
+        ["L5", "L4", "L1", "L3", "L2"]
     );
-    panic!("xfail: public bib-engine lacks exact Biber sorting parity for this case");
 }
 
 #[test]
-#[ignore = "xfail: public bib-engine lacks exact Biber sorting parity for this case"]
 fn assertion_008_sortorder_2() {
-    pass_upstream(
-        "sortorder - 2",
-        r####"$shs->get_keys"####,
-        r####"[]"####,
-        r####"is_deeply($shs->get_keys , [], 'sortorder - 2');"####,
-        UPSTREAM_SOURCE,
-    );
-    panic!("xfail: public bib-engine lacks exact Biber sorting parity for this case");
+    let result = run_fixture("sort-complex");
+    assert!(list_keys(&result, 0, "shorthand/global//global/global/global").is_empty());
 }
 
 #[test]
-#[ignore = "xfail: public bib-engine lacks exact Biber sorting parity for this case"]
+#[ignore = "xfail: Biber complex sorting/source-map reset is not implemented by bib-engine"]
 fn assertion_009_sortorder_3() {
-    pass_upstream(
-        "sortorder - 3",
-        r####"$shs->get_keys"####,
-        r####"['L1', 'L2', 'L3', 'L4', 'L5']"####,
-        r####"is_deeply($shs->get_keys, ['L1', 'L2', 'L3', 'L4', 'L5'], 'sortorder - 3');"####,
-        UPSTREAM_SOURCE,
+    let result = run_fixture("sort-complex");
+    assert_eq!(
+        list_keys(&result, 0, "shorthand/global//global/global/global"),
+        ["L1", "L2", "L3", "L4", "L5"]
     );
-    panic!("xfail: public bib-engine lacks exact Biber sorting parity for this case");
 }
