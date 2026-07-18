@@ -409,7 +409,7 @@ fn hrule_head_for_vmode_defers_rule_until_after_paragraph_dispatch() {
 }
 
 #[test]
-fn halign_in_restricted_horizontal_mode_retains_off_save_recovery() {
+fn halign_in_restricted_horizontal_mode_with_open_group_retains_off_save_recovery() {
     let mut stores = Universe::new();
     install_unexpandable_primitives(&mut stores);
     let halign = Token::Cs(stores.intern("halign").symbol());
@@ -418,6 +418,7 @@ fn halign_in_restricted_horizontal_mode_retains_off_save_recovery() {
     let mut input = InputStack::new(MemoryInput::new(""));
     let mut nest = ModeNest::new();
     nest.push(Mode::RestrictedHorizontal);
+    stores.enter_group_with_kind(tex_state::GroupKind::HBox);
     let mut context = crate::ExecutionContext::new("texput");
 
     dispatch_delivered_token(&mut nest, command, &mut input, &mut stores, &mut context)
@@ -456,6 +457,39 @@ fn halign_in_restricted_horizontal_mode_retains_off_save_recovery() {
     assert_eq!(inserted_origin.parent(), command_origin);
     assert_eq!(replayed, command);
     assert!(support::terminal_effect_text(&stores).contains("Missing } inserted"));
+}
+
+#[test]
+fn bottom_level_halign_recovery_drops_command_without_growing_input_frames() {
+    let mut stores = Universe::new();
+    install_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new("\\halign"));
+    let mut nest = ModeNest::new();
+    nest.push(Mode::RestrictedHorizontal);
+    let mut context = crate::ExecutionContext::new("texput");
+    let mut delivered = 0;
+    let mut maximum_depth = input.depth();
+
+    while let Some(token) = tex_expand::get_x_token_with_context(
+        &mut input,
+        &mut tex_state::ExpansionContext::new(&mut stores),
+        &mut context,
+    )
+    .expect("recovery token read")
+    {
+        delivered += 1;
+        assert!(delivered <= 4, "halign recovery must make bounded progress");
+        dispatch_delivered_token(&mut nest, token, &mut input, &mut stores, &mut context)
+            .expect("halign recovery dispatch");
+        maximum_depth = maximum_depth.max(input.depth());
+    }
+
+    assert_eq!(delivered, 1, "bottom-level off_save drops the command");
+    assert!(
+        maximum_depth <= 1,
+        "recovery must not retain inserted frames"
+    );
+    assert!(support::terminal_effect_text(&stores).contains("Extra \\halign"));
 }
 
 #[test]

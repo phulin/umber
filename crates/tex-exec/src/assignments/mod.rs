@@ -1466,6 +1466,20 @@ pub(crate) fn off_save_alignment(
     input: &mut InputStack,
     stores: &mut Universe,
 ) -> Result<(), ExecError> {
+    // TeX.web §§1064 and 1066 must drop the current command at the
+    // bottom level. Backing it up with an inserted right brace cannot expose
+    // an enclosing group there; it only recreates the same off_save call.
+    if stores.innermost_group_kind().is_none() {
+        let command = tex_expand::token_text(stores, tex_expand::semantic_token(command));
+        stores.world_mut().write_text(
+            tex_state::PrintSink::TerminalAndLog,
+            &format!(
+                "\n! Extra {command}.\nThings are pretty mixed up, but I think the worst is over.\n"
+            ),
+        );
+        return Ok(());
+    }
+
     // TeX.web's `off_save` chooses a recovery token that can actually close
     // the current group.  In particular, a semisimple group must be closed by
     // the inaccessible equivalent of `\endgroup`, not by a right brace.
