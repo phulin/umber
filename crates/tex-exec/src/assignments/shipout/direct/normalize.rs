@@ -106,7 +106,13 @@ fn normalize_list(
     overlay: &mut PageOverlay,
 ) -> Result<(), ExecError> {
     check_depth(depth)?;
-    let permutation = direction_permutation(stores, list);
+    let (len, permutation) = {
+        let nodes = stores.nodes(list);
+        if !nodes.requires_shipout_normalization() {
+            return Ok(());
+        }
+        (nodes.len(), direction_permutation(nodes))
+    };
     if let Some(order) = permutation.as_ref() {
         overlay.directions.push(DirectionPermutation {
             list,
@@ -124,7 +130,6 @@ fn normalize_list(
             )?;
         }
     } else {
-        let len = stores.nodes(list).len();
         for index in 0..len {
             normalize_index(
                 stores,
@@ -657,7 +662,7 @@ fn expand_pdf_literal_tokens(
     Ok(text.into_bytes())
 }
 
-fn direction_permutation(stores: &Universe, list: NodeListId) -> Option<Vec<usize>> {
+fn direction_permutation(nodes: NodeList<'_>) -> Option<Vec<usize>> {
     struct Segment {
         right_to_left: bool,
         chunks: Vec<Vec<usize>>,
@@ -684,7 +689,6 @@ fn direction_permutation(stores: &Universe, list: NodeListId) -> Option<Vec<usiz
         }
     }
 
-    let nodes = stores.nodes(list);
     if !nodes.contains_direction() {
         return None;
     }

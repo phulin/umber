@@ -15,7 +15,7 @@ use tex_state::node::{
     BoxNode as StateBoxNode, Direction, DiscKind as StateDiscKind, GlueKind as StateGlueKind,
     KernKind as StateKernKind, LeaderPayload as StateLeaderPayload, Node, Sign, Whatsit,
 };
-use tex_state::node_arena::NodeRef;
+use tex_state::node_arena::{NodeList, NodeRef};
 use tex_state::token::{Catcode, OriginId, Token};
 use tex_state::{EffectRecord, PrintSink, Universe, VerifiedArtifact};
 
