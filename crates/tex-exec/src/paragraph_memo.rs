@@ -742,10 +742,8 @@ fn publish_recorded_region(
     let ending_group_depth = tex_state::ExpansionState::execution_group_depth(stores);
     // Balanced child groups are represented by the exact live-group setter
     // script. Replacing or attaching payload to the entry frame itself is not.
-    if recording.starting_span.is_some()
-        && (recording.starting_group_depth != ending_group_depth
-            || (recording.starting_group_depth != 0
-                && mutation_summary.unsupported_group_ownership))
+    if recording.starting_group_depth != ending_group_depth
+        || (recording.starting_group_depth != 0 && mutation_summary.unsupported_group_ownership)
     {
         recording
             .barriers

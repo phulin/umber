@@ -2591,6 +2591,51 @@ fn paragraph_macro_frame_transitions_replay_across_carried_generations() {
 }
 
 #[test]
+fn macro_started_group_transitions_are_paragraph_replay_barriers() {
+    for (name, source) in [
+        (
+            "macro-open-group",
+            concat!(
+                "\\def\\body{macro text \\begingroup grouped paragraph text\\par}\n",
+                "\\body\\endgroup\n",
+                "\\vfill\\eject\\end",
+            ),
+        ),
+        (
+            "macro-aftergroup-entry-frame",
+            concat!(
+                "\\def\\mark{\\global\\count0=7}\n",
+                "\\def\\body{macro text \\aftergroup\\mark aftergroup paragraph text\\par}\n",
+                "\\begingroup\\body\\endgroup\n",
+                "\\vfill\\eject\\end",
+            ),
+        ),
+    ] {
+        let mut universe = template();
+        universe.enable_pure_memo(tex_state::PureMemoConfig::default());
+        let mut session = Session::start(
+            universe,
+            name,
+            RevisionId::new(1),
+            source.to_owned(),
+            usize::MAX,
+        )
+        .expect("session starts");
+        session.cold().expect("cold revision");
+
+        let stats = session.pure_memo_stats();
+        assert_eq!(
+            stats.paragraph_unsupported_group_transition_barriers, 1,
+            "{name}: {stats:?}"
+        );
+        assert!(
+            session.pure_memo.accepted_paragraphs().is_empty(),
+            "{name}: a macro-started group transition must not publish a replay record"
+        );
+    }
+}
+
+#[test]
 fn rooted_paragraph_replays_with_a_live_macro_suffix() {
     let mut universe = template();
     universe.enable_pure_memo(tex_state::PureMemoConfig::default());
