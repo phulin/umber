@@ -369,9 +369,12 @@ The completed accepted-history path changes the practical roofline. On the
 2026-07-18 Gentle slow edit, 863 of 873 eligible paragraphs mount retained
 finished lines, 101,166 commands are skipped, and only nine candidates miss
 validation. Across all 912 paragraph executions, including output-routine
-paragraphs, 94.6% replay. In an optimized 50-iteration isolated slow-path
-sample, `try_reuse_aligned_paragraph` owns only 0.07% of weighted samples. The
-remaining executor work is dominated by the ordinary page pipeline:
+paragraphs, 94.6% replay. In the saved optimized isolated slow-path capture,
+`try_reuse_aligned_paragraph` has 0.07% direct weighted samples and a 6.56%
+inclusive subtree. The inclusive total contains dependency validation,
+profiling clocks and allocation, and ordinary paragraph epilogue/page work;
+the replay-specific retained-line mount is about 0.14%. The remaining executor
+work is dominated by the ordinary page pipeline:
 `drain_pending_output` owns 20.55%, alignment 19.21%, shipout 16.86%, and
 `stage_shipout` 11.58% of samples; direct output emission contributes roughly
 another 8%. Line breaking itself is 1.78% and is limited to misses and

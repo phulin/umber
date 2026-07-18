@@ -1192,10 +1192,14 @@ The optimized ten-pair release-profile run reports:
 | Independent fast suffix adoption |                        +1.118 ms |
 | Forced line-result rebreak       |                        +4.729 ms |
 
-An isolated 50-iteration memoized slow-path Samply capture places
-`try_reuse_aligned_paragraph` at four weighted samples, 0.07% of the whole
-capture. The remaining executor is dominated by page/output work that
-finished-line replay intentionally recomputes: `drain_pending_output` is
+An isolated 50-iteration memoized slow-path Samply capture places four direct
+weighted samples, 0.07% of the whole capture, on
+`try_reuse_aligned_paragraph`. Its inclusive subtree is 6.56%: dependency
+validation contributes about 1.49%, while ordinary paragraph start/epilogue
+and page work, profiling clocks, and allocation account for most of the rest.
+The replay-specific retained-line mount is about 0.14%. The remaining executor
+is dominated by page/output work that finished-line replay intentionally
+recomputes: `drain_pending_output` is
 20.55%, alignment 19.21%, shipout 16.86%, `stage_shipout` 11.58%, and direct
 emission approximately 8%. Line breaking is 1.78% and occurs only for misses
 and output-routine paragraphs. Allocator runtime is 19.52%, platform/memory
@@ -1204,7 +1208,9 @@ movement 8.23%, and kernel work 4.04%; profiling-only payload measurement is
 
 The conclusion is architectural rather than a request for more replay-loop
 micro-optimization. Almost every ordinary paragraph already replays, and the
-replay algorithm is below the sampling floor. The next material slow-path
+replay-specific mount is below the actionable sampling floor even though the
+routine's inclusive subtree contains ordinary downstream work. The next
+material slow-path
 ceiling is page/output reuse or a cheaper rebuild representation. Input-frame
 provenance deferral and first-read entry-font tracking remain valid narrow
 cleanups, but neither can materially move this profile and neither is required
