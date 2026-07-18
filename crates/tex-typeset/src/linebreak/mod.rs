@@ -395,6 +395,11 @@ fn run_pass<S: TypesetState>(
     let easy_line = tex_easy_line(params);
 
     for bp in LegalBreakpoints::new(state, nodes, params) {
+        // Background and discretionary material depend only on this
+        // breakpoint. Combine them once instead of once per active route.
+        let mut breakpoint_width = bp.line_width;
+        breakpoint_width.add_assign(background);
+        breakpoint_width.add_assign(bp.add_width);
         let prior_active_len = active.len();
         let mut survivor_count = 0;
         let forced = bp.penalty <= EJECT_PENALTY;
@@ -409,9 +414,7 @@ fn run_pass<S: TypesetState>(
                 survivor_count += 1;
                 continue;
             }
-            let mut widths = bp.line_width.sub(active_candidate.start_width);
-            widths.add_assign(background);
-            widths.add_assign(bp.add_width);
+            let mut widths = breakpoint_width.sub(active_candidate.start_width);
             let target = params.shape.dimensions(active_candidate.line + 1).width;
             let extra = if emergency {
                 params.emergency_stretch
