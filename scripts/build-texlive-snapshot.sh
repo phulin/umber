@@ -3,6 +3,7 @@ set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 texmf_dist="${UMBER_TEXMF_DIST:-${repo_root}/third_party/texlive-20260301-texmf/texmf-dist}"
+pdftex_map="${UMBER_PDFTEX_MAP:-}"
 package_database=""
 output_dir="${repo_root}/target/texlive-snapshot"
 objects_base_url="https://example.invalid/umber/texlive/objects/"
@@ -11,6 +12,7 @@ shard_bits=8
 usage() {
   cat <<'EOF'
 usage: scripts/build-texlive-snapshot.sh [--texmf-dist PATH]
+       [--pdftex-map PATH]
        [--package-database PATH] [--output-dir PATH]
        [--objects-base-url HTTPS-URL]
        [--shard-bits BITS]
@@ -37,6 +39,7 @@ sha256() {
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --texmf-dist) texmf_dist="${2:-}"; shift 2 ;;
+    --pdftex-map) pdftex_map="${2:-}"; shift 2 ;;
     --package-database) package_database="${2:-}"; shift 2 ;;
     --output-dir) output_dir="${2:-}"; shift 2 ;;
     --objects-base-url) objects_base_url="${2:-}"; shift 2 ;;
@@ -47,8 +50,10 @@ while [[ $# -gt 0 ]]; do
 done
 
 package_database="${package_database:-$(dirname "$texmf_dist")/tlpkg/texlive.tlpdb}"
+pdftex_map="${pdftex_map:-$(dirname "$texmf_dist")/texmf-var/fonts/map/pdftex/updmap/pdftex.map}"
 [[ -d "$texmf_dist" ]] || fail "missing texmf-dist root: $texmf_dist"
 [[ -f "$package_database" ]] || fail "missing TeX Live package database: $package_database"
+[[ -f "$pdftex_map" ]] || fail "missing generated pdfTeX map: $pdftex_map"
 [[ "$objects_base_url" == https://*/ ]] || fail "objects base URL must be HTTPS and end with /"
 [[ "$shard_bits" =~ ^([0-9]|1[0-6])$ ]] || fail "shard bits must be between 0 and 16"
 
@@ -88,11 +93,17 @@ while read -r kind relative _; do
   esac
 done < "$repo_root/tests/latex-source.lock"
 
+generated_runtime="$tmp_root/generated-runtime"
+generated_map_dir="$generated_runtime/fonts/map/pdftex/updmap"
+mkdir -p "$generated_map_dir"
+install -m 0644 "$pdftex_map" "$generated_map_dir/pdftex.map"
+
 cd "$repo_root"
 cargo build -q --release --manifest-path tools/texlive-wasm-publish/Cargo.toml
 publisher="${CARGO_TARGET_DIR:-${repo_root}/tools/texlive-wasm-publish/target}/release/texlive-wasm-publish"
 tree_hash="$($publisher --tree-sha256 "$texmf_dist")"
 local_tree_hash="$($publisher --tree-sha256 "$local_root")"
+generated_tree_hash="$($publisher --tree-sha256 "$generated_runtime")"
 distribution="$(awk '$1 == "distribution" { print $2 }' tests/latex-source.lock)"
 
 config="$tmp_root/publish.json"
@@ -112,6 +123,11 @@ cat > "$config" <<EOF
       "name": "format-local-inputs",
       "path": "${local_root}",
       "treeSha256": "${local_tree_hash}"
+    },
+    {
+      "name": "texlive-generated-runtime",
+      "path": "${generated_runtime}",
+      "treeSha256": "${generated_tree_hash}"
     }
   ],
   "packageDatabase": "${package_database}",
