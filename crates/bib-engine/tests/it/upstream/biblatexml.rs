@@ -9,11 +9,13 @@ const CONTROL: &[u8] =
     include_bytes!("../../../../../tests/corpus/bib/upstream-2.22/tdata/biblatexml.bcf");
 const DATA: &[u8] =
     include_bytes!("../../../../../tests/corpus/bib/upstream-2.22/tdata/biblatexml.bltxml");
-const EXPECTED_BLTX1: &str = r###"    \entry{bltx1}{misc}{useprefix=false}{}
+const EXPECTED_BLTX1: &str = concat!(
+    r###"    \entry{bltx1}{misc}{useprefix=false}{}
       \true{moreauthor}
       \true{morelabelname}
-      
-ame{author}{3}{useprefix=true}{%
+"###,
+    "      \n",
+    r###"ame{author}{3}{useprefix=true}{%
         {{hash=bdef740dab20c2b52a3b6e0563c42bdb}{%
            family={Булгаков},
            familyi={Б\\bibinitperiod},
@@ -34,16 +36,18 @@ ame{author}{3}{useprefix=true}{%
            given={Ашраф\\bibnamedelima Ахмедович},
            giveni={A\\bibinitperiod\\bibinitdelim А\\bibinitperiod}}}%
       }
-      
-ame{foreword}{1}{}{%
+"###,
+    "      \n",
+    r###"ame{foreword}{1}{}{%
         {{hash=88354d4ba914f2ded2574386a2493996}{%
            family={Brown},
            familyi={B\\bibinitperiod},
            given={John},
            giveni={J\\bibinitperiod}}}%
       }
-      
-ame{translator}{1}{}{%
+"###,
+    "      \n",
+    r###"ame{translator}{1}{}{%
         {{hash=b44eba830fe9817fbe8e53c82f1cbe04}{%
            family={Smith},
            familyi={S\\bibinitperiod},
@@ -117,7 +121,8 @@ ame{translator}{1}{}{%
       \annotation{part}{author}{default}{1}{given}{1}{namepart-ann1}
       \annotation{part}{author}{default}{2}{family}{0}{namepart-ann2}
     \endentry
-"###;
+"###
+);
 const EXPECTED_LOOP: &str = r###"    \entry{loopkey:a}{book}{}{}
       \field{sortinit}{0}
       \field{sortinithash}{c5602f03f17cc894ea7a6362c3cb0e13}

@@ -2,7 +2,8 @@
 
 use bib_engine::{BibCommand, FileProvisioner, GeneratedFile, VfsLimits, VirtualPath};
 use bib_unicode::{LegacyEncoding, encode_legacy};
-const ENCODE1: &str = r###"% $ biblatex auxiliary file $
+const ENCODE1: &str = concat!(
+    r###"% $ biblatex auxiliary file $
 % $ biblatex bbl format version 3.3 $
 % Do not modify the above lines!
 %
@@ -24,8 +25,9 @@ const ENCODE1: &str = r###"% $ biblatex auxiliary file $
 \refsection{0}
   \datalist[entry]{nty/global//global/global/global}
     \entry{testŠ}{book}{}{}
-      
-ame{author}{1}{}{%
+"###,
+    "      \n",
+    r###"ame{author}{1}{}{%
         {{un=0,uniquepart=base,hash=06a47edae2e847800cfd78323a0e6be8}{%
            family={Encalcer},
            familyi={E\bibinitperiod},
@@ -59,8 +61,10 @@ ame{author}{1}{}{%
 \endrefsection
 \endinput
 
-"###;
-const ENCODE2: &str = r###"% $ biblatex auxiliary file $
+"###
+);
+const ENCODE2: &str = concat!(
+    r###"% $ biblatex auxiliary file $
 % $ biblatex bbl format version 3.3 $
 % Do not modify the above lines!
 %
@@ -82,8 +86,9 @@ const ENCODE2: &str = r###"% $ biblatex auxiliary file $
 \refsection{0}
   \datalist[entry]{nty/global//global/global/global}
     \entry{test1}{book}{}{}
-      
-ame{author}{1}{}{%
+"###,
+    "      \n",
+    r###"ame{author}{1}{}{%
         {{un=0,uniquepart=base,hash=06a47edae2e847800cfd78323a0e6be8}{%
            family={Encalcer},
            familyi={E\bibinitperiod},
@@ -117,8 +122,10 @@ ame{author}{1}{}{%
 \endrefsection
 \endinput
 
-"###;
-const ENCODE3: &str = r###"% $ biblatex auxiliary file $
+"###
+);
+const ENCODE3: &str = concat!(
+    r###"% $ biblatex auxiliary file $
 % $ biblatex bbl format version 3.3 $
 % Do not modify the above lines!
 %
@@ -140,8 +147,9 @@ const ENCODE3: &str = r###"% $ biblatex auxiliary file $
 \refsection{0}
   \datalist[entry]{nty/global//global/global/global}
     \entry{test1}{book}{}{}
-      
-ame{author}{1}{}{%
+"###,
+    "      \n",
+    r###"ame{author}{1}{}{%
         {{un=0,uniquepart=base,hash=06a47edae2e847800cfd78323a0e6be8}{%
            family={Encalcer},
            familyi={E\bibinitperiod},
@@ -175,8 +183,10 @@ ame{author}{1}{}{%
 \endrefsection
 \endinput
 
-"###;
-const ENCODE5: &str = r###"% $ biblatex auxiliary file $
+"###
+);
+const ENCODE5: &str = concat!(
+    r###"% $ biblatex auxiliary file $
 % $ biblatex bbl format version 3.3 $
 % Do not modify the above lines!
 %
@@ -198,8 +208,9 @@ const ENCODE5: &str = r###"% $ biblatex auxiliary file $
 \refsection{0}
   \datalist[entry]{nty/global//global/global/global}
     \entry{test}{book}{}{}
-      
-ame{author}{1}{}{%
+"###,
+    "      \n",
+    r###"ame{author}{1}{}{%
         {{un=0,uniquepart=base,hash=06a47edae2e847800cfd78323a0e6be8}{%
            family={Encalcer},
            familyi={E\bibinitperiod},
@@ -233,8 +244,10 @@ ame{author}{1}{}{%
 \endrefsection
 \endinput
 
-"###;
-const ENCODE6: &str = r###"% $ biblatex auxiliary file $
+"###
+);
+const ENCODE6: &str = concat!(
+    r###"% $ biblatex auxiliary file $
 % $ biblatex bbl format version 3.3 $
 % Do not modify the above lines!
 %
@@ -256,8 +269,9 @@ const ENCODE6: &str = r###"% $ biblatex auxiliary file $
 \refsection{0}
   \datalist[entry]{nty/global//global/global/global}
     \entry{test}{book}{}{}
-      
-ame{author}{1}{}{%
+"###,
+    "      \n",
+    r###"ame{author}{1}{}{%
         {{un=0,uniquepart=base,hash=06a47edae2e847800cfd78323a0e6be8}{%
            family={Encalcer},
            familyi={E\bibinitperiod},
@@ -291,8 +305,10 @@ ame{author}{1}{}{%
 \endrefsection
 \endinput
 
-"###;
-const ENCODE7: &str = r###"% $ biblatex auxiliary file $
+"###
+);
+const ENCODE7: &str = concat!(
+    r###"% $ biblatex auxiliary file $
 % $ biblatex bbl format version 3.3 $
 % Do not modify the above lines!
 %
@@ -314,8 +330,9 @@ const ENCODE7: &str = r###"% $ biblatex auxiliary file $
 \refsection{0}
   \datalist[entry]{nty/global//global/global/global}
     \entry{test}{book}{}{}
-      
-ame{author}{1}{}{%
+"###,
+    "      \n",
+    r###"ame{author}{1}{}{%
         {{un=0,uniquepart=base,hash=06a47edae2e847800cfd78323a0e6be8}{%
            family={Encalcer},
            familyi={E\bibinitperiod},
@@ -349,7 +366,8 @@ ame{author}{1}{}{%
 \endrefsection
 \endinput
 
-"###;
+"###
+);
 fn fixture(name: &str) -> &[u8] {
     match name {
         "encoding1.bcf" => {

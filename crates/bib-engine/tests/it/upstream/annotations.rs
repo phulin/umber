@@ -5,9 +5,11 @@ const CONTROL: &[u8] =
     include_bytes!("../../../../../tests/corpus/bib/upstream-2.22/tdata/annotations.bcf");
 const DATA: &[u8] =
     include_bytes!("../../../../../tests/corpus/bib/upstream-2.22/tdata/annotations.bib");
-const EXPECTED_ANN1: &str = r###"    \entry{ann1}{misc}{}{1}
-      
-ame{author}{3}{}{%
+const EXPECTED_ANN1: &str = concat!(
+    r###"    \entry{ann1}{misc}{}{1}
+"###,
+    "      \n",
+    r###"ame{author}{3}{}{%
         {{hash=89a9e5097e11e595700540379c9b3a6b}{%
            family={Last1},
            familyi={L\\bibinitperiod},
@@ -49,10 +51,13 @@ ame{author}{3}{}{%
       \annotation{item}{language}{default}{2}{}{0}{ann2, ann3}
       \annotation{part}{author}{default}{1}{family}{0}{student}
     \endentry
-"###;
-const EXPECTED_ANN2: &str = r###"    \entry{ann2}{misc}{}{3}
-      
-ame{author}{3}{}{%
+"###
+);
+const EXPECTED_ANN2: &str = concat!(
+    r###"    \entry{ann2}{misc}{}{3}
+"###,
+    "      \n",
+    r###"ame{author}{3}{}{%
         {{hash=89a9e5097e11e595700540379c9b3a6b}{%
            family={Last1},
            familyi={L\bibinitperiod},
@@ -98,7 +103,8 @@ ame{author}{3}{}{%
       \annotation{item}{language}{default}{2}{}{1}{ann2}
       \annotation{part}{author}{default}{1}{family}{1}{student}
     \endentry
-"###;
+"###
+);
 fn output() -> Vec<u8> {
     let mut f = FileProvisioner::new(VfsLimits::default()).unwrap();
     f.register_user(
