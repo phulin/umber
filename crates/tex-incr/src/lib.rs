@@ -1573,6 +1573,8 @@ impl Session {
                 &next,
                 &fragments,
                 &next_layout,
+                self.utf8_input_as_bytes,
+                self.root_source_is_byte_projection,
                 input_resolver,
                 font_resolver,
                 image_resolver,

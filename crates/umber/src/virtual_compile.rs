@@ -1194,7 +1194,6 @@ impl VirtualCompileSession {
         self.awaiting = None;
         self.attempts += 1;
         self.attempts_without_progress += 1;
-
         match self.run_attempt() {
             Ok(result) => result,
             Err(error) => {
@@ -1603,6 +1602,19 @@ impl VirtualCompileSession {
         Ok(CompileAttemptResult::Complete(output))
     }
 
+    fn resource_is_bound(&self, key: &ResourceRequestKey) -> bool {
+        match key {
+            ResourceRequestKey::File(key) => {
+                self.files.get(key).is_some()
+                    || self.files.is_unavailable(key)
+                    || user_path_for_key(key).is_ok_and(|path| self.files.contains_user(&path))
+            }
+            ResourceRequestKey::Font(key) => {
+                self.resolved_fonts.contains_key(key) || self.unavailable_fonts.contains(key)
+            }
+        }
+    }
+
     pub fn clear_distribution_cache(&mut self) -> Result<(), CompileError> {
         if let Some(session) = &self.incremental {
             let latest = session.source().as_bytes().to_vec();
@@ -1687,6 +1699,13 @@ impl VirtualCompileSession {
     }
 }
 
+fn resource_request_key(request: &ResourceRequest) -> ResourceRequestKey {
+    match request {
+        ResourceRequest::File(request) => ResourceRequestKey::File(request.key().clone()),
+        ResourceRequest::Font(request) => ResourceRequestKey::Font(request.key.clone()),
+    }
+}
+
 fn resource_sort_key(request: &ResourceRequest) -> (u8, String) {
     match request {
         ResourceRequest::File(request) => (
@@ -1694,13 +1713,6 @@ fn resource_sort_key(request: &ResourceRequest) -> (u8, String) {
             format!("{:?}:{}", request.key().kind(), request.key().name()),
         ),
         ResourceRequest::Font(request) => (1, request.key.logical_name().to_owned()),
-    }
-}
-
-fn resource_request_key(request: &ResourceRequest) -> ResourceRequestKey {
-    match request {
-        ResourceRequest::File(request) => ResourceRequestKey::File(request.key().clone()),
-        ResourceRequest::Font(request) => ResourceRequestKey::Font(request.key.clone()),
     }
 }
 
