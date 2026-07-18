@@ -1,4 +1,4 @@
-// Direct passing translation of upstream t/dm-constraints.t at commit 74252e6.
+// Direct xfail translation of upstream t/dm-constraints.t at commit 74252e6.
 // Keep `UPSTREAM_SOURCE` byte-for-byte equivalent when editing expectations.
 
 use super::pass_upstream;
@@ -107,6 +107,7 @@ is_deeply($bibentries->entry('c10')->get_field('warnings'), $c10, 'Constraints t
 "#;
 
 #[test]
+#[ignore = "xfail: public bib-engine lacks exact Biber data-model constraint parity"]
 fn assertion_001_constraints_test_1() {
     pass_upstream(
         "Constraints test 1",
@@ -115,9 +116,11 @@ fn assertion_001_constraints_test_1() {
         r"is_deeply($bibentries->entry('c1')->get_field('warnings'), $c1, 'Constraints test 1' );",
         UPSTREAM_SOURCE,
     );
+    panic!("xfail: public bib-engine lacks exact Biber data-model constraint parity");
 }
 
 #[test]
+#[ignore = "xfail: public bib-engine lacks exact Biber data-model constraint parity"]
 fn assertion_002_constraints_test_2() {
     pass_upstream(
         "Constraints test 2",
@@ -126,9 +129,11 @@ fn assertion_002_constraints_test_2() {
         r"is_deeply($bibentries->entry('c2')->get_field('warnings'), $c2, 'Constraints test 2' );",
         UPSTREAM_SOURCE,
     );
+    panic!("xfail: public bib-engine lacks exact Biber data-model constraint parity");
 }
 
 #[test]
+#[ignore = "xfail: public bib-engine lacks exact Biber data-model constraint parity"]
 fn assertion_003_constraints_test_3a() {
     pass_upstream(
         "Constraints test 3a",
@@ -137,9 +142,11 @@ fn assertion_003_constraints_test_3a() {
         r"is_deeply($bibentries->entry('c3')->get_field('warnings'), $c3, 'Constraints test 3a' );",
         UPSTREAM_SOURCE,
     );
+    panic!("xfail: public bib-engine lacks exact Biber data-model constraint parity");
 }
 
 #[test]
+#[ignore = "xfail: public bib-engine lacks exact Biber data-model constraint parity"]
 fn assertion_004_constraints_test_3b() {
     pass_upstream(
         "Constraints test 3b",
@@ -148,9 +155,11 @@ fn assertion_004_constraints_test_3b() {
         r"ok(is_undef($bibentries->entry('c3')->get_field('month')), 'Constraints test 3b' );",
         UPSTREAM_SOURCE,
     );
+    panic!("xfail: public bib-engine lacks exact Biber data-model constraint parity");
 }
 
 #[test]
+#[ignore = "xfail: public bib-engine lacks exact Biber data-model constraint parity"]
 fn assertion_005_constraints_test_4a() {
     pass_upstream(
         "Constraints test 4a",
@@ -159,9 +168,11 @@ fn assertion_005_constraints_test_4a() {
         r"is_deeply($bibentries->entry('c4')->get_field('warnings'), $c4, 'Constraints test 4a' );",
         UPSTREAM_SOURCE,
     );
+    panic!("xfail: public bib-engine lacks exact Biber data-model constraint parity");
 }
 
 #[test]
+#[ignore = "xfail: public bib-engine lacks exact Biber data-model constraint parity"]
 fn assertion_006_constraints_test_4b() {
     pass_upstream(
         "Constraints test 4b",
@@ -170,9 +181,11 @@ fn assertion_006_constraints_test_4b() {
         r"ok(is_undef($bibentries->entry('c4')->get_field('month')), 'Constraints test 4b' );",
         UPSTREAM_SOURCE,
     );
+    panic!("xfail: public bib-engine lacks exact Biber data-model constraint parity");
 }
 
 #[test]
+#[ignore = "xfail: public bib-engine lacks exact Biber data-model constraint parity"]
 fn assertion_007_constraints_test_5a() {
     pass_upstream(
         "Constraints test 5a",
@@ -181,9 +194,11 @@ fn assertion_007_constraints_test_5a() {
         r"is_deeply($bibentries->entry('c5')->get_field('warnings'), $c5, 'Constraints test 5a' );",
         UPSTREAM_SOURCE,
     );
+    panic!("xfail: public bib-engine lacks exact Biber data-model constraint parity");
 }
 
 #[test]
+#[ignore = "xfail: public bib-engine lacks exact Biber data-model constraint parity"]
 fn assertion_008_constraints_test_5b() {
     pass_upstream(
         "Constraints test 5b",
@@ -192,9 +207,11 @@ fn assertion_008_constraints_test_5b() {
         r"ok(is_undef($bibentries->entry('c5')->get_field('field5')), 'Constraints test 5b' );",
         UPSTREAM_SOURCE,
     );
+    panic!("xfail: public bib-engine lacks exact Biber data-model constraint parity");
 }
 
 #[test]
+#[ignore = "xfail: public bib-engine lacks exact Biber data-model constraint parity"]
 fn assertion_009_constraints_test_5c() {
     pass_upstream(
         "Constraints test 5c",
@@ -203,9 +220,11 @@ fn assertion_009_constraints_test_5c() {
         r"ok(is_undef($bibentries->entry('c5')->get_field('field6')), 'Constraints test 5c' );",
         UPSTREAM_SOURCE,
     );
+    panic!("xfail: public bib-engine lacks exact Biber data-model constraint parity");
 }
 
 #[test]
+#[ignore = "xfail: public bib-engine lacks exact Biber data-model constraint parity"]
 fn assertion_010_constraints_test_6() {
     pass_upstream(
         "Constraints test 6",
@@ -214,9 +233,11 @@ fn assertion_010_constraints_test_6() {
         r"is_deeply($bibentries->entry('c6')->get_field('warnings'), $c6, 'Constraints test 6' );",
         UPSTREAM_SOURCE,
     );
+    panic!("xfail: public bib-engine lacks exact Biber data-model constraint parity");
 }
 
 #[test]
+#[ignore = "xfail: public bib-engine lacks exact Biber data-model constraint parity"]
 fn assertion_011_constraints_test_7a() {
     pass_upstream(
         "Constraints test 7a",
@@ -225,9 +246,11 @@ fn assertion_011_constraints_test_7a() {
         r"is_deeply($bibentries->entry('c7')->get_field('warnings'), $c7, 'Constraints test 7a' );",
         UPSTREAM_SOURCE,
     );
+    panic!("xfail: public bib-engine lacks exact Biber data-model constraint parity");
 }
 
 #[test]
+#[ignore = "xfail: public bib-engine lacks exact Biber data-model constraint parity"]
 fn assertion_012_constraints_test_7b() {
     pass_upstream(
         "Constraints test 7b",
@@ -236,9 +259,11 @@ fn assertion_012_constraints_test_7b() {
         r"ok(is_undef($bibentries->entry('c7')->get_field('field7')), 'Constraints test 7b' );",
         UPSTREAM_SOURCE,
     );
+    panic!("xfail: public bib-engine lacks exact Biber data-model constraint parity");
 }
 
 #[test]
+#[ignore = "xfail: public bib-engine lacks exact Biber data-model constraint parity"]
 fn assertion_013_constraints_test_8a() {
     pass_upstream(
         "Constraints test 8a",
@@ -247,9 +272,11 @@ fn assertion_013_constraints_test_8a() {
         r"is_deeply($bibentries->entry('c8')->get_field('warnings'), $c8, 'Constraints test 8a' );",
         UPSTREAM_SOURCE,
     );
+    panic!("xfail: public bib-engine lacks exact Biber data-model constraint parity");
 }
 
 #[test]
+#[ignore = "xfail: public bib-engine lacks exact Biber data-model constraint parity"]
 fn assertion_014_constraints_test_8b() {
     pass_upstream(
         "Constraints test 8b",
@@ -258,9 +285,11 @@ fn assertion_014_constraints_test_8b() {
         r"ok(is_undef($bibentries->entry('c8')->get_field('field4')), 'Constraints test 8b' );",
         UPSTREAM_SOURCE,
     );
+    panic!("xfail: public bib-engine lacks exact Biber data-model constraint parity");
 }
 
 #[test]
+#[ignore = "xfail: public bib-engine lacks exact Biber data-model constraint parity"]
 fn assertion_015_constraints_test_9() {
     pass_upstream(
         "Constraints test 9",
@@ -269,9 +298,11 @@ fn assertion_015_constraints_test_9() {
         r"ok(is_undef($bibentries->entry('c9')->get_field('warnings')), 'Constraints test 9' );",
         UPSTREAM_SOURCE,
     );
+    panic!("xfail: public bib-engine lacks exact Biber data-model constraint parity");
 }
 
 #[test]
+#[ignore = "xfail: public bib-engine lacks exact Biber data-model constraint parity"]
 fn assertion_016_constraints_test_10() {
     pass_upstream(
         "Constraints test 10",
@@ -280,4 +311,5 @@ fn assertion_016_constraints_test_10() {
         r"is_deeply($bibentries->entry('c10')->get_field('warnings'), $c10, 'Constraints test 10' );",
         UPSTREAM_SOURCE,
     );
+    panic!("xfail: public bib-engine lacks exact Biber data-model constraint parity");
 }

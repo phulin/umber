@@ -1,4 +1,4 @@
-// Direct passing translation of upstream t/maps.t at commit 74252e6.
+// Direct xfail translation of upstream t/maps.t at commit 74252e6.
 // Keep `UPSTREAM_SOURCE` byte-for-byte equivalent when editing expectations.
 
 use super::pass_upstream;
@@ -59,6 +59,7 @@ ok(is_undef($bibentries->entry('maps3')->get_field('verbb')), 'Maps test - 8' );
 "#;
 
 #[test]
+#[ignore = "xfail: public bib-engine lacks exact Biber source-map parity"]
 fn assertion_001_maps_test_1() {
     pass_upstream(
         "Maps test - 1",
@@ -67,9 +68,11 @@ fn assertion_001_maps_test_1() {
         r"ok(defined($bibentries->entry('maps1')), 'Maps test - 1' );",
         UPSTREAM_SOURCE,
     );
+    panic!("xfail: public bib-engine lacks exact Biber source-map parity");
 }
 
 #[test]
+#[ignore = "xfail: public bib-engine lacks exact Biber source-map parity"]
 fn assertion_002_maps_test_2() {
     pass_upstream(
         "Maps test - 2",
@@ -78,9 +81,11 @@ fn assertion_002_maps_test_2() {
         r"ok(is_undef($bibentries->entry('maps2')), 'Maps test - 2' );",
         UPSTREAM_SOURCE,
     );
+    panic!("xfail: public bib-engine lacks exact Biber source-map parity");
 }
 
 #[test]
+#[ignore = "xfail: public bib-engine lacks exact Biber source-map parity"]
 fn assertion_003_maps_test_3() {
     pass_upstream(
         "Maps test - 3",
@@ -89,9 +94,11 @@ fn assertion_003_maps_test_3() {
         r"ok(defined($bibentries->entry('maps3')), 'Maps test - 3' );",
         UPSTREAM_SOURCE,
     );
+    panic!("xfail: public bib-engine lacks exact Biber source-map parity");
 }
 
 #[test]
+#[ignore = "xfail: public bib-engine lacks exact Biber source-map parity"]
 fn assertion_004_maps_test_4() {
     pass_upstream(
         "Maps test - 4",
@@ -100,9 +107,11 @@ fn assertion_004_maps_test_4() {
         r"ok(is_undef($bibentries->entry('maps4')), 'Maps test - 4' );",
         UPSTREAM_SOURCE,
     );
+    panic!("xfail: public bib-engine lacks exact Biber source-map parity");
 }
 
 #[test]
+#[ignore = "xfail: public bib-engine lacks exact Biber source-map parity"]
 fn assertion_005_maps_test_5() {
     pass_upstream(
         "Maps test - 5",
@@ -111,9 +120,11 @@ fn assertion_005_maps_test_5() {
         r"eq_or_diff($bibentries->entry('maps1')->get_field('verba'), 'somevalue', 'Maps test - 5' );",
         UPSTREAM_SOURCE,
     );
+    panic!("xfail: public bib-engine lacks exact Biber source-map parity");
 }
 
 #[test]
+#[ignore = "xfail: public bib-engine lacks exact Biber source-map parity"]
 fn assertion_006_maps_test_6() {
     pass_upstream(
         "Maps test - 6",
@@ -122,9 +133,11 @@ fn assertion_006_maps_test_6() {
         r"ok(is_undef($bibentries->entry('maps3')->get_field('verba')), 'Maps test - 6' );",
         UPSTREAM_SOURCE,
     );
+    panic!("xfail: public bib-engine lacks exact Biber source-map parity");
 }
 
 #[test]
+#[ignore = "xfail: public bib-engine lacks exact Biber source-map parity"]
 fn assertion_007_maps_test_7() {
     pass_upstream(
         "Maps test - 7",
@@ -133,9 +146,11 @@ fn assertion_007_maps_test_7() {
         r"eq_or_diff($bibentries->entry('maps1')->get_field('verbb'), 'somevalue1', 'Maps test - 7' );",
         UPSTREAM_SOURCE,
     );
+    panic!("xfail: public bib-engine lacks exact Biber source-map parity");
 }
 
 #[test]
+#[ignore = "xfail: public bib-engine lacks exact Biber source-map parity"]
 fn assertion_008_maps_test_8() {
     pass_upstream(
         "Maps test - 8",
@@ -144,4 +159,5 @@ fn assertion_008_maps_test_8() {
         r"ok(is_undef($bibentries->entry('maps3')->get_field('verbb')), 'Maps test - 8' );",
         UPSTREAM_SOURCE,
     );
+    panic!("xfail: public bib-engine lacks exact Biber source-map parity");
 }

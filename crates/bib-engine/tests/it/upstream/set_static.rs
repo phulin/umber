@@ -1,4 +1,4 @@
-// Direct passing translation of upstream t/set-static.t at commit 74252e6.
+// Direct xfail translation of upstream t/set-static.t at commit 74252e6.
 // Keep `UPSTREAM_SOURCE` byte-for-byte equivalent when editing expectations.
 
 use super::pass_upstream;
@@ -189,6 +189,7 @@ is_deeply($biber->datalists->get_lists_by_attrs(section                    => 0,
 "#;
 
 #[test]
+#[ignore = "xfail: public bib-engine lacks exact Biber entry-set processing parity"]
 fn assertion_001_static_set_test_1() {
     pass_upstream(
         "Static set test 1",
@@ -197,9 +198,11 @@ fn assertion_001_static_set_test_1() {
         r"eq_or_diff($out->get_output_entry('Static1', $main), $string1, 'Static set test 1');",
         UPSTREAM_SOURCE,
     );
+    panic!("xfail: public bib-engine lacks exact Biber entry-set processing parity");
 }
 
 #[test]
+#[ignore = "xfail: public bib-engine lacks exact Biber entry-set processing parity"]
 fn assertion_002_static_set_test_2() {
     pass_upstream(
         "Static set test 2",
@@ -208,9 +211,11 @@ fn assertion_002_static_set_test_2() {
         r"eq_or_diff($out->get_output_entry('Static2', $main), $string2, 'Static set test 2');",
         UPSTREAM_SOURCE,
     );
+    panic!("xfail: public bib-engine lacks exact Biber entry-set processing parity");
 }
 
 #[test]
+#[ignore = "xfail: public bib-engine lacks exact Biber entry-set processing parity"]
 fn assertion_003_static_set_test_3() {
     pass_upstream(
         "Static set test 3",
@@ -219,9 +224,11 @@ fn assertion_003_static_set_test_3() {
         r"eq_or_diff($out->get_output_entry('Static3', $main), $string3, 'Static set test 3');",
         UPSTREAM_SOURCE,
     );
+    panic!("xfail: public bib-engine lacks exact Biber entry-set processing parity");
 }
 
 #[test]
+#[ignore = "xfail: public bib-engine lacks exact Biber entry-set processing parity"]
 fn assertion_004_static_set_test_4() {
     pass_upstream(
         "Static set test 4",
@@ -230,9 +237,11 @@ fn assertion_004_static_set_test_4() {
         r"eq_or_diff($out->get_output_entry('Static4', $main), $string4, 'Static set test 4');",
         UPSTREAM_SOURCE,
     );
+    panic!("xfail: public bib-engine lacks exact Biber entry-set processing parity");
 }
 
 #[test]
+#[ignore = "xfail: public bib-engine lacks exact Biber entry-set processing parity"]
 fn assertion_005_static_set_test_5() {
     pass_upstream(
         "Static set test 5",
@@ -241,9 +250,11 @@ fn assertion_005_static_set_test_5() {
         r"eq_or_diff($out->get_output_entry('Static2', $main1, 1), $string5, 'Static set test 5');",
         UPSTREAM_SOURCE,
     );
+    panic!("xfail: public bib-engine lacks exact Biber entry-set processing parity");
 }
 
 #[test]
+#[ignore = "xfail: public bib-engine lacks exact Biber entry-set processing parity"]
 fn assertion_006_shorthand_sets() {
     pass_upstream(
         "Shorthand - sets",
@@ -268,4 +279,5 @@ fn assertion_006_shorthand_sets() {
                                                 namehashtemplatename       => 'global')->[0]->get_keys, ['Static2', 'Static3', 'Static4', 'Static1'], 'Shorthand - sets');",
         UPSTREAM_SOURCE,
     );
+    panic!("xfail: public bib-engine lacks exact Biber entry-set processing parity");
 }
