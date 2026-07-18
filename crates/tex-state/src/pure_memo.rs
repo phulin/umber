@@ -7,6 +7,8 @@
 use crate::dependency::DependencyKey;
 use crate::env::banks::IntParam;
 use crate::glue::GlueSpec;
+use crate::ids::FontId;
+use crate::interner::Symbol;
 use crate::survivor::RetainedNodeList;
 use crate::{ContentHash, DetachedMemoValue, InputSummary, ObservedDependency, RootSpanId};
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
@@ -485,6 +487,13 @@ pub enum PureParagraphMutation {
         param: IntParam,
         expected: i32,
         value: i32,
+        global: bool,
+    },
+    CurrentFont {
+        expected_font: FontId,
+        expected_symbol: Option<Symbol>,
+        value_font: FontId,
+        value_symbol: Option<Symbol>,
         global: bool,
     },
 }

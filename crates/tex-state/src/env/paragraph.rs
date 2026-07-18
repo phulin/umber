@@ -3,6 +3,8 @@
 use super::Env;
 use crate::cell::{BankTag, CellId};
 use crate::env::banks::IntParam;
+use crate::ids::FontId;
+use crate::interner::Symbol;
 use crate::{PureParagraphMutation, PureParagraphMutationSummary};
 use ahash::{AHashMap, RandomState};
 
@@ -104,7 +106,8 @@ impl Env {
                     value: value as u32 as i32,
                     global,
                 },
-                _ => unreachable!("paragraph mutation recorder only sees count/int cells"),
+                BankTag::CurrentFont => current_font_mutation(entry_value, value, global),
+                _ => unreachable!("unsupported paragraph mutation cell"),
             };
             let recorder = self
                 .paragraph_mutations
@@ -177,7 +180,12 @@ impl Env {
                         value: self.semantic_word(recorded.cell) as u32 as i32,
                         global: recorded.global,
                     },
-                    _ => unreachable!("filtered count/int paragraph survivor"),
+                    BankTag::CurrentFont => current_font_mutation(
+                        recorded.expected,
+                        self.semantic_word(recorded.cell),
+                        recorded.global,
+                    ),
+                    _ => unreachable!("unsupported paragraph mutation survivor"),
                 })
                 .collect()
         };
@@ -194,5 +202,24 @@ impl Env {
         self.paragraph_mutations
             .take()
             .expect("paragraph mutation recorder missing at abandon");
+    }
+}
+
+fn current_font_mutation(expected: u64, value: u64, global: bool) -> PureParagraphMutation {
+    let decode = |word: u64| {
+        let symbol = word >> 32;
+        (
+            FontId::new(word as u32),
+            (symbol != 0).then(|| Symbol::new((symbol - 1) as u32)),
+        )
+    };
+    let (expected_font, expected_symbol) = decode(expected);
+    let (value_font, value_symbol) = decode(value);
+    PureParagraphMutation::CurrentFont {
+        expected_font,
+        expected_symbol,
+        value_font,
+        value_symbol,
+        global,
     }
 }

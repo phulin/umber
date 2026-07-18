@@ -1423,10 +1423,7 @@ impl Universe {
             let mut build = |hash: &mut EngineBoundaryHasher<'_>| hash.glue(id);
             projection(&mut build)
         };
-        let font = |id| {
-            let mut build = |hash: &mut EngineBoundaryHasher<'_>| hash.font(id);
-            projection(&mut build)
-        };
+        let font = |id| self.semantic_font_dependency_value(id);
         let node_list = |id| {
             let mut build = |hash: &mut EngineBoundaryHasher<'_>| hash.node_list(id);
             projection(&mut build)
@@ -1655,6 +1652,18 @@ impl Universe {
             | DependencyKey::Page(_)
             | DependencyKey::World { .. }
             | DependencyKey::Query { .. } => None,
+        }
+    }
+
+    /// Projects a selected font through the same semantic dependency domain
+    /// used by [`Self::semantic_dependency_value`].
+    #[doc(hidden)]
+    #[must_use]
+    pub fn semantic_font_dependency_value(&self, font: FontId) -> DependencyValue {
+        const DOMAIN: u64 = 0x6465_7065_6e64_0001;
+        DependencyValue::Projection {
+            schema: 1,
+            fingerprint: self.engine_boundary_hash(DOMAIN, |hash| hash.font(font)),
         }
     }
 
@@ -4506,6 +4515,7 @@ impl Universe {
         id: FontId,
     ) {
         self.stores.set_current_font_selector(symbol, id);
+        self.mark_cell_changed(DependencyBank::CurrentFont, 0);
     }
 
     pub fn set_current_font_selector_global(
@@ -4514,6 +4524,7 @@ impl Universe {
         id: FontId,
     ) {
         self.stores.set_current_font_selector_global(symbol, id);
+        self.mark_cell_changed(DependencyBank::CurrentFont, 0);
     }
 
     #[must_use]

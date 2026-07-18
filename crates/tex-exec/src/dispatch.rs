@@ -197,18 +197,6 @@ pub(crate) fn dispatch_delivered_token_with_context(
             )
         }
         Meaning::Font(id) => {
-            let selector_changes = match token {
-                Token::Cs(symbol) => {
-                    stores.current_font() != id
-                        || stores.current_font_symbol().map(|id| id.symbol()) != Some(symbol)
-                }
-                _ => stores.current_font() != id,
-            };
-            if selector_changes {
-                execution.mark_paragraph_barrier(
-                    tex_state::ParagraphBarrierReason::UnsupportedEscapingWrite,
-                );
-            }
             if let Token::Cs(symbol) = token {
                 stores.set_current_font_selector(symbol, id);
             } else {

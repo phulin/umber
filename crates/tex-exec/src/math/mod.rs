@@ -563,13 +563,6 @@ fn dispatch_math_control(
             assignments::execute_assignment_meaning(meaning, traced, input, stores, execution)
         }
         Meaning::Font(id) => {
-            if stores.current_font() != id
-                || stores.current_font_symbol().map(|id| id.symbol()) != Some(symbol)
-            {
-                execution.mark_paragraph_barrier(
-                    tex_state::ParagraphBarrierReason::UnsupportedEscapingWrite,
-                );
-            }
             stores.set_current_font_selector(symbol, id);
             Ok(DispatchAction::Continue)
         }

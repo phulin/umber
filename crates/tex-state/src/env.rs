@@ -885,6 +885,8 @@ impl Env {
     }
 
     fn set_current_font_word(&mut self, word: u64, global: bool) {
+        let old = self.current_font.word;
+        self.record_paragraph_mutation(CellId::new(BankTag::CurrentFont, 0), old, word, global);
         let cell = if global {
             CellId::new_global(BankTag::CurrentFont, 0)
         } else {

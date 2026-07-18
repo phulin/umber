@@ -858,6 +858,28 @@ fn paragraph_mutations_keep_only_compacted_root_survivors() {
 }
 
 #[test]
+fn paragraph_mutations_record_current_font_selector_transitions() {
+    let mut env = Env::new();
+    let checkpoint = env.begin_paragraph_mutations();
+    let selector = Symbol::new(7);
+    let font = FontId::new(2);
+
+    env.set_current_font_selector(selector, font);
+
+    let summary = env.finish_paragraph_mutations(checkpoint);
+    assert_eq!(
+        summary.mutations,
+        vec![crate::PureParagraphMutation::CurrentFont {
+            expected_font: FontId::new(0),
+            expected_symbol: None,
+            value_font: font,
+            value_symbol: Some(selector),
+            global: false,
+        }]
+    );
+}
+
+#[test]
 fn paragraph_mutations_omit_restored_root_values_and_nested_locals() {
     let mut env = Env::new();
     let checkpoint = env.begin_paragraph_mutations();

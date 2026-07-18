@@ -284,6 +284,22 @@ fn projected_break_validation_value(
     {
         return tex_state::DependencyValue::Integer(i64::from(value));
     }
+    if let Some(font) = mutations
+        .iter()
+        .rev()
+        .find_map(|mutation| match (*mutation, key) {
+            (
+                tex_state::PureParagraphMutation::CurrentFont { value_font, .. },
+                tex_state::DependencyKey::Cell {
+                    bank: tex_state::DependencyBank::CurrentFont,
+                    index: 0,
+                },
+            ) => Some(value_font),
+            _ => None,
+        })
+    {
+        return stores.semantic_font_dependency_value(font);
+    }
     paragraph_validation_value(stores, execution, key)
 }
 
@@ -300,24 +316,26 @@ fn validate_effects(effects: &[DetachedVirtualEffect]) -> bool {
 fn validate_mutations(stores: &Universe, mutations: &[tex_state::PureParagraphMutation]) -> bool {
     let mut seen = ahash::AHashSet::new();
     mutations.iter().all(|mutation| {
-        let expected = match *mutation {
-            tex_state::PureParagraphMutation::Count { expected, .. } => expected,
-            tex_state::PureParagraphMutation::IntParam { expected, .. } => expected,
-        };
         let key = match *mutation {
             tex_state::PureParagraphMutation::Count { index, .. } => (0_u8, index),
             tex_state::PureParagraphMutation::IntParam { param, .. } => (1_u8, param.raw()),
+            tex_state::PureParagraphMutation::CurrentFont { .. } => (2_u8, 0),
         };
         if !seen.insert(key) {
             return true;
         }
         match *mutation {
-            tex_state::PureParagraphMutation::Count { index, .. } => {
-                stores.count(index) == expected
-            }
-            tex_state::PureParagraphMutation::IntParam { param, .. } => {
-                stores.int_param(param) == expected
-            }
+            tex_state::PureParagraphMutation::Count {
+                index, expected, ..
+            } => stores.count(index) == expected,
+            tex_state::PureParagraphMutation::IntParam {
+                param, expected, ..
+            } => stores.int_param(param) == expected,
+            tex_state::PureParagraphMutation::CurrentFont {
+                expected_font,
+                expected_symbol,
+                ..
+            } => font_selector_matches(stores, expected_font, expected_symbol),
         }
     })
 }
@@ -349,8 +367,41 @@ fn replay_mutations(stores: &mut Universe, mutations: &[tex_state::PureParagraph
                     stores.set_int_param(param, value);
                 }
             }
+            tex_state::PureParagraphMutation::CurrentFont {
+                value_font,
+                value_symbol,
+                global,
+                ..
+            } => match (global, value_symbol) {
+                (true, Some(symbol)) => {
+                    stores.set_current_font_selector_global(symbol, value_font);
+                }
+                (false, Some(symbol)) => stores.set_current_font_selector(symbol, value_font),
+                (true, None) => stores.set_current_font_global(value_font),
+                (false, None) => stores.set_current_font(value_font),
+            },
         }
     }
+}
+
+fn font_selector_matches(
+    stores: &Universe,
+    expected_font: tex_state::ids::FontId,
+    expected_symbol: Option<tex_state::interner::Symbol>,
+) -> bool {
+    stores.semantic_font_dependency_value(stores.current_font())
+        == stores.semantic_font_dependency_value(expected_font)
+        && match (
+            stores.current_font_symbol().map(|symbol| symbol.symbol()),
+            expected_symbol,
+        ) {
+            (Some(current), Some(expected)) => {
+                stores.control_sequence_kind(current) == stores.control_sequence_kind(expected)
+                    && stores.resolve(current) == stores.resolve(expected)
+            }
+            (None, None) => true,
+            (Some(_), None) | (None, Some(_)) => false,
+        }
 }
 
 fn replay_effects(stores: &mut Universe, effects: &[DetachedVirtualEffect]) {
