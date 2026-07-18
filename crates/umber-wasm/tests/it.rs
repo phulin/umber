@@ -514,7 +514,7 @@ fn errors_are_typed_and_invalid_boundary_values_throw() {
 }
 
 #[wasm_bindgen_test]
-fn resource_batches_use_rust_validation_and_retry_state() {
+fn empty_resource_batch_uses_rust_no_progress_state() {
     let mut stalled_session = session("main.tex");
     stalled_session
         .add_user_file("main.tex", &bytes(b"\\input remote \\end"))
@@ -531,7 +531,10 @@ fn resource_batches_use_rust_validation_and_retry_state() {
         string_field(&field(stalled.as_ref(), "diagnostic"), "code"),
         "no-progress"
     );
+}
 
+#[wasm_bindgen_test]
+fn resource_batches_use_rust_atomic_validation_and_idempotency() {
     let mut fresh = session("main.tex");
     fresh
         .add_user_file("main.tex", &bytes(b"\\input remote \\end"))
@@ -571,7 +574,16 @@ fn resource_batches_use_rust_validation_and_retry_state() {
         .provide_resources(&Array::of1(&first))
         .expect("exact duplicate is idempotent");
     assert_eq!(fresh.resolved_file_count().expect("count"), 1);
+}
 
+#[wasm_bindgen_test]
+fn resource_batches_use_rust_limits() {
+    let request = Object::new();
+    set(&request, "type", &JsValue::from_str("file"));
+    set(&request, "domain", &JsValue::from_str("tex"));
+    set(&request, "kind", &JsValue::from_str("tex"));
+    set(&request, "name", &JsValue::from_str("remote.tex"));
+    set(&request, "originalName", &JsValue::from_str("remote"));
     let limited_options = options("main.tex");
     let limits = Object::new();
     set(&limits, "oneFileBytes", &JsValue::from_f64(1.0));
