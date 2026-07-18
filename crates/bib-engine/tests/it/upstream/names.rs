@@ -1,206 +1,994 @@
-// Direct translation of upstream t/names.t at commit 74252e6.
-// Keep `UPSTREAM_SOURCE` byte-for-byte equivalent when editing expectations.
+// Native Rust translation of the corresponding upstream Biber name test at commit 74252e6.
 
-fn pass_upstream(
-    assertion: &str,
-    actual_expression: &str,
-    expected_expression: &str,
-    upstream_call: &str,
-    upstream_source: &str,
-) {
-    super::pass_upstream(
-        assertion,
-        actual_expression,
-        expected_expression,
-        upstream_call,
-        upstream_source,
-    );
-    panic!("xfail: bib-engine has no public prepared-name query API");
+use std::path::PathBuf;
+
+use bib_engine::{
+    BibAttempt, BibJob, BibOptionsBuilder, BibSession, EntryId, FieldId, FieldValue,
+    FileProvisioner, Name, NamePartValue, OutputFormat, OutputRequest, ProcessedBibliography,
+    ResolvedFile, SectionId, VfsLimits, VirtualPath,
+};
+
+#[derive(Debug, Eq, PartialEq)]
+struct PartSnapshot {
+    value: Option<String>,
+    initials: Vec<String>,
 }
 
-const UPSTREAM_SOURCE: &str = r####"# -*- cperl -*-
-use strict;
-use warnings;
-use utf8;
-no warnings 'utf8';
+#[derive(Debug, Eq, PartialEq)]
+struct NameSnapshot {
+    given: PartSnapshot,
+    family: PartSnapshot,
+    prefix: PartSnapshot,
+    suffix: PartSnapshot,
+}
 
-use Test::More tests => 75;
-use Test::Differences;
-unified_diff;
+struct FixtureResult {
+    document: ProcessedBibliography,
+    bbl: String,
+}
 
-use Biber;
-use Biber::Utils;
-use Biber::Output::bbl;
-use Log::Log4perl;
-use Unicode::Normalize;
-use Encode;
-chdir("t/tdata");
+fn process_fixture(control_name: &str, inline_bib: Option<&str>) -> FixtureResult {
+    let fixture_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../tests/corpus/bib/upstream-2.22/tdata");
+    let control = VirtualPath::user(control_name).expect("valid control path");
+    let mut provisioner = FileProvisioner::new(VfsLimits::default()).expect("valid VFS limits");
+    provisioner
+        .register_user(
+            control.clone(),
+            std::fs::read(fixture_dir.join(control_name)).expect("committed BCF fixture"),
+        )
+        .expect("unique control file");
+    let output_path = VirtualPath::user("native.bbl").expect("valid output path");
+    let mut options = BibOptionsBuilder::new();
+    options
+        .output(OutputRequest::new(output_path, OutputFormat::Bbl))
+        .expect("unique output");
+    let job = BibJob::new(control, options.freeze());
+    let mut session = BibSession::default();
+    loop {
+        match session.process(&job, &provisioner.snapshot()) {
+            BibAttempt::Complete(result) => {
+                let bbl = result
+                    .files()
+                    .find(|file| file.path().as_str().ends_with("native.bbl"))
+                    .map(|file| String::from_utf8_lossy(file.bytes()).into_owned())
+                    .unwrap_or_default();
+                return FixtureResult {
+                    document: result.document().as_ref().clone(),
+                    bbl,
+                };
+            }
+            BibAttempt::NeedResources(requests) => {
+                provisioner.expect(&requests);
+                for request in requests
+                    .required
+                    .iter()
+                    .chain(requests.prefetch_hints.iter())
+                {
+                    let path = fixture_dir.join(request.key().name());
+                    let bytes = if request.key().name().ends_with(".bib") {
+                        inline_bib
+                            .map(|bib| bib.as_bytes().to_vec())
+                            .or_else(|| std::fs::read(&path).ok())
+                    } else {
+                        std::fs::read(&path).ok()
+                    };
+                    let Some(bytes) = bytes else { continue };
+                    provisioner
+                        .provision(ResolvedFile {
+                            request: request.key().clone(),
+                            virtual_path: format!("/texlive/bib/{}", request.key().name()).into(),
+                            bytes,
+                            expected_digest: None,
+                        })
+                        .expect("requested fixture is valid");
+                }
+            }
+            BibAttempt::Failed(failure) => panic!("fixture processing failed: {failure:?}"),
+        }
+    }
+}
 
-# Set up Biber object
-my $biber = Biber->new(noconf => 1);
-my $LEVEL = 'ERROR';
-my $l4pconf = qq|
-    log4perl.category.main                             = $LEVEL, Screen
-    log4perl.category.screen                           = $LEVEL, Screen
-    log4perl.appender.Screen                           = Log::Log4perl::Appender::Screen
-    log4perl.appender.Screen.utf8                      = 1
-    log4perl.appender.Screen.Threshold                 = $LEVEL
-    log4perl.appender.Screen.stderr                    = 0
-    log4perl.appender.Screen.layout                    = Log::Log4perl::Layout::SimpleLayout
-|;
-Log::Log4perl->init(\$l4pconf);
+fn part_snapshot(part: Option<&NamePartValue>) -> PartSnapshot {
+    PartSnapshot {
+        value: part.map(|part| part.value().as_str().to_owned()),
+        initials: part
+            .into_iter()
+            .flat_map(NamePartValue::initials)
+            .map(str::to_owned)
+            .collect(),
+    }
+}
 
-$biber->parse_ctrlfile('names.bcf');
-$biber->set_output_obj(Biber::Output::bbl->new());
+fn name_snapshot(name: &Name) -> NameSnapshot {
+    NameSnapshot {
+        given: part_snapshot(name.given()),
+        family: part_snapshot(name.family()),
+        prefix: part_snapshot(name.prefix()),
+        suffix: part_snapshot(name.suffix()),
+    }
+}
 
-# Options - we could set these in the control file but it's nice to see what we're
-# relying on here for tests
+fn parsed_name(control: &str, source: &str) -> Name {
+    let bib = format!("@book{{native, author = {{{source}}}}}");
+    let fixture = process_fixture(control, Some(&bib));
+    let entry = fixture
+        .document
+        .section(SectionId::new(0))
+        .and_then(|section| section.entry(&EntryId::new("native").expect("valid entry key")))
+        .expect("synthetic entry is processed");
+    match entry
+        .fields()
+        .get(&FieldId::new("author").expect("valid field name"))
+        .expect("synthetic author is processed")
+    {
+        FieldValue::NameList(names) => names.iter().next().expect("one synthetic author").clone(),
+        value => panic!("expected a name list, got {value:?}"),
+    }
+}
 
-# Biber options
-Biber::Config->setoption('namesep', 'und'); # Testing custom name splitting string
-Biber::Config->setoption('others_string', 'andere'); # Testing custom implied "et al"
-Biber::Config->setoption('sortlocale', 'en_GB.UTF-8');
-Biber::Config->setblxoption(undef,'mincitenames', 3);
+fn field_text(control: &str, entry_key: &str, field_name: &str) -> Option<String> {
+    let fixture = process_fixture(control, None);
+    let entry = fixture
+        .document
+        .section(SectionId::new(0))?
+        .entry(&EntryId::new(entry_key).expect("valid entry key"))?;
+    match entry
+        .fields()
+        .get(&FieldId::new(field_name).expect("valid field name"))?
+    {
+        FieldValue::Literal(value) => Some(value.as_str().to_owned()),
+        FieldValue::Integer(value) => Some(value.to_string()),
+        FieldValue::Boolean(value) => Some(if *value { "1" } else { "0" }.to_owned()),
+        _ => None,
+    }
+}
 
-# Now generate the information
-$biber->prepare;
-my $out = $biber->get_output_obj;
-my $section = $biber->sections->get_section(0);
-my $main = $biber->datalists->get_list('custom/global//global/global/global');
-my $nhtest = $biber->datalists->get_list('custom/global//global/global/test');
-my $bibentries = $section->bibentries;
+fn name_count(control: &str, entry_key: &str) -> usize {
+    let fixture = process_fixture(control, None);
+    let entry = fixture
+        .document
+        .section(SectionId::new(0))
+        .and_then(|section| section.entry(&EntryId::new(entry_key).expect("valid entry key")))
+        .expect("fixture entry exists");
+    let source = match entry
+        .fields()
+        .get(&FieldId::new("labelnamesource").expect("valid field name"))
+        .expect("label-name source exists")
+    {
+        FieldValue::Literal(source) => source.as_str(),
+        value => panic!("expected literal label-name source, got {value:?}"),
+    };
+    match entry
+        .fields()
+        .get(&FieldId::new(source).expect("valid name field"))
+        .expect("selected name list exists")
+    {
+        FieldValue::NameList(names) => names.len(),
+        value => panic!("expected selected name list, got {value:?}"),
+    }
+}
 
-my $name1 =
-    { given               => {string => 'John', initial => ['J']},
-      family              => {string => 'Doe', initial => ['D']},
-      prefix              => {string => undef, initial => undef},
-      suffix              => {string => undef, initial => undef}};
+fn name_initial(control: &str, entry_key: &str, part: &str, initial_index: usize) -> String {
+    let fixture = process_fixture(control, None);
+    let entry = fixture
+        .document
+        .section(SectionId::new(0))
+        .and_then(|section| section.entry(&EntryId::new(entry_key).expect("valid entry key")))
+        .expect("fixture entry exists");
+    let names = match entry
+        .fields()
+        .get(&FieldId::new("author").expect("valid field name"))
+        .expect("author list exists")
+    {
+        FieldValue::NameList(names) => names,
+        value => panic!("expected author name list, got {value:?}"),
+    };
+    let name = names.iter().next().expect("first author exists");
+    let part = match part {
+        "given" => name.given(),
+        "family" => name.family(),
+        "prefix" => name.prefix(),
+        "suffix" => name.suffix(),
+        _ => None,
+    }
+    .expect("requested name part exists");
+    part.initials()
+        .nth(initial_index)
+        .expect("requested initial exists")
+        .to_owned()
+}
 
-my $name2 =
-    { given               => {string => 'John', initial => ['J']},
-      family              => {string => 'Doe', initial  => ['D']},
-      prefix              => {string => undef, initial => undef},
-      suffix              => {string => 'Jr', initial => ['J']}};
+fn output_entry(control: &str, entry_key: &str, occurrence: usize) -> String {
+    let fixture = process_fixture(control, None);
+    let marker = format!("\\\\entry{{{entry_key}}}");
+    let marker_at = fixture
+        .bbl
+        .match_indices(&marker)
+        .nth(occurrence)
+        .map(|(offset, _)| offset)
+        .expect("entry is present in generated BBL");
+    let start = fixture.bbl[..marker_at].rfind("    ").unwrap_or(marker_at);
+    let end = fixture.bbl[marker_at..]
+        .find("\\\\endentry")
+        .map(|offset| marker_at + offset + "\\\\endentry".len())
+        .expect("entry is terminated");
+    fixture.bbl[start..end].to_owned()
+}
 
-my $name3 =
-    { given               => {string => 'Johann~Gottfried', initial => ['J', 'G']},
-      family              => {string => 'Berlichingen zu~Hornberg', initial => ['B', 'z', 'H']},
-      prefix              => {string => 'von', initial => ['v']},
-      suffix              => {string => undef, initial => undef}};
+fn to_extended_name(name: &Name) -> String {
+    let mut assignments = Vec::new();
+    if let Some(family) = name.family() {
+        assignments.push(format!("family={}", family.value().as_str()));
+    }
+    if let Some(given) = name.given() {
+        assignments.push(format!("given={}", given.value().as_str()));
+    }
+    if let Some(prefix) = name.prefix() {
+        assignments.push(format!("prefix={}", prefix.value().as_str()));
+    }
+    if let Some(suffix) = name.suffix() {
+        assignments.push(format!("suffix={}", suffix.value().as_str()));
+    }
+    if name.use_prefix() == Some(true) {
+        assignments.push("useprefix=true".to_owned());
+    }
+    assignments.join(", ")
+}
 
-my $name4 =
-    { given               => {string => 'Johann~Gottfried', initial => ['J', 'G']},
-      family              => {string => 'Berlichingen zu~Hornberg', initial => ['B', 'z', 'H']},
-      prefix              => {string => 'von', initial => ['v']},
-      suffix              => {string => undef, initial => undef}};
+#[test]
+fn assertion_001_parsename_1() {
+    assert_eq!(
+        name_snapshot(&parsed_name(r#####"names.bcf"#####, r#####"John Doe"#####)),
+        NameSnapshot {
+            given: PartSnapshot {
+                value: Some(r#####"John"#####.to_owned()),
+                initials: vec![r#####"J"#####.to_owned()]
+            },
+            family: PartSnapshot {
+                value: Some(r#####"Doe"#####.to_owned()),
+                initials: vec![r#####"D"#####.to_owned()]
+            },
+            prefix: PartSnapshot {
+                value: None,
+                initials: vec![]
+            },
+            suffix: PartSnapshot {
+                value: None,
+                initials: vec![]
+            }
+        }
+    );
+}
 
-my $name5 =
-   {  given               => {string => undef, initial => undef},
-      family              => {string => 'Robert and Sons, Inc.', initial => ['R']},
-      prefix              => {string => undef, initial => undef},
-      suffix              => {string => undef, initial => undef}};
+#[test]
+fn assertion_002_parsename_2() {
+    assert_eq!(
+        name_snapshot(&parsed_name(
+            r#####"names.bcf"#####,
+            r#####"Doe, Jr, John"#####
+        )),
+        NameSnapshot {
+            given: PartSnapshot {
+                value: Some(r#####"John"#####.to_owned()),
+                initials: vec![r#####"J"#####.to_owned()]
+            },
+            family: PartSnapshot {
+                value: Some(r#####"Doe"#####.to_owned()),
+                initials: vec![r#####"D"#####.to_owned()]
+            },
+            prefix: PartSnapshot {
+                value: None,
+                initials: vec![]
+            },
+            suffix: PartSnapshot {
+                value: Some(r#####"Jr"#####.to_owned()),
+                initials: vec![r#####"J"#####.to_owned()]
+            }
+        }
+    );
+}
 
-my $name6 =
-   {  given               => {string => 'ʿAbdallāh', initial => ['A']},
-      family              => {string => 'al-Ṣāliḥ', initial => ['Ṣ']},
-      prefix              => {string => undef, initial => undef},
-      suffix              => {string => undef, initial => undef}};
+#[test]
+fn assertion_003_parsename_3() {
+    assert_eq!(
+        name_snapshot(&parsed_name(
+            r#####"names.bcf"#####,
+            r#####"von Berlichingen zu Hornberg, Johann Gottfried"#####
+        )),
+        NameSnapshot {
+            given: PartSnapshot {
+                value: Some(r#####"Johann~Gottfried"#####.to_owned()),
+                initials: vec![r#####"J"#####.to_owned(), r#####"G"#####.to_owned()]
+            },
+            family: PartSnapshot {
+                value: Some(r#####"Berlichingen zu~Hornberg"#####.to_owned()),
+                initials: vec![
+                    r#####"B"#####.to_owned(),
+                    r#####"z"#####.to_owned(),
+                    r#####"H"#####.to_owned()
+                ]
+            },
+            prefix: PartSnapshot {
+                value: Some(r#####"von"#####.to_owned()),
+                initials: vec![r#####"v"#####.to_owned()]
+            },
+            suffix: PartSnapshot {
+                value: None,
+                initials: vec![]
+            }
+        }
+    );
+}
 
-my $name7 =
-   {  given               => {string => 'Jean Charles~Gabriel', initial => ['J', 'C', 'G']},
-      family              => {string => 'Vallée~Poussin', initial => ['V', 'P']},
-      prefix              => {string => 'de~la', initial => ['d', 'l']},
-      suffix              => {string => undef, initial => undef}};
+#[test]
+fn assertion_004_parsename_4() {
+    assert_eq!(
+        name_snapshot(&parsed_name(
+            r#####"names.bcf"#####,
+            r#####"von Berlichingen zu Hornberg, Johann Gottfried"#####
+        )),
+        NameSnapshot {
+            given: PartSnapshot {
+                value: Some(r#####"Johann~Gottfried"#####.to_owned()),
+                initials: vec![r#####"J"#####.to_owned(), r#####"G"#####.to_owned()]
+            },
+            family: PartSnapshot {
+                value: Some(r#####"Berlichingen zu~Hornberg"#####.to_owned()),
+                initials: vec![
+                    r#####"B"#####.to_owned(),
+                    r#####"z"#####.to_owned(),
+                    r#####"H"#####.to_owned()
+                ]
+            },
+            prefix: PartSnapshot {
+                value: Some(r#####"von"#####.to_owned()),
+                initials: vec![r#####"v"#####.to_owned()]
+            },
+            suffix: PartSnapshot {
+                value: None,
+                initials: vec![]
+            }
+        }
+    );
+}
 
-my $name8 =
-   {  given               => {string => 'Jean Charles Gabriel', initial => ['J']},
-      family              => {string => 'Vallée~Poussin', initial => ['V', 'P']},
-      prefix              => {string => 'de~la', initial => ['d', 'l']},
-      suffix              => {string => undef, initial => undef}};
+#[test]
+fn assertion_005_parsename_5() {
+    assert_eq!(
+        name_snapshot(&parsed_name(
+            r#####"names.bcf"#####,
+            r#####"{Robert and Sons, Inc.}"#####
+        )),
+        NameSnapshot {
+            given: PartSnapshot {
+                value: None,
+                initials: vec![]
+            },
+            family: PartSnapshot {
+                value: Some(r#####"Robert and Sons, Inc."#####.to_owned()),
+                initials: vec![r#####"R"#####.to_owned()]
+            },
+            prefix: PartSnapshot {
+                value: None,
+                initials: vec![]
+            },
+            suffix: PartSnapshot {
+                value: None,
+                initials: vec![]
+            }
+        }
+    );
+}
 
-my $name9 =
-   {  given               => {string => 'Jean Charles Gabriel {de la}~Vallée', initial => ['J', 'C', 'G', 'd', 'V']},
-      family              => {string => 'Poussin', initial => ['P']},
-      prefix              => {string => undef, initial => undef},
-      suffix              => {string => undef, initial => undef}};
+#[test]
+fn assertion_006_parsename_6() {
+    assert_eq!(
+        name_snapshot(&parsed_name(
+            r#####"names.bcf"#####,
+            r#####"al-Ṣāliḥ, ʿAbdallāh"#####
+        )),
+        NameSnapshot {
+            given: PartSnapshot {
+                value: Some(r#####"ʿAbdallāh"#####.to_owned()),
+                initials: vec![r#####"A"#####.to_owned()]
+            },
+            family: PartSnapshot {
+                value: Some(r#####"al-Ṣāliḥ"#####.to_owned()),
+                initials: vec![r#####"Ṣ"#####.to_owned()]
+            },
+            prefix: PartSnapshot {
+                value: None,
+                initials: vec![]
+            },
+            suffix: PartSnapshot {
+                value: None,
+                initials: vec![]
+            }
+        }
+    );
+}
 
-my $name10 =
-   {  given               => {string => 'Jean Charles~Gabriel', initial => ['J', 'C', 'G']},
-      family              => {string => 'Vallée Poussin', initial => ['V']},
-      prefix              => {string => 'de~la', initial => ['d', 'l']},
-      suffix              => {string => undef, initial => undef}};
+#[test]
+fn assertion_007_parsename_6a() {
+    assert_eq!(
+        name_snapshot(&parsed_name(
+            r#####"names.bcf"#####,
+            r#####"al- Hakim, Tawfik"#####
+        )),
+        NameSnapshot {
+            given: PartSnapshot {
+                value: Some(r#####"Tawfik"#####.to_owned()),
+                initials: vec![r#####"T"#####.to_owned()]
+            },
+            family: PartSnapshot {
+                value: Some(r#####"Hakim"#####.to_owned()),
+                initials: vec![r#####"H"#####.to_owned()]
+            },
+            prefix: PartSnapshot {
+                value: Some(r#####"al-"#####.to_owned()),
+                initials: vec![r#####"a"#####.to_owned()]
+            },
+            suffix: PartSnapshot {
+                value: None,
+                initials: vec![]
+            }
+        }
+    );
+}
 
-my $name11 =
-   {  given               => {string => 'Jean Charles Gabriel', initial => ['J']},
-      family              => {string => 'Vallée Poussin', initial => ['V']},
-      prefix              => {string => 'de~la', initial => ['d', 'l']},
-      suffix              => {string => undef, initial => undef}};
+#[test]
+fn assertion_008_parsename_7() {
+    assert_eq!(
+        name_snapshot(&parsed_name(
+            r#####"names.bcf"#####,
+            r#####"Jean Charles Gabriel de la Vallée Poussin"#####
+        )),
+        NameSnapshot {
+            given: PartSnapshot {
+                value: Some(r#####"Jean Charles~Gabriel"#####.to_owned()),
+                initials: vec![
+                    r#####"J"#####.to_owned(),
+                    r#####"C"#####.to_owned(),
+                    r#####"G"#####.to_owned()
+                ]
+            },
+            family: PartSnapshot {
+                value: Some(r#####"Vallée~Poussin"#####.to_owned()),
+                initials: vec![r#####"V"#####.to_owned(), r#####"P"#####.to_owned()]
+            },
+            prefix: PartSnapshot {
+                value: Some(r#####"de~la"#####.to_owned()),
+                initials: vec![r#####"d"#####.to_owned(), r#####"l"#####.to_owned()]
+            },
+            suffix: PartSnapshot {
+                value: None,
+                initials: vec![]
+            }
+        }
+    );
+}
 
-my $name12 =
-   {  given               => {string => 'Jean Charles~Gabriel', initial => ['J', 'C', 'G']},
-      family              => {string => 'Poussin', initial => ['P']},
-      prefix              => {string => undef, initial => undef},
-      suffix              => {string => undef, initial => undef}};
+#[test]
+fn assertion_009_parsename_8() {
+    assert_eq!(
+        name_snapshot(&parsed_name(
+            r#####"names.bcf"#####,
+            r#####"{Jean Charles Gabriel} de la Vallée Poussin"#####
+        )),
+        NameSnapshot {
+            given: PartSnapshot {
+                value: Some(r#####"Jean Charles Gabriel"#####.to_owned()),
+                initials: vec![r#####"J"#####.to_owned()]
+            },
+            family: PartSnapshot {
+                value: Some(r#####"Vallée~Poussin"#####.to_owned()),
+                initials: vec![r#####"V"#####.to_owned(), r#####"P"#####.to_owned()]
+            },
+            prefix: PartSnapshot {
+                value: Some(r#####"de~la"#####.to_owned()),
+                initials: vec![r#####"d"#####.to_owned(), r#####"l"#####.to_owned()]
+            },
+            suffix: PartSnapshot {
+                value: None,
+                initials: vec![]
+            }
+        }
+    );
+}
 
-my $name13 =
-   {  given               => {string => 'Jean~Charles', initial => ['J', 'C']},
-      family              => {string => 'Poussin Lecoq', initial => ['P']},
-      prefix              => {string => undef, initial => undef},
-      suffix              => {string => undef, initial => undef}};
+#[test]
+fn assertion_010_parsename_9() {
+    assert_eq!(
+        name_snapshot(&parsed_name(
+            r#####"names.bcf"#####,
+            r#####"Jean Charles Gabriel {de la} Vallée Poussin"#####
+        )),
+        NameSnapshot {
+            given: PartSnapshot {
+                value: Some(r#####"Jean Charles Gabriel {de la}~Vallée"#####.to_owned()),
+                initials: vec![
+                    r#####"J"#####.to_owned(),
+                    r#####"C"#####.to_owned(),
+                    r#####"G"#####.to_owned(),
+                    r#####"d"#####.to_owned(),
+                    r#####"V"#####.to_owned()
+                ]
+            },
+            family: PartSnapshot {
+                value: Some(r#####"Poussin"#####.to_owned()),
+                initials: vec![r#####"P"#####.to_owned()]
+            },
+            prefix: PartSnapshot {
+                value: None,
+                initials: vec![]
+            },
+            suffix: PartSnapshot {
+                value: None,
+                initials: vec![]
+            }
+        }
+    );
+}
 
-my $name14 =
-   {  given               => {string => 'J.~C.~G.', initial => ['J', 'C', 'G']},
-      family              => {string => 'Vallée~Poussin', initial => ['V', 'P']},
-      prefix              => {string => 'de~la', initial => ['d', 'l']},
-      suffix              => {string => undef, initial => undef}};
+#[test]
+fn assertion_011_parsename_10() {
+    assert_eq!(
+        name_snapshot(&parsed_name(
+            r#####"names.bcf"#####,
+            r#####"Jean Charles Gabriel de la {Vallée Poussin}"#####
+        )),
+        NameSnapshot {
+            given: PartSnapshot {
+                value: Some(r#####"Jean Charles~Gabriel"#####.to_owned()),
+                initials: vec![
+                    r#####"J"#####.to_owned(),
+                    r#####"C"#####.to_owned(),
+                    r#####"G"#####.to_owned()
+                ]
+            },
+            family: PartSnapshot {
+                value: Some(r#####"Vallée Poussin"#####.to_owned()),
+                initials: vec![r#####"V"#####.to_owned()]
+            },
+            prefix: PartSnapshot {
+                value: Some(r#####"de~la"#####.to_owned()),
+                initials: vec![r#####"d"#####.to_owned(), r#####"l"#####.to_owned()]
+            },
+            suffix: PartSnapshot {
+                value: None,
+                initials: vec![]
+            }
+        }
+    );
+}
 
-my $namepre1 =
-   {  given               => {string => 'Tawfik', initial => ['T']},
-      family              => {string => 'Hakim', initial => ['H']},
-      prefix              => {string => 'al-', initial => ['a']},
-      suffix              => {string => undef, initial => undef}};
+#[test]
+fn assertion_012_parsename_11() {
+    assert_eq!(
+        name_snapshot(&parsed_name(
+            r#####"names.bcf"#####,
+            r#####"{Jean Charles Gabriel} de la {Vallée Poussin}"#####
+        )),
+        NameSnapshot {
+            given: PartSnapshot {
+                value: Some(r#####"Jean Charles Gabriel"#####.to_owned()),
+                initials: vec![r#####"J"#####.to_owned()]
+            },
+            family: PartSnapshot {
+                value: Some(r#####"Vallée Poussin"#####.to_owned()),
+                initials: vec![r#####"V"#####.to_owned()]
+            },
+            prefix: PartSnapshot {
+                value: Some(r#####"de~la"#####.to_owned()),
+                initials: vec![r#####"d"#####.to_owned(), r#####"l"#####.to_owned()]
+            },
+            suffix: PartSnapshot {
+                value: None,
+                initials: vec![]
+            }
+        }
+    );
+}
 
-# Note that the family initials are wrong because the prefix "El-" was not stripped
-# This is because the default noinit regexp only strips lower-case prefices to protect
-# hyphenated names
-my $name15 =
-   {  given               => {string => 'E.~S.', initial => ['E', 'S']},
-      family              => {string => 'El-{M}allah', initial => ['E-M']},
-      prefix              => {string => undef, initial => undef},
-      suffix              => {string => undef, initial => undef}};
+#[test]
+fn assertion_013_parsename_12() {
+    assert_eq!(
+        name_snapshot(&parsed_name(
+            r#####"names.bcf"#####,
+            r#####"Jean Charles Gabriel Poussin"#####
+        )),
+        NameSnapshot {
+            given: PartSnapshot {
+                value: Some(r#####"Jean Charles~Gabriel"#####.to_owned()),
+                initials: vec![
+                    r#####"J"#####.to_owned(),
+                    r#####"C"#####.to_owned(),
+                    r#####"G"#####.to_owned()
+                ]
+            },
+            family: PartSnapshot {
+                value: Some(r#####"Poussin"#####.to_owned()),
+                initials: vec![r#####"P"#####.to_owned()]
+            },
+            prefix: PartSnapshot {
+                value: None,
+                initials: vec![]
+            },
+            suffix: PartSnapshot {
+                value: None,
+                initials: vec![]
+            }
+        }
+    );
+}
 
-my $name16 =
-   {  given               => {string => 'E.~S.', initial => ['E', 'S']},
-      family              => {string => '{K}ent-{B}oswell', initial => ['K-B']},
-      prefix              => {string => undef, initial => undef},
-      suffix              => {string => undef, initial => undef}};
+#[test]
+fn assertion_014_parsename_13() {
+    assert_eq!(
+        name_snapshot(&parsed_name(
+            r#####"names.bcf"#####,
+            r#####"Jean Charles {Poussin Lecoq}"#####
+        )),
+        NameSnapshot {
+            given: PartSnapshot {
+                value: Some(r#####"Jean~Charles"#####.to_owned()),
+                initials: vec![r#####"J"#####.to_owned(), r#####"C"#####.to_owned()]
+            },
+            family: PartSnapshot {
+                value: Some(r#####"Poussin Lecoq"#####.to_owned()),
+                initials: vec![r#####"P"#####.to_owned()]
+            },
+            prefix: PartSnapshot {
+                value: None,
+                initials: vec![]
+            },
+            suffix: PartSnapshot {
+                value: None,
+                initials: vec![]
+            }
+        }
+    );
+}
 
-my $name17 =
-   {  given               => {string => 'A.~N.', initial => ['A', 'N']},
-      family              => {string => 'Other', initial => ['O']},
-      prefix              => {string => undef, initial => undef},
-      suffix              => {string => undef, initial => undef}};
+#[test]
+fn assertion_015_parsename_14() {
+    assert_eq!(
+        name_snapshot(&parsed_name(
+            r#####"names.bcf"#####,
+            r#####"J. C. G. de la Vallée Poussin"#####
+        )),
+        NameSnapshot {
+            given: PartSnapshot {
+                value: Some(r#####"J.~C.~G."#####.to_owned()),
+                initials: vec![
+                    r#####"J"#####.to_owned(),
+                    r#####"C"#####.to_owned(),
+                    r#####"G"#####.to_owned()
+                ]
+            },
+            family: PartSnapshot {
+                value: Some(r#####"Vallée~Poussin"#####.to_owned()),
+                initials: vec![r#####"V"#####.to_owned(), r#####"P"#####.to_owned()]
+            },
+            prefix: PartSnapshot {
+                value: Some(r#####"de~la"#####.to_owned()),
+                initials: vec![r#####"d"#####.to_owned(), r#####"l"#####.to_owned()]
+            },
+            suffix: PartSnapshot {
+                value: None,
+                initials: vec![]
+            }
+        }
+    );
+}
 
-my $name18 =
-   {  given               => {string => undef, initial => undef},
-      family              => {string => 'British National Corpus', initial => ['B']},
-      prefix              => {string => undef, initial => undef},
-      suffix              => {string => undef, initial => undef}};
-my $name18strip = { given => undef, family => 1, prefix => undef, suffix => undef };
+#[test]
+fn assertion_016_parsename_15() {
+    assert_eq!(
+        name_snapshot(&parsed_name(
+            r#####"names.bcf"#####,
+            r#####"E. S. El-{M}allah"#####
+        )),
+        NameSnapshot {
+            given: PartSnapshot {
+                value: Some(r#####"E.~S."#####.to_owned()),
+                initials: vec![r#####"E"#####.to_owned(), r#####"S"#####.to_owned()]
+            },
+            family: PartSnapshot {
+                value: Some(r#####"El-{M}allah"#####.to_owned()),
+                initials: vec![r#####"E-M"#####.to_owned()]
+            },
+            prefix: PartSnapshot {
+                value: None,
+                initials: vec![]
+            },
+            suffix: PartSnapshot {
+                value: None,
+                initials: vec![]
+            }
+        }
+    );
+}
 
-my $name19 =
-   {  given               => {string => 'Luis', initial => ['L']},
-      family              => {string => 'Vázques{ de }Parga', initial => ['V']},
-      prefix              => {string => undef, initial => undef},
-      suffix              => {string => undef, initial => undef}};
+#[test]
+fn assertion_017_parsename_16() {
+    assert_eq!(
+        name_snapshot(&parsed_name(
+            r#####"names.bcf"#####,
+            r#####"E. S. {K}ent-{B}oswell"#####
+        )),
+        NameSnapshot {
+            given: PartSnapshot {
+                value: Some(r#####"E.~S."#####.to_owned()),
+                initials: vec![r#####"E"#####.to_owned(), r#####"S"#####.to_owned()]
+            },
+            family: PartSnapshot {
+                value: Some(r#####"{K}ent-{B}oswell"#####.to_owned()),
+                initials: vec![r#####"K-B"#####.to_owned()]
+            },
+            prefix: PartSnapshot {
+                value: None,
+                initials: vec![]
+            },
+            suffix: PartSnapshot {
+                value: None,
+                initials: vec![]
+            }
+        }
+    );
+}
 
-my $namex1 =
-   {  given               => {string => 'James', initial => ['J']},
-      family              => {string => 'Smithers~Jones', initial => ['S','J']},
-      prefix              => {string => 'van~der', initial => ['v','d']},
-      suffix              => {string => undef, initial => undef}};
+#[test]
+fn assertion_018_parsename_17() {
+    assert_eq!(
+        name_snapshot(&parsed_name(
+            r#####"names.bcf"#####,
+            r#####"Other, A.~N."#####
+        )),
+        NameSnapshot {
+            given: PartSnapshot {
+                value: Some(r#####"A.~N."#####.to_owned()),
+                initials: vec![r#####"A"#####.to_owned(), r#####"N"#####.to_owned()]
+            },
+            family: PartSnapshot {
+                value: Some(r#####"Other"#####.to_owned()),
+                initials: vec![r#####"O"#####.to_owned()]
+            },
+            prefix: PartSnapshot {
+                value: None,
+                initials: vec![]
+            },
+            suffix: PartSnapshot {
+                value: None,
+                initials: vec![]
+            }
+        }
+    );
+}
 
-my $l1 = q|    \entry{L1}{book}{}{}
+#[test]
+fn assertion_019_parsename_18() {
+    assert_eq!(
+        name_snapshot(&parsed_name(
+            r#####"names.bcf"#####,
+            r#####"{{{British National Corpus}}}"#####
+        )),
+        NameSnapshot {
+            given: PartSnapshot {
+                value: None,
+                initials: vec![]
+            },
+            family: PartSnapshot {
+                value: Some(r#####"British National Corpus"#####.to_owned()),
+                initials: vec![r#####"B"#####.to_owned()]
+            },
+            prefix: PartSnapshot {
+                value: None,
+                initials: vec![]
+            },
+            suffix: PartSnapshot {
+                value: None,
+                initials: vec![]
+            }
+        }
+    );
+}
+
+#[test]
+fn assertion_020_parsename_18a() {
+    let name = parsed_name(
+        r#####"names.bcf"#####,
+        r#####"{{{British National Corpus}}}"#####,
+    );
+    assert_eq!(
+        [name.given(), name.family(), name.prefix(), name.suffix()]
+            .map(|part| part.map(NamePartValue::outer_braces_stripped)),
+        [None, Some(true), None, None]
+    );
+}
+
+#[test]
+fn assertion_021_parsename_19() {
+    assert_eq!(
+        name_snapshot(&parsed_name(
+            r#####"names.bcf"#####,
+            r#####"Vázques{ de }Parga, Luis"#####
+        )),
+        NameSnapshot {
+            given: PartSnapshot {
+                value: Some(r#####"Luis"#####.to_owned()),
+                initials: vec![r#####"L"#####.to_owned()]
+            },
+            family: PartSnapshot {
+                value: Some(r#####"Vázques{ de }Parga"#####.to_owned()),
+                initials: vec![r#####"V"#####.to_owned()]
+            },
+            prefix: PartSnapshot {
+                value: None,
+                initials: vec![]
+            },
+            suffix: PartSnapshot {
+                value: None,
+                initials: vec![]
+            }
+        }
+    );
+}
+
+#[test]
+#[ignore = "xfail: processed name or BBL differs from the Biber 2.22 expectation"]
+fn assertion_022_parsename_x_1() {
+    assert_eq!(
+        name_snapshot(&parsed_name(
+            r#####"names.bcf"#####,
+            r#####"family=Smithers Jones, prefix=van der, given=James, useprefix=true"#####
+        )),
+        NameSnapshot {
+            given: PartSnapshot {
+                value: Some(r#####"James"#####.to_owned()),
+                initials: vec![r#####"J"#####.to_owned()]
+            },
+            family: PartSnapshot {
+                value: Some(r#####"Smithers~Jones"#####.to_owned()),
+                initials: vec![r#####"S"#####.to_owned(), r#####"J"#####.to_owned()]
+            },
+            prefix: PartSnapshot {
+                value: Some(r#####"van~der"#####.to_owned()),
+                initials: vec![r#####"v"#####.to_owned(), r#####"d"#####.to_owned()]
+            },
+            suffix: PartSnapshot {
+                value: None,
+                initials: vec![]
+            }
+        }
+    );
+}
+
+#[test]
+#[ignore = "xfail: processed name or BBL differs from the Biber 2.22 expectation"]
+fn assertion_023_parsename_x_2() {
+    assert_eq!(
+        parsed_name(
+            r#####"names.bcf"#####,
+            r#####"family=Smithers Jones, prefix=van der, given=James, useprefix=true"#####
+        )
+        .use_prefix(),
+        Some(true)
+    );
+}
+
+#[test]
+fn assertion_024_name_to_bibtex_1() {
+    assert_eq!(
+        parsed_name(r#####"names.bcf"#####, r#####"John Doe"#####).to_bibtex(),
+        r#####"Doe, John"#####
+    );
+}
+
+#[test]
+fn assertion_025_name_to_bibtex_2() {
+    assert_eq!(
+        parsed_name(r#####"names.bcf"#####, r#####"John van der Doe"#####).to_bibtex(),
+        r#####"van der Doe, John"#####
+    );
+}
+
+#[test]
+fn assertion_026_name_to_bibtex_3() {
+    assert_eq!(
+        parsed_name(r#####"names.bcf"#####, r#####"Doe, Jr, John"#####).to_bibtex(),
+        r#####"Doe, Jr, John"#####
+    );
+}
+
+#[test]
+fn assertion_027_name_to_bibtex_4() {
+    assert_eq!(
+        parsed_name(r#####"names.bcf"#####, r#####"von Doe, Jr, John"#####).to_bibtex(),
+        r#####"von Doe, Jr, John"#####
+    );
+}
+
+#[test]
+fn assertion_028_name_to_bibtex_5() {
+    assert_eq!(
+        parsed_name(r#####"names.bcf"#####, r#####"John Alan Doe"#####).to_bibtex(),
+        r#####"Doe, John Alan"#####
+    );
+}
+
+#[test]
+fn assertion_029_name_to_bibtex_6() {
+    assert_eq!(
+        parsed_name(r#####"names.bcf"#####, r#####"{Robert and Sons, Inc.}"#####).to_bibtex(),
+        r#####"{Robert and Sons, Inc.}"#####
+    );
+}
+
+#[test]
+fn assertion_030_name_to_bibtex_7() {
+    assert_eq!(
+        parsed_name(
+            r#####"names.bcf"#####,
+            r#####"Jean Charles Gabriel de la {Vallée Poussin}"#####
+        )
+        .to_bibtex(),
+        r#####"de la {Vallée Poussin}, Jean Charles Gabriel"#####
+    );
+}
+
+#[test]
+fn assertion_031_name_to_bibtex_8() {
+    assert_eq!(
+        parsed_name(r#####"names.bcf"#####, r#####"E. S. {K}ent-{B}oswell"#####).to_bibtex(),
+        r#####"{K}ent-{B}oswell, E. S."#####
+    );
+}
+
+#[test]
+#[ignore = "xfail: processed name or BBL differs from the Biber 2.22 expectation"]
+fn assertion_032_name_to_bibtex_9() {
+    assert_eq!(
+        parsed_name(
+            r#####"names.bcf"#####,
+            r#####"family=Smithers Jones, prefix=van der, given=James, useprefix=true"#####
+        )
+        .to_bibtex(),
+        r#####"van der Smithers Jones, James"#####
+    );
+}
+
+#[test]
+#[ignore = "xfail: processed name or BBL differs from the Biber 2.22 expectation"]
+fn assertion_033_name_to_xname_1() {
+    assert_eq!(
+        to_extended_name(&parsed_name(
+            r#####"names.bcf"#####,
+            r#####"van der Smithers Jones, James"#####
+        )),
+        r#####"family=Smithers Jones, given=James, prefix=van der"#####
+    );
+}
+
+#[test]
+#[ignore = "xfail: processed name or BBL differs from the Biber 2.22 expectation"]
+fn assertion_034_name_to_xname_2() {
+    assert_eq!(
+        to_extended_name(&parsed_name(
+            r#####"names.bcf"#####,
+            r#####"family=Smithers Jones, prefix=van der, given=James, useprefix=true"#####
+        )),
+        r#####"family=Smithers Jones, given=James, prefix=van der, useprefix=true"#####
+    );
+}
+
+#[test]
+#[ignore = "xfail: processed name or BBL differs from the Biber 2.22 expectation"]
+fn assertion_035_first_last() {
+    assert_eq!(
+        output_entry(r#####"names.bcf"#####, r#####"L1"#####, 0),
+        r#####"    \entry{L1}{book}{}{}
       \name{author}{1}{}{%
         {{hash=72287a68c1714cb1b9f4ab9e03a88b96}{%
            family={Adler},
@@ -221,32 +1009,16 @@ my $l1 = q|    \entry{L1}{book}{}{}
       \field{sortinithash}{2f401846e2029bad6b3ecc16d50031e2}
       \field{labelnamesource}{author}
     \endentry
-|;
+"#####
+    );
+}
 
-my $l1id = q|    \entry{L1id}{book}{}{}
-      \name{author}{1}{}{%
-        {{hash=88354d4ba914f2ded2574386a2493996}{%
-           family={Adler},
-           familyi={A\bibinitperiod},
-           given={Alfred},
-           giveni={A\bibinitperiod}}}%
-      }
-      \strng{namehash}{88354d4ba914f2ded2574386a2493996}
-      \strng{fullhash}{88354d4ba914f2ded2574386a2493996}
-      \strng{fullhashraw}{72287a68c1714cb1b9f4ab9e03a88b96}
-      \strng{bibnamehash}{88354d4ba914f2ded2574386a2493996}
-      \strng{authorbibnamehash}{88354d4ba914f2ded2574386a2493996}
-      \strng{authornamehash}{88354d4ba914f2ded2574386a2493996}
-      \strng{authorfullhash}{88354d4ba914f2ded2574386a2493996}
-      \strng{authorfullhashraw}{72287a68c1714cb1b9f4ab9e03a88b96}
-      \field{extraname}{2}
-      \field{sortinit}{A}
-      \field{sortinithash}{2f401846e2029bad6b3ecc16d50031e2}
-      \field{labelnamesource}{author}
-    \endentry
-|;
-
-my $l1h = q|    \entry{L1}{book}{}{}
+#[test]
+#[ignore = "xfail: processed name or BBL differs from the Biber 2.22 expectation"]
+fn assertion_036_name_hashing_given_initials() {
+    assert_eq!(
+        output_entry(r#####"names.bcf"#####, r#####"L1"#####, 1),
+        r#####"    \entry{L1}{book}{}{}
       \name{author}{1}{}{%
         {{hash=a4e132fab651ba62e051557227672cda}{%
            family={Adler},
@@ -267,9 +1039,46 @@ my $l1h = q|    \entry{L1}{book}{}{}
       \field{sortinithash}{2f401846e2029bad6b3ecc16d50031e2}
       \field{labelnamesource}{author}
     \endentry
-|;
+"#####
+    );
+}
 
-my $l2 = q|    \entry{L2}{book}{}{}
+#[test]
+#[ignore = "xfail: processed name or BBL differs from the Biber 2.22 expectation"]
+fn assertion_037_name_hashing_custom_hashid() {
+    assert_eq!(
+        output_entry(r#####"names.bcf"#####, r#####"L1id"#####, 0),
+        r#####"    \entry{L1id}{book}{}{}
+      \name{author}{1}{}{%
+        {{hash=88354d4ba914f2ded2574386a2493996}{%
+           family={Adler},
+           familyi={A\bibinitperiod},
+           given={Alfred},
+           giveni={A\bibinitperiod}}}%
+      }
+      \strng{namehash}{88354d4ba914f2ded2574386a2493996}
+      \strng{fullhash}{88354d4ba914f2ded2574386a2493996}
+      \strng{fullhashraw}{72287a68c1714cb1b9f4ab9e03a88b96}
+      \strng{bibnamehash}{88354d4ba914f2ded2574386a2493996}
+      \strng{authorbibnamehash}{88354d4ba914f2ded2574386a2493996}
+      \strng{authornamehash}{88354d4ba914f2ded2574386a2493996}
+      \strng{authorfullhash}{88354d4ba914f2ded2574386a2493996}
+      \strng{authorfullhashraw}{72287a68c1714cb1b9f4ab9e03a88b96}
+      \field{extraname}{2}
+      \field{sortinit}{A}
+      \field{sortinithash}{2f401846e2029bad6b3ecc16d50031e2}
+      \field{labelnamesource}{author}
+    \endentry
+"#####
+    );
+}
+
+#[test]
+#[ignore = "xfail: processed name or BBL differs from the Biber 2.22 expectation"]
+fn assertion_038_first_initial_last() {
+    assert_eq!(
+        output_entry(r#####"names.bcf"#####, r#####"L2"#####, 0),
+        r#####"    \entry{L2}{book}{}{}
       \name{author}{1}{}{%
         {{hash=2098d59d0f19a2e003ee06c1aa750d57}{%
            family={Bull},
@@ -289,9 +1098,16 @@ my $l2 = q|    \entry{L2}{book}{}{}
       \field{sortinithash}{d7095fff47cda75ca2589920aae98399}
       \field{labelnamesource}{author}
     \endentry
-|;
+"#####
+    );
+}
 
-my $l3 = q|    \entry{L3}{book}{}{}
+#[test]
+#[ignore = "xfail: processed name or BBL differs from the Biber 2.22 expectation"]
+fn assertion_039_initial_initial_last() {
+    assert_eq!(
+        output_entry(r#####"names.bcf"#####, r#####"L3"#####, 0),
+        r#####"    \entry{L3}{book}{}{}
       \name{author}{1}{}{%
         {{hash=c8b06fe88bde128b25eb0b3b1cc5837c}{%
            family={Crop},
@@ -311,9 +1127,16 @@ my $l3 = q|    \entry{L3}{book}{}{}
       \field{sortinithash}{4d103a86280481745c9c897c925753c0}
       \field{labelnamesource}{author}
     \endentry
-|;
+"#####
+    );
+}
 
-my $l4 = q|    \entry{L4}{book}{}{}
+#[test]
+#[ignore = "xfail: processed name or BBL differs from the Biber 2.22 expectation"]
+fn assertion_040_first_initial_last() {
+    assert_eq!(
+        output_entry(r#####"names.bcf"#####, r#####"L4"#####, 0),
+        r#####"    \entry{L4}{book}{}{}
       \name{author}{1}{}{%
         {{hash=5ec958b850c0c2de7de7c42c84b9c419}{%
            family={Decket},
@@ -333,9 +1156,16 @@ my $l4 = q|    \entry{L4}{book}{}{}
       \field{sortinithash}{6f385f66841fb5e82009dc833c761848}
       \field{labelnamesource}{author}
     \endentry
-|;
+"#####
+    );
+}
 
-my $l5 = q|    \entry{L5}{book}{}{}
+#[test]
+#[ignore = "xfail: processed name or BBL differs from the Biber 2.22 expectation"]
+fn assertion_041_first_prefix_last() {
+    assert_eq!(
+        output_entry(r#####"names.bcf"#####, r#####"L5"#####, 0),
+        r#####"    \entry{L5}{book}{}{}
       \name{author}{1}{}{%
         {{hash=c6b9d281cc1ff3f35570f76f463d4244}{%
            family={Eel},
@@ -357,9 +1187,16 @@ my $l5 = q|    \entry{L5}{book}{}{}
       \field{sortinithash}{afb52128e5b4dc4b843768c0113d673b}
       \field{labelnamesource}{author}
     \endentry
-|;
+"#####
+    );
+}
 
-my $l6 = q|    \entry{L6}{book}{}{}
+#[test]
+#[ignore = "xfail: processed name or BBL differs from the Biber 2.22 expectation"]
+fn assertion_042_first_prefix_prefix_last() {
+    assert_eq!(
+        output_entry(r#####"names.bcf"#####, r#####"L6"#####, 0),
+        r#####"    \entry{L6}{book}{}{}
       \name{author}{1}{}{%
         {{hash=5fd24d3d1608a310ec205a6b201a5495}{%
            family={Frome},
@@ -381,9 +1218,16 @@ my $l6 = q|    \entry{L6}{book}{}{}
       \field{sortinithash}{afb52128e5b4dc4b843768c0113d673b}
       \field{labelnamesource}{author}
     \endentry
-|;
+"#####
+    );
+}
 
-my $l7 = q|    \entry{L7}{book}{}{}
+#[test]
+#[ignore = "xfail: processed name or BBL differs from the Biber 2.22 expectation"]
+fn assertion_043_first_initial_prefix_last() {
+    assert_eq!(
+        output_entry(r#####"names.bcf"#####, r#####"L7"#####, 0),
+        r#####"    \entry{L7}{book}{}{}
       \name{author}{1}{}{%
         {{hash=98edb0b90251df22b74328d9227eceb7}{%
            family={Gloom},
@@ -405,9 +1249,16 @@ my $l7 = q|    \entry{L7}{book}{}{}
       \field{sortinithash}{afb52128e5b4dc4b843768c0113d673b}
       \field{labelnamesource}{author}
     \endentry
-|;
+"#####
+    );
+}
 
-my $l8 = q|    \entry{L8}{book}{}{}
+#[test]
+#[ignore = "xfail: processed name or BBL differs from the Biber 2.22 expectation"]
+fn assertion_044_first_initial_prefix_last() {
+    assert_eq!(
+        output_entry(r#####"names.bcf"#####, r#####"L8"#####, 0),
+        r#####"    \entry{L8}{book}{}{}
       \name{author}{1}{}{%
         {{hash=1211dc8dbbc191cbcab4da3c3c1fc48a}{%
            family={Henkel},
@@ -429,9 +1280,16 @@ my $l8 = q|    \entry{L8}{book}{}{}
       \field{sortinithash}{afb52128e5b4dc4b843768c0113d673b}
       \field{labelnamesource}{author}
     \endentry
-|;
+"#####
+    );
+}
 
-my $l9 = q|    \entry{L9}{book}{}{}
+#[test]
+#[ignore = "xfail: processed name or BBL differs from the Biber 2.22 expectation"]
+fn assertion_045_first_last_last() {
+    assert_eq!(
+        output_entry(r#####"names.bcf"#####, r#####"L9"#####, 0),
+        r#####"    \entry{L9}{book}{}{}
       \name{author}{1}{}{%
         {{hash=bae61a889ab149a6deafe45333204cf0}{%
            family={{Iliad Ipswich}},
@@ -451,10 +1309,16 @@ my $l9 = q|    \entry{L9}{book}{}{}
       \field{sortinithash}{8d291c51ee89b6cd86bf5379f0b151d8}
       \field{labelnamesource}{author}
     \endentry
-|;
+"#####
+    );
+}
 
-
-my $l10 = q|    \entry{L10}{book}{}{}
+#[test]
+#[ignore = "xfail: processed name or BBL differs from the Biber 2.22 expectation"]
+fn assertion_046_last_suffix_first() {
+    assert_eq!(
+        output_entry(r#####"names.bcf"#####, r#####"L10"#####, 0),
+        r#####"    \entry{L10}{book}{}{}
       \name{author}{1}{}{%
         {{hash=37b4325752e394ddfb2fc810f6c88e27}{%
            family={Jolly},
@@ -476,10 +1340,16 @@ my $l10 = q|    \entry{L10}{book}{}{}
       \field{sortinithash}{b2f54a9081ace9966a7cb9413811edb4}
       \field{labelnamesource}{author}
     \endentry
-|;
+"#####
+    );
+}
 
-
-my $l10a = q|    \entry{L10a}{book}{}{}
+#[test]
+#[ignore = "xfail: processed name or BBL differs from the Biber 2.22 expectation"]
+fn assertion_047_last_suffix_first_initial() {
+    assert_eq!(
+        output_entry(r#####"names.bcf"#####, r#####"L10a"#####, 0),
+        r#####"    \entry{L10a}{book}{}{}
       \name{author}{1}{}{%
         {{hash=7bf2c9d8b89a1930ee91bfddcaf20c9c}{%
            family={Pimentel},
@@ -501,10 +1371,16 @@ my $l10a = q|    \entry{L10a}{book}{}{}
       \field{sortinithash}{ff3bcf24f47321b42cb156c2cc8a8422}
       \field{labelnamesource}{author}
     \endentry
-|;
+"#####
+    );
+}
 
-
-my $l11 = q|    \entry{L11}{book}{}{}
+#[test]
+#[ignore = "xfail: processed name or BBL differs from the Biber 2.22 expectation"]
+fn assertion_048_prefix_last_suffix_first() {
+    assert_eq!(
+        output_entry(r#####"names.bcf"#####, r#####"L11"#####, 0),
+        r#####"    \entry{L11}{book}{}{}
       \name{author}{1}{}{%
         {{hash=9f48d231be68c9435fab4faca55a5caf}{%
            family={Kluster},
@@ -528,34 +1404,16 @@ my $l11 = q|    \entry{L11}{book}{}{}
       \field{sortinithash}{afb52128e5b4dc4b843768c0113d673b}
       \field{labelnamesource}{author}
     \endentry
-|;
+"#####
+    );
+}
 
-my $l12 = q|    \entry{L12}{book}{}{}
-      \name{author}{1}{}{%
-        {{hash=d7ca88c13a8f7ce1c23e920010a31f83}{%
-           family={Vallée\\bibnamedelima Poussin},
-           familyi={V\\bibinitperiod\\bibinitdelim P\\bibinitperiod},
-           given={Charles\\bibnamedelimb Louis\\bibnamedelimb Xavier\\bibnamedelima Joseph},
-           giveni={C\\bibinitperiod\\bibinitdelim L\\bibinitperiod\\bibinitdelim X\\bibinitperiod\\bibinitdelim J\\bibinitperiod},
-           prefix={de\\bibnamedelima la},
-           prefixi={d\\bibinitperiod\\bibinitdelim l\\bibinitperiod}}}%
-      }
-      \strng{namehash}{d7ca88c13a8f7ce1c23e920010a31f83}
-      \strng{fullhash}{d7ca88c13a8f7ce1c23e920010a31f83}
-      \strng{fullhashraw}{d7ca88c13a8f7ce1c23e920010a31f83}
-      \strng{bibnamehash}{d7ca88c13a8f7ce1c23e920010a31f83}
-      \strng{authorbibnamehash}{d7ca88c13a8f7ce1c23e920010a31f83}
-      \strng{authornamehash}{d7ca88c13a8f7ce1c23e920010a31f83}
-      \strng{authorfullhash}{d7ca88c13a8f7ce1c23e920010a31f83}
-      \strng{authorfullhashraw}{d7ca88c13a8f7ce1c23e920010a31f83}
-      \field{sortinit}{d}
-      \field{sortinithash}{6f385f66841fb5e82009dc833c761848}
-      \true{uniqueprimaryauthor}
-      \field{labelnamesource}{author}
-    \endentry
-|;
-
-my $l13 = q|    \entry{L13}{book}{}{}
+#[test]
+#[ignore = "xfail: processed name or BBL differs from the Biber 2.22 expectation"]
+fn assertion_049_last_last_last_initial_initial() {
+    assert_eq!(
+        output_entry(r#####"names.bcf"#####, r#####"L13"#####, 0),
+        r#####"    \entry{L13}{book}{}{}
       \name{author}{1}{}{%
         {{hash=227ac48bb788a658cfaa4eefc71ff0cc}{%
            family={Van\bibnamedelimb de\bibnamedelima Graaff},
@@ -575,9 +1433,16 @@ my $l13 = q|    \entry{L13}{book}{}{}
       \field{sortinithash}{afb52128e5b4dc4b843768c0113d673b}
       \field{labelnamesource}{author}
     \endentry
-|;
+"#####
+    );
+}
 
-my $l14 = q|    \entry{L14}{book}{}{}
+#[test]
+#[ignore = "xfail: processed name or BBL differs from the Biber 2.22 expectation"]
+fn assertion_050_last_last_last_first() {
+    assert_eq!(
+        output_entry(r#####"names.bcf"#####, r#####"L14"#####, 0),
+        r#####"    \entry{L14}{book}{}{}
       \name{author}{1}{}{%
         {{hash=779475052c17ed56dc3be900d0dfdf87}{%
            family={St\bibnamedelima John-Mollusc},
@@ -597,9 +1462,16 @@ my $l14 = q|    \entry{L14}{book}{}{}
       \field{sortinithash}{b164b07b29984b41daf1e85279fbc5ab}
       \field{labelnamesource}{author}
     \endentry
-|;
+"#####
+    );
+}
 
-my $l15 = q|    \entry{L15}{book}{}{}
+#[test]
+#[ignore = "xfail: processed name or BBL differs from the Biber 2.22 expectation"]
+fn assertion_051_first_f_bibinitdelim_f_last() {
+    assert_eq!(
+        output_entry(r#####"names.bcf"#####, r#####"L15"#####, 0),
+        r#####"    \entry{L15}{book}{}{}
       \name{author}{1}{}{%
         {{hash=783c636e853e47a854ae034ebe9dde62}{%
            family={Gompel},
@@ -622,9 +1494,16 @@ my $l15 = q|    \entry{L15}{book}{}{}
       \field{sortinithash}{afb52128e5b4dc4b843768c0113d673b}
       \field{labelnamesource}{author}
     \endentry
-|;
+"#####
+    );
+}
 
-my $l16 = q|    \entry{L16}{book}{}{}
+#[test]
+#[ignore = "xfail: processed name or BBL differs from the Biber 2.22 expectation"]
+fn assertion_052_first_f_bibinitdelim_f_last() {
+    assert_eq!(
+        output_entry(r#####"names.bcf"#####, r#####"L16"#####, 0),
+        r#####"    \entry{L16}{book}{}{}
       \name{author}{1}{}{%
         {{hash=783c636e853e47a854ae034ebe9dde62}{%
            family={Gompel},
@@ -647,9 +1526,16 @@ my $l16 = q|    \entry{L16}{book}{}{}
       \field{sortinithash}{afb52128e5b4dc4b843768c0113d673b}
       \field{labelnamesource}{author}
     \endentry
-|;
+"#####
+    );
+}
 
-my $l17 = q|    \entry{L17}{book}{}{}
+#[test]
+#[ignore = "xfail: processed name or BBL differs from the Biber 2.22 expectation"]
+fn assertion_053_last_first_f_bibinitdelim_f() {
+    assert_eq!(
+        output_entry(r#####"names.bcf"#####, r#####"L17"#####, 0),
+        r#####"    \entry{L17}{book}{}{}
       \name{author}{1}{}{%
         {{hash=b51f667a3384d92ea5458ba80716bff7}{%
            family={Lovecraft},
@@ -670,9 +1556,16 @@ my $l17 = q|    \entry{L17}{book}{}{}
       \field{sortinithash}{7c47d417cecb1f4bd38d1825c427a61a}
       \field{labelnamesource}{author}
     \endentry
-|;
+"#####
+    );
+}
 
-my $l18 = q|    \entry{L18}{book}{}{}
+#[test]
+#[ignore = "xfail: processed name or BBL differs from the Biber 2.22 expectation"]
+fn assertion_054_last_first_f_bibinitdelim_f() {
+    assert_eq!(
+        output_entry(r#####"names.bcf"#####, r#####"L18"#####, 0),
+        r#####"    \entry{L18}{book}{}{}
       \name{author}{1}{}{%
         {{hash=b51f667a3384d92ea5458ba80716bff7}{%
            family={Lovecraft},
@@ -693,9 +1586,16 @@ my $l18 = q|    \entry{L18}{book}{}{}
       \field{sortinithash}{7c47d417cecb1f4bd38d1825c427a61a}
       \field{labelnamesource}{author}
     \endentry
-|;
+"#####
+    );
+}
 
-my $l19 = q|    \entry{L19}{book}{}{}
+#[test]
+#[ignore = "xfail: processed name or BBL differs from the Biber 2.22 expectation"]
+fn assertion_055_firstname_with_hyphen() {
+    assert_eq!(
+        output_entry(r#####"names.bcf"#####, r#####"L19"#####, 0),
+        r#####"    \entry{L19}{book}{}{}
       \name{author}{1}{}{%
         {{hash=83caa52f21f97e572dd3267bdf62978a}{%
            family={Mustermann},
@@ -715,9 +1615,16 @@ my $l19 = q|    \entry{L19}{book}{}{}
       \field{sortinithash}{4625c616857f13d17ce56f7d4f97d451}
       \field{labelnamesource}{author}
     \endentry
-|;
+"#####
+    );
+}
 
-my $l19a = q|    \entry{L19a}{book}{}{}
+#[test]
+#[ignore = "xfail: processed name or BBL differs from the Biber 2.22 expectation"]
+fn assertion_056_short_given_name_with_hyphen() {
+    assert_eq!(
+        output_entry(r#####"names.bcf"#####, r#####"L19a"#####, 0),
+        r#####"    \entry{L19a}{book}{}{}
       \name{author}{1}{}{%
         {{hash=0963f6904ccfeaac2770c5882a587001}{%
            family={Lam},
@@ -737,10 +1644,16 @@ my $l19a = q|    \entry{L19a}{book}{}{}
       \field{sortinithash}{7c47d417cecb1f4bd38d1825c427a61a}
       \field{labelnamesource}{author}
     \endentry
-|;
+"#####
+    );
+}
 
-
-my $l20 = q|    \entry{L20}{book}{}{}
+#[test]
+#[ignore = "xfail: processed name or BBL differs from the Biber 2.22 expectation"]
+fn assertion_057_protected_dual_given_name() {
+    assert_eq!(
+        output_entry(r#####"names.bcf"#####, r#####"L20"#####, 0),
+        r#####"    \entry{L20}{book}{}{}
       \name{author}{1}{}{%
         {{hash=5f26c2f3b33095d5b005714893f4d698}{%
            family={Ford},
@@ -760,9 +1673,257 @@ my $l20 = q|    \entry{L20}{book}{}{}
       \field{sortinithash}{2638baaa20439f1b5a8f80c6c08a13b4}
       \field{labelnamesource}{author}
     \endentry
-|;
+"#####
+    );
+}
 
-my $l21 = q|    \entry{L21}{book}{}{}
+#[test]
+#[ignore = "xfail: processed name or BBL differs from the Biber 2.22 expectation"]
+fn assertion_058_latex_encoded_unicode_family_1() {
+    assert_eq!(
+        output_entry(r#####"names.bcf"#####, r#####"L22"#####, 0),
+        r#####"    \entry{L22}{book}{}{}
+      \name{author}{1}{}{%
+        {{hash=e58b861545799d0eaf883402a882126e}{%
+           family={Šmith},
+           familyi={Š\bibinitperiod},
+           given={Someone},
+           giveni={S\bibinitperiod}}}%
+      }
+      \strng{namehash}{e58b861545799d0eaf883402a882126e}
+      \strng{fullhash}{e58b861545799d0eaf883402a882126e}
+      \strng{fullhashraw}{e58b861545799d0eaf883402a882126e}
+      \strng{bibnamehash}{e58b861545799d0eaf883402a882126e}
+      \strng{authorbibnamehash}{e58b861545799d0eaf883402a882126e}
+      \strng{authornamehash}{e58b861545799d0eaf883402a882126e}
+      \strng{authorfullhash}{e58b861545799d0eaf883402a882126e}
+      \strng{authorfullhashraw}{e58b861545799d0eaf883402a882126e}
+      \field{extraname}{1}
+      \field{sortinit}{Š}
+      \field{sortinithash}{b164b07b29984b41daf1e85279fbc5ab}
+      \field{labelnamesource}{author}
+    \endentry
+"#####
+    );
+}
+
+#[test]
+#[ignore = "xfail: processed name or BBL differs from the Biber 2.22 expectation"]
+fn assertion_059_unicode_given_name() {
+    assert_eq!(
+        output_entry(r#####"names.bcf"#####, r#####"L23"#####, 0),
+        r#####"    \entry{L23}{book}{}{}
+      \name{author}{1}{}{%
+        {{hash=4389a3c0dc7da74487b50808ba9436ad}{%
+           family={Smith},
+           familyi={S\bibinitperiod},
+           given={Šomeone},
+           giveni={Š\bibinitperiod}}}%
+      }
+      \strng{namehash}{4389a3c0dc7da74487b50808ba9436ad}
+      \strng{fullhash}{4389a3c0dc7da74487b50808ba9436ad}
+      \strng{fullhashraw}{4389a3c0dc7da74487b50808ba9436ad}
+      \strng{bibnamehash}{4389a3c0dc7da74487b50808ba9436ad}
+      \strng{authorbibnamehash}{4389a3c0dc7da74487b50808ba9436ad}
+      \strng{authornamehash}{4389a3c0dc7da74487b50808ba9436ad}
+      \strng{authorfullhash}{4389a3c0dc7da74487b50808ba9436ad}
+      \strng{authorfullhashraw}{4389a3c0dc7da74487b50808ba9436ad}
+      \field{extraname}{2}
+      \field{sortinit}{S}
+      \field{sortinithash}{b164b07b29984b41daf1e85279fbc5ab}
+      \field{labelnamesource}{author}
+    \endentry
+"#####
+    );
+}
+
+#[test]
+#[ignore = "xfail: processed name or BBL differs from the Biber 2.22 expectation"]
+fn assertion_060_unicode_family_name() {
+    assert_eq!(
+        output_entry(r#####"names.bcf"#####, r#####"L24"#####, 0),
+        r#####"    \entry{L24}{book}{}{}
+      \name{author}{1}{}{%
+        {{hash=e58b861545799d0eaf883402a882126e}{%
+           family={Šmith},
+           familyi={Š\bibinitperiod},
+           given={Someone},
+           giveni={S\bibinitperiod}}}%
+      }
+      \strng{namehash}{e58b861545799d0eaf883402a882126e}
+      \strng{fullhash}{e58b861545799d0eaf883402a882126e}
+      \strng{fullhashraw}{e58b861545799d0eaf883402a882126e}
+      \strng{bibnamehash}{e58b861545799d0eaf883402a882126e}
+      \strng{authorbibnamehash}{e58b861545799d0eaf883402a882126e}
+      \strng{authornamehash}{e58b861545799d0eaf883402a882126e}
+      \strng{authorfullhash}{e58b861545799d0eaf883402a882126e}
+      \strng{authorfullhashraw}{e58b861545799d0eaf883402a882126e}
+      \field{extraname}{2}
+      \field{sortinit}{Š}
+      \field{sortinithash}{b164b07b29984b41daf1e85279fbc5ab}
+      \field{labelnamesource}{author}
+    \endentry
+"#####
+    );
+}
+
+#[test]
+#[ignore = "xfail: processed name or BBL differs from the Biber 2.22 expectation"]
+fn assertion_061_single_string_name() {
+    assert_eq!(
+        output_entry(r#####"names.bcf"#####, r#####"L25"#####, 0),
+        r#####"    \entry{L25}{book}{}{}
+      \name{author}{1}{}{%
+        {{hash=d7cd2c5ea0848abc3e90609558b84a45}{%
+           family={{American Psychological Association, Task Force on the Sexualization of Girls}},
+           familyi={A\bibinitperiod}}}%
+      }
+      \strng{namehash}{d7cd2c5ea0848abc3e90609558b84a45}
+      \strng{fullhash}{d7cd2c5ea0848abc3e90609558b84a45}
+      \strng{fullhashraw}{d7cd2c5ea0848abc3e90609558b84a45}
+      \strng{bibnamehash}{d7cd2c5ea0848abc3e90609558b84a45}
+      \strng{authorbibnamehash}{d7cd2c5ea0848abc3e90609558b84a45}
+      \strng{authornamehash}{d7cd2c5ea0848abc3e90609558b84a45}
+      \strng{authorfullhash}{d7cd2c5ea0848abc3e90609558b84a45}
+      \strng{authorfullhashraw}{d7cd2c5ea0848abc3e90609558b84a45}
+      \field{sortinit}{A}
+      \field{sortinithash}{2f401846e2029bad6b3ecc16d50031e2}
+      \field{labelnamesource}{author}
+    \endentry
+"#####
+    );
+}
+
+#[test]
+#[ignore = "xfail: processed name or BBL differs from the Biber 2.22 expectation"]
+fn assertion_062_hyphen_at_brace_level_0() {
+    assert_eq!(
+        output_entry(r#####"names.bcf"#####, r#####"L26"#####, 0),
+        r#####"    \entry{L26}{book}{}{}
+      \name{author}{1}{}{%
+        {{hash=8eee1dbafdbd0a4b73157e60f18b4784}{%
+           family={{Sci-Art Publishers}},
+           familyi={S\bibinitperiod}}}%
+      }
+      \strng{namehash}{8eee1dbafdbd0a4b73157e60f18b4784}
+      \strng{fullhash}{8eee1dbafdbd0a4b73157e60f18b4784}
+      \strng{fullhashraw}{8eee1dbafdbd0a4b73157e60f18b4784}
+      \strng{bibnamehash}{8eee1dbafdbd0a4b73157e60f18b4784}
+      \strng{authorbibnamehash}{8eee1dbafdbd0a4b73157e60f18b4784}
+      \strng{authornamehash}{8eee1dbafdbd0a4b73157e60f18b4784}
+      \strng{authorfullhash}{8eee1dbafdbd0a4b73157e60f18b4784}
+      \strng{authorfullhashraw}{8eee1dbafdbd0a4b73157e60f18b4784}
+      \field{sortinit}{S}
+      \field{sortinithash}{b164b07b29984b41daf1e85279fbc5ab}
+      \field{labelnamesource}{author}
+    \endentry
+"#####
+    );
+}
+
+#[test]
+#[ignore = "xfail: processed name or BBL differs from the Biber 2.22 expectation"]
+fn assertion_063_escaped_name_with_3_commas() {
+    assert_eq!(
+        output_entry(r#####"names.bcf"#####, r#####"L29"#####, 0),
+        r#####"    \entry{L29}{book}{}{}
+      \name{author}{1}{}{%
+        {{hash=27ad192a3a715aa89152b2a4ee392e8c}{%
+           family={{U.S. Department of Health and Human Services, National Institute of Mental Health, National Heart, Lung and Blood Institute}},
+           familyi={U\bibinitperiod}}}%
+      }
+      \strng{namehash}{27ad192a3a715aa89152b2a4ee392e8c}
+      \strng{fullhash}{27ad192a3a715aa89152b2a4ee392e8c}
+      \strng{fullhashraw}{27ad192a3a715aa89152b2a4ee392e8c}
+      \strng{bibnamehash}{27ad192a3a715aa89152b2a4ee392e8c}
+      \strng{authorbibnamehash}{27ad192a3a715aa89152b2a4ee392e8c}
+      \strng{authornamehash}{27ad192a3a715aa89152b2a4ee392e8c}
+      \strng{authorfullhash}{27ad192a3a715aa89152b2a4ee392e8c}
+      \strng{authorfullhashraw}{27ad192a3a715aa89152b2a4ee392e8c}
+      \field{sortinit}{U}
+      \field{sortinithash}{6901a00e45705986ee5e7ca9fd39adca}
+      \field{labelnamesource}{author}
+    \endentry
+"#####
+    );
+}
+
+#[test]
+#[ignore = "xfail: processed name or BBL differs from the Biber 2.22 expectation"]
+fn assertion_064_name_count_for_and_others_1() {
+    assert_eq!(name_count(r#####"names.bcf"#####, r#####"V1"#####), 2);
+}
+
+#[test]
+#[ignore = "xfail: processed name or BBL differs from the Biber 2.22 expectation"]
+fn assertion_065_visibility_for_and_others_1() {
+    assert_eq!(
+        field_text(r#####"names.bcf"#####, r#####"V1"#####, "visiblecite").as_deref(),
+        Some(r#####"2"#####)
+    );
+}
+
+#[test]
+#[ignore = "xfail: processed name or BBL differs from the Biber 2.22 expectation"]
+fn assertion_066_visibility_for_and_others_2() {
+    assert_eq!(
+        field_text(r#####"names.bcf"#####, r#####"V2"#####, "visiblecite").as_deref(),
+        Some(r#####"1"#####)
+    );
+}
+
+#[test]
+#[ignore = "xfail: processed name or BBL differs from the Biber 2.22 expectation"]
+fn assertion_067_terseinitials_1() {
+    assert_eq!(
+        name_initial(
+            r#####"names.bcf"#####,
+            r#####"L21"#####,
+            r#####"given"#####,
+            0
+        ),
+        r#####"Š"#####
+    );
+}
+
+#[test]
+#[ignore = "xfail: processed name or BBL differs from the Biber 2.22 expectation"]
+fn assertion_068_first_first_first_first_prefix_prefix_last_last() {
+    assert_eq!(
+        output_entry(r#####"names.bcf"#####, r#####"L12"#####, 0),
+        r#####"    \entry{L12}{book}{}{}
+      \name{author}{1}{}{%
+        {{hash=d7ca88c13a8f7ce1c23e920010a31f83}{%
+           family={Vallée\\bibnamedelima Poussin},
+           familyi={V\\bibinitperiod\\bibinitdelim P\\bibinitperiod},
+           given={Charles\\bibnamedelimb Louis\\bibnamedelimb Xavier\\bibnamedelima Joseph},
+           giveni={C\\bibinitperiod\\bibinitdelim L\\bibinitperiod\\bibinitdelim X\\bibinitperiod\\bibinitdelim J\\bibinitperiod},
+           prefix={de\\bibnamedelima la},
+           prefixi={d\\bibinitperiod\\bibinitdelim l\\bibinitperiod}}}%
+      }
+      \strng{namehash}{d7ca88c13a8f7ce1c23e920010a31f83}
+      \strng{fullhash}{d7ca88c13a8f7ce1c23e920010a31f83}
+      \strng{fullhashraw}{d7ca88c13a8f7ce1c23e920010a31f83}
+      \strng{bibnamehash}{d7ca88c13a8f7ce1c23e920010a31f83}
+      \strng{authorbibnamehash}{d7ca88c13a8f7ce1c23e920010a31f83}
+      \strng{authornamehash}{d7ca88c13a8f7ce1c23e920010a31f83}
+      \strng{authorfullhash}{d7ca88c13a8f7ce1c23e920010a31f83}
+      \strng{authorfullhashraw}{d7ca88c13a8f7ce1c23e920010a31f83}
+      \field{sortinit}{d}
+      \field{sortinithash}{6f385f66841fb5e82009dc833c761848}
+      \true{uniqueprimaryauthor}
+      \field{labelnamesource}{author}
+    \endentry
+"#####
+    );
+}
+
+#[test]
+#[ignore = "xfail: processed name or BBL differs from the Biber 2.22 expectation"]
+fn assertion_069_latex_encoded_unicode_given_name() {
+    assert_eq!(
+        output_entry(r#####"names.bcf"#####, r#####"L21"#####, 0),
+        r#####"    \entry{L21}{book}{}{}
       \name{author}{1}{}{%
         {{hash=4389a3c0dc7da74487b50808ba9436ad}{%
            family={Smith},
@@ -784,33 +1945,16 @@ my $l21 = q|    \entry{L21}{book}{}{}
       \true{uniqueprimaryauthor}
       \field{labelnamesource}{author}
     \endentry
-|;
+"#####
+    );
+}
 
-my $l22u = q|    \entry{L22}{book}{}{}
-      \name{author}{1}{}{%
-        {{hash=e58b861545799d0eaf883402a882126e}{%
-           family={Šmith},
-           familyi={Š\bibinitperiod},
-           given={Someone},
-           giveni={S\bibinitperiod}}}%
-      }
-      \strng{namehash}{e58b861545799d0eaf883402a882126e}
-      \strng{fullhash}{e58b861545799d0eaf883402a882126e}
-      \strng{fullhashraw}{e58b861545799d0eaf883402a882126e}
-      \strng{bibnamehash}{e58b861545799d0eaf883402a882126e}
-      \strng{authorbibnamehash}{e58b861545799d0eaf883402a882126e}
-      \strng{authornamehash}{e58b861545799d0eaf883402a882126e}
-      \strng{authorfullhash}{e58b861545799d0eaf883402a882126e}
-      \strng{authorfullhashraw}{e58b861545799d0eaf883402a882126e}
-      \field{extraname}{1}
-      \field{sortinit}{Š}
-      \field{sortinithash}{b164b07b29984b41daf1e85279fbc5ab}
-      \field{labelnamesource}{author}
-    \endentry
-|;
-
-
-my $l22 = q|    \entry{L22}{book}{}{}
+#[test]
+#[ignore = "xfail: processed name or BBL differs from the Biber 2.22 expectation"]
+fn assertion_070_latex_encoded_unicode_family_name_2() {
+    assert_eq!(
+        output_entry(r#####"names.bcf"#####, r#####"L22"#####, 0),
+        r#####"    \entry{L22}{book}{}{}
       \name{author}{1}{}{%
         {{hash=e58b861545799d0eaf883402a882126e}{%
            family={\v{S}mith},
@@ -832,116 +1976,16 @@ my $l22 = q|    \entry{L22}{book}{}{}
       \true{uniqueprimaryauthor}
       \field{labelnamesource}{author}
     \endentry
-|;
+"#####
+    );
+}
 
-
-my $l23 = q|    \entry{L23}{book}{}{}
-      \name{author}{1}{}{%
-        {{hash=4389a3c0dc7da74487b50808ba9436ad}{%
-           family={Smith},
-           familyi={S\bibinitperiod},
-           given={Šomeone},
-           giveni={Š\bibinitperiod}}}%
-      }
-      \strng{namehash}{4389a3c0dc7da74487b50808ba9436ad}
-      \strng{fullhash}{4389a3c0dc7da74487b50808ba9436ad}
-      \strng{fullhashraw}{4389a3c0dc7da74487b50808ba9436ad}
-      \strng{bibnamehash}{4389a3c0dc7da74487b50808ba9436ad}
-      \strng{authorbibnamehash}{4389a3c0dc7da74487b50808ba9436ad}
-      \strng{authornamehash}{4389a3c0dc7da74487b50808ba9436ad}
-      \strng{authorfullhash}{4389a3c0dc7da74487b50808ba9436ad}
-      \strng{authorfullhashraw}{4389a3c0dc7da74487b50808ba9436ad}
-      \field{extraname}{2}
-      \field{sortinit}{S}
-      \field{sortinithash}{b164b07b29984b41daf1e85279fbc5ab}
-      \field{labelnamesource}{author}
-    \endentry
-|;
-
-my $l24 = q|    \entry{L24}{book}{}{}
-      \name{author}{1}{}{%
-        {{hash=e58b861545799d0eaf883402a882126e}{%
-           family={Šmith},
-           familyi={Š\bibinitperiod},
-           given={Someone},
-           giveni={S\bibinitperiod}}}%
-      }
-      \strng{namehash}{e58b861545799d0eaf883402a882126e}
-      \strng{fullhash}{e58b861545799d0eaf883402a882126e}
-      \strng{fullhashraw}{e58b861545799d0eaf883402a882126e}
-      \strng{bibnamehash}{e58b861545799d0eaf883402a882126e}
-      \strng{authorbibnamehash}{e58b861545799d0eaf883402a882126e}
-      \strng{authornamehash}{e58b861545799d0eaf883402a882126e}
-      \strng{authorfullhash}{e58b861545799d0eaf883402a882126e}
-      \strng{authorfullhashraw}{e58b861545799d0eaf883402a882126e}
-      \field{extraname}{2}
-      \field{sortinit}{Š}
-      \field{sortinithash}{b164b07b29984b41daf1e85279fbc5ab}
-      \field{labelnamesource}{author}
-    \endentry
-|;
-
-my $l25 = q|    \entry{L25}{book}{}{}
-      \name{author}{1}{}{%
-        {{hash=d7cd2c5ea0848abc3e90609558b84a45}{%
-           family={{American Psychological Association, Task Force on the Sexualization of Girls}},
-           familyi={A\bibinitperiod}}}%
-      }
-      \strng{namehash}{d7cd2c5ea0848abc3e90609558b84a45}
-      \strng{fullhash}{d7cd2c5ea0848abc3e90609558b84a45}
-      \strng{fullhashraw}{d7cd2c5ea0848abc3e90609558b84a45}
-      \strng{bibnamehash}{d7cd2c5ea0848abc3e90609558b84a45}
-      \strng{authorbibnamehash}{d7cd2c5ea0848abc3e90609558b84a45}
-      \strng{authornamehash}{d7cd2c5ea0848abc3e90609558b84a45}
-      \strng{authorfullhash}{d7cd2c5ea0848abc3e90609558b84a45}
-      \strng{authorfullhashraw}{d7cd2c5ea0848abc3e90609558b84a45}
-      \field{sortinit}{A}
-      \field{sortinithash}{2f401846e2029bad6b3ecc16d50031e2}
-      \field{labelnamesource}{author}
-    \endentry
-|;
-
-my $l26 = q|    \entry{L26}{book}{}{}
-      \name{author}{1}{}{%
-        {{hash=8eee1dbafdbd0a4b73157e60f18b4784}{%
-           family={{Sci-Art Publishers}},
-           familyi={S\bibinitperiod}}}%
-      }
-      \strng{namehash}{8eee1dbafdbd0a4b73157e60f18b4784}
-      \strng{fullhash}{8eee1dbafdbd0a4b73157e60f18b4784}
-      \strng{fullhashraw}{8eee1dbafdbd0a4b73157e60f18b4784}
-      \strng{bibnamehash}{8eee1dbafdbd0a4b73157e60f18b4784}
-      \strng{authorbibnamehash}{8eee1dbafdbd0a4b73157e60f18b4784}
-      \strng{authornamehash}{8eee1dbafdbd0a4b73157e60f18b4784}
-      \strng{authorfullhash}{8eee1dbafdbd0a4b73157e60f18b4784}
-      \strng{authorfullhashraw}{8eee1dbafdbd0a4b73157e60f18b4784}
-      \field{sortinit}{S}
-      \field{sortinithash}{b164b07b29984b41daf1e85279fbc5ab}
-      \field{labelnamesource}{author}
-    \endentry
-|;
-
-my $l29 = q|    \entry{L29}{book}{}{}
-      \name{author}{1}{}{%
-        {{hash=27ad192a3a715aa89152b2a4ee392e8c}{%
-           family={{U.S. Department of Health and Human Services, National Institute of Mental Health, National Heart, Lung and Blood Institute}},
-           familyi={U\bibinitperiod}}}%
-      }
-      \strng{namehash}{27ad192a3a715aa89152b2a4ee392e8c}
-      \strng{fullhash}{27ad192a3a715aa89152b2a4ee392e8c}
-      \strng{fullhashraw}{27ad192a3a715aa89152b2a4ee392e8c}
-      \strng{bibnamehash}{27ad192a3a715aa89152b2a4ee392e8c}
-      \strng{authorbibnamehash}{27ad192a3a715aa89152b2a4ee392e8c}
-      \strng{authornamehash}{27ad192a3a715aa89152b2a4ee392e8c}
-      \strng{authorfullhash}{27ad192a3a715aa89152b2a4ee392e8c}
-      \strng{authorfullhashraw}{27ad192a3a715aa89152b2a4ee392e8c}
-      \field{sortinit}{U}
-      \field{sortinithash}{6901a00e45705986ee5e7ca9fd39adca}
-      \field{labelnamesource}{author}
-    \endentry
-|;
-
-my $l31 = q|    \entry{L31}{book}{}{}
+#[test]
+#[ignore = "xfail: processed name or BBL differs from the Biber 2.22 expectation"]
+fn assertion_071_latex_encoded_unicode_family_name_with_tie_char() {
+    assert_eq!(
+        output_entry(r#####"names.bcf"#####, r#####"L31"#####, 0),
+        r#####"    \entry{L31}{book}{}{}
       \name{author}{1}{}{%
         {{hash=29c3ff92fff79d09a8b44d2f775de0b1}{%
            family={\~{Z}elly},
@@ -984,1043 +2028,60 @@ my $l31 = q|    \entry{L31}{book}{}{}
       \true{uniqueprimaryauthor}
       \field{labelnamesource}{author}
     \endentry
-|;
-
-# Convert to NFC for testing
-sub tparsename {
-  my $nps = Biber::Input::file::bibtex::parsename(@_)->{nameparts};
-  foreach my $np (keys $nps->%*) {
-    next unless defined($nps->{$np}{string});
-    $nps->{$np}{string} = NFC($nps->{$np}{string});
-    my $npis;
-    foreach my $npi ($nps->{$np}{initial}->@*) {
-      push $npis->@*, NFC($npi);
-    }
-    $nps->{$np}{initial} = $npis;
-  }
-  return $nps;
-}
-
-sub tparsename_x {
-  my $nps = Biber::Input::file::bibtex::parsename_x(@_)->{nameparts};
-  foreach my $np (keys $nps->%*) {
-    next unless defined($nps->{$np}{string});
-    $nps->{$np}{string} = NFC($nps->{$np}{string}) || undef;
-    my $npis;
-    foreach my $npi ($nps->{$np}{initial}->@*) {
-      push $npis->@*, NFC($npi);
-    }
-    $nps->{$np}{initial} = $npis;
-  }
-  return $nps;
-}
-
-# name parsing tests
-is_deeply(tparsename($section,'John Doe', 'author'), $name1, 'parsename 1');
-is_deeply(tparsename($section,'Doe, Jr, John', 'author'), $name2, 'parsename 2');
-is_deeply(tparsename($section,'von Berlichingen zu Hornberg, Johann Gottfried', 'author'), $name3, 'parsename 3') ;
-is_deeply(tparsename($section,'von Berlichingen zu Hornberg, Johann Gottfried', 'author'), $name4, 'parsename 4') ;
-is_deeply(tparsename($section,'{Robert and Sons, Inc.}', 'author'), $name5, 'parsename 5') ;
-is_deeply(tparsename($section,'al-Ṣāliḥ, ʿAbdallāh', 'author'), $name6, 'parsename 6') ;
-is_deeply(tparsename($section,'al- Hakim, Tawfik', 'author'), $namepre1, 'parsename 6a') ;
-is_deeply(tparsename($section,'Jean Charles Gabriel de la Vallée Poussin', 'author'), $name7, 'parsename 7');
-is_deeply(tparsename($section,'{Jean Charles Gabriel} de la Vallée Poussin', 'author'), $name8, 'parsename 8');
-is_deeply(tparsename($section,'Jean Charles Gabriel {de la} Vallée Poussin', 'author'), $name9, 'parsename 9');
-is_deeply(tparsename($section,'Jean Charles Gabriel de la {Vallée Poussin}', 'author'), $name10, 'parsename 10');
-is_deeply(tparsename($section,'{Jean Charles Gabriel} de la {Vallée Poussin}', 'author'), $name11, 'parsename 11');
-is_deeply(tparsename($section,'Jean Charles Gabriel Poussin', 'author'), $name12, 'parsename 12');
-is_deeply(tparsename($section,'Jean Charles {Poussin Lecoq}', 'author'), $name13, 'parsename 13');
-is_deeply(tparsename($section,'J. C. G. de la Vallée Poussin', 'author'), $name14, 'parsename 14');
-is_deeply(tparsename($section,'E. S. El-{M}allah', 'author'), $name15, 'parsename 15');
-is_deeply(tparsename($section,'E. S. {K}ent-{B}oswell', 'author'), $name16, 'parsename 16');
-is_deeply(tparsename($section,'Other, A.~N.', 'author'), $name17, 'parsename 17');
-is_deeply(tparsename($section,'{{{British National Corpus}}}', 'author'), $name18, 'parsename 18');
-is_deeply(Biber::Input::file::bibtex::parsename($section,'{{{British National Corpus}}}', 'author')->{strip}, $name18strip, 'parsename 18a');
-is_deeply(tparsename($section,'Vázques{ de }Parga, Luis', 'author'), $name19, 'parsename 19');
-is_deeply(tparsename_x($section,'family=Smithers Jones, prefix=van der, given=James, useprefix=true', 'author'), $namex1, 'parsename_x 1');
-eq_or_diff(Biber::Input::file::bibtex::parsename_x($section,'family=Smithers Jones, prefix=van der, given=James, useprefix=true', 'author')->{useprefix}, '1', 'parsename_x 2');
-
-# name to bib tests
-eq_or_diff(Biber::Input::file::bibtex::parsename($section,'John Doe', 'author')->name_to_bibtex, 'Doe, John', 'name_to_bibtex 1');
-eq_or_diff(Biber::Input::file::bibtex::parsename($section,'John van der Doe', 'author')->name_to_bibtex, 'van der Doe, John', 'name_to_bibtex 2');
-eq_or_diff(Biber::Input::file::bibtex::parsename($section,'Doe, Jr, John', 'author')->name_to_bibtex, 'Doe, Jr, John', 'name_to_bibtex 3');
-eq_or_diff(Biber::Input::file::bibtex::parsename($section,'von Doe, Jr, John', 'author')->name_to_bibtex, 'von Doe, Jr, John', 'name_to_bibtex 4');
-eq_or_diff(Biber::Input::file::bibtex::parsename($section,'John Alan Doe', 'author')->name_to_bibtex, 'Doe, John Alan', 'name_to_bibtex 5');
-eq_or_diff(Biber::Input::file::bibtex::parsename($section,'{Robert and Sons, Inc.}', 'author')->name_to_bibtex, '{Robert and Sons, Inc.}', 'name_to_bibtex 6');
-eq_or_diff(NFC(Biber::Input::file::bibtex::parsename($section,'Jean Charles Gabriel de la {Vallée Poussin}', 'author')->name_to_bibtex), 'de la {Vallée Poussin}, Jean Charles Gabriel', 'name_to_bibtex 7');
-eq_or_diff(Biber::Input::file::bibtex::parsename($section,'E. S. {K}ent-{B}oswell', 'author')->name_to_bibtex, '{K}ent-{B}oswell, E. S.', 'name_to_bibtex 8');
-is_deeply(Biber::Input::file::bibtex::parsename_x($section,'family=Smithers Jones, prefix=van der, given=James, useprefix=true', 'author')->name_to_bibtex, 'van der Smithers Jones, James', 'name_to_bibtex - 9');
-
-# name to xname tests
-is_deeply(Biber::Input::file::bibtex::parsename($section,'van der Smithers Jones, James', 'author')->name_to_xname, 'family=Smithers Jones, given=James, prefix=van der', 'name_to_xname - 1');
-is_deeply(Biber::Input::file::bibtex::parsename_x($section,'family=Smithers Jones, prefix=van der, given=James, useprefix=true', 'author')->name_to_xname, 'family=Smithers Jones, given=James, prefix=van der, useprefix=true', 'name_to_xname - 2');
-
-# Full entry tests
-eq_or_diff( $out->get_output_entry('L1', $main), $l1, 'First Last') ;
-eq_or_diff( $out->get_output_entry('L1', $nhtest), $l1h, 'Name hashing - given initials'); # testing custom name hash templates
-eq_or_diff( $out->get_output_entry('L1id', $main), $l1id, 'Name hashing - custom hashid'); # testing custom hashid
-eq_or_diff( $out->get_output_entry('L2', $main), $l2, 'First Initial. Last') ;
-eq_or_diff( $out->get_output_entry('L3', $main), $l3, 'Initial. Initial. Last') ;
-eq_or_diff( $out->get_output_entry('L4', $main), $l4, 'First Initial Last') ;
-eq_or_diff( $out->get_output_entry('L5', $main), $l5, 'First prefix Last') ;
-eq_or_diff( $out->get_output_entry('L6', $main), $l6, 'First prefix prefix Last') ;
-eq_or_diff( $out->get_output_entry('L7', $main), $l7, 'First Initial. prefix Last') ;
-eq_or_diff( $out->get_output_entry('L8', $main), $l8, 'First Initial prefix Last') ;
-eq_or_diff( $out->get_output_entry('L9', $main), $l9, 'First {Last Last}') ;
-eq_or_diff( $out->get_output_entry('L10', $main), $l10, 'Last, Suffix, First') ;
-eq_or_diff( $out->get_output_entry('L10a', $main), $l10a, 'Last, Suffix, First Initial.') ;
-eq_or_diff( $out->get_output_entry('L11', $main), $l11, 'prefix Last, Suffix, First') ;
-eq_or_diff( $out->get_output_entry('L13', $main), $l13, 'Last Last Last, Initial. Initial.');
-eq_or_diff( $out->get_output_entry('L14', $main), $l14, 'Last Last-Last, First');
-eq_or_diff( $out->get_output_entry('L15', $main), $l15, 'First F.{\bibinitdelim }F. Last');
-eq_or_diff( $out->get_output_entry('L16', $main), $l16, 'First {F.\bibinitdelim F.} Last');
-eq_or_diff( $out->get_output_entry('L17', $main), $l17, 'Last, First {F.\bibinitdelim F.}');
-eq_or_diff( $out->get_output_entry('L18', $main), $l18, 'Last, First F.{\bibinitdelim }F.');
-eq_or_diff( $out->get_output_entry('L19', $main), $l19, 'Firstname with hyphen');
-eq_or_diff( $out->get_output_entry('L19a', $main), $l19a, 'Short given name with hyphen');
-eq_or_diff( $out->get_output_entry('L20', $main), $l20, 'Protected dual given name');
-eq_or_diff( encode_utf8(NFC($out->get_output_entry('L22', $main))), encode_utf8($l22u), 'LaTeX encoded unicode family - 1');
-eq_or_diff( NFC($out->get_output_entry('L23', $main)), $l23, 'Unicode given name');
-eq_or_diff( NFC($out->get_output_entry('L24', $main)), $l24, 'Unicode family name');
-eq_or_diff( $out->get_output_entry('L25', $main), $l25, 'Single string name');
-eq_or_diff( $out->get_output_entry('L26', $main), $l26, 'Hyphen at brace level <> 0');
-eq_or_diff( $out->get_output_entry('L29', $main), $l29, 'Escaped name with 3 commas');
-
-# Checking visibility
-# Count does not include the "and others" as this "name" is deleted in the output driver
-eq_or_diff($bibentries->entry('V1')->get_field($bibentries->entry('V1')->get_labelname_info)->count, '2', 'Name count for "and others" - 1');
-eq_or_diff($main->get_visible_cite($bibentries->entry('V1')->get_field($bibentries->entry('V1')->get_labelname_info)->get_id), '2', 'Visibility for "and others" - 1');
-eq_or_diff($main->get_visible_cite($bibentries->entry('V2')->get_field($bibentries->entry('V2')->get_labelname_info)->get_id), '1', 'Visibility for "and others" - 2');
-# A few tests depend on non UTF-8 output
-# Have to use a new biber object when trying to change encoding as this isn't
-# dealt with in ->prepare
-$biber->parse_ctrlfile('names.bcf');
-$biber->set_output_obj(Biber::Output::bbl->new());
-
-# Biber options
-Biber::Config->setoption('output_encoding', 'latin1');
-# If you change the encoding options, you have to re-read the T::B data from the datasource
-# This won't happen unless you invalidate the T::B cache.
-Biber::Config->setblxoption(undef,'uniqueprimaryauthor', 1);
-Biber::Config->setoption('namesep', 'and'); # revert custom name sep
-Biber::Input::file::bibtex->init_cache;
-
-# Now generate the information
-$biber->prepare;
-$out = $biber->get_output_obj;
-$section = $biber->sections->get_section(0);
-$main = $biber->datalists->get_list('custom/global//global/global/global');
-$bibentries = $section->bibentries;
-
-eq_or_diff(NFC($bibentries->entry('L21')->get_field($bibentries->entry('L21')->get_labelname_info)->nth_name(1)->get_namepart_initial('given')->[0]), 'Š', 'Terseinitials 1'); # Should be in NFD UTF-8
-eq_or_diff( encode_utf8($out->get_output_entry('L12', $main)), encode_utf8($l12), 'First First First First prefix prefix Last Last') ;
-eq_or_diff( $out->get_output_entry('L21', $main), $l21, 'LaTeX encoded unicode given name');
-eq_or_diff( $out->get_output_entry('L22', $main), $l22, 'LaTeX encoded unicode family name - 2');
-eq_or_diff( $out->get_output_entry('L31', $main), $l31, 'LaTeX encoded unicode family name with tie char');
-
-# uniqueprimaryauthor tests
-eq_or_diff($main->get_entryfield('upa1', 'uniqueprimaryauthor'), 1, 'Unique primary author - 1');
-ok(is_undef($main->get_entryfield('upa2', 'uniqueprimaryauthor')), 'Unique primary author - 2');
-ok(is_undef($main->get_entryfield('upa3', 'uniqueprimaryauthor')), 'Unique primary author - 3');
-eq_or_diff($main->get_entryfield('upa4', 'uniqueprimaryauthor'), 1, 'Unique primary author - 4');
-"####;
-
-#[test]
-#[ignore = "xfail: bib-engine has no public prepared-name query API"]
-fn assertion_001_parsename_1() {
-    pass_upstream(
-        "parsename 1",
-        r####"tparsename($section,'John Doe', 'author')"####,
-        r####"$name1"####,
-        r####"is_deeply(tparsename($section,'John Doe', 'author'), $name1, 'parsename 1');"####,
-        UPSTREAM_SOURCE,
-    );
-}
-
-#[test]
-#[ignore = "xfail: bib-engine has no public prepared-name query API"]
-fn assertion_002_parsename_2() {
-    pass_upstream(
-        "parsename 2",
-        r####"tparsename($section,'Doe, Jr, John', 'author')"####,
-        r####"$name2"####,
-        r####"is_deeply(tparsename($section,'Doe, Jr, John', 'author'), $name2, 'parsename 2');"####,
-        UPSTREAM_SOURCE,
-    );
-}
-
-#[test]
-#[ignore = "xfail: bib-engine has no public prepared-name query API"]
-fn assertion_003_parsename_3() {
-    pass_upstream(
-        "parsename 3",
-        r####"tparsename($section,'von Berlichingen zu Hornberg, Johann Gottfried', 'author')"####,
-        r####"$name3"####,
-        r####"is_deeply(tparsename($section,'von Berlichingen zu Hornberg, Johann Gottfried', 'author'), $name3, 'parsename 3') ;"####,
-        UPSTREAM_SOURCE,
-    );
-}
-
-#[test]
-#[ignore = "xfail: bib-engine has no public prepared-name query API"]
-fn assertion_004_parsename_4() {
-    pass_upstream(
-        "parsename 4",
-        r####"tparsename($section,'von Berlichingen zu Hornberg, Johann Gottfried', 'author')"####,
-        r####"$name4"####,
-        r####"is_deeply(tparsename($section,'von Berlichingen zu Hornberg, Johann Gottfried', 'author'), $name4, 'parsename 4') ;"####,
-        UPSTREAM_SOURCE,
-    );
-}
-
-#[test]
-#[ignore = "xfail: bib-engine has no public prepared-name query API"]
-fn assertion_005_parsename_5() {
-    pass_upstream(
-        "parsename 5",
-        r####"tparsename($section,'{Robert and Sons, Inc.}', 'author')"####,
-        r####"$name5"####,
-        r####"is_deeply(tparsename($section,'{Robert and Sons, Inc.}', 'author'), $name5, 'parsename 5') ;"####,
-        UPSTREAM_SOURCE,
-    );
-}
-
-#[test]
-#[ignore = "xfail: bib-engine has no public prepared-name query API"]
-fn assertion_006_parsename_6() {
-    pass_upstream(
-        "parsename 6",
-        r####"tparsename($section,'al-Ṣāliḥ, ʿAbdallāh', 'author')"####,
-        r####"$name6"####,
-        r####"is_deeply(tparsename($section,'al-Ṣāliḥ, ʿAbdallāh', 'author'), $name6, 'parsename 6') ;"####,
-        UPSTREAM_SOURCE,
-    );
-}
-
-#[test]
-#[ignore = "xfail: bib-engine has no public prepared-name query API"]
-fn assertion_007_parsename_6a() {
-    pass_upstream(
-        "parsename 6a",
-        r####"tparsename($section,'al- Hakim, Tawfik', 'author')"####,
-        r####"$namepre1"####,
-        r####"is_deeply(tparsename($section,'al- Hakim, Tawfik', 'author'), $namepre1, 'parsename 6a') ;"####,
-        UPSTREAM_SOURCE,
-    );
-}
-
-#[test]
-#[ignore = "xfail: bib-engine has no public prepared-name query API"]
-fn assertion_008_parsename_7() {
-    pass_upstream(
-        "parsename 7",
-        r####"tparsename($section,'Jean Charles Gabriel de la Vallée Poussin', 'author')"####,
-        r####"$name7"####,
-        r####"is_deeply(tparsename($section,'Jean Charles Gabriel de la Vallée Poussin', 'author'), $name7, 'parsename 7');"####,
-        UPSTREAM_SOURCE,
-    );
-}
-
-#[test]
-#[ignore = "xfail: bib-engine has no public prepared-name query API"]
-fn assertion_009_parsename_8() {
-    pass_upstream(
-        "parsename 8",
-        r####"tparsename($section,'{Jean Charles Gabriel} de la Vallée Poussin', 'author')"####,
-        r####"$name8"####,
-        r####"is_deeply(tparsename($section,'{Jean Charles Gabriel} de la Vallée Poussin', 'author'), $name8, 'parsename 8');"####,
-        UPSTREAM_SOURCE,
-    );
-}
-
-#[test]
-#[ignore = "xfail: bib-engine has no public prepared-name query API"]
-fn assertion_010_parsename_9() {
-    pass_upstream(
-        "parsename 9",
-        r####"tparsename($section,'Jean Charles Gabriel {de la} Vallée Poussin', 'author')"####,
-        r####"$name9"####,
-        r####"is_deeply(tparsename($section,'Jean Charles Gabriel {de la} Vallée Poussin', 'author'), $name9, 'parsename 9');"####,
-        UPSTREAM_SOURCE,
-    );
-}
-
-#[test]
-#[ignore = "xfail: bib-engine has no public prepared-name query API"]
-fn assertion_011_parsename_10() {
-    pass_upstream(
-        "parsename 10",
-        r####"tparsename($section,'Jean Charles Gabriel de la {Vallée Poussin}', 'author')"####,
-        r####"$name10"####,
-        r####"is_deeply(tparsename($section,'Jean Charles Gabriel de la {Vallée Poussin}', 'author'), $name10, 'parsename 10');"####,
-        UPSTREAM_SOURCE,
-    );
-}
-
-#[test]
-#[ignore = "xfail: bib-engine has no public prepared-name query API"]
-fn assertion_012_parsename_11() {
-    pass_upstream(
-        "parsename 11",
-        r####"tparsename($section,'{Jean Charles Gabriel} de la {Vallée Poussin}', 'author')"####,
-        r####"$name11"####,
-        r####"is_deeply(tparsename($section,'{Jean Charles Gabriel} de la {Vallée Poussin}', 'author'), $name11, 'parsename 11');"####,
-        UPSTREAM_SOURCE,
-    );
-}
-
-#[test]
-#[ignore = "xfail: bib-engine has no public prepared-name query API"]
-fn assertion_013_parsename_12() {
-    pass_upstream(
-        "parsename 12",
-        r####"tparsename($section,'Jean Charles Gabriel Poussin', 'author')"####,
-        r####"$name12"####,
-        r####"is_deeply(tparsename($section,'Jean Charles Gabriel Poussin', 'author'), $name12, 'parsename 12');"####,
-        UPSTREAM_SOURCE,
-    );
-}
-
-#[test]
-#[ignore = "xfail: bib-engine has no public prepared-name query API"]
-fn assertion_014_parsename_13() {
-    pass_upstream(
-        "parsename 13",
-        r####"tparsename($section,'Jean Charles {Poussin Lecoq}', 'author')"####,
-        r####"$name13"####,
-        r####"is_deeply(tparsename($section,'Jean Charles {Poussin Lecoq}', 'author'), $name13, 'parsename 13');"####,
-        UPSTREAM_SOURCE,
-    );
-}
-
-#[test]
-#[ignore = "xfail: bib-engine has no public prepared-name query API"]
-fn assertion_015_parsename_14() {
-    pass_upstream(
-        "parsename 14",
-        r####"tparsename($section,'J. C. G. de la Vallée Poussin', 'author')"####,
-        r####"$name14"####,
-        r####"is_deeply(tparsename($section,'J. C. G. de la Vallée Poussin', 'author'), $name14, 'parsename 14');"####,
-        UPSTREAM_SOURCE,
-    );
-}
-
-#[test]
-#[ignore = "xfail: bib-engine has no public prepared-name query API"]
-fn assertion_016_parsename_15() {
-    pass_upstream(
-        "parsename 15",
-        r####"tparsename($section,'E. S. El-{M}allah', 'author')"####,
-        r####"$name15"####,
-        r####"is_deeply(tparsename($section,'E. S. El-{M}allah', 'author'), $name15, 'parsename 15');"####,
-        UPSTREAM_SOURCE,
-    );
-}
-
-#[test]
-#[ignore = "xfail: bib-engine has no public prepared-name query API"]
-fn assertion_017_parsename_16() {
-    pass_upstream(
-        "parsename 16",
-        r####"tparsename($section,'E. S. {K}ent-{B}oswell', 'author')"####,
-        r####"$name16"####,
-        r####"is_deeply(tparsename($section,'E. S. {K}ent-{B}oswell', 'author'), $name16, 'parsename 16');"####,
-        UPSTREAM_SOURCE,
-    );
-}
-
-#[test]
-#[ignore = "xfail: bib-engine has no public prepared-name query API"]
-fn assertion_018_parsename_17() {
-    pass_upstream(
-        "parsename 17",
-        r####"tparsename($section,'Other, A.~N.', 'author')"####,
-        r####"$name17"####,
-        r####"is_deeply(tparsename($section,'Other, A.~N.', 'author'), $name17, 'parsename 17');"####,
-        UPSTREAM_SOURCE,
-    );
-}
-
-#[test]
-#[ignore = "xfail: bib-engine has no public prepared-name query API"]
-fn assertion_019_parsename_18() {
-    pass_upstream(
-        "parsename 18",
-        r####"tparsename($section,'{{{British National Corpus}}}', 'author')"####,
-        r####"$name18"####,
-        r####"is_deeply(tparsename($section,'{{{British National Corpus}}}', 'author'), $name18, 'parsename 18');"####,
-        UPSTREAM_SOURCE,
-    );
-}
-
-#[test]
-#[ignore = "xfail: bib-engine has no public prepared-name query API"]
-fn assertion_020_parsename_18a() {
-    pass_upstream(
-        "parsename 18a",
-        r####"Biber::Input::file::bibtex::parsename($section,'{{{British National Corpus}}}', 'author')->{strip}"####,
-        r####"$name18strip"####,
-        r####"is_deeply(Biber::Input::file::bibtex::parsename($section,'{{{British National Corpus}}}', 'author')->{strip}, $name18strip, 'parsename 18a');"####,
-        UPSTREAM_SOURCE,
-    );
-}
-
-#[test]
-#[ignore = "xfail: bib-engine has no public prepared-name query API"]
-fn assertion_021_parsename_19() {
-    pass_upstream(
-        "parsename 19",
-        r####"tparsename($section,'Vázques{ de }Parga, Luis', 'author')"####,
-        r####"$name19"####,
-        r####"is_deeply(tparsename($section,'Vázques{ de }Parga, Luis', 'author'), $name19, 'parsename 19');"####,
-        UPSTREAM_SOURCE,
-    );
-}
-
-#[test]
-#[ignore = "xfail: bib-engine has no public prepared-name query API"]
-fn assertion_022_parsename_x_1() {
-    pass_upstream(
-        "parsename_x 1",
-        r####"tparsename_x($section,'family=Smithers Jones, prefix=van der, given=James, useprefix=true', 'author')"####,
-        r####"$namex1"####,
-        r####"is_deeply(tparsename_x($section,'family=Smithers Jones, prefix=van der, given=James, useprefix=true', 'author'), $namex1, 'parsename_x 1');"####,
-        UPSTREAM_SOURCE,
-    );
-}
-
-#[test]
-#[ignore = "xfail: bib-engine has no public prepared-name query API"]
-fn assertion_023_parsename_x_2() {
-    pass_upstream(
-        "parsename_x 2",
-        r####"Biber::Input::file::bibtex::parsename_x($section,'family=Smithers Jones, prefix=van der, given=James, useprefix=true', 'author')->{useprefix}"####,
-        r####"'1'"####,
-        r####"eq_or_diff(Biber::Input::file::bibtex::parsename_x($section,'family=Smithers Jones, prefix=van der, given=James, useprefix=true', 'author')->{useprefix}, '1', 'parsename_x 2');"####,
-        UPSTREAM_SOURCE,
-    );
-}
-
-#[test]
-#[ignore = "xfail: bib-engine has no public prepared-name query API"]
-fn assertion_024_name_to_bibtex_1() {
-    pass_upstream(
-        "name_to_bibtex 1",
-        r####"Biber::Input::file::bibtex::parsename($section,'John Doe', 'author')->name_to_bibtex"####,
-        r####"'Doe, John'"####,
-        r####"eq_or_diff(Biber::Input::file::bibtex::parsename($section,'John Doe', 'author')->name_to_bibtex, 'Doe, John', 'name_to_bibtex 1');"####,
-        UPSTREAM_SOURCE,
-    );
-}
-
-#[test]
-#[ignore = "xfail: bib-engine has no public prepared-name query API"]
-fn assertion_025_name_to_bibtex_2() {
-    pass_upstream(
-        "name_to_bibtex 2",
-        r####"Biber::Input::file::bibtex::parsename($section,'John van der Doe', 'author')->name_to_bibtex"####,
-        r####"'van der Doe, John'"####,
-        r####"eq_or_diff(Biber::Input::file::bibtex::parsename($section,'John van der Doe', 'author')->name_to_bibtex, 'van der Doe, John', 'name_to_bibtex 2');"####,
-        UPSTREAM_SOURCE,
-    );
-}
-
-#[test]
-#[ignore = "xfail: bib-engine has no public prepared-name query API"]
-fn assertion_026_name_to_bibtex_3() {
-    pass_upstream(
-        "name_to_bibtex 3",
-        r####"Biber::Input::file::bibtex::parsename($section,'Doe, Jr, John', 'author')->name_to_bibtex"####,
-        r####"'Doe, Jr, John'"####,
-        r####"eq_or_diff(Biber::Input::file::bibtex::parsename($section,'Doe, Jr, John', 'author')->name_to_bibtex, 'Doe, Jr, John', 'name_to_bibtex 3');"####,
-        UPSTREAM_SOURCE,
-    );
-}
-
-#[test]
-#[ignore = "xfail: bib-engine has no public prepared-name query API"]
-fn assertion_027_name_to_bibtex_4() {
-    pass_upstream(
-        "name_to_bibtex 4",
-        r####"Biber::Input::file::bibtex::parsename($section,'von Doe, Jr, John', 'author')->name_to_bibtex"####,
-        r####"'von Doe, Jr, John'"####,
-        r####"eq_or_diff(Biber::Input::file::bibtex::parsename($section,'von Doe, Jr, John', 'author')->name_to_bibtex, 'von Doe, Jr, John', 'name_to_bibtex 4');"####,
-        UPSTREAM_SOURCE,
-    );
-}
-
-#[test]
-#[ignore = "xfail: bib-engine has no public prepared-name query API"]
-fn assertion_028_name_to_bibtex_5() {
-    pass_upstream(
-        "name_to_bibtex 5",
-        r####"Biber::Input::file::bibtex::parsename($section,'John Alan Doe', 'author')->name_to_bibtex"####,
-        r####"'Doe, John Alan'"####,
-        r####"eq_or_diff(Biber::Input::file::bibtex::parsename($section,'John Alan Doe', 'author')->name_to_bibtex, 'Doe, John Alan', 'name_to_bibtex 5');"####,
-        UPSTREAM_SOURCE,
-    );
-}
-
-#[test]
-#[ignore = "xfail: bib-engine has no public prepared-name query API"]
-fn assertion_029_name_to_bibtex_6() {
-    pass_upstream(
-        "name_to_bibtex 6",
-        r####"Biber::Input::file::bibtex::parsename($section,'{Robert and Sons, Inc.}', 'author')->name_to_bibtex"####,
-        r####"'{Robert and Sons, Inc.}'"####,
-        r####"eq_or_diff(Biber::Input::file::bibtex::parsename($section,'{Robert and Sons, Inc.}', 'author')->name_to_bibtex, '{Robert and Sons, Inc.}', 'name_to_bibtex 6');"####,
-        UPSTREAM_SOURCE,
-    );
-}
-
-#[test]
-#[ignore = "xfail: bib-engine has no public prepared-name query API"]
-fn assertion_030_name_to_bibtex_7() {
-    pass_upstream(
-        "name_to_bibtex 7",
-        r####"NFC(Biber::Input::file::bibtex::parsename($section,'Jean Charles Gabriel de la {Vallée Poussin}', 'author')->name_to_bibtex)"####,
-        r####"'de la {Vallée Poussin}, Jean Charles Gabriel'"####,
-        r####"eq_or_diff(NFC(Biber::Input::file::bibtex::parsename($section,'Jean Charles Gabriel de la {Vallée Poussin}', 'author')->name_to_bibtex), 'de la {Vallée Poussin}, Jean Charles Gabriel', 'name_to_bibtex 7');"####,
-        UPSTREAM_SOURCE,
-    );
-}
-
-#[test]
-#[ignore = "xfail: bib-engine has no public prepared-name query API"]
-fn assertion_031_name_to_bibtex_8() {
-    pass_upstream(
-        "name_to_bibtex 8",
-        r####"Biber::Input::file::bibtex::parsename($section,'E. S. {K}ent-{B}oswell', 'author')->name_to_bibtex"####,
-        r####"'{K}ent-{B}oswell, E. S.'"####,
-        r####"eq_or_diff(Biber::Input::file::bibtex::parsename($section,'E. S. {K}ent-{B}oswell', 'author')->name_to_bibtex, '{K}ent-{B}oswell, E. S.', 'name_to_bibtex 8');"####,
-        UPSTREAM_SOURCE,
-    );
-}
-
-#[test]
-#[ignore = "xfail: bib-engine has no public prepared-name query API"]
-fn assertion_032_name_to_bibtex_9() {
-    pass_upstream(
-        "name_to_bibtex - 9",
-        r####"Biber::Input::file::bibtex::parsename_x($section,'family=Smithers Jones, prefix=van der, given=James, useprefix=true', 'author')->name_to_bibtex"####,
-        r####"'van der Smithers Jones, James'"####,
-        r####"is_deeply(Biber::Input::file::bibtex::parsename_x($section,'family=Smithers Jones, prefix=van der, given=James, useprefix=true', 'author')->name_to_bibtex, 'van der Smithers Jones, James', 'name_to_bibtex - 9');"####,
-        UPSTREAM_SOURCE,
-    );
-}
-
-#[test]
-#[ignore = "xfail: bib-engine has no public prepared-name query API"]
-fn assertion_033_name_to_xname_1() {
-    pass_upstream(
-        "name_to_xname - 1",
-        r####"Biber::Input::file::bibtex::parsename($section,'van der Smithers Jones, James', 'author')->name_to_xname"####,
-        r####"'family=Smithers Jones, given=James, prefix=van der'"####,
-        r####"is_deeply(Biber::Input::file::bibtex::parsename($section,'van der Smithers Jones, James', 'author')->name_to_xname, 'family=Smithers Jones, given=James, prefix=van der', 'name_to_xname - 1');"####,
-        UPSTREAM_SOURCE,
-    );
-}
-
-#[test]
-#[ignore = "xfail: bib-engine has no public prepared-name query API"]
-fn assertion_034_name_to_xname_2() {
-    pass_upstream(
-        "name_to_xname - 2",
-        r####"Biber::Input::file::bibtex::parsename_x($section,'family=Smithers Jones, prefix=van der, given=James, useprefix=true', 'author')->name_to_xname"####,
-        r####"'family=Smithers Jones, given=James, prefix=van der, useprefix=true'"####,
-        r####"is_deeply(Biber::Input::file::bibtex::parsename_x($section,'family=Smithers Jones, prefix=van der, given=James, useprefix=true', 'author')->name_to_xname, 'family=Smithers Jones, given=James, prefix=van der, useprefix=true', 'name_to_xname - 2');"####,
-        UPSTREAM_SOURCE,
-    );
-}
-
-#[test]
-#[ignore = "xfail: bib-engine has no public prepared-name query API"]
-fn assertion_035_first_last() {
-    pass_upstream(
-        "First Last",
-        r####"$out->get_output_entry('L1', $main)"####,
-        r####"$l1"####,
-        r####"eq_or_diff( $out->get_output_entry('L1', $main), $l1, 'First Last') ;"####,
-        UPSTREAM_SOURCE,
-    );
-}
-
-#[test]
-#[ignore = "xfail: bib-engine has no public prepared-name query API"]
-fn assertion_036_name_hashing_given_initials() {
-    pass_upstream(
-        "Name hashing - given initials",
-        r####"$out->get_output_entry('L1', $nhtest)"####,
-        r####"$l1h"####,
-        r####"eq_or_diff( $out->get_output_entry('L1', $nhtest), $l1h, 'Name hashing - given initials');"####,
-        UPSTREAM_SOURCE,
-    );
-}
-
-#[test]
-#[ignore = "xfail: bib-engine has no public prepared-name query API"]
-fn assertion_037_name_hashing_custom_hashid() {
-    pass_upstream(
-        "Name hashing - custom hashid",
-        r####"$out->get_output_entry('L1id', $main)"####,
-        r####"$l1id"####,
-        r####"eq_or_diff( $out->get_output_entry('L1id', $main), $l1id, 'Name hashing - custom hashid');"####,
-        UPSTREAM_SOURCE,
-    );
-}
-
-#[test]
-#[ignore = "xfail: bib-engine has no public prepared-name query API"]
-fn assertion_038_first_initial_last() {
-    pass_upstream(
-        "First Initial. Last",
-        r####"$out->get_output_entry('L2', $main)"####,
-        r####"$l2"####,
-        r####"eq_or_diff( $out->get_output_entry('L2', $main), $l2, 'First Initial. Last') ;"####,
-        UPSTREAM_SOURCE,
-    );
-}
-
-#[test]
-#[ignore = "xfail: bib-engine has no public prepared-name query API"]
-fn assertion_039_initial_initial_last() {
-    pass_upstream(
-        "Initial. Initial. Last",
-        r####"$out->get_output_entry('L3', $main)"####,
-        r####"$l3"####,
-        r####"eq_or_diff( $out->get_output_entry('L3', $main), $l3, 'Initial. Initial. Last') ;"####,
-        UPSTREAM_SOURCE,
-    );
-}
-
-#[test]
-#[ignore = "xfail: bib-engine has no public prepared-name query API"]
-fn assertion_040_first_initial_last() {
-    pass_upstream(
-        "First Initial Last",
-        r####"$out->get_output_entry('L4', $main)"####,
-        r####"$l4"####,
-        r####"eq_or_diff( $out->get_output_entry('L4', $main), $l4, 'First Initial Last') ;"####,
-        UPSTREAM_SOURCE,
-    );
-}
-
-#[test]
-#[ignore = "xfail: bib-engine has no public prepared-name query API"]
-fn assertion_041_first_prefix_last() {
-    pass_upstream(
-        "First prefix Last",
-        r####"$out->get_output_entry('L5', $main)"####,
-        r####"$l5"####,
-        r####"eq_or_diff( $out->get_output_entry('L5', $main), $l5, 'First prefix Last') ;"####,
-        UPSTREAM_SOURCE,
-    );
-}
-
-#[test]
-#[ignore = "xfail: bib-engine has no public prepared-name query API"]
-fn assertion_042_first_prefix_prefix_last() {
-    pass_upstream(
-        "First prefix prefix Last",
-        r####"$out->get_output_entry('L6', $main)"####,
-        r####"$l6"####,
-        r####"eq_or_diff( $out->get_output_entry('L6', $main), $l6, 'First prefix prefix Last') ;"####,
-        UPSTREAM_SOURCE,
-    );
-}
-
-#[test]
-#[ignore = "xfail: bib-engine has no public prepared-name query API"]
-fn assertion_043_first_initial_prefix_last() {
-    pass_upstream(
-        "First Initial. prefix Last",
-        r####"$out->get_output_entry('L7', $main)"####,
-        r####"$l7"####,
-        r####"eq_or_diff( $out->get_output_entry('L7', $main), $l7, 'First Initial. prefix Last') ;"####,
-        UPSTREAM_SOURCE,
-    );
-}
-
-#[test]
-#[ignore = "xfail: bib-engine has no public prepared-name query API"]
-fn assertion_044_first_initial_prefix_last() {
-    pass_upstream(
-        "First Initial prefix Last",
-        r####"$out->get_output_entry('L8', $main)"####,
-        r####"$l8"####,
-        r####"eq_or_diff( $out->get_output_entry('L8', $main), $l8, 'First Initial prefix Last') ;"####,
-        UPSTREAM_SOURCE,
-    );
-}
-
-#[test]
-#[ignore = "xfail: bib-engine has no public prepared-name query API"]
-fn assertion_045_first_last_last() {
-    pass_upstream(
-        "First {Last Last}",
-        r####"$out->get_output_entry('L9', $main)"####,
-        r####"$l9"####,
-        r####"eq_or_diff( $out->get_output_entry('L9', $main), $l9, 'First {Last Last}') ;"####,
-        UPSTREAM_SOURCE,
-    );
-}
-
-#[test]
-#[ignore = "xfail: bib-engine has no public prepared-name query API"]
-fn assertion_046_last_suffix_first() {
-    pass_upstream(
-        "Last, Suffix, First",
-        r####"$out->get_output_entry('L10', $main)"####,
-        r####"$l10"####,
-        r####"eq_or_diff( $out->get_output_entry('L10', $main), $l10, 'Last, Suffix, First') ;"####,
-        UPSTREAM_SOURCE,
-    );
-}
-
-#[test]
-#[ignore = "xfail: bib-engine has no public prepared-name query API"]
-fn assertion_047_last_suffix_first_initial() {
-    pass_upstream(
-        "Last, Suffix, First Initial.",
-        r####"$out->get_output_entry('L10a', $main)"####,
-        r####"$l10a"####,
-        r####"eq_or_diff( $out->get_output_entry('L10a', $main), $l10a, 'Last, Suffix, First Initial.') ;"####,
-        UPSTREAM_SOURCE,
-    );
-}
-
-#[test]
-#[ignore = "xfail: bib-engine has no public prepared-name query API"]
-fn assertion_048_prefix_last_suffix_first() {
-    pass_upstream(
-        "prefix Last, Suffix, First",
-        r####"$out->get_output_entry('L11', $main)"####,
-        r####"$l11"####,
-        r####"eq_or_diff( $out->get_output_entry('L11', $main), $l11, 'prefix Last, Suffix, First') ;"####,
-        UPSTREAM_SOURCE,
-    );
-}
-
-#[test]
-#[ignore = "xfail: bib-engine has no public prepared-name query API"]
-fn assertion_049_last_last_last_initial_initial() {
-    pass_upstream(
-        "Last Last Last, Initial. Initial.",
-        r####"$out->get_output_entry('L13', $main)"####,
-        r####"$l13"####,
-        r####"eq_or_diff( $out->get_output_entry('L13', $main), $l13, 'Last Last Last, Initial. Initial.');"####,
-        UPSTREAM_SOURCE,
-    );
-}
-
-#[test]
-#[ignore = "xfail: bib-engine has no public prepared-name query API"]
-fn assertion_050_last_last_last_first() {
-    pass_upstream(
-        "Last Last-Last, First",
-        r####"$out->get_output_entry('L14', $main)"####,
-        r####"$l14"####,
-        r####"eq_or_diff( $out->get_output_entry('L14', $main), $l14, 'Last Last-Last, First');"####,
-        UPSTREAM_SOURCE,
-    );
-}
-
-#[test]
-#[ignore = "xfail: bib-engine has no public prepared-name query API"]
-fn assertion_051_first_f_bibinitdelim_f_last() {
-    pass_upstream(
-        "First F.{\\bibinitdelim }F. Last",
-        r####"$out->get_output_entry('L15', $main)"####,
-        r####"$l15"####,
-        r####"eq_or_diff( $out->get_output_entry('L15', $main), $l15, 'First F.{\bibinitdelim }F. Last');"####,
-        UPSTREAM_SOURCE,
-    );
-}
-
-#[test]
-#[ignore = "xfail: bib-engine has no public prepared-name query API"]
-fn assertion_052_first_f_bibinitdelim_f_last() {
-    pass_upstream(
-        "First {F.\\bibinitdelim F.} Last",
-        r####"$out->get_output_entry('L16', $main)"####,
-        r####"$l16"####,
-        r####"eq_or_diff( $out->get_output_entry('L16', $main), $l16, 'First {F.\bibinitdelim F.} Last');"####,
-        UPSTREAM_SOURCE,
-    );
-}
-
-#[test]
-#[ignore = "xfail: bib-engine has no public prepared-name query API"]
-fn assertion_053_last_first_f_bibinitdelim_f() {
-    pass_upstream(
-        "Last, First {F.\\bibinitdelim F.}",
-        r####"$out->get_output_entry('L17', $main)"####,
-        r####"$l17"####,
-        r####"eq_or_diff( $out->get_output_entry('L17', $main), $l17, 'Last, First {F.\bibinitdelim F.}');"####,
-        UPSTREAM_SOURCE,
-    );
-}
-
-#[test]
-#[ignore = "xfail: bib-engine has no public prepared-name query API"]
-fn assertion_054_last_first_f_bibinitdelim_f() {
-    pass_upstream(
-        "Last, First F.{\\bibinitdelim }F.",
-        r####"$out->get_output_entry('L18', $main)"####,
-        r####"$l18"####,
-        r####"eq_or_diff( $out->get_output_entry('L18', $main), $l18, 'Last, First F.{\bibinitdelim }F.');"####,
-        UPSTREAM_SOURCE,
-    );
-}
-
-#[test]
-#[ignore = "xfail: bib-engine has no public prepared-name query API"]
-fn assertion_055_firstname_with_hyphen() {
-    pass_upstream(
-        "Firstname with hyphen",
-        r####"$out->get_output_entry('L19', $main)"####,
-        r####"$l19"####,
-        r####"eq_or_diff( $out->get_output_entry('L19', $main), $l19, 'Firstname with hyphen');"####,
-        UPSTREAM_SOURCE,
-    );
-}
-
-#[test]
-#[ignore = "xfail: bib-engine has no public prepared-name query API"]
-fn assertion_056_short_given_name_with_hyphen() {
-    pass_upstream(
-        "Short given name with hyphen",
-        r####"$out->get_output_entry('L19a', $main)"####,
-        r####"$l19a"####,
-        r####"eq_or_diff( $out->get_output_entry('L19a', $main), $l19a, 'Short given name with hyphen');"####,
-        UPSTREAM_SOURCE,
-    );
-}
-
-#[test]
-#[ignore = "xfail: bib-engine has no public prepared-name query API"]
-fn assertion_057_protected_dual_given_name() {
-    pass_upstream(
-        "Protected dual given name",
-        r####"$out->get_output_entry('L20', $main)"####,
-        r####"$l20"####,
-        r####"eq_or_diff( $out->get_output_entry('L20', $main), $l20, 'Protected dual given name');"####,
-        UPSTREAM_SOURCE,
-    );
-}
-
-#[test]
-#[ignore = "xfail: bib-engine has no public prepared-name query API"]
-fn assertion_058_latex_encoded_unicode_family_1() {
-    pass_upstream(
-        "LaTeX encoded unicode family - 1",
-        r####"encode_utf8(NFC($out->get_output_entry('L22', $main)))"####,
-        r####"encode_utf8($l22u)"####,
-        r####"eq_or_diff( encode_utf8(NFC($out->get_output_entry('L22', $main))), encode_utf8($l22u), 'LaTeX encoded unicode family - 1');"####,
-        UPSTREAM_SOURCE,
-    );
-}
-
-#[test]
-#[ignore = "xfail: bib-engine has no public prepared-name query API"]
-fn assertion_059_unicode_given_name() {
-    pass_upstream(
-        "Unicode given name",
-        r####"NFC($out->get_output_entry('L23', $main))"####,
-        r####"$l23"####,
-        r####"eq_or_diff( NFC($out->get_output_entry('L23', $main)), $l23, 'Unicode given name');"####,
-        UPSTREAM_SOURCE,
-    );
-}
-
-#[test]
-#[ignore = "xfail: bib-engine has no public prepared-name query API"]
-fn assertion_060_unicode_family_name() {
-    pass_upstream(
-        "Unicode family name",
-        r####"NFC($out->get_output_entry('L24', $main))"####,
-        r####"$l24"####,
-        r####"eq_or_diff( NFC($out->get_output_entry('L24', $main)), $l24, 'Unicode family name');"####,
-        UPSTREAM_SOURCE,
-    );
-}
-
-#[test]
-#[ignore = "xfail: bib-engine has no public prepared-name query API"]
-fn assertion_061_single_string_name() {
-    pass_upstream(
-        "Single string name",
-        r####"$out->get_output_entry('L25', $main)"####,
-        r####"$l25"####,
-        r####"eq_or_diff( $out->get_output_entry('L25', $main), $l25, 'Single string name');"####,
-        UPSTREAM_SOURCE,
-    );
-}
-
-#[test]
-#[ignore = "xfail: bib-engine has no public prepared-name query API"]
-fn assertion_062_hyphen_at_brace_level_0() {
-    pass_upstream(
-        "Hyphen at brace level <> 0",
-        r####"$out->get_output_entry('L26', $main)"####,
-        r####"$l26"####,
-        r####"eq_or_diff( $out->get_output_entry('L26', $main), $l26, 'Hyphen at brace level <> 0');"####,
-        UPSTREAM_SOURCE,
-    );
-}
-
-#[test]
-#[ignore = "xfail: bib-engine has no public prepared-name query API"]
-fn assertion_063_escaped_name_with_3_commas() {
-    pass_upstream(
-        "Escaped name with 3 commas",
-        r####"$out->get_output_entry('L29', $main)"####,
-        r####"$l29"####,
-        r####"eq_or_diff( $out->get_output_entry('L29', $main), $l29, 'Escaped name with 3 commas');"####,
-        UPSTREAM_SOURCE,
-    );
-}
-
-#[test]
-#[ignore = "xfail: bib-engine has no public prepared-name query API"]
-fn assertion_064_name_count_for_and_others_1() {
-    pass_upstream(
-        "Name count for \"and others\" - 1",
-        r####"$bibentries->entry('V1')->get_field($bibentries->entry('V1')->get_labelname_info)->count"####,
-        r####"'2'"####,
-        r####"eq_or_diff($bibentries->entry('V1')->get_field($bibentries->entry('V1')->get_labelname_info)->count, '2', 'Name count for "and others" - 1');"####,
-        UPSTREAM_SOURCE,
-    );
-}
-
-#[test]
-#[ignore = "xfail: bib-engine has no public prepared-name query API"]
-fn assertion_065_visibility_for_and_others_1() {
-    pass_upstream(
-        "Visibility for \"and others\" - 1",
-        r####"$main->get_visible_cite($bibentries->entry('V1')->get_field($bibentries->entry('V1')->get_labelname_info)->get_id)"####,
-        r####"'2'"####,
-        r####"eq_or_diff($main->get_visible_cite($bibentries->entry('V1')->get_field($bibentries->entry('V1')->get_labelname_info)->get_id), '2', 'Visibility for "and others" - 1');"####,
-        UPSTREAM_SOURCE,
-    );
-}
-
-#[test]
-#[ignore = "xfail: bib-engine has no public prepared-name query API"]
-fn assertion_066_visibility_for_and_others_2() {
-    pass_upstream(
-        "Visibility for \"and others\" - 2",
-        r####"$main->get_visible_cite($bibentries->entry('V2')->get_field($bibentries->entry('V2')->get_labelname_info)->get_id)"####,
-        r####"'1'"####,
-        r####"eq_or_diff($main->get_visible_cite($bibentries->entry('V2')->get_field($bibentries->entry('V2')->get_labelname_info)->get_id), '1', 'Visibility for "and others" - 2');"####,
-        UPSTREAM_SOURCE,
-    );
-}
-
-#[test]
-#[ignore = "xfail: bib-engine has no public prepared-name query API"]
-fn assertion_067_terseinitials_1() {
-    pass_upstream(
-        "Terseinitials 1",
-        r####"NFC($bibentries->entry('L21')->get_field($bibentries->entry('L21')->get_labelname_info)->nth_name(1)->get_namepart_initial('given')->[0])"####,
-        r####"'Š'"####,
-        r####"eq_or_diff(NFC($bibentries->entry('L21')->get_field($bibentries->entry('L21')->get_labelname_info)->nth_name(1)->get_namepart_initial('given')->[0]), 'Š', 'Terseinitials 1');"####,
-        UPSTREAM_SOURCE,
-    );
-}
-
-#[test]
-#[ignore = "xfail: bib-engine has no public prepared-name query API"]
-fn assertion_068_first_first_first_first_prefix_prefix_last_last() {
-    pass_upstream(
-        "First First First First prefix prefix Last Last",
-        r####"encode_utf8($out->get_output_entry('L12', $main))"####,
-        r####"encode_utf8($l12)"####,
-        r####"eq_or_diff( encode_utf8($out->get_output_entry('L12', $main)), encode_utf8($l12), 'First First First First prefix prefix Last Last') ;"####,
-        UPSTREAM_SOURCE,
-    );
-}
-
-#[test]
-#[ignore = "xfail: bib-engine has no public prepared-name query API"]
-fn assertion_069_latex_encoded_unicode_given_name() {
-    pass_upstream(
-        "LaTeX encoded unicode given name",
-        r####"$out->get_output_entry('L21', $main)"####,
-        r####"$l21"####,
-        r####"eq_or_diff( $out->get_output_entry('L21', $main), $l21, 'LaTeX encoded unicode given name');"####,
-        UPSTREAM_SOURCE,
-    );
-}
-
-#[test]
-#[ignore = "xfail: bib-engine has no public prepared-name query API"]
-fn assertion_070_latex_encoded_unicode_family_name_2() {
-    pass_upstream(
-        "LaTeX encoded unicode family name - 2",
-        r####"$out->get_output_entry('L22', $main)"####,
-        r####"$l22"####,
-        r####"eq_or_diff( $out->get_output_entry('L22', $main), $l22, 'LaTeX encoded unicode family name - 2');"####,
-        UPSTREAM_SOURCE,
-    );
-}
-
-#[test]
-#[ignore = "xfail: bib-engine has no public prepared-name query API"]
-fn assertion_071_latex_encoded_unicode_family_name_with_tie_char() {
-    pass_upstream(
-        "LaTeX encoded unicode family name with tie char",
-        r####"$out->get_output_entry('L31', $main)"####,
-        r####"$l31"####,
-        r####"eq_or_diff( $out->get_output_entry('L31', $main), $l31, 'LaTeX encoded unicode family name with tie char');"####,
-        UPSTREAM_SOURCE,
+"#####
     );
 }
 
 #[test]
-#[ignore = "xfail: bib-engine has no public prepared-name query API"]
+#[ignore = "xfail: processed name or BBL differs from the Biber 2.22 expectation"]
 fn assertion_072_unique_primary_author_1() {
-    pass_upstream(
-        "Unique primary author - 1",
-        r####"$main->get_entryfield('upa1', 'uniqueprimaryauthor')"####,
-        r####"1"####,
-        r####"eq_or_diff($main->get_entryfield('upa1', 'uniqueprimaryauthor'), 1, 'Unique primary author - 1');"####,
-        UPSTREAM_SOURCE,
+    assert_eq!(
+        field_text(
+            r#####"names.bcf"#####,
+            r#####"upa1"#####,
+            r#####"uniqueprimaryauthor"#####
+        )
+        .as_deref(),
+        Some("1")
     );
 }
 
 #[test]
-#[ignore = "xfail: bib-engine has no public prepared-name query API"]
 fn assertion_073_unique_primary_author_2() {
-    pass_upstream(
-        "Unique primary author - 2",
-        r####"is_undef($main->get_entryfield('upa2', 'uniqueprimaryauthor'))"####,
-        r####"true"####,
-        r####"ok(is_undef($main->get_entryfield('upa2', 'uniqueprimaryauthor')), 'Unique primary author - 2');"####,
-        UPSTREAM_SOURCE,
+    assert_eq!(
+        field_text(
+            r#####"names.bcf"#####,
+            r#####"upa2"#####,
+            r#####"uniqueprimaryauthor"#####
+        )
+        .as_deref(),
+        None
     );
 }
 
 #[test]
-#[ignore = "xfail: bib-engine has no public prepared-name query API"]
 fn assertion_074_unique_primary_author_3() {
-    pass_upstream(
-        "Unique primary author - 3",
-        r####"is_undef($main->get_entryfield('upa3', 'uniqueprimaryauthor'))"####,
-        r####"true"####,
-        r####"ok(is_undef($main->get_entryfield('upa3', 'uniqueprimaryauthor')), 'Unique primary author - 3');"####,
-        UPSTREAM_SOURCE,
+    assert_eq!(
+        field_text(
+            r#####"names.bcf"#####,
+            r#####"upa3"#####,
+            r#####"uniqueprimaryauthor"#####
+        )
+        .as_deref(),
+        None
     );
 }
 
 #[test]
-#[ignore = "xfail: bib-engine has no public prepared-name query API"]
+#[ignore = "xfail: processed name or BBL differs from the Biber 2.22 expectation"]
 fn assertion_075_unique_primary_author_4() {
-    pass_upstream(
-        "Unique primary author - 4",
-        r####"$main->get_entryfield('upa4', 'uniqueprimaryauthor')"####,
-        r####"1"####,
-        r####"eq_or_diff($main->get_entryfield('upa4', 'uniqueprimaryauthor'), 1, 'Unique primary author - 4');"####,
-        UPSTREAM_SOURCE,
+    assert_eq!(
+        field_text(
+            r#####"names.bcf"#####,
+            r#####"upa4"#####,
+            r#####"uniqueprimaryauthor"#####
+        )
+        .as_deref(),
+        Some("1")
     );
 }

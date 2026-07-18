@@ -1,613 +1,963 @@
-// Direct translation of upstream t/extradate.t at commit 74252e6.
-// Keep `UPSTREAM_SOURCE` byte-for-byte equivalent when editing expectations.
+// Native Rust translation of the corresponding upstream Biber test at commit 74252e6.
 
-fn pass_upstream(
-    assertion: &str,
-    actual_expression: &str,
-    expected_expression: &str,
-    upstream_call: &str,
-    upstream_source: &str,
-) {
-    super::pass_upstream(
-        assertion,
-        actual_expression,
-        expected_expression,
-        upstream_call,
-        upstream_source,
-    );
-    panic!("xfail: bib-engine has no public extra-date metadata query API");
+use std::path::PathBuf;
+
+use bib_engine::{
+    BibAttempt, BibJob, BibOptionsBuilder, BibSession, EntryId, FieldId, FieldValue,
+    FileProvisioner, OutputFormat, OutputRequest, ProcessedBibliography, ResolvedFile, SectionId,
+    VfsLimits, VirtualPath,
+};
+
+#[allow(dead_code)]
+struct FixtureResult {
+    document: ProcessedBibliography,
+    bbl: String,
 }
 
-const UPSTREAM_SOURCE: &str = r####"# -*- cperl -*-
-use strict;
-use warnings;
-use utf8;
-no warnings 'utf8';
+fn override_scalar_option(control: &mut String, key: &str, value: &str) {
+    if key == "extradatespec" {
+        let start_tag = "<bcf:extradatespec>";
+        let end_tag = "</bcf:extradatespec>";
+        let start = control.find(start_tag).expect("extradate spec exists");
+        let end = control[start..]
+            .find(end_tag)
+            .map(|offset| start + offset + end_tag.len())
+            .expect("extradate spec is terminated");
+        let scopes = value
+            .split(';')
+            .map(|scope| {
+                let fields = scope
+                    .split(',')
+                    .enumerate()
+                    .map(|(index, field)| {
+                        format!(
+                            "      <bcf:field order=\"{}\">{field}</bcf:field>\n",
+                            index + 1
+                        )
+                    })
+                    .collect::<String>();
+                format!("    <bcf:scope>\n{fields}    </bcf:scope>\n")
+            })
+            .collect::<String>();
+        control.replace_range(start..end, &format!("{start_tag}\n{scopes}  {end_tag}"));
+        return;
+    }
+    let key_tag = format!("<bcf:key>{key}</bcf:key>");
+    let key_at = control
+        .find(&key_tag)
+        .expect("option exists in committed BCF");
+    let value_start = control[key_at..]
+        .find("<bcf:value>")
+        .map(|offset| key_at + offset + "<bcf:value>".len())
+        .expect("option has a value");
+    let value_end = control[value_start..]
+        .find("</bcf:value>")
+        .map(|offset| value_start + offset)
+        .expect("option value is terminated");
+    control.replace_range(value_start..value_end, value);
+}
 
-use Test::More tests => 39;
-use Test::Differences;
-unified_diff;
+fn process_fixture(control_name: &str, option_overrides: &[(&str, &str)]) -> FixtureResult {
+    let fixture_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../tests/corpus/bib/upstream-2.22/tdata");
+    let control = VirtualPath::user(control_name).expect("valid control path");
+    let mut control_bytes = String::from_utf8(
+        std::fs::read(fixture_dir.join(control_name)).expect("committed BCF fixture"),
+    )
+    .expect("BCF is UTF-8");
+    for &(key, value) in option_overrides {
+        override_scalar_option(&mut control_bytes, key, value);
+    }
+    let mut provisioner = FileProvisioner::new(VfsLimits::default()).expect("valid VFS limits");
+    provisioner
+        .register_user(control.clone(), control_bytes.into_bytes())
+        .expect("unique control file");
+    let output_path = VirtualPath::user("native.bbl").expect("valid output path");
+    let mut options = BibOptionsBuilder::new();
+    options
+        .output(OutputRequest::new(output_path, OutputFormat::Bbl))
+        .expect("unique output");
+    let job = BibJob::new(control, options.freeze());
+    let mut session = BibSession::default();
+    loop {
+        match session.process(&job, &provisioner.snapshot()) {
+            BibAttempt::Complete(result) => {
+                let bbl = result
+                    .files()
+                    .find(|file| file.path().as_str().ends_with("native.bbl"))
+                    .map(|file| String::from_utf8_lossy(file.bytes()).into_owned())
+                    .unwrap_or_default();
+                return FixtureResult {
+                    document: result.document().as_ref().clone(),
+                    bbl,
+                };
+            }
+            BibAttempt::NeedResources(requests) => {
+                provisioner.expect(&requests);
+                for request in requests
+                    .required
+                    .iter()
+                    .chain(requests.prefetch_hints.iter())
+                {
+                    let path = fixture_dir.join(request.key().name());
+                    if !path.is_file() {
+                        continue;
+                    }
+                    provisioner
+                        .provision(ResolvedFile {
+                            request: request.key().clone(),
+                            virtual_path: format!("/texlive/bib/{}", request.key().name()).into(),
+                            bytes: std::fs::read(path).expect("committed requested fixture"),
+                            expected_digest: None,
+                        })
+                        .expect("requested fixture is valid");
+                }
+            }
+            BibAttempt::Failed(failure) => panic!("fixture processing failed: {failure:?}"),
+        }
+    }
+}
 
-use Biber;
-use Biber::Utils;
-use Biber::Output::bbl;
-use Log::Log4perl;
-chdir("t/tdata");
+fn field_text(
+    control: &str,
+    option_overrides: &[(&str, &str)],
+    entry_key: &str,
+    field_name: &str,
+) -> Option<String> {
+    let fixture = process_fixture(control, option_overrides);
+    let entry = fixture
+        .document
+        .section(SectionId::new(0))?
+        .entry(&EntryId::new(entry_key).expect("valid entry key"))?;
+    match entry
+        .fields()
+        .get(&FieldId::new(field_name).expect("valid field name"))?
+    {
+        FieldValue::Literal(value) => Some(value.as_str().to_owned()),
+        FieldValue::Verbatim(value) => Some(value.as_str().to_owned()),
+        FieldValue::Integer(value) => Some(value.to_string()),
+        FieldValue::Boolean(value) => Some(if *value { "1" } else { "0" }.to_owned()),
+        _ => None,
+    }
+}
 
-# Set up Biber object
-my $biber = Biber->new(noconf => 1);
-my $LEVEL = 'ERROR';
-my $l4pconf = qq|
-    log4perl.category.main                             = $LEVEL, Screen
-    log4perl.category.screen                           = $LEVEL, Screen
-    log4perl.appender.Screen                           = Log::Log4perl::Appender::Screen
-    log4perl.appender.Screen.utf8                      = 1
-    log4perl.appender.Screen.Threshold                 = $LEVEL
-    log4perl.appender.Screen.stderr                    = 0
-    log4perl.appender.Screen.layout                    = Log::Log4perl::Layout::SimpleLayout
-|;
-Log::Log4perl->init(\$l4pconf);
+#[allow(dead_code)]
+fn name_assignment(
+    control: &str,
+    option_overrides: &[(&str, &str)],
+    entry_key: &str,
+    name_index: usize,
+    assignment_key: &str,
+) -> Option<String> {
+    let fixture = process_fixture(control, option_overrides);
+    let entry = fixture
+        .document
+        .section(SectionId::new(0))?
+        .entry(&EntryId::new(entry_key).expect("valid entry key"))?;
+    let source = match entry
+        .fields()
+        .get(&FieldId::new("labelnamesource").expect("valid field name"))?
+    {
+        FieldValue::Literal(value) => value.as_str(),
+        _ => return None,
+    };
+    let names = match entry
+        .fields()
+        .get(&FieldId::new(source).expect("valid name-list field"))?
+    {
+        FieldValue::NameList(names) => names,
+        _ => return None,
+    };
+    names
+        .iter()
+        .nth(name_index.checked_sub(1)?)?
+        .assignments()
+        .find(|assignment| assignment.key() == assignment_key)
+        .map(|assignment| assignment.value().to_owned())
+}
 
-$biber->parse_ctrlfile('extradate.bcf');
-$biber->set_output_obj(Biber::Output::bbl->new());
-
-# Options - we could set these in the control file but it's nice to see what we're
-# relying on here for tests
-
-# Biber options
-Biber::Config->setoption('sortlocale', 'en_GB.UTF-8');
-
-# Biblatex options
-Biber::Config->setblxoption(undef,'maxcitenames', 1);
-Biber::Config->setblxoption(undef,'maxbibnames', 1);
-Biber::Config->setblxoption(undef,'maxsortnames', 1);
-
-# Now generate the information
-$biber->prepare;
-my $section = $biber->sections->get_section(0);
-my $main = $biber->datalists->get_list('custom/global//global/global/global');
-my $bibentries = $section->bibentries;
-
-eq_or_diff($main->get_extradatedata_for_key('L1'), '1', 'Entry L1 - one name, first in 1995');
-eq_or_diff($main->get_extradatedata_for_key('L2'), '2', 'Entry L2 - one name, second in 1995');
-eq_or_diff($main->get_extradatedata_for_key('L3'), '3', 'Entry L3 - one name, third in 1995');
-eq_or_diff($main->get_extradatedata_for_key('L4'), '1', 'Entry L4 - two names, first in 1995');
-eq_or_diff($main->get_extradatedata_for_key('L5'), '2', 'Entry L5 - two names, second in 1995');
-eq_or_diff($main->get_extradatedata_for_key('L6'), '1', 'Entry L6 - two names, first in 1996');
-eq_or_diff($main->get_extradatedata_for_key('L7'), '2', 'Entry L7 - two names, second in 1996');
-eq_or_diff($main->get_extradatedata_for_key('nodate1'), '1', 'Same name, no year 1');
-eq_or_diff($main->get_extradatedata_for_key('nodate2'), '2', 'Same name, no year 2');
-ok(is_undef($main->get_extradatedata_for_key('L8')), 'Entry L8 - one name, only in year');
-ok(is_undef($main->get_extradatedata_for_key('L9')), 'Entry L9 - No name, same year as another with no name');
-ok(is_undef($main->get_extradatedata_for_key('L10')), 'Entry L10 - No name, same year as another with no name');
-eq_or_diff($main->get_extradatedata_for_key('companion1'), '1', 'Entry companion1 - names truncated to same as another entry in same year');
-eq_or_diff($main->get_extradatedata_for_key('companion2'), '2', 'Entry companion2 - names truncated to same as another entry in same year');
-ok(is_undef($main->get_extradatedata_for_key('companion3')), 'Entry companion3 - one name, same year as truncated names');
-eq_or_diff($main->get_extradatedata_for_key('vangennep'), '2', 'Entry vangennep - useprefix does makes it different');
-eq_or_diff($main->get_extradatedata_for_key('gennep'), '1', 'Entry gennep - different from prefix name');
-ok(is_undef($main->get_extradatedata_for_key('LY1')), 'Date range means no extradate - 1');
-ok(is_undef($main->get_extradatedata_for_key('LY2')), 'Date range means no extradate - 2');
-ok(is_undef($main->get_extradatedata_for_key('LY3')), 'Date range means no extradate - 3');
-
-# Test for labeldatesource literal string
-eq_or_diff($bibentries->entry('nodate1')->get_field('labeldatesource'), 'nodate', 'Labeldatesource string - 1');
-eq_or_diff($bibentries->entry('nodate2')->get_field('labeldatesource'), 'nodate', 'Labeldatesource string - 2');
-
-# Testing different extradate scopes (granularity) extradate should be set
-# at year scope only in default setup so these two get different extradate
-# because they differ at month scope
-eq_or_diff($main->get_extradatedata_for_key('ed1'), '1', 'labelyear scope - 1');
-eq_or_diff($main->get_extradatedata_for_key('ed2'), '2', 'labelyear scope - 2');
-eq_or_diff($bibentries->entry('ed1')->get_field('extradatescope'), 'labelyear', 'labelyear scope - 1a');
-# One of these has an open enddate
-ok(is_undef($main->get_extradatedata_for_key('ed7')), 'labelyear scope - 3');
-ok(is_undef($main->get_extradatedata_for_key('ed8')), 'labelyear scope - 4');
-
-# Switch to a month-in-year scope for extradate tracking
-Biber::Config->setblxoption(undef,'extradatespec', [['labelyear', 'year'],['labelmonth']]);
-$biber->prepare;
-$main = $biber->datalists->get_list('custom/global//global/global/global');
-
-# Now extradate should be unset as the months differ
-ok(is_undef($main->get_extradatedata_for_key('ed1')), 'labelmonth scope - 1');
-ok(is_undef($main->get_extradatedata_for_key('ed2')), 'labelmonth scope - 2');
-eq_or_diff($bibentries->entry('ed1')->get_field('extradatescope'), 'labelmonth', 'labelmonth scope - 1a');
-
-# But these have no months and are the same at labelyear so they should be set
-eq_or_diff($main->get_extradatedata_for_key('ed3'), '1', 'labelmonth scope - 3');
-eq_or_diff($main->get_extradatedata_for_key('ed4'), '2', 'labelmonth scope - 4');
-
-# Switch to a minute scope for extradate tracking
-Biber::Config->setblxoption(undef,'extradatespec', [['labelyear', 'year'],
-                                              ['labelmonth'],
-                                              ['labelday'],
-                                              ['labelhour'],
-                                              ['labelminute']]);
-$biber->prepare;
-$main = $biber->datalists->get_list('custom/global//global/global/global');
-
-# extradate should be set as the minutes are the same
-eq_or_diff($main->get_extradatedata_for_key('ed5'), '1', 'labelminute scope - 1');
-eq_or_diff($main->get_extradatedata_for_key('ed6'), '2', 'labelminute scope - 2');
-eq_or_diff($bibentries->entry('ed5')->get_field('extradatescope'), 'labelminute', 'labelminute scope - 1a');
-# But these have no times
-ok(is_undef($main->get_extradatedata_for_key('ed1')), 'labelminute scope - 3');
-ok(is_undef($main->get_extradatedata_for_key('ed2')), 'labelminute scope - 4');
-
-# Test not using label* which means that open enddates would not be
-# considered
-Biber::Config->setblxoption(undef,'extradatespec', [['year']]);
-$biber->prepare;
-$main = $biber->datalists->get_list('custom/global//global/global/global');
-eq_or_diff($main->get_extradatedata_for_key('ed7'), '1', 'year scope - 1');
-eq_or_diff($main->get_extradatedata_for_key('ed8'), '2', 'year scope - 2');
-
-"####;
+#[allow(dead_code)]
+fn output_entry(control: &str, option_overrides: &[(&str, &str)], entry_key: &str) -> String {
+    let fixture = process_fixture(control, option_overrides);
+    let marker = format!("\\\\entry{{{entry_key}}}");
+    let marker_at = fixture
+        .bbl
+        .find(&marker)
+        .expect("entry is present in generated BBL");
+    let start = fixture.bbl[..marker_at].rfind("    ").unwrap_or(marker_at);
+    let end = fixture.bbl[marker_at..]
+        .find("\\\\endentry")
+        .map(|offset| marker_at + offset + "\\\\endentry".len())
+        .expect("entry is terminated");
+    fixture.bbl[start..end].to_owned()
+}
 
 #[test]
-#[ignore = "xfail: bib-engine has no public extra-date metadata query API"]
+#[ignore = "xfail: extra-date metadata differs from the Biber 2.22 expectation"]
 fn assertion_001_entry_l1_one_name_first_in_1995() {
-    pass_upstream(
-        "Entry L1 - one name, first in 1995",
-        r####"$main->get_extradatedata_for_key('L1')"####,
-        r####"'1'"####,
-        r####"eq_or_diff($main->get_extradatedata_for_key('L1'), '1', 'Entry L1 - one name, first in 1995');"####,
-        UPSTREAM_SOURCE,
+    assert_eq!(
+        field_text(
+            r#####"extradate.bcf"#####,
+            &[
+                (r#####"maxcitenames"#####, r#####"1"#####),
+                (r#####"maxbibnames"#####, r#####"1"#####),
+                (r#####"maxsortnames"#####, r#####"1"#####)
+            ],
+            r#####"L1"#####,
+            r#####"extradate"#####
+        )
+        .as_deref(),
+        Some(r#####"1"#####)
     );
 }
 
 #[test]
-#[ignore = "xfail: bib-engine has no public extra-date metadata query API"]
+#[ignore = "xfail: extra-date metadata differs from the Biber 2.22 expectation"]
 fn assertion_002_entry_l2_one_name_second_in_1995() {
-    pass_upstream(
-        "Entry L2 - one name, second in 1995",
-        r####"$main->get_extradatedata_for_key('L2')"####,
-        r####"'2'"####,
-        r####"eq_or_diff($main->get_extradatedata_for_key('L2'), '2', 'Entry L2 - one name, second in 1995');"####,
-        UPSTREAM_SOURCE,
+    assert_eq!(
+        field_text(
+            r#####"extradate.bcf"#####,
+            &[
+                (r#####"maxcitenames"#####, r#####"1"#####),
+                (r#####"maxbibnames"#####, r#####"1"#####),
+                (r#####"maxsortnames"#####, r#####"1"#####)
+            ],
+            r#####"L2"#####,
+            r#####"extradate"#####
+        )
+        .as_deref(),
+        Some(r#####"2"#####)
     );
 }
 
 #[test]
-#[ignore = "xfail: bib-engine has no public extra-date metadata query API"]
+#[ignore = "xfail: extra-date metadata differs from the Biber 2.22 expectation"]
 fn assertion_003_entry_l3_one_name_third_in_1995() {
-    pass_upstream(
-        "Entry L3 - one name, third in 1995",
-        r####"$main->get_extradatedata_for_key('L3')"####,
-        r####"'3'"####,
-        r####"eq_or_diff($main->get_extradatedata_for_key('L3'), '3', 'Entry L3 - one name, third in 1995');"####,
-        UPSTREAM_SOURCE,
+    assert_eq!(
+        field_text(
+            r#####"extradate.bcf"#####,
+            &[
+                (r#####"maxcitenames"#####, r#####"1"#####),
+                (r#####"maxbibnames"#####, r#####"1"#####),
+                (r#####"maxsortnames"#####, r#####"1"#####)
+            ],
+            r#####"L3"#####,
+            r#####"extradate"#####
+        )
+        .as_deref(),
+        Some(r#####"3"#####)
     );
 }
 
 #[test]
-#[ignore = "xfail: bib-engine has no public extra-date metadata query API"]
+#[ignore = "xfail: extra-date metadata differs from the Biber 2.22 expectation"]
 fn assertion_004_entry_l4_two_names_first_in_1995() {
-    pass_upstream(
-        "Entry L4 - two names, first in 1995",
-        r####"$main->get_extradatedata_for_key('L4')"####,
-        r####"'1'"####,
-        r####"eq_or_diff($main->get_extradatedata_for_key('L4'), '1', 'Entry L4 - two names, first in 1995');"####,
-        UPSTREAM_SOURCE,
+    assert_eq!(
+        field_text(
+            r#####"extradate.bcf"#####,
+            &[
+                (r#####"maxcitenames"#####, r#####"1"#####),
+                (r#####"maxbibnames"#####, r#####"1"#####),
+                (r#####"maxsortnames"#####, r#####"1"#####)
+            ],
+            r#####"L4"#####,
+            r#####"extradate"#####
+        )
+        .as_deref(),
+        Some(r#####"1"#####)
     );
 }
 
 #[test]
-#[ignore = "xfail: bib-engine has no public extra-date metadata query API"]
+#[ignore = "xfail: extra-date metadata differs from the Biber 2.22 expectation"]
 fn assertion_005_entry_l5_two_names_second_in_1995() {
-    pass_upstream(
-        "Entry L5 - two names, second in 1995",
-        r####"$main->get_extradatedata_for_key('L5')"####,
-        r####"'2'"####,
-        r####"eq_or_diff($main->get_extradatedata_for_key('L5'), '2', 'Entry L5 - two names, second in 1995');"####,
-        UPSTREAM_SOURCE,
+    assert_eq!(
+        field_text(
+            r#####"extradate.bcf"#####,
+            &[
+                (r#####"maxcitenames"#####, r#####"1"#####),
+                (r#####"maxbibnames"#####, r#####"1"#####),
+                (r#####"maxsortnames"#####, r#####"1"#####)
+            ],
+            r#####"L5"#####,
+            r#####"extradate"#####
+        )
+        .as_deref(),
+        Some(r#####"2"#####)
     );
 }
 
 #[test]
-#[ignore = "xfail: bib-engine has no public extra-date metadata query API"]
+#[ignore = "xfail: extra-date metadata differs from the Biber 2.22 expectation"]
 fn assertion_006_entry_l6_two_names_first_in_1996() {
-    pass_upstream(
-        "Entry L6 - two names, first in 1996",
-        r####"$main->get_extradatedata_for_key('L6')"####,
-        r####"'1'"####,
-        r####"eq_or_diff($main->get_extradatedata_for_key('L6'), '1', 'Entry L6 - two names, first in 1996');"####,
-        UPSTREAM_SOURCE,
+    assert_eq!(
+        field_text(
+            r#####"extradate.bcf"#####,
+            &[
+                (r#####"maxcitenames"#####, r#####"1"#####),
+                (r#####"maxbibnames"#####, r#####"1"#####),
+                (r#####"maxsortnames"#####, r#####"1"#####)
+            ],
+            r#####"L6"#####,
+            r#####"extradate"#####
+        )
+        .as_deref(),
+        Some(r#####"1"#####)
     );
 }
 
 #[test]
-#[ignore = "xfail: bib-engine has no public extra-date metadata query API"]
+#[ignore = "xfail: extra-date metadata differs from the Biber 2.22 expectation"]
 fn assertion_007_entry_l7_two_names_second_in_1996() {
-    pass_upstream(
-        "Entry L7 - two names, second in 1996",
-        r####"$main->get_extradatedata_for_key('L7')"####,
-        r####"'2'"####,
-        r####"eq_or_diff($main->get_extradatedata_for_key('L7'), '2', 'Entry L7 - two names, second in 1996');"####,
-        UPSTREAM_SOURCE,
+    assert_eq!(
+        field_text(
+            r#####"extradate.bcf"#####,
+            &[
+                (r#####"maxcitenames"#####, r#####"1"#####),
+                (r#####"maxbibnames"#####, r#####"1"#####),
+                (r#####"maxsortnames"#####, r#####"1"#####)
+            ],
+            r#####"L7"#####,
+            r#####"extradate"#####
+        )
+        .as_deref(),
+        Some(r#####"2"#####)
     );
 }
 
 #[test]
-#[ignore = "xfail: bib-engine has no public extra-date metadata query API"]
+#[ignore = "xfail: extra-date metadata differs from the Biber 2.22 expectation"]
 fn assertion_008_same_name_no_year_1() {
-    pass_upstream(
-        "Same name, no year 1",
-        r####"$main->get_extradatedata_for_key('nodate1')"####,
-        r####"'1'"####,
-        r####"eq_or_diff($main->get_extradatedata_for_key('nodate1'), '1', 'Same name, no year 1');"####,
-        UPSTREAM_SOURCE,
+    assert_eq!(
+        field_text(
+            r#####"extradate.bcf"#####,
+            &[
+                (r#####"maxcitenames"#####, r#####"1"#####),
+                (r#####"maxbibnames"#####, r#####"1"#####),
+                (r#####"maxsortnames"#####, r#####"1"#####)
+            ],
+            r#####"nodate1"#####,
+            r#####"extradate"#####
+        )
+        .as_deref(),
+        Some(r#####"1"#####)
     );
 }
 
 #[test]
-#[ignore = "xfail: bib-engine has no public extra-date metadata query API"]
+#[ignore = "xfail: extra-date metadata differs from the Biber 2.22 expectation"]
 fn assertion_009_same_name_no_year_2() {
-    pass_upstream(
-        "Same name, no year 2",
-        r####"$main->get_extradatedata_for_key('nodate2')"####,
-        r####"'2'"####,
-        r####"eq_or_diff($main->get_extradatedata_for_key('nodate2'), '2', 'Same name, no year 2');"####,
-        UPSTREAM_SOURCE,
+    assert_eq!(
+        field_text(
+            r#####"extradate.bcf"#####,
+            &[
+                (r#####"maxcitenames"#####, r#####"1"#####),
+                (r#####"maxbibnames"#####, r#####"1"#####),
+                (r#####"maxsortnames"#####, r#####"1"#####)
+            ],
+            r#####"nodate2"#####,
+            r#####"extradate"#####
+        )
+        .as_deref(),
+        Some(r#####"2"#####)
     );
 }
 
 #[test]
-#[ignore = "xfail: bib-engine has no public extra-date metadata query API"]
 fn assertion_010_entry_l8_one_name_only_in_year() {
-    pass_upstream(
-        "Entry L8 - one name, only in year",
-        r####"is_undef($main->get_extradatedata_for_key('L8'))"####,
-        r####"true"####,
-        r####"ok(is_undef($main->get_extradatedata_for_key('L8')), 'Entry L8 - one name, only in year');"####,
-        UPSTREAM_SOURCE,
+    assert_eq!(
+        field_text(
+            r#####"extradate.bcf"#####,
+            &[
+                (r#####"maxcitenames"#####, r#####"1"#####),
+                (r#####"maxbibnames"#####, r#####"1"#####),
+                (r#####"maxsortnames"#####, r#####"1"#####)
+            ],
+            r#####"L8"#####,
+            r#####"extradate"#####
+        )
+        .as_deref(),
+        None
     );
 }
 
 #[test]
-#[ignore = "xfail: bib-engine has no public extra-date metadata query API"]
 fn assertion_011_entry_l9_no_name_same_year_as_another_with_no_name() {
-    pass_upstream(
-        "Entry L9 - No name, same year as another with no name",
-        r####"is_undef($main->get_extradatedata_for_key('L9'))"####,
-        r####"true"####,
-        r####"ok(is_undef($main->get_extradatedata_for_key('L9')), 'Entry L9 - No name, same year as another with no name');"####,
-        UPSTREAM_SOURCE,
+    assert_eq!(
+        field_text(
+            r#####"extradate.bcf"#####,
+            &[
+                (r#####"maxcitenames"#####, r#####"1"#####),
+                (r#####"maxbibnames"#####, r#####"1"#####),
+                (r#####"maxsortnames"#####, r#####"1"#####)
+            ],
+            r#####"L9"#####,
+            r#####"extradate"#####
+        )
+        .as_deref(),
+        None
     );
 }
 
 #[test]
-#[ignore = "xfail: bib-engine has no public extra-date metadata query API"]
 fn assertion_012_entry_l10_no_name_same_year_as_another_with_no_name() {
-    pass_upstream(
-        "Entry L10 - No name, same year as another with no name",
-        r####"is_undef($main->get_extradatedata_for_key('L10'))"####,
-        r####"true"####,
-        r####"ok(is_undef($main->get_extradatedata_for_key('L10')), 'Entry L10 - No name, same year as another with no name');"####,
-        UPSTREAM_SOURCE,
+    assert_eq!(
+        field_text(
+            r#####"extradate.bcf"#####,
+            &[
+                (r#####"maxcitenames"#####, r#####"1"#####),
+                (r#####"maxbibnames"#####, r#####"1"#####),
+                (r#####"maxsortnames"#####, r#####"1"#####)
+            ],
+            r#####"L10"#####,
+            r#####"extradate"#####
+        )
+        .as_deref(),
+        None
     );
 }
 
 #[test]
-#[ignore = "xfail: bib-engine has no public extra-date metadata query API"]
+#[ignore = "xfail: extra-date metadata differs from the Biber 2.22 expectation"]
 fn assertion_013_entry_companion1_names_truncated_to_same_as_another_entry_in_same_year() {
-    pass_upstream(
-        "Entry companion1 - names truncated to same as another entry in same year",
-        r####"$main->get_extradatedata_for_key('companion1')"####,
-        r####"'1'"####,
-        r####"eq_or_diff($main->get_extradatedata_for_key('companion1'), '1', 'Entry companion1 - names truncated to same as another entry in same year');"####,
-        UPSTREAM_SOURCE,
+    assert_eq!(
+        field_text(
+            r#####"extradate.bcf"#####,
+            &[
+                (r#####"maxcitenames"#####, r#####"1"#####),
+                (r#####"maxbibnames"#####, r#####"1"#####),
+                (r#####"maxsortnames"#####, r#####"1"#####)
+            ],
+            r#####"companion1"#####,
+            r#####"extradate"#####
+        )
+        .as_deref(),
+        Some(r#####"1"#####)
     );
 }
 
 #[test]
-#[ignore = "xfail: bib-engine has no public extra-date metadata query API"]
+#[ignore = "xfail: extra-date metadata differs from the Biber 2.22 expectation"]
 fn assertion_014_entry_companion2_names_truncated_to_same_as_another_entry_in_same_year() {
-    pass_upstream(
-        "Entry companion2 - names truncated to same as another entry in same year",
-        r####"$main->get_extradatedata_for_key('companion2')"####,
-        r####"'2'"####,
-        r####"eq_or_diff($main->get_extradatedata_for_key('companion2'), '2', 'Entry companion2 - names truncated to same as another entry in same year');"####,
-        UPSTREAM_SOURCE,
+    assert_eq!(
+        field_text(
+            r#####"extradate.bcf"#####,
+            &[
+                (r#####"maxcitenames"#####, r#####"1"#####),
+                (r#####"maxbibnames"#####, r#####"1"#####),
+                (r#####"maxsortnames"#####, r#####"1"#####)
+            ],
+            r#####"companion2"#####,
+            r#####"extradate"#####
+        )
+        .as_deref(),
+        Some(r#####"2"#####)
     );
 }
 
 #[test]
-#[ignore = "xfail: bib-engine has no public extra-date metadata query API"]
 fn assertion_015_entry_companion3_one_name_same_year_as_truncated_names() {
-    pass_upstream(
-        "Entry companion3 - one name, same year as truncated names",
-        r####"is_undef($main->get_extradatedata_for_key('companion3'))"####,
-        r####"true"####,
-        r####"ok(is_undef($main->get_extradatedata_for_key('companion3')), 'Entry companion3 - one name, same year as truncated names');"####,
-        UPSTREAM_SOURCE,
+    assert_eq!(
+        field_text(
+            r#####"extradate.bcf"#####,
+            &[
+                (r#####"maxcitenames"#####, r#####"1"#####),
+                (r#####"maxbibnames"#####, r#####"1"#####),
+                (r#####"maxsortnames"#####, r#####"1"#####)
+            ],
+            r#####"companion3"#####,
+            r#####"extradate"#####
+        )
+        .as_deref(),
+        None
     );
 }
 
 #[test]
-#[ignore = "xfail: bib-engine has no public extra-date metadata query API"]
+#[ignore = "xfail: extra-date metadata differs from the Biber 2.22 expectation"]
 fn assertion_016_entry_vangennep_useprefix_does_makes_it_different() {
-    pass_upstream(
-        "Entry vangennep - useprefix does makes it different",
-        r####"$main->get_extradatedata_for_key('vangennep')"####,
-        r####"'2'"####,
-        r####"eq_or_diff($main->get_extradatedata_for_key('vangennep'), '2', 'Entry vangennep - useprefix does makes it different');"####,
-        UPSTREAM_SOURCE,
+    assert_eq!(
+        field_text(
+            r#####"extradate.bcf"#####,
+            &[
+                (r#####"maxcitenames"#####, r#####"1"#####),
+                (r#####"maxbibnames"#####, r#####"1"#####),
+                (r#####"maxsortnames"#####, r#####"1"#####)
+            ],
+            r#####"vangennep"#####,
+            r#####"extradate"#####
+        )
+        .as_deref(),
+        Some(r#####"2"#####)
     );
 }
 
 #[test]
-#[ignore = "xfail: bib-engine has no public extra-date metadata query API"]
+#[ignore = "xfail: extra-date metadata differs from the Biber 2.22 expectation"]
 fn assertion_017_entry_gennep_different_from_prefix_name() {
-    pass_upstream(
-        "Entry gennep - different from prefix name",
-        r####"$main->get_extradatedata_for_key('gennep')"####,
-        r####"'1'"####,
-        r####"eq_or_diff($main->get_extradatedata_for_key('gennep'), '1', 'Entry gennep - different from prefix name');"####,
-        UPSTREAM_SOURCE,
+    assert_eq!(
+        field_text(
+            r#####"extradate.bcf"#####,
+            &[
+                (r#####"maxcitenames"#####, r#####"1"#####),
+                (r#####"maxbibnames"#####, r#####"1"#####),
+                (r#####"maxsortnames"#####, r#####"1"#####)
+            ],
+            r#####"gennep"#####,
+            r#####"extradate"#####
+        )
+        .as_deref(),
+        Some(r#####"1"#####)
     );
 }
 
 #[test]
-#[ignore = "xfail: bib-engine has no public extra-date metadata query API"]
 fn assertion_018_date_range_means_no_extradate_1() {
-    pass_upstream(
-        "Date range means no extradate - 1",
-        r####"is_undef($main->get_extradatedata_for_key('LY1'))"####,
-        r####"true"####,
-        r####"ok(is_undef($main->get_extradatedata_for_key('LY1')), 'Date range means no extradate - 1');"####,
-        UPSTREAM_SOURCE,
+    assert_eq!(
+        field_text(
+            r#####"extradate.bcf"#####,
+            &[
+                (r#####"maxcitenames"#####, r#####"1"#####),
+                (r#####"maxbibnames"#####, r#####"1"#####),
+                (r#####"maxsortnames"#####, r#####"1"#####)
+            ],
+            r#####"LY1"#####,
+            r#####"extradate"#####
+        )
+        .as_deref(),
+        None
     );
 }
 
 #[test]
-#[ignore = "xfail: bib-engine has no public extra-date metadata query API"]
 fn assertion_019_date_range_means_no_extradate_2() {
-    pass_upstream(
-        "Date range means no extradate - 2",
-        r####"is_undef($main->get_extradatedata_for_key('LY2'))"####,
-        r####"true"####,
-        r####"ok(is_undef($main->get_extradatedata_for_key('LY2')), 'Date range means no extradate - 2');"####,
-        UPSTREAM_SOURCE,
+    assert_eq!(
+        field_text(
+            r#####"extradate.bcf"#####,
+            &[
+                (r#####"maxcitenames"#####, r#####"1"#####),
+                (r#####"maxbibnames"#####, r#####"1"#####),
+                (r#####"maxsortnames"#####, r#####"1"#####)
+            ],
+            r#####"LY2"#####,
+            r#####"extradate"#####
+        )
+        .as_deref(),
+        None
     );
 }
 
 #[test]
-#[ignore = "xfail: bib-engine has no public extra-date metadata query API"]
 fn assertion_020_date_range_means_no_extradate_3() {
-    pass_upstream(
-        "Date range means no extradate - 3",
-        r####"is_undef($main->get_extradatedata_for_key('LY3'))"####,
-        r####"true"####,
-        r####"ok(is_undef($main->get_extradatedata_for_key('LY3')), 'Date range means no extradate - 3');"####,
-        UPSTREAM_SOURCE,
+    assert_eq!(
+        field_text(
+            r#####"extradate.bcf"#####,
+            &[
+                (r#####"maxcitenames"#####, r#####"1"#####),
+                (r#####"maxbibnames"#####, r#####"1"#####),
+                (r#####"maxsortnames"#####, r#####"1"#####)
+            ],
+            r#####"LY3"#####,
+            r#####"extradate"#####
+        )
+        .as_deref(),
+        None
     );
 }
 
 #[test]
-#[ignore = "xfail: bib-engine has no public extra-date metadata query API"]
+#[ignore = "xfail: extra-date metadata differs from the Biber 2.22 expectation"]
 fn assertion_021_labeldatesource_string_1() {
-    pass_upstream(
-        "Labeldatesource string - 1",
-        r####"$bibentries->entry('nodate1')->get_field('labeldatesource')"####,
-        r####"'nodate'"####,
-        r####"eq_or_diff($bibentries->entry('nodate1')->get_field('labeldatesource'), 'nodate', 'Labeldatesource string - 1');"####,
-        UPSTREAM_SOURCE,
+    assert_eq!(
+        field_text(
+            r#####"extradate.bcf"#####,
+            &[
+                (r#####"maxcitenames"#####, r#####"1"#####),
+                (r#####"maxbibnames"#####, r#####"1"#####),
+                (r#####"maxsortnames"#####, r#####"1"#####)
+            ],
+            r#####"nodate1"#####,
+            r#####"labeldatesource"#####
+        )
+        .as_deref(),
+        Some(r#####"nodate"#####)
     );
 }
 
 #[test]
-#[ignore = "xfail: bib-engine has no public extra-date metadata query API"]
+#[ignore = "xfail: extra-date metadata differs from the Biber 2.22 expectation"]
 fn assertion_022_labeldatesource_string_2() {
-    pass_upstream(
-        "Labeldatesource string - 2",
-        r####"$bibentries->entry('nodate2')->get_field('labeldatesource')"####,
-        r####"'nodate'"####,
-        r####"eq_or_diff($bibentries->entry('nodate2')->get_field('labeldatesource'), 'nodate', 'Labeldatesource string - 2');"####,
-        UPSTREAM_SOURCE,
+    assert_eq!(
+        field_text(
+            r#####"extradate.bcf"#####,
+            &[
+                (r#####"maxcitenames"#####, r#####"1"#####),
+                (r#####"maxbibnames"#####, r#####"1"#####),
+                (r#####"maxsortnames"#####, r#####"1"#####)
+            ],
+            r#####"nodate2"#####,
+            r#####"labeldatesource"#####
+        )
+        .as_deref(),
+        Some(r#####"nodate"#####)
     );
 }
 
 #[test]
-#[ignore = "xfail: bib-engine has no public extra-date metadata query API"]
+#[ignore = "xfail: extra-date metadata differs from the Biber 2.22 expectation"]
 fn assertion_023_labelyear_scope_1() {
-    pass_upstream(
-        "labelyear scope - 1",
-        r####"$main->get_extradatedata_for_key('ed1')"####,
-        r####"'1'"####,
-        r####"eq_or_diff($main->get_extradatedata_for_key('ed1'), '1', 'labelyear scope - 1');"####,
-        UPSTREAM_SOURCE,
+    assert_eq!(
+        field_text(
+            r#####"extradate.bcf"#####,
+            &[
+                (r#####"maxcitenames"#####, r#####"1"#####),
+                (r#####"maxbibnames"#####, r#####"1"#####),
+                (r#####"maxsortnames"#####, r#####"1"#####)
+            ],
+            r#####"ed1"#####,
+            r#####"extradate"#####
+        )
+        .as_deref(),
+        Some(r#####"1"#####)
     );
 }
 
 #[test]
-#[ignore = "xfail: bib-engine has no public extra-date metadata query API"]
+#[ignore = "xfail: extra-date metadata differs from the Biber 2.22 expectation"]
 fn assertion_024_labelyear_scope_2() {
-    pass_upstream(
-        "labelyear scope - 2",
-        r####"$main->get_extradatedata_for_key('ed2')"####,
-        r####"'2'"####,
-        r####"eq_or_diff($main->get_extradatedata_for_key('ed2'), '2', 'labelyear scope - 2');"####,
-        UPSTREAM_SOURCE,
+    assert_eq!(
+        field_text(
+            r#####"extradate.bcf"#####,
+            &[
+                (r#####"maxcitenames"#####, r#####"1"#####),
+                (r#####"maxbibnames"#####, r#####"1"#####),
+                (r#####"maxsortnames"#####, r#####"1"#####)
+            ],
+            r#####"ed2"#####,
+            r#####"extradate"#####
+        )
+        .as_deref(),
+        Some(r#####"2"#####)
     );
 }
 
 #[test]
-#[ignore = "xfail: bib-engine has no public extra-date metadata query API"]
+#[ignore = "xfail: extra-date metadata differs from the Biber 2.22 expectation"]
 fn assertion_025_labelyear_scope_1a() {
-    pass_upstream(
-        "labelyear scope - 1a",
-        r####"$bibentries->entry('ed1')->get_field('extradatescope')"####,
-        r####"'labelyear'"####,
-        r####"eq_or_diff($bibentries->entry('ed1')->get_field('extradatescope'), 'labelyear', 'labelyear scope - 1a');"####,
-        UPSTREAM_SOURCE,
+    assert_eq!(
+        field_text(
+            r#####"extradate.bcf"#####,
+            &[
+                (r#####"maxcitenames"#####, r#####"1"#####),
+                (r#####"maxbibnames"#####, r#####"1"#####),
+                (r#####"maxsortnames"#####, r#####"1"#####)
+            ],
+            r#####"ed1"#####,
+            r#####"extradatescope"#####
+        )
+        .as_deref(),
+        Some(r#####"labelyear"#####)
     );
 }
 
 #[test]
-#[ignore = "xfail: bib-engine has no public extra-date metadata query API"]
 fn assertion_026_labelyear_scope_3() {
-    pass_upstream(
-        "labelyear scope - 3",
-        r####"is_undef($main->get_extradatedata_for_key('ed7'))"####,
-        r####"true"####,
-        r####"ok(is_undef($main->get_extradatedata_for_key('ed7')), 'labelyear scope - 3');"####,
-        UPSTREAM_SOURCE,
+    assert_eq!(
+        field_text(
+            r#####"extradate.bcf"#####,
+            &[
+                (r#####"maxcitenames"#####, r#####"1"#####),
+                (r#####"maxbibnames"#####, r#####"1"#####),
+                (r#####"maxsortnames"#####, r#####"1"#####)
+            ],
+            r#####"ed7"#####,
+            r#####"extradate"#####
+        )
+        .as_deref(),
+        None
     );
 }
 
 #[test]
-#[ignore = "xfail: bib-engine has no public extra-date metadata query API"]
 fn assertion_027_labelyear_scope_4() {
-    pass_upstream(
-        "labelyear scope - 4",
-        r####"is_undef($main->get_extradatedata_for_key('ed8'))"####,
-        r####"true"####,
-        r####"ok(is_undef($main->get_extradatedata_for_key('ed8')), 'labelyear scope - 4');"####,
-        UPSTREAM_SOURCE,
+    assert_eq!(
+        field_text(
+            r#####"extradate.bcf"#####,
+            &[
+                (r#####"maxcitenames"#####, r#####"1"#####),
+                (r#####"maxbibnames"#####, r#####"1"#####),
+                (r#####"maxsortnames"#####, r#####"1"#####)
+            ],
+            r#####"ed8"#####,
+            r#####"extradate"#####
+        )
+        .as_deref(),
+        None
     );
 }
 
 #[test]
-#[ignore = "xfail: bib-engine has no public extra-date metadata query API"]
 fn assertion_028_labelmonth_scope_1() {
-    pass_upstream(
-        "labelmonth scope - 1",
-        r####"is_undef($main->get_extradatedata_for_key('ed1'))"####,
-        r####"true"####,
-        r####"ok(is_undef($main->get_extradatedata_for_key('ed1')), 'labelmonth scope - 1');"####,
-        UPSTREAM_SOURCE,
+    assert_eq!(
+        field_text(
+            r#####"extradate.bcf"#####,
+            &[
+                (
+                    r#####"extradatespec"#####,
+                    r#####"labelyear,year;labelmonth"#####
+                ),
+                (r#####"maxcitenames"#####, r#####"1"#####),
+                (r#####"maxbibnames"#####, r#####"1"#####),
+                (r#####"maxsortnames"#####, r#####"1"#####)
+            ],
+            r#####"ed1"#####,
+            r#####"extradate"#####
+        )
+        .as_deref(),
+        None
     );
 }
 
 #[test]
-#[ignore = "xfail: bib-engine has no public extra-date metadata query API"]
 fn assertion_029_labelmonth_scope_2() {
-    pass_upstream(
-        "labelmonth scope - 2",
-        r####"is_undef($main->get_extradatedata_for_key('ed2'))"####,
-        r####"true"####,
-        r####"ok(is_undef($main->get_extradatedata_for_key('ed2')), 'labelmonth scope - 2');"####,
-        UPSTREAM_SOURCE,
+    assert_eq!(
+        field_text(
+            r#####"extradate.bcf"#####,
+            &[
+                (
+                    r#####"extradatespec"#####,
+                    r#####"labelyear,year;labelmonth"#####
+                ),
+                (r#####"maxcitenames"#####, r#####"1"#####),
+                (r#####"maxbibnames"#####, r#####"1"#####),
+                (r#####"maxsortnames"#####, r#####"1"#####)
+            ],
+            r#####"ed2"#####,
+            r#####"extradate"#####
+        )
+        .as_deref(),
+        None
     );
 }
 
 #[test]
-#[ignore = "xfail: bib-engine has no public extra-date metadata query API"]
+#[ignore = "xfail: extra-date metadata differs from the Biber 2.22 expectation"]
 fn assertion_030_labelmonth_scope_1a() {
-    pass_upstream(
-        "labelmonth scope - 1a",
-        r####"$bibentries->entry('ed1')->get_field('extradatescope')"####,
-        r####"'labelmonth'"####,
-        r####"eq_or_diff($bibentries->entry('ed1')->get_field('extradatescope'), 'labelmonth', 'labelmonth scope - 1a');"####,
-        UPSTREAM_SOURCE,
+    assert_eq!(
+        field_text(
+            r#####"extradate.bcf"#####,
+            &[
+                (
+                    r#####"extradatespec"#####,
+                    r#####"labelyear,year;labelmonth"#####
+                ),
+                (r#####"maxcitenames"#####, r#####"1"#####),
+                (r#####"maxbibnames"#####, r#####"1"#####),
+                (r#####"maxsortnames"#####, r#####"1"#####)
+            ],
+            r#####"ed1"#####,
+            r#####"extradatescope"#####
+        )
+        .as_deref(),
+        Some(r#####"labelmonth"#####)
     );
 }
 
 #[test]
-#[ignore = "xfail: bib-engine has no public extra-date metadata query API"]
+#[ignore = "xfail: extra-date metadata differs from the Biber 2.22 expectation"]
 fn assertion_031_labelmonth_scope_3() {
-    pass_upstream(
-        "labelmonth scope - 3",
-        r####"$main->get_extradatedata_for_key('ed3')"####,
-        r####"'1'"####,
-        r####"eq_or_diff($main->get_extradatedata_for_key('ed3'), '1', 'labelmonth scope - 3');"####,
-        UPSTREAM_SOURCE,
+    assert_eq!(
+        field_text(
+            r#####"extradate.bcf"#####,
+            &[
+                (
+                    r#####"extradatespec"#####,
+                    r#####"labelyear,year;labelmonth"#####
+                ),
+                (r#####"maxcitenames"#####, r#####"1"#####),
+                (r#####"maxbibnames"#####, r#####"1"#####),
+                (r#####"maxsortnames"#####, r#####"1"#####)
+            ],
+            r#####"ed3"#####,
+            r#####"extradate"#####
+        )
+        .as_deref(),
+        Some(r#####"1"#####)
     );
 }
 
 #[test]
-#[ignore = "xfail: bib-engine has no public extra-date metadata query API"]
+#[ignore = "xfail: extra-date metadata differs from the Biber 2.22 expectation"]
 fn assertion_032_labelmonth_scope_4() {
-    pass_upstream(
-        "labelmonth scope - 4",
-        r####"$main->get_extradatedata_for_key('ed4')"####,
-        r####"'2'"####,
-        r####"eq_or_diff($main->get_extradatedata_for_key('ed4'), '2', 'labelmonth scope - 4');"####,
-        UPSTREAM_SOURCE,
+    assert_eq!(
+        field_text(
+            r#####"extradate.bcf"#####,
+            &[
+                (
+                    r#####"extradatespec"#####,
+                    r#####"labelyear,year;labelmonth"#####
+                ),
+                (r#####"maxcitenames"#####, r#####"1"#####),
+                (r#####"maxbibnames"#####, r#####"1"#####),
+                (r#####"maxsortnames"#####, r#####"1"#####)
+            ],
+            r#####"ed4"#####,
+            r#####"extradate"#####
+        )
+        .as_deref(),
+        Some(r#####"2"#####)
     );
 }
 
 #[test]
-#[ignore = "xfail: bib-engine has no public extra-date metadata query API"]
+#[ignore = "xfail: extra-date metadata differs from the Biber 2.22 expectation"]
 fn assertion_033_labelminute_scope_1() {
-    pass_upstream(
-        "labelminute scope - 1",
-        r####"$main->get_extradatedata_for_key('ed5')"####,
-        r####"'1'"####,
-        r####"eq_or_diff($main->get_extradatedata_for_key('ed5'), '1', 'labelminute scope - 1');"####,
-        UPSTREAM_SOURCE,
+    assert_eq!(
+        field_text(
+            r#####"extradate.bcf"#####,
+            &[
+                (
+                    r#####"extradatespec"#####,
+                    r#####"labelyear,year;labelmonth;labelday;labelhour;labelminute"#####
+                ),
+                (r#####"maxcitenames"#####, r#####"1"#####),
+                (r#####"maxbibnames"#####, r#####"1"#####),
+                (r#####"maxsortnames"#####, r#####"1"#####)
+            ],
+            r#####"ed5"#####,
+            r#####"extradate"#####
+        )
+        .as_deref(),
+        Some(r#####"1"#####)
     );
 }
 
 #[test]
-#[ignore = "xfail: bib-engine has no public extra-date metadata query API"]
+#[ignore = "xfail: extra-date metadata differs from the Biber 2.22 expectation"]
 fn assertion_034_labelminute_scope_2() {
-    pass_upstream(
-        "labelminute scope - 2",
-        r####"$main->get_extradatedata_for_key('ed6')"####,
-        r####"'2'"####,
-        r####"eq_or_diff($main->get_extradatedata_for_key('ed6'), '2', 'labelminute scope - 2');"####,
-        UPSTREAM_SOURCE,
+    assert_eq!(
+        field_text(
+            r#####"extradate.bcf"#####,
+            &[
+                (
+                    r#####"extradatespec"#####,
+                    r#####"labelyear,year;labelmonth;labelday;labelhour;labelminute"#####
+                ),
+                (r#####"maxcitenames"#####, r#####"1"#####),
+                (r#####"maxbibnames"#####, r#####"1"#####),
+                (r#####"maxsortnames"#####, r#####"1"#####)
+            ],
+            r#####"ed6"#####,
+            r#####"extradate"#####
+        )
+        .as_deref(),
+        Some(r#####"2"#####)
     );
 }
 
 #[test]
-#[ignore = "xfail: bib-engine has no public extra-date metadata query API"]
+#[ignore = "xfail: extra-date metadata differs from the Biber 2.22 expectation"]
 fn assertion_035_labelminute_scope_1a() {
-    pass_upstream(
-        "labelminute scope - 1a",
-        r####"$bibentries->entry('ed5')->get_field('extradatescope')"####,
-        r####"'labelminute'"####,
-        r####"eq_or_diff($bibentries->entry('ed5')->get_field('extradatescope'), 'labelminute', 'labelminute scope - 1a');"####,
-        UPSTREAM_SOURCE,
+    assert_eq!(
+        field_text(
+            r#####"extradate.bcf"#####,
+            &[
+                (
+                    r#####"extradatespec"#####,
+                    r#####"labelyear,year;labelmonth;labelday;labelhour;labelminute"#####
+                ),
+                (r#####"maxcitenames"#####, r#####"1"#####),
+                (r#####"maxbibnames"#####, r#####"1"#####),
+                (r#####"maxsortnames"#####, r#####"1"#####)
+            ],
+            r#####"ed5"#####,
+            r#####"extradatescope"#####
+        )
+        .as_deref(),
+        Some(r#####"labelminute"#####)
     );
 }
 
 #[test]
-#[ignore = "xfail: bib-engine has no public extra-date metadata query API"]
 fn assertion_036_labelminute_scope_3() {
-    pass_upstream(
-        "labelminute scope - 3",
-        r####"is_undef($main->get_extradatedata_for_key('ed1'))"####,
-        r####"true"####,
-        r####"ok(is_undef($main->get_extradatedata_for_key('ed1')), 'labelminute scope - 3');"####,
-        UPSTREAM_SOURCE,
+    assert_eq!(
+        field_text(
+            r#####"extradate.bcf"#####,
+            &[
+                (
+                    r#####"extradatespec"#####,
+                    r#####"labelyear,year;labelmonth;labelday;labelhour;labelminute"#####
+                ),
+                (r#####"maxcitenames"#####, r#####"1"#####),
+                (r#####"maxbibnames"#####, r#####"1"#####),
+                (r#####"maxsortnames"#####, r#####"1"#####)
+            ],
+            r#####"ed1"#####,
+            r#####"extradate"#####
+        )
+        .as_deref(),
+        None
     );
 }
 
 #[test]
-#[ignore = "xfail: bib-engine has no public extra-date metadata query API"]
 fn assertion_037_labelminute_scope_4() {
-    pass_upstream(
-        "labelminute scope - 4",
-        r####"is_undef($main->get_extradatedata_for_key('ed2'))"####,
-        r####"true"####,
-        r####"ok(is_undef($main->get_extradatedata_for_key('ed2')), 'labelminute scope - 4');"####,
-        UPSTREAM_SOURCE,
+    assert_eq!(
+        field_text(
+            r#####"extradate.bcf"#####,
+            &[
+                (
+                    r#####"extradatespec"#####,
+                    r#####"labelyear,year;labelmonth;labelday;labelhour;labelminute"#####
+                ),
+                (r#####"maxcitenames"#####, r#####"1"#####),
+                (r#####"maxbibnames"#####, r#####"1"#####),
+                (r#####"maxsortnames"#####, r#####"1"#####)
+            ],
+            r#####"ed2"#####,
+            r#####"extradate"#####
+        )
+        .as_deref(),
+        None
     );
 }
 
 #[test]
-#[ignore = "xfail: bib-engine has no public extra-date metadata query API"]
+#[ignore = "xfail: extra-date metadata differs from the Biber 2.22 expectation"]
 fn assertion_038_year_scope_1() {
-    pass_upstream(
-        "year scope - 1",
-        r####"$main->get_extradatedata_for_key('ed7')"####,
-        r####"'1'"####,
-        r####"eq_or_diff($main->get_extradatedata_for_key('ed7'), '1', 'year scope - 1');"####,
-        UPSTREAM_SOURCE,
+    assert_eq!(
+        field_text(
+            r#####"extradate.bcf"#####,
+            &[
+                (r#####"extradatespec"#####, r#####"year"#####),
+                (r#####"maxcitenames"#####, r#####"1"#####),
+                (r#####"maxbibnames"#####, r#####"1"#####),
+                (r#####"maxsortnames"#####, r#####"1"#####)
+            ],
+            r#####"ed7"#####,
+            r#####"extradate"#####
+        )
+        .as_deref(),
+        Some(r#####"1"#####)
     );
 }
 
 #[test]
-#[ignore = "xfail: bib-engine has no public extra-date metadata query API"]
+#[ignore = "xfail: extra-date metadata differs from the Biber 2.22 expectation"]
 fn assertion_039_year_scope_2() {
-    pass_upstream(
-        "year scope - 2",
-        r####"$main->get_extradatedata_for_key('ed8')"####,
-        r####"'2'"####,
-        r####"eq_or_diff($main->get_extradatedata_for_key('ed8'), '2', 'year scope - 2');"####,
-        UPSTREAM_SOURCE,
+    assert_eq!(
+        field_text(
+            r#####"extradate.bcf"#####,
+            &[
+                (r#####"extradatespec"#####, r#####"year"#####),
+                (r#####"maxcitenames"#####, r#####"1"#####),
+                (r#####"maxbibnames"#####, r#####"1"#####),
+                (r#####"maxsortnames"#####, r#####"1"#####)
+            ],
+            r#####"ed8"#####,
+            r#####"extradate"#####
+        )
+        .as_deref(),
+        Some(r#####"2"#####)
     );
 }
