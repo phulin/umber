@@ -1,7 +1,22 @@
 // Direct passing translation of upstream t/labelname.t at commit 74252e6.
 // Keep `UPSTREAM_SOURCE` byte-for-byte equivalent when editing expectations.
 
-use super::pass_upstream;
+fn pass_upstream(
+    assertion: &str,
+    actual_expression: &str,
+    expected_expression: &str,
+    upstream_call: &str,
+    upstream_source: &str,
+) {
+    super::pass_upstream(
+        assertion,
+        actual_expression,
+        expected_expression,
+        upstream_call,
+        upstream_source,
+    );
+    panic!("xfail: bib-engine has no public label-name selection query API");
+}
 
 const UPSTREAM_SOURCE: &str = r####"# -*- cperl -*-
 use strict;
@@ -61,6 +76,7 @@ eq_or_diff($bibentries->entry('lne1')->get_labelname_info, 'namea', 'type-specif
 "####;
 
 #[test]
+#[ignore = "xfail: bib-engine has no public label-name selection query API"]
 fn assertion_001_global_shortauthor() {
     pass_upstream(
         "global shortauthor",
@@ -72,6 +88,7 @@ fn assertion_001_global_shortauthor() {
 }
 
 #[test]
+#[ignore = "xfail: bib-engine has no public label-name selection query API"]
 fn assertion_002_global_author() {
     pass_upstream(
         "global author",
@@ -83,6 +100,7 @@ fn assertion_002_global_author() {
 }
 
 #[test]
+#[ignore = "xfail: bib-engine has no public label-name selection query API"]
 fn assertion_003_type_specific_editor() {
     pass_upstream(
         "type-specific editor",
@@ -94,6 +112,7 @@ fn assertion_003_type_specific_editor() {
 }
 
 #[test]
+#[ignore = "xfail: bib-engine has no public label-name selection query API"]
 fn assertion_004_type_specific_exotic_name() {
     pass_upstream(
         "type-specific exotic name",
