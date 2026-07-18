@@ -122,6 +122,13 @@ Macro bodies and parameter patterns are durable content. Macro arguments and
 temporary rendered values remain transient unless a durable state or future
 memoization boundary explicitly publishes them.
 
+Each top-level request for an expanded token has a fixed work budget. Nested
+expansion performed while satisfying that request shares the same remaining
+budget, so a recursive macro or primitive cannot reset the guard. Once a token
+is delivered, the next independent request receives a fresh budget; ordinary
+long-running jobs therefore are not charged for unrelated, already-completed
+expansion chains.
+
 ## 6. Execution engine
 
 `tex-exec` owns primitive dispatch, grouping, assignments, modes, box building,

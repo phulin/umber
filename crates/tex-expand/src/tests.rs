@@ -812,17 +812,48 @@ fn expansion_fuel_stops_a_self_recursive_macro() {
 }
 
 #[test]
+fn expansion_fuel_resets_after_a_token_is_delivered() {
+    let mut stores = Universe::new();
+    let macro_cs = stores.intern("finite");
+    let params = stores.intern_token_list(&[]);
+    let body = stores.intern_token_list(&[char_token('x')]);
+    stores.set_macro_meaning(
+        macro_cs,
+        MacroMeaning::new(MeaningFlags::EMPTY, params, body),
+    );
+    let mut input = InputStack::new(MemoryInput::new("\\finite\\finite"));
+    let mut expansion = ExpansionContext::new("texput").with_fuel(2);
+
+    for _ in 0..2 {
+        assert_eq!(
+            crate::get_x_token_with_context(
+                &mut input,
+                &mut tex_state::ExpansionContext::new(&mut stores),
+                &mut expansion,
+            )
+            .expect("each finite expansion request has its own fuel")
+            .map(crate::semantic_token),
+            Some(char_token('x'))
+        );
+    }
+}
+
+#[test]
 fn nested_expansion_consumes_the_parent_fuel_budget() {
     let mut expansion = ExpansionContext::new("texput").with_fuel(2);
+    expansion.begin_fuel_scope();
     expansion.burn_fuel().expect("parent fuel");
-    expansion
-        .with_nested(ExpansionContext::burn_fuel)
-        .expect("nested fuel");
+    expansion.with_nested(|nested| {
+        nested.begin_fuel_scope();
+        nested.burn_fuel().expect("nested fuel");
+        nested.end_fuel_scope();
+    });
 
     assert!(matches!(
         expansion.burn_fuel(),
         Err(crate::ExpandError::ExpansionWorkLimitExceeded { limit: 2 })
     ));
+    expansion.end_fuel_scope();
 }
 
 #[test]

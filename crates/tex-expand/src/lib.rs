@@ -1132,10 +1132,10 @@ pub struct ExpansionContext<'a> {
     recoverable_diagnostics: Vec<RecoverableExpansionDiagnostic>,
     fuel_limit: u64,
     remaining_fuel: u64,
+    fuel_scope_depth: u32,
 }
 
-/// Default number of expansion-loop steps available to one persistent
-/// expansion session.
+/// Default number of expansion-loop steps available to one expansion request.
 pub const DEFAULT_EXPANSION_FUEL: u64 = 250_000;
 
 impl<'a> ExpansionContext<'a> {
@@ -1154,6 +1154,7 @@ impl<'a> ExpansionContext<'a> {
             recoverable_diagnostics: Vec::new(),
             fuel_limit: DEFAULT_EXPANSION_FUEL,
             remaining_fuel: DEFAULT_EXPANSION_FUEL,
+            fuel_scope_depth: 0,
         }
     }
 
@@ -1175,6 +1176,7 @@ impl<'a> ExpansionContext<'a> {
             recoverable_diagnostics: Vec::new(),
             fuel_limit: DEFAULT_EXPANSION_FUEL,
             remaining_fuel: DEFAULT_EXPANSION_FUEL,
+            fuel_scope_depth: 0,
         }
     }
 
@@ -1193,6 +1195,23 @@ impl<'a> ExpansionContext<'a> {
         }
         self.remaining_fuel -= 1;
         Ok(())
+    }
+
+    fn begin_fuel_scope(&mut self) {
+        if self.fuel_scope_depth == 0 {
+            self.remaining_fuel = self.fuel_limit;
+        }
+        self.fuel_scope_depth = self
+            .fuel_scope_depth
+            .checked_add(1)
+            .expect("expansion fuel scope depth overflowed");
+    }
+
+    fn end_fuel_scope(&mut self) {
+        self.fuel_scope_depth = self
+            .fuel_scope_depth
+            .checked_sub(1)
+            .expect("expansion fuel scope depth underflowed");
     }
 
     /// Installs an erased read recorder for this expansion session.
@@ -1294,6 +1313,7 @@ impl<'a> ExpansionContext<'a> {
             recoverable_diagnostics: Vec::new(),
             fuel_limit: self.fuel_limit,
             remaining_fuel: self.remaining_fuel,
+            fuel_scope_depth: self.fuel_scope_depth,
         };
         let output = operation(&mut nested);
         self.input_resolver = nested.input_resolver.take();
@@ -1646,7 +1666,10 @@ pub fn get_x_token_with_context(
     stores: &mut tex_state::ExpansionContext<'_>,
     expansion: &mut ExpansionContext<'_>,
 ) -> Result<Option<TracedTokenWord>, ExpandError> {
-    match get_x_token_with_context_inner(input, stores, expansion, false, false, None) {
+    expansion.begin_fuel_scope();
+    let result = get_x_token_with_context_inner(input, stores, expansion, false, false, None);
+    expansion.end_fuel_scope();
+    match result {
         Ok(token) => Ok(token),
         Err(error) => Err(error.capture(input)),
     }
@@ -1662,7 +1685,10 @@ pub fn get_command_token_with_context(
     stores: &mut tex_state::ExpansionContext<'_>,
     expansion: &mut ExpansionContext<'_>,
 ) -> Result<Option<TracedTokenWord>, ExpandError> {
-    match get_x_token_with_context_inner(input, stores, expansion, false, true, None) {
+    expansion.begin_fuel_scope();
+    let result = get_x_token_with_context_inner(input, stores, expansion, false, true, None);
+    expansion.end_fuel_scope();
+    match result {
         Ok(token) => Ok(token),
         Err(error) => Err(error.capture(input)),
     }
@@ -1679,7 +1705,10 @@ pub fn get_x_or_protected_with_context(
     // ordinary x-token expansion. It does not turn alignment lookahead into
     // the explicit command-demand scan used after assignment prefixes, so a
     // token replayed by `\unexpanded` remains suppressed for this call.
-    match get_x_token_with_context_inner(input, stores, expansion, true, false, None) {
+    expansion.begin_fuel_scope();
+    let result = get_x_token_with_context_inner(input, stores, expansion, true, false, None);
+    expansion.end_fuel_scope();
+    match result {
         Ok(token) => Ok(token),
         Err(error) => Err(error.capture(input)),
     }
@@ -1697,7 +1726,10 @@ pub fn get_alignment_x_or_protected_with_context(
     stores: &mut tex_state::ExpansionContext<'_>,
     expansion: &mut ExpansionContext<'_>,
 ) -> Result<Option<TracedTokenWord>, ExpandError> {
-    match get_x_token_with_context_inner(input, stores, expansion, true, true, None) {
+    expansion.begin_fuel_scope();
+    let result = get_x_token_with_context_inner(input, stores, expansion, true, true, None);
+    expansion.end_fuel_scope();
+    match result {
         Ok(token) => Ok(token),
         Err(error) => Err(error.capture(input)),
     }
@@ -1736,7 +1768,11 @@ pub(crate) fn get_x_or_protected_from_prepared_with_context(
     stores: &mut tex_state::ExpansionContext<'_>,
     expansion: &mut ExpansionContext<'_>,
 ) -> Result<Option<TracedTokenWord>, ExpandError> {
-    match get_x_token_with_context_inner(input, stores, expansion, true, false, Some(prepared)) {
+    expansion.begin_fuel_scope();
+    let result =
+        get_x_token_with_context_inner(input, stores, expansion, true, false, Some(prepared));
+    expansion.end_fuel_scope();
+    match result {
         Ok(token) => Ok(token),
         Err(error) => Err(error.capture(input)),
     }
