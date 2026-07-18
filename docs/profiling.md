@@ -26,7 +26,7 @@ without Samply when checking timing or setup:
 
 ```bash
 cargo run --profile profiling -p umber --bin gentle-profile \
-  --features profiling-stats -- \
+  --features profiling-runner -- \
   --iterations 10 --warmups 1
 ```
 
@@ -64,13 +64,15 @@ equivalence, page reuse, trace hits, the one-shot cold fallback, and incremental
 ratios:
 
 ```bash
-cargo run --profile profiling -p umber --bin gentle-profile -- \
+cargo run --profile profiling -p umber --bin gentle-profile \
+  --features profiling-runner -- \
   --repo-root /path/to/umber2 --incremental-edit --iterations 6 --warmups 1
 ```
 
 Use the build without `profiling-stats` for release latency. The first summary
 line prints `profiling_stats=false` so an attributed diagnostic run cannot be
-mistaken for the release comparison. Rebuild with `--features profiling-stats`
+mistaken for the release comparison. Rebuild with
+`--features profiling-runner,profiling-stats`
 only when the named recording phases and exact-identity counters are needed to
 explain a losing path.
 
@@ -105,7 +107,8 @@ alternating AB/BA loop, and the paired delta is reported as candidate minus
 baseline. For example, the isolated pretolerance comparison uses:
 
 ```bash
-cargo run --profile profiling -p umber --bin gentle-profile -- \
+cargo run --profile profiling -p umber --bin gentle-profile \
+  --features profiling-runner -- \
   --repo-root /path/to/umber2 --incremental-edit --iterations 6 --warmups 2 \
   --baseline-memo-layers paragraph \
   --memo-layers pretolerance,paragraph

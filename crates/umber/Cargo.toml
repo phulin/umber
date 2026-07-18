@@ -6,13 +6,14 @@ edition.workspace = true
 [[bin]]
 name = "gentle-profile"
 path = "src/bin/gentle_profile.rs"
-required-features = ["profiling-stats"]
+required-features = ["profiling-runner"]
 test = false
 bench = false
 
 [features]
 default = []
 shadow = ["tex-state/shadow"]
+profiling-runner = []
 profiling-stats = [
   "tex-exec/profiling-stats",
   "tex-expand/profiling-stats",

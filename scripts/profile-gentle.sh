@@ -18,7 +18,8 @@ fi
 
 mkdir -p "$(dirname "$output")"
 printf '%s\n' 'Building instrumented Gentle runner with full debug information' >&2
-cargo build --profile profiling -p umber --bin gentle-profile --features profiling-stats
+cargo build --profile profiling -p umber --bin gentle-profile \
+  --features profiling-runner,profiling-stats
 
 runner="$target_dir/profiling/gentle-profile"
 printf 'Recording %s measured Gentle runs to %s\n' "$iterations" "$output" >&2

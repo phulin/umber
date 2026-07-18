@@ -15,6 +15,7 @@ CARGO_TARGET_DIR="${TOOLS_TARGET_DIR:-target/tools}" \
   cargo clippy -q -p profile-analyzer -p refexec -p parity-harness \
     --all-targets --features parity-harness/reference-tools -- -D warnings
 CARGO_TARGET_DIR="${TOOLS_TARGET_DIR:-target/tools}" \
-  cargo clippy -q -p umber --bin gentle-profile --features profiling-stats -- -D warnings
+  cargo clippy -q -p umber --bin gentle-profile \
+    --features profiling-runner,profiling-stats -- -D warnings
 CARGO_TARGET_DIR="${TOOLS_TARGET_DIR:-target/tools}" \
   cargo clippy -q -p tex-out --bin texout-dvitype --features dvi-tools -- -D warnings
