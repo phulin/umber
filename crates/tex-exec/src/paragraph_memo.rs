@@ -4,7 +4,7 @@ use tex_lex::InputStack;
 use tex_state::env::banks::{DimenParam, GlueParam, IntParam, TokParam};
 use tex_state::{
     DetachedVirtualEffect, EffectRecord, MemoTimingPhase, ParagraphRecordingPhase,
-    ParagraphValidationFailure, PrintSink, PureMemoLayer, Universe,
+    ParagraphValidationFailure, PrintSink, Universe,
 };
 
 use crate::{ExecError, ExecutionContext, ExecutionStats, ModeNest};
@@ -41,6 +41,18 @@ fn finish_phase(stores: &mut Universe, phase: ParagraphRecordingPhase, started: 
     let _ = (stores, phase, started);
 }
 
+#[inline]
+fn finish_memo_phase(stores: &mut Universe, phase: MemoTimingPhase, started: PhaseStart) {
+    #[cfg(feature = "profiling-stats")]
+    stores.record_pure_memo_timing(
+        tex_state::PureMemoLayer::Paragraph,
+        phase,
+        started.elapsed(),
+    );
+    #[cfg(not(feature = "profiling-stats"))]
+    let _ = (stores, phase, started);
+}
+
 pub(crate) fn try_reuse_aligned_paragraph(
     starting_span: Option<tex_state::RootSpanId>,
     nest: &mut ModeNest,
@@ -55,8 +67,7 @@ pub(crate) fn try_reuse_aligned_paragraph(
         return Ok(false);
     };
     debug_assert!(entry.barriers.is_empty());
-    #[allow(clippy::disallowed_methods)]
-    let validation_started = std::time::Instant::now();
+    let validation_started = start_phase();
     let validated = validate_paragraph_entry(
         &mut entry, input, stores, execution,
         // Every recorded outer paragraph crosses `start_paragraph`, which
@@ -66,11 +77,7 @@ pub(crate) fn try_reuse_aligned_paragraph(
         // pre-start vertical value.
         0,
     );
-    stores.record_pure_memo_timing(
-        PureMemoLayer::Paragraph,
-        MemoTimingPhase::Validation,
-        validation_started.elapsed(),
-    );
+    finish_memo_phase(stores, MemoTimingPhase::Validation, validation_started);
     let Some(ValidatedParagraphEntry {
         input: prepared_input,
         lines: retained_lines,
@@ -87,8 +94,7 @@ pub(crate) fn try_reuse_aligned_paragraph(
     let _ = stores.finish_pure_paragraph_recording();
     replay_mutations(stores, &entry.mutations);
     replay_effects(stores, &entry.effects);
-    #[allow(clippy::disallowed_methods)]
-    let mount_started = std::time::Instant::now();
+    let mount_started = start_phase();
     let origins = resolve_paragraph_provenance(stores, &entry.line_provenance);
     let mounted_lines = stores
         .mount_prevalidated_paragraph_result(
@@ -98,11 +104,7 @@ pub(crate) fn try_reuse_aligned_paragraph(
         )
         .expect("prevalidated paragraph line mount must remain valid");
     let lines = stores.nodes(mounted_lines).to_vec();
-    stores.record_pure_memo_timing(
-        PureMemoLayer::Paragraph,
-        MemoTimingPhase::Import,
-        mount_started.elapsed(),
-    );
+    finish_memo_phase(stores, MemoTimingPhase::Import, mount_started);
     execution.abandon_cold_paragraph_recording();
     entry.ending_input = current_input;
     entry.lines = Some(retained_lines);
@@ -210,8 +212,7 @@ fn validate_finished_lines(
     execution: &mut ExecutionContext<'_>,
     current_prev_graf: i32,
 ) -> bool {
-    #[allow(clippy::disallowed_methods)]
-    let line_validation_started = std::time::Instant::now();
+    let line_validation_started = start_phase();
     let semantic_failure = stores
         .validate_dependencies_with_failure_readonly(&entry.break_dependencies, |key| {
             projected_break_validation_value(stores, execution, &entry.mutations, key)
@@ -220,11 +221,7 @@ fn validate_finished_lines(
         .break_prev_graf
         .is_none_or(|expected| current_prev_graf == expected)
         && semantic_failure.is_none();
-    stores.record_pure_memo_timing(
-        PureMemoLayer::Paragraph,
-        MemoTimingPhase::Validation,
-        line_validation_started.elapsed(),
-    );
+    finish_memo_phase(stores, MemoTimingPhase::Validation, line_validation_started);
     if !valid {
         stores
             .record_pure_paragraph_validation_failure(ParagraphValidationFailure::BreakDependency);

@@ -467,6 +467,10 @@ Read-only validation deliberately leaves accepted-history observations at
 their recording stamps, so a restored value may take that semantic path again
 without copying shared metadata.
 
+Replay validation and mount phase timers are compiled only with
+`profiling-stats`. Production builds retain hit/miss/work counters but do not
+read the host clock around every paragraph hit.
+
 If a stamp differs, validation falls back only to the typed semantic
 observations for the recorded read set. Mutation admission separately checks
 the compact touched-cell preconditions. Paragraph history's large immutable

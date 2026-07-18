@@ -1122,3 +1122,23 @@ versus 117.382 ms baseline mean. Cold and height/page-preserving fast-path
 comparisons were likewise neutral within host-order noise. This is accepted as
 a smaller single-pass validation architecture with measured inner-loop and
 memory reductions, not as an end-to-end timing win.
+
+The next q02h.67 child moved the three paragraph replay timing pairs behind
+`tex-exec`'s existing `profiling-stats` feature boundary. A feature-enabled
+smoke run retained nonzero paragraph validation/import telemetry
+(1.719/1.132 ms for 450 hits), while the production build performs no direct
+clock read around outer validation, finished-line validation, or provenance
+mounting.
+
+Matched production profiles resolve the intended category despite severe host
+contention. In the baseline replay subtree, `Instant::elapsed` and
+`Timespec::now` were direct callees of `try_reuse_aligned_paragraph`; together
+they held 12 of 751 weighted subtree samples. Neither is a direct replay callee
+in the candidate. Clock samples remain below replay because page-building and
+other generic memo timers are still unconditional; they are separate
+follow-up work. Four balanced 80-edit blocks had 200--342 ms outliers and did
+not resolve the sub-millisecond effect. Two balanced 150-edit fast-path blocks
+were neutral-to-favorable, and cold ordering reversed the apparent result.
+Identical replay counts and DVI, the exact direct-call disappearance, and the
+absence of a new production operation are the acceptance evidence; no precise
+end-to-end gain is claimed under this host load.
