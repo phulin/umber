@@ -138,6 +138,9 @@ pub trait ExpansionState {
     fn primitive_meaning(&self, _name: &str) -> Option<Meaning> {
         None
     }
+    fn primitive_name(&self, _meaning: Meaning) -> Option<&str> {
+        None
+    }
     fn primitive_token(&self, _name: &str) -> Option<Token> {
         None
     }
@@ -1143,6 +1146,7 @@ pub struct Universe {
     /// reconstruct it after loading.
     primitive_meanings: HashMap<String, Meaning>,
     primitive_meanings_by_index: Vec<Meaning>,
+    primitive_names_by_index: Vec<String>,
     primitive_indices: HashMap<String, u16>,
     state_hash_base: StateHashBase,
     state_hash_projection_cache: StateHashProjectionCache,
@@ -1286,6 +1290,7 @@ impl Clone for Universe {
             pdf: self.pdf.clone(),
             primitive_meanings: self.primitive_meanings.clone(),
             primitive_meanings_by_index: self.primitive_meanings_by_index.clone(),
+            primitive_names_by_index: self.primitive_names_by_index.clone(),
             primitive_indices: self.primitive_indices.clone(),
             state_hash_base,
             state_hash_projection_cache: self.state_hash_projection_cache.clone(),
@@ -1353,6 +1358,7 @@ impl Universe {
             pdf,
             primitive_meanings: HashMap::new(),
             primitive_meanings_by_index: Vec::new(),
+            primitive_names_by_index: Vec::new(),
             primitive_indices: HashMap::new(),
             state_hash_base,
             state_hash_projection_cache: StateHashProjectionCache::default(),
@@ -1376,6 +1382,7 @@ impl Universe {
                 let index = u16::try_from(self.primitive_meanings_by_index.len())
                     .expect("primitive registry exceeds frozen-token capacity");
                 self.primitive_meanings_by_index.push(meaning);
+                self.primitive_names_by_index.push(name.to_owned());
                 self.primitive_indices.insert(name.to_owned(), index);
             }
         }
@@ -1391,6 +1398,16 @@ impl Universe {
     #[must_use]
     pub fn primitive_meaning(&self, name: &str) -> Option<Meaning> {
         self.primitive_meanings.get(name).copied()
+    }
+
+    /// Returns the first registered spelling for a primitive meaning.
+    #[must_use]
+    pub fn primitive_name(&self, meaning: Meaning) -> Option<&str> {
+        self.primitive_meanings_by_index
+            .iter()
+            .position(|candidate| *candidate == meaning)
+            .and_then(|index| self.primitive_names_by_index.get(index))
+            .map(String::as_str)
     }
 
     #[must_use]
@@ -2240,6 +2257,7 @@ impl Universe {
             pdf,
             primitive_meanings: HashMap::new(),
             primitive_meanings_by_index: Vec::new(),
+            primitive_names_by_index: Vec::new(),
             primitive_indices: HashMap::new(),
             state_hash_base,
             state_hash_projection_cache: StateHashProjectionCache::default(),
@@ -6231,6 +6249,14 @@ impl ExpansionState for Universe {
         Self::meaning(self, self.stores.resolve_stored_symbol(symbol))
     }
 
+    fn primitive_meaning(&self, name: &str) -> Option<Meaning> {
+        Self::primitive_meaning(self, name)
+    }
+
+    fn primitive_name(&self, meaning: Meaning) -> Option<&str> {
+        Self::primitive_name(self, meaning)
+    }
+
     fn macro_definition(&self, id: MacroDefinitionId) -> MacroMeaning {
         Self::macro_definition(self, id)
     }
@@ -6749,6 +6775,10 @@ impl ExpansionState for ExpansionContext<'_> {
 
     fn primitive_meaning(&self, name: &str) -> Option<Meaning> {
         self.universe.primitive_meaning(name)
+    }
+
+    fn primitive_name(&self, meaning: Meaning) -> Option<&str> {
+        self.universe.primitive_name(meaning)
     }
 
     fn primitive_token(&self, name: &str) -> Option<Token> {

@@ -3494,6 +3494,29 @@ fn meaning_uses_the_canonical_name_for_a_radical_alias() {
 }
 
 #[test]
+fn meaning_uses_registered_names_for_primitive_aliases() {
+    let mut stores = Universe::new();
+    let expanded = Meaning::ExpandablePrimitive(ExpandablePrimitive::Expanded);
+    stores.install_primitive_meaning("expanded", expanded);
+    let expanded_alias = stores.intern("expandedalias");
+    stores.set_meaning(expanded_alias, expanded);
+
+    let mark = Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Mark);
+    stores.install_primitive_meaning("mark", mark);
+    let mark_alias = stores.intern("markalias");
+    stores.set_meaning(mark_alias, mark);
+
+    assert_eq!(
+        crate::meaning_text(&stores, Token::Cs(expanded_alias.symbol())),
+        "\\expanded"
+    );
+    assert_eq!(
+        crate::meaning_text(&stores, Token::Cs(mark_alias.symbol())),
+        "\\mark"
+    );
+}
+
+#[test]
 fn meaning_renders_macro_prefixes_in_tex_order() {
     let mut stores = Universe::new();
     let macro_cs = stores.intern("prefixed");

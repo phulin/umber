@@ -1230,11 +1230,21 @@ pub fn meaning_text(stores: &impl ExpansionState, token: Token) -> String {
                 format!("\\{}", stores.resolve(symbol))
             }
             Meaning::Font(font) => format!("select font {}", stores.font_name(font)),
-            Meaning::ExpandablePrimitive(_) => format!("\\{}", stores.resolve(symbol)),
+            meaning @ Meaning::ExpandablePrimitive(_) => format!(
+                "\\{}",
+                stores
+                    .primitive_name(meaning)
+                    .unwrap_or_else(|| stores.resolve(symbol))
+            ),
             Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Radical) => {
                 "\\radical".to_owned()
             }
-            Meaning::UnexpandablePrimitive(_) => format!("\\{}", stores.resolve(symbol)),
+            meaning @ Meaning::UnexpandablePrimitive(_) => format!(
+                "\\{}",
+                stores
+                    .primitive_name(meaning)
+                    .unwrap_or_else(|| stores.resolve(symbol))
+            ),
             Meaning::Macro { flags, definition } => {
                 let macro_meaning = stores.macro_definition(definition);
                 let mut text = String::new();
