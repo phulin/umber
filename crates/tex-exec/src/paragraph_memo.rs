@@ -1319,8 +1319,7 @@ fn paragraph_validation_value(
     {
         return cached.value.clone();
     }
-    let value = stores
-        .semantic_dependency_value(key)
+    let value = paragraph_semantic_dependency_value(stores, key)
         .unwrap_or(tex_state::DependencyValue::Absent);
     if execution.paragraph_dependency_cache.len() < MAX_PARAGRAPH_DEPENDENCY_CACHE_ENTRIES {
         execution.paragraph_dependency_cache.insert(
@@ -1346,10 +1345,11 @@ fn paragraph_observed_dependency(
     {
         return Some(cached.clone());
     }
+    let value = paragraph_semantic_dependency_value(stores, key);
     let observed = tex_state::ObservedDependency {
         key,
         changed_at,
-        value: stores.semantic_dependency_value(key)?,
+        value: value?,
     };
     if execution.paragraph_dependency_cache.len() < MAX_PARAGRAPH_DEPENDENCY_CACHE_ENTRIES {
         execution
@@ -1357,6 +1357,19 @@ fn paragraph_observed_dependency(
             .insert(key, observed.clone());
     }
     Some(observed)
+}
+
+fn paragraph_semantic_dependency_value(
+    stores: &Universe,
+    key: tex_state::DependencyKey,
+) -> Option<tex_state::DependencyValue> {
+    if key == tex_state::DependencyKey::Engine(tex_state::DependencyEngineField::Mode) {
+        // Paragraph candidates are recorded and validated only at the outer
+        // vertical boundary. Mode changes within the retained body are then
+        // reproduced deterministically by `start_paragraph`.
+        return Some(tex_state::DependencyValue::Integer(0));
+    }
+    stores.semantic_dependency_value(key)
 }
 
 fn detach_effects(records: &[EffectRecord]) -> Option<Vec<DetachedVirtualEffect>> {

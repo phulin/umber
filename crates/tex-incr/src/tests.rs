@@ -2411,6 +2411,59 @@ fn rooted_paragraph_replays_with_a_live_macro_suffix() {
 }
 
 #[test]
+fn paragraph_mode_reads_are_discharged_by_the_replay_boundary() {
+    let mut universe = template();
+    universe.enable_pure_memo(tex_state::PureMemoConfig::default());
+    let source = concat!(
+        "\\def\\entrymode{\\ifvmode vertical\\else wrong\\fi}\n",
+        "\\entrymode \\ifhmode horizontal\\else wrong\\fi paragraph\\par\n",
+        "stable suffix paragraph\\par\n",
+        "\\vfill\\eject\\end",
+    );
+    let mut session = Session::start(
+        universe,
+        "paragraph-structural-mode",
+        RevisionId::new(1),
+        source.to_owned(),
+        usize::MAX,
+    )
+    .expect("session starts");
+    session.cold().expect("cold revision");
+
+    let prefix = "% preserve mode-sensitive paragraphs\n";
+    let before = session.pure_memo_stats();
+    let incremental = session
+        .advance(
+            RevisionId::new(2),
+            Edit {
+                base_revision: RevisionId::new(1),
+                expected_hash: ContentHash::from_bytes(source.as_bytes()),
+                range: 0..0,
+                replacement: prefix.to_owned(),
+            },
+        )
+        .expect("prefix edit");
+    assert!(
+        session.pure_memo_stats().paragraph_line_hits >= before.paragraph_line_hits + 2,
+        "mode-sensitive paragraphs should replay from the same vertical boundary"
+    );
+
+    let mut cold_universe = template();
+    cold_universe.enable_pure_memo(tex_state::PureMemoConfig::default());
+    let mut cold = Session::start(
+        cold_universe,
+        "paragraph-structural-mode",
+        RevisionId::new(2),
+        format!("{prefix}{source}"),
+        usize::MAX,
+    )
+    .expect("cold comparison starts");
+    let expected = cold.cold().expect("cold comparison");
+    assert_eq!(incremental.dvi_bytes(), expected.dvi_bytes());
+    assert_eq!(incremental.effects, expected.effects);
+}
+
+#[test]
 fn paragraph_front_end_rejects_changed_raw_span_before_reusing_later_macros() {
     let mut universe = template();
     universe.enable_pure_memo(all_memo_layers());
