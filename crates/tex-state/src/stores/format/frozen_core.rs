@@ -490,16 +490,11 @@ fn encode_token_v2(
             )
         }
         FormatToken::Param(slot) => (PARAM_TAG | u32::from(slot), Token::Param(slot), None),
-        FormatToken::Frozen(kind @ 0..=1) => (
+        FormatToken::Frozen(kind) => (
             FROZEN_TAG | u32::from(kind),
-            if kind == 0 {
-                Token::Frozen(FrozenToken::END_TEMPLATE)
-            } else {
-                Token::Frozen(FrozenToken::END_V)
-            },
+            Token::Frozen(FrozenToken::from_raw(kind)),
             None,
         ),
-        FormatToken::Frozen(_) => return Err(StoreFormatError::Invalid("frozen token kind")),
     })
 }
 
@@ -544,13 +539,9 @@ fn decode_token_v2(word: u32, interner: &Interner) -> Result<DecodedToken, Store
             Token::Param(payload as u8),
             None,
         )),
-        3 if payload <= 1 => Ok((
-            FormatToken::Frozen(payload as u8),
-            if payload == 0 {
-                Token::Frozen(FrozenToken::END_TEMPLATE)
-            } else {
-                Token::Frozen(FrozenToken::END_V)
-            },
+        3 if payload <= u32::from(u16::MAX) => Ok((
+            FormatToken::Frozen(payload as u16),
+            Token::Frozen(FrozenToken::from_raw(payload as u16)),
             None,
         )),
         _ => Err(StoreFormatError::Invalid("invalid frozen token word")),
@@ -597,13 +588,9 @@ fn decode_token(word: u64, interner: &Interner) -> Result<DecodedToken, StoreFor
             Token::Param(payload as u8),
             None,
         )),
-        3 if payload <= 1 => Ok((
-            FormatToken::Frozen(payload as u8),
-            if payload == 0 {
-                Token::Frozen(FrozenToken::END_TEMPLATE)
-            } else {
-                Token::Frozen(FrozenToken::END_V)
-            },
+        3 if payload <= u64::from(u16::MAX) => Ok((
+            FormatToken::Frozen(payload as u16),
+            Token::Frozen(FrozenToken::from_raw(payload as u16)),
             None,
         )),
         _ => Err(StoreFormatError::Invalid("invalid frozen token word")),

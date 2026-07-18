@@ -184,3 +184,28 @@ fn frozen_alignment_token_kinds_have_distinct_semantic_hashes() {
 
     assert_ne!(end_template_hash, endv_hash);
 }
+
+#[test]
+fn frozen_primitive_tokens_have_distinct_semantic_hashes_and_round_trip() {
+    let mut universe = Universe::new();
+    let checkpoint = universe.snapshot();
+    let first = universe.intern_token_list(&[Token::frozen_primitive(7)]);
+    universe.set_toks(0, first);
+    let first_hash = universe.snapshot().state_hash();
+
+    universe.rollback(&checkpoint);
+    let second = universe.intern_token_list(&[Token::frozen_primitive(8)]);
+    universe.set_toks(0, second);
+    let second_hash = universe.snapshot().state_hash();
+
+    assert_ne!(first_hash, second_hash);
+
+    let bytes = universe.dump_format().expect("frozen primitive format");
+    let restored =
+        Universe::from_format(World::memory(), &bytes).expect("restore frozen primitive");
+    assert_eq!(
+        restored.tokens(restored.toks(0)),
+        &[Token::frozen_primitive(8)]
+    );
+    assert_eq!(restored.testing_state_hash(), universe.testing_state_hash());
+}

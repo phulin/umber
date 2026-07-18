@@ -23,6 +23,16 @@ impl FrozenToken {
             None
         }
     }
+
+    #[must_use]
+    pub(crate) const fn raw(self) -> u16 {
+        self.0
+    }
+
+    #[must_use]
+    pub(crate) const fn from_raw(raw: u16) -> Self {
+        Self(raw)
+    }
 }
 
 /// TeX category codes, shared by lexing and token storage.

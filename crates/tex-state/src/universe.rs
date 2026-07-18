@@ -7686,7 +7686,14 @@ fn hash_token(stores: &Stores, token: Token, hasher: &mut StateHasher) {
         }
         Token::Frozen(crate::token::FrozenToken::END_TEMPLATE) => hasher.tag(3),
         Token::Frozen(crate::token::FrozenToken::END_V) => hasher.tag(4),
-        Token::Frozen(_) => unreachable!("invalid frozen token payload"),
+        Token::Frozen(frozen) => {
+            hasher.tag(5);
+            hasher.u16(
+                frozen
+                    .primitive_index()
+                    .expect("non-sentinel frozen token must identify a primitive"),
+            );
+        }
     }
 }
 

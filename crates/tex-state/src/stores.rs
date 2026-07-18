@@ -911,9 +911,7 @@ impl Stores {
                 CS_TAG | slot
             }
             Token::Param(slot) => PARAM_TAG | u32::from(slot),
-            Token::Frozen(crate::token::FrozenToken::END_TEMPLATE) => FROZEN_TAG,
-            Token::Frozen(crate::token::FrozenToken::END_V) => FROZEN_TAG | 1,
-            Token::Frozen(_) => unreachable!("invalid frozen token payload"),
+            Token::Frozen(frozen) => FROZEN_TAG | u32::from(frozen.raw()),
         }
     }
 
@@ -931,9 +929,7 @@ impl Stores {
                     (1_u64 << 56) | u64::from(slot)
                 }
                 Token::Param(slot) => (2_u64 << 56) | u64::from(slot),
-                Token::Frozen(crate::token::FrozenToken::END_TEMPLATE) => 3_u64 << 56,
-                Token::Frozen(crate::token::FrozenToken::END_V) => (3_u64 << 56) | 1,
-                Token::Frozen(_) => unreachable!("invalid frozen token payload"),
+                Token::Frozen(frozen) => (3_u64 << 56) | u64::from(frozen.raw()),
             };
             key.extend_from_slice(&word.to_le_bytes());
         }

@@ -107,7 +107,14 @@ impl TokenSemanticIdBuilder {
             }
             Token::Frozen(crate::token::FrozenToken::END_TEMPLATE) => self.stream.tag(3),
             Token::Frozen(crate::token::FrozenToken::END_V) => self.stream.tag(4),
-            Token::Frozen(_) => unreachable!("invalid frozen token payload"),
+            Token::Frozen(frozen) => {
+                self.stream.tag(5);
+                self.stream.u16(
+                    frozen
+                        .primitive_index()
+                        .expect("non-sentinel frozen token must identify a primitive"),
+                );
+            }
         }
         self.len += 1;
     }

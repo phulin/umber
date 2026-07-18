@@ -340,13 +340,10 @@ fn exact_token_leaf(stores: &Stores, raw: usize) -> Result<u64, StoreFormatError
                 );
             }
             Token::Param(slot) => framed.extend_from_slice(&[2, slot]),
-            Token::Frozen(crate::token::FrozenToken::END_TEMPLATE) => {
-                framed.extend_from_slice(&[3, 0]);
+            Token::Frozen(frozen) => {
+                framed.push(3);
+                framed.extend_from_slice(&frozen.raw().to_le_bytes());
             }
-            Token::Frozen(crate::token::FrozenToken::END_V) => {
-                framed.extend_from_slice(&[3, 1]);
-            }
-            Token::Frozen(_) => unreachable!("invalid frozen token payload"),
         }
     }
     Ok(crate::state_hash::exact_identity_bytes(
@@ -451,7 +448,7 @@ enum FormatToken {
     Char { ch: char, cat: u8 },
     Cs(u32),
     Param(u8),
-    Frozen(u8),
+    Frozen(u16),
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -1769,9 +1766,6 @@ impl StoreFormat {
                     FormatToken::Cs(raw) if *raw as usize >= self.names.len() => {
                         return Err(StoreFormatError::Invalid("token symbol is not live"));
                     }
-                    FormatToken::Frozen(kind) if *kind > 1 => {
-                        return Err(StoreFormatError::Invalid("unknown frozen token"));
-                    }
                     _ => {}
                 }
             }
@@ -2076,9 +2070,7 @@ impl FormatToken {
             Token::Char { ch, cat } => Self::Char { ch, cat: cat as u8 },
             Token::Cs(symbol) => Self::Cs(stores.resolve_stored_symbol(symbol).raw()),
             Token::Param(slot) => Self::Param(slot),
-            Token::Frozen(crate::token::FrozenToken::END_TEMPLATE) => Self::Frozen(0),
-            Token::Frozen(crate::token::FrozenToken::END_V) => Self::Frozen(1),
-            Token::Frozen(_) => unreachable!("invalid frozen token payload"),
+            Token::Frozen(frozen) => Self::Frozen(frozen.raw()),
         }
     }
 
@@ -2095,9 +2087,7 @@ impl FormatToken {
                     .ok_or(StoreFormatError::Invalid("token symbol is not live"))?,
             ),
             Self::Param(slot) => Token::Param(slot),
-            Self::Frozen(0) => Token::Frozen(crate::token::FrozenToken::END_TEMPLATE),
-            Self::Frozen(1) => Token::Frozen(crate::token::FrozenToken::END_V),
-            Self::Frozen(_) => return Err(StoreFormatError::Invalid("unknown frozen token")),
+            Self::Frozen(raw) => Token::Frozen(crate::token::FrozenToken::from_raw(raw)),
         })
     }
 }
