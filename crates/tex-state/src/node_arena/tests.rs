@@ -408,11 +408,21 @@ fn shipout_normalization_predicate_rejects_inert_compact_tags() {
     }))]);
     let math = arena.append(&[Node::MathStyle(MathStyle::Display)]);
     let directed = arena.append(&[Node::Direction(Direction::BeginR)]);
+    let mixed = arena.append(&[
+        Node::Penalty(1),
+        Node::Direction(Direction::BeginR),
+        Node::Penalty(2),
+    ]);
 
     assert!(!arena.get_epoch(inert).requires_shipout_normalization());
     assert!(arena.get_epoch(nested).requires_shipout_normalization());
     assert!(arena.get_epoch(math).requires_shipout_normalization());
     assert!(arena.get_epoch(directed).requires_shipout_normalization());
+    let mixed = arena.get_epoch(mixed);
+    assert_eq!(mixed.node_requires_shipout_normalization(0), Some(false));
+    assert_eq!(mixed.node_requires_shipout_normalization(1), Some(true));
+    assert_eq!(mixed.node_requires_shipout_normalization(2), Some(false));
+    assert_eq!(mixed.node_requires_shipout_normalization(3), None);
 
     for tag in 0..=23 {
         assert_eq!(

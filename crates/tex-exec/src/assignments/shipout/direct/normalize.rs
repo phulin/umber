@@ -155,6 +155,13 @@ fn normalize_index(
     overlay: &mut PageOverlay,
 ) -> Result<(), ExecError> {
     let NormalizeLocation { in_hlist, depth } = location;
+    if !stores
+        .nodes(list)
+        .node_requires_shipout_normalization(index)
+        .expect("normalization index belongs to the frozen list")
+    {
+        return Ok(());
+    }
     let action = {
         let node = stores
             .nodes(list)

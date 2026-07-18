@@ -281,6 +281,17 @@ impl<'a> NodeList<'a> {
             .iter()
             .any(|word| !shipout_normalization_inert_tag(word.tag()))
     }
+    /// Reports whether one node requires inspection during shipout
+    /// normalization, using only its compact tag.
+    #[must_use]
+    pub fn node_requires_shipout_normalization(self, index: usize) -> Option<bool> {
+        if index >= self.len() {
+            return None;
+        }
+        Some(!shipout_normalization_inert_tag(
+            self.storage.words[self.start + index].tag(),
+        ))
+    }
     /// Returns the maximal same-font run of inline byte-character words at
     /// `index`. Ligatures and every non-character word deliberately terminate
     /// a run so callers retain their ordinary semantic handling.
