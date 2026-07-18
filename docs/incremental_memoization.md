@@ -40,7 +40,7 @@ The design must:
 - preserve the cold named-boundary schedule, effect order, page artifacts,
   DVI bytes, and final state;
 - keep paragraph artifacts tied to accepted-history handles that own their
-  shared node roots, resource closures, and provenance recipes;
+  shared node roots, resource closures, and lazy provenance resolvers;
 - make front-end failure local so later mapped paragraphs may re-align, while
   a changed line-breaking dependency switches the revision to one cold pass;
   and
@@ -203,6 +203,14 @@ For each candidate record, in order:
 The next old record is then the only candidate. There is no token preflight,
 content-key bucket search, paragraph census, probabilistic admission, or
 per-paragraph discovery map on this aligned path.
+
+Rooted and input-frame fallback alignment share one monotonic accepted-history
+cursor. Each fallback bucket is ordered by accepted index and keeps a direct
+position that only advances. Entries behind the global cursor are skipped at
+most once per revision, so bucket traversal is amortized constant time and
+never rescans an accepted prefix. Every successful alignment advances the
+global cursor. Mixed rooted/macro starts therefore cannot select an earlier
+paragraph after later effects or mutations were consumed.
 
 If mapping, transition preparation, front-end dependency validation, mount
 validation, or a barrier fails, the candidate leaves live state untouched and
@@ -440,13 +448,16 @@ resolution. Existing eager and stable-recipe representations remain for live
 input provenance and shipout memo, but paragraph replay does not construct
 either.
 
-The focused scaling regression expands 4,096 `\relax` tokens after paragraph
-entry but produces only two characters; both retained recipes contain at most
-three roots and three slots. Current-layout resolution after a finished-line
-hit and typed deletion after replacing the referenced fragment are covered
-separately. Thus retained metadata scales with reachable output provenance,
-while replay performs no origin allocation and the scalar delivered-token
-count remains only avoided-work telemetry.
+The earlier recipe implementation's focused scaling regression expands 4,096
+`\relax` tokens after paragraph entry but produces only two characters; both
+retained recipes contain at most three roots and three slots. Current-layout
+resolution after a finished-line hit and typed deletion after replacing the
+referenced fragment are covered separately. That experiment established
+output-scaled sparse recipes. The current resolver instead keeps one
+generation snapshot alive and avoids all publication-time graph traversal;
+its retained lifetime is generation-scaled rather than output-reachability
+scaled. Replay still performs no origin allocation, and the scalar
+delivered-token count remains only avoided-work telemetry.
 
 On the 2026-07-18 stable 721-hit Gentle run, the earlier recipe deferral reduced paragraph import
 from 2.565 to 0.209 ms on the forward slow edit and from 1.793 to 0.203 ms on
