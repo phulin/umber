@@ -28,6 +28,10 @@ native entries, corruption recovery, and the browser portability boundary.
 and reproducible entrypoint decisions in the pinned 100-document arXiv sample.
 Keep engine failures in Beads rather than classifying them there prematurely.
 
+`arxiv_census/` contains immutable machine-readable 100-row census captures.
+Its README records the exact interpretation and provisional-status rules; keep
+engine ownership and follow-up work in the linked Beads epic and children.
+
 `incremental_v1.md` fixes the named-boundary schedule, editor-session
 retention, edit mapping, pruning, and schedule-relative convergence contract
 for the first incremental engine.
