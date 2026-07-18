@@ -23,8 +23,8 @@ use umber_fetch::{
 
 use crate::{
     AcceptedFinalization, CompileAttemptResult, EngineMode, FileContentId, FileKind, FileRequest,
-    MemoryRunOutput, ResolvedFile, ResourceRequest, ResourceResponse, SessionOptions, SourcePatch,
-    TexFontSearchPath, TexInputSearchPath, VirtualCompileSession,
+    MemoryRunOutput, ResolvedFile, ResourceRequest, ResourceResponse, SessionLimits,
+    SessionOptions, SourcePatch, TexFontSearchPath, TexInputSearchPath, VirtualCompileSession,
 };
 
 pub const DEFAULT_DISTRIBUTION_URL: &str =
@@ -194,13 +194,16 @@ impl NativeCompileSession {
             format,
             engine: options.engine,
             clock,
+            limits: SessionLimits {
+                attempts: SessionLimits::HARD_MAX.attempts,
+                ..SessionLimits::default()
+            },
             html: options.html,
             accepted_font_containers: if options.html {
                 AcceptedFontContainers::WASM
             } else {
                 AcceptedFontContainers::NATIVE_WITH_COLLECTIONS
             },
-            ..SessionOptions::default()
         })
         .map_err(|error| NativeRunError::Compile(error.to_string()))?;
         session

@@ -1310,6 +1310,11 @@ impl VirtualCompileSession {
         self.attempts
     }
 
+    #[cfg(test)]
+    pub(crate) const fn attempt_limit(&self) -> u32 {
+        self.limits.attempts
+    }
+
     #[must_use]
     pub fn resolved_file_count(&self) -> usize {
         self.files.len()

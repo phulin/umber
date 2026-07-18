@@ -80,6 +80,9 @@ The native CLI's resource host policy lives in `umber::cli_resource`: it
 preserves `TEXINPUTS`/`TEXFONTS` candidate ordering, then consults the verified
 native object cache and a pinned HTTPS or explicit local manifest. Network and
 cache I/O remain above the session and engine boundaries in `umber-fetch`.
+Native CLI discovery permits up to the validated hard ceiling of 128 compile
+attempts so a large local TeX closure can be discovered incrementally; the
+host-neutral session default remains 32, and both paths reject unbounded retry.
 
 `umber-vfs` owns file request identity, required-versus-hint file batches,
 generic response validation, request-bound resolved origins, layered session

@@ -7,6 +7,34 @@ use tex_incr::RevisionId;
 use super::*;
 
 #[test]
+fn native_session_allows_the_hard_bounded_resource_attempt_count() {
+    let directory = TempDir::new().expect("temporary project");
+    let input = directory.path().join("main.tex");
+    std::fs::write(&input, b"\\end").expect("main input");
+    let options = NativeRunOptions {
+        input,
+        format: None,
+        engine: EngineMode::Tex82,
+        html: false,
+        distribution: None,
+        distribution_sha256: None,
+        offline: true,
+    };
+
+    let session = NativeCompileSession::new_with_cache(
+        &options,
+        &FetchCancellation::new(),
+        ObjectCache::new(directory.path().join("cache")),
+    )
+    .expect("native session");
+
+    assert_eq!(
+        session.session.attempt_limit(),
+        SessionLimits::HARD_MAX.attempts
+    );
+}
+
+#[test]
 fn retained_revision_does_not_refetch_resolved_distribution_file() {
     let directory = TempDir::new().expect("temporary project");
     let distribution = directory.path().join("distribution");
