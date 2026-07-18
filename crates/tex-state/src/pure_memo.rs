@@ -14,6 +14,34 @@ use crate::{ContentHash, DetachedMemoValue, InputSummary, ObservedDependency, Ro
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::sync::Arc;
 use std::time::Duration;
+#[cfg(not(target_arch = "wasm32"))]
+use std::time::Instant;
+
+struct TelemetryTimer {
+    #[cfg(not(target_arch = "wasm32"))]
+    started: Instant,
+}
+
+impl TelemetryTimer {
+    #[allow(clippy::disallowed_methods)] // Operational telemetry; semantic state never observes it.
+    fn start() -> Self {
+        Self {
+            #[cfg(not(target_arch = "wasm32"))]
+            started: Instant::now(),
+        }
+    }
+
+    fn elapsed(&self) -> Duration {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            self.started.elapsed()
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            Duration::ZERO
+        }
+    }
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct PureMemoRecordingPolicy {
@@ -750,7 +778,7 @@ impl PureMemoRuntime {
             self.record_not_attempted(PureMemoLayer::Pretolerance);
             return None;
         }
-        let started = std::time::Instant::now();
+        let started = TelemetryTimer::start();
         let cache = self.cache.as_mut()?;
         cache.stats.lookups = cache.stats.lookups.saturating_add(1);
         let hit = cache
@@ -807,7 +835,7 @@ impl PureMemoRuntime {
             self.record_not_attempted(PureMemoLayer::Page);
             return None;
         }
-        let started = std::time::Instant::now();
+        let started = TelemetryTimer::start();
         let cache = self.cache.as_mut()?;
         cache.stats.lookups = cache.stats.lookups.saturating_add(1);
         cache.stats.page_lookups = cache.stats.page_lookups.saturating_add(1);
@@ -857,7 +885,7 @@ impl PureMemoRuntime {
             .retained_bytes()
             .saturating_sub(std::mem::size_of::<DetachedMemoValue>())
             .saturating_add(value.origin_ordinals.capacity().saturating_mul(4));
-        let started = std::time::Instant::now();
+        let started = TelemetryTimer::start();
         let before = self.cache.as_ref().map_or(0, |cache| cache.stats.inserts);
         self.insert_value(key, PureMemoValue::Page(value), owned_bytes);
         if let Some(cache) = &mut self.cache
@@ -897,7 +925,7 @@ impl PureMemoRuntime {
             self.record_not_attempted(PureMemoLayer::Shipout);
             return None;
         }
-        let started = std::time::Instant::now();
+        let started = TelemetryTimer::start();
         let cache = self.cache.as_mut()?;
         cache.stats.lookups = cache.stats.lookups.saturating_add(1);
         cache.stats.shipout_lookups = cache.stats.shipout_lookups.saturating_add(1);
@@ -950,7 +978,7 @@ impl PureMemoRuntime {
             .saturating_add(paragraph_provenance_retained_bytes(
                 &value.render_provenance,
             ));
-        let started = std::time::Instant::now();
+        let started = TelemetryTimer::start();
         let before = self.cache.as_ref().map_or(0, |cache| cache.stats.inserts);
         self.insert_value(key, PureMemoValue::Shipout(value), owned_bytes);
         if let Some(cache) = &mut self.cache
@@ -1137,7 +1165,7 @@ impl PureMemoRuntime {
 
     pub(crate) fn record_paragraph_region(&mut self, region: RecordedParagraphRegion) {
         debug_assert!(region.barriers.is_empty());
-        let started = std::time::Instant::now();
+        let started = TelemetryTimer::start();
         let Some(cache) = &mut self.cache else {
             return;
         };
@@ -1161,7 +1189,7 @@ impl PureMemoRuntime {
     }
 
     pub(crate) fn record_carried_paragraph(&mut self, region: &RecordedParagraphRegion) {
-        let started = std::time::Instant::now();
+        let started = TelemetryTimer::start();
         if let Some(cache) = &mut self.cache {
             let metric = &mut cache.stats.paragraph_opportunities.carried_forward;
             metric.regions = metric.regions.saturating_add(1);
@@ -1184,7 +1212,7 @@ impl PureMemoRuntime {
             self.record_not_attempted(PureMemoLayer::Paragraph);
             return None;
         }
-        let started = std::time::Instant::now();
+        let started = TelemetryTimer::start();
         let cache = self.cache.as_mut()?;
         cache.stats.lookups = cache.stats.lookups.saturating_add(1);
         cache.stats.paragraph_lookups = cache.stats.paragraph_lookups.saturating_add(1);
@@ -1324,7 +1352,7 @@ impl PureMemoRuntime {
             self.record_not_attempted(PureMemoLayer::Pretolerance);
             return;
         }
-        let started = std::time::Instant::now();
+        let started = TelemetryTimer::start();
         let owned_bytes = plan.as_ref().map_or(0, |plan| {
             plan.breaks
                 .capacity()
