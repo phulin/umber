@@ -242,10 +242,12 @@ relative/index reference model, validation order, literal hash-table layout,
 and immutable-versus-job-local state boundary are specified in
 [frozen_format.md](frozen_format.md).
 
-Schema 10 temporarily wraps the validated schema-9 semantic DTO as a single
-transition section, so existing format behavior continues while later phases
-install runtime-ready frozen stores. Schema 9 itself is rejected rather than
-guessed or reinterpreted; formats are regenerated from source. Loading never
-publishes partially validated state, persists Rust heap layout, or mutates
-frozen bytes. Job-local clocks, input, page state, journals, effects, and
-mutable overlays are constructed fresh.
+Schema 10 installs authoritative fixed-width sections for names, lookup
+indexes, token lists, macros, glue, fonts, code tables, hyphenation,
+environment cells, and reachable node graphs. The historically named section
+1 contains only Universe-level interaction and PDF configuration metadata; it
+is not a schema-9 compatibility payload. Schema 9 itself is rejected rather
+than guessed or reinterpreted, and formats are regenerated from source.
+Loading never publishes partially validated state, persists Rust heap layout,
+or mutates frozen bytes. Job-local clocks, input, page state, journals,
+effects, and mutable overlays are constructed fresh.

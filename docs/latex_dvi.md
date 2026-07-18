@@ -2,7 +2,7 @@
 
 Status: LaTeX-DVI supported; pdfLaTeX mode and deterministic format supported
 Contract version: 2
-Reference distribution: TeX Live 2025 LaTeX2e kernel and base files
+Reference distribution: TeX Live 2026 LaTeX2e kernel and base files
 
 ## Engine identity
 
@@ -24,7 +24,7 @@ The supported contract consists of:
 - TeX82 semantics and primitives;
 - the separately documented e-TeX V2 extension layer;
 - the versioned Umber LaTeX extension inventory below;
-- an Umber-native format built from pinned TeX Live 2025 LaTeX sources; and
+- an Umber-native format built from pinned TeX Live 2026 LaTeX sources; and
 - deterministic native and browser input resolution for that pinned closure.
 
 Formats are Umber's validated semantic format images. TeX Live-native `.fmt`
@@ -84,8 +84,8 @@ TeX Live lookup roots:
 
 ```sh
 scripts/build-latex-format.sh
-TEXINPUTS=/usr/local/texlive/2025/texmf-dist/tex/latex/base:/usr/local/texlive/2025/texmf-dist/tex/latex/l3kernel:/usr/local/texlive/2025/texmf-dist/tex/latex/l3backend \
-TEXFONTS=/usr/local/texlive/2025/texmf-dist/fonts/tfm/public/cm \
+TEXINPUTS=/usr/local/texlive/2026/texmf-dist/tex/latex/base:/usr/local/texlive/2026/texmf-dist/tex/latex/l3kernel:/usr/local/texlive/2026/texmf-dist/tex/latex/l3backend \
+TEXFONTS=/usr/local/texlive/2026/texmf-dist/fonts/tfm/public/cm \
   cargo run-dev -p umber -- run --latex document.tex \
     --format target/latex-format/latex.fmt --dvi document.dvi
 ```
@@ -99,8 +99,8 @@ source closure plus its explicitly locked PDF configuration inputs:
 
 ```sh
 scripts/build-latex-format.sh --engine pdflatex
-TEXINPUTS=/usr/local/texlive/2025/texmf-dist/tex/latex/base:/usr/local/texlive/2025/texmf-dist/tex/latex/l3kernel:/usr/local/texlive/2025/texmf-dist/tex/latex/l3backend \
-TEXFONTS=/usr/local/texlive/2025/texmf-dist/fonts/tfm/public/cm \
+TEXINPUTS=/usr/local/texlive/2026/texmf-dist/tex/latex/base:/usr/local/texlive/2026/texmf-dist/tex/latex/l3kernel:/usr/local/texlive/2026/texmf-dist/tex/latex/l3backend \
+TEXFONTS=/usr/local/texlive/2026/texmf-dist/fonts/tfm/public/cm \
   cargo run-dev -p umber -- run --pdflatex document.tex \
     --format target/pdflatex-format/pdflatex.fmt --pdf document.pdf
 ```
@@ -113,12 +113,14 @@ identity.
 ### Rust library
 
 Source initialization selects the extension contract explicitly with
-`umber::prepare_latex_run_stores(&mut stores)` or
-`umber::prepare_pdflatex_run_stores(&mut stores)`. Normal applications should load
-the pinned bytes with `Universe::from_format(world, &format_bytes)` and execute
-through `EngineSession` plus `FileSessionResolvers`; this is the same composed
-path used by the CLI. A library embedding remains responsible for labeling the
-run LaTeX-DVI and for supplying deterministic TeX/TFM search areas.
+`EngineMode::Latex.prepare_fresh(&mut stores)` or
+`EngineMode::PdfLatex.prepare_fresh(&mut stores)`. After
+`Universe::from_format(world, &format_bytes)`, an embedding must call the same
+mode's `install_after_format` before execution so the process-local primitive
+registry matches the selected driver without overwriting format meanings.
+`VirtualCompileSession` performs both branches automatically and is the same
+composed path used by the CLI and WASM boundary. An embedding remains
+responsible for supplying deterministic TeX/TFM search areas.
 
 Library callers that need automatic bibliography processing opt into
 `umber::LatexProjectSession`. It runs the existing TeX engine and in-process
@@ -163,7 +165,7 @@ The package example under `examples/latex.html` is the same browser workflow.
 ### Verification tiers
 
 - `scripts/check-latex-corpus.sh` runs article, report, book, and letter for
-  three passes against TeX Live 2025 and verifies the exact 30-file runtime
+  three passes against TeX Live 2026 and verifies the exact 30-file runtime
   closure.
 - `scripts/check-latex-wasm.sh` builds the package and hosted bundle, runs the
   article corpus for three passes inside the generated WASM module, and
@@ -171,7 +173,7 @@ The package example under `examples/latex.html` is the same browser workflow.
   exact published format to an explicit temporary native path, so the gate has
   no dependency on a pre-existing `target/latex-format/latex.fmt`.
 - `scripts/check-latex-parity.sh` derives a whole-repository LaTeX2e DVI cohort
-  from one hash-pinned upstream archive and runs it against TeX Live 2025. The
+  from one hash-pinned upstream archive and runs it against TeX Live 2026. The
   pinned scopes yield 295 shipout-log candidates: 286 actual classic-LaTeX
   DVIs and nine alternate test configurations. One reference-DVI case,
   `base/testfiles/sx172785.lvt`, is retained in the census but explicitly
@@ -185,7 +187,7 @@ The package example under `examples/latex.html` is the same browser workflow.
   after preamble-comment normalization, every DVI byte and therefore every
   encoded coordinate must match. Reference kpathsea lookup is run with a clean
   environment and explicit TeX, TFM, configuration, and format paths: inputs
-  may come only from the pinned upstream snapshot, the selected TeX Live 2025
+  may come only from the pinned upstream snapshot, the selected TeX Live 2026
   `texmf-dist`, the exact distribution-owned `latex.fmt` and configuration, or
   that case's isolated generated-state directory. Every recorder input is
   canonicalized after the run, including through symlinks, and an input outside

@@ -376,3 +376,24 @@ exist only in authoritative sections 256 through 352 and are never reinterned
 during normal loading. The decoder validates environment references against
 those frozen stores before publication. Section 1 remains only for
 Universe-level format metadata until a later explicit schema migration.
+
+## Compatibility failures
+
+The native CLI and host-neutral session report decoder failures as `format
+image rejected: ...`; WASM returns the same message in its compile diagnostic.
+Failures are deterministic and identify the rejected boundary:
+
+- wrong magic means the input is not an Umber format image;
+- any schema other than 10 reports the unsupported version, including schema
+  9, which must be regenerated rather than upgraded in place;
+- ABI or lookup fingerprint mismatch means the image and runtime implement
+  different schema-10 contracts;
+- checksum mismatch means the bytes changed after publication; and
+- directory, section, canonical-order, or cross-reference errors identify a
+  structurally invalid image even when its checksum was recomputed.
+
+Browser manifests reject an incompatible `engineVersion` or `formatSchema`
+before downloading the object. Length and SHA-256 validate transport, then the
+Rust decoder applies the complete schema-10 validation above. There is no
+compatibility flag or fallback loader for TeX Live-native `.fmt`, schema 9, or
+partially migrated images.

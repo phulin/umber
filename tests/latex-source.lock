@@ -2,7 +2,7 @@
 # Common fields: source|local <path> <bytes> <sha256>.
 # pdfLaTeX-only fields: pdflatex-source|pdflatex-local <path> <bytes> <sha256>.
 distribution texlive-2026-r79639
-format_schema 9
+format_schema 10
 source_date_epoch 1784066400
 source fonts/tfm/public/cm/cmex10.tfm 992 0890bccea1dd4d27f001ac30e86c63af35bc803e0557c35aafb1903c8d208e92
 source fonts/tfm/public/cm/cmmi10.tfm 1528 e442c5487f84df70218ff37f775c87060856f5b6e04c011b6cadbbadfcf46645
