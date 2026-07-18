@@ -74,6 +74,22 @@ mistaken for the release comparison. Rebuild with `--features profiling-stats`
 only when the named recording phases and exact-identity counters are needed to
 explain a losing path.
 
+To isolate cold recording overhead from every incremental revision, repeat
+fresh incremental-session cold compiles under one explicit policy:
+
+```bash
+GENTLE_PROFILE_ITERATIONS=100 \
+  scripts/profile-gentle.sh --cold-memo-layers paragraph
+GENTLE_PROFILE_ITERATIONS=100 \
+  scripts/profile-gentle.sh --cold-memo-layers disabled
+```
+
+This mode verifies every DVI against a true memo-disabled cold run and reports
+paragraph recording phases, retained history bytes, state-hash work, and
+survivor work.
+Use `disabled` for the true no-runtime control; `none` keeps the memo runtime
+enabled with every recording layer off.
+
 Select recording layers with `--memo-layers`. For this profiler's explicitly
 memo-enabled candidate, the default is `paragraph`, whose results and trace
 metadata belong to the accepted generation. The engine memo runtime remains

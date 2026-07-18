@@ -47,6 +47,7 @@ struct Options {
     checkpoints: bool,
     incremental_edit: bool,
     incremental_path: Option<IncrementalPath>,
+    cold_memo_policy: Option<ColdMemoPolicy>,
     baseline_memo_recording: Option<PureMemoRecordingPolicy>,
     memo_recording: PureMemoRecordingPolicy,
 }
@@ -59,6 +60,7 @@ impl Options {
         let mut checkpoints = false;
         let mut incremental_edit = false;
         let mut incremental_path = None;
+        let mut cold_memo_policy = None;
         let mut baseline_memo_recording = None;
         let mut memo_recording = PureMemoRecordingPolicy::default();
         let mut args = env::args().skip(1);
@@ -83,6 +85,12 @@ impl Options {
                     incremental_path = Some(parse_incremental_path(&next_value(
                         &mut args,
                         "--incremental-path",
+                    )?)?);
+                }
+                "--cold-memo-layers" => {
+                    cold_memo_policy = Some(parse_cold_memo_policy(&next_value(
+                        &mut args,
+                        "--cold-memo-layers",
                     )?)?);
                 }
                 "--memo-layers" => {
@@ -115,6 +123,7 @@ impl Options {
             checkpoints,
             incremental_edit,
             incremental_path,
+            cold_memo_policy,
             baseline_memo_recording,
             memo_recording,
         }))
@@ -160,6 +169,9 @@ fn run() -> Result<(), String> {
     };
     let template = load_template(&options.repo_root)?;
 
+    if let Some(policy) = options.cold_memo_policy {
+        return run_cold_memo_policy(&options, &template, policy);
+    }
     if let Some(path) = options.incremental_path {
         return run_incremental_path(&options, &template, path);
     }
@@ -193,6 +205,21 @@ fn run() -> Result<(), String> {
 
     print_summary(&options, &last, elapsed);
     Ok(())
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ColdMemoPolicy {
+    Disabled,
+    Enabled(PureMemoRecordingPolicy),
+}
+
+impl ColdMemoPolicy {
+    fn config(self) -> (bool, PureMemoRecordingPolicy) {
+        match self {
+            Self::Disabled => (false, PureMemoRecordingPolicy::default()),
+            Self::Enabled(recording) => (true, recording),
+        }
+    }
 }
 
 struct IncrementalFixture {
@@ -302,6 +329,122 @@ impl IncrementalStages {
             dvi_materialization: dvi_latency,
         }
     }
+}
+
+#[allow(clippy::disallowed_methods)] // Host-side cold-policy profiling timer.
+fn run_cold_memo_policy(
+    options: &Options,
+    template: &World,
+    policy: ColdMemoPolicy,
+) -> Result<(), String> {
+    if options.checkpoints || options.incremental_edit || options.incremental_path.is_some() {
+        return Err(
+            "--cold-memo-layers cannot be combined with --checkpoints, --incremental-edit, or --incremental-path"
+                .to_owned(),
+        );
+    }
+    let fixture = incremental_fixture(&options.repo_root)?;
+    let source_path = Path::new(JOB_DIR).join(JOB_FILE);
+    let (memo, recording) = policy.config();
+    let total_runs = options.warmups.saturating_add(options.iterations);
+    let mut durations = Vec::with_capacity(options.iterations);
+    let (_, cold_reference) = execute_cold_sample(template, &fixture.original, RevisionId::new(1))?;
+    let reference_dvi = cold_reference
+        .dvi_bytes()
+        .map_err(|error| error.to_string())?;
+    let mut last_pages = 0;
+    let mut last_memo = PureMemoStats::default();
+    #[cfg(feature = "profiling-stats")]
+    let mut last_state_hash = StateHashMeasurement::default();
+    #[cfg(feature = "profiling-stats")]
+    let mut last_survivor = SurvivorMeasurement::default();
+
+    for run in 0..total_runs {
+        let mut session = incremental_session(
+            template,
+            &fixture.original,
+            RevisionId::new(1),
+            memo,
+            recording,
+        )?;
+        let mut resolvers = FileSessionResolvers::new(&source_path, Vec::new(), Vec::new());
+        #[cfg(feature = "profiling-stats")]
+        let state_hash_before = state_hash_measurement();
+        #[cfg(feature = "profiling-stats")]
+        let survivor_before = survivor_measurement();
+        let started = Instant::now();
+        let (input, font) = resolvers.resolvers();
+        let accepted = session
+            .cold_with_resolvers(input, font)
+            .map_err(|error| format!("cold memo-policy run {}: {error}", run + 1))?;
+        let elapsed = started.elapsed();
+        let dvi = accepted.dvi_bytes().map_err(|error| error.to_string())?;
+        if reference_dvi != dvi {
+            return Err(format!(
+                "cold memo-policy run {} differs from memo-disabled cold output",
+                run + 1
+            ));
+        }
+        if run >= options.warmups {
+            durations.push(elapsed);
+        }
+        last_pages = accepted.artifacts.len();
+        last_memo = session.pure_memo_stats();
+        #[cfg(feature = "profiling-stats")]
+        {
+            last_state_hash = state_hash_delta(state_hash_measurement(), state_hash_before);
+            last_survivor = survivor_delta(survivor_measurement(), survivor_before);
+        }
+        let _ = black_box(last_pages);
+        let _ = black_box(dvi.len());
+    }
+
+    let name = match policy {
+        ColdMemoPolicy::Disabled => "disabled",
+        ColdMemoPolicy::Enabled(_) => "enabled",
+    };
+    println!(
+        "gentle-profile isolated cold: memo={name} recording={recording:?} measured_runs={} warmup_runs={}",
+        options.iterations, options.warmups
+    );
+    print_duration_stats("isolated cold", duration_stats(&durations));
+    println!(
+        "gentle-profile isolated cold output: pages={} dvi_bytes={} paragraph_history_metadata_bytes={}",
+        last_pages,
+        reference_dvi.len(),
+        last_memo.paragraph_history_metadata_bytes,
+    );
+    let phases = last_memo.paragraph_recording;
+    println!(
+        "gentle-profile isolated cold paragraph phases: front_end_dependency_ns={} input_transition_ns={} region_publication_ns={} break_dependency_ns={} line_provenance_ns={} line_retention_ns={}",
+        phases.front_end_dependency_nanos,
+        phases.input_transition_nanos,
+        phases.region_publication_nanos,
+        phases.break_dependency_nanos,
+        phases.line_provenance_nanos,
+        phases.line_retention_nanos,
+    );
+    #[cfg(feature = "profiling-stats")]
+    {
+        println!(
+            "gentle-profile isolated cold state hash: calls={} journal_entries={} changed_cells={} peak_changed_scratch_bytes={}",
+            last_state_hash.calls,
+            last_state_hash.journal_entries,
+            last_state_hash.changed_cells,
+            last_state_hash.peak_changed_cell_scratch_bytes,
+        );
+        println!(
+            "gentle-profile isolated cold survivor: fresh_promotions={} recycled_promotions={} releases={} promotion_nanos={} source_words={}",
+            last_survivor.fresh_promotions,
+            last_survivor.recycled_promotions,
+            last_survivor.releases_to_recycling,
+            last_survivor
+                .fresh_promotion_nanos
+                .saturating_add(last_survivor.recycled_promotion_nanos),
+            last_survivor.source_words,
+        );
+    }
+    Ok(())
 }
 
 #[allow(clippy::disallowed_methods)] // Host-side path-isolated profiling timer.
@@ -1792,6 +1935,19 @@ fn parse_incremental_path(value: &str) -> Result<IncrementalPath, String> {
     }
 }
 
+fn parse_cold_memo_policy(value: &str) -> Result<ColdMemoPolicy, String> {
+    if value == "disabled" {
+        return Ok(ColdMemoPolicy::Disabled);
+    }
+    parse_memo_layers(value)
+        .map(ColdMemoPolicy::Enabled)
+        .map_err(|_| {
+            format!(
+                "--cold-memo-layers expects disabled, all, none, or a comma-separated layer list, got {value:?}"
+            )
+        })
+}
+
 fn parse_memo_layers(value: &str) -> Result<PureMemoRecordingPolicy, String> {
     if value == "all" {
         return Ok(PureMemoRecordingPolicy::all());
@@ -1821,7 +1977,7 @@ fn parse_memo_layers(value: &str) -> Result<PureMemoRecordingPolicy, String> {
 
 fn print_help() {
     println!(
-        "Usage: gentle-profile [--iterations N] [--warmups N] [--repo-root PATH] [--checkpoints] [--incremental-edit] [--incremental-path fast|slow] [--baseline-memo-layers LIST] [--memo-layers LIST]\n\n\
+        "Usage: gentle-profile [--iterations N] [--warmups N] [--repo-root PATH] [--checkpoints] [--cold-memo-layers disabled|LIST] [--incremental-edit] [--incremental-path fast|slow] [--baseline-memo-layers LIST] [--memo-layers LIST]\n\n\
          Loads Gentle and its support files once, then executes fresh deterministic\n\
          in-memory Umber sessions for profiling. Defaults: {DEFAULT_ITERATIONS} measured\n\
          iterations and {DEFAULT_WARMUPS} warm-up. --checkpoints captures and hashes every\n\
@@ -1831,6 +1987,8 @@ fn print_help() {
          the fifth changes a line-breaking dependency to verify one-shot cold fallback.\n\
          --incremental-path repeatedly ping-pongs one fast or slow edit after cold setup,\n\
          verifies each direction against cold output, and isolates its sampled stacks.\n\
+         --cold-memo-layers repeats fresh incremental-session cold compiles with memoization\n\
+         disabled or enabled for the selected layers, isolating recording overhead.\n\
          --memo-layers configures enabled recording layers; the default is paragraph.\n\
          --baseline-memo-layers replaces the disabled control with an explicit recording\n\
          policy for direct marginal layer comparisons."
@@ -1839,7 +1997,7 @@ fn print_help() {
 
 #[cfg(test)]
 mod tests {
-    use super::replacement_between;
+    use super::{ColdMemoPolicy, parse_cold_memo_policy, replacement_between};
 
     fn assert_replacement(from: &str, to: &str) {
         let (range, replacement) = replacement_between(from, to);
@@ -1858,5 +2016,22 @@ mod tests {
             assert_replacement(left, right);
             assert_replacement(right, left);
         }
+    }
+
+    #[test]
+    fn cold_memo_policy_distinguishes_disabled_from_empty_recording() {
+        assert_eq!(
+            parse_cold_memo_policy("disabled").expect("disabled policy"),
+            ColdMemoPolicy::Disabled
+        );
+        let ColdMemoPolicy::Enabled(recording) =
+            parse_cold_memo_policy("none").expect("empty enabled policy")
+        else {
+            panic!("none must still enable the memo runtime");
+        };
+        assert!(!recording.pretolerance);
+        assert!(!recording.paragraphs);
+        assert!(!recording.pages);
+        assert!(!recording.shipouts);
     }
 }
