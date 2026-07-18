@@ -578,7 +578,19 @@ fn translated_suite_has_explicit_compatibility_status() {
         modules += 1;
         let source = fs::read_to_string(&path)
             .unwrap_or_else(|error| panic!("failed to read {}: {error}", path.display()));
-        assertions += source.matches("#[test]").count();
+        let assertion_identifiers = source
+            .split(|character: char| !(character.is_ascii_alphanumeric() || character == '_'))
+            .filter(|token| {
+                token.strip_prefix("assertion_").is_some_and(|suffix| {
+                    suffix
+                        .as_bytes()
+                        .get(..3)
+                        .is_some_and(|digits| digits.iter().all(u8::is_ascii_digit))
+                        && suffix.as_bytes().get(3) == Some(&b'_')
+                })
+            })
+            .collect::<BTreeSet<_>>();
+        assertions += assertion_identifiers.len();
         let unexpected_pass_marker = ["X", "PASS"].concat();
         let ignored_test_marker = ["#[", "ignore", "]"].concat();
         let expected_panic_marker = ["#[", "should_panic", "]"].concat();
@@ -602,6 +614,27 @@ fn translated_suite_has_explicit_compatibility_status() {
             "every ignored compatibility test in {} must use `#[ignore = \"xfail: <specific production gap>\"]`",
             path.display()
         );
+        for forbidden in [
+            "UPSTREAM_SOURCE",
+            "pass_upstream(",
+            "compare_owned_upstream(",
+            "source.contains(",
+            "upstream_call",
+            "actual_expression",
+            "expected_expression",
+            "panic!(\"xfail",
+            "todo!",
+            "unimplemented!",
+            "eq_or_diff(",
+            "is_deeply(",
+            "->get_",
+        ] {
+            assert!(
+                !source.contains(forbidden),
+                "non-native compatibility marker `{forbidden}` remains in {}",
+                path.display()
+            );
+        }
     }
     assert_eq!(modules, UPSTREAM_MODULE_COUNT);
     assert_eq!(assertions, UPSTREAM_ASSERTION_COUNT);
