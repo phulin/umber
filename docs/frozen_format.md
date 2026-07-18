@@ -1,6 +1,6 @@
 # Portable Frozen Format Images
 
-Status: schema-10 container contract; frozen-store payloads are phased work.
+Status: schema-10 container plus foundational frozen-store sections.
 
 This document is the durable ABI contract for Umber format images. The outer
 container is implemented in `tex-state::format_container`. Schema 10 replaces
@@ -73,10 +73,12 @@ The checksum is FNV-1a-64 over the exact complete file with header bytes
 fingerprints, the directory, alignment padding, and every payload byte. It is
 an accidental-corruption checksum, not an authenticity mechanism.
 
-Section kind 1 is `TransitionalSemanticV9`. It contains the preexisting
-detached semantic DTO and is the only section accepted by the schema-10
-runtime today. It exists to land and exercise the container independently of
-the frozen-store rollout. The following kinds are allocated for that rollout:
+Section kind 1 is `TransitionalSemanticV9`. It contains the detached semantic
+DTO for stores that have not migrated yet. During the phased rollout it also
+duplicates names, token lists, macros, and glue; the loader requires those
+values to exactly match the authoritative frozen sections before publication.
+The schema-10 runtime currently requires kinds 1, 256, 272, 288, and 304.
+The following kinds are allocated for the complete rollout:
 
 | Kind | Intended contents                        |
 | ---: | ---------------------------------------- |
@@ -92,9 +94,82 @@ the frozen-store rollout. The following kinds are allocated for that rollout:
 |  512 | reachable frozen node and math graph     |
 |  528 | frozen environment cells and roots       |
 
-Adding one of these payload schemas changes the format schema version until
-that section's exact record vocabulary is documented. Unknown kinds are not
-silently ignored by a version that does not define them.
+Adding an undocumented payload or changing a documented record vocabulary
+requires a schema change. Unknown kinds are not silently ignored by a version
+that does not define them.
+
+## Foundational store sections
+
+Kinds 256, 272, 288, and 304 have section version 1. All offsets in these
+sections are section-relative, all counts and offsets are `u32`, all semantic
+identities are `u64`, and every reserved field is zero.
+
+### Names (kind 256)
+
+The 24-byte header contains `(version, count, records_offset, strings_offset,
+strings_length, reserved)` as six `u32` values. `records_offset` is 24. Each
+24-byte record is:
+
+| Offset | Type  | Field                                    |
+| -----: | ----- | ---------------------------------------- |
+|      0 | `u8`  | namespace: 0 named, 1 active character   |
+|      1 | 3 B   | reserved                                 |
+|      4 | `u32` | offset in the section string byte region |
+|      8 | `u32` | UTF-8 byte length                        |
+|     12 | `u32` | reserved                                 |
+|     16 | `u64` | canonical control-sequence semantic atom |
+
+String spans are contiguous in record order with no unused bytes. Names are
+valid UTF-8, active names contain exactly one Unicode scalar, namespace/name
+pairs are unique, and semantic atoms are recomputed during validation. The
+dense record index is the local interner slot used by other frozen sections.
+
+### Token lists (kind 272)
+
+The 24-byte header contains `(version, count, records_offset, words_offset,
+word_count, reserved)` as `u32` values. `records_offset` is 24. Each 24-byte
+list record contains `start: u32`, `length: u32`, `semantic_id: u64`, and a
+reserved `u64`. Spans are contiguous and list 0 is the canonical empty list.
+Duplicate lists are rejected.
+
+Each token word is `u64`. Bits 63..56 are the tag and bits 55..0 are payload:
+
+| Tag | Payload                                              |
+| --: | ---------------------------------------------------- |
+|   0 | Unicode scalar in bits 31..0, catcode in bits 39..32 |
+|   1 | names-section record index in bits 31..0             |
+|   2 | internal/parameter byte in bits 7..0                 |
+|   3 | frozen sentinel 0 or 1                               |
+
+Unused payload bits are zero. Character, catcode, name-index, and sentinel
+domains are validated. The semantic identity is recomputed from the decoded
+tokens and name semantic atoms before the arena is published.
+
+### Macros (kind 288)
+
+The 16-byte header is `(version, count, records_offset, reserved)` as `u32`;
+`records_offset` is 16. Each 16-byte record contains `flags: u8`, three
+reserved bytes, parameter-list index `u32`, replacement-list index `u32`, and
+a reserved `u32`. Only the four defined meaning-flag bits are accepted. Both
+indices must name token-list records. Parameter delimiter metadata is derived
+directly while the validated macro column is installed; definitions are not
+reinterned.
+
+### Glue (kind 304)
+
+The 16-byte header is `(version, count, records_offset, reserved)` as `u32`;
+`records_offset` is 16. Each 24-byte record contains signed `i32` width,
+stretch, and shrink values at offsets 0, 4, and 8; `u8` stretch and shrink
+orders at offsets 12 and 13; and ten reserved zero bytes. Orders are 0..=3,
+record 0 is canonical zero glue, and duplicate specs are rejected.
+
+These four sections are decoded into validated dense immutable prefixes with
+their canonical record indices. Fresh generation-tagged runtime identities and
+lookup indexes are attached in bulk. Ordinary job-created values append after
+the prefix and use the existing interning, snapshot, and rollback paths. The
+process-wide compact symbol registry is resolved in one batch for names;
+neither token lists, macro definitions, nor glue specs are replayed through
+their semantic interning APIs.
 
 ## References and structural validation
 
@@ -179,8 +254,9 @@ boundary: the loader rejects schema 9 with `UnsupportedVersion(9)`. Users
 regenerate format images from their source under the schema-10 engine; Umber
 does not reinterpret an old image heuristically.
 
-During the transition, schema 10 writes section 1 and restores fresh dense
-stores exactly as schema 9 did. Epic phases replace semantic reconstruction
-with the allocated frozen sections, literal lookup arrays, immutable graph
+During the transition, schema 10 writes section 1 for unmigrated state and
+restores names, token lists, macros, and glue directly from sections 256, 272,
+288, and 304. Epic phases replace the remaining semantic reconstruction with
+the other allocated frozen sections, literal lookup arrays, immutable graph
 stores, and mutable overlays. Once those sections are integrated across all
 drivers, section 1 is removed under another explicit schema bump.
