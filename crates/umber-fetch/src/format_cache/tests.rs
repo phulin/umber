@@ -37,6 +37,10 @@ fn format() -> Vec<u8> {
 fn canonical_key_covers_every_identity_component() {
     let original = identity(FormatEngineMode::Latex);
     assert_eq!(original.key(), original.clone().key());
+    assert_eq!(
+        original.key().hex(),
+        "93a7e946ff3a01d8626b27ec64afa7f5414cd8ba242a99ce521f386c2b300623"
+    );
 
     let mutations = [
         FormatCacheIdentity {
@@ -74,6 +78,34 @@ fn canonical_key_covers_every_identity_component() {
         FormatCacheIdentity {
             job_clock: FormatCacheClock {
                 second: 1,
+                ..original.job_clock
+            },
+            ..original.clone()
+        },
+        FormatCacheIdentity {
+            job_clock: FormatCacheClock {
+                time: original.job_clock.time + 1,
+                ..original.job_clock
+            },
+            ..original.clone()
+        },
+        FormatCacheIdentity {
+            job_clock: FormatCacheClock {
+                day: original.job_clock.day + 1,
+                ..original.job_clock
+            },
+            ..original.clone()
+        },
+        FormatCacheIdentity {
+            job_clock: FormatCacheClock {
+                month: original.job_clock.month + 1,
+                ..original.job_clock
+            },
+            ..original.clone()
+        },
+        FormatCacheIdentity {
+            job_clock: FormatCacheClock {
+                year: original.job_clock.year + 1,
                 ..original.job_clock
             },
             ..original.clone()

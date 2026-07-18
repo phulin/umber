@@ -9,8 +9,8 @@ A generated format is reusable only when every input that can affect its bytes
 is identical. `umber-fetch::FormatCacheIdentity` therefore keys an entry by:
 
 - the composed engine mode (TeX82, e-TeX, pdfTeX, LaTeX, or pdfLaTeX);
-- the format schema, container ABI fingerprint, and frozen-lookup
-  configuration fingerprint exported by `tex-state::Universe`;
+- the format schema, container ABI fingerprint, and frozen-lookup configuration
+  fingerprint exported by `tex-state::Universe`;
 - SHA-256 identities for the pinned distribution root, exact format-input
   closure, generation source lock, and relevant build configuration; and
 - all five fields of the pinned TeX job clock.
@@ -30,6 +30,9 @@ lookup (`u64`) fingerprints, four 32-byte identities in the order above, then
 the clock's time, second, day, month, and year as little-endian `i32` values.
 The cache key is SHA-256 of that preimage. Any schema or ABI transition creates
 a different namespace without probing or heuristically upgrading old images.
+The public constructor always supplies the current build's schema and
+fingerprints; callers cannot mint an identity that labels current format bytes
+with stale compatibility metadata.
 
 ## Native entry and validation
 
@@ -39,7 +42,8 @@ binary entry containing an entry magic/schema, canonical key preimage, declared
 payload length, payload SHA-256, and the schema-10 format bytes. A same-directory
 temporary file is fully written and synchronized before no-clobber rename, so
 readers see either the old complete entry or the new complete entry. Competing
-publishers preserve the first valid entry.
+publishers validate the winner before accepting it; if a corrupt entry won the
+race, it is removed and publication is retried.
 
 Every read independently checks file bounds, entry geometry and version, exact
 key metadata, payload length and SHA-256, and finally calls
