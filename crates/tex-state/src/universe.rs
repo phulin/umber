@@ -1295,6 +1295,11 @@ impl Default for Universe {
 
 impl Universe {
     pub const FORMAT_SCHEMA_VERSION: u32 = crate::format_container::SCHEMA_VERSION;
+    /// Fingerprint of the current portable format container ABI.
+    pub const FORMAT_ABI_FINGERPRINT: u64 = crate::format_container::ABI_FINGERPRINT;
+    /// Fingerprint of the immutable lookup tables embedded in format images.
+    pub const FORMAT_LOOKUP_CONFIGURATION_FINGERPRINT: u64 =
+        crate::format_container::LOOKUP_CONFIGURATION_FINGERPRINT;
 
     /// Creates an isolated TeX state timeline.
     #[must_use]

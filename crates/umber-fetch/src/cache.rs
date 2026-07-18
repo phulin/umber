@@ -235,7 +235,7 @@ fn nonempty_env(name: &str) -> Option<PathBuf> {
         .map(PathBuf::from)
 }
 
-fn platform_cache_root() -> Option<PathBuf> {
+pub(crate) fn platform_cache_root() -> Option<PathBuf> {
     if let Some(path) = nonempty_env("XDG_CACHE_HOME") {
         return Some(path);
     }

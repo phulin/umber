@@ -31,6 +31,9 @@ compatibility fingerprints, deterministic literal lookup-table representation,
 validation and checksum coverage, immutable/job-local split, and migration
 from schema 9.
 
+`format_cache.md` defines generated-format cache identity, validated atomic
+native entries, corruption recovery, and the browser portability boundary.
+
 `incremental_v1.md` fixes the named-boundary schedule, editor-session
 retention, edit mapping, pruning, and schedule-relative convergence contract
 for the first incremental engine.
