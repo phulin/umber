@@ -208,7 +208,7 @@ fn paragraph_history_interns_changed_observations_per_generation() {
     let mut universe = template();
     universe.enable_pure_memo(tex_state::PureMemoConfig::default());
     let source = concat!(
-        "\\font\\tenrm=cmr10\\relax\\tenrm\n",
+        "\\font\\tenrm=cmr10\\relax\\tenrm\\vsize=1000pt\n",
         "\\count0=1 \\ifnum\\count0=1 first paragraph\\fi\\par\n",
         "\\count0=2 \\ifnum\\count0=2 second paragraph\\fi\\par\n",
         "\\vfill\\eject\\end",
@@ -461,7 +461,7 @@ fn cold_middle_paragraph_and_carried_suffix_keep_generation_observation_tables()
     let mut universe = template();
     universe.enable_pure_memo(tex_state::PureMemoConfig::default());
     let source = concat!(
-        "\\font\\tenrm=cmr10\\relax\\tenrm\n",
+        "\\font\\tenrm=cmr10\\relax\\tenrm\\vsize=1000pt\n",
         "first literal paragraph text\\par\n",
         "changed middle paragraph text\\par\n",
         "stable suffix paragraph text\\par\n",
@@ -501,7 +501,8 @@ fn cold_middle_paragraph_and_carried_suffix_keep_generation_observation_tables()
         .expect("middle paragraph edit");
     assert!(
         session.pure_memo_stats().paragraph_hits > before.paragraph_hits,
-        "the unchanged suffix must be carried"
+        "the unchanged suffix must be carried: before={before:?}, after={:?}",
+        session.pure_memo_stats(),
     );
     let accepted = session
         .pure_memo
@@ -684,6 +685,88 @@ fn paragraph_hit_preserves_outer_paragraph_and_shipout_boundaries() {
         schedule(&expected),
         "paragraph replay must preserve outer-paragraph and shipout checkpoints"
     );
+}
+
+#[test]
+fn paragraph_replay_deopts_before_a_new_paragraph_start_output_fire() {
+    let first = "A\\vrule width40pt height7pt depth2pt";
+    let inserted = " \\penalty-10000 B";
+    let source = format!(
+        concat!(
+            "\\font\\tenrm=cmr10\\relax\\tenrm ",
+            "\\hsize=60pt\\vsize=12pt ",
+            "\\output={{\\immediate\\write16{{OUT count=\\the\\count0 line=\\the\\inputlineno}}",
+            "\\shipout\\box255}}\n",
+            "{}\\par\n",
+            "X\\global\\count0=7 stable suffix text\\par\n",
+            "\\vfill\\eject\\end",
+        ),
+        first
+    );
+    let insertion = source.find("\\par\nX").expect("first paragraph end");
+
+    let mut universe = template();
+    universe.enable_pure_memo(tex_state::PureMemoConfig::default());
+    let mut session = Session::start(
+        universe,
+        "paragraph-start-output-deopt",
+        RevisionId::new(1),
+        source.clone(),
+        usize::MAX,
+    )
+    .expect("session starts");
+    session
+        .register_input_file(Path::new("cmr10.tfm"), CMR10.to_vec())
+        .expect("font fixture");
+    session.cold().expect("cold revision");
+    let before = session.pure_memo_stats();
+    let incremental = session
+        .advance(
+            RevisionId::new(2),
+            Edit {
+                base_revision: RevisionId::new(1),
+                expected_hash: ContentHash::from_bytes(source.as_bytes()),
+                range: insertion..insertion,
+                replacement: inserted.to_owned(),
+            },
+        )
+        .expect("pagination-changing edit");
+    let after = session.pure_memo_stats();
+    assert!(
+        after.paragraph_validation_failure_count(
+            tex_state::ParagraphValidationFailure::ParagraphStart,
+        ) > before.paragraph_validation_failure_count(
+            tex_state::ParagraphValidationFailure::ParagraphStart,
+        ),
+        "the stable paragraph must deopt when its new start fires output: {after:?}"
+    );
+
+    let edited = format!("{}{inserted}{}", &source[..insertion], &source[insertion..]);
+    let mut cold_universe = template();
+    cold_universe.enable_pure_memo(tex_state::PureMemoConfig::default());
+    let mut cold = Session::start(
+        cold_universe,
+        "paragraph-start-output-deopt",
+        RevisionId::new(2),
+        edited,
+        usize::MAX,
+    )
+    .expect("cold comparison starts");
+    cold.register_input_file(Path::new("cmr10.tfm"), CMR10.to_vec())
+        .expect("cold font fixture");
+    let expected = cold.cold().expect("cold comparison");
+
+    assert_eq!(incremental.effects, expected.effects);
+    assert_eq!(incremental.artifacts, expected.artifacts);
+    assert_eq!(
+        incremental.dvi_bytes().expect("incremental DVI"),
+        expected.dvi_bytes().expect("cold DVI")
+    );
+    assert!(incremental.effects.iter().any(|effect| matches!(
+        effect,
+        tex_state::EffectRecord::StreamWrite { text, .. }
+            if text.contains("OUT count=0")
+    )));
 }
 
 #[test]
@@ -2858,7 +2941,7 @@ fn paragraph_post_break_reuse_tiers_match_cold_for_layout_and_hyphenation_change
 
     let prose = "hyphenation demonstration hyphenation demonstration hyphenation demonstration";
     let source = format!(
-        "\\font\\tenrm=cmr10\\relax \\tenrm \\hsize=70pt \\hyphenation{{hy-phen-a-tion}}\n{prose}\\par\n{prose}\\par\n\\end"
+        "\\font\\tenrm=cmr10\\relax \\tenrm \\hsize=70pt \\vsize=1000pt \\hyphenation{{hy-phen-a-tion}}\n{prose}\\par\n{prose}\\par\n\\end"
     );
     let hsize = source.find("70pt").expect("hsize value");
     let (layout, _) = run_edit(&source, hsize..hsize + 2, "45", |_| {});

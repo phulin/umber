@@ -94,6 +94,41 @@ pub(crate) fn try_reuse_aligned_paragraph(
     else {
         return Ok(false);
     };
+
+    // Cold execution starts the paragraph before consuming or executing its
+    // body. Preserve that ordering, but make the start speculative because a
+    // changed prefix can make its parskip fire the output routine. In that
+    // case normal dispatch must repeat the start from the original input and
+    // pre-body state so the output routine observes cold-equivalent context.
+    let nest_before_start = nest.clone();
+    let effect_start = stores.world().effect_records().len();
+    let mut start_probe = stores.begin_replay_probe();
+    let start_result = crate::assignments::start_reused_paragraph(nest, input, &mut start_probe);
+    let start_failure = if start_result.is_ok() {
+        start_probe
+            .page_fire_up()
+            .is_some()
+            .then_some(ParagraphValidationFailure::ParagraphStart)
+            .or_else(|| {
+                (start_probe.world().effect_records().len() != effect_start)
+                    .then_some(ParagraphValidationFailure::Effect)
+            })
+    } else {
+        None
+    };
+    if let Err(error) = start_result {
+        drop(start_probe);
+        *nest = nest_before_start;
+        return Err(error);
+    }
+    if let Some(failure) = start_failure {
+        drop(start_probe);
+        *nest = nest_before_start;
+        stores.record_pure_paragraph_validation_failure(failure);
+        return Ok(false);
+    }
+    start_probe.commit();
+
     let input_origins = resolve_paragraph_provenance(stores, &entry.input_provenance);
     let input_suffix_token_lists = entry
         .input_suffix_token_lists
@@ -143,9 +178,8 @@ pub(crate) fn try_reuse_aligned_paragraph(
     stores.record_carried_paragraph(&entry);
     stores.record_paragraph_region(entry);
     execution.pending_paragraph_memo = None;
-    let last_line = crate::assignments::install_reused_paragraph_hlist(
+    let last_line = crate::assignments::install_reused_paragraph_hlist_after_start(
         nest,
-        input,
         stores,
         execution,
         Vec::new(),

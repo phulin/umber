@@ -530,6 +530,19 @@ pub struct ShipoutTransaction<'a> {
     finished: bool,
 }
 
+/// Full-state rollback guard for a speculative replay transition.
+///
+/// This is deliberately an opaque, lifetime-bound capability. Dropping it
+/// restores the aggregate state captured at construction; [`Self::commit`]
+/// keeps the transition. It avoids the semantic hashing performed by durable
+/// editor snapshots.
+#[doc(hidden)]
+#[derive(Debug)]
+pub struct ReplayProbeTransaction<'a> {
+    universe: &'a mut Universe,
+    rollback: Option<ScopedRollback>,
+}
+
 #[derive(Debug)]
 struct ScopedRollback {
     owner: SnapshotOwner,
@@ -568,6 +581,20 @@ impl std::ops::Deref for ShipoutTransaction<'_> {
     }
 }
 
+impl std::ops::Deref for ReplayProbeTransaction<'_> {
+    type Target = Universe;
+
+    fn deref(&self) -> &Self::Target {
+        self.universe
+    }
+}
+
+impl std::ops::DerefMut for ReplayProbeTransaction<'_> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.universe
+    }
+}
+
 impl std::ops::DerefMut for ShipoutTransaction<'_> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         self.universe
@@ -583,6 +610,21 @@ impl Drop for ShipoutTransaction<'_> {
                 .expect("unfinished shipout transaction retains rollback roots");
             self.universe.rollback_scoped(rollback);
         }
+    }
+}
+
+impl Drop for ReplayProbeTransaction<'_> {
+    fn drop(&mut self) {
+        if let Some(rollback) = self.rollback.take() {
+            self.universe.rollback_scoped(rollback);
+        }
+    }
+}
+
+impl ReplayProbeTransaction<'_> {
+    /// Keeps the state transition performed through this guard.
+    pub fn commit(mut self) {
+        self.rollback = None;
     }
 }
 
@@ -2702,6 +2744,18 @@ impl Universe {
             node_mark,
             rollback: Some(rollback),
             finished: false,
+        }
+    }
+
+    /// Begins a full-state speculative transition without computing a durable
+    /// checkpoint identity.
+    #[doc(hidden)]
+    #[must_use]
+    pub fn begin_replay_probe(&mut self) -> ReplayProbeTransaction<'_> {
+        let rollback = self.capture_scoped_rollback();
+        ReplayProbeTransaction {
+            universe: self,
+            rollback: Some(rollback),
         }
     }
 

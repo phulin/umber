@@ -68,7 +68,6 @@ pub(crate) use paragraph::apply_line_expansion as test_apply_line_expansion;
 #[cfg(test)]
 pub(crate) use paragraph::break_hlist as test_break_hlist;
 pub use paragraph::cached_pretolerance_plan;
-pub(crate) use paragraph::install_reused_paragraph_hlist;
 #[cfg(test)]
 pub(crate) use paragraph::test_pretolerance_memo_key;
 use paragraph::*;
@@ -76,6 +75,7 @@ pub(crate) use paragraph::{
     ParagraphBreakResult, display_line_dimensions, end_paragraph, ensure_horizontal_for_character,
     interrupt_paragraph_for_display, make_indent_box, normal_paragraph,
 };
+pub(crate) use paragraph::{install_reused_paragraph_hlist_after_start, start_reused_paragraph};
 use pdf_fonts::*;
 pub use primitives::{
     install_etex_unexpandable_primitives, install_unexpandable_primitives,

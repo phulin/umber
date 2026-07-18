@@ -269,6 +269,7 @@ pub enum ParagraphValidationFailure {
     InputTransition,
     RetainedResult,
     BreakDependency,
+    ParagraphStart,
 }
 
 impl ParagraphValidationFailure {
@@ -299,7 +300,7 @@ impl ParagraphValidationFailure {
     }
 }
 
-const PARAGRAPH_VALIDATION_FAILURES: usize = 15;
+const PARAGRAPH_VALIDATION_FAILURES: usize = 16;
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct PureMemoStats {

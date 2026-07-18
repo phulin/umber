@@ -2414,6 +2414,45 @@ fn rollback_restores_page_builder_state_and_hash() {
 }
 
 #[test]
+fn replay_probe_drop_restores_semantic_page_store_and_world_state() {
+    let mut universe = Universe::with_world(World::memory());
+    let base_hash = universe.testing_state_hash();
+
+    {
+        let mut probe = universe.begin_replay_probe();
+        probe.set_count(7, 91);
+        probe.append_page_contribution(Node::Penalty(17));
+        probe.record_page_fire_up(3);
+        probe
+            .world_mut()
+            .write_text(PrintSink::TerminalAndLog, "speculative\n");
+    }
+
+    assert_eq!(universe.testing_state_hash(), base_hash);
+    assert_eq!(universe.count(7), 0);
+    assert!(universe.page_contributions().is_empty());
+    assert!(universe.page_fire_up().is_none());
+    assert!(universe.world().effect_records().is_empty());
+}
+
+#[test]
+fn replay_probe_commit_keeps_semantic_transition() {
+    let mut universe = Universe::new();
+    let mut probe = universe.begin_replay_probe();
+    probe.set_count(7, 91);
+    probe.append_page_contribution(Node::Penalty(17));
+    probe.record_page_fire_up(3);
+    probe.commit();
+
+    assert_eq!(universe.count(7), 91);
+    assert_eq!(universe.page_contributions(), &[Node::Penalty(17)]);
+    assert_eq!(
+        universe.page_fire_up().map(|fire| fire.trigger().index()),
+        Some(3)
+    );
+}
+
+#[test]
 fn rollback_bumps_epoch_past_previous_live_epoch() {
     let mut universe = Universe::new();
     let snapshot = universe.snapshot();

@@ -216,22 +216,27 @@ fn end_paragraph_with_memo(
     Ok(())
 }
 
-pub(crate) fn install_reused_paragraph_hlist(
+pub(crate) fn start_reused_paragraph(
     nest: &mut ModeNest,
     input: &mut InputStack,
+    stores: &mut Universe,
+) -> Result<(), ExecError> {
+    // The retained hlist already includes the recorded `everypar` execution;
+    // scheduling it again would leave its tokens after the consumed paragraph.
+    // Finished retained lines already contain the recorded indent box and
+    // `\everypar` material, so reproduce only the vertical-side transition.
+    start_paragraph(nest, input, stores, false, false)
+}
+
+pub(crate) fn install_reused_paragraph_hlist_after_start(
+    nest: &mut ModeNest,
     stores: &mut Universe,
     execution: &mut crate::ExecutionContext<'_>,
     nodes: Vec<Node>,
     finished: Option<(Vec<Node>, i32, i32)>,
     continuation: crate::executor::ParagraphContinuation,
 ) -> Result<Option<BoxNode>, ExecError> {
-    // The retained hlist already includes the recorded `everypar` execution;
-    // scheduling it again would leave its tokens after the consumed paragraph.
-    // Finished retained lines already contain the recorded indent box and
-    // `\everypar` material. Enter horizontal mode only to reproduce the
-    // paragraph's vertical-side effects; constructing either input again
-    // would be immediately discarded below.
-    start_paragraph(nest, input, stores, finished.is_none(), false)?;
+    debug_assert_eq!(nest.current_mode(), Mode::Horizontal);
     let _ = nest.current_list_mut().take_nodes();
     nest.current_list_mut().append(nodes);
     let Some((finished, line_count, last_badness)) = finished else {

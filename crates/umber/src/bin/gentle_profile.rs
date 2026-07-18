@@ -1395,6 +1395,7 @@ fn paragraph_validation_reasons(current: &PureMemoStats, previous: &PureMemoStat
         ParagraphValidationFailure::InputTransition,
         ParagraphValidationFailure::RetainedResult,
         ParagraphValidationFailure::BreakDependency,
+        ParagraphValidationFailure::ParagraphStart,
     ];
     reasons
         .into_iter()
