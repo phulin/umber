@@ -514,6 +514,7 @@ pub struct Session {
     registered_inputs: BTreeMap<PathBuf, Vec<u8>>,
     accepted_retention: Option<RetentionMetrics>,
     dumped_format: bool,
+    utf8_input_as_bytes: bool,
     expansion_stats: tex_lex::ExpansionStats,
     render_maps: RefCell<RenderMapCache>,
 }
@@ -580,6 +581,7 @@ impl Session {
             registered_inputs: BTreeMap::new(),
             accepted_retention: None,
             dumped_format: false,
+            utf8_input_as_bytes: false,
             expansion_stats: tex_lex::ExpansionStats::default(),
             render_maps: RefCell::default(),
         })
@@ -598,6 +600,18 @@ impl Session {
     #[must_use]
     pub const fn content_hash(&self) -> ContentHash {
         self.content_hash
+    }
+
+    /// Selects classic TeX byte-oriented physical input for this session.
+    ///
+    /// This must be configured before the initial revision is executed. The
+    /// resulting input-stack summaries retain the mode across later edits.
+    pub fn set_utf8_input_as_bytes(&mut self, enabled: bool) {
+        assert!(
+            self.history.is_empty(),
+            "input decoding mode cannot change after execution starts"
+        );
+        self.utf8_input_as_bytes = enabled;
     }
 
     #[must_use]
@@ -1159,6 +1173,7 @@ impl Session {
             &self.source,
             &self.fragments,
             &self.layout,
+            self.utf8_input_as_bytes,
             input_resolver,
             font_resolver,
             image_resolver,
@@ -2122,6 +2137,7 @@ fn execute_revision(
     source: &str,
     fragments: &FragmentStore,
     layout: &EditorLayout,
+    utf8_input_as_bytes: bool,
     input_resolver: &mut dyn InputResolver,
     font_resolver: &mut dyn tex_exec::FontResolver,
     image_resolver: Option<&mut dyn tex_exec::PdfImageResolver>,
@@ -2129,6 +2145,7 @@ fn execute_revision(
     let mut universe = template.clone();
     universe.begin_retained_session()?;
     let mut input = InputStack::new(MemoryInput::new(source));
+    input.set_utf8_input_as_bytes(utf8_input_as_bytes);
     universe.install_editor_fragments(fragments, layout)?;
     universe.set_root_editor_content_hash(ContentHash::from_bytes(source.as_bytes()));
     input

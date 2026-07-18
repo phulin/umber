@@ -1230,8 +1230,8 @@ impl VirtualCompileSession {
                 self.engine.prepare_fresh(&mut template);
                 template
             };
-            let session = Box::new(
-                tex_incr::Session::start_with_source_path(
+            let session = Box::new({
+                let mut session = tex_incr::Session::start_with_source_path(
                     template,
                     &self.job_name,
                     self.main_path.as_str(),
@@ -1239,8 +1239,10 @@ impl VirtualCompileSession {
                     source,
                     self.limits.cached_file_bytes,
                 )
-                .map_err(|error| CompileError::Incremental(error.to_string()))?,
-            );
+                .map_err(|error| CompileError::Incremental(error.to_string()))?;
+                session.set_utf8_input_as_bytes(self.engine.uses_latex_input());
+                session
+            });
             let mut candidate = session
                 .start_cold_candidate()
                 .map_err(|error| CompileError::Incremental(error.to_string()))?;

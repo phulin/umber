@@ -713,6 +713,34 @@ fn successful_resource_progress_is_not_mistaken_for_an_attempt_loop() {
 }
 
 #[test]
+fn latex_sessions_preserve_legacy_high_bytes_in_resolved_inputs() {
+    let mut options = SessionOptions {
+        engine: EngineMode::Latex,
+        ..SessionOptions::default()
+    };
+    options.main_path = "main.tex".to_owned();
+    let mut session = VirtualCompileSession::new(options).expect("LaTeX session");
+    session
+        .add_user_file("main.tex", b"\\input legacy \\end".to_vec())
+        .expect("main file");
+
+    let missing = requests(session.compile_attempt());
+    assert_eq!(missing.len(), 1);
+    session
+        .provide_resolved_file(
+            missing[0].key().clone(),
+            "/texlive/tex/legacy.tex",
+            vec![b'%', b' ', 0x96, b'\n'],
+        )
+        .expect("legacy input");
+
+    assert!(matches!(
+        session.compile_attempt(),
+        CompileAttemptResult::Complete(_)
+    ));
+}
+
+#[test]
 fn user_files_override_distribution_bindings() {
     let mut session = session("\\input shared \\end");
     session
