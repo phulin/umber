@@ -115,9 +115,11 @@ fn start_paragraph(
             if indent {
                 append_indent_box(nest, stores)?;
             }
-            let everypar = stores.tok_param(TokParam::EVERY_PAR);
-            if replay_everypar && !stores.tokens(everypar).is_empty() {
-                input.push_token_list(everypar, TokenListReplayKind::EveryPar);
+            if replay_everypar {
+                let everypar = stores.tok_param(TokParam::EVERY_PAR);
+                if !stores.tokens(everypar).is_empty() {
+                    input.push_token_list(everypar, TokenListReplayKind::EveryPar);
+                }
             }
             Ok(())
         }
@@ -225,7 +227,11 @@ pub(crate) fn install_reused_paragraph_hlist(
 ) -> Result<Option<BoxNode>, ExecError> {
     // The retained hlist already includes the recorded `everypar` execution;
     // scheduling it again would leave its tokens after the consumed paragraph.
-    start_paragraph(nest, input, stores, true, false)?;
+    // Finished retained lines already contain the recorded indent box and
+    // `\everypar` material. Enter horizontal mode only to reproduce the
+    // paragraph's vertical-side effects; constructing either input again
+    // would be immediately discarded below.
+    start_paragraph(nest, input, stores, finished.is_none(), false)?;
     let _ = nest.current_list_mut().take_nodes();
     nest.current_list_mut().append(nodes);
     let Some((finished, line_count, last_badness)) = finished else {
