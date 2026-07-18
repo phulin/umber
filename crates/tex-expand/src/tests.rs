@@ -39,6 +39,37 @@ fn paragraph_reads_are_deduplicated_at_publication() {
     assert!(barriers.is_empty());
 }
 
+#[test]
+fn paragraph_local_meaning_reads_are_source_proven_until_group_exit() {
+    let mut context = ExpansionContext::new("test");
+    let mut stores = Universe::new();
+    let symbol = stores.intern("local").symbol();
+    context.begin_paragraph_recording();
+    context.mark_paragraph_local_meaning(symbol, 1);
+    context.record_meaning(symbol, Meaning::Relax);
+    context.paragraph_group_exited(0);
+    context.record_meaning(symbol, Meaning::Undefined);
+
+    let (reads, _) = context.finish_paragraph_recording();
+
+    assert_eq!(reads, vec![ReadDependency::Meaning(symbol.raw())]);
+}
+
+#[test]
+fn paragraph_meaning_read_before_local_write_remains_a_dependency() {
+    let mut context = ExpansionContext::new("test");
+    let mut stores = Universe::new();
+    let symbol = stores.intern("local").symbol();
+    context.begin_paragraph_recording();
+    context.record_meaning(symbol, Meaning::Undefined);
+    context.mark_paragraph_local_meaning(symbol, 1);
+    context.record_meaning(symbol, Meaning::Relax);
+
+    let (reads, _) = context.finish_paragraph_recording();
+
+    assert_eq!(reads, vec![ReadDependency::Meaning(symbol.raw())]);
+}
+
 fn pdf_test_font(name: &str, content_hash: [u8; 32], size: i32) -> tex_state::font::LoadedFont {
     tex_state::font::LoadedFont::new(
         name,

@@ -236,7 +236,17 @@ sequence against the current group. Unrelated count/integer divergence is
 irrelevant. This operation-log rule reproduces both values and local/global
 ownership without a whole-state fingerprint or journal-ownership scan.
 
-Unsupported writes, entry-frame replacement or `\aftergroup` payload changes,
+The same depth rule applies before unsupported group-scoped assignments become
+barriers. Local macro/register/code-table/box assignments made strictly below
+the paragraph's entry group are allowed to execute and disappear with their
+balanced child group; an effective global assignment or a write at the entry
+depth remains an escaping-write barrier. Expansion tracking excludes a meaning
+first supplied by such a local definition while the group is active, but keeps
+any read made before the definition, any external right-hand-side meaning read,
+and any read after the group exits. This lets retained output depend on local
+macro machinery without hiding dependencies on the state that supplied it.
+
+Escaping unsupported writes, entry-frame replacement or `\aftergroup` payload changes,
 unsupported input continuations, output routines, `\scantokens`,
 mid-paragraph input opening, `\endinput`, box-register reads/consumption,
 unsupported nested vertical construction, and untracked World access remain

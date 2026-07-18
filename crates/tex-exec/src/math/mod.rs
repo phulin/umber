@@ -266,6 +266,8 @@ pub(crate) fn dispatch_math_token_with_context(
                 } else {
                     return Err(error);
                 }
+            } else {
+                execution.paragraph_group_exited(stores);
             }
             Ok(DispatchAction::Continue)
         }
@@ -315,6 +317,7 @@ fn finish_math(
             "\n! Missing \\endgroup inserted.\nI've inserted something that you may have forgotten.\n",
         );
         leave_group_with_origin(input, stores, tex_state::GroupKind::SemiSimple, origin)?;
+        execution.paragraph_group_exited(stores);
     }
     if stores.innermost_group_kind().is_none() {
         // Malformed input can leave a math nest beneath the semisimple group
@@ -374,6 +377,7 @@ fn finish_math(
         finish_display_math(nest, stores, content, None)?;
         if stores.innermost_group_kind() == Some(tex_state::GroupKind::MathShift) {
             leave_group_with_origin(input, stores, tex_state::GroupKind::MathShift, origin)?;
+            execution.paragraph_group_exited(stores);
         }
         resume_after_display(nest, input, stores, interrupt.active_directions)?;
     } else {
@@ -389,6 +393,7 @@ fn finish_math(
         // spacing before the math-shift group is unsaved.
         nest.current_list_mut().set_space_factor(1000);
         leave_group_with_origin(input, stores, tex_state::GroupKind::MathShift, origin)?;
+        execution.paragraph_group_exited(stores);
     }
     Ok(DispatchAction::Continue)
 }
@@ -440,6 +445,7 @@ fn finish_equation_number(
     }
     let finished_eq_no = finish_eq_no(stores, eq_no.side, content);
     leave_group_with_origin(input, stores, tex_state::GroupKind::MathShift, origin)?;
+    execution.paragraph_group_exited(stores);
 
     let mut display_level = nest.pop()?;
     let interrupt = display_level.list_mut().take_display_interrupt().ok_or(
@@ -453,6 +459,7 @@ fn finish_equation_number(
     finish_display_math(nest, stores, eq_no.display, Some(finished_eq_no))?;
     if stores.innermost_group_kind() == Some(tex_state::GroupKind::MathShift) {
         leave_group_with_origin(input, stores, tex_state::GroupKind::MathShift, origin)?;
+        execution.paragraph_group_exited(stores);
     }
     resume_after_display(nest, input, stores, interrupt.active_directions)?;
     Ok(DispatchAction::Continue)
@@ -919,6 +926,7 @@ fn finish_display_halign(
             tex_state::GroupKind::SemiSimple,
             context.origin(),
         )?;
+        execution.paragraph_group_exited(stores);
     }
     if !nest.current_list().nodes().is_empty() || nest.current_list().display_eq_no().is_some() {
         stores.world_mut().write_text(
@@ -949,6 +957,7 @@ fn finish_display_halign(
         tex_state::GroupKind::MathShift,
         closing_origin,
     )?;
+    execution.paragraph_group_exited(stores);
     resume_after_display_alignment(nest, input, stores, interrupt.active_directions)
 }
 

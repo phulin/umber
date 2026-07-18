@@ -304,6 +304,8 @@ fn dispatch_character_token(
                         ),
                     error => return Err(error),
                 }
+            } else {
+                execution.paragraph_group_exited(stores);
             }
             Ok(DispatchAction::Continue)
         }

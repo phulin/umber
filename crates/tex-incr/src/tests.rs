@@ -776,6 +776,217 @@ fn paragraph_with_group_local_mutation_replays_without_root_write() {
 }
 
 #[test]
+fn paragraph_with_discharged_nested_assignments_replays() {
+    let mut universe = template();
+    universe.enable_pure_memo(tex_state::PureMemoConfig::default());
+    let source = concat!(
+        "changed prefix paragraph text\\par\n",
+        "nested assignments {\\dimen0=5pt \\def\\local{local words} ",
+        "\\catcode`\\@=11 \\setbox0=\\hbox{temporary box} \\local} after group\\par\n",
+        "\\ifvoid0 stable suffix paragraph\\else leaked box\\fi\\par\n",
+        "\\vfill\\eject\\end",
+    );
+    let mut session = Session::start(
+        universe,
+        "paragraph-discharged-nested-assignments",
+        RevisionId::new(1),
+        source,
+        usize::MAX,
+    )
+    .expect("session starts");
+    session.cold().expect("cold revision");
+    let after_cold = session.pure_memo_stats();
+    assert_eq!(
+        after_cold.paragraph_unsupported_write_barriers, 0,
+        "balanced nested-local assignments must not escape: {after_cold:?}"
+    );
+
+    let changed = source.find("changed").expect("changed word");
+    let edited = format!(
+        "{}altered{}",
+        &source[..changed],
+        &source[changed + "changed".len()..]
+    );
+    let before = session.pure_memo_stats();
+    let incremental = session
+        .advance(
+            RevisionId::new(2),
+            Edit {
+                base_revision: RevisionId::new(1),
+                expected_hash: ContentHash::from_bytes(source.as_bytes()),
+                range: changed..changed + "changed".len(),
+                replacement: "altered".to_owned(),
+            },
+        )
+        .expect("prefix edit");
+    let after = session.pure_memo_stats();
+    assert!(
+        after.paragraph_line_hits > before.paragraph_line_hits,
+        "nested-local assignment paragraph should replay: {after:?}"
+    );
+
+    let mut cold_universe = template();
+    cold_universe.enable_pure_memo(tex_state::PureMemoConfig::default());
+    let mut cold = Session::start(
+        cold_universe,
+        "paragraph-discharged-nested-assignments",
+        RevisionId::new(2),
+        edited,
+        usize::MAX,
+    )
+    .expect("cold comparison starts");
+    let expected = cold.cold().expect("cold comparison");
+    assert_eq!(incremental.dvi_bytes(), expected.dvi_bytes());
+    assert_eq!(incremental.effects, expected.effects);
+}
+
+#[test]
+fn nested_local_let_tracks_the_rhs_meaning() {
+    let mut universe = template();
+    universe.enable_pure_memo(tex_state::PureMemoConfig::default());
+    let source = concat!(
+        "\\def\\original{old}\n",
+        "changed prefix paragraph text\\par\n",
+        "nested local {\\let\\temporary=\\original \\temporary} meaning paragraph\\par\n",
+        "stable suffix paragraph\\par\n",
+        "\\vfill\\eject\\end",
+    );
+    let mut session = Session::start(
+        universe,
+        "paragraph-nested-local-let-read",
+        RevisionId::new(1),
+        source,
+        usize::MAX,
+    )
+    .expect("session starts");
+    session.cold().expect("cold revision");
+    let changed = source.find("old").expect("old macro body");
+    let edited = format!(
+        "{}new{}",
+        &source[..changed],
+        &source[changed + "old".len()..]
+    );
+    let incremental = session
+        .advance(
+            RevisionId::new(2),
+            Edit {
+                base_revision: RevisionId::new(1),
+                expected_hash: ContentHash::from_bytes(source.as_bytes()),
+                range: changed..changed + "old".len(),
+                replacement: "new".to_owned(),
+            },
+        )
+        .expect("macro-body edit");
+    let mut cold_universe = template();
+    cold_universe.enable_pure_memo(tex_state::PureMemoConfig::default());
+    let mut cold = Session::start(
+        cold_universe,
+        "paragraph-nested-local-let-read",
+        RevisionId::new(2),
+        edited,
+        usize::MAX,
+    )
+    .expect("cold comparison starts");
+    let expected = cold.cold().expect("cold comparison");
+    assert_eq!(incremental.dvi_bytes(), expected.dvi_bytes());
+    assert_eq!(incremental.effects, expected.effects);
+}
+
+#[test]
+fn box_local_definition_does_not_hide_a_later_outer_meaning_read() {
+    let mut universe = template();
+    universe.enable_pure_memo(tex_state::PureMemoConfig::default());
+    let source = concat!(
+        "\\def\\word{old}\n",
+        "changed prefix paragraph text\\par\n",
+        "boxed \\hbox{\\def\\word{inner}\\word} then outer \\word paragraph\\par\n",
+        "stable suffix paragraph\\par\n",
+        "\\vfill\\eject\\end",
+    );
+    let mut session = Session::start(
+        universe,
+        "paragraph-box-local-meaning-scope",
+        RevisionId::new(1),
+        source,
+        usize::MAX,
+    )
+    .expect("session starts");
+    session.cold().expect("cold revision");
+    assert_eq!(
+        session
+            .pure_memo_stats()
+            .paragraph_unsupported_write_barriers,
+        0,
+        "the balanced box-local definition should not barrier the paragraph"
+    );
+
+    let changed = source.find("old").expect("old macro body");
+    let edited = format!(
+        "{}new{}",
+        &source[..changed],
+        &source[changed + "old".len()..]
+    );
+    let before = session.pure_memo_stats();
+    let incremental = session
+        .advance(
+            RevisionId::new(2),
+            Edit {
+                base_revision: RevisionId::new(1),
+                expected_hash: ContentHash::from_bytes(source.as_bytes()),
+                range: changed..changed + "old".len(),
+                replacement: "new".to_owned(),
+            },
+        )
+        .expect("macro-body edit");
+    assert!(
+        session.pure_memo_stats().paragraph_validation_misses > before.paragraph_validation_misses,
+        "the changed outer meaning should invalidate an eligible paragraph"
+    );
+
+    let mut cold_universe = template();
+    cold_universe.enable_pure_memo(tex_state::PureMemoConfig::default());
+    let mut cold = Session::start(
+        cold_universe,
+        "paragraph-box-local-meaning-scope",
+        RevisionId::new(2),
+        edited,
+        usize::MAX,
+    )
+    .expect("cold comparison starts");
+    let expected = cold.cold().expect("cold comparison");
+    assert_eq!(incremental.dvi_bytes(), expected.dvi_bytes());
+    assert_eq!(incremental.effects, expected.effects);
+}
+
+#[test]
+fn paragraph_with_global_assignment_inside_nested_group_remains_barriered() {
+    let mut universe = template();
+    universe.enable_pure_memo(tex_state::PureMemoConfig::default());
+    let source = concat!(
+        "changed prefix paragraph text\\par\n",
+        "nested global {\\global\\dimen0=5pt} assignment paragraph\\par\n",
+        "\\hrule height\\dimen0\n",
+        "\\vfill\\eject\\end",
+    );
+    let mut session = Session::start(
+        universe,
+        "paragraph-nested-global-assignment",
+        RevisionId::new(1),
+        source,
+        usize::MAX,
+    )
+    .expect("session starts");
+    session.cold().expect("cold revision");
+    assert!(
+        session
+            .pure_memo_stats()
+            .paragraph_unsupported_write_barriers
+            > 0,
+        "a nested global write must remain visible after group exit"
+    );
+}
+
+#[test]
 fn paragraph_with_unsupported_future_write_executes_cold() {
     let mut universe = template();
     universe.enable_pure_memo(tex_state::PureMemoConfig::default());

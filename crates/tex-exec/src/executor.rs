@@ -290,6 +290,41 @@ impl<'a> ExecutionContext<'a> {
         }
     }
 
+    pub(crate) fn mark_paragraph_group_scoped_assignment(
+        &mut self,
+        stores: &Universe,
+        global: bool,
+    ) {
+        let Some(recording) = &self.cold_paragraph_recording else {
+            return;
+        };
+        let current_depth = tex_state::ExpansionState::execution_group_depth(stores);
+        if global || current_depth <= recording.starting_group_depth {
+            self.mark_paragraph_barrier(ParagraphBarrierReason::UnsupportedEscapingWrite);
+        }
+    }
+
+    pub(crate) fn mark_paragraph_local_meaning(
+        &mut self,
+        stores: &Universe,
+        symbol: tex_state::interner::Symbol,
+        global: bool,
+    ) {
+        let Some(recording) = &self.cold_paragraph_recording else {
+            return;
+        };
+        let current_depth = tex_state::ExpansionState::execution_group_depth(stores);
+        if !global && current_depth > recording.starting_group_depth {
+            self.expansion
+                .mark_paragraph_local_meaning(symbol, current_depth);
+        }
+    }
+
+    pub(crate) fn paragraph_group_exited(&mut self, stores: &Universe) {
+        self.expansion
+            .paragraph_group_exited(tex_state::ExpansionState::execution_group_depth(stores));
+    }
+
     pub(crate) fn mark_paragraph_inline_math(&mut self) {
         if let Some(recording) = &mut self.cold_paragraph_recording {
             recording.inline_math.get_or_insert_default();

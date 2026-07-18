@@ -1060,6 +1060,9 @@ pub struct ExpansionContext<'a> {
     paragraph_read_tracking: bool,
     paragraph_meanings: Vec<u32>,
     paragraph_meaning_marks: Vec<u32>,
+    /// Locally supplied meanings whose first paragraph read follows their
+    /// definition. Reads remain source-proven until the defining group exits.
+    paragraph_local_meanings: Vec<(u32, u32)>,
     paragraph_recording_generation: u32,
     paragraph_barriers: BTreeSet<ParagraphExpansionBarrier>,
 }
@@ -1088,6 +1091,7 @@ impl<'a> ExpansionContext<'a> {
             paragraph_read_tracking: false,
             paragraph_meanings: Vec::new(),
             paragraph_meaning_marks: Vec::new(),
+            paragraph_local_meanings: Vec::new(),
             paragraph_recording_generation: 0,
             paragraph_barriers: BTreeSet::new(),
         }
@@ -1116,6 +1120,7 @@ impl<'a> ExpansionContext<'a> {
             paragraph_read_tracking: false,
             paragraph_meanings: Vec::new(),
             paragraph_meaning_marks: Vec::new(),
+            paragraph_local_meanings: Vec::new(),
             paragraph_recording_generation: 0,
             paragraph_barriers: BTreeSet::new(),
         }
@@ -1168,6 +1173,7 @@ impl<'a> ExpansionContext<'a> {
         self.paragraph_reads = Some(Vec::new());
         self.paragraph_read_tracking = true;
         self.paragraph_meanings.clear();
+        self.paragraph_local_meanings.clear();
         self.paragraph_recording_generation = self.paragraph_recording_generation.wrapping_add(1);
         if self.paragraph_recording_generation == 0 {
             self.paragraph_meaning_marks.fill(0);
@@ -1182,6 +1188,7 @@ impl<'a> ExpansionContext<'a> {
     ) -> (Vec<ReadDependency>, Vec<ParagraphExpansionBarrier>) {
         let mut reads = self.paragraph_reads.take().unwrap_or_default();
         self.paragraph_read_tracking = false;
+        self.paragraph_local_meanings.clear();
         reads.extend(
             self.paragraph_meanings
                 .drain(..)
@@ -1209,6 +1216,26 @@ impl<'a> ExpansionContext<'a> {
             reads.clear();
         }
         self.paragraph_meanings.clear();
+        self.paragraph_local_meanings.clear();
+    }
+
+    #[doc(hidden)]
+    pub fn mark_paragraph_local_meaning(&mut self, symbol: Symbol, group_depth: u32) {
+        if !self.paragraph_read_tracking {
+            return;
+        }
+        let raw = symbol.raw();
+        let read_before_write = self.paragraph_meaning_marks.get(raw as usize).copied()
+            == Some(self.paragraph_recording_generation);
+        if !read_before_write {
+            self.paragraph_local_meanings.push((raw, group_depth));
+        }
+    }
+
+    #[doc(hidden)]
+    pub fn paragraph_group_exited(&mut self, remaining_depth: u32) {
+        self.paragraph_local_meanings
+            .retain(|&(_, definition_depth)| definition_depth <= remaining_depth);
     }
 
     #[inline(always)]
@@ -1320,6 +1347,7 @@ impl<'a> ExpansionContext<'a> {
             paragraph_read_tracking: self.paragraph_read_tracking,
             paragraph_meanings: std::mem::take(&mut self.paragraph_meanings),
             paragraph_meaning_marks: std::mem::take(&mut self.paragraph_meaning_marks),
+            paragraph_local_meanings: std::mem::take(&mut self.paragraph_local_meanings),
             paragraph_recording_generation: self.paragraph_recording_generation,
             paragraph_barriers: std::mem::take(&mut self.paragraph_barriers),
         };
@@ -1334,6 +1362,7 @@ impl<'a> ExpansionContext<'a> {
         self.paragraph_read_tracking = nested.paragraph_read_tracking;
         self.paragraph_meanings = std::mem::take(&mut nested.paragraph_meanings);
         self.paragraph_meaning_marks = std::mem::take(&mut nested.paragraph_meaning_marks);
+        self.paragraph_local_meanings = std::mem::take(&mut nested.paragraph_local_meanings);
         self.paragraph_recording_generation = nested.paragraph_recording_generation;
         self.paragraph_barriers = std::mem::take(&mut nested.paragraph_barriers);
         output
@@ -1371,6 +1400,14 @@ impl<'a> ExpansionContext<'a> {
             recorder.record_meaning(symbol, meaning);
         }
         if self.paragraph_read_tracking {
+            if self
+                .paragraph_local_meanings
+                .iter()
+                .rev()
+                .any(|&(raw, _)| raw == symbol.raw())
+            {
+                return;
+            }
             let index = symbol.raw() as usize;
             if self.paragraph_meaning_marks.len() <= index {
                 self.paragraph_meaning_marks.resize(index + 1, 0);

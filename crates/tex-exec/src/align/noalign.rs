@@ -29,6 +29,7 @@ pub(super) fn execute_noalign(
         crate::assignments::normal_paragraph(nest, stores);
         scan_noalign_group(nest, input, stores, execution)?;
         leave_group(input, stores, tex_state::GroupKind::NoAlign)?;
+        execution.paragraph_group_exited(stores);
         Ok(())
     }
 }

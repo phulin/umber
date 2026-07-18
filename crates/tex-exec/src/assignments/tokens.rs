@@ -182,16 +182,26 @@ pub(super) fn scan_optional_equals_one_space(
 pub(super) fn token_meaning_for_let(
     traced: TracedTokenWord,
     stores: &Universe,
+    execution: &mut crate::ExecutionContext<'_>,
 ) -> Result<Meaning, ExecError> {
     let token = tex_expand::semantic_token(traced);
     match token {
-        Token::Cs(symbol) => Ok(stores.meaning(symbol)),
+        Token::Cs(symbol) => {
+            let meaning = stores.meaning(symbol);
+            execution.record_meaning(symbol, meaning);
+            Ok(meaning)
+        }
         Token::Char {
             ch,
             cat: Catcode::Active,
-        } => stores
-            .active_character_symbol(ch)
-            .map_or(Ok(Meaning::Undefined), |symbol| Ok(stores.meaning(symbol))),
+        } => tex_state::ExpansionState::active_character_symbol(stores, ch).map_or(
+            Ok(Meaning::Undefined),
+            |symbol| {
+                let meaning = stores.meaning(symbol);
+                execution.record_meaning(symbol.symbol(), meaning);
+                Ok(meaning)
+            },
+        ),
         Token::Char { ch, cat } => Ok(Meaning::CharToken { ch, cat }),
         token if token.is_frozen_end_template() => Ok(Meaning::ExpandablePrimitive(
             tex_state::meaning::ExpandablePrimitive::EndTemplate,

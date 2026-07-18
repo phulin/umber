@@ -239,6 +239,7 @@ pub(super) fn scan_box_node(
         BoxKind::VTop => Node::VList(vtop(stores, children, spec, vpack_params(stores)).node),
     };
     leave_group(input, stores, group_kind)?;
+    execution.paragraph_group_exited(stores);
     Ok(node)
 }
 

@@ -330,6 +330,7 @@ fn execute_insert(
     let floating_penalty = stores.int_param(IntParam::FLOATING_PENALTY);
 
     crate::leave_group(input, stores, tex_state::GroupKind::Insert)?;
+    execution.paragraph_group_exited(stores);
 
     append_vertical_contribution(
         nest,
@@ -390,6 +391,7 @@ fn execute_vadjust(
     let level = inner.pop()?;
     let content = stores.freeze_node_list(level.list().nodes());
     crate::leave_group(input, stores, tex_state::GroupKind::AdjustedHBox)?;
+    execution.paragraph_group_exited(stores);
     nest.current_list_mut().push(Node::Adjust(content));
     Ok(())
 }
@@ -1371,6 +1373,7 @@ fn scan_hlist_group(
     let level = inner.pop()?;
     let nodes = stores.freeze_node_list(level.list().nodes());
     crate::leave_group(input, stores, tex_state::GroupKind::Disc)?;
+    execution.paragraph_group_exited(stores);
     Ok(nodes)
 }
 

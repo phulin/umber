@@ -75,7 +75,9 @@ pub(super) fn execute_def(
             }
         }
     }
-    if apply_globaldefs(global, stores) {
+    let global = apply_globaldefs(global, stores);
+    execution.mark_paragraph_local_meaning(stores, target.symbol, global);
+    if global {
         stores.set_macro_meaning_global_with_provenance(
             target.symbol,
             scanned.meaning(),
@@ -95,12 +97,15 @@ pub(super) fn execute_let(
     prefixes: Prefixes,
     input: &mut InputStack,
     stores: &mut Universe,
+    execution: &mut crate::ExecutionContext<'_>,
 ) -> Result<(), ExecError> {
     reject_macro_prefixes(prefixes)?;
     let target = scan_definition_target(input, stores, "\\let")?;
     let rhs = scan_optional_equals_one_space(input, stores)?;
-    let meaning = token_meaning_for_let(rhs, stores)?;
-    if apply_globaldefs(prefixes.global, stores) {
+    let meaning = token_meaning_for_let(rhs, stores, execution)?;
+    let global = apply_globaldefs(prefixes.global, stores);
+    execution.mark_paragraph_local_meaning(stores, target, global);
+    if global {
         stores.set_meaning_global(target, meaning);
     } else {
         stores.set_meaning(target, meaning);
@@ -112,6 +117,7 @@ pub(super) fn execute_futurelet(
     prefixes: Prefixes,
     input: &mut InputStack,
     stores: &mut Universe,
+    execution: &mut crate::ExecutionContext<'_>,
 ) -> Result<(), ExecError> {
     reject_macro_prefixes(prefixes)?;
     let target = scan_definition_target(input, stores, "\\futurelet")?;
@@ -126,8 +132,10 @@ pub(super) fn execute_futurelet(
         .ok_or(ExecError::MissingToken {
             context: "\\futurelet lookahead",
         })?;
-    let meaning = token_meaning_for_let(second, stores)?;
-    if apply_globaldefs(prefixes.global, stores) {
+    let meaning = token_meaning_for_let(second, stores, execution)?;
+    let global = apply_globaldefs(prefixes.global, stores);
+    execution.mark_paragraph_local_meaning(stores, target, global);
+    if global {
         stores.set_meaning_global(target, meaning);
     } else {
         stores.set_meaning(target, meaning);

@@ -178,11 +178,7 @@ pub(crate) fn execute_unexpandable_with_context(
         reject_all_prefixes(prefixes)?;
         let outcome = execute_immediate(input, stores, execution)?;
         if outcome.assigned {
-            if !outcome.paragraph_replayable_assignment {
-                execution.mark_paragraph_barrier(
-                    tex_state::ParagraphBarrierReason::UnsupportedEscapingWrite,
-                );
-            }
+            account_paragraph_assignment(outcome.paragraph_assignment, false, stores, execution);
             if fire_afterassignment(input, stores) {
                 execution.mark_paragraph_barrier(
                     tex_state::ParagraphBarrierReason::UnsupportedEscapingWrite,
@@ -223,11 +219,12 @@ pub(crate) fn execute_unexpandable_with_context(
         Err(error) => return Err(error),
     };
     if outcome.assigned {
-        if !outcome.paragraph_replayable_assignment {
-            execution.mark_paragraph_barrier(
-                tex_state::ParagraphBarrierReason::UnsupportedEscapingWrite,
-            );
-        }
+        account_paragraph_assignment(
+            outcome.paragraph_assignment,
+            apply_globaldefs(prefixes.global, stores),
+            stores,
+            execution,
+        );
         if fire_afterassignment(input, stores) {
             execution.mark_paragraph_barrier(
                 tex_state::ParagraphBarrierReason::UnsupportedEscapingWrite,
@@ -1322,11 +1319,12 @@ pub(crate) fn execute_assignment_meaning(
     let mut nest = ModeNest::new();
     let outcome = execute_prefixed_command(command, prefixes, &mut nest, input, stores, execution)?;
     if outcome.assigned {
-        if !outcome.paragraph_replayable_assignment {
-            execution.mark_paragraph_barrier(
-                tex_state::ParagraphBarrierReason::UnsupportedEscapingWrite,
-            );
-        }
+        account_paragraph_assignment(
+            outcome.paragraph_assignment,
+            apply_globaldefs(prefixes.global, stores),
+            stores,
+            execution,
+        );
         if fire_afterassignment(input, stores) {
             execution.mark_paragraph_barrier(
                 tex_state::ParagraphBarrierReason::UnsupportedEscapingWrite,
@@ -1368,15 +1366,38 @@ impl Default for Prefixes {
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct CommandOutcome {
     assigned: bool,
-    paragraph_replayable_assignment: bool,
+    paragraph_assignment: ParagraphAssignment,
     action: DispatchAction,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ParagraphAssignment {
+    Replayable,
+    GroupScoped,
+    Unsupported,
+}
+
+fn account_paragraph_assignment(
+    assignment: ParagraphAssignment,
+    global: bool,
+    stores: &Universe,
+    execution: &mut crate::ExecutionContext<'_>,
+) {
+    match assignment {
+        ParagraphAssignment::Replayable => {}
+        ParagraphAssignment::GroupScoped => {
+            execution.mark_paragraph_group_scoped_assignment(stores, global);
+        }
+        ParagraphAssignment::Unsupported => execution
+            .mark_paragraph_barrier(tex_state::ParagraphBarrierReason::UnsupportedEscapingWrite),
+    }
 }
 
 impl CommandOutcome {
     const fn assigned() -> Self {
         Self {
             assigned: true,
-            paragraph_replayable_assignment: false,
+            paragraph_assignment: ParagraphAssignment::Unsupported,
             action: DispatchAction::Continue,
         }
     }
@@ -1384,7 +1405,15 @@ impl CommandOutcome {
     const fn paragraph_replayable_assignment() -> Self {
         Self {
             assigned: true,
-            paragraph_replayable_assignment: true,
+            paragraph_assignment: ParagraphAssignment::Replayable,
+            action: DispatchAction::Continue,
+        }
+    }
+
+    const fn group_scoped_assignment() -> Self {
+        Self {
+            assigned: true,
+            paragraph_assignment: ParagraphAssignment::GroupScoped,
             action: DispatchAction::Continue,
         }
     }
@@ -1392,7 +1421,7 @@ impl CommandOutcome {
     const fn assigned_if(assigned: bool) -> Self {
         Self {
             assigned,
-            paragraph_replayable_assignment: false,
+            paragraph_assignment: ParagraphAssignment::Unsupported,
             action: DispatchAction::Continue,
         }
     }
@@ -1400,7 +1429,7 @@ impl CommandOutcome {
     const fn continue_only() -> Self {
         Self {
             assigned: false,
-            paragraph_replayable_assignment: false,
+            paragraph_assignment: ParagraphAssignment::Unsupported,
             action: DispatchAction::Continue,
         }
     }
@@ -1408,7 +1437,7 @@ impl CommandOutcome {
     fn shipout(page: crate::dispatch::PreparedDviPage) -> Self {
         Self {
             assigned: false,
-            paragraph_replayable_assignment: false,
+            paragraph_assignment: ParagraphAssignment::Unsupported,
             action: DispatchAction::Shipout(page),
         }
     }
@@ -1575,15 +1604,24 @@ fn execute_prefixed_command(
             | UnexpandablePrimitive::Gdef
             | UnexpandablePrimitive::Xdef => {
                 execute_def(primitive, prefixes, input, stores, execution)?;
-                Ok(CommandOutcome::assigned())
+                Ok(
+                    if matches!(
+                        primitive,
+                        UnexpandablePrimitive::Def | UnexpandablePrimitive::Edef
+                    ) {
+                        CommandOutcome::group_scoped_assignment()
+                    } else {
+                        CommandOutcome::assigned()
+                    },
+                )
             }
             UnexpandablePrimitive::Let => {
-                execute_let(prefixes, input, stores)?;
-                Ok(CommandOutcome::assigned())
+                execute_let(prefixes, input, stores, execution)?;
+                Ok(CommandOutcome::group_scoped_assignment())
             }
             UnexpandablePrimitive::FutureLet => {
-                execute_futurelet(prefixes, input, stores)?;
-                Ok(CommandOutcome::assigned())
+                execute_futurelet(prefixes, input, stores, execution)?;
+                Ok(CommandOutcome::group_scoped_assignment())
             }
             UnexpandablePrimitive::GlobalDefs => {
                 execute_globaldefs(prefixes, command.traced, input, stores, execution)?;
@@ -1610,6 +1648,8 @@ fn execute_prefixed_command(
                     } else {
                         return Err(error);
                     }
+                } else {
+                    execution.paragraph_group_exited(stores);
                 }
                 Ok(CommandOutcome::continue_only())
             }
@@ -1642,7 +1682,7 @@ fn execute_prefixed_command(
                 Ok(if primitive == UnexpandablePrimitive::Count {
                     CommandOutcome::paragraph_replayable_assignment()
                 } else {
-                    CommandOutcome::assigned()
+                    CommandOutcome::group_scoped_assignment()
                 })
             }
             UnexpandablePrimitive::CountDef
@@ -1658,7 +1698,7 @@ fn execute_prefixed_command(
                     stores,
                     execution,
                 )?;
-                Ok(CommandOutcome::assigned())
+                Ok(CommandOutcome::group_scoped_assignment())
             }
             UnexpandablePrimitive::CharDef | UnexpandablePrimitive::MathCharDef => {
                 execute_char_def(
@@ -1669,7 +1709,7 @@ fn execute_prefixed_command(
                     stores,
                     execution,
                 )?;
-                Ok(CommandOutcome::assigned())
+                Ok(CommandOutcome::group_scoped_assignment())
             }
             UnexpandablePrimitive::Advance
             | UnexpandablePrimitive::Multiply
@@ -1701,7 +1741,7 @@ fn execute_prefixed_command(
                     stores,
                     execution,
                 )?;
-                Ok(CommandOutcome::assigned())
+                Ok(CommandOutcome::group_scoped_assignment())
             }
             primitive @ (UnexpandablePrimitive::PdfLpCode
             | UnexpandablePrimitive::PdfRpCode
@@ -1775,7 +1815,7 @@ fn execute_prefixed_command(
                     stores,
                     execution,
                 )?;
-                Ok(CommandOutcome::assigned())
+                Ok(CommandOutcome::group_scoped_assignment())
             }
             UnexpandablePrimitive::FontDimen
             | UnexpandablePrimitive::HyphenChar
@@ -1917,7 +1957,7 @@ fn execute_prefixed_command(
                     stores,
                     execution,
                 )?;
-                Ok(CommandOutcome::assigned())
+                Ok(CommandOutcome::group_scoped_assignment())
             }
             UnexpandablePrimitive::Box
             | UnexpandablePrimitive::Copy
@@ -2644,6 +2684,17 @@ fn execute_prefixed_command(
             let target =
                 variable_from_meaning(meaning).ok_or(ExecError::UnsupportedAssignmentTarget)?;
             let replayable = matches!(target, Variable::IntRegister(_) | Variable::IntParam(_));
+            let group_scoped = matches!(
+                target,
+                Variable::DimenRegister(_)
+                    | Variable::GlueRegister(_)
+                    | Variable::MuGlueRegister(_)
+                    | Variable::ToksRegister(_)
+                    | Variable::DimenParam(_)
+                    | Variable::GlueParam(_)
+                    | Variable::MuGlueParam(_)
+                    | Variable::TokParam(_)
+            );
             execute_assignment_to_target(
                 target,
                 prefixes,
@@ -2654,6 +2705,8 @@ fn execute_prefixed_command(
             )?;
             Ok(if replayable {
                 CommandOutcome::paragraph_replayable_assignment()
+            } else if group_scoped {
+                CommandOutcome::group_scoped_assignment()
             } else {
                 CommandOutcome::assigned()
             })

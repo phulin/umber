@@ -137,10 +137,12 @@ pub(super) fn execute_register_def(
 ) -> Result<(), ExecError> {
     reject_macro_prefixes(prefixes)?;
     let target = scan_definition_target(input, stores, "register definition")?;
+    let global = apply_globaldefs(prefixes.global, stores);
+    execution.mark_paragraph_local_meaning(stores, target, global);
     // As for `\chardef`, TeX.web section 1220 installs `\relax` before
     // scanning the register number. This makes `\skipdef\s100\s` terminate
     // the number scan without expanding an undefined/old target meaning.
-    if apply_globaldefs(prefixes.global, stores) {
+    if global {
         stores.set_meaning_global(target, Meaning::Relax);
     } else {
         stores.set_meaning(target, Meaning::Relax);
@@ -155,7 +157,7 @@ pub(super) fn execute_register_def(
         UnexpandablePrimitive::ToksDef => Meaning::ToksRegister(index),
         _ => unreachable!("caller restricts primitive"),
     };
-    if apply_globaldefs(prefixes.global, stores) {
+    if global {
         stores.set_meaning_global(target, meaning);
     } else {
         stores.set_meaning(target, meaning);
@@ -173,10 +175,12 @@ pub(super) fn execute_char_def(
 ) -> Result<(), ExecError> {
     reject_macro_prefixes(prefixes)?;
     let target = scan_definition_target(input, stores, "character definition")?;
+    let global = apply_globaldefs(prefixes.global, stores);
+    execution.mark_paragraph_local_meaning(stores, target, global);
     // TeX.web temporarily makes the target `\relax` before scanning the
     // numeric value, so a self-terminating definition cannot expand the old
     // meaning (section 1220).
-    if apply_globaldefs(prefixes.global, stores) {
+    if global {
         stores.set_meaning_global(target, Meaning::Relax);
     } else {
         stores.set_meaning(target, Meaning::Relax);
@@ -207,7 +211,7 @@ pub(super) fn execute_char_def(
         }
         _ => unreachable!("caller restricts primitive"),
     };
-    if apply_globaldefs(prefixes.global, stores) {
+    if global {
         stores.set_meaning_global(target, meaning);
     } else {
         stores.set_meaning(target, meaning);

@@ -180,6 +180,7 @@ fn scan_math_group_after_open_inner(
         let semantic = tex_expand::semantic_token(token);
         if assignments::has_catcode_meaning(stores, semantic, Catcode::EndGroup) {
             crate::leave_group_with_origin(input, stores, GroupKind::Math, token.origin())?;
+            execution.paragraph_group_exited(stores);
             let list = finish_current_math_list(nest, stores);
             let _ = nest.pop()?;
             return Ok(list);
@@ -556,6 +557,7 @@ pub(super) fn scan_vcenter_field(
     );
     let boxed = stores.freeze_node_list(&[vbox]);
     crate::leave_group(input, stores, GroupKind::VCenter)?;
+    execution.paragraph_group_exited(stores);
     transaction.commit();
     Ok(MathField::SubBox(boxed))
 }
