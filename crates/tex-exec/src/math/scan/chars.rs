@@ -14,9 +14,11 @@ pub(crate) fn append_mathcode_char(
     nest: &mut ModeNest,
     input: &mut InputStack,
     stores: &mut Universe,
+    execution: &mut crate::ExecutionContext<'_>,
     ch: char,
     origin: OriginId,
 ) -> Result<(), ExecError> {
+    execution.record_paragraph_mathcode(ch);
     let value = stores.mathcode(ch);
     if value == 0x8000 {
         redispatch_active_char(input, stores, ch);

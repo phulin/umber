@@ -112,7 +112,16 @@ pub(crate) struct ColdParagraphRecording {
     pub(crate) starting_input_identity: Option<u64>,
     pub(crate) starting_group_depth: u32,
     pub(crate) delivered_tokens: usize,
+    pub(crate) inline_math: Option<InlineMathReads>,
     pub(crate) barriers: std::collections::BTreeSet<ParagraphBarrierReason>,
+}
+
+#[derive(Default)]
+pub(crate) struct InlineMathReads {
+    pub(crate) mathcodes: Vec<char>,
+    pub(crate) delcodes: Vec<char>,
+    /// One bit per `(size, family)` binding, in `size * 16 + family` order.
+    pub(crate) family_mask: u64,
 }
 
 pub struct ExecutionContext<'a> {
@@ -242,6 +251,7 @@ impl<'a> ExecutionContext<'a> {
             starting_input_identity,
             starting_group_depth,
             delivered_tokens: 0,
+            inline_math: None,
             barriers: std::collections::BTreeSet::new(),
         });
         true
@@ -277,6 +287,42 @@ impl<'a> ExecutionContext<'a> {
         if let Some(recording) = &mut self.cold_paragraph_recording {
             recording.barriers.insert(reason);
             self.expansion.stop_paragraph_read_tracking();
+        }
+    }
+
+    pub(crate) fn mark_paragraph_inline_math(&mut self) {
+        if let Some(recording) = &mut self.cold_paragraph_recording {
+            recording.inline_math.get_or_insert_default();
+        }
+    }
+
+    pub(crate) fn record_paragraph_mathcode(&mut self, ch: char) {
+        if let Some(reads) = self
+            .cold_paragraph_recording
+            .as_mut()
+            .and_then(|recording| recording.inline_math.as_mut())
+        {
+            reads.mathcodes.push(ch);
+        }
+    }
+
+    pub(crate) fn record_paragraph_delcode(&mut self, ch: char) {
+        if let Some(reads) = self
+            .cold_paragraph_recording
+            .as_mut()
+            .and_then(|recording| recording.inline_math.as_mut())
+        {
+            reads.delcodes.push(ch);
+        }
+    }
+
+    pub(crate) fn record_paragraph_math_families(&mut self, family_mask: u64) {
+        if let Some(reads) = self
+            .cold_paragraph_recording
+            .as_mut()
+            .and_then(|recording| recording.inline_math.as_mut())
+        {
+            reads.family_mask |= family_mask;
         }
     }
 

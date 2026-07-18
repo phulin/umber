@@ -59,7 +59,7 @@ pub(crate) fn insert_dollar_sign(
          you left one out. Proceed, with fingers crossed.\n",
     );
 }
-pub(crate) use lower::finish_math_list_node;
+pub(crate) use lower::{finish_inline_math_list_node, finish_math_list_node};
 pub(crate) use lower::{finish_math_lists, finish_math_lists_owned};
 use scan::*;
 use support::*;
@@ -120,10 +120,9 @@ pub(crate) fn enter_math(
         let paragraph = assignments::interrupt_paragraph_for_display(nest, stores, execution)?;
         return enter_math_after_paragraph(nest, input, stores, execution, Some(paragraph));
     }
-    // Inline math becomes paragraph material and observes a broad
-    // family/code/style parameter surface not yet represented in the
-    // finished-line dependency projection.
-    execution.mark_paragraph_barrier(tex_state::ParagraphBarrierReason::DisplayMath);
+    // Inline math is fully lowered into the paragraph's retained line graph.
+    // Publication adds its explicit math-state dependency projection.
+    execution.mark_paragraph_inline_math();
     enter_math_after_paragraph(nest, input, stores, execution, None)
 }
 
@@ -292,7 +291,7 @@ pub(crate) fn dispatch_math_token_with_context(
             Ok(DispatchAction::Continue)
         }
         Token::Char { ch, .. } => {
-            append_mathcode_char(nest, input, stores, ch, traced.origin())?;
+            append_mathcode_char(nest, input, stores, execution, ch, traced.origin())?;
             Ok(DispatchAction::Continue)
         }
         Token::Cs(symbol) => dispatch_math_control(nest, traced, symbol, input, stores, execution),
@@ -379,8 +378,12 @@ fn finish_math(
         resume_after_display(nest, input, stores, interrupt.active_directions)?;
     } else {
         let insert_penalties = nest.current_mode() == Mode::Horizontal;
-        let nodes =
-            finish_math_list_node(stores, MathListNode { display, content }, insert_penalties);
+        let (nodes, family_mask) = finish_inline_math_list_node(
+            stores,
+            MathListNode { display, content },
+            insert_penalties,
+        );
+        execution.record_paragraph_math_families(family_mask);
         nest.current_list_mut().append(nodes);
         // tex.web `Finish math in text`: an inline formula resets sentence
         // spacing before the math-shift group is unsaved.
@@ -551,7 +554,7 @@ fn dispatch_math_control(
             origin,
         }),
         Meaning::CharGiven(ch) => {
-            append_mathcode_char(nest, input, stores, ch, origin)?;
+            append_mathcode_char(nest, input, stores, execution, ch, origin)?;
             Ok(DispatchAction::Continue)
         }
         Meaning::MathCharGiven(value) => {
@@ -670,7 +673,7 @@ fn dispatch_math_primitive(
                     context: "\\char",
                     value,
                 })?;
-            append_mathcode_char(nest, input, stores, ch, traced.origin())?;
+            append_mathcode_char(nest, input, stores, execution, ch, traced.origin())?;
             Ok(DispatchAction::Continue)
         }
         UnexpandablePrimitive::Delimiter => {

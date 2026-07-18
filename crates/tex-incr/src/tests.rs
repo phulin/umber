@@ -10,6 +10,9 @@ fn all_memo_layers() -> tex_state::PureMemoConfig {
 use tex_state::RootSpanId;
 
 const CMR10: &[u8] = include_bytes!("../../tex-fonts/tests/fixtures/cm/cmr10.tfm");
+const CMTT10: &[u8] = include_bytes!("../../tex-fonts/tests/fixtures/cm/cmtt10.tfm");
+const CMSY10: &[u8] = include_bytes!("../../tex-fonts/tests/fixtures/cm/cmsy10.tfm");
+const CMEX10: &[u8] = include_bytes!("../../tex-fonts/tests/fixtures/cm/cmex10.tfm");
 
 fn template() -> Universe {
     let mut universe = Universe::with_world(tex_state::World::memory());
@@ -1011,25 +1014,67 @@ fn paragraph_replay_restores_final_line_badness() {
 }
 
 #[test]
-fn paragraph_with_inline_math_executes_cold_until_math_dependencies_are_modeled() {
+fn paragraph_with_inline_math_replays_with_explicit_math_dependencies() {
     let mut universe = template();
     universe.enable_pure_memo(tex_state::PureMemoConfig::default());
     let source = concat!(
         "changed prefix paragraph text\\par\n",
-        "inline math $x+y$ paragraph text\\par\n",
+        "inline math $\\fam=0 x+y$ paragraph text\\par\n",
         "stable suffix paragraph text\\par\n",
         "\\vfill\\eject\\end",
     );
     let mut session = Session::start(
         universe,
-        "paragraph-inline-math-barrier",
+        "paragraph-inline-math-replay",
         RevisionId::new(1),
         source,
         usize::MAX,
     )
     .expect("session starts");
     session.cold().expect("cold revision");
-    assert!(session.pure_memo_stats().paragraph_display_math_barriers > 0);
+    let inline_region = session
+        .pure_memo
+        .accepted_paragraphs()
+        .iter()
+        .find(|region| {
+            region.dependencies.iter().any(|dependency| {
+                matches!(
+                    dependency.key,
+                    tex_state::DependencyKey::Code {
+                        table: tex_state::DependencyCodeTable::Mathcode,
+                        ..
+                    }
+                )
+            })
+        })
+        .expect("inline paragraph records exact math-code reads");
+    assert!(inline_region.dependencies.iter().all(|dependency| {
+        !matches!(
+            dependency.key,
+            tex_state::DependencyKey::CodeGeneration(
+                tex_state::DependencyCodeTable::Mathcode | tex_state::DependencyCodeTable::Delcode
+            )
+        )
+    }));
+    let family_dependencies = inline_region
+        .dependencies
+        .iter()
+        .filter(|dependency| {
+            matches!(
+                dependency.key,
+                tex_state::DependencyKey::Cell {
+                    bank: tex_state::DependencyBank::MathFamilyFont,
+                    ..
+                }
+            )
+        })
+        .count();
+    // This fixture has no installed math fonts, so TeX replaces the formula
+    // after checking the six family-2/family-3 parameter bindings. The exact
+    // projection must not retain the other 42 family cells.
+    assert_eq!(family_dependencies, 6);
+    let before = session.pure_memo_stats();
+    assert_eq!(before.paragraph_display_math_barriers, 0, "{before:?}");
 
     let changed = source.find("changed").expect("changed word");
     let edited = format!(
@@ -1048,17 +1093,176 @@ fn paragraph_with_inline_math_executes_cold_until_math_dependencies_are_modeled(
             },
         )
         .expect("prefix edit");
+    let after = session.pure_memo_stats();
+    assert!(after.paragraph_hits > before.paragraph_hits, "{after:?}");
 
     let mut cold_universe = template();
     cold_universe.enable_pure_memo(tex_state::PureMemoConfig::default());
     let mut cold = Session::start(
         cold_universe,
-        "paragraph-inline-math-barrier",
+        "paragraph-inline-math-replay",
         RevisionId::new(2),
         edited,
         usize::MAX,
     )
     .expect("cold comparison starts");
+    let expected = cold.cold().expect("cold comparison");
+    assert_eq!(incremental.dvi_bytes(), expected.dvi_bytes());
+    assert_eq!(incremental.effects, expected.effects);
+}
+
+#[test]
+fn inline_math_dependency_change_rejects_retained_lines() {
+    let mut universe = template();
+    universe.enable_pure_memo(tex_state::PureMemoConfig::default());
+    let source = concat!(
+        "\\mathsurround=0pt\n",
+        "prefix paragraph text\\par\n",
+        "inline math $x+y$ paragraph text\\par\n",
+        "stable suffix paragraph text\\par\n",
+        "\\vfill\\eject\\end",
+    );
+    let mut session = Session::start(
+        universe,
+        "paragraph-inline-math-dependency",
+        RevisionId::new(1),
+        source,
+        usize::MAX,
+    )
+    .expect("session starts");
+    session.cold().expect("cold revision");
+    let before = session.pure_memo_stats();
+
+    let value = source.find("0pt").expect("math surround value");
+    let edited = format!("{}5{}", &source[..value], &source[value + 1..]);
+    let incremental = session
+        .advance(
+            RevisionId::new(2),
+            Edit {
+                base_revision: RevisionId::new(1),
+                expected_hash: ContentHash::from_bytes(source.as_bytes()),
+                range: value..value + 1,
+                replacement: "5".to_owned(),
+            },
+        )
+        .expect("math dependency edit");
+    let after = session.pure_memo_stats();
+    assert!(
+        after.paragraph_validation_misses > before.paragraph_validation_misses,
+        "{after:?}"
+    );
+
+    let mut cold_universe = template();
+    cold_universe.enable_pure_memo(tex_state::PureMemoConfig::default());
+    let mut cold = Session::start(
+        cold_universe,
+        "paragraph-inline-math-dependency",
+        RevisionId::new(2),
+        edited,
+        usize::MAX,
+    )
+    .expect("cold comparison starts");
+    let expected = cold.cold().expect("cold comparison");
+    assert_eq!(incremental.dvi_bytes(), expected.dvi_bytes());
+    assert_eq!(incremental.effects, expected.effects);
+}
+
+#[test]
+fn inline_math_family_binding_change_rejects_retained_lines() {
+    let mut universe = template();
+    universe.enable_pure_memo(tex_state::PureMemoConfig::default());
+    let source = concat!(
+        "\\font\\matha=cmr10 \\font\\mathb=cmtt10 ",
+        "\\font\\mathsy=cmsy10 \\font\\mathex=cmex10\n",
+        "\\textfont2=\\mathsy \\scriptfont2=\\mathsy ",
+        "\\scriptscriptfont2=\\mathsy\n",
+        "\\textfont3=\\mathex \\scriptfont3=\\mathex ",
+        "\\scriptscriptfont3=\\mathex\n",
+        "prefix paragraph \\textfont0=\\matha text\\par\n",
+        "inline math $\\mathchar\"0078+\\mathchar\"0079$ paragraph text\\par\n",
+        "stable suffix paragraph text\\par\n",
+        "\\vfill\\eject\\end",
+    );
+    let mut session = Session::start(
+        universe,
+        "paragraph-inline-math-family",
+        RevisionId::new(1),
+        source,
+        usize::MAX,
+    )
+    .expect("session starts");
+    session
+        .register_input_file(Path::new("cmr10.tfm"), CMR10.to_vec())
+        .expect("roman font fixture");
+    session
+        .register_input_file(Path::new("cmtt10.tfm"), CMTT10.to_vec())
+        .expect("typewriter font fixture");
+    session
+        .register_input_file(Path::new("cmsy10.tfm"), CMSY10.to_vec())
+        .expect("symbol font fixture");
+    session
+        .register_input_file(Path::new("cmex10.tfm"), CMEX10.to_vec())
+        .expect("extension font fixture");
+    session.cold().expect("cold revision");
+    let before = session.pure_memo_stats();
+    let inline_region = session
+        .pure_memo
+        .accepted_paragraphs()
+        .iter()
+        .find(|region| {
+            region.dependencies.iter().any(|dependency| {
+                matches!(
+                    dependency.key,
+                    tex_state::DependencyKey::Cell {
+                        bank: tex_state::DependencyBank::MathFamilyFont,
+                        index: 0,
+                    }
+                )
+            })
+        })
+        .expect("inline paragraph records its text-family binding");
+    assert!(inline_region.barriers.is_empty());
+
+    let font = source
+        .find("textfont0=\\matha")
+        .expect("text font assignment")
+        + "textfont0=\\math".len();
+    let edited = format!("{}b{}", &source[..font], &source[font + 1..]);
+    let incremental = session
+        .advance(
+            RevisionId::new(2),
+            Edit {
+                base_revision: RevisionId::new(1),
+                expected_hash: ContentHash::from_bytes(source.as_bytes()),
+                range: font..font + 1,
+                replacement: "b".to_owned(),
+            },
+        )
+        .expect("math-family binding edit");
+    let after = session.pure_memo_stats();
+    assert!(
+        after.paragraph_validation_misses > before.paragraph_validation_misses,
+        "the changed family binding must invalidate the inline paragraph: {after:?}"
+    );
+
+    let mut cold_universe = template();
+    cold_universe.enable_pure_memo(tex_state::PureMemoConfig::default());
+    let mut cold = Session::start(
+        cold_universe,
+        "paragraph-inline-math-family",
+        RevisionId::new(2),
+        edited,
+        usize::MAX,
+    )
+    .expect("cold comparison starts");
+    cold.register_input_file(Path::new("cmr10.tfm"), CMR10.to_vec())
+        .expect("roman font fixture");
+    cold.register_input_file(Path::new("cmtt10.tfm"), CMTT10.to_vec())
+        .expect("typewriter font fixture");
+    cold.register_input_file(Path::new("cmsy10.tfm"), CMSY10.to_vec())
+        .expect("symbol font fixture");
+    cold.register_input_file(Path::new("cmex10.tfm"), CMEX10.to_vec())
+        .expect("extension font fixture");
     let expected = cold.cold().expect("cold comparison");
     assert_eq!(incremental.dvi_bytes(), expected.dvi_bytes());
     assert_eq!(incremental.effects, expected.effects);

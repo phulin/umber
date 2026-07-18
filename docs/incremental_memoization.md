@@ -237,13 +237,23 @@ irrelevant. This operation-log rule reproduces both values and local/global
 ownership without a whole-state fingerprint or journal-ownership scan.
 
 Unsupported writes, entry-frame replacement or `\aftergroup` payload changes,
-input continuations, output routines, inline or display math, `\scantokens`,
+unsupported input continuations, output routines, `\scantokens`,
 mid-paragraph input opening, `\endinput`, box-register reads/consumption,
 unsupported nested vertical construction, and untracked World access remain
 explicit barriers. Balanced child groups are permitted at every entry depth;
 entering and leaving them does not mutate the entry frame. Shifted fresh boxes
 remain eligible, while a nested `\box`, `\copy`, `\vsplit`, or `\lastbox`
 marks the containing paragraph at the scanner that observes it.
+
+Inline math stays inside the retained finished-line graph. Its front-end read
+set adds exact `\mathcode` and `\delcode` characters, math parameters, and a
+64-bit mask naming only the `(size, family)` bindings actually consulted by
+Appendix G conversion. Semantic metrics, parameters, and skew facts are then
+retained only for fonts reached through those bindings. This avoids hashing
+whole code tables or validating all 48 family cells. A display interruption
+publishes the preceding paragraph with a typed display continuation; replay
+skips the proven `$$` transition and re-enters display mode before ordinary
+display processing resumes.
 
 Recording begins provisionally in outer vertical mode at every group depth so expansion
 reads made by the paragraph-starting token are captured. If the delivered
@@ -489,9 +499,10 @@ The audited treatment of future-relevant state is:
 | Expansion reads, current font, `\everypar`, `\parindent`, `\spaceskip`, and `\xspaceskip`                                                                                 | Exact-stamp match or typed semantic fallback                                                                   |
 | Surviving count-register and integer-parameter writes                                                                                                                     | Touched entry scalars validated; compact root redo or exact live-group setter sequence replayed                |
 | Detached stream text                                                                                                                                                      | Shape validated, then replayed in original order                                                               |
+| Inline-math codes, parameters, used family bindings, and reached font facts                                                                                               | Exact-stamp match or typed semantic fallback; unused families and unobserved code points are irrelevant        |
 | Aggregate `\sfcode`/lowercase-code roots, line parameters, shapes, penalty arrays, conditional `prev_graf`, font/hyphenation facts, and aggregate mutable font parameters | Pre-redo exact-stamp match or typed semantic fallback; a real mismatch switches the revision to cold execution |
 | Baseline/interline glue, normal-paragraph reset, page building, output routines, and shipout                                                                              | Recomputed by the ordinary paragraph epilogue and page pipeline                                                |
-| Entry-frame replacement, unsupported writes/input transitions, math, box-register scans, `\scantokens`, input opening/ending, and untracked World access                  | Explicit barrier; balanced child groups and their discharged local writes remain reusable                      |
+| Entry-frame replacement, unsupported writes/input transitions, box-register scans, `\scantokens`, input opening/ending, and untracked World access                        | Explicit barrier; balanced child groups and their discharged local writes remain reusable                      |
 
 No conservative whole-state identity is added: facts are named at their actual
 read tier, and missing seams use typed observations. Pre-redo line validation

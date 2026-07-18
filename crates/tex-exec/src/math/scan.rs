@@ -58,6 +58,7 @@ pub(super) fn scan_math_field(
                 scan_math_field(nest, input, stores, execution)
             }
             Token::Char { ch, .. } => {
+                execution.record_paragraph_mathcode(ch);
                 let value = stores.mathcode(ch);
                 if value == 0x8000 {
                     redispatch_active_char(input, stores, ch);
@@ -75,6 +76,7 @@ pub(super) fn scan_math_field(
             }
             Token::Cs(symbol) => match stores.meaning(symbol) {
                 Meaning::CharGiven(ch) => {
+                    execution.record_paragraph_mathcode(ch);
                     let (_, math_char) =
                         math_char_from_mathcode(ch, stores.mathcode(ch), stores, traced.origin())?;
                     Ok(MathField::MathChar(math_char))
@@ -94,6 +96,7 @@ pub(super) fn scan_math_field(
                             value,
                         }
                     })?;
+                    execution.record_paragraph_mathcode(ch);
                     let (_, math_char) =
                         math_char_from_mathcode(ch, stores.mathcode(ch), stores, traced.origin())?;
                     Ok(MathField::MathChar(math_char))
@@ -614,7 +617,12 @@ fn scan_delimiter_token(
                 ch,
                 cat: Catcode::Letter | Catcode::Other,
             } => {
-                let code = if ch == '.' { 0 } else { stores.delcode(ch) };
+                let code = if ch == '.' {
+                    0
+                } else {
+                    execution.record_paragraph_delcode(ch);
+                    stores.delcode(ch)
+                };
                 if code >= 0 {
                     return Ok(code as u32);
                 }

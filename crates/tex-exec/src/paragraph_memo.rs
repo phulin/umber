@@ -661,6 +661,9 @@ fn publish_recorded_region(
             }
         });
     }
+    if let Some(reads) = &mut recording.inline_math {
+        append_inline_math_dependency_keys(stores, reads, &mut keys);
+    }
     let input_started = start_phase();
     let effects = match detach_effects(&stores.world().effect_records()[recording.effect_start..]) {
         Some(effects) => effects,
@@ -928,6 +931,98 @@ fn paragraph_graph_provenance(
     let mut recipe = ParagraphProvenanceBuilder::default();
     visit(stores, root, &mut recipe);
     recipe.finish()
+}
+
+fn append_inline_math_dependency_keys(
+    stores: &Universe,
+    reads: &mut crate::executor::InlineMathReads,
+    keys: &mut Vec<tex_state::DependencyKey>,
+) {
+    use tex_state::{
+        DependencyBank as Bank, DependencyCodeTable as Code, DependencyFontField as Font,
+        DependencyKey as Key,
+    };
+
+    reads.mathcodes.sort_unstable();
+    reads.mathcodes.dedup();
+    keys.extend(reads.mathcodes.iter().map(|ch| Key::Code {
+        table: Code::Mathcode,
+        scalar: u32::from(*ch),
+    }));
+    reads.delcodes.sort_unstable();
+    reads.delcodes.dedup();
+    keys.extend(reads.delcodes.iter().map(|ch| Key::Code {
+        table: Code::Delcode,
+        scalar: u32::from(*ch),
+    }));
+    for param in [
+        IntParam::FAM,
+        IntParam::DELIMITER_FACTOR,
+        IntParam::BIN_OP_PENALTY,
+        IntParam::REL_PENALTY,
+    ] {
+        keys.push(Key::Cell {
+            bank: Bank::IntParam,
+            index: u32::from(param.raw()),
+        });
+    }
+    for param in [
+        DimenParam::MATH_SURROUND,
+        DimenParam::DELIMITER_SHORTFALL,
+        DimenParam::NULL_DELIMITER_SPACE,
+        // TeX's `\scriptspace` slot has no named bank constant yet.
+        DimenParam::new(12),
+    ] {
+        keys.push(Key::Cell {
+            bank: Bank::DimenParam,
+            index: u32::from(param.raw()),
+        });
+    }
+    for param in [
+        // TeX's thin/medium/thick math glue slots.
+        GlueParam::new(15),
+        GlueParam::new(16),
+        GlueParam::new(17),
+    ] {
+        keys.push(Key::Cell {
+            bank: Bank::GlueParam,
+            index: u32::from(param.raw()),
+        });
+    }
+    keys.push(Key::Cell {
+        bank: Bank::TokParam,
+        index: u32::from(TokParam::EVERY_MATH.raw()),
+    });
+
+    let sizes = [
+        tex_state::math::MathFontSize::Text,
+        tex_state::math::MathFontSize::Script,
+        tex_state::math::MathFontSize::ScriptScript,
+    ];
+    let mut fonts = Vec::with_capacity(reads.family_mask.count_ones() as usize);
+    for index in 0_u32..48 {
+        if reads.family_mask & (1_u64 << index) == 0 {
+            continue;
+        }
+        keys.push(Key::Cell {
+            bank: Bank::MathFamilyFont,
+            index,
+        });
+        let size = sizes[usize::try_from(index / 16).expect("math size index fits usize")];
+        let family = u8::try_from(index % 16).expect("math family index fits u8");
+        fonts.push(stores.math_family_font(size, family));
+    }
+    fonts.sort_unstable_by_key(|font| font.raw());
+    fonts.dedup();
+    for font in fonts {
+        for field in [Font::Metrics, Font::Parameters, Font::SkewChar] {
+            keys.push(Key::Font {
+                field,
+                font: font.raw(),
+                index: 0,
+            });
+        }
+    }
 }
 
 fn paragraph_break_dependencies(
