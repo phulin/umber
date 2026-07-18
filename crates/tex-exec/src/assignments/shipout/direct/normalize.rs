@@ -1,4 +1,5 @@
 use super::*;
+use smallvec::SmallVec;
 use tex_lex::MemoryInput;
 
 pub(super) struct PageOverlay {
@@ -106,41 +107,43 @@ fn normalize_list(
     overlay: &mut PageOverlay,
 ) -> Result<(), ExecError> {
     check_depth(depth)?;
-    let (len, permutation) = {
+    let (active_indices, permutation) = {
         let nodes = stores.nodes(list);
         if !nodes.requires_shipout_normalization() {
             return Ok(());
         }
-        (nodes.len(), direction_permutation(nodes))
+        let permutation = direction_permutation(nodes);
+        let mut active_indices = SmallVec::<[usize; 32]>::new();
+        if let Some(order) = permutation.as_deref() {
+            active_indices.extend(order.iter().copied().filter(|&index| {
+                nodes
+                    .node_requires_shipout_normalization(index)
+                    .expect("direction permutation index belongs to the frozen list")
+            }));
+        } else {
+            active_indices.extend((0..nodes.len()).filter(|&index| {
+                nodes
+                    .node_requires_shipout_normalization(index)
+                    .expect("normalization index belongs to the frozen list")
+            }));
+        }
+        (active_indices, permutation)
     };
-    if let Some(order) = permutation.as_ref() {
-        overlay.directions.push(DirectionPermutation {
+    if let Some(order) = permutation {
+        overlay
+            .directions
+            .push(DirectionPermutation { list, order });
+    }
+    for index in active_indices {
+        normalize_index(
+            stores,
+            expansion,
             list,
-            order: order.clone(),
-        });
-        for &index in order {
-            normalize_index(
-                stores,
-                expansion,
-                list,
-                index,
-                suppress_deferred_streams,
-                NormalizeLocation { in_hlist, depth },
-                overlay,
-            )?;
-        }
-    } else {
-        for index in 0..len {
-            normalize_index(
-                stores,
-                expansion,
-                list,
-                index,
-                suppress_deferred_streams,
-                NormalizeLocation { in_hlist, depth },
-                overlay,
-            )?;
-        }
+            index,
+            suppress_deferred_streams,
+            NormalizeLocation { in_hlist, depth },
+            overlay,
+        )?;
     }
     Ok(())
 }
@@ -155,13 +158,6 @@ fn normalize_index(
     overlay: &mut PageOverlay,
 ) -> Result<(), ExecError> {
     let NormalizeLocation { in_hlist, depth } = location;
-    if !stores
-        .nodes(list)
-        .node_requires_shipout_normalization(index)
-        .expect("normalization index belongs to the frozen list")
-    {
-        return Ok(());
-    }
     let action = {
         let node = stores
             .nodes(list)
