@@ -1151,6 +1151,87 @@ fn paragraph_read_only_external_box_replays_and_invalidates() {
 }
 
 #[test]
+fn paragraph_vertical_boxes_are_opaque_break_inputs() {
+    let mut universe = template();
+    universe.enable_pure_memo(tex_state::PureMemoConfig::default());
+    let source = concat!(
+        "\\setbox0=\\vbox{\\hbox{old vertical box}}\n",
+        "changed prefix paragraph text\\par\n",
+        "local \\vbox{\\hbox{built vertical box}} paragraph\\par\n",
+        "external \\copy0 paragraph\\par\n",
+        "\\vfill\\eject\\end",
+    );
+    let mut session = Session::start(
+        universe,
+        "paragraph-vertical-box-break-input",
+        RevisionId::new(1),
+        source,
+        usize::MAX,
+    )
+    .expect("session starts");
+    session.cold().expect("cold revision");
+
+    let prefix = "% preserve vertical-box paragraphs\n";
+    let before_reuse = session.pure_memo_stats();
+    session
+        .advance(
+            RevisionId::new(2),
+            Edit {
+                base_revision: RevisionId::new(1),
+                expected_hash: ContentHash::from_bytes(source.as_bytes()),
+                range: 0..0,
+                replacement: prefix.to_owned(),
+            },
+        )
+        .expect("prefix edit");
+    let after_reuse = session.pure_memo_stats();
+    assert!(
+        after_reuse.paragraph_line_hits >= before_reuse.paragraph_line_hits + 2,
+        "local and read-only external vertical boxes should both replay (before={before_reuse:?}, after={after_reuse:?})",
+    );
+
+    let edited = format!("{prefix}{source}");
+    let old = edited.find("old vertical box").expect("old box text");
+    let replacement = "new wider vertical box";
+    let redefined = format!(
+        "{}{replacement}{}",
+        &edited[..old],
+        &edited[old + "old vertical box".len()..]
+    );
+    let before_invalidation = session.pure_memo_stats();
+    let incremental = session
+        .advance(
+            RevisionId::new(3),
+            Edit {
+                base_revision: RevisionId::new(2),
+                expected_hash: ContentHash::from_bytes(edited.as_bytes()),
+                range: old..old + "old vertical box".len(),
+                replacement: replacement.to_owned(),
+            },
+        )
+        .expect("vertical box content edit");
+    assert!(
+        session.pure_memo_stats().paragraph_validation_misses
+            > before_invalidation.paragraph_validation_misses,
+        "changing an external vertical box must invalidate its reader"
+    );
+
+    let mut cold_universe = template();
+    cold_universe.enable_pure_memo(tex_state::PureMemoConfig::default());
+    let mut cold = Session::start(
+        cold_universe,
+        "paragraph-vertical-box-break-input",
+        RevisionId::new(3),
+        redefined,
+        usize::MAX,
+    )
+    .expect("cold comparison starts");
+    let expected = cold.cold().expect("cold comparison");
+    assert_eq!(incremental.dvi_bytes(), expected.dvi_bytes());
+    assert_eq!(incremental.effects, expected.effects);
+}
+
+#[test]
 fn paragraph_void_box_read_invalidates_when_filled() {
     let mut universe = template();
     universe.enable_pure_memo(tex_state::PureMemoConfig::default());

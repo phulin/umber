@@ -1242,9 +1242,11 @@ fn collect_break_graph_facts(
             // already-built graph is retained with the finished result, but
             // it contributes no horizontal break facts.
             tex_state::node::Node::Adjust(_) => {}
-            tex_state::node::Node::VList(_)
-            | tex_state::node::Node::Ins { .. }
-            | tex_state::node::Node::Unset(_) => return true,
+            // A built vertical box contributes only its fixed dimensions to
+            // horizontal line breaking. Its child graph is retained verbatim
+            // and was already covered by front-end or external-box reads.
+            tex_state::node::Node::VList(_) => {}
+            tex_state::node::Node::Ins { .. } | tex_state::node::Node::Unset(_) => return true,
             tex_state::node::Node::Glue {
                 leader: Some(_), ..
             } => return true,
@@ -1286,8 +1288,10 @@ fn collect_frozen_break_graph_facts(
                     return true;
                 }
             }
-            tex_state::node_arena::NodeRef::VList(_)
-            | tex_state::node_arena::NodeRef::Ins { .. }
+            // As above, an already-frozen vertical box is an opaque fixed-size
+            // break item; its descendants cannot affect line construction.
+            tex_state::node_arena::NodeRef::VList(_) => {}
+            tex_state::node_arena::NodeRef::Ins { .. }
             | tex_state::node_arena::NodeRef::Adjust(_)
             | tex_state::node_arena::NodeRef::Unset(_) => return true,
             tex_state::node_arena::NodeRef::Glue {
