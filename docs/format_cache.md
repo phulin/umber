@@ -112,3 +112,60 @@ structural validity. Formats are portable across native and browser hosts only
 when those three independent checks agree. The cache contains no process-local
 handles or job-local mutable state, consistent with
 [the frozen-format contract](frozen_format.md).
+
+## Schema-10 verification receipt (2026-07-18)
+
+The closure-cache acceptance run used the `94232834` implementation base,
+Rust 1.93.0, and an arm64 Darwin host. The native unit and CLI suites exercised
+cold miss, validated hit, mismatched identity, byte corruption, truncation,
+decoder-invalid content, interrupted temporary files, schema transition, and
+eight-way concurrent readers/publishers. Entry encoding was repeated in memory
+and proved byte-identical, including exact recovery of the original format
+payload. The schema-transition case proved that copying a current entry into a
+stale-schema key path is rejected and removed without disturbing the current
+entry.
+
+Available format tiers were checked as follows:
+
+| tier             | repeated format result                                                                                                                   | source-versus-loaded result                                                                                                                                                                                                               |
+| ---------------- | ---------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Plain / TeX82    | committed 588,488-byte schema-10 image reproduced twice as `cc29ddf3da9ccf6109646c340bbcbdf97c079a1fb08ff85567cb482da18d3d12`            | exact DVI and the `--check` metadata gate passed against pinned TeX Live 2025 inputs                                                                                                                                                      |
+| e-TeX            | a minimal fixed-clock 38,304-byte schema-10 image reproduced twice as `27934664748ab823ec7a9dcb973d7c9d66f8c99132e41d14a2af62bcf7a2e31e` | exact DVI passed for fresh `--etex` state versus the loaded image                                                                                                                                                                         |
+| LaTeX / pdfLaTeX | cache mechanism, engine-separated identity, closure sizes, and CLI integration passed hermetically                                       | live regeneration was unavailable because the exact TeX Live 2026 tree was absent and the independent accepted-before-`\\dump` semantic failure remains `umber2-pbxv.5.4.1`; stale schema-9 local artifacts were deliberately not counted |
+
+`scripts/check-wasm.sh` passed the wasm32 build, JavaScript resource-cache
+suite, Firefox `wasm-pack` tests, browser integration, and package inventory.
+The packaged Plain test loaded the same schema-10 bytes and rejected
+incompatible bytes. `cargo tree -p umber-wasm --target
+wasm32-unknown-unknown` contains no `umber-fetch`: the native cache store is a
+non-WASM dependency, while the browser continues to acquire the raw packaged
+image through its verified object cache.
+
+### Performance and requested allocation
+
+The release CLI was sampled five times after build, with pinned Plain inputs
+already in the filesystem cache. Source initialization plus the representative
+job had a 40 ms median; loading `plain.fmt` plus the byte-identical job had a
+10 ms median, a 75% wall-time reduction before generated-format cache lookup is
+considered. These are workload observations rather than budgets: cache hits
+for the much larger LaTeX tiers cannot be compared responsibly until
+`umber2-pbxv.5.4.1` permits a current schema-10 cold generation.
+
+The repeatable mechanism profiler is:
+
+```sh
+cargo run --release --manifest-path benchmarks/tex-state/Cargo.toml \
+  --bin format_cache_profile
+```
+
+For the 588,488-byte Plain image its 21-sample medians were 2 us for an absent
+entry, 5,937 us for a fully revalidated warm hit, 10,190 us for an idempotent
+store against the validated winner, and 4,235 us for direct schema decoding.
+First atomic publication took 16,945 us. Every operation retained zero
+requested heap bytes. Peak requested allocation was 417 bytes for a miss,
+2,434,012 bytes for direct decode/first publication, and 3,022,939 bytes for a
+hit or repeated store. Thus native validation costs one additional
+approximately image-sized transient buffer over direct decode, while a hit
+avoids all source-tokenization and initialization work. Measurements exclude
+process startup and build time and should be refreshed after a format schema,
+decoder, allocator, or cache-envelope change.

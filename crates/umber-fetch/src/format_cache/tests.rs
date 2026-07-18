@@ -142,6 +142,44 @@ fn hit_miss_and_identity_mismatch_are_safe() {
 }
 
 #[test]
+fn schema_transition_uses_a_disjoint_namespace_and_cannot_relabel_an_entry() {
+    let temp = TempDir::new().expect("tempdir");
+    let cache = FormatCacheStore::new(temp.path());
+    let current = identity(FormatEngineMode::Latex);
+    let previous = FormatCacheIdentity {
+        format_schema: current.format_schema - 1,
+        ..current.clone()
+    };
+    let bytes = format();
+    cache.store(&current, &bytes).expect("store current schema");
+
+    assert_ne!(current.key(), previous.key());
+    assert!(cache.load(&previous).expect("old namespace miss").is_none());
+    fs::copy(cache.path(&current), cache.path(&previous)).expect("forge old-schema path");
+    assert!(cache.load(&previous).expect("reject relabeling").is_none());
+    assert!(!cache.path(&previous).exists());
+    assert_eq!(
+        cache
+            .load(&current)
+            .expect("current schema load")
+            .expect("current schema hit")
+            .as_bytes(),
+        bytes
+    );
+}
+
+#[test]
+fn entry_encoding_is_deterministic_and_preserves_exact_format_bytes() {
+    let key = identity(FormatEngineMode::Latex);
+    let bytes = format();
+    let first = encode_entry(&key, &bytes);
+    let second = encode_entry(&key, &bytes);
+
+    assert_eq!(first, second);
+    assert_eq!(decode_entry(&first, &key), Some(bytes.as_slice()));
+}
+
+#[test]
 fn corrupt_truncated_and_decoder_invalid_entries_recover_as_misses() {
     let temp = TempDir::new().expect("tempdir");
     let cache = FormatCacheStore::new(temp.path());

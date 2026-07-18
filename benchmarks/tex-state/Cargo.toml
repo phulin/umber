@@ -12,6 +12,7 @@ tex-exec = { path = "../../crates/tex-exec" }
 tex-expand = { path = "../../crates/tex-expand" }
 tex-lex = { path = "../../crates/tex-lex" }
 tex-state = { path = "../../crates/tex-state", features = ["testing"] }
+umber-fetch = { path = "../../crates/umber-fetch" }
 
 [[bench]]
 name = "state_budgets"
