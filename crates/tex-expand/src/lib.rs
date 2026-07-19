@@ -1523,6 +1523,11 @@ pub trait ExpansionMode {
         self.next_expanded_token(input, stores, expansion)
     }
 
+    /// Whether this mode resumes tokens replayed by `\unexpanded`.
+    fn expands_unexpanded_replay(&self) -> bool {
+        false
+    }
+
     fn dispatch_raw_token(
         &mut self,
         token: TracedTokenWord,
@@ -1556,7 +1561,19 @@ pub trait ExpansionMode {
         stores: &mut tex_state::ExpansionContext<'_>,
         expansion: &mut ExpansionContext<'_>,
     ) -> Result<(), ExpandError> {
-        let dispatched = self.dispatch_raw_token(target, input, stores, expansion);
+        // Raw `get_token` delivery does not carry the replay suppression bits
+        // separately from provenance. Preserve `\noexpand` in every mode and
+        // preserve `\unexpanded` in restricted expansion; command-demand
+        // driver expansion intentionally resumes the latter.
+        let suppress = stores
+            .origin_is_inserted_kind(target.origin(), InsertedOriginKind::NoExpand)
+            || (!self.expands_unexpanded_replay()
+                && stores.origin_is_inserted_kind(target.origin(), InsertedOriginKind::Unexpanded));
+        let dispatched = if suppress {
+            Ok(Dispatch::DeliverNoExpand(target))
+        } else {
+            self.dispatch_raw_token(target, input, stores, expansion)
+        };
         let result = dispatched.map(|dispatch| push_dispatch_result(input, stores, dispatch));
         // TeX's `back_input` cancels the first `get_token` delivery before
         // the saved token is read again. Without this, a brace held by
@@ -1660,6 +1677,10 @@ impl ExpansionMode for DriverExpansionMode {
         expansion: &mut ExpansionContext<'_>,
     ) -> Result<Option<TracedTokenWord>, ExpandError> {
         get_x_token_with_context(input, stores, expansion)
+    }
+
+    fn expands_unexpanded_replay(&self) -> bool {
+        true
     }
 
     fn dispatch_raw_token(

@@ -1,7 +1,7 @@
 use crate::{
     DriverExpansionMode, EngineMode, ExpandableOpcode, ExpansionContext, ExpansionMode,
-    ReadDependency, ReadRecorder, dispatch, dispatch_expandable_opcode, dispatch_with_context,
-    install_expandable_primitives, semantic_token,
+    ReadDependency, ReadRecorder, RestrictedExpansionMode, dispatch, dispatch_expandable_opcode,
+    dispatch_with_context, install_expandable_primitives, semantic_token,
 };
 use ahash::AHashMap;
 #[cfg(feature = "profiling-stats")]
@@ -2148,6 +2148,48 @@ fn expandafter_expands_second_token_then_replays_saved_token_first() {
             &mut tex_state::ExpansionContext::new(&mut stores)
         ),
         "axy"
+    );
+}
+
+#[test]
+fn restricted_expandafter_preserves_an_unexpanded_target() {
+    let mut stores = Universe::new();
+    let macro_cs = stores.intern("m");
+    let empty = stores.intern_token_list(&[]);
+    let body = stores.intern_token_list(&[char_token('x')]);
+    stores.set_macro_meaning(
+        macro_cs,
+        MacroMeaning::new(MeaningFlags::EMPTY, empty, body),
+    );
+    let target_token = Token::Cs(macro_cs.symbol());
+    let target_origin = stores.inserted_origin(
+        InsertedOriginKind::Unexpanded,
+        target_token,
+        OriginId::UNKNOWN,
+    );
+    let target = TracedTokenWord::pack(target_token, target_origin);
+    let saved = TracedTokenWord::pack(char_token('a'), OriginId::UNKNOWN);
+    let mut input = InputStack::new(MemoryInput::new(""));
+    let mut expansion = ExpansionContext::new("texput");
+
+    RestrictedExpansionMode
+        .dispatch_raw_token_after(
+            saved,
+            target,
+            &mut input,
+            &mut tex_state::ExpansionContext::new(&mut stores),
+            &mut expansion,
+        )
+        .expect("restricted expandafter");
+
+    let mut context = tex_state::ExpansionContext::new(&mut stores);
+    assert_eq!(
+        get_x_token(&mut input, &mut context).expect("saved token"),
+        Some(char_token('a'))
+    );
+    assert_eq!(
+        get_x_token(&mut input, &mut context).expect("suppressed target"),
+        Some(target_token)
     );
 }
 
