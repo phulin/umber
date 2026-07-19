@@ -1,7 +1,7 @@
 use tex_lex::InputStack;
 use tex_out::dvi::DviPagePlan;
 use tex_state::meaning::{ExpandablePrimitive, Meaning, UnexpandablePrimitive};
-use tex_state::provenance::{InsertedOriginKind, OriginRecord};
+use tex_state::provenance::InsertedOriginKind;
 use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 use tex_state::{ContentHash, GroupKind, GroupMismatch, Universe};
 
@@ -121,10 +121,6 @@ pub(crate) fn dispatch_delivered_token_with_context(
         }
     };
 
-    if replay_unexpanded_command(traced, meaning, input, stores) {
-        return Ok(DispatchAction::Continue);
-    }
-
     let continues_character_run = matches!(
         meaning,
         Meaning::CharGiven(_)
@@ -238,33 +234,6 @@ pub(crate) fn dispatch_delivered_token_with_context(
             origin,
         }),
     }
-}
-
-pub(crate) fn replay_unexpanded_command(
-    traced: TracedTokenWord,
-    meaning: Meaning,
-    input: &mut InputStack,
-    stores: &mut Universe,
-) -> bool {
-    let origin = traced.origin();
-    let unexpanded_delivery = matches!(
-        stores.origin(origin),
-        OriginRecord::Inserted(inserted)
-            if inserted.kind() == InsertedOriginKind::Unexpanded
-    );
-    if !unexpanded_delivery
-        || !matches!(
-            meaning,
-            Meaning::Undefined | Meaning::Macro { .. } | Meaning::ExpandablePrimitive(_)
-        )
-    {
-        return false;
-    }
-
-    let token = tex_expand::semantic_token(traced);
-    let replay_origin = stores.inserted_origin(InsertedOriginKind::Unread, token, origin);
-    push_traced_tokens(input, stores, [TracedTokenWord::pack(token, replay_origin)]);
-    true
 }
 
 fn dispatch_character_token(

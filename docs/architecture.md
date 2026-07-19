@@ -134,12 +134,12 @@ is delivered, the next independent request receives a fresh budget; ordinary
 long-running jobs therefore are not charged for unrelated, already-completed
 expansion chains.
 
-Execution-driver scans preserve ordinary `\unexpanded` suppression by
-default. A scanner boundary that begins a fresh command demand opens an
-explicit scope, propagated through the nested scanner work needed to satisfy
-that request; the post-character-constant lookahead in integer scanning uses
-this path. Raw `\expandafter` dispatch preserves `\noexpand` everywhere and
-preserves `\unexpanded` outside such a command-demand scope.
+Expanded-token-list builders copy the result of `\unexpanded` and the
+token-list form of `\the` without expanding it further, matching TeX's direct
+`the_toks` splice. Once those tokens return to ordinary `get_x_token`
+processing they expand normally. Raw `\expandafter` dispatch therefore
+preserves the one-token suppression of `\noexpand`, but historical
+`\unexpanded` provenance does not alter its target expansion.
 
 End of source input is accepted only when the expansion loop is quiescent. If
 a source-origin macro argument scanner reaches root EOF while matching a call,

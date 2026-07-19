@@ -435,10 +435,7 @@ fn consume_optional_expanded_space(
 ) -> Result<(), ScanIntError>
 where
 {
-    // TeX's post-constant lookahead is a fresh command demand. In driver
-    // mode this must resume a macro replayed by `\unexpanded`; expl3's
-    // linked-property builder relies on that distinction inside nested
-    // `\expandafter` sequences.
+    // TeX's post-constant lookahead is an ordinary `get_x_token` request.
     let Some(token) = mode.next_command_token(input, stores, expansion)? else {
         return Ok(());
     };

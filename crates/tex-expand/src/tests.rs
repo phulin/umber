@@ -954,7 +954,7 @@ fn get_x_or_protected_stops_before_protected_macro_expansion() {
 }
 
 #[test]
-fn get_x_or_protected_preserves_unexpanded_replay_suppression() {
+fn get_x_or_protected_expands_tokens_returned_by_unexpanded() {
     let mut stores = Universe::new();
     install_expandable_primitives(&mut stores);
     crate::install_etex_expandable_primitives(&mut stores);
@@ -975,7 +975,7 @@ fn get_x_or_protected_preserves_unexpanded_replay_suppression() {
         )
         .expect("protected-aware expansion")
         .map(crate::semantic_token),
-        Some(Token::Cs(macro_cs.symbol()))
+        Some(char_token('x'))
     );
 }
 
@@ -1037,7 +1037,7 @@ fn keyword_scanner_resumes_a_macro_from_unexpanded_replay() {
 }
 
 #[test]
-fn general_driver_expansion_preserves_unexpanded_replay() {
+fn general_driver_expands_tokens_returned_by_unexpanded() {
     let mut stores = Universe::new();
     install_expandable_primitives(&mut stores);
     crate::install_etex_expandable_primitives(&mut stores);
@@ -1057,9 +1057,9 @@ fn general_driver_expansion_preserves_unexpanded_replay() {
             &mut ExpansionContext::new("texput"),
         )
         .expect("driver expansion")
-        .expect("suppressed macro token");
+        .expect("expanded macro token");
 
-    assert_eq!(semantic_token(delivered), Token::Cs(macro_cs.symbol()));
+    assert_eq!(semantic_token(delivered), char_token('x'));
 }
 
 #[test]
@@ -1103,7 +1103,7 @@ fn backtick_constant_lookahead_resumes_unexpanded_replay() {
 }
 
 #[test]
-fn unexpanded_suppresses_macros_for_the_current_expansion_call() {
+fn ordinary_get_x_token_expands_tokens_returned_by_unexpanded() {
     let mut stores = Universe::new();
     install_expandable_primitives(&mut stores);
     crate::install_etex_expandable_primitives(&mut stores);
@@ -1122,7 +1122,7 @@ fn unexpanded_suppresses_macros_for_the_current_expansion_call() {
             &mut tex_state::ExpansionContext::new(&mut stores)
         )
         .expect("unexpanded expansion"),
-        Some(Token::Cs(macro_cs.symbol()))
+        Some(char_token('x'))
     );
 }
 
@@ -2152,7 +2152,7 @@ fn expandafter_expands_second_token_then_replays_saved_token_first() {
 }
 
 #[test]
-fn restricted_expandafter_preserves_an_unexpanded_target() {
+fn restricted_expandafter_expands_a_historical_unexpanded_target() {
     let mut stores = Universe::new();
     let macro_cs = stores.intern("m");
     let empty = stores.intern_token_list(&[]);
@@ -2188,8 +2188,8 @@ fn restricted_expandafter_preserves_an_unexpanded_target() {
         Some(char_token('a'))
     );
     assert_eq!(
-        get_x_token(&mut input, &mut context).expect("suppressed target"),
-        Some(target_token)
+        get_x_token(&mut input, &mut context).expect("expanded target"),
+        Some(char_token('x'))
     );
 }
 

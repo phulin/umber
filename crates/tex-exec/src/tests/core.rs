@@ -1188,6 +1188,26 @@ fn edef_omits_noexpand_command_and_freezes_the_output() {
 }
 
 #[test]
+fn edef_expandafter_expands_a_target_preserved_by_prior_unexpanded() {
+    // TeX.web section 366 expands the second raw token once; e-TeX manual
+    // section 3.1 limits `\unexpanded` suppression to construction of the
+    // expanded token list, not a later invocation of that stored list.
+    let mut stores = Universe::new();
+    tex_expand::install_expandable_primitives(&mut stores);
+    tex_expand::install_etex_expandable_primitives(&mut stores);
+    install_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(
+        r"\def\a{A}\def\b{B}\edef\holder{\unexpanded{\expandafter\a\b}}\edef\result{\holder}",
+    ));
+
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("historical unexpanded tokens execute normally");
+
+    assert_eq!(macro_text(&stores, "result"), "AB");
+}
+
+#[test]
 fn edef_expansion_uses_active_input_resolver() {
     let mut stores = Universe::new();
     install_unexpandable_primitives(&mut stores);

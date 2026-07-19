@@ -1054,7 +1054,6 @@ pub struct ExpansionContext<'a> {
     fuel_limit: u64,
     remaining_fuel: u64,
     fuel_scope_depth: u32,
-    command_demand_depth: u32,
     // Meanings use generation-marked dense deduplication below. The remaining
     // read kinds stay append-only here and are sorted once at publication.
     paragraph_reads: Option<Vec<ReadDependency>>,
@@ -1088,7 +1087,6 @@ impl<'a> ExpansionContext<'a> {
             fuel_limit: DEFAULT_EXPANSION_FUEL,
             remaining_fuel: DEFAULT_EXPANSION_FUEL,
             fuel_scope_depth: 0,
-            command_demand_depth: 0,
             paragraph_reads: None,
             paragraph_read_tracking: false,
             paragraph_meanings: Vec::new(),
@@ -1118,7 +1116,6 @@ impl<'a> ExpansionContext<'a> {
             fuel_limit: DEFAULT_EXPANSION_FUEL,
             remaining_fuel: DEFAULT_EXPANSION_FUEL,
             fuel_scope_depth: 0,
-            command_demand_depth: 0,
             paragraph_reads: None,
             paragraph_read_tracking: false,
             paragraph_meanings: Vec::new(),
@@ -1346,7 +1343,6 @@ impl<'a> ExpansionContext<'a> {
             fuel_limit: self.fuel_limit,
             remaining_fuel: self.remaining_fuel,
             fuel_scope_depth: self.fuel_scope_depth,
-            command_demand_depth: self.command_demand_depth,
             paragraph_reads: self.paragraph_reads.take(),
             paragraph_read_tracking: self.paragraph_read_tracking,
             paragraph_meanings: std::mem::take(&mut self.paragraph_meanings),
@@ -1499,11 +1495,11 @@ pub trait ExpansionMode {
         expansion: &mut ExpansionContext<'_>,
     ) -> Result<Option<TracedTokenWord>, ExpandError>;
 
-    /// Pulls a token at a nested command-demand boundary.
+    /// Pulls a token at a nested command boundary.
     ///
-    /// Most scanner lookahead belongs to the enclosing expansion call, but
-    /// selected TeX scanner boundaries start a fresh command demand and must
-    /// therefore resume a macro replayed by `\unexpanded`.
+    /// TeX scanners use ordinary `get_x_token` semantics here. In particular,
+    /// tokens returned by `\unexpanded` expand normally once they leave an
+    /// expanded-token-list builder.
     fn next_command_token(
         &mut self,
         input: &mut InputStack,
@@ -1516,8 +1512,7 @@ pub trait ExpansionMode {
     /// Pulls a token using ordinary `get_x_token` suppression semantics.
     ///
     /// This is used by scanners such as `\the` whose operand belongs to the
-    /// current expansion request even when the surrounding driver otherwise
-    /// performs command-demand expansion.
+    /// current expansion request even when the scanner was entered recursively.
     fn next_ordinary_token(
         &mut self,
         input: &mut InputStack,
@@ -1525,11 +1520,6 @@ pub trait ExpansionMode {
         expansion: &mut ExpansionContext<'_>,
     ) -> Result<Option<TracedTokenWord>, ExpandError> {
         self.next_expanded_token(input, stores, expansion)
-    }
-
-    /// Whether this mode resumes tokens replayed by `\unexpanded`.
-    fn expands_unexpanded_replay(&self, _expansion: &ExpansionContext<'_>) -> bool {
-        false
     }
 
     fn dispatch_raw_token(
@@ -1565,14 +1555,11 @@ pub trait ExpansionMode {
         stores: &mut tex_state::ExpansionContext<'_>,
         expansion: &mut ExpansionContext<'_>,
     ) -> Result<(), ExpandError> {
-        // Raw `get_token` delivery does not carry the replay suppression bits
-        // separately from provenance. Preserve `\noexpand` in every mode and
-        // preserve `\unexpanded` in restricted expansion; command-demand
-        // driver expansion intentionally resumes the latter.
-        let suppress = stores
-            .origin_is_inserted_kind(target.origin(), InsertedOriginKind::NoExpand)
-            || (!self.expands_unexpanded_replay(expansion)
-                && stores.origin_is_inserted_kind(target.origin(), InsertedOriginKind::Unexpanded));
+        // `\noexpand` suppresses exactly the token fetched by TeX's raw
+        // `get_token`. Historical `\unexpanded` provenance does not: e-TeX
+        // limits that suppression to expanded-token-list construction.
+        let suppress =
+            stores.origin_is_inserted_kind(target.origin(), InsertedOriginKind::NoExpand);
         let dispatched = if suppress {
             Ok(Dispatch::DeliverNoExpand(target))
         } else {
@@ -1662,11 +1649,7 @@ impl ExpansionMode for DriverExpansionMode {
         stores: &mut tex_state::ExpansionContext<'_>,
         expansion: &mut ExpansionContext<'_>,
     ) -> Result<Option<TracedTokenWord>, ExpandError> {
-        if expansion.command_demand_depth == 0 {
-            get_x_token_with_context(input, stores, expansion)
-        } else {
-            get_command_token_with_context(input, stores, expansion)
-        }
+        get_x_token_with_context(input, stores, expansion)
     }
 
     fn next_command_token(
@@ -1675,13 +1658,7 @@ impl ExpansionMode for DriverExpansionMode {
         stores: &mut tex_state::ExpansionContext<'_>,
         expansion: &mut ExpansionContext<'_>,
     ) -> Result<Option<TracedTokenWord>, ExpandError> {
-        expansion.command_demand_depth = expansion
-            .command_demand_depth
-            .checked_add(1)
-            .expect("command-demand expansion depth overflowed");
-        let result = get_command_token_with_context(input, stores, expansion);
-        expansion.command_demand_depth -= 1;
-        result
+        get_x_token_with_context(input, stores, expansion)
     }
 
     fn next_ordinary_token(
@@ -1691,10 +1668,6 @@ impl ExpansionMode for DriverExpansionMode {
         expansion: &mut ExpansionContext<'_>,
     ) -> Result<Option<TracedTokenWord>, ExpandError> {
         get_x_token_with_context(input, stores, expansion)
-    }
-
-    fn expands_unexpanded_replay(&self, expansion: &ExpansionContext<'_>) -> bool {
-        expansion.command_demand_depth != 0
     }
 
     fn dispatch_raw_token(
@@ -1811,7 +1784,7 @@ pub fn get_x_token_with_context(
     expansion: &mut ExpansionContext<'_>,
 ) -> Result<Option<TracedTokenWord>, ExpandError> {
     expansion.begin_fuel_scope();
-    let result = get_x_token_with_context_inner(input, stores, expansion, false, false, None);
+    let result = get_x_token_with_context_inner(input, stores, expansion, false, true, None);
     expansion.end_fuel_scope();
     match result {
         Ok(token) => Ok(token),
@@ -1819,23 +1792,16 @@ pub fn get_x_token_with_context(
     }
 }
 
-/// Pulls the next command token after a prefix.
+/// Pulls the next expanded command token after a prefix.
 ///
-/// e-TeX `\unexpanded` suppresses tokens for the enclosing expansion-only
-/// consumer, but a nested command-demand scan resumes macro expansion. An
-/// explicit `\noexpand` remains suppressed.
+/// This is an explicit name for the ordinary TeX `get_x_token` operation used
+/// by prefix scanners; it does not introduce a distinct expansion policy.
 pub fn get_command_token_with_context(
     input: &mut InputStack,
     stores: &mut tex_state::ExpansionContext<'_>,
     expansion: &mut ExpansionContext<'_>,
 ) -> Result<Option<TracedTokenWord>, ExpandError> {
-    expansion.begin_fuel_scope();
-    let result = get_x_token_with_context_inner(input, stores, expansion, false, true, None);
-    expansion.end_fuel_scope();
-    match result {
-        Ok(token) => Ok(token),
-        Err(error) => Err(error.capture(input)),
-    }
+    get_x_token_with_context(input, stores, expansion)
 }
 
 /// Pulls the next expanded token while leaving e-TeX protected macros
@@ -1845,12 +1811,10 @@ pub fn get_x_or_protected_with_context(
     stores: &mut tex_state::ExpansionContext<'_>,
     expansion: &mut ExpansionContext<'_>,
 ) -> Result<Option<TracedTokenWord>, ExpandError> {
-    // e-TeX's `get_x_or_protected` adds the protected-macro stopping rule to
-    // ordinary x-token expansion. It does not turn alignment lookahead into
-    // the explicit command-demand scan used after assignment prefixes, so a
-    // token replayed by `\unexpanded` remains suppressed for this call.
+    // e-TeX's `get_x_or_protected` adds only the protected-macro stopping rule
+    // to ordinary x-token expansion.
     expansion.begin_fuel_scope();
-    let result = get_x_token_with_context_inner(input, stores, expansion, true, false, None);
+    let result = get_x_token_with_context_inner(input, stores, expansion, true, true, None);
     expansion.end_fuel_scope();
     match result {
         Ok(token) => Ok(token),
@@ -1861,22 +1825,14 @@ pub fn get_x_or_protected_with_context(
 /// Pulls the next alignment-lookahead token while leaving protected macros
 /// unexpanded.
 ///
-/// Unlike expanded-definition scanning, TeX's alignment command demand must
-/// resume an ordinary macro replayed by `\unexpanded`. Keep this override at
-/// the alignment boundary instead of changing every `get_x_or_protected`
-/// consumer.
+/// This remains a named alignment entry point, but e-TeX gives it the same
+/// unexpanded-token behavior as ordinary `get_x_or_protected`.
 pub fn get_alignment_x_or_protected_with_context(
     input: &mut InputStack,
     stores: &mut tex_state::ExpansionContext<'_>,
     expansion: &mut ExpansionContext<'_>,
 ) -> Result<Option<TracedTokenWord>, ExpandError> {
-    expansion.begin_fuel_scope();
-    let result = get_x_token_with_context_inner(input, stores, expansion, true, true, None);
-    expansion.end_fuel_scope();
-    match result {
-        Ok(token) => Ok(token),
-        Err(error) => Err(error.capture(input)),
-    }
+    get_x_or_protected_with_context(input, stores, expansion)
 }
 
 /// A token whose alignment-sensitive `get_next` work has already completed.
@@ -1927,7 +1883,7 @@ fn get_x_token_with_context_inner(
     stores: &mut tex_state::ExpansionContext<'_>,
     expansion: &mut ExpansionContext<'_>,
     protect_macros: bool,
-    command_demand: bool,
+    expand_unexpanded_replay: bool,
     first: Option<PreparedExpansionToken>,
 ) -> Result<Option<TracedTokenWord>, ExpandError> {
     let mut first = first;
@@ -1976,7 +1932,9 @@ fn get_x_token_with_context_inner(
             }
         }
 
-        if read.suppress_expansion() && !(command_demand && read.expand_for_command_demand()) {
+        if read.suppress_expansion()
+            && !(expand_unexpanded_replay && read.expand_in_ordinary_context())
+        {
             if !alignment_prepared && intercept_suppressed_alignment_token(input, stores, traced) {
                 continue;
             }
@@ -2377,7 +2335,7 @@ pub(crate) fn get_x_token_without_input_open(
         let token = read.token();
         let traced = read.traced_token();
 
-        if read.suppress_expansion() && !read.expand_for_command_demand() {
+        if read.suppress_expansion() && !read.expand_in_ordinary_context() {
             if intercept_suppressed_alignment_token(input, stores, traced) {
                 continue;
             }

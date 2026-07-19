@@ -1358,7 +1358,7 @@ pub struct TracedExpansionToken {
     token: Token,
     origin: OriginId,
     suppress_expansion: bool,
-    expand_for_command_demand: bool,
+    expand_in_ordinary_context: bool,
     macro_replay_site: Option<MacroReplaySite>,
 }
 
@@ -1397,14 +1397,14 @@ impl TracedExpansionToken {
     fn from_decoded(
         token: DecodedTracedToken,
         suppress_expansion: bool,
-        expand_for_command_demand: bool,
+        expand_in_ordinary_context: bool,
         macro_replay_site: Option<MacroReplaySite>,
     ) -> Self {
         Self {
             token: token.token,
             origin: token.origin,
             suppress_expansion,
-            expand_for_command_demand,
+            expand_in_ordinary_context,
             macro_replay_site,
         }
     }
@@ -1429,10 +1429,14 @@ impl TracedExpansionToken {
         self.suppress_expansion
     }
 
-    /// Returns whether nested command demand should resume expansion.
+    /// Returns whether ordinary expansion should resume this token.
+    ///
+    /// Tokens produced by e-TeX's `\unexpanded` and TeX's token-list form of
+    /// `\the` are copied literally only by expanded-token-list builders. Once
+    /// returned to an ordinary `get_x_token` caller they expand normally.
     #[must_use]
-    pub const fn expand_for_command_demand(self) -> bool {
-        self.expand_for_command_demand
+    pub const fn expand_in_ordinary_context(self) -> bool {
+        self.expand_in_ordinary_context
     }
 
     #[must_use]
