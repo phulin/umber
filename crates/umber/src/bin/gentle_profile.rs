@@ -450,7 +450,7 @@ fn run_cold_memo_policy(
             last_state_hash.peak_changed_cell_scratch_bytes,
         );
         println!(
-            "gentle-profile isolated cold survivor: fresh_promotions={} recycled_promotions={} releases={} promotion_nanos={} source_words={}",
+            "gentle-profile isolated cold survivor: fresh_promotions={} recycled_promotions={} releases={} promotion_nanos={} source_words={} epoch_source_words={} survivor_source_words={} epoch_source_lists={} survivor_source_lists={}",
             last_survivor.fresh_promotions,
             last_survivor.recycled_promotions,
             last_survivor.releases_to_recycling,
@@ -458,6 +458,10 @@ fn run_cold_memo_policy(
                 .fresh_promotion_nanos
                 .saturating_add(last_survivor.recycled_promotion_nanos),
             last_survivor.source_words,
+            last_survivor.epoch_source_words,
+            last_survivor.survivor_source_words,
+            last_survivor.epoch_source_lists,
+            last_survivor.survivor_source_lists,
         );
     }
     Ok(())
@@ -1971,6 +1975,18 @@ fn survivor_delta(after: SurvivorMeasurement, before: SurvivorMeasurement) -> Su
             .shared_payload_drop_nanos
             .saturating_sub(before.shared_payload_drop_nanos),
         source_words: after.source_words.saturating_sub(before.source_words),
+        epoch_source_words: after
+            .epoch_source_words
+            .saturating_sub(before.epoch_source_words),
+        survivor_source_words: after
+            .survivor_source_words
+            .saturating_sub(before.survivor_source_words),
+        epoch_source_lists: after
+            .epoch_source_lists
+            .saturating_sub(before.epoch_source_lists),
+        survivor_source_lists: after
+            .survivor_source_lists
+            .saturating_sub(before.survivor_source_lists),
         child_bearing_nodes: after
             .child_bearing_nodes
             .saturating_sub(before.child_bearing_nodes),
