@@ -421,6 +421,26 @@ becomes a larger workload, but the current optimization loop should first
 reduce expansion, line-breaking, and allocator call volume with higher sampled
 ceilings.
 
+## Invariant-fast traced-token decoding
+
+Issue `umber2-ffoh` removed redundant validation from the semantic traced-token
+decode used throughout expansion. `TracedTokenWord` has a private
+representation and its public constructor packs an existing `Token`, so live
+engine words already guarantee a valid two-bit kind, catcode discriminant,
+Unicode scalar, parameter slot, and frozen-token payload. The checked
+`token()` API remains available for test-only raw encodings and validation;
+the hot `semantic_token()` path directly decodes the established invariant.
+
+In matched ten-second native samples, checked token decoding plus its expansion
+wrapper fell from 167 of 7,602 main-thread samples (2.20%) to 60 of 7,653
+(0.78%), a 64.4% relative reduction and 1.42 percentage points of the whole
+run. An initial interleaved timing block encountered severe host contention,
+with later processes jumping from about 86 ms/run to 132--217 ms/run, and was
+discarded. After conditioning both binaries, twelve alternating ten-run pairs
+measured medians of 86.622 ms/run baseline and 85.353 ms/run candidate, a
+1.46% whole-Gentle improvement; all twelve pairs favored the candidate. Output
+remained exactly 97 pages and 263,424 DVI bytes.
+
 ## Analyze a capture
 
 Use the repository analyzer for a repeatable text report:
