@@ -245,7 +245,7 @@ fn next_x(
 ) -> Result<Option<TracedTokenWord>, ScanIntError>
 where
 {
-    Ok(mode.next_expanded_token(input, stores, expansion)?)
+    Ok(mode.next_command_token(input, stores, expansion)?)
 }
 
 fn scan_signs(
