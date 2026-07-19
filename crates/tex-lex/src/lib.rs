@@ -1414,7 +1414,7 @@ impl LiteralSpanPolicy {
             (
                 Self::HorizontalText,
                 Token::Char {
-                    cat: Catcode::Letter | Catcode::Other,
+                    cat: Catcode::Letter | Catcode::Other | Catcode::Space,
                     ..
                 },
             ) => true,
@@ -2725,10 +2725,11 @@ impl InputStack {
     /// Appends directly backed physical-source characters that horizontal
     /// main control can consume without expansion or provenance allocation.
     ///
-    /// The run is deliberately limited to current-catcode `Letter` and
-    /// `Other` scalars. Every other category remains a seam for the ordinary
-    /// lexer, including superscript notation, active and structural tokens,
-    /// whitespace, synthetic end lines, and degraded source origins.
+    /// The run accepts current-catcode `Letter`, `Other`, and `Space` scalars.
+    /// Spaces are canonicalized and collapsed with the ordinary TeX lexer
+    /// state machine, allowing one run to cross word boundaries. Every other
+    /// category remains a seam, including superscript notation, active and
+    /// structural tokens, synthetic end lines, and degraded source origins.
     pub fn append_source_text_span(
         &mut self,
         stores: &mut impl ExpansionState,
@@ -2774,39 +2775,61 @@ impl InputStack {
         let start = tokens_out.len();
         let mut byte_offset = source.frame.byte_offset;
         let mut column = source.frame.column;
+        let mut state = source.frame.state;
         let utf8_input_as_bytes = self.utf8_input_as_bytes && !source.scantokens;
         while byte_offset < source.frame.cursor_len() && tokens_out.len() - start < limit {
             let (ch, width) = input_char_at(&source.frame, byte_offset, utf8_input_as_bytes)
                 .expect("byte cursor remains within the normalized line");
             let cat = stores.catcode(ch);
-            if !matches!(cat, Catcode::Letter | Catcode::Other) {
+            if !matches!(cat, Catcode::Letter | Catcode::Other | Catcode::Space) {
                 break;
             }
             let next = byte_offset + width;
-            let Some(physical_start) = source
-                .frame
-                .origin_line_start
-                .checked_add(byte_offset as u64)
-            else {
-                break;
+            let (next_state, token) = match cat {
+                Catcode::Letter | Catcode::Other => {
+                    (LexerState::MidLine, Some(Token::Char { ch, cat }))
+                }
+                Catcode::Space if state == LexerState::MidLine => (
+                    LexerState::SkippingBlanks,
+                    Some(Token::Char {
+                        ch: ' ',
+                        cat: Catcode::Space,
+                    }),
+                ),
+                Catcode::Space => (state, None),
+                _ => unreachable!("span admission checked the catcode"),
             };
-            let Some(physical_end) = source.frame.origin_line_start.checked_add(next as u64) else {
-                break;
-            };
-            let Some(origin) = registration.direct_origin(physical_start, physical_end) else {
-                break;
-            };
-            tokens_out.push(TracedTokenWord::pack(Token::Char { ch, cat }, origin));
+            if let Some(token) = token {
+                let Some(physical_start) = source
+                    .frame
+                    .origin_line_start
+                    .checked_add(byte_offset as u64)
+                else {
+                    break;
+                };
+                let Some(physical_end) = source.frame.origin_line_start.checked_add(next as u64)
+                else {
+                    break;
+                };
+                let Some(origin) = registration.direct_origin(physical_start, physical_end) else {
+                    break;
+                };
+                tokens_out.push(TracedTokenWord::pack(token, origin));
+            }
+            state = next_state;
             byte_offset = next;
             column += 1;
         }
         let appended = tokens_out.len() - start;
-        if appended == 0 {
+        if byte_offset == source.frame.byte_offset {
             return 0;
         }
         source.frame.byte_offset = byte_offset;
         source.frame.column = column;
-        source.frame.state = LexerState::MidLine;
+        source.frame.state = state;
+        if appended == 0 {
+            return 0;
+        }
         #[cfg(feature = "profiling-stats")]
         {
             self.expansion_stats.source_text_spans += 1;
