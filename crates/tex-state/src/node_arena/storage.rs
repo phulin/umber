@@ -65,6 +65,7 @@ pub(super) struct StorageMark {
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub(super) struct SidecarNeeds {
+    any: bool,
     pub(super) ligatures: u32,
     pub(super) boxes: u32,
     pub(super) unsets: u32,
@@ -130,6 +131,7 @@ impl SidecarNeeds {
             | Node::Nonscript => None,
         };
         if let Some(target) = target {
+            self.any = true;
             *target = target.checked_add(1).expect("sidecar count overflow");
         }
     }
@@ -270,10 +272,14 @@ impl NodeStorage {
         for node in nodes {
             needs.preflight_and_count(node);
         }
-        self.preflight_sidecars(needs);
+        if needs.any {
+            self.preflight_sidecars(needs);
+        }
         self.words.reserve(nodes.len());
         self.origins.reserve(nodes.len());
-        self.reserve_sidecars(needs);
+        if needs.any {
+            self.reserve_sidecars(needs);
+        }
         for node in nodes {
             let word = self.encode(node);
             self.words.push(word);
