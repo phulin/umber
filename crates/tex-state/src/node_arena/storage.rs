@@ -305,17 +305,16 @@ impl NodeStorage {
         #[cfg(feature = "profiling-stats")]
         {
             let capacity_after = self.capacity_signature();
-            let growth_events = capacity_before
-                .iter()
-                .zip(capacity_after)
-                .filter(|(before, after)| **before != *after)
-                .count();
+            let growth_by_column = core::array::from_fn(|index| {
+                u8::from(capacity_before[index] != capacity_after[index])
+            });
             let retained_after = self.retained_payload_bytes();
             crate::measurement::record_node_append(
                 nodes.len(),
                 needs.as_array(),
-                growth_events,
+                growth_by_column,
                 retained_after.saturating_sub(retained_before),
+                false,
             );
             self.record_peak();
         }
@@ -357,17 +356,16 @@ impl NodeStorage {
         #[cfg(feature = "profiling-stats")]
         {
             let capacity_after = self.capacity_signature();
-            let growth_events = capacity_before
-                .iter()
-                .zip(capacity_after)
-                .filter(|(before, after)| **before != *after)
-                .count();
+            let growth_by_column = core::array::from_fn(|index| {
+                u8::from(capacity_before[index] != capacity_after[index])
+            });
             let retained_after = self.retained_payload_bytes();
             crate::measurement::record_node_append(
                 len as usize,
                 needs.as_array(),
-                growth_events,
+                growth_by_column,
                 retained_after.saturating_sub(retained_before),
+                false,
             );
             self.record_peak();
         }

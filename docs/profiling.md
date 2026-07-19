@@ -406,10 +406,20 @@ The profiling runner now reports a feature-gated compact-node append census to
 guide larger storage changes. One measured Gentle run performs 33,339 append
 calls for 419,797 words, appends rows to 10 of the 14 sidecar tables, triggers
 10,608 retained-vector capacity growth events, and grows retained payload
-capacity by 9,512,080 bytes. That points to append/storage organization—not
-promotion lookup—as the larger algorithmic target: co-allocate or chunk the
-parallel columns, or make whole built suffixes detachable, rather than tuning
-another small lookup leaf.
+capacity by 9,512,080 bytes. Per-column attribution assigns 3,662 events each
+to words and origins and 2,543 to packed box rows; every other sidecar column
+combined accounts for only 741 events (7.0%). This rules out the 14-table shape
+as the principal allocation cause.
+
+Path attribution then assigns 3,646 word growths, 3,646 origin growths, and
+2,531 box growths to survivor compact copy. In other words, nearly all of the
+visible growth is the cost of fresh per-root survivor buffers. However, the
+matched whole-run sample places complete promotion at only about 2.3% of
+Gentle, so even a zero-cost promotion redesign cannot be a large end-to-end
+swing. Chunked or detachable storage remains the principled fix if promotion
+becomes a larger workload, but the current optimization loop should first
+reduce expansion, line-breaking, and allocator call volume with higher sampled
+ceilings.
 
 ## Analyze a capture
 

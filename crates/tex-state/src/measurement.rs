@@ -8,14 +8,70 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::state_hash::StateHashComponent;
 
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct NodeAppendMeasurement {
     pub calls: u64,
     pub words: u64,
     pub sidecar_rows: [u64; 14],
     pub capacity_growth_events: u64,
+    pub capacity_growth_by_column: [u64; 33],
+    pub compact_copy_calls: u64,
+    pub compact_copy_words: u64,
+    pub compact_copy_growth_by_column: [u64; 33],
     pub retained_payload_bytes_grown: u64,
 }
+
+impl Default for NodeAppendMeasurement {
+    fn default() -> Self {
+        Self {
+            calls: 0,
+            words: 0,
+            sidecar_rows: [0; 14],
+            capacity_growth_events: 0,
+            capacity_growth_by_column: [0; 33],
+            compact_copy_calls: 0,
+            compact_copy_words: 0,
+            compact_copy_growth_by_column: [0; 33],
+            retained_payload_bytes_grown: 0,
+        }
+    }
+}
+
+pub const NODE_APPEND_CAPACITY_COLUMNS: [&str; 33] = [
+    "words",
+    "origins",
+    "ligatures",
+    "boxes",
+    "unsets.kind",
+    "unsets.width",
+    "unsets.height",
+    "unsets.depth",
+    "unsets.span_count",
+    "unsets.stretch",
+    "unsets.stretch_order",
+    "unsets.shrink",
+    "unsets.shrink_order",
+    "unsets.children",
+    "rules",
+    "leaders",
+    "discs",
+    "marks",
+    "insertions.class",
+    "insertions.size",
+    "insertions.split_top_skip",
+    "insertions.split_max_depth",
+    "insertions.floating_penalty",
+    "insertions.content",
+    "whatsits",
+    "noads.kind",
+    "noads.nucleus",
+    "noads.subscript",
+    "noads.superscript",
+    "fractions",
+    "choices",
+    "math_lists",
+    "adjusts",
+];
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct StateHashMeasurement {
@@ -87,6 +143,10 @@ static NODE_APPEND_CALLS: AtomicU64 = AtomicU64::new(0);
 static NODE_APPEND_WORDS: AtomicU64 = AtomicU64::new(0);
 static NODE_APPEND_SIDECARS: [AtomicU64; 14] = [const { AtomicU64::new(0) }; 14];
 static NODE_APPEND_GROWTH_EVENTS: AtomicU64 = AtomicU64::new(0);
+static NODE_APPEND_GROWTH_BY_COLUMN: [AtomicU64; 33] = [const { AtomicU64::new(0) }; 33];
+static NODE_COMPACT_COPY_CALLS: AtomicU64 = AtomicU64::new(0);
+static NODE_COMPACT_COPY_WORDS: AtomicU64 = AtomicU64::new(0);
+static NODE_COMPACT_COPY_GROWTH_BY_COLUMN: [AtomicU64; 33] = [const { AtomicU64::new(0) }; 33];
 static NODE_APPEND_GROWN_BYTES: AtomicU64 = AtomicU64::new(0);
 
 static HASH_CALLS: AtomicU64 = AtomicU64::new(0);
@@ -131,15 +191,36 @@ static MEANING_ROLLBACKS: AtomicU64 = AtomicU64::new(0);
 pub(crate) fn record_node_append(
     words: usize,
     sidecars: [u32; 14],
-    capacity_growth_events: usize,
+    capacity_growth_by_column: [u8; 33],
     retained_payload_bytes_grown: usize,
+    compact_copy: bool,
 ) {
     NODE_APPEND_CALLS.fetch_add(1, Ordering::Relaxed);
     NODE_APPEND_WORDS.fetch_add(words as u64, Ordering::Relaxed);
     for (counter, value) in NODE_APPEND_SIDECARS.iter().zip(sidecars) {
         counter.fetch_add(u64::from(value), Ordering::Relaxed);
     }
-    NODE_APPEND_GROWTH_EVENTS.fetch_add(capacity_growth_events as u64, Ordering::Relaxed);
+    let capacity_growth_events = capacity_growth_by_column
+        .iter()
+        .map(|&grew| u64::from(grew))
+        .sum::<u64>();
+    NODE_APPEND_GROWTH_EVENTS.fetch_add(capacity_growth_events, Ordering::Relaxed);
+    for (counter, grew) in NODE_APPEND_GROWTH_BY_COLUMN
+        .iter()
+        .zip(capacity_growth_by_column)
+    {
+        counter.fetch_add(u64::from(grew), Ordering::Relaxed);
+    }
+    if compact_copy {
+        NODE_COMPACT_COPY_CALLS.fetch_add(1, Ordering::Relaxed);
+        NODE_COMPACT_COPY_WORDS.fetch_add(words as u64, Ordering::Relaxed);
+        for (counter, grew) in NODE_COMPACT_COPY_GROWTH_BY_COLUMN
+            .iter()
+            .zip(capacity_growth_by_column)
+        {
+            counter.fetch_add(u64::from(grew), Ordering::Relaxed);
+        }
+    }
     NODE_APPEND_GROWN_BYTES.fetch_add(retained_payload_bytes_grown as u64, Ordering::Relaxed);
 }
 
@@ -249,6 +330,14 @@ pub fn node_append_measurement() -> NodeAppendMeasurement {
             NODE_APPEND_SIDECARS[index].load(Ordering::Relaxed)
         }),
         capacity_growth_events: NODE_APPEND_GROWTH_EVENTS.load(Ordering::Relaxed),
+        capacity_growth_by_column: core::array::from_fn(|index| {
+            NODE_APPEND_GROWTH_BY_COLUMN[index].load(Ordering::Relaxed)
+        }),
+        compact_copy_calls: NODE_COMPACT_COPY_CALLS.load(Ordering::Relaxed),
+        compact_copy_words: NODE_COMPACT_COPY_WORDS.load(Ordering::Relaxed),
+        compact_copy_growth_by_column: core::array::from_fn(|index| {
+            NODE_COMPACT_COPY_GROWTH_BY_COLUMN[index].load(Ordering::Relaxed)
+        }),
         retained_payload_bytes_grown: NODE_APPEND_GROWN_BYTES.load(Ordering::Relaxed),
     }
 }

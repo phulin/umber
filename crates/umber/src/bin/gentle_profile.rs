@@ -19,8 +19,9 @@ use tex_lex::ExpansionStats;
 use tex_lex::{InputSource, InputStack, MemoryInput, WorldInput};
 #[cfg(feature = "profiling-stats")]
 use tex_state::measurement::{
-    ExactIdentityMeasurement, NodeAppendMeasurement, StateHashMeasurement,
-    exact_identity_measurement, node_append_measurement, state_hash_measurement,
+    ExactIdentityMeasurement, NODE_APPEND_CAPACITY_COLUMNS, NodeAppendMeasurement,
+    StateHashMeasurement, exact_identity_measurement, node_append_measurement,
+    state_hash_measurement,
 };
 #[cfg(feature = "profiling-stats")]
 use tex_state::survivor::{SurvivorMeasurement, survivor_measurement};
@@ -230,6 +231,25 @@ fn run() -> Result<(), String> {
             node_append.capacity_growth_events,
             node_append.retained_payload_bytes_grown,
         );
+        let growth_columns = NODE_APPEND_CAPACITY_COLUMNS
+            .iter()
+            .zip(node_append.capacity_growth_by_column)
+            .filter(|(_, count)| *count != 0)
+            .map(|(name, count)| format!("{name}={count}"))
+            .collect::<Vec<_>>()
+            .join(",");
+        println!("gentle-profile node growth columns: {growth_columns}");
+        let compact_growth_columns = NODE_APPEND_CAPACITY_COLUMNS
+            .iter()
+            .zip(node_append.compact_copy_growth_by_column)
+            .filter(|(_, count)| *count != 0)
+            .map(|(name, count)| format!("{name}={count}"))
+            .collect::<Vec<_>>()
+            .join(",");
+        println!(
+            "gentle-profile compact-copy growth: calls={} words={} columns={compact_growth_columns}",
+            node_append.compact_copy_calls, node_append.compact_copy_words,
+        );
     }
     Ok(())
 }
@@ -248,6 +268,20 @@ fn node_append_delta(
         capacity_growth_events: after
             .capacity_growth_events
             .saturating_sub(before.capacity_growth_events),
+        capacity_growth_by_column: core::array::from_fn(|index| {
+            after.capacity_growth_by_column[index]
+                .saturating_sub(before.capacity_growth_by_column[index])
+        }),
+        compact_copy_calls: after
+            .compact_copy_calls
+            .saturating_sub(before.compact_copy_calls),
+        compact_copy_words: after
+            .compact_copy_words
+            .saturating_sub(before.compact_copy_words),
+        compact_copy_growth_by_column: core::array::from_fn(|index| {
+            after.compact_copy_growth_by_column[index]
+                .saturating_sub(before.compact_copy_growth_by_column[index])
+        }),
         retained_payload_bytes_grown: after
             .retained_payload_bytes_grown
             .saturating_sub(before.retained_payload_bytes_grown),

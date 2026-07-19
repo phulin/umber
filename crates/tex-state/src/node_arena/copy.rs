@@ -239,17 +239,16 @@ impl NodeStorage {
         #[cfg(feature = "profiling-stats")]
         {
             let capacity_after = self.capacity_signature();
-            let growth_events = capacity_before
-                .iter()
-                .zip(capacity_after)
-                .filter(|(before, after)| **before != *after)
-                .count();
+            let growth_by_column = core::array::from_fn(|index| {
+                u8::from(capacity_before[index] != capacity_after[index])
+            });
             crate::measurement::record_node_append(
                 source_words.len(),
                 needs.as_array(),
-                growth_events,
+                growth_by_column,
                 self.retained_payload_bytes()
                     .saturating_sub(retained_before),
+                true,
             );
             self.record_peak();
         }
