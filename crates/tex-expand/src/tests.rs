@@ -1037,7 +1037,7 @@ fn keyword_scanner_resumes_a_macro_from_unexpanded_replay() {
 }
 
 #[test]
-fn general_driver_command_demand_resumes_unexpanded_replay() {
+fn general_driver_expansion_preserves_unexpanded_replay() {
     let mut stores = Universe::new();
     install_expandable_primitives(&mut stores);
     crate::install_etex_expandable_primitives(&mut stores);
@@ -1057,9 +1057,49 @@ fn general_driver_command_demand_resumes_unexpanded_replay() {
             &mut ExpansionContext::new("texput"),
         )
         .expect("driver expansion")
-        .expect("resumed macro token");
+        .expect("suppressed macro token");
 
-    assert_eq!(semantic_token(delivered), char_token('x'));
+    assert_eq!(semantic_token(delivered), Token::Cs(macro_cs.symbol()));
+}
+
+#[test]
+fn backtick_constant_lookahead_resumes_unexpanded_replay() {
+    let mut stores = Universe::new();
+    install_expandable_primitives(&mut stores);
+    crate::install_etex_expandable_primitives(&mut stores);
+    let space_cs = stores.intern("sp");
+    let empty = stores.intern_token_list(&[]);
+    let body = stores.intern_token_list(&[Token::Char {
+        ch: ' ',
+        cat: Catcode::Space,
+    }]);
+    stores.set_macro_meaning(
+        space_cs,
+        MacroMeaning::new(MeaningFlags::EMPTY, empty, body),
+    );
+    let mut input = InputStack::new(MemoryInput::new("`a\\unexpanded{\\sp}z"));
+    let mut expansion = ExpansionContext::new("texput");
+    let context = TracedTokenWord::pack(char_token('0'), OriginId::UNKNOWN);
+
+    let scanned = crate::scan_int::scan_int_with_mode_and_context(
+        &mut input,
+        &mut tex_state::ExpansionContext::new(&mut stores),
+        &mut expansion,
+        &mut DriverExpansionMode,
+        context,
+    )
+    .expect("backtick constant");
+    assert_eq!(scanned.value(), 'a' as i32);
+
+    let following = DriverExpansionMode
+        .next_expanded_token(
+            &mut input,
+            &mut tex_state::ExpansionContext::new(&mut stores),
+            &mut expansion,
+        )
+        .expect("following expansion")
+        .expect("following token");
+    assert_eq!(semantic_token(following), char_token('z'));
 }
 
 #[test]

@@ -1495,6 +1495,20 @@ pub trait ExpansionMode {
         expansion: &mut ExpansionContext<'_>,
     ) -> Result<Option<TracedTokenWord>, ExpandError>;
 
+    /// Pulls a token at a nested command-demand boundary.
+    ///
+    /// Most scanner lookahead belongs to the enclosing expansion call, but
+    /// selected TeX scanner boundaries start a fresh command demand and must
+    /// therefore resume a macro replayed by `\unexpanded`.
+    fn next_command_token(
+        &mut self,
+        input: &mut InputStack,
+        stores: &mut tex_state::ExpansionContext<'_>,
+        expansion: &mut ExpansionContext<'_>,
+    ) -> Result<Option<TracedTokenWord>, ExpandError> {
+        self.next_expanded_token(input, stores, expansion)
+    }
+
     fn dispatch_raw_token(
         &mut self,
         token: TracedTokenWord,
@@ -1613,12 +1627,15 @@ impl ExpansionMode for DriverExpansionMode {
         stores: &mut tex_state::ExpansionContext<'_>,
         expansion: &mut ExpansionContext<'_>,
     ) -> Result<Option<TracedTokenWord>, ExpandError> {
-        // Driver scanners are command-demand consumers: a token copied by
-        // `\unexpanded` is protected from its enclosing expansion, then
-        // resumes ordinary macro expansion when the driver asks for the next
-        // command. This is also required by expl3's linked-property builder,
-        // whose nested `\unexpanded`/`\expandafter` sequence must expose the
-        // generated link token to the following definition scan.
+        get_x_token_with_context(input, stores, expansion)
+    }
+
+    fn next_command_token(
+        &mut self,
+        input: &mut InputStack,
+        stores: &mut tex_state::ExpansionContext<'_>,
+        expansion: &mut ExpansionContext<'_>,
+    ) -> Result<Option<TracedTokenWord>, ExpandError> {
         get_command_token_with_context(input, stores, expansion)
     }
 
