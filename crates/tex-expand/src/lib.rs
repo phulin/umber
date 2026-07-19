@@ -1055,6 +1055,7 @@ pub struct ExpansionContext<'a> {
     remaining_fuel: u64,
     fuel_scope_depth: u32,
     command_demand_depth: u32,
+    expandafter_suppression_depth: u32,
     // Meanings use generation-marked dense deduplication below. The remaining
     // read kinds stay append-only here and are sorted once at publication.
     paragraph_reads: Option<Vec<ReadDependency>>,
@@ -1089,6 +1090,7 @@ impl<'a> ExpansionContext<'a> {
             remaining_fuel: DEFAULT_EXPANSION_FUEL,
             fuel_scope_depth: 0,
             command_demand_depth: 0,
+            expandafter_suppression_depth: 0,
             paragraph_reads: None,
             paragraph_read_tracking: false,
             paragraph_meanings: Vec::new(),
@@ -1119,6 +1121,7 @@ impl<'a> ExpansionContext<'a> {
             remaining_fuel: DEFAULT_EXPANSION_FUEL,
             fuel_scope_depth: 0,
             command_demand_depth: 0,
+            expandafter_suppression_depth: 0,
             paragraph_reads: None,
             paragraph_read_tracking: false,
             paragraph_meanings: Vec::new(),
@@ -1347,6 +1350,7 @@ impl<'a> ExpansionContext<'a> {
             remaining_fuel: self.remaining_fuel,
             fuel_scope_depth: self.fuel_scope_depth,
             command_demand_depth: self.command_demand_depth,
+            expandafter_suppression_depth: self.expandafter_suppression_depth,
             paragraph_reads: self.paragraph_reads.take(),
             paragraph_read_tracking: self.paragraph_read_tracking,
             paragraph_meanings: std::mem::take(&mut self.paragraph_meanings),
@@ -1527,6 +1531,17 @@ pub trait ExpansionMode {
         self.next_expanded_token(input, stores, expansion)
     }
 
+    /// Pulls a conditional character operand while preserving command demand
+    /// except at nested `\expandafter` target steps.
+    fn next_conditional_token(
+        &mut self,
+        input: &mut InputStack,
+        stores: &mut tex_state::ExpansionContext<'_>,
+        expansion: &mut ExpansionContext<'_>,
+    ) -> Result<Option<TracedTokenWord>, ExpandError> {
+        self.next_expanded_token(input, stores, expansion)
+    }
+
     /// Whether this mode resumes tokens replayed by `\unexpanded`.
     fn expands_unexpanded_replay(&self, _expansion: &ExpansionContext<'_>) -> bool {
         false
@@ -1693,8 +1708,23 @@ impl ExpansionMode for DriverExpansionMode {
         get_x_token_with_context(input, stores, expansion)
     }
 
+    fn next_conditional_token(
+        &mut self,
+        input: &mut InputStack,
+        stores: &mut tex_state::ExpansionContext<'_>,
+        expansion: &mut ExpansionContext<'_>,
+    ) -> Result<Option<TracedTokenWord>, ExpandError> {
+        expansion.expandafter_suppression_depth = expansion
+            .expandafter_suppression_depth
+            .checked_add(1)
+            .expect("conditional expandafter suppression depth overflowed");
+        let result = self.next_expanded_token(input, stores, expansion);
+        expansion.expandafter_suppression_depth -= 1;
+        result
+    }
+
     fn expands_unexpanded_replay(&self, expansion: &ExpansionContext<'_>) -> bool {
-        expansion.command_demand_depth != 0
+        expansion.command_demand_depth != 0 && expansion.expandafter_suppression_depth == 0
     }
 
     fn dispatch_raw_token(
