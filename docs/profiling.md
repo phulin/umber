@@ -253,6 +253,36 @@ order-balanced ten-run timing pairs measured 98.596 ms/run for the baseline and
 favored the candidate. Gentle remained exactly 97 pages and 263,424 DVI bytes,
 and the tex-typeset and tex-exec test suites pass.
 
+## Owned node-freeze encoding
+
+Issue `umber2-q02h.116` separated production node-freeze work from the
+`profiling-stats` payload measurement that scans every compact column. In the
+baseline matched capture, `freeze_node_list_owned` occupied 4.16% of Gentle,
+but 1.34 percentage points were the profiling-only payload scan. The production
+path still traversed each decoded list once for semantic validation and hashing,
+again to count and preflight sidecars, and again to encode. Owned sidecar
+payloads were cloned during encoding and then immediately dropped when the
+source vector was cleared.
+
+The accepted implementation counts and validates sidecar requirements during
+the semantic traversal, removing the separate preflight scan. Its owned encoder
+then drains the reusable source vector and moves ligature buffers, whatsits,
+noads, fractions, and choices directly into compact sidecars. Borrowed freezes
+retain the established cloning encoder. Atomic capacity preflight, handle
+validation, font sealing, semantic identity, and source-vector capacity reuse
+remain unchanged.
+
+Samply failed before recording with macOS error 1100, so the primary comparison
+used matched ten-second native `sample` captures of 200-run profiling binaries.
+`hpack_owned_with_overfull_rule` fell from 310/7,640 main-thread samples (4.06%)
+to 258/7,654 (3.37%), a 17.0% relative reduction. Twelve order-balanced ten-run
+timing pairs measured 97.196 ms/run for the baseline and 96.620 ms/run for the
+candidate, a 0.59% whole-Gentle improvement; eleven pairs favored the candidate.
+A cleanup that forwarded simple owned variants through the borrowed encoder was
+rejected after an eight-pair comparison regressed by about 0.34%; the direct
+single-dispatch owned match is intentional. Gentle remained exactly 97 pages
+and 263,424 DVI bytes.
+
 ## Analyze a capture
 
 Use the repository analyzer for a repeatable text report:

@@ -2,7 +2,7 @@ use super::checked_len;
 #[cfg(feature = "profiling-stats")]
 use super::measurement::NodeMemoryColumn;
 use super::semantic::{NodeSemanticId, NodeSemanticIdBuilder};
-use super::storage::{NodeArenaMark, NodeStorage};
+use super::storage::{NodeArenaMark, NodeStorage, SidecarNeeds};
 use super::view::NodeList;
 use crate::identity::{HandleIdentity, IdentityAllocator};
 use crate::ids::{ArenaRef, NodeListId};
@@ -141,6 +141,9 @@ impl NodeArena {
             checked_len(self.storage.len(), "node arena exceeds u32 entries"),
         )
     }
+    // Used by tests and transitional format restoration, but the ordinary
+    // freeze path carries a preflight plan from semantic validation.
+    #[allow(dead_code)]
     pub(crate) fn append_with_semantic_id(
         &mut self,
         nodes: &[Node],
@@ -157,6 +160,46 @@ impl NodeArena {
             crate::node::record_node_append(n);
         }
         let (start, len) = self.storage.append(nodes);
+        self.mint_span(start, len, semantic_id)
+    }
+
+    pub(crate) fn append_preflighted_with_semantic_id(
+        &mut self,
+        nodes: &[Node],
+        semantic_id: NodeSemanticId,
+        needs: SidecarNeeds,
+    ) -> NodeListId {
+        if nodes.is_empty() {
+            debug_assert_eq!(semantic_id, self.semantic_ids[0]);
+            return NodeListId::new_epoch(HandleIdentity::builtin(0));
+        }
+        let start = checked_len(self.storage.len(), "node arena exceeds u32 entries");
+        self.debug_assert_bottom_up(nodes, start);
+        #[cfg(feature = "profiling-stats")]
+        for n in nodes {
+            crate::node::record_node_append(n);
+        }
+        let (start, len) = self.storage.append_preflighted(nodes, needs);
+        self.mint_span(start, len, semantic_id)
+    }
+
+    pub(crate) fn append_owned_preflighted_with_semantic_id(
+        &mut self,
+        nodes: &mut Vec<Node>,
+        semantic_id: NodeSemanticId,
+        needs: SidecarNeeds,
+    ) -> NodeListId {
+        if nodes.is_empty() {
+            debug_assert_eq!(semantic_id, self.semantic_ids[0]);
+            return NodeListId::new_epoch(HandleIdentity::builtin(0));
+        }
+        let start = checked_len(self.storage.len(), "node arena exceeds u32 entries");
+        self.debug_assert_bottom_up(nodes, start);
+        #[cfg(feature = "profiling-stats")]
+        for n in nodes.iter() {
+            crate::node::record_node_append(n);
+        }
+        let (start, len) = self.storage.append_owned_preflighted(nodes, needs);
         self.mint_span(start, len, semantic_id)
     }
 

@@ -17,7 +17,7 @@ pub(crate) use copy::ChildPatch;
 #[cfg(feature = "profiling-stats")]
 pub use measurement::{NodeMemoryColumn, NodeStorageObservation, peak_node_storage_measurement};
 pub(crate) use semantic::{NodeSemanticId, NodeSemanticIdBuilder};
-pub(crate) use storage::{NodeArenaMark, NodeStorage};
+pub(crate) use storage::{NodeArenaMark, NodeStorage, SidecarNeeds};
 pub(crate) use view::NodeOriginOverlay;
 pub use view::{CharCodes, CharRun, NodeIter, NodeList, NodeRef};
 

@@ -64,7 +64,7 @@ pub(super) struct StorageMark {
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub(super) struct SidecarNeeds {
+pub(crate) struct SidecarNeeds {
     any: bool,
     pub(super) ligatures: u32,
     pub(super) boxes: u32,
@@ -83,7 +83,7 @@ pub(super) struct SidecarNeeds {
 }
 
 impl SidecarNeeds {
-    fn preflight_and_count(&mut self, node: &Node) {
+    pub(crate) fn preflight_and_count(&mut self, node: &Node) {
         let target = match node {
             Node::Lig {
                 ch, orig, origins, ..
@@ -256,6 +256,17 @@ impl NodeStorage {
     }
 
     pub(crate) fn append(&mut self, nodes: &[Node]) -> (u32, u32) {
+        // Validate every encoding and selected table before reserving or
+        // publishing either rows or words. Publication below is infallible
+        // apart from process-aborting allocation failure.
+        let mut needs = SidecarNeeds::default();
+        for node in nodes {
+            needs.preflight_and_count(node);
+        }
+        self.append_preflighted(nodes, needs)
+    }
+
+    pub(crate) fn append_preflighted(&mut self, nodes: &[Node], needs: SidecarNeeds) -> (u32, u32) {
         #[cfg(feature = "profiling-stats")]
         let capacity_before = self.capacity_signature();
         #[cfg(feature = "profiling-stats")]
@@ -265,13 +276,6 @@ impl NodeStorage {
         start
             .checked_add(len)
             .expect("node arena span overflows u32");
-        // Validate every encoding and selected table before reserving or
-        // publishing either rows or words. Publication below is infallible
-        // apart from process-aborting allocation failure.
-        let mut needs = SidecarNeeds::default();
-        for node in nodes {
-            needs.preflight_and_count(node);
-        }
         if needs.any {
             self.preflight_sidecars(needs);
         }
@@ -300,6 +304,58 @@ impl NodeStorage {
             let retained_after = self.retained_payload_bytes();
             crate::measurement::record_node_append(
                 nodes.len(),
+                needs.as_array(),
+                growth_events,
+                retained_after.saturating_sub(retained_before),
+            );
+            self.record_peak();
+        }
+        (start, len)
+    }
+
+    pub(crate) fn append_owned_preflighted(
+        &mut self,
+        nodes: &mut Vec<Node>,
+        needs: SidecarNeeds,
+    ) -> (u32, u32) {
+        #[cfg(feature = "profiling-stats")]
+        let capacity_before = self.capacity_signature();
+        #[cfg(feature = "profiling-stats")]
+        let retained_before = self.retained_payload_bytes();
+        let start = checked_len(self.words.len(), "node arena exceeds u32 entries");
+        let len = checked_len(nodes.len(), "node list exceeds u32 entries");
+        start
+            .checked_add(len)
+            .expect("node arena span overflows u32");
+        if needs.any {
+            self.preflight_sidecars(needs);
+        }
+        self.words.reserve(nodes.len());
+        self.origins.reserve(nodes.len());
+        if needs.any {
+            self.reserve_sidecars(needs);
+        }
+        for node in nodes.drain(..) {
+            let origin = match &node {
+                Node::Char { origin, .. } => *origin,
+                Node::Lig { origins, .. } => origins.first().copied().unwrap_or(OriginId::UNKNOWN),
+                _ => OriginId::UNKNOWN,
+            };
+            let word = self.encode_owned(node);
+            self.words.push(word);
+            self.origins.push(origin);
+        }
+        #[cfg(feature = "profiling-stats")]
+        {
+            let capacity_after = self.capacity_signature();
+            let growth_events = capacity_before
+                .iter()
+                .zip(capacity_after)
+                .filter(|(before, after)| **before != *after)
+                .count();
+            let retained_after = self.retained_payload_bytes();
+            crate::measurement::record_node_append(
+                len as usize,
                 needs.as_array(),
                 growth_events,
                 retained_after.saturating_sub(retained_before),
@@ -442,6 +498,85 @@ impl NodeStorage {
             Node::MathChoice(value) => push_sidecar(20, &mut self.choices, value.clone()),
             Node::MathList(value) => push_sidecar(21, &mut self.math_lists, *value),
             Node::Adjust(value) => push_sidecar(22, &mut self.adjusts, *value),
+        }
+    }
+
+    // Keep the complete match here instead of forwarding non-owning variants
+    // to `encode`: this is the hot owned-freeze loop, and a second tag dispatch
+    // measurably gives back part of the move-encoding win.
+    fn encode_owned(&mut self, node: Node) -> NodeWord {
+        match node {
+            Node::Char { font, ch, .. } => {
+                NodeWord::new(0, (ch as u64) | ((font.raw() as u64) << 21))
+            }
+            Node::Lig {
+                font,
+                ch,
+                orig,
+                origins,
+            } => {
+                let font = crate::ids::FontId::new(font.raw());
+                push_sidecar(1, &mut self.ligatures, (font, ch, orig, origins))
+            }
+            Node::Kern { amount, kind } => NodeWord::new(
+                2,
+                amount.raw() as u32 as u64 | ((kern_code(kind) as u64) << 32),
+            ),
+            Node::Glue {
+                spec,
+                kind,
+                leader: None,
+            } => NodeWord::new(3, spec.raw() as u64 | ((glue_code(kind) as u64) << 32)),
+            Node::Penalty(value) => NodeWord::new(4, value as u32 as u64),
+            Node::MathOn(value) => NodeWord::new(5, value.raw() as u32 as u64),
+            Node::MathOff(value) => NodeWord::new(6, value.raw() as u32 as u64),
+            Node::Direction(direction) => NodeWord::new(23, direction as u64),
+            Node::MathStyle(style) => NodeWord::new(7, style_code(style) as u64),
+            Node::Nonscript => NodeWord::new(8, 0),
+            Node::HList(value) => NodeWord::sidecar(9, self.boxes.push(value)),
+            Node::VList(value) => NodeWord::sidecar(10, self.boxes.push(value)),
+            Node::Unset(value) => NodeWord::sidecar(11, self.unsets.push(value)),
+            Node::Rule {
+                width,
+                height,
+                depth,
+            } => push_sidecar(12, &mut self.rules, (width, height, depth)),
+            Node::Glue {
+                spec,
+                kind,
+                leader: Some(value),
+            } => push_sidecar(13, &mut self.leaders, (spec, kind, value)),
+            Node::Disc {
+                kind,
+                pre,
+                post,
+                replace,
+            } => push_sidecar(14, &mut self.discs, (kind, pre, post, replace)),
+            Node::Mark { class, tokens } => push_sidecar(15, &mut self.marks, (class, tokens)),
+            Node::Ins {
+                class,
+                size,
+                split_top_skip,
+                split_max_depth,
+                floating_penalty,
+                content,
+            } => NodeWord::sidecar(
+                16,
+                self.insertions.push((
+                    class,
+                    size,
+                    split_top_skip,
+                    split_max_depth,
+                    floating_penalty,
+                    content,
+                )),
+            ),
+            Node::Whatsit(value) => push_sidecar(17, &mut self.whatsits, value),
+            Node::MathNoad(value) => NodeWord::sidecar(18, self.noads.push(value)),
+            Node::FractionNoad(value) => push_sidecar(19, &mut self.fractions, value),
+            Node::MathChoice(value) => push_sidecar(20, &mut self.choices, value),
+            Node::MathList(value) => push_sidecar(21, &mut self.math_lists, value),
+            Node::Adjust(value) => push_sidecar(22, &mut self.adjusts, value),
         }
     }
 

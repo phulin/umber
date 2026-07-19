@@ -8,7 +8,7 @@ use super::state_hash::{
 use crate::ids::{FontId, NodeListId};
 use crate::math::MathField;
 use crate::node::{BoxNode, LeaderPayload, Node, Whatsit};
-use crate::node_arena::{NodeSemanticId, NodeSemanticIdBuilder};
+use crate::node_arena::{NodeSemanticId, NodeSemanticIdBuilder, SidecarNeeds};
 use crate::state_hash::StateHasher;
 
 impl Stores {
@@ -28,11 +28,12 @@ impl Stores {
         identity.finish()
     }
 
-    pub(super) fn validate_and_compute_node_semantic_id(
+    pub(super) fn validate_and_plan_node_list(
         &mut self,
         nodes: &[Node],
-    ) -> NodeSemanticId {
+    ) -> (NodeSemanticId, SidecarNeeds) {
         let mut identity = NodeSemanticIdBuilder::new();
+        let mut needs = SidecarNeeds::default();
         let mut index = 0;
         while index < nodes.len() {
             if let Node::Char { font, .. } = nodes[index] {
@@ -44,6 +45,7 @@ impl Stores {
                 index = end;
             } else {
                 let node = &nodes[index];
+                needs.preflight_and_count(node);
                 self.assert_live_handles_in_node(node);
                 if let Node::Lig { font, .. } = node {
                     let stored_font = self.resolve_stored_font(*font);
@@ -53,7 +55,7 @@ impl Stores {
                 index += 1;
             }
         }
-        identity.finish()
+        (identity.finish(), needs)
     }
 
     // Used by transitional format restoration, which is not reached in the
