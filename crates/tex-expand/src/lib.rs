@@ -20,7 +20,7 @@ use tex_state::glue::GlueSpec;
 use tex_state::ids::{OriginListId, TokenListId};
 use tex_state::interner::Symbol;
 use tex_state::meaning::{Meaning, MeaningFlags, UnexpandablePrimitive};
-use tex_state::provenance::{DiagnosticSite, InsertedOriginKind};
+use tex_state::provenance::{DiagnosticSite, InsertedOriginKind, OriginRecord};
 use tex_state::scaled::Scaled;
 use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 pub use tex_state::{
@@ -1613,10 +1613,13 @@ impl ExpansionMode for DriverExpansionMode {
         stores: &mut tex_state::ExpansionContext<'_>,
         expansion: &mut ExpansionContext<'_>,
     ) -> Result<Option<TracedTokenWord>, ExpandError> {
-        // This is the ordinary TeX `get_x_token` path used by general
-        // scanners. Only callers that are explicitly fetching the command
-        // after a prefix may override `\unexpanded` replay suppression.
-        get_x_token_with_context(input, stores, expansion)
+        // Driver scanners are command-demand consumers: a token copied by
+        // `\unexpanded` is protected from its enclosing expansion, then
+        // resumes ordinary macro expansion when the driver asks for the next
+        // command. This is also required by expl3's linked-property builder,
+        // whose nested `\unexpanded`/`\expandafter` sequence must expose the
+        // generated link token to the following definition scan.
+        get_command_token_with_context(input, stores, expansion)
     }
 
     fn dispatch_raw_token(
@@ -1934,9 +1937,7 @@ fn get_x_token_with_context_inner(
             Ok(dispatched) => dispatched,
             Err(error) => match expansion.recover_macro_mismatch(error) {
                 Ok(()) => continue,
-                Err(ExpandError::MacroCall(args::MacroCallError::EndOfInput { .. })) => {
-                    return Ok(None);
-                }
+                Err(error) if replay_macro_eof_is_clean(stores, &error) => return Ok(None),
                 Err(error) => return Err(error),
             },
         };
@@ -2333,9 +2334,7 @@ pub(crate) fn get_x_token_without_input_open(
             Ok(dispatched) => dispatched,
             Err(error) => match expansion.recover_macro_mismatch(error) {
                 Ok(()) => continue,
-                Err(ExpandError::MacroCall(args::MacroCallError::EndOfInput { .. })) => {
-                    return Ok(None);
-                }
+                Err(error) if replay_macro_eof_is_clean(stores, &error) => return Ok(None),
                 Err(error) => return Err(error),
             },
         };
@@ -2358,6 +2357,20 @@ pub(crate) fn get_x_token_without_input_open(
             }
         }
     }
+}
+
+fn replay_macro_eof_is_clean(
+    stores: &tex_state::ExpansionContext<'_>,
+    error: &ExpandError,
+) -> bool {
+    let ExpandError::MacroCall(args::MacroCallError::EndOfInput { context, .. }) = error else {
+        return false;
+    };
+    matches!(
+        stores.origin(context.origin()),
+        OriginRecord::Inserted(inserted)
+            if matches!(inserted.kind(), InsertedOriginKind::TokenListReplay(_))
+    )
 }
 
 pub(crate) fn dispatch_one_raw_token_with_context(

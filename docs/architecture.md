@@ -134,6 +134,19 @@ is delivered, the next independent request receives a fresh budget; ordinary
 long-running jobs therefore are not charged for unrelated, already-completed
 expansion chains.
 
+Execution-driver scanners are command-demand consumers. Tokens produced by
+`\unexpanded` remain protected for the enclosing expansion request, then
+resume ordinary macro expansion when a driver scanner requests the next
+command. Keeping that second boundary explicit is required by nested
+`\unexpanded`/`\expandafter` constructions such as expl3 linked properties.
+
+End of source input is accepted only when the expansion loop is quiescent. If
+a source-origin macro argument scanner reaches root EOF while matching a call,
+its incomplete-call error crosses both ordinary and restricted expansion
+boundaries. The legacy clean-EOF recovery is limited to calls originating in
+an inserted token-list replay, which preserves format-loaded TRIP behavior
+without hiding a prematurely exhausted source job.
+
 ## 6. Execution engine
 
 `tex-exec` owns primitive dispatch, grouping, assignments, modes, box building,

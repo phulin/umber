@@ -1,5 +1,6 @@
 use super::support::*;
 use super::*;
+use tex_lex::TokenListReplayKind;
 use tex_state::ids::ArenaRef;
 use tex_state::node::Node;
 use tex_state::scaled::Scaled;
@@ -556,6 +557,51 @@ fn dump_marks_format_stop_and_stops_before_following_input() {
     stores
         .dump_format()
         .expect("dump should leave a quiescent serializable format boundary");
+}
+
+#[test]
+fn incomplete_delimited_macro_at_root_eof_is_not_accepted_as_end_of_input() {
+    let mut stores = Universe::new();
+    tex_expand::install_expandable_primitives(&mut stores);
+    crate::install_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(r"\def\runaway#1\stop{}\runaway missing"));
+
+    let error = Executor::new()
+        .run(&mut input, &mut stores)
+        .expect_err("an incomplete macro call must not become accepted end of input");
+
+    assert!(
+        error
+            .to_string()
+            .contains("File ended while scanning use of \\runaway"),
+        "{error}"
+    );
+}
+
+#[test]
+fn incomplete_delimited_macro_from_inserted_replay_retains_clean_eof_recovery() {
+    let mut stores = Universe::new();
+    tex_expand::install_expandable_primitives(&mut stores);
+    crate::install_unexpandable_primitives(&mut stores);
+    let mut definition = InputStack::new(MemoryInput::new(r"\def\runaway#1\stop{}\end"));
+    Executor::new()
+        .run(&mut definition, &mut stores)
+        .expect("macro definition");
+
+    let runaway = stores.intern("runaway");
+    let replay = stores.intern_token_list(&[
+        Token::Cs(runaway.symbol()),
+        Token::Char {
+            ch: 'X',
+            cat: Catcode::Letter,
+        },
+    ]);
+    let mut input = InputStack::new(MemoryInput::new(""));
+    input.push_token_list(replay, TokenListReplayKind::Inserted);
+
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("inserted replay preserves legacy clean EOF recovery");
 }
 
 #[test]
