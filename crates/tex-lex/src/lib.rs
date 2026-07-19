@@ -371,13 +371,40 @@ impl From<WorldError> for InputSourceError {
 /// One valid UTF-8 physical line and its exact range in the source backing.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PhysicalLine {
-    text: String,
+    text: PhysicalLineText,
     bytes_as_chars: bool,
     byte_projection: bool,
     start: usize,
     content_end: usize,
     terminator_start: usize,
     terminator_end: usize,
+}
+
+#[derive(Clone, Debug)]
+enum PhysicalLineText {
+    Owned(String),
+    Shared {
+        backing: Arc<[u8]>,
+        range: std::ops::Range<usize>,
+    },
+}
+
+impl PartialEq for PhysicalLineText {
+    fn eq(&self, other: &Self) -> bool {
+        self.as_str() == other.as_str()
+    }
+}
+
+impl Eq for PhysicalLineText {}
+
+impl PhysicalLineText {
+    fn as_str(&self) -> &str {
+        match self {
+            Self::Owned(text) => text,
+            Self::Shared { backing, range } => std::str::from_utf8(&backing[range.clone()])
+                .expect("shared physical-line backing was validated as UTF-8"),
+        }
+    }
 }
 
 /// Exact content identity of one physical line, including terminator spelling.
@@ -432,7 +459,7 @@ impl PhysicalLine {
             .expect("physical line byte range overflowed");
         assert!(terminator_end >= content_end);
         Self {
-            text,
+            text: PhysicalLineText::Owned(text),
             bytes_as_chars: false,
             byte_projection: false,
             start,
@@ -450,8 +477,9 @@ impl PhysicalLine {
             2 => LineTerminator::CrLf,
             _ => unreachable!("physical input supports only LF and CRLF terminators"),
         };
-        let mut framed = Vec::with_capacity(self.text.len() + 2);
-        framed.extend_from_slice(self.text.as_bytes());
+        let text = self.text.as_str();
+        let mut framed = Vec::with_capacity(text.len() + 2);
+        framed.extend_from_slice(text.as_bytes());
         match terminator {
             LineTerminator::Missing => {}
             LineTerminator::Lf => framed.push(b'\n'),
@@ -5923,7 +5951,7 @@ struct NormalizedLine {
 }
 
 fn normalize_line(line: &PhysicalLine, endlinechar: i32) -> NormalizedLine {
-    let stripped = line.text.trim_end_matches(' ');
+    let stripped = line.text.as_str().trim_end_matches(' ');
     let cursor_len = if line.bytes_as_chars {
         stripped.chars().count()
     } else {
@@ -5951,7 +5979,7 @@ fn normalize_line(line: &PhysicalLine, endlinechar: i32) -> NormalizedLine {
     }
 }
 
-fn next_physical_line(bytes: &[u8], next_offset: &mut usize) -> Option<PhysicalLine> {
+fn next_physical_line(bytes: &Arc<[u8]>, next_offset: &mut usize) -> Option<PhysicalLine> {
     let start = *next_offset;
     if start >= bytes.len() {
         return None;
@@ -5971,12 +5999,12 @@ fn next_physical_line(bytes: &[u8], next_offset: &mut usize) -> Option<PhysicalL
         }
         None => (bytes.len(), bytes.len()),
     };
-    let text = std::str::from_utf8(&bytes[start..terminator_start])
-        .expect("input backing was validated as UTF-8")
-        .to_owned();
     *next_offset = terminator_end;
     Some(PhysicalLine {
-        text,
+        text: PhysicalLineText::Shared {
+            backing: Arc::clone(bytes),
+            range: start..terminator_start,
+        },
         bytes_as_chars: false,
         byte_projection: false,
         start,
@@ -6013,7 +6041,7 @@ fn next_physical_byte_line(bytes: &[u8], next_offset: &mut usize) -> Option<Phys
         .collect();
     *next_offset = terminator_end;
     Some(PhysicalLine {
-        text,
+        text: PhysicalLineText::Owned(text),
         bytes_as_chars: true,
         byte_projection: false,
         start,
