@@ -2444,7 +2444,10 @@ fn replay_macro_eof_is_clean(
     matches!(
         stores.origin(context.origin()),
         OriginRecord::Inserted(inserted)
-            if matches!(inserted.kind(), InsertedOriginKind::TokenListReplay(_))
+            if matches!(
+                inserted.kind(),
+                InsertedOriginKind::TokenListReplay(TokenListReplayKind::Inserted)
+            )
     )
 }
 
