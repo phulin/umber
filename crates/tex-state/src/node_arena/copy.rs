@@ -109,7 +109,13 @@ impl NodeStorage {
             let side = word.payload() as usize;
             let copied = match word.tag() {
                 0 | 2..=8 | 23 => word,
-                1 => copy_vec_row(1, &mut self.ligatures, &source.storage.ligatures, side),
+                1 => {
+                    let word =
+                        copy_vec_row(1, &mut self.ligatures, &source.storage.ligatures, side);
+                    #[cfg(feature = "profiling-stats")]
+                    self.record_last_ligature_payload();
+                    word
+                }
                 9 | 10 => {
                     let row = self.boxes.copy_row(&source.storage.boxes, side);
                     pending.push(ChildPatch::Box {
@@ -156,7 +162,12 @@ impl NodeStorage {
                     });
                     NodeWord::sidecar(16, row)
                 }
-                17 => copy_vec_row(17, &mut self.whatsits, &source.storage.whatsits, side),
+                17 => {
+                    let word = copy_vec_row(17, &mut self.whatsits, &source.storage.whatsits, side);
+                    #[cfg(feature = "profiling-stats")]
+                    self.record_last_whatsit_payload();
+                    word
+                }
                 18 => {
                     let row = self.noads.copy_row(&source.storage.noads, side);
                     let index = row as usize;

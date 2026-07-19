@@ -258,6 +258,84 @@ fn whatsit_owned_payloads(whatsit: &crate::node::Whatsit) -> WhatsitOwnedPayload
 
 impl NodeStorage {
     #[cfg(feature = "profiling-stats")]
+    pub(super) fn record_last_ligature_payload(&mut self) {
+        let (_, _, source, origins) = self
+            .ligatures
+            .last()
+            .expect("a ligature payload was just appended");
+        self.nested_payload_logical += (source.len() * core::mem::size_of::<char>()) as u64
+            + (origins.len() * core::mem::size_of::<crate::token::OriginId>()) as u64;
+        self.nested_payload_retained += (source.capacity() * core::mem::size_of::<char>()) as u64
+            + (origins.capacity() * core::mem::size_of::<crate::token::OriginId>()) as u64;
+    }
+
+    #[cfg(feature = "profiling-stats")]
+    pub(super) fn record_last_whatsit_payload(&mut self) {
+        let owned = whatsit_owned_payloads(
+            self.whatsits
+                .last()
+                .expect("a whatsit payload was just appended"),
+        );
+        for allocation in [owned.strings, owned.bytes, owned.boxes] {
+            self.nested_payload_logical += allocation.logical as u64;
+            self.nested_payload_retained += allocation.retained as u64;
+        }
+    }
+
+    #[cfg(feature = "profiling-stats")]
+    pub(super) fn remove_nested_payloads_from(
+        &mut self,
+        ligature_start: usize,
+        whatsit_start: usize,
+    ) {
+        let mut logical = 0_u64;
+        let mut retained = 0_u64;
+        for (_, _, source, origins) in &self.ligatures[ligature_start..] {
+            logical += (source.len() * core::mem::size_of::<char>()) as u64;
+            retained += (source.capacity() * core::mem::size_of::<char>()) as u64;
+            logical += (origins.len() * core::mem::size_of::<crate::token::OriginId>()) as u64;
+            retained +=
+                (origins.capacity() * core::mem::size_of::<crate::token::OriginId>()) as u64;
+        }
+        for whatsit in &self.whatsits[whatsit_start..] {
+            let owned = whatsit_owned_payloads(whatsit);
+            for allocation in [owned.strings, owned.bytes, owned.boxes] {
+                logical += allocation.logical as u64;
+                retained += allocation.retained as u64;
+            }
+        }
+        self.nested_payload_logical = self
+            .nested_payload_logical
+            .checked_sub(logical)
+            .expect("nested logical payload accounting underflow");
+        self.nested_payload_retained = self
+            .nested_payload_retained
+            .checked_sub(retained)
+            .expect("nested retained payload accounting underflow");
+    }
+
+    #[cfg(all(test, feature = "profiling-stats"))]
+    pub(super) fn rebuild_nested_payload_measurement(&mut self) {
+        self.nested_payload_logical = 0;
+        self.nested_payload_retained = 0;
+        for index in 0..self.ligatures.len() {
+            let (_, _, source, origins) = &self.ligatures[index];
+            self.nested_payload_logical += (source.len() * core::mem::size_of::<char>()) as u64
+                + (origins.len() * core::mem::size_of::<crate::token::OriginId>()) as u64;
+            self.nested_payload_retained += (source.capacity() * core::mem::size_of::<char>())
+                as u64
+                + (origins.capacity() * core::mem::size_of::<crate::token::OriginId>()) as u64;
+        }
+        for index in 0..self.whatsits.len() {
+            let owned = whatsit_owned_payloads(&self.whatsits[index]);
+            for allocation in [owned.strings, owned.bytes, owned.boxes] {
+                self.nested_payload_logical += allocation.logical as u64;
+                self.nested_payload_retained += allocation.retained as u64;
+            }
+        }
+    }
+
+    #[cfg(feature = "profiling-stats")]
     pub(super) fn capacity_signature(&self) -> [usize; 33] {
         [
             self.words.capacity(),
@@ -349,6 +427,7 @@ impl NodeStorage {
         add!(self.choices);
         add!(self.math_lists);
         add!(self.adjusts);
+        #[cfg(not(feature = "profiling-stats"))]
         for (_, _, source, origins) in &self.ligatures {
             logical += (source.len() * core::mem::size_of::<char>()) as u64;
             retained += (source.capacity() * core::mem::size_of::<char>()) as u64;
@@ -356,12 +435,18 @@ impl NodeStorage {
             retained +=
                 (origins.capacity() * core::mem::size_of::<crate::token::OriginId>()) as u64;
         }
+        #[cfg(not(feature = "profiling-stats"))]
         for whatsit in &self.whatsits {
             let owned = whatsit_owned_payloads(whatsit);
             for allocation in [owned.strings, owned.bytes, owned.boxes] {
                 logical += allocation.logical as u64;
                 retained += allocation.retained as u64;
             }
+        }
+        #[cfg(feature = "profiling-stats")]
+        {
+            logical += self.nested_payload_logical;
+            retained += self.nested_payload_retained;
         }
         (logical, retained)
     }

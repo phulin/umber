@@ -51,6 +51,7 @@ fn owned_whatsit_payloads_participate_in_totals_and_columns() {
             structure: None,
             kind: PdfDestinationKind::Fit,
         })));
+    storage.rebuild_nested_payload_measurement();
 
     let measured = observation(&storage);
 
@@ -117,6 +118,7 @@ fn newer_whatsit_payloads_are_exhaustively_measured() {
             running: false,
         })),
     ]);
+    storage.rebuild_nested_payload_measurement();
 
     let measured = observation(&storage);
 
@@ -165,6 +167,39 @@ fn owned_ligature_payloads_participate_in_totals_and_columns() {
         arena.measurement_payload_bytes(),
         measured.order_key(),
         "payload totals must equal the sum of canonical columns"
+    );
+}
+
+#[test]
+fn incremental_nested_payload_totals_follow_compact_copy_and_rollback() {
+    let mut source = NodeStorage::default();
+    source.append(&[
+        Node::Lig {
+            font: FontId::new(1),
+            ch: 'f',
+            orig: vec!['f', 'i'],
+            origins: vec![OriginId::from_raw(1), OriginId::from_raw(2)],
+        },
+        Node::Whatsit(Whatsit::Special {
+            class: "measurement".to_owned(),
+            payload: vec![1, 2, 3, 4],
+        }),
+    ]);
+
+    let mut destination = NodeStorage::default();
+    let empty = destination.mark();
+    let mut pending = Vec::new();
+    destination.append_compact(source.view(0, 2), &mut pending);
+    assert!(pending.is_empty());
+    assert_eq!(
+        destination.payload_bytes(),
+        observation(&destination).order_key()
+    );
+
+    destination.truncate(empty);
+    assert_eq!(
+        destination.payload_bytes(),
+        observation(&destination).order_key()
     );
 }
 
@@ -221,6 +256,7 @@ fn storage_with_payload(len: usize, capacity: usize) -> NodeStorage {
         class: String::new(),
         payload,
     });
+    storage.rebuild_nested_payload_measurement();
     storage
 }
 

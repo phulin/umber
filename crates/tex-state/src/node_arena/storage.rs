@@ -177,6 +177,13 @@ pub(crate) struct NodeStorage {
     pub(super) choices: Vec<crate::math::MathChoice>,
     pub(super) math_lists: Vec<crate::math::MathListNode>,
     pub(super) adjusts: Vec<NodeListId>,
+    /// Exact totals for heap allocations owned below ligature and whatsit
+    /// sidecar rows. Profiling reads these after every append, so keep the
+    /// totals incrementally instead of rescanning all accumulated rows.
+    #[cfg(feature = "profiling-stats")]
+    pub(super) nested_payload_logical: u64,
+    #[cfg(feature = "profiling-stats")]
+    pub(super) nested_payload_retained: u64,
 }
 
 impl NodeStorage {
@@ -237,6 +244,8 @@ impl NodeStorage {
         assert!(mark.choices as usize <= self.choices.len());
         assert!(mark.math_lists as usize <= self.math_lists.len());
         assert!(mark.adjusts as usize <= self.adjusts.len());
+        #[cfg(feature = "profiling-stats")]
+        self.remove_nested_payloads_from(mark.ligatures as usize, mark.whatsits as usize);
         self.words.truncate(mark.words as usize);
         self.origins.truncate(mark.words as usize);
         self.ligatures.truncate(mark.ligatures as usize);
@@ -433,11 +442,14 @@ impl NodeStorage {
                 // epoch-bearing handle and a packed character handle cannot look
                 // like two distinct resources with the same public font id.
                 let font = crate::ids::FontId::new(font.raw());
-                push_sidecar(
+                let word = push_sidecar(
                     1,
                     &mut self.ligatures,
                     (font, *ch, orig.clone(), origins.clone()),
-                )
+                );
+                #[cfg(feature = "profiling-stats")]
+                self.record_last_ligature_payload();
+                word
             }
             Node::Kern { amount, kind } => NodeWord::new(
                 2,
@@ -492,7 +504,12 @@ impl NodeStorage {
                     *content,
                 )),
             ),
-            Node::Whatsit(value) => push_sidecar(17, &mut self.whatsits, value.clone()),
+            Node::Whatsit(value) => {
+                let word = push_sidecar(17, &mut self.whatsits, value.clone());
+                #[cfg(feature = "profiling-stats")]
+                self.record_last_whatsit_payload();
+                word
+            }
             Node::MathNoad(value) => NodeWord::sidecar(18, self.noads.push(value.clone())),
             Node::FractionNoad(value) => push_sidecar(19, &mut self.fractions, value.clone()),
             Node::MathChoice(value) => push_sidecar(20, &mut self.choices, value.clone()),
@@ -516,7 +533,10 @@ impl NodeStorage {
                 origins,
             } => {
                 let font = crate::ids::FontId::new(font.raw());
-                push_sidecar(1, &mut self.ligatures, (font, ch, orig, origins))
+                let word = push_sidecar(1, &mut self.ligatures, (font, ch, orig, origins));
+                #[cfg(feature = "profiling-stats")]
+                self.record_last_ligature_payload();
+                word
             }
             Node::Kern { amount, kind } => NodeWord::new(
                 2,
@@ -571,7 +591,12 @@ impl NodeStorage {
                     content,
                 )),
             ),
-            Node::Whatsit(value) => push_sidecar(17, &mut self.whatsits, value),
+            Node::Whatsit(value) => {
+                let word = push_sidecar(17, &mut self.whatsits, value);
+                #[cfg(feature = "profiling-stats")]
+                self.record_last_whatsit_payload();
+                word
+            }
             Node::MathNoad(value) => NodeWord::sidecar(18, self.noads.push(value)),
             Node::FractionNoad(value) => push_sidecar(19, &mut self.fractions, value),
             Node::MathChoice(value) => push_sidecar(20, &mut self.choices, value),

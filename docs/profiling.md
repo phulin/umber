@@ -306,6 +306,27 @@ prototype was retained. A useful future output specialization would first need
 a different committed-page identity contract; under the current exact
 artifact and incremental contract this is not a big compile-time opportunity.
 
+## Incremental compact-node measurement
+
+Issue `umber2-2xrt` found that the `profiling-stats` peak-memory observer was
+changing the algorithm it measured. Every compact-list append called
+`payload_bytes`; that routine rescanned all previously accumulated ligature and
+whatsit heap payloads. Repeated append therefore made profiling measurement
+quadratic in accumulated sidecar rows. It was the largest self-time owner in
+the post-freeze capture at 756/7,654 main-thread samples (9.88%).
+
+Compact storage now maintains exact logical and retained totals for nested
+ligature and whatsit allocations as rows are appended, compact-copied, or
+rolled back. The ordinary fixed set of column capacities remains a bounded
+calculation, and detailed peak columns retain the same values. The matched
+ten-second native sample reduced `payload_bytes` to 70/7,630 samples (0.92%), a
+90.7% relative reduction. Twelve order-balanced ten-run timing pairs all
+favored the change: the profiling baseline averaged 96.527 ms/run and the
+candidate 87.527 ms/run, a 9.32% whole-Gentle improvement. The production
+feature set adds no accounting fields or append work. Gentle remained exactly
+97 pages and 263,424 DVI bytes, and profiling measurement tests cover borrowed,
+owned, compact-copy, and rollback accounting.
+
 ## Analyze a capture
 
 Use the repository analyzer for a repeatable text report:
