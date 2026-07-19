@@ -20,7 +20,8 @@ pub fn post_line_break<S: TypesetState>(
 /// clears it, and fills it with the next line. Callers that consume one line
 /// before requesting another therefore pay for line storage only once.
 pub struct LineMaterializer {
-    nodes: std::iter::Peekable<std::iter::Enumerate<std::vec::IntoIter<Node>>>,
+    nodes: std::vec::IntoIter<Node>,
+    position: usize,
     node_count: usize,
     breaks: Vec<BreakDecision>,
     line_no: usize,
@@ -34,7 +35,8 @@ impl LineMaterializer {
     pub fn new(nodes: Vec<Node>, breaks: Vec<BreakDecision>, params: PostLineBreakParams) -> Self {
         let node_count = nodes.len();
         Self {
-            nodes: nodes.into_iter().enumerate().peekable(),
+            nodes: nodes.into_iter(),
+            position: 0,
             node_count,
             breaks,
             line_no: 0,
@@ -51,7 +53,7 @@ impl LineMaterializer {
     ) -> Option<BrokenLine> {
         let decision = *self.breaks.get(self.line_no)?;
         let end = decision.position.min(self.node_count);
-        let start = self.nodes.peek().map_or(end, |(index, _)| *index);
+        let start = self.position.min(end);
         let required = end
             .checked_sub(start)
             .and_then(|len| len.checked_add(self.pending_post.len()))
@@ -73,9 +75,8 @@ impl LineMaterializer {
         line.append(&mut self.pending_post);
         self.pending_post = push_owned_line_segment(
             state,
-            &mut self.nodes,
+            (&mut self.nodes, &mut self.position, self.node_count),
             end,
-            self.node_count,
             &decision,
             self.params.empty_list,
             &mut line,
@@ -101,8 +102,9 @@ impl LineMaterializer {
             &self.params,
         );
         self.line_no += 1;
-        while matches!(self.nodes.peek(), Some((_, node)) if is_discardable(node)) {
+        while self.nodes.as_slice().first().is_some_and(is_discardable) {
             let _ = self.nodes.next();
+            self.position += 1;
         }
         Some(BrokenLine {
             nodes: line,
@@ -159,16 +161,18 @@ pub fn post_line_break_owned<S: TypesetState>(
 
 fn push_owned_line_segment<S: TypesetState>(
     state: &S,
-    nodes: &mut std::iter::Peekable<impl Iterator<Item = (usize, Node)>>,
+    source: (&mut std::vec::IntoIter<Node>, &mut usize, usize),
     end: usize,
-    node_count: usize,
     decision: &BreakDecision,
     empty_list: tex_state::ids::NodeListId,
     out: &mut Vec<Node>,
 ) -> Vec<Node> {
+    let (nodes, position, node_count) = source;
     let mut post = Vec::new();
-    while matches!(nodes.peek(), Some((index, _)) if *index < end) {
-        let (absolute, node) = nodes.next().expect("peeked paragraph node exists");
+    while *position < end {
+        let absolute = *position;
+        let node = nodes.next().expect("paragraph break position is in bounds");
+        *position += 1;
         match node {
             Node::Disc {
                 pre,
