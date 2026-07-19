@@ -327,6 +327,22 @@ feature set adds no accounting fields or append work. Gentle remained exactly
 97 pages and 263,424 DVI bytes, and profiling measurement tests cover borrowed,
 owned, compact-copy, and rollback accounting.
 
+## Batched compact-promotion copy experiment
+
+Issue `umber2-0kij` tested maximal runs of inline compact words (characters,
+kerns, ordinary glue, penalties, math boundaries, directions, and styles) in
+`NodeStorage::append_compact`. The candidate copied each run's words and
+diagnostic origins with two bulk slice extensions while preserving the exact
+sidecar preflight and child-patch path.
+
+The matched native samples reduced `append_compact` self time from 144/7,630
+samples (1.89%) to 103/7,588 (1.36%), but system `memmove` remained essentially
+flat at 267 versus 270 samples. Twelve order-balanced timing pairs were also
+flat to slightly adverse: 87.371 ms/run baseline versus 87.407 ms/run candidate,
+with five pairs favoring the candidate. The prototype was removed. Per-word
+tag dispatch is not the promotion roofline; reducing the 3,057 promotions and
+202,149 source words copied by a cold Gentle run is the higher-leverage target.
+
 ## Analyze a capture
 
 Use the repository analyzer for a repeatable text report:
