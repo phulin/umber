@@ -505,7 +505,7 @@ impl InputResolver for VirtualFileResolver<'_> {
         if self.request_is_unavailable(FileKind::TexInput, name) {
             return Ok(None);
         }
-        self.open(input, FileKind::TexInput, name, request_index)
+        self.open_classified(input, FileKind::TexInput, name, request_index, true)
             .map(|content| Some(u64::try_from(content.bytes().len()).unwrap_or(u64::MAX)))
     }
 

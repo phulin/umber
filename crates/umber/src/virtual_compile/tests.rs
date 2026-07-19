@@ -268,6 +268,115 @@ fn unavailable_probe_retries_through_dump_instead_of_accepting_end_of_input() {
 }
 
 #[test]
+fn positive_probe_can_promote_to_required_input_before_dump() {
+    let mut session = session(
+        "\\openin0=optional.cfg \\ifeof0 \\errmessage{missing optional file}\\else \\closein0 \\input optional.cfg \\fi \\dump",
+    );
+    let missing = probes(session.compile_attempt());
+    assert_eq!(missing.len(), 1);
+    session
+        .provide_resources(vec![ResourceResponse::File(ResolvedFile {
+            request: missing[0].key().clone(),
+            virtual_path: "/texlive/optional.cfg".to_owned(),
+            bytes: b"\\message{OPTIONAL-PRESENT}\\endinput".to_vec(),
+            expected_digest: None,
+        })])
+        .expect("positive probe response");
+    let CompileAttemptResult::Complete(output) = session.compile_attempt() else {
+        panic!("positive probe should permit the guarded input and dump");
+    };
+    assert!(
+        output
+            .terminal
+            .windows(16)
+            .any(|window| window == b"OPTIONAL-PRESENT")
+    );
+    assert!(
+        session
+            .into_accepted_finalization()
+            .expect("accepted format finalization")
+            .dumped_format
+    );
+}
+
+#[test]
+fn resolved_nested_probe_retries_through_endinput_to_root_dump() {
+    let mut session = session("\\input wrapper \\dump");
+    let missing = resources(session.compile_attempt());
+    assert_eq!(missing.len(), 1);
+    let ResourceRequest::File(wrapper) = &missing[0] else {
+        unreachable!();
+    };
+    session
+        .provide_resources(vec![ResourceResponse::File(ResolvedFile {
+            request: wrapper.key().clone(),
+            virtual_path: "/texlive/wrapper.tex".into(),
+            bytes: b"\\openin0=optional.dfu \\ifeof0 \\else \\input optional.dfu \\fi \\endinput"
+                .to_vec(),
+            expected_digest: None,
+        })])
+        .expect("wrapper response");
+
+    let probed = probes(session.compile_attempt());
+    assert_eq!(probed.len(), 1);
+    session
+        .provide_resources(vec![ResourceResponse::File(ResolvedFile {
+            request: probed[0].key().clone(),
+            virtual_path: "/texlive/optional.dfu".into(),
+            bytes: b"\\endinput".to_vec(),
+            expected_digest: None,
+        })])
+        .expect("positive probe response");
+
+    assert!(matches!(
+        session.compile_attempt(),
+        CompileAttemptResult::Complete(_)
+    ));
+    assert!(
+        session
+            .into_accepted_finalization()
+            .expect("accepted format finalization")
+            .dumped_format
+    );
+}
+
+#[test]
+fn unavailable_nested_probe_retries_through_endinput_to_root_dump() {
+    let mut session = session("\\input wrapper \\dump");
+    let missing = resources(session.compile_attempt());
+    let ResourceRequest::File(wrapper) = &missing[0] else {
+        unreachable!();
+    };
+    session
+        .provide_resources(vec![ResourceResponse::File(ResolvedFile {
+            request: wrapper.key().clone(),
+            virtual_path: "/texlive/wrapper.tex".into(),
+            bytes: b"\\openin0=optional.dfu \\ifeof0 \\else \\input optional.dfu \\fi \\endinput"
+                .to_vec(),
+            expected_digest: None,
+        })])
+        .expect("wrapper response");
+
+    let probed = probes(session.compile_attempt());
+    session
+        .provide_resources(vec![ResourceResponse::FileUnavailable(
+            probed[0].key().clone(),
+        )])
+        .expect("negative probe response");
+
+    assert!(matches!(
+        session.compile_attempt(),
+        CompileAttemptResult::Complete(_)
+    ));
+    assert!(
+        session
+            .into_accepted_finalization()
+            .expect("accepted format finalization")
+            .dumped_format
+    );
+}
+
+#[test]
 fn multiple_tfm_misses_and_later_input_are_batched_in_order() {
     let mut session = session("\\font\\a=one\\relax \\font\\b=two\\relax \\input later \\end");
     let missing = requests(session.compile_attempt());
@@ -1033,6 +1142,43 @@ fn invalid_openin_probe_uses_tex_missing_file_semantics() {
             .terminal
             .windows(b"INVALID-PROBE-MISSING".len())
             .any(|window| window == b"INVALID-PROBE-MISSING")
+    );
+}
+
+#[test]
+fn unavailable_file_size_enquiry_is_a_probe_and_reaches_dump() {
+    let mut session = VirtualCompileSession::new(SessionOptions {
+        engine: EngineMode::PdfTex,
+        ..SessionOptions::default()
+    })
+    .expect("session");
+    session
+        .add_user_file(
+            "main.tex",
+            b"\\message{SIZE=[\\pdffilesize{optional.cfg}]}\\dump".to_vec(),
+        )
+        .expect("main source");
+    let missing = probes(session.compile_attempt());
+    assert_eq!(missing.len(), 1);
+    session
+        .provide_resources(vec![ResourceResponse::FileUnavailable(
+            missing[0].key().clone(),
+        )])
+        .expect("authoritative negative enquiry response");
+    let CompileAttemptResult::Complete(output) = session.compile_attempt() else {
+        panic!("negative file-size probe should resume through dump");
+    };
+    assert!(
+        output
+            .terminal
+            .windows(7)
+            .any(|window| window == b"SIZE=[]")
+    );
+    assert!(
+        session
+            .into_accepted_finalization()
+            .expect("accepted format finalization")
+            .dumped_format
     );
 }
 
