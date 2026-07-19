@@ -18,19 +18,19 @@ pub(crate) fn expand_after(
 ) -> Result<(), ExpandError>
 where
 {
-    let Some(saved) = crate::next_prepared_expansion_token(input, stores, expansion)? else {
+    let Some(saved) = crate::get_token_with_context(input, stores, expansion)? else {
         return Err(ExpandError::MissingTokenAfterPrimitive {
             opcode: ExpandableOpcode::ExpandAfter,
             context,
         });
     };
-    let Some(target) = crate::next_prepared_expansion_token(input, stores, expansion)? else {
+    let Some(target) = crate::get_token_with_context(input, stores, expansion)? else {
         return Err(ExpandError::MissingTokenAfterPrimitive {
             opcode: ExpandableOpcode::ExpandAfter,
             context,
         });
     };
-    mode.dispatch_raw_token_after(saved.traced_token(), target.raw(), input, stores, expansion)
+    mode.dispatch_raw_token_after(saved, target, input, stores, expansion)
 }
 
 pub(crate) fn scan_csname(

@@ -429,20 +429,9 @@ where
                 continue;
             }
         }
-        let restricted_expandafter = crate::expandable_symbol(stores, raw).is_some_and(|symbol| {
-            expansion.resolve_meaning(input, stores, symbol)
-                == Meaning::ExpandablePrimitive(ExpandablePrimitive::ExpandAfter)
-        });
-        if restricted_expandafter {
-            expansion.begin_restricted_expandafter();
-        }
-        let expanded = crate::get_x_or_protected_from_prepared_with_context(
+        let expanded = match crate::get_x_or_protected_from_prepared_with_context(
             prepared, input, stores, expansion,
-        );
-        if restricted_expandafter {
-            expansion.end_restricted_expandafter();
-        }
-        let expanded = match expanded {
+        ) {
             Ok(expanded) => expanded,
             Err(error) => {
                 record_undefined_diagnostic(error, diagnostics)?;
@@ -794,10 +783,7 @@ fn collect_expanded_text(
             // step on its target, then returns control to the protected-aware
             // replacement scanner. Calling `get_x_token` here would continue
             // through the saved protected macro and expand it incorrectly.
-            expansion.begin_restricted_expandafter();
-            let dispatch = mode.dispatch_raw_token(traced, input, stores, expansion);
-            expansion.end_restricted_expandafter();
-            let dispatch = dispatch?;
+            let dispatch = mode.dispatch_raw_token(traced, input, stores, expansion)?;
             crate::push_dispatch_result(input, stores, dispatch);
             continue;
         }

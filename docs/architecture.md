@@ -138,15 +138,8 @@ Execution-driver scans preserve ordinary `\unexpanded` suppression by
 default. A scanner boundary that begins a fresh command demand opens an
 explicit scope, propagated through the nested scanner work needed to satisfy
 that request; the post-character-constant lookahead in integer scanning uses
-this path. Raw `\expandafter` dispatch classifies the lexer's delivery-local
-suppression state at its target step: it preserves `\noexpand` everywhere,
-resumes `\unexpanded` in ordinary driver command demand, and preserves
-`\unexpanded` in restricted expansion, including the one-step target
-expansion performed while an expanded replacement text is being collected.
-That collection freezes provenance but not the source replay frame, so the
-restricted target step reconstructs suppression from a direct `Unexpanded`
-origin. Ordinary driver replay treats the same origin as history and does not
-reactivate suppression when the frozen macro body is used later.
+this path. Raw `\expandafter` dispatch preserves `\noexpand` everywhere and
+preserves `\unexpanded` outside such a command-demand scope.
 
 End of source input is accepted only when the expansion loop is quiescent. If
 a source-origin macro argument scanner reaches root EOF while matching a call,

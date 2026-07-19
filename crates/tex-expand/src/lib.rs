@@ -1055,7 +1055,6 @@ pub struct ExpansionContext<'a> {
     remaining_fuel: u64,
     fuel_scope_depth: u32,
     command_demand_depth: u32,
-    restricted_expandafter_depth: u32,
     // Meanings use generation-marked dense deduplication below. The remaining
     // read kinds stay append-only here and are sorted once at publication.
     paragraph_reads: Option<Vec<ReadDependency>>,
@@ -1090,7 +1089,6 @@ impl<'a> ExpansionContext<'a> {
             remaining_fuel: DEFAULT_EXPANSION_FUEL,
             fuel_scope_depth: 0,
             command_demand_depth: 0,
-            restricted_expandafter_depth: 0,
             paragraph_reads: None,
             paragraph_read_tracking: false,
             paragraph_meanings: Vec::new(),
@@ -1121,7 +1119,6 @@ impl<'a> ExpansionContext<'a> {
             remaining_fuel: DEFAULT_EXPANSION_FUEL,
             fuel_scope_depth: 0,
             command_demand_depth: 0,
-            restricted_expandafter_depth: 0,
             paragraph_reads: None,
             paragraph_read_tracking: false,
             paragraph_meanings: Vec::new(),
@@ -1350,7 +1347,6 @@ impl<'a> ExpansionContext<'a> {
             remaining_fuel: self.remaining_fuel,
             fuel_scope_depth: self.fuel_scope_depth,
             command_demand_depth: self.command_demand_depth,
-            restricted_expandafter_depth: self.restricted_expandafter_depth,
             paragraph_reads: self.paragraph_reads.take(),
             paragraph_read_tracking: self.paragraph_read_tracking,
             paragraph_meanings: std::mem::take(&mut self.paragraph_meanings),
@@ -1488,17 +1484,6 @@ impl<'a> ExpansionContext<'a> {
         self.resolution_index = self.resolution_index.wrapping_add(1);
         index
     }
-
-    fn begin_restricted_expandafter(&mut self) {
-        self.restricted_expandafter_depth = self
-            .restricted_expandafter_depth
-            .checked_add(1)
-            .expect("restricted expandafter depth overflowed");
-    }
-
-    fn end_restricted_expandafter(&mut self) {
-        self.restricted_expandafter_depth -= 1;
-    }
 }
 
 /// Erased policy for recursive expansion from scanner code.
@@ -1547,15 +1532,6 @@ pub trait ExpansionMode {
         false
     }
 
-    /// Whether `\expandafter` resumes an actively suppressed `\unexpanded`
-    /// target.
-    ///
-    /// Driver expansion is a command-demand step at this raw-token boundary;
-    /// restricted expansion preserves the target for its enclosing consumer.
-    fn expands_expandafter_unexpanded_replay(&self, _expansion: &ExpansionContext<'_>) -> bool {
-        false
-    }
-
     fn dispatch_raw_token(
         &mut self,
         token: TracedTokenWord,
@@ -1584,87 +1560,31 @@ pub trait ExpansionMode {
     fn dispatch_raw_token_after(
         &mut self,
         saved: TracedTokenWord,
-        target: RawExpansionToken,
+        target: TracedTokenWord,
         input: &mut InputStack,
         stores: &mut tex_state::ExpansionContext<'_>,
         expansion: &mut ExpansionContext<'_>,
     ) -> Result<(), ExpandError> {
-        // Suppression is delivery-local lexer state, not a durable property of
-        // provenance. A token can retain an `Unexpanded` origin after it has
-        // been frozen into and replayed from a macro body; treating that old
-        // origin as live suppression loses expl3's expandafter delimiters.
-        let expands_unexpanded = self.expands_expandafter_unexpanded_replay(expansion);
-        let target_suppression = if stores
-            .origin_is_inserted_kind(target.token.origin(), InsertedOriginKind::NoExpand)
-        {
-            ExpansionSuppression::NoExpand
-        } else if !expands_unexpanded
-            && stores.origin_is_inserted_kind(target.token.origin(), InsertedOriginKind::Unexpanded)
-        {
-            // Expanded replacement collection freezes the semantic token and
-            // its provenance but not the original replay frame. Reconstruct
-            // suppression from that direct origin only in a restricted target
-            // step; ordinary driver replay treats the same origin as history.
-            ExpansionSuppression::Unexpanded
+        // Raw `get_token` delivery does not carry the replay suppression bits
+        // separately from provenance. Preserve `\noexpand` in every mode and
+        // preserve `\unexpanded` in restricted expansion; command-demand
+        // driver expansion intentionally resumes the latter.
+        let suppress = stores
+            .origin_is_inserted_kind(target.origin(), InsertedOriginKind::NoExpand)
+            || (!self.expands_unexpanded_replay(expansion)
+                && stores.origin_is_inserted_kind(target.origin(), InsertedOriginKind::Unexpanded));
+        let dispatched = if suppress {
+            Ok(Dispatch::DeliverNoExpand(target))
         } else {
-            target.suppression.for_mode(expands_unexpanded)
-        };
-        let dispatched = if target_suppression.is_suppressed() {
-            push_suppressed_token(input, stores, target.token, target_suppression);
-            Ok(Dispatch::Continue)
-        } else {
-            self.dispatch_raw_token(target.token, input, stores, expansion)
+            self.dispatch_raw_token(target, input, stores, expansion)
         };
         let result = dispatched.map(|dispatch| push_dispatch_result(input, stores, dispatch));
         // TeX's `back_input` cancels the first `get_token` delivery before
         // the saved token is read again. Without this, a brace held by
         // `\expandafter` changes `align_state` twice.
         input.undo_alignment_delivery(classify_alignment_token(stores, saved).0);
-        // The saved token was fetched by raw `get_token` and is backed up as
-        // ordinary inserted input. Replay suppression controls the target's
-        // one expansion step; it must not follow the saved token across that
-        // backup boundary.
         push_inserted_token(input, stores, saved, InsertedOriginKind::ExpandAfter);
         result
-    }
-}
-
-/// One-shot expansion suppression attached to a raw lexer delivery.
-///
-/// Unlike token provenance, this state is meaningful only while the token is
-/// being consumed from its current replay frame.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum ExpansionSuppression {
-    None,
-    NoExpand,
-    Unexpanded,
-}
-
-/// Raw token delivery paired with its current replay-suppression state.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct RawExpansionToken {
-    token: TracedTokenWord,
-    suppression: ExpansionSuppression,
-}
-
-impl RawExpansionToken {
-    #[must_use]
-    pub const fn new(token: TracedTokenWord, suppression: ExpansionSuppression) -> Self {
-        Self { token, suppression }
-    }
-}
-
-impl ExpansionSuppression {
-    const fn for_mode(self, expands_unexpanded_replay: bool) -> Self {
-        if expands_unexpanded_replay && matches!(self, Self::Unexpanded) {
-            Self::None
-        } else {
-            self
-        }
-    }
-
-    const fn is_suppressed(self) -> bool {
-        !matches!(self, Self::None)
     }
 }
 
@@ -1775,10 +1695,6 @@ impl ExpansionMode for DriverExpansionMode {
 
     fn expands_unexpanded_replay(&self, expansion: &ExpansionContext<'_>) -> bool {
         expansion.command_demand_depth != 0
-    }
-
-    fn expands_expandafter_unexpanded_replay(&self, expansion: &ExpansionContext<'_>) -> bool {
-        expansion.restricted_expandafter_depth == 0
     }
 
     fn dispatch_raw_token(
@@ -1985,20 +1901,6 @@ impl PreparedExpansionToken {
     #[must_use]
     pub(crate) const fn suppress_expansion(self) -> bool {
         self.0.suppress_expansion()
-    }
-
-    pub(crate) const fn suppression(self) -> ExpansionSuppression {
-        if !self.0.suppress_expansion() {
-            ExpansionSuppression::None
-        } else if self.0.expand_for_command_demand() {
-            ExpansionSuppression::Unexpanded
-        } else {
-            ExpansionSuppression::NoExpand
-        }
-    }
-
-    pub(crate) fn raw(self) -> RawExpansionToken {
-        RawExpansionToken::new(self.traced_token(), self.suppression())
     }
 }
 
@@ -2668,25 +2570,6 @@ pub(crate) fn push_noexpand_token(
     let mut buffer = input.take_transient_token_buffer();
     buffer.push(TracedTokenWord::pack(semantic, origin));
     input.push_transient_tokens(buffer, TokenListReplayKind::NoExpand);
-}
-
-fn push_suppressed_token(
-    input: &mut InputStack,
-    stores: &mut tex_state::ExpansionContext<'_>,
-    token: TracedTokenWord,
-    suppression: ExpansionSuppression,
-) {
-    match suppression {
-        ExpansionSuppression::None => {
-            push_inserted_token(input, stores, token, InsertedOriginKind::ExpandAfter);
-        }
-        ExpansionSuppression::NoExpand => push_noexpand_token(input, stores, token),
-        ExpansionSuppression::Unexpanded => {
-            let mut buffer = input.take_transient_token_buffer();
-            buffer.push(token);
-            input.push_transient_tokens(buffer, TokenListReplayKind::Unexpanded);
-        }
-    }
 }
 
 pub(crate) fn expansion_suppressed_origin_list(
