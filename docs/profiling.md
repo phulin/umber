@@ -283,6 +283,29 @@ rejected after an eight-pair comparison regressed by about 0.34%; the direct
 single-dispatch owned match is intentional. Gentle remained exactly 97 pages
 and 263,424 DVI bytes.
 
+## DVI-only shipout experiment
+
+Issue `umber2-q02h.119` tested whether plain-DVI execution could bypass the
+canonical page-artifact path. Fresh shipout already performs one compact-list
+walk that drives the artifact writer and DVI state machine together; there is
+no second generic page-model traversal to remove. The canonical artifact is
+also the committed page identity used by checkpoints, suffix reuse, replay,
+and the public execution result, even when `\pdfoutput=0`. Omitting it would
+therefore change engine and incremental semantics rather than specialize an
+output formatter.
+
+The post-freeze native sample contained 7,654 main-thread samples. Direct
+shipout staging was 681 samples (8.90%), but its visible artifact serialization
+leaves were small: `V10NodeListWriter::char` had 17 self samples (0.22%),
+`glue` 10 (0.13%), and the remaining artifact writer leaves were individually
+below the report's five-sample threshold. The shared emitter itself had 39 self
+samples (0.51%), while DVI movement alone had 56 (0.73%). Thus even an invalid
+artifact-free ceiling would retain most shipout traversal and DVI work while
+removing less than roughly one percent of the whole run. No production
+prototype was retained. A useful future output specialization would first need
+a different committed-page identity contract; under the current exact
+artifact and incremental contract this is not a big compile-time opportunity.
+
 ## Analyze a capture
 
 Use the repository analyzer for a repeatable text report:
