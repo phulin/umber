@@ -505,8 +505,17 @@ impl InputResolver for VirtualFileResolver<'_> {
         if self.request_is_unavailable(FileKind::TexInput, name) {
             return Ok(None);
         }
-        self.open_classified(input, FileKind::TexInput, name, request_index, true)
-            .map(|content| Some(u64::try_from(content.bytes().len()).unwrap_or(u64::MAX)))
+        match self.open_classified(input, FileKind::TexInput, name, request_index, true) {
+            Ok(content) => Ok(Some(
+                u64::try_from(content.bytes().len()).unwrap_or(u64::MAX),
+            )),
+            // A cache miss is the provisional not-found result of this
+            // read-only enquiry. Keep expanding so one speculative run can
+            // collect every probe; the session discards that run and retries
+            // after the host supplies authoritative answers.
+            Err(_) if self.fatal.is_none() => Ok(None),
+            Err(error) => Err(error),
+        }
     }
 
     fn open_stream_input(
