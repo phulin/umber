@@ -385,6 +385,32 @@ working-set locality, decoding the packed meaning is cheaper than probing a
 second cache; future expansion gains should eliminate higher-level token or
 meaning requests rather than memoize this leaf.
 
+## Dense survivor-promotion remap experiment
+
+Issue `umber2-2plv` tested whether the epoch-heavy promotion workload should
+use direct slot indexing instead of hashing every source list. A cold Gentle
+run copies 94.1% of its promoted words and 78.9% of its source lists from the
+epoch arena, so the candidate kept a reusable dense epoch-slot remap and used
+the hash table only for survivor sources. In a matched native sample,
+`BuildHasher::hash_one` fell from 23 of 7,630 main-thread samples (0.30%) to 12
+of 6,712 (0.18%), while the inclusive promotion share fell from 2.33% to
+2.07%. This confirms that the data structure removed the intended local work.
+
+It was nevertheless slower end to end. Twelve alternating ten-run Gentle
+pairs had medians of 85.938 ms/run for the baseline and 86.366 ms/run for the
+candidate, a 0.50% regression, with only three pairs favoring the dense map.
+Growing, clearing, and touching the extra vectors costs more than hashing the
+roughly 16,798 source lists at this scale, so the prototype was removed.
+
+The profiling runner now reports a feature-gated compact-node append census to
+guide larger storage changes. One measured Gentle run performs 33,339 append
+calls for 419,797 words, appends rows to 10 of the 14 sidecar tables, triggers
+10,608 retained-vector capacity growth events, and grows retained payload
+capacity by 9,512,080 bytes. That points to append/storage organization—not
+promotion lookup—as the larger algorithmic target: co-allocate or chunk the
+parallel columns, or make whole built suffixes detachable, rather than tuning
+another small lookup leaf.
+
 ## Analyze a capture
 
 Use the repository analyzer for a repeatable text report:

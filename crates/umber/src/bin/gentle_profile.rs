@@ -19,8 +19,8 @@ use tex_lex::ExpansionStats;
 use tex_lex::{InputSource, InputStack, MemoryInput, WorldInput};
 #[cfg(feature = "profiling-stats")]
 use tex_state::measurement::{
-    ExactIdentityMeasurement, StateHashMeasurement, exact_identity_measurement,
-    state_hash_measurement,
+    ExactIdentityMeasurement, NodeAppendMeasurement, StateHashMeasurement,
+    exact_identity_measurement, node_append_measurement, state_hash_measurement,
 };
 #[cfg(feature = "profiling-stats")]
 use tex_state::survivor::{SurvivorMeasurement, survivor_measurement};
@@ -200,6 +200,8 @@ fn run() -> Result<(), String> {
         }
     }
 
+    #[cfg(feature = "profiling-stats")]
+    let node_append_before = node_append_measurement();
     let started = Instant::now();
     let mut last = execute_once(&template, options.checkpoints)?;
     let _ = black_box(last.pages);
@@ -217,7 +219,39 @@ fn run() -> Result<(), String> {
     }
 
     print_summary(&options, &last, elapsed);
+    #[cfg(feature = "profiling-stats")]
+    {
+        let node_append = node_append_delta(node_append_measurement(), node_append_before);
+        println!(
+            "gentle-profile node append: calls={} words={} sidecar_rows={:?} capacity_growth_events={} retained_payload_bytes_grown={}",
+            node_append.calls,
+            node_append.words,
+            node_append.sidecar_rows,
+            node_append.capacity_growth_events,
+            node_append.retained_payload_bytes_grown,
+        );
+    }
     Ok(())
+}
+
+#[cfg(feature = "profiling-stats")]
+fn node_append_delta(
+    after: NodeAppendMeasurement,
+    before: NodeAppendMeasurement,
+) -> NodeAppendMeasurement {
+    NodeAppendMeasurement {
+        calls: after.calls.saturating_sub(before.calls),
+        words: after.words.saturating_sub(before.words),
+        sidecar_rows: core::array::from_fn(|index| {
+            after.sidecar_rows[index].saturating_sub(before.sidecar_rows[index])
+        }),
+        capacity_growth_events: after
+            .capacity_growth_events
+            .saturating_sub(before.capacity_growth_events),
+        retained_payload_bytes_grown: after
+            .retained_payload_bytes_grown
+            .saturating_sub(before.retained_payload_bytes_grown),
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
