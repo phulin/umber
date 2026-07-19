@@ -145,6 +145,39 @@ test("drives file and font resources through one client-owned resolver API", asy
 	assert.equal(wasm.CompilerSession.instances[0].resolved[0].type, "font");
 });
 
+test("resolves only the blocking probe frontier before retrying WASM", async () => {
+	const frontier = {
+		type: "file",
+		kind: "tex",
+		name: "first.cfg",
+		originalName: "first.cfg",
+	};
+	const wasm = bindings([
+		{ kind: "need-resources", required: [], probes: [frontier], prefetchHints: [] },
+		{ kind: "complete", output: output() },
+	]);
+	let received;
+	await compile(
+		{ mainPath: "main.tex" },
+		new Map(),
+		{
+			async resolve(requests, options) {
+				received = { requests, options };
+				return [{ ...frontier, type: "file-unavailable" }];
+			},
+		},
+		undefined,
+		wasm,
+	);
+
+	assert.deepEqual(received.requests, []);
+	assert.deepEqual(received.options.probes, [frontier]);
+	assert.deepEqual(received.options.prefetchHints, []);
+	assert.deepEqual(wasm.CompilerSession.instances[0].resolved, [
+		{ ...frontier, type: "file-unavailable" },
+	]);
+});
+
 test("forwards shared Rust resource wire values without a JavaScript kind table", async () => {
 	const request = {
 		type: "file",

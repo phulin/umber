@@ -86,10 +86,23 @@ impl<'a> VirtualRunResolvers<'a> {
         probes.extend(self.font.files.probes);
         probes.extend(self.image.files.probes);
         probes.sort_by_key(|(request_index, _)| *request_index);
+        let probe_frontier = probes.first().map(|(request_index, _)| *request_index);
+        if let Some(probe_frontier) = probe_frontier {
+            probes.retain(|(request_index, _)| *request_index == probe_frontier);
+            misses.retain(|(request_index, _)| *request_index < probe_frontier);
+        }
+        let font_misses = self
+            .font
+            .font_misses
+            .into_values()
+            .filter_map(|(request_index, request)| {
+                (probe_frontier.is_none_or(|frontier| request_index < frontier)).then_some(request)
+            })
+            .collect();
         (
             misses.into_iter().map(|(_, request)| request).collect(),
             probes.into_iter().map(|(_, request)| request).collect(),
-            self.font.font_misses.into_values().collect(),
+            font_misses,
             self.input
                 .fatal
                 .or(self.font.files.fatal)
@@ -543,7 +556,7 @@ struct VirtualFontResolver<'a> {
     unavailable_fonts: &'a BTreeSet<FontRequestKey>,
     accepted_font_containers: AcceptedFontContainers,
     require_opentype: bool,
-    font_misses: BTreeMap<FontRequestKey, FontRequest>,
+    font_misses: BTreeMap<FontRequestKey, (u64, FontRequest)>,
 }
 
 impl<'a> VirtualFontResolver<'a> {
@@ -612,10 +625,15 @@ impl FontResolver for VirtualFontResolver<'_> {
             if self.unavailable_fonts.contains(&key) {
                 return Err(format!("OpenType font {logical_name} is unavailable"));
             }
-            self.font_misses.entry(key.clone()).or_insert(FontRequest {
-                key,
-                accepted_containers: self.accepted_font_containers,
-                purposes: FontPurposes::LAYOUT_AND_HTML,
+            self.font_misses.entry(key.clone()).or_insert_with(|| {
+                (
+                    request_index,
+                    FontRequest {
+                        key,
+                        accepted_containers: self.accepted_font_containers,
+                        purposes: FontPurposes::LAYOUT_AND_HTML,
+                    },
+                )
             });
             return Err(format!("OpenType font {logical_name} is not cached"));
         };
@@ -638,10 +656,81 @@ impl FontResolver for VirtualFontResolver<'_> {
 #[cfg(test)]
 mod tests {
     use super::pixels_to_scaled;
+    use crate::{
+        CompileAttemptResult, EngineMode, FileKind, ResolvedFile, ResourceRequest,
+        ResourceResponse, SessionOptions, VirtualCompileSession,
+    };
 
     #[test]
     fn zero_image_resolution_uses_pdftexs_seventy_two_dpi_fallback() {
         assert_eq!(pixels_to_scaled(10, 0), pixels_to_scaled(10, 72));
         assert_eq!(pixels_to_scaled(10, 144), pixels_to_scaled(5, 72));
+    }
+
+    #[test]
+    fn unresolved_probe_hides_later_speculative_fallback_miss() {
+        let mut session = VirtualCompileSession::new(SessionOptions {
+            engine: EngineMode::PdfTex,
+            ..SessionOptions::default()
+        })
+        .expect("session");
+        session
+            .add_user_file(
+                "main.tex",
+                b"\\def\\empty{}\\edef\\found{\\pdffilesize{hyphen.cfg}}\\ifx\\found\\empty\\input hyphen.ltx\\else\\dump\\fi".to_vec(),
+            )
+            .expect("main source");
+
+        let CompileAttemptResult::NeedResources(batch) = session.compile_attempt() else {
+            panic!("file-size cache miss should expose its probe frontier");
+        };
+        assert!(
+            batch.required.is_empty(),
+            "fallback input after an unresolved probe is speculative"
+        );
+        let [ResourceRequest::File(probe)] = batch.probes.as_slice() else {
+            panic!("expected exactly one file probe");
+        };
+        assert_eq!(probe.key().kind(), FileKind::TexInput);
+        assert_eq!(probe.key().name(), "hyphen.cfg");
+        session
+            .provide_resources(vec![ResourceResponse::File(ResolvedFile {
+                request: probe.key().clone(),
+                virtual_path: "/texlive/hyphen.cfg".into(),
+                bytes: b"cfg".to_vec(),
+                expected_digest: None,
+            })])
+            .expect("positive probe response");
+
+        assert!(matches!(
+            session.compile_attempt(),
+            CompileAttemptResult::Complete(_)
+        ));
+        assert!(
+            session
+                .into_accepted_finalization()
+                .expect("accepted format finalization")
+                .dumped_format
+        );
+    }
+
+    #[test]
+    fn unresolved_probe_hides_later_branch_dependent_probe() {
+        let mut session = VirtualCompileSession::new(SessionOptions::default()).expect("session");
+        session
+            .add_user_file(
+                "main.tex",
+                b"\\openin0=first.cfg \\ifeof0 \\openin1=second.cfg \\fi \\dump".to_vec(),
+            )
+            .expect("main source");
+
+        let CompileAttemptResult::NeedResources(batch) = session.compile_attempt() else {
+            panic!("openin cache miss should expose its probe frontier");
+        };
+        assert!(batch.required.is_empty());
+        let [ResourceRequest::File(probe)] = batch.probes.as_slice() else {
+            panic!("only the earliest unresolved probe may escape the attempt");
+        };
+        assert_eq!(probe.key().name(), "first.cfg");
     }
 }
