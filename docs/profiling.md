@@ -206,6 +206,30 @@ order-balanced ten-run timing pairs favored it: the baseline averaged 101.181
 ms/run and the candidate 99.325 ms/run, a 1.83% whole-Gentle improvement. The
 tex-exec test suite and repository format/clippy gate pass.
 
+## Owned alignment-node transfer
+
+Issue `umber2-q02h.118` examined the 22.07% alignment subtree after compact TFM
+text runs. Cell, row, and final alignment mode levels were already exclusively
+owned when popped, but all three paths cloned their complete node vectors before
+math lowering, freezing, or width resolution. They now transfer those vectors
+out of the mode level and use the existing owned math-list finalizer.
+
+The matched 200-run sample reduced the complete alignment subtree from
+4,553/20,627 samples (22.07%) to 4,470/20,484 (21.82%). Cell packaging fell
+from 1.66% to 1.46% of the whole run, and direct node-clone self samples inside
+alignment fell from 0.082% to 0.034%. Twelve order-balanced timing pairs
+measured 97.032 ms/run for the baseline and 96.706 ms/run for the candidate, a
+0.34% improvement; eight pairs favored the candidate. Gentle remained exactly
+97 pages and 263,424 DVI bytes.
+
+A broader guarded executor for already-unexpandable alignment templates was
+also tested and removed. It eliminated 303 of 172,512 expansion-frame steps,
+but alignment increased from 21.94% to 22.23% of whole-run samples and template
+replay/get-x attribution remained flat. The common Gentle templates are mostly
+macros and scanner-bearing commands; a consequential improvement requires an
+invalidation-safe template compiler or a transient alignment representation,
+not another per-cell classifier.
+
 ## Analyze a capture
 
 Use the repository analyzer for a repeatable text report:
