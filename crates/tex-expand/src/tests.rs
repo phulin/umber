@@ -1127,6 +1127,43 @@ fn ordinary_get_x_token_expands_tokens_returned_by_unexpanded() {
 }
 
 #[test]
+fn expanded_token_list_scope_preserves_unexpanded_replay_until_collection_finishes() {
+    let mut stores = Universe::new();
+    let macro_cs = stores.intern("m");
+    let empty = stores.intern_token_list(&[]);
+    let body = stores.intern_token_list(&[char_token('x')]);
+    stores.set_macro_meaning(
+        macro_cs,
+        MacroMeaning::new(MeaningFlags::EMPTY, empty, body),
+    );
+    let replay =
+        stores.intern_token_list(&[Token::Cs(macro_cs.symbol()), Token::Cs(macro_cs.symbol())]);
+    let mut input = InputStack::new(MemoryInput::new(""));
+    input.push_token_list(replay, TokenListReplayKind::Unexpanded);
+    let mut expansion = ExpansionContext::new("texput");
+
+    expansion.begin_expanded_token_list();
+    let preserved = crate::get_x_token_with_context(
+        &mut input,
+        &mut tex_state::ExpansionContext::new(&mut stores),
+        &mut expansion,
+    )
+    .expect("expanded-list collection")
+    .expect("preserved token");
+    expansion.end_expanded_token_list();
+    assert_eq!(semantic_token(preserved), Token::Cs(macro_cs.symbol()));
+
+    let expanded = crate::get_x_token_with_context(
+        &mut input,
+        &mut tex_state::ExpansionContext::new(&mut stores),
+        &mut expansion,
+    )
+    .expect("ordinary expansion after collection")
+    .expect("expanded token");
+    assert_eq!(semantic_token(expanded), char_token('x'));
+}
+
+#[test]
 fn expanded_replays_nested_unexpanded_tokens_to_its_caller() {
     let mut stores = Universe::new();
     install_expandable_primitives(&mut stores);

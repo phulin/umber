@@ -1054,6 +1054,7 @@ pub struct ExpansionContext<'a> {
     fuel_limit: u64,
     remaining_fuel: u64,
     fuel_scope_depth: u32,
+    expanded_token_list_depth: u32,
     // Meanings use generation-marked dense deduplication below. The remaining
     // read kinds stay append-only here and are sorted once at publication.
     paragraph_reads: Option<Vec<ReadDependency>>,
@@ -1087,6 +1088,7 @@ impl<'a> ExpansionContext<'a> {
             fuel_limit: DEFAULT_EXPANSION_FUEL,
             remaining_fuel: DEFAULT_EXPANSION_FUEL,
             fuel_scope_depth: 0,
+            expanded_token_list_depth: 0,
             paragraph_reads: None,
             paragraph_read_tracking: false,
             paragraph_meanings: Vec::new(),
@@ -1116,6 +1118,7 @@ impl<'a> ExpansionContext<'a> {
             fuel_limit: DEFAULT_EXPANSION_FUEL,
             remaining_fuel: DEFAULT_EXPANSION_FUEL,
             fuel_scope_depth: 0,
+            expanded_token_list_depth: 0,
             paragraph_reads: None,
             paragraph_read_tracking: false,
             paragraph_meanings: Vec::new(),
@@ -1158,6 +1161,25 @@ impl<'a> ExpansionContext<'a> {
             .fuel_scope_depth
             .checked_sub(1)
             .expect("expansion fuel scope depth underflowed");
+    }
+
+    pub(crate) fn begin_expanded_token_list(&mut self) {
+        self.expanded_token_list_depth = self
+            .expanded_token_list_depth
+            .checked_add(1)
+            .expect("expanded-token-list depth overflowed");
+    }
+
+    pub(crate) fn end_expanded_token_list(&mut self) {
+        self.expanded_token_list_depth = self
+            .expanded_token_list_depth
+            .checked_sub(1)
+            .expect("expanded-token-list depth underflowed");
+    }
+
+    #[must_use]
+    const fn expands_unexpanded_replay(&self) -> bool {
+        self.expanded_token_list_depth == 0
     }
 
     /// Installs an erased read recorder for this expansion session.
@@ -1343,6 +1365,7 @@ impl<'a> ExpansionContext<'a> {
             fuel_limit: self.fuel_limit,
             remaining_fuel: self.remaining_fuel,
             fuel_scope_depth: self.fuel_scope_depth,
+            expanded_token_list_depth: self.expanded_token_list_depth,
             paragraph_reads: self.paragraph_reads.take(),
             paragraph_read_tracking: self.paragraph_read_tracking,
             paragraph_meanings: std::mem::take(&mut self.paragraph_meanings),
@@ -1784,7 +1807,15 @@ pub fn get_x_token_with_context(
     expansion: &mut ExpansionContext<'_>,
 ) -> Result<Option<TracedTokenWord>, ExpandError> {
     expansion.begin_fuel_scope();
-    let result = get_x_token_with_context_inner(input, stores, expansion, false, true, None);
+    let expand_unexpanded_replay = expansion.expands_unexpanded_replay();
+    let result = get_x_token_with_context_inner(
+        input,
+        stores,
+        expansion,
+        false,
+        expand_unexpanded_replay,
+        None,
+    );
     expansion.end_fuel_scope();
     match result {
         Ok(token) => Ok(token),
@@ -1814,7 +1845,15 @@ pub fn get_x_or_protected_with_context(
     // e-TeX's `get_x_or_protected` adds only the protected-macro stopping rule
     // to ordinary x-token expansion.
     expansion.begin_fuel_scope();
-    let result = get_x_token_with_context_inner(input, stores, expansion, true, true, None);
+    let expand_unexpanded_replay = expansion.expands_unexpanded_replay();
+    let result = get_x_token_with_context_inner(
+        input,
+        stores,
+        expansion,
+        true,
+        expand_unexpanded_replay,
+        None,
+    );
     expansion.end_fuel_scope();
     match result {
         Ok(token) => Ok(token),

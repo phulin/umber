@@ -271,8 +271,11 @@ where
 {
     let parameter_text = scan_parameter_text(input, stores, context)?;
     let mut diagnostics = Vec::new();
-    let replacement_text =
-        scan_expanded_replacement_with_driver(input, stores, context, expansion, &mut diagnostics)?;
+    expansion.begin_expanded_token_list();
+    let replacement_result =
+        scan_expanded_replacement_with_driver(input, stores, context, expansion, &mut diagnostics);
+    expansion.end_expanded_token_list();
+    let replacement_text = replacement_result?;
     let replacement_text = append_hash_brace(stores, replacement_text, parameter_text.hash_brace);
     Ok(ScannedMacro {
         meaning: MacroMeaning::new(
