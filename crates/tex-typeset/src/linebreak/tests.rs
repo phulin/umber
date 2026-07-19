@@ -46,7 +46,7 @@ fn pdf_image_reference_contributes_width_to_line_measurement() {
     assert_eq!(decoded.natural, tex_arith::WideScaled::from_scaled(sp(30)));
 
     let list = universe.freeze_node_list(&[image]);
-    let compact = line_widths_view(&universe, universe.nodes(list), 0, 1);
+    let compact = line_widths_view(&universe, universe.nodes(list), 0, 1, false);
     assert_eq!(compact.natural, tex_arith::WideScaled::from_scaled(sp(30)));
 }
 

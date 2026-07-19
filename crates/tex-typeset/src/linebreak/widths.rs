@@ -108,6 +108,7 @@ pub(super) fn line_widths_view<S: TypesetState>(
     nodes: NodeList<'_>,
     start: usize,
     end: usize,
+    include_font_expansion: bool,
 ) -> Widths {
     let mut widths = Widths::zero();
     let limit = end.min(nodes.len());
@@ -126,12 +127,14 @@ pub(super) fn line_widths_view<S: TypesetState>(
                         .map_or(Scaled::from_raw(0), |metrics| metrics.width)
                 };
                 widths.natural = add_scaled(widths.natural, natural);
-                add_char_expansion(state, &mut widths, font, code, natural);
+                if include_font_expansion {
+                    add_char_expansion(state, &mut widths, font, code, natural);
+                }
                 run_len += 1;
             }
             index += run_len;
         } else {
-            widths.add_assign(node_width_ref_at(state, nodes, index));
+            add_node_width_ref(&mut widths, state, nodes, index, include_font_expansion);
             index += 1;
         }
     }
@@ -141,20 +144,25 @@ pub(super) fn line_widths_view<S: TypesetState>(
 pub(super) fn line_widths_nodes<S: TypesetState>(state: &S, nodes: &[Node]) -> Widths {
     let mut widths = Widths::zero();
     for index in 0..nodes.len() {
-        widths.add_assign(node_width_at(state, nodes, index));
+        add_node_width(&mut widths, state, nodes, index, true);
     }
     widths
 }
 
-pub(super) fn node_width_at<S: TypesetState>(state: &S, nodes: &[Node], index: usize) -> Widths {
+pub(super) fn add_node_width<S: TypesetState>(
+    widths: &mut Widths,
+    state: &S,
+    nodes: &[Node],
+    index: usize,
+    include_font_expansion: bool,
+) {
     let node = &nodes[index];
-    let mut widths = Widths::zero();
     match node {
         Node::Char { font, ch, .. } | Node::Lig { font, ch, .. } => {
             if let Some(metrics) = state.font_character_metrics(*font, *ch) {
                 widths.natural = add_scaled(widths.natural, metrics.width);
-                if let Ok(code) = u8::try_from(*ch as u32) {
-                    add_char_expansion(state, &mut widths, *font, code, metrics.width);
+                if include_font_expansion && let Ok(code) = u8::try_from(*ch as u32) {
+                    add_char_expansion(state, widths, *font, code, metrics.width);
                 }
             }
         }
@@ -164,14 +172,14 @@ pub(super) fn node_width_at<S: TypesetState>(state: &S, nodes: &[Node], index: u
             // adjustment here makes the accumulated width equal the shaped
             // cluster advance rather than the sum of cmap glyph advances.
             widths.natural = add_scaled(widths.natural, *amount);
-            if *kind == tex_state::node::KernKind::Font {
-                add_font_kern_expansion(state, &mut widths, nodes, index, *amount);
+            if include_font_expansion && *kind == tex_state::node::KernKind::Font {
+                add_font_kern_expansion(state, widths, nodes, index, *amount);
             }
         }
         Node::MathOn(width) | Node::MathOff(width) => {
             widths.natural = add_scaled(widths.natural, *width)
         }
-        Node::Glue { spec, .. } => add_glue(&mut widths, state.glue(*spec)),
+        Node::Glue { spec, .. } => add_glue(widths, state.glue(*spec)),
         Node::Rule { width, .. } => {
             if let Some(width) = width {
                 widths.natural = add_scaled(widths.natural, *width);
@@ -189,6 +197,7 @@ pub(super) fn node_width_at<S: TypesetState>(state: &S, nodes: &[Node], index: u
                 state.nodes(*replace),
                 0,
                 state.nodes(*replace).len(),
+                include_font_expansion,
             ));
         }
         Node::Whatsit(
@@ -210,31 +219,35 @@ pub(super) fn node_width_at<S: TypesetState>(state: &S, nodes: &[Node], index: u
         | Node::Direction(_)
         | Node::Adjust(_) => {}
     }
-    widths
 }
 
-fn node_width_ref_at<S: TypesetState>(state: &S, nodes: NodeList<'_>, index: usize) -> Widths {
+fn add_node_width_ref<S: TypesetState>(
+    widths: &mut Widths,
+    state: &S,
+    nodes: NodeList<'_>,
+    index: usize,
+    include_font_expansion: bool,
+) {
     let node = nodes.get(index).expect("index is within node list");
-    let mut widths = Widths::zero();
     match node {
         NodeRef::Char { font, ch, .. } | NodeRef::Lig { font, ch, .. } => {
             if let Some(metrics) = state.font_character_metrics(font, ch) {
                 widths.natural = add_scaled(widths.natural, metrics.width);
-                if let Ok(code) = u8::try_from(ch as u32) {
-                    add_char_expansion(state, &mut widths, font, code, metrics.width);
+                if include_font_expansion && let Ok(code) = u8::try_from(ch as u32) {
+                    add_char_expansion(state, widths, font, code, metrics.width);
                 }
             }
         }
         NodeRef::Kern { amount, kind } => {
             widths.natural = add_scaled(widths.natural, amount);
-            if kind == tex_state::node::KernKind::Font {
-                add_font_kern_expansion_ref(state, &mut widths, nodes, index, amount);
+            if include_font_expansion && kind == tex_state::node::KernKind::Font {
+                add_font_kern_expansion_ref(state, widths, nodes, index, amount);
             }
         }
         NodeRef::MathOn(amount) | NodeRef::MathOff(amount) => {
             widths.natural = add_scaled(widths.natural, amount)
         }
-        NodeRef::Glue { spec, .. } => add_glue(&mut widths, state.glue(spec)),
+        NodeRef::Glue { spec, .. } => add_glue(widths, state.glue(spec)),
         NodeRef::Rule {
             width: Some(width), ..
         } => widths.natural = add_scaled(widths.natural, width),
@@ -244,7 +257,13 @@ fn node_width_ref_at<S: TypesetState>(state: &S, nodes: NodeList<'_>, index: usi
         NodeRef::Unset(unset) => widths.natural = add_scaled(widths.natural, unset.width),
         NodeRef::Disc { replace, .. } => {
             let list = state.nodes(replace);
-            widths.add_assign(line_widths_view(state, list, 0, list.len()));
+            widths.add_assign(line_widths_view(
+                state,
+                list,
+                0,
+                list.len(),
+                include_font_expansion,
+            ));
         }
         NodeRef::Whatsit(
             tex_state::node::Whatsit::PdfRefXForm { width, .. }
@@ -252,7 +271,6 @@ fn node_width_ref_at<S: TypesetState>(state: &S, nodes: NodeList<'_>, index: usi
         ) => widths.natural = add_scaled(widths.natural, *width),
         _ => {}
     }
-    widths
 }
 
 fn add_font_kern_expansion_ref<S: TypesetState>(

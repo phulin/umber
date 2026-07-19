@@ -230,6 +230,29 @@ macros and scanner-bearing commands; a consequential improvement requires an
 invalidation-safe template compiler or a transient alignment representation,
 not another per-cell classifier.
 
+## Fused line-width accumulation
+
+Issue `umber2-q02h.115` first replaced each active line-break candidate's copied
+start width with an index into an append-only width pool. The representation
+preserved break ordering and exact output, but increased `run_pass` from
+1,074/20,484 samples (5.24%) to 1,210/20,601 (5.87%) and increased allocation;
+the prototype was removed.
+
+The accepted change instead eliminates temporary eleven-field `Widths` values
+from the legal-breakpoint scan. Each node now adds directly to the live prefix
+or next-line accumulator. When `pdfadjustspacing <= 1`, the scan also skips
+font-expansion capacity lookup and arithmetic, which line scoring cannot use in
+those modes. Expansion-enabled paragraphs retain the same capacity accounting.
+
+In the matched 200-run capture, the complete `run_pass` subtree fell from
+1,074/20,484 samples (5.24%) to 856/20,262 (4.22%), a 19.4% relative reduction.
+The old node-width construction path accounted for 1.69% of the baseline whole
+run; the fused accumulator accounts for 1.14%, including metric lookup. Twelve
+order-balanced ten-run timing pairs measured 98.596 ms/run for the baseline and
+97.560 ms/run for the candidate, a 1.05% whole-Gentle improvement; eleven pairs
+favored the candidate. Gentle remained exactly 97 pages and 263,424 DVI bytes,
+and the tex-typeset and tex-exec test suites pass.
+
 ## Analyze a capture
 
 Use the repository analyzer for a repeatable text report:
