@@ -1037,7 +1037,7 @@ fn keyword_scanner_resumes_a_macro_from_unexpanded_replay() {
 }
 
 #[test]
-fn general_driver_expansion_preserves_unexpanded_replay() {
+fn general_driver_command_demand_resumes_unexpanded_replay() {
     let mut stores = Universe::new();
     install_expandable_primitives(&mut stores);
     crate::install_etex_expandable_primitives(&mut stores);
@@ -1057,9 +1057,9 @@ fn general_driver_expansion_preserves_unexpanded_replay() {
             &mut ExpansionContext::new("texput"),
         )
         .expect("driver expansion")
-        .expect("suppressed macro token");
+        .expect("resumed macro token");
 
-    assert_eq!(semantic_token(delivered), Token::Cs(macro_cs.symbol()));
+    assert_eq!(semantic_token(delivered), char_token('x'));
 }
 
 #[test]

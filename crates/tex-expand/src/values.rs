@@ -42,9 +42,21 @@ pub(crate) fn expand_the_with_mode_and_context(
 where
 {
     let cause_origin = cause_context.origin();
-    let Some(token) =
-        scan_helpers::next_non_space_x_token_with_mode_and_context(input, stores, expansion, mode)?
-    else {
+    let token = loop {
+        let Some(token) = mode.next_ordinary_token(input, stores, expansion)? else {
+            break None;
+        };
+        if !matches!(
+            crate::semantic_token(token),
+            Token::Char {
+                cat: Catcode::Space,
+                ..
+            }
+        ) {
+            break Some(token);
+        }
+    };
+    let Some(token) = token else {
         return Err(ExpandError::MissingTokenAfterPrimitive {
             opcode: ExpandableOpcode::The,
             context: cause_context,

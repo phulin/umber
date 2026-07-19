@@ -134,11 +134,11 @@ is delivered, the next independent request receives a fresh budget; ordinary
 long-running jobs therefore are not charged for unrelated, already-completed
 expansion chains.
 
-Execution-driver scans preserve tokens protected by `\unexpanded` for their
-enclosing expansion call. Scanner points that begin a fresh command demand
-opt in explicitly; this includes the post-character-constant lookahead in
-integer scanning, which must resume a replayed macro before deciding whether
-to consume an optional space.
+Execution-driver scans are command-demand consumers, including nested scanner
+work needed to satisfy the request. Tokens protected by `\unexpanded` resume
+ordinary macro expansion there. Scanners whose operands remain part of the
+enclosing expansion opt into ordinary suppression explicitly; `\the` does so
+to inspect its operand's meaning without expanding a replayed macro.
 
 End of source input is accepted only when the expansion loop is quiescent. If
 a source-origin macro argument scanner reaches root EOF while matching a call,

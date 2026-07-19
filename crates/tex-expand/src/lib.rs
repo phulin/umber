@@ -1509,6 +1509,20 @@ pub trait ExpansionMode {
         self.next_expanded_token(input, stores, expansion)
     }
 
+    /// Pulls a token using ordinary `get_x_token` suppression semantics.
+    ///
+    /// This is used by scanners such as `\the` whose operand belongs to the
+    /// current expansion request even when the surrounding driver otherwise
+    /// performs command-demand expansion.
+    fn next_ordinary_token(
+        &mut self,
+        input: &mut InputStack,
+        stores: &mut tex_state::ExpansionContext<'_>,
+        expansion: &mut ExpansionContext<'_>,
+    ) -> Result<Option<TracedTokenWord>, ExpandError> {
+        self.next_expanded_token(input, stores, expansion)
+    }
+
     fn dispatch_raw_token(
         &mut self,
         token: TracedTokenWord,
@@ -1627,7 +1641,7 @@ impl ExpansionMode for DriverExpansionMode {
         stores: &mut tex_state::ExpansionContext<'_>,
         expansion: &mut ExpansionContext<'_>,
     ) -> Result<Option<TracedTokenWord>, ExpandError> {
-        get_x_token_with_context(input, stores, expansion)
+        get_command_token_with_context(input, stores, expansion)
     }
 
     fn next_command_token(
@@ -1637,6 +1651,15 @@ impl ExpansionMode for DriverExpansionMode {
         expansion: &mut ExpansionContext<'_>,
     ) -> Result<Option<TracedTokenWord>, ExpandError> {
         get_command_token_with_context(input, stores, expansion)
+    }
+
+    fn next_ordinary_token(
+        &mut self,
+        input: &mut InputStack,
+        stores: &mut tex_state::ExpansionContext<'_>,
+        expansion: &mut ExpansionContext<'_>,
+    ) -> Result<Option<TracedTokenWord>, ExpandError> {
+        get_x_token_with_context(input, stores, expansion)
     }
 
     fn dispatch_raw_token(
