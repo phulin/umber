@@ -111,6 +111,9 @@ fn finalize_run(
     let expansion_stats = finalization.expansion_stats;
     let committed_artifacts = stores.world().committed_artifacts().to_vec();
     let resolvers = FileSessionResolvers::from_environment(&opts.input);
+    if opts.format_out.is_some() && !dumped_format {
+        return Err(CliError::MissingFormatDump);
+    }
     #[cfg(feature = "profiling-stats")]
     if opts.profiling_stats {
         let stats = expansion_stats;
@@ -670,6 +673,7 @@ enum CliError {
     Pdf(umber::PdfBuildError),
     PdfFontResource(String),
     Format(FormatError),
+    MissingFormatDump,
     Finalization(umber::FinalizationError),
     InputReceipt(String),
     Bib(bib::BibCliError),
@@ -691,6 +695,9 @@ impl std::fmt::Display for CliError {
             Self::Pdf(err) => write!(f, "{err}"),
             Self::PdfFontResource(err) => write!(f, "PDF font resource error: {err}"),
             Self::Format(err) => write!(f, "{err}"),
+            Self::MissingFormatDump => {
+                f.write_str("--format-out requires the input to execute \\dump")
+            }
             Self::Finalization(err) => write!(f, "{err}"),
             Self::InputReceipt(message) => f.write_str(message),
             Self::Bib(err) => write!(f, "{err}"),

@@ -244,6 +244,30 @@ fn run_publishes_a_dumped_format_from_the_resource_session() {
 
 #[test]
 #[allow(clippy::disallowed_methods)] // host-side temporary files and command execution.
+fn format_output_rejects_a_successful_run_that_did_not_dump() {
+    let temp_dir = tempfile::tempdir().expect("create format output temp dir");
+    let source = temp_dir.path().join("format.tex");
+    let format = temp_dir.path().join("format.fmt");
+    fs::write(&source, "\\message{NO-DUMP}\\endinput\n").expect("write format source");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_umber"))
+        .env("SOURCE_DATE_EPOCH", PINNED_SOURCE_DATE_EPOCH)
+        .args(["run", "--format-out"])
+        .arg(&format)
+        .arg(&source)
+        .output()
+        .expect("run missing format dump");
+
+    assert!(!output.status.success());
+    assert_eq!(
+        String::from_utf8_lossy(&output.stderr),
+        "umber: --format-out requires the input to execute \\dump\n"
+    );
+    assert!(!format.exists());
+}
+
+#[test]
+#[allow(clippy::disallowed_methods)] // host-side temporary files and command execution.
 fn pdftex_rule_page_is_published_only_to_an_explicit_distinct_pdf_path() {
     let temp_dir = tempfile::tempdir().expect("create PDF output temp dir");
     let source = temp_dir.path().join("rule.tex");
