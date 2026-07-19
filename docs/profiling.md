@@ -441,6 +441,26 @@ measured medians of 86.622 ms/run baseline and 85.353 ms/run candidate, a
 1.46% whole-Gentle improvement; all twelve pairs favored the candidate. Output
 remained exactly 97 pages and 263,424 DVI bytes.
 
+## Alignment physical-text batching experiment
+
+Issue `umber2-g2zs` tested whether the large alignment subtree could reuse the
+physical-source horizontal text path. The prototype advanced a retired
+u-template to the cell body exactly and admitted only directly backed
+`Letter`, `Other`, and `Space` tokens; braces, tabs, control sequences, active
+characters, superscript notation, tracing, and provenance seams remained on
+ordinary alignment interception.
+
+Gentle exposed only 45 additional spans containing 409 tokens, 0.24% of the
+172,512 expansion-frame steps. The matched native sample left
+`get_x_token_with_context_inner` effectively flat at 2.85% baseline and 2.79%
+candidate, while added span probing and TFM delivery absorbed the removed
+scalar calls. The exact 97-page, 263,424-byte output was preserved, but the
+prototype was removed without wall-clock promotion because the primary
+profile established a negligible ceiling. Alignment's roughly 15% inclusive
+subtree is dominated by template commands, box construction, and nested
+dispatch; a large gain there requires compiled/reusable template semantics,
+not another physical-text run path.
+
 ## Analyze a capture
 
 Use the repository analyzer for a repeatable text report:
