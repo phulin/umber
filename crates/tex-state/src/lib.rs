@@ -33,10 +33,12 @@
 /// state. Version 22 adds saved-position enquiries and snapping reference
 /// coordinates. Version 23 adds pdfTeX's session-global return value. Version
 /// 24 adds total-page and color-depth facts to external-image metadata.
+/// Version 25 adopts node semantic-identity v3, whose canonical node-list
+/// stream groups maximal same-font character runs.
 /// Hashes are
 /// comparable only when both this version and the named-boundary schedule
 /// match.
-pub const CHECKPOINT_STATE_HASH_SCHEMA_VERSION: u32 = 24;
+pub const CHECKPOINT_STATE_HASH_SCHEMA_VERSION: u32 = 25;
 
 pub mod cell;
 pub mod code_tables;

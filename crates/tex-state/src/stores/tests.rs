@@ -69,6 +69,11 @@ fn owned_and_borrowed_semantic_hash_paths_match_every_node_variant() {
             ch: 'x',
             origin: crate::token::OriginId::UNKNOWN,
         },
+        Node::Char {
+            font: NULL_FONT,
+            ch: 'y',
+            origin: crate::token::OriginId::UNKNOWN,
+        },
         Node::Lig {
             font: NULL_FONT,
             ch: 'f',

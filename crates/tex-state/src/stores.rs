@@ -1828,8 +1828,7 @@ impl Stores {
 
     /// Freezes the current node-list builder value and clears it for reuse.
     pub fn finish_node_list(&mut self, builder: &mut NodeListBuilder) -> NodeListId {
-        self.assert_live_handles_in_nodes(builder.as_slice());
-        let semantic_id = self.compute_and_seal_node_semantic_id(builder.as_slice());
+        let semantic_id = self.validate_and_compute_node_semantic_id(builder.as_slice());
         let id = self
             .nodes
             .append_with_semantic_id(builder.as_slice(), semantic_id);
