@@ -58,7 +58,9 @@ use fonts::*;
 pub(crate) use hmode::fixed_infinite_glue;
 pub(crate) use hmode::scan_rule_node;
 use hmode::*;
-pub(crate) use hmode::{append_given_char, flush_pending_hchars, try_append_character};
+pub(crate) use hmode::{
+    append_given_char, flush_pending_hchars, try_append_character, try_append_tfm_character_span,
+};
 #[cfg(test)]
 pub(crate) use hyphenation::hyphenated_hlist as test_hyphenated_hlist_owned;
 #[cfg(test)]

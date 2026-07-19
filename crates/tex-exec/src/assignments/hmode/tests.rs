@@ -406,7 +406,7 @@ fn flushing_a_character_run_appends_its_right_boundary_kern() {
     ));
     let mut nest = ModeNest::new();
     nest.current_list_mut()
-        .begin_pending_hchars(font, 'A', OriginId::UNKNOWN);
+        .begin_pending_hchars(font, 'A', OriginId::UNKNOWN, false);
 
     flush_pending_hchars(&mut nest, &mut stores).expect("character run flushes");
 

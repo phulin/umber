@@ -14,7 +14,7 @@ use tex_typeset::{INF_BAD, PackSpec, VpackParams};
 use super::paragraph::{end_paragraph, ensure_horizontal_for_character, normal_paragraph};
 use super::*;
 use crate::dispatch::dispatch_delivered_token_with_context;
-use crate::mode::{ModeList, PendingHRunChar};
+use crate::mode::{ModeList, PendingHRun, PendingHRunChar};
 use crate::packing_params::vpack;
 use crate::vertical::{append_vertical_contribution, build_page_if_outer_vertical};
 use crate::{DispatchAction, ExecError, Mode, ModeNest, push_traced_tokens};
@@ -36,6 +36,80 @@ pub(crate) fn try_append_character(
         }
         _ => Ok(false),
     }
+}
+
+/// Consumes a preclassified horizontal text span through the compact TFM
+/// reconstitution state machine. OpenType runs retain their shaping-specific
+/// source collection and deliberately use the scalar path.
+pub(crate) fn try_append_tfm_character_span(
+    nest: &mut ModeNest,
+    traced: &[TracedTokenWord],
+    stores: &mut Universe,
+) -> Result<bool, ExecError> {
+    let mode = nest.current_mode();
+    if !matches!(mode, Mode::RestrictedHorizontal | Mode::Horizontal) {
+        return Ok(false);
+    }
+    let font = stores.current_font();
+    if is_ltr_shaping_font(stores, font) {
+        return Ok(false);
+    }
+
+    let mut offset = 0;
+    while offset < traced.len() {
+        let Token::Char { cat, .. } = tex_expand::semantic_token(traced[offset]) else {
+            unreachable!("preclassified horizontal text spans contain only character tokens")
+        };
+        if cat == Catcode::Space {
+            append_space(nest, stores)?;
+            offset += 1;
+            continue;
+        }
+        fix_hyphen_language(nest, stores, mode);
+
+        // A TFM run cannot continue an OpenType pending run. This is normally
+        // a font-command boundary, but keeping the guard here makes this
+        // entry point correct for any future span producer.
+        if nest.current_list().pending_hchars().is_some_and(|pending| {
+            pending.first.font != font && is_ltr_shaping_font(stores, pending.first.font)
+        }) {
+            flush_pending_hchar_run(nest, stores, mode == Mode::Horizontal);
+        }
+
+        let list = nest.current_list_mut();
+        let mut pending = list.take_pending_hchars();
+        let mut space_factor = list.space_factor();
+        let emitted = list.reconstitution_target();
+        let context = TfmRunContext {
+            node_start: emitted.len(),
+            font,
+            insert_hyphen_discs: mode == Mode::Horizontal,
+        };
+        while offset < traced.len() {
+            let Token::Char { ch, cat } = tex_expand::semantic_token(traced[offset]) else {
+                unreachable!("preclassified horizontal text spans contain only character tokens")
+            };
+            if cat == Catcode::Space {
+                break;
+            }
+            if append_tfm_hchar(
+                &mut pending,
+                emitted,
+                stores,
+                context,
+                ch,
+                traced[offset].origin(),
+            ) {
+                space_factor = next_space_factor(space_factor, stores, ch);
+            }
+            offset += 1;
+        }
+        if let Some(pending) = pending {
+            list.set_pending_hchars(pending);
+        }
+        list.set_space_factor(space_factor);
+    }
+    Ok(true)
 }
 
 pub(crate) fn append_given_char(
@@ -445,23 +519,7 @@ fn append_control_space(
 
 fn append_hchar(nest: &mut ModeNest, stores: &mut Universe, ch: char, origin: OriginId) {
     let mode = nest.current_mode();
-    if mode == Mode::Horizontal {
-        let language = u8::try_from(stores.int_param(IntParam::LANGUAGE)).unwrap_or(0);
-        if language != nest.current_list().hyphen_language() {
-            // tex.web's fix_language flushes the current ligature word before
-            // recording the new language and its current hyphen minima.
-            flush_pending_hchar_run(nest, stores, true);
-            let left_hyphen_min = stores.int_param(IntParam::LEFT_HYPHEN_MIN).clamp(1, 63) as u8;
-            let right_hyphen_min = stores.int_param(IntParam::RIGHT_HYPHEN_MIN).clamp(1, 63) as u8;
-            nest.current_list_mut()
-                .push(Node::Whatsit(tex_state::node::Whatsit::Language {
-                    language,
-                    left_hyphen_min,
-                    right_hyphen_min,
-                }));
-            nest.current_list_mut().set_hyphen_language(language);
-        }
-    }
+    fix_hyphen_language(nest, stores, mode);
     let font = stores.current_font();
     let (character_exists, font_is_ltr_shaping) = {
         let loaded = stores.font(font);
@@ -490,6 +548,28 @@ fn append_hchar(nest: &mut ModeNest, stores: &mut Universe, ch: char, origin: Or
     report_missing_character(stores, font, ch);
 }
 
+fn fix_hyphen_language(nest: &mut ModeNest, stores: &mut Universe, mode: Mode) {
+    if mode != Mode::Horizontal {
+        return;
+    }
+    let language = u8::try_from(stores.int_param(IntParam::LANGUAGE)).unwrap_or(0);
+    if language == nest.current_list().hyphen_language() {
+        return;
+    }
+    // tex.web's fix_language flushes the current ligature word before
+    // recording the new language and its current hyphen minima.
+    flush_pending_hchar_run(nest, stores, true);
+    let left_hyphen_min = stores.int_param(IntParam::LEFT_HYPHEN_MIN).clamp(1, 63) as u8;
+    let right_hyphen_min = stores.int_param(IntParam::RIGHT_HYPHEN_MIN).clamp(1, 63) as u8;
+    nest.current_list_mut()
+        .push(Node::Whatsit(tex_state::node::Whatsit::Language {
+            language,
+            left_hyphen_min,
+            right_hyphen_min,
+        }));
+    nest.current_list_mut().set_hyphen_language(language);
+}
+
 fn append_pending_hchar(
     list: &mut ModeList,
     stores: &mut Universe,
@@ -503,7 +583,7 @@ fn append_pending_hchar(
         if let Some(kern) = auto_kern(stores, &PendingHRunChar::new(font, ch, origin), Some(true)) {
             list.push(kern);
         }
-        list.begin_pending_hchars(font, ch, origin);
+        list.begin_pending_hchars(font, ch, origin, font_is_ltr_shaping);
         return;
     };
     if font_is_ltr_shaping
@@ -556,6 +636,62 @@ fn append_pending_hchar(
         }
     }
     list.set_pending_hchars(pending);
+}
+
+#[derive(Clone, Copy)]
+struct TfmRunContext {
+    node_start: usize,
+    font: FontId,
+    insert_hyphen_discs: bool,
+}
+
+fn append_tfm_hchar(
+    pending: &mut Option<PendingHRun>,
+    emitted: &mut Vec<Node>,
+    stores: &mut Universe,
+    context: TfmRunContext,
+    ch: char,
+    origin: OriginId,
+) -> bool {
+    if !stores.font(context.font).character_exists(ch) {
+        report_missing_character(stores, context.font, ch);
+        return false;
+    }
+    let next = PendingHRunChar::new(context.font, ch, origin);
+    let Some(mut current_run) = pending.take() else {
+        if let Some(kern) = auto_kern(stores, &next, Some(true)) {
+            emitted.push(kern);
+        }
+        *pending = Some(PendingHRun::new(
+            context.font,
+            ch,
+            origin,
+            context.node_start + emitted.len(),
+            false,
+        ));
+        return true;
+    };
+    match reconstitution_step(stores, current_run.current, next) {
+        ReconstitutionStep::Merge(merged) => current_run.current = merged,
+        ReconstitutionStep::Emit {
+            current,
+            next,
+            kern,
+        } => {
+            let disc = literal_hyphen_disc(stores, &current, context.insert_hyphen_discs);
+            let auto = auto_kern_between(stores, &current, &next);
+            emitted.push(rechar_node(current));
+            emitted.extend(disc);
+            emitted.extend(auto);
+            emitted.extend(kern.map(|amount| Node::Kern {
+                amount,
+                kind: KernKind::Font,
+            }));
+            current_run.current = next;
+        }
+    }
+    *pending = Some(current_run);
+    true
 }
 
 fn is_strong_script(script: tex_shape::Script) -> bool {
@@ -1061,17 +1197,19 @@ fn right_boundary_kern(stores: &Universe, current: &PendingHRunChar) -> Option<N
 }
 
 fn update_space_factor(list: &mut ModeList, stores: &Universe, ch: char) {
+    list.set_space_factor(next_space_factor(list.space_factor(), stores, ch));
+}
+
+fn next_space_factor(current: i32, stores: &Universe, ch: char) -> i32 {
     let sf = i32::from(stores.sfcode(ch));
     if sf == 0 {
-        return;
+        return current;
     }
-    let current = list.space_factor();
-    let next = if sf > 1000 && current < 1000 {
+    if sf > 1000 && current < 1000 {
         1000
     } else {
         sf
-    };
-    list.set_space_factor(next);
+    }
 }
 
 fn nonzero_glue_param_or_font_space(

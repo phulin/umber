@@ -181,6 +181,31 @@ this contended host. The prototype was removed. A broader block requires a
 real macro compiler/deoptimizer capable of preserving arbitrary scanner and
 meaning-write interleavings; adding another main-loop probe is not supported.
 
+## Compact TFM text-run reconstitution
+
+Issue `umber2-q02h.114` replaced immediate scalarization of the existing macro
+and physical-source text spans with a TFM-only run state machine. It takes the
+pending ligature state once per non-space run, acquires the mode list's
+copy-on-write target once, emits nodes directly into that target, and applies
+space-factor and paragraph-token accounting in batches. OpenType shaping keeps
+the established scalar/source-collecting path. Ordinary TFM runs also no longer
+allocate a source-character vector that only shaping consumes.
+
+The first prototype merely wrapped the scalar character loop and regressed its
+horizontal owner from 6.77% to 8.10% of whole-run samples; it was removed. A
+second prototype buffered emitted nodes in a small vector: reconstitution fell
+from 2.17% to 1.60%, but buffer spill made the new path a 1.09% runtime-allocation
+owner. Direct mode-list emission removed that allocation. In the final matched
+200-run capture, horizontal text delivery fell from 2,111/20,949 weighted
+samples (10.08%) to 1,573/20,627 (7.63%), a 24.3% relative reduction. The
+ligature/kern state machine itself fell from 454/20,949 (2.17%) to 352/20,627
+(1.71%).
+
+The candidate preserved the pinned 97-page, 263,424-byte DVI. All twelve
+order-balanced ten-run timing pairs favored it: the baseline averaged 101.181
+ms/run and the candidate 99.325 ms/run, a 1.83% whole-Gentle improvement. The
+tex-exec test suite and repository format/clippy gate pass.
+
 ## Analyze a capture
 
 Use the repository analyzer for a repeatable text report:

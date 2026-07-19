@@ -131,6 +131,10 @@ impl ModeList {
         Arc::make_mut(&mut self.nodes).extend(nodes);
     }
 
+    pub(crate) fn reconstitution_target(&mut self) -> &mut Vec<Node> {
+        Arc::make_mut(&mut self.nodes)
+    }
+
     pub(crate) fn push_reconstituted(
         &mut self,
         insertion: Option<(usize, Node)>,
@@ -157,9 +161,21 @@ impl ModeList {
         }
     }
 
-    pub(crate) fn begin_pending_hchars(&mut self, font: FontId, ch: char, origin: OriginId) {
+    pub(crate) fn begin_pending_hchars(
+        &mut self,
+        font: FontId,
+        ch: char,
+        origin: OriginId,
+        retain_source: bool,
+    ) {
         debug_assert!(self.pending_hchars.is_none());
-        self.pending_hchars = Some(PendingHRun::new(font, ch, origin, self.nodes.len()));
+        self.pending_hchars = Some(PendingHRun::new(
+            font,
+            ch,
+            origin,
+            self.nodes.len(),
+            retain_source,
+        ));
     }
 
     pub(crate) fn pending_hchars(&self) -> Option<&PendingHRun> {
@@ -527,12 +543,22 @@ pub(crate) struct PendingHRun {
 }
 
 impl PendingHRun {
-    pub(crate) fn new(font: FontId, ch: char, origin: OriginId, node_start: usize) -> Self {
+    pub(crate) fn new(
+        font: FontId,
+        ch: char,
+        origin: OriginId,
+        node_start: usize,
+        retain_source: bool,
+    ) -> Self {
         Self {
             first: PendingHChar { font, ch, origin },
             current: PendingHRunChar::new(font, ch, origin),
             node_start,
-            source: vec![PendingHChar { font, ch, origin }],
+            source: if retain_source {
+                vec![PendingHChar { font, ch, origin }]
+            } else {
+                Vec::new()
+            },
             script: tex_shape::character_script(ch),
         }
     }
