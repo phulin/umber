@@ -159,6 +159,28 @@ cold-output checks, and confirm an apparent win with a separate optimized run.
 Detailed historical measurements and rejected experiments remain available in
 Git history rather than in this operational contract.
 
+## Guarded macro-command block experiment
+
+Issue `umber2-q02h.117` tested a horizontal main-control block over the only
+commands that can be consumed ahead without changing input-scanning order:
+ordinary characters, `CharGiven`/`CharToken`, font selection, and `\relax`.
+Alignment, tracing, degraded provenance, zero expansion fuel, expandable
+meanings, and every command that scans or mutates subsequent input remained on
+the scalar path. A profiling-only census showed why this guard is narrow:
+macro-replayed unexpandable commands were led by `\hbox` (6,250), `\setbox`
+(2,802), `\char` (2,425), prefixes (1,726), `\unhbox` (1,528), catcode writes
+(1,509), penalties (1,258), skips (1,207), boxes (1,059), and kerns (1,017).
+
+The candidate preserved the pinned 97-page, 263,424-byte DVI and removed 766
+of 172,512 expansion-frame steps (0.44%). In matched 200-run Samply captures,
+however, `get_x_token_with_context_inner` increased from 3,177/20,949 samples
+(15.17%) to 3,287/21,074 (15.60%); the new classified-span probe owned another
+27 samples (0.13%). Twelve order-balanced timing pairs leaned favorable by
+about 0.62 ms/run, but sample attribution is the primary decision evidence on
+this contended host. The prototype was removed. A broader block requires a
+real macro compiler/deoptimizer capable of preserving arbitrary scanner and
+meaning-write interleavings; adding another main-loop probe is not supported.
+
 ## Analyze a capture
 
 Use the repository analyzer for a repeatable text report:
