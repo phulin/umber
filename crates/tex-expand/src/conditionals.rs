@@ -532,15 +532,12 @@ pub(crate) fn scan_condition_x_token(
 ) -> Result<Token, ExpandError>
 where
 {
-    // Conditional character operands retain command demand, but an enclosing
-    // scanner must not make replay resumption leak into their internal
-    // `\expandafter` target step.
-    let token = mode
-        .next_conditional_token(input, stores, expansion)?
-        .ok_or(ExpandError::MissingTokenAfterPrimitive {
+    let token = mode.next_expanded_token(input, stores, expansion)?.ok_or(
+        ExpandError::MissingTokenAfterPrimitive {
             opcode: ExpandableOpcode::If,
             context,
-        })?;
+        },
+    )?;
     let token = semantic_token(token);
     Ok(match token {
         Token::Cs(symbol) => match stores.meaning(symbol) {

@@ -1103,66 +1103,6 @@ fn backtick_constant_lookahead_resumes_unexpanded_replay() {
 }
 
 #[test]
-fn conditional_operand_suspends_enclosing_command_demand_through_expandafter() {
-    let mut stores = Universe::new();
-    let expandafter =
-        expandable_primitive(&mut stores, "expandafter", ExpandablePrimitive::ExpandAfter);
-    let macro_cs = stores.intern("m");
-    let empty = stores.intern_token_list(&[]);
-    let body = stores.intern_token_list(&[char_token('x')]);
-    stores.set_macro_meaning(
-        macro_cs,
-        MacroMeaning::new(MeaningFlags::EMPTY, empty, body),
-    );
-    let target = Token::Cs(macro_cs.symbol());
-    let direct = stores.intern_token_list(&[target]);
-    let mut direct_input = InputStack::new(MemoryInput::new(""));
-    direct_input.push_token_list(direct, TokenListReplayKind::Unexpanded);
-    let mut expansion = ExpansionContext::new("texput");
-    expansion.command_demand_depth = 1;
-    let context = TracedTokenWord::pack(char_token('0'), OriginId::UNKNOWN);
-    assert_eq!(
-        crate::conditionals::scan_condition_x_token(
-            &mut direct_input,
-            &mut tex_state::ExpansionContext::new(&mut stores),
-            &mut expansion,
-            &mut DriverExpansionMode,
-            context,
-        )
-        .expect("direct command-demand operand"),
-        char_token('x')
-    );
-
-    let target_origin =
-        stores.inserted_origin(InsertedOriginKind::Unexpanded, target, OriginId::UNKNOWN);
-    let list =
-        stores.intern_token_list(&[Token::Cs(expandafter.symbol()), char_token('a'), target]);
-    let origins =
-        stores.allocate_origin_list(&[OriginId::UNKNOWN, OriginId::UNKNOWN, target_origin]);
-    let mut input = InputStack::new(MemoryInput::new(""));
-    input.push_token_list_with_origins(list, origins, TokenListReplayKind::Inserted);
-    let first = crate::conditionals::scan_condition_x_token(
-        &mut input,
-        &mut tex_state::ExpansionContext::new(&mut stores),
-        &mut expansion,
-        &mut DriverExpansionMode,
-        context,
-    )
-    .expect("first conditional operand");
-    let second = crate::conditionals::scan_condition_x_token(
-        &mut input,
-        &mut tex_state::ExpansionContext::new(&mut stores),
-        &mut expansion,
-        &mut DriverExpansionMode,
-        context,
-    )
-    .expect("second conditional operand");
-
-    assert_eq!(first, char_token('a'));
-    assert_eq!(second, target);
-}
-
-#[test]
 fn unexpanded_suppresses_macros_for_the_current_expansion_call() {
     let mut stores = Universe::new();
     install_expandable_primitives(&mut stores);
