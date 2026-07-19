@@ -8,6 +8,8 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::time::{Duration, Instant};
 
+#[cfg(feature = "profiling-stats")]
+use tex_exec::{AlignmentTemplateMeasurement, alignment_template_measurement};
 use tex_exec::{Cancellation, CheckpointSink, EngineCheckpoint, PdfImageRequest, PdfImageResolver};
 use tex_expand::{InputResolver, ResourceLookup, ResourceResult};
 use tex_incr::{
@@ -203,6 +205,8 @@ fn run() -> Result<(), String> {
 
     #[cfg(feature = "profiling-stats")]
     let node_append_before = node_append_measurement();
+    #[cfg(feature = "profiling-stats")]
+    let alignment_template_before = alignment_template_measurement();
     let started = Instant::now();
     let mut last = execute_once(&template, options.checkpoints)?;
     let _ = black_box(last.pages);
@@ -250,8 +254,50 @@ fn run() -> Result<(), String> {
             "gentle-profile compact-copy growth: calls={} words={} columns={compact_growth_columns}",
             node_append.compact_copy_calls, node_append.compact_copy_words,
         );
+        let templates =
+            alignment_template_delta(alignment_template_measurement(), alignment_template_before);
+        println!(
+            "gentle-profile alignment u-templates: invocations={} delivered_tokens={} character_tokens={} control_sequence_tokens={} relax_commands={} font_commands={} unexpandable_commands={} inert_glue_commands={} other_commands={}",
+            templates.invocations,
+            templates.delivered_tokens,
+            templates.character_tokens,
+            templates.control_sequence_tokens,
+            templates.relax_commands,
+            templates.font_commands,
+            templates.unexpandable_commands,
+            templates.inert_glue_commands,
+            templates.other_commands,
+        );
     }
     Ok(())
+}
+
+#[cfg(feature = "profiling-stats")]
+fn alignment_template_delta(
+    after: AlignmentTemplateMeasurement,
+    before: AlignmentTemplateMeasurement,
+) -> AlignmentTemplateMeasurement {
+    AlignmentTemplateMeasurement {
+        invocations: after.invocations.saturating_sub(before.invocations),
+        delivered_tokens: after
+            .delivered_tokens
+            .saturating_sub(before.delivered_tokens),
+        character_tokens: after
+            .character_tokens
+            .saturating_sub(before.character_tokens),
+        control_sequence_tokens: after
+            .control_sequence_tokens
+            .saturating_sub(before.control_sequence_tokens),
+        relax_commands: after.relax_commands.saturating_sub(before.relax_commands),
+        font_commands: after.font_commands.saturating_sub(before.font_commands),
+        unexpandable_commands: after
+            .unexpandable_commands
+            .saturating_sub(before.unexpandable_commands),
+        inert_glue_commands: after
+            .inert_glue_commands
+            .saturating_sub(before.inert_glue_commands),
+        other_commands: after.other_commands.saturating_sub(before.other_commands),
+    }
 }
 
 #[cfg(feature = "profiling-stats")]

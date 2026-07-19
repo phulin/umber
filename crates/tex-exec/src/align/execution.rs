@@ -693,6 +693,8 @@ pub(super) fn run_one_main_control_token(
         Err(error) => return Err(error.into()),
     };
     stats.delivered_tokens += 1;
+    #[cfg(feature = "profiling-stats")]
+    super::record_template_token(tex_expand::semantic_token(token), stores);
     if tex_expand::semantic_token(token).is_frozen_endv() {
         return Ok(TemplateStep::EndV);
     }

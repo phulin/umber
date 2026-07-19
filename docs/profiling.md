@@ -461,6 +461,26 @@ subtree is dominated by template commands, box construction, and nested
 dispatch; a large gain there requires compiled/reusable template semantics,
 not another physical-text run path.
 
+## Alignment u-template operation census
+
+Issue `umber2-gxha` tested the remaining compiled-template hypothesis by
+counting the commands delivered while each u-template is active. One cold
+Gentle run replayed 1,339 templates but delivered only 3,490 operations, an
+average of 2.61 operations per replay and 2.02% of the run's 172,512 expansion
+frame steps. The stream contained 431 character tokens, 644 relax commands,
+342 font commands, 1,717 other unexpandable primitives, and 356 commands with
+other meanings. Only 484 operations were the simple `hfil`, `hfill`, `hss`, or
+`hfilneg` glue primitives that a narrow no-scan executor could cheaply
+specialize.
+
+The census rejects a guarded u-template compiler as a large Gentle win. Its
+absolute zero-cost ceiling is already low-single-digit, while a correct cache
+must still guard meaning changes, reproduce macro expansion and scanner
+interleavings, preserve origins and tracing, dispatch the nontrivial commands,
+and retire the alignment marker. The feature-gated counters remain available
+to detect a different workload with longer or simpler templates; no production
+fast path was added.
+
 ## Analyze a capture
 
 Use the repository analyzer for a repeatable text report:
