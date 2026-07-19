@@ -367,6 +367,24 @@ survivor source words/lists for future profiles. Directly constructing a
 survivor from the owned box payload, while keeping the existing register and
 rollback representation, is the narrower higher-value follow-up.
 
+## Non-macro decoded-meaning cache experiment
+
+Issue `umber2-qxh1` added a 64-entry direct-mapped cache for decoded control-
+sequence meanings outside immutable macro replay sites. Entries were guarded
+by the same store owner and monotonic meaning-write generation as the existing
+site cache, so local/global writes, group restoration, and rollback remained
+exact. Gentle store lookups fell from 54,483 to 43,916 per run (19.4%), with
+the pinned 97 pages and 263,424 DVI bytes unchanged.
+
+The lookup reduction did not reduce sampled decode attribution reliably and
+the extra guard/slot probe increased `resolve_meaning_inner` self time. A first
+interleaved block was contaminated by host contention; a repeated twelve-pair
+block had stable medians of 86.251 ms/run baseline and 86.760 ms/run candidate,
+with only one pair favoring the cache. The prototype was removed. At this
+working-set locality, decoding the packed meaning is cheaper than probing a
+second cache; future expansion gains should eliminate higher-level token or
+meaning requests rather than memoize this leaf.
+
 ## Analyze a capture
 
 Use the repository analyzer for a repeatable text report:
