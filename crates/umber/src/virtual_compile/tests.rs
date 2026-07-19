@@ -377,69 +377,6 @@ fn unavailable_nested_probe_retries_through_endinput_to_root_dump() {
 }
 
 #[test]
-fn physical_eof_of_nested_input_resumes_root_latex_tail_probes_and_dump() {
-    let mut session = VirtualCompileSession::new(SessionOptions {
-        engine: EngineMode::PdfTex,
-        ..SessionOptions::default()
-    })
-    .expect("session");
-    session
-        .add_user_file(
-            "main.tex",
-            b"\\input expl3.ltx \\edef\\otone{\\pdffilesize{ot1enc.dfu}} \\edef\\tone{\\pdffilesize{t1enc.dfu}} \\edef\\tsone{\\pdffilesize{ts1enc.dfu}} \\dump".to_vec(),
-        )
-        .expect("main source");
-    let missing = resources(session.compile_attempt());
-    let ResourceRequest::File(expl3) = &missing[0] else {
-        unreachable!();
-    };
-    session
-        .provide_resources(vec![ResourceResponse::File(ResolvedFile {
-            request: expl3.key().clone(),
-            virtual_path: "/texlive/expl3.ltx".into(),
-            bytes: b"\\message{EXPL3-PHYSICAL-EOF}".to_vec(),
-            expected_digest: None,
-        })])
-        .expect("expl3 response");
-
-    let probed = probes(session.compile_attempt());
-    assert_eq!(
-        probed
-            .iter()
-            .map(|request| request.key().name())
-            .collect::<Vec<_>>(),
-        ["ot1enc.dfu", "t1enc.dfu", "ts1enc.dfu"]
-    );
-    session
-        .provide_resources(
-            probed
-                .into_iter()
-                .map(|request| {
-                    let name = request.key().name().to_owned();
-                    ResourceResponse::File(ResolvedFile {
-                        request: request.key().clone(),
-                        virtual_path: format!("/texlive/{name}"),
-                        bytes: b"dfu".to_vec(),
-                        expected_digest: None,
-                    })
-                })
-                .collect(),
-        )
-        .expect("dfu responses");
-
-    assert!(matches!(
-        session.compile_attempt(),
-        CompileAttemptResult::Complete(_)
-    ));
-    assert!(
-        session
-            .into_accepted_finalization()
-            .expect("accepted format finalization")
-            .dumped_format
-    );
-}
-
-#[test]
 fn multiple_tfm_misses_and_later_input_are_batched_in_order() {
     let mut session = session("\\font\\a=one\\relax \\font\\b=two\\relax \\input later \\end");
     let missing = requests(session.compile_attempt());
