@@ -134,11 +134,12 @@ is delivered, the next independent request receives a fresh budget; ordinary
 long-running jobs therefore are not charged for unrelated, already-completed
 expansion chains.
 
-Execution-driver scans are command-demand consumers, including nested scanner
-work needed to satisfy the request. Tokens protected by `\unexpanded` resume
-ordinary macro expansion there. Scanners whose operands remain part of the
-enclosing expansion opt into ordinary suppression explicitly; `\the` does so
-to inspect its operand's meaning without expanding a replayed macro.
+Execution-driver scans preserve ordinary `\unexpanded` suppression by
+default. A scanner boundary that begins a fresh command demand opens an
+explicit scope, propagated through the nested scanner work needed to satisfy
+that request; the post-character-constant lookahead in integer scanning uses
+this path. Raw `\expandafter` dispatch preserves `\noexpand` everywhere and
+preserves `\unexpanded` outside such a command-demand scope.
 
 End of source input is accepted only when the expansion loop is quiescent. If
 a source-origin macro argument scanner reaches root EOF while matching a call,

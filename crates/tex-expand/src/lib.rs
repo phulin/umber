@@ -1054,6 +1054,7 @@ pub struct ExpansionContext<'a> {
     fuel_limit: u64,
     remaining_fuel: u64,
     fuel_scope_depth: u32,
+    command_demand_depth: u32,
     // Meanings use generation-marked dense deduplication below. The remaining
     // read kinds stay append-only here and are sorted once at publication.
     paragraph_reads: Option<Vec<ReadDependency>>,
@@ -1087,6 +1088,7 @@ impl<'a> ExpansionContext<'a> {
             fuel_limit: DEFAULT_EXPANSION_FUEL,
             remaining_fuel: DEFAULT_EXPANSION_FUEL,
             fuel_scope_depth: 0,
+            command_demand_depth: 0,
             paragraph_reads: None,
             paragraph_read_tracking: false,
             paragraph_meanings: Vec::new(),
@@ -1116,6 +1118,7 @@ impl<'a> ExpansionContext<'a> {
             fuel_limit: DEFAULT_EXPANSION_FUEL,
             remaining_fuel: DEFAULT_EXPANSION_FUEL,
             fuel_scope_depth: 0,
+            command_demand_depth: 0,
             paragraph_reads: None,
             paragraph_read_tracking: false,
             paragraph_meanings: Vec::new(),
@@ -1343,6 +1346,7 @@ impl<'a> ExpansionContext<'a> {
             fuel_limit: self.fuel_limit,
             remaining_fuel: self.remaining_fuel,
             fuel_scope_depth: self.fuel_scope_depth,
+            command_demand_depth: self.command_demand_depth,
             paragraph_reads: self.paragraph_reads.take(),
             paragraph_read_tracking: self.paragraph_read_tracking,
             paragraph_meanings: std::mem::take(&mut self.paragraph_meanings),
@@ -1524,7 +1528,7 @@ pub trait ExpansionMode {
     }
 
     /// Whether this mode resumes tokens replayed by `\unexpanded`.
-    fn expands_unexpanded_replay(&self) -> bool {
+    fn expands_unexpanded_replay(&self, _expansion: &ExpansionContext<'_>) -> bool {
         false
     }
 
@@ -1567,7 +1571,7 @@ pub trait ExpansionMode {
         // driver expansion intentionally resumes the latter.
         let suppress = stores
             .origin_is_inserted_kind(target.origin(), InsertedOriginKind::NoExpand)
-            || (!self.expands_unexpanded_replay()
+            || (!self.expands_unexpanded_replay(expansion)
                 && stores.origin_is_inserted_kind(target.origin(), InsertedOriginKind::Unexpanded));
         let dispatched = if suppress {
             Ok(Dispatch::DeliverNoExpand(target))
@@ -1658,7 +1662,11 @@ impl ExpansionMode for DriverExpansionMode {
         stores: &mut tex_state::ExpansionContext<'_>,
         expansion: &mut ExpansionContext<'_>,
     ) -> Result<Option<TracedTokenWord>, ExpandError> {
-        get_command_token_with_context(input, stores, expansion)
+        if expansion.command_demand_depth == 0 {
+            get_x_token_with_context(input, stores, expansion)
+        } else {
+            get_command_token_with_context(input, stores, expansion)
+        }
     }
 
     fn next_command_token(
@@ -1667,7 +1675,13 @@ impl ExpansionMode for DriverExpansionMode {
         stores: &mut tex_state::ExpansionContext<'_>,
         expansion: &mut ExpansionContext<'_>,
     ) -> Result<Option<TracedTokenWord>, ExpandError> {
-        get_command_token_with_context(input, stores, expansion)
+        expansion.command_demand_depth = expansion
+            .command_demand_depth
+            .checked_add(1)
+            .expect("command-demand expansion depth overflowed");
+        let result = get_command_token_with_context(input, stores, expansion);
+        expansion.command_demand_depth -= 1;
+        result
     }
 
     fn next_ordinary_token(
@@ -1679,8 +1693,8 @@ impl ExpansionMode for DriverExpansionMode {
         get_x_token_with_context(input, stores, expansion)
     }
 
-    fn expands_unexpanded_replay(&self) -> bool {
-        true
+    fn expands_unexpanded_replay(&self, expansion: &ExpansionContext<'_>) -> bool {
+        expansion.command_demand_depth != 0
     }
 
     fn dispatch_raw_token(
