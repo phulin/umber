@@ -60,6 +60,8 @@ pub(crate) use hmode::scan_rule_node;
 use hmode::*;
 pub(crate) use hmode::{append_given_char, flush_pending_hchars, try_append_character};
 #[cfg(test)]
+pub(crate) use hyphenation::hyphenated_hlist as test_hyphenated_hlist_owned;
+#[cfg(test)]
 pub(crate) use hyphenation::test_hyphenated_word as test_hyphenated_hlist;
 use hyphenation::*;
 use macros::*;

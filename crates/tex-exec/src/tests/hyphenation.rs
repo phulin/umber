@@ -199,6 +199,36 @@ fn paragraph_hyphenation_preserves_existing_chars_when_no_break_is_found() {
 }
 
 #[test]
+fn unchanged_hyphenation_reuses_the_owned_paragraph_buffer() {
+    let mut stores = stores_with_fonts();
+    let font = stores.current_font();
+    let glue = stores.glue_param(tex_state::env::banks::GlueParam::PAR_SKIP);
+    let boundary = tex_state::node::Node::Glue {
+        spec: glue,
+        kind: tex_state::node::GlueKind::Normal,
+        leader: None,
+    };
+    let mut paragraph = Vec::with_capacity(16);
+    paragraph.push(boundary.clone());
+    paragraph.extend("unmatched".chars().map(|ch| tex_state::node::Node::Char {
+        font,
+        ch,
+        origin: tex_state::token::OriginId::UNKNOWN,
+    }));
+    paragraph.push(boundary);
+    let allocation = paragraph.as_ptr();
+
+    let unchanged = crate::assignments::test_hyphenated_hlist_owned(&mut stores, paragraph);
+
+    assert_eq!(unchanged.as_ptr(), allocation);
+    assert!(
+        !unchanged
+            .iter()
+            .any(|node| matches!(node, tex_state::node::Node::Disc { .. }))
+    );
+}
+
+#[test]
 fn paragraph_hyphenation_stops_at_a_font_change() {
     let mut stores = stores_with_fonts();
     tex_expand::install_expandable_primitives(&mut stores);
