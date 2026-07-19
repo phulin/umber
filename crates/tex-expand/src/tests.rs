@@ -1,7 +1,8 @@
 use crate::{
     DriverExpansionMode, EngineMode, ExpandableOpcode, ExpansionContext, ExpansionMode,
-    ReadDependency, ReadRecorder, RestrictedExpansionMode, dispatch, dispatch_expandable_opcode,
-    dispatch_with_context, install_expandable_primitives, semantic_token,
+    ExpansionSuppression, RawExpansionToken, ReadDependency, ReadRecorder, RestrictedExpansionMode,
+    dispatch, dispatch_expandable_opcode, dispatch_with_context, install_expandable_primitives,
+    semantic_token,
 };
 use ahash::AHashMap;
 #[cfg(feature = "profiling-stats")]
@@ -2175,7 +2176,7 @@ fn restricted_expandafter_preserves_an_unexpanded_target() {
     RestrictedExpansionMode
         .dispatch_raw_token_after(
             saved,
-            target,
+            RawExpansionToken::new(target, ExpansionSuppression::Unexpanded),
             &mut input,
             &mut tex_state::ExpansionContext::new(&mut stores),
             &mut expansion,
@@ -2190,6 +2191,133 @@ fn restricted_expandafter_preserves_an_unexpanded_target() {
     assert_eq!(
         get_x_token(&mut input, &mut context).expect("suppressed target"),
         Some(target_token)
+    );
+}
+
+#[test]
+fn driver_expandafter_resumes_an_unexpanded_target() {
+    let mut stores = Universe::new();
+    let macro_cs = stores.intern("m");
+    let empty = stores.intern_token_list(&[]);
+    let body = stores.intern_token_list(&[char_token('x')]);
+    stores.set_macro_meaning(
+        macro_cs,
+        MacroMeaning::new(MeaningFlags::EMPTY, empty, body),
+    );
+    let target_token = Token::Cs(macro_cs.symbol());
+    let target_origin = stores.inserted_origin(
+        InsertedOriginKind::Unexpanded,
+        target_token,
+        OriginId::UNKNOWN,
+    );
+    let target = TracedTokenWord::pack(target_token, target_origin);
+    let saved = TracedTokenWord::pack(char_token('a'), OriginId::UNKNOWN);
+    let mut input = InputStack::new(MemoryInput::new(""));
+    let mut expansion = ExpansionContext::new("texput");
+
+    DriverExpansionMode
+        .dispatch_raw_token_after(
+            saved,
+            RawExpansionToken::new(target, ExpansionSuppression::Unexpanded),
+            &mut input,
+            &mut tex_state::ExpansionContext::new(&mut stores),
+            &mut expansion,
+        )
+        .expect("driver expandafter");
+
+    let mut context = tex_state::ExpansionContext::new(&mut stores);
+    assert_eq!(
+        get_x_token(&mut input, &mut context).expect("saved token"),
+        Some(char_token('a'))
+    );
+    assert_eq!(
+        get_x_token(&mut input, &mut context).expect("expanded target"),
+        Some(char_token('x'))
+    );
+}
+
+#[test]
+fn expanded_replacement_scopes_driver_expandafter_suppression() {
+    let mut stores = Universe::new();
+    let macro_cs = stores.intern("m");
+    let empty = stores.intern_token_list(&[]);
+    let body = stores.intern_token_list(&[char_token('x')]);
+    stores.set_macro_meaning(
+        macro_cs,
+        MacroMeaning::new(MeaningFlags::EMPTY, empty, body),
+    );
+    let target_token = Token::Cs(macro_cs.symbol());
+    let target_origin = stores.inserted_origin(
+        InsertedOriginKind::Unexpanded,
+        target_token,
+        OriginId::UNKNOWN,
+    );
+    let target = TracedTokenWord::pack(target_token, target_origin);
+    let saved = TracedTokenWord::pack(char_token('a'), OriginId::UNKNOWN);
+    let mut input = InputStack::new(MemoryInput::new(""));
+    let mut expansion = ExpansionContext::new("texput");
+
+    expansion.begin_restricted_expandafter();
+    let dispatched = DriverExpansionMode.dispatch_raw_token_after(
+        saved,
+        RawExpansionToken::new(target, ExpansionSuppression::None),
+        &mut input,
+        &mut tex_state::ExpansionContext::new(&mut stores),
+        &mut expansion,
+    );
+    expansion.end_restricted_expandafter();
+    dispatched.expect("expanded-replacement expandafter");
+
+    let mut context = tex_state::ExpansionContext::new(&mut stores);
+    assert_eq!(
+        get_x_token(&mut input, &mut context).expect("saved token"),
+        Some(char_token('a'))
+    );
+    assert_eq!(
+        get_x_token(&mut input, &mut context).expect("suppressed target"),
+        Some(target_token)
+    );
+}
+
+#[test]
+fn driver_expandafter_does_not_restore_suppression_from_frozen_provenance() {
+    let mut stores = Universe::new();
+    let macro_cs = stores.intern("m");
+    let empty = stores.intern_token_list(&[]);
+    let body = stores.intern_token_list(&[char_token('x')]);
+    stores.set_macro_meaning(
+        macro_cs,
+        MacroMeaning::new(MeaningFlags::EMPTY, empty, body),
+    );
+    let target_token = Token::Cs(macro_cs.symbol());
+    let historical_origin = stores.inserted_origin(
+        InsertedOriginKind::Unexpanded,
+        target_token,
+        OriginId::UNKNOWN,
+    );
+    let target = TracedTokenWord::pack(target_token, historical_origin);
+    let saved = TracedTokenWord::pack(char_token('a'), OriginId::UNKNOWN);
+    let mut input = InputStack::new(MemoryInput::new(""));
+    let mut expansion = ExpansionContext::new("texput");
+
+    DriverExpansionMode
+        .dispatch_raw_token_after(
+            saved,
+            RawExpansionToken::new(target, ExpansionSuppression::None),
+            &mut input,
+            &mut tex_state::ExpansionContext::new(&mut stores),
+            &mut expansion,
+        )
+        .expect("expandafter target with historical provenance");
+
+    let mut context = tex_state::ExpansionContext::new(&mut stores);
+    assert_eq!(
+        get_x_token(&mut input, &mut context).expect("saved token"),
+        Some(char_token('a'))
+    );
+    assert_eq!(
+        get_x_token(&mut input, &mut context).expect("expanded target"),
+        Some(char_token('x'))
     );
 }
 
