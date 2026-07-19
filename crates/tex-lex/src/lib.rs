@@ -277,6 +277,11 @@ pub trait InputSource: fmt::Debug + Send {
         false
     }
 
+    /// Whether repeated physical-line values should share normalization work.
+    fn cache_normalized_lines(&self) -> bool {
+        true
+    }
+
     /// Allows a physical file source to preserve arbitrary bytes for classic
     /// 8-bit TeX tokenization. Generated/scantokens sources remain Unicode.
     fn set_utf8_input_as_bytes(&mut self, _enabled: bool) {}
@@ -304,6 +309,10 @@ where
 
     fn is_scantokens(&self) -> bool {
         (**self).is_scantokens()
+    }
+
+    fn cache_normalized_lines(&self) -> bool {
+        (**self).cache_normalized_lines()
     }
 
     fn set_utf8_input_as_bytes(&mut self, enabled: bool) {
@@ -697,6 +706,10 @@ impl InputSource for WorldInput {
 
     fn is_scantokens(&self) -> bool {
         self.scantokens
+    }
+
+    fn cache_normalized_lines(&self) -> bool {
+        self.input_record.is_none()
     }
 
     fn set_utf8_input_as_bytes(&mut self, enabled: bool) {
@@ -5883,11 +5896,16 @@ where
         let Some(line) = self.source.read_line()? else {
             return Ok(None);
         };
-        Ok(Some(self.normalization_cache.normalize(
-            &line,
-            stores.endlinechar(),
-            self.source.is_scantokens(),
-        )))
+        let normalized = if self.source.cache_normalized_lines() {
+            self.normalization_cache.normalize(
+                &line,
+                stores.endlinechar(),
+                self.source.is_scantokens(),
+            )
+        } else {
+            normalize_line(&line, stores.endlinechar())
+        };
+        Ok(Some(normalized))
     }
 }
 

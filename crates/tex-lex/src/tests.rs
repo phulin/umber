@@ -1103,6 +1103,32 @@ fn line_reader_reuses_only_complete_normalization_keys() {
 }
 
 #[test]
+fn immutable_world_lines_bypass_source_local_normalization_cache() {
+    let mut stores = Universe::new();
+    stores.set_int_param(IntParam::END_LINE_CHAR, 13);
+    stores
+        .world_mut()
+        .set_memory_file("repeat.tex", b"same\nsame\n".to_vec())
+        .expect("seed immutable input");
+    let content = stores
+        .world_mut()
+        .read_file("repeat.tex")
+        .expect("open immutable input");
+    let mut reader = LineReader::new(super::WorldInput::from_content(content));
+
+    assert_eq!(
+        reader.next_event(&stores).expect("first line"),
+        Some(LineEvent::Text("same\r".into()))
+    );
+    assert_eq!(
+        reader.next_event(&stores).expect("second line"),
+        Some(LineEvent::Text("same\r".into()))
+    );
+    assert_eq!(reader.normalization_cache().hits(), 0);
+    assert!(reader.normalization_cache().is_empty());
+}
+
+#[test]
 fn layout_cursor_scalar_crossing_direct_boundary_uses_fragment_span() {
     let mut fragments = FragmentStore::new();
     let (fragment, registration) = fragments
