@@ -856,9 +856,6 @@ pub enum ExpandError {
         name: String,
         context: TracedTokenWord,
     },
-    ForbiddenOuterTokenInAlignment {
-        context: TracedTokenWord,
-    },
     ExpansionWorkLimitExceeded {
         limit: u64,
     },
@@ -956,9 +953,6 @@ impl fmt::Display for ExpandError {
                     "Forbidden control sequence found while scanning conditional text: {name}"
                 )
             }
-            Self::ForbiddenOuterTokenInAlignment { .. } => {
-                f.write_str("Forbidden control sequence found while scanning an alignment")
-            }
             Self::ExpansionWorkLimitExceeded { limit } => {
                 write!(f, "expansion work limit of {limit} steps exceeded")
             }
@@ -998,7 +992,6 @@ impl std::error::Error for ExpandError {
             | Self::IncompleteIf { .. }
             | Self::ExtraConditionalControl { .. }
             | Self::ForbiddenOuterTokenInSkippedConditional { .. }
-            | Self::ForbiddenOuterTokenInAlignment { .. }
             | Self::ExpansionWorkLimitExceeded { .. } => None,
         }
     }
@@ -1039,7 +1032,6 @@ impl ExpandError {
             | Self::ForbiddenOuterTokenInSkippedConditional { context, .. } => {
                 Some(context.origin())
             }
-            Self::ForbiddenOuterTokenInAlignment { context } => Some(context.origin()),
             Self::NonCharacterInInputName { context }
             | Self::UnsupportedTheTarget { context }
             | Self::MissingFontIdentifier { context }
@@ -2316,12 +2308,6 @@ fn get_x_token_with_context_inner(
         {
             return Ok(Some(traced));
         }
-        if input.has_active_alignment_cell()
-            && matches!(meaning, Meaning::Macro { flags, .. } if flags.contains(MeaningFlags::OUTER))
-        {
-            return Err(ExpandError::ForbiddenOuterTokenInAlignment { context: traced });
-        }
-
         let dispatched =
             dispatch_with_context(token, read.origin(), input, stores, expansion, meaning);
         let dispatched = match dispatched {

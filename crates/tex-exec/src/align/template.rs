@@ -33,7 +33,6 @@ pub(super) fn replay_template(
                 nest, input, stores, execution, &mut stats,
             )? {
                 super::execution::TemplateStep::Continue => {}
-                super::execution::TemplateStep::DeferredOuterRecovery => return Ok(()),
                 super::execution::TemplateStep::EndV => {
                     // Malformed preambles can cause the cell terminator to fire
                     // while a u-template replay is still retiring. Preserve the

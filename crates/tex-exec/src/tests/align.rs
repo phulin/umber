@@ -2111,6 +2111,35 @@ fn outer_macro_in_skipped_span_expansion_recovers_runaway_preamble() {
 }
 
 #[test]
+fn expandafter_may_expand_outer_sentinel_in_alignment_cell() {
+    let mut stores = support::stores_with_fonts();
+    tex_expand::install_expandable_primitives(&mut stores);
+    let source = r#"
+        \outer\def\sentinel{\relax}
+        \def\scan{\futurelet\next\scanone}
+        \def\scanone{\expandafter\consume}
+        \def\consume#1{\global\count7=123}
+        \halign{#\cr \scan\sentinel\cr}
+        \global\count8=456
+    "#;
+    let mut input = InputStack::new(MemoryInput::new(source));
+    let mut context = crate::ExecutionContext::new("texput").with_expansion_fuel(10_000);
+
+    let stats = Executor::new()
+        .run_with_context(&mut input, &mut stores, &mut context)
+        .expect("expandafter may expand an outer sentinel after preamble scanning");
+
+    assert_eq!(stores.count(7), 123);
+    assert_eq!(stores.count(8), 456);
+    assert!(
+        !support::terminal_effect_text(&stores).contains("Missing } inserted"),
+        "scanner_status is normal after the preamble"
+    );
+    assert!(stats.delivered_tokens < 100);
+    assert!(input.summary().frames().is_empty());
+}
+
+#[test]
 fn trip_conditional_preamble_recovery_stops_before_following_input() {
     let mut stores = support::stores_with_fonts();
     tex_expand::install_expandable_primitives(&mut stores);

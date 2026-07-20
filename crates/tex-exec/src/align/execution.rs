@@ -505,23 +505,6 @@ fn run_cell_body_until_terminator(
                 );
                 continue;
             }
-            Err(tex_expand::ExpandError::ForbiddenOuterTokenInAlignment { context }) => {
-                recover_outer_alignment_token(context, input, stores);
-                continue;
-            }
-            Err(tex_expand::ExpandError::Captured { error, .. })
-                if matches!(
-                    error.as_ref(),
-                    tex_expand::ExpandError::ForbiddenOuterTokenInAlignment { .. }
-                ) =>
-            {
-                let tex_expand::ExpandError::ForbiddenOuterTokenInAlignment { context } = *error
-                else {
-                    unreachable!("guard restricts captured expansion error")
-                };
-                recover_outer_alignment_token(context, input, stores);
-                continue;
-            }
             Err(tex_expand::ExpandError::Captured { error, .. })
                 if matches!(
                     error.as_ref(),
@@ -584,7 +567,7 @@ fn run_cell_body_until_terminator(
             // alignment brace level is negative. Backing up \par behind
             // the inserted right brace lets ordinary group dispatch
             // reach §1103's align_group recovery in the same order.
-            recover_outer_alignment_token(token, input, stores);
+            recover_alignment_par_token(token, input, stores);
             continue;
         }
         if is_end_group(stores, semantic)
@@ -654,7 +637,6 @@ fn classify_cell_terminator(
 pub(super) enum TemplateStep {
     Continue,
     EndV,
-    DeferredOuterRecovery,
 }
 
 pub(super) fn run_one_main_control_token(
@@ -675,18 +657,6 @@ pub(super) fn run_one_main_control_token(
             return Err(ExecError::MissingToken {
                 context: "alignment template",
             });
-        }
-        Err(tex_expand::ExpandError::Captured { error, .. })
-            if matches!(
-                error.as_ref(),
-                tex_expand::ExpandError::ForbiddenOuterTokenInAlignment { .. }
-            ) =>
-        {
-            let tex_expand::ExpandError::ForbiddenOuterTokenInAlignment { context } = *error else {
-                unreachable!("guard restricts captured expansion error")
-            };
-            recover_outer_alignment_token(context, input, stores);
-            return Ok(TemplateStep::DeferredOuterRecovery);
         }
         Err(error) => return Err(error.into()),
     };
@@ -774,7 +744,7 @@ fn is_alignment_par(stores: &Universe, token: Token) -> bool {
     )
 }
 
-fn recover_outer_alignment_token(
+fn recover_alignment_par_token(
     context: TracedTokenWord,
     input: &mut InputStack,
     stores: &mut Universe,

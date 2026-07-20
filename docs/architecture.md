@@ -164,6 +164,14 @@ boundaries. The legacy clean-EOF recovery is limited to calls originating in
 an inserted token-list replay, which preserves format-loaded TRIP behavior
 without hiding a prematurely exhausted source job.
 
+Outer-control-sequence validity follows TeX.web §§336--340's scanner status,
+not the presence of an executing alignment cell. Alignment preamble scanning
+checks outer macros and recovers with frozen `\cr` plus a closing brace; macro
+argument matching and skipped conditionals retain their own forbidden-token
+checks. Once the preamble ends, u/v templates and cell bodies run with normal
+scanner status, so packages may use outer sentinels through `\futurelet` and
+`\expandafter` there, as pdfTeX's `bm` package does.
+
 ## 6. Execution engine
 
 `tex-exec` owns primitive dispatch, grouping, assignments, modes, box building,
