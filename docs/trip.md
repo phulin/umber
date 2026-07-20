@@ -27,6 +27,11 @@ contains a deliberate nested `\message` construction at line 419: `\the` of
 a token register must stay unexpanded while the complete message text is being
 expanded, as in TeX82's `scan_toks(..., xpand=true)`. Expanding that replay a
 second time recursively nests `\message{` and is an allocation-safety bug.
+The same bounded replay keeps an engine-owned frozen sentinel below the raw
+general text. Operand scanners may therefore read past a trailing value such
+as `\the\count15` without exposing caller input, while the rendered digits are
+still collected into the mark or definition. TRIP page 3 exercises this with
+the numeric marks created by `\everypar`.
 
 `scripts/trip.sh` fetches official CTAN bytes into gitignored
 `third_party/trip/`, verifies SHA-256 hashes, uses the pinned official

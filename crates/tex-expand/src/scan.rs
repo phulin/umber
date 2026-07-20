@@ -14,7 +14,7 @@ use tex_state::ids::{OriginListId, TokenListId};
 use tex_state::macro_store::{MacroDefinitionProvenance, MacroMeaning};
 use tex_state::meaning::{ExpandablePrimitive, Meaning, MeaningFlags};
 use tex_state::provenance::{InsertedOriginKind, OriginListBuilder};
-use tex_state::token::{Catcode, Token, TracedTokenWord};
+use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 use tex_state::token_store::TokenListBuilder;
 use tex_state::{ExpansionState, TracedTokenList};
 
@@ -648,7 +648,17 @@ fn expand_replacement_text(
     expansion: &mut ExpansionContext<'_>,
     mode: &mut dyn ExpansionMode,
 ) -> Result<TracedTokenList, ScanToksError> {
-    let replay = input.push_token_list_with_origins(
+    // Keep an inaccessible token below the raw replacement. Expandable
+    // primitives commonly read one token ahead while scanning their operands
+    // (`\the\count15` is the canonical case). A replay marker alone cannot
+    // delimit that read because the raw frame is retired before the primitive
+    // pushes its rendered result. The frozen alignment sentinel is already an
+    // engine-owned token that expansion turns into `frozen_endv`; it cannot be
+    // manufactured by source input, so it provides an exact synchronous
+    // boundary without exposing the caller's next token.
+    let boundary = TracedTokenWord::pack(stores.frozen_end_template_token(), OriginId::UNKNOWN);
+    let replay = input.push_transient_tokens(vec![boundary], TokenListReplayKind::Inserted);
+    input.push_token_list_with_origins(
         replacement_text,
         replacement_origins,
         TokenListReplayKind::Inserted,
@@ -697,11 +707,6 @@ fn collect_expanded_text_inner(
     let mut builder = stores.token_list_builder();
     let mut origins = stores.origin_list_builder();
     loop {
-        if let ExpandedTextBoundary::Replay(replay) = boundary
-            && input.finish_exhausted_token_list_replay(replay, stores)
-        {
-            break;
-        }
         if input.append_macro_literal_span(
             stores,
             &mut builder,
@@ -725,6 +730,15 @@ fn collect_expanded_text_inner(
         expansion.observe_read(read);
         let token = read.token();
         let traced = read.traced_token();
+        if matches!(boundary, ExpandedTextBoundary::Replay(_))
+            && (token.is_frozen_end_template() || token.is_frozen_endv())
+        {
+            let ExpandedTextBoundary::Replay(replay) = boundary else {
+                unreachable!();
+            };
+            let _ = input.finish_exhausted_token_list_replay(replay, stores);
+            break;
+        }
         if read.suppress_expansion() {
             append_collected_token(
                 &mut boundary,

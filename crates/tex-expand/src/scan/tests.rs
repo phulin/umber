@@ -111,6 +111,46 @@ fn expanded_general_text_trailing_conditional_preserves_following_input() {
 }
 
 #[test]
+fn expanded_general_text_collects_trailing_value_output_before_its_boundary() {
+    let mut stores = Universe::new();
+    crate::install_expandable_primitives(&mut stores);
+    let count = stores.intern("count");
+    stores.set_meaning(
+        count,
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Count),
+    );
+    stores.set_count(15, 51);
+    let context =
+        TracedTokenWord::pack(Token::Cs(stores.intern("mark").symbol()), OriginId::UNKNOWN);
+    let mut input = InputStack::new(MemoryInput::new("{\\the\\count15}Z"));
+    let mut expansion = ExpansionContext::new("texput").with_fuel(10_000);
+
+    let expanded = scan_general_text_expanded_with_driver(
+        &mut input,
+        &mut tex_state::ExpansionContext::new(&mut stores),
+        &mut expansion,
+        context,
+    )
+    .expect("general text should expand");
+
+    assert_eq!(
+        stores.tokens(expanded),
+        &[
+            char_token('5', Catcode::Other),
+            char_token('1', Catcode::Other),
+        ]
+    );
+    let next = crate::get_x_token_with_context(
+        &mut input,
+        &mut tex_state::ExpansionContext::new(&mut stores),
+        &mut expansion,
+    )
+    .expect("following input should expand")
+    .map(crate::semantic_token);
+    assert_eq!(next, Some(char_token('Z', Catcode::Letter)));
+}
+
+#[test]
 fn expanded_preserves_unexpanded_replay_expanded_once_by_expandafter() {
     let mut stores = Universe::new();
     crate::install_expandable_primitives(&mut stores);
