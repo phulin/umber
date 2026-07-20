@@ -7645,6 +7645,8 @@ fn hash_token_list_replay_kind(kind: TokenListReplayKind, hasher: &mut StateHash
         TokenListReplayKind::NoExpand => 2,
         TokenListReplayKind::Unexpanded => 10,
         TokenListReplayKind::EveryPar => 3,
+        TokenListReplayKind::EveryHBox => 12,
+        TokenListReplayKind::EveryVBox => 13,
         TokenListReplayKind::EveryJob => 11,
         TokenListReplayKind::EveryCr => 4,
         TokenListReplayKind::Mark => 5,

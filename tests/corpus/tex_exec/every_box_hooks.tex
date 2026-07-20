@@ -1,0 +1,9 @@
+\count0=0 \count1=0 \dimen0=10pt
+\def\after{\global\count0=1}
+\everyhbox{\global\advance\count0 by1 \global\dimen0=20pt}
+\everyvbox{\global\advance\count1 by1}
+\afterassignment\after
+\setbox0=\hbox to\dimen0{\hbox{}}
+\setbox1=\vbox{\vtop{}}
+\message{H:\the\count0,\the\wd0;V:\the\count1}
+\end

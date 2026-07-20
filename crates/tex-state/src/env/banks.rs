@@ -421,6 +421,12 @@ impl TokParam {
     /// TeX's `\everydisplay` token-list parameter.
     pub const EVERY_DISPLAY: Self = Self::new(3);
 
+    /// TeX's token list inserted at the start of every explicit hbox.
+    pub const EVERY_HBOX: Self = Self::new(4);
+
+    /// TeX's token list inserted at the start of every explicit vbox or vtop.
+    pub const EVERY_VBOX: Self = Self::new(5);
+
     /// TeX's token list inserted at the start of a format-loaded job.
     pub const EVERY_JOB: Self = Self::new(6);
 

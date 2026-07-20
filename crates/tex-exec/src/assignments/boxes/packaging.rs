@@ -1,5 +1,6 @@
 use tex_expand::get_x_token_with_context;
-use tex_lex::InputStack;
+use tex_lex::{InputStack, TokenListReplayKind};
+use tex_state::env::banks::TokParam;
 use tex_state::ids::NodeListId;
 use tex_state::meaning::{Meaning, UnexpandablePrimitive};
 use tex_state::node::Node;
@@ -11,8 +12,8 @@ use crate::packing_params::{hpack, hpack_params, vpack, vpack_params, vtop};
 use crate::{ExecError, Mode, ModeNest, leave_group, push_traced_tokens};
 
 use super::super::{
-    flush_pending_hchars, has_catcode_meaning, next_non_space_traced_x, normal_paragraph,
-    scan_optional_keyword_x, scan_register_index, scan_scaled,
+    fire_afterassignment, flush_pending_hchars, has_catcode_meaning, next_non_space_traced_x,
+    normal_paragraph, scan_optional_keyword_x, scan_register_index, scan_scaled,
 };
 use super::vsplit::scan_vsplit_node;
 
@@ -227,6 +228,21 @@ pub(super) fn scan_box_node(
         normal_paragraph(&mut inner, stores);
     }
     inner.push(mode);
+    let (hook, replay_kind) = match kind {
+        BoxKind::HBox => (TokParam::EVERY_HBOX, TokenListReplayKind::EveryHBox),
+        BoxKind::VBox | BoxKind::VTop => (TokParam::EVERY_VBOX, TokenListReplayKind::EveryVBox),
+    };
+    let hook = stores.tok_param(hook);
+    if !stores.tokens(hook).is_empty() {
+        input.push_token_list(hook, replay_kind);
+    }
+    // TeX82 inserts a pending `\afterassignment` token before the every-box
+    // list when this box is the value of `\setbox`. Input frames are LIFO, so
+    // push the hook first and the one-token afterassignment replay second.
+    if fire_afterassignment(input, stores) {
+        execution
+            .mark_paragraph_barrier(tex_state::ParagraphBarrierReason::UnsupportedEscapingWrite);
+    }
     scan_box_group(&mut inner, input, stores, execution, box_group_depth)?;
     if kind != BoxKind::HBox && inner.current_mode() == Mode::Horizontal {
         // TeX82's vbox_group/vtop_group right-brace handler runs end_graf

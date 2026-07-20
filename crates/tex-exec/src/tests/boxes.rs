@@ -12,6 +12,15 @@ fn run(source: &str) -> Universe {
 }
 
 #[test]
+fn every_box_hooks_match_tex82_reference_observation() {
+    let reference = test_support::read_fixture("tex_exec", "every_box_hooks", "ref");
+    assert!(
+        reference.contains("H:3,10.0pt;V:2"),
+        "reference every-box timing changed:\n{reference}"
+    );
+}
+
+#[test]
 fn every_box_hooks_cover_empty_nested_vtop_and_implicit_groups() {
     let stores = run(r"\everyhbox{}\setbox0=\hbox{}
            \everyhbox{\global\advance\count0 by1}

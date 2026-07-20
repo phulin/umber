@@ -177,6 +177,8 @@ pub enum TokenListReplayKind {
     /// Tokens returned by e-TeX `\unexpanded`; command demand may expand them.
     Unexpanded,
     EveryPar,
+    EveryHBox,
+    EveryVBox,
     EveryJob,
     EveryCr,
     Mark,

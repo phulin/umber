@@ -1,0 +1,13 @@
+success: true
+stdout:
+Underfull \hbox (badness 10000) detected at line 6
+[]
+H:3,10.0pt;V:2
+log:
+Underfull \hbox (badness 10000) detected at line 6
+[]
+
+\hbox(0.0+0.0)x10.0
+.\hbox(0.0+0.0)x0.0
+
+H:3,10.0pt;V:2
