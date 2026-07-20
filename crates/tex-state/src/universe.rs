@@ -2176,7 +2176,7 @@ impl Universe {
                     "schema-10 transition is missing its semantic section".to_owned(),
                 )
             })?;
-        let format: UniverseFormatPayload = bincode::deserialize(payload.bytes)
+        let format: UniverseFormatPayload = bincode::deserialize(payload.bytes.as_ref())
             .map_err(|error| FormatError::InvalidState(error.to_string()))?;
         let mode = decode_interaction_mode(format.interaction_mode)?;
         let frozen = crate::stores::FrozenCoreSections {
@@ -7676,12 +7676,12 @@ fn map_container_error(error: crate::format_container::ContainerError) -> Format
 }
 
 fn required_format_section<'a>(
-    container: &crate::format_container::DecodedContainer<'a>,
+    container: &'a crate::format_container::DecodedContainer<'_>,
     kind: u32,
 ) -> Result<&'a [u8], FormatError> {
     container
         .section(kind)
-        .map(|section| section.bytes)
+        .map(|section| section.bytes.as_ref())
         .ok_or_else(|| FormatError::InvalidState(format!("missing format section {kind}")))
 }
 

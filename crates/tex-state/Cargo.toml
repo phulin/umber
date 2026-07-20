@@ -19,6 +19,7 @@ profiling-stats = []
 ahash.workspace = true
 bincode.workspace = true
 chrono.workspace = true
+flate2.workspace = true
 serde.workspace = true
 tex-arith = { path = "../tex-arith" }
 tex-content = { path = "../tex-content" }

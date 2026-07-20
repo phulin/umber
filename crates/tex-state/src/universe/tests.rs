@@ -617,7 +617,7 @@ fn frozen_foundational_sections_restore_ids_and_accept_job_local_additions() {
     let environment = container
         .section(crate::stores::FROZEN_ENV_SECTION)
         .expect("frozen environment section");
-    let env_entries = crate::stores::testing_frozen_environment_shape(environment.bytes);
+    let env_entries = crate::stores::testing_frozen_environment_shape(environment.bytes.as_ref());
     assert!(env_entries > 0);
 
     let _ = crate::stores::testing_take_transitional_format_work();
@@ -745,18 +745,26 @@ fn checksum_valid_foundational_section_corruption_fails_structural_validation() 
     let mut universe = Universe::new();
     let name = universe.intern("corrupt-me");
     let tokens = universe.intern_token_list(&[Token::Cs(name.symbol())]);
-    universe.intern_macro(MacroMeaning::new(
+    let definition = universe.intern_macro(MacroMeaning::new(
         MeaningFlags::EMPTY,
         crate::ids::TokenListId::EMPTY,
         tokens,
     ));
-    universe.intern_glue(GlueSpec {
+    universe.set_meaning(
+        name,
+        Meaning::Macro {
+            flags: MeaningFlags::EMPTY,
+            definition,
+        },
+    );
+    let glue = universe.intern_glue(GlueSpec {
         width: Scaled::from_raw(1),
         stretch: Scaled::from_raw(2),
         stretch_order: Order::Normal,
         shrink: Scaled::from_raw(3),
         shrink_order: Order::Fil,
     });
+    universe.set_skip(0, glue);
     let valid = universe.dump_format().expect("valid frozen core");
 
     for (kind, offset, expected) in [
@@ -809,7 +817,8 @@ fn frozen_environment_references_are_validated_against_frozen_stores() {
     let environment = container
         .section(crate::stores::FROZEN_ENV_SECTION)
         .expect("frozen environment section");
-    let corrupt = crate::stores::testing_corrupt_environment_macro_reference(environment.bytes);
+    let corrupt =
+        crate::stores::testing_corrupt_environment_macro_reference(environment.bytes.as_ref());
     replace_format_section(&mut image, crate::stores::FROZEN_ENV_SECTION, |section| {
         *section = corrupt;
     });
@@ -841,7 +850,7 @@ fn frozen_environment_rejects_global_cells_and_bad_box_references() {
         let environment = container
             .section(crate::stores::FROZEN_ENV_SECTION)
             .expect("frozen environment section");
-        let payload = corrupt(environment.bytes);
+        let payload = corrupt(environment.bytes.as_ref());
         let mut image = valid.clone();
         replace_format_section(&mut image, crate::stores::FROZEN_ENV_SECTION, |section| {
             *section = payload;
@@ -1042,10 +1051,24 @@ fn token_semantic_id_converges_across_cold_restore_and_fork() {
 
     let bytes = cold.dump_format().expect("token format encodes");
     let fork = cold.clone();
-    let restored = Universe::from_format(World::memory(), &bytes).expect("token format restores");
+    let mut restored =
+        Universe::from_format(World::memory(), &bytes).expect("token format restores");
 
     let fork_body = fork.toks(7);
     let restored_body = restored.toks(7);
+    let restored_target = restored.symbol("target").expect("target restores");
+    assert_eq!(
+        restored.intern_token_list(&[
+            Token::Cs(restored_target.symbol()),
+            Token::Char {
+                ch: 'x',
+                cat: Catcode::Letter,
+            },
+            Token::param(1),
+        ]),
+        restored_body,
+        "direct frozen lookup must reuse the authoritative arena record",
+    );
     let semantic_id = cold.stores.testing_token_semantic_id(body);
     assert_eq!(
         fork.stores.testing_token_semantic_id(fork_body),
@@ -1316,21 +1339,18 @@ fn format_v10_round_trips_tex_web_box_shift_and_rejects_legacy_v9() {
     ));
 }
 
-fn replace_format_ratio(bytes: &mut [u8], old: (i32, i32), new: (i32, i32)) {
-    let section = crate::format_container::decode(bytes)
-        .expect("decode test container")
-        .section(crate::stores::FROZEN_NODES_SECTION)
-        .expect("frozen node section");
-    let range = section.offset..section.offset + section.bytes.len();
-    let old = [old.0.to_le_bytes(), old.1.to_le_bytes()].concat();
-    let replacement = [new.0.to_le_bytes(), new.1.to_le_bytes()].concat();
-    let offsets: Vec<_> = bytes[range.clone()]
-        .windows(old.len())
-        .enumerate()
-        .filter_map(|(offset, window)| (window == old).then_some(range.start + offset))
-        .collect();
-    assert_eq!(offsets.len(), 1, "ratio wire must occur exactly once");
-    bytes[offsets[0]..offsets[0] + replacement.len()].copy_from_slice(&replacement);
+fn replace_format_ratio(bytes: &mut Vec<u8>, old: (i32, i32), new: (i32, i32)) {
+    replace_format_section(bytes, crate::stores::FROZEN_NODES_SECTION, |section| {
+        let old = [old.0.to_le_bytes(), old.1.to_le_bytes()].concat();
+        let replacement = [new.0.to_le_bytes(), new.1.to_le_bytes()].concat();
+        let offsets: Vec<_> = section
+            .windows(old.len())
+            .enumerate()
+            .filter_map(|(offset, window)| (window == old).then_some(offset))
+            .collect();
+        assert_eq!(offsets.len(), 1, "ratio wire must occur exactly once");
+        section[offsets[0]..offsets[0] + replacement.len()].copy_from_slice(&replacement);
+    });
 }
 
 fn refresh_format_checksum(bytes: &mut [u8]) {
@@ -1373,8 +1393,11 @@ fn corrupt_font_format(
     let frozen = container
         .section(crate::stores::FONTS_SECTION)
         .expect("frozen font section");
-    let (environment, frozen) =
-        crate::stores::testing_corrupt_font_format(environment.bytes, frozen.bytes, corruption);
+    let (environment, frozen) = crate::stores::testing_corrupt_font_format(
+        environment.bytes.as_ref(),
+        frozen.bytes.as_ref(),
+        corruption,
+    );
     replace_format_section(bytes, crate::stores::FROZEN_ENV_SECTION, |section| {
         *section = environment;
     });
@@ -2890,7 +2913,19 @@ fn exact_immutable_store_cache_tracks_live_accepted_and_scratch_lineages() {
 fn exact_immutable_store_root_survives_format_reconstruction() {
     let mut original = Universe::new();
     let name = original.intern("format-root-name");
-    original.intern_token_list(&[Token::Cs(name.symbol())]);
+    let tokens = original.intern_token_list(&[Token::Cs(name.symbol())]);
+    let definition = original.intern_macro(MacroMeaning::new(
+        MeaningFlags::EMPTY,
+        crate::ids::TokenListId::EMPTY,
+        tokens,
+    ));
+    original.set_meaning(
+        name,
+        Meaning::Macro {
+            flags: MeaningFlags::EMPTY,
+            definition,
+        },
+    );
     let expected = original
         .snapshot_with_exact_identity()
         .exact_state_identity
@@ -2904,6 +2939,57 @@ fn exact_immutable_store_root_survives_format_reconstruction() {
         .expect("restored state has exact identity");
 
     assert_eq!(actual, expected);
+}
+
+#[test]
+fn format_dump_compacts_to_the_reachable_name_macro_and_token_closure() {
+    let mut universe = Universe::new();
+    let dead_name = universe.intern("dead-format-history");
+    let dead_tokens = universe.intern_token_list(&[Token::Cs(dead_name.symbol())]);
+    universe.intern_macro(MacroMeaning::new(
+        MeaningFlags::EMPTY,
+        crate::ids::TokenListId::EMPTY,
+        dead_tokens,
+    ));
+
+    let live_name = universe.intern("live-format-root");
+    let live_tokens = universe.intern_token_list(&[Token::Cs(live_name.symbol())]);
+    let live_macro = universe.intern_macro(MacroMeaning::new(
+        MeaningFlags::EMPTY,
+        crate::ids::TokenListId::EMPTY,
+        live_tokens,
+    ));
+    universe.set_meaning(
+        live_name,
+        Meaning::Macro {
+            flags: MeaningFlags::EMPTY,
+            definition: live_macro,
+        },
+    );
+
+    let image = universe.dump_format().expect("compact format dump");
+    let container = crate::format_container::decode(&image).expect("decode compact format");
+    let count = |kind| {
+        let bytes = container
+            .section(kind)
+            .expect("format section")
+            .bytes
+            .as_ref();
+        u32::from_le_bytes(bytes[4..8].try_into().expect("count field"))
+    };
+    assert_eq!(count(crate::stores::NAMES_SECTION), 1);
+    assert_eq!(count(crate::stores::TOKEN_LISTS_SECTION), 2);
+    assert_eq!(count(crate::stores::MACROS_SECTION), 1);
+
+    let restored = Universe::from_format(World::memory(), &image).expect("restore compact format");
+    let restored_live = restored
+        .symbol("live-format-root")
+        .expect("reachable name remains interned");
+    assert!(matches!(
+        restored.meaning(restored_live),
+        Meaning::Macro { .. }
+    ));
+    assert!(restored.symbol("dead-format-history").is_none());
 }
 
 #[test]

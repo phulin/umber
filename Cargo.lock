@@ -1929,6 +1929,7 @@ dependencies = [
  "ahash",
  "bincode",
  "chrono",
+ "flate2",
  "proptest",
  "serde",
  "tempfile",

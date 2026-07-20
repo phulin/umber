@@ -1016,7 +1016,7 @@ impl StoreFormat {
     fn capture(stores: &Stores) -> Result<Self, StoreFormatError> {
         let immutable = ImmutableStoreIdentity::capture(stores);
         let mutable = MutableStoreIdentity::capture(stores)?;
-        Ok(Self {
+        let mut format = Self {
             names: immutable.names,
             token_lists: immutable.token_lists,
             macros: immutable.macros,
@@ -1028,8 +1028,249 @@ impl StoreFormat {
             hyphenation: mutable.hyphenation,
             prepared_mag: mutable.prepared_mag,
             last_loaded_font: mutable.last_loaded_font,
-        })
+        };
+        format.retain_reachable_format_closure()?;
+        Ok(format)
     }
+
+    fn retain_reachable_format_closure(&mut self) -> Result<(), StoreFormatError> {
+        use crate::cell::BankTag;
+
+        let mut live_macros = vec![false; self.macros.len()];
+        let mut live_tokens = vec![false; self.token_lists.len()];
+        if let Some(empty) = live_tokens.first_mut() {
+            *empty = true;
+        }
+
+        for entry in &self.env {
+            let cell = crate::cell::CellId::from_raw(entry.cell)
+                .ok_or(StoreFormatError::Invalid("unknown environment cell"))?;
+            let FormatEnvValue::Raw(raw) = entry.value else {
+                continue;
+            };
+            match cell.bank() {
+                BankTag::Meaning => {
+                    if let crate::meaning::Meaning::Macro { definition, .. } =
+                        crate::meaning::Meaning::decode_stored(raw)
+                    {
+                        mark_reachable(&mut live_macros, definition.raw(), "meaning macro")?;
+                    }
+                }
+                BankTag::Toks | BankTag::TokParam => {
+                    let raw = u32::try_from(raw)
+                        .map_err(|_| StoreFormatError::Invalid("environment token list"))?;
+                    mark_reachable(&mut live_tokens, raw, "environment token list")?;
+                }
+                _ => {}
+            }
+        }
+
+        for (raw, definition) in self.macros.iter().enumerate() {
+            if live_macros[raw] {
+                mark_reachable(
+                    &mut live_tokens,
+                    definition.parameter_text,
+                    "macro parameter token list",
+                )?;
+                mark_reachable(
+                    &mut live_tokens,
+                    definition.replacement_text,
+                    "macro replacement token list",
+                )?;
+            }
+        }
+        for list in &mut self.node_lists {
+            for node in &mut list.nodes {
+                let mut invalid = false;
+                node.visit_token_list_refs(|raw| {
+                    invalid |= mark_reachable(&mut live_tokens, *raw, "node token list").is_err();
+                });
+                if invalid {
+                    return Err(StoreFormatError::Invalid("node token-list reference"));
+                }
+            }
+        }
+
+        let macro_map = dense_reachable_map(&live_macros)?;
+        let token_map = dense_reachable_map(&live_tokens)?;
+        let mut live_names = vec![false; self.names.len()];
+        for entry in &self.env {
+            let cell = crate::cell::CellId::from_raw(entry.cell)
+                .ok_or(StoreFormatError::Invalid("unknown environment cell"))?;
+            if cell.bank() == BankTag::Meaning {
+                mark_reachable(&mut live_names, cell.index(), "meaning symbol")?;
+            }
+            if cell.bank() == BankTag::CurrentFont
+                && let FormatEnvValue::Raw(word) = entry.value
+            {
+                let symbol_plus_one = word >> 32;
+                if symbol_plus_one != 0 {
+                    mark_reachable(
+                        &mut live_names,
+                        u32::try_from(symbol_plus_one - 1)
+                            .map_err(|_| StoreFormatError::Invalid("current-font identifier"))?,
+                        "current-font identifier",
+                    )?;
+                }
+            }
+        }
+        for (raw, list) in self.token_lists.iter().enumerate() {
+            if live_tokens[raw] {
+                for token in list {
+                    if let FormatToken::Cs(symbol) = token {
+                        mark_reachable(&mut live_names, *symbol, "token symbol")?;
+                    }
+                }
+            }
+        }
+        for font in &self.fonts {
+            if let Some(symbol) = font.identifier {
+                mark_reachable(&mut live_names, symbol, "font identifier symbol")?;
+            }
+        }
+        let name_map = dense_reachable_map(&live_names)?;
+        for entry in &mut self.env {
+            let cell = crate::cell::CellId::from_raw(entry.cell)
+                .ok_or(StoreFormatError::Invalid("unknown environment cell"))?;
+            if cell.bank() == BankTag::Meaning {
+                entry.cell = crate::cell::CellId::new(
+                    BankTag::Meaning,
+                    remapped(&name_map, cell.index(), "meaning symbol")?,
+                )
+                .raw();
+            }
+            let FormatEnvValue::Raw(raw) = &mut entry.value else {
+                continue;
+            };
+            match cell.bank() {
+                BankTag::Meaning => {
+                    if let crate::meaning::Meaning::Macro { flags, definition } =
+                        crate::meaning::Meaning::decode_stored(*raw)
+                    {
+                        let definition = remapped(&macro_map, definition.raw(), "meaning macro")?;
+                        *raw = crate::meaning::Meaning::Macro {
+                            flags,
+                            definition: MacroDefinitionId::new(definition),
+                        }
+                        .encode();
+                    }
+                }
+                BankTag::Toks | BankTag::TokParam => {
+                    let old = u32::try_from(*raw)
+                        .map_err(|_| StoreFormatError::Invalid("environment token list"))?;
+                    *raw = u64::from(remapped(&token_map, old, "environment token list")?);
+                }
+                BankTag::CurrentFont => {
+                    let symbol_plus_one = *raw >> 32;
+                    if symbol_plus_one != 0 {
+                        let old = u32::try_from(symbol_plus_one - 1)
+                            .map_err(|_| StoreFormatError::Invalid("current-font identifier"))?;
+                        let symbol = remapped(&name_map, old, "current-font identifier")?;
+                        *raw = (u64::from(symbol) + 1) << 32 | u64::from(*raw as u32);
+                    }
+                }
+                _ => {}
+            }
+        }
+        self.env.sort_unstable_by_key(|entry| entry.cell);
+        for list in &mut self.node_lists {
+            for node in &mut list.nodes {
+                let mut invalid = false;
+                node.visit_token_list_refs(|raw| {
+                    match remapped(&token_map, *raw, "node token list") {
+                        Ok(mapped) => *raw = mapped,
+                        Err(_) => invalid = true,
+                    }
+                });
+                if invalid {
+                    return Err(StoreFormatError::Invalid("node token-list reference"));
+                }
+            }
+        }
+
+        self.macros = self
+            .macros
+            .drain(..)
+            .enumerate()
+            .filter_map(|(raw, mut definition)| {
+                live_macros[raw].then(|| {
+                    definition.parameter_text = token_map[definition.parameter_text as usize]
+                        .expect("live macro parameter was marked reachable");
+                    definition.replacement_text = token_map[definition.replacement_text as usize]
+                        .expect("live macro replacement was marked reachable");
+                    definition
+                })
+            })
+            .collect();
+        for (raw, list) in self.token_lists.iter_mut().enumerate() {
+            if live_tokens[raw] {
+                for token in list {
+                    if let FormatToken::Cs(symbol) = token {
+                        *symbol = remapped(&name_map, *symbol, "token symbol")?;
+                    }
+                }
+            }
+        }
+        for font in &mut self.fonts {
+            if let Some(symbol) = &mut font.identifier {
+                *symbol = remapped(&name_map, *symbol, "font identifier symbol")?;
+            }
+        }
+        self.token_lists = self
+            .token_lists
+            .drain(..)
+            .enumerate()
+            .filter_map(|(raw, tokens)| live_tokens[raw].then_some(tokens))
+            .collect();
+        self.names = self
+            .names
+            .drain(..)
+            .enumerate()
+            .filter_map(|(raw, name)| live_names[raw].then_some(name))
+            .collect();
+        Ok(())
+    }
+}
+
+fn mark_reachable(
+    reachable: &mut [bool],
+    raw: u32,
+    message: &'static str,
+) -> Result<(), StoreFormatError> {
+    let slot = reachable
+        .get_mut(raw as usize)
+        .ok_or(StoreFormatError::Invalid(message))?;
+    *slot = true;
+    Ok(())
+}
+
+fn dense_reachable_map(reachable: &[bool]) -> Result<Vec<Option<u32>>, StoreFormatError> {
+    let mut next = 0_u32;
+    reachable
+        .iter()
+        .map(|&live| {
+            if !live {
+                return Ok(None);
+            }
+            let mapped = next;
+            next = next
+                .checked_add(1)
+                .ok_or(StoreFormatError::Invalid("reachable store exceeds u32"))?;
+            Ok(Some(mapped))
+        })
+        .collect()
+}
+
+fn remapped(
+    mapping: &[Option<u32>],
+    raw: u32,
+    message: &'static str,
+) -> Result<u32, StoreFormatError> {
+    mapping
+        .get(raw as usize)
+        .copied()
+        .flatten()
+        .ok_or(StoreFormatError::Invalid(message))
 }
 
 impl ImmutableStoreMarks {

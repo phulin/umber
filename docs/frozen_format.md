@@ -48,28 +48,34 @@ The header is exactly 80 bytes:
 Every integer is little-endian. The ABI fingerprint is FNV-1a-64 of the
 literal contract string in `format_container.rs`; the lookup fingerprint is
 the same operation over the literal lookup-configuration string. A decoder
-requires exact values. The strings, not a compiler's struct layout, define the
-values.
+requires the current values, except that it recognizes the previous
+uncompressed/literal-token-lookup pair for schema-10 migration. The strings,
+not a compiler's struct layout, define the values.
 
 The directory immediately follows the header. Each record is exactly 40
 bytes:
 
-| Offset | Width | Field                                                    |
-| -----: | ----: | -------------------------------------------------------- |
-|      0 |     4 | nonzero section kind                                     |
-|      4 |     4 | flags, zero in schema 10                                 |
-|      8 |     8 | file-relative payload offset                             |
-|     16 |     8 | stored byte length                                       |
-|     24 |     8 | logical byte length; equal to stored length in schema 10 |
-|     32 |     4 | alignment                                                |
-|     36 |     4 | reserved, zero                                           |
+| Offset | Width | Field                            |
+| -----: | ----: | -------------------------------- |
+|      0 |     4 | nonzero section kind             |
+|      4 |     4 | flags: bit 0 means raw DEFLATE   |
+|      8 |     8 | file-relative payload offset     |
+|     16 |     8 | stored byte length               |
+|     24 |     8 | uncompressed logical byte length |
+|     32 |     4 | alignment                        |
+|     36 |     4 | reserved, zero                   |
 
 Records are strictly increasing by section kind. Kinds are unique. Alignment
 is a power of two from 8 through 4096. Each payload begins at the first
 possible aligned offset after the preceding directory or section; alignment
 bytes are zero, and no bytes follow the last section. These rules make one
 canonical byte layout and rule out aliases, overlaps, hidden data, and
-platform-dependent padding.
+platform-dependent padding. New images compress every section independently
+with deterministic raw DEFLATE level 6. The decoder bounds each logical
+section at 512 MiB, limits decompression to the declared logical length plus
+one byte, and requires the result to have exactly that length. It retains the
+container-v1 fingerprint and zero-flag decode path only to read already
+published uncompressed schema-10 images.
 
 The checksum is FNV-1a-64 over the exact complete file with header bytes
 56..64 treated as zero. It therefore covers header fields, compatibility
@@ -103,7 +109,8 @@ that does not define them.
 
 ## Foundational store sections
 
-Kinds 256, 272, 288, and 304 have section version 1. All offsets in these
+Kinds 256, 288, and 304 have section version 1; newly emitted kind 272 has
+section version 2. All offsets in these
 sections are section-relative, all counts and offsets are `u32`, all semantic
 identities are `u64`, and every reserved field is zero.
 
@@ -130,23 +137,25 @@ dense record index is the local interner slot used by other frozen sections.
 ### Token lists (kind 272)
 
 The 24-byte header contains `(version, count, records_offset, words_offset,
-word_count, reserved)` as `u32` values. `records_offset` is 24. Each 24-byte
-list record contains `start: u32`, `length: u32`, `semantic_id: u64`, and a
-reserved `u64`. Spans are contiguous and list 0 is the canonical empty list.
-Duplicate lists are rejected.
+word_count, reserved)` as `u32` values. `records_offset` is 24. Each 16-byte
+list record contains `start: u32`, `length: u32`, and `semantic_id: u64`.
+Spans are contiguous and list 0 is the canonical empty list. Duplicate lists
+are rejected.
 
-Each token word is `u64`. Bits 63..56 are the tag and bits 55..0 are payload:
+Each token word is `u32`. Bits 31..30 are the tag and bits 29..0 are payload:
 
 | Tag | Payload                                              |
 | --: | ---------------------------------------------------- |
-|   0 | Unicode scalar in bits 31..0, catcode in bits 39..32 |
-|   1 | names-section record index in bits 31..0             |
+|   0 | Unicode scalar in bits 20..0, catcode in bits 24..21 |
+|   1 | names-section record index in bits 29..0             |
 |   2 | internal/parameter byte in bits 7..0                 |
 |   3 | frozen sentinel 0 or 1                               |
 
 Unused payload bits are zero. Character, catcode, name-index, and sentinel
 domains are validated. The semantic identity is recomputed from the decoded
-tokens and name semantic atoms before the arena is published.
+tokens and name semantic atoms before the arena is published. The decoder
+also accepts the previous version-1, 24-byte-record, `u64`-word token section
+when loading an older schema-10 image; new dumps never emit it.
 
 ### Macros (kind 288)
 
@@ -165,6 +174,16 @@ The 16-byte header is `(version, count, records_offset, reserved)` as `u32`;
 stretch, and shrink values at offsets 0, 4, and 8; `u8` stretch and shrink
 orders at offsets 12 and 13; and ten reserved zero bytes. Orders are 0..=3,
 record 0 is canonical zero glue, and duplicate specs are rejected.
+
+Before these sections are encoded, capture computes the mandatory semantic
+closure rooted in current environment meanings, token registers and token
+parameters, live macro parameter/replacement lists, and token-bearing frozen
+nodes. It retains the names referenced by the resulting token lists, meaning
+cells, current-font cells, and font identifiers. Names, token-list IDs, and
+macro-definition IDs are compacted in original relative order and every
+cross-reference is remapped. Append-only INITEX history is not part of a
+format's semantics and is omitted; a future warm-cache section would be an
+explicit, separately budgeted optimization.
 
 These four sections are decoded into validated dense immutable prefixes with
 their canonical record indices. Kind 257 holds the name index; the token-list
@@ -309,8 +328,9 @@ Frozen lookup indexes use literal bucket arrays, never serialized
 | empty value   | `u32` | `0xffff_ffff`                        |
 | maximum probe | `u32` | exact maximum emitted probe distance |
 
-The header is followed by `bucket_count` little-endian `u32` entry indices,
-then section-specific fixed-width entry records and canonical key bytes.
+For names and glue, the header is followed by `bucket_count` little-endian
+`u32` entry indices, then section-specific fixed-width entry records and
+canonical key bytes.
 Entries are sorted by complete canonical key bytes. Bucket count is the
 smallest allowed power of two satisfying `entry_count * 4 <= bucket_count *
 3`. Emission inserts entries in canonical order. The initial bucket is
@@ -319,11 +339,19 @@ probing with wraparound.
 
 Each 16-byte entry record contains key offset `u32`, key length `u32`, target
 record index `u32`, and a zero reserved `u32`. Key spans are contiguous. Name
-keys are the namespace byte followed by UTF-8 name bytes, token-list keys are
-the complete sequence of canonical little-endian token words, and glue keys
-are the complete 24-byte glue record. Empty token lists therefore have an empty
-key. The target is the dense record index in the corresponding foundational
-store.
+keys are the namespace byte followed by UTF-8 name bytes and glue keys are the
+complete 24-byte glue record. The target is the dense record index in the
+corresponding foundational store.
+
+Token lists use direct-target lookup algorithm 2. Its header has the same
+geometry and capacity policy, but each occupied bucket contains the token-list
+record index directly; no entry table or copied key arena follows the buckets.
+The hash consumes each canonical `u32` token word incrementally in
+little-endian byte order. Lookup follows the linear-probe sequence, compares
+each candidate exactly against the authoritative runtime token arena, and
+stops at an empty bucket. Hash collisions therefore cannot return a false
+match. Older version-1 token sections retain their literal-key lookup only on
+the compatibility load path.
 
 The lookup-configuration fingerprint covers the algorithm, algorithm version,
 seed, capacity/load policy, empty sentinel, and probe strategy. Exact
@@ -340,7 +368,7 @@ invalid structure acceptable.
 ## Immutable and job-local state
 
 Frozen sections contain only state TeX deliberately preserves at `\dump`:
-names and current meanings, immutable tokens/macros/glue/fonts, code tables,
+reachable names and current meanings, reachable tokens/macros, glue/fonts, code tables,
 hyphenation data, reachable box/node graphs, format-visible environment cells,
 interaction mode, and permitted format-level PDF configuration.
 

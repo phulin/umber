@@ -4,7 +4,9 @@
 //! deliberately independent so they can migrate from the schema-v9 semantic
 //! reconstruction path to runtime-ready frozen stores incrementally.
 
+use std::borrow::Cow;
 use std::fmt;
+use std::io::{Read, Write};
 
 pub(crate) const MAGIC: [u8; 8] = *b"UMBRFMT\0";
 pub(crate) const SCHEMA_VERSION: u32 = 10;
@@ -14,14 +16,22 @@ const CHECKSUM_OFFSET: usize = 56;
 const CHECKSUM_LEN: usize = 8;
 const MAX_SECTIONS: usize = 64;
 const MAX_ALIGNMENT: u32 = 4096;
+const MAX_LOGICAL_SECTION_LEN: usize = 512 * 1024 * 1024;
+const DEFLATE_FLAG: u32 = 1;
 
 /// Transitional Universe-level metadata payload; store data lives elsewhere.
 pub(crate) const TRANSITIONAL_SEMANTIC_SECTION: u32 = 1;
 
 pub(crate) const ABI_FINGERPRINT: u64 = fingerprint(
-    b"umber.format.container.v1;le;header=80;directory=40;refs=relative-or-index;checksum=fnv1a64-zero-field",
+    b"umber.format.container.v2;le;header=80;directory=40;refs=relative-or-index;sections=deflate;checksum=fnv1a64-zero-field",
 );
 pub(crate) const LOOKUP_CONFIGURATION_FINGERPRINT: u64 = fingerprint(
+    b"umber.format.lookup.v2;fnv1a64;seed=cbf29ce484222325;capacity=pow2-lte-3/4;probe=linear;empty=ffffffff;tokens=direct-target-u32",
+);
+const LEGACY_ABI_FINGERPRINT: u64 = fingerprint(
+    b"umber.format.container.v1;le;header=80;directory=40;refs=relative-or-index;checksum=fnv1a64-zero-field",
+);
+const LEGACY_LOOKUP_CONFIGURATION_FINGERPRINT: u64 = fingerprint(
     b"umber.format.lookup.v1;fnv1a64;seed=cbf29ce484222325;capacity=pow2-lte-3/4;probe=linear;empty=ffffffff",
 );
 
@@ -43,14 +53,14 @@ pub(crate) struct SectionInput<'a> {
     pub bytes: &'a [u8],
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct DecodedSection<'a> {
     pub kind: u32,
     #[cfg_attr(not(test), allow(dead_code))]
     pub alignment: u32,
     #[cfg_attr(not(test), allow(dead_code))]
     pub offset: usize,
-    pub bytes: &'a [u8],
+    pub bytes: Cow<'a, [u8]>,
 }
 
 #[derive(Debug, Eq, PartialEq)]
@@ -60,11 +70,8 @@ pub(crate) struct DecodedContainer<'a> {
 }
 
 impl<'a> DecodedContainer<'a> {
-    pub fn section(&self, kind: u32) -> Option<DecodedSection<'a>> {
-        self.sections
-            .iter()
-            .copied()
-            .find(|section| section.kind == kind)
+    pub fn section(&self, kind: u32) -> Option<&DecodedSection<'a>> {
+        self.sections.iter().find(|section| section.kind == kind)
     }
 }
 
@@ -98,6 +105,13 @@ impl fmt::Display for ContainerError {
 }
 
 pub(crate) fn encode(sections: &[SectionInput<'_>]) -> Result<Vec<u8>, ContainerError> {
+    encode_with_compression(sections, true)
+}
+
+fn encode_with_compression(
+    sections: &[SectionInput<'_>],
+    compress_sections: bool,
+) -> Result<Vec<u8>, ContainerError> {
     if sections.is_empty() || sections.len() > MAX_SECTIONS {
         return Err(ContainerError::Invalid("invalid section count"));
     }
@@ -109,14 +123,24 @@ pub(crate) fn encode(sections: &[SectionInput<'_>]) -> Result<Vec<u8>, Container
         .len()
         .checked_mul(DIRECTORY_ENTRY_LEN)
         .ok_or(ContainerError::Invalid("directory length overflow"))?;
+    let stored_sections = sections
+        .iter()
+        .map(|section| {
+            if compress_sections {
+                compress(section.bytes)
+            } else {
+                Ok(section.bytes.to_vec())
+            }
+        })
+        .collect::<Result<Vec<_>, _>>()?;
     let mut cursor = HEADER_LEN
         .checked_add(directory_len)
         .ok_or(ContainerError::Invalid("directory length overflow"))?;
     let mut records = Vec::with_capacity(sections.len());
-    for section in &sections {
+    for (section, stored) in sections.iter().zip(&stored_sections) {
         cursor = align_up(cursor, section.alignment)?;
         let end = cursor
-            .checked_add(section.bytes.len())
+            .checked_add(stored.len())
             .ok_or(ContainerError::Invalid("section length overflow"))?;
         records.push((cursor, end));
         cursor = end;
@@ -135,17 +159,22 @@ pub(crate) fn encode(sections: &[SectionInput<'_>]) -> Result<Vec<u8>, Container
     bytes[40..48].copy_from_slice(&ABI_FINGERPRINT.to_le_bytes());
     bytes[48..56].copy_from_slice(&LOOKUP_CONFIGURATION_FINGERPRINT.to_le_bytes());
 
-    for (index, (section, &(offset, end))) in sections.iter().zip(&records).enumerate() {
+    for (index, ((section, stored), &(offset, end))) in sections
+        .iter()
+        .zip(&stored_sections)
+        .zip(&records)
+        .enumerate()
+    {
         let record = HEADER_LEN + index * DIRECTORY_ENTRY_LEN;
         bytes[record..record + 4].copy_from_slice(&section.kind.to_le_bytes());
-        // record + 4..8 is the zero flags field.
+        bytes[record + 4..record + 8]
+            .copy_from_slice(&(if compress_sections { DEFLATE_FLAG } else { 0 }).to_le_bytes());
         bytes[record + 8..record + 16].copy_from_slice(&(offset as u64).to_le_bytes());
-        bytes[record + 16..record + 24]
-            .copy_from_slice(&(section.bytes.len() as u64).to_le_bytes());
+        bytes[record + 16..record + 24].copy_from_slice(&(stored.len() as u64).to_le_bytes());
         bytes[record + 24..record + 32]
             .copy_from_slice(&(section.bytes.len() as u64).to_le_bytes());
         bytes[record + 32..record + 36].copy_from_slice(&section.alignment.to_le_bytes());
-        bytes[offset..end].copy_from_slice(section.bytes);
+        bytes[offset..end].copy_from_slice(stored);
     }
     let checksum = image_checksum(&bytes);
     bytes[CHECKSUM_OFFSET..CHECKSUM_OFFSET + CHECKSUM_LEN].copy_from_slice(&checksum.to_le_bytes());
@@ -182,11 +211,15 @@ pub(crate) fn decode(bytes: &[u8]) -> Result<DecodedContainer<'_>, ContainerErro
         return Err(ContainerError::Checksum);
     }
     let abi = read_u64(bytes, 40);
-    if abi != ABI_FINGERPRINT {
+    if abi != ABI_FINGERPRINT && abi != LEGACY_ABI_FINGERPRINT {
         return Err(ContainerError::IncompatibleAbi(abi));
     }
     let configuration = read_u64(bytes, 48);
-    if configuration != LOOKUP_CONFIGURATION_FINGERPRINT {
+    let compatible_pair = (abi == ABI_FINGERPRINT
+        && configuration == LOOKUP_CONFIGURATION_FINGERPRINT)
+        || (abi == LEGACY_ABI_FINGERPRINT
+            && configuration == LEGACY_LOOKUP_CONFIGURATION_FINGERPRINT);
+    if !compatible_pair {
         return Err(ContainerError::IncompatibleLookupConfiguration(
             configuration,
         ));
@@ -222,7 +255,8 @@ pub(crate) fn decode(bytes: &[u8]) -> Result<DecodedContainer<'_>, ContainerErro
             ));
         }
         previous_kind = kind;
-        if read_u32(bytes, record + 4) != 0 || read_u32(bytes, record + 36) != 0 {
+        let flags = read_u32(bytes, record + 4);
+        if flags & !DEFLATE_FLAG != 0 || read_u32(bytes, record + 36) != 0 {
             return Err(ContainerError::Invalid("nonzero reserved section field"));
         }
         let alignment = read_u32(bytes, record + 32);
@@ -231,9 +265,11 @@ pub(crate) fn decode(bytes: &[u8]) -> Result<DecodedContainer<'_>, ContainerErro
             .map_err(|_| ContainerError::Invalid("section offset exceeds usize"))?;
         let stored_len = usize::try_from(read_u64(bytes, record + 16))
             .map_err(|_| ContainerError::Invalid("section length exceeds usize"))?;
-        if read_u64(bytes, record + 24) != stored_len as u64 {
+        let logical_len = usize::try_from(read_u64(bytes, record + 24))
+            .map_err(|_| ContainerError::Invalid("section length exceeds usize"))?;
+        if flags == 0 && logical_len != stored_len {
             return Err(ContainerError::Invalid(
-                "compressed sections are not supported",
+                "uncompressed section length mismatch",
             ));
         }
         let canonical_offset = align_up(cursor, alignment)?;
@@ -249,11 +285,17 @@ pub(crate) fn decode(bytes: &[u8]) -> Result<DecodedContainer<'_>, ContainerErro
         if end > bytes.len() {
             return Err(ContainerError::Truncated);
         }
+        let payload = &bytes[offset..end];
+        let section_bytes = if flags == DEFLATE_FLAG {
+            Cow::Owned(decompress(payload, logical_len)?)
+        } else {
+            Cow::Borrowed(payload)
+        };
         sections.push(DecodedSection {
             kind,
             alignment,
             offset,
-            bytes: &bytes[offset..end],
+            bytes: section_bytes,
         });
         cursor = end;
     }
@@ -266,6 +308,36 @@ pub(crate) fn decode(bytes: &[u8]) -> Result<DecodedContainer<'_>, ContainerErro
         checksum: expected_checksum,
         sections,
     })
+}
+
+fn compress(bytes: &[u8]) -> Result<Vec<u8>, ContainerError> {
+    let mut encoder = flate2::write::DeflateEncoder::new(Vec::new(), flate2::Compression::new(6));
+    encoder
+        .write_all(bytes)
+        .map_err(|_| ContainerError::Invalid("section compression failed"))?;
+    encoder
+        .finish()
+        .map_err(|_| ContainerError::Invalid("section compression failed"))
+}
+
+fn decompress(bytes: &[u8], logical_len: usize) -> Result<Vec<u8>, ContainerError> {
+    if logical_len > MAX_LOGICAL_SECTION_LEN {
+        return Err(ContainerError::Invalid(
+            "compressed section exceeds size limit",
+        ));
+    }
+    let decoder = flate2::read::DeflateDecoder::new(bytes);
+    let mut decoder = decoder.take(logical_len as u64 + 1);
+    let mut decoded = Vec::new();
+    decoder
+        .read_to_end(&mut decoded)
+        .map_err(|_| ContainerError::Invalid("invalid compressed section"))?;
+    if decoded.len() != logical_len {
+        return Err(ContainerError::Invalid(
+            "compressed section length mismatch",
+        ));
+    }
+    Ok(decoded)
 }
 
 fn validate_inputs(sections: &[SectionInput<'_>]) -> Result<(), ContainerError> {

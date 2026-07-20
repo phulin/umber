@@ -768,18 +768,29 @@ impl Stores {
     /// Interns a frozen token-list value in the owned token store.
     pub fn intern_token_list(&mut self, tokens: &[Token]) -> TokenListId {
         let semantic_id = self.token_list_semantic_id(tokens.iter().copied());
-        let frozen_key = self.frozen_token_lookup_key(tokens.iter().copied());
+        let frozen_hash = self.frozen_token_lookup_hash(tokens.iter().copied());
+        let legacy_key = self
+            .tokens
+            .requires_legacy_frozen_key()
+            .then(|| self.legacy_frozen_token_lookup_key(tokens.iter().copied()));
         self.tokens
-            .intern_with_semantic_id(tokens, semantic_id, &frozen_key)
+            .intern_with_semantic_id(tokens, semantic_id, frozen_hash, legacy_key.as_deref())
     }
 
     /// Interns the current token-list builder value and clears it for reuse.
     pub fn finish_token_list(&mut self, builder: &mut TokenListBuilder) -> TokenListId {
         let semantic_id = self.token_list_semantic_id(builder.as_slice().iter().copied());
-        let frozen_key = self.frozen_token_lookup_key(builder.as_slice().iter().copied());
-        let id = self
+        let frozen_hash = self.frozen_token_lookup_hash(builder.as_slice().iter().copied());
+        let legacy_key = self
             .tokens
-            .intern_with_semantic_id(builder.as_slice(), semantic_id, &frozen_key);
+            .requires_legacy_frozen_key()
+            .then(|| self.legacy_frozen_token_lookup_key(builder.as_slice().iter().copied()));
+        let id = self.tokens.intern_with_semantic_id(
+            builder.as_slice(),
+            semantic_id,
+            frozen_hash,
+            legacy_key.as_deref(),
+        );
         builder.clear();
         id
     }
@@ -799,16 +810,25 @@ impl Stores {
             word.token()
                 .expect("validated traced token became invalid during semantic hashing")
         }));
-        let frozen_key = self.frozen_token_lookup_key(traced.iter().map(|word| {
+        let frozen_hash = self.frozen_token_lookup_hash(traced.iter().map(|word| {
             word.token()
                 .expect("validated traced token became invalid during lookup encoding")
         }));
+        let legacy_key = self.tokens.requires_legacy_frozen_key().then(|| {
+            self.legacy_frozen_token_lookup_key(traced.iter().map(|word| {
+                word.token()
+                    .expect("validated traced token became invalid during lookup encoding")
+            }))
+        });
 
         #[cfg(feature = "profiling-stats")]
         crate::measurement::record_traced_list_finish(traced.len(), 0, 0);
-        let token_list =
-            self.tokens
-                .intern_traced_with_semantic_id(traced, semantic_id, &frozen_key);
+        let token_list = self.tokens.intern_traced_with_semantic_id(
+            traced,
+            semantic_id,
+            frozen_hash,
+            legacy_key.as_deref(),
+        );
         let origin_list = self.provenance.allocate_traced_list(traced);
         TracedTokenList::new(token_list, origin_list)
     }
@@ -867,7 +887,37 @@ impl Stores {
         identity.finish()
     }
 
-    fn frozen_token_lookup_key(&self, tokens: impl IntoIterator<Item = Token>) -> Vec<u8> {
+    fn frozen_token_lookup_hash(&self, tokens: impl IntoIterator<Item = Token>) -> u64 {
+        let mut hash = crate::frozen_lookup::FrozenWordHasher::new();
+        for token in tokens {
+            hash.push_u32(self.frozen_token_word(token));
+        }
+        hash.finish()
+    }
+
+    fn frozen_token_word(&self, token: Token) -> u32 {
+        const CS_TAG: u32 = 1 << 30;
+        const PARAM_TAG: u32 = 2 << 30;
+        const FROZEN_TAG: u32 = 3 << 30;
+        match token {
+            Token::Char { ch, cat } => u32::from(cat as u8) << 21 | ch as u32,
+            Token::Cs(symbol) => {
+                let slot = self
+                    .interner
+                    .resolve_stored(symbol)
+                    .expect("token symbol is live")
+                    .raw();
+                assert!(slot < CS_TAG, "frozen token symbol exceeds 30 bits");
+                CS_TAG | slot
+            }
+            Token::Param(slot) => PARAM_TAG | u32::from(slot),
+            Token::Frozen(crate::token::FrozenToken::END_TEMPLATE) => FROZEN_TAG,
+            Token::Frozen(crate::token::FrozenToken::END_V) => FROZEN_TAG | 1,
+            Token::Frozen(_) => unreachable!("invalid frozen token payload"),
+        }
+    }
+
+    fn legacy_frozen_token_lookup_key(&self, tokens: impl IntoIterator<Item = Token>) -> Vec<u8> {
         let mut key = Vec::new();
         for token in tokens {
             let word = match token {

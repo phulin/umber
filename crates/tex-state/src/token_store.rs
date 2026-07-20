@@ -16,6 +16,12 @@ use std::hash::{BuildHasherDefault, Hash, Hasher};
 type TokenIndex =
     HashMap<TokenSemanticId, Vec<TokenListId>, BuildHasherDefault<PrehashedU64Hasher>>;
 
+#[derive(Clone, Debug)]
+pub(crate) enum FrozenTokenLookup {
+    Legacy(crate::frozen_lookup::FrozenLookup),
+    Direct(crate::frozen_lookup::DirectFrozenLookup),
+}
+
 /// Versioned, allocation-independent identity of one immutable token sequence.
 ///
 /// Control sequences contribute their namespace and spelling through the
@@ -219,7 +225,7 @@ pub struct TokenStore {
     arena: Vec<Token>,
     spans: Vec<(u32, u32)>,
     semantic_ids: Vec<TokenSemanticId>,
-    frozen_lookup: crate::frozen_lookup::FrozenLookup,
+    frozen_lookup: FrozenTokenLookup,
     frozen_len: u32,
     index: TokenIndex,
     #[cfg(test)]
@@ -246,6 +252,11 @@ impl Clone for TokenStore {
 }
 
 impl TokenStore {
+    #[must_use]
+    pub(crate) fn requires_legacy_frozen_key(&self) -> bool {
+        matches!(self.frozen_lookup, FrozenTokenLookup::Legacy(_))
+    }
+
     pub(crate) fn retains_mark(&self, mark: TokenStoreMark) -> bool {
         self.identities.retains(mark.identities)
             && mark.spans as usize <= self.spans.len()
@@ -259,7 +270,9 @@ impl TokenStore {
             arena: Vec::new(),
             spans: vec![(0, 0)],
             semantic_ids: vec![TokenSemanticIdBuilder::new().finish()],
-            frozen_lookup: crate::frozen_lookup::FrozenLookup::empty(),
+            frozen_lookup: FrozenTokenLookup::Direct(
+                crate::frozen_lookup::DirectFrozenLookup::empty(),
+            ),
             frozen_len: 0,
             index: TokenIndex::default(),
             #[cfg(test)]
@@ -281,7 +294,7 @@ impl TokenStore {
         arena: Vec<Token>,
         spans: Vec<(u32, u32)>,
         semantic_ids: Vec<TokenSemanticId>,
-        frozen_lookup: crate::frozen_lookup::FrozenLookup,
+        frozen_lookup: FrozenTokenLookup,
     ) -> Result<Self, &'static str> {
         if spans.len() != semantic_ids.len() {
             return Err("frozen token column length mismatch");
@@ -322,7 +335,7 @@ impl TokenStore {
     #[cfg(test)]
     pub(crate) fn intern(&mut self, tokens: &[Token]) -> TokenListId {
         let hash = self.content_hash(tokens);
-        self.intern_with_semantic_id(tokens, TokenSemanticId::testing(hash), &[])
+        self.intern_with_semantic_id(tokens, TokenSemanticId::testing(hash), 0, None)
     }
 
     /// Interns tokens using their aggregate-computed canonical semantic identity.
@@ -330,7 +343,8 @@ impl TokenStore {
         &mut self,
         tokens: &[Token],
         semantic_id: TokenSemanticId,
-        frozen_key: &[u8],
+        frozen_hash: u64,
+        legacy_key: Option<&[u8]>,
     ) -> TokenListId {
         #[cfg(feature = "profiling-stats")]
         let capacity_before = self.arena.capacity();
@@ -346,13 +360,24 @@ impl TokenStore {
             self.rebuild_index();
         }
 
-        if let Some(raw) = self.frozen_lookup.get(frozen_key) {
-            let id = self.id_at(raw);
-            if self.get(id) == tokens {
-                return id;
+        match &self.frozen_lookup {
+            FrozenTokenLookup::Legacy(lookup) => {
+                if let Some(raw) = legacy_key.and_then(|key| lookup.get(key)) {
+                    let id = self.id_at(raw);
+                    if self.get(id) == tokens {
+                        return id;
+                    }
+                }
+            }
+            FrozenTokenLookup::Direct(lookup) => {
+                for raw in lookup.candidates(frozen_hash) {
+                    let id = self.id_at(raw);
+                    if self.get(id) == tokens {
+                        return id;
+                    }
+                }
             }
         }
-
         if let Some(candidates) = self.index.get(&semantic_id) {
             for &id in candidates {
                 // Hash collisions are safe because the candidate span is
@@ -394,7 +419,7 @@ impl TokenStore {
     #[cfg(test)]
     pub(crate) fn intern_traced(&mut self, traced: &[TracedTokenWord]) -> TokenListId {
         let hash = self.hash_state.hash_one(TracedTokenProjection(traced));
-        self.intern_traced_with_semantic_id(traced, TokenSemanticId::testing(hash), &[])
+        self.intern_traced_with_semantic_id(traced, TokenSemanticId::testing(hash), 0, None)
     }
 
     /// Interns traced tokens using their aggregate-computed canonical semantic identity.
@@ -402,7 +427,8 @@ impl TokenStore {
         &mut self,
         traced: &[TracedTokenWord],
         semantic_id: TokenSemanticId,
-        frozen_key: &[u8],
+        frozen_hash: u64,
+        legacy_key: Option<&[u8]>,
     ) -> TokenListId {
         #[cfg(feature = "profiling-stats")]
         let capacity_before = self.arena.capacity();
@@ -418,19 +444,30 @@ impl TokenStore {
             self.rebuild_index();
         }
 
-        if let Some(raw) = self.frozen_lookup.get(frozen_key) {
-            let id = self.id_at(raw);
-            let candidate = self.get(id);
-            if candidate.len() == traced.len()
+        let matches = |store: &Self, raw| {
+            let candidate = store.get(store.id_at(raw));
+            candidate.len() == traced.len()
                 && candidate
                     .iter()
                     .zip(traced)
                     .all(|(&token, &word)| word.token() == Some(token))
-            {
-                return id;
+        };
+        match &self.frozen_lookup {
+            FrozenTokenLookup::Legacy(lookup) => {
+                if let Some(raw) = legacy_key.and_then(|key| lookup.get(key))
+                    && matches(self, raw)
+                {
+                    return self.id_at(raw);
+                }
+            }
+            FrozenTokenLookup::Direct(lookup) => {
+                for raw in lookup.candidates(frozen_hash) {
+                    if matches(self, raw) {
+                        return self.id_at(raw);
+                    }
+                }
             }
         }
-
         if let Some(candidates) = self.index.get(&semantic_id) {
             for &id in candidates {
                 let candidate = self.get(id);

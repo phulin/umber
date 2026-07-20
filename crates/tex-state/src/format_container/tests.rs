@@ -30,12 +30,13 @@ fn header_and_directory_are_fixed_width_little_endian_and_canonical() {
     assert_eq!(decoded.sections.len(), 2);
     assert_eq!(decoded.sections[0].kind, 2);
     assert_eq!(decoded.sections[0].alignment, 8);
-    assert_eq!(decoded.sections[0].bytes, b"first");
+    assert_eq!(decoded.sections[0].bytes.as_ref(), b"first");
     assert_eq!(decoded.sections[1].kind, 9);
     assert_eq!(decoded.sections[1].alignment, 32);
-    assert_eq!(decoded.sections[1].bytes, b"second");
+    assert_eq!(decoded.sections[1].bytes.as_ref(), b"second");
+    let first_stored_len = read_u64(&encoded, HEADER_LEN + 16) as usize;
     assert!(
-        encoded[decoded.sections[0].offset + 5..decoded.sections[1].offset]
+        encoded[decoded.sections[0].offset + first_stored_len..decoded.sections[1].offset]
             .iter()
             .all(|byte| *byte == 0)
     );
@@ -49,7 +50,8 @@ fn checksum_covers_header_directory_padding_and_payload() {
         bytes: b"payload",
     }])
     .expect("encode container");
-    let section = decode(&encoded).expect("decode container").sections[0];
+    let decoded = decode(&encoded).expect("decode container");
+    let section = &decoded.sections[0];
     for offset in [40, HEADER_LEN + 8, section.offset - 1, section.offset] {
         let mut corrupted = encoded.clone();
         corrupted[offset] ^= 1;
@@ -115,5 +117,28 @@ fn codec_rejects_native_shaped_or_ambiguous_geometry() {
             },
         ]),
         Err(ContainerError::Invalid("duplicate or zero section kind"))
+    );
+}
+
+#[test]
+fn decoder_accepts_legacy_uncompressed_sections() {
+    let mut legacy = encode_with_compression(
+        &[SectionInput {
+            kind: 1,
+            alignment: 8,
+            bytes: b"legacy payload",
+        }],
+        false,
+    )
+    .expect("encode legacy container");
+    legacy[40..48].copy_from_slice(&LEGACY_ABI_FINGERPRINT.to_le_bytes());
+    legacy[48..56].copy_from_slice(&LEGACY_LOOKUP_CONFIGURATION_FINGERPRINT.to_le_bytes());
+    refresh_checksum(&mut legacy);
+    assert_eq!(read_u32(&legacy, HEADER_LEN + 4), 0);
+    assert_eq!(
+        decode(&legacy).expect("decode legacy container").sections[0]
+            .bytes
+            .as_ref(),
+        b"legacy payload"
     );
 }

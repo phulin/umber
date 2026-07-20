@@ -259,6 +259,14 @@ pub(super) struct FormatMathListNode {
 }
 
 impl FormatNode {
+    pub(super) fn visit_token_list_refs(&mut self, mut visit: impl FnMut(&mut u32)) {
+        match self {
+            Self::Mark { tokens, .. } => visit(tokens),
+            Self::Whatsit(whatsit) => whatsit.visit_token_list_refs(visit),
+            _ => {}
+        }
+    }
+
     pub(super) fn remap_list_keys(&mut self, keys: &BTreeMap<FormatListKey, FormatListKey>) {
         let remap = |key: &mut FormatListKey| {
             *key = *keys.get(key).expect("captured child key must be present");
@@ -499,6 +507,31 @@ impl FormatNode {
             Self::Nonscript => Node::Nonscript,
             Self::Adjust(content) => Node::Adjust(list_id(ids, content)?),
         })
+    }
+}
+
+impl FormatWhatsit {
+    fn visit_token_list_refs(&mut self, mut visit: impl FnMut(&mut u32)) {
+        match self {
+            Self::DeferredWrite { tokens, .. } | Self::DeferredPdfLiteral { tokens, .. } => {
+                visit(tokens);
+            }
+            Self::PdfDestination {
+                name_tokens: Some(tokens),
+                ..
+            } => visit(tokens),
+            Self::PdfThread {
+                name_tokens,
+                attributes,
+                ..
+            } => {
+                if let Some(tokens) = name_tokens {
+                    visit(tokens);
+                }
+                visit(attributes);
+            }
+            _ => {}
+        }
     }
 }
 

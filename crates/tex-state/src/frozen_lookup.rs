@@ -7,12 +7,141 @@ const EMPTY: u32 = u32::MAX;
 const HEADER_LEN: usize = 32;
 const ENTRY_LEN: usize = 16;
 const FNV_PRIME: u64 = 0x0000_0100_0000_01b3;
+const DIRECT_ALGORITHM: u32 = 2;
+const DIRECT_VERSION: u32 = 1;
 
 #[derive(Clone, Debug)]
 pub(crate) struct FrozenLookup {
     buckets: Vec<u32>,
     targets: Vec<u32>,
     keys: Vec<Vec<u8>>,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct DirectFrozenLookup {
+    buckets: Vec<u32>,
+}
+
+impl DirectFrozenLookup {
+    #[must_use]
+    pub(crate) fn empty() -> Self {
+        Self {
+            buckets: vec![EMPTY; 8],
+        }
+    }
+
+    pub(crate) fn candidates(&self, hash: u64) -> DirectCandidates<'_> {
+        DirectCandidates {
+            lookup: self,
+            bucket: hash as usize & (self.buckets.len() - 1),
+            remaining: self.buckets.len(),
+        }
+    }
+}
+
+pub(crate) struct DirectCandidates<'a> {
+    lookup: &'a DirectFrozenLookup,
+    bucket: usize,
+    remaining: usize,
+}
+
+impl Iterator for DirectCandidates<'_> {
+    type Item = u32;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.remaining == 0 {
+            return None;
+        }
+        let target = self.lookup.buckets[self.bucket];
+        if target == EMPTY {
+            self.remaining = 0;
+            return None;
+        }
+        self.bucket = (self.bucket + 1) & (self.lookup.buckets.len() - 1);
+        self.remaining -= 1;
+        Some(target)
+    }
+}
+
+pub(crate) struct FrozenWordHasher(u64);
+
+impl FrozenWordHasher {
+    #[must_use]
+    pub(crate) const fn new() -> Self {
+        Self(SEED)
+    }
+
+    pub(crate) fn push_u32(&mut self, word: u32) {
+        for byte in word.to_le_bytes() {
+            self.0 ^= u64::from(byte);
+            self.0 = self.0.wrapping_mul(FNV_PRIME);
+        }
+    }
+
+    #[must_use]
+    pub(crate) const fn finish(self) -> u64 {
+        self.0
+    }
+}
+
+pub(crate) fn encode_direct(hashes: &[u64]) -> Result<Vec<u8>, &'static str> {
+    let count = u32::try_from(hashes.len()).map_err(|_| "direct lookup entry capacity")?;
+    let bucket_count = bucket_count(hashes.len())?;
+    let mut buckets = vec![EMPTY; bucket_count];
+    let mut maximum_probe = 0_u32;
+    for (target, &hash) in hashes.iter().enumerate() {
+        let initial = hash as usize & (bucket_count - 1);
+        let mut bucket = initial;
+        while buckets[bucket] != EMPTY {
+            bucket = (bucket + 1) & (bucket_count - 1);
+        }
+        maximum_probe =
+            maximum_probe.max(((bucket + bucket_count - initial) & (bucket_count - 1)) as u32);
+        buckets[bucket] = target as u32;
+    }
+    let mut out = vec![0; HEADER_LEN + bucket_count * 4];
+    put_u32(&mut out, 0, DIRECT_ALGORITHM);
+    put_u32(&mut out, 4, DIRECT_VERSION);
+    put_u64(&mut out, 8, SEED);
+    put_u32(&mut out, 16, bucket_count as u32);
+    put_u32(&mut out, 20, count);
+    put_u32(&mut out, 24, EMPTY);
+    put_u32(&mut out, 28, maximum_probe);
+    for (index, bucket) in buckets.into_iter().enumerate() {
+        put_u32(&mut out, HEADER_LEN + index * 4, bucket);
+    }
+    Ok(out)
+}
+
+pub(crate) fn decode_direct(
+    bytes: &[u8],
+    hashes: &[u64],
+) -> Result<DirectFrozenLookup, &'static str> {
+    if bytes.len() < HEADER_LEN
+        || read_u32(bytes, 0) != DIRECT_ALGORITHM
+        || read_u32(bytes, 4) != DIRECT_VERSION
+        || read_u64(bytes, 8) != SEED
+        || read_u32(bytes, 24) != EMPTY
+    {
+        return Err("incompatible direct lookup header");
+    }
+    let bucket_count = read_u32(bytes, 16) as usize;
+    let entry_count = read_u32(bytes, 20) as usize;
+    if entry_count != hashes.len()
+        || bucket_count != bucket_count_for_decode(entry_count)?
+        || bytes.len() != HEADER_LEN + bucket_count * 4
+    {
+        return Err("invalid direct lookup capacity");
+    }
+    let expected = encode_direct(hashes)?;
+    if expected != bytes {
+        return Err("non-canonical direct lookup structure");
+    }
+    Ok(DirectFrozenLookup {
+        buckets: (0..bucket_count)
+            .map(|index| read_u32(bytes, HEADER_LEN + index * 4))
+            .collect(),
+    })
 }
 
 impl FrozenLookup {

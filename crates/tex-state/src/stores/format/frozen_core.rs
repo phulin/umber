@@ -17,7 +17,9 @@ const SECTION_VERSION: u32 = 1;
 const NAMES_HEADER: usize = 24;
 const NAME_RECORD: usize = 24;
 const TOKENS_HEADER: usize = 24;
-const TOKEN_RECORD: usize = 24;
+const TOKEN_SECTION_VERSION: u32 = 2;
+const TOKEN_RECORD: usize = 16;
+const LEGACY_TOKEN_RECORD: usize = 24;
 const MACROS_HEADER: usize = 16;
 const MACRO_RECORD: usize = 16;
 const GLUE_HEADER: usize = 16;
@@ -240,11 +242,12 @@ fn encode_tokens(
             .ok_or(StoreFormatError::Invalid("frozen token count overflow"))
     })?;
     let words_end = words_offset
-        .checked_add(checked_len(word_count, 8, "frozen token words")?)
+        .checked_add(checked_len(word_count, 4, "frozen token words")?)
         .ok_or(StoreFormatError::Invalid("frozen token section overflow"))?;
     let mut keys = Vec::with_capacity(lists.len());
     let mut out = vec![0; words_end];
     write_header(&mut out, TOKENS_HEADER, count, words_offset, word_count)?;
+    put_u32(&mut out, 0, TOKEN_SECTION_VERSION);
     let mut word_cursor = 0_usize;
     for (index, list) in lists.iter().enumerate() {
         let record = TOKENS_HEADER + index * TOKEN_RECORD;
@@ -259,20 +262,23 @@ fn encode_tokens(
             u32_count(list.len(), "frozen token length")?,
         );
         let mut semantic = TokenSemanticIdBuilder::new();
-        let mut key = Vec::with_capacity(list.len() * 8);
+        let mut hash = crate::frozen_lookup::FrozenWordHasher::new();
         for token in list {
-            let (word, runtime, atom) = encode_token(token, names)?;
-            let offset = words_offset + word_cursor * 8;
-            put_u64(&mut out, offset, word);
-            key.extend_from_slice(&word.to_le_bytes());
+            let (word, runtime, atom) = encode_token_v2(token, names)?;
+            let offset = words_offset + word_cursor * 4;
+            put_u32(&mut out, offset, word);
+            hash.push_u32(word);
             semantic.push(runtime, atom);
             word_cursor += 1;
         }
         let semantic_id = semantic.finish().value();
         put_u64(&mut out, record + 8, semantic_id);
-        keys.push((key, u32_count(index, "frozen token-list index")?));
+        let _ = index;
+        keys.push(hash.finish());
     }
-    out.extend_from_slice(&crate::frozen_lookup::encode(keys).map_err(StoreFormatError::Invalid)?);
+    out.extend_from_slice(
+        &crate::frozen_lookup::encode_direct(&keys).map_err(StoreFormatError::Invalid)?,
+    );
     Ok(out)
 }
 
@@ -281,8 +287,100 @@ fn decode_tokens(
     interner: &Interner,
     checksum: u64,
 ) -> Result<(TokenStore, Vec<Vec<FormatToken>>), StoreFormatError> {
-    let (count, words_offset, word_count) =
-        read_header(bytes, TOKENS_HEADER, TOKEN_RECORD, "frozen token lists")?;
+    if bytes.len() < TOKENS_HEADER {
+        return Err(StoreFormatError::Invalid("frozen token lists"));
+    }
+    if read_u32(bytes, 0) == SECTION_VERSION {
+        return decode_tokens_v1(bytes, interner, checksum);
+    }
+    if read_u32(bytes, 0) != TOKEN_SECTION_VERSION
+        || read_u32(bytes, 8) != TOKENS_HEADER as u32
+        || read_u32(bytes, 20) != 0
+    {
+        return Err(StoreFormatError::Invalid("frozen token lists"));
+    }
+    let count = read_u32(bytes, 4) as usize;
+    let words_offset = TOKENS_HEADER
+        .checked_add(checked_len(count, TOKEN_RECORD, "frozen token lists")?)
+        .ok_or(StoreFormatError::Invalid("frozen token lists"))?;
+    if read_u32(bytes, 12) as usize != words_offset {
+        return Err(StoreFormatError::Invalid("frozen token lists"));
+    }
+    let word_count = read_u32(bytes, 16) as usize;
+    let words_end = words_offset
+        .checked_add(checked_len(word_count, 4, "frozen token words")?)
+        .ok_or(StoreFormatError::Invalid("frozen token word range"))?;
+    if words_end > bytes.len() {
+        return Err(StoreFormatError::Invalid("frozen token word range"));
+    }
+    let mut arena = Vec::with_capacity(word_count);
+    let mut rows = Vec::with_capacity(count);
+    let mut spans = Vec::with_capacity(count);
+    let mut semantic_ids = Vec::with_capacity(count);
+    let mut hashes = Vec::with_capacity(count);
+    let mut cursor = 0_u32;
+    for index in 0..count {
+        let record = TOKENS_HEADER + index * TOKEN_RECORD;
+        let start = read_u32(bytes, record);
+        let len = read_u32(bytes, record + 4);
+        if start != cursor {
+            return Err(StoreFormatError::Invalid(
+                "invalid frozen token-list record",
+            ));
+        }
+        cursor = start
+            .checked_add(len)
+            .ok_or(StoreFormatError::Invalid("frozen token span overflow"))?;
+        if cursor as usize > word_count {
+            return Err(StoreFormatError::Invalid("frozen token span out of bounds"));
+        }
+        let mut row = Vec::with_capacity(len as usize);
+        let mut semantic = TokenSemanticIdBuilder::new();
+        let mut hash = crate::frozen_lookup::FrozenWordHasher::new();
+        for word_index in start..cursor {
+            let word = read_u32(bytes, words_offset + word_index as usize * 4);
+            hash.push_u32(word);
+            let (format, runtime, atom) = decode_token_v2(word, interner)?;
+            row.push(format);
+            arena.push(runtime);
+            semantic.push(runtime, atom);
+        }
+        let expected = read_u64(bytes, record + 8);
+        let semantic_id = semantic.finish();
+        if semantic_id.value() != expected {
+            return Err(StoreFormatError::Invalid("frozen token semantic identity"));
+        }
+        rows.push(row);
+        spans.push((start, len));
+        semantic_ids.push(semantic_id);
+        hashes.push(hash.finish());
+    }
+    if cursor as usize != word_count {
+        return Err(StoreFormatError::Invalid("unused frozen token words"));
+    }
+    let lookup = crate::frozen_lookup::decode_direct(&bytes[words_end..], &hashes)
+        .map_err(StoreFormatError::Invalid)?;
+    let tokens = TokenStore::from_frozen(
+        arena,
+        spans,
+        semantic_ids,
+        crate::token_store::FrozenTokenLookup::Direct(lookup),
+    )
+    .map_err(StoreFormatError::Invalid)?;
+    Ok((tokens, rows))
+}
+
+fn decode_tokens_v1(
+    bytes: &[u8],
+    interner: &Interner,
+    checksum: u64,
+) -> Result<(TokenStore, Vec<Vec<FormatToken>>), StoreFormatError> {
+    let (count, words_offset, word_count) = read_header(
+        bytes,
+        TOKENS_HEADER,
+        LEGACY_TOKEN_RECORD,
+        "frozen token lists",
+    )?;
     let words_len = checked_len(word_count, 8, "frozen token words")?;
     let words_end = words_offset
         .checked_add(words_len)
@@ -297,7 +395,7 @@ fn decode_tokens(
     let mut keys = Vec::with_capacity(count);
     let mut cursor = 0_u32;
     for index in 0..count {
-        let record = TOKENS_HEADER + index * TOKEN_RECORD;
+        let record = TOKENS_HEADER + index * LEGACY_TOKEN_RECORD;
         let start = read_u32(bytes, record);
         let len = read_u32(bytes, record + 4);
         if start != cursor || read_u64(bytes, record + 16) != 0 {
@@ -342,30 +440,41 @@ fn decode_tokens(
             Ok(lookup)
         })
         .map_err(StoreFormatError::Invalid)?;
-    let tokens = TokenStore::from_frozen(arena, spans, semantic_ids, lookup)
-        .map_err(StoreFormatError::Invalid)?;
+    let tokens = TokenStore::from_frozen(
+        arena,
+        spans,
+        semantic_ids,
+        crate::token_store::FrozenTokenLookup::Legacy(lookup),
+    )
+    .map_err(StoreFormatError::Invalid)?;
     Ok((tokens, rows))
 }
 
 type SemanticAtom = (u64, ContentHash);
-type EncodedToken = (u64, Token, Option<SemanticAtom>);
 type DecodedToken = (FormatToken, Token, Option<SemanticAtom>);
 
-fn encode_token(
+fn encode_token_v2(
     token: &FormatToken,
     names: &[FormatName],
-) -> Result<EncodedToken, StoreFormatError> {
-    const TAG_SHIFT: u32 = 56;
+) -> Result<(u32, Token, Option<SemanticAtom>), StoreFormatError> {
+    const CS_TAG: u32 = 1 << 30;
+    const PARAM_TAG: u32 = 2 << 30;
+    const FROZEN_TAG: u32 = 3 << 30;
     Ok(match *token {
         FormatToken::Char { ch, cat } => {
             let catcode = catcode(cat)?;
             (
-                u64::from(ch as u32) | (u64::from(cat) << 32),
+                u32::from(cat) << 21 | ch as u32,
                 Token::Char { ch, cat: catcode },
                 None,
             )
         }
         FormatToken::Cs(raw) => {
+            if raw >= CS_TAG {
+                return Err(StoreFormatError::Invalid(
+                    "frozen token symbol exceeds 30 bits",
+                ));
+            }
             let name = names
                 .get(raw as usize)
                 .ok_or(StoreFormatError::Invalid("frozen token symbol reference"))?;
@@ -375,18 +484,14 @@ fn encode_token(
                 ControlSequenceKind::Named
             };
             (
-                (1_u64 << TAG_SHIFT) | u64::from(raw),
+                CS_TAG | raw,
                 Token::Cs(crate::interner::Symbol::new(raw)),
                 Some(strong_semantic_atom(kind, &name.text)),
             )
         }
-        FormatToken::Param(slot) => (
-            (2_u64 << TAG_SHIFT) | u64::from(slot),
-            Token::Param(slot),
-            None,
-        ),
+        FormatToken::Param(slot) => (PARAM_TAG | u32::from(slot), Token::Param(slot), None),
         FormatToken::Frozen(kind @ 0..=1) => (
-            (3_u64 << TAG_SHIFT) | u64::from(kind),
+            FROZEN_TAG | u32::from(kind),
             if kind == 0 {
                 Token::Frozen(FrozenToken::END_TEMPLATE)
             } else {
@@ -394,10 +499,62 @@ fn encode_token(
             },
             None,
         ),
-        FormatToken::Frozen(_) => {
-            return Err(StoreFormatError::Invalid("frozen token kind"));
-        }
+        FormatToken::Frozen(_) => return Err(StoreFormatError::Invalid("frozen token kind")),
     })
+}
+
+fn decode_token_v2(word: u32, interner: &Interner) -> Result<DecodedToken, StoreFormatError> {
+    let tag = word >> 30;
+    let payload = word & 0x3fff_ffff;
+    match tag {
+        0 => {
+            let code = payload & 0x001f_ffff;
+            let cat = (payload >> 21) as u8;
+            if cat > 15 {
+                return Err(StoreFormatError::Invalid("frozen token catcode"));
+            }
+            let ch =
+                char::from_u32(code).ok_or(StoreFormatError::Invalid("frozen token character"))?;
+            let catcode = catcode(cat)?;
+            Ok((
+                FormatToken::Char { ch, cat },
+                Token::Char { ch, cat: catcode },
+                None,
+            ))
+        }
+        1 => {
+            let symbol = interner
+                .symbol_at_slot(payload)
+                .ok_or(StoreFormatError::Invalid("frozen token symbol reference"))?;
+            Ok((
+                FormatToken::Cs(payload),
+                Token::Cs(symbol),
+                interner.semantic_atom(symbol).map(|fingerprint| {
+                    let symbol = interner
+                        .resolve_stored(symbol)
+                        .expect("decoded frozen symbol should resolve to its stored identity");
+                    let (_, identity) =
+                        strong_semantic_atom(interner.kind_id(symbol), interner.resolve_id(symbol));
+                    (fingerprint, identity)
+                }),
+            ))
+        }
+        2 if payload <= u32::from(u8::MAX) => Ok((
+            FormatToken::Param(payload as u8),
+            Token::Param(payload as u8),
+            None,
+        )),
+        3 if payload <= 1 => Ok((
+            FormatToken::Frozen(payload as u8),
+            if payload == 0 {
+                Token::Frozen(FrozenToken::END_TEMPLATE)
+            } else {
+                Token::Frozen(FrozenToken::END_V)
+            },
+            None,
+        )),
+        _ => Err(StoreFormatError::Invalid("invalid frozen token word")),
+    }
 }
 
 fn decode_token(word: u64, interner: &Interner) -> Result<DecodedToken, StoreFormatError> {
