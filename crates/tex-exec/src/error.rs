@@ -126,7 +126,6 @@ pub enum ExecError {
     BadPrevGraf(i32),
     MissingHashInAlignmentPreamble,
     ExtraHashInAlignmentPreamble,
-    MisplacedNoAlign,
     MisplacedOmit,
     MissingLeaderPayload {
         context: TracedTokenWord,
@@ -300,7 +299,6 @@ impl fmt::Display for ExecError {
             Self::ExtraHashInAlignmentPreamble => {
                 write!(f, "Only one # is allowed per tab.")
             }
-            Self::MisplacedNoAlign => write!(f, "Misplaced \\noalign."),
             Self::MisplacedOmit => write!(f, "Misplaced \\omit."),
             Self::MissingLeaderPayload { .. } => write!(f, "A <box> was supposed to be here."),
             Self::LeadersNotFollowedByProperGlue { .. } => {
@@ -460,7 +458,6 @@ impl std::error::Error for ExecError {
             | Self::BadPrevGraf(_)
             | Self::MissingHashInAlignmentPreamble
             | Self::ExtraHashInAlignmentPreamble
-            | Self::MisplacedNoAlign
             | Self::MisplacedOmit
             | Self::MissingLeaderPayload { .. }
             | Self::LeadersNotFollowedByProperGlue { .. }
@@ -564,7 +561,6 @@ impl ExecError {
             | Self::BadPrevGraf(_)
             | Self::MissingHashInAlignmentPreamble
             | Self::ExtraHashInAlignmentPreamble
-            | Self::MisplacedNoAlign
             | Self::MisplacedOmit
             | Self::HRuleHereExceptLeaders
             | Self::CannotDeleteFromCurrentPage { .. }

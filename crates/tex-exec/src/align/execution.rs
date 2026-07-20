@@ -543,9 +543,6 @@ fn run_cell_body_until_terminator(
         }
         stats.delivered_tokens += 1;
         if is_noalign(stores, semantic) {
-            if stores.interaction_mode() == InteractionMode::ErrorStop {
-                return Err(ExecError::MisplacedNoAlign);
-            }
             stores.world_mut().write_text(
                 PrintSink::TerminalAndLog,
                 "\n! Misplaced \\noalign.\nI expect to see \\noalign only after the \\cr of an alignment.\n",

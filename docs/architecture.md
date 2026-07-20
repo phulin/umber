@@ -172,6 +172,14 @@ checks. Once the preamble ends, u/v templates and cell bodies run with normal
 scanner status, so packages may use outer sentinels through `\futurelet` and
 `\expandafter` there, as pdfTeX's `bm` package does.
 
+Alignment recovery follows TeX.web §§782 and 785: `\noalign` is recognized as
+structural only by `align_peek` after a completed row. If it instead expands
+inside a cell, execution reports the canonical misplaced-control diagnostic,
+consumes the control sequence, and continues with the remaining cell input.
+This deterministic continuation is used even in error-stop mode because the
+embedded engine has no interactive error prompt at which a user could request
+TeX's ordinary recovery action.
+
 ## 6. Execution engine
 
 `tex-exec` owns primitive dispatch, grouping, assignments, modes, box building,

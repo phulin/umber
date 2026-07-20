@@ -1399,11 +1399,12 @@ fn misplaced_omit_in_nonstop_alignment_reports_and_continues() {
 }
 
 #[test]
-fn misplaced_noalign_outside_row_boundary_reports_reference_primary_text() {
-    let err =
-        run_alignment_source_err("\\setbox0=\\vbox{\\halign{#\\cr a \\noalign{\\hrule}\\cr}}");
+fn misplaced_noalign_in_cell_reports_and_continues_in_error_stop_mode() {
+    let stores = run_boxed_alignment_source("\\halign{#\\cr a \\noalign{ignored}b\\cr}");
+    let rows = vlist_rows(&stores, box_zero_vlist(&stores));
 
-    assert_eq!(err.to_string(), "Misplaced \\noalign.");
+    assert_eq!(rows.len(), 1);
+    assert!(support::terminal_effect_text(&stores).contains("! Misplaced \\noalign."));
 }
 
 #[test]
