@@ -119,6 +119,80 @@ fn repeated_resource_need_is_a_typed_no_progress_failure() {
     assert!(session.accepted_output().is_none());
 }
 
+fn only_file_request(needs: &NeedResources) -> umber_vfs::FileRequestKey {
+    let [ResourceRequest::File(request)] = needs.required.as_slice() else {
+        panic!("expected one required file, got {:?}", needs.required);
+    };
+    request.key().clone()
+}
+
+fn resolved(request: umber_vfs::FileRequestKey, path: &str, bytes: &[u8]) -> ResourceResponse {
+    ResourceResponse::File(ResolvedFile {
+        request,
+        virtual_path: path.into(),
+        bytes: bytes.to_vec(),
+        expected_digest: None,
+    })
+}
+
+#[test]
+fn legacy_project_retains_one_tex_pass_across_positive_and_negative_resources() {
+    let source = b"\\input first \\openin0=absent \\ifeof0\\closein0\\fi \\end\n";
+    let mut session = LatexProjectSession::new(options()).expect("session");
+    session
+        .add_user_file("/job/main.tex", source.to_vec())
+        .expect("source");
+
+    let LatexProjectAttempt::NeedResources(first) = session.compile_attempt() else {
+        panic!("first resource suspension");
+    };
+    assert_eq!(
+        session
+            .candidate
+            .as_ref()
+            .expect("retained project candidate")
+            .tex
+            .as_ref()
+            .expect("retained TeX pass")
+            .attempts(),
+        1
+    );
+    session
+        .provide_resources(vec![resolved(
+            only_file_request(&first),
+            "/texlive/first.tex",
+            b"% first\n",
+        )])
+        .expect("first resource");
+
+    let probe = match session.compile_attempt() {
+        LatexProjectAttempt::NeedResources(needs) => needs,
+        other => panic!("expected probe suspension, got {other:?}"),
+    };
+    assert_eq!(
+        session
+            .candidate
+            .as_ref()
+            .expect("retained project candidate")
+            .tex
+            .as_ref()
+            .expect("retained TeX pass")
+            .attempts(),
+        2
+    );
+    let [ResourceRequest::File(probe)] = probe.probes.as_slice() else {
+        panic!("expected one probe");
+    };
+    session
+        .provide_resources(vec![ResourceResponse::FileUnavailable(probe.key().clone())])
+        .expect("negative probe");
+
+    assert!(matches!(
+        session.compile_attempt(),
+        LatexProjectAttempt::Complete(_)
+    ));
+}
+
 fn classic_options(mode: bib_engine::BibliographyMode) -> LatexProjectOptionsV2 {
     LatexProjectOptionsV2 {
         tex: SessionOptions {
@@ -145,6 +219,67 @@ fn classic_project_source() -> &'static [u8] {
 \immediate\closeout1
 \shipout\hbox{X}\end
 "#
+}
+
+#[test]
+fn v2_project_retains_one_tex_pass_across_positive_and_negative_resources() {
+    let source = b"\\input first \\openin0=absent \\ifeof0\\closein0\\fi \\end\n";
+    let mut session =
+        LatexProjectSessionV2::new(classic_options(bib_engine::BibliographyMode::Auto {
+            job_path: VirtualPath::user("/job/main").expect("job"),
+        }))
+        .expect("session");
+    session
+        .add_user_file("/job/main.tex", source.to_vec())
+        .expect("source");
+
+    let LatexProjectAttemptV2::NeedResources(first) = session.compile_attempt() else {
+        panic!("first resource suspension");
+    };
+    assert_eq!(
+        session
+            .candidate
+            .as_ref()
+            .expect("retained project candidate")
+            .tex
+            .as_ref()
+            .expect("retained TeX pass")
+            .attempts(),
+        1
+    );
+    session
+        .provide_resources(vec![resolved(
+            only_file_request(&first),
+            "/texlive/first.tex",
+            b"% first\n",
+        )])
+        .expect("first resource");
+
+    let probe = match session.compile_attempt() {
+        LatexProjectAttemptV2::NeedResources(needs) => needs,
+        other => panic!("expected probe suspension, got {other:?}"),
+    };
+    assert_eq!(
+        session
+            .candidate
+            .as_ref()
+            .expect("retained project candidate")
+            .tex
+            .as_ref()
+            .expect("retained TeX pass")
+            .attempts(),
+        2
+    );
+    let [ResourceRequest::File(probe)] = probe.probes.as_slice() else {
+        panic!("expected one probe");
+    };
+    session
+        .provide_resources(vec![ResourceResponse::FileUnavailable(probe.key().clone())])
+        .expect("negative probe");
+    assert!(matches!(
+        session.compile_attempt(),
+        LatexProjectAttemptV2::Complete(_)
+    ));
 }
 
 fn finish_classic_project(session: &mut LatexProjectSessionV2) -> LatexProjectOutputV2 {

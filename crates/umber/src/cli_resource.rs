@@ -249,6 +249,7 @@ impl NativeCompileSession {
     ) -> Result<MemoryRunOutput, NativeRunError> {
         loop {
             if cancellation.is_cancelled() {
+                self.session.discard_suspended_candidate();
                 return Err(NativeRunError::Cancelled);
             }
             match self.session.compile_attempt() {
@@ -263,9 +264,18 @@ impl NativeCompileSession {
                 }
                 CompileAttemptResult::NeedResources(batch) => {
                     let responses =
-                        self.distribution
-                            .resolve_batch(&self.local, &batch, cancellation)?;
+                        match self
+                            .distribution
+                            .resolve_batch(&self.local, &batch, cancellation)
+                        {
+                            Ok(responses) => responses,
+                            Err(error) => {
+                                self.session.discard_suspended_candidate();
+                                return Err(error);
+                            }
+                        };
                     if cancellation.is_cancelled() {
+                        self.session.discard_suspended_candidate();
                         return Err(NativeRunError::Cancelled);
                     }
                     self.session

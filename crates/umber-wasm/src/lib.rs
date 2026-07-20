@@ -325,6 +325,11 @@ impl CompilerSession {
             .map_err(compile_boundary_error)
     }
 
+    #[wasm_bindgen(js_name = cancelPendingPatch)]
+    pub fn cancel_pending_patch(&mut self) -> Result<bool, JsValue> {
+        Ok(self.session_mut()?.cancel_pending_patch())
+    }
+
     pub fn dispose(&mut self) {
         self.session = None;
     }
@@ -465,6 +470,14 @@ impl ProjectSession {
             ProjectSessionInner::V2(session) => session.apply_patch(patch),
         }
         .map_err(project_boundary_error)
+    }
+
+    #[wasm_bindgen(js_name = cancelPendingPatch)]
+    pub fn cancel_pending_patch(&mut self) -> Result<bool, JsValue> {
+        Ok(match self.session_mut()? {
+            ProjectSessionInner::Legacy(session) => session.cancel_pending_patch(),
+            ProjectSessionInner::V2(session) => session.cancel_pending_patch(),
+        })
     }
 
     #[wasm_bindgen(getter)]

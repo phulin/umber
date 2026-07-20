@@ -754,6 +754,18 @@ impl VirtualCompileSession {
         cancelled
     }
 
+    /// Drops the currently executing candidate without changing the requested
+    /// revision. Hosts use this when an in-flight operation is cancelled; a
+    /// later attempt starts that revision again from a fresh candidate.
+    pub fn discard_suspended_candidate(&mut self) -> bool {
+        let discarded = self.candidate.take().is_some();
+        if discarded {
+            self.awaiting = None;
+            self.attempts_without_progress = 0;
+        }
+        discarded
+    }
+
     #[must_use]
     pub fn revision(&self) -> Option<tex_incr::RevisionId> {
         self.incremental

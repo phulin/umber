@@ -24,7 +24,7 @@ pub(crate) fn parse_options(value: &JsValue) -> Result<SessionOptions, JsValue> 
         if !Array::is_array(&hints) {
             return Err(js_error("formatPrefetchHints must be an array"));
         }
-        options.format_prefetch_hints = Some(
+        options.initial_prefetch_hints = Some(
             Array::from(&hints)
                 .iter()
                 .map(|hint| {

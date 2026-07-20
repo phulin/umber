@@ -233,8 +233,19 @@ file has identical path and byte identity. A repeated non-adjacent generation
 is an oscillation; configured attempt and pass limits are typed failures.
 
 Project resource responses use the existing combined file/font protocol.
+Each project candidate retains its current pass number, convergence history,
+private generated-file map, and active `VirtualCompileSession`. A TeX resource
+response is installed directly into that active session, so resumption advances
+the same owned executor run; it does not reconstruct the pass or replay its
+committed prefix. An intentional next TeX pass creates a new engine run only
+after the preceding TeX and bibliography phase changed the generated-file
+signature. Bibliography detection and `BibSession` resource waits remain their
+own protocol: while either waits, the already completed TeX pass is retained
+and is not mistaken for a cold resource retry.
+
 Immutable responses and bibliography parse caches survive a suspended
-candidate, but candidate stage writes do not. Acceptance installs the root
+candidate, and the candidate owns its private generated stage until acceptance
+or rejection. Acceptance installs the root
 revision, complete generated VFS generation, bibliography diagnostics, final
 TeX output, and retained rendered-source session together. A resource miss or
 terminal failure therefore cannot replace any part of the prior accepted
@@ -246,6 +257,13 @@ completed value contains the converged TeX output, bibliography diagnostics
 and statistics, and complete generated generation. The authored JavaScript
 facade chooses this binding when `bibliography` is present and implements no
 bibliography parsing or pass policy.
+
+Native cancellation discards the suspended engine candidate before returning;
+watch supersession then cancels the pending patch and starts the replacement
+revision. The WASM bindings expose `cancelPendingPatch()` for direct persistent
+session users, while the one-shot authored facade always disposes its session
+on abort, resolver failure, attempt-limit failure, or completion. Worker
+timeout and abort terminate the worker, releasing the complete Rust session.
 
 ## Rendered-source queries
 

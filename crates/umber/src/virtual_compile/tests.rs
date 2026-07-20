@@ -475,6 +475,28 @@ fn initial_candidate_and_committed_prefix_survive_sequential_resource_batches() 
 }
 
 #[test]
+fn discarded_suspension_cannot_resume_and_releases_candidate_retention() {
+    let mut session = session("\\input remote \\end");
+    let first = requests(session.compile_attempt());
+    assert!(session.candidate.is_some());
+    assert!(session.discard_suspended_candidate());
+    assert!(session.candidate.is_none());
+    assert!(session.awaiting.is_none());
+
+    let restarted = requests(session.compile_attempt());
+    assert_eq!(restarted, first);
+    assert_eq!(
+        session
+            .candidate
+            .as_ref()
+            .expect("fresh candidate after cancellation")
+            .suspension_serial,
+        1,
+        "the cancelled run's suspension serial must not be resumed"
+    );
+}
+
+#[test]
 fn cancelled_edit_drops_its_run_but_keeps_accepted_output_and_late_bytes_cache_only() {
     let source = "\\message{accepted}\\end";
     let mut session = session(source);

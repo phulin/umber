@@ -27,6 +27,7 @@ export interface CompilerBindings {
 		addHtmlFont(font: import("./umber_wasm.js").HtmlFontInput): void;
 		provideResources(responses: ResourceResponse[]): void;
 		applyPatch(patch: import("./umber_wasm.js").SourcePatch): void;
+		cancelPendingPatch(): boolean;
 		readonly revision: number | undefined;
 		readonly contentHash: string | undefined;
 		readonly reuseMetrics: import("./umber_wasm.js").ReuseMetrics | undefined;
@@ -42,6 +43,7 @@ export interface CompilerBindings {
 	) => {
 		addUserFile(path: string, bytes: Uint8Array): void;
 		provideResources(responses: ResourceResponse[]): void;
+		cancelPendingPatch(): boolean;
 		advance?(): import("./umber_wasm.js").AttemptResult;
 		compileAttempt(): import("./umber_wasm.js").AttemptResult;
 		dispose(): void;

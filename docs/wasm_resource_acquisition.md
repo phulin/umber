@@ -173,7 +173,12 @@ Cancellation aborts work owned only by the cancelled session. A client may
 retain a shared in-flight fetch while another live session still references
 it. The facade checks cancellation again after acquisition and before batch
 transfer, so no response from cancelled work reaches Rust. No partially
-downloaded or partially verified response reaches Rust.
+downloaded or partially verified response reaches Rust. The one-shot facade
+then disposes the WASM session, and worker timeout or abort terminates the
+worker. Direct persistent clients may call `cancelPendingPatch()` before
+applying a superseding edit; this drops the suspended candidate and its charged
+private engine state while preserving the accepted revision. A later attempt
+therefore cannot resume a cancelled suspension.
 
 ## Prefetch without correctness coupling
 

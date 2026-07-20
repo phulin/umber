@@ -21,6 +21,8 @@ use crate::{
 };
 
 const PROJECT_PRODUCER: ProducerId = ProducerId::new(3);
+type GeneratedSignature = Vec<(VirtualPath, ContentHash)>;
+type V2ConvergenceKey = (Option<BibliographyBackend>, GeneratedSignature);
 
 mod support;
 use support::{
@@ -219,8 +221,19 @@ pub struct LatexProjectSession {
     accepted_revision: Option<tex_incr::RevisionId>,
     accepted_root: Option<Vec<u8>>,
     pending_root: Option<(tex_incr::RevisionId, Vec<u8>)>,
-    accepted_tex: Option<VirtualCompileSession>,
+    candidate: Option<LegacyProjectCandidate>,
+    accepted_tex: Option<Box<VirtualCompileSession>>,
     accepted_output: Option<LatexProjectOutput>,
+}
+
+struct LegacyProjectCandidate {
+    revision: tex_incr::RevisionId,
+    root: Vec<u8>,
+    generated: BTreeMap<VirtualPath, Vec<u8>>,
+    seen: BTreeMap<GeneratedSignature, u32>,
+    pass: u32,
+    tex: Option<Box<VirtualCompileSession>>,
+    tex_awaiting: bool,
 }
 
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
@@ -255,13 +268,14 @@ impl LatexProjectSession {
             accepted_revision: None,
             accepted_root: None,
             pending_root: None,
+            candidate: None,
             accepted_tex: None,
             accepted_output: None,
         })
     }
 
     pub fn add_user_file(&mut self, path: &str, bytes: Vec<u8>) -> Result<(), LatexProjectError> {
-        if self.accepted_output.is_some() {
+        if self.accepted_output.is_some() || self.candidate.is_some() {
             return Err(LatexProjectError::Compile(
                 CompileError::SessionAlreadyStarted,
             ));
@@ -315,6 +329,7 @@ impl LatexProjectSession {
         let mut next = source.to_owned();
         next.replace_range(patch.range, &patch.replacement);
         self.pending_root = Some((patch.next_revision, next.into_bytes()));
+        self.candidate = None;
         self.awaiting.clear();
         Ok(())
     }
@@ -323,6 +338,7 @@ impl LatexProjectSession {
         &mut self,
         responses: Vec<ResourceResponse>,
     ) -> Result<(), LatexProjectError> {
+        let tex_responses = responses.clone();
         let mut files = self.files.clone();
         let mut file_responses = self.file_responses.clone();
         let mut font_responses = self.font_responses.clone();
@@ -393,7 +409,30 @@ impl LatexProjectSession {
         self.file_responses = file_responses;
         self.font_responses = font_responses;
         self.unavailable_fonts = unavailable_fonts;
+        if let Some(candidate) = self.candidate.as_mut()
+            && candidate.tex_awaiting
+        {
+            candidate
+                .tex
+                .as_mut()
+                .expect("a TeX wait retains its session")
+                .provide_resources(tex_responses)
+                .map_err(LatexProjectError::Compile)?;
+            candidate.tex_awaiting = false;
+        }
         Ok(())
+    }
+
+    /// Cancels an unaccepted edited project generation and releases its
+    /// suspended TeX pass while preserving the accepted project.
+    pub fn cancel_pending_patch(&mut self) -> bool {
+        let cancelled = self.pending_root.take().is_some();
+        if cancelled {
+            self.candidate = None;
+            self.awaiting.clear();
+            self.attempts = 0;
+        }
+        cancelled
     }
 
     pub fn compile_attempt(&mut self) -> LatexProjectAttempt {
@@ -477,10 +516,23 @@ impl LatexProjectSession {
     }
 
     fn run_candidate(&mut self) -> Result<LatexProjectOutput, CandidateStop> {
-        let (revision, root) = self.candidate_root()?;
-        let mut generated = accepted_generated(&self.files)?;
-        let mut seen = BTreeMap::new();
-        seen.insert(generated_signature(&generated), 0u32);
+        let mut candidate = if let Some(candidate) = self.candidate.take() {
+            candidate
+        } else {
+            let (revision, root) = self.candidate_root()?;
+            let generated = accepted_generated(&self.files)?;
+            let mut seen = BTreeMap::new();
+            seen.insert(generated_signature(&generated), 0u32);
+            LegacyProjectCandidate {
+                revision,
+                root,
+                generated,
+                seen,
+                pass: 1,
+                tex: None,
+                tex_awaiting: false,
+            }
+        };
         let bib_paths = self
             .options
             .bibliography
@@ -489,19 +541,38 @@ impl LatexProjectSession {
             .map(|request| request.path().clone())
             .collect::<BTreeSet<_>>();
 
-        for pass in 1..=self.options.limits.passes {
-            let before = generated_signature(&generated);
-            let (tex_output, tex_session) = self.run_tex_pass(revision, &root, &generated)?;
-            generated.retain(|path, _| bib_paths.contains(path));
-            merge_tex_files(&mut generated, &tex_output.files)?;
+        while candidate.pass <= self.options.limits.passes {
+            let before = generated_signature(&candidate.generated);
+            let mut tex_session = match candidate.tex.take() {
+                Some(session) => session,
+                None => {
+                    self.start_tex_pass(candidate.revision, &candidate.root, &candidate.generated)?
+                }
+            };
+            let tex_output = match self.advance_tex_pass(&mut tex_session)? {
+                Ok(output) => output,
+                Err(needs) => {
+                    candidate.tex = Some(tex_session);
+                    candidate.tex_awaiting = true;
+                    self.candidate = Some(candidate);
+                    return Err(CandidateStop::Need(needs));
+                }
+            };
+            candidate
+                .generated
+                .retain(|path, _| bib_paths.contains(path));
+            merge_tex_files(&mut candidate.generated, &tex_output.files)?;
 
             let mut bib_result = None;
-            if generated.contains_key(self.options.bibliography.control_path()) {
+            if candidate
+                .generated
+                .contains_key(self.options.bibliography.control_path())
+            {
                 let snapshot = candidate_snapshot(
                     &self.files,
                     &self.options.tex.main_path,
-                    &root,
-                    &generated,
+                    &candidate.root,
+                    &candidate.generated,
                 )?;
                 match self
                     .bibliography
@@ -509,14 +580,19 @@ impl LatexProjectSession {
                 {
                     BibAttempt::Complete(result) => {
                         for path in &bib_paths {
-                            generated.remove(path);
+                            candidate.generated.remove(path);
                         }
                         for file in result.files() {
-                            generated.insert(file.path().clone(), file.bytes().to_vec());
+                            candidate
+                                .generated
+                                .insert(file.path().clone(), file.bytes().to_vec());
                         }
                         bib_result = Some(result);
                     }
                     BibAttempt::NeedResources(batch) => {
+                        candidate.tex = Some(tex_session);
+                        candidate.tex_awaiting = false;
+                        self.candidate = Some(candidate);
                         return Err(CandidateStop::Need(file_needs(batch)));
                     }
                     BibAttempt::Failed(error) => {
@@ -527,43 +603,45 @@ impl LatexProjectSession {
                 }
             } else {
                 for path in &bib_paths {
-                    generated.remove(path);
+                    candidate.generated.remove(path);
                 }
             }
 
-            let after = generated_signature(&generated);
+            let after = generated_signature(&candidate.generated);
             if after == before {
                 return self.accept_candidate(
-                    revision,
-                    root,
-                    pass,
+                    candidate.revision,
+                    candidate.root,
+                    candidate.pass,
                     tex_output,
                     bib_result,
-                    generated,
+                    candidate.generated,
                     tex_session,
                 );
             }
-            if let Some(first_pass) = seen.insert(after, pass) {
+            if let Some(first_pass) = candidate.seen.insert(after, candidate.pass) {
                 return Err(CandidateStop::Failed(LatexProjectError::Oscillation {
                     first_pass,
-                    repeated_pass: pass,
+                    repeated_pass: candidate.pass,
                 }));
             }
+            candidate.pass += 1;
         }
         Err(CandidateStop::Failed(LatexProjectError::PassLimit {
             limit: self.options.limits.passes,
         }))
     }
 
-    fn run_tex_pass(
+    fn start_tex_pass(
         &self,
         revision: tex_incr::RevisionId,
         root: &[u8],
         generated: &BTreeMap<VirtualPath, Vec<u8>>,
-    ) -> Result<(MemoryRunOutput, VirtualCompileSession), CandidateStop> {
-        let mut session =
+    ) -> Result<Box<VirtualCompileSession>, CandidateStop> {
+        let mut session = Box::new(
             VirtualCompileSession::new_at_revision(self.options.tex.clone(), revision)
-                .map_err(LatexProjectError::Compile)?;
+                .map_err(LatexProjectError::Compile)?,
+        );
         add_candidate_inputs(
             &mut session,
             &self.files,
@@ -580,9 +658,16 @@ impl LatexProjectSession {
                 )
                 .map_err(LatexProjectError::Compile)?;
         }
+        Ok(session)
+    }
+
+    fn advance_tex_pass(
+        &self,
+        session: &mut VirtualCompileSession,
+    ) -> Result<Result<MemoryRunOutput, NeedResources>, CandidateStop> {
         loop {
             match session.compile_attempt() {
-                CompileAttemptResult::Complete(output) => return Ok((output, session)),
+                CompileAttemptResult::Complete(output) => return Ok(Ok(output)),
                 CompileAttemptResult::Error(error) => {
                     return Err(CandidateStop::Failed(LatexProjectError::Compile(error)));
                 }
@@ -637,7 +722,7 @@ impl LatexProjectSession {
                         }
                     }
                     if !missing.is_empty() || !missing_probes.is_empty() {
-                        return Err(CandidateStop::Need(NeedResources {
+                        return Ok(Err(NeedResources {
                             required: missing,
                             probes: missing_probes,
                             prefetch_hints: needs.prefetch_hints,
@@ -660,7 +745,7 @@ impl LatexProjectSession {
         tex: MemoryRunOutput,
         bibliography: Option<BibResult>,
         generated: BTreeMap<VirtualPath, Vec<u8>>,
-        tex_session: VirtualCompileSession,
+        tex_session: Box<VirtualCompileSession>,
     ) -> Result<LatexProjectOutput, CandidateStop> {
         let mut pending = self.files.clone();
         let main = VirtualPath::user(&self.options.tex.main_path)
@@ -702,6 +787,7 @@ impl LatexProjectSession {
         self.accepted_revision = Some(revision);
         self.accepted_root = Some(root);
         self.pending_root = None;
+        self.candidate = None;
         self.awaiting.clear();
         self.accepted_tex = Some(tex_session);
         self.accepted_output = Some(output.clone());
@@ -750,6 +836,7 @@ impl LatexProjectSession {
 
     fn reject_pending(&mut self) {
         self.pending_root = None;
+        self.candidate = None;
         self.awaiting.clear();
     }
 }
@@ -773,8 +860,19 @@ pub struct LatexProjectSessionV2 {
     accepted_revision: Option<tex_incr::RevisionId>,
     accepted_root: Option<Vec<u8>>,
     pending_root: Option<(tex_incr::RevisionId, Vec<u8>)>,
-    accepted_tex: Option<VirtualCompileSession>,
+    candidate: Option<ProjectCandidateV2>,
+    accepted_tex: Option<Box<VirtualCompileSession>>,
     accepted_output: Option<LatexProjectOutputV2>,
+}
+
+struct ProjectCandidateV2 {
+    revision: tex_incr::RevisionId,
+    root: Vec<u8>,
+    generated: BTreeMap<VirtualPath, Vec<u8>>,
+    seen: BTreeMap<V2ConvergenceKey, u32>,
+    pass: u32,
+    tex: Option<Box<VirtualCompileSession>>,
+    tex_awaiting: bool,
 }
 
 impl LatexProjectSessionV2 {
@@ -803,6 +901,7 @@ impl LatexProjectSessionV2 {
             accepted_revision: None,
             accepted_root: None,
             pending_root: None,
+            candidate: None,
             accepted_tex: None,
             accepted_output: None,
         })
@@ -825,12 +924,13 @@ impl LatexProjectSessionV2 {
         self.detector = BibliographyDetector::new(self.options.bibliography.detector);
         self.bibliography = None;
         self.bibliography_backend = None;
+        self.candidate = None;
         self.awaiting.clear();
         Ok(())
     }
 
     pub fn add_user_file(&mut self, path: &str, bytes: Vec<u8>) -> Result<(), LatexProjectError> {
-        if self.accepted_output.is_some() {
+        if self.accepted_output.is_some() || self.candidate.is_some() {
             return Err(LatexProjectError::Compile(
                 CompileError::SessionAlreadyStarted,
             ));
@@ -884,6 +984,7 @@ impl LatexProjectSessionV2 {
         let mut next = source.to_owned();
         next.replace_range(patch.range, &patch.replacement);
         self.pending_root = Some((patch.next_revision, next.into_bytes()));
+        self.candidate = None;
         self.awaiting.clear();
         Ok(())
     }
@@ -892,6 +993,7 @@ impl LatexProjectSessionV2 {
         &mut self,
         responses: Vec<ResourceResponse>,
     ) -> Result<(), LatexProjectError> {
+        let tex_responses = responses.clone();
         let mut files = self.files.clone();
         let mut file_responses = self.file_responses.clone();
         let mut font_responses = self.font_responses.clone();
@@ -959,7 +1061,30 @@ impl LatexProjectSessionV2 {
         self.file_responses = file_responses;
         self.font_responses = font_responses;
         self.unavailable_fonts = unavailable_fonts;
+        if let Some(candidate) = self.candidate.as_mut()
+            && candidate.tex_awaiting
+        {
+            candidate
+                .tex
+                .as_mut()
+                .expect("a TeX wait retains its session")
+                .provide_resources(tex_responses)
+                .map_err(LatexProjectError::Compile)?;
+            candidate.tex_awaiting = false;
+        }
         Ok(())
+    }
+
+    /// Cancels an unaccepted edited project generation and releases its
+    /// suspended TeX pass while preserving the accepted project.
+    pub fn cancel_pending_patch(&mut self) -> bool {
+        let cancelled = self.pending_root.take().is_some();
+        if cancelled {
+            self.candidate = None;
+            self.awaiting.clear();
+            self.attempts = 0;
+        }
+        cancelled
     }
 
     pub fn compile_attempt(&mut self) -> LatexProjectAttemptV2 {
@@ -1022,23 +1147,57 @@ impl LatexProjectSessionV2 {
     }
 
     fn run_candidate(&mut self) -> Result<LatexProjectOutputV2, CandidateStop> {
-        let (revision, root) = self.candidate_root()?;
-        let mut generated = accepted_generated(&self.files)?;
-        for path in &self.published_bibliography_paths {
-            generated.remove(path);
-        }
-        let mut seen = BTreeMap::new();
-        seen.insert(
-            (self.bibliography_backend, generated_signature(&generated)),
-            0u32,
-        );
-        for pass in 1..=self.options.limits.passes {
+        let mut candidate = if let Some(candidate) = self.candidate.take() {
+            candidate
+        } else {
+            let (revision, root) = self.candidate_root()?;
+            let mut generated = accepted_generated(&self.files)?;
+            for path in &self.published_bibliography_paths {
+                generated.remove(path);
+            }
+            let mut seen = BTreeMap::new();
+            seen.insert(
+                (self.bibliography_backend, generated_signature(&generated)),
+                0u32,
+            );
+            ProjectCandidateV2 {
+                revision,
+                root,
+                generated,
+                seen,
+                pass: 1,
+                tex: None,
+                tex_awaiting: false,
+            }
+        };
+        while candidate.pass <= self.options.limits.passes {
             let mut bibliography = None;
-            let before = (self.bibliography_backend, generated_signature(&generated));
-            let (tex_output, tex_session) = self.run_tex_pass(revision, &root, &generated)?;
-            merge_tex_files(&mut generated, &tex_output.files)?;
-            let snapshot =
-                candidate_snapshot(&self.files, &self.options.tex.main_path, &root, &generated)?;
+            let before = (
+                self.bibliography_backend,
+                generated_signature(&candidate.generated),
+            );
+            let mut tex_session = match candidate.tex.take() {
+                Some(session) => session,
+                None => {
+                    self.start_tex_pass(candidate.revision, &candidate.root, &candidate.generated)?
+                }
+            };
+            let tex_output = match self.advance_tex_pass(&mut tex_session)? {
+                Ok(output) => output,
+                Err(needs) => {
+                    candidate.tex = Some(tex_session);
+                    candidate.tex_awaiting = true;
+                    self.candidate = Some(candidate);
+                    return Err(CandidateStop::Need(needs));
+                }
+            };
+            merge_tex_files(&mut candidate.generated, &tex_output.files)?;
+            let snapshot = candidate_snapshot(
+                &self.files,
+                &self.options.tex.main_path,
+                &candidate.root,
+                &candidate.generated,
+            )?;
             match self
                 .detector
                 .detect(&self.options.bibliography.mode, &snapshot)
@@ -1048,6 +1207,9 @@ impl LatexProjectSessionV2 {
                     self.bibliography_backend = None;
                 }
                 bib_engine::BibliographyDetection::NeedResources(batch) => {
+                    candidate.tex = Some(tex_session);
+                    candidate.tex_awaiting = false;
+                    self.candidate = Some(candidate);
                     return Err(CandidateStop::Need(file_needs(batch)));
                 }
                 bib_engine::BibliographyDetection::Failed(error) => {
@@ -1065,6 +1227,9 @@ impl LatexProjectSessionV2 {
                         .process(&job, &snapshot);
                     match attempt {
                         BibliographyAttempt::NeedResources(batch) => {
+                            candidate.tex = Some(tex_session);
+                            candidate.tex_awaiting = false;
+                            self.candidate = Some(candidate);
                             return Err(CandidateStop::Need(file_needs(batch)));
                         }
                         BibliographyAttempt::Failed(error) => {
@@ -1083,34 +1248,40 @@ impl LatexProjectSessionV2 {
                             self.published_bibliography_paths =
                                 result.files().map(|file| file.path().clone()).collect();
                             for path in &self.published_bibliography_paths {
-                                generated.remove(path);
+                                candidate.generated.remove(path);
                             }
                             for file in result.files() {
-                                generated.insert(file.path().clone(), file.bytes().to_vec());
+                                candidate
+                                    .generated
+                                    .insert(file.path().clone(), file.bytes().to_vec());
                             }
                             bibliography = Some(result);
                         }
                     }
                 }
             }
-            let after = (self.bibliography_backend, generated_signature(&generated));
+            let after = (
+                self.bibliography_backend,
+                generated_signature(&candidate.generated),
+            );
             if after == before {
                 return self.accept_candidate(
-                    revision,
-                    root,
-                    pass,
+                    candidate.revision,
+                    candidate.root,
+                    candidate.pass,
                     tex_output,
                     bibliography,
-                    generated,
+                    candidate.generated,
                     tex_session,
                 );
             }
-            if let Some(first_pass) = seen.insert(after, pass) {
+            if let Some(first_pass) = candidate.seen.insert(after, candidate.pass) {
                 return Err(CandidateStop::Failed(LatexProjectError::Oscillation {
                     first_pass,
-                    repeated_pass: pass,
+                    repeated_pass: candidate.pass,
                 }));
             }
+            candidate.pass += 1;
         }
         Err(CandidateStop::Failed(LatexProjectError::PassLimit {
             limit: self.options.limits.passes,
@@ -1145,15 +1316,16 @@ impl LatexProjectSessionV2 {
         Ok(())
     }
 
-    fn run_tex_pass(
+    fn start_tex_pass(
         &self,
         revision: tex_incr::RevisionId,
         root: &[u8],
         generated: &BTreeMap<VirtualPath, Vec<u8>>,
-    ) -> Result<(MemoryRunOutput, VirtualCompileSession), CandidateStop> {
-        let mut session =
+    ) -> Result<Box<VirtualCompileSession>, CandidateStop> {
+        let mut session = Box::new(
             VirtualCompileSession::new_at_revision(self.options.tex.clone(), revision)
-                .map_err(LatexProjectError::Compile)?;
+                .map_err(LatexProjectError::Compile)?,
+        );
         add_candidate_inputs(
             &mut session,
             &self.files,
@@ -1170,9 +1342,16 @@ impl LatexProjectSessionV2 {
                 )
                 .map_err(LatexProjectError::Compile)?;
         }
+        Ok(session)
+    }
+
+    fn advance_tex_pass(
+        &self,
+        session: &mut VirtualCompileSession,
+    ) -> Result<Result<MemoryRunOutput, NeedResources>, CandidateStop> {
         loop {
             match session.compile_attempt() {
-                CompileAttemptResult::Complete(output) => return Ok((output, session)),
+                CompileAttemptResult::Complete(output) => return Ok(Ok(output)),
                 CompileAttemptResult::Error(error) => {
                     return Err(CandidateStop::Failed(LatexProjectError::Compile(error)));
                 }
@@ -1220,7 +1399,7 @@ impl LatexProjectSessionV2 {
                         }
                     }
                     if !missing.is_empty() || !missing_probes.is_empty() {
-                        return Err(CandidateStop::Need(NeedResources {
+                        return Ok(Err(NeedResources {
                             required: missing,
                             probes: missing_probes,
                             prefetch_hints: needs.prefetch_hints,
@@ -1243,7 +1422,7 @@ impl LatexProjectSessionV2 {
         tex: MemoryRunOutput,
         bibliography: Option<BibliographyResult>,
         generated: BTreeMap<VirtualPath, Vec<u8>>,
-        tex_session: VirtualCompileSession,
+        tex_session: Box<VirtualCompileSession>,
     ) -> Result<LatexProjectOutputV2, CandidateStop> {
         let mut pending = self.files.clone();
         pending
@@ -1291,6 +1470,7 @@ impl LatexProjectSessionV2 {
         self.accepted_revision = Some(revision);
         self.accepted_root = Some(root);
         self.pending_root = None;
+        self.candidate = None;
         self.awaiting.clear();
         self.accepted_tex = Some(tex_session);
         self.accepted_output = Some(output.clone());
@@ -1337,6 +1517,7 @@ impl LatexProjectSessionV2 {
     }
     fn reject_pending(&mut self) {
         self.pending_root = None;
+        self.candidate = None;
         self.awaiting.clear();
     }
 }
