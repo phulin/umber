@@ -727,11 +727,30 @@ fn real_output_does_not_materialize_before_commit() {
 fn buffered_memory_output_is_readable_as_same_job_input_and_rolls_back() {
     let mut world = World::memory();
     let slot = StreamSlot::new(10);
+    world
+        .set_memory_file("materialized.tex", b"host input".to_vec())
+        .expect("seed ordinary input");
+    assert!(
+        world
+            .read_pending_output_file(Path::new("materialized.tex"))
+            .expect("pending-only lookup")
+            .is_none(),
+        "pending-output lookup must not bypass driver input policy"
+    );
     let before = world.snapshot();
 
     world.open_out(slot, "same-job.tex");
     world.write_text(PrintSink::Stream(slot), "first\nsecond\n");
     world.close_out(slot);
+
+    assert_eq!(
+        world
+            .read_pending_output_file(Path::new("same-job.tex"))
+            .expect("read pending output")
+            .expect("generated path")
+            .bytes(),
+        b"first\nsecond\n"
+    );
 
     let content = world
         .read_file("same-job.tex")

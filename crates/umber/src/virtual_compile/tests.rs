@@ -1435,6 +1435,46 @@ fn unavailable_openin_retries_into_tex_missing_file_semantics() {
 }
 
 #[test]
+fn format_macro_reads_same_run_output_after_an_authoritative_missing_probe() {
+    let mut initex = Universe::with_world(World::memory());
+    prepare_run_stores(&mut initex);
+    crate::run_memory_with_stores(
+        "\\long\\def\\GenerateAfterProbe#1{\\openin1=\"#1\" \\ifeof1 \\message{OPTIONAL-MISSING}\\else \\errmessage{unexpected existing input}\\fi \\immediate\\openout1=#1 \\immediate\\write1{\\string\\message{GENERATED-READ}}\\immediate\\closeout1 \\input #1}\\dump",
+        &mut initex,
+    )
+    .expect("create format with optional-input macro");
+    let format = initex.dump_format().expect("dump format");
+    let mut session = VirtualCompileSession::new(SessionOptions {
+        format: Some(format),
+        ..SessionOptions::default()
+    })
+    .expect("formatted session");
+    session
+        .add_user_file(
+            "main.tex",
+            b"\\GenerateAfterProbe{roundtrip.cfg}\\end".to_vec(),
+        )
+        .expect("main source");
+
+    let missing = probes(session.compile_attempt());
+    assert_eq!(missing.len(), 1);
+    session
+        .provide_resources(vec![ResourceResponse::FileUnavailable(
+            missing[0].key().clone(),
+        )])
+        .expect("negative file response");
+    let CompileAttemptResult::Complete(output) = session.compile_attempt() else {
+        panic!("same-run output should override an earlier negative acquisition binding");
+    };
+    assert!(
+        output
+            .terminal
+            .windows(b"GENERATED-READ".len())
+            .any(|window| window == b"GENERATED-READ")
+    );
+}
+
+#[test]
 fn invalid_openin_probe_uses_tex_missing_file_semantics() {
     let mut session = session(
         "\\openin0=:texsys.aux \\ifeof0 \\message{INVALID-PROBE-MISSING}\\else \\errmessage{unexpected invalid probe}\\fi \\end",

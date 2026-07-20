@@ -33,6 +33,12 @@ struct VirtualFileResolver<'a> {
     fatal: Option<CompileError>,
 }
 
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum FileOpenIntent {
+    Required,
+    Probe,
+}
+
 impl<'a> VirtualRunResolvers<'a> {
     pub(super) fn new(
         snapshot: &'a VfsSnapshot,
@@ -384,7 +390,13 @@ impl<'a> VirtualFileResolver<'a> {
         original_name: &str,
         request_index: u64,
     ) -> ResourceResult<FileContent> {
-        self.open_classified(input, kind, original_name, request_index, false)
+        self.open_classified(
+            input,
+            kind,
+            original_name,
+            request_index,
+            FileOpenIntent::Required,
+        )
     }
 
     fn open_classified(
@@ -393,11 +405,14 @@ impl<'a> VirtualFileResolver<'a> {
         kind: FileKind,
         original_name: &str,
         request_index: u64,
-        probe: bool,
+        intent: FileOpenIntent,
     ) -> ResourceResult<FileContent> {
         let requested = match RequestedFile::parse(kind, original_name) {
             Ok(requested) => requested,
             Err(error) => {
+                if intent == FileOpenIntent::Probe {
+                    return Ok(ResourceLookup::Unavailable);
+                }
                 let failure = CompileError::InvalidRequestedPath {
                     name: original_name.to_owned(),
                     message: error.to_string(),
@@ -407,9 +422,20 @@ impl<'a> VirtualFileResolver<'a> {
             }
         };
 
+        let pending_path = match &requested {
+            RequestedFile::UserOnly(path) => path.as_path(),
+            RequestedFile::Remote { key, .. } => Path::new(key.name()),
+        };
+        if let Some(content) = self.read_pending_output(input, pending_path)? {
+            return Ok(ResourceLookup::Available(content));
+        }
+
         match requested {
             RequestedFile::UserOnly(path) => {
                 let Some(file) = self.snapshot_file(&path)? else {
+                    if intent == FileOpenIntent::Probe {
+                        return Ok(ResourceLookup::Unavailable);
+                    }
                     let failure = CompileError::UnavailableAbsoluteUserFile(path.to_string());
                     self.record_fatal(failure.clone());
                     return Err(failure.to_string());
@@ -442,12 +468,12 @@ impl<'a> VirtualFileResolver<'a> {
                 }
                 let request = FileRequest::new(key.clone(), original_name);
                 if self.seen.insert(key.clone()) {
-                    if probe {
+                    if intent == FileOpenIntent::Probe {
                         self.probes.push((request_index, request));
                     } else {
                         self.misses.push((request_index, request));
                     }
-                } else if !probe
+                } else if intent == FileOpenIntent::Required
                     && let Some(position) = self
                         .probes
                         .iter()
@@ -468,6 +494,18 @@ impl<'a> VirtualFileResolver<'a> {
         path: &VirtualPath,
     ) -> Result<Option<&'a umber_vfs::VirtualFile>, String> {
         self.snapshot.get(path).map_err(|error| {
+            let failure = CompileError::World(error.to_string());
+            self.record_fatal(failure.clone());
+            failure.to_string()
+        })
+    }
+
+    fn read_pending_output(
+        &mut self,
+        input: &mut dyn InputReadState,
+        path: &Path,
+    ) -> Result<Option<FileContent>, String> {
+        input.read_pending_output_file(path).map_err(|error| {
             let failure = CompileError::World(error.to_string());
             self.record_fatal(failure.clone());
             failure.to_string()
@@ -519,25 +557,16 @@ impl InputResolver for VirtualFileResolver<'_> {
         name: &str,
         request_index: u64,
     ) -> ResourceResult<u64> {
-        let requested = match RequestedFile::parse(FileKind::TexInput, name) {
-            Ok(requested) => requested,
-            Err(_) => return Ok(ResourceLookup::Unavailable),
-        };
-        if let RequestedFile::UserOnly(path) = requested {
-            let Some(file) = self.snapshot_file(&path)? else {
-                return Ok(ResourceLookup::Unavailable);
-            };
-            return self.read_snapshot(input, file).map(|content| {
-                ResourceLookup::Available(u64::try_from(content.bytes().len()).unwrap_or(u64::MAX))
-            });
-        }
-        if self.request_is_unavailable(FileKind::TexInput, name) {
-            return Ok(ResourceLookup::Unavailable);
-        }
-        self.open_classified(input, FileKind::TexInput, name, request_index, true)
-            .map(|lookup| {
-                lookup.map(|content| u64::try_from(content.bytes().len()).unwrap_or(u64::MAX))
-            })
+        self.open_classified(
+            input,
+            FileKind::TexInput,
+            name,
+            request_index,
+            FileOpenIntent::Probe,
+        )
+        .map(|lookup| {
+            lookup.map(|content| u64::try_from(content.bytes().len()).unwrap_or(u64::MAX))
+        })
     }
 
     fn open_stream_input(
@@ -546,24 +575,13 @@ impl InputResolver for VirtualFileResolver<'_> {
         name: &str,
         request_index: u64,
     ) -> ResourceResult<FileContent> {
-        // `\openin` is a probe: an invalid host-neutral path is unavailable,
-        // just like a valid path with no matching file.  In particular, the
-        // LaTeX kernel intentionally probes `:texsys.aux` while detecting the
-        // filesystem.  Do not turn that probe into a fatal compile error or a
-        // resource request, while keeping invalid `\input` paths fatal.
-        if RequestedFile::parse(FileKind::TexInput, name).is_err() {
-            return Ok(ResourceLookup::Unavailable);
-        }
-        if self.request_is_unavailable(FileKind::TexInput, name) {
-            return Ok(ResourceLookup::Unavailable);
-        }
-        self.open_classified(input, FileKind::TexInput, name, request_index, true)
-    }
-}
-
-impl VirtualFileResolver<'_> {
-    fn request_is_unavailable(&self, kind: FileKind, name: &str) -> bool {
-        matches!(RequestedFile::parse(kind, name), Ok(RequestedFile::Remote { key, .. }) if self.unavailable.contains(&key))
+        self.open_classified(
+            input,
+            FileKind::TexInput,
+            name,
+            request_index,
+            FileOpenIntent::Probe,
+        )
     }
 }
 
@@ -682,7 +700,7 @@ impl FontResolver for VirtualFontResolver<'_> {
 mod tests {
     use std::collections::{BTreeMap, BTreeSet};
 
-    use super::{VirtualFileResolver, pixels_to_scaled};
+    use super::{FileOpenIntent, VirtualFileResolver, pixels_to_scaled};
     use crate::{
         CompileAttemptResult, EngineMode, FileKind, ResolvedFile, ResourceRequest,
         ResourceResponse, SessionOptions, VirtualCompileSession,
@@ -713,7 +731,7 @@ mod tests {
                     FileKind::TexInput,
                     "shared.cfg",
                     7,
-                    true,
+                    FileOpenIntent::Probe,
                 )
                 .expect("probe lookup"),
             ResourceLookup::NeedResource(need) if need == ResourceNeed::new(7)
@@ -725,7 +743,7 @@ mod tests {
                     FileKind::TexInput,
                     "shared.cfg",
                     9,
-                    false,
+                    FileOpenIntent::Required,
                 )
                 .expect("required lookup"),
             ResourceLookup::NeedResource(need) if need == ResourceNeed::new(9)

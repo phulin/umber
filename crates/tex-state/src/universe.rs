@@ -379,6 +379,16 @@ pub trait InputReadState {
         path: &std::path::Path,
     ) -> Result<crate::FileContent, crate::WorldError>;
 
+    /// Reads an uncommitted TeX output only when this run has generated the
+    /// requested path. Driver-owned resource policy remains responsible for
+    /// every other input source.
+    fn read_pending_output_file(
+        &mut self,
+        _path: &std::path::Path,
+    ) -> Result<Option<crate::FileContent>, crate::WorldError> {
+        Ok(None)
+    }
+
     /// Records immutable bytes selected by a driver-owned resolver as a
     /// `World` input while preserving pending-output precedence.
     fn read_supplied_input_file(
@@ -7241,6 +7251,13 @@ impl InputReadState for InputOpenContext<'_> {
         path: &std::path::Path,
     ) -> Result<crate::FileContent, crate::WorldError> {
         self.universe.world.read_file(path)
+    }
+
+    fn read_pending_output_file(
+        &mut self,
+        path: &std::path::Path,
+    ) -> Result<Option<crate::FileContent>, crate::WorldError> {
+        self.universe.world.read_pending_output_file(path)
     }
 
     fn read_supplied_input_file(

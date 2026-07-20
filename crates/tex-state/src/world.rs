@@ -1748,6 +1748,24 @@ impl World {
         Ok(self.register_input_content(path, bytes, modification_date))
     }
 
+    /// Reads bytes generated but not yet committed by this TeX run.
+    ///
+    /// This narrow lookup lets a driver resolver preserve pending-output
+    /// precedence without exposing unrelated materialized host or VFS files.
+    pub(crate) fn read_pending_output_file(
+        &mut self,
+        path: &Path,
+    ) -> Result<Option<FileContent>, WorldError> {
+        let Some(bytes) = self.pending_output_bytes(path)? else {
+            return Ok(None);
+        };
+        Ok(Some(self.register_input_content(
+            path,
+            Arc::from(bytes),
+            Some(FileModificationDate::utc(self.job_clock)),
+        )))
+    }
+
     /// Registers immutable bytes supplied by a driver-owned resolver as one
     /// successful input read.
     ///
