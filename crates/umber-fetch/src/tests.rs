@@ -1,5 +1,5 @@
 use std::collections::BTreeMap;
-use std::io::{Read, Write};
+use std::io::{self, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::num::NonZeroUsize;
 use std::process::Command;
@@ -140,14 +140,29 @@ fn serve(
         "Not Found"
     };
     let length = reply.content_length.unwrap_or(reply.body.len() as u64);
-    write!(
-        stream,
+    let response = format!(
         "HTTP/1.1 {} {}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
         reply.status, reason, length
-    )
-    .expect("write fixture headers");
-    let _ = stream.write_all(&reply.body);
+    );
+    write_fixture_response(&mut stream, response.as_bytes(), &reply.body);
     active_connections.fetch_sub(1, Ordering::SeqCst);
+}
+
+fn write_fixture_response(stream: &mut TcpStream, headers: &[u8], body: &[u8]) {
+    if let Err(error) = stream
+        .write_all(headers)
+        .and_then(|()| stream.write_all(body))
+    {
+        assert!(
+            matches!(
+                error.kind(),
+                io::ErrorKind::BrokenPipe
+                    | io::ErrorKind::ConnectionAborted
+                    | io::ErrorKind::ConnectionReset
+            ),
+            "write fixture response: {error}"
+        );
+    }
 }
 
 fn serve_routed(
@@ -169,13 +184,11 @@ fn serve_routed(
     let reply = replies.get(object).expect("routed fixture object").clone();
     thread::sleep(reply.delay);
     let length = reply.content_length.unwrap_or(reply.body.len() as u64);
-    write!(
-        stream,
+    let response = format!(
         "HTTP/1.1 {} OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
         reply.status, length
-    )
-    .expect("write fixture headers");
-    let _ = stream.write_all(&reply.body);
+    );
+    write_fixture_response(&mut stream, response.as_bytes(), &reply.body);
     active_connections.fetch_sub(1, Ordering::SeqCst);
 }
 
