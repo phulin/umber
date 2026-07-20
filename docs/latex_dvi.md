@@ -195,7 +195,9 @@ The package example under `examples/latex.html` is the same browser workflow.
   article corpus for three passes inside the generated WASM module, and
   requires exact native DVI/AUX/TOC parity. The bundle builder exports the
   exact published format to an explicit temporary native path, so the gate has
-  no dependency on a pre-existing `target/latex-format/latex.fmt`.
+  no dependency on a pre-existing `target/latex-format/latex.fmt`. Its focused
+  publisher configuration uses schema 3 and the measured production
+  `shardBits = 8` layout.
 - `scripts/check-latex-parity.sh` derives a whole-repository LaTeX2e DVI cohort
   from one hash-pinned upstream archive and runs it against TeX Live 2026. The
   pinned scopes yield 295 shipout-log candidates: 286 actual classic-LaTeX

@@ -13,3 +13,4 @@ Read the repository-root `AGENTS.md` first. This file adds the directory map for
 - `test-run-umber-guarded.sh`: forced-timeout and RSS-limit self-test proving the shared Umber watchdog kills and reaps descendants.
 - `run-stepwise-arxiv-census.sh`: guarded per-paper stepwise-resource census with separate accepted-engine and optional detached-finalizer outcomes.
 - `build-texlive-snapshot.sh`: deterministic full TeX Live runtime snapshot staging with package dependency hints and production inventory floors.
+- `write-latex-wasm-publish-config.sh`: deterministic schema-3 publisher configuration for the focused LaTeX WASM bundle, pinned to the measured production 8-bit shard policy.

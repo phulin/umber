@@ -121,32 +121,9 @@ publisher="${CARGO_TARGET_DIR:-${repo_root}/tools/texlive-wasm-publish/target}/d
 tree_hash="$($publisher --tree-sha256 "$runtime_root")"
 
 config="${tmp_root}/publish.json"
-cat > "$config" <<EOF
-{
-  "schema": 1,
-  "distribution": "${distribution}",
-  "objectsBaseUrl": "${objects_base_url}",
-  "roots": [
-    {
-      "name": "latex-base-runtime",
-      "path": "${runtime_root}",
-      "treeSha256": "${tree_hash}"
-    }
-  ],
-  "dependencies": {
-    "tex:article.cls": ["tex:size10.clo", "tex:l3backend-dvips.def"],
-    "tex:book.cls": ["tex:bk10.clo", "tex:l3backend-dvips.def"],
-    "tex:letter.cls": ["tex:size10.clo", "tex:l3backend-dvips.def"],
-    "tex:report.cls": ["tex:size10.clo", "tex:l3backend-dvips.def"]
-  },
-  "formats": [
-    {
-      "path": "${format_dir}/latex.fmt",
-      "metadata": "${format_dir}/latex-format.json"
-    }
-  ]
-}
-EOF
+"${repo_root}/scripts/write-latex-wasm-publish-config.sh" \
+  "$config" "$distribution" "$objects_base_url" "$runtime_root" "$tree_hash" \
+  "${format_dir}/latex.fmt" "${format_dir}/latex-format.json"
 
 first="${tmp_root}/first"
 second="${tmp_root}/second"

@@ -1,6 +1,7 @@
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::Path;
+use std::process::Command;
 
 use anyhow::Result;
 use tempfile::TempDir;
@@ -40,6 +41,32 @@ fn config(roots: Vec<RootConfig>) -> PublishConfig {
         package_database: None,
         inventory: None,
     }
+}
+
+#[test]
+fn latex_wasm_script_emits_current_sharded_publisher_config() -> Result<()> {
+    let fixture = TempDir::new()?;
+    let output = fixture.path().join("publish.json");
+    let script = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../scripts/write-latex-wasm-publish-config.sh");
+    let status = Command::new("bash")
+        .arg(script)
+        .arg(&output)
+        .arg("texlive-2026-03-01")
+        .arg("https://cdn.example.test/latex/objects/")
+        .arg("/fixture/texmf-dist")
+        .arg("0".repeat(64))
+        .arg("/fixture/latex.fmt")
+        .arg("/fixture/latex-format.json")
+        .status()?;
+    assert!(status.success());
+
+    let config: PublishConfig = serde_json::from_slice(&fs::read(output)?)?;
+    assert_eq!(config.schema, super::sharded::ROOT_SCHEMA);
+    assert_eq!(config.shard_bits, 8);
+    assert_eq!(config.roots.len(), 1);
+    assert_eq!(config.formats.len(), 1);
+    Ok(())
 }
 
 #[test]
