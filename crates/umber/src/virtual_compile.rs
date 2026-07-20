@@ -53,6 +53,8 @@ pub struct NeedResources {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct SessionLimits {
+    /// Engine executions allowed without an intervening accepted resource
+    /// binding. Resource and byte limits separately bound progressing retries.
     pub attempts: u32,
     pub user_files: usize,
     pub resolved_files: usize,
@@ -456,6 +458,7 @@ pub struct VirtualCompileSession {
     files: FileProvisioner,
     font_cached_bytes: usize,
     attempts: u32,
+    attempts_without_progress: u32,
     awaiting: Option<BTreeSet<ResourceRequestKey>>,
     font_requests: BTreeMap<FontRequestKey, FontRequest>,
     resolved_fonts: BTreeMap<FontRequestKey, OpenTypeFont>,
@@ -578,6 +581,7 @@ impl VirtualCompileSession {
             files: FileProvisioner::new(limits.vfs_limits()).map_err(map_vfs_limit)?,
             font_cached_bytes: 0,
             attempts: 0,
+            attempts_without_progress: 0,
             awaiting: None,
             font_requests: BTreeMap::new(),
             resolved_fonts: BTreeMap::new(),
@@ -701,6 +705,7 @@ impl VirtualCompileSession {
         self.pending_patch = Some((patch.next_revision, edit));
         self.awaiting = None;
         self.attempts = 0;
+        self.attempts_without_progress = 0;
         Ok(())
     }
 
@@ -711,6 +716,7 @@ impl VirtualCompileSession {
         if cancelled {
             self.awaiting = None;
             self.attempts = 0;
+            self.attempts_without_progress = 0;
         }
         cancelled
     }
@@ -995,7 +1001,17 @@ impl VirtualCompileSession {
         {
             return CompileAttemptResult::Complete(output.clone());
         }
-        if self.attempts >= self.limits.attempts {
+        if let Some(awaiting) = &self.awaiting {
+            let progressed = awaiting.iter().any(|key| self.resource_is_bound(key));
+            if !progressed {
+                if self.accepted_output.is_some() {
+                    self.pending_patch = None;
+                }
+                return CompileAttemptResult::Error(CompileError::NoProgress);
+            }
+            self.attempts_without_progress = 0;
+        }
+        if self.attempts_without_progress >= self.limits.attempts {
             if self.accepted_output.is_some() {
                 self.pending_patch = None;
             }
@@ -1003,26 +1019,9 @@ impl VirtualCompileSession {
                 limit: self.limits.attempts,
             });
         }
-        if let Some(awaiting) = &self.awaiting {
-            let progressed = awaiting.iter().any(|key| match key {
-                ResourceRequestKey::File(key) => {
-                    self.files.get(key).is_some()
-                        || self.files.is_unavailable(key)
-                        || user_path_for_key(key).is_ok_and(|path| self.files.contains_user(&path))
-                }
-                ResourceRequestKey::Font(key) => {
-                    self.resolved_fonts.contains_key(key) || self.unavailable_fonts.contains(key)
-                }
-            });
-            if !progressed {
-                if self.accepted_output.is_some() {
-                    self.pending_patch = None;
-                }
-                return CompileAttemptResult::Error(CompileError::NoProgress);
-            }
-        }
         self.awaiting = None;
         self.attempts += 1;
+        self.attempts_without_progress += 1;
 
         match self.run_attempt() {
             Ok(result) => result,
@@ -1159,20 +1158,15 @@ impl VirtualCompileSession {
                 .collect::<Vec<_>>();
             probes.sort_by_key(resource_sort_key);
             probes.dedup();
-            self.awaiting = Some(
-                required
-                    .iter()
-                    .chain(&probes)
-                    .map(|request| match request {
-                        ResourceRequest::File(request) => {
-                            ResourceRequestKey::File(request.key().clone())
-                        }
-                        ResourceRequest::Font(request) => {
-                            ResourceRequestKey::Font(request.key.clone())
-                        }
-                    })
-                    .collect(),
-            );
+            let awaiting = required
+                .iter()
+                .chain(&probes)
+                .map(resource_request_key)
+                .collect::<BTreeSet<_>>();
+            if awaiting.iter().any(|key| self.resource_is_bound(key)) {
+                return Err(CompileError::NoProgress);
+            }
+            self.awaiting = Some(awaiting);
             let prefetch_hints = if let Some(hints) = self.initial_prefetch_hints.take() {
                 let required_keys = required
                     .iter()
@@ -1388,6 +1382,7 @@ impl VirtualCompileSession {
         self.font_requests.clear();
         self.font_cached_bytes = 0;
         self.awaiting = None;
+        self.attempts_without_progress = 0;
         self.incremental = None;
         self.accepted_output = None;
         self.pending_patch = None;
@@ -1415,6 +1410,19 @@ impl VirtualCompileSession {
         self.files
             .resolved_bytes()
             .saturating_add(self.font_cached_bytes)
+    }
+
+    fn resource_is_bound(&self, key: &ResourceRequestKey) -> bool {
+        match key {
+            ResourceRequestKey::File(key) => {
+                self.files.get(key).is_some()
+                    || self.files.is_unavailable(key)
+                    || user_path_for_key(key).is_ok_and(|path| self.files.contains_user(&path))
+            }
+            ResourceRequestKey::Font(key) => {
+                self.resolved_fonts.contains_key(key) || self.unavailable_fonts.contains(key)
+            }
+        }
     }
 }
 

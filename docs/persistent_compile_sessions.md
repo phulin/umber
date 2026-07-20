@@ -31,6 +31,22 @@ false probe result without promoting the lookup to a required input. Both
 answers count as retry progress, while speculative prefetch hints remain
 positive-only and never create negative bindings.
 
+The retry attempt ceiling applies to executions within one no-progress epoch,
+not to the cumulative telemetry count. Supplying a newly awaited immutable
+positive or unavailable binding resets that guard; returning no awaited
+binding, or having execution re-emit a request whose key is already bound,
+fails immediately with typed `NoProgress`. Progressing chains remain bounded
+by resolved-resource count and byte limits even when they legitimately require
+more than 128 sequential discoveries.
+
+This retry loop is host orchestration rather than a change to TeX file-open
+semantics. In canonical `tex.web`, section 328 `begin_file_reading` allocates
+an input level, section 537 `start_input` scans the name, supplies `.tex`,
+opens synchronously, and removes the failed level before prompting or aborting,
+and section 538 reads the first line only after a successful open. The matching
+`pdftex.web` sections are 350, 563, and 564 respectively; pdfTeX adds no
+extension that converts this synchronous operation into a retry protocol.
+
 `Complete` means that the initial or pending revision was accepted. Calling
 `advance()` again without a patch returns the accepted output without
 re-executing TeX. Native and WASM callers observe the same result variants.

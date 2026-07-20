@@ -448,6 +448,33 @@ fn retry_requires_progress_and_reaches_completion_after_provision() {
 }
 
 #[test]
+fn successful_resource_progress_is_not_mistaken_for_an_attempt_loop() {
+    let mut session = session("\\input remote-0 \\end");
+
+    for index in 0..SessionLimits::HARD_MAX.attempts {
+        let missing = requests(session.compile_attempt());
+        assert_eq!(missing.len(), 1, "resource round {index}");
+        let contents = if index + 1 == SessionLimits::HARD_MAX.attempts {
+            b"\\message{resolved-chain}".to_vec()
+        } else {
+            format!("\\input remote-{}", index + 1).into_bytes()
+        };
+        session
+            .provide_resolved_file(
+                missing[0].key().clone(),
+                &format!("/texlive/remote-{index}.tex"),
+                contents,
+            )
+            .expect("provide the newly requested resource");
+    }
+
+    let CompileAttemptResult::Complete(output) = session.compile_attempt() else {
+        panic!("a fully progressing resource chain must complete");
+    };
+    assert!(String::from_utf8_lossy(&output.terminal).contains("resolved-chain"));
+}
+
+#[test]
 fn user_files_override_distribution_bindings() {
     let mut session = session("\\input shared \\end");
     session
