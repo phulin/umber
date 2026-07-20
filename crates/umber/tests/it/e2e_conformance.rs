@@ -167,7 +167,10 @@ fn run_file_in_process(
         .map_err(|error| error.to_string())?;
     let mut input = InputStack::new(WorldInput::from_content(content));
     let mut resolvers = InProcessResolvers::new(&path);
-    let run = EngineSession::new(&mut input, &mut stores, resolvers.context())
+    let context = resolvers
+        .context()
+        .with_expansion_fuel(tex_expand::DEFAULT_EXPANSION_FUEL);
+    let run = EngineSession::new(&mut input, &mut stores, context)
         .execute()
         .map_err(|error| error.format_with_provenance(&stores))?;
     for (index, committed) in run.committed_artifacts.iter().enumerate() {

@@ -18,6 +18,16 @@ scripts/regen-fixtures.sh --case e2e/etrip
 scripts/setup-conformance-tests.sh
 ```
 
+When running either in-process conformance test during hang or memory-growth
+work, use `scripts/run-umber-guarded.py` with a targeted timeout no greater
+than 120 seconds, an aggregate RSS ceiling no greater than 6144 MiB, and a
+TERM grace no greater than five seconds. The two-phase helper also selects the
+finite default expansion-fuel budget explicitly. The format-loaded TRIP path
+contains a deliberate nested `\message` construction at line 419: `\the` of
+a token register must stay unexpanded while the complete message text is being
+expanded, as in TeX82's `scan_toks(..., xpand=true)`. Expanding that replay a
+second time recursively nests `\message{` and is an allocation-safety bug.
+
 `scripts/trip.sh` fetches official CTAN bytes into gitignored
 `third_party/trip/`, verifies SHA-256 hashes, uses the pinned official
 `trip.tfm`, runs the INITEX transcript phase, runs the format-loaded TRIP

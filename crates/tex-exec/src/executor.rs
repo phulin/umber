@@ -191,6 +191,13 @@ impl<'a> ExecutionContext<'a> {
         }
     }
 
+    /// Replaces the recursive expansion-work budget for each delivered token.
+    #[must_use]
+    pub fn with_expansion_fuel(mut self, fuel: u64) -> Self {
+        self.expansion = self.expansion.with_fuel(fuel);
+        self
+    }
+
     #[must_use]
     pub fn with_resource_resolvers(
         job_name: &'a str,

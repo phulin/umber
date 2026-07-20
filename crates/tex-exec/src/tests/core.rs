@@ -650,6 +650,38 @@ fn format_loaded_job_replays_everyjob_before_root_input() {
 }
 
 #[test]
+fn format_loaded_message_keeps_the_token_register_output_unexpanded() {
+    let mut stores = Universe::new();
+    tex_expand::install_expandable_primitives(&mut stores);
+    install_unexpandable_primitives(&mut stores);
+    let mut initial = InputStack::new(MemoryInput::new(
+        r"\toksdef\tokens=256
+          \def\settest#1{\let\test= }\settest. \relax
+          \def\a#1{\ifcat#1 \message\ifx#1 {\iffalse\fi\the\tokens\fi\fi}}
+          \tokens={\a\test}\dump",
+    ));
+    let mut initial_context = crate::ExecutionContext::new("texput")
+        .with_expansion_fuel(tex_expand::DEFAULT_EXPANSION_FUEL);
+    Executor::new()
+        .run_with_context(&mut initial, &mut stores, &mut initial_context)
+        .expect("reduced TRIP format setup");
+    let format = stores.dump_format().expect("dump reduced TRIP format");
+
+    let mut loaded = Universe::from_format(tex_state::World::memory(), &format)
+        .expect("load reduced TRIP format");
+    tex_expand::register_expandable_primitives(&mut loaded);
+    register_unexpandable_primitives(&mut loaded);
+    let mut input = InputStack::new(MemoryInput::new("\\the\\tokens\\end"));
+    let mut loaded_context = crate::ExecutionContext::new("texput")
+        .with_expansion_fuel(tex_expand::DEFAULT_EXPANSION_FUEL);
+    Executor::new()
+        .run_with_context(&mut input, &mut loaded, &mut loaded_context)
+        .expect("the token-register result stays literal inside message expansion");
+
+    assert!(terminal_effect_text(&loaded).contains("\\a \\test"));
+}
+
+#[test]
 fn immediate_puts_back_non_io_extension_tokens() {
     let mut stores = Universe::new();
     tex_expand::install_expandable_primitives(&mut stores);

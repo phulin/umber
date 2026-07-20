@@ -612,29 +612,31 @@ fn scan_balanced_expanded_text(
     if !is_begin_group(open) {
         return Err(ExecError::MissingToken { context });
     }
-    let mut depth = 1usize;
-    let mut tokens = Vec::new();
-    while let Some(token) = get_x_token_with_context(
-        input,
-        &mut tex_state::ExpansionContext::new(stores),
-        execution,
-    )?
-    .map(tex_expand::semantic_token)
-    {
-        if is_begin_group(token) {
-            depth += 1;
-            tokens.push(token);
-        } else if is_end_group(token) {
-            depth -= 1;
-            if depth == 0 {
-                return Ok(tokens);
+    execution.with_expanded_token_list(|expansion| {
+        let mut depth = 1usize;
+        let mut tokens = Vec::new();
+        while let Some(token) = get_x_token_with_context(
+            input,
+            &mut tex_state::ExpansionContext::new(stores),
+            expansion,
+        )?
+        .map(tex_expand::semantic_token)
+        {
+            if is_begin_group(token) {
+                depth += 1;
+                tokens.push(token);
+            } else if is_end_group(token) {
+                depth -= 1;
+                if depth == 0 {
+                    return Ok(tokens);
+                }
+                tokens.push(token);
+            } else {
+                tokens.push(token);
             }
-            tokens.push(token);
-        } else {
-            tokens.push(token);
         }
-    }
-    Err(ExecError::MissingToken { context })
+        Err(ExecError::MissingToken { context })
+    })
 }
 
 fn next_non_space_x(
