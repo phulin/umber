@@ -2801,6 +2801,14 @@ impl Universe {
         self.world.retained_output_bytes()
     }
 
+    /// Approximate ownership charge for a live private execution generation.
+    /// This uses the same aggregate roots as accepted-generation accounting,
+    /// before any additional accepted diagnostic-origin map is installed.
+    #[must_use]
+    pub fn live_generation_charged_bytes(&self) -> usize {
+        generation_charged_bytes(self, &HashMap::new())
+    }
+
     /// Rehomes the stable root editor frame without registering a document-sized backing.
     pub fn rebind_root_editor_layout(
         &self,

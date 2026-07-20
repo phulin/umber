@@ -252,7 +252,7 @@ impl LayoutCursor {
 ///
 /// The trait is local so M3's `World` can implement it without forcing the
 /// lexer to know where bytes came from.
-pub trait InputSource: fmt::Debug {
+pub trait InputSource: fmt::Debug + Send {
     /// Clones the complete live source cursor over its already owned backing.
     ///
     /// Executor-step savepoints use this operation to preserve retry state.

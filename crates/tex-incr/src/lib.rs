@@ -12,8 +12,9 @@ use std::time::Duration;
 use std::time::Instant;
 
 use tex_exec::{
-    CheckpointSink, EditorRestoreError, EngineBoundary, EngineCheckpoint, ExecutionContext,
-    ExecutionStats, Executor,
+    Cancellation, CheckpointSink, EditorRestoreError, EngineBoundary, EngineCheckpoint,
+    ExecutionContext, ExecutionRun, ExecutionServices, ExecutionState, ExecutionStats,
+    ExecutionStepResult, Executor, ResourceSuspension,
 };
 use tex_expand::{InputResolver, ResourceLookup, ResourceResult};
 use tex_lex::{InputSource, InputStack, LayoutCursor, LayoutCursorError, MemoryInput, WorldInput};
@@ -223,6 +224,64 @@ pub struct PendingRevision {
     reuse: ReuseMetrics,
     dumped_format: bool,
     expansion_stats: tex_lex::ExpansionStats,
+    candidate_memo: Option<tex_state::PureMemoRuntime>,
+}
+
+/// One private revision execution retained across resource suspensions.
+///
+/// The candidate owns every mutable engine root and speculative checkpoint
+/// sink. Callers supply a fresh resolver view to each [`Self::drive`] call;
+/// no host capability is retained between calls.
+pub struct RevisionCandidate {
+    input: InputStack,
+    universe: Universe,
+    run: ExecutionRun,
+    sink: CandidateSink,
+    memo: tex_state::PureMemoRuntime,
+    completed: Option<ExecutionStats>,
+    suspension_serial: u64,
+    kind: RevisionCandidateKind,
+}
+
+enum CandidateSink {
+    Cold(HistorySink),
+    Advance(ResumeSink),
+}
+
+enum RevisionCandidateKind {
+    Initial {
+        source_len: usize,
+    },
+    Replacement {
+        setup: Box<AdvanceSetup>,
+    },
+    Incremental {
+        setup: Box<AdvanceSetup>,
+        restart: usize,
+        restart_fork_latency: Duration,
+    },
+}
+
+/// Result of driving a retained private revision until it either suspends or
+/// reaches a terminal executor state.
+#[derive(Clone, Debug)]
+pub enum RevisionCandidateResult {
+    AwaitingResources(ResourceSuspension),
+    Complete,
+}
+
+struct AdvanceSetup {
+    next_revision: RevisionId,
+    old_source: String,
+    old_history: Vec<BoundaryRecord>,
+    old_effects: Vec<EffectRecord>,
+    old_artifacts: Vec<CommittedArtifact>,
+    old_pages: Vec<DviPagePlan>,
+    next: String,
+    fragments: FragmentStore,
+    next_layout: EditorLayout,
+    map: EditMap,
+    revision_setup_latency: Duration,
 }
 
 enum PendingSubstrate {
@@ -261,6 +320,88 @@ impl PendingRevision {
 
     pub fn dvi_bytes(&self) -> Result<Vec<u8>, DviError> {
         dvi_bytes(&self.dvi_pages)
+    }
+}
+
+impl RevisionCandidate {
+    /// Drives committed executor steps until the candidate either needs a
+    /// resource or completes. Resolver selection is call-local so a newly
+    /// provisioned immutable generation is observed only by the replayed step.
+    pub fn drive_with_resource_resolvers(
+        &mut self,
+        input_resolver: &mut dyn InputResolver,
+        font_resolver: &mut dyn tex_exec::FontResolver,
+        image_resolver: &mut dyn tex_exec::PdfImageResolver,
+        cancellation: &Cancellation,
+    ) -> Result<RevisionCandidateResult, SessionError> {
+        if self.completed.is_some() {
+            return Ok(RevisionCandidateResult::Complete);
+        }
+        loop {
+            let sink: &mut dyn CheckpointSink = match &mut self.sink {
+                CandidateSink::Cold(sink) => sink,
+                CandidateSink::Advance(sink) => sink,
+            };
+            let mut services = ExecutionServices::new(&mut self.input, &mut self.universe)
+                .with_input_resolver(input_resolver)
+                .with_font_resolver(font_resolver)
+                .with_image_resolver(image_resolver)
+                .with_checkpoints(sink);
+            match self.run.step(&mut services, cancellation) {
+                ExecutionStepResult::Progress(progress) => {
+                    if progress.stop_requested {
+                        self.run.finish_after_checkpoint();
+                    }
+                }
+                ExecutionStepResult::AwaitingResources(suspension) => {
+                    self.suspension_serial = suspension.serial;
+                    return Ok(RevisionCandidateResult::AwaitingResources(suspension));
+                }
+                ExecutionStepResult::Complete(stats) => {
+                    self.completed = Some(stats);
+                    return Ok(RevisionCandidateResult::Complete);
+                }
+                ExecutionStepResult::Failed(error) => return Err(error.into()),
+                ExecutionStepResult::Cancelled => {
+                    return Err(SessionError::Execute(
+                        tex_exec::ExecError::ExecutionCancelled,
+                    ));
+                }
+            }
+        }
+    }
+
+    #[must_use]
+    pub fn suspension_serial(&self) -> u64 {
+        self.suspension_serial
+    }
+
+    /// Charges the private execution roots retained while this candidate is
+    /// suspended. Accepted-session telemetry remains separate until commit.
+    #[must_use]
+    pub fn retention_metrics(&self) -> RetentionMetrics {
+        let (diagnostic_bytes, output_bytes) = match &self.kind {
+            RevisionCandidateKind::Initial { .. } => (0, self.universe.retained_output_bytes()),
+            RevisionCandidateKind::Replacement { setup }
+            | RevisionCandidateKind::Incremental { setup, .. } => (
+                setup
+                    .fragments
+                    .retained_bytes()
+                    .saturating_add(setup.next_layout.retained_bytes()),
+                self.universe.retained_output_bytes(),
+            ),
+        };
+        RetentionMetrics {
+            checkpoint_root_bytes: self
+                .universe
+                .live_generation_charged_bytes()
+                .saturating_add(std::mem::size_of::<ExecutionRun>())
+                .saturating_add(std::mem::size_of::<InputStack>()),
+            memo_result_bytes: self.universe.pure_memo_stats().retained_bytes,
+            diagnostic_bytes,
+            output_bytes,
+            protected_overage_bytes: 0,
+        }
     }
 }
 
@@ -507,6 +648,493 @@ impl Session {
         image_resolver: &mut dyn tex_exec::PdfImageResolver,
     ) -> Result<AcceptedOutput, SessionError> {
         self.cold_with_optional_image_resolver(input_resolver, font_resolver, Some(image_resolver))
+    }
+
+    /// Creates a private cold candidate without changing accepted session
+    /// state. The returned owner may be retained across resource batches.
+    pub fn start_cold_candidate(&self) -> Result<RevisionCandidate, SessionError> {
+        let mut universe = self.template.clone();
+        universe.begin_retained_session()?;
+        let mut input = InputStack::new(MemoryInput::new(&self.source));
+        universe.install_editor_fragments(&self.fragments, &self.layout)?;
+        universe.set_root_editor_content_hash(ContentHash::from_bytes(self.source.as_bytes()));
+        input
+            .install_root_layout_cursor(LayoutCursor::new(&self.layout, &self.fragments)?)
+            .expect("new editor input has a root source");
+        let mut memo = self.pure_memo.clone();
+        memo.begin_paragraph_history(false);
+        universe.install_pure_memo_runtime(std::mem::take(&mut memo));
+        Ok(RevisionCandidate {
+            input,
+            universe,
+            run: ExecutionRun::new(&self.job_name),
+            sink: CandidateSink::Cold(HistorySink::default()),
+            memo,
+            completed: None,
+            suspension_serial: 0,
+            kind: RevisionCandidateKind::Initial {
+                source_len: self.source.len(),
+            },
+        })
+    }
+
+    /// Accepts a completed private cold candidate into this (typically still
+    /// private) session.
+    pub fn accept_cold_candidate(
+        &mut self,
+        candidate: RevisionCandidate,
+    ) -> Result<AcceptedOutput, SessionError> {
+        let run = finish_cold_candidate(candidate)?;
+        self.pure_memo = run.memo;
+        self.accept_cold(run.run)
+    }
+
+    /// Creates a private edited-revision candidate while leaving accepted
+    /// history, output, and substrate untouched.
+    pub fn start_advance_candidate(
+        &self,
+        next_revision: RevisionId,
+        edit: Edit,
+    ) -> Result<RevisionCandidate, SessionError> {
+        let revision_setup_started = Timer::start();
+        self.validate_edit(next_revision, &edit)?;
+        let old_source = self.source.clone();
+        let old_history = self.history.clone();
+        let mut next = old_source.clone();
+        next.replace_range(edit.range.clone(), &edit.replacement);
+        let (expanded_range, expanded_replacement) = line_expanded_replacement(&old_source, &edit);
+        let mut fragments = self.fragments.clone();
+        let (fragment, _) = fragments.append(
+            Arc::from(expanded_replacement.as_bytes()),
+            next_revision.raw(),
+        )?;
+        let next_layout = replace_layout_range(
+            &self.layout,
+            &fragments,
+            expanded_range,
+            fragment,
+            expanded_replacement.len(),
+            LayoutGeneration::new(next_revision.raw()),
+        )?;
+        let restart = select_restart(&old_history, &old_source, &next, &edit);
+        let map = EditMap::new(edit.range.clone(), edit.replacement.len());
+        self.substrate
+            .as_ref()
+            .ok_or(SessionError::MissingAcceptedSubstrate)?
+            .world()
+            .validate_recorded_inputs()?;
+        let setup = Box::new(AdvanceSetup {
+            next_revision,
+            old_source,
+            old_history,
+            old_effects: self.effects.clone(),
+            old_artifacts: self.artifacts.clone(),
+            old_pages: self.dvi_pages.clone(),
+            next,
+            fragments,
+            next_layout,
+            map,
+            revision_setup_latency: revision_setup_started.elapsed(),
+        });
+
+        let mut memo = self.pure_memo.clone();
+        match restart {
+            None => {
+                let mut universe = self.template.clone();
+                universe.begin_retained_session()?;
+                let mut input = InputStack::new(MemoryInput::new(&setup.next));
+                universe.install_editor_fragments(&setup.fragments, &setup.next_layout)?;
+                universe
+                    .set_root_editor_content_hash(ContentHash::from_bytes(setup.next.as_bytes()));
+                input
+                    .install_root_layout_cursor(LayoutCursor::new(
+                        &setup.next_layout,
+                        &setup.fragments,
+                    )?)
+                    .expect("new editor input has a root source");
+                memo.begin_paragraph_history(false);
+                universe.install_pure_memo_runtime(std::mem::take(&mut memo));
+                Ok(RevisionCandidate {
+                    input,
+                    universe,
+                    run: ExecutionRun::new(&self.job_name),
+                    sink: CandidateSink::Cold(HistorySink::default()),
+                    memo,
+                    completed: None,
+                    suspension_serial: 0,
+                    kind: RevisionCandidateKind::Replacement { setup },
+                })
+            }
+            Some(restart) => {
+                let substrate = self
+                    .substrate
+                    .as_ref()
+                    .ok_or(SessionError::MissingAcceptedSubstrate)?;
+                let anchor = &setup.old_history[restart];
+                let mut universe = self.template.clone();
+                let mut input = InputStack::new(MemoryInput::new(String::new()));
+                let mut executor = Executor::new();
+                let restart_fork_latency = executor.restore_editor_checkpoint(
+                    &mut input,
+                    &mut universe,
+                    substrate,
+                    anchor.checkpoint(),
+                    &setup.old_source,
+                    &setup.next,
+                    &setup.fragments,
+                    &setup.next_layout,
+                    LayoutCursor::new(&setup.next_layout, &setup.fragments)?,
+                )?;
+                for (path, bytes) in &self.registered_inputs {
+                    universe.world_mut().set_memory_file(path, bytes.clone())?;
+                }
+                memo.begin_paragraph_history(true);
+                universe.install_pure_memo_runtime(std::mem::take(&mut memo));
+                let nest = std::mem::take(executor.nest_mut());
+                Ok(RevisionCandidate {
+                    input,
+                    universe,
+                    run: ExecutionRun::from_parts(
+                        &self.job_name,
+                        nest,
+                        ExecutionState::default(),
+                        false,
+                    ),
+                    sink: CandidateSink::Advance(ResumeSink::new(
+                        &setup.old_history,
+                        restart,
+                        &setup.map,
+                    )),
+                    memo,
+                    completed: None,
+                    suspension_serial: 0,
+                    kind: RevisionCandidateKind::Incremental {
+                        setup,
+                        restart,
+                        restart_fork_latency,
+                    },
+                })
+            }
+        }
+    }
+
+    /// Converts a completed edited candidate into a private pending revision.
+    pub fn finish_advance_candidate(
+        &mut self,
+        candidate: RevisionCandidate,
+    ) -> Result<PendingRevision, SessionError> {
+        match &candidate.kind {
+            RevisionCandidateKind::Replacement { .. } => {
+                self.finish_replacement_candidate(candidate)
+            }
+            RevisionCandidateKind::Incremental { .. } => {
+                self.finish_incremental_candidate(candidate)
+            }
+            RevisionCandidateKind::Initial { .. } => Err(SessionError::CandidateKindMismatch),
+        }
+    }
+
+    fn finish_replacement_candidate(
+        &self,
+        mut candidate: RevisionCandidate,
+    ) -> Result<PendingRevision, SessionError> {
+        let RevisionCandidateKind::Replacement { setup } = candidate.kind else {
+            return Err(SessionError::CandidateKindMismatch);
+        };
+        let stats = candidate
+            .completed
+            .take()
+            .ok_or(SessionError::CandidateNotComplete)?;
+        let CandidateSink::Cold(mut sink) = candidate.sink else {
+            return Err(SessionError::CandidateKindMismatch);
+        };
+        let mut memo = candidate.universe.take_pure_memo_runtime();
+        memo.accept_paragraph_history(candidate.universe.paragraph_origin_resolver());
+        for record in &mut sink.records {
+            record.revision = setup.next_revision;
+        }
+        let effects = candidate.universe.world().effect_records().to_vec();
+        let artifacts = candidate.universe.world().committed_artifacts().to_vec();
+        let expansion_stats = candidate.input.expansion_stats();
+        let ExecutionStats {
+            dvi_pages,
+            dumped_format,
+            delivered_tokens,
+            main_control_dispatches,
+            macro_text_span_tokens,
+            source_text_span_tokens,
+            ..
+        } = stats;
+        let substrate = candidate.universe.freeze_generation();
+        let history = retain_restorable_history(sink.records, &substrate)?;
+        let reuse = ReuseMetrics {
+            pages_retyped: artifacts.len(),
+            reexecuted_bytes: setup.next.len(),
+            reexecuted_tokens: delivered_tokens,
+            reexecuted_commands: main_control_dispatches,
+            reexecuted_macro_text_span_tokens: macro_text_span_tokens,
+            reexecuted_source_text_span_tokens: source_text_span_tokens,
+            reexecuted_paragraphs: history
+                .iter()
+                .filter(|record| record.key.boundary == EngineBoundary::OuterParagraphEnd)
+                .count(),
+            revision_setup_latency: setup.revision_setup_latency,
+            ..ReuseMetrics::default()
+        };
+        let content_hash = ContentHash::from_bytes(setup.next.as_bytes());
+        Ok(PendingRevision {
+            session_output_id: self.output_id,
+            base_revision: self.revision,
+            base_content_hash: self.content_hash,
+            revision: setup.next_revision,
+            source: setup.next,
+            fragments: setup.fragments,
+            layout: setup.next_layout,
+            content_hash,
+            effects,
+            artifacts,
+            dvi_pages,
+            history,
+            substrate: PendingSubstrate::Replaced(substrate),
+            reuse,
+            dumped_format,
+            expansion_stats,
+            candidate_memo: Some(memo),
+        })
+    }
+
+    fn finish_incremental_candidate(
+        &self,
+        mut candidate: RevisionCandidate,
+    ) -> Result<PendingRevision, SessionError> {
+        let RevisionCandidateKind::Incremental {
+            setup,
+            restart,
+            restart_fork_latency,
+        } = candidate.kind
+        else {
+            return Err(SessionError::CandidateKindMismatch);
+        };
+        let stats = candidate
+            .completed
+            .take()
+            .ok_or(SessionError::CandidateNotComplete)?;
+        let CandidateSink::Advance(sink) = candidate.sink else {
+            return Err(SessionError::CandidateKindMismatch);
+        };
+        let mut memo = candidate.universe.take_pure_memo_runtime();
+        let ExecutionStats {
+            dvi_pages,
+            dumped_format,
+            delivered_tokens,
+            main_control_dispatches,
+            macro_text_span_tokens,
+            source_text_span_tokens,
+            ..
+        } = stats;
+        let reexecuted_paragraphs = sink
+            .records
+            .iter()
+            .filter(|record| record.key.boundary == EngineBoundary::OuterParagraphEnd)
+            .count();
+        let reexecuted_through = sink
+            .records
+            .last()
+            .map_or(setup.next.len(), |record| record.key.position);
+        let same_history_stop = if sink.convergence_old_index.is_some() {
+            SameHistoryStop::Matched
+        } else if sink.schedule_diverged {
+            SameHistoryStop::ScheduleDiverged
+        } else if sink.same_history_attempts > 0 {
+            SameHistoryStop::HashesDiverged
+        } else {
+            SameHistoryStop::NoComparableBoundary
+        };
+        let expansion_stats = candidate.input.expansion_stats();
+        let effects = candidate.universe.world().effect_records().to_vec();
+        let artifacts = candidate.universe.world().committed_artifacts().to_vec();
+        let mut pages_through_stop =
+            setup.old_pages[..setup.old_history[restart].artifact_prefix].to_vec();
+        pages_through_stop.extend(dvi_pages);
+
+        let roots = tex_exec::RootRehomeContext::new(&setup.old_source, &setup.next);
+        let paragraph_history_transition_started = Timer::start();
+        if sink.convergence_old_index.is_some() {
+            memo.discard_paragraph_history();
+        } else {
+            memo.accept_paragraph_history(candidate.universe.paragraph_origin_resolver());
+        }
+        let paragraph_history_transition_latency = paragraph_history_transition_started.elapsed();
+        let splice_started = Timer::start();
+        let substrate = self
+            .substrate
+            .as_ref()
+            .ok_or(SessionError::MissingAcceptedSubstrate)?;
+        let anchor = &setup.old_history[restart];
+        let (effects, artifacts, pages, mut history, pending_substrate, mut reuse) =
+            if let Some(old_index) = sink.convergence_old_index {
+                let old_effect_prefix = setup.old_history[old_index].effect_prefix;
+                let new_effect_prefix = sink
+                    .records
+                    .last()
+                    .expect("convergence requires a new matching record")
+                    .effect_prefix;
+                let scratch_effect_count = new_effect_prefix.saturating_sub(anchor.effect_prefix);
+                let mut joined_effects = setup.old_effects[..anchor.effect_prefix].to_vec();
+                joined_effects.extend_from_slice(&effects[..scratch_effect_count]);
+                joined_effects.extend_from_slice(&setup.old_effects[old_effect_prefix..]);
+
+                let old_prefix = setup.old_history[old_index].artifact_prefix;
+                let new_prefix = sink
+                    .records
+                    .last()
+                    .expect("convergence requires a new matching record")
+                    .artifact_prefix;
+                let scratch_artifact_count = new_prefix.saturating_sub(anchor.artifact_prefix);
+                let mut joined_artifacts = setup.old_artifacts[..anchor.artifact_prefix].to_vec();
+                joined_artifacts.extend_from_slice(&artifacts[..scratch_artifact_count]);
+                joined_artifacts.extend_from_slice(&setup.old_artifacts[old_prefix..]);
+                let mut joined_pages = pages_through_stop;
+                joined_pages.extend_from_slice(&setup.old_pages[old_prefix..]);
+                let mut history = Vec::with_capacity(
+                    restart + 1 + setup.old_history.len().saturating_sub(old_index),
+                );
+                for mut record in setup.old_history[..=restart].iter().cloned() {
+                    record.checkpoint = record
+                        .checkpoint
+                        .rehome_unchanged_prefix(substrate, &roots)?;
+                    history.push(record);
+                }
+                for mut record in setup.old_history[old_index..].iter().cloned() {
+                    let mapped_position = setup
+                        .map
+                        .map(record.key.position)
+                        .expect("adopted suffix anchors were validated as mappable");
+                    record.key.position = mapped_position;
+                    record.checkpoint = record.checkpoint.rehome_converged_root(
+                        substrate,
+                        &roots,
+                        mapped_position,
+                    )?;
+                    record.revision = setup.next_revision;
+                    history.push(record);
+                }
+                let adopted_origins = artifacts[..scratch_artifact_count]
+                    .iter()
+                    .flat_map(|artifact| artifact.live_render_origins().iter())
+                    .copied()
+                    .collect::<Vec<_>>();
+                let convergence_boundary = history.get(restart + 1).map(BoundaryRecord::key);
+                (
+                    joined_effects,
+                    joined_artifacts,
+                    joined_pages,
+                    history,
+                    PendingSubstrate::Retained {
+                        scratch: candidate.universe,
+                        adopted_origins,
+                    },
+                    ReuseMetrics {
+                        restart_boundary: Some(anchor.key),
+                        convergence_boundary,
+                        pages_retained_prefix: anchor.artifact_prefix,
+                        pages_reused: setup.old_artifacts.len().saturating_sub(old_prefix),
+                        pages_retyped: scratch_artifact_count,
+                        reexecuted_bytes: reexecuted_through.saturating_sub(anchor.key.position),
+                        reexecuted_tokens: delivered_tokens,
+                        reexecuted_commands: main_control_dispatches,
+                        reexecuted_macro_text_span_tokens: macro_text_span_tokens,
+                        reexecuted_source_text_span_tokens: source_text_span_tokens,
+                        reexecuted_paragraphs,
+                        same_history_attempts: sink.same_history_attempts,
+                        same_history_hash_mismatches: sink.same_history_hash_mismatches,
+                        trace_nodes_walked: sink.same_history_attempts,
+                        trace_leaf_hits: setup.old_artifacts.len().saturating_sub(old_prefix),
+                        trace_subtree_hits: 1,
+                        suffixes_adopted: 1,
+                        same_history_stop,
+                        restart_fork_latency,
+                        revision_setup_latency: setup.revision_setup_latency,
+                        paragraph_history_transition_latency,
+                        trace_validation_latency: sink.trace_validation_latency,
+                        ..ReuseMetrics::default()
+                    },
+                )
+            } else {
+                let target = candidate.universe.freeze_generation();
+                let mut history = Vec::with_capacity(restart + 1 + sink.records.len());
+                for record in &setup.old_history[..=restart] {
+                    let mut record = record.clone();
+                    record.checkpoint = record
+                        .checkpoint
+                        .retarget_prefix(&target, substrate, &roots)?;
+                    record.revision = setup.next_revision;
+                    history.push(record);
+                }
+                history.extend(sink.records);
+                let pages_retyped = artifacts.len();
+                let mut joined_artifacts = setup.old_artifacts[..anchor.artifact_prefix].to_vec();
+                joined_artifacts.extend(artifacts);
+                let mut joined_effects = setup.old_effects[..anchor.effect_prefix].to_vec();
+                joined_effects.extend(effects);
+                (
+                    joined_effects,
+                    joined_artifacts,
+                    pages_through_stop,
+                    history,
+                    PendingSubstrate::Replaced(target),
+                    ReuseMetrics {
+                        restart_boundary: Some(anchor.key),
+                        pages_retained_prefix: anchor.artifact_prefix,
+                        pages_retyped,
+                        reexecuted_bytes: reexecuted_through.saturating_sub(anchor.key.position),
+                        reexecuted_tokens: delivered_tokens,
+                        reexecuted_commands: main_control_dispatches,
+                        reexecuted_macro_text_span_tokens: macro_text_span_tokens,
+                        reexecuted_source_text_span_tokens: source_text_span_tokens,
+                        reexecuted_paragraphs,
+                        same_history_attempts: sink.same_history_attempts,
+                        same_history_hash_mismatches: sink.same_history_hash_mismatches,
+                        trace_nodes_walked: sink.same_history_attempts,
+                        same_history_stop,
+                        restart_fork_latency,
+                        revision_setup_latency: setup.revision_setup_latency,
+                        paragraph_history_transition_latency,
+                        trace_validation_latency: sink.trace_validation_latency,
+                        ..ReuseMetrics::default()
+                    },
+                )
+            };
+        for record in &mut history {
+            record.revision = setup.next_revision;
+        }
+        let retained_substrate = match &pending_substrate {
+            PendingSubstrate::Retained { .. } => substrate,
+            PendingSubstrate::Replaced(substrate) => substrate,
+        };
+        let history = retain_restorable_history(history, retained_substrate)?;
+        reuse.trace_retained_bytes = std::mem::size_of_val(history.as_slice());
+        reuse.splice_latency = splice_started.elapsed();
+        reuse.trace_replay_latency = reuse.splice_latency;
+        Ok(PendingRevision {
+            session_output_id: self.output_id,
+            base_revision: self.revision,
+            base_content_hash: self.content_hash,
+            revision: setup.next_revision,
+            content_hash: roots.new_content_hash(),
+            source: setup.next,
+            fragments: setup.fragments,
+            layout: setup.next_layout,
+            effects,
+            artifacts,
+            dvi_pages: pages,
+            history,
+            substrate: pending_substrate,
+            reuse,
+            dumped_format,
+            expansion_stats,
+            candidate_memo: Some(memo),
+        })
     }
 
     fn cold_with_optional_image_resolver(
@@ -882,6 +1510,7 @@ impl Session {
                 reuse,
                 dumped_format: run.dumped_format,
                 expansion_stats: run.expansion_stats,
+                candidate_memo: None,
             });
         };
         let substrate = self
@@ -1112,6 +1741,7 @@ impl Session {
             reuse,
             dumped_format: advance.dumped_format,
             expansion_stats: advance.expansion_stats,
+            candidate_memo: None,
         })
     }
 
@@ -1154,6 +1784,7 @@ impl Session {
             reuse,
             dumped_format,
             expansion_stats,
+            candidate_memo,
             ..
         } = pending;
 
@@ -1215,6 +1846,9 @@ impl Session {
         self.history = history;
         self.dumped_format = dumped_format;
         self.expansion_stats = expansion_stats;
+        if let Some(candidate_memo) = candidate_memo {
+            self.pure_memo = candidate_memo;
+        }
         self.accepted_retention = Some(retention);
         let mut output = self.output(reuse, retention);
         output.reuse.substrate_transition_latency = substrate_transition_latency;
@@ -1392,6 +2026,67 @@ struct RevisionRun {
     executed_macro_text_span_tokens: usize,
     executed_source_text_span_tokens: usize,
     executed_paragraphs: usize,
+}
+
+struct FinishedColdCandidate {
+    run: RevisionRun,
+    memo: tex_state::PureMemoRuntime,
+}
+
+fn finish_cold_candidate(
+    mut candidate: RevisionCandidate,
+) -> Result<FinishedColdCandidate, SessionError> {
+    let RevisionCandidateKind::Initial { source_len } = candidate.kind else {
+        return Err(SessionError::CandidateKindMismatch);
+    };
+    let stats = candidate
+        .completed
+        .take()
+        .ok_or(SessionError::CandidateNotComplete)?;
+    let CandidateSink::Cold(sink) = candidate.sink else {
+        return Err(SessionError::CandidateKindMismatch);
+    };
+    candidate.memo = candidate.universe.take_pure_memo_runtime();
+    candidate
+        .memo
+        .accept_paragraph_history(candidate.universe.paragraph_origin_resolver());
+    let effects = candidate.universe.world().effect_records().to_vec();
+    let artifacts = candidate.universe.world().committed_artifacts().to_vec();
+    let output_bytes = candidate.universe.retained_output_bytes();
+    let expansion_stats = candidate.input.expansion_stats();
+    let executed_paragraphs = sink
+        .records
+        .iter()
+        .filter(|record| record.key.boundary == EngineBoundary::OuterParagraphEnd)
+        .count();
+    let ExecutionStats {
+        dvi_pages,
+        dumped_format,
+        delivered_tokens,
+        main_control_dispatches,
+        macro_text_span_tokens,
+        source_text_span_tokens,
+        ..
+    } = stats;
+    Ok(FinishedColdCandidate {
+        run: RevisionRun {
+            history: sink.records,
+            effects,
+            artifacts,
+            dvi_pages,
+            output_bytes,
+            substrate: candidate.universe.freeze_generation(),
+            dumped_format,
+            expansion_stats,
+            executed_bytes: source_len,
+            executed_tokens: delivered_tokens,
+            executed_commands: main_control_dispatches,
+            executed_macro_text_span_tokens: macro_text_span_tokens,
+            executed_source_text_span_tokens: source_text_span_tokens,
+            executed_paragraphs,
+        },
+        memo: candidate.memo,
+    })
 }
 
 #[derive(Default)]
@@ -2052,6 +2747,8 @@ pub enum SessionError {
     ContentHashMismatch,
     NonMonotonicRevision,
     InvalidEditRange,
+    CandidateKindMismatch,
+    CandidateNotComplete,
     MissingAcceptedSubstrate,
     Execute(tex_exec::ExecError),
     World(WorldError),
@@ -2078,6 +2775,12 @@ impl fmt::Display for SessionError {
             Self::ContentHashMismatch => f.write_str("edit base content hash does not match"),
             Self::NonMonotonicRevision => f.write_str("new revision id must increase"),
             Self::InvalidEditRange => f.write_str("edit range is outside UTF-8 boundaries"),
+            Self::CandidateKindMismatch => {
+                f.write_str("revision candidate does not belong to this completion path")
+            }
+            Self::CandidateNotComplete => {
+                f.write_str("revision candidate is still executing or suspended")
+            }
             Self::MissingAcceptedSubstrate => {
                 f.write_str("session has no accepted cold generation")
             }
