@@ -919,6 +919,10 @@ fn append_hash_brace(
     let mut builder = stores.token_list_builder();
     builder.extend_from_slice(stores.tokens(text.token_list()));
     builder.push(traced_semantic_token(hash_brace));
+    if text.origin_list() == OriginListId::EMPTY {
+        let token_list = stores.finish_token_list(&mut builder);
+        return TracedTokenList::new(token_list, OriginListId::EMPTY);
+    }
     let mut origins = stores.origin_list_builder();
     origins.extend_from_slice(stores.origin_list(text.origin_list()));
     origins.push(hash_brace.origin());

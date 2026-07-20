@@ -3,6 +3,12 @@
 Status: Phase 6 adoption measurements for compact tagged source provenance,
 2026-07-10.
 
+Origin-list absence is whole-list state. Transformations that extend a token
+list must either extend an existing parallel origin list by the same number of
+entries or preserve `OriginListId::EMPTY`; they must not manufacture a partial
+origin list for an otherwise untraced token list. This includes TeX's trailing
+hash-brace macro-definition rewrite.
+
 ## Reproduction and comparison method
 
 Run the current matrix with Criterion's 100-sample default:

@@ -1,9 +1,13 @@
 use super::{
-    MacroScanDiagnostic, ScanToksError, scan_general_text_expanded_with_expanded_open, scan_toks,
-    scan_toks_expanded, scan_toks_expanded_with_driver,
+    MacroScanDiagnostic, ScanToksError, append_hash_brace,
+    scan_general_text_expanded_with_expanded_open, scan_toks, scan_toks_expanded,
+    scan_toks_expanded_with_driver,
 };
 use tex_lex::{InputStack, MemoryInput, TokenListReplayKind};
+use tex_state::TracedTokenList;
 use tex_state::Universe;
+use tex_state::ids::OriginListId;
+use tex_state::macro_store::MacroDefinitionProvenance;
 use tex_state::macro_store::MacroMeaning;
 use tex_state::meaning::{ExpandablePrimitive, Meaning, MeaningFlags, UnexpandablePrimitive};
 use tex_state::provenance::OriginRecord;
@@ -708,6 +712,44 @@ fn scans_trailing_hash_brace_parameter_text() {
     assert_eq!(
         replacement,
         vec![Token::param(1), char_token('{', Catcode::BeginGroup)]
+    );
+}
+
+#[test]
+fn trailing_hash_brace_preserves_whole_list_absent_provenance() {
+    let mut stores = Universe::new();
+    let replacement = [
+        char_token('a', Catcode::Letter),
+        char_token('b', Catcode::Letter),
+        char_token('c', Catcode::Letter),
+        char_token('d', Catcode::Letter),
+        char_token('e', Catcode::Letter),
+        char_token('f', Catcode::Letter),
+        char_token('g', Catcode::Letter),
+    ];
+    let replacement = stores.intern_token_list(&replacement);
+    let replacement = TracedTokenList::new(replacement, OriginListId::EMPTY);
+    let hash_brace = TracedTokenWord::pack(
+        char_token('{', Catcode::BeginGroup),
+        stores.source_origin(tex_state::SourceId::new(1), 10, 1, 1),
+    );
+
+    let replacement = append_hash_brace(
+        &mut tex_state::ExpansionContext::new(&mut stores),
+        replacement,
+        Some(hash_brace),
+    );
+
+    assert_eq!(stores.tokens(replacement.token_list()).len(), 8);
+    assert_eq!(replacement.origin_list(), OriginListId::EMPTY);
+    let empty = stores.intern_token_list(&[]);
+    stores.intern_macro_with_provenance(
+        MacroMeaning::new(MeaningFlags::EMPTY, empty, replacement.token_list()),
+        MacroDefinitionProvenance::new(
+            OriginId::UNKNOWN,
+            OriginListId::EMPTY,
+            replacement.origin_list(),
+        ),
     );
 }
 
