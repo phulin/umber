@@ -33,6 +33,26 @@ two-minute local budget.
 `scripts/check-and-test.sh` runs the default native correctness suite followed
 by that quality gate.
 
+Commands that execute Umber, including Cargo tests whose selected test enters
+the engine, must run through the shared process-group guard when investigating
+a hang or memory-growth failure. A targeted invocation is:
+
+```bash
+python3 scripts/run-umber-guarded.py \
+  --timeout-seconds 120 --max-rss-mib 6144 --term-grace-seconds 5 -- \
+  cargo test -q -p umber --test it TEST_NAME -- --nocapture
+```
+
+Use a smaller RSS or time limit whenever the fixture permits it. The guard
+sums resident memory across the command's process group, sends TERM to the
+whole group at either limit, waits no more than five seconds, sends KILL to the
+whole group, reaps the leader, and fails if any group member survives. Exit 124
+means a time or RSS limit fired; exit 125 means cleanup itself failed. Run
+`scripts/test-run-umber-guarded.sh` to exercise the forced-timeout path.
+Compiler-only commands such as `cargo check`, rustfmt, and clippy do not need
+the guard. The guard complements rather than replaces an explicit finite
+engine expansion-fuel setting on the exercised `ExecutionContext`.
+
 Snapshot scaling has a separate explicit performance tier:
 
 ```bash
