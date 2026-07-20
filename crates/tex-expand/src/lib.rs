@@ -493,6 +493,34 @@ pub trait ReadRecorder {
     fn record_dependency(&mut self, _dependency: ReadDependency) {}
 }
 
+enum StagedRecorderRead {
+    Meaning(Symbol, Meaning),
+    Dependency(ReadDependency),
+}
+
+/// Detached read observations produced by one candidate executor operation.
+///
+/// The batch is opaque so only the outer executor transaction can choose
+/// whether to deliver or discard it.
+#[doc(hidden)]
+pub struct ReadRecorderBatch(Vec<StagedRecorderRead>);
+
+impl ReadRecorderBatch {
+    #[doc(hidden)]
+    pub fn deliver(self, recorder: &mut dyn ReadRecorder) {
+        for read in self.0 {
+            match read {
+                StagedRecorderRead::Meaning(symbol, meaning) => {
+                    recorder.record_meaning(symbol, meaning);
+                }
+                StagedRecorderRead::Dependency(dependency) => {
+                    recorder.record_dependency(dependency);
+                }
+            }
+        }
+    }
+}
+
 /// Deterministic concrete recorder for memoization and speculation clients.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct ReadSetRecorder {
@@ -1105,6 +1133,7 @@ pub struct ExpansionContext<'a> {
     pub job_clock: JobClock,
     input_resolver: Option<&'a mut dyn InputResolver>,
     pub(crate) recorder: Option<&'a mut dyn ReadRecorder>,
+    staged_recorder_reads: Option<Vec<StagedRecorderRead>>,
     resolution_index: u64,
     meaning_site_cache: Box<[Option<MeaningSiteCacheEntry>; MEANING_SITE_CACHE_LEN]>,
     last_macro_replay_site: Option<MacroReplaySite>,
@@ -1132,6 +1161,7 @@ pub struct ExpansionContext<'a> {
 /// Host resolvers and read recorders deliberately do not appear here.  A
 /// caller installs those capabilities only while constructing an
 /// [`ExpansionContext`] for one bounded operation.
+#[derive(Clone)]
 pub struct ExpansionSessionState {
     engine: EngineStateSnapshot,
     job_clock: JobClock,
@@ -1152,6 +1182,13 @@ pub struct ExpansionSessionState {
     paragraph_recording_generation: u32,
     paragraph_barriers: BTreeSet<ParagraphExpansionBarrier>,
 }
+
+/// Opaque rollback root for one bounded executor step.
+///
+/// This is deliberately separate from durable engine checkpoints.  It owns no
+/// host resolver or recorder capability and is intended to live only until the
+/// enclosing executor step commits or rolls back.
+pub struct ExpansionSessionSnapshot(ExpansionSessionState);
 
 /// Default number of expansion-loop steps available to one expansion request.
 pub const DEFAULT_EXPANSION_FUEL: u64 = 250_000;
@@ -1191,6 +1228,20 @@ impl ExpansionSessionState {
         self
     }
 
+    /// Captures all logical expansion state needed to replay the current
+    /// executor step from its stable entry.
+    #[doc(hidden)]
+    #[must_use]
+    pub fn snapshot(&self) -> ExpansionSessionSnapshot {
+        ExpansionSessionSnapshot(self.clone())
+    }
+
+    /// Infallibly restores a previously captured step-local expansion root.
+    #[doc(hidden)]
+    pub fn rollback(&mut self, snapshot: ExpansionSessionSnapshot) {
+        *self = snapshot.0;
+    }
+
     #[doc(hidden)]
     pub fn set_job_clock(&mut self, clock: JobClock) {
         self.job_clock = clock;
@@ -1228,6 +1279,7 @@ impl<'a> ExpansionContext<'a> {
             job_clock: state.job_clock,
             input_resolver,
             recorder,
+            staged_recorder_reads: None,
             resolution_index: state.resolution_index,
             meaning_site_cache: state.meaning_site_cache,
             last_macro_replay_site: state.last_macro_replay_site,
@@ -1361,6 +1413,26 @@ impl<'a> ExpansionContext<'a> {
         self
     }
 
+    /// Begins one executor-owned transaction for host-visible read delivery.
+    #[doc(hidden)]
+    pub fn begin_transactional_recording(&mut self) {
+        debug_assert!(self.staged_recorder_reads.is_none());
+        self.staged_recorder_reads = Some(Vec::new());
+    }
+
+    /// Detaches reads for delivery after the aggregate executor step commits.
+    #[doc(hidden)]
+    #[must_use]
+    pub fn finish_transactional_recording(&mut self) -> ReadRecorderBatch {
+        ReadRecorderBatch(self.staged_recorder_reads.take().unwrap_or_default())
+    }
+
+    /// Discards reads produced by a rolled-back executor step.
+    #[doc(hidden)]
+    pub fn discard_transactional_recording(&mut self) {
+        self.staged_recorder_reads = None;
+    }
+
     #[doc(hidden)]
     pub fn begin_paragraph_recording(&mut self) {
         debug_assert!(self.paragraph_reads.is_none());
@@ -1434,7 +1506,9 @@ impl<'a> ExpansionContext<'a> {
 
     #[inline(always)]
     fn record_dependency(&mut self, dependency: ReadDependency) {
-        if let Some(recorder) = self.recorder.as_deref_mut() {
+        if let Some(reads) = &mut self.staged_recorder_reads {
+            reads.push(StagedRecorderRead::Dependency(dependency));
+        } else if let Some(recorder) = self.recorder.as_deref_mut() {
             recorder.record_dependency(dependency);
         }
         if self.paragraph_read_tracking
@@ -1529,6 +1603,7 @@ impl<'a> ExpansionContext<'a> {
             job_clock: self.job_clock,
             input_resolver: self.input_resolver.take(),
             recorder: self.recorder.take(),
+            staged_recorder_reads: self.staged_recorder_reads.take(),
             resolution_index: self.resolution_index,
             meaning_site_cache: Box::new([None; MEANING_SITE_CACHE_LEN]),
             last_macro_replay_site: None,
@@ -1549,6 +1624,7 @@ impl<'a> ExpansionContext<'a> {
         let output = operation(&mut nested);
         self.input_resolver = nested.input_resolver.take();
         self.recorder = nested.recorder.take();
+        self.staged_recorder_reads = nested.staged_recorder_reads.take();
         self.resolution_index = nested.resolution_index;
         self.remaining_fuel = nested.remaining_fuel;
         self.recoverable_diagnostics
@@ -1591,7 +1667,9 @@ impl<'a> ExpansionContext<'a> {
 
     #[inline(always)]
     pub fn record_meaning(&mut self, symbol: Symbol, meaning: Meaning) {
-        if let Some(recorder) = self.recorder.as_deref_mut() {
+        if let Some(reads) = &mut self.staged_recorder_reads {
+            reads.push(StagedRecorderRead::Meaning(symbol, meaning));
+        } else if let Some(recorder) = self.recorder.as_deref_mut() {
             recorder.record_meaning(symbol, meaning);
         }
         if self.paragraph_read_tracking {

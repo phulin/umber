@@ -8,7 +8,7 @@ use tex_expand::{
     EngineStateSnapshot, InputResolver, ReadRecorder, ResourceLookup, ResourceResult,
     get_x_token_with_context,
 };
-use tex_lex::InputStack;
+use tex_lex::{InputStack, InputStackSnapshot};
 use tex_out::dvi::DviPagePlan;
 use tex_state::ids::TokenListId;
 use tex_state::node::Node;
@@ -97,6 +97,7 @@ pub enum FontSource {
 /// Expansion scanners see this only through its concrete dereference to
 /// [`tex_expand::ExpansionContext`]; font resolution remains an execution-only
 /// operation and is invoked solely by `\font` assignment.
+#[derive(Clone)]
 pub(crate) struct PendingParagraphMemo {
     pub(crate) break_dependency_ordinals: Vec<u32>,
     pub(crate) prev_graf: Option<i32>,
@@ -109,6 +110,7 @@ pub(crate) enum ParagraphContinuation {
     Display,
 }
 
+#[derive(Clone)]
 pub(crate) struct ColdParagraphRecording {
     pub(crate) effect_start: usize,
     pub(crate) starting_span: Option<tex_state::RootSpanId>,
@@ -126,7 +128,7 @@ pub(crate) struct ColdParagraphRecording {
     pub(crate) barriers: std::collections::BTreeSet<ParagraphBarrierReason>,
 }
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub(crate) struct InlineMathReads {
     pub(crate) mathcodes: Vec<char>,
     pub(crate) delcodes: Vec<char>,
@@ -173,6 +175,36 @@ impl ExecutionState {
         self.expansion = self.expansion.with_fuel(fuel);
         self
     }
+
+    fn snapshot(&self) -> ExecutionStateSnapshot {
+        ExecutionStateSnapshot {
+            expansion: self.expansion.snapshot(),
+            pending_paragraph_memo: self.pending_paragraph_memo.clone(),
+            paragraph_memo_barrier: self.paragraph_memo_barrier,
+            paragraph_memo_disabled_for_run: self.paragraph_memo_disabled_for_run,
+            cold_paragraph_recording: self.cold_paragraph_recording.clone(),
+            paragraph_dependency_cache: self.paragraph_dependency_cache.clone(),
+        }
+    }
+
+    fn rollback(&mut self, snapshot: ExecutionStateSnapshot) {
+        self.expansion.rollback(snapshot.expansion);
+        self.pending_paragraph_memo = snapshot.pending_paragraph_memo;
+        self.paragraph_memo_barrier = snapshot.paragraph_memo_barrier;
+        self.paragraph_memo_disabled_for_run = snapshot.paragraph_memo_disabled_for_run;
+        self.cold_paragraph_recording = snapshot.cold_paragraph_recording;
+        self.paragraph_dependency_cache = snapshot.paragraph_dependency_cache;
+    }
+}
+
+struct ExecutionStateSnapshot {
+    expansion: tex_expand::ExpansionSessionSnapshot,
+    pending_paragraph_memo: Option<PendingParagraphMemo>,
+    paragraph_memo_barrier: bool,
+    paragraph_memo_disabled_for_run: bool,
+    cold_paragraph_recording: Option<ColdParagraphRecording>,
+    paragraph_dependency_cache:
+        ahash::AHashMap<tex_state::DependencyKey, CachedParagraphDependency>,
 }
 
 /// Host capabilities borrowed for exactly one [`ExecutionRun::step`] call.
@@ -684,6 +716,19 @@ pub struct ExecutionRun {
     checkpoint_mode_projection: Option<(crate::ModeNestSummary, u64)>,
 }
 
+struct StepSavepoint {
+    universe: tex_state::Snapshot,
+    input: InputStackSnapshot,
+    nest: ModeNest,
+    execution: ExecutionStateSnapshot,
+    stats: ExecutionStats,
+    artifact_start: Option<usize>,
+    next_step: ExecutionStep,
+    lifecycle: ExecutionLifecycle,
+    publish_job_start: bool,
+    checkpoint_mode_projection: Option<(crate::ModeNestSummary, u64)>,
+}
+
 impl ExecutionRun {
     #[must_use]
     pub fn new(job_name: impl Into<String>) -> Self {
@@ -768,11 +813,11 @@ impl ExecutionRun {
             self.artifact_start = Some(services.stores.world().artifact_commits().len());
         }
 
-        if self.next_step == ExecutionStep::Finalize {
-            return self.step_finalize(services);
-        }
+        let blocked_step = self.next_step;
+        let savepoint = self.capture_step_savepoint(services);
         let checkpoint_destination = services.checkpoints.take();
         let mut staged = StagedCheckpointSink::new(checkpoint_destination);
+        let mut staged_reads = Vec::new();
         let result = match self.next_step {
             ExecutionStep::JobStart => {
                 if self.publish_job_start {
@@ -798,22 +843,80 @@ impl ExecutionRun {
                 self.lifecycle = ExecutionLifecycle::Ready;
                 Ok(())
             }
-            ExecutionStep::MainControl => self.step_main_control(services, &mut staged),
-            ExecutionStep::FinishEnd => self.step_finish_end(services),
-            ExecutionStep::Finalize => unreachable!("finalize handled before checkpoint staging"),
+            ExecutionStep::MainControl => {
+                self.step_main_control(services, &mut staged, &mut staged_reads)
+            }
+            ExecutionStep::FinishEnd => self.step_finish_end(services, &mut staged_reads),
+            ExecutionStep::Finalize => self.step_finalize(services),
         };
 
-        let stop_requested = staged.stop_requested();
-        let (checkpoints, checkpoint_destination) = staged.deliver();
-        services.checkpoints = checkpoint_destination;
         match result {
-            Ok(()) => ExecutionStepResult::Progress(ExecutionProgress {
-                next_step: self.next_step,
-                checkpoints,
-                stop_requested,
-            }),
-            Err(error) => self.handle_step_error(error),
+            Ok(()) => {
+                let (checkpoints, stop_requested, checkpoint_destination) = staged.commit();
+                services.checkpoints = checkpoint_destination;
+                if let Some(recorder) = services.recorder.as_deref_mut() {
+                    for reads in staged_reads {
+                        reads.deliver(recorder);
+                    }
+                }
+                if self.lifecycle == ExecutionLifecycle::Complete {
+                    ExecutionStepResult::Complete(self.stats.clone())
+                } else {
+                    ExecutionStepResult::Progress(ExecutionProgress {
+                        next_step: self.next_step,
+                        checkpoints,
+                        stop_requested,
+                    })
+                }
+            }
+            Err(error) => {
+                services.checkpoints = staged.discard();
+                self.rollback_step_savepoint(services, savepoint);
+                self.handle_step_error(error, blocked_step)
+            }
         }
+    }
+
+    fn capture_step_savepoint(
+        &mut self,
+        services: &mut ExecutionServices<'_, '_>,
+    ) -> StepSavepoint {
+        StepSavepoint {
+            universe: services.stores.snapshot(),
+            input: services.input.snapshot(),
+            nest: self.nest.clone(),
+            execution: self
+                .execution
+                .as_ref()
+                .expect("execution state is installed between steps")
+                .snapshot(),
+            stats: self.stats.clone(),
+            artifact_start: self.artifact_start,
+            next_step: self.next_step,
+            lifecycle: self.lifecycle,
+            publish_job_start: self.publish_job_start,
+            checkpoint_mode_projection: self.checkpoint_mode_projection.clone(),
+        }
+    }
+
+    fn rollback_step_savepoint(
+        &mut self,
+        services: &mut ExecutionServices<'_, '_>,
+        savepoint: StepSavepoint,
+    ) {
+        services.stores.rollback(&savepoint.universe);
+        services.input.rollback(savepoint.input);
+        self.nest = savepoint.nest;
+        self.execution
+            .as_mut()
+            .expect("execution state is reinstalled before rollback")
+            .rollback(savepoint.execution);
+        self.stats = savepoint.stats;
+        self.artifact_start = savepoint.artifact_start;
+        self.next_step = savepoint.next_step;
+        self.lifecycle = savepoint.lifecycle;
+        self.publish_job_start = savepoint.publish_job_start;
+        self.checkpoint_mode_projection = savepoint.checkpoint_mode_projection;
     }
 
     fn execution_mut(&mut self) -> &mut ExecutionState {
@@ -825,14 +928,15 @@ impl ExecutionRun {
     fn with_context<T>(
         &mut self,
         services: &mut ExecutionServices<'_, '_>,
+        staged_reads: &mut Vec<tex_expand::ReadRecorderBatch>,
         operation: impl FnOnce(
             &mut ModeNest,
             &mut InputStack,
             &mut Universe,
             &mut ExecutionContext<'_>,
             &mut ExecutionStats,
-        ) -> T,
-    ) -> T {
+        ) -> Result<T, ExecError>,
+    ) -> Result<T, ExecError> {
         let state = self.execution.take().expect("execution state is owned");
         let input_resolver = services.input_resolver.take();
         let font_resolver = services.font_resolver.take();
@@ -846,6 +950,7 @@ impl ExecutionRun {
             image_resolver,
             recorder,
         );
+        context.begin_transactional_recording();
         let output = operation(
             &mut self.nest,
             services.input,
@@ -853,6 +958,11 @@ impl ExecutionRun {
             &mut context,
             &mut self.stats,
         );
+        if output.is_ok() {
+            staged_reads.push(context.finish_transactional_recording());
+        } else {
+            context.discard_transactional_recording();
+        }
         let (state, input_resolver, font_resolver, image_resolver, recorder) =
             context.into_owned_parts();
         self.execution = Some(state);
@@ -867,19 +977,24 @@ impl ExecutionRun {
         &mut self,
         services: &mut ExecutionServices<'_, '_>,
         staged: &mut StagedCheckpointSink<'_>,
+        staged_reads: &mut Vec<tex_expand::ReadRecorderBatch>,
     ) -> Result<(), ExecError> {
         let mut checkpoint_mode_projection = self.checkpoint_mode_projection.take();
-        let exit = self.with_context(services, |nest, input, stores, execution, stats| {
-            run_outer_main_control_step(
-                nest,
-                input,
-                stores,
-                execution,
-                stats,
-                staged,
-                &mut checkpoint_mode_projection,
-            )
-        });
+        let exit = self.with_context(
+            services,
+            staged_reads,
+            |nest, input, stores, execution, stats| {
+                run_outer_main_control_step(
+                    nest,
+                    input,
+                    stores,
+                    execution,
+                    stats,
+                    staged,
+                    &mut checkpoint_mode_projection,
+                )
+            },
+        );
         self.checkpoint_mode_projection = checkpoint_mode_projection;
         let exit = exit?;
         match exit {
@@ -909,17 +1024,22 @@ impl ExecutionRun {
     fn step_finish_end(
         &mut self,
         services: &mut ExecutionServices<'_, '_>,
+        staged_reads: &mut Vec<tex_expand::ReadRecorderBatch>,
     ) -> Result<(), ExecError> {
-        self.with_context(services, |nest, input, stores, execution, stats| {
-            output::finish_end(nest, input, stores, execution, stats)
-                .map_err(|error| error.capture(input))
-        })?;
+        self.with_context(
+            services,
+            staged_reads,
+            |nest, input, stores, execution, stats| {
+                output::finish_end(nest, input, stores, execution, stats)
+                    .map_err(|error| error.capture(input))
+            },
+        )?;
         self.next_step = ExecutionStep::Finalize;
         self.lifecycle = ExecutionLifecycle::Finishing;
         Ok(())
     }
 
-    fn step_finalize(&mut self, services: &mut ExecutionServices<'_, '_>) -> ExecutionStepResult {
+    fn step_finalize(&mut self, services: &mut ExecutionServices<'_, '_>) -> Result<(), ExecError> {
         let dumped_format = self.stats.dumped_format;
         let summary = if dumped_format {
             InputSummary::default()
@@ -952,26 +1072,22 @@ impl ExecutionRun {
                     .map_err(|error| ExecError::InvalidShipoutArtifact(error.to_string()))
             })
             .collect::<Result<Vec<_>, _>>();
-        match plans {
-            Ok(plans) => {
-                self.stats.dvi_pages = plans;
-                self.lifecycle = ExecutionLifecycle::Complete;
-                ExecutionStepResult::Complete(self.stats.clone())
-            }
-            Err(error) => {
-                self.lifecycle = ExecutionLifecycle::Failed;
-                ExecutionStepResult::Failed(error)
-            }
-        }
+        self.stats.dvi_pages = plans?;
+        self.lifecycle = ExecutionLifecycle::Complete;
+        Ok(())
     }
 
-    fn handle_step_error(&mut self, error: ExecError) -> ExecutionStepResult {
+    fn handle_step_error(
+        &mut self,
+        error: ExecError,
+        blocked_step: ExecutionStep,
+    ) -> ExecutionStepResult {
         if let Some(need) = resource_need(&error) {
             self.suspension_serial = self.suspension_serial.saturating_add(1);
             self.lifecycle = ExecutionLifecycle::Awaiting;
             return ExecutionStepResult::AwaitingResources(ResourceSuspension {
                 requests: vec![need],
-                site: match self.next_step {
+                site: match blocked_step {
                     ExecutionStep::JobStart | ExecutionStep::MainControl => {
                         ResourceSite::MainControl
                     }
@@ -980,7 +1096,7 @@ impl ExecutionRun {
                     }
                 },
                 serial: self.suspension_serial,
-                blocked_step: self.next_step,
+                blocked_step,
             });
         }
         self.lifecycle = ExecutionLifecycle::Failed;
@@ -1018,14 +1134,28 @@ impl<'a> StagedCheckpointSink<'a> {
         }
     }
 
-    fn deliver(
+    fn commit(
         mut self,
     ) -> (
         Vec<crate::EngineCheckpoint>,
+        bool,
         Option<&'a mut dyn CheckpointSink>,
     ) {
         let checkpoints = std::mem::take(&mut self.checkpoints);
-        (checkpoints, self.destination.take())
+        if let Some(destination) = self.destination.as_deref_mut() {
+            for checkpoint in &checkpoints {
+                destination.checkpoint(checkpoint.clone());
+            }
+        }
+        let stop_requested = self
+            .destination
+            .as_deref()
+            .is_some_and(CheckpointSink::stop_requested);
+        (checkpoints, stop_requested, self.destination.take())
+    }
+
+    fn discard(mut self) -> Option<&'a mut dyn CheckpointSink> {
+        self.destination.take()
     }
 }
 
@@ -1049,9 +1179,6 @@ impl CheckpointSink for StagedCheckpointSink<'_> {
     }
 
     fn checkpoint(&mut self, checkpoint: crate::EngineCheckpoint) {
-        if let Some(destination) = self.destination.as_deref_mut() {
-            destination.checkpoint(checkpoint.clone());
-        }
         self.checkpoints.push(checkpoint);
     }
 }

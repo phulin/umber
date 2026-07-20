@@ -72,6 +72,112 @@ fn owned_execution_run_observes_cancellation_before_mutation() {
     assert!(stores.input_summary().is_empty());
 }
 
+struct SuspendInputOnce {
+    suspensions_remaining: usize,
+    request_indices: Vec<u64>,
+}
+
+impl tex_expand::InputResolver for SuspendInputOnce {
+    fn open_input(
+        &mut self,
+        _input: &mut dyn tex_state::InputReadState,
+        _name: &str,
+        request_index: u64,
+    ) -> tex_expand::ResourceResult<Box<dyn tex_lex::InputSource>> {
+        self.request_indices.push(request_index);
+        if self.suspensions_remaining > 0 {
+            self.suspensions_remaining -= 1;
+            return Ok(tex_expand::ResourceLookup::NeedResource(
+                tex_expand::ResourceNeed::new(request_index),
+            ));
+        }
+        Ok(tex_expand::ResourceLookup::Available(Box::new(
+            MemoryInput::new("\\count0=42"),
+        )))
+    }
+}
+
+#[test]
+fn resource_suspension_rolls_back_the_aggregate_step_and_replays_stably() {
+    let mut stores = Universe::new();
+    tex_expand::install_expandable_primitives(&mut stores);
+    install_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new("\\count0=7 \\input child"));
+    let mut resolver = SuspendInputOnce {
+        suspensions_remaining: 2,
+        request_indices: Vec::new(),
+    };
+    let mut recorder = TestRecorder::default();
+    let mut run = ExecutionRun::new("rollback-job");
+    let cancellation = Cancellation::new();
+
+    assert!(matches!(
+        run.step(
+            &mut ExecutionServices::new(&mut input, &mut stores),
+            &cancellation,
+        ),
+        ExecutionStepResult::Progress(_)
+    ));
+
+    let suspension = loop {
+        let universe_before = stores.snapshot().state_hash();
+        let input_before = input.summary();
+        let nest_before = run.nest().clone();
+        let recorder_before = recorder.meanings.len();
+        let blocked_step = run.next_step();
+        let result = run.step(
+            &mut ExecutionServices::new(&mut input, &mut stores)
+                .with_input_resolver(&mut resolver)
+                .recording(&mut recorder),
+            &cancellation,
+        );
+        if let ExecutionStepResult::AwaitingResources(suspension) = result {
+            assert_eq!(stores.snapshot().state_hash(), universe_before);
+            assert_eq!(input.summary(), input_before);
+            assert_eq!(run.nest(), &nest_before);
+            assert_eq!(run.next_step(), blocked_step);
+            assert_eq!(recorder.meanings.len(), recorder_before);
+            break suspension;
+        }
+        assert!(matches!(result, ExecutionStepResult::Progress(_)));
+    };
+    assert_eq!(run.lifecycle(), ExecutionLifecycle::Awaiting);
+    assert_eq!(suspension.requests.len(), 1);
+    assert_eq!(suspension.blocked_step, ExecutionStep::MainControl);
+
+    let first_request_index = suspension.requests[0].request_index();
+    let mut last_serial = suspension.serial;
+    loop {
+        let recorder_before = recorder.meanings.len();
+        let result = run.step(
+            &mut ExecutionServices::new(&mut input, &mut stores)
+                .with_input_resolver(&mut resolver)
+                .recording(&mut recorder),
+            &cancellation,
+        );
+        match result {
+            ExecutionStepResult::Progress(_) => {}
+            ExecutionStepResult::AwaitingResources(repeated) => {
+                assert_eq!(repeated.requests[0].request_index(), first_request_index);
+                assert!(repeated.serial > last_serial);
+                assert_eq!(recorder.meanings.len(), recorder_before);
+                last_serial = repeated.serial;
+            }
+            ExecutionStepResult::Complete(_) => break,
+            other => panic!("replayed run must complete, got {other:?}"),
+        }
+    }
+    assert_eq!(
+        resolver.request_indices,
+        vec![
+            first_request_index,
+            first_request_index,
+            first_request_index
+        ]
+    );
+    assert_eq!(stores.count(0), 42);
+}
+
 #[test]
 fn unsupported_typesetting_diagnostic_names_control_sequence() {
     let mut stores = Universe::new();

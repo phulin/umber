@@ -36,10 +36,18 @@ retains complete owned source cursors and private input machinery, while
 rollback is infallible and resolver-free; `InputSummary` remains the durable
 publication format.
 
-Transactional `StepSavepoint` rollback and durable resource-generation
-progress checks remain the next layer. Until that layer is installed, a typed
-resource need is surfaced as `AwaitingResources`, but callers must not replay
-the same run because mutation rollback is not yet guaranteed.
+`ExecutionRun` now wraps every candidate operation in a private aggregate
+`StepSavepoint`. A typed resource need restores the matching `Universe`, opaque
+input-stack, mode-nest, execution, statistics, checkpoint-publisher, prepared
+page, diagnostic/effect/artifact, and lifecycle roots before returning
+`AwaitingResources`; the suspension serial remains monotonic and replay uses
+the original logical resolution index. Named checkpoints and external read
+observations are staged and delivered only after the candidate commits.
+
+Durable resource-generation progress checks and host-session retention remain
+the next layer. The executor is now safe to replay after provisioning, but
+callers must still retain the run and reject a retry which binds no new
+positive or authoritative-negative response.
 
 ## Public shape and ownership
 
