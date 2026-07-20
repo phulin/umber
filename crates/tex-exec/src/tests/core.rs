@@ -52,6 +52,36 @@ fn owned_execution_run_advances_through_explicit_phases() {
 }
 
 #[test]
+fn owned_execution_run_amortizes_savepoints_across_bounded_command_chunks() {
+    let command_count = 257;
+    let mut source = "\\count0=0 ".repeat(command_count);
+    source.push_str("\\end");
+    let mut stores = Universe::new();
+    tex_expand::install_expandable_primitives(&mut stores);
+    install_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(source));
+    let mut run = ExecutionRun::new("chunked-job");
+    let cancellation = Cancellation::new();
+
+    loop {
+        match run.step(
+            &mut ExecutionServices::new(&mut input, &mut stores),
+            &cancellation,
+        ) {
+            ExecutionStepResult::Progress(_) => {}
+            ExecutionStepResult::Complete(stats) => {
+                assert_eq!(stats.main_control_dispatches, command_count + 1);
+                break;
+            }
+            other => panic!("chunked run failed: {other:?}"),
+        }
+    }
+
+    // JobStart, two bounded main-control chunks, FinishEnd, and Finalize.
+    assert_eq!(run.telemetry().advance_calls, 5);
+}
+
+#[test]
 fn owned_execution_run_observes_cancellation_before_mutation() {
     let mut stores = Universe::new();
     let mut input = InputStack::new(MemoryInput::new("ignored"));

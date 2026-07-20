@@ -25,10 +25,13 @@ native and `wasm32-unknown-unknown` targets.
 `tex-exec` now exposes the owned `ExecutionRun` and `ExecutionState`, the
 call-local `ExecutionServices`, and the explicit `JobStart`, `MainControl`,
 `FinishEnd`, and `Finalize` lifecycle. The compatibility `run*` and `resume*`
-entry points drive this same state machine. Main control yields after one
-fully dispatched token, one paragraph-reuse operation, or a fixed 256-token
-text span; named checkpoints are staged and delivered only after that bounded
-operation returns successfully. Expansion state is detached from input,
+entry points drive this same state machine. Main control yields after at most
+256 fully dispatched tokens, paragraph-reuse operations, or fixed 256-token
+text spans, and yields immediately after a named paragraph or shipout boundary;
+it also yields whenever TeX's execution-group depth changes so the environment
+snapshot remains a valid rollback root. Named checkpoints are staged and
+delivered only after that bounded operation chunk returns successfully.
+Expansion state is detached from input,
 font, image, and read-recorder capabilities between calls.
 
 `tex-lex` now provides the opaque `InputStackSnapshot` prerequisite. Capture
@@ -179,10 +182,12 @@ The four step kinds have these exact commit boundaries:
 1. `JobStart` synchronizes source ids and job clock, queues `\everyjob`, and
    stages the single `JobStart` checkpoint. It commits all of those together.
 2. `MainControl` begins immediately before paragraph-reuse probing and
-   recoverable-diagnostic draining. It processes one fully expanded delivered
-   token, or one fixed-size text-span chunk, including dispatch and all pending
-   output work caused by that dispatch. End-of-input flushing is also one main
-   control step. Paragraph reuse plus its resulting output drain is one step.
+   recoverable-diagnostic draining. It processes at most 256 fully expanded
+   delivered tokens, paragraph reuses, or fixed-size text-span chunks,
+   including dispatch and all pending output work caused by each operation.
+   It commits early after a named paragraph or shipout boundary or any
+   execution-group depth change. End-of-input flushing is also one main-control
+   step.
 3. `FinishEnd` performs the current `finish_end`, including final paragraph,
    page-builder, output-routine, recursive dispatch, and shipout work. If this
    proves too large under focused measurements it may be decomposed into
@@ -241,12 +246,13 @@ must decline it through `wants_checkpoint` before capture; it cannot make an
 already committed TeX step fail. A checkpoint sink's stop decision is sampled
 for the next return only.
 
-On a typed resource need, cancellation, injected failure, or hard-limit error,
-the run first detaches the request or error payload, then restores every field
-in `StepSavepoint`. No restoration calls host policy. For a resource need the
-restored run enters `AwaitingResources`; for the other cases it enters the
-corresponding terminal state. A Rust panic is not a supported suspension and
-does not promise recovery.
+On a typed resource need, the run first detaches the request payload, then
+restores every field in `StepSavepoint` and enters `AwaitingResources`. No
+restoration calls host policy. Terminal TeX errors preserve the live failure
+state, matching the one-shot interpreter contract; their staged checkpoints
+and read observations are discarded, and the run enters `Failed`. Cancellation
+is checked before mutation. A Rust panic is not a supported suspension and does
+not promise recovery.
 
 The `Universe` snapshot and input snapshot must be taken and restored as one
 aggregate operation. No caller may roll back input, modes, paragraph recording,

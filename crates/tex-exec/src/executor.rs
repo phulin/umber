@@ -941,7 +941,8 @@ impl ExecutionRun {
                 }
             }
             Err(error) => {
-                if resource_need(&error).is_some() {
+                let suspends = resource_need(&error).is_some();
+                if suspends {
                     self.telemetry.suspensions = self.telemetry.suspensions.saturating_add(1);
                     self.telemetry.replayed_delivered_tokens =
                         self.telemetry.replayed_delivered_tokens.saturating_add(
@@ -957,9 +958,16 @@ impl ExecutionRun {
                                 .saturating_sub(stats_before.main_control_dispatches)
                                 as u64,
                         );
+                    services.checkpoints = staged.discard();
+                    self.rollback_step_savepoint(services, savepoint);
+                } else {
+                    // A terminal TeX error historically leaves the live engine
+                    // at its failure point.  Only a typed host-resource need
+                    // is replayable; rolling semantic failures back would
+                    // erase preceding commands in this bounded chunk and can
+                    // invalidate a group-local Universe snapshot.
+                    services.checkpoints = staged.discard();
                 }
-                services.checkpoints = staged.discard();
-                self.rollback_step_savepoint(services, savepoint);
                 self.handle_step_error(error, blocked_step)
             }
         }
@@ -1430,6 +1438,7 @@ where {
 }
 
 const EXECUTION_TEXT_SPAN_CHUNK: usize = 256;
+const EXECUTION_STEP_OPERATION_CHUNK: usize = 256;
 
 fn run_outer_main_control_step<C>(
     nest: &mut ModeNest,
@@ -1444,6 +1453,8 @@ where
     C: CheckpointSink,
 {
     let mut session = EngineSession::with_mode_projection(session_sink, mode_projection.take());
+    let mut operations = 0usize;
+    let entry_group_depth = tex_state::ExpansionState::execution_group_depth(stores);
     let result = run_main_control_until_observing(
         nest,
         input,
@@ -1455,14 +1466,16 @@ where
         |nest, input, stores, event| {
             if event.shipout_complete {
                 session.publish(EngineBoundary::ShipoutComplete, nest, input, stores);
-                if session.stop_requested() {
-                    return true;
-                }
             }
             if event.outer_paragraph_end {
                 session.publish(EngineBoundary::OuterParagraphEnd, nest, input, stores);
             }
-            true
+            operations += 1;
+            event.shipout_complete
+                || event.outer_paragraph_end
+                || session.stop_requested()
+                || tex_state::ExpansionState::execution_group_depth(stores) != entry_group_depth
+                || operations >= EXECUTION_STEP_OPERATION_CHUNK
         },
     );
     *mode_projection = session.into_mode_projection();
