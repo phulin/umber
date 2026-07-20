@@ -42,6 +42,10 @@ for the first incremental engine.
 session lifecycle that composes typed resource retries with revision-checked
 root-buffer patches and retained incremental execution.
 
+`stepwise_execution.md` defines the owned `tex-exec` run, atomic per-step
+snapshot/replay protocol, typed resource sites, lifecycle, cumulative fuel and
+cancellation rules, and the migration from whole-attempt retries.
+
 `incremental_memoization.md` defines the changed-document slow path: stable
 source alignment plus an ordered accepted-history paragraph replay cursor,
 per-paragraph dependency validation, accepted-history-owned shared finished-line
