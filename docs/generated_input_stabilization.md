@@ -1,0 +1,304 @@
+# Generated-input correctness and editor stabilization
+
+> **Status:** proposed design. The current implementation has the incremental
+> and multipass components described below, but it does not yet implement the
+> generated-input validation or decoupled stabilization contract defined here.
+
+This document defines how persistent editor compilation should compose
+root-buffer edits, generated TeX inputs such as `.aux` and `.toc` files, and
+bounded fixed-point iteration. It complements
+[`incremental_v1.md`](incremental_v1.md),
+[`incremental_memoization.md`](incremental_memoization.md),
+[`persistent_compile_sessions.md`](persistent_compile_sessions.md), and
+[`umber_vfs.md`](umber_vfs.md).
+
+The governing correctness criterion is simple:
+
+> An accepted editor pass must be byte-identical to a cold pass of the same
+> root revision against the same incoming VFS snapshot.
+
+Reuse is optional. A generated-input change may reduce reuse, but it must never
+permit execution from state derived from different input bytes.
+
+## Current architecture
+
+Umber currently has three relevant mechanisms.
+
+### Retained single-pass editor sessions
+
+`VirtualCompileSession` owns one `tex-incr::Session`. After a root patch it
+selects the latest retained named checkpoint before the edit, executes forward,
+and adopts the old suffix when a mapped boundary reaches the same canonical
+future-state identity. Detached effects and committed artifacts are spliced
+separately and are deliberately excluded from the convergence identity.
+
+This is a prefix plus convergent-suffix design, not independent page
+compilation. With a retained checkpoint and later state convergence, work often
+corresponds to the affected pages. That is an outcome, not an API guarantee:
+checkpoint pruning may force an earlier restart, equal line counts do not prove
+state convergence, and a reflow may either remain divergent or rejoin at a
+later boundary.
+
+### Changed-document paragraph replay
+
+`tex-incr` can reuse accepted finished lines for source-aligned paragraphs whose
+typed dependency observations still validate. Page building, output routines,
+and shipout execute normally. This is the appropriate slow-path mechanism when
+full engine state does not converge.
+
+The machinery is currently opt-in. Ordinary native and WebAssembly
+`VirtualCompileSession` construction does not enable `PureMemoRuntime`; the
+Gentle profiling runner enables it explicitly. Historical measurements prove
+that the path can win on selected pagination-changing edits, but those results
+are not a default web-session latency contract. Default activation requires a
+new balanced performance and retention gate.
+
+### Multipass project sessions
+
+`LatexProjectSession` and `LatexProjectSessionV2` already run bounded
+fixed-point jobs. They execute TeX over a candidate generated generation,
+optionally execute a bibliography backend, compare generated signatures, detect
+oscillation, and accept the root, generated files, and final output atomically.
+The WebAssembly `ProjectSession` exposes the same state machine.
+
+Each TeX pass currently starts a fresh `VirtualCompileSession`, including the
+first pass after an editor patch. The authored JavaScript facade selects the
+project surface only when bibliography options are present. The existing
+driver therefore supplies convergence and transaction policy, but it is not a
+general, latency-decoupled editor `stabilize` operation and does not use the
+single-pass incremental fast path for the provisional edited pass.
+
+## Generated-input correctness gap
+
+The retained single-pass path validates recorded inputs before starting an
+edited revision, but the memory-backed validation compares each record with
+the accepted `World`'s own retained file map. The candidate's incoming VFS
+stage snapshot is created later. Restart selection itself considers only root
+buffer positions and bytes.
+
+Generated outputs are published into the accepted VFS generated layer after a
+successful pass. Consequently, the next patch can observe a different
+generated input in its incoming stage while a retained checkpoint still
+contains state derived from the earlier input outcome.
+
+There are three required transition classes:
+
+- `Missing -> Present(hash)`: the accepted pass probed or attempted an absent
+  generated input and later produced it.
+- `Present(old_hash) -> Present(new_hash)`: the accepted pass read one
+  generation and later published another.
+- `Present(hash) -> Missing`: an earlier generated input is no longer present
+  in the accepted generation.
+
+Successful `InputRecord`s represent only the second class's old positive
+binding. Authoritative misses must also be retained as dependencies; otherwise
+the first and third classes cannot be validated.
+
+The sharp failure sequence is:
+
+1. revision N reads or probes a generated input near job start;
+2. revision N publishes a different outcome for that path;
+3. revision N+1 edits root text after the input site;
+4. restart restores a later checkpoint without repeating the input operation;
+5. execution continues with state derived from revision N's incoming bytes,
+   although a cold revision N+1 would use the newly accepted VFS binding.
+
+No accepted output may depend on this sequence being harmless.
+
+## Input dependency contract
+
+Every accepted incremental generation must retain the external input outcomes
+that can affect restored state:
+
+```text
+InputDependency {
+    canonical path,
+    outcome: Present(ContentHash) | Missing,
+    access class: required read | authoritative probe,
+}
+```
+
+Speculative prefetch misses are not semantic dependencies. A failed required
+read that suspends for resources is candidate state, not an accepted
+`Missing` outcome. An authoritative unavailable response or a completed TeX
+existence probe is semantic and must be recorded.
+
+Before selecting or restoring a checkpoint for a new pass, the host integration
+must validate these dependencies against the exact immutable VFS snapshot that
+the candidate's resolvers will read. Validation must finish before any candidate
+engine, VFS stage, effect, or accepted history mutation.
+
+Only inputs actually read or authoritatively observed need validation. A
+generated output that is never consumed is not a reason to discard incremental
+history. Immutable user and resolved-resource bindings remain subject to their
+existing no-rebind contracts; generated inputs are the expected source of
+between-pass deltas.
+
+### Mismatch behavior
+
+A mismatch is not a patch error. It selects a safe `JobStart` execution path
+against the new snapshot. The initial correctness implementation may disable
+paragraph replay for that pass. It must preserve:
+
+- the previously accepted revision and output until the candidate succeeds;
+- resource suspension and retry of the same private candidate;
+- candidate VFS isolation and atomic generated-output publication; and
+- cold-equivalent diagnostics, effects, artifacts, DVI/PDF, and generated
+  files.
+
+The public editor revision remains the root-buffer revision. Internal
+stabilization passes over an unchanged root must not invent observable editor
+revisions merely to satisfy engine bookkeeping.
+
+## Stabilization contract
+
+Interactive display and fixed-point completion have different latency needs
+and should be separate operations.
+
+### Hot path
+
+An editor patch performs one incremental TeX pass and may publish its output as
+provisional display state. Cross-references may reflect the generated inputs
+accepted before that pass. The result reports whether relevant generated
+bindings changed and therefore whether stabilization is pending.
+
+Suggested host-visible state is:
+
+```text
+Provisional { revision, output, stabilization_required }
+Stabilizing { revision, completed_passes }
+Stable { revision, output, passes }
+```
+
+The ordinary `advance` operation remains bounded to one TeX pass. Hosts may
+request stabilization on idle, save, export, or another explicit policy
+boundary.
+
+### Off-hot-path stabilization
+
+Stabilization repeatedly compiles the unchanged root against the latest private
+generated generation until the selected generated-input signature is stable.
+It must reuse the existing project-session rules for:
+
+- private generated generations;
+- deterministic signature comparison;
+- bounded pass and attempt counts;
+- non-adjacent oscillation detection;
+- resource suspension without pass reconstruction; and
+- atomic publication of stable root, output, and generated files.
+
+The first implementation may use fresh cold TeX sessions for stabilization
+passes. The provisional output remains available while stabilization runs. A
+failure leaves the last accepted display and stable state intact and returns a
+typed error; it must not partially publish a later generated generation.
+
+Generated-byte equality after the provisional pass is already sufficient to
+avoid an unnecessary rerun. A label-table parser is neither required nor a
+safe substitute for generated-input equality because aux files may execute
+arbitrary TeX state changes beyond `\r@...` definitions.
+
+## Incremental stabilization passes
+
+After the correctness and orchestration contracts are established,
+stabilization passes may preserve accepted paragraph history while restarting
+engine execution at `JobStart`.
+
+The unchanged root gives every surviving source anchor an identity mapping.
+Executing the changed generated inputs first installs the current macro and
+register state. Existing generic dependency tracking already records control-
+sequence meanings and typed state reads. A paragraph that consumed a changed
+reference meaning therefore misses validation, while unrelated paragraphs may
+mount their retained finished lines. Page building and shipout continue to run
+cold, as required by the paragraph-replay contract.
+
+This optimization requires an explicit external-input-delta candidate path. It
+must not pretend that a later checkpoint is valid, and it must not create a
+fresh session that discards the accepted paragraph history. Fast suffix
+adoption remains possible only if the complete future state genuinely rejoins;
+common changed-label passes should expect paragraph replay rather than a fast
+full-state splice.
+
+Paragraph recording must remain default-disabled until measurements show that
+the combined cost of history construction, stabilization replay, neutral edits,
+retention, and long sessions satisfies the production gate. Rerun-only or
+project-specific enablement may have different economics from universal editor
+enablement and must be measured separately.
+
+## Delivery plan
+
+### Phase 1: pin generated-input correctness
+
+1. Add retained-session regressions for missing-to-present,
+   present-to-changed, and present-to-missing generated inputs.
+2. Cover both required reads and authoritative `\openin`/existence probes.
+3. Compare the accepted incremental diagnostics, effects, artifacts, DVI/PDF,
+   and generated files with a cold pass against the same incoming snapshot.
+4. Record positive and negative input dependencies and validate them against
+   the incoming VFS snapshot before candidate mutation.
+5. On mismatch, execute safely from `JobStart` and accept atomically.
+
+Exit criterion: generated-input changes can reduce reuse but cannot change any
+accepted observable relative to cold execution.
+
+### Phase 2: expose general editor stabilization
+
+1. Extract or generalize the existing project convergence coordinator so it
+   can run TeX-only jobs without bibliography configuration.
+2. Keep the one-pass incremental result available as provisional display.
+3. Add an explicit idle/save stabilization operation and stable/provisional
+   status at the native and WebAssembly boundaries.
+4. Preserve bounded attempts, oscillation detection, resource resumption, and
+   atomic stable publication.
+
+Exit criterion: label/reference and table-of-contents fixtures become stable
+after bounded off-hot-path passes without delaying the provisional result.
+
+### Phase 3: reuse paragraphs during stabilization
+
+1. Add a root-unchanged external-input-delta candidate that starts at
+   `JobStart` while retaining accepted paragraph history.
+2. Reuse generic meaning and state dependencies; do not introduce
+   label-specific semantic caches.
+3. Prove that changed-reference paragraphs miss and unrelated paragraphs hit,
+   with ordinary page building and shipout.
+4. Run the existing cold-equivalence, schedule, provenance, retention, and
+   incremental fuzz tiers.
+
+Exit criterion: representative stabilization passes beat fresh cold reruns in
+balanced optimized measurements without weakening cold equivalence.
+
+### Phase 4: decide activation policy
+
+Measure provisional latency, initial history construction, stabilization
+latency, neutral and contained edits, pagination-changing edits, long-session
+retention, and WebAssembly memory. Enable paragraph recording only for the
+surfaces whose complete workload wins. Record historical measurements in Beads
+or Git history rather than turning one workload's numbers into a permanent
+architecture promise.
+
+## Required verification
+
+The implementation gate must include:
+
+- primitive TeX fixtures that read and rewrite a generated macro file;
+- LaTeX `\label`/`\ref`, `\pageref`, and `\tableofcontents` fixtures;
+- positive and negative probe transitions;
+- unchanged generated bytes, changed unused output, and changed consumed input;
+- cold versus incremental and cold versus stabilized byte identity;
+- candidate failure, cancellation, resource suspension, pass-limit, and
+  oscillation rollback;
+- native and WebAssembly representation parity; and
+- balanced optimized performance measurements for any replay activation.
+
+Use focused `cargo test -q --tests` invocations while implementing, then the
+repository's normal static and correctness gates. Fixture regeneration, when
+needed, goes only through `scripts/regen-fixtures.sh`.
+
+## Non-goals
+
+- promising independent page compilation;
+- inferring convergence from line count or pagination alone;
+- parsing aux files into a label-only semantic model;
+- enabling paragraph replay by default without a complete performance gate;
+- changing TeX's synchronous file-open semantics; or
+- exposing internal stabilization passes as editor revisions.
