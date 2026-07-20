@@ -58,16 +58,6 @@ The project also uses bd (beads) for issue tracking; see below for full instruct
 - `tests/corpus/pdf/`: pinned minimal pdfTeX references, deterministic Umber PDFs, normalized structure, and rendered-page parity fixtures.
 - `docs/`: architecture, phase, and design documents.
 - `scripts/`: local development scripts and versioned git hook templates.
-- `scripts/fetch-conformance-inputs.sh`: shared acquisition for hyphenation,
-  Computer Modern fonts, and hash-pinned TRIP/e-TRIP inputs.
-- `scripts/profile-pdftex-arxiv.sh`: disposable pinned pdfTeX primitive/file-access tracer build and deterministic 100-paper arXiv source profile.
-- `scripts/measure-sharded-manifest.py`: read-only replay of normalized pdfTeX file traces over candidate schema-v2 shard counts.
-- `scripts/publish-texlive-r2.sh`: verified staged TeX Live snapshot publication to an immutable Cloudflare R2 prefix; browser CORS policy lives beside it in `scripts/texlive-r2-cors.json`.
-- `scripts/test-publish-texlive-r2.sh`: hermetic mock-rclone/curl contract test for resumable, manifest-last R2 publication.
-- `scripts/run-umber-guarded.py`: canonical process-group watchdog for Umber and tests that execute Umber; enforces wall-time and aggregate-RSS ceilings, TERM-to-KILL escalation, reap, and survivor checks.
-- `scripts/test-run-umber-guarded.sh`: forced-timeout self-test proving the shared Umber watchdog kills and reaps descendants.
-- `scripts/run-stepwise-arxiv-census.sh`: guarded per-paper stepwise-resource census with separate accepted-engine and optional detached-finalizer outcomes.
-- `scripts/build-texlive-snapshot.sh`: deterministic full TeX Live runtime snapshot staging with package dependency hints and production inventory floors.
 - `third_party/`: ignored reference downloads and external source archives.
 
 ## Development
