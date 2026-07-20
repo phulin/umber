@@ -211,7 +211,6 @@ fn client(concurrency: usize, timeout: Duration, retries: usize) -> FetchClient 
         timeout,
         retries,
     })
-    .expect("fetch client")
 }
 
 #[test]

@@ -3,10 +3,10 @@ use std::fmt;
 use std::io::Read;
 use std::time::Duration;
 
-use reqwest::blocking::Client;
 use sha2::{Digest, Sha256};
 
 use crate::FetchCancellation;
+use crate::fetch::{agent, parse_transport_url};
 
 const MAX_MANIFEST_BYTES: u64 = 32 * 1024 * 1024;
 
@@ -57,31 +57,16 @@ pub fn fetch_manifest_cancellable(
     if cancellation.is_cancelled() {
         return Err(ManifestFetchError::Cancelled);
     }
-    let url = reqwest::Url::parse(url)
-        .map_err(|error| ManifestFetchError::InvalidUrl(error.to_string()))?;
-    if url.scheme() != "https"
-        && !(url.scheme() == "http"
-            && url
-                .host_str()
-                .and_then(|host| host.parse::<std::net::IpAddr>().ok())
-                .is_some_and(|address| address.is_loopback()))
-    {
-        return Err(ManifestFetchError::InvalidUrl(
-            "manifests must use HTTPS (HTTP is allowed only for loopback tests)".into(),
-        ));
-    }
-    let response = Client::builder()
-        .connect_timeout(timeout)
-        .timeout(timeout)
-        .build()
-        .map_err(|error| ManifestFetchError::Transport(error.to_string()))?
+    let url = parse_transport_url(url, "manifests").map_err(ManifestFetchError::InvalidUrl)?;
+    let mut response = agent(timeout)
         .get(url)
-        .send()
+        .call()
         .map_err(|error| ManifestFetchError::Transport(error.to_string()))?;
     if !response.status().is_success() {
         return Err(ManifestFetchError::HttpStatus(response.status().as_u16()));
     }
     if response
+        .body()
         .content_length()
         .is_some_and(|length| length > MAX_MANIFEST_BYTES)
     {
@@ -90,7 +75,8 @@ pub fn fetch_manifest_cancellable(
         });
     }
     let mut bytes = Vec::new();
-    let mut reader = response.take(MAX_MANIFEST_BYTES + 1);
+    let mut body = response.body_mut().as_reader();
+    let mut reader = body.by_ref().take(MAX_MANIFEST_BYTES + 1);
     let mut chunk = [0_u8; 64 * 1024];
     loop {
         if cancellation.is_cancelled() {

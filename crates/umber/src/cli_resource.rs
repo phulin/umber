@@ -831,7 +831,6 @@ impl DistributionResolver {
             max_bytes: crate::SessionLimits::FORMAT_IMAGE_BYTES as u64,
         };
         let object = FetchClient::new(FetchClientConfig::default())
-            .map_err(|error| NativeRunError::Fetch(error.to_string()))?
             .fetch_batch_cancellable(
                 &self.cache,
                 &loaded.root.objects_base_url,
@@ -895,8 +894,7 @@ impl DistributionResolver {
             }
             return Ok(found);
         }
-        let client = FetchClient::new(FetchClientConfig::default())
-            .map_err(|error| NativeRunError::Fetch(error.to_string()))?;
+        let client = FetchClient::new(FetchClientConfig::default());
         client
             .fetch_batch_cancellable(&self.cache, &root.objects_base_url, requests, cancellation)
             .map_err(map_fetch_error)

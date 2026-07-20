@@ -2,12 +2,14 @@ use std::error::Error;
 use std::fmt;
 use std::io::Read;
 use std::num::NonZeroUsize;
+use std::str::FromStr;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use reqwest::blocking::{Client, Response};
 use umber_distribution::ObjectEntry;
+use ureq::http::Uri;
+use ureq::http::uri::PathAndQuery;
 
 use crate::cache::hex_digest;
 use crate::{CacheError, ObjectCache};
@@ -142,17 +144,15 @@ impl Error for BatchFetchError {}
 
 #[derive(Clone, Debug)]
 pub struct FetchClient {
-    client: Client,
+    agent: ureq::Agent,
     config: FetchClientConfig,
 }
 
 impl FetchClient {
-    pub fn new(config: FetchClientConfig) -> Result<Self, reqwest::Error> {
-        let client = Client::builder()
-            .connect_timeout(config.timeout)
-            .timeout(config.timeout)
-            .build()?;
-        Ok(Self { client, config })
+    #[must_use]
+    pub fn new(config: FetchClientConfig) -> Self {
+        let agent = agent(config.timeout);
+        Self { agent, config }
     }
 
     /// Acquires a complete batch in input order. On any failure no bytes are
@@ -178,10 +178,7 @@ impl FetchClient {
         if cancellation.is_cancelled() {
             return Err(cancelled_batch(requests));
         }
-        let base_url = match reqwest::Url::parse(objects_base_url)
-            .map_err(|error| error.to_string())
-            .and_then(validate_transport)
-        {
+        let base_url = match parse_transport_url(objects_base_url, "distribution objects") {
             Ok(url) => url,
             Err(message) => {
                 return Err(BatchFetchError {
@@ -266,7 +263,7 @@ impl FetchClient {
     fn fetch_one(
         &self,
         cache: &ObjectCache,
-        base_url: &reqwest::Url,
+        base_url: &Uri,
         request: &FetchRequest,
         cancellation: &FetchCancellation,
     ) -> Result<FetchedObject, FetchDiagnostic> {
@@ -294,11 +291,8 @@ impl FetchClient {
             Ok(None) => {}
             Err(error) => return Err(cache_diagnostic(request, error)),
         }
-        let url = base_url
-            .join(&request.object.object)
+        let url = join_url(base_url, &request.object.object)
             .map_err(|error| diagnostic(request, FetchFailure::InvalidUrl(error.to_string())))?;
-        let url = validate_transport(url)
-            .map_err(|error| diagnostic(request, FetchFailure::InvalidUrl(error)))?;
         let mut last_failure = None;
         for attempt in 0..=self.config.retries {
             check_cancelled(request, cancellation)?;
@@ -324,20 +318,20 @@ impl FetchClient {
 
     fn download(
         &self,
-        url: &reqwest::Url,
+        url: &Uri,
         request: &FetchRequest,
         cancellation: &FetchCancellation,
     ) -> Result<Vec<u8>, FetchFailure> {
         let response = self
-            .client
+            .agent
             .get(url.clone())
-            .send()
+            .call()
             .map_err(|error| FetchFailure::Transport(error.to_string()))?;
         let status = response.status();
         if !status.is_success() {
             return Err(FetchFailure::HttpStatus(status.as_u16()));
         }
-        if let Some(length) = response.content_length()
+        if let Some(length) = response.body().content_length()
             && (length > request.max_bytes || length > request.object.bytes)
         {
             return Err(FetchFailure::LengthMismatch {
@@ -349,23 +343,52 @@ impl FetchClient {
     }
 }
 
-fn validate_transport(url: reqwest::Url) -> Result<reqwest::Url, String> {
-    if url.scheme() == "https" {
+pub(crate) fn agent(timeout: Duration) -> ureq::Agent {
+    let config = ureq::Agent::config_builder()
+        .timeout_connect(Some(timeout))
+        .timeout_global(Some(timeout))
+        .http_status_as_error(false)
+        .build();
+    ureq::Agent::new_with_config(config)
+}
+
+pub(crate) fn parse_transport_url(value: &str, subject: &str) -> Result<Uri, String> {
+    let url = Uri::from_str(value).map_err(|error| error.to_string())?;
+    let Some(scheme) = url.scheme_str() else {
+        return Err("URL must be absolute".into());
+    };
+    let Some(host) = url.host() else {
+        return Err("URL must include a host".into());
+    };
+    if scheme == "https" {
         return Ok(url);
     }
-    if url.scheme() == "http"
-        && url
-            .host_str()
-            .and_then(|host| host.parse::<std::net::IpAddr>().ok())
+    if scheme == "http"
+        && host
+            .parse::<std::net::IpAddr>()
+            .ok()
             .is_some_and(|address| address.is_loopback())
     {
         return Ok(url);
     }
-    Err("distribution objects must use HTTPS (HTTP is allowed only for loopback tests)".into())
+    Err(format!(
+        "{subject} must use HTTPS (HTTP is allowed only for loopback tests)"
+    ))
+}
+
+fn join_url(base: &Uri, relative: &str) -> Result<Uri, String> {
+    let mut parts = base.clone().into_parts();
+    let path = base.path();
+    let directory_end = path.rfind('/').map_or(0, |index| index + 1);
+    let joined = format!("{}{relative}", &path[..directory_end]);
+    parts.path_and_query = Some(
+        PathAndQuery::from_str(&joined).map_err(|error| format!("invalid object path: {error}"))?,
+    );
+    Uri::from_parts(parts).map_err(|error| error.to_string())
 }
 
 fn read_and_verify(
-    mut response: Response,
+    mut response: ureq::http::Response<ureq::Body>,
     request: &FetchRequest,
     cancellation: &FetchCancellation,
 ) -> Result<Vec<u8>, FetchFailure> {
@@ -373,7 +396,8 @@ fn read_and_verify(
     let mut bytes = Vec::with_capacity(
         usize::try_from(request.object.bytes.min(1024 * 1024)).unwrap_or(1024 * 1024),
     );
-    let mut reader = response.by_ref().take(bound);
+    let mut body = response.body_mut().as_reader();
+    let mut reader = body.by_ref().take(bound);
     let mut chunk = [0_u8; 64 * 1024];
     loop {
         if cancellation.is_cancelled() {
