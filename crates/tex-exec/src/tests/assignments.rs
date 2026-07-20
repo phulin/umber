@@ -478,6 +478,55 @@ fn token_register_runaway_closes_before_outer_macro_and_replays_it() {
 }
 
 #[test]
+fn token_register_output_preserves_nested_expandafter_csname_order() {
+    let mut stores = Universe::new();
+    tex_expand::install_expandable_primitives(&mut stores);
+    install_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(concat!(
+        "\\toksdef\\A=0 ",
+        "\\def\\source{S} ",
+        "\\A={\\expandafter\\global\\expandafter\\let",
+        "\\csname target\\endcsname} ",
+        "\\expandafter\\the\\expandafter\\A",
+        "\\csname source\\endcsname ",
+        "\\ifx\\target\\source\\count0=1\\else\\count0=2\\fi",
+    )));
+
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("nested expandafter preserves token-register output order");
+
+    let target = stores.symbol("target").expect("target cs exists");
+    let source = stores.symbol("source").expect("source cs exists");
+    assert_eq!(
+        stores.meaning(target),
+        stores.meaning(source),
+        "{}",
+        terminal_effect_text(&stores),
+    );
+    assert_eq!(stores.count(0), 1);
+}
+
+#[test]
+fn token_register_output_is_copied_inside_expanded_message_text() {
+    let mut stores = Universe::new();
+    tex_expand::install_expandable_primitives(&mut stores);
+    install_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(concat!(
+        "\\toksdef\\A=0 ",
+        "\\def\\a#1{\\message{\\the\\A}} ",
+        "\\A={\\a X} ",
+        "\\the\\A\\end",
+    )));
+
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("message copies token-register output without re-expansion");
+
+    assert!(terminal_effect_text(&stores).contains("\\a X"));
+}
+
+#[test]
 fn glue_arithmetic_preserves_fil_order_rules() {
     let mut stores = Universe::new();
     install_unexpandable_primitives(&mut stores);

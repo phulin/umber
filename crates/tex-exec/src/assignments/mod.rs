@@ -2326,12 +2326,12 @@ fn execute_prefixed_command(
             }
             UnexpandablePrimitive::Message => {
                 reject_all_prefixes(prefixes)?;
-                diagnostics::execute_message(input, stores, execution, false)?;
+                diagnostics::execute_message(command.traced, input, stores, execution, false)?;
                 Ok(CommandOutcome::continue_only())
             }
             UnexpandablePrimitive::ErrMessage => {
                 reject_all_prefixes(prefixes)?;
-                diagnostics::execute_message(input, stores, execution, true)?;
+                diagnostics::execute_message(command.traced, input, stores, execution, true)?;
                 Ok(CommandOutcome::continue_only())
             }
             UnexpandablePrimitive::ShowLists => {
@@ -2341,7 +2341,7 @@ fn execute_prefixed_command(
             }
             UnexpandablePrimitive::ShowHyphens => {
                 reject_all_prefixes(prefixes)?;
-                diagnostics::execute_showhyphens(input, stores, execution)?;
+                diagnostics::execute_showhyphens(command.traced, input, stores, execution)?;
                 Ok(CommandOutcome::continue_only())
             }
             UnexpandablePrimitive::Uppercase => {

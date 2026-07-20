@@ -2270,6 +2270,73 @@ fn expandafter_expands_second_token_then_replays_saved_token_first() {
 }
 
 #[test]
+fn nested_expandafter_preserves_csname_after_token_register_output() {
+    let mut stores = Universe::new();
+    install_expandable_primitives(&mut stores);
+    let expandafter = stores
+        .symbol("expandafter")
+        .expect("expandafter primitive")
+        .symbol();
+    let csname = stores.symbol("csname").expect("csname primitive").symbol();
+    let endcsname = stores
+        .symbol("endcsname")
+        .expect("endcsname primitive")
+        .symbol();
+    let global = stores.intern("global");
+    stores.set_meaning(
+        global,
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Global),
+    );
+    let let_cs = stores.intern("let");
+    stores.set_meaning(
+        let_cs,
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Let),
+    );
+    let register = stores.intern("A");
+    stores.set_meaning(register, Meaning::ToksRegister(0));
+    let contents = stores.intern_token_list(&[
+        Token::Cs(expandafter),
+        Token::Cs(global.symbol()),
+        Token::Cs(expandafter),
+        Token::Cs(let_cs.symbol()),
+        Token::Cs(csname),
+        char_token('t'),
+        char_token('a'),
+        char_token('r'),
+        char_token('g'),
+        char_token('e'),
+        char_token('t'),
+        Token::Cs(endcsname),
+    ]);
+    stores.set_toks(0, contents);
+    let mut input = InputStack::new(MemoryInput::new(
+        "\\expandafter\\the\\expandafter\\A\\csname source\\endcsname",
+    ));
+    let target = stores.intern("target").symbol();
+    let source = stores.intern("source").symbol();
+
+    let mut actual = Vec::new();
+    while let Some(token) = crate::get_x_token(
+        &mut input,
+        &mut tex_state::ExpansionContext::new(&mut stores),
+    )
+    .expect("nested expandafter expansion")
+    {
+        actual.push(semantic_token(token));
+    }
+
+    assert_eq!(
+        actual,
+        vec![
+            Token::Cs(global.symbol()),
+            Token::Cs(let_cs.symbol()),
+            Token::Cs(target),
+            Token::Cs(source),
+        ]
+    );
+}
+
+#[test]
 fn restricted_expandafter_expands_a_historical_unexpanded_target() {
     let mut stores = Universe::new();
     let macro_cs = stores.intern("m");

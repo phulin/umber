@@ -241,12 +241,13 @@ pub(crate) fn execute_showbox(stores: &mut Universe, index: u16) {
 }
 
 pub(crate) fn execute_message(
+    context: TracedTokenWord,
     input: &mut InputStack,
     stores: &mut Universe,
     execution: &mut crate::ExecutionContext<'_>,
     error: bool,
 ) -> Result<(), ExecError> {
-    let tokens = scan_balanced_expanded_text(input, stores, execution, "\\message")?;
+    let tokens = scan_balanced_expanded_text(context, input, stores, execution)?;
     let text = print_text_with_newlinechar(stores, &message_tokens_text(stores, &tokens));
     if error {
         write_diagnostic(stores, &format!("\n! {text}.\n"));
@@ -379,11 +380,12 @@ fn mode_text(mode: Mode) -> &'static str {
 }
 
 pub(crate) fn execute_showhyphens(
+    context: TracedTokenWord,
     input: &mut InputStack,
     stores: &mut Universe,
     execution: &mut crate::ExecutionContext<'_>,
 ) -> Result<(), ExecError> {
-    let tokens = scan_balanced_expanded_text(input, stores, execution, "\\showhyphens")?;
+    let tokens = scan_balanced_expanded_text(context, input, stores, execution)?;
     let language = u8::try_from(stores.int_param(IntParam::LANGUAGE)).unwrap_or(0);
     let mut words = Vec::new();
     let mut current = String::new();
@@ -602,41 +604,18 @@ fn scan_balanced_raw_text(
 }
 
 fn scan_balanced_expanded_text(
+    context: TracedTokenWord,
     input: &mut InputStack,
     stores: &mut Universe,
     execution: &mut crate::ExecutionContext<'_>,
-    context: &'static str,
 ) -> Result<Vec<Token>, ExecError> {
-    let open =
-        next_non_space_x(input, stores, execution)?.ok_or(ExecError::MissingToken { context })?;
-    if !is_begin_group(open) {
-        return Err(ExecError::MissingToken { context });
-    }
-    execution.with_expanded_token_list(|expansion| {
-        let mut depth = 1usize;
-        let mut tokens = Vec::new();
-        while let Some(token) = get_x_token_with_context(
-            input,
-            &mut tex_state::ExpansionContext::new(stores),
-            expansion,
-        )?
-        .map(tex_expand::semantic_token)
-        {
-            if is_begin_group(token) {
-                depth += 1;
-                tokens.push(token);
-            } else if is_end_group(token) {
-                depth -= 1;
-                if depth == 0 {
-                    return Ok(tokens);
-                }
-                tokens.push(token);
-            } else {
-                tokens.push(token);
-            }
-        }
-        Err(ExecError::MissingToken { context })
-    })
+    let token_list = tex_expand::scan::scan_general_text_expanded_with_driver(
+        input,
+        &mut tex_state::ExpansionContext::new(stores),
+        execution,
+        context,
+    )?;
+    Ok(stores.tokens(token_list).to_vec())
 }
 
 fn next_non_space_x(

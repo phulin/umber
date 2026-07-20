@@ -198,7 +198,7 @@ where
                     cause_origin,
                 );
                 Ok(Dispatch::Push {
-                    replay_kind: ExpansionReplayKind::Unexpanded,
+                    replay_kind: ExpansionReplayKind::TheToksOutput,
                     token_list,
                     origin_list,
                     macro_arguments: MacroArguments::new(),
@@ -632,7 +632,7 @@ where
                 cause_origin,
             );
             Ok(Dispatch::Push {
-                replay_kind: ExpansionReplayKind::Unexpanded,
+                replay_kind: ExpansionReplayKind::TheToksOutput,
                 token_list,
                 origin_list,
                 macro_arguments: MacroArguments::new(),
@@ -844,7 +844,7 @@ where
                 cause_origin,
             );
             Ok(Dispatch::Push {
-                replay_kind: ExpansionReplayKind::Unexpanded,
+                replay_kind: ExpansionReplayKind::TheToksOutput,
                 token_list,
                 origin_list,
                 macro_arguments: MacroArguments::new(),
@@ -907,7 +907,7 @@ where
                     cause_origin,
                 );
                 Ok(Dispatch::Push {
-                    replay_kind: ExpansionReplayKind::Unexpanded,
+                    replay_kind: ExpansionReplayKind::TheToksOutput,
                     token_list,
                     origin_list,
                     macro_arguments: MacroArguments::new(),
