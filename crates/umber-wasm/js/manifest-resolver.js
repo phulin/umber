@@ -163,9 +163,7 @@ export class HttpManifestResolver {
 		const prefetchHints = Object.hasOwn(options ?? {}, "prefetchHints")
 			? options.prefetchHints
 			: [];
-		const probes = Object.hasOwn(options ?? {}, "probes")
-			? options.probes
-			: [];
+		const probes = Object.hasOwn(options ?? {}, "probes") ? options.probes : [];
 		if (!Array.isArray(probes)) {
 			throw new ManifestResolverError(
 				"invalid-options",

@@ -119,7 +119,12 @@ test("drives file and font resources through one client-owned resolver API", asy
 		originalName: "optional.cfg",
 	};
 	const wasm = bindings([
-		{ kind: "need-resources", required: [font], probes: [probe], prefetchHints: [hint] },
+		{
+			kind: "need-resources",
+			required: [font],
+			probes: [probe],
+			prefetchHints: [hint],
+		},
 		{ kind: "complete", output: output() },
 	]);
 	let resolverOptions;
@@ -153,7 +158,12 @@ test("resolves only the blocking probe frontier before retrying WASM", async () 
 		originalName: "first.cfg",
 	};
 	const wasm = bindings([
-		{ kind: "need-resources", required: [], probes: [frontier], prefetchHints: [] },
+		{
+			kind: "need-resources",
+			required: [],
+			probes: [frontier],
+			prefetchHints: [],
+		},
 		{ kind: "complete", output: output() },
 	]);
 	let received;
@@ -189,7 +199,12 @@ test("forwards shared Rust resource wire values without a JavaScript kind table"
 	let forwarded;
 	const wasm = bindings(
 		[
-			{ kind: "need-resources", required: [request], probes: [], prefetchHints: [] },
+			{
+				kind: "need-resources",
+				required: [request],
+				probes: [],
+				prefetchHints: [],
+			},
 			{ kind: "complete", output: output() },
 		],
 		{
@@ -227,7 +242,12 @@ test("selects the in-WASM project session while keeping acquisition generic", as
 	};
 	const compiled = { revision: 1, passes: 3, generatedFiles: [] };
 	const wasm = bindings([
-		{ kind: "need-resources", required: [request], probes: [], prefetchHints: [] },
+		{
+			kind: "need-resources",
+			required: [request],
+			probes: [],
+			prefetchHints: [],
+		},
 		{ kind: "complete", output: compiled },
 	]);
 	let acquired;
