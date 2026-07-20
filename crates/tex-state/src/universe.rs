@@ -4272,6 +4272,7 @@ impl Universe {
     #[must_use]
     pub fn origin_is_inserted_kind(&self, id: OriginId, kind: InsertedOriginKind) -> bool {
         match id.decode() {
+            crate::token::OriginEncoding::NoExpandFallback => kind == InsertedOriginKind::NoExpand,
             crate::token::OriginEncoding::DirectSource(_)
             | crate::token::OriginEncoding::Unknown => false,
             crate::token::OriginEncoding::Arena(_) => match self.stores.origin_if_live(id) {

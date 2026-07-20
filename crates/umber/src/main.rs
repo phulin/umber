@@ -85,6 +85,7 @@ fn run_tex(opts: &RunCliOptions) -> Result<(), CliError> {
         umber::cli_resource::run_for_finalization(&umber::cli_resource::NativeRunOptions {
             input: opts.input.clone(),
             format: opts.format.clone(),
+            initial_prefetch_keys: opts.initial_prefetch_keys.clone(),
             engine: opts.engine,
             html: false,
             distribution: opts.distribution.clone(),
@@ -349,6 +350,7 @@ struct RunCliOptions {
     format: Option<PathBuf>,
     format_out: Option<PathBuf>,
     input_records_out: Option<PathBuf>,
+    initial_prefetch_keys: Vec<String>,
     engine: RunEngine,
     distribution: Option<String>,
     distribution_sha256: Option<String>,
@@ -369,6 +371,7 @@ impl RunCliOptions {
         let mut format = None;
         let mut format_out = None;
         let mut input_records_out = None;
+        let mut initial_prefetch_keys = Vec::new();
         let mut engine = RunEngine::Tex82;
         let mut distribution = None;
         let mut distribution_sha256 = None;
@@ -510,6 +513,9 @@ impl RunCliOptions {
                     };
                     input_records_out = Some(PathBuf::from(path));
                 }
+                "--prefetch-input" => initial_prefetch_keys.push(args.next().ok_or(
+                    CliError::Usage("missing distribution request key for --prefetch-input"),
+                )?),
                 flag if flag.starts_with('-') => {
                     return Err(CliError::Usage(
                         "run accepts one input path with optional --show-fixtures and --dvi <path>",
@@ -576,6 +582,7 @@ impl RunCliOptions {
             format,
             format_out,
             input_records_out,
+            initial_prefetch_keys,
             engine,
             distribution,
             distribution_sha256,

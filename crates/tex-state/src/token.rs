@@ -123,6 +123,7 @@ impl OriginId {
 
     /// Unknown or bootstrap provenance.
     pub const UNKNOWN: Self = Self(0);
+    pub(crate) const NOEXPAND_FALLBACK: Self = Self(u32::MAX);
 
     /// Returns the packed origin id value.
     #[must_use]
@@ -150,7 +151,7 @@ impl OriginId {
 
     #[must_use]
     pub(crate) const fn arena(index: u32) -> Option<Self> {
-        if index <= Self::PAYLOAD_MASK {
+        if index < Self::PAYLOAD_MASK {
             Some(Self(Self::ARENA_TAG | index))
         } else {
             None
@@ -159,7 +160,9 @@ impl OriginId {
 
     #[must_use]
     pub(crate) const fn decode(self) -> OriginEncoding {
-        if self.0 == 0 {
+        if self.0 == Self::NOEXPAND_FALLBACK.0 {
+            OriginEncoding::NoExpandFallback
+        } else if self.0 == 0 {
             OriginEncoding::Unknown
         } else if self.0 & Self::ARENA_TAG == 0 {
             OriginEncoding::DirectSource(crate::source_map::SourcePos::from_origin_payload(
@@ -188,6 +191,7 @@ impl core::fmt::Debug for OriginId {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum OriginEncoding {
     Unknown,
+    NoExpandFallback,
     DirectSource(crate::source_map::SourcePos),
     Arena(u32),
 }

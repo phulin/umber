@@ -673,6 +673,19 @@ fn collect_expanded_text(
     stores: &mut tex_state::ExpansionContext<'_>,
     expansion: &mut ExpansionContext<'_>,
     mode: &mut dyn ExpansionMode,
+    boundary: ExpandedTextBoundary,
+) -> Result<TracedTokenList, ScanToksError> {
+    expansion.begin_expanded_token_list();
+    let result = collect_expanded_text_inner(input, stores, expansion, mode, boundary);
+    expansion.end_expanded_token_list();
+    result
+}
+
+fn collect_expanded_text_inner(
+    input: &mut InputStack,
+    stores: &mut tex_state::ExpansionContext<'_>,
+    expansion: &mut ExpansionContext<'_>,
+    mode: &mut dyn ExpansionMode,
     mut boundary: ExpandedTextBoundary,
 ) -> Result<TracedTokenList, ScanToksError> {
     let mut builder = stores.token_list_builder();

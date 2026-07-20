@@ -1570,10 +1570,15 @@ pub trait ExpansionMode {
         expansion: &mut ExpansionContext<'_>,
     ) -> Result<Dispatch, ExpandError>;
 
+    // Keeping both tokens and both structural-suppression bits explicit makes
+    // the TeX `back_input` ordering contract visible at this mode boundary.
+    #[allow(clippy::too_many_arguments)]
     fn dispatch_raw_token_after(
         &mut self,
         saved: TracedTokenWord,
+        saved_suppresses_expansion: bool,
         target: TracedTokenWord,
+        target_suppresses_expansion: bool,
         input: &mut InputStack,
         stores: &mut tex_state::ExpansionContext<'_>,
         expansion: &mut ExpansionContext<'_>,
@@ -1581,9 +1586,7 @@ pub trait ExpansionMode {
         // `\noexpand` suppresses exactly the token fetched by TeX's raw
         // `get_token`. Historical `\unexpanded` provenance does not: e-TeX
         // limits that suppression to expanded-token-list construction.
-        let suppress =
-            stores.origin_is_inserted_kind(target.origin(), InsertedOriginKind::NoExpand);
-        let dispatched = if suppress {
+        let dispatched = if target_suppresses_expansion {
             Ok(Dispatch::DeliverNoExpand(target))
         } else {
             self.dispatch_raw_token(target, input, stores, expansion)
@@ -1593,7 +1596,11 @@ pub trait ExpansionMode {
         // the saved token is read again. Without this, a brace held by
         // `\expandafter` changes `align_state` twice.
         input.undo_alignment_delivery(classify_alignment_token(stores, saved).0);
-        push_inserted_token(input, stores, saved, InsertedOriginKind::ExpandAfter);
+        if saved_suppresses_expansion {
+            push_noexpand_token(input, stores, saved);
+        } else {
+            push_inserted_token(input, stores, saved, InsertedOriginKind::ExpandAfter);
+        }
         result
     }
 }

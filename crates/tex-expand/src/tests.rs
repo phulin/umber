@@ -2212,7 +2212,9 @@ fn restricted_expandafter_expands_a_historical_unexpanded_target() {
     RestrictedExpansionMode
         .dispatch_raw_token_after(
             saved,
+            false,
             target,
+            false,
             &mut input,
             &mut tex_state::ExpansionContext::new(&mut stores),
             &mut expansion,
@@ -2227,6 +2229,68 @@ fn restricted_expandafter_expands_a_historical_unexpanded_target() {
     assert_eq!(
         get_x_token(&mut input, &mut context).expect("expanded target"),
         Some(char_token('x'))
+    );
+}
+
+#[test]
+fn expandafter_preserves_structural_noexpand_without_provenance() {
+    let mut stores = Universe::new();
+    let macro_cs = stores.intern("m");
+    let empty = stores.intern_token_list(&[]);
+    let body = stores.intern_token_list(&[char_token('x')]);
+    stores.set_macro_meaning(
+        macro_cs,
+        MacroMeaning::new(MeaningFlags::EMPTY, empty, body),
+    );
+    let target = TracedTokenWord::pack(Token::Cs(macro_cs.symbol()), OriginId::UNKNOWN);
+    let saved = TracedTokenWord::pack(char_token('a'), OriginId::UNKNOWN);
+    let mut input = InputStack::new(MemoryInput::new(""));
+    let mut expansion = ExpansionContext::new("texput");
+
+    RestrictedExpansionMode
+        .dispatch_raw_token_after(
+            saved,
+            false,
+            target,
+            true,
+            &mut input,
+            &mut tex_state::ExpansionContext::new(&mut stores),
+            &mut expansion,
+        )
+        .expect("structurally suppressed expandafter target");
+
+    let mut context = tex_state::ExpansionContext::new(&mut stores);
+    assert_eq!(
+        get_x_token(&mut input, &mut context).expect("saved token"),
+        Some(char_token('a'))
+    );
+    assert_eq!(
+        get_x_token(&mut input, &mut context).expect("suppressed target"),
+        Some(Token::Cs(macro_cs.symbol())),
+    );
+
+    let saved = TracedTokenWord::pack(Token::Cs(macro_cs.symbol()), OriginId::UNKNOWN);
+    let target = TracedTokenWord::pack(char_token('b'), OriginId::UNKNOWN);
+    let mut input = InputStack::new(MemoryInput::new(""));
+    RestrictedExpansionMode
+        .dispatch_raw_token_after(
+            saved,
+            true,
+            target,
+            false,
+            &mut input,
+            &mut tex_state::ExpansionContext::new(&mut stores),
+            &mut expansion,
+        )
+        .expect("structurally suppressed saved token");
+    let mut context = tex_state::ExpansionContext::new(&mut stores);
+    assert_eq!(
+        get_x_token(&mut input, &mut context).expect("suppressed saved token"),
+        Some(Token::Cs(macro_cs.symbol())),
+    );
+    assert_eq!(
+        get_x_token(&mut input, &mut context).expect("target token"),
+        Some(char_token('b')),
     );
 }
 
@@ -4493,6 +4557,50 @@ fn ifx_treats_a_noexpanded_expandable_operand_as_relax() {
         empty,
         MacroMeaning::new(MeaningFlags::EMPTY, token_list, token_list),
     );
+
+    assert_eq!(
+        next_expanded_chars(
+            &mut input,
+            &mut tex_state::ExpansionContext::new(&mut stores)
+        ),
+        "y"
+    );
+}
+
+#[test]
+fn expandafter_preserves_noexpand_relax_meaning_for_ifx() {
+    let mut stores = Universe::new();
+    crate::install_expandable_primitives(&mut stores);
+    crate::install_etex_expandable_primitives(&mut stores);
+    let eval = stores.intern("eval");
+    let empty = stores.intern("empty");
+    let expandafter = stores.intern("expandafter");
+    let ifx = stores.intern("ifx");
+    let noexpand = stores.intern("noexpand");
+    let else_cs = stores.intern("else");
+    let fi = stores.intern("fi");
+    let token_list = stores.intern_token_list(&[]);
+    stores.set_macro_meaning(
+        empty,
+        MacroMeaning::new(MeaningFlags::EMPTY, token_list, token_list),
+    );
+    let parameter = stores.intern_token_list(&[Token::param(1)]);
+    let body = stores.intern_token_list(&[
+        Token::Cs(expandafter.symbol()),
+        Token::Cs(ifx.symbol()),
+        Token::Cs(noexpand.symbol()),
+        Token::param(1),
+        Token::param(1),
+        char_token('n'),
+        Token::Cs(else_cs.symbol()),
+        char_token('y'),
+        Token::Cs(fi.symbol()),
+    ]);
+    stores.set_macro_meaning(
+        eval,
+        MacroMeaning::new(MeaningFlags::EMPTY, parameter, body),
+    );
+    let mut input = InputStack::new(MemoryInput::new("\\eval\\empty%"));
 
     assert_eq!(
         next_expanded_chars(

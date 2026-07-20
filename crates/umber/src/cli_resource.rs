@@ -38,6 +38,7 @@ const MAX_INDEX_SHARD_BYTES: u64 = 32 * 1024 * 1024;
 pub struct NativeRunOptions {
     pub input: PathBuf,
     pub format: Option<PathBuf>,
+    pub initial_prefetch_keys: Vec<String>,
     pub engine: EngineMode,
     pub html: bool,
     pub distribution: Option<String>,
@@ -182,6 +183,16 @@ impl NativeCompileSession {
             }
             None => (None, Vec::new()),
         };
+        let mut initial_prefetch_hints = options
+            .initial_prefetch_keys
+            .iter()
+            .map(|key| {
+                DistributionFileRequestKey::from_manifest_key(key)
+                    .map_err(|error| NativeRunError::Selection(error.to_string()))
+                    .and_then(distribution_request)
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        initial_prefetch_hints.extend(format_prefetch_hints);
         let clock = World::real().job_clock();
         let name = options
             .input
@@ -198,8 +209,8 @@ impl NativeCompileSession {
             main_path: format!("/job/{name}"),
             job_name: Some(job_name),
             format,
-            format_prefetch_hints: (!format_prefetch_hints.is_empty())
-                .then(|| format_prefetch_hints.into_boxed_slice()),
+            initial_prefetch_hints: (!initial_prefetch_hints.is_empty())
+                .then(|| initial_prefetch_hints.into_boxed_slice()),
             engine: options.engine,
             clock,
             limits: SessionLimits {
@@ -791,7 +802,7 @@ impl DistributionResolver {
         let request = FetchRequest {
             request_key: format!("format:{name}"),
             object,
-            max_bytes: crate::SessionLimits::default().one_file_bytes as u64,
+            max_bytes: crate::SessionLimits::FORMAT_IMAGE_BYTES as u64,
         };
         let object = FetchClient::new(FetchClientConfig::default())
             .map_err(|error| NativeRunError::Fetch(error.to_string()))?

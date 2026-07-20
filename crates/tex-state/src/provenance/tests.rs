@@ -241,6 +241,47 @@ fn provenance_capacity_index_guards_reserve_overflow_values() {
 }
 
 #[test]
+fn provenance_soft_budget_degrades_excess_history_to_unknown_and_empty() {
+    let mut store = ProvenanceStore::new();
+    store.record_limit = 1;
+    store.list_span_limit = 2;
+    store.list_entry_limit = 2;
+
+    let retained = store.allocate(OriginRecord::Synthetic(SyntheticOrigin::new(
+        SyntheticOriginKind::Engine,
+    )));
+    let degraded = store.allocate(OriginRecord::Synthetic(SyntheticOrigin::new(
+        SyntheticOriginKind::Primitive,
+    )));
+    assert_ne!(retained, OriginId::UNKNOWN);
+    assert_eq!(degraded, OriginId::UNKNOWN);
+    let noexpand = store.allocate(OriginRecord::Inserted(InsertedOrigin::new(
+        InsertedOriginKind::NoExpand,
+        Token::Cs(crate::interner::Symbol::new(1)),
+        OriginId::UNKNOWN,
+    )));
+    assert_eq!(noexpand, OriginId::NOEXPAND_FALLBACK);
+    assert_eq!(
+        noexpand.decode(),
+        crate::token::OriginEncoding::NoExpandFallback
+    );
+    assert!(store.contains_origin(noexpand));
+    assert_eq!(store.stats().origin_records(), 1);
+
+    let retained_list = store.allocate_list(&[retained, OriginId::UNKNOWN]);
+    let degraded_for_entries = store.allocate_list(&[retained]);
+    assert_ne!(retained_list, OriginListId::EMPTY);
+    assert_eq!(degraded_for_entries, OriginListId::EMPTY);
+
+    let mut span_limited = ProvenanceStore::new();
+    span_limited.list_span_limit = 1;
+    assert_eq!(
+        span_limited.allocate_repeated_list(OriginId::UNKNOWN, 1),
+        OriginListId::EMPTY
+    );
+}
+
+#[test]
 fn rollback_mark_truncates_records_and_lists() {
     let mut store = ProvenanceStore::new();
     let kept = store.allocate(OriginRecord::Synthetic(SyntheticOrigin::new(

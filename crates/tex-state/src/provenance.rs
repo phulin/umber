@@ -155,6 +155,7 @@ impl ParagraphOriginResolver {
                     | OriginRecord::Synthetic(_) => return None,
                 },
                 crate::token::OriginEncoding::Unknown
+                | crate::token::OriginEncoding::NoExpandFallback
                 | crate::token::OriginEncoding::DirectSource(_) => return None,
             };
         }
@@ -833,6 +834,10 @@ impl OriginKeyRuns {
     }
 }
 
+const DEFAULT_ORIGIN_RECORD_LIMIT: usize = 1_048_576;
+const DEFAULT_ORIGIN_LIST_SPAN_LIMIT: usize = 262_144;
+const DEFAULT_ORIGIN_LIST_ENTRY_LIMIT: usize = 2_097_152;
+
 /// Append-only origin-record and origin-list arenas.
 #[derive(Debug)]
 pub(crate) struct ProvenanceStore {
@@ -841,6 +846,9 @@ pub(crate) struct ProvenanceStore {
     origins: Vec<OriginId>,
     list_identities: IdentityAllocator,
     record_keys: OriginKeyRuns,
+    record_limit: usize,
+    list_span_limit: usize,
+    list_entry_limit: usize,
 }
 
 impl Clone for ProvenanceStore {
@@ -851,6 +859,9 @@ impl Clone for ProvenanceStore {
             origins: self.origins.clone(),
             list_identities: self.list_identities.fork(),
             record_keys: self.record_keys.clone(),
+            record_limit: self.record_limit,
+            list_span_limit: self.list_span_limit,
+            list_entry_limit: self.list_entry_limit,
         }
     }
 }
@@ -865,6 +876,9 @@ impl ProvenanceStore {
             origins: Vec::new(),
             list_identities: IdentityAllocator::new(1),
             record_keys: OriginKeyRuns::default(),
+            record_limit: DEFAULT_ORIGIN_RECORD_LIMIT,
+            list_span_limit: DEFAULT_ORIGIN_LIST_SPAN_LIMIT,
+            list_entry_limit: DEFAULT_ORIGIN_LIST_ENTRY_LIMIT,
         }
     }
 
@@ -882,6 +896,16 @@ impl ProvenanceStore {
 
     /// Allocates a new origin record, saturating capacity overflow to unknown.
     pub(crate) fn allocate(&mut self, record: OriginRecord) -> OriginId {
+        if self.records.len() >= self.record_limit {
+            return match record {
+                OriginRecord::Inserted(inserted)
+                    if inserted.kind() == InsertedOriginKind::NoExpand =>
+                {
+                    OriginId::NOEXPAND_FALLBACK
+                }
+                _ => OriginId::UNKNOWN,
+            };
+        }
         let Some(key) = next_packed_arena_origin() else {
             return OriginId::UNKNOWN;
         };
@@ -927,6 +951,9 @@ impl ProvenanceStore {
                 | OriginRecord::Synthetic(_) => {}
             }
             imported.push((key, record));
+            if self.records.len() >= self.record_limit {
+                break;
+            }
         }
         imported.sort_unstable_by_key(|(key, _)| *key);
         for (key, record) in imported {
@@ -941,9 +968,18 @@ impl ProvenanceStore {
         self.records.snapshot()
     }
 
+    fn list_budget_allows(&self, len: usize) -> bool {
+        self.spans.len() < self.list_span_limit
+            && self
+                .origins
+                .len()
+                .checked_add(len)
+                .is_some_and(|end| end <= self.list_entry_limit)
+    }
+
     /// Allocates an origin-list span, saturating capacity overflow to empty.
     pub(crate) fn allocate_list(&mut self, origins: &[OriginId]) -> OriginListId {
-        if origins.is_empty() {
+        if origins.is_empty() || !self.list_budget_allows(origins.len()) {
             return OriginListId::EMPTY;
         }
         let (Some(start), Some(len), Some(_raw)) = (
@@ -967,7 +1003,7 @@ impl ProvenanceStore {
 
     /// Allocates the origin projection of an already-validated traced slice.
     pub(crate) fn allocate_traced_list(&mut self, traced: &[TracedTokenWord]) -> OriginListId {
-        if traced.is_empty() {
+        if traced.is_empty() || !self.list_budget_allows(traced.len()) {
             return OriginListId::EMPTY;
         }
         let (Some(start), Some(len), Some(_raw)) = (
@@ -993,7 +1029,7 @@ impl ProvenanceStore {
 
     /// Allocates an origin-list span by repeating one live origin.
     pub(crate) fn allocate_repeated_list(&mut self, origin: OriginId, len: usize) -> OriginListId {
-        if len == 0 {
+        if len == 0 || !self.list_budget_allows(len) {
             return OriginListId::EMPTY;
         }
         let (Some(start), Some(len), Some(_raw)) = (
@@ -1060,6 +1096,7 @@ impl ProvenanceStore {
     pub(crate) fn contains_origin(&self, id: OriginId) -> bool {
         match id.decode() {
             crate::token::OriginEncoding::Unknown => true,
+            crate::token::OriginEncoding::NoExpandFallback => true,
             crate::token::OriginEncoding::Arena(index) => self.record_keys.slot(index).is_some(),
             crate::token::OriginEncoding::DirectSource(_) => false,
         }

@@ -49,16 +49,21 @@ fn origin_encoding_has_exact_direct_and_arena_boundaries() {
     );
 
     let first_arena = OriginId::arena(0).expect("first arena index must pack");
-    let last_arena = OriginId::arena(0x7fff_ffff).expect("last arena index must pack");
+    let last_arena = OriginId::arena(0x7fff_fffe).expect("last arena index must pack");
     assert_eq!(first_arena.raw(), 0x8000_0000);
-    assert_eq!(last_arena.raw(), u32::MAX);
+    assert_eq!(last_arena.raw(), 0xffff_fffe);
+    assert!(OriginId::arena(0x7fff_ffff).is_none());
     assert!(OriginId::arena(0x8000_0000).is_none());
     assert_eq!(first_arena.decode(), super::OriginEncoding::Arena(0));
     assert_eq!(
         last_arena.decode(),
-        super::OriginEncoding::Arena(0x7fff_ffff)
+        super::OriginEncoding::Arena(0x7fff_fffe)
     );
     assert_eq!(OriginId::UNKNOWN.decode(), super::OriginEncoding::Unknown);
+    assert_eq!(
+        OriginId::NOEXPAND_FALLBACK.decode(),
+        super::OriginEncoding::NoExpandFallback
+    );
 }
 
 #[test]

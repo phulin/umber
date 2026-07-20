@@ -1,6 +1,6 @@
 use super::{
-    MacroScanDiagnostic, ScanToksError, scan_toks, scan_toks_expanded,
-    scan_toks_expanded_with_driver,
+    MacroScanDiagnostic, ScanToksError, scan_general_text_expanded_with_expanded_open, scan_toks,
+    scan_toks_expanded, scan_toks_expanded_with_driver,
 };
 use tex_lex::{InputStack, MemoryInput, TokenListReplayKind};
 use tex_state::Universe;
@@ -39,6 +39,65 @@ fn install_passthrough_macro(stores: &mut Universe, name: &str) {
     stores.set_macro_meaning(
         symbol,
         MacroMeaning::new(MeaningFlags::EMPTY, parameter, replacement),
+    );
+}
+
+#[test]
+fn expanded_preserves_group_pairs_around_nested_unexpanded_text() {
+    let mut stores = Universe::new();
+    crate::install_etex_expandable_primitives(&mut stores);
+    crate::install_latex_expandable_primitives(&mut stores);
+    let target = stores.intern("target");
+    let context = TracedTokenWord::pack(Token::Cs(target.symbol()), OriginId::UNKNOWN);
+    let mut input = InputStack::new(MemoryInput::new(
+        "{\\unexpanded{\\target}{\\unexpanded{X}{Y}}}",
+    ));
+
+    let expanded = scan_general_text_expanded_with_expanded_open(
+        &mut input,
+        &mut tex_state::ExpansionContext::new(&mut stores),
+        &mut ExpansionContext::new("texput"),
+        &mut crate::DriverExpansionMode,
+        context,
+    )
+    .expect("expanded text should preserve nested grouping");
+
+    assert_eq!(
+        stores.tokens(expanded.token_list()),
+        &[
+            Token::Cs(target.symbol()),
+            char_token('{', Catcode::BeginGroup),
+            char_token('X', Catcode::Letter),
+            char_token('{', Catcode::BeginGroup),
+            char_token('Y', Catcode::Letter),
+            char_token('}', Catcode::EndGroup),
+            char_token('}', Catcode::EndGroup),
+        ]
+    );
+}
+
+#[test]
+fn expanded_preserves_unexpanded_replay_expanded_once_by_expandafter() {
+    let mut stores = Universe::new();
+    crate::install_expandable_primitives(&mut stores);
+    crate::install_etex_expandable_primitives(&mut stores);
+    crate::install_latex_expandable_primitives(&mut stores);
+    let target = stores.intern("target");
+    let context = TracedTokenWord::pack(Token::Cs(target.symbol()), OriginId::UNKNOWN);
+    let mut input = InputStack::new(MemoryInput::new("{\\expandafter A\\unexpanded{\\target}}"));
+
+    let expanded = scan_general_text_expanded_with_expanded_open(
+        &mut input,
+        &mut tex_state::ExpansionContext::new(&mut stores),
+        &mut ExpansionContext::new("texput"),
+        &mut crate::DriverExpansionMode,
+        context,
+    )
+    .expect("expandafter should preserve unexpanded replay during collection");
+
+    assert_eq!(
+        stores.tokens(expanded.token_list()),
+        &[char_token('A', Catcode::Letter), Token::Cs(target.symbol()),]
     );
 }
 

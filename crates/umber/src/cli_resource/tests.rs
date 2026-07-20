@@ -15,6 +15,7 @@ fn native_session_allows_the_hard_bounded_resource_attempt_count() {
     let options = NativeRunOptions {
         input,
         format: None,
+        initial_prefetch_keys: Vec::new(),
         engine: EngineMode::Tex82,
         html: false,
         distribution: None,
@@ -62,6 +63,7 @@ fn retained_revision_does_not_refetch_resolved_distribution_file() {
     let options = NativeRunOptions {
         input,
         format: None,
+        initial_prefetch_keys: Vec::new(),
         engine: EngineMode::Tex82,
         html: false,
         distribution: Some(distribution.to_string_lossy().into_owned()),
@@ -100,6 +102,7 @@ fn cancelled_pending_revision_can_be_superseded() {
     let options = NativeRunOptions {
         input,
         format: None,
+        initial_prefetch_keys: Vec::new(),
         engine: EngineMode::Tex82,
         html: false,
         distribution: None,
@@ -459,6 +462,7 @@ fn format_closure_batch_is_installed_for_an_exactly_two_attempt_retry() {
             &NativeRunOptions {
                 input,
                 format: Some(PathBuf::from("probe.fmt")),
+                initial_prefetch_keys: Vec::new(),
                 engine,
                 html: false,
                 distribution: Some(distribution.to_string_lossy().into_owned()),

@@ -69,6 +69,7 @@ pub(super) fn run(mut args: impl Iterator<Item = String>) -> Result<(), WatchErr
     let options = NativeRunOptions {
         input: input.clone(),
         format,
+        initial_prefetch_keys: Vec::new(),
         engine: EngineMode::Tex82,
         html: false,
         distribution,

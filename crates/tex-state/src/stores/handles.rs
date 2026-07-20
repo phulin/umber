@@ -270,6 +270,7 @@ impl Stores {
                     .is_some()
                     || self.source_fragments.contains_position(position)
             }
+            crate::token::OriginEncoding::NoExpandFallback => true,
             crate::token::OriginEncoding::Unknown | crate::token::OriginEncoding::Arena(_) => {
                 self.provenance.contains_origin(id)
             }

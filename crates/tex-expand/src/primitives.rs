@@ -18,19 +18,38 @@ pub(crate) fn expand_after(
 ) -> Result<(), ExpandError>
 where
 {
-    let Some(saved) = crate::get_token_with_context(input, stores, expansion)? else {
+    let Some(saved) = crate::next_prepared_expansion_token(input, stores, expansion)? else {
         return Err(ExpandError::MissingTokenAfterPrimitive {
             opcode: ExpandableOpcode::ExpandAfter,
             context,
         });
     };
-    let Some(target) = crate::get_token_with_context(input, stores, expansion)? else {
+    let Some(target) = crate::next_prepared_expansion_token(input, stores, expansion)? else {
         return Err(ExpandError::MissingTokenAfterPrimitive {
             opcode: ExpandableOpcode::ExpandAfter,
             context,
         });
     };
-    mode.dispatch_raw_token_after(saved, target, input, stores, expansion)
+    {
+        // TeX.web §366 expands the second token exactly once before putting
+        // the saved first token back. The e-TeX manual §3.1 additionally
+        // requires `\unexpanded` replay to remain literal while constructing a
+        // complete expanded token list, but not during ordinary expansion.
+        let preserves_unexpanded = !expansion.expands_unexpanded_replay();
+        let saved_suppresses_expansion = saved.suppress_expansion()
+            && (preserves_unexpanded || !saved.expansion_token().expand_in_ordinary_context());
+        let target_suppresses_expansion = target.suppress_expansion()
+            && (preserves_unexpanded || !target.expansion_token().expand_in_ordinary_context());
+        mode.dispatch_raw_token_after(
+            saved.traced_token(),
+            saved_suppresses_expansion,
+            target.traced_token(),
+            target_suppresses_expansion,
+            input,
+            stores,
+            expansion,
+        )
+    }
 }
 
 pub(crate) fn scan_csname(

@@ -842,10 +842,7 @@ fn formatted_session_starts_with_fresh_clock_everyjob_and_checkpoint_state() {
 }
 
 #[test]
-fn formatted_session_installs_positive_prefetch_responses_for_the_next_attempt() {
-    let mut stores = Universe::with_world(World::memory());
-    prepare_run_stores(&mut stores);
-    let format = stores.dump_format().expect("format");
+fn source_session_installs_positive_prefetch_responses_for_the_next_attempt() {
     let request = |name: &str| {
         ResourceRequest::File(FileRequest::new(
             FileRequestKey::new(FileKind::TexInput, name).expect("request key"),
@@ -853,8 +850,7 @@ fn formatted_session_installs_positive_prefetch_responses_for_the_next_attempt()
         ))
     };
     let mut formatted = VirtualCompileSession::new(SessionOptions {
-        format: Some(format),
-        format_prefetch_hints: Some(
+        initial_prefetch_hints: Some(
             vec![
                 request("remote.tex"),
                 request("required.tex"),
@@ -941,6 +937,19 @@ fn formatted_session_reports_unsupported_schema_version() {
         message.contains("unsupported Umber format version 9"),
         "{message}"
     );
+}
+
+#[test]
+fn format_images_have_a_separate_size_ceiling_from_vfs_files() {
+    assert!(check_format_image_bytes(SessionLimits::default().one_file_bytes + 1).is_ok());
+    assert!(matches!(
+        check_format_image_bytes(SessionLimits::FORMAT_IMAGE_BYTES + 1),
+        Err(CompileError::LimitExceeded {
+            resource: "format image bytes",
+            limit: SessionLimits::FORMAT_IMAGE_BYTES,
+            attempted,
+        }) if attempted == SessionLimits::FORMAT_IMAGE_BYTES + 1
+    ));
 }
 
 #[test]

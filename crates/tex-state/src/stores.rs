@@ -1040,6 +1040,7 @@ impl Stores {
             crate::token::OriginEncoding::DirectSource(position) => {
                 OriginRecord::SourceSpan(self.direct_source_span(position))
             }
+            crate::token::OriginEncoding::NoExpandFallback => OriginRecord::UnknownBootstrap,
             crate::token::OriginEncoding::Unknown | crate::token::OriginEncoding::Arena(_) => {
                 self.provenance.get(id)
             }
@@ -1054,6 +1055,7 @@ impl Stores {
                 .source_map
                 .region_for_backed_position(position)
                 .map(|_| OriginRecord::SourceSpan(self.direct_source_span(position))),
+            crate::token::OriginEncoding::NoExpandFallback => Some(OriginRecord::UnknownBootstrap),
             crate::token::OriginEncoding::Unknown | crate::token::OriginEncoding::Arena(_) => self
                 .provenance
                 .contains_origin(id)

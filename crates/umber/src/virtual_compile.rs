@@ -63,6 +63,13 @@ pub struct SessionLimits {
 }
 
 impl SessionLimits {
+    /// Maximum serialized format-image size accepted by every frontend.
+    ///
+    /// Format images are engine snapshots, not VFS files: a production LaTeX
+    /// image can legitimately exceed the per-file resource ceiling while it
+    /// remains bounded by the same ceiling as generated engine output.
+    pub const FORMAT_IMAGE_BYTES: usize = 256 * 1024 * 1024;
+
     pub const HARD_MAX: Self = Self {
         attempts: 128,
         user_files: VfsLimits::HARD_MAX.user_files,
@@ -132,9 +139,9 @@ pub struct SessionOptions {
     pub main_path: String,
     pub job_name: Option<String>,
     pub format: Option<Vec<u8>>,
-    /// Validated, transport-only requests likely to be needed by this format.
+    /// Validated, transport-only requests likely to be needed by the compile.
     /// They are emitted once, with the first required resource batch.
-    pub format_prefetch_hints: Option<Box<[ResourceRequest]>>,
+    pub initial_prefetch_hints: Option<Box<[ResourceRequest]>>,
     pub engine: EngineMode,
     pub clock: JobClock,
     pub limits: SessionLimits,
@@ -150,7 +157,7 @@ impl Default for SessionOptions {
             main_path: "/job/main.tex".to_owned(),
             job_name: None,
             format: None,
-            format_prefetch_hints: None,
+            initial_prefetch_hints: None,
             engine: EngineMode::Tex82,
             clock: JobClock::DEFAULT,
             limits: SessionLimits::default(),
@@ -442,7 +449,7 @@ pub struct VirtualCompileSession {
     main_path: VirtualPath,
     job_name: String,
     format: Option<Vec<u8>>,
-    format_prefetch_hints: Option<Box<[ResourceRequest]>>,
+    initial_prefetch_hints: Option<Box<[ResourceRequest]>>,
     engine: EngineMode,
     clock: JobClock,
     limits: SessionLimits,
@@ -540,10 +547,7 @@ impl VirtualCompileSession {
             }
         })?;
         if let Some(format) = &options.format {
-            limits
-                .vfs_limits()
-                .check(VfsLimitKind::OneFileBytes, format.len())
-                .map_err(map_vfs_limit)?;
+            check_format_image_bytes(format.len())?;
         }
         let job_name = options.job_name.unwrap_or_else(|| {
             Path::new(main_path.as_str())
@@ -552,26 +556,22 @@ impl VirtualCompileSession {
                 .unwrap_or("texput")
                 .to_owned()
         });
-        let mut format_prefetch_hints = if options.format.is_some() {
-            options
-                .format_prefetch_hints
-                .map_or_else(Vec::new, |hints| hints.into_vec())
-        } else {
-            Vec::new()
-        };
-        format_prefetch_hints.sort_by_key(resource_sort_key);
-        format_prefetch_hints.dedup();
+        let mut initial_prefetch_hints = options
+            .initial_prefetch_hints
+            .map_or_else(Vec::new, |hints| hints.into_vec());
+        initial_prefetch_hints.sort_by_key(resource_sort_key);
+        initial_prefetch_hints.dedup();
         check_limit(
-            "format prefetch hints",
-            format_prefetch_hints.len(),
+            "initial prefetch hints",
+            initial_prefetch_hints.len(),
             limits.resolved_files,
         )?;
         Ok(Self {
             main_path,
             job_name,
             format: options.format,
-            format_prefetch_hints: (!format_prefetch_hints.is_empty())
-                .then(|| format_prefetch_hints.into_boxed_slice()),
+            initial_prefetch_hints: (!initial_prefetch_hints.is_empty())
+                .then(|| initial_prefetch_hints.into_boxed_slice()),
             engine: options.engine,
             clock: options.clock,
             limits,
@@ -1173,7 +1173,7 @@ impl VirtualCompileSession {
                     })
                     .collect(),
             );
-            let prefetch_hints = if let Some(hints) = self.format_prefetch_hints.take() {
+            let prefetch_hints = if let Some(hints) = self.initial_prefetch_hints.take() {
                 let required_keys = required
                     .iter()
                     .chain(&probes)
@@ -1533,6 +1533,14 @@ fn check_limit(resource: &'static str, attempted: usize, limit: usize) -> Result
         });
     }
     Ok(())
+}
+
+fn check_format_image_bytes(attempted: usize) -> Result<(), CompileError> {
+    check_limit(
+        "format image bytes",
+        attempted,
+        SessionLimits::FORMAT_IMAGE_BYTES,
+    )
 }
 
 fn memory_run_output_bytes(output: &MemoryRunOutput) -> usize {

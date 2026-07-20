@@ -165,7 +165,7 @@ while read -r kind relative expected_bytes expected_hash extra; do
     printf 'tex:%s\n' "$request_name" >> "$closure_index"
   fi
 done < "$lock_file"
-LC_ALL=C sort -k1,1 "$expected_index" | awk -F '\t' '{ print $2 "\t" $1 }' > "$expected_receipt"
+LC_ALL=C sort -k1,1 "$expected_index" | awk -F '\t' '{ print $2 "\t" $1 }' | LC_ALL=C sort > "$expected_receipt"
 LC_ALL=C sort -u "$closure_index" -o "$closure_index"
 
 prefetch_source_closure() {
@@ -186,9 +186,14 @@ prefetch_source_closure() {
     "$(wc -l < "$source_index" | tr -d ' ')" >&2
 }
 
-texinputs="${repo_root}/tests/latex:${texmf_dist}/tex/latex/base:${texmf_dist}/tex/latex/l3kernel:${texmf_dist}/tex/latex/l3backend:${texmf_dist}/tex/generic/unicode-data:${texmf_dist}/tex/generic/babel:${texmf_dist}/tex/generic/hyphen:${texmf_dist}/tex/generic/pdftex"
+texinputs="${repo_root}/tests/latex:${texmf_dist}/tex/latex/base:${texmf_dist}/tex/latex/l3kernel:${texmf_dist}/tex/latex/l3backend:${texmf_dist}/tex/latex/atveryend:${texmf_dist}/tex/latex-dev/firstaid:${texmf_dist}/tex/generic/unicode-data:${texmf_dist}/tex/generic/atbegshi:${texmf_dist}/tex/generic/babel:${texmf_dist}/tex/generic/hyphen:${texmf_dist}/tex/generic/knuth-lib:${texmf_dist}/tex/generic/pdftex"
 texfonts="${texmf_dist}/fonts/tfm/public/cm:${texmf_dist}/fonts/tfm/public/latex-fonts:${texmf_dist}/fonts/tfm/jknappen/ec"
 latex_ltx="${texmf_dist}/tex/latex/base/latex.ltx"
+
+prefetch_args=()
+while IFS= read -r request_key; do
+  prefetch_args+=(--prefetch-input "$request_key")
+done < "$closure_index"
 
 cd "$repo_root"
 cargo build --release -p umber
@@ -208,13 +213,14 @@ run_engine() {
 build_one() {
   local directory="$1"
   mkdir -p "$directory"
-  run_engine "$directory" "$format_input" --format-out "${format_name}.fmt" \
+  run_engine "$directory" "$format_input" "${prefetch_args[@]}" --format-out "${format_name}.fmt" \
     --input-records-out build.inputs > "${directory}/build.stdout" 2> "${directory}/build.stderr"
   if grep -q '^! ' "${directory}/build.stdout"; then
     grep -m1 '^! ' "${directory}/build.stdout" >&2
     fail "LaTeX format build emitted a diagnostic"
   fi
-  cmp "$expected_receipt" "${directory}/build.inputs" || \
+  LC_ALL=C sort "${directory}/build.inputs" > "${directory}/build.inputs.sorted"
+  cmp "$expected_receipt" "${directory}/build.inputs.sorted" || \
     fail "LaTeX format build opened inputs outside the locked closure"
 }
 
@@ -267,6 +273,22 @@ if [[ "$generated" -eq 1 ]]; then
   cp "$fixture" "${source_dir}/representative.tex"
   cp "$fixture" "${loaded_dir}/representative.tex"
   cp "$format_file" "${loaded_dir}/${format_name}.fmt"
+  : > "${source_dir}/document.aux"
+  : > "${loaded_dir}/document.aux"
+  representative_prefetch_args=(
+    "${prefetch_args[@]}"
+    --prefetch-input tex:article.cls
+    --prefetch-input tex:size10.clo
+    --prefetch-input tex:l3backend-dvips.def
+    --prefetch-input tex:tex/latex-dev/l3backend/l3backend-luatex.def
+    --prefetch-input tex:tex/latex-dev/l3backend/l3backend-xetex.def
+    --prefetch-input tfm:cmbx10.tfm
+    --prefetch-input tfm:cmbx12.tfm
+    --prefetch-input tfm:cmr12.tfm
+    --prefetch-input tfm:cmti10.tfm
+    --prefetch-input tfm:tcrm1000.tfm
+  )
+
   awk '
     $0 == sprintf("%c%s", 92, "dump") {
       print sprintf("%c%s", 92, "input representative")
@@ -282,9 +304,9 @@ if [[ "$generated" -eq 1 ]]; then
   printf '\input representative\n' > "${loaded_dir}/document.tex"
 
   output_args=("--${output_extension}" "document.${output_extension}")
-  run_engine "$source_dir" document.tex "${output_args[@]}" \
+  run_engine "$source_dir" document.tex "${representative_prefetch_args[@]}" "${output_args[@]}" \
     > "${source_dir}/document.stdout" 2> "${source_dir}/document.stderr"
-  run_engine "$loaded_dir" document.tex --format "${format_name}.fmt" "${output_args[@]}" \
+  run_engine "$loaded_dir" document.tex --format "${format_name}.fmt" "${representative_prefetch_args[@]}" "${output_args[@]}" \
     > "${loaded_dir}/document.stdout" 2> "${loaded_dir}/document.stderr"
   for directory in "$source_dir" "$loaded_dir"; do
     if grep -q '^! ' "${directory}/document.stdout"; then
