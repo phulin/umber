@@ -52,7 +52,7 @@ On a hit, `restore` revalidates the entry envelope, SHA-256, and full Universe
 decode, then atomically materializes the requested `.fmt` output. The builder
 does not require or open the TeX Live source tree on this path. A mismatch or
 corrupt entry is a diagnosed miss. On a miss, the builder verifies every file
-in the 57-key LaTeX or 60-key pdfLaTeX closure before source initialization,
+in the 61-key LaTeX or 64-key pdfLaTeX closure before source initialization,
 performs two clean byte-identical generations and the representative
 source-versus-loaded equivalence gate, then publishes the validated image with
 the cache store's no-clobber atomic protocol. The ordinary output format and
@@ -71,9 +71,10 @@ pinned builder, so they share cache selection and deterministic publication.
 Runtime distribution acquisition remains a separate object-cache workflow: a
 published schema-3 format closure is still offered as prefetch hints and is
 installed with the required input in the established two-attempt compile path.
-The cache does not mask the live-bootstrap semantic blocker tracked by
-`umber2-pbxv.5.4.1`: misses, `--force`, and `--check` all exercise source
-initialization and report that failure normally.
+The cache does not mask bootstrap failures: misses, `--force`, and `--check`
+all exercise source initialization and report any failure normally. Format
+generation uses the accepted bounded 500,000,000 cumulative-fuel budget for
+the pinned TeX Live 2026-03-01 LaTeX and pdfLaTeX tiers.
 
 ## Native entry and validation
 
@@ -119,9 +120,9 @@ object cache or starting acquisition. These metadata checks provide an early,
 deterministic incompatible-format diagnostic; they do not replace transport
 digest validation or the authoritative Rust `Universe` decode after acquisition.
 
-## Schema-10 verification receipt (2026-07-18)
+## Schema-10 verification receipt (2026-07-20)
 
-The closure-cache acceptance run used the `94232834` implementation base,
+The closure-cache acceptance run used the `81274a0f` implementation base,
 Rust 1.93.0, and an arm64 Darwin host. The native unit and CLI suites exercised
 cold miss, validated hit, mismatched identity, byte corruption, truncation,
 decoder-invalid content, interrupted temporary files, schema transition, and
@@ -133,11 +134,12 @@ entry.
 
 Available format tiers were checked as follows:
 
-| tier             | repeated format result                                                                                                                   | source-versus-loaded result                                                                                                                                                                                                               |
-| ---------------- | ---------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Plain / TeX82    | committed 588,488-byte schema-10 image reproduced twice as `cc29ddf3da9ccf6109646c340bbcbdf97c079a1fb08ff85567cb482da18d3d12`            | exact DVI and the `--check` metadata gate passed against pinned TeX Live 2025 inputs                                                                                                                                                      |
-| e-TeX            | a minimal fixed-clock 38,304-byte schema-10 image reproduced twice as `27934664748ab823ec7a9dcb973d7c9d66f8c99132e41d14a2af62bcf7a2e31e` | exact DVI passed for fresh `--etex` state versus the loaded image                                                                                                                                                                         |
-| LaTeX / pdfLaTeX | cache mechanism, engine-separated identity, closure sizes, and CLI integration passed hermetically                                       | live regeneration was unavailable because the exact TeX Live 2026 tree was absent and the independent accepted-before-`\\dump` semantic failure remains `umber2-pbxv.5.4.1`; stale schema-9 local artifacts were deliberately not counted |
+| tier          | repeated format result                                                                                                                                                         | source-versus-loaded result                                                             |
+| ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------- |
+| Plain / TeX82 | committed 588,488-byte schema-10 image reproduced twice as `cc29ddf3da9ccf6109646c340bbcbdf97c079a1fb08ff85567cb482da18d3d12`                                                  | exact DVI and the `--check` metadata gate passed against pinned TeX Live 2025 inputs    |
+| e-TeX         | a minimal fixed-clock 38,304-byte schema-10 image reproduced twice as `27934664748ab823ec7a9dcb973d7c9d66f8c99132e41d14a2af62bcf7a2e31e`                                       | exact DVI passed for fresh `--etex` state versus the loaded image                       |
+| LaTeX         | repeated clean TeX Live 2026-03-01 builds and cache `--check`/`--force` reproduced the 1,661,211-byte image `8e3823737079626c669fa4140f24c63db09779243e9ab2851c35f75aa3fa4a99` | exact 61-input closure and byte-identical source-versus-loaded DVI/AUX artifacts passed |
+| pdfLaTeX      | repeated clean TeX Live 2026-03-01 builds reproduced the 1,711,258-byte image `f640624c160500d6faafd88be3c381e94390e7edb4a547d82a4350eef73a96f4`                               | exact 64-input closure and byte-identical source-versus-loaded PDF/AUX artifacts passed |
 
 `scripts/check-wasm.sh` passed the wasm32 build, JavaScript resource-cache
 suite, Firefox `wasm-pack` tests, browser integration, and package inventory.
@@ -149,13 +151,15 @@ image through its verified object cache.
 
 ### Performance and requested allocation
 
-The release CLI was sampled five times after build, with pinned Plain inputs
-already in the filesystem cache. Source initialization plus the representative
-job had a 40 ms median; loading `plain.fmt` plus the byte-identical job had a
-10 ms median, a 75% wall-time reduction before generated-format cache lookup is
-considered. These are workload observations rather than budgets: cache hits
-for the much larger LaTeX tiers cannot be compared responsibly until
-`umber2-pbxv.5.4.1` permits a current schema-10 cold generation.
+A representative release-mode LaTeX builder run used an isolated empty cache,
+the pinned TeX Live 2026-03-01 tree, and the accepted 500,000,000 cumulative
+fuel limit. The cold miss verified 61 sources, generated the image twice,
+checked source-versus-loaded equivalence, and published the cache entry in
+172.07 s. A subsequent validated hit produced the same format and metadata in
+0.99 s without opening the TeX Live source tree, a 99.4% end-to-end wall-time
+reduction. `--check` (160.42 s) and `--force` (162.63 s) each regenerated twice
+and reproduced the cached and published bytes. These are workload observations,
+not budgets; they include the builder's release-binary freshness check.
 
 The repeatable mechanism profiler is:
 
@@ -164,12 +168,12 @@ cargo run --release --manifest-path benchmarks/tex-state/Cargo.toml \
   --bin format_cache_profile
 ```
 
-For the 588,488-byte Plain image its 21-sample medians were 2 us for an absent
-entry, 5,937 us for a fully revalidated warm hit, 10,190 us for an idempotent
-store against the validated winner, and 4,235 us for direct schema decoding.
-First atomic publication took 16,945 us. Every operation retained zero
+For the 588,488-byte Plain image its refreshed 21-sample medians were 2 us for
+an absent entry, 4,883 us for a fully revalidated warm hit, 8,487 us for an
+idempotent store against the validated winner, and 3,591 us for direct schema
+decoding. First atomic publication took 14,928 us. Every operation retained zero
 requested heap bytes. Peak requested allocation was 417 bytes for a miss,
-2,434,012 bytes for direct decode/first publication, and 3,022,939 bytes for a
+2,434,100 bytes for direct decode/first publication, and 3,023,027 bytes for a
 hit or repeated store. Thus native validation costs one additional
 approximately image-sized transient buffer over direct decode, while a hit
 avoids all source-tokenization and initialization work. Measurements exclude
