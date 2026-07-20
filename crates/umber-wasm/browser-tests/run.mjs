@@ -315,9 +315,14 @@ try {
 } catch (error) {
 	throw new Error(`${error.stack}\nChrome stderr:\n${browserError}`);
 } finally {
-	browser.kill("SIGTERM");
+	await stopBrowser(browser);
 	server.close();
-	await rm(profile, { recursive: true, force: true });
+	await rm(profile, {
+		recursive: true,
+		force: true,
+		maxRetries: 5,
+		retryDelay: 100,
+	});
 	await rm(nativeRoot, { recursive: true, force: true });
 }
 
@@ -376,6 +381,33 @@ async function debuggingPort(profile, child) {
 		await new Promise((resolve) => setTimeout(resolve, 25));
 	}
 	throw new Error("Chrome debugging endpoint did not start");
+}
+
+async function stopBrowser(child) {
+	let closed = waitForClose(child, 5_000);
+	child.kill("SIGTERM");
+	if (await closed) return;
+
+	closed = waitForClose(child, 5_000);
+	child.kill("SIGKILL");
+	if (!(await closed)) throw new Error("Chrome did not exit after SIGKILL");
+}
+
+function waitForClose(child, timeout) {
+	if (child.exitCode !== null || child.signalCode !== null) {
+		return Promise.resolve(true);
+	}
+	return new Promise((resolve) => {
+		const onClose = () => {
+			clearTimeout(timer);
+			resolve(true);
+		};
+		const timer = setTimeout(() => {
+			child.off("close", onClose);
+			resolve(false);
+		}, timeout);
+		child.once("close", onClose);
+	});
 }
 
 async function protocol(url) {
