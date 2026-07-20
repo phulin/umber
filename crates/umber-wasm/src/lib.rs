@@ -4,12 +4,9 @@ mod options;
 mod result;
 
 use js_sys::{Array, Uint8Array};
-use options::{
-    ProjectOptions, parse_options, parse_project_options, parse_request_key,
-    parse_resource_responses,
-};
+use options::{parse_options, parse_project_options, parse_request_key, parse_resource_responses};
 use result::attempt_result;
-use umber::{LatexProjectSession, LatexProjectSessionV2, VirtualCompileSession};
+use umber::{LatexProjectSession, VirtualCompileSession};
 use wasm_bindgen::prelude::*;
 
 #[wasm_bindgen(typescript_custom_section)]
@@ -80,7 +77,7 @@ export type BibliographyOutputFormat = "bbl" | "bibtex" | "biblatex-xml" | "bbl-
 
 export interface ProjectSessionOptions extends SessionOptions {
   bibliography: {
-    /** Omit mode to use the legacy biblatex project API. */
+    /** Omit mode for the original biblatex-only option shape. */
     mode?: "biblatex" | "classic" | "auto";
     controlPath: string;
     outputs: Array<{ path: string; format: BibliographyOutputFormat }>;
@@ -157,18 +154,14 @@ export interface Diagnostic {
 }
 
 export interface BibliographyDiagnostic {
-  severity: "info" | "warning" | "error";
   code: string;
   message: string;
-  path?: string;
-  line?: number;
-  column?: number;
 }
 
 export interface BibliographyResult {
+  backend: "biblatex" | "classic";
   files: CompileOutputFile[];
   diagnostics: BibliographyDiagnostic[];
-  stats: { sections: number; entries: number; generatedFiles: number; generatedBytes: number };
 }
 
 export interface ProjectCompileOutput {
@@ -226,12 +219,7 @@ pub struct CompilerSession {
 
 #[wasm_bindgen]
 pub struct ProjectSession {
-    session: Option<ProjectSessionInner>,
-}
-
-enum ProjectSessionInner {
-    Legacy(LatexProjectSession),
-    V2(LatexProjectSessionV2),
+    session: Option<LatexProjectSession>,
 }
 
 #[wasm_bindgen(js_name = packageVersion)]
@@ -413,14 +401,8 @@ impl CompilerSession {
 impl ProjectSession {
     #[wasm_bindgen(constructor)]
     pub fn new(options: &JsProjectSessionOptions) -> Result<ProjectSession, JsValue> {
-        let session = match parse_project_options(options.as_ref())? {
-            ProjectOptions::Legacy(options) => ProjectSessionInner::Legacy(
-                LatexProjectSession::new(options).map_err(project_boundary_error)?,
-            ),
-            ProjectOptions::V2(options) => ProjectSessionInner::V2(
-                LatexProjectSessionV2::new(options).map_err(project_boundary_error)?,
-            ),
-        };
+        let options = parse_project_options(options.as_ref())?;
+        let session = LatexProjectSession::new(options).map_err(project_boundary_error)?;
         Ok(Self {
             session: Some(session),
         })
@@ -428,33 +410,22 @@ impl ProjectSession {
 
     #[wasm_bindgen(js_name = addUserFile)]
     pub fn add_user_file(&mut self, path: &str, bytes: &Uint8Array) -> Result<(), JsValue> {
-        match self.session_mut()? {
-            ProjectSessionInner::Legacy(session) => session.add_user_file(path, bytes.to_vec()),
-            ProjectSessionInner::V2(session) => session.add_user_file(path, bytes.to_vec()),
-        }
-        .map_err(project_boundary_error)
+        self.session_mut()?
+            .add_user_file(path, bytes.to_vec())
+            .map_err(project_boundary_error)
     }
 
     #[wasm_bindgen(js_name = provideResources)]
     pub fn provide_resources(&mut self, responses: &Array) -> Result<(), JsValue> {
         let responses = parse_resource_responses(responses.as_ref())
             .map_err(|error| tag_js_error(error, "invalid-resource"))?;
-        match self.session_mut()? {
-            ProjectSessionInner::Legacy(session) => session.provide_resources(responses),
-            ProjectSessionInner::V2(session) => session.provide_resources(responses),
-        }
-        .map_err(project_boundary_error)
+        self.session_mut()?
+            .provide_resources(responses)
+            .map_err(project_boundary_error)
     }
 
     pub fn advance(&mut self) -> Result<JsAttemptResult, JsValue> {
-        match self.session_mut()? {
-            ProjectSessionInner::Legacy(session) => {
-                result::project_attempt_result(session.compile_attempt())
-            }
-            ProjectSessionInner::V2(session) => {
-                result::project_attempt_result_v2(session.compile_attempt())
-            }
-        }
+        result::project_attempt_result(self.session_mut()?.compile_attempt())
     }
 
     #[wasm_bindgen(js_name = compileAttempt)]
@@ -465,27 +436,19 @@ impl ProjectSession {
     #[wasm_bindgen(js_name = applyPatch)]
     pub fn apply_patch(&mut self, patch: &JsSourcePatch) -> Result<(), JsValue> {
         let patch = options::parse_source_patch(patch.as_ref())?;
-        match self.session_mut()? {
-            ProjectSessionInner::Legacy(session) => session.apply_patch(patch),
-            ProjectSessionInner::V2(session) => session.apply_patch(patch),
-        }
-        .map_err(project_boundary_error)
+        self.session_mut()?
+            .apply_patch(patch)
+            .map_err(project_boundary_error)
     }
 
     #[wasm_bindgen(js_name = cancelPendingPatch)]
     pub fn cancel_pending_patch(&mut self) -> Result<bool, JsValue> {
-        Ok(match self.session_mut()? {
-            ProjectSessionInner::Legacy(session) => session.cancel_pending_patch(),
-            ProjectSessionInner::V2(session) => session.cancel_pending_patch(),
-        })
+        Ok(self.session_mut()?.cancel_pending_patch())
     }
 
     #[wasm_bindgen(getter)]
     pub fn revision(&self) -> Result<Option<u32>, JsValue> {
-        let revision = match self.session_ref()? {
-            ProjectSessionInner::Legacy(session) => session.revision(),
-            ProjectSessionInner::V2(session) => session.revision(),
-        };
+        let revision = self.session_ref()?.revision();
         revision
             .map(|revision| {
                 u32::try_from(revision.raw())
@@ -496,11 +459,7 @@ impl ProjectSession {
 
     #[wasm_bindgen(getter, js_name = contentHash)]
     pub fn accepted_content_hash(&self) -> Result<Option<String>, JsValue> {
-        Ok(match self.session_ref()? {
-            ProjectSessionInner::Legacy(session) => session.content_hash(),
-            ProjectSessionInner::V2(session) => session.content_hash(),
-        }
-        .map(|hash| hash.hex()))
+        Ok(self.session_ref()?.content_hash().map(|hash| hash.hex()))
     }
 
     pub fn dispose(&mut self) {
@@ -514,13 +473,13 @@ impl ProjectSession {
 }
 
 impl ProjectSession {
-    fn session_ref(&self) -> Result<&ProjectSessionInner, JsValue> {
+    fn session_ref(&self) -> Result<&LatexProjectSession, JsValue> {
         self.session
             .as_ref()
             .ok_or_else(|| js_error("ProjectSession has been disposed"))
     }
 
-    fn session_mut(&mut self) -> Result<&mut ProjectSessionInner, JsValue> {
+    fn session_mut(&mut self) -> Result<&mut LatexProjectSession, JsValue> {
         self.session
             .as_mut()
             .ok_or_else(|| js_error("ProjectSession has been disposed"))

@@ -30,10 +30,8 @@ pub const PACKAGE_VERSION: &str = env!("CARGO_PKG_VERSION");
 pub use html_output::DirectoryHtmlFontResolver;
 pub use input_search::{TexFontSearchPath, TexInputSearchPath};
 pub use latex_project::{
-    BibliographyProjectOptions, LatexProjectAttempt, LatexProjectAttemptV2, LatexProjectError,
-    LatexProjectLimits, LatexProjectOptions, LatexProjectOptionsV2, LatexProjectOutput,
-    LatexProjectOutputV2, LatexProjectSession, LatexProjectSessionV2,
-    ProjectConvergenceFingerprint,
+    BibliographyProjectOptions, LatexProjectAttempt, LatexProjectError, LatexProjectLimits,
+    LatexProjectOptions, LatexProjectOutput, LatexProjectSession, ProjectConvergenceFingerprint,
 };
 pub use memory_output::{
     MemoryOutputCollectionError, MemoryOutputFile, MemoryRunOutput, collect_final_memory_output,

@@ -1,11 +1,11 @@
-use bib_engine::{BibJob, BibOptionsBuilder, BibliographyMode, OutputFormat, OutputRequest};
+use bib_engine::{BibOptionsBuilder, BibliographyMode, OutputFormat, OutputRequest};
 use js_sys::{Array, Reflect, Uint8Array};
 use umber::{
     BibliographyProjectOptions, EngineMode, FeatureSetting, FileContentId, FileKind, FileRequest,
     FileRequestKey, FontContainer, FontFeaturePolicy, FontObjectIdentity, FontProgramIdentity,
-    FontRequestKey, LatexProjectLimits, LatexProjectOptions, LatexProjectOptionsV2, OpenTypeTag,
-    ResolvedFile, ResolvedFont, ResourceDomain, ResourceRequest, ResourceResponse, SessionLimits,
-    SessionOptions, SessionWebFont, SourcePatch, VariationCoordinate, VariationSelection,
+    FontRequestKey, LatexProjectLimits, LatexProjectOptions, OpenTypeTag, ResolvedFile,
+    ResolvedFont, ResourceDomain, ResourceRequest, ResourceResponse, SessionLimits, SessionOptions,
+    SessionWebFont, SourcePatch, VariationCoordinate, VariationSelection,
 };
 use wasm_bindgen::{JsCast, JsValue};
 
@@ -68,12 +68,7 @@ pub(crate) fn parse_options(value: &JsValue) -> Result<SessionOptions, JsValue> 
     Ok(options)
 }
 
-pub(crate) enum ProjectOptions {
-    Legacy(LatexProjectOptions),
-    V2(LatexProjectOptionsV2),
-}
-
-pub(crate) fn parse_project_options(value: &JsValue) -> Result<ProjectOptions, JsValue> {
+pub(crate) fn parse_project_options(value: &JsValue) -> Result<LatexProjectOptions, JsValue> {
     let tex = parse_options(value)?;
     let bibliography = optional_object(value, "bibliography")?
         .ok_or_else(|| js_error("project options require bibliography"))?;
@@ -129,17 +124,16 @@ pub(crate) fn parse_project_options(value: &JsValue) -> Result<ProjectOptions, J
     }
     let biblatex = builder.freeze();
     match mode.as_deref() {
-        None => Ok(ProjectOptions::Legacy(LatexProjectOptions {
+        None => Ok(LatexProjectOptions {
             tex,
-            bibliography: BibJob::new(
+            bibliography: BibliographyProjectOptions::biblatex(
                 control_path
                     .ok_or_else(|| js_error("project bibliography requires controlPath"))?,
                 biblatex,
             ),
-            bib_session: bib_engine::BibSessionOptions::default(),
             limits,
-        })),
-        Some("biblatex") => Ok(ProjectOptions::V2(LatexProjectOptionsV2 {
+        }),
+        Some("biblatex") => Ok(LatexProjectOptions {
             tex,
             bibliography: BibliographyProjectOptions {
                 mode: BibliographyMode::Biblatex {
@@ -152,22 +146,22 @@ pub(crate) fn parse_project_options(value: &JsValue) -> Result<ProjectOptions, J
                 detector: bib_engine::BibliographyDetectorOptions::default(),
             },
             limits,
-        })),
-        Some("classic") => Ok(ProjectOptions::V2(LatexProjectOptionsV2 {
+        }),
+        Some("classic") => Ok(LatexProjectOptions {
             tex,
             bibliography: BibliographyProjectOptions::classic(parse_virtual_path(
                 &required_string(&bibliography, "auxPath")?,
             )?),
             limits,
-        })),
-        Some("auto") => Ok(ProjectOptions::V2(LatexProjectOptionsV2 {
+        }),
+        Some("auto") => Ok(LatexProjectOptions {
             tex,
             bibliography: BibliographyProjectOptions::auto(parse_virtual_path(&required_string(
                 &bibliography,
                 "jobPath",
             )?)?),
             limits,
-        })),
+        }),
         Some(_) => Err(js_error(
             "bibliography mode must be 'biblatex', 'classic', or 'auto'",
         )),

@@ -43,7 +43,7 @@ fn project_binding_validates_options_and_disposes() {
 }
 
 #[wasm_bindgen_test]
-fn project_binding_accepts_versioned_classic_bibliography_options() {
+fn project_binding_accepts_classic_bibliography_options() {
     let project_options = options("/job/main.tex");
     let bibliography = Object::new();
     set(&bibliography, "mode", &JsValue::from_str("classic"));

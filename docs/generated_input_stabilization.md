@@ -55,9 +55,9 @@ new balanced performance and retention gate.
 
 ### Multipass project sessions
 
-`LatexProjectSession` and `LatexProjectSessionV2` already run bounded
-fixed-point jobs. They execute TeX over a candidate generated generation,
-optionally execute a bibliography backend, compare generated signatures, detect
+`LatexProjectSession` already runs bounded fixed-point jobs. It executes TeX
+over a candidate generated generation,
+optionally executes a bibliography backend, compares generated signatures, detects
 oscillation, and accept the root, generated files, and final output atomically.
 The WebAssembly `ProjectSession` exposes the same state machine.
 

@@ -4,7 +4,6 @@ use super::*;
 use crate::EngineMode;
 
 fn options() -> LatexProjectOptions {
-    let control = VirtualPath::user("/job/main.bcf").expect("control path");
     let mut bib = BibOptionsBuilder::new();
     bib.output(OutputRequest::new(
         VirtualPath::user("/job/main.bbl").expect("output path"),
@@ -16,8 +15,15 @@ fn options() -> LatexProjectOptions {
             engine: EngineMode::Tex82,
             ..SessionOptions::default()
         },
-        bibliography: BibJob::new(control, bib.freeze()),
-        bib_session: BibSessionOptions::default(),
+        bibliography: BibliographyProjectOptions {
+            mode: bib_engine::BibliographyMode::Auto {
+                job_path: VirtualPath::user("/job/main").expect("job path"),
+            },
+            biblatex: bib.freeze(),
+            bib_session: BibSessionOptions::default(),
+            classic: bib_engine::ClassicBibOptions::default(),
+            detector: bib_engine::BibliographyDetectorOptions::default(),
+        },
         limits: LatexProjectLimits::default(),
     }
 }
@@ -98,7 +104,7 @@ fn failed_patch_preserves_the_accepted_project() {
         session.compile_attempt(),
         LatexProjectAttempt::Error(_)
     ));
-    assert_eq!(session.accepted_output(), Some(&accepted));
+    assert_eq!(session.accepted_output(), Some(accepted.as_ref()));
     assert_eq!(session.revision(), Some(tex_incr::RevisionId::new(1)));
 }
 
@@ -136,7 +142,7 @@ fn resolved(request: umber_vfs::FileRequestKey, path: &str, bytes: &[u8]) -> Res
 }
 
 #[test]
-fn legacy_project_retains_one_tex_pass_across_positive_and_negative_resources() {
+fn project_retains_one_tex_pass_across_positive_and_negative_resources() {
     let source = b"\\input first \\openin0=absent \\ifeof0\\closein0\\fi \\end\n";
     let mut session = LatexProjectSession::new(options()).expect("session");
     session
@@ -193,8 +199,8 @@ fn legacy_project_retains_one_tex_pass_across_positive_and_negative_resources() 
     ));
 }
 
-fn classic_options(mode: bib_engine::BibliographyMode) -> LatexProjectOptionsV2 {
-    LatexProjectOptionsV2 {
+fn classic_options(mode: bib_engine::BibliographyMode) -> LatexProjectOptions {
+    LatexProjectOptions {
         tex: SessionOptions {
             engine: EngineMode::Tex82,
             ..SessionOptions::default()
@@ -222,10 +228,10 @@ fn classic_project_source() -> &'static [u8] {
 }
 
 #[test]
-fn v2_project_retains_one_tex_pass_across_positive_and_negative_resources() {
+fn project_retains_one_tex_pass_across_resources_with_auto_detection() {
     let source = b"\\input first \\openin0=absent \\ifeof0\\closein0\\fi \\end\n";
     let mut session =
-        LatexProjectSessionV2::new(classic_options(bib_engine::BibliographyMode::Auto {
+        LatexProjectSession::new(classic_options(bib_engine::BibliographyMode::Auto {
             job_path: VirtualPath::user("/job/main").expect("job"),
         }))
         .expect("session");
@@ -233,7 +239,7 @@ fn v2_project_retains_one_tex_pass_across_positive_and_negative_resources() {
         .add_user_file("/job/main.tex", source.to_vec())
         .expect("source");
 
-    let LatexProjectAttemptV2::NeedResources(first) = session.compile_attempt() else {
+    let LatexProjectAttempt::NeedResources(first) = session.compile_attempt() else {
         panic!("first resource suspension");
     };
     assert_eq!(
@@ -256,7 +262,7 @@ fn v2_project_retains_one_tex_pass_across_positive_and_negative_resources() {
         .expect("first resource");
 
     let probe = match session.compile_attempt() {
-        LatexProjectAttemptV2::NeedResources(needs) => needs,
+        LatexProjectAttempt::NeedResources(needs) => needs,
         other => panic!("expected probe suspension, got {other:?}"),
     };
     assert_eq!(
@@ -278,15 +284,15 @@ fn v2_project_retains_one_tex_pass_across_positive_and_negative_resources() {
         .expect("negative probe");
     assert!(matches!(
         session.compile_attempt(),
-        LatexProjectAttemptV2::Complete(_)
+        LatexProjectAttempt::Complete(_)
     ));
 }
 
-fn finish_classic_project(session: &mut LatexProjectSessionV2) -> LatexProjectOutputV2 {
+fn finish_classic_project(session: &mut LatexProjectSession) -> LatexProjectOutput {
     loop {
         match session.compile_attempt() {
-            LatexProjectAttemptV2::Complete(output) => return *output,
-            LatexProjectAttemptV2::NeedResources(needs) => {
+            LatexProjectAttempt::Complete(output) => return *output,
+            LatexProjectAttempt::NeedResources(needs) => {
                 let responses = needs
                     .required
                     .into_iter()
@@ -324,7 +330,7 @@ fn finish_classic_project(session: &mut LatexProjectSessionV2) -> LatexProjectOu
                     .provide_resources(responses)
                     .expect("provide classic resource");
             }
-            LatexProjectAttemptV2::Error(error) => panic!("classic project failed: {error}"),
+            LatexProjectAttempt::Error(error) => panic!("classic project failed: {error}"),
         }
     }
 }
@@ -339,8 +345,7 @@ fn classic_projects_converge_transactionally_with_explicit_and_auto_modes() {
             job_path: VirtualPath::user("/job/main").expect("job"),
         },
     ] {
-        let mut session =
-            LatexProjectSessionV2::new(classic_options(mode.clone())).expect("project");
+        let mut session = LatexProjectSession::new(classic_options(mode.clone())).expect("project");
         session
             .add_user_file("/job/main.tex", classic_project_source().to_vec())
             .expect("source");
@@ -372,9 +377,9 @@ fn classic_projects_converge_transactionally_with_explicit_and_auto_modes() {
 }
 
 #[test]
-fn v2_backend_switch_discards_incompatible_bibliography_artifacts() {
+fn backend_switch_discards_incompatible_bibliography_artifacts() {
     let mut session =
-        LatexProjectSessionV2::new(classic_options(bib_engine::BibliographyMode::Classic {
+        LatexProjectSession::new(classic_options(bib_engine::BibliographyMode::Classic {
             aux_path: VirtualPath::user("/job/main.aux").expect("aux"),
         }))
         .expect("project");
@@ -414,7 +419,7 @@ fn v2_backend_switch_discards_incompatible_bibliography_artifacts() {
 #[test]
 fn fatal_classic_execution_rolls_back_to_the_last_accepted_project() {
     let mut session =
-        LatexProjectSessionV2::new(classic_options(bib_engine::BibliographyMode::Classic {
+        LatexProjectSession::new(classic_options(bib_engine::BibliographyMode::Classic {
             aux_path: VirtualPath::user("/job/main.aux").expect("aux"),
         }))
         .expect("project");
@@ -438,7 +443,7 @@ fn fatal_classic_execution_rolls_back_to_the_last_accepted_project() {
         .expect("patch");
     loop {
         match session.compile_attempt() {
-            LatexProjectAttemptV2::NeedResources(needs) => {
+            LatexProjectAttempt::NeedResources(needs) => {
                 let responses = needs
                     .required
                     .into_iter()
@@ -467,7 +472,7 @@ fn fatal_classic_execution_rolls_back_to_the_last_accepted_project() {
                     .collect();
                 session.provide_resources(responses).expect("resources");
             }
-            LatexProjectAttemptV2::Error(LatexProjectError::BibliographyFatal {
+            LatexProjectAttempt::Error(LatexProjectError::BibliographyFatal {
                 backend: bib_engine::BibliographyBackend::Classic,
             }) => break,
             other => panic!("expected fatal classic rollback, got {other:?}"),
