@@ -331,14 +331,24 @@ fn inline_hint_fetches_without_loading_the_dependency_shard() {
         None,
         false,
     );
-    let responses = resolver
-        .resolve_batch(
+    let resolved = resolver
+        .resolve_batch_with_prefetch(
             &local_resolver(directory.path()),
             &needs(vec![file_request("article.cls")]),
             &FetchCancellation::new(),
         )
         .expect("inline dependency hint");
-    assert!(matches!(responses.as_slice(), [ResourceResponse::File(_)]));
+    assert!(matches!(
+        resolved.responses.as_slice(),
+        [ResourceResponse::File(_)]
+    ));
+    assert!(matches!(
+        resolved.prefetched.as_slice(),
+        [file]
+            if file.request.name() == "cmr10.tfm"
+                && file.virtual_path == "/texlive/fonts/cmr10.tfm"
+                && file.bytes == dependency_bytes
+    ));
     assert_eq!(
         cache
             .load_object(&dependency_digest, dependency_bytes.len() as u64)

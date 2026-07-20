@@ -751,7 +751,13 @@ impl Session {
     pub fn start_cold_candidate(&self) -> Result<RevisionCandidate, SessionError> {
         let mut universe = self.template.clone();
         universe.begin_retained_session()?;
-        let mut input = InputStack::new(MemoryInput::new(&self.source));
+        let root = if self.root_source_is_byte_projection {
+            MemoryInput::byte_projection(&self.source)
+        } else {
+            MemoryInput::new(&self.source)
+        };
+        let mut input = InputStack::new(root);
+        input.set_utf8_input_as_bytes(self.utf8_input_as_bytes);
         universe.install_editor_fragments(&self.fragments, &self.layout)?;
         universe.set_root_editor_content_hash(ContentHash::from_bytes(self.source.as_bytes()));
         input
@@ -838,7 +844,13 @@ impl Session {
             None => {
                 let mut universe = self.template.clone();
                 universe.begin_retained_session()?;
-                let mut input = InputStack::new(MemoryInput::new(&setup.next));
+                let root = if self.root_source_is_byte_projection {
+                    MemoryInput::byte_projection(&setup.next)
+                } else {
+                    MemoryInput::new(&setup.next)
+                };
+                let mut input = InputStack::new(root);
+                input.set_utf8_input_as_bytes(self.utf8_input_as_bytes);
                 universe.install_editor_fragments(&setup.fragments, &setup.next_layout)?;
                 universe
                     .set_root_editor_content_hash(ContentHash::from_bytes(setup.next.as_bytes()));
@@ -881,6 +893,7 @@ impl Session {
                     &setup.next_layout,
                     LayoutCursor::new(&setup.next_layout, &setup.fragments)?,
                 )?;
+                input.set_utf8_input_as_bytes(self.utf8_input_as_bytes);
                 for (path, bytes) in &self.registered_inputs {
                     universe.world_mut().set_memory_file(path, bytes.clone())?;
                 }

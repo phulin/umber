@@ -341,6 +341,26 @@ fn positive_probe_can_promote_to_required_input_before_dump() {
 }
 
 #[test]
+fn prefetched_file_is_available_before_an_engine_request() {
+    let mut session = session("\\input hinted \\end");
+    let request = FileRequestKey::new(FileKind::TexInput, "hinted.tex").expect("request key");
+    session
+        .preload_resolved_file(ResolvedFile {
+            request,
+            virtual_path: "/texlive/tex/latex/example/hinted.tex".to_owned(),
+            bytes: b"\\message{PREFETCHED}".to_vec(),
+            expected_digest: None,
+        })
+        .expect("prefetch response");
+
+    let CompileAttemptResult::Complete(output) = session.compile_attempt() else {
+        panic!("prefetched input should avoid a resource request");
+    };
+    assert!(String::from_utf8_lossy(&output.terminal).contains("PREFETCHED"));
+    assert_eq!(session.attempts(), 1);
+}
+
+#[test]
 fn resolved_nested_probe_retries_through_endinput_to_root_dump() {
     let mut session = session("\\input wrapper \\dump");
     let missing = resources(session.compile_attempt());
@@ -756,10 +776,11 @@ fn latex_sessions_preserve_legacy_high_bytes_in_resolved_inputs() {
         )
         .expect("legacy input");
 
-    assert!(matches!(
-        session.compile_attempt(),
-        CompileAttemptResult::Complete(_)
-    ));
+    let result = session.compile_attempt();
+    assert!(
+        matches!(result, CompileAttemptResult::Complete(_)),
+        "legacy-byte LaTeX compile did not complete: {result:?}"
+    );
 }
 
 #[test]

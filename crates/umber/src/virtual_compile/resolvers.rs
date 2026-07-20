@@ -465,7 +465,6 @@ impl<'a> VirtualFileResolver<'a> {
                 return Err(failure.to_string());
             }
         };
-
         let pending_path = match &requested {
             RequestedFile::UserOnly(path) => path.as_path(),
             RequestedFile::Remote { key, .. } => Path::new(key.name()),
@@ -749,12 +748,10 @@ mod tests {
         CompileAttemptResult, EngineMode, FileKind, ResolvedFile, ResourceRequest,
         ResourceResponse, SessionOptions, VirtualCompileSession,
     };
-    use tex_expand::{ResourceLookup, ResourceNeed};
     use lopdf::dictionary;
     use tex_exec::{PdfImagePageBox, PdfImageRequest};
-    use tex_state::{
-        InputOpenState, PdfExternalImageMetadata, PdfPageRotation, Universe, World,
-    };
+    use tex_expand::{ResourceLookup, ResourceNeed};
+    use tex_state::{InputOpenState, PdfExternalImageMetadata, PdfPageRotation, Universe, World};
     use umber_vfs::{VfsLimits, VirtualFs};
 
     #[test]

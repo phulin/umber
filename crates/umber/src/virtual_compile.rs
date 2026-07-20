@@ -943,6 +943,11 @@ impl VirtualCompileSession {
         self.refresh_candidate_files()
     }
 
+    /// Installs a trusted manifest hint before the engine requests it.
+    pub fn preload_resolved_file(&mut self, response: ResolvedFile) -> Result<(), CompileError> {
+        self.provide_file_inner(response, false, true)
+    }
+
     pub fn provide_resources(
         &mut self,
         responses: Vec<ResourceResponse>,
@@ -1683,19 +1688,6 @@ impl VirtualCompileSession {
         self.files
             .resolved_bytes()
             .saturating_add(self.font_cached_bytes)
-    }
-
-    fn resource_is_bound(&self, key: &ResourceRequestKey) -> bool {
-        match key {
-            ResourceRequestKey::File(key) => {
-                self.files.get(key).is_some()
-                    || self.files.is_unavailable(key)
-                    || user_path_for_key(key).is_ok_and(|path| self.files.contains_user(&path))
-            }
-            ResourceRequestKey::Font(key) => {
-                self.resolved_fonts.contains_key(key) || self.unavailable_fonts.contains(key)
-            }
-        }
     }
 }
 

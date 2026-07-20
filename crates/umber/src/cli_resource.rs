@@ -124,6 +124,15 @@ pub struct NativeAcceptedRun {
     local: LocalResolver,
 }
 
+pub type NativeAcceptedParts = (
+    MemoryRunOutput,
+    AcceptedFinalization,
+    BTreeMap<PathBuf, PathBuf>,
+    Vec<(PathBuf, usize)>,
+    (PathBuf, usize),
+    CompileTelemetry,
+);
+
 impl NativeAcceptedRun {
     #[must_use]
     pub fn pdf_draft_mode(&self) -> bool {
@@ -150,16 +159,7 @@ impl NativeAcceptedRun {
     }
 
     #[must_use]
-    pub fn into_parts(
-        self,
-    ) -> (
-        MemoryRunOutput,
-        AcceptedFinalization,
-        BTreeMap<PathBuf, PathBuf>,
-        Vec<(PathBuf, usize)>,
-        (PathBuf, usize),
-        CompileTelemetry,
-    ) {
+    pub fn into_parts(self) -> NativeAcceptedParts {
         (
             self.output,
             self.finalization,
@@ -340,24 +340,31 @@ impl NativeCompileSession {
                     return Err(NativeRunError::Compile(error.to_string()));
                 }
                 CompileAttemptResult::NeedResources(batch) => {
-                    let responses =
-                        match self
-                            .distribution
-                            .resolve_batch(&self.local, &batch, cancellation)
-                        {
-                            Ok(responses) => responses,
-                            Err(error) => {
-                                self.session.discard_suspended_candidate();
-                                return Err(error);
-                            }
-                        };
+                    let resolved = match self.distribution.resolve_batch_with_prefetch(
+                        &self.local,
+                        &batch,
+                        cancellation,
+                    ) {
+                        Ok(resolved) => resolved,
+                        Err(error) => {
+                            self.session.discard_suspended_candidate();
+                            return Err(error);
+                        }
+                    };
                     if cancellation.is_cancelled() {
                         self.session.discard_suspended_candidate();
                         return Err(NativeRunError::Cancelled);
                     }
-                    self.session
-                        .provide_resources(responses)
-                        .map_err(|error| NativeRunError::Compile(error.to_string()))?;
+                    for file in resolved.prefetched {
+                        if let Err(error) = self.session.preload_resolved_file(file) {
+                            self.session.discard_suspended_candidate();
+                            return Err(NativeRunError::Compile(error.to_string()));
+                        }
+                    }
+                    if let Err(error) = self.session.provide_resources(resolved.responses) {
+                        self.session.discard_suspended_candidate();
+                        return Err(NativeRunError::Compile(error.to_string()));
+                    }
                 }
             }
         }
@@ -592,6 +599,11 @@ struct ResolvedFormat {
     prefetch_hints: Vec<ResourceRequest>,
 }
 
+struct ResolvedDistributionBatch {
+    responses: Vec<ResourceResponse>,
+    prefetched: Vec<ResolvedFile>,
+}
+
 struct DistributionResolver {
     cache: ObjectCache,
     source: Option<String>,
@@ -616,12 +628,23 @@ impl DistributionResolver {
         }
     }
 
+    #[cfg(test)]
     fn resolve_batch(
         &mut self,
         local: &LocalResolver,
         batch: &NeedResources,
         cancellation: &FetchCancellation,
     ) -> Result<Vec<ResourceResponse>, NativeRunError> {
+        self.resolve_batch_with_prefetch(local, batch, cancellation)
+            .map(|resolved| resolved.responses)
+    }
+
+    fn resolve_batch_with_prefetch(
+        &mut self,
+        local: &LocalResolver,
+        batch: &NeedResources,
+        cancellation: &FetchCancellation,
+    ) -> Result<ResolvedDistributionBatch, NativeRunError> {
         check_cancelled(cancellation)?;
         let mut responses = Vec::new();
         let mut unresolved = Vec::new();
@@ -651,7 +674,10 @@ impl DistributionResolver {
             }
         }
         if unresolved.is_empty() && unresolved_hints.is_empty() {
-            return Ok(responses);
+            return Ok(ResolvedDistributionBatch {
+                responses,
+                prefetched: Vec::new(),
+            });
         }
         let root = self.load(cancellation)?.root.clone();
         let mut original_files = BTreeMap::new();
@@ -805,7 +831,27 @@ impl DistributionResolver {
                 bytes: data,
             }));
         }
-        Ok(responses)
+        let mut prefetched = Vec::new();
+        for (manifest_key, entry) in hints {
+            let Some(data) = bytes.remove(&manifest_key) else {
+                continue;
+            };
+            let distribution_key = DistributionFileRequestKey::from_manifest_key(&manifest_key)
+                .map_err(|error| NativeRunError::Selection(error.to_string()))?;
+            let ResourceRequest::File(request) = distribution_request(distribution_key)? else {
+                continue;
+            };
+            prefetched.push(ResolvedFile {
+                request: request.key().clone(),
+                expected_digest: Some(FileContentId::for_bytes(&data)),
+                virtual_path: entry.virtual_path,
+                bytes: data,
+            });
+        }
+        Ok(ResolvedDistributionBatch {
+            responses,
+            prefetched,
+        })
     }
 
     fn resolve_generic_asset(
@@ -819,7 +865,7 @@ impl DistributionResolver {
         })?;
         let key = crate::FileRequestKey::new(FileKind::GenericAsset, name)
             .map_err(|error| NativeRunError::Selection(error.to_string()))?;
-        let responses = self.resolve_batch(
+        let resolved = self.resolve_batch_with_prefetch(
             local,
             &NeedResources {
                 required: vec![ResourceRequest::File(FileRequest::new(key.clone(), name))],
@@ -828,7 +874,7 @@ impl DistributionResolver {
             },
             cancellation,
         )?;
-        for response in responses {
+        for response in resolved.responses {
             match response {
                 ResourceResponse::File(file) if file.request == key => return Ok(file.bytes),
                 ResourceResponse::FileUnavailable(unavailable) if unavailable == key => {
