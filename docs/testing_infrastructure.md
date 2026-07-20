@@ -186,6 +186,13 @@ builder reads the common and mode-specific TeX Live input closure from
 `tests/latex-source.lock`; its pdfLaTeX configuration is pinned locally in
 `tests/latex/pdftexconfig.tex`. Generated formats and comparison artifacts
 remain under `target/` rather than becoming repository fixtures.
+All builder-started Umber and format-cache subprocesses reuse
+`scripts/run-umber-guarded.py` with finite engine fuel, aggregate process-group
+RSS and wall-time ceilings, and TERM-to-KILL/reap enforcement. Compiler-only
+work remains outside that guard. Tune the bounded builder through the
+`UMBER_LATEX_FORMAT_ENGINE_FUEL`, `UMBER_LATEX_FORMAT_MAX_RSS_MIB`, and
+`UMBER_LATEX_FORMAT_TIMEOUT_SECONDS` variables rather than writing a separate
+watchdog.
 With `--publish-input-closure`, format metadata schema 2 also records the
 canonical sorted request keys derived from that already verified trace. The
 production snapshot builder uses this mode for both engines, stages local

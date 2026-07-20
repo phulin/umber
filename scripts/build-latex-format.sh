@@ -9,6 +9,10 @@ texmf_dist="${UMBER_TEXMF_DIST:-${repo_root}/third_party/texlive-20260301-texmf/
 publish_input_closure=0
 force_regeneration=0
 check_only=0
+guard="${repo_root}/scripts/run-umber-guarded.py"
+guard_timeout="${UMBER_LATEX_FORMAT_TIMEOUT_SECONDS:-600}"
+guard_rss_mib="${UMBER_LATEX_FORMAT_MAX_RSS_MIB:-2048}"
+engine_fuel="${UMBER_LATEX_FORMAT_ENGINE_FUEL:-500000000}"
 
 usage() {
   cat <<'EOF'
@@ -199,14 +203,23 @@ cd "$repo_root"
 cargo build --release -p umber
 umber_bin="${CARGO_TARGET_DIR:-${repo_root}/target}/release/umber"
 [[ -x "$umber_bin" ]] || fail "Umber binary was not built at $umber_bin"
+[[ -x "$guard" ]] || fail "missing shared Umber watchdog: $guard"
+
+run_umber() {
+  python3 "$guard" \
+    --timeout-seconds "$guard_timeout" \
+    --max-rss-mib "$guard_rss_mib" \
+    --term-grace-seconds 5 \
+    -- env UMBER_ENGINE_FUEL="$engine_fuel" "$umber_bin" "$@"
+}
 
 run_engine() {
   local directory="$1"
   shift
   (
     cd "$directory"
-    env SOURCE_DATE_EPOCH="$source_date_epoch" TEXINPUTS="$texinputs" TEXFONTS="$texfonts" \
-      "$umber_bin" run "--${engine}" "$@"
+    SOURCE_DATE_EPOCH="$source_date_epoch" TEXINPUTS="$texinputs" TEXFONTS="$texfonts" \
+      run_umber run "--${engine}" "$@"
   )
 }
 
@@ -245,7 +258,7 @@ cached_format="${tmp_root}/cached/${format_name}.fmt"
 mkdir -p "$(dirname "$cached_format")"
 cache_state="$(
   SOURCE_DATE_EPOCH="$source_date_epoch" \
-    "$umber_bin" format-cache restore "${cache_args[@]}" --format-out "$cached_format"
+    run_umber format-cache restore "${cache_args[@]}" --format-out "$cached_format"
 )"
 [[ "$cache_state" == hit || "$cache_state" == miss ]] || \
   fail "unexpected generated format cache result: $cache_state"
@@ -330,7 +343,7 @@ if [[ "$generated" -eq 1 && "$cache_state" == hit ]]; then
     fail "regenerated ${format_name} format differs from the validated cache entry"
 elif [[ "$generated" -eq 1 ]]; then
   SOURCE_DATE_EPOCH="$source_date_epoch" \
-    "$umber_bin" format-cache store "${cache_args[@]}" --format "$format_file" >/dev/null
+    run_umber format-cache store "${cache_args[@]}" --format "$format_file" >/dev/null
 fi
 
 format_sha256="$(sha256 "$format_file")"
@@ -342,7 +355,10 @@ if [[ "$publish_input_closure" -eq 1 ]]; then
   metadata_schema=2
   input_closure_json="$(awk '
     BEGIN { print "    \"keys\": [" }
-    { printf "%s      \"%s\"", NR == 1 ? "" : ",\n", $0 }
+    {
+      if (NR > 1) printf ",\n"
+      printf "      \"%s\"", $0
+    }
     END { print "\n    ]" }
   ' "$closure_index")"
   closure_metadata="$(printf ',\n  "inputClosure": {\n    "schema": 1,\n%s\n  }' "$input_closure_json")"

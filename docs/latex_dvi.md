@@ -109,6 +109,17 @@ on a hit, or `--check` to regenerate and compare the valid cache plus existing
 output without changing either. `UMBER_FORMAT_CACHE_ROOT` selects an explicit
 cache root for hermetic build or acquisition workflows.
 
+Every Umber subprocess started by the builder, including format-cache restore
+and publication, runs through `scripts/run-umber-guarded.py`. The shared guard
+sets finite engine fuel, enforces aggregate process-group RSS and wall-time
+ceilings, sends TERM followed by KILL after at most five seconds, reaps the
+leader, and rejects surviving descendants. The defaults are 500,000,000 fuel,
+2 GiB RSS, and 600 seconds per subprocess; explicit regeneration jobs may lower
+them with `UMBER_LATEX_FORMAT_ENGINE_FUEL`,
+`UMBER_LATEX_FORMAT_MAX_RSS_MIB`, and
+`UMBER_LATEX_FORMAT_TIMEOUT_SECONDS`. Do not add a second format-specific
+watchdog or invoke the Umber binary directly from this workflow.
+
 Build and run the corresponding pdfLaTeX mode with the same pinned common
 source closure plus its explicitly locked PDF configuration inputs:
 
@@ -129,7 +140,7 @@ identity.
 The full TeX Live snapshot builder invokes both modes with
 `--publish-input-closure`. That opt-in upgrades the generated format metadata
 to schema 2 and records the exact canonical request-key closure verified from
-`tests/latex-source.lock`: 57 common keys for LaTeX and three additional keys
+`tests/latex-source.lock`: 61 common keys for LaTeX and three additional keys
 for pdfLaTeX. The schema-3 distribution root carries those sorted, bounded
 closures beside each format. This producer contract does not itself change
 runtime retry or prefetch behavior.
