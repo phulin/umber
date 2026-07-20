@@ -68,7 +68,9 @@ with cumulative engine fuel, wall-time, aggregate-RSS, process-group
 TERM-to-KILL, reap, and survivor enforcement. The TSV under
 `target/stepwise-arxiv-census/` records cold starts, suspensions, local replay,
 cumulative fuel, resource wait, engine time, guard status, and accepted-engine
-status. The default stops after accepted engine completion and finalization
+status. Failed rows also carry a stable error cluster so engine errors, Rust
+panics, unavailable distribution inputs, and guard terminations remain
+machine-separable. The default stops after accepted engine completion and finalization
 handoff. `UMBER_ARXIV_FINALIZE=1` performs a second guarded run and records the
 detached PDF-finalizer result separately, so map, encoding, PFB, or PK failures
 cannot be mistaken for engine failures. `UMBER_ARXIV_LIMIT=1` selects the

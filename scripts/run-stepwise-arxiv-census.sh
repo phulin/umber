@@ -41,9 +41,38 @@ entrypoint() {
     | head -1
 }
 
+error_cluster() {
+  local log=$1 status=$2
+  if [[ $status -eq 0 ]]; then
+    printf 'none\n'
+  elif [[ $status -eq 124 ]]; then
+    printf 'guard-timeout-or-rss\n'
+  elif rg -q 'panicked at crates/tex-state/src/stores.rs' "$log"; then
+    printf 'stores-snapshot-panic\n'
+  elif rg -q 'ropbox\{' "$log"; then
+    printf 'image-cropbox-filename\n'
+  elif rg -q 'invalid UTF-8|valid UTF-8' "$log"; then
+    printf 'invalid-utf8-input\n'
+  elif rg -q 'action type missing' "$log"; then
+    printf 'pdf-action-type\n'
+  elif rg -q 'End of file on the terminal' "$log"; then
+    printf 'terminal-read-eof\n'
+  elif rg -q 'invalid parameter token' "$log"; then
+    printf 'macro-parameter-token\n'
+  elif rg -q 'failed to open input' "$log"; then
+    printf 'missing-generated-input\n'
+  elif rg -q 'distribution unavailable' "$log"; then
+    printf 'missing-distribution-resource\n'
+  elif rg -q 'expansion work limit' "$log"; then
+    printf 'expansion-work-limit\n'
+  else
+    printf 'other-engine-error\n'
+  fi
+}
+
 mkdir -p "$results"
 summary=$results/summary.tsv
-printf 'id\tengine_status\tfinalizer_status\tcold_starts\tsuspensions\tlocal_step_retries\treplayed_delivered_tokens\treplayed_dispatches\tcumulative_fuel\tresource_wait_ns\tengine_ns\tguard_status\n' >"$summary"
+printf 'id\tengine_status\tfinalizer_status\tcold_starts\tsuspensions\tlocal_step_retries\treplayed_delivered_tokens\treplayed_dispatches\tcumulative_fuel\tresource_wait_ns\tengine_ns\terror_cluster\tguard_status\n' >"$summary"
 
 rows=0
 while IFS=$'\t' read -r id _category; do
@@ -55,7 +84,7 @@ while IFS=$'\t' read -r id _category; do
   log=$results/$key.engine.log
   main=$(entrypoint "$source_dir" || true)
   if [[ -z $main ]]; then
-    printf '%s\tno-entrypoint\tnot-run\t0\t0\t0\t0\t0\t0\t0\t0\t0\n' "$id" >>"$summary"
+    printf '%s\tno-entrypoint\tnot-run\t0\t0\t0\t0\t0\t0\t0\t0\tno-entrypoint\t0\n' "$id" >>"$summary"
     continue
   fi
 
@@ -85,6 +114,7 @@ while IFS=$'\t' read -r id _category; do
   engine_status=failed
   [[ $status -eq 0 ]] && engine_status=accepted
   [[ $status -eq 124 ]] && engine_status=guard-timeout-or-rss
+  cluster=$(error_cluster "$log" "$status")
 
   finalizer_status=not-run
   if [[ ${UMBER_ARXIV_FINALIZE:-0} == 1 && $engine_status == accepted ]]; then
@@ -103,9 +133,9 @@ while IFS=$'\t' read -r id _category; do
     [[ $final_status -eq 124 ]] && finalizer_status=guard-timeout-or-rss
   fi
 
-  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
     "$id" "$engine_status" "$finalizer_status" "$cold" "$suspensions" "$retries" \
-    "$tokens" "$dispatches" "$cumulative" "$wait_ns" "$engine_ns" "$status" >>"$summary"
+    "$tokens" "$dispatches" "$cumulative" "$wait_ns" "$engine_ns" "$cluster" "$status" >>"$summary"
 done <"$sample"
 
 echo "stepwise arXiv census: $summary"
