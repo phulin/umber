@@ -204,7 +204,10 @@ responses through the same host-neutral session API. A driver resolver may
 supply immutable bytes selected from its own storage, but it must pass them
 through the narrow `InputReadState` capability so `World` still allocates the
 input record, retains the content backing, and gives pending same-run output
-precedence.
+precedence. Each successful read retains typed origin metadata: immutable
+external inputs participate in retained validation and dependency receipts,
+while rollback-safe outputs reopened during the same run remain readable and
+source-addressable without becoming external cache dependencies.
 
 ## 9. Snapshots, rollback, and commit
 

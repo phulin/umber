@@ -617,7 +617,7 @@ fn input_record_receipt(
     for (path, len) in resolved_inputs {
         insert_input_record(&mut records, path.clone(), *len)?;
     }
-    for record in world.input_records() {
+    for record in world.external_input_records() {
         let path = path_map
             .get(record.path())
             .cloned()
@@ -790,5 +790,40 @@ impl From<umber::FinalizationError> for CliError {
 impl From<umber::cli_resource::NativeRunError> for CliError {
     fn from(value: umber::cli_resource::NativeRunError) -> Self {
         Self::NativeRun(value)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tex_state::{InputOrigin, PrintSink, StreamSlot};
+
+    #[test]
+    fn input_receipt_deduplicates_external_reads_and_excludes_same_run_outputs() {
+        let mut world = World::memory();
+        world
+            .set_memory_file("external.cfg", b"external".to_vec())
+            .expect("seed external input");
+        let first = world
+            .read_file("external.cfg")
+            .expect("first external read");
+        let second = world
+            .read_file("external.cfg")
+            .expect("repeated external read");
+        assert_eq!(first.origin(), InputOrigin::External);
+        assert_eq!(second.origin(), InputOrigin::External);
+
+        let slot = StreamSlot::new(1);
+        world.open_out(slot, "generated.tmp");
+        world.write_text(PrintSink::Stream(slot), "generated");
+        world.close_out(slot);
+        let generated = world
+            .read_file("generated.tmp")
+            .expect("same-run generated read");
+        assert_eq!(generated.origin(), InputOrigin::SameRunGenerated);
+
+        let receipt =
+            input_record_receipt(&world, &BTreeMap::new(), &[], None).expect("build input receipt");
+        assert_eq!(receipt, b"external.cfg\t8\n");
     }
 }

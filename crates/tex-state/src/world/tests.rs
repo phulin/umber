@@ -141,7 +141,9 @@ fn memory_world_reads_and_records_hashes() {
 
     assert_eq!(content.bytes(), b"hello");
     assert_eq!(content.hash(), ContentHash::from_bytes(b"hello"));
+    assert_eq!(content.origin(), InputOrigin::External);
     assert_eq!(world.input_records()[0].hash(), content.hash());
+    assert!(world.input_records()[0].is_external_dependency());
     assert_eq!(
         world.input_record(content.record()),
         Some(&world.input_records()[0])
@@ -743,19 +745,20 @@ fn buffered_memory_output_is_readable_as_same_job_input_and_rolls_back() {
     world.write_text(PrintSink::Stream(slot), "first\nsecond\n");
     world.close_out(slot);
 
-    assert_eq!(
-        world
-            .read_pending_output_file(Path::new("same-job.tex"))
-            .expect("read pending output")
-            .expect("generated path")
-            .bytes(),
-        b"first\nsecond\n"
-    );
+    let generated = world
+        .read_pending_output_file(Path::new("same-job.tex"))
+        .expect("read pending output")
+        .expect("generated path");
+    assert_eq!(generated.bytes(), b"first\nsecond\n");
+    assert_eq!(generated.origin(), InputOrigin::SameRunGenerated);
+    assert!(world.external_input_records().next().is_none());
 
     let content = world
         .read_file("same-job.tex")
         .expect("buffered output is readable before host commit");
     assert_eq!(content.bytes(), b"first\nsecond\n");
+    assert_eq!(content.origin(), InputOrigin::SameRunGenerated);
+    assert!(world.external_input_records().next().is_none());
     assert_eq!(world.memory_output("same-job.tex"), None);
     world.rollback(&before);
     assert!(world.read_file("same-job.tex").is_err());
@@ -888,6 +891,7 @@ fn supplied_input_bytes_are_recorded_and_pending_output_takes_precedence() {
         .read_supplied_file(Path::new("same.aux"), Arc::clone(&supplied))
         .expect("read supplied input");
     assert_eq!(first.bytes(), b"snapshot");
+    assert_eq!(first.origin(), InputOrigin::External);
 
     let slot = StreamSlot::new(1);
     world.open_out(slot, "same.aux");
@@ -897,7 +901,9 @@ fn supplied_input_bytes_are_recorded_and_pending_output_takes_precedence() {
         .read_supplied_file(Path::new("same.aux"), supplied)
         .expect("reopen pending output");
     assert_eq!(reopened.bytes(), b"pending");
+    assert_eq!(reopened.origin(), InputOrigin::SameRunGenerated);
     assert_eq!(world.input_records().len(), 2);
+    assert_eq!(world.external_input_records().count(), 1);
 }
 
 #[test]
