@@ -246,6 +246,25 @@ fn latex_token_loop_preserves_an_enclosing_conditional_frame() {
 }
 
 #[test]
+fn deferred_write_preserves_unexpanded_tokens_through_shipout_collection() {
+    let mut stores = Universe::new();
+    tex_expand::install_expandable_primitives(&mut stores);
+    tex_expand::install_etex_expandable_primitives(&mut stores);
+    crate::install_unexpandable_primitives(&mut stores);
+    crate::install_etex_unexpandable_primitives(&mut stores);
+    let source = r"\def\payload{\endgroup \fi \bgroup \iffalse \else}
+\setbox0=\hbox{\write16{\unexpanded\expandafter{\payload}}}
+\shipout\box0\end";
+    let mut input = InputStack::new(MemoryInput::new(source));
+
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("deferred write expands without executing unexpanded conditionals");
+
+    assert!(!terminal_effect_text(&stores).contains("Extra \\fi"));
+}
+
+#[test]
 fn trailing_hash_brace_is_appended_to_the_macro_replacement() {
     let mut stores = Universe::new();
     tex_expand::install_expandable_primitives(&mut stores);

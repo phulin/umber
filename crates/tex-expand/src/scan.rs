@@ -271,10 +271,9 @@ where
 {
     let parameter_text = scan_parameter_text(input, stores, context)?;
     let mut diagnostics = Vec::new();
-    expansion.begin_expanded_token_list();
-    let replacement_result =
-        scan_expanded_replacement_with_driver(input, stores, context, expansion, &mut diagnostics);
-    expansion.end_expanded_token_list();
+    let replacement_result = expansion.with_expanded_token_list(|expansion| {
+        scan_expanded_replacement_with_driver(input, stores, context, expansion, &mut diagnostics)
+    });
     let replacement_text = replacement_result?;
     let replacement_text = append_hash_brace(stores, replacement_text, parameter_text.hash_brace);
     Ok(ScannedMacro {
@@ -675,10 +674,9 @@ fn collect_expanded_text(
     mode: &mut dyn ExpansionMode,
     boundary: ExpandedTextBoundary,
 ) -> Result<TracedTokenList, ScanToksError> {
-    expansion.begin_expanded_token_list();
-    let result = collect_expanded_text_inner(input, stores, expansion, mode, boundary);
-    expansion.end_expanded_token_list();
-    result
+    expansion.with_expanded_token_list(|expansion| {
+        collect_expanded_text_inner(input, stores, expansion, mode, boundary)
+    })
 }
 
 fn collect_expanded_text_inner(

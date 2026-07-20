@@ -307,9 +307,12 @@ fn expand_write_tokens(
     let mut input = InputStack::empty();
     input.push_token_list(tokens, TokenListReplayKind::Inserted);
     let mut text = String::new();
-    while let Some(token) = next_write_expansion_token(&mut input, stores, expansion)? {
-        crate::diagnostics::append_token_show_text(stores, token, &mut text);
-    }
+    expansion.with_expanded_token_list(|expansion| -> Result<(), ExecError> {
+        while let Some(token) = next_write_expansion_token(&mut input, stores, expansion)? {
+            crate::diagnostics::append_token_show_text(stores, token, &mut text);
+        }
+        Ok(())
+    })?;
     let mut text = print_text_with_newlinechar(stores, &text);
     text.push('\n');
     Ok(text)

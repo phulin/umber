@@ -1142,15 +1142,15 @@ fn expanded_token_list_scope_preserves_unexpanded_replay_until_collection_finish
     input.push_token_list(replay, TokenListReplayKind::Unexpanded);
     let mut expansion = ExpansionContext::new("texput");
 
-    expansion.begin_expanded_token_list();
-    let preserved = crate::get_x_token_with_context(
-        &mut input,
-        &mut tex_state::ExpansionContext::new(&mut stores),
-        &mut expansion,
-    )
-    .expect("expanded-list collection")
-    .expect("preserved token");
-    expansion.end_expanded_token_list();
+    let preserved = expansion.with_expanded_token_list(|expansion| {
+        crate::get_x_token_with_context(
+            &mut input,
+            &mut tex_state::ExpansionContext::new(&mut stores),
+            expansion,
+        )
+        .expect("expanded-list collection")
+        .expect("preserved token")
+    });
     assert_eq!(semantic_token(preserved), Token::Cs(macro_cs.symbol()));
 
     let expanded = crate::get_x_token_with_context(

@@ -1163,14 +1163,14 @@ impl<'a> ExpansionContext<'a> {
             .expect("expansion fuel scope depth underflowed");
     }
 
-    pub(crate) fn begin_expanded_token_list(&mut self) {
+    fn begin_expanded_token_list(&mut self) {
         self.expanded_token_list_depth = self
             .expanded_token_list_depth
             .checked_add(1)
             .expect("expanded-token-list depth overflowed");
     }
 
-    pub(crate) fn end_expanded_token_list(&mut self) {
+    fn end_expanded_token_list(&mut self) {
         self.expanded_token_list_depth = self
             .expanded_token_list_depth
             .checked_sub(1)
@@ -1180,6 +1180,18 @@ impl<'a> ExpansionContext<'a> {
     #[must_use]
     const fn expands_unexpanded_replay(&self) -> bool {
         self.expanded_token_list_depth == 0
+    }
+
+    /// Runs one complete expanded-token-list collector.
+    ///
+    /// e-TeX's `\unexpanded` suppresses expansion until the enclosing
+    /// collector finishes, including through nested scanner calls. Ordinary
+    /// token fetching resumes expansion after this scope returns.
+    pub fn with_expanded_token_list<T>(&mut self, collect: impl FnOnce(&mut Self) -> T) -> T {
+        self.begin_expanded_token_list();
+        let result = collect(self);
+        self.end_expanded_token_list();
+        result
     }
 
     /// Installs an erased read recorder for this expansion session.
