@@ -48,7 +48,10 @@ sums resident memory across the command's process group, sends TERM to the
 whole group at either limit, waits no more than five seconds, sends KILL to the
 whole group, reaps the leader, and fails if any group member survives. Exit 124
 means a time or RSS limit fired; exit 125 means cleanup itself failed. Run
-`scripts/test-run-umber-guarded.sh` to exercise the forced-timeout path.
+`scripts/test-run-umber-guarded.sh` to exercise the forced-timeout and RSS-limit paths. On macOS
+the guard reads process-group membership and live resident size through `libproc`; on Linux it
+reads `/proc`. These native paths avoid a global `ps` subprocess and run inside the development
+sandbox without elevated permissions.
 Compiler-only commands such as `cargo check`, rustfmt, and clippy do not need
 the guard. The guard complements rather than replaces an explicit finite
 engine expansion-fuel setting on the exercised `ExecutionContext`. Native

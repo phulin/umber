@@ -2,6 +2,8 @@
 """Run an Umber command in a bounded, fully reaped process group."""
 
 import argparse
+import ctypes
+import functools
 import os
 import signal
 import subprocess
@@ -9,7 +11,7 @@ import sys
 import time
 
 
-def process_rows():
+def ps_process_rows():
     result = subprocess.run(
         ["ps", "-axo", "pid=,pgid=,rss=,command="], capture_output=True, check=True, text=True
     )
@@ -19,8 +21,87 @@ def process_rows():
             yield int(parts[0]), int(parts[1]), int(parts[2]), line.strip()
 
 
+@functools.cache
+def darwin_libproc():
+    libproc = ctypes.CDLL("/usr/lib/libproc.dylib", use_errno=True)
+    libproc.proc_listpgrppids.argtypes = [ctypes.c_int, ctypes.c_void_p, ctypes.c_int]
+    libproc.proc_listpgrppids.restype = ctypes.c_int
+    libproc.proc_pidinfo.argtypes = [
+        ctypes.c_int,
+        ctypes.c_int,
+        ctypes.c_uint64,
+        ctypes.c_void_p,
+        ctypes.c_int,
+    ]
+    libproc.proc_pidinfo.restype = ctypes.c_int
+    libproc.proc_name.argtypes = [ctypes.c_int, ctypes.c_void_p, ctypes.c_uint32]
+    libproc.proc_name.restype = ctypes.c_int
+    return libproc
+
+
+def darwin_group_rows(pgid):
+    libproc = darwin_libproc()
+
+    buffer_size = libproc.proc_listpgrppids(pgid, None, 0)
+    if buffer_size < 0:
+        raise OSError(ctypes.get_errno(), "proc_listpgrppids sizing failed")
+    if buffer_size == 0:
+        return []
+
+    pid_capacity = max(1, buffer_size // ctypes.sizeof(ctypes.c_int))
+    pids = (ctypes.c_int * pid_capacity)()
+    pid_count = libproc.proc_listpgrppids(pgid, pids, ctypes.sizeof(pids))
+    if pid_count < 0:
+        raise OSError(ctypes.get_errno(), "proc_listpgrppids failed")
+
+    # PROC_PIDTASKINFO begins with virtual size and resident size, both in bytes.
+    task_info = (ctypes.c_uint64 * 12)()
+    name = ctypes.create_string_buffer(1024)
+    rows = []
+    for pid in pids[:pid_count]:
+        info_size = libproc.proc_pidinfo(pid, 4, 0, task_info, ctypes.sizeof(task_info))
+        if info_size < 2 * ctypes.sizeof(ctypes.c_uint64):
+            continue
+        rss_kib = (task_info[1] + 1023) // 1024
+        name.value = b""
+        name_size = libproc.proc_name(pid, name, ctypes.sizeof(name))
+        command = name.value.decode(errors="replace") if name_size > 0 else "?"
+        rows.append((pid, pgid, rss_kib, f"{pid} {pgid} {rss_kib} {command}"))
+    return rows
+
+
+def linux_group_rows(pgid):
+    page_size = os.sysconf("SC_PAGE_SIZE")
+    rows = []
+    with os.scandir("/proc") as entries:
+        for entry in entries:
+            if not entry.name.isdigit():
+                continue
+            pid = int(entry.name)
+            try:
+                with open(f"/proc/{pid}/stat", encoding="utf-8") as stat_file:
+                    stat = stat_file.read()
+                fields = stat[stat.rfind(")") + 2 :].split()
+                if int(fields[2]) != pgid:
+                    continue
+                with open(f"/proc/{pid}/statm", encoding="utf-8") as statm_file:
+                    resident_pages = int(statm_file.read().split()[1])
+                rss_kib = (resident_pages * page_size + 1023) // 1024
+                with open(f"/proc/{pid}/cmdline", "rb") as command_file:
+                    command = command_file.read().replace(b"\0", b" ").strip()
+            except (FileNotFoundError, PermissionError, ProcessLookupError, ValueError, IndexError):
+                continue
+            command_text = command.decode(errors="replace") or "?"
+            rows.append((pid, pgid, rss_kib, f"{pid} {pgid} {rss_kib} {command_text}"))
+    return rows
+
+
 def group_rows(pgid):
-    return [row for row in process_rows() if row[1] == pgid]
+    if sys.platform == "darwin":
+        return darwin_group_rows(pgid)
+    if sys.platform.startswith("linux"):
+        return linux_group_rows(pgid)
+    return [row for row in ps_process_rows() if row[1] == pgid]
 
 
 def signal_group(pgid, sig):
@@ -28,6 +109,14 @@ def signal_group(pgid, sig):
         os.killpg(pgid, sig)
     except ProcessLookupError:
         pass
+    except PermissionError:
+        # Sandboxed macOS can reject killpg after the session leader exits even
+        # though its former descendants remain signalable individually.
+        for pid, _, _, _ in group_rows(pgid):
+            try:
+                os.kill(pid, sig)
+            except ProcessLookupError:
+                pass
 
 
 def parse_args():
