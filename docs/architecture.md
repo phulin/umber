@@ -180,6 +180,19 @@ This deterministic continuation is used even in error-stop mode because the
 embedded engine has no interactive error prompt at which a user could request
 TeX's ordinary recovery action.
 
+Alignment entry completion follows TeX.web §§791, 799, and 1131 rather than
+assuming that delivery of the frozen end-template marker can always finish a
+cell immediately. Section 1131's `do_endv` first requires the innermost group
+to be the entry `align_group`; when a control-sequence brace alias or another
+construct has left a group open without changing `align_state`, it applies
+§§1064 and 1066 `off_save` recovery and replays the marker after that group is
+closed. Only then may `fin_col`/`fin_row` reach §785 `align_peek`, where a
+following booktabs-style `\noalign` is structural. Restricted-horizontal
+paragraph and vertical-command recovery is adjacent but distinct: the issue's
+historical §1091 citation names `new_graf`, while the relevant `par_end` and
+`head_for_vmode` `off_save` paths are §§1094--1095. pdfTeX retains these TeX82
+alignment transitions without an extension-specific divergence.
+
 ## 6. Execution engine
 
 `tex-exec` owns primitive dispatch, grouping, assignments, modes, box building,

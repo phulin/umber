@@ -1530,6 +1530,44 @@ fn noalign_backtick_brace_keeps_local_meaning_until_balancing_idiom() {
 }
 
 #[test]
+fn booktabs_rules_stay_structural_after_rows_with_unclosed_brace_alias_groups() {
+    let stores = run_boxed_alignment_source(
+        r"\let\bgroup={
+          \def\complexrow#1{\bgroup\hbox{#1}\cr}
+          \def\toprule{\noalign{\hrule height1pt}}
+          \def\midrule{\noalign{\hrule height2pt}}
+          \def\bottomrule{\noalign{\hrule height3pt}}
+          \halign{#\cr
+            \complexrow{header}
+            \toprule
+            \complexrow{body}
+            \midrule
+            \complexrow{footer}
+            \bottomrule}",
+    );
+
+    let output = support::terminal_effect_text(&stores);
+    assert!(!output.contains("Misplaced \\noalign"), "{output}");
+    let nodes = stores
+        .nodes(box_zero_vlist(&stores).children)
+        .testing_decoded();
+    assert_eq!(
+        nodes
+            .iter()
+            .filter(|node| matches!(node, Node::HList(_)))
+            .count(),
+        3
+    );
+    assert_eq!(
+        nodes
+            .iter()
+            .filter(|node| matches!(node, Node::Rule { .. }))
+            .count(),
+        3
+    );
+}
+
+#[test]
 fn noalign_nointerlineskip_suppresses_next_row_baseline_glue() {
     let stores = run_boxed_alignment_source(
         "\\baselineskip=20pt \\halign{#\\cr a\\cr\\noalign{\\nointerlineskip}b\\cr}",

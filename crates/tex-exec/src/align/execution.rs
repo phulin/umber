@@ -524,12 +524,13 @@ fn run_cell_body_until_terminator(
         };
         let semantic = tex_expand::semantic_token(token);
         if semantic.is_frozen_endv()
-            && matches!(nest.current_mode(), Mode::Math | Mode::DisplayMath)
+            && stores.innermost_group_kind() != Some(tex_state::GroupKind::Align)
         {
-            // TeX82 reaches `endv` through main_control. In math mode it must
-            // first apply `off_save`, which inserts the delimiter needed to
-            // close an intervening math or ordinary group and then retries
-            // the inaccessible token in the alignment cell's base mode.
+            // TeX.web §1131 do_endv finishes an entry only when the current
+            // group is align_group. Any intervening group needs §1064
+            // off_save first, including an ordinary group opened by a control
+            // sequence brace alias that did not change align_state. The
+            // inserted closer runs before this inaccessible token is retried.
             crate::assignments::off_save_alignment(token, input, stores)?;
             continue;
         }
