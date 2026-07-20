@@ -1093,6 +1093,17 @@ pub struct TokenListReplayMarker {
     frame_index: usize,
 }
 
+/// Ephemeral proof of the exact macro replay frame and position that delivered
+/// one token. This is deliberately absent from resumable summaries: TeX's
+/// `back_input` contract applies only to the token just delivered by the live
+/// input stack.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct TokenListDelivery {
+    replay_marker: TokenListReplayMarker,
+    next_index: usize,
+    token: TracedTokenWord,
+}
+
 #[derive(Clone, Debug)]
 enum InputFrame {
     Source(SourceInputFrame),
@@ -1513,6 +1524,7 @@ pub struct InputStack {
     utf8_input_as_bytes: bool,
     last_source_frame: Option<LastSourceFrame>,
     next_replay_marker: u64,
+    last_token_list_delivery: Option<TokenListDelivery>,
     next_condition_token: u64,
     alignment_inputs: Vec<AlignmentInput>,
     /// Derived, discardable segmentation of immutable macro token lists.
@@ -1751,6 +1763,7 @@ impl InputStack {
             utf8_input_as_bytes: false,
             last_source_frame: None,
             next_replay_marker: 0,
+            last_token_list_delivery: None,
             next_condition_token: 0,
             alignment_inputs: Vec::new(),
             literal_span_cache: AHashMap::new(),
@@ -1987,6 +2000,7 @@ impl InputStack {
                 next_source_offset: source.next_source_offset(),
             }),
             next_replay_marker: 0,
+            last_token_list_delivery: None,
             next_condition_token: summary
                 .frames()
                 .iter()
@@ -2325,17 +2339,36 @@ impl InputStack {
         self.push_token_list_with_origins(token_list, OriginListId::EMPTY, replay_kind)
     }
 
-    pub fn rewind_current_token_list_frame(&mut self) -> bool {
+    /// Rewinds a macro replay only when it is the exact live frame and
+    /// position that delivered `token` most recently.
+    ///
+    /// Semantic token equality is insufficient: an exhausted replay may
+    /// expose a different macro frame whose preceding token happens to be
+    /// equal. The one-shot delivery proof keeps the ordinary lookahead path
+    /// allocation-free while preventing that wrong-frame rewind.
+    pub fn rewind_last_macro_token_delivery(&mut self, token: TracedTokenWord) -> bool {
+        let Some(delivery) = self.last_token_list_delivery.take() else {
+            return false;
+        };
         let Some(index) = self.current_token_frame_index() else {
             return false;
         };
         let InputFrame::TokenList(frame) = &mut self.frames[index] else {
             return false;
         };
-        let Some(previous) = frame.index.checked_sub(1) else {
+        if !matches!(
+            frame.replay_kind,
+            TokenListReplayKind::MacroBody | TokenListReplayKind::MacroArgument
+        ) || frame.replay_marker != Some(delivery.replay_marker)
+            || frame.index != delivery.next_index
+            || delivery.token != token
+        {
             return false;
-        };
-        frame.index = previous;
+        }
+        frame.index = frame
+            .index
+            .checked_sub(1)
+            .expect("delivered macro token must advance its replay frame");
         true
     }
 
@@ -4091,10 +4124,12 @@ impl InputStack {
         stores: &mut impl ExpansionState,
     ) -> Result<Option<TracedTokenWord>, LexError> {
         self.recently_popped_invocation = None;
+        self.last_token_list_delivery = None;
         loop {
             let Some(frame_index) = self.current_token_frame_index() else {
                 return Ok(None);
             };
+            self.ensure_macro_replay_marker(frame_index);
             match &mut self.frames[frame_index] {
                 InputFrame::TokenList(token_list) => {
                     match next_traced_token_from_token_list_frame(
@@ -4111,7 +4146,9 @@ impl InputStack {
                             TracedTokenReplay::Deliver(token)
                             | TracedTokenReplay::DeliverNoExpand(token),
                         ) => {
-                            return Ok(Some(token.packed()));
+                            let token = token.packed();
+                            self.record_macro_token_delivery(frame_index, token);
+                            return Ok(Some(token));
                         }
                         None => {
                             let frame = self.discard_token_list_frame(frame_index);
@@ -4232,10 +4269,12 @@ impl InputStack {
         stores: &mut impl ExpansionState,
     ) -> Result<Option<TracedExpansionToken>, LexError> {
         self.recently_popped_invocation = None;
+        self.last_token_list_delivery = None;
         loop {
             let Some(frame_index) = self.current_token_frame_index() else {
                 return Ok(None);
             };
+            self.ensure_macro_replay_marker(frame_index);
             match &mut self.frames[frame_index] {
                 InputFrame::TokenList(token_list) => {
                     let stored_token_list =
@@ -4284,20 +4323,24 @@ impl InputStack {
                             continue;
                         }
                         Some(TracedTokenReplay::Deliver(token)) => {
-                            return Ok(Some(TracedExpansionToken::from_decoded(
+                            let token = TracedExpansionToken::from_decoded(
                                 token,
                                 false,
                                 false,
                                 macro_replay_site,
-                            )));
+                            );
+                            self.record_macro_token_delivery(frame_index, token.traced_token());
+                            return Ok(Some(token));
                         }
                         Some(TracedTokenReplay::DeliverNoExpand(token)) => {
-                            return Ok(Some(TracedExpansionToken::from_decoded(
+                            let token = TracedExpansionToken::from_decoded(
                                 token,
                                 true,
                                 token_list.replay_kind == TokenListReplayKind::Unexpanded,
                                 macro_replay_site,
-                            )));
+                            );
+                            self.record_macro_token_delivery(frame_index, token.traced_token());
+                            return Ok(Some(token));
                         }
                         None => {
                             let frame = self.discard_token_list_frame(frame_index);
@@ -4388,6 +4431,7 @@ impl InputStack {
         &mut self,
         stores: &impl ExpansionState,
     ) -> Result<Option<ExpansionToken>, LexError> {
+        self.last_token_list_delivery = None;
         loop {
             let Some(frame_index) = self.current_token_frame_index() else {
                 return Ok(None);
@@ -4602,6 +4646,49 @@ impl InputStack {
 
     fn current_token_frame_index(&self) -> Option<usize> {
         self.token_frame_indices.last().copied()
+    }
+
+    fn ensure_macro_replay_marker(&mut self, frame_index: usize) {
+        let needs_marker = matches!(
+            &self.frames[frame_index],
+            InputFrame::TokenList(frame)
+                if matches!(
+                    frame.replay_kind,
+                    TokenListReplayKind::MacroBody | TokenListReplayKind::MacroArgument
+                ) && frame.replay_marker.is_none()
+        );
+        if !needs_marker {
+            return;
+        }
+        let marker = TokenListReplayMarker {
+            sequence: self.next_replay_marker,
+            frame_index,
+        };
+        self.next_replay_marker = self
+            .next_replay_marker
+            .checked_add(1)
+            .expect("token-list replay marker overflowed");
+        let InputFrame::TokenList(frame) = &mut self.frames[frame_index] else {
+            unreachable!("validated macro replay frame changed")
+        };
+        frame.replay_marker = Some(marker);
+    }
+
+    fn record_macro_token_delivery(&mut self, frame_index: usize, token: TracedTokenWord) {
+        let InputFrame::TokenList(frame) = &self.frames[frame_index] else {
+            unreachable!("token-list delivery requires a token-list frame")
+        };
+        self.last_token_list_delivery = match (frame.replay_kind, frame.replay_marker) {
+            (
+                TokenListReplayKind::MacroBody | TokenListReplayKind::MacroArgument,
+                Some(replay_marker),
+            ) => Some(TokenListDelivery {
+                replay_marker,
+                next_index: frame.index,
+                token,
+            }),
+            _ => None,
+        };
     }
 
     fn push_macro_argument_frame(&mut self, parent_index: usize, slot: u8) {

@@ -2550,15 +2550,7 @@ fn back_input_with_kind<I>(
     };
     input.undo_alignment_delivery(classify_alignment_token(stores, first).0);
     let Some(second) = traced.next() else {
-        if let Some((list, replay_kind, index)) = input.current_token_list_frame()
-            && matches!(
-                replay_kind,
-                TokenListReplayKind::MacroBody | TokenListReplayKind::MacroArgument
-            )
-            && index > 0
-            && stores.tokens(list).get(index - 1).copied() == Some(semantic_token(first))
-            && input.rewind_current_token_list_frame()
-        {
+        if input.rewind_last_macro_token_delivery(first) {
             return;
         }
         if input.push_current_source_pending(first) {

@@ -4,7 +4,6 @@ use crate::{
     dispatch_with_context, install_expandable_primitives, semantic_token,
 };
 use ahash::AHashMap;
-#[cfg(feature = "profiling-stats")]
 use tex_lex::MacroArguments;
 use tex_lex::{InputStack, MemoryInput, TokenListReplayKind};
 use tex_state::glue::{GlueSpec, Order};
@@ -1262,6 +1261,72 @@ fn back_input_clears_one_shot_noexpand_suppression() {
         .expect("replayed expansion")
         .map(crate::semantic_token),
         Some(char_token('x'))
+    );
+}
+
+#[test]
+fn back_input_rewinds_only_the_macro_frame_that_delivered_the_token() {
+    let mut stores = Universe::new();
+    let x = char_token('x');
+    let outer = stores.intern_token_list(&[x, char_token('o')]);
+    let inner = stores.intern_token_list(&[x]);
+    let mut input = InputStack::new(MemoryInput::new(""));
+
+    input.push_macro_body(outer, MacroArguments::new());
+    let outer_token = input
+        .next_traced_token(&mut stores)
+        .expect("outer replay")
+        .expect("outer token");
+    crate::back_input(
+        &mut input,
+        &mut tex_state::ExpansionContext::new(&mut stores),
+        [outer_token],
+    );
+    assert_eq!(
+        input.current_token_list_frame(),
+        Some((outer, TokenListReplayKind::MacroBody, 0)),
+        "ordinary lookahead must rewind in place without a transient allocation"
+    );
+    let _ = input
+        .next_traced_token(&mut stores)
+        .expect("outer replay after rewind")
+        .expect("outer token after rewind");
+
+    input.push_macro_body(inner, MacroArguments::new());
+    let inner_token = input
+        .next_traced_token(&mut stores)
+        .expect("inner replay")
+        .expect("inner token");
+    assert_eq!(inner_token, outer_token, "tokens intentionally coincide");
+    assert!(input.pop_current_token_list_frame(inner, TokenListReplayKind::MacroBody));
+    assert_eq!(
+        input.current_token_list_frame(),
+        Some((outer, TokenListReplayKind::MacroBody, 1))
+    );
+
+    crate::back_input(
+        &mut input,
+        &mut tex_state::ExpansionContext::new(&mut stores),
+        [inner_token],
+    );
+    assert_eq!(
+        input.current_token_list_frame(),
+        None,
+        "the backed token must be inserted ahead of, not rewind, the outer frame"
+    );
+    assert_eq!(
+        input
+            .next_traced_token(&mut stores)
+            .expect("backed replay")
+            .map(crate::semantic_token),
+        Some(x)
+    );
+    assert_eq!(
+        input
+            .next_traced_token(&mut stores)
+            .expect("outer continuation")
+            .map(crate::semantic_token),
+        Some(char_token('o'))
     );
 }
 

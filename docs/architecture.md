@@ -172,6 +172,17 @@ checks. Once the preamble ends, u/v templates and cell bodies run with normal
 scanner status, so packages may use outer sentinels through `\futurelet` and
 `\expandafter` there, as pdfTeX's `bm` package does.
 
+Token backup follows TeX.web §§323--325 by retaining an ephemeral identity for
+the exact live token-list frame and position that most recently delivered a
+macro-body or macro-argument token. The allocation-free rewind optimization is
+used only while that frame is still current at the delivered position;
+semantic equality with the previous token of a different replay frame is not
+proof of delivery. TeX.web §§379--380 and §389 build expansion and macro replay
+on that exact-token lifecycle, while scanner lookahead in §§440, 463, and 473
+and alignment lookahead in §785 may back up only their actual delivered token.
+This identity is execution-local and is intentionally excluded from resumable
+input summaries. pdfTeX does not diverge from TeX82 at this boundary.
+
 Alignment recovery follows TeX.web §§782 and 785: `\noalign` is recognized as
 structural only by `align_peek` after a completed row. If it instead expands
 inside a cell, execution reports the canonical misplaced-control diagnostic,
