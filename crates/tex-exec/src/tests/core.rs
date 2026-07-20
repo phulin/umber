@@ -107,6 +107,84 @@ struct SuspendInputOnce {
     request_indices: Vec<u64>,
 }
 
+struct SuspendScannerInputOnce {
+    suspended: bool,
+    request_indices: Vec<u64>,
+}
+
+impl tex_expand::InputResolver for SuspendScannerInputOnce {
+    fn open_input(
+        &mut self,
+        _input: &mut dyn tex_state::InputReadState,
+        _name: &str,
+        request_index: u64,
+    ) -> tex_expand::ResourceResult<Box<dyn tex_lex::InputSource>> {
+        self.request_indices.push(request_index);
+        if !self.suspended {
+            self.suspended = true;
+            return Ok(tex_expand::ResourceLookup::NeedResource(
+                tex_expand::ResourceNeed::new(request_index),
+            ));
+        }
+        Ok(tex_expand::ResourceLookup::Available(Box::new(
+            MemoryInput::new("0 "),
+        )))
+    }
+}
+
+#[test]
+fn resource_suspension_inside_integer_scanning_rolls_back_and_resumes() {
+    let mut stores = Universe::new();
+    tex_expand::install_expandable_primitives(&mut stores);
+    install_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(
+        "\\count0=7 \\count\\input child =42 \\end",
+    ));
+    let mut resolver = SuspendScannerInputOnce {
+        suspended: false,
+        request_indices: Vec::new(),
+    };
+    let mut run = ExecutionRun::new("nested-scanner-rollback");
+    let cancellation = Cancellation::new();
+
+    assert!(matches!(
+        run.step(
+            &mut ExecutionServices::new(&mut input, &mut stores),
+            &cancellation,
+        ),
+        ExecutionStepResult::Progress(_)
+    ));
+    let universe_before = stores.snapshot().state_hash();
+    let input_before = input.summary();
+    let nest_before = run.nest().clone();
+
+    let ExecutionStepResult::AwaitingResources(suspension) = run.step(
+        &mut ExecutionServices::new(&mut input, &mut stores).with_input_resolver(&mut resolver),
+        &cancellation,
+    ) else {
+        panic!("resource request nested in integer scanning must suspend")
+    };
+    assert_eq!(suspension.requests, vec![tex_expand::ResourceNeed::new(0)]);
+    assert_eq!(suspension.blocked_step, ExecutionStep::MainControl);
+    assert_eq!(stores.snapshot().state_hash(), universe_before);
+    assert_eq!(input.summary(), input_before);
+    assert_eq!(run.nest(), &nest_before);
+    assert_eq!(stores.count(0), 0);
+
+    loop {
+        match run.step(
+            &mut ExecutionServices::new(&mut input, &mut stores).with_input_resolver(&mut resolver),
+            &cancellation,
+        ) {
+            ExecutionStepResult::Progress(_) => {}
+            ExecutionStepResult::Complete(_) => break,
+            other => panic!("nested scanner replay must complete, got {other:?}"),
+        }
+    }
+    assert_eq!(resolver.request_indices, vec![0, 0]);
+    assert_eq!(stores.count(0), 42);
+}
+
 impl tex_expand::InputResolver for SuspendInputOnce {
     fn open_input(
         &mut self,

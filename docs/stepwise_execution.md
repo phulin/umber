@@ -271,8 +271,10 @@ ResourceLookup<T> = Available(T) | Unavailable | NeedResource(ResourceNeed)
 `Need` is carried through `ExpandError`/`ExecError` without conversion to a
 diagnostic string. `Unavailable` is an authoritative registered answer and
 continues through ordinary TeX missing-input, false-probe, or missing-font
-semantics. The complete public request key, not a resolver URL or the numeric
-request index, is its identity.
+semantics. Typed extraction recursively traverses captured errors and every
+integer, dimension, glue, and general-text scanner wrapper, including scanner
+wrappers nested inside other scanners. The complete public request key, not a
+resolver URL or the numeric request index, is its identity.
 
 The resource classes are:
 

@@ -1213,19 +1213,9 @@ fn resource_need(error: &ExecError) -> Option<tex_expand::ResourceNeed> {
     match error {
         ExecError::NeedResource(need) => Some(*need),
         ExecError::Captured { error, .. } => resource_need(error),
-        ExecError::Expand(error) => expansion_resource_need(error),
-        ExecError::ScanToks(tex_expand::scan::ScanToksError::Expand(error))
-        | ExecError::ScanGlue(tex_expand::scan_glue::ScanGlueError::Expand(error)) => {
-            expansion_resource_need(error)
-        }
-        _ => None,
-    }
-}
-
-fn expansion_resource_need(error: &tex_expand::ExpandError) -> Option<tex_expand::ResourceNeed> {
-    match error {
-        tex_expand::ExpandError::NeedResource(need) => Some(*need),
-        tex_expand::ExpandError::Captured { error, .. } => expansion_resource_need(error),
+        ExecError::Expand(error) => error.resource_need(),
+        ExecError::ScanToks(error) => error.resource_need(),
+        ExecError::ScanGlue(error) => error.resource_need(),
         _ => None,
     }
 }

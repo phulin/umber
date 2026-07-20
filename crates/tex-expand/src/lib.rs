@@ -997,6 +997,25 @@ impl std::error::Error for ExpandError {
 }
 
 impl ExpandError {
+    /// Returns the typed resource request carried through any scanner wrapper.
+    ///
+    /// Scanner errors are recursive because expandable primitives may scan
+    /// integers, dimensions, glue, or general text while another scanner is
+    /// already active. Suspension must follow that entire typed chain instead
+    /// of turning a nested request into a terminal diagnostic.
+    #[must_use]
+    pub fn resource_need(&self) -> Option<ResourceNeed> {
+        match self {
+            Self::NeedResource(need) => Some(*need),
+            Self::Captured { error, .. } => error.resource_need(),
+            Self::ScanInt(error) => error.resource_need(),
+            Self::ScanDimen(error) => error.resource_need(),
+            Self::ScanGlue(error) => error.resource_need(),
+            Self::ScanGeneralText(error) => error.resource_need(),
+            _ => None,
+        }
+    }
+
     #[must_use]
     pub fn primary_origin(&self) -> Option<OriginId> {
         match self {

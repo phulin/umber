@@ -162,6 +162,14 @@ impl std::error::Error for ScanIntError {
 
 impl ScanIntError {
     #[must_use]
+    pub fn resource_need(&self) -> Option<crate::ResourceNeed> {
+        match self {
+            Self::Expand(error) => error.resource_need(),
+            _ => None,
+        }
+    }
+
+    #[must_use]
     pub fn primary_origin(&self) -> Option<OriginId> {
         match self {
             Self::MissingNumber { context } | Self::RegisterNumberOutOfRange { context, .. } => {

@@ -23,6 +23,35 @@ use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 use tex_state::{ExpansionState, InputReadState, Universe};
 
 #[test]
+fn resource_need_survives_every_nested_scanner_wrapper() {
+    fn need() -> crate::ExpandError {
+        crate::ExpandError::NeedResource(crate::ResourceNeed::new(115))
+    }
+
+    let errors = [
+        crate::ExpandError::ScanInt(Box::new(crate::scan_int::ScanIntError::Expand(need()))),
+        crate::ExpandError::ScanInt(Box::new(crate::scan_int::ScanIntError::Expand(
+            crate::ExpandError::ScanInt(Box::new(crate::scan_int::ScanIntError::Expand(need()))),
+        ))),
+        crate::ExpandError::ScanDimen(Box::new(crate::scan_dimen::ScanDimenError::Expand(need()))),
+        crate::ExpandError::ScanDimen(Box::new(crate::scan_dimen::ScanDimenError::Integer(
+            crate::scan_int::ScanIntError::Expand(need()),
+        ))),
+        crate::ExpandError::ScanGlue(Box::new(crate::scan_glue::ScanGlueError::Expand(need()))),
+        crate::ExpandError::ScanGlue(Box::new(crate::scan_glue::ScanGlueError::Dimen(
+            crate::scan_dimen::ScanDimenError::Integer(crate::scan_int::ScanIntError::Expand(
+                need(),
+            )),
+        ))),
+        crate::ExpandError::ScanGeneralText(Box::new(crate::scan::ScanToksError::Expand(need()))),
+    ];
+
+    for error in errors {
+        assert_eq!(error.resource_need(), Some(crate::ResourceNeed::new(115)));
+    }
+}
+
+#[test]
 fn paragraph_reads_are_deduplicated_at_publication() {
     let mut context = ExpansionContext::new("test");
     context.begin_paragraph_recording();
