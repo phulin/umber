@@ -1498,6 +1498,38 @@ fn noalign_material_is_spliced_between_finished_rows() {
 }
 
 #[test]
+fn noalign_backtick_brace_keeps_local_meaning_until_balancing_idiom() {
+    let mut stores = support::stores_with_fonts();
+    tex_expand::install_expandable_primitives(&mut stores);
+    run_alignment_source_in(
+        &mut stores,
+        r"\let\normal\relax
+          \def\rule{\ifx\longtable\undefined
+              \let\switch\normal
+            \else\ifx\hline\LThline
+              \let\switch\normal
+            \else
+              \let\switch\normal
+            \fi\fi
+            \switch}
+          \setbox0=\vbox{\halign{#\cr a\cr
+          \noalign{\ifnum0=`}\fi
+            \rule
+          \ifnum0=`{\fi}
+          b\cr}}",
+    );
+
+    let output = support::terminal_effect_text(&stores);
+    assert!(!output.contains("Undefined control sequence"), "{output}");
+    assert_eq!(vlist_rows(&stores, box_zero_vlist(&stores)).len(), 2);
+    assert_eq!(
+        stores.meaning(stores.symbol("switch").expect("switch symbol")),
+        Meaning::Undefined,
+        "the local switch definition must restore after noalign exits"
+    );
+}
+
+#[test]
 fn noalign_nointerlineskip_suppresses_next_row_baseline_glue() {
     let stores = run_boxed_alignment_source(
         "\\baselineskip=20pt \\halign{#\\cr a\\cr\\noalign{\\nointerlineskip}b\\cr}",
