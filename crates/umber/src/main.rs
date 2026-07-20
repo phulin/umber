@@ -824,6 +824,20 @@ mod tests {
 
         let receipt =
             input_record_receipt(&world, &BTreeMap::new(), &[], None).expect("build input receipt");
-        assert_eq!(receipt, b"external.cfg\t8\n");
+        assert_eq!(receipt, b"8\texternal.cfg\n");
+    }
+
+    #[test]
+    fn input_receipt_rejects_unescaped_tsv_delimiters() {
+        for path in ["tab\tname.tex", "line\nname.tex", "return\rname.tex"] {
+            let error = input_record_receipt(
+                &World::memory(),
+                &BTreeMap::new(),
+                &[(PathBuf::from(path), 1)],
+                None,
+            )
+            .expect_err("receipt paths containing delimiters must be rejected");
+            assert!(matches!(error, CliError::InputReceipt(_)));
+        }
     }
 }
