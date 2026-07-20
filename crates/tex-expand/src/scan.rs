@@ -820,17 +820,27 @@ fn collect_expanded_text_inner(
             continue;
         }
 
-        unread_token(input, stores, traced);
-        if let Some(expanded) = mode.next_expanded_token(input, stores, expansion)?
-            && append_collected_token(
-                &mut boundary,
-                &mut builder,
-                &mut origins,
-                expanded,
-                crate::semantic_token(expanded),
-                true,
-            )
-        {
+        if matches!(
+            meaning,
+            Meaning::ExpandablePrimitive(_) | Meaning::Undefined
+        ) {
+            // Expand exactly one operation before rechecking the replay
+            // boundary. A recursive `get_x_token` call here can run past an
+            // exhausted raw general-text replay after a trailing conditional
+            // and steal the first token belonging to the caller.
+            let dispatch = mode.dispatch_raw_token(traced, input, stores, expansion)?;
+            crate::push_dispatch_result(input, stores, dispatch);
+            continue;
+        }
+
+        if append_collected_token(
+            &mut boundary,
+            &mut builder,
+            &mut origins,
+            traced,
+            token,
+            true,
+        ) {
             break;
         }
     }

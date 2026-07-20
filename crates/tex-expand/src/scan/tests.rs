@@ -1,5 +1,5 @@
 use super::{
-    MacroScanDiagnostic, ScanToksError, append_hash_brace,
+    MacroScanDiagnostic, ScanToksError, append_hash_brace, scan_general_text_expanded_with_driver,
     scan_general_text_expanded_with_expanded_open, scan_toks, scan_toks_expanded,
     scan_toks_expanded_with_driver,
 };
@@ -78,6 +78,36 @@ fn expanded_preserves_group_pairs_around_nested_unexpanded_text() {
             char_token('}', Catcode::EndGroup),
         ]
     );
+}
+
+#[test]
+fn expanded_general_text_trailing_conditional_preserves_following_input() {
+    let mut stores = Universe::new();
+    crate::install_expandable_primitives(&mut stores);
+    let context = TracedTokenWord::pack(
+        Token::Cs(stores.intern("pdfximage").symbol()),
+        OriginId::UNKNOWN,
+    );
+    let mut input = InputStack::new(MemoryInput::new("{\\iftrue X\\fi}cropbox"));
+    let mut expansion = ExpansionContext::new("texput").with_fuel(10_000);
+
+    let expanded = scan_general_text_expanded_with_driver(
+        &mut input,
+        &mut tex_state::ExpansionContext::new(&mut stores),
+        &mut expansion,
+        context,
+    )
+    .expect("general text should expand");
+
+    assert_eq!(stores.tokens(expanded), &[char_token('X', Catcode::Letter)]);
+    let next = crate::get_x_token_with_context(
+        &mut input,
+        &mut tex_state::ExpansionContext::new(&mut stores),
+        &mut expansion,
+    )
+    .expect("following input should expand")
+    .map(crate::semantic_token);
+    assert_eq!(next, Some(char_token('c', Catcode::Letter)));
 }
 
 #[test]

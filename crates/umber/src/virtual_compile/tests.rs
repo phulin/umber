@@ -2280,6 +2280,65 @@ fn pdfximage_uses_typed_image_retry_and_accepts_png_metadata() {
 }
 
 #[test]
+fn pdfximage_expands_macro_page_box_without_leaking_it_into_the_file_name() {
+    let source = concat!(
+        "\\pdfoutput=1 ",
+        "\\def\\empty{}",
+        "\\def\\page{}",
+        "\\def\\decode{}",
+        "\\let\\ifinterpolate\\iffalse",
+        "\\let\\iftransgroup\\iftrue",
+        "\\def\\pagebox{cropbox}",
+        "\\pdfximage",
+        "\\ifnum0",
+        "\\ifx\\decode\\empty\\else1\\fi",
+        "\\ifinterpolate1\\fi",
+        "\\iftransgroup1\\fi",
+        ">0 attr{",
+        "\\ifx\\decode\\empty\\else/Decode[\\decode]\\fi",
+        "\\iftransgroup/Group<</S/Transparency/K false/I false>>\\fi",
+        "\\ifinterpolate/Interpolate true\\fi",
+        "}\\fi",
+        "\\ifx\\page\\empty\\else page \\page\\fi",
+        "\\pagebox{figure.png} ",
+        "\\end",
+    );
+    let mut session = VirtualCompileSession::new(SessionOptions {
+        engine: EngineMode::PdfTex,
+        limits: SessionLimits {
+            engine_fuel: 1_000_000,
+            ..SessionLimits::default()
+        },
+        ..SessionOptions::default()
+    })
+    .expect("session");
+    session
+        .add_user_file("main.tex", source.as_bytes().to_vec())
+        .expect("main file");
+
+    let requested = requests(session.compile_attempt());
+    let [request] = requested.as_slice() else {
+        panic!("expected one image request, got {requested:?}");
+    };
+    assert_eq!(request.key().kind(), FileKind::Image);
+    assert_eq!(request.key().name(), "figure.png");
+
+    let mut png = b"\x89PNG\r\n\x1a\n".to_vec();
+    png.extend_from_slice(&13_u32.to_be_bytes());
+    png.extend_from_slice(b"IHDR");
+    png.extend_from_slice(&40_u32.to_be_bytes());
+    png.extend_from_slice(&20_u32.to_be_bytes());
+    png.extend_from_slice(&[8, 2, 0, 0, 0]);
+    session
+        .provide_resolved_file(request.key().clone(), "/texlive/figure.png", png)
+        .expect("provide PNG");
+    assert!(
+        matches!(session.compile_attempt(), CompileAttemptResult::Complete(_)),
+        "resumed image scan must retain the complete page-box token sequence"
+    );
+}
+
+#[test]
 fn pdfximage_distinguishes_unavailable_and_malformed_resources() {
     let source = "\\pdfoutput=1 \\pdfximage figure.png \\end";
 

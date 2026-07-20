@@ -197,7 +197,10 @@ lower to typed image or form XObjects; repeated references reuse the same
 object and PDF-page resources and transparency groups are recursively
 remapped. Final PDF dictionaries, streams, resource entries, and content
 operations are serialized exclusively through `pdf_writer` at the detached
-output boundary.
+output boundary. Expanded `attr` general text remains bounded by its raw
+balanced-text replay even when its last token is a conditional terminator, so
+the following page-box keyword and image name remain caller input rather than
+being absorbed into the attribute expansion.
 
 The companion integer enquiries `\pdflastximagepages` and
 `\pdflastximagecolordepth` start at zero and update only after a successful
