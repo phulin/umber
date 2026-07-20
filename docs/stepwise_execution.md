@@ -31,6 +31,11 @@ text span; named checkpoints are staged and delivered only after that bounded
 operation returns successfully. Expansion state is detached from input,
 font, image, and read-recorder capabilities between calls.
 
+`tex-lex` now provides the opaque `InputStackSnapshot` prerequisite. Capture
+retains complete owned source cursors and private input machinery, while
+rollback is infallible and resolver-free; `InputSummary` remains the durable
+publication format.
+
 Transactional `StepSavepoint` rollback and durable resource-generation
 progress checks remain the next layer. Until that layer is installed, a typed
 resource need is surfaced as `AwaitingResources`, but callers must not replay

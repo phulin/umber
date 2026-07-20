@@ -253,6 +253,12 @@ impl LayoutCursor {
 /// The trait is local so M3's `World` can implement it without forcing the
 /// lexer to know where bytes came from.
 pub trait InputSource: fmt::Debug {
+    /// Clones the complete live source cursor over its already owned backing.
+    ///
+    /// Executor-step savepoints use this operation to preserve retry state.
+    /// Implementations must not reopen a resource or consult host policy.
+    fn clone_input_source(&self) -> Box<dyn InputSource>;
+
     /// Reads the next physical line with its original backing-byte metadata.
     fn read_line(&mut self) -> Result<Option<PhysicalLine>, InputSourceError>;
 
@@ -280,6 +286,10 @@ impl<T> InputSource for Box<T>
 where
     T: InputSource + ?Sized,
 {
+    fn clone_input_source(&self) -> Box<dyn InputSource> {
+        (**self).clone_input_source()
+    }
+
     fn read_line(&mut self) -> Result<Option<PhysicalLine>, InputSourceError> {
         (**self).read_line()
     }
@@ -298,6 +308,12 @@ where
 
     fn set_utf8_input_as_bytes(&mut self, enabled: bool) {
         (**self).set_utf8_input_as_bytes(enabled);
+    }
+}
+
+impl Clone for Box<dyn InputSource> {
+    fn clone(&self) -> Self {
+        self.clone_input_source()
     }
 }
 
@@ -456,7 +472,7 @@ impl PhysicalLine {
 }
 
 /// In-memory input source for tests, `\scantokens`, and editor buffers.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct MemoryInput {
     backing: Arc<[u8]>,
     next_offset: usize,
@@ -497,6 +513,10 @@ impl MemoryInput {
 }
 
 impl InputSource for MemoryInput {
+    fn clone_input_source(&self) -> Box<dyn InputSource> {
+        Box::new(self.clone())
+    }
+
     fn read_line(&mut self) -> Result<Option<PhysicalLine>, InputSourceError> {
         Ok(next_physical_line(&self.backing, &mut self.next_offset))
     }
@@ -511,7 +531,7 @@ impl InputSource for MemoryInput {
 }
 
 /// Content-addressed input source created from `World` file content.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct WorldInput {
     input_record: Option<InputRecordId>,
     backing: Arc<[u8]>,
@@ -609,6 +629,10 @@ impl WorldInput {
 }
 
 impl InputSource for WorldInput {
+    fn clone_input_source(&self) -> Box<dyn InputSource> {
+        Box::new(self.clone())
+    }
+
     fn read_line(&mut self) -> Result<Option<PhysicalLine>, InputSourceError> {
         if self.decode_invalid_bytes {
             return Ok(next_physical_byte_line(
@@ -661,7 +685,7 @@ pub enum LineEvent {
 }
 
 /// Drives TeX line normalization for an input source.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct LineReader<S> {
     source: S,
     normalization_cache: LineNormalizationCache,
@@ -853,7 +877,7 @@ impl SourceFrame {
     }
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 struct SourceInputFrame {
     source_id: SourceId,
     input_record: Option<InputRecordId>,
@@ -887,7 +911,7 @@ impl SourceInputFrame {
     }
 }
 
-#[derive(Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 enum ReplayPayload {
     Stored {
         token_list: TokenListId,
@@ -955,7 +979,7 @@ fn argument_index(slot: u8) -> usize {
     usize::from(slot - 1)
 }
 
-#[derive(Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 struct TokenListInputFrame {
     payload: ReplayPayload,
     replay_kind: TokenListReplayKind,
@@ -1037,7 +1061,7 @@ pub struct TokenListReplayMarker {
     frame_index: usize,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 enum InputFrame {
     Source(SourceInputFrame),
     TokenList(TokenListInputFrame),
@@ -1047,7 +1071,7 @@ enum InputFrame {
     },
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 struct StableFrames {
     slots: Vec<Option<InputFrame>>,
     active: usize,
@@ -1446,7 +1470,7 @@ impl TracedExpansionToken {
 }
 
 /// TeX input stack for source frames and frozen token-list replay.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct InputStack {
     frames: StableFrames,
     source_frame_count: usize,
@@ -1467,6 +1491,14 @@ pub struct InputStack {
     active_macro_invocation: OriginId,
     recently_popped_invocation: Option<OriginId>,
 }
+
+/// Opaque, ephemeral retry state for one executor step.
+///
+/// Unlike [`InputSummary`], this snapshot retains every live source and all
+/// private input machinery. It is neither a durable checkpoint nor part of a
+/// semantic hash, and restoring it never reopens an input resource.
+#[derive(Debug)]
+pub struct InputStackSnapshot(InputStack);
 
 /// Proof that one token was delivered directly from a physical source frame.
 /// Fields are private so replayed or expanded tokens cannot manufacture it.
@@ -1653,6 +1685,23 @@ struct AlignmentInput {
 pub struct AlignmentCellSuspension(Option<AlignmentInput>);
 
 impl InputStack {
+    /// Captures the exact live input state for one private executor step.
+    ///
+    /// Source implementations clone their owned backing and cursor directly;
+    /// no resolver is consulted and no [`InputSummary`] is constructed.
+    #[must_use]
+    pub fn snapshot(&self) -> InputStackSnapshot {
+        InputStackSnapshot(self.clone())
+    }
+
+    /// Restores an executor-step snapshot without host interaction.
+    ///
+    /// This operation is infallible because the snapshot already owns every
+    /// source backing and transient buffer needed by the retry point.
+    pub fn rollback(&mut self, snapshot: InputStackSnapshot) {
+        *self = snapshot.0;
+    }
+
     /// Constructs a stack with no physical source frames.
     ///
     /// This is used for synchronous expansion of an already-frozen token

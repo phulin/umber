@@ -116,6 +116,12 @@ Replay frames have two representations:
 Transient execution does not intern token lists merely to re-enter the input.
 Checkpoint summaries own the remaining transient words by value.
 
+Executor steps use a separate opaque `InputStackSnapshot`. It clones each
+live source cursor over already owned backing together with source, replay,
+condition, alignment, provenance, allocator, lexer, cache, transient-pool, and
+profiling state. Rollback is an infallible replacement and never reopens a
+resource; durable named checkpoints continue to use `InputSummary`.
+
 ## 5. Expansion engine
 
 `tex-expand` owns the gullet loop, macro argument matching, replacement replay,

@@ -6,6 +6,7 @@ use super::{
     load_next_line,
 };
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use tex_state::env::banks::IntParam;
 use tex_state::ids::{OriginListId, TokenListId};
 use tex_state::provenance::{InsertedOriginKind, OriginRecord};
@@ -16,6 +17,137 @@ use tex_state::{
 };
 
 mod input_lines;
+
+#[test]
+fn executor_step_snapshot_restores_complete_live_input_without_host_lookup() {
+    #[derive(Clone, Debug)]
+    struct CountingInput {
+        inner: MemoryInput,
+        reads: Arc<AtomicUsize>,
+    }
+
+    impl InputSource for CountingInput {
+        fn clone_input_source(&self) -> Box<dyn InputSource> {
+            Box::new(self.clone())
+        }
+
+        fn read_line(&mut self) -> Result<Option<PhysicalLine>, super::InputSourceError> {
+            self.reads.fetch_add(1, Ordering::Relaxed);
+            self.inner.read_line()
+        }
+
+        fn source_descriptor(&self) -> Option<tex_state::source_map::SourceDescriptor> {
+            self.inner.source_descriptor()
+        }
+    }
+
+    let reads = Arc::new(AtomicUsize::new(0));
+    let mut stores = Universe::new();
+    stores.set_int_param(IntParam::END_LINE_CHAR, 13);
+    let mut input = InputStack::new(CountingInput {
+        inner: MemoryInput::new("a\nb"),
+        reads: Arc::clone(&reads),
+    });
+    assert_eq!(
+        input.next_token(&mut stores).expect("first source token"),
+        Some(char_token('a', Catcode::Letter))
+    );
+
+    let macro_token = char_token('m', Catcode::Letter);
+    let macro_body = stores.intern_token_list(&[macro_token]);
+    let macro_origin = stores.source_origin(tex_state::SourceId::new(7), 11, 2, 3);
+    let macro_origins = stores.allocate_origin_list(&[macro_origin]);
+    input.push_macro_body_with_origins_and_invocation(
+        macro_body,
+        macro_origins,
+        MacroArguments::new(),
+        macro_origin,
+    );
+    let transient_token = char_token('t', Catcode::Other);
+    let transient_marker = input.push_transient_tokens(
+        vec![TracedTokenWord::pack(transient_token, macro_origin)],
+        TokenListReplayKind::Inserted,
+    );
+    let condition = input.push_condition(ConditionFrameSummary::new_if(condition_context(), true));
+    input.begin_alignment();
+    input.set_alignment_state(0);
+    input.begin_alignment_cell(Some(transient_marker), macro_body, 7);
+    input.literal_span_cache.insert(
+        (macro_body, LiteralSpanPolicy::ExpandedReplacement),
+        Arc::from([(0, 1)]),
+    );
+    input.recycle_transient_token_buffer(Vec::with_capacity(8));
+    input.unicode_superscript_notation = false;
+    input.utf8_input_as_bytes = true;
+    input.recently_popped_invocation = Some(macro_origin);
+    #[cfg(feature = "profiling-stats")]
+    {
+        input.expansion_stats.meaning_lookups = 17;
+        input.expansion_stats.frame_step_timer_events = 23;
+    }
+
+    let expected = format!("{input:#?}");
+    let summary_before = input.summary();
+    let reads_before = reads.load(Ordering::Relaxed);
+    let snapshot = input.snapshot();
+    assert_eq!(reads.load(Ordering::Relaxed), reads_before);
+
+    input.frames = super::StableFrames::new();
+    input.source_frame_count = 0;
+    input.token_frame_indices.clear();
+    input.condition_frame_indices.clear();
+    input.next_source_id = u32::MAX;
+    input.unicode_superscript_notation = true;
+    input.utf8_input_as_bytes = false;
+    input.last_source_frame = None;
+    input.next_replay_marker = u64::MAX;
+    input.next_condition_token = u64::MAX;
+    input.alignment_inputs.clear();
+    input.literal_span_cache.clear();
+    input.transient_buffer_pool.clear();
+    input.active_macro_invocation = OriginId::UNKNOWN;
+    input.recently_popped_invocation = None;
+    #[cfg(feature = "profiling-stats")]
+    {
+        input.expansion_stats = super::ExpansionStats::default();
+    }
+
+    input.rollback(snapshot);
+    assert_eq!(reads.load(Ordering::Relaxed), reads_before);
+    assert_eq!(format!("{input:#?}"), expected);
+    assert_eq!(input.summary(), summary_before);
+    assert_eq!(input.current_condition_token(), Some(condition));
+    assert!(input.contains_token_list_replay_marker(transient_marker));
+    assert!(input.alignment_state_is(0));
+    assert_eq!(input.active_macro_invocation(), macro_origin);
+    assert_eq!(input.transient_buffer_pool.len(), 1);
+    assert_eq!(input.literal_span_cache.len(), 1);
+    #[cfg(feature = "profiling-stats")]
+    {
+        assert_eq!(input.expansion_stats().meaning_lookups, 17);
+        assert_eq!(input.expansion_stats.frame_step_timer_events, 23);
+    }
+
+    let transient = input
+        .next_traced_token(&mut stores)
+        .expect("restored transient replay")
+        .expect("transient token");
+    assert_eq!(transient.unpack(), Some((transient_token, macro_origin)));
+    let macro_replay = input
+        .next_traced_token(&mut stores)
+        .expect("restored macro replay")
+        .expect("macro token");
+    assert_eq!(macro_replay.unpack(), Some((macro_token, macro_origin)));
+    assert_eq!(
+        input.next_token(&mut stores).expect("restored line ending"),
+        Some(char_token(' ', Catcode::Space))
+    );
+    assert_eq!(
+        input.next_token(&mut stores).expect("restored next line"),
+        Some(char_token('b', Catcode::Letter))
+    );
+    assert_eq!(reads.load(Ordering::Relaxed), reads_before + 1);
+}
 
 #[test]
 fn nested_alignment_resume_preserves_outer_align_state() {
@@ -558,10 +690,14 @@ fn readonly_missing_control_sequence_retains_source_context() {
 
 #[test]
 fn input_failure_retains_next_line_source_context() {
-    #[derive(Debug)]
+    #[derive(Clone, Debug)]
     struct FailingInput(Option<tex_state::WorldError>);
 
     impl InputSource for FailingInput {
+        fn clone_input_source(&self) -> Box<dyn InputSource> {
+            Box::new(self.clone())
+        }
+
         fn read_line(&mut self) -> Result<Option<super::PhysicalLine>, super::InputSourceError> {
             Err(self
                 .0
