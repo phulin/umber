@@ -1,6 +1,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::path::Path;
+use std::time::Duration;
+#[cfg(not(target_arch = "wasm32"))]
+use std::time::Instant;
 
 use tex_fonts::{
     AcceptedFontContainers, FontLimits, FontRequest, FontRequestKey, OpenTypeFont, ResolvedFont,
@@ -62,6 +65,8 @@ pub struct SessionLimits {
     pub cached_file_bytes: usize,
     pub user_source_bytes: usize,
     pub output_bytes: usize,
+    /// Monotonic expansion work allowed for one logical engine revision.
+    pub engine_fuel: u64,
 }
 
 impl SessionLimits {
@@ -80,6 +85,7 @@ impl SessionLimits {
         cached_file_bytes: VfsLimits::HARD_MAX.resolved_bytes,
         user_source_bytes: VfsLimits::HARD_MAX.user_bytes,
         output_bytes: 256 * 1024 * 1024,
+        engine_fuel: 1_000_000_000,
     };
 
     fn validate(self) -> Result<Self, CompileError> {
@@ -103,6 +109,13 @@ impl SessionLimits {
                     attempted,
                 });
             }
+        }
+        if self.engine_fuel > Self::HARD_MAX.engine_fuel {
+            return Err(CompileError::HardLimitExceeded {
+                resource: "engine fuel",
+                hard: Self::HARD_MAX.engine_fuel as usize,
+                attempted: usize::try_from(self.engine_fuel).unwrap_or(usize::MAX),
+            });
         }
         Ok(self)
     }
@@ -132,6 +145,7 @@ impl Default for SessionLimits {
             cached_file_bytes: 64 * 1024 * 1024,
             user_source_bytes: 16 * 1024 * 1024,
             output_bytes: 64 * 1024 * 1024,
+            engine_fuel: 100_000_000,
         }
     }
 }
@@ -284,6 +298,13 @@ pub struct RetentionMetrics {
     pub output_bytes: usize,
     pub resource_bytes: usize,
     pub protected_overage_bytes: usize,
+}
+
+/// Monotonic engine and host-wait telemetry for the active logical revision.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct CompileTelemetry {
+    pub execution: tex_exec::ExecutionTelemetry,
+    pub resource_wait_time: Duration,
 }
 
 /// One rendered text unit resolved against the accepted editor revision.
@@ -475,6 +496,10 @@ pub struct VirtualCompileSession {
     response_generation: u64,
     last_reuse: Option<tex_incr::ReuseMetrics>,
     initial_revision: tex_incr::RevisionId,
+    execution_telemetry: tex_exec::ExecutionTelemetry,
+    resource_wait_time: Duration,
+    #[cfg(not(target_arch = "wasm32"))]
+    resource_wait_started: Option<Instant>,
 }
 
 enum CandidateExecution {
@@ -624,6 +649,10 @@ impl VirtualCompileSession {
             response_generation: 0,
             last_reuse: None,
             initial_revision,
+            execution_telemetry: tex_exec::ExecutionTelemetry::default(),
+            resource_wait_time: Duration::ZERO,
+            #[cfg(not(target_arch = "wasm32"))]
+            resource_wait_started: None,
         })
     }
 
@@ -909,6 +938,7 @@ impl VirtualCompileSession {
             && self.resource_is_bound(&key)
         {
             self.response_generation = self.response_generation.saturating_add(1);
+            self.finish_resource_wait();
         }
         self.refresh_candidate_files()
     }
@@ -983,6 +1013,7 @@ impl VirtualCompileSession {
                 .is_some_and(|(before, after)| after > before)
             {
                 self.response_generation = self.response_generation.saturating_add(1);
+                self.finish_resource_wait();
             }
             self.refresh_candidate_files()?;
         }
@@ -1210,9 +1241,10 @@ impl VirtualCompileSession {
                 )
                 .map_err(|error| CompileError::Incremental(error.to_string()))?,
             );
-            let candidate = session
+            let mut candidate = session
                 .start_cold_candidate()
                 .map_err(|error| CompileError::Incremental(error.to_string()))?;
+            candidate.set_cumulative_fuel_limit(self.limits.engine_fuel);
             RetainedCandidate {
                 files: self.files.clone(),
                 execution: RetainedExecution::Initial { session, candidate },
@@ -1224,9 +1256,10 @@ impl VirtualCompileSession {
                 .pending_patch
                 .as_ref()
                 .expect("accepted sessions execute only pending patches");
-            let candidate = session
+            let mut candidate = session
                 .start_advance_candidate(*next_revision, edit.clone())
                 .map_err(|error| CompileError::Incremental(error.to_string()))?;
+            candidate.set_cumulative_fuel_limit(self.limits.engine_fuel);
             let mut files = self.files.clone();
             let mut source = session.source().to_owned();
             source.replace_range(edit.range.clone(), &edit.replacement);
@@ -1278,6 +1311,10 @@ impl VirtualCompileSession {
                 image_resolver,
                 &cancellation,
             ),
+        };
+        self.execution_telemetry = match &retained.execution {
+            RetainedExecution::Initial { candidate, .. }
+            | RetainedExecution::Pending(candidate) => candidate.execution_telemetry(),
         };
         let (file_misses, file_probes, font_misses, fatal) = resolvers.finish();
 
@@ -1391,6 +1428,7 @@ impl VirtualCompileSession {
             retained.response_generation = self.response_generation;
             retained.suspension_serial = suspension.serial;
             self.candidate = Some(retained);
+            self.start_resource_wait();
             return Ok(CompileAttemptResult::NeedResources(NeedResources {
                 required,
                 probes,
@@ -1592,6 +1630,29 @@ impl VirtualCompileSession {
     #[must_use]
     pub const fn attempts(&self) -> u32 {
         self.attempts
+    }
+
+    #[must_use]
+    pub const fn compile_telemetry(&self) -> CompileTelemetry {
+        CompileTelemetry {
+            execution: self.execution_telemetry,
+            resource_wait_time: self.resource_wait_time,
+        }
+    }
+
+    fn finish_resource_wait(&mut self) {
+        #[cfg(not(target_arch = "wasm32"))]
+        if let Some(started) = self.resource_wait_started.take() {
+            self.resource_wait_time = self.resource_wait_time.saturating_add(started.elapsed());
+        }
+    }
+
+    #[allow(clippy::disallowed_methods)] // Process telemetry; TeX state never observes it.
+    fn start_resource_wait(&mut self) {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            self.resource_wait_started = Some(Instant::now());
+        }
     }
 
     #[cfg(test)]

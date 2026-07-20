@@ -22,9 +22,10 @@ use umber_fetch::{
 };
 
 use crate::{
-    AcceptedFinalization, CompileAttemptResult, EngineMode, FileContentId, FileKind, FileRequest,
-    MemoryRunOutput, NeedResources, ResolvedFile, ResourceRequest, ResourceResponse, SessionLimits,
-    SessionOptions, SourcePatch, TexFontSearchPath, TexInputSearchPath, VirtualCompileSession,
+    AcceptedFinalization, CompileAttemptResult, CompileTelemetry, EngineMode, FileContentId,
+    FileKind, FileRequest, MemoryRunOutput, NeedResources, ResolvedFile, ResourceRequest,
+    ResourceResponse, SessionLimits, SessionOptions, SourcePatch, TexFontSearchPath,
+    TexInputSearchPath, VirtualCompileSession,
 };
 
 pub const DEFAULT_DISTRIBUTION_URL: &str =
@@ -117,6 +118,7 @@ pub struct NativeAcceptedRun {
     pub input_path_map: BTreeMap<PathBuf, PathBuf>,
     pub resolved_inputs: Vec<(PathBuf, usize)>,
     pub main_input: (PathBuf, usize),
+    pub telemetry: CompileTelemetry,
 }
 
 pub fn run_for_finalization(
@@ -128,6 +130,7 @@ pub fn run_for_finalization(
     let input_path_map = session.local.input_path_map();
     let resolved_inputs = session.local.resolved_inputs();
     let main_input = (options.input.clone(), session.source.len());
+    let telemetry = session.session.compile_telemetry();
     let mut finalization = session.into_accepted_finalization()?;
     finalization
         .stores
@@ -140,6 +143,7 @@ pub fn run_for_finalization(
         input_path_map,
         resolved_inputs,
         main_input,
+        telemetry,
     })
 }
 
@@ -205,6 +209,17 @@ impl NativeCompileSession {
             .and_then(|name| name.to_str())
             .unwrap_or("texput")
             .to_owned();
+        let engine_fuel = env::var("UMBER_ENGINE_FUEL")
+            .ok()
+            .map(|value| {
+                value.parse::<u64>().map_err(|_| {
+                    NativeRunError::Selection(format!(
+                        "UMBER_ENGINE_FUEL must be an unsigned integer: {value}"
+                    ))
+                })
+            })
+            .transpose()?
+            .unwrap_or(SessionLimits::default().engine_fuel);
         let mut session = VirtualCompileSession::new(SessionOptions {
             main_path: format!("/job/{name}"),
             job_name: Some(job_name),
@@ -215,6 +230,7 @@ impl NativeCompileSession {
             clock,
             limits: SessionLimits {
                 attempts: SessionLimits::HARD_MAX.attempts,
+                engine_fuel,
                 ..SessionLimits::default()
             },
             html: options.html,

@@ -376,6 +376,15 @@ impl RevisionCandidate {
         self.suspension_serial
     }
 
+    pub fn set_cumulative_fuel_limit(&mut self, limit: u64) {
+        self.run.set_cumulative_fuel_limit(limit);
+    }
+
+    #[must_use]
+    pub const fn execution_telemetry(&self) -> tex_exec::ExecutionTelemetry {
+        self.run.telemetry()
+    }
+
     /// Charges the private execution roots retained while this candidate is
     /// suspended. Accepted-session telemetry remains separate until commit.
     #[must_use]

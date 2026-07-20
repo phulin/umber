@@ -105,7 +105,21 @@ fn finalize_run(
         input_path_map,
         resolved_inputs,
         main_input,
+        telemetry,
     } = accepted;
+    if env::var_os("UMBER_RESOURCE_TELEMETRY").is_some_and(|value| value == "1") {
+        eprintln!(
+            "RESOURCE_TELEMETRY cold_starts={} suspensions={} local_step_retries={} replayed_delivered_tokens={} replayed_dispatches={} cumulative_fuel={} resource_wait_ns={} engine_ns={}",
+            telemetry.execution.cold_starts,
+            telemetry.execution.suspensions,
+            telemetry.execution.local_step_retries,
+            telemetry.execution.replayed_delivered_tokens,
+            telemetry.execution.replayed_dispatches,
+            telemetry.execution.cumulative_fuel,
+            telemetry.resource_wait_time.as_nanos(),
+            telemetry.execution.engine_time.as_nanos(),
+        );
+    }
     let mut stores = finalization.stores;
     let dumped_format = finalization.dumped_format;
     #[cfg_attr(not(feature = "profiling-stats"), allow(unused_variables))]

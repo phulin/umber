@@ -48,7 +48,7 @@ Use this crate when behavior mutates live engine state or depends on TeX's curre
 - `src/diagnostics.rs`: diagnostic primitives such as `\show`, `\showthe`, `\showbox`, and message writing.
 - `src/dispatch.rs`: main-control token dispatch, group exits, token replay, and execution statistics.
 - `src/error.rs`: execution error enum, conversions, and display text.
-- `src/executor.rs`: `Executor` run loop, concrete execution context, localized font resolver and atomic `FontSource` handoff, and expansion snapshot synchronization.
+- `src/executor.rs`: `Executor` run loop, concrete execution context, localized font resolver and atomic `FontSource` handoff, expansion snapshot synchronization, monotonic cumulative-fuel enforcement, and step/replay telemetry.
 - `src/lib.rs`: public crate surface and module wiring for the TeX execution engine.
 - `src/math/`: math-mode stomach front-end that builds frozen mlists, noads, fractions, choices, styles, and mu nodes; split into dispatch, display packaging, lowering, scanner, and support modules.
 - `src/math/scan/tests.rs`: focused math scanner coverage for numeric delimiter bounds and traced-token recovery.

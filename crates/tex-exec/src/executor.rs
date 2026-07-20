@@ -3,6 +3,7 @@ use std::ops::{Deref, DerefMut};
 use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::Duration;
 
 use tex_expand::{
     EngineStateSnapshot, InputResolver, ReadRecorder, ResourceLookup, ResourceResult,
@@ -22,6 +23,7 @@ use crate::checkpoint::{CheckpointSink, EngineBoundary, EngineSession, NoopCheck
 use crate::dispatch::{dispatch_delivered_token_with_context, unimplemented_typesetting};
 use crate::mode::ignored_depth;
 use crate::output;
+use crate::timing::TelemetryTimer;
 use crate::vertical::is_outer_vertical;
 use crate::{DispatchAction, ExecError, ExecutionStats, ModeNest, assignments};
 
@@ -307,6 +309,19 @@ pub struct ExecutionProgress {
     pub next_step: ExecutionStep,
     pub checkpoints: Vec<crate::EngineCheckpoint>,
     pub stop_requested: bool,
+}
+
+/// Monotonic work and retry telemetry for one owned executor run.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct ExecutionTelemetry {
+    pub cold_starts: u64,
+    pub advance_calls: u64,
+    pub suspensions: u64,
+    pub local_step_retries: u64,
+    pub replayed_delivered_tokens: u64,
+    pub replayed_dispatches: u64,
+    pub cumulative_fuel: u64,
+    pub engine_time: Duration,
 }
 
 #[derive(Debug)]
@@ -714,6 +729,8 @@ pub struct ExecutionRun {
     publish_job_start: bool,
     suspension_serial: u64,
     checkpoint_mode_projection: Option<(crate::ModeNestSummary, u64)>,
+    cumulative_fuel_limit: u64,
+    telemetry: ExecutionTelemetry,
 }
 
 struct StepSavepoint {
@@ -761,7 +778,27 @@ impl ExecutionRun {
             publish_job_start,
             suspension_serial: 0,
             checkpoint_mode_projection: None,
+            cumulative_fuel_limit: u64::MAX,
+            telemetry: ExecutionTelemetry {
+                cold_starts: 1,
+                ..ExecutionTelemetry::default()
+            },
         }
+    }
+
+    #[must_use]
+    pub fn with_cumulative_fuel_limit(mut self, limit: u64) -> Self {
+        self.cumulative_fuel_limit = limit;
+        self
+    }
+
+    pub fn set_cumulative_fuel_limit(&mut self, limit: u64) {
+        self.cumulative_fuel_limit = limit;
+    }
+
+    #[must_use]
+    pub const fn telemetry(&self) -> ExecutionTelemetry {
+        self.telemetry
     }
 
     #[must_use]
@@ -812,12 +849,15 @@ impl ExecutionRun {
             return ExecutionStepResult::Failed(ExecError::ExecutionAlreadyTerminated);
         }
         if self.lifecycle == ExecutionLifecycle::Awaiting {
+            self.telemetry.local_step_retries = self.telemetry.local_step_retries.saturating_add(1);
             self.lifecycle = match self.next_step {
                 ExecutionStep::FinishEnd | ExecutionStep::Finalize => ExecutionLifecycle::Finishing,
                 ExecutionStep::JobStart => ExecutionLifecycle::Created,
                 ExecutionStep::MainControl => ExecutionLifecycle::Ready,
             };
         }
+        self.telemetry.advance_calls = self.telemetry.advance_calls.saturating_add(1);
+        let timer = TelemetryTimer::start();
         if self.artifact_start.is_none() {
             services
                 .input
@@ -833,6 +873,7 @@ impl ExecutionRun {
         let checkpoint_destination = services.checkpoints.take();
         let mut staged = StagedCheckpointSink::new(checkpoint_destination);
         let mut staged_reads = Vec::new();
+        let stats_before = self.stats.clone();
         let result = match self.next_step {
             ExecutionStep::JobStart => {
                 if self.publish_job_start {
@@ -865,6 +906,21 @@ impl ExecutionRun {
             ExecutionStep::Finalize => self.step_finalize(services),
         };
 
+        self.telemetry.engine_time = self.telemetry.engine_time.saturating_add(timer.elapsed());
+        self.telemetry.cumulative_fuel = self
+            .execution
+            .as_ref()
+            .expect("execution state is installed after a step")
+            .expansion
+            .cumulative_fuel_burned();
+        let result = if self.telemetry.cumulative_fuel > self.cumulative_fuel_limit {
+            Err(ExecError::CumulativeFuelExceeded {
+                limit: self.cumulative_fuel_limit,
+                attempted: self.telemetry.cumulative_fuel,
+            })
+        } else {
+            result
+        };
         match result {
             Ok(()) => {
                 let (checkpoints, stop_requested, checkpoint_destination) = staged.commit();
@@ -885,6 +941,23 @@ impl ExecutionRun {
                 }
             }
             Err(error) => {
+                if resource_need(&error).is_some() {
+                    self.telemetry.suspensions = self.telemetry.suspensions.saturating_add(1);
+                    self.telemetry.replayed_delivered_tokens =
+                        self.telemetry.replayed_delivered_tokens.saturating_add(
+                            self.stats
+                                .delivered_tokens
+                                .saturating_sub(stats_before.delivered_tokens)
+                                as u64,
+                        );
+                    self.telemetry.replayed_dispatches =
+                        self.telemetry.replayed_dispatches.saturating_add(
+                            self.stats
+                                .main_control_dispatches
+                                .saturating_sub(stats_before.main_control_dispatches)
+                                as u64,
+                        );
+                }
                 services.checkpoints = staged.discard();
                 self.rollback_step_savepoint(services, savepoint);
                 self.handle_step_error(error, blocked_step)

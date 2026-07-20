@@ -38,9 +38,9 @@ pub use dispatch::{DispatchAction, ExecutionStats, dispatch_delivered_token};
 pub use error::ExecError;
 pub use executor::{
     Cancellation, ExecutionContext, ExecutionLifecycle, ExecutionProgress, ExecutionRun,
-    ExecutionServices, ExecutionState, ExecutionStep, ExecutionStepResult, Executor, FontResolver,
-    FontSource, PdfImagePageBox, PdfImageRequest, PdfImageResolver, ResourceSite,
-    ResourceSuspension,
+    ExecutionServices, ExecutionState, ExecutionStep, ExecutionStepResult, ExecutionTelemetry,
+    Executor, FontResolver, FontSource, PdfImagePageBox, PdfImageRequest, PdfImageResolver,
+    ResourceSite, ResourceSuspension,
 };
 pub use mode::{
     AlignColumn, AlignState, AlignmentKind, AlignmentPackSpec, Mode, ModeLevelSummary, ModeList,

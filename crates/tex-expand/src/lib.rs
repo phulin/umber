@@ -1142,6 +1142,7 @@ pub struct ExpansionContext<'a> {
     fuel_limit: u64,
     remaining_fuel: u64,
     fuel_scope_depth: u32,
+    cumulative_fuel_burned: u64,
     expanded_token_list_depth: u32,
     // Meanings use generation-marked dense deduplication below. The remaining
     // read kinds stay append-only here and are sorted once at publication.
@@ -1173,6 +1174,7 @@ pub struct ExpansionSessionState {
     fuel_limit: u64,
     remaining_fuel: u64,
     fuel_scope_depth: u32,
+    cumulative_fuel_burned: u64,
     expanded_token_list_depth: u32,
     paragraph_reads: Option<Vec<ReadDependency>>,
     paragraph_read_tracking: bool,
@@ -1206,6 +1208,7 @@ impl Default for ExpansionSessionState {
             fuel_limit: DEFAULT_EXPANSION_FUEL,
             remaining_fuel: DEFAULT_EXPANSION_FUEL,
             fuel_scope_depth: 0,
+            cumulative_fuel_burned: 0,
             expanded_token_list_depth: 0,
             paragraph_reads: None,
             paragraph_read_tracking: false,
@@ -1239,12 +1242,20 @@ impl ExpansionSessionState {
     /// Infallibly restores a previously captured step-local expansion root.
     #[doc(hidden)]
     pub fn rollback(&mut self, snapshot: ExpansionSessionSnapshot) {
+        let cumulative_fuel_burned = self.cumulative_fuel_burned;
         *self = snapshot.0;
+        self.cumulative_fuel_burned = cumulative_fuel_burned;
     }
 
     #[doc(hidden)]
     pub fn set_job_clock(&mut self, clock: JobClock) {
         self.job_clock = clock;
+    }
+
+    #[doc(hidden)]
+    #[must_use]
+    pub const fn cumulative_fuel_burned(&self) -> u64 {
+        self.cumulative_fuel_burned
     }
 }
 
@@ -1288,6 +1299,7 @@ impl<'a> ExpansionContext<'a> {
             fuel_limit: state.fuel_limit,
             remaining_fuel: state.remaining_fuel,
             fuel_scope_depth: state.fuel_scope_depth,
+            cumulative_fuel_burned: state.cumulative_fuel_burned,
             expanded_token_list_depth: state.expanded_token_list_depth,
             paragraph_reads: state.paragraph_reads,
             paragraph_read_tracking: state.paragraph_read_tracking,
@@ -1329,6 +1341,7 @@ impl<'a> ExpansionContext<'a> {
             fuel_limit: self.fuel_limit,
             remaining_fuel: self.remaining_fuel,
             fuel_scope_depth: self.fuel_scope_depth,
+            cumulative_fuel_burned: self.cumulative_fuel_burned,
             expanded_token_list_depth: self.expanded_token_list_depth,
             paragraph_reads: self.paragraph_reads,
             paragraph_read_tracking: self.paragraph_read_tracking,
@@ -1355,6 +1368,7 @@ impl<'a> ExpansionContext<'a> {
             return expansion_work_limit_exceeded(self.fuel_limit);
         }
         self.remaining_fuel -= 1;
+        self.cumulative_fuel_burned = self.cumulative_fuel_burned.saturating_add(1);
         Ok(())
     }
 
@@ -1612,6 +1626,7 @@ impl<'a> ExpansionContext<'a> {
             fuel_limit: self.fuel_limit,
             remaining_fuel: self.remaining_fuel,
             fuel_scope_depth: self.fuel_scope_depth,
+            cumulative_fuel_burned: self.cumulative_fuel_burned,
             expanded_token_list_depth: self.expanded_token_list_depth,
             paragraph_reads: self.paragraph_reads.take(),
             paragraph_read_tracking: self.paragraph_read_tracking,
@@ -1627,6 +1642,7 @@ impl<'a> ExpansionContext<'a> {
         self.staged_recorder_reads = nested.staged_recorder_reads.take();
         self.resolution_index = nested.resolution_index;
         self.remaining_fuel = nested.remaining_fuel;
+        self.cumulative_fuel_burned = nested.cumulative_fuel_burned;
         self.recoverable_diagnostics
             .append(&mut nested.recoverable_diagnostics);
         self.paragraph_reads = nested.paragraph_reads.take();

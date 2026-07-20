@@ -17,6 +17,10 @@ use crate::Mode;
 pub enum ExecError {
     ExecutionAlreadyTerminated,
     ExecutionCancelled,
+    CumulativeFuelExceeded {
+        limit: u64,
+        attempted: u64,
+    },
     Captured {
         error: Box<ExecError>,
         site: DiagnosticSite,
@@ -187,6 +191,10 @@ impl fmt::Display for ExecError {
         match self {
             Self::ExecutionAlreadyTerminated => f.write_str("execution run is already terminal"),
             Self::ExecutionCancelled => f.write_str("execution run was cancelled"),
+            Self::CumulativeFuelExceeded { limit, attempted } => write!(
+                f,
+                "execution cumulative fuel limit {limit} exceeded at {attempted}"
+            ),
             Self::Captured { error, .. } => write!(f, "{error}"),
             Self::Expand(err) => write!(f, "{err}"),
             Self::NeedResource(need) => write!(
@@ -420,6 +428,7 @@ impl std::error::Error for ExecError {
             Self::NeedResource(_)
             | Self::ExecutionAlreadyTerminated
             | Self::ExecutionCancelled
+            | Self::CumulativeFuelExceeded { .. }
             | Self::FontOpen { .. }
             | Self::PdfGlyphToUnicode(_)
             | Self::EmptyModeNestSummary
@@ -505,9 +514,10 @@ impl ExecError {
     pub fn primary_origin(&self) -> Option<OriginId> {
         match self {
             Self::Captured { site, .. } => site.primary_origin(),
-            Self::NeedResource(_) | Self::ExecutionAlreadyTerminated | Self::ExecutionCancelled => {
-                None
-            }
+            Self::NeedResource(_)
+            | Self::ExecutionAlreadyTerminated
+            | Self::ExecutionCancelled
+            | Self::CumulativeFuelExceeded { .. } => None,
             Self::Expand(err) => err.primary_origin(),
             Self::ScanGlue(err) => err.primary_origin(),
             Self::UndefinedControlSequence { origin, .. }

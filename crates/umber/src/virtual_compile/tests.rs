@@ -474,6 +474,136 @@ fn initial_candidate_and_committed_prefix_survive_sequential_resource_batches() 
     assert!(session.candidate.is_none());
 }
 
+fn register_equivalence_resources(session: &mut VirtualCompileSession) {
+    session
+        .provide_resolved_file(
+            FileRequestKey::new(FileKind::Tfm, "cmr10.tfm").expect("TFM key"),
+            "/texlive/fonts/tfm/public/cm/cmr10.tfm",
+            CMR10.to_vec(),
+        )
+        .expect("preloaded TFM");
+    session
+        .provide_resolved_file(
+            FileRequestKey::new(FileKind::TexInput, "remote.tex").expect("input key"),
+            "/texlive/tex/remote.tex",
+            b"\\message{REMOTE}\\endinput".to_vec(),
+        )
+        .expect("preloaded input");
+}
+
+#[test]
+fn preloaded_and_partitioned_positive_negative_resources_are_exactly_equivalent() {
+    let source = r"\font\tenrm=cmr10 \openin0=optional.cfg \ifeof0 \message{ABSENT}\else \errmessage{unexpected optional}\fi \closein0 \input remote \tenrm \shipout\hbox{A}\end";
+
+    let mut preloaded = session(source);
+    register_equivalence_resources(&mut preloaded);
+    let optional = FileRequestKey::new(FileKind::TexInput, "optional.cfg").expect("probe key");
+    preloaded.files.expect(&FileRequestBatch::with_probes(
+        std::iter::empty(),
+        [FileRequest::new(optional.clone(), "optional.cfg")],
+        std::iter::empty(),
+    ));
+    preloaded
+        .files
+        .provision_unavailable(optional.clone())
+        .expect("preloaded authoritative absence");
+    let CompileAttemptResult::Complete(preloaded_output) = preloaded.compile_attempt() else {
+        panic!("preloaded run must complete uninterrupted");
+    };
+    let preloaded_telemetry = preloaded.compile_telemetry();
+    let mut preloaded_final = preloaded
+        .into_accepted_finalization()
+        .expect("preloaded finalization");
+    let preloaded_hash = preloaded_final.stores.snapshot().state_hash();
+
+    let mut partitioned = session(source);
+    loop {
+        match partitioned.compile_attempt() {
+            CompileAttemptResult::NeedResources(needs) => {
+                let request = needs
+                    .required
+                    .into_iter()
+                    .chain(needs.probes)
+                    .next()
+                    .expect("one deliberately partitioned dependency");
+                match request {
+                    ResourceRequest::File(request) if request.key().kind() == FileKind::Tfm => {
+                        partitioned
+                            .provide_resolved_file(
+                                request.key().clone(),
+                                "/texlive/fonts/tfm/public/cm/cmr10.tfm",
+                                CMR10.to_vec(),
+                            )
+                            .expect("partitioned TFM");
+                    }
+                    ResourceRequest::File(request) if request.key() == &optional => {
+                        partitioned
+                            .provide_resources(vec![ResourceResponse::FileUnavailable(
+                                optional.clone(),
+                            )])
+                            .expect("partitioned authoritative absence");
+                    }
+                    ResourceRequest::File(request) => {
+                        assert_eq!(request.key().name(), "remote.tex");
+                        partitioned
+                            .provide_resolved_file(
+                                request.key().clone(),
+                                "/texlive/tex/remote.tex",
+                                b"\\message{REMOTE}\\endinput".to_vec(),
+                            )
+                            .expect("partitioned input");
+                    }
+                    ResourceRequest::Font(_) => panic!("classic DVI run requests no OpenType font"),
+                }
+            }
+            CompileAttemptResult::Complete(partitioned_output) => {
+                assert_eq!(partitioned_output, preloaded_output);
+                break;
+            }
+            other => panic!("partitioned run failed: {other:?}"),
+        }
+    }
+    let partitioned_telemetry = partitioned.compile_telemetry();
+    assert_eq!(preloaded_telemetry.execution.cold_starts, 1);
+    assert_eq!(preloaded_telemetry.execution.suspensions, 0);
+    assert_eq!(partitioned_telemetry.execution.cold_starts, 1);
+    assert_eq!(partitioned_telemetry.execution.suspensions, 3);
+    assert_eq!(partitioned_telemetry.execution.local_step_retries, 3);
+    assert_eq!(partitioned.attempts(), 4);
+    assert!(
+        partitioned_telemetry.execution.cumulative_fuel
+            >= preloaded_telemetry.execution.cumulative_fuel
+    );
+    let mut partitioned_final = partitioned
+        .into_accepted_finalization()
+        .expect("partitioned finalization");
+    assert_eq!(
+        partitioned_final.stores.snapshot().state_hash(),
+        preloaded_hash
+    );
+}
+
+#[test]
+fn cumulative_engine_fuel_is_terminal_across_step_boundaries() {
+    let mut limited = VirtualCompileSession::new(SessionOptions {
+        limits: SessionLimits {
+            engine_fuel: 1,
+            ..SessionLimits::default()
+        },
+        ..SessionOptions::default()
+    })
+    .expect("limited session");
+    limited
+        .add_user_file("main.tex", b"\\def\\a{A}\\a\\a\\a\\end".to_vec())
+        .expect("source");
+    assert!(matches!(
+        limited.compile_attempt(),
+        CompileAttemptResult::Error(CompileError::Diagnostic(diagnostic))
+            if diagnostic.message.contains("cumulative fuel limit")
+    ));
+    assert!(limited.compile_telemetry().execution.cumulative_fuel > 1);
+}
+
 #[test]
 fn discarded_suspension_cannot_resume_and_releases_candidate_retention() {
     let mut session = session("\\input remote \\end");

@@ -53,6 +53,15 @@ snapshot and therefore replays only the rolled-back executor step. The host
 tracks response progress separately and rejects a retry that binds no newly
 awaited positive or authoritative-negative response.
 
+Expansion fuel also has a monotonic per-revision counter outside the step
+savepoint. A resource rollback restores semantic expansion state without
+refunding work, and `SessionLimits::engine_fuel` terminally rejects a candidate
+that crosses its finite ceiling. `ExecutionTelemetry` reports one cold start
+per owned run, advance calls, suspensions, local step retries, replayed
+delivered tokens and dispatches, cumulative expansion fuel, and engine time.
+The virtual compile layer adds host resource-wait time without changing the
+engine's deterministic state.
+
 ## Public shape and ownership
 
 `tex-exec` owns the run as `ExecutionRun`. The intended API shape is:
@@ -428,7 +437,7 @@ path.
 5. Make paragraph finish, page drain, shipout, and end/finalization return typed
    suspension unchanged through every recursive layer. Stage checkpoint and
    recorder delivery until step commit.
-6. Move prepared DVI/artifact suffix assembly into `Finalize`, add cumulative
+6. **Implemented.** Move prepared DVI/artifact suffix assembly into `Finalize`, add cumulative
    fuel and cancellation polls, and enforce checked counter exhaustion.
 7. **Implemented.** `tex-incr` and `VirtualCompileSession` retain an
    `ExecutionRun` across resource batches instead of rerunning a cold or

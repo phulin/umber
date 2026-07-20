@@ -51,7 +51,28 @@ means a time or RSS limit fired; exit 125 means cleanup itself failed. Run
 `scripts/test-run-umber-guarded.sh` to exercise the forced-timeout path.
 Compiler-only commands such as `cargo check`, rustfmt, and clippy do not need
 the guard. The guard complements rather than replaces an explicit finite
-engine expansion-fuel setting on the exercised `ExecutionContext`.
+engine expansion-fuel setting on the exercised `ExecutionContext`. Native
+resource sessions accept the bounded `UMBER_ENGINE_FUEL` override; invalid or
+hard-maximum-exceeding values fail before execution.
+
+The explicit stepwise arXiv validation tier is:
+
+```bash
+cargo build -q -p umber
+UMBER_ARXIV_FORMAT=/path/to/pdflatex.umberfmt \
+  scripts/run-stepwise-arxiv-census.sh
+```
+
+Every paper is launched independently through `scripts/run-umber-guarded.py`
+with cumulative engine fuel, wall-time, aggregate-RSS, process-group
+TERM-to-KILL, reap, and survivor enforcement. The TSV under
+`target/stepwise-arxiv-census/` records cold starts, suspensions, local replay,
+cumulative fuel, resource wait, engine time, guard status, and accepted-engine
+status. The default stops after accepted engine completion and finalization
+handoff. `UMBER_ARXIV_FINALIZE=1` performs a second guarded run and records the
+detached PDF-finalizer result separately, so map, encoding, PFB, or PK failures
+cannot be mistaken for engine failures. `UMBER_ARXIV_LIMIT=1` selects the
+pinned `1609.01918` reduction before a 100-paper census.
 
 Snapshot scaling has a separate explicit performance tier:
 
