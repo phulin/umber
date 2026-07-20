@@ -96,12 +96,33 @@ schema-1 `manifest.json` is not overwritten. Publication remains manifest-last:
 all content and shard objects are uploaded and checked before that root key.
 
 `scripts/build-texlive-snapshot.sh` now performs verified builds for both
-`latex.fmt` and `pdflatex.fmt`. It derives their 57-key common and 60-key PDF
+`latex.fmt` and `pdflatex.fmt`. It derives their 61-key common and 64-key PDF
 closures from `tests/latex-source.lock`, stages the two repository-local
 configuration inputs as a pinned auxiliary TEXMF root, and publishes both
 format closures in the schema-3 root. Two clean publications must still be
 byte-identical. `scripts/publish-texlive-r2.sh` reserves `manifest-v3.json` for
 this new immutable contract and retains the manifest-last upload order.
+
+The builder additionally verifies `tests/texlive-snapshot.lock` before it
+publishes anything. That lock fixes the publisher-visible tree digest and the
+exact 2026-03-01 LaTeX kernel, latex-dev `array.sty` v2.7a, and pdfTeX map
+bytes, preventing a mutable year directory or a newer cached package from
+being labeled as the pinned snapshot. Package metadata normally remains
+required. `--without-package-database` exists only for a content-exact local
+regeneration when the preserved snapshot lacks `texlive.tlpdb`; it omits
+package dependency hints but cannot weaken tree, format-closure, inventory, or
+object verification and is not suitable for production publication.
+
+Native object and manifest cache namespaces are shared across authenticated
+distributions; content addressing prevents byte confusion but does not make a
+cache listing snapshot-exclusive. A default-hosted Umber run can therefore
+repopulate older `texlive-2026-r79639` manifest entries immediately after a
+purge. For snapshot-sensitive corpus work, first stop concurrent Umber runs,
+clear only the Umber `objects` and `manifests` namespaces, and warm with an
+explicit `--distribution` path to the regenerated 2026-03-01 staging root.
+Then rerun with `--offline` and the same explicit distribution and require
+identical output. Do not infer provenance from cache recency or the year in a
+mutable hosted distribution name.
 
 ### Format-closure retry verification receipt
 
@@ -117,7 +138,7 @@ cargo test -q -p umber \
   -- --nocapture
 ```
 
-Both cases fetch and authenticate the full 57- or 60-key closure in the first
+Both cases fetch and authenticate the full 61- or 64-key closure in the first
 host batch, publish its validated positive file responses atomically, and
 reach the synthetic bootstrap terminal state on compile attempt two. Separate
 tests cover local and user precedence, stale hints without negative bindings,

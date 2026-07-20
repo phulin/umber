@@ -15,11 +15,18 @@ SHA-256 identities opened while building the Umber-native `latex.fmt` and
 `pdflatex-source`/`pdflatex-local` records extend only the PDF format closure.
 The explicit LaTeX format builder verifies the selected closure before every
 build. With `--publish-input-closure`, it also emits the canonical request-key
-closure consumed by the schema-3 TeX Live snapshot publisher; LaTeX has 57
+closure consumed by the schema-3 TeX Live snapshot publisher; LaTeX has 61
 keys and pdfLaTeX has those same keys plus its three mode-specific records.
 `tests/latex/language.dat` keeps the
 format's English language slot and hyphenation minima deterministic without
 depending on generated TeX Live `texmf-var` state.
+
+`tests/texlive-snapshot.lock` pins the complete publisher-visible runtime-tree
+digest for the 2026-03-01 snapshot plus compatibility-critical LaTeX kernel,
+latex-dev `array.sty` v2.7a, and generated pdfTeX map identities. The production
+snapshot builder verifies this lock before publication; changing a snapshot
+requires an explicit lock and distribution-identity update, never reuse of a
+mutable TeX Live year directory.
 
 `tests/latex-parity-manifest.txt` pins one complete official LaTeX2e repository
 archive rather than individual support or test files. Setup derives the DVI

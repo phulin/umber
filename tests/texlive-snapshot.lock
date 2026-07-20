@@ -1,0 +1,8 @@
+# Immutable content identities for the repository-pinned 2026-03-01 TeX Live
+# runtime tree. The tree digest covers exactly the publisher-supported runtime
+# files; source records make compatibility-critical selections reviewable.
+distribution texlive-20260301-texmf
+tree_sha256 3b3c5c503d363c652996f17e3af831a79972054727a44a557143fd908be8fad8
+source tex/latex/base/latex.ltx 765547 95c2ef02c2d92aa29e4a77a5e5a7d9f25b5589143d1e879fb80ffa0b20be1e6d
+source tex/latex-dev/tools/array.sty 17686 dfbd0638fed1cc21180bd9b3ebd91afd2049827a1491dfea8e5d2d95410459c1
+source fonts/map/pdftex/updmap/pdftex.map 5541360 622cafc1a370ada71b298ee0396620bc49decb82c7472a5daa75124612f57f0b
