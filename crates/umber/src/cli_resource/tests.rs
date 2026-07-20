@@ -21,6 +21,7 @@ fn native_session_allows_the_hard_bounded_resource_attempt_count() {
         distribution: None,
         distribution_sha256: None,
         offline: true,
+        expansion_fuel: None,
     };
 
     let session = NativeCompileSession::new_with_cache(
@@ -69,6 +70,7 @@ fn retained_revision_does_not_refetch_resolved_distribution_file() {
         distribution: Some(distribution.to_string_lossy().into_owned()),
         distribution_sha256: None,
         offline: false,
+        expansion_fuel: None,
     };
     let cache_root = directory.path().join("cache");
     let cancellation = FetchCancellation::new();
@@ -108,6 +110,7 @@ fn cancelled_pending_revision_can_be_superseded() {
         distribution: None,
         distribution_sha256: None,
         offline: true,
+        expansion_fuel: None,
     };
     let cancellation = FetchCancellation::new();
     let mut session = NativeCompileSession::new_with_cache(
@@ -507,6 +510,7 @@ fn native_compile_uses_local_file_after_shadowed_distribution_hint() {
         distribution_sha256: None,
         offline: false,
         initial_prefetch_keys: Vec::new(),
+        expansion_fuel: None,
     };
     let cancellation = FetchCancellation::new();
     let mut session = NativeCompileSession::new_with_cache(
@@ -644,6 +648,7 @@ fn format_closure_batch_is_installed_for_an_exactly_two_attempt_retry() {
                 distribution: Some(distribution.to_string_lossy().into_owned()),
                 distribution_sha256: None,
                 offline: false,
+                expansion_fuel: None,
             },
             &cancellation,
             cache.clone(),

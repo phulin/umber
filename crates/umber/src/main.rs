@@ -91,6 +91,7 @@ fn run_tex(opts: &RunCliOptions) -> Result<(), CliError> {
             distribution: opts.distribution.clone(),
             distribution_sha256: opts.distribution_sha256.clone(),
             offline: opts.offline,
+            expansion_fuel: opts.expansion_fuel,
         })?;
     finalize_run(opts, accepted)
 }
@@ -362,6 +363,7 @@ struct RunCliOptions {
     distribution: Option<String>,
     distribution_sha256: Option<String>,
     offline: bool,
+    expansion_fuel: Option<u64>,
     #[cfg(feature = "profiling-stats")]
     profiling_stats: bool,
 }
@@ -383,6 +385,7 @@ impl RunCliOptions {
         let mut distribution = None;
         let mut distribution_sha256 = None;
         let mut offline = env::var_os("UMBER_OFFLINE").is_some_and(|value| value == "1");
+        let mut expansion_fuel = None;
         #[cfg(feature = "profiling-stats")]
         let mut profiling_stats = false;
         let mut args = args.peekable();
@@ -392,6 +395,18 @@ impl RunCliOptions {
                     show_fixtures = true;
                 }
                 "--offline" => offline = true,
+                "--expansion-fuel" => {
+                    if expansion_fuel.is_some() {
+                        return Err(CliError::Usage("run accepts at most one --expansion-fuel"));
+                    }
+                    let value = args.next().ok_or(CliError::Usage(
+                        "missing positive integer for --expansion-fuel",
+                    ))?;
+                    expansion_fuel =
+                        Some(value.parse::<u64>().ok().filter(|value| *value > 0).ok_or(
+                            CliError::Usage("--expansion-fuel must be a positive integer"),
+                        )?);
+                }
                 "--distribution" => {
                     if distribution.is_some() {
                         return Err(CliError::Usage("run accepts at most one --distribution"));
@@ -594,6 +609,7 @@ impl RunCliOptions {
             distribution,
             distribution_sha256,
             offline,
+            expansion_fuel,
             #[cfg(feature = "profiling-stats")]
             profiling_stats,
         })

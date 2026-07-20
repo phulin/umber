@@ -75,6 +75,7 @@ pub(super) fn run(mut args: impl Iterator<Item = String>) -> Result<(), WatchErr
         distribution,
         distribution_sha256,
         offline,
+        expansion_fuel: None,
     };
     let interrupted = Arc::new(AtomicBool::new(false));
     let active = Arc::new(Mutex::new(None::<FetchCancellation>));

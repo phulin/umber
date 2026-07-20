@@ -45,6 +45,7 @@ pub struct NativeRunOptions {
     pub distribution: Option<String>,
     pub distribution_sha256: Option<String>,
     pub offline: bool,
+    pub expansion_fuel: Option<u64>,
 }
 
 #[derive(Debug)]
@@ -268,16 +269,18 @@ impl NativeCompileSession {
             .and_then(|name| name.to_str())
             .unwrap_or("texput")
             .to_owned();
-        let engine_fuel = env::var("UMBER_ENGINE_FUEL")
-            .ok()
-            .map(|value| {
-                value.parse::<u64>().map_err(|_| {
-                    NativeRunError::Selection(format!(
-                        "UMBER_ENGINE_FUEL must be an unsigned integer: {value}"
-                    ))
+        let engine_fuel = options
+            .expansion_fuel
+            .or(env::var("UMBER_ENGINE_FUEL")
+                .ok()
+                .map(|value| {
+                    value.parse::<u64>().map_err(|_| {
+                        NativeRunError::Selection(format!(
+                            "UMBER_ENGINE_FUEL must be an unsigned integer: {value}"
+                        ))
+                    })
                 })
-            })
-            .transpose()?
+                .transpose()?)
             .unwrap_or(SessionLimits::default().engine_fuel);
         let mut session = VirtualCompileSession::new(SessionOptions {
             main_path: format!("/job/{name}"),
