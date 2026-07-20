@@ -1358,6 +1358,36 @@ fn rollback_allows_snapshot_before_balanced_inner_group() {
 }
 
 #[test]
+fn rollback_allows_snapshot_before_still_open_inner_groups() {
+    let mut stores = Stores::new();
+    let symbol = stores.intern("kept");
+    stores.enter_group();
+    let snapshot = stores.checkpoint();
+
+    stores.enter_group();
+    stores.set_meaning(symbol, Meaning::CharGiven('x'));
+    stores.enter_group();
+    stores.set_meaning(symbol, Meaning::CharGiven('y'));
+
+    stores.rollback(&snapshot);
+    assert_eq!(stores.env_group_depth(), 1);
+    assert_eq!(stores.meaning(symbol), Meaning::Undefined);
+}
+
+#[test]
+#[should_panic(expected = "Stores snapshots are invalidated by exiting a group that encloses them")]
+fn rollback_rejects_exited_group_replaced_at_same_depth() {
+    let mut stores = Stores::new();
+    stores.enter_group();
+    let snapshot = stores.checkpoint();
+
+    assert_eq!(stores.leave_group(), Vec::<Token>::new());
+    stores.enter_group();
+
+    stores.rollback(&snapshot);
+}
+
+#[test]
 #[should_panic(expected = "Stores snapshot belongs to a different Stores instance")]
 fn rollback_rejects_snapshot_from_different_store() {
     let mut first = Stores::new();

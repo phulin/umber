@@ -226,6 +226,10 @@ An internal `Snapshot` captures journal/effect positions, store watermarks,
 copy-on-write roots, world state, mode/page summaries, and other future-relevant
 scalars. Taking a snapshot is bounded and independent of total live document
 size; rollback cost is proportional to changed or newly allocated state.
+Each environment snapshot also carries the O(1) lineage token of its enclosing
+group. Rollback may unwind descendant groups entered after capture, while an
+exited-and-replaced enclosing group invalidates the snapshot even if the live
+stack later returns to the same depth and journal position.
 
 The probabilistic canonical identity used for optional suffix adoption remains
 optional for ordinary snapshots. Incremental accepted-history sinks request it

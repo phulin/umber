@@ -185,6 +185,7 @@ pub struct Env {
     aftergroup: Vec<Token>,
     afterassignment: Option<Token>,
     group_depth: u32,
+    next_group_lineage: u64,
     epoch: Epoch,
     #[cfg(feature = "shadow")]
     shadow: AHashMap<CellId, u64>,
@@ -235,6 +236,7 @@ impl Env {
             aftergroup: Vec::new(),
             afterassignment: None,
             group_depth: 0,
+            next_group_lineage: 1,
             epoch: Epoch::START,
             #[cfg(feature = "shadow")]
             shadow: AHashMap::new(),

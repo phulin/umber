@@ -56,6 +56,7 @@ pub(super) struct GroupBoundary {
     box_undo_len: u32,
     aftergroup_start: u32,
     kind: GroupKind,
+    lineage: u64,
 }
 
 impl GroupKind {
@@ -169,6 +170,7 @@ pub(crate) struct EnvSnapshot {
     afterassignment: Option<Token>,
     group_depth: u32,
     group_boundary_len: u32,
+    enclosing_group_lineage: Option<u64>,
     epoch: crate::epoch::Epoch,
 }
 
@@ -177,12 +179,6 @@ impl EnvSnapshot {
     #[must_use]
     pub(crate) const fn journal_pos(self) -> JournalPos {
         self.journal_pos
-    }
-
-    /// Returns the group depth captured by this snapshot.
-    #[must_use]
-    pub(crate) const fn group_depth(self) -> u32 {
-        self.group_depth
     }
 
     /// Returns the epoch captured by this snapshot.
@@ -209,6 +205,10 @@ impl Env {
                 self.group_boundaries.len(),
                 "group boundary stack exceeds u32 entries",
             ),
+            enclosing_group_lineage: self
+                .group_boundaries
+                .last()
+                .map(|boundary| boundary.lineage),
             epoch: self.epoch,
         };
         self.epoch.bump();
@@ -240,6 +240,28 @@ impl Env {
         self.journal.retained_bytes()
     }
 
+    /// Returns whether `snapshot` is an ancestor of the checked-out group stack.
+    ///
+    /// A rollback may unwind groups entered after capture. It may not resurrect
+    /// a group that was exited, even if later groups happen to recreate the same
+    /// depth and journal position.
+    #[must_use]
+    pub(crate) fn can_rollback_to(&self, snapshot: EnvSnapshot) -> bool {
+        let Ok(boundary_len) = usize::try_from(snapshot.group_boundary_len) else {
+            return false;
+        };
+        if boundary_len > self.group_boundaries.len() {
+            return false;
+        }
+        match snapshot.enclosing_group_lineage {
+            Some(lineage) => self
+                .group_boundaries
+                .get(boundary_len.saturating_sub(1))
+                .is_some_and(|boundary| boundary.lineage == lineage),
+            None => boundary_len == 0,
+        }
+    }
+
     #[must_use]
     pub(crate) const fn group_depth(&self) -> u32 {
         self.group_depth
@@ -268,6 +290,11 @@ impl Env {
         );
         let marker_pos = self.journal.pos();
         let box_undo_len = self.journal.box_undo_len();
+        let lineage = self.next_group_lineage;
+        self.next_group_lineage = self
+            .next_group_lineage
+            .checked_add(1)
+            .expect("group lineage exceeds u64 entries");
         self.journal.push_marker(Marker::Group {
             aftergroup_start,
             kind,
@@ -277,6 +304,7 @@ impl Env {
             box_undo_len,
             aftergroup_start,
             kind,
+            lineage,
         });
         self.group_depth = self
             .group_depth

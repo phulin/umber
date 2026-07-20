@@ -256,9 +256,12 @@ not promise recovery.
 
 The `Universe` snapshot and input snapshot must be taken and restored as one
 aggregate operation. No caller may roll back input, modes, paragraph recording,
-or `Universe` independently. The existing lifetime-bound
-`ExecutionTransaction` remains useful inside recursive submodes but does not
-replace this aggregate outer savepoint.
+execution state, or `Universe` independently. A resource lookup may suspend
+after the blocked operation has entered nested TeX groups; the environment's
+lineage check admits rollback through those still-live descendants while
+rejecting a savepoint whose enclosing group was exited. The existing
+lifetime-bound `ExecutionTransaction` remains useful inside recursive submodes
+but does not replace this aggregate outer savepoint.
 
 ## Resource protocol and request sites
 

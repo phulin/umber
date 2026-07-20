@@ -303,7 +303,7 @@ impl Stores {
 
     pub(crate) fn can_restore_snapshot(&self, snapshot: &StoreSnapshot) -> bool {
         snapshot.owner == self.owner.snapshot_owner()
-            && snapshot.env_snapshot.group_depth() == self.env.group_depth()
+            && self.env.can_rollback_to(snapshot.env_snapshot)
             && snapshot.env_snapshot.journal_pos() <= self.env.current_journal_pos()
             && snapshot.survivor_pin_mark <= self.survivor_pins.len()
     }
@@ -2616,9 +2616,8 @@ impl Stores {
             self.owner.snapshot_owner(),
             "Stores snapshot belongs to a different Stores instance"
         );
-        assert_eq!(
-            snapshot.env_snapshot.group_depth(),
-            self.env.group_depth(),
+        assert!(
+            self.env.can_rollback_to(snapshot.env_snapshot),
             "Stores snapshots are invalidated by exiting a group that encloses them"
         );
         assert!(

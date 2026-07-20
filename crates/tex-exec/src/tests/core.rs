@@ -185,6 +185,54 @@ fn resource_suspension_inside_integer_scanning_rolls_back_and_resumes() {
     assert_eq!(stores.count(0), 42);
 }
 
+#[test]
+fn resource_suspension_rolls_back_groups_entered_by_blocked_dispatch() {
+    let mut stores = Universe::new();
+    tex_expand::install_expandable_primitives(&mut stores);
+    install_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new("\\halign{\\input child#\\cr a\\cr}\\end"));
+    let mut resolver = SuspendScannerInputOnce {
+        suspended: false,
+        request_indices: Vec::new(),
+    };
+    let mut run =
+        ExecutionRun::new("nested-group-resource-rollback").with_cumulative_fuel_limit(100_000);
+    let cancellation = Cancellation::new();
+
+    assert!(matches!(
+        run.step(
+            &mut ExecutionServices::new(&mut input, &mut stores),
+            &cancellation,
+        ),
+        ExecutionStepResult::Progress(_)
+    ));
+    let universe_before = stores.snapshot().state_hash();
+    let input_before = input.summary();
+
+    let ExecutionStepResult::AwaitingResources(suspension) = run.step(
+        &mut ExecutionServices::new(&mut input, &mut stores).with_input_resolver(&mut resolver),
+        &cancellation,
+    ) else {
+        panic!("resource request after alignment group entry must suspend")
+    };
+    assert_eq!(suspension.requests, vec![tex_expand::ResourceNeed::new(0)]);
+    assert_eq!(stores.snapshot().state_hash(), universe_before);
+    assert_eq!(input.summary(), input_before);
+    assert_eq!(tex_state::ExpansionState::execution_group_depth(&stores), 0);
+
+    loop {
+        match run.step(
+            &mut ExecutionServices::new(&mut input, &mut stores).with_input_resolver(&mut resolver),
+            &cancellation,
+        ) {
+            ExecutionStepResult::Progress(_) => {}
+            ExecutionStepResult::Complete(_) => break,
+            other => panic!("alignment replay must complete, got {other:?}"),
+        }
+    }
+    assert_eq!(resolver.request_indices, vec![0, 0]);
+}
+
 impl tex_expand::InputResolver for SuspendInputOnce {
     fn open_input(
         &mut self,
