@@ -44,6 +44,7 @@ pub use mode::{
     AlignColumn, AlignState, AlignmentKind, AlignmentPackSpec, Mode, ModeLevelSummary, ModeList,
     ModeNest, ModeNestSummary,
 };
+pub use tex_expand::{ResourceLookup, ResourceNeed, ResourceResult};
 
 pub(crate) use dispatch::{
     insert_traced_tokens, leave_group, leave_group_with_origin, push_tokens, push_traced_tokens,

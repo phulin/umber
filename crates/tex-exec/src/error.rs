@@ -21,6 +21,7 @@ pub enum ExecError {
     },
     Expand(ExpandError),
     Lex(LexError),
+    NeedResource(tex_expand::ResourceNeed),
     ScanToks(ScanToksError),
     ScanGlue(tex_expand::scan_glue::ScanGlueError),
     World(WorldError),
@@ -184,6 +185,11 @@ impl fmt::Display for ExecError {
         match self {
             Self::Captured { error, .. } => write!(f, "{error}"),
             Self::Expand(err) => write!(f, "{err}"),
+            Self::NeedResource(need) => write!(
+                f,
+                "resource request {} requires host resolution",
+                need.request_index()
+            ),
             Self::Lex(err) => write!(f, "{err}"),
             Self::ScanToks(err) => write!(f, "{err}"),
             Self::ScanGlue(err) => write!(f, "{err}"),
@@ -407,7 +413,8 @@ impl std::error::Error for ExecError {
             Self::World(err) => Some(err),
             Self::FontParse(err) => Some(err),
             Self::PdfFontMap(err) => Some(err),
-            Self::FontOpen { .. }
+            Self::NeedResource(_)
+            | Self::FontOpen { .. }
             | Self::PdfGlyphToUnicode(_)
             | Self::EmptyModeNestSummary
             | Self::CannotPopBaseMode
@@ -492,6 +499,7 @@ impl ExecError {
     pub fn primary_origin(&self) -> Option<OriginId> {
         match self {
             Self::Captured { site, .. } => site.primary_origin(),
+            Self::NeedResource(_) => None,
             Self::Expand(err) => err.primary_origin(),
             Self::ScanGlue(err) => err.primary_origin(),
             Self::UndefinedControlSequence { origin, .. }
@@ -589,7 +597,7 @@ impl ExecError {
     }
 
     pub(crate) fn capture(self, input: &tex_lex::InputStack) -> Self {
-        if matches!(self, Self::Captured { .. }) {
+        if matches!(self, Self::Captured { .. } | Self::NeedResource(_)) {
             return self;
         }
         let inherited = self.diagnostic_site();
@@ -639,7 +647,10 @@ impl ExecError {
 
 impl From<ExpandError> for ExecError {
     fn from(value: ExpandError) -> Self {
-        Self::Expand(value)
+        match value {
+            ExpandError::NeedResource(need) => Self::NeedResource(need),
+            value => Self::Expand(value),
+        }
     }
 }
 

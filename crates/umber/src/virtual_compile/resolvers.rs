@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 use tex_exec::{FontResolver, PdfImagePageBox, PdfImageRequest, PdfImageResolver};
-use tex_expand::InputResolver;
+use tex_expand::{InputResolver, ResourceLookup, ResourceNeed, ResourceResult};
 use tex_fonts::{
     AcceptedFontContainers, FontFeaturePolicy, FontPurposes, FontRequest, FontRequestKey,
     OpenTypeFont, VariationSelection,
@@ -121,11 +121,17 @@ impl PdfImageResolver for VirtualImageResolver<'_> {
         input: &mut dyn InputReadState,
         request: &PdfImageRequest,
         request_index: u64,
-    ) -> Result<PdfExternalImageSource, String> {
-        let content = self
+    ) -> ResourceResult<PdfExternalImageSource> {
+        match self
             .files
-            .open(input, FileKind::Image, &request.name, request_index)?;
-        parse_image(&content, request)
+            .open(input, FileKind::Image, &request.name, request_index)?
+        {
+            ResourceLookup::Available(content) => {
+                parse_image(&content, request).map(ResourceLookup::Available)
+            }
+            ResourceLookup::Unavailable => Ok(ResourceLookup::Unavailable),
+            ResourceLookup::NeedResource(need) => Ok(ResourceLookup::NeedResource(need)),
+        }
     }
 }
 
@@ -377,7 +383,7 @@ impl<'a> VirtualFileResolver<'a> {
         kind: FileKind,
         original_name: &str,
         request_index: u64,
-    ) -> Result<FileContent, String> {
+    ) -> ResourceResult<FileContent> {
         self.open_classified(input, kind, original_name, request_index, false)
     }
 
@@ -388,7 +394,7 @@ impl<'a> VirtualFileResolver<'a> {
         original_name: &str,
         request_index: u64,
         probe: bool,
-    ) -> Result<FileContent, String> {
+    ) -> ResourceResult<FileContent> {
         let requested = match RequestedFile::parse(kind, original_name) {
             Ok(requested) => requested,
             Err(error) => {
@@ -409,12 +415,15 @@ impl<'a> VirtualFileResolver<'a> {
                     return Err(failure.to_string());
                 };
                 self.read_snapshot(input, file)
+                    .map(ResourceLookup::Available)
             }
             RequestedFile::Remote { user_path, key } => {
                 if let Some(user_path) = user_path
                     && let Some(file) = self.snapshot_file(&user_path)?
                 {
-                    return self.read_snapshot(input, file);
+                    return self
+                        .read_snapshot(input, file)
+                        .map(ResourceLookup::Available);
                 }
                 if let Some(path) = self.resolved_paths.get(&key) {
                     let Some(file) = self.snapshot_file(path)? else {
@@ -424,10 +433,12 @@ impl<'a> VirtualFileResolver<'a> {
                         self.record_fatal(failure.clone());
                         return Err(failure.to_string());
                     };
-                    return self.read_snapshot(input, file);
+                    return self
+                        .read_snapshot(input, file)
+                        .map(ResourceLookup::Available);
                 }
                 if self.unavailable.contains(&key) {
-                    return Err(format!("{kind} file {original_name} is unavailable"));
+                    return Ok(ResourceLookup::Unavailable);
                 }
                 let request = FileRequest::new(key.clone(), original_name);
                 if self.seen.insert(key.clone()) {
@@ -442,10 +453,12 @@ impl<'a> VirtualFileResolver<'a> {
                         .iter()
                         .position(|(_, existing)| existing.key() == &key)
                 {
-                    self.probes.swap_remove(position);
-                    self.misses.push((request_index, request));
+                    let (probe_index, _) = self.probes.swap_remove(position);
+                    self.misses.push((probe_index, request));
                 }
-                Err(format!("{kind} file {original_name} is not cached"))
+                Ok(ResourceLookup::NeedResource(ResourceNeed::new(
+                    request_index,
+                )))
             }
         }
     }
@@ -491,10 +504,13 @@ impl InputResolver for VirtualFileResolver<'_> {
         input: &mut dyn InputReadState,
         name: &str,
         request_index: u64,
-    ) -> Result<Box<dyn tex_lex::InputSource>, String> {
+    ) -> ResourceResult<Box<dyn tex_lex::InputSource>> {
         self.open(input, FileKind::TexInput, name, request_index)
-            .map(WorldInput::from_content)
-            .map(|source| Box::new(source) as Box<dyn tex_lex::InputSource>)
+            .map(|lookup| {
+                lookup.map(|content| {
+                    Box::new(WorldInput::from_content(content)) as Box<dyn tex_lex::InputSource>
+                })
+            })
     }
 
     fn input_file_size(
@@ -502,24 +518,26 @@ impl InputResolver for VirtualFileResolver<'_> {
         input: &mut dyn InputReadState,
         name: &str,
         request_index: u64,
-    ) -> Result<Option<u64>, String> {
+    ) -> ResourceResult<u64> {
         let requested = match RequestedFile::parse(FileKind::TexInput, name) {
             Ok(requested) => requested,
-            Err(_) => return Ok(None),
+            Err(_) => return Ok(ResourceLookup::Unavailable),
         };
         if let RequestedFile::UserOnly(path) = requested {
             let Some(file) = self.snapshot_file(&path)? else {
-                return Ok(None);
+                return Ok(ResourceLookup::Unavailable);
             };
-            return self
-                .read_snapshot(input, file)
-                .map(|content| Some(u64::try_from(content.bytes().len()).unwrap_or(u64::MAX)));
+            return self.read_snapshot(input, file).map(|content| {
+                ResourceLookup::Available(u64::try_from(content.bytes().len()).unwrap_or(u64::MAX))
+            });
         }
         if self.request_is_unavailable(FileKind::TexInput, name) {
-            return Ok(None);
+            return Ok(ResourceLookup::Unavailable);
         }
         self.open_classified(input, FileKind::TexInput, name, request_index, true)
-            .map(|content| Some(u64::try_from(content.bytes().len()).unwrap_or(u64::MAX)))
+            .map(|lookup| {
+                lookup.map(|content| u64::try_from(content.bytes().len()).unwrap_or(u64::MAX))
+            })
     }
 
     fn open_stream_input(
@@ -527,20 +545,19 @@ impl InputResolver for VirtualFileResolver<'_> {
         input: &mut dyn InputReadState,
         name: &str,
         request_index: u64,
-    ) -> Result<Option<FileContent>, String> {
+    ) -> ResourceResult<FileContent> {
         // `\openin` is a probe: an invalid host-neutral path is unavailable,
         // just like a valid path with no matching file.  In particular, the
         // LaTeX kernel intentionally probes `:texsys.aux` while detecting the
         // filesystem.  Do not turn that probe into a fatal compile error or a
         // resource request, while keeping invalid `\input` paths fatal.
         if RequestedFile::parse(FileKind::TexInput, name).is_err() {
-            return Ok(None);
+            return Ok(ResourceLookup::Unavailable);
         }
         if self.request_is_unavailable(FileKind::TexInput, name) {
-            return Ok(None);
+            return Ok(ResourceLookup::Unavailable);
         }
         self.open_classified(input, FileKind::TexInput, name, request_index, true)
-            .map(Some)
     }
 }
 
@@ -586,7 +603,7 @@ impl FontResolver for VirtualFontResolver<'_> {
         input: &mut dyn InputReadState,
         path: &Path,
         request_index: u64,
-    ) -> Result<tex_exec::FontSource, String> {
+    ) -> ResourceResult<tex_exec::FontSource> {
         let Some(name) = path.to_str() else {
             let failure = CompileError::InvalidRequestedPath {
                 name: path.display().to_string(),
@@ -604,9 +621,11 @@ impl FontResolver for VirtualFontResolver<'_> {
         if !self.require_opentype && opentype_only.is_none() {
             return tfm
                 .expect("classic selection has a TFM request")
-                .map(|metrics| tex_exec::FontSource::Tfm {
-                    metrics,
-                    opentype: None,
+                .map(|lookup| {
+                    lookup.map(|metrics| tex_exec::FontSource::Tfm {
+                        metrics,
+                        opentype: None,
+                    })
                 });
         }
         let logical_name = opentype_only.unwrap_or_else(|| {
@@ -623,7 +642,7 @@ impl FontResolver for VirtualFontResolver<'_> {
         .map_err(|error| error.to_string())?;
         let Some(font) = self.resolved_fonts.get(&key) else {
             if self.unavailable_fonts.contains(&key) {
-                return Err(format!("OpenType font {logical_name} is unavailable"));
+                return Ok(ResourceLookup::Unavailable);
             }
             self.font_misses.entry(key.clone()).or_insert_with(|| {
                 (
@@ -635,7 +654,9 @@ impl FontResolver for VirtualFontResolver<'_> {
                     },
                 )
             });
-            return Err(format!("OpenType font {logical_name} is not cached"));
+            return Ok(ResourceLookup::NeedResource(ResourceNeed::new(
+                request_index,
+            )));
         };
         let selection = tex_fonts::OpenTypeProgramSelection {
             font: font.clone(),
@@ -644,27 +665,74 @@ impl FontResolver for VirtualFontResolver<'_> {
             direction: tex_fonts::WritingDirection::LeftToRight,
         };
         match tfm {
-            Some(tfm) => tfm.map(|metrics| tex_exec::FontSource::Tfm {
-                metrics,
-                opentype: Some(selection),
+            Some(tfm) => tfm.map(|lookup| {
+                lookup.map(|metrics| tex_exec::FontSource::Tfm {
+                    metrics,
+                    opentype: Some(selection),
+                })
             }),
-            None => Ok(tex_exec::FontSource::OpenType(selection)),
+            None => Ok(ResourceLookup::Available(tex_exec::FontSource::OpenType(
+                selection,
+            ))),
         }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::pixels_to_scaled;
+    use std::collections::{BTreeMap, BTreeSet};
+
+    use super::{VirtualFileResolver, pixels_to_scaled};
     use crate::{
         CompileAttemptResult, EngineMode, FileKind, ResolvedFile, ResourceRequest,
         ResourceResponse, SessionOptions, VirtualCompileSession,
     };
+    use tex_expand::{ResourceLookup, ResourceNeed};
+    use tex_state::{InputOpenState, Universe, World};
+    use umber_vfs::{VfsLimits, VirtualFs};
 
     #[test]
     fn zero_image_resolution_uses_pdftexs_seventy_two_dpi_fallback() {
         assert_eq!(pixels_to_scaled(10, 0), pixels_to_scaled(10, 72));
         assert_eq!(pixels_to_scaled(10, 144), pixels_to_scaled(5, 72));
+    }
+
+    #[test]
+    fn required_lookup_promotes_an_earlier_probe_without_changing_its_order() {
+        let filesystem = VirtualFs::new(VfsLimits::default()).expect("empty VFS");
+        let snapshot = filesystem.snapshot();
+        let resolved = BTreeMap::new();
+        let unavailable = BTreeSet::new();
+        let mut resolver = VirtualFileResolver::new(&snapshot, &resolved, &unavailable);
+        let mut stores = Universe::with_world(World::memory());
+
+        assert!(matches!(
+            resolver
+                .open_classified(
+                    &mut stores.input_open_context(),
+                    FileKind::TexInput,
+                    "shared.cfg",
+                    7,
+                    true,
+                )
+                .expect("probe lookup"),
+            ResourceLookup::NeedResource(need) if need == ResourceNeed::new(7)
+        ));
+        assert!(matches!(
+            resolver
+                .open_classified(
+                    &mut stores.input_open_context(),
+                    FileKind::TexInput,
+                    "shared.cfg",
+                    9,
+                    false,
+                )
+                .expect("required lookup"),
+            ResourceLookup::NeedResource(need) if need == ResourceNeed::new(9)
+        ));
+        assert!(resolver.probes.is_empty());
+        assert_eq!(resolver.misses.len(), 1);
+        assert_eq!(resolver.misses[0].0, 7);
     }
 
     #[test]

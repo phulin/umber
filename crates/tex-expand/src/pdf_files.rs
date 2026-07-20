@@ -191,13 +191,18 @@ fn resolve_file(
     name: &str,
     context: TracedTokenWord,
 ) -> Result<Option<tex_state::FileContent>, ExpandError> {
-    expansion
+    let lookup = expansion
         .input_file_content(&mut stores.input_open_context(), name)
         .map_err(|message| ExpandError::InputOpen {
             name: name.to_owned(),
             message,
             context,
-        })
+        })?;
+    match lookup {
+        crate::ResourceLookup::Available(content) => Ok(Some(content)),
+        crate::ResourceLookup::Unavailable => Ok(None),
+        crate::ResourceLookup::NeedResource(need) => Err(ExpandError::NeedResource(need)),
+    }
 }
 
 fn format_pdf_date(clock: tex_state::JobClock, utc_offset_minutes: i16) -> String {

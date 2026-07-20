@@ -319,16 +319,21 @@ impl InputResolver for FileInputResolver {
         input: &mut dyn tex_state::InputReadState,
         name: &str,
         _request_index: u64,
-    ) -> Result<Box<dyn InputSource>, String> {
+    ) -> tex_expand::ResourceResult<Box<dyn InputSource>> {
         if let Some(output) = self.0.read_restricted_pipe(input, name) {
             return output.map(|text| {
-                Box::new(tex_lex::WorldInput::generated(text)) as Box<dyn InputSource>
+                tex_expand::ResourceLookup::Available(
+                    Box::new(tex_lex::WorldInput::generated(text)) as Box<dyn InputSource>,
+                )
             });
         }
-        self.0
-            .read(input, name)
-            .map(tex_lex::WorldInput::from_content)
-            .map(|source| Box::new(source) as Box<dyn InputSource>)
+        Ok(match self.0.read(input, name) {
+            Ok(content) => tex_expand::ResourceLookup::Available(Box::new(
+                tex_lex::WorldInput::from_content(content),
+            )
+                as Box<dyn InputSource>),
+            Err(_) => tex_expand::ResourceLookup::Unavailable,
+        })
     }
 
     fn input_file_size(
@@ -336,12 +341,13 @@ impl InputResolver for FileInputResolver {
         input: &mut dyn tex_state::InputReadState,
         name: &str,
         _request_index: u64,
-    ) -> Result<Option<u64>, String> {
-        Ok(self
-            .0
-            .read(input, name)
-            .ok()
-            .map(|content| u64::try_from(content.bytes().len()).unwrap_or(u64::MAX)))
+    ) -> tex_expand::ResourceResult<u64> {
+        Ok(match self.0.read(input, name) {
+            Ok(content) => tex_expand::ResourceLookup::Available(
+                u64::try_from(content.bytes().len()).unwrap_or(u64::MAX),
+            ),
+            Err(_) => tex_expand::ResourceLookup::Unavailable,
+        })
     }
 
     fn open_stream_input(
@@ -349,8 +355,11 @@ impl InputResolver for FileInputResolver {
         input: &mut dyn tex_state::InputReadState,
         name: &str,
         _request_index: u64,
-    ) -> Result<Option<tex_state::FileContent>, String> {
-        Ok(self.0.read(input, name).ok())
+    ) -> tex_expand::ResourceResult<tex_state::FileContent> {
+        Ok(match self.0.read(input, name) {
+            Ok(content) => tex_expand::ResourceLookup::Available(content),
+            Err(_) => tex_expand::ResourceLookup::Unavailable,
+        })
     }
 }
 
@@ -364,9 +373,12 @@ impl PdfImageResolver for FileImageResolver {
         input: &mut dyn tex_state::InputReadState,
         request: &PdfImageRequest,
         _request_index: u64,
-    ) -> Result<tex_state::PdfExternalImageSource, String> {
-        let content = self.0.read(input, &request.name)?;
-        virtual_compile::parse_image(&content, request)
+    ) -> tex_expand::ResourceResult<tex_state::PdfExternalImageSource> {
+        let content = match self.0.read(input, &request.name) {
+            Ok(content) => content,
+            Err(_) => return Ok(tex_expand::ResourceLookup::Unavailable),
+        };
+        virtual_compile::parse_image(&content, request).map(tex_expand::ResourceLookup::Available)
     }
 }
 
@@ -376,13 +388,14 @@ impl FontResolver for FileFontResolver {
         input: &mut dyn tex_state::InputReadState,
         path: &Path,
         _request_index: u64,
-    ) -> Result<tex_exec::FontSource, String> {
-        self.0
-            .read(input, path)
-            .map(|metrics| tex_exec::FontSource::Tfm {
+    ) -> tex_expand::ResourceResult<tex_exec::FontSource> {
+        Ok(match self.0.read(input, path) {
+            Ok(metrics) => tex_expand::ResourceLookup::Available(tex_exec::FontSource::Tfm {
                 metrics,
                 opentype: None,
-            })
+            }),
+            Err(_) => tex_expand::ResourceLookup::Unavailable,
+        })
     }
 }
 
@@ -1174,8 +1187,9 @@ impl InputResolver for RejectingMemoryInputResolver {
         _input: &mut dyn tex_state::InputReadState,
         name: &str,
         _request_index: u64,
-    ) -> Result<Box<dyn InputSource>, String> {
-        Err(format!("memory run cannot open input {name}"))
+    ) -> tex_expand::ResourceResult<Box<dyn InputSource>> {
+        let _ = name;
+        Ok(tex_expand::ResourceLookup::Unavailable)
     }
 }
 
@@ -1188,14 +1202,14 @@ impl FontResolver for DirectFontResolver {
         input: &mut dyn tex_state::InputReadState,
         path: &Path,
         _request_index: u64,
-    ) -> Result<tex_exec::FontSource, String> {
-        input
-            .read_input_file(path)
-            .map(|metrics| tex_exec::FontSource::Tfm {
+    ) -> tex_expand::ResourceResult<tex_exec::FontSource> {
+        Ok(match input.read_input_file(path) {
+            Ok(metrics) => tex_expand::ResourceLookup::Available(tex_exec::FontSource::Tfm {
                 metrics,
                 opentype: None,
-            })
-            .map_err(|error| error.to_string())
+            }),
+            Err(_) => tex_expand::ResourceLookup::Unavailable,
+        })
     }
 }
 

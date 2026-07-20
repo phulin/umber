@@ -1433,6 +1433,26 @@ fn filesize_expands_to_nothing_when_the_file_is_missing() {
 }
 
 #[test]
+fn filesize_propagates_a_typed_resource_need() {
+    let mut stores = Universe::new();
+    install_expandable_primitives(&mut stores);
+    crate::install_latex_expandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new("\\filesize{asset}"));
+    let mut resolver = SuspendingResolver;
+    let mut context = ExpansionContext::with_input_resolver("main", &mut resolver);
+
+    assert!(matches!(
+        crate::get_x_token_without_input_open(
+            &mut input,
+            &mut tex_state::ExpansionContext::new(&mut stores),
+            &mut context,
+        ),
+        Err(crate::ExpandError::NeedResource(need))
+            if need == crate::ResourceNeed::new(0)
+    ));
+}
+
+#[test]
 fn expanded_performs_message_style_balanced_text_expansion() {
     let mut stores = Universe::new();
     install_expandable_primitives(&mut stores);
@@ -3651,6 +3671,25 @@ fn input_pushes_driver_source_and_returns_to_calling_source() {
 }
 
 #[test]
+fn input_propagates_a_typed_resource_need() {
+    let mut stores = Universe::new();
+    expandable_primitive(&mut stores, "input", ExpandablePrimitive::Input);
+    let mut input = InputStack::new(MemoryInput::new("\\input{inc}"));
+    let mut resolver = SuspendingResolver;
+    let mut context = ExpansionContext::with_input_resolver("main", &mut resolver);
+
+    assert!(matches!(
+        crate::get_x_token_with_context(
+            &mut input,
+            &mut tex_state::ExpansionContext::new(&mut stores),
+            &mut context,
+        ),
+        Err(crate::ExpandError::NeedResource(need))
+            if need == crate::ResourceNeed::new(0)
+    ));
+}
+
+#[test]
 fn input_strips_filename_quotes_and_accepts_spaces_inside_them() {
     let mut stores = Universe::new();
     stores.set_int_param(tex_state::env::banks::IntParam::END_LINE_CHAR, 13);
@@ -5488,6 +5527,32 @@ struct MemoryResolver {
     sized: Vec<String>,
 }
 
+struct SuspendingResolver;
+
+impl crate::InputResolver for SuspendingResolver {
+    fn open_input(
+        &mut self,
+        _input: &mut dyn InputReadState,
+        _name: &str,
+        request_index: u64,
+    ) -> crate::ResourceResult<Box<dyn tex_lex::InputSource>> {
+        Ok(crate::ResourceLookup::NeedResource(
+            crate::ResourceNeed::new(request_index),
+        ))
+    }
+
+    fn input_file_size(
+        &mut self,
+        _input: &mut dyn InputReadState,
+        _name: &str,
+        request_index: u64,
+    ) -> crate::ResourceResult<u64> {
+        Ok(crate::ResourceLookup::NeedResource(
+            crate::ResourceNeed::new(request_index),
+        ))
+    }
+}
+
 impl MemoryResolverFixture {
     fn new(job_name: &str) -> Self {
         Self {
@@ -5534,13 +5599,14 @@ impl crate::InputResolver for MemoryResolver {
         _input: &mut dyn InputReadState,
         name: &str,
         _request_index: u64,
-    ) -> Result<Box<dyn tex_lex::InputSource>, String> {
-        let source = self
-            .sources
-            .get(name)
-            .ok_or_else(|| "missing memory source".to_owned())?;
+    ) -> crate::ResourceResult<Box<dyn tex_lex::InputSource>> {
+        let Some(source) = self.sources.get(name) else {
+            return Ok(crate::ResourceLookup::Unavailable);
+        };
         self.opened.push(name.to_owned());
-        Ok(Box::new(MemoryInput::new(source.clone())))
+        Ok(crate::ResourceLookup::Available(Box::new(
+            MemoryInput::new(source.clone()),
+        )))
     }
 
     fn input_file_size(
@@ -5548,10 +5614,15 @@ impl crate::InputResolver for MemoryResolver {
         _input: &mut dyn InputReadState,
         name: &str,
         _request_index: u64,
-    ) -> Result<Option<u64>, String> {
+    ) -> crate::ResourceResult<u64> {
         self.sized.push(name.to_owned());
-        Ok(self.sources.get(name).map(|source| {
-            u64::try_from(source.len()).expect("test source length should fit in u64")
-        }))
+        Ok(self
+            .sources
+            .get(name)
+            .map_or(crate::ResourceLookup::Unavailable, |source| {
+                crate::ResourceLookup::Available(
+                    u64::try_from(source.len()).expect("test source length should fit in u64"),
+                )
+            }))
     }
 }

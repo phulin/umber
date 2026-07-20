@@ -687,6 +687,48 @@ pub enum RecoverableExpansionDiagnostic {
     },
 }
 
+/// A host resource lookup that distinguishes authoritative absence from a
+/// request which can be satisfied before replaying the current operation.
+#[derive(Debug)]
+pub enum ResourceLookup<T> {
+    Available(T),
+    Unavailable,
+    NeedResource(ResourceNeed),
+}
+
+impl<T> ResourceLookup<T> {
+    #[must_use]
+    pub fn map<U>(self, f: impl FnOnce(T) -> U) -> ResourceLookup<U> {
+        match self {
+            Self::Available(value) => ResourceLookup::Available(f(value)),
+            Self::Unavailable => ResourceLookup::Unavailable,
+            Self::NeedResource(need) => ResourceLookup::NeedResource(need),
+        }
+    }
+}
+
+/// Stable identity of one resolver call within an execution attempt.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct ResourceNeed {
+    request_index: u64,
+}
+
+impl ResourceNeed {
+    #[must_use]
+    pub const fn new(request_index: u64) -> Self {
+        Self { request_index }
+    }
+
+    #[must_use]
+    pub const fn request_index(self) -> u64 {
+        self.request_index
+    }
+}
+
+/// Fatal resolver failures remain errors; normal absence and suspension are
+/// represented by [`ResourceLookup`] rather than diagnostic strings.
+pub type ResourceResult<T> = Result<ResourceLookup<T>, String>;
+
 /// Errors raised by `get_x_token`.
 #[derive(Debug)]
 pub enum ExpandError {
@@ -695,6 +737,7 @@ pub enum ExpandError {
         site: DiagnosticSite,
     },
     Lex(LexError),
+    NeedResource(ResourceNeed),
     MacroCall(args::MacroCallError),
     UnimplementedExpandable {
         opcode: ExpandableOpcode,
@@ -790,6 +833,11 @@ impl fmt::Display for ExpandError {
         match self {
             Self::Captured { error, .. } => write!(f, "{error}"),
             Self::Lex(err) => write!(f, "{err}"),
+            Self::NeedResource(need) => write!(
+                f,
+                "resource request {} requires host resolution",
+                need.request_index()
+            ),
             Self::MacroCall(err) => write!(f, "{err}"),
             Self::UnimplementedExpandable { opcode, .. } => {
                 write!(f, "expandable opcode {opcode:?} is not implemented yet")
@@ -892,7 +940,8 @@ impl std::error::Error for ExpandError {
             Self::ScanDimen(err) => Some(err),
             Self::ScanGlue(err) => Some(err),
             Self::ScanGeneralText(err) => Some(err),
-            Self::UnimplementedExpandable { .. }
+            Self::NeedResource(_)
+            | Self::UnimplementedExpandable { .. }
             | Self::MissingTokenAfterPrimitive { .. }
             | Self::MissingEndCsName { .. }
             | Self::MissingInputName { .. }
@@ -924,6 +973,7 @@ impl ExpandError {
     pub fn primary_origin(&self) -> Option<OriginId> {
         match self {
             Self::Captured { site, .. } => site.primary_origin(),
+            Self::NeedResource(_) => None,
             Self::UnimplementedExpandable { context, .. }
             | Self::MissingTokenAfterPrimitive { context, .. }
             | Self::MissingEndCsName { context }
@@ -970,7 +1020,7 @@ impl ExpandError {
     #[cold]
     #[inline(never)]
     fn capture(self, input: &InputStack) -> Self {
-        if matches!(self, Self::Captured { .. }) {
+        if matches!(self, Self::Captured { .. } | Self::NeedResource(_)) {
             return self;
         }
         let site = input.diagnostic_site(self.primary_origin(), []);
@@ -992,7 +1042,7 @@ pub trait InputResolver {
         input: &mut dyn InputReadState,
         name: &str,
         request_index: u64,
-    ) -> Result<Box<dyn InputSource>, String>;
+    ) -> ResourceResult<Box<dyn InputSource>>;
 
     /// Resolves an input and returns its byte size.
     ///
@@ -1004,11 +1054,17 @@ pub trait InputResolver {
         input: &mut dyn InputReadState,
         name: &str,
         request_index: u64,
-    ) -> Result<Option<u64>, String> {
-        let source = self.open_input(input, name, request_index)?;
-        Ok(source
-            .source_descriptor()
-            .map(|descriptor| descriptor.byte_len()))
+    ) -> ResourceResult<u64> {
+        self.open_input(input, name, request_index)
+            .map(|lookup| match lookup {
+                ResourceLookup::Available(source) => source
+                    .source_descriptor()
+                    .map_or(ResourceLookup::Unavailable, |descriptor| {
+                        ResourceLookup::Available(descriptor.byte_len())
+                    }),
+                ResourceLookup::Unavailable => ResourceLookup::Unavailable,
+                ResourceLookup::NeedResource(need) => ResourceLookup::NeedResource(need),
+            })
     }
 
     /// Resolves immutable file bytes and metadata for read-only enquiries.
@@ -1017,7 +1073,7 @@ pub trait InputResolver {
         input: &mut dyn InputReadState,
         name: &str,
         request_index: u64,
-    ) -> Result<Option<FileContent>, String> {
+    ) -> ResourceResult<FileContent> {
         self.open_stream_input(input, name, request_index)
     }
 
@@ -1030,8 +1086,11 @@ pub trait InputResolver {
         input: &mut dyn InputReadState,
         name: &str,
         _request_index: u64,
-    ) -> Result<Option<FileContent>, String> {
-        Ok(input.read_input_file(Path::new(name)).ok())
+    ) -> ResourceResult<FileContent> {
+        Ok(match input.read_input_file(Path::new(name)) {
+            Ok(content) => ResourceLookup::Available(content),
+            Err(_) => ResourceLookup::Unavailable,
+        })
     }
 }
 
@@ -1458,7 +1517,7 @@ impl<'a> ExpansionContext<'a> {
         &mut self,
         input: &mut dyn InputReadState,
         name: &str,
-    ) -> Result<Box<dyn InputSource>, String> {
+    ) -> ResourceResult<Box<dyn InputSource>> {
         self.mark_paragraph_barrier(ParagraphExpansionBarrier::InputOpen);
         self.record_dependency(ReadDependency::Query {
             domain: PARAGRAPH_INPUT_OPEN_BARRIER_DOMAIN,
@@ -1475,14 +1534,16 @@ impl<'a> ExpansionContext<'a> {
         &mut self,
         input: &mut dyn InputReadState,
         name: &str,
-    ) -> Result<Option<u64>, String> {
+    ) -> ResourceResult<u64> {
         let request_index = self.next_resolution_index();
         match self.input_resolver.as_deref_mut() {
             Some(resolver) => resolver.input_file_size(input, name, request_index),
-            None => Ok(input
-                .read_input_file(Path::new(name))
-                .ok()
-                .map(|content| u64::try_from(content.bytes().len()).unwrap_or(u64::MAX))),
+            None => Ok(match input.read_input_file(Path::new(name)) {
+                Ok(content) => ResourceLookup::Available(
+                    u64::try_from(content.bytes().len()).unwrap_or(u64::MAX),
+                ),
+                Err(_) => ResourceLookup::Unavailable,
+            }),
         }
     }
 
@@ -1490,11 +1551,14 @@ impl<'a> ExpansionContext<'a> {
         &mut self,
         input: &mut dyn InputReadState,
         name: &str,
-    ) -> Result<Option<FileContent>, String> {
+    ) -> ResourceResult<FileContent> {
         let request_index = self.next_resolution_index();
         match self.input_resolver.as_deref_mut() {
             Some(resolver) => resolver.input_file_content(input, name, request_index),
-            None => Ok(input.read_input_file(Path::new(name)).ok()),
+            None => Ok(match input.read_input_file(Path::new(name)) {
+                Ok(content) => ResourceLookup::Available(content),
+                Err(_) => ResourceLookup::Unavailable,
+            }),
         }
     }
 
@@ -1502,11 +1566,14 @@ impl<'a> ExpansionContext<'a> {
         &mut self,
         input: &mut dyn InputReadState,
         name: &str,
-    ) -> Result<Option<FileContent>, String> {
+    ) -> ResourceResult<FileContent> {
         let request_index = self.next_resolution_index();
         match self.input_resolver.as_deref_mut() {
             Some(resolver) => resolver.open_stream_input(input, name, request_index),
-            None => Ok(input.read_input_file(Path::new(name)).ok()),
+            None => Ok(match input.read_input_file(Path::new(name)) {
+                Ok(content) => ResourceLookup::Available(content),
+                Err(_) => ResourceLookup::Unavailable,
+            }),
         }
     }
 

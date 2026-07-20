@@ -23,9 +23,18 @@ pub(super) fn execute_font_definition(
     } else {
         tfm_path(&font_name)
     };
-    let source = match execution.open_font(&mut stores.input_open_context(), &path) {
-        Ok(content) => content,
-        Err(_) => {
+    let lookup = execution
+        .open_font(&mut stores.input_open_context(), &path)
+        .map_err(|message| ExecError::FontOpen {
+            name: font_name.clone(),
+            message,
+        })?;
+    let source = match lookup {
+        tex_expand::ResourceLookup::Available(content) => content,
+        tex_expand::ResourceLookup::NeedResource(need) => {
+            return Err(ExecError::NeedResource(need));
+        }
+        tex_expand::ResourceLookup::Unavailable => {
             // TeX.web `new_font` leaves the newly defined selector at
             // `null_font` after a TFM open failure and continues after the
             // ordinary recoverable font diagnostic.

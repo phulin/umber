@@ -217,7 +217,7 @@ replace this aggregate outer savepoint.
 Resolver operations return a typed internal result:
 
 ```text
-ResourceLookup<T> = Ready(T) | Unavailable | Need(ResourceRequest)
+ResourceLookup<T> = Available(T) | Unavailable | NeedResource(ResourceNeed)
 ```
 
 `Need` is carried through `ExpandError`/`ExecError` without conversion to a
@@ -369,6 +369,15 @@ WASM memory output remains detached. Neither platform exposes host effects
 that would need to be undone.
 
 ## Migration sequence
+
+The first migration step is implemented by the resolver-facing
+`ResourceLookup<T>` contract shared by `tex-expand` and `tex-exec`. Resolver
+calls now distinguish `Available`, authoritative `Unavailable`, and
+`NeedResource(ResourceNeed)` outcomes, with malformed or host failures left in
+the error channel. The current one-shot adapter still assembles public request
+batches from its resolver-side request records and retries the whole candidate;
+later steps replace only that outer retry policy, not the typed engine control
+path.
 
 1. Add typed `ResourceLookup`/suspension propagation to input, font, and image
    resolvers without changing one-shot behavior. Remove missing-resource

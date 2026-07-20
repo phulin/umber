@@ -106,12 +106,12 @@ impl InputResolver for WorldMemoryInputResolver {
         input: &mut dyn tex_state::InputReadState,
         name: &str,
         _request_index: u64,
-    ) -> Result<Box<dyn tex_lex::InputSource>, String> {
+    ) -> tex_expand::ResourceResult<Box<dyn tex_lex::InputSource>> {
         let content = input
             .read_input_file(Path::new(name))
             .map_err(|error| error.to_string())?;
-        Ok(Box::new(MemoryInput::new(
-            String::from_utf8_lossy(content.bytes()).into_owned(),
+        Ok(tex_expand::ResourceLookup::Available(Box::new(
+            MemoryInput::new(String::from_utf8_lossy(content.bytes()).into_owned()),
         )))
     }
 }
@@ -126,16 +126,18 @@ impl crate::FontResolver for WorldFontResolver {
         input: &mut dyn tex_state::InputReadState,
         path: &std::path::Path,
         _request_index: u64,
-    ) -> Result<crate::FontSource, String> {
+    ) -> tex_expand::ResourceResult<crate::FontSource> {
         let path = self
             .root
             .as_ref()
             .map_or_else(|| path.to_owned(), |root| root.join(path));
         input
             .read_input_file(&path)
-            .map(|metrics| crate::FontSource::Tfm {
-                metrics,
-                opentype: None,
+            .map(|metrics| {
+                tex_expand::ResourceLookup::Available(crate::FontSource::Tfm {
+                    metrics,
+                    opentype: None,
+                })
             })
             .map_err(|err| err.to_string())
     }

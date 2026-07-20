@@ -4106,9 +4106,9 @@ mod tests {
             _input: &mut dyn tex_state::InputReadState,
             request: &tex_exec::PdfImageRequest,
             _request_index: u64,
-        ) -> Result<tex_state::PdfExternalImageSource, String> {
+        ) -> tex_expand::ResourceResult<tex_state::PdfExternalImageSource> {
             self.requests.push(request.clone());
-            Ok(self.source.clone())
+            Ok(tex_expand::ResourceLookup::Available(self.source.clone()))
         }
     }
 
@@ -4118,9 +4118,10 @@ mod tests {
             _input: &mut dyn tex_state::InputReadState,
             _request: &tex_exec::PdfImageRequest,
             _request_index: u64,
-        ) -> Result<tex_state::PdfExternalImageSource, String> {
+        ) -> tex_expand::ResourceResult<tex_state::PdfExternalImageSource> {
             self.sources
                 .pop_front()
+                .map(tex_expand::ResourceLookup::Available)
                 .ok_or_else(|| "test image queue is empty".to_owned())
         }
     }
@@ -4131,8 +4132,8 @@ mod tests {
             _input: &mut dyn tex_state::InputReadState,
             _request: &tex_exec::PdfImageRequest,
             _request_index: u64,
-        ) -> Result<tex_state::PdfExternalImageSource, String> {
-            Ok(self.source.clone())
+        ) -> tex_expand::ResourceResult<tex_state::PdfExternalImageSource> {
+            Ok(tex_expand::ResourceLookup::Available(self.source.clone()))
         }
     }
 

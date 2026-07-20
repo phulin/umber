@@ -15,7 +15,7 @@ use tex_exec::{
     CheckpointSink, EditorRestoreError, EngineBoundary, EngineCheckpoint, ExecutionContext,
     ExecutionStats, Executor,
 };
-use tex_expand::InputResolver;
+use tex_expand::{InputResolver, ResourceLookup, ResourceResult};
 use tex_lex::{InputSource, InputStack, LayoutCursor, LayoutCursorError, MemoryInput, WorldInput};
 use tex_out::dvi::{DviError, DviPagePlan, DviStreamWriter};
 pub use tex_out::html::RenderedOutputId;
@@ -1872,12 +1872,13 @@ impl InputResolver for DirectInputResolver {
         input: &mut dyn InputReadState,
         name: &str,
         _request_index: u64,
-    ) -> Result<Box<dyn InputSource>, String> {
-        input
-            .read_input_file(Path::new(name))
-            .map(WorldInput::from_content)
-            .map(|source| Box::new(source) as Box<dyn InputSource>)
-            .map_err(|error| error.to_string())
+    ) -> ResourceResult<Box<dyn InputSource>> {
+        Ok(match input.read_input_file(Path::new(name)) {
+            Ok(content) => ResourceLookup::Available(
+                Box::new(WorldInput::from_content(content)) as Box<dyn InputSource>
+            ),
+            Err(_) => ResourceLookup::Unavailable,
+        })
     }
 }
 
@@ -1915,14 +1916,14 @@ impl tex_exec::FontResolver for DirectFontResolver {
         input: &mut dyn InputReadState,
         path: &Path,
         _request_index: u64,
-    ) -> Result<tex_exec::FontSource, String> {
-        input
-            .read_input_file(path)
-            .map(|metrics| tex_exec::FontSource::Tfm {
+    ) -> ResourceResult<tex_exec::FontSource> {
+        Ok(match input.read_input_file(path) {
+            Ok(metrics) => ResourceLookup::Available(tex_exec::FontSource::Tfm {
                 metrics,
                 opentype: None,
-            })
-            .map_err(|error| error.to_string())
+            }),
+            Err(_) => ResourceLookup::Unavailable,
+        })
     }
 }
 

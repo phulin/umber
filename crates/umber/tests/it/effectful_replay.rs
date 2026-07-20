@@ -334,7 +334,7 @@ impl InputResolver for FuzzInputResolver {
         input: &mut dyn tex_state::InputReadState,
         name: &str,
         _request_index: u64,
-    ) -> Result<Box<dyn tex_lex::InputSource>, String> {
+    ) -> tex_expand::ResourceResult<Box<dyn tex_lex::InputSource>> {
         let mut path = PathBuf::from(name);
         if path.extension().is_none() {
             path.set_extension("tex");
@@ -342,8 +342,8 @@ impl InputResolver for FuzzInputResolver {
         let content = input
             .read_input_file(&path)
             .map_err(|err| format!("{} ({err})", path.display()))?;
-        Ok(Box::new(MemoryInput::new(
-            String::from_utf8_lossy(content.bytes()).into_owned(),
+        Ok(tex_expand::ResourceLookup::Available(Box::new(
+            MemoryInput::new(String::from_utf8_lossy(content.bytes()).into_owned()),
         )))
     }
 }
@@ -356,7 +356,7 @@ impl FontResolver for RejectingFontResolver {
         _input: &mut dyn tex_state::InputReadState,
         path: &std::path::Path,
         _request_index: u64,
-    ) -> Result<tex_exec::FontSource, String> {
+    ) -> tex_expand::ResourceResult<tex_exec::FontSource> {
         Err(format!("unexpected font request {}", path.display()))
     }
 }

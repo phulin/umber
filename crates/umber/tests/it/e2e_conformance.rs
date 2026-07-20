@@ -47,7 +47,7 @@ impl InputResolver for InProcessInputResolver {
         input: &mut dyn InputReadState,
         name: &str,
         _request_index: u64,
-    ) -> Result<Box<dyn tex_lex::InputSource>, String> {
+    ) -> tex_expand::ResourceResult<Box<dyn tex_lex::InputSource>> {
         let mut path = PathBuf::from(name);
         if path.extension().is_none() {
             path.set_extension("tex");
@@ -56,7 +56,11 @@ impl InputResolver for InProcessInputResolver {
             .read_input_file(&self.base_dir.join(&path))
             .or_else(|_| input.read_input_file(&path))
             .map(WorldInput::from_content)
-            .map(|source| Box::new(source) as Box<dyn tex_lex::InputSource>)
+            .map(|source| {
+                tex_expand::ResourceLookup::Available(
+                    Box::new(source) as Box<dyn tex_lex::InputSource>
+                )
+            })
             .map_err(|error| error.to_string())
     }
 }
@@ -71,18 +75,18 @@ impl FontResolver for InProcessFontResolver {
         input: &mut dyn InputReadState,
         path: &Path,
         _request_index: u64,
-    ) -> Result<tex_exec::FontSource, String> {
+    ) -> tex_expand::ResourceResult<tex_exec::FontSource> {
         let mut path = path.to_owned();
         if path.extension().is_none() {
             path.set_extension("tfm");
         }
-        input
-            .read_input_file(&self.base_dir.join(path))
-            .map(|metrics| tex_exec::FontSource::Tfm {
+        Ok(match input.read_input_file(&self.base_dir.join(&path)) {
+            Ok(metrics) => tex_expand::ResourceLookup::Available(tex_exec::FontSource::Tfm {
                 metrics,
                 opentype: None,
-            })
-            .map_err(|error| error.to_string())
+            }),
+            Err(_) => tex_expand::ResourceLookup::Unavailable,
+        })
     }
 }
 

@@ -1329,13 +1329,26 @@ where
 {
     let name = scan_input_name(input, stores, expansion, context)?;
     let transfer_endinput = input.take_current_source_end_after_current_line();
-    let source = expansion
+    let lookup = expansion
         .open_input(&mut stores.input_open_context(), &name)
         .map_err(|message| ExpandError::InputOpen {
             name: name.clone(),
             message,
             context,
         })?;
+    let source = match lookup {
+        crate::ResourceLookup::Available(source) => source,
+        crate::ResourceLookup::Unavailable => {
+            return Err(ExpandError::InputOpen {
+                name: name.clone(),
+                message: "input is unavailable".to_owned(),
+                context,
+            });
+        }
+        crate::ResourceLookup::NeedResource(need) => {
+            return Err(ExpandError::NeedResource(need));
+        }
+    };
     input.push_boxed_source(source);
     if transfer_endinput {
         input.end_current_source_after_current_line();
@@ -1368,19 +1381,22 @@ fn execute_filesize_primitive(
     for &token in stores.tokens(expanded.token_list()) {
         crate::append_token_string_text(stores, token, &mut name);
     }
-    match expansion.input_file_size(&mut stores.input_open_context(), &name) {
-        Ok(Some(size)) => Ok(push_rendered_text(
+    let lookup = expansion
+        .input_file_size(&mut stores.input_open_context(), &name)
+        .map_err(|message| ExpandError::InputOpen {
+            name: name.clone(),
+            message,
+            context,
+        })?;
+    match lookup {
+        crate::ResourceLookup::Available(size) => Ok(push_rendered_text(
             stores,
             ExpansionReplayKind::NumberOutput,
             &size.to_string(),
             context.origin(),
         )),
-        Ok(None) => Ok(Dispatch::Continue),
-        Err(message) => Err(ExpandError::InputOpen {
-            name,
-            message,
-            context,
-        }),
+        crate::ResourceLookup::Unavailable => Ok(Dispatch::Continue),
+        crate::ResourceLookup::NeedResource(need) => Err(ExpandError::NeedResource(need)),
     }
 }
 

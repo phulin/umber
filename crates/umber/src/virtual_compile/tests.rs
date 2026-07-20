@@ -244,6 +244,25 @@ fn extensions_are_normalized_and_requests_are_deduplicated() {
 }
 
 #[test]
+fn unavailable_required_input_becomes_an_engine_open_error() {
+    let mut session = session("\\input absent \\end");
+    let requested = requests(session.compile_attempt());
+    let [request] = requested.as_slice() else {
+        panic!("expected one required input request");
+    };
+    session
+        .provide_resources(vec![ResourceResponse::FileUnavailable(
+            request.key().clone(),
+        )])
+        .expect("authoritative negative input response");
+    assert!(matches!(
+        session.compile_attempt(),
+        CompileAttemptResult::Error(CompileError::Diagnostic(diagnostic))
+            if diagnostic.message.contains("failed to open input")
+    ));
+}
+
+#[test]
 fn unavailable_probe_retries_through_dump_instead_of_accepting_end_of_input() {
     let mut session = session(
         "\\openin0=optional.cfg \\ifeof0 \\message{OPTIONAL-MISSING}\\else \\errmessage{unexpected optional file}\\fi \\dump\\endinput",
@@ -377,21 +396,33 @@ fn unavailable_nested_probe_retries_through_endinput_to_root_dump() {
 }
 
 #[test]
-fn multiple_tfm_misses_and_later_input_are_batched_in_order() {
+fn required_resources_suspend_at_the_first_unavailable_dependency() {
     let mut session = session("\\font\\a=one\\relax \\font\\b=two\\relax \\input later \\end");
-    let missing = requests(session.compile_attempt());
-    let keys = missing
-        .iter()
-        .map(|request| (request.key().kind(), request.key().name()))
-        .collect::<Vec<_>>();
-    assert_eq!(
-        keys,
-        vec![
-            (FileKind::TexInput, "later.tex"),
-            (FileKind::Tfm, "one.tfm"),
-            (FileKind::Tfm, "two.tfm"),
-        ]
-    );
+    for expected in ["one.tfm", "two.tfm"] {
+        let requested = requests(session.compile_attempt());
+        let [request] = requested.as_slice() else {
+            panic!("expected one ordered TFM dependency");
+        };
+        assert_eq!(request.key().kind(), FileKind::Tfm);
+        assert_eq!(request.key().name(), expected);
+        session
+            .provide_resolved_file(
+                request.key().clone(),
+                if expected == "one.tfm" {
+                    "/texlive/one.tfm"
+                } else {
+                    "/texlive/two.tfm"
+                },
+                CMR10.to_vec(),
+            )
+            .expect("TFM response");
+    }
+    let requested = requests(session.compile_attempt());
+    let [request] = requested.as_slice() else {
+        panic!("expected the later input after both font dependencies");
+    };
+    assert_eq!(request.key().kind(), FileKind::TexInput);
+    assert_eq!(request.key().name(), "later.tex");
 }
 
 #[test]
@@ -1260,6 +1291,77 @@ fn unavailable_font_answers_are_idempotent_and_conflict_with_bytes() {
 }
 
 #[test]
+fn unavailable_font_and_tfm_answers_use_tex_missing_font_semantics() {
+    let mut classic = session("\\font\\missing=absent \\message{FONT=[\\fontname\\missing]} \\end");
+    let requested = requests(classic.compile_attempt());
+    let [tfm] = requested.as_slice() else {
+        panic!("expected one TFM request");
+    };
+    assert_eq!(tfm.key().kind(), FileKind::Tfm);
+    classic
+        .provide_resources(vec![ResourceResponse::FileUnavailable(tfm.key().clone())])
+        .expect("authoritative negative TFM response");
+    let CompileAttemptResult::Complete(output) = classic.compile_attempt() else {
+        panic!("an unavailable TFM should use TeX's recoverable null-font behavior");
+    };
+    let terminal = String::from_utf8(output.terminal).expect("terminal UTF-8");
+    assert!(
+        terminal.contains("Metric (TFM) file not found"),
+        "{terminal}"
+    );
+
+    let mut modern = VirtualCompileSession::new(SessionOptions {
+        html: true,
+        ..SessionOptions::default()
+    })
+    .expect("HTML session");
+    modern
+        .add_user_file(
+            "main.tex",
+            b"\\font\\missing=opentype:absent \\message{FONT=[\\fontname\\missing]} \\shipout\\hbox{\\vrule width1pt height1pt} \\end".to_vec(),
+        )
+        .expect("main source");
+    let requested = resources(modern.compile_attempt());
+    let [ResourceRequest::Font(font)] = requested.as_slice() else {
+        panic!("expected one OpenType font request");
+    };
+    modern
+        .provide_resources(vec![ResourceResponse::FontUnavailable(font.key.clone())])
+        .expect("authoritative negative OpenType response");
+    let attempt = modern.compile_attempt();
+    let CompileAttemptResult::Complete(output) = attempt else {
+        panic!(
+            "an unavailable OpenType font should use recoverable null-font behavior: {attempt:?}"
+        );
+    };
+    let terminal = String::from_utf8(output.terminal).expect("terminal UTF-8");
+    assert!(
+        terminal.contains("OpenType resource not found"),
+        "{terminal}"
+    );
+}
+
+#[test]
+fn malformed_tfm_bytes_remain_a_fatal_engine_error() {
+    let mut session = session("\\font\\broken=broken \\end");
+    let requested = requests(session.compile_attempt());
+    let [tfm] = requested.as_slice() else {
+        panic!("expected one TFM request");
+    };
+    session
+        .provide_resolved_file(
+            tfm.key().clone(),
+            "/texlive/broken.tfm",
+            b"not a TFM".to_vec(),
+        )
+        .expect("malformed TFM bytes are provisioned before parsing");
+    assert!(matches!(
+        session.compile_attempt(),
+        CompileAttemptResult::Error(CompileError::Diagnostic(_))
+    ));
+}
+
+#[test]
 fn invalid_mixed_batch_publishes_nothing() {
     let mut session = VirtualCompileSession::new(SessionOptions {
         html: true,
@@ -1545,20 +1647,23 @@ fn rendered_source_location_survives_math_layout() {
     session
         .add_user_file("main.tex", source.to_vec())
         .expect("main source");
-    let fonts = resources(session.compile_attempt())
-        .into_iter()
-        .filter_map(|request| match request {
-            ResourceRequest::Font(request) => Some(request),
-            ResourceRequest::File(_) => None,
-        })
-        .collect::<Vec<_>>();
-    assert!(!fonts.is_empty(), "font requests");
-    for font in fonts {
-        provide_cmu_font(&mut session, font);
-    }
-
-    let CompileAttemptResult::Complete(output) = session.compile_attempt() else {
-        panic!("math HTML compile should complete");
+    let output = loop {
+        match session.compile_attempt() {
+            CompileAttemptResult::NeedResources(needs) => {
+                let fonts = needs
+                    .required
+                    .into_iter()
+                    .filter_map(|request| match request {
+                        ResourceRequest::Font(request) => Some(request),
+                        ResourceRequest::File(_) => None,
+                    })
+                    .collect::<Vec<_>>();
+                assert_eq!(fonts.len(), 1, "one font dependency per suspension");
+                provide_cmu_font(&mut session, fonts.into_iter().next().expect("font"));
+            }
+            CompileAttemptResult::Complete(output) => break output,
+            other => panic!("math HTML compile should complete: {other:?}"),
+        }
     };
     let html = String::from_utf8(output.html.expect("HTML output")).expect("HTML UTF-8");
     let (page, event) = rendered_text_address(&html, b'A');
@@ -1907,4 +2012,62 @@ fn pdfximage_uses_typed_image_retry_and_accepts_png_metadata() {
     };
     assert_eq!(replayed.terminal, output.terminal);
     assert_eq!(session.revision(), Some(RevisionId::new(2)));
+}
+
+#[test]
+fn pdfximage_distinguishes_unavailable_and_malformed_resources() {
+    let source = "\\pdfoutput=1 \\pdfximage figure.png \\end";
+
+    let mut unavailable = VirtualCompileSession::new(SessionOptions {
+        engine: EngineMode::PdfTex,
+        ..SessionOptions::default()
+    })
+    .expect("PDF session");
+    unavailable
+        .add_user_file("main.tex", source.as_bytes().to_vec())
+        .expect("main file");
+    let requested = requests(unavailable.compile_attempt());
+    let [request] = requested.as_slice() else {
+        panic!("expected one image request");
+    };
+    unavailable
+        .provide_resources(vec![ResourceResponse::FileUnavailable(
+            request.key().clone(),
+        )])
+        .expect("authoritative negative image response");
+    assert!(matches!(
+        unavailable.compile_attempt(),
+        CompileAttemptResult::Error(CompileError::Diagnostic(diagnostic))
+            if diagnostic.message.contains("image is unavailable")
+    ));
+
+    let mut malformed = VirtualCompileSession::new(SessionOptions {
+        engine: EngineMode::PdfTex,
+        ..SessionOptions::default()
+    })
+    .expect("PDF session");
+    malformed
+        .add_user_file("main.tex", source.as_bytes().to_vec())
+        .expect("main file");
+    let requested = requests(malformed.compile_attempt());
+    let [request] = requested.as_slice() else {
+        panic!("expected one image request");
+    };
+    malformed
+        .provide_resolved_file(
+            request.key().clone(),
+            "/texlive/figure.png",
+            b"not an image".to_vec(),
+        )
+        .expect("malformed image bytes are provisioned before parsing");
+    match malformed.compile_attempt() {
+        CompileAttemptResult::Error(CompileError::Diagnostic(diagnostic)) => assert!(
+            diagnostic
+                .message
+                .contains("image type is not PDF, PNG, or JPEG"),
+            "{}",
+            diagnostic.message
+        ),
+        other => panic!("malformed image must be a fatal engine error: {other:?}"),
+    }
 }

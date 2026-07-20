@@ -27,10 +27,21 @@ pub(in crate::assignments) fn execute_stream_command(
         UnexpandablePrimitive::OpenIn => {
             skip_optional_equals_x(input, stores, execution)?;
             let name = scan_file_name(input, stores, execution, "\\openin")?;
-            let resolved = execution
+            let resolved = match execution
                 .open_stream_input(&mut stores.input_open_context(), &name)
-                .ok()
-                .flatten();
+                .map_err(|message| {
+                    ExecError::Expand(tex_expand::ExpandError::InputOpen {
+                        name: name.clone(),
+                        message,
+                        context,
+                    })
+                })? {
+                tex_expand::ResourceLookup::Available(content) => Some(content),
+                tex_expand::ResourceLookup::Unavailable => None,
+                tex_expand::ResourceLookup::NeedResource(need) => {
+                    return Err(ExecError::NeedResource(need));
+                }
+            };
             match resolved {
                 Some(content) if stores.world_mut().open_in_content(slot, &content).is_ok() => {}
                 _ => stores.world_mut().close_in(slot),

@@ -4164,14 +4164,20 @@ impl InputResolver for StagedInputResolver {
         &mut self,
         _input: &mut dyn InputReadState,
         name: &str,
-        _request_index: u64,
-    ) -> Result<Box<dyn InputSource>, String> {
-        self.files
-            .get(name)
-            .cloned()
-            .map(MemoryInput::new)
-            .map(|source| Box::new(source) as Box<dyn InputSource>)
-            .ok_or_else(|| format!("resource {name} is not available yet"))
+        request_index: u64,
+    ) -> tex_expand::ResourceResult<Box<dyn InputSource>> {
+        Ok(self.files.get(name).cloned().map_or_else(
+            || {
+                tex_expand::ResourceLookup::NeedResource(tex_expand::ResourceNeed::new(
+                    request_index,
+                ))
+            },
+            |source| {
+                tex_expand::ResourceLookup::Available(
+                    Box::new(MemoryInput::new(source)) as Box<dyn InputSource>
+                )
+            },
+        ))
     }
 }
 

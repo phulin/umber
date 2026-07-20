@@ -556,12 +556,24 @@ fn execute_pdf_ximage(
         )
         .expect("clamped image resolution is nonnegative"),
     };
-    let source = execution
+    let lookup = execution
         .open_pdf_image(&mut stores.input_open_context(), &request)
         .map_err(|message| ExecError::PdfImageOpen {
             name: name.clone(),
             message,
         })?;
+    let source = match lookup {
+        tex_expand::ResourceLookup::Available(source) => source,
+        tex_expand::ResourceLookup::Unavailable => {
+            return Err(ExecError::PdfImageOpen {
+                name,
+                message: "image is unavailable".to_owned(),
+            });
+        }
+        tex_expand::ResourceLookup::NeedResource(need) => {
+            return Err(ExecError::NeedResource(need));
+        }
+    };
     if let tex_state::PdfExternalImageMetadata::PdfPage { pdf_version, .. } = source.metadata {
         let wanted = (
             stores.int_param(IntParam::PDF_MAJOR_VERSION).max(1) as u8,

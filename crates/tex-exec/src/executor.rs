@@ -2,7 +2,10 @@ use std::collections::{BTreeMap, VecDeque};
 use std::ops::{Deref, DerefMut};
 use std::path::Path;
 
-use tex_expand::{EngineStateSnapshot, InputResolver, ReadRecorder, get_x_token_with_context};
+use tex_expand::{
+    EngineStateSnapshot, InputResolver, ReadRecorder, ResourceLookup, ResourceResult,
+    get_x_token_with_context,
+};
 use tex_lex::InputStack;
 use tex_out::dvi::DviPagePlan;
 use tex_state::ids::TokenListId;
@@ -44,7 +47,7 @@ pub trait FontResolver {
         input: &mut dyn InputReadState,
         path: &Path,
         request_index: u64,
-    ) -> Result<FontSource, String>;
+    ) -> ResourceResult<FontSource>;
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
@@ -72,7 +75,7 @@ pub trait PdfImageResolver {
         input: &mut dyn InputReadState,
         request: &PdfImageRequest,
         request_index: u64,
-    ) -> Result<tex_state::PdfExternalImageSource, String>;
+    ) -> ResourceResult<tex_state::PdfExternalImageSource>;
 }
 
 /// Font inputs selected atomically by the host.
@@ -218,17 +221,17 @@ impl<'a> ExecutionContext<'a> {
         &mut self,
         input: &mut dyn InputReadState,
         path: &Path,
-    ) -> Result<FontSource, String> {
+    ) -> ResourceResult<FontSource> {
         let request_index = self.expansion.next_resolution_index();
         match self.font_resolver.as_deref_mut() {
             Some(resolver) => resolver.open_font(input, path, request_index),
-            None => input
-                .read_input_file(path)
-                .map(|metrics| FontSource::Tfm {
+            None => Ok(match input.read_input_file(path) {
+                Ok(metrics) => ResourceLookup::Available(FontSource::Tfm {
                     metrics,
                     opentype: None,
-                })
-                .map_err(|error| error.to_string()),
+                }),
+                Err(_) => ResourceLookup::Unavailable,
+            }),
         }
     }
 
@@ -236,12 +239,13 @@ impl<'a> ExecutionContext<'a> {
         &mut self,
         input: &mut dyn InputReadState,
         request: &PdfImageRequest,
-    ) -> Result<tex_state::PdfExternalImageSource, String> {
+    ) -> ResourceResult<tex_state::PdfExternalImageSource> {
         let request_index = self.expansion.next_resolution_index();
         self.image_resolver
             .as_deref_mut()
-            .ok_or_else(|| format!("PDF image {} has no host resolver", request.name))?
-            .open_image(input, request, request_index)
+            .map_or(Ok(ResourceLookup::Unavailable), |resolver| {
+                resolver.open_image(input, request, request_index)
+            })
     }
 
     pub(crate) fn begin_cold_paragraph_recording(
