@@ -60,6 +60,16 @@ does the session commit the incremental revision and swap in the VFS
 generation. Dropping either candidate leaves the previously accepted revision,
 root binding, generated files, and output unchanged.
 
+The private revision is an owned `tex_incr::RevisionCandidate`: its executor,
+input stack, rollback roots, speculative checkpoint sink, paragraph history,
+and candidate output remain live across progressing resource responses.
+Provisioning changes only immutable session resource bindings and increments a
+monotonic response generation. The next `compile_attempt` supplies a fresh VFS
+snapshot-backed resolver to the same candidate; the executor's monotonic
+suspension serial identifies the active wait, and only the rolled-back step is
+replayed. Earlier committed steps and their generated/effect state are neither
+published nor recomputed.
+
 ## Patch contract
 
 A patch is one UTF-8 byte-range replacement against the root editor buffer:
@@ -82,6 +92,15 @@ clears only candidate/awaiting state and the per-revision attempt count; the
 accepted root, output, incremental checkpoints, and immutable resolved-resource
 bindings remain intact for the replacement patch.
 
+Cancellation before the first accepted revision drops the private cold
+candidate; cancellation of an edit drops the private edited candidate and its
+synthetic root while restoring immediate visibility of the accepted output.
+Dropping a candidate also drops its speculative memo history, rollback roots,
+and private generated state. A response for a cancelled or superseded wait is
+never installed into that dropped execution. Successfully verified immutable
+bytes may still enter the session resource cache and can be selected normally
+by a later, independently created candidate.
+
 The initial revision is `1`. Public revision numbers use JavaScript-safe
 unsigned 32-bit integers at the WASM boundary and widen to the engine's `u64`
 identity internally. The accepted revision and content hash are exposed by
@@ -95,6 +114,15 @@ distribution resources remain immutable for the lifetime of accepted
 incremental history. A patch that introduces a new include or font may request
 and pin a new immutable resource before acceptance. Rebinding an existing
 resource to different bytes remains an error.
+
+Local `/job` bindings shadow distribution candidates according to VFS layer
+ordering, including the edited candidate's synthetic root binding. Immutable
+request keys may alias one canonical resolved path only when their bytes
+agree; path collisions, positive-versus-negative rebinding, and differing
+bytes for an existing request fail deterministically before the response batch
+commits. Response registration is atomic across files and fonts. Duplicate
+identical responses do not advance response progress and cannot drive a
+suspended candidate.
 
 Domain-qualified file request identity, deterministic file batching, generic
 registration, and file limits are owned by `umber-vfs`. The compile session
@@ -182,6 +210,15 @@ incremental detached output, the retained returned `MemoryRunOutput`, and the
 accepted generated VFS generation. Replacing an accepted build therefore
 removes the old internal VFS generation charge as soon as no external snapshot
 retains it; charges do not accumulate with revision count.
+
+While a candidate is suspended, live retention telemetry adds its private
+engine-generation charge, shallow executor/input owners, speculative editor
+fragments and layout, memo results, and private output state to the accepted
+revision's charge. The VFS resource charge comes from the candidate's private
+provisioner generation, whose immutable backing may be shared with accepted
+state; shared bytes are not double-counted merely because both generations
+reference them. Candidate charges disappear on cancellation, terminal failure,
+or acceptance.
 
 `dispose()` releases resources, accepted history, and output. No session
 method succeeds after disposal.

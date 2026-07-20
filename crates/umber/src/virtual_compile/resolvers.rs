@@ -749,8 +749,9 @@ mod tests {
             )
             .expect("main source");
 
-        let CompileAttemptResult::NeedResources(batch) = session.compile_attempt() else {
-            panic!("file-size cache miss should expose its probe frontier");
+        let attempt = session.compile_attempt();
+        let CompileAttemptResult::NeedResources(batch) = attempt else {
+            panic!("file-size cache miss should expose its probe frontier: {attempt:?}");
         };
         assert!(
             batch.required.is_empty(),

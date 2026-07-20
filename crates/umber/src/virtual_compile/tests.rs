@@ -426,6 +426,92 @@ fn required_resources_suspend_at_the_first_unavailable_dependency() {
 }
 
 #[test]
+fn initial_candidate_and_committed_prefix_survive_sequential_resource_batches() {
+    let mut session = session("\\input first \\input second \\end");
+    let first = requests(session.compile_attempt());
+    assert_eq!(first[0].key().name(), "first.tex");
+    assert_eq!(
+        session
+            .candidate
+            .as_ref()
+            .expect("retained first suspension")
+            .suspension_serial,
+        1
+    );
+    assert!(session.retention_metrics().is_some());
+    session
+        .provide_resolved_file(
+            first[0].key().clone(),
+            "/texlive/first.tex",
+            b"\\message{first}".to_vec(),
+        )
+        .expect("first response");
+
+    let second = requests(session.compile_attempt());
+    assert_eq!(second[0].key().name(), "second.tex");
+    assert_eq!(
+        session
+            .candidate
+            .as_ref()
+            .expect("retained second suspension")
+            .suspension_serial,
+        2,
+        "the same execution run must advance its suspension serial"
+    );
+    session
+        .provide_resolved_file(
+            second[0].key().clone(),
+            "/texlive/second.tex",
+            b"\\message{second}".to_vec(),
+        )
+        .expect("second response");
+    let CompileAttemptResult::Complete(output) = session.compile_attempt() else {
+        panic!("retained candidate should complete");
+    };
+    let terminal = String::from_utf8_lossy(&output.terminal);
+    assert!(terminal.contains("first"));
+    assert!(terminal.contains("second"));
+    assert!(session.candidate.is_none());
+}
+
+#[test]
+fn cancelled_edit_drops_its_run_but_keeps_accepted_output_and_late_bytes_cache_only() {
+    let source = "\\message{accepted}\\end";
+    let mut session = session(source);
+    let CompileAttemptResult::Complete(accepted) = session.compile_attempt() else {
+        panic!("initial revision should complete");
+    };
+    let end = source.find("\\end").expect("end marker");
+    session
+        .apply_patch(SourcePatch {
+            next_revision: RevisionId::new(2),
+            base_revision: RevisionId::new(1),
+            expected_hash: session.content_hash().expect("accepted hash"),
+            range: end..end,
+            replacement: "\\input late ".to_owned(),
+        })
+        .expect("patch");
+    let late = requests(session.compile_attempt());
+    assert!(session.candidate.is_some());
+    assert!(session.cancel_pending_patch());
+    assert!(session.candidate.is_none());
+    session
+        .provide_resources(vec![ResourceResponse::File(ResolvedFile {
+            request: late[0].key().clone(),
+            virtual_path: "/texlive/late.tex".to_owned(),
+            bytes: b"verified late bytes".to_vec(),
+            expected_digest: None,
+        })])
+        .expect("late immutable response may warm the cache");
+    assert!(session.candidate.is_none());
+    assert_eq!(
+        session.compile_attempt(),
+        CompileAttemptResult::Complete(accepted)
+    );
+    assert_eq!(session.revision(), Some(RevisionId::new(1)));
+}
+
+#[test]
 fn retry_requires_progress_and_reaches_completion_after_provision() {
     let mut session = session("\\input remote \\end");
     let missing = requests(session.compile_attempt());

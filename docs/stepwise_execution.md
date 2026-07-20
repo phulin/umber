@@ -44,10 +44,14 @@ page, diagnostic/effect/artifact, and lifecycle roots before returning
 the original logical resolution index. Named checkpoints and external read
 observations are staged and delivered only after the candidate commits.
 
-Durable resource-generation progress checks and host-session retention remain
-the next layer. The executor is now safe to replay after provisioning, but
-callers must still retain the run and reject a retry which binds no new
-positive or authoritative-negative response.
+`tex-incr::RevisionCandidate` and `umber::VirtualCompileSession` now provide
+the host-session retention layer. A candidate owns its `ExecutionRun`, input
+stack, mutable `Universe`, speculative checkpoint sink, paragraph-memo
+generation, editor setup, and private VFS provisioner generation across
+resource batches. Each drive installs resolvers over a fresh immutable VFS
+snapshot and therefore replays only the rolled-back executor step. The host
+tracks response progress separately and rejects a retry that binds no newly
+awaited positive or authoritative-negative response.
 
 ## Public shape and ownership
 
@@ -426,9 +430,10 @@ path.
    recorder delivery until step commit.
 6. Move prepared DVI/artifact suffix assembly into `Finalize`, add cumulative
    fuel and cancellation polls, and enforce checked counter exhaustion.
-7. Change `tex-incr` and `VirtualCompileSession` to retain an `ExecutionRun`
-   across resource batches instead of rerunning a cold or pending revision.
-   Preserve the enclosing candidate revision and VFS build transaction.
+7. **Implemented.** `tex-incr` and `VirtualCompileSession` retain an
+   `ExecutionRun` across resource batches instead of rerunning a cold or
+   pending revision. The enclosing candidate revision, speculative engine
+   roots, and private VFS build generation remain owned by the candidate.
 8. Route native CLI, direct WASM, worker, and authored JavaScript loops through
    the same session results; remove the full-attempt resource-retry path after
    parity and failure-injection gates pass.

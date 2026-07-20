@@ -471,6 +471,8 @@ pub struct VirtualCompileSession {
     incremental: Option<tex_incr::Session>,
     accepted_output: Option<MemoryRunOutput>,
     pending_patch: Option<(tex_incr::RevisionId, tex_incr::Edit)>,
+    candidate: Option<RetainedCandidate>,
+    response_generation: u64,
     last_reuse: Option<tex_incr::ReuseMetrics>,
     initial_revision: tex_incr::RevisionId,
 }
@@ -481,6 +483,30 @@ enum CandidateExecution {
         accepted: Result<Box<tex_incr::AcceptedOutput>, tex_incr::SessionError>,
     },
     Pending(Result<Box<tex_incr::PendingRevision>, tex_incr::SessionError>),
+}
+
+enum RetainedExecution {
+    Initial {
+        session: Box<tex_incr::Session>,
+        candidate: tex_incr::RevisionCandidate,
+    },
+    Pending(tex_incr::RevisionCandidate),
+}
+
+struct RetainedCandidate {
+    files: FileProvisioner,
+    execution: RetainedExecution,
+    response_generation: u64,
+    suspension_serial: u64,
+}
+
+impl RetainedCandidate {
+    fn engine_retention(&self) -> tex_incr::RetentionMetrics {
+        match &self.execution {
+            RetainedExecution::Initial { candidate, .. }
+            | RetainedExecution::Pending(candidate) => candidate.retention_metrics(),
+        }
+    }
 }
 
 enum PreparedExecution {
@@ -594,6 +620,8 @@ impl VirtualCompileSession {
             incremental: None,
             accepted_output: None,
             pending_patch: None,
+            candidate: None,
+            response_generation: 0,
             last_reuse: None,
             initial_revision,
         })
@@ -603,7 +631,10 @@ impl VirtualCompileSession {
     /// to a one-shot client finalizer. Pending and failed revisions never
     /// cross this boundary.
     pub fn into_accepted_finalization(self) -> Result<AcceptedFinalization, CompileError> {
-        if self.pending_patch.is_some() || self.accepted_output.is_none() {
+        if self.pending_patch.is_some()
+            || self.candidate.is_some()
+            || self.accepted_output.is_none()
+        {
             return Err(CompileError::Incremental(
                 "the session has no completed accepted output to finalize".to_owned(),
             ));
@@ -703,6 +734,7 @@ impl VirtualCompileSession {
             .validate_edit(patch.next_revision, &edit)
             .map_err(|error| CompileError::Incremental(error.to_string()))?;
         self.pending_patch = Some((patch.next_revision, edit));
+        self.candidate = None;
         self.awaiting = None;
         self.attempts = 0;
         self.attempts_without_progress = 0;
@@ -714,6 +746,7 @@ impl VirtualCompileSession {
     pub fn cancel_pending_patch(&mut self) -> bool {
         let cancelled = self.pending_patch.take().is_some();
         if cancelled {
+            self.candidate = None;
             self.awaiting = None;
             self.attempts = 0;
             self.attempts_without_progress = 0;
@@ -794,24 +827,47 @@ impl VirtualCompileSession {
 
     #[must_use]
     pub fn retention_metrics(&self) -> Option<RetentionMetrics> {
-        let engine = self
+        let accepted = self
             .incremental
             .as_ref()
-            .and_then(tex_incr::Session::retention_metrics)?;
-        let vfs = self.files.snapshot().retention();
+            .and_then(tex_incr::Session::retention_metrics);
+        let candidate = self
+            .candidate
+            .as_ref()
+            .map(RetainedCandidate::engine_retention);
+        if accepted.is_none() && candidate.is_none() {
+            return None;
+        }
+        let accepted = accepted.unwrap_or_default();
+        let candidate = candidate.unwrap_or_default();
+        let vfs = self
+            .candidate
+            .as_ref()
+            .map_or_else(
+                || self.files.snapshot(),
+                |candidate| candidate.files.snapshot(),
+            )
+            .retention();
         let returned_output = self
             .accepted_output
             .as_ref()
             .map_or(0, memory_run_output_bytes);
         Some(RetentionMetrics {
-            checkpoint_root_bytes: engine.checkpoint_root_bytes,
-            diagnostic_bytes: engine.diagnostic_bytes,
-            output_bytes: engine
+            checkpoint_root_bytes: accepted
+                .checkpoint_root_bytes
+                .saturating_add(candidate.checkpoint_root_bytes),
+            diagnostic_bytes: accepted
+                .diagnostic_bytes
+                .saturating_add(candidate.diagnostic_bytes),
+            output_bytes: accepted
                 .output_bytes
+                .saturating_add(candidate.output_bytes)
                 .saturating_add(returned_output)
                 .saturating_add(vfs.generated_bytes),
             resource_bytes: vfs.input_bytes,
-            protected_overage_bytes: engine.protected_overage_bytes,
+            protected_overage_bytes: accepted
+                .protected_overage_bytes
+                .saturating_add(candidate.protected_overage_bytes),
         })
     }
 
@@ -821,6 +877,8 @@ impl VirtualCompileSession {
         virtual_path: &str,
         bytes: Vec<u8>,
     ) -> Result<(), CompileError> {
+        let key = ResourceRequestKey::File(request.clone());
+        let was_bound = self.resource_is_bound(&key);
         self.provide_file_inner(
             ResolvedFile {
                 request,
@@ -830,13 +888,29 @@ impl VirtualCompileSession {
             },
             false,
             true,
-        )
+        )?;
+        if self
+            .awaiting
+            .as_ref()
+            .is_some_and(|awaiting| awaiting.contains(&key))
+            && !was_bound
+            && self.resource_is_bound(&key)
+        {
+            self.response_generation = self.response_generation.saturating_add(1);
+        }
+        self.refresh_candidate_files()
     }
 
     pub fn provide_resources(
         &mut self,
         responses: Vec<ResourceResponse>,
     ) -> Result<(), CompileError> {
+        let awaited_before = self.awaiting.as_ref().map(|awaiting| {
+            awaiting
+                .iter()
+                .filter(|key| self.resource_is_bound(key))
+                .count()
+        });
         let mut staged_files = self.files.clone();
         let mut staged_fonts = self.resolved_fonts.clone();
         let mut staged_unavailable_fonts = self.unavailable_fonts.clone();
@@ -857,7 +931,7 @@ impl VirtualCompileSession {
                     .provision_unavailable(request)
                     .map(|_| ())
                     .map_err(map_provision),
-                ResourceResponse::Font(font) => self.provide_resolved_font(font),
+                ResourceResponse::Font(font) => self.provide_resolved_font_inner(font),
                 ResourceResponse::FontUnavailable(request) => {
                     self.provide_unavailable_font(request)
                 }
@@ -876,19 +950,69 @@ impl VirtualCompileSession {
                 staged_font_responses,
             ));
             self.font_cached_bytes = original_font_cached_bytes;
-        } else if let Some(session) = &mut self.incremental {
-            for (request, file) in self.files.files() {
-                if original_files.get(request).is_none() {
-                    session
-                        .register_input_file(file.path().as_path(), file.bytes().to_vec())
-                        .map_err(|error| CompileError::Incremental(error.to_string()))?;
+        } else {
+            if let Some(session) = &mut self.incremental {
+                for (request, file) in self.files.files() {
+                    if original_files.get(request).is_none() {
+                        session
+                            .register_input_file(file.path().as_path(), file.bytes().to_vec())
+                            .map_err(|error| CompileError::Incremental(error.to_string()))?;
+                    }
                 }
             }
+            let awaited_after = self.awaiting.as_ref().map(|awaiting| {
+                awaiting
+                    .iter()
+                    .filter(|key| self.resource_is_bound(key))
+                    .count()
+            });
+            if awaited_before
+                .zip(awaited_after)
+                .is_some_and(|(before, after)| after > before)
+            {
+                self.response_generation = self.response_generation.saturating_add(1);
+            }
+            self.refresh_candidate_files()?;
         }
         result
     }
 
+    fn refresh_candidate_files(&mut self) -> Result<(), CompileError> {
+        if self.candidate.is_none() {
+            return Ok(());
+        }
+        let mut refreshed = self.files.clone();
+        if let (Some((_, edit)), Some(session)) = (&self.pending_patch, self.incremental.as_ref()) {
+            let mut source = session.source().to_owned();
+            source.replace_range(edit.range.clone(), &edit.replacement);
+            refreshed
+                .register_user(self.main_path.clone(), source.into_bytes())
+                .map_err(map_user_registration)?;
+        }
+        self.candidate
+            .as_mut()
+            .expect("candidate presence was checked")
+            .files = refreshed;
+        Ok(())
+    }
+
     pub fn provide_resolved_font(&mut self, response: ResolvedFont) -> Result<(), CompileError> {
+        let key = ResourceRequestKey::Font(response.request.clone());
+        let was_bound = self.resource_is_bound(&key);
+        self.provide_resolved_font_inner(response)?;
+        if self
+            .awaiting
+            .as_ref()
+            .is_some_and(|awaiting| awaiting.contains(&key))
+            && !was_bound
+            && self.resource_is_bound(&key)
+        {
+            self.response_generation = self.response_generation.saturating_add(1);
+        }
+        self.refresh_candidate_files()
+    }
+
+    fn provide_resolved_font_inner(&mut self, response: ResolvedFont) -> Result<(), CompileError> {
         let key = response.request.clone();
         let request = self.font_requests.get(&key).ok_or_else(|| {
             CompileError::UnexpectedResourceResponse(key.logical_name().to_owned())
@@ -1002,8 +1126,12 @@ impl VirtualCompileSession {
             return CompileAttemptResult::Complete(output.clone());
         }
         if let Some(awaiting) = &self.awaiting {
-            let progressed = awaiting.iter().any(|key| self.resource_is_bound(key));
+            let progressed = self.candidate.as_ref().map_or_else(
+                || awaiting.iter().any(|key| self.resource_is_bound(key)),
+                |candidate| self.response_generation > candidate.response_generation,
+            );
             if !progressed {
+                self.candidate = None;
                 if self.accepted_output.is_some() {
                     self.pending_patch = None;
                 }
@@ -1012,6 +1140,7 @@ impl VirtualCompileSession {
             self.attempts_without_progress = 0;
         }
         if self.attempts_without_progress >= self.limits.attempts {
+            self.candidate = None;
             if self.accepted_output.is_some() {
                 self.pending_patch = None;
             }
@@ -1026,6 +1155,7 @@ impl VirtualCompileSession {
         match self.run_attempt() {
             Ok(result) => result,
             Err(error) => {
+                self.candidate = None;
                 if self.accepted_output.is_some() {
                     self.pending_patch = None;
                 }
@@ -1035,7 +1165,9 @@ impl VirtualCompileSession {
     }
 
     fn run_attempt(&mut self) -> Result<CompileAttemptResult, CompileError> {
-        let mut initial_session = if self.incremental.is_none() {
+        let mut retained = if let Some(candidate) = self.candidate.take() {
+            candidate
+        } else if self.incremental.is_none() {
             let snapshot = self.files.snapshot();
             let source = snapshot
                 .get(&self.main_path)
@@ -1055,7 +1187,7 @@ impl VirtualCompileSession {
                 self.engine.prepare_fresh(&mut template);
                 template
             };
-            Some(Box::new(
+            let session = Box::new(
                 tex_incr::Session::start_with_source_path(
                     template,
                     &self.job_name,
@@ -1065,23 +1197,41 @@ impl VirtualCompileSession {
                     self.limits.cached_file_bytes,
                 )
                 .map_err(|error| CompileError::Incremental(error.to_string()))?,
-            ))
+            );
+            let candidate = session
+                .start_cold_candidate()
+                .map_err(|error| CompileError::Incremental(error.to_string()))?;
+            RetainedCandidate {
+                files: self.files.clone(),
+                execution: RetainedExecution::Initial { session, candidate },
+                response_generation: self.response_generation,
+                suspension_serial: 0,
+            }
+        } else if let Some(session) = self.incremental.as_ref() {
+            let (next_revision, edit) = self
+                .pending_patch
+                .as_ref()
+                .expect("accepted sessions execute only pending patches");
+            let candidate = session
+                .start_advance_candidate(*next_revision, edit.clone())
+                .map_err(|error| CompileError::Incremental(error.to_string()))?;
+            let mut files = self.files.clone();
+            let mut source = session.source().to_owned();
+            source.replace_range(edit.range.clone(), &edit.replacement);
+            files
+                .register_user(self.main_path.clone(), source.into_bytes())
+                .map_err(map_user_registration)?;
+            RetainedCandidate {
+                files,
+                execution: RetainedExecution::Pending(candidate),
+                response_generation: self.response_generation,
+                suspension_serial: 0,
+            }
         } else {
-            None
+            unreachable!("candidate creation covers initial and accepted sessions")
         };
 
-        let mut pending_files = self.files.clone();
-        if let Some((_, edit)) = &self.pending_patch {
-            let session = self
-                .incremental
-                .as_ref()
-                .expect("a pending patch requires an accepted incremental session");
-            let mut pending_source = session.source().to_owned();
-            pending_source.replace_range(edit.range.clone(), &edit.replacement);
-            pending_files
-                .register_user(self.main_path.clone(), pending_source.into_bytes())
-                .map_err(map_user_registration)?;
-        }
+        let mut pending_files = retained.files;
 
         let resolved_paths = pending_files
             .resolved_paths()
@@ -1107,32 +1257,33 @@ impl VirtualCompileSession {
             self.html,
         );
         let (input_resolver, font_resolver, image_resolver) = resolvers.resolvers();
-        let execution = if let Some((next_revision, edit)) = &self.pending_patch {
-            CandidateExecution::Pending(
-                self.incremental
-                    .as_mut()
-                    .expect("incremental session was initialized")
-                    .prepare_advance_with_resource_resolvers(
-                        *next_revision,
-                        edit.clone(),
-                        input_resolver,
-                        font_resolver,
-                        image_resolver,
-                    )
-                    .map(Box::new),
-            )
-        } else {
-            let mut session = initial_session
-                .take()
-                .expect("initial execution owns a private incremental session");
-            let accepted = session
-                .cold_with_resource_resolvers(input_resolver, font_resolver, image_resolver)
-                .map(Box::new);
-            CandidateExecution::Initial { session, accepted }
+        let cancellation = tex_exec::Cancellation::new();
+        let drive = match &mut retained.execution {
+            RetainedExecution::Initial { candidate, .. }
+            | RetainedExecution::Pending(candidate) => candidate.drive_with_resource_resolvers(
+                input_resolver,
+                font_resolver,
+                image_resolver,
+                &cancellation,
+            ),
         };
         let (file_misses, file_probes, font_misses, fatal) = resolvers.finish();
 
         if !file_misses.is_empty() || !file_probes.is_empty() || !font_misses.is_empty() {
+            let suspension = match &drive {
+                Ok(tex_incr::RevisionCandidateResult::AwaitingResources(suspension)) => suspension,
+                Ok(tex_incr::RevisionCandidateResult::Complete) => {
+                    return Err(CompileError::NoProgress);
+                }
+                Err(error) => {
+                    return Err(CompileError::Diagnostic(CompileDiagnostic {
+                        message: error.to_string(),
+                        file: None,
+                        line: None,
+                        column: None,
+                    }));
+                }
+            };
             stage.discard();
             build.discard();
             for request in &font_misses {
@@ -1224,6 +1375,10 @@ impl VirtualCompileSession {
                     ResourceRequest::Font(_) => None,
                 }),
             ));
+            retained.files = pending_files;
+            retained.response_generation = self.response_generation;
+            retained.suspension_serial = suspension.serial;
+            self.candidate = Some(retained);
             return Ok(CompileAttemptResult::NeedResources(NeedResources {
                 required,
                 probes,
@@ -1235,8 +1390,13 @@ impl VirtualCompileSession {
             build.discard();
             return Err(fatal);
         }
-        let execution = match execution.into_prepared() {
-            Ok(execution) => execution,
+        match drive {
+            Ok(tex_incr::RevisionCandidateResult::Complete) => {}
+            Ok(tex_incr::RevisionCandidateResult::AwaitingResources(_)) => {
+                stage.discard();
+                build.discard();
+                return Err(CompileError::NoProgress);
+            }
             Err(error) => {
                 stage.discard();
                 build.discard();
@@ -1247,7 +1407,32 @@ impl VirtualCompileSession {
                     column: None,
                 }));
             }
-        };
+        }
+        let execution = match retained.execution {
+            RetainedExecution::Initial {
+                mut session,
+                candidate,
+            } => {
+                let accepted = session.accept_cold_candidate(candidate).map(Box::new);
+                CandidateExecution::Initial { session, accepted }
+            }
+            RetainedExecution::Pending(candidate) => CandidateExecution::Pending(
+                self.incremental
+                    .as_mut()
+                    .expect("a pending candidate requires an accepted incremental session")
+                    .finish_advance_candidate(candidate)
+                    .map(Box::new),
+            ),
+        }
+        .into_prepared()
+        .map_err(|error| {
+            CompileError::Diagnostic(CompileDiagnostic {
+                message: error.to_string(),
+                file: None,
+                line: None,
+                column: None,
+            })
+        })?;
         let accepted_world = match &execution {
             PreparedExecution::Initial { session, .. } => session.materialize_accepted_world(),
             PreparedExecution::Pending(pending) => self
@@ -1386,6 +1571,8 @@ impl VirtualCompileSession {
         self.incremental = None;
         self.accepted_output = None;
         self.pending_patch = None;
+        self.candidate = None;
+        self.response_generation = 0;
         self.last_reuse = None;
         Ok(())
     }
