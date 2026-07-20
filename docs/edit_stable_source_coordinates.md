@@ -1,10 +1,7 @@
 # Edit-Stable Source Coordinates
 
-Status: implemented through phase 4. Per-revision whole-document source
-regions have been replaced by fragment-backed coordinates so token, node, and
-shipout provenance stays resolvable and correct across editor inserts and
-deletes. Retired fragment bytes are pruned after checkpoint protection ends,
-and long-session capacity and read-path costs are measured.
+Status: authoritative contract for fragment-backed coordinates,
+current-layout resolution, pruning, and retained-memory accounting.
 
 ## 1. Problem
 
@@ -347,31 +344,11 @@ lookups chase at most one hop. Deferred until measurements demand it.
   fragment store and layout are display-only session state charged to
   retained-diagnostic memory.
 
-## 10. Implementation phases
+## 10. Verification
 
-1. **tex-state substrate (complete).** Add `FragmentStore`, `FragmentId`,
-   fragment-backed region resolution behind the aggregate facade, the
-   session-lifetime position allocator split, and the layout-aware resolver
-   with typed `Deleted`. Unit-test region disjointness, deletion, liveness,
-   and allocator monotonicity across simulated fork discard.
-2. **tex-lex cursor (complete).** Add the frozen `LayoutCursor` and per-line
-   registration handoff to the root frame; prove per-token minting is
-   unchanged (existing provenance benchmarks; the
-   `provenance_performance.md` throughput matrix is the gate).
-3. **tex-incr adoption (complete).** Line-expanded edit application, fragment minting,
-   layout maintenance and generation stamping in `advance`; replace
-   whole-document `rebind_root_editor_input` with cursor installation;
-   route `rendered_source_location` (and the retained maps from
-   `rendered_source_map.md`, if landed first) through the layout-aware
-   resolver. Regression tests prove an edit-before-reused-page scenario
-   resolves reused-page origins to _current_ offsets and a
-   convergence-adopted scratch page resolves at all.
-4. **Pruning and measurement (complete).** Fragment byte pruning, retained-memory
-   accounting, long-session capacity tests (keystroke storm, alternating
-   insert/delete, pathological piece growth), and a
-   `provenance_performance.md` update recording construction parity and
-   read-path costs.
-
-Each phase keeps Story/Gentle parity, fixture parity, and
-`scripts/check-and-test.sh` green; phase 3 is where the three §1 defects
-become regression tests.
+Focused tests cover fragment-region disjointness, deletion, liveness,
+allocator monotonicity across fork discard, per-token construction parity,
+line-expanded edits, generation stamping, pruning, retained-memory accounting,
+and long alternating edit sessions. Reused and convergence-adopted pages must
+resolve through the current editor layout or return a typed deleted/unknown
+result. Story/Gentle and fixture parity remain unchanged.

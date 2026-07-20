@@ -1,12 +1,7 @@
 # Rendered Source Map
 
-Status: phases 1-4 and the producer-binding closure are implemented. Accepted
-HTML is stamped with a collision-resistant session/output identity and revision.
-The native `tex-incr`/`umber` query path uses a lazily built, session-cached
-per-page render source map with typed current, deleted, stale-revision, and
-cross-session mismatch results. The WASM boundary exposes those typed results
-and the authored DOM helper converts browser caret positions into producer- and
-revision-bound queries; no mapping tables cross into JavaScript.
+Status: authoritative contract for producer-bound per-page render source maps,
+typed current/deleted/stale/cross-producer results, and retention accounting.
 
 Builds on the edit-stable fragment-backed coordinates of
 `edit_stable_source_coordinates.md` (umber2-hwtp): the map stores opaque
@@ -211,8 +206,8 @@ map layout must not preclude it (it does not).
 - Origins remain excluded from node semantic identity, state hashes, format
   images, artifact bytes, and artifact content identity; the map is
   display-only session state.
-- Token delivery and provenance-arena allocation are untouched; the source
-  throughput matrix in `provenance_performance.md` is unaffected.
+- Token delivery and provenance-arena allocation are untouched; the compact
+  source contract in `source_spans_and_provenance.md` remains authoritative.
 - Maps are dropped with the accepted output they describe (next accept or
   rollback) and are never queried across their revision boundary (checked,
   per §2.2).
@@ -225,33 +220,11 @@ map layout must not preclude it (it does not).
 - Lazily built map memory is charged to retained-output accounting at
   construction.
 
-## 5. Implementation phases
+## 5. Verification
 
-1. **tex-out:** add the `data-umber-revision` stamp beside
-   `data-umber-page`. Existing HTML byte output changes only by the one
-   attribute.
-2. **tex-incr / umber (implemented):** add the lazy `PageRenderMap` cache (build on first
-   query per page from one deserialize + lower pass joined with
-   `render_origins`; drop on accept/rollback), route
-   `rendered_source_location` through it and the layout-aware resolver, and
-   add the revision check with the typed `stale-revision` and `deleted`
-   results. Regression tests: repeated queries on one page lower it exactly
-   once; after an edit, a reused page's map resolves to current-document
-   offsets; an edited-away unit reports `deleted`; a stale revision is
-   rejected.
-3. **umber-wasm + js (implemented):** extend the typed query result, add the authored
-   `source-map.js` DOM helper and Node tests, extend the browser integration
-   fixture with a click-to-source assertion.
-4. **Docs and budgets (implemented):** update `source_spans_and_provenance.md` §6.3,
-   `provenance_performance.md` rendered-source follow-up, and
-   `persistent_compile_sessions.md`; verify
-   `scripts/check-snapshot-budgets.sh` still meets retained-allocation
-   budgets with the lazily built maps included in accounting. Live retention
-   tests charge the exact page-map capacities to `output_bytes`, independently
-   charge the lazy layout line index to `diagnostic_bytes`, and preserve the
-   point-in-time accepted metrics. The 2026-07-15 snapshot gate met every
-   latency and retained-allocation budget.
-5. **Producer binding (implemented):** add the 128-bit session/output identity,
-   stamp and query it across native/WASM/DOM boundaries, reject cross-session
-   pairing before map lookup, and make the Chrome fixture retain the exact
-   `CompilerSession` that emitted the installed HTML.
+Tests require one lowering pass for repeated queries, current-document offsets
+for reused pages after an edit, typed deleted and stale-revision results, and
+producer/session rejection before map lookup. Native, WASM, DOM, and browser
+fixtures exercise the same query identity. Retention tests charge exact page-map
+capacity to accepted `output_bytes`, charge the lazy layout line index to
+`diagnostic_bytes`, and keep both caches outside snapshot capture.

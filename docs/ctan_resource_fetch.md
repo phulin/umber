@@ -329,101 +329,17 @@ policy, not architecture:
 - Errors expose request keys, canonical virtual paths, and digests, never
   attacker-controlled markup; URLs appear only in host-side diagnostics.
 
-## Implementation phases
+## Verification
 
-Each phase is a `bd` issue under the `umber2-mbwq` epic (phase N is
-`umber2-mbwq.N`); each lands with its tests and keeps
-`scripts/check-and-test.sh` and `scripts/check-wasm.sh` green.
+The native and browser gates start from empty caches, resolve the same pinned
+manifest and objects, and require byte-identical generated files and DVI. Warm
+and explicit offline runs must reproduce those bytes without network access.
+Missing optional files follow TeX not-found semantics; required misses,
+pin/digest failures, corruption, oversize objects, cancellation, and cache
+races are typed and may not publish partial VFS state.
 
-1. **Complete — shared manifest crate.** `crates/umber-distribution` owns the
-   manifest model, strict parser, canonical serializer, request-key encoding,
-   and deterministic job/miss selection. `tools/texlive-wasm-publish` uses it,
-   and shared Rust/JavaScript fixtures cover round trips, transitive hints,
-   cycles, duplicate requests, and typed file/font misses.
-2. **Complete — unavailable responses.** `FileUnavailable`/`FontUnavailable`
-   flow through `umber-vfs`, the session, the WASM wire types, and the JS
-   facade. Immutable negative bindings provide idempotence, conflict, progress,
-   and TeX missing-file semantics, and web manifest misses now produce typed
-   negative responses instead of `missing-key` failures.
-3. **Complete — native cache and fetcher.** `crates/umber-fetch` implements the
-   content-addressed cache and blocking HTTPS fetch layer with bounded
-   concurrency, atomic writes, digest verification, and typed failures.
-   Local fixture-server and child-process contract tests cover success, cache
-   reuse and corruption, 404, truncation, oversized declarations and response
-   lengths, timeout/retry, concurrency bounds, and concurrent-process races.
-4. **Complete — CLI session migration.** `umber run --distribution ...` and
-   offline runs drive `VirtualCompileSession` through project search,
-   content-addressed cache, and verified distribution acquisition. The CLI
-   accepts pinned HTTPS or local manifests, resolves formats through the same
-   manifest, reports one progress line per acquired batch, and gives typed
-   pin-mismatch and offline-unavailable errors. The release-default URL and
-   digest slots are present. Every `umber run` output mode uses this path.
-   Completed one-shot sessions expose a consuming accepted-finalization
-   boundary, so client-owned PDF lowering, format dumping, profiling, HTML
-   asset publication, input receipts, effect commit, and atomic driver-file
-   publication retain live-state behavior without granting engine execution
-   host I/O access.
-5. **Complete — watch and cancellation.** `umber watch` now drives one retained
-   native resource session across accepted edits. File polling cancels an
-   in-flight manifest/object acquisition when a newer edit appears, discards
-   only the unaccepted patch, and retries the newest source against the last
-   accepted revision; Ctrl-C uses the same path. Tests verify that a resolved
-   distribution file is not reopened or refetched on a later revision and
-   that cancelled downloads publish neither bytes nor cache objects.
-6. **Complete — publish and adopt the self-hosted snapshot.** The verified
-   TeX Live 2026 staging bundle, sharded-root publisher contract, and resumable
-   rclone publication tooling are complete. Native and browser shard
-   resolution and production pin adoption are complete; publication performs
-   structural, public digest, object, and CORS verification before adoption.
-7. **Complete — parity gate.** One corpus document requiring distribution
-   packages compiles from a cold cache natively and in the browser fixture to
-   byte-identical DVI, satisfies repeat runs entirely from cache, and passes an
-   offline-mode run after warming.
-
-## Exit criteria
-
-- `umber run` on a document using distribution packages succeeds on a clean
-  machine with no TeX installation, and a second run performs zero network
-  requests.
-- Native and web builds against the same snapshot pin produce byte-identical
-  generated files and DVI.
-- A file absent from the distribution produces TeX's own missing-file
-  behavior, not a session-fatal error; optional-file probes work.
-- Offline mode is fully deterministic: cache-satisfiable builds succeed,
-  others fail with typed diagnostics naming exact request keys.
-- No engine crate gained network, filesystem, or URL-derivation behavior;
-  the JS facade still owns acquisition only.
-- Fetch failures, corrupt objects, oversized objects, mismatched manifests,
-  and cancellation are typed, tested, and leak no partial state into the
-  VFS.
-
-The phase-7 CI gate is `scripts/test-wasm-browser.sh`. Its existing fixture
-protocol now drives both the native CLI and the packaged browser worker against
-one pinned sharded manifest. Each frontend starts with an empty persistent
-cache, fetches the root, canonical shard, TeX input, and two TFM objects, and
-produces exact byte-identical DVI. A fresh warm session and an explicit offline
-session then reproduce those bytes with zero additional server requests. The
-browser cache stores the pinned root as well as shards and payloads, re-verifies
-every cached digest, and rejects an offline cache miss without calling fetch.
-
-The production read-only audit used the default
-`texlive-2026-r79639/manifest-v2.json` pin and a clean cache to compile
-`tests/latex/article.tex` through the native LaTeX-DVI frontend. Cold, warm,
-and offline runs produced the same 1,520-byte DVI (SHA-256
-`db1077f0078cfd787fd9048a8b3e13100f396ea8c2fe031f9026d88975ab9d62`);
-the warm and offline runs acquired no resources. Source and dependency audits
-confirm that this work changes only the host-side JavaScript resolver and test
-harness: no engine, VFS, or distribution crate gained networking or URL
-derivation, `umber-fetch` remains absent from the WASM dependency tree, and
-the authored JavaScript facade remains the browser acquisition owner.
-
-## Open questions
-
-- **Local TeX Live probing.** Whether the CLI should optionally probe an
-  existing `kpsewhich`-discoverable installation before the network. Default
-  answer is no — it reintroduces machine-dependent bytes — but a
-  `--texmf <dir>` escape hatch mapping a local tree as a manifest-less
-  source may be worth adding for development.
-- **Per-project pins.** Whether a checked-in project file should record the
-  snapshot pin (lockfile-style) so collaborating users and CI resolve the
-  same distribution without flags.
+`scripts/test-wasm-browser.sh` covers the shared browser/native fixture.
+Fetcher contract tests cover bounded concurrency, atomic cache writes,
+corruption recovery, truncation, response limits, timeout/retry behavior, and
+concurrent processes. Engine crates remain free of networking, filesystem, and
+URL-derivation behavior; the authored JavaScript facade owns browser transport.

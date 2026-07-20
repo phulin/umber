@@ -1009,25 +1009,3 @@ client-owned and gains bibliography file kinds through `umber-vfs`.
 The former automatic-bibliography non-goal in [`latex_dvi.md`](latex_dvi.md)
 has been replaced with the exact supported version, modes, and transactional
 project-session behavior.
-
-## Completed exit criteria
-
-The bibliography subsystem satisfies the pinned-target exit criteria:
-
-- every supported operation runs as pure Rust in the Umber process and in
-  `umber-wasm`, with no subprocess or native filesystem dependency;
-- all 51 upstream test files and all 1,275 declared assertions have direct
-  passing Rust equivalents, including development-gated whole-output tests;
-- every output format and ordered diagnostic matches the pinned reference;
-- native and WASM consume the same VFS bytes and produce identical results;
-- TeX and bibliography stages exchange files transactionally and resource
-  misses never partially publish a build;
-- end-to-end LaTeX `.bbl`, auxiliary, and DVI parity passes;
-- all caches can be disabled without changing results;
-- resource, recursion, regex, output, and retained-memory limits are covered by
-  adversarial tests;
-- public Umber callers can run a one-shot bibliography job, retain a
-  `BibSession`, query the processed document, or use automatic project
-  orchestration; and
-- architecture, testing, WASM, LaTeX, and directory-map documentation describe
-  the implemented state rather than the rollout plan.

@@ -4,22 +4,12 @@ Read the repository-level `AGENTS.md` before editing here. Documentation should 
 
 When documenting tests or parity workflow, point fixture changes to `scripts/regen-fixtures.sh` modes rather than cargo-test environment variables or retired scripts.
 
-`provenance_performance.md` records durable benchmark and memory observations for packed token provenance; update it when provenance hot-path behavior or benchmark workloads change.
-
 `snapshot_performance.md` defines the focused snapshot latency and retained-allocation gate, including its asymptotic budgets and measurement semantics.
 
 `profiling.md` documents the persistent in-process Gentle profiler, its
-Samply wrapper, prerequisites, and measured boundary.
-
-`profiling_q02h64_release_receipt.md` is the durable final paragraph-replay
-release receipt: exact commands, optimized path-separated timing, sampled
-attribution, retention, long-session evidence, and the default-enablement
-decision after q02h.58--.63.
-
-`profiling_q02h66_release_receipt.md` records the follow-up finished-line-only
-release gate: exact optimized timings, replay coverage, retained metadata,
-correctness gates, and the explicit cold fallback for changed line-breaking
-state.
+Samply wrapper, prerequisites, counters, measurement controls, and capture
+analysis workflow. Historical measurements belong in Git history or Beads,
+not as chronological release receipts in `docs/`.
 
 `testing_policy.md` is forward-looking guidance for test design and placement.
 `testing_infrastructure.md` inventories the current test commands, budgets,
@@ -49,19 +39,20 @@ cancellation rules, and the migration from whole-attempt retries.
 `incremental_memoization.md` defines the changed-document slow path: stable
 source alignment plus an ordered accepted-history paragraph replay cursor,
 per-paragraph dependency validation, accepted-history-owned shared finished-line
-mounts, cold-equivalent boundary publication, simplification of the old generic
-memo layers, and path-separated rollout. It deliberately does not use a reverse
-suffix hash or hierarchical execution trace.
+mounts, lazy output provenance, cold-equivalent boundary publication, and
+path-separated verification. It deliberately does not use a reverse suffix
+hash, hierarchical execution trace, or prepared-hlist fallback tier.
 
 `retained_group_roots.md` specifies the proposed persistent/COW environment
 history needed for durable paragraph checkpoints inside ordinary open groups,
 including store ownership, reclamation, hashing, rollout, and validation.
 
-`source_spans_and_provenance.md` specifies the compact source-map, source-span, and derived-provenance design plus its phased migration plan.
+`source_spans_and_provenance.md` specifies the adopted compact source-map,
+source-span, derived-provenance, packing, capacity, and validation contract.
 
 `node_word_arena.md` is the authoritative compact node-word arena document: it
-combines measurements with the representation, sidecar ownership, migration,
-validation, and conditional adoption design. Do not create a separate
+defines the adopted word encoding, generation-tagged identities, sidecar and
+survivor ownership, access boundary, hashing, and validation. Do not create a separate
 `node_word_layout.md` whose encoding or rollback rules could drift.
 
 `wasm_resource_acquisition.md` specifies the implemented typed, batched
@@ -108,15 +99,15 @@ diagnostics, reserved codecs, and the typed PDF writer boundary.
 their shared extension inventory, pinned format boundaries, output contracts,
 and parity tiers.
 
-`umber_vfs.md` defines the partially implemented host-neutral shared virtual
+`umber_vfs.md` defines the implemented host-neutral shared virtual
 filesystem, including canonical paths, immutable input layers, generated-file
 transactions, typed resource registration, build atomicity, native/WASM
-parity, migration, and validation.
+parity, and validation.
 
-`bib.md` defines the proposed pure-Rust in-process bibliography subsystem,
+`bib.md` defines the implemented pure-Rust in-process bibliography subsystem,
 its `bib-*` crate boundaries, exact compatibility target, public API,
 processing pipeline, direct upstream-test translation, shared-VFS dependency,
-multi-pass native/WASM composition, rollout, and exit criteria.
+and multi-pass native/WASM composition.
 
 `classic_bibtex_inventory.md` pins the merged classic BibTeX 0.99d Web2C
 identity, construct and upstream-test ownership census, committed fixture

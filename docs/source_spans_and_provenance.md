@@ -1,18 +1,11 @@
 # Compact Source Spans and Token Provenance
 
-Status: adopted design. All six phases are implemented; the Phase 6 evidence
-and compatibility decision are recorded in `provenance_performance.md`.
+Status: authoritative contract for the adopted compact source-map, source-span,
+and derived-provenance representation.
 
 ## 1. Purpose
 
-Umber currently allocates one 32-byte `OriginRecord::Source` for nearly every
-token emitted from source. The record repeats `SourceId`, byte offset, line,
-and column even though the input content and source cursor already determine
-those values. It also computes byte offsets by rescanning the current line
-prefix, so the existing provenance benchmark does not cleanly isolate origin
-allocation cost.
-
-This design adopts the source-location pattern used by production compilers:
+Umber follows the source-location pattern used by production compilers:
 hot paths carry compact byte locations or handles, a central source map owns
 buffer-to-file mapping, and diagnostic formatting resolves line, column,
 source excerpts, and macro traces lazily.
@@ -68,6 +61,10 @@ The design has four goals:
   Direct-delivery counts come from benchmark-only instrumentation or
   crate-private inspection of returned ids, while production statistics remain
   derived from arena/region lengths and capacities.
+- Origin-list absence is whole-list state. A transformation that extends a
+  token list either extends its existing parallel origin list by the same
+  number of entries or preserves `OriginListId::EMPTY`; it never creates a
+  partial origin list for an otherwise untraced token list.
 - `SourcePos` is a logical `u64` coordinate. The smaller direct payload in
   `OriginId` is an encoding optimization, not the definition of the source
   coordinate domain.
@@ -477,8 +474,7 @@ before rollback.
 
 ## 9. Capacity and format constraints
 
-Before adopting the tagged representation, implementation must establish and
-test:
+The tagged representation preserves and tests:
 
 - the exact direct range `0..=0x7fff_fffe` and arena-index range
   `0..=0x7fff_ffff`;
@@ -494,7 +490,26 @@ No raw `OriginId` encoding is a stable artifact format. If provenance is ever
 serialized, it must use an explicit versioned logical representation rather
 than dumping packed ids.
 
-## 10. Rejected alternatives
+## 10. Adoption decision
+
+The compact representation is adopted. Against the original traced baseline,
+logical provenance/source-map storage fell by 95.73% for ASCII input, 93.93%
+for mixed UTF-8, and 99.99% for a single long line. No required throughput row
+crossed the 5% regression ceiling; ordinary ASCII, mixed UTF-8, long-line,
+macro-replay, scanner, and generated-value workloads were neutral or faster.
+
+Cold and repeated diagnostic resolution intentionally retain no shared cache.
+Resolution is error-path work, and measured repeated cost did not justify
+checkpoint-coupled cache ownership. Accepted rendered-source maps remain lazy
+session output and are charged to accepted-output retention rather than to
+snapshot capture.
+
+`OriginRecord::Source` remains only as degraded compatibility for explicitly
+unregistered origins created by older APIs and focused tests. Production World
+and memory inputs register before delivery and emit direct positions, validated
+`SourceSpan`s, or structured derived records.
+
+## 11. Rejected alternatives
 
 ### Flat source records
 
@@ -532,205 +547,9 @@ Umber's packed runtime token and add bandwidth to every macro movement. It may
 be reconsidered only if precise ranges become more valuable than the measured
 hot-path cost.
 
-## 11. Phased implementation
-
-Each phase is independently reviewable and must preserve the existing semantic
-and output parity suites. Later phases do not begin until the preceding phase's
-measurements and invariants are documented.
-
-### Phase 1: Incremental coordinates and trustworthy baselines
-
-**Status (2026-07-10): implemented.** The lexer now uses one normalized UTF-8
-byte cursor, retains physical line/content/terminator and synthetic-anchor
-metadata, rejects malformed World input with an exact physical byte range,
-and resumes allocator/configuration state exactly. The full coordinate and
-resume matrix, normal/shadow replay tests, strict Story/Gentle parity, and the
-updated baselines in `docs/provenance_performance.md` pass.
-
-- Store normalized lines as UTF-8 bytes/`String` and make the byte cursor the
-  canonical source-frame index.
-- Retain raw physical line starts, content ends, terminator ranges, and the
-  normalized end anchor.
-- Make lookahead, rewind, and every `^^` success/failure path restore byte and
-  column state together.
-- Persist the source-id allocator high-water mark and Unicode `^^`
-  configuration in `InputSummary`.
-- Remove line-prefix rescanning from coordinate production.
-- Reject invalid UTF-8 with an exact physical-byte diagnostic.
-- Extend lexer tests for ASCII, mixed-width UTF-8, LF, CRLF, stripped trailing
-  spaces, missing final newline, control sequences, comments, synthetic end
-  lines, nested inputs, `^^` notation, source exhaustion, and snapshot resume.
-- Re-run the source provenance benchmarks and update
-  `docs/provenance_performance.md`.
-
-Exit gate: flat source origins contain exact physical backing offsets,
-synthetic input uses documented zero-width anchors, resume cannot reuse a live
-source id or reset lexer configuration, long single-line tokenization is
-linear, and the readonly/traced comparison isolates provenance work.
-
-### Phase 2: Source-map substrate
-
-**Status (2026-07-10): implemented.** `tex-state` now owns opaque logical
-`SourcePos` values, validated `SourceSpan`s, append-only source regions, and
-explicit World/generated backing identities under the aggregate `Stores` /
-`Universe` rollback tuple. `tex-lex` registers built-in World and memory
-sources idempotently through `ExpansionState` before traced delivery; World
-registration validates record liveness and byte length without copying input
-bytes, while memory input shares one immutable `Arc<[u8]>` with the generated
-registry. Resolver line/column lookup is lazy over immutable physical bytes,
-with no reusable-id-keyed mutable cache, and legacy flat source records remain
-the emitted representation for Phase 3 migration. Source regions, generated
-backings, and the next logical position roll back by constant-size watermarks;
-their identities and bytes remain excluded from semantic hashes.
-
-- Add logical `u64 SourcePos`, validated `SourceSpan`, source regions,
-  generated-source backings, and rollback marks in `tex-state` behind the
-  aggregate facade.
-- Add idempotent source registration through the expansion-state facade before
-  first delivery. World sources retain `InputRecordId`; memory/generated
-  sources share immutable content with the state registry.
-- Implement live position lookup and lazy line-start resolution.
-- Convert `ProvenanceResolver` to render source records through the source map
-  while retaining the existing flat source-origin representation.
-
-Exit gate: all existing diagnostics render identically or improve, source-map
-and World rollback/reuse cannot alias source regions or derived caches, empty
-and generated sources remain renderable after frame pop, snapshot capture is
-O(1), and no downstream crate can mutate raw map/backing state.
-
-### Phase 3: Tagged direct-source origins
-
-**Status (2026-07-10): implemented.** `OriginId` now uses the private
-raw-zero/direct/high-bit-arena layout while remaining four bytes inside the
-eight-byte `TracedTokenWord`. Registered ordinary one-scalar source delivery
-packs its logical `SourcePos` without appending a provenance record; positions
-beyond the direct payload fall back to the same validated arena `SourceSpan`.
-Legacy flat `Source` records remain available for non-ordinary and migration
-paths. Direct and arena liveness dispatch through the aggregate source-map /
-provenance tuple, including rollback, saturation, and unknown degradation.
-Production statistics derive arena and source-map live/retained storage from
-lengths and capacities; benchmark-only id inspection counts direct deliveries
-without a per-token production counter write.
-
-- Make `OriginId` encoding opaque and add private direct/arena constructors and
-  decoders.
-- Implement the exact raw-zero/direct/high-bit-arena layout from section 5.
-- Add direct-boundary crossing, oversized-source, capacity, saturation,
-  liveness, packing, rollback, and state-hash tests.
-- Emit direct positions for ordinary one-scalar source tokens.
-- Keep existing arena source records as the fallback during migration.
-- Use the same `SourceSpan` logical representation for positions outside the
-  direct payload; do not add a separate wide coordinate type.
-- Extend provenance statistics to distinguish direct source deliveries,
-  source regions, arena records, logical bytes, and retained capacity without
-  exposing mutation internals.
-
-Exit gate: the common source-character path performs zero provenance-record
-appends, token packing remains 64 bits, and all semantic hashes and parity
-artifacts are unchanged.
-
-### Phase 4: Precise source ranges and diagnostic sites
-
-**Status: implemented.** Lexer-issued direct-delivery proofs constrain the
-initial scanner join to ordered endpoints from one still-live physical frame;
-integer-overflow diagnostics are the first consumer. Lexer, expansion, and
-execution errors cross their public boundaries with owned bounded
-`DiagnosticSite` values, including an invocation-chain head retained across
-frame pop.
-
-- Use validated half-open `SourceSpan` origin records for exact, zero-width,
-  and multi-line locations.
-- Emit exact spelling ranges for control sequences, transformed input, and
-  other multi-character source tokens.
-- Add physical-source-frame range joining for a demonstrated scanner
-  diagnostic. Do not infer compatible expansion context from two origins.
-- Add structured `DiagnosticSite` values with a primary origin, labeled
-  related locations, and an invocation-chain head captured at error creation.
-- Upgrade lexer, expansion, execution, and rendering errors to use those sites
-  and the defined Unicode/tab/multi-line display policy.
-
-Exit gate: focused diagnostics underline exact token spellings across ASCII,
-UTF-8, LF/CRLF normalization, control sequences, and `^^` transformations;
-traces remain available after replay frames pop; incompatible, synthetic, or
-unavailable ranges degrade to labeled separate locations.
-
-### Phase 5: Derived provenance and replay audit
-
-**Status (2026-07-10): implemented.** The derived-provenance audit now covers
-source, inserted, synthesized, macro-definition, macro-argument,
-macro-invocation, token-list replay, scanner recovery, execution, World, and
-generated-memory paths. Frozen origin lists remain the only per-token storage
-for macro bodies and arguments, while one invocation origin is shared by each
-macro replay frame. Popped invocation ids are retained in a fixed bounded
-buffer for exactly one delivery attempt, including nested frame exhaustion and
-pre-token errors, then cleared before the next attempt. Stale replay origin
-lists degrade to unknown instead of dereferencing a discarded diagnostic side
-table. Aggregate rollback tests prove that discarded source regions,
-generated backings, origin records, and origin lists return to zero live
-growth while retained vector capacity remains separately observable. Semantic
-hash, replay, shadow, fixture, and external Story/Gentle parity gates remain
-the adoption guardrails.
-
-- Audit inserted, synthesized, macro-definition, macro-argument, and
-  macro-invocation paths plus World and generated source backings against the
-  mixed direct/arena representation.
-- Verify origin lists, replay frames, snapshot rollback, memo reconstruction,
-  captured trace lifetime, id reuse, and stale side-table/cache degradation.
-- Preserve the rule that macro-body delivery performs no per-token provenance
-  writes.
-
-Exit gate: every token-delivery path carries valid best-effort provenance,
-discarded timelines retain no live arena/source-map growth, retained capacity
-is reported separately, source/input id reuse cannot alias stale data, and
-expansion traces remain presentation-bounded and lazy after frame pop.
-
-### Phase 6: Measurement, cleanup, and adoption decision
-
-**Status (2026-07-10): adopted.** Controlled 100-sample comparisons rebuild
-the Phase 1 commit with the current toolchain. ASCII and mixed UTF-8 logical
-storage fall by 95.73% and 93.93%; their median tokenization times improve by
-5.43% and 2.56%. The long-line path improves 15.63%, macro replay improves
-1.03%, and the only slower primary median is control-sequence-heavy input at
-3.03% with overlapping confidence intervals. No primary workload exceeds the
-5% regression ceiling. Cold/repeated resolver cost, zero cache growth,
-retained/peak/rollback bytes, and exact capacity boundaries are documented in
-`provenance_performance.md`.
-
-The tagged form is adopted. Production traced inputs have no flat-source
-migration path: registration yields an opaque `RegisteredSource` capability,
-ordinary scalars encode directly, and nontrivial or wide spellings use
-validated spans. `OriginRecord::Source` remains only as degraded compatibility
-for explicitly unregistered origins created by older APIs and focused tests;
-removing it would force artificial backing into tests without reducing
-production storage or writes.
-
-- Benchmark source-heavy ASCII, mixed UTF-8, a single very long line,
-  control-sequence-heavy, scanner-heavy, macro-heavy, rollback/reuse, and
-  cold/warm diagnostic-rendering workloads.
-- Report token throughput, direct deliveries, arena/source-map/cache growth,
-  logical live bytes, retained vector/allocator capacity, peak bytes, and
-  post-rollback retained bytes.
-- Count only incremental storage attributable to provenance/source mapping.
-  Existing World bytes and generated bytes shared with the input adapter are
-  not charged again; any accidental duplicate is charged in full.
-- Remove the legacy flat source-origin path only after the fallback and
-  capacity tests pass.
-- Update `docs/architecture.md`, `docs/core_state.md`, and
-  `docs/provenance_performance.md` to describe the adopted representation and
-  measurements rather than the proposal.
-
-Exit gate: relative to the Phase 1 traced baseline, source-heavy ASCII and
-mixed-UTF-8 logical provenance/source-map bytes fall by at least 80%, and no
-required primary workload has a statistically significant token-throughput
-regression greater than 5%. If either gate fails, adoption requires an
-explicit recorded revision decision; otherwise the tagged encoding is revised
-or reverted while the physical-coordinate, source-backing, and byte-cursor
-improvements remain.
-
 ## 12. Validation matrix
 
-Every implementation phase runs the affected crate tests and the repository
-gate. The final phase additionally covers:
+The focused suites and repository gates cover:
 
 | Area              | Required cases                                                                                                                                                           |
 | ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
