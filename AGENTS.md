@@ -8,7 +8,8 @@ The project also uses bd (beads) for issue tracking; see below for full instruct
 
 ## General Instructions
 
-- Commit as you go in logical chunks. Write good commit messages (a one-line summary and then details below). You have to escalate privileges to commit.
+- Commit as you go in logical chunks. Write good commit messages (a one-line summary and then details below). Use rough Conventional Commits style. You have
+  to escalate privileges to commit.
 - Make sure you are writing clean code; don't hesitate to do refactor commits if you find that a certain area of the code has gotten complex or difficult to understand.
 - Don't worry about keeping changes "low-risk" or implementing only "narrow slices", as making clean code will sometimes require big, ambitious, cross-cutting changes, and reimplementing something from scratch means we will need to write complex new features.
 - In general, try to keep source files short (goal is under roughly 600 lines, but it's okay if a file gets somewhat larger; test files can be as long as needed, they should only be split logically).
@@ -53,7 +54,6 @@ The project also uses bd (beads) for issue tracking; see below for full instruct
 - `crates/bib-bst`: bounded classic BibTeX style lexer, parser, compiler, and immutable programs.
 - `tools/`: Rust tooling crates.
 - `benchmarks/`: opt-in standalone benchmark crates kept outside the root workspace.
-- `benchmarks/tex-state/src/bin/format_cache_profile.rs`: opt-in schema-10 cache hit/miss latency and requested-allocation profiler.
 - `tests/`: committed fixtures and parity test definitions.
 - `tests/corpus/pdf/`: pinned minimal pdfTeX references, deterministic Umber PDFs, normalized structure, and rendered-page parity fixtures.
 - `docs/`: architecture, phase, and design documents.
@@ -73,11 +73,6 @@ The project also uses bd (beads) for issue tracking; see below for full instruct
   build.
 - Use `cargo run-dev -p umber -- <args>` for local CLI runs that should share
   optimized artifacts with the test build.
-- Run `scripts/check-snapshot-budgets.sh` in the explicit performance tier;
-  snapshot allocation and latency gates do not run under ordinary cargo tests.
-- Run `scripts/check-tools.sh` for the explicit host-side regeneration,
-  profiling, and triage-tool test/clippy gate; these targets are excluded from
-  routine native correctness builds.
 
 ## Beads Issue Tracker
 
