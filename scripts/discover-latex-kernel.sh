@@ -2,7 +2,7 @@
 set -euo pipefail
 
 root=$(cd "$(dirname "$0")/.." && pwd)
-texmf_dist=/usr/local/texlive/2026/texmf-dist
+texmf_dist="${UMBER_TEXMF_DIST:-${root}/third_party/texlive-20260301-texmf/texmf-dist}"
 keep_work=false
 expected_first_error=
 

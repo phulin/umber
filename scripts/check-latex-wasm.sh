@@ -13,7 +13,7 @@ native_format="${tmp_root}/format/latex.fmt"
 "${repo_root}/scripts/build-wasm-package.sh" "$package_dir"
 
 source_date_epoch="$(awk '$1 == "source_date_epoch" { print $2 }' "${repo_root}/tests/latex-source.lock")"
-texmf_dist="${UMBER_TEXMF_DIST:-/usr/local/texlive/2025/texmf-dist}"
+texmf_dist="${UMBER_TEXMF_DIST:-${repo_root}/third_party/texlive-20260301-texmf/texmf-dist}"
 texinputs="${texmf_dist}/tex/latex/base:${texmf_dist}/tex/latex/l3kernel:${texmf_dist}/tex/latex/l3backend:${texmf_dist}/tex/generic/unicode-data:${texmf_dist}/tex/generic/babel:${texmf_dist}/tex/generic/hyphen"
 texfonts="${texmf_dist}/fonts/tfm/public/cm:${texmf_dist}/fonts/tfm/public/latex-fonts:${texmf_dist}/fonts/tfm/jknappen/ec"
 native_dir="${tmp_root}/native"
