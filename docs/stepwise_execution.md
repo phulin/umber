@@ -20,6 +20,22 @@ This deliberately trades some repeated work at a miss for simple ownership,
 bounded retained state, deterministic retries, and one implementation on
 native and `wasm32-unknown-unknown` targets.
 
+## Implementation status
+
+`tex-exec` now exposes the owned `ExecutionRun` and `ExecutionState`, the
+call-local `ExecutionServices`, and the explicit `JobStart`, `MainControl`,
+`FinishEnd`, and `Finalize` lifecycle. The compatibility `run*` and `resume*`
+entry points drive this same state machine. Main control yields after one
+fully dispatched token, one paragraph-reuse operation, or a fixed 256-token
+text span; named checkpoints are staged and delivered only after that bounded
+operation returns successfully. Expansion state is detached from input,
+font, image, and read-recorder capabilities between calls.
+
+Transactional `StepSavepoint` rollback and durable resource-generation
+progress checks remain the next layer. Until that layer is installed, a typed
+resource need is surfaced as `AwaitingResources`, but callers must not replay
+the same run because mutation rollback is not yet guaranteed.
+
 ## Public shape and ownership
 
 `tex-exec` owns the run as `ExecutionRun`. The intended API shape is:

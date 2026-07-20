@@ -6,6 +6,73 @@ use tex_state::node::Node;
 use tex_state::scaled::Scaled;
 
 #[test]
+fn owned_execution_run_advances_through_explicit_phases() {
+    let mut stores = Universe::new();
+    let mut input = InputStack::new(MemoryInput::new(""));
+    let mut checkpoints = Vec::new();
+    let mut run = ExecutionRun::new("owned-job");
+    let cancellation = Cancellation::new();
+
+    let first = run.step(
+        &mut ExecutionServices::new(&mut input, &mut stores).with_checkpoints(&mut checkpoints),
+        &cancellation,
+    );
+    let ExecutionStepResult::Progress(first) = first else {
+        panic!("job start must commit progress")
+    };
+    assert_eq!(first.next_step, ExecutionStep::MainControl);
+    assert_eq!(first.checkpoints.len(), 1);
+    assert_eq!(checkpoints.len(), 1);
+
+    let second = run.step(
+        &mut ExecutionServices::new(&mut input, &mut stores),
+        &cancellation,
+    );
+    let ExecutionStepResult::Progress(second) = second else {
+        panic!("end of input must advance to finalization")
+    };
+    assert_eq!(second.next_step, ExecutionStep::Finalize);
+
+    let complete = run.step(
+        &mut ExecutionServices::new(&mut input, &mut stores),
+        &cancellation,
+    );
+    let ExecutionStepResult::Complete(stats) = complete else {
+        panic!("finalization must complete the run")
+    };
+    assert_eq!(stats, ExecutionStats::default());
+    assert_eq!(run.lifecycle(), ExecutionLifecycle::Complete);
+    assert!(matches!(
+        run.step(
+            &mut ExecutionServices::new(&mut input, &mut stores),
+            &cancellation,
+        ),
+        ExecutionStepResult::Failed(ExecError::ExecutionAlreadyTerminated)
+    ));
+}
+
+#[test]
+fn owned_execution_run_observes_cancellation_before_mutation() {
+    let mut stores = Universe::new();
+    let mut input = InputStack::new(MemoryInput::new("ignored"));
+    let mut run = ExecutionRun::new("cancelled-job");
+    let cancellation = Cancellation::new();
+    let input_before = input.summary();
+    cancellation.cancel();
+
+    assert!(matches!(
+        run.step(
+            &mut ExecutionServices::new(&mut input, &mut stores),
+            &cancellation,
+        ),
+        ExecutionStepResult::Cancelled
+    ));
+    assert_eq!(run.lifecycle(), ExecutionLifecycle::Cancelled);
+    assert_eq!(input.summary(), input_before);
+    assert!(stores.input_summary().is_empty());
+}
+
+#[test]
 fn unsupported_typesetting_diagnostic_names_control_sequence() {
     let mut stores = Universe::new();
     let special = stores.intern("special");

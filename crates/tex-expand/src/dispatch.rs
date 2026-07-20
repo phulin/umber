@@ -699,7 +699,7 @@ macro_rules! dispatch_match {
             Meaning::ExpandablePrimitive(ExpandablePrimitive::JobName) => Ok(push_rendered_text(
                 stores,
                 ExpansionReplayKind::JobName,
-                expansion.job_name,
+                &expansion.job_name,
                 call_origin,
             )),
             Meaning::ExpandablePrimitive(ExpandablePrimitive::FontName) => {

@@ -1,6 +1,8 @@
 use std::collections::{BTreeMap, VecDeque};
 use std::ops::{Deref, DerefMut};
 use std::path::Path;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use tex_expand::{
     EngineStateSnapshot, InputResolver, ReadRecorder, ResourceLookup, ResourceResult,
@@ -141,6 +143,169 @@ pub(crate) struct CachedParagraphDependency {
     pub(crate) recorded_ordinal: Option<u32>,
 }
 
+/// Expansion and paragraph state that survives between bounded executor calls.
+pub struct ExecutionState {
+    expansion: tex_expand::ExpansionSessionState,
+    pending_paragraph_memo: Option<PendingParagraphMemo>,
+    paragraph_memo_barrier: bool,
+    paragraph_memo_disabled_for_run: bool,
+    cold_paragraph_recording: Option<ColdParagraphRecording>,
+    paragraph_dependency_cache:
+        ahash::AHashMap<tex_state::DependencyKey, CachedParagraphDependency>,
+}
+
+impl Default for ExecutionState {
+    fn default() -> Self {
+        Self {
+            expansion: tex_expand::ExpansionSessionState::default(),
+            pending_paragraph_memo: None,
+            paragraph_memo_barrier: false,
+            paragraph_memo_disabled_for_run: false,
+            cold_paragraph_recording: None,
+            paragraph_dependency_cache: ahash::AHashMap::new(),
+        }
+    }
+}
+
+impl ExecutionState {
+    #[must_use]
+    pub fn with_expansion_fuel(mut self, fuel: u64) -> Self {
+        self.expansion = self.expansion.with_fuel(fuel);
+        self
+    }
+}
+
+/// Host capabilities borrowed for exactly one [`ExecutionRun::step`] call.
+pub struct ExecutionServices<'call, 'host> {
+    pub input: &'call mut InputStack,
+    pub stores: &'call mut Universe,
+    input_resolver: Option<&'host mut dyn InputResolver>,
+    font_resolver: Option<&'host mut dyn FontResolver>,
+    image_resolver: Option<&'host mut dyn PdfImageResolver>,
+    recorder: Option<&'host mut dyn ReadRecorder>,
+    checkpoints: Option<&'call mut dyn CheckpointSink>,
+}
+
+impl<'a> ExecutionServices<'a, 'a> {
+    pub fn new(input: &'a mut InputStack, stores: &'a mut Universe) -> Self {
+        Self {
+            input,
+            stores,
+            input_resolver: None,
+            font_resolver: None,
+            image_resolver: None,
+            recorder: None,
+            checkpoints: None,
+        }
+    }
+
+    #[must_use]
+    pub fn with_input_resolver(mut self, resolver: &'a mut dyn InputResolver) -> Self {
+        self.input_resolver = Some(resolver);
+        self
+    }
+
+    #[must_use]
+    pub fn with_font_resolver(mut self, resolver: &'a mut dyn FontResolver) -> Self {
+        self.font_resolver = Some(resolver);
+        self
+    }
+
+    #[must_use]
+    pub fn with_image_resolver(mut self, resolver: &'a mut dyn PdfImageResolver) -> Self {
+        self.image_resolver = Some(resolver);
+        self
+    }
+
+    #[must_use]
+    pub fn recording(mut self, recorder: &'a mut dyn ReadRecorder) -> Self {
+        self.recorder = Some(recorder);
+        self
+    }
+
+    #[must_use]
+    pub fn with_checkpoints(mut self, checkpoints: &'a mut dyn CheckpointSink) -> Self {
+        self.checkpoints = Some(checkpoints);
+        self
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ExecutionStep {
+    JobStart,
+    MainControl,
+    FinishEnd,
+    Finalize,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ExecutionLifecycle {
+    Created,
+    Ready,
+    Awaiting,
+    Finishing,
+    Complete,
+    Failed,
+    Cancelled,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ResourceSite {
+    Expansion,
+    MainControl,
+    ParagraphFinish,
+    LineBuild,
+    PageBuild,
+    Shipout,
+    FontLoad,
+    ExternalImageParse,
+    EndFinalization,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ResourceSuspension {
+    pub requests: Vec<tex_expand::ResourceNeed>,
+    pub site: ResourceSite,
+    pub serial: u64,
+    pub blocked_step: ExecutionStep,
+}
+
+#[derive(Clone, Debug)]
+pub struct ExecutionProgress {
+    pub next_step: ExecutionStep,
+    pub checkpoints: Vec<crate::EngineCheckpoint>,
+    pub stop_requested: bool,
+}
+
+#[derive(Debug)]
+pub enum ExecutionStepResult {
+    Progress(ExecutionProgress),
+    AwaitingResources(ResourceSuspension),
+    Complete(ExecutionStats),
+    Failed(ExecError),
+    Cancelled,
+}
+
+/// Shareable monotonic cancellation latch polled at executor step boundaries.
+#[derive(Clone, Debug, Default)]
+pub struct Cancellation(Arc<AtomicBool>);
+
+impl Cancellation {
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn cancel(&self) {
+        self.0.store(true, Ordering::Release);
+    }
+
+    #[must_use]
+    pub fn is_cancelled(&self) -> bool {
+        self.0.load(Ordering::Acquire)
+    }
+}
+
 pub struct ExecutionContext<'a> {
     expansion: tex_expand::ExpansionContext<'a>,
     font_resolver: Option<&'a mut dyn FontResolver>,
@@ -158,9 +323,17 @@ pub struct ExecutionContext<'a> {
         ahash::AHashMap<tex_state::DependencyKey, CachedParagraphDependency>,
 }
 
+type ExecutionContextParts<'a> = (
+    ExecutionState,
+    Option<&'a mut dyn InputResolver>,
+    Option<&'a mut dyn FontResolver>,
+    Option<&'a mut dyn PdfImageResolver>,
+    Option<&'a mut dyn ReadRecorder>,
+);
+
 impl<'a> ExecutionContext<'a> {
     #[must_use]
-    pub fn new(job_name: &'a str) -> Self {
+    pub fn new(job_name: &str) -> Self {
         Self {
             expansion: tex_expand::ExpansionContext::new(job_name),
             font_resolver: None,
@@ -173,9 +346,52 @@ impl<'a> ExecutionContext<'a> {
         }
     }
 
+    fn from_owned_state(
+        job_name: &str,
+        state: ExecutionState,
+        input_resolver: Option<&'a mut dyn InputResolver>,
+        font_resolver: Option<&'a mut dyn FontResolver>,
+        image_resolver: Option<&'a mut dyn PdfImageResolver>,
+        recorder: Option<&'a mut dyn ReadRecorder>,
+    ) -> Self {
+        Self {
+            expansion: tex_expand::ExpansionContext::from_state(
+                job_name,
+                state.expansion,
+                input_resolver,
+                recorder,
+            ),
+            font_resolver,
+            image_resolver,
+            pending_paragraph_memo: state.pending_paragraph_memo,
+            paragraph_memo_barrier: state.paragraph_memo_barrier,
+            paragraph_memo_disabled_for_run: state.paragraph_memo_disabled_for_run,
+            cold_paragraph_recording: state.cold_paragraph_recording,
+            paragraph_dependency_cache: state.paragraph_dependency_cache,
+        }
+    }
+
+    fn into_owned_parts(self) -> ExecutionContextParts<'a> {
+        let (expansion, input_resolver, recorder) = self.expansion.into_parts();
+        (
+            ExecutionState {
+                expansion,
+                pending_paragraph_memo: self.pending_paragraph_memo,
+                paragraph_memo_barrier: self.paragraph_memo_barrier,
+                paragraph_memo_disabled_for_run: self.paragraph_memo_disabled_for_run,
+                cold_paragraph_recording: self.cold_paragraph_recording,
+                paragraph_dependency_cache: self.paragraph_dependency_cache,
+            },
+            input_resolver,
+            self.font_resolver,
+            self.image_resolver,
+            recorder,
+        )
+    }
+
     #[must_use]
     pub fn with_resolvers(
-        job_name: &'a str,
+        job_name: &str,
         input_resolver: &'a mut dyn InputResolver,
         font_resolver: &'a mut dyn FontResolver,
     ) -> Self {
@@ -200,7 +416,7 @@ impl<'a> ExecutionContext<'a> {
 
     #[must_use]
     pub fn with_resource_resolvers(
-        job_name: &'a str,
+        job_name: &str,
         input_resolver: &'a mut dyn InputResolver,
         font_resolver: &'a mut dyn FontResolver,
         image_resolver: &'a mut dyn PdfImageResolver,
@@ -454,6 +670,392 @@ pub struct Executor {
     pub(crate) nest: ModeNest,
 }
 
+/// Owned stomach state and lifecycle for a cooperatively driven execution.
+pub struct ExecutionRun {
+    job_name: String,
+    nest: ModeNest,
+    execution: Option<ExecutionState>,
+    stats: ExecutionStats,
+    artifact_start: Option<usize>,
+    next_step: ExecutionStep,
+    lifecycle: ExecutionLifecycle,
+    publish_job_start: bool,
+    suspension_serial: u64,
+    checkpoint_mode_projection: Option<(crate::ModeNestSummary, u64)>,
+}
+
+impl ExecutionRun {
+    #[must_use]
+    pub fn new(job_name: impl Into<String>) -> Self {
+        Self::from_parts(job_name, ModeNest::new(), ExecutionState::default(), true)
+    }
+
+    #[must_use]
+    pub fn from_parts(
+        job_name: impl Into<String>,
+        nest: ModeNest,
+        execution: ExecutionState,
+        publish_job_start: bool,
+    ) -> Self {
+        Self {
+            job_name: job_name.into(),
+            nest,
+            execution: Some(execution),
+            stats: ExecutionStats::default(),
+            artifact_start: None,
+            next_step: if publish_job_start {
+                ExecutionStep::JobStart
+            } else {
+                ExecutionStep::MainControl
+            },
+            lifecycle: if publish_job_start {
+                ExecutionLifecycle::Created
+            } else {
+                ExecutionLifecycle::Ready
+            },
+            publish_job_start,
+            suspension_serial: 0,
+            checkpoint_mode_projection: None,
+        }
+    }
+
+    #[must_use]
+    pub const fn next_step(&self) -> ExecutionStep {
+        self.next_step
+    }
+
+    #[must_use]
+    pub const fn lifecycle(&self) -> ExecutionLifecycle {
+        self.lifecycle
+    }
+
+    #[must_use]
+    pub fn nest(&self) -> &ModeNest {
+        &self.nest
+    }
+
+    pub fn step(
+        &mut self,
+        services: &mut ExecutionServices<'_, '_>,
+        cancellation: &Cancellation,
+    ) -> ExecutionStepResult {
+        if cancellation.is_cancelled() {
+            self.lifecycle = ExecutionLifecycle::Cancelled;
+            return ExecutionStepResult::Cancelled;
+        }
+        if matches!(
+            self.lifecycle,
+            ExecutionLifecycle::Complete
+                | ExecutionLifecycle::Failed
+                | ExecutionLifecycle::Cancelled
+        ) {
+            return ExecutionStepResult::Failed(ExecError::ExecutionAlreadyTerminated);
+        }
+        if self.lifecycle == ExecutionLifecycle::Awaiting {
+            self.lifecycle = match self.next_step {
+                ExecutionStep::FinishEnd | ExecutionStep::Finalize => ExecutionLifecycle::Finishing,
+                ExecutionStep::JobStart => ExecutionLifecycle::Created,
+                ExecutionStep::MainControl => ExecutionLifecycle::Ready,
+            };
+        }
+        if self.artifact_start.is_none() {
+            services
+                .input
+                .ensure_source_ids_at_least(services.stores.input_summary().next_source_id());
+            self.execution_mut()
+                .expansion
+                .set_job_clock(services.stores.world().job_clock());
+            self.artifact_start = Some(services.stores.world().artifact_commits().len());
+        }
+
+        if self.next_step == ExecutionStep::Finalize {
+            return self.step_finalize(services);
+        }
+        let checkpoint_destination = services.checkpoints.take();
+        let mut staged = StagedCheckpointSink::new(checkpoint_destination);
+        let result = match self.next_step {
+            ExecutionStep::JobStart => {
+                if self.publish_job_start {
+                    let every_job = services.stores.take_pending_every_job();
+                    if every_job != TokenListId::EMPTY {
+                        services
+                            .input
+                            .push_token_list(every_job, TokenListReplayKind::EveryJob);
+                    }
+                    let mut session = EngineSession::with_mode_projection(
+                        &mut staged,
+                        self.checkpoint_mode_projection.take(),
+                    );
+                    session.publish(
+                        EngineBoundary::JobStart,
+                        &self.nest,
+                        services.input,
+                        services.stores,
+                    );
+                    self.checkpoint_mode_projection = session.into_mode_projection();
+                }
+                self.next_step = ExecutionStep::MainControl;
+                self.lifecycle = ExecutionLifecycle::Ready;
+                Ok(())
+            }
+            ExecutionStep::MainControl => self.step_main_control(services, &mut staged),
+            ExecutionStep::FinishEnd => self.step_finish_end(services),
+            ExecutionStep::Finalize => unreachable!("finalize handled before checkpoint staging"),
+        };
+
+        let stop_requested = staged.stop_requested();
+        let (checkpoints, checkpoint_destination) = staged.deliver();
+        services.checkpoints = checkpoint_destination;
+        match result {
+            Ok(()) => ExecutionStepResult::Progress(ExecutionProgress {
+                next_step: self.next_step,
+                checkpoints,
+                stop_requested,
+            }),
+            Err(error) => self.handle_step_error(error),
+        }
+    }
+
+    fn execution_mut(&mut self) -> &mut ExecutionState {
+        self.execution
+            .as_mut()
+            .expect("execution state is installed outside call-local dispatch")
+    }
+
+    fn with_context<T>(
+        &mut self,
+        services: &mut ExecutionServices<'_, '_>,
+        operation: impl FnOnce(
+            &mut ModeNest,
+            &mut InputStack,
+            &mut Universe,
+            &mut ExecutionContext<'_>,
+            &mut ExecutionStats,
+        ) -> T,
+    ) -> T {
+        let state = self.execution.take().expect("execution state is owned");
+        let input_resolver = services.input_resolver.take();
+        let font_resolver = services.font_resolver.take();
+        let image_resolver = services.image_resolver.take();
+        let recorder = services.recorder.take();
+        let mut context = ExecutionContext::from_owned_state(
+            &self.job_name,
+            state,
+            input_resolver,
+            font_resolver,
+            image_resolver,
+            recorder,
+        );
+        let output = operation(
+            &mut self.nest,
+            services.input,
+            services.stores,
+            &mut context,
+            &mut self.stats,
+        );
+        let (state, input_resolver, font_resolver, image_resolver, recorder) =
+            context.into_owned_parts();
+        self.execution = Some(state);
+        services.input_resolver = input_resolver;
+        services.font_resolver = font_resolver;
+        services.image_resolver = image_resolver;
+        services.recorder = recorder;
+        output
+    }
+
+    fn step_main_control(
+        &mut self,
+        services: &mut ExecutionServices<'_, '_>,
+        staged: &mut StagedCheckpointSink<'_>,
+    ) -> Result<(), ExecError> {
+        let mut checkpoint_mode_projection = self.checkpoint_mode_projection.take();
+        let exit = self.with_context(services, |nest, input, stores, execution, stats| {
+            run_outer_main_control_step(
+                nest,
+                input,
+                stores,
+                execution,
+                stats,
+                staged,
+                &mut checkpoint_mode_projection,
+            )
+        });
+        self.checkpoint_mode_projection = checkpoint_mode_projection;
+        let exit = exit?;
+        match exit {
+            MainControlExit::EndOfInput => {
+                self.next_step = ExecutionStep::Finalize;
+                self.lifecycle = ExecutionLifecycle::Finishing;
+            }
+            MainControlExit::End { .. } => {
+                self.next_step = ExecutionStep::FinishEnd;
+                self.lifecycle = ExecutionLifecycle::Finishing;
+            }
+            MainControlExit::Stopped => {}
+            MainControlExit::NotConsumed { token } => {
+                return Err(unimplemented_typesetting(
+                    self.nest.current_mode(),
+                    tex_expand::semantic_token(token),
+                    token.origin(),
+                    "non-assignment command",
+                )
+                .expect_err("unimplemented_typesetting always returns Err")
+                .capture(services.input));
+            }
+        }
+        Ok(())
+    }
+
+    fn step_finish_end(
+        &mut self,
+        services: &mut ExecutionServices<'_, '_>,
+    ) -> Result<(), ExecError> {
+        self.with_context(services, |nest, input, stores, execution, stats| {
+            output::finish_end(nest, input, stores, execution, stats)
+                .map_err(|error| error.capture(input))
+        })?;
+        self.next_step = ExecutionStep::Finalize;
+        self.lifecycle = ExecutionLifecycle::Finishing;
+        Ok(())
+    }
+
+    fn step_finalize(&mut self, services: &mut ExecutionServices<'_, '_>) -> ExecutionStepResult {
+        let dumped_format = self.stats.dumped_format;
+        let summary = if dumped_format {
+            InputSummary::default()
+        } else {
+            services.input.publication_summary(services.stores)
+        };
+        if dumped_format {
+            services.stores.start_new_page();
+        }
+        services.stores.set_input_summary(summary);
+        let artifact_start = self
+            .artifact_start
+            .unwrap_or_else(|| services.stores.world().artifact_commits().len());
+        self.stats.shipped_artifacts =
+            services.stores.world().artifact_commits()[artifact_start..].to_vec();
+        let mut prepared = BTreeMap::<_, VecDeque<_>>::new();
+        for page in std::mem::take(&mut self.stats.prepared_dvi_pages) {
+            prepared.entry(page.hash).or_default().push_back(page.plan);
+        }
+        let plans = services.stores.world().committed_artifacts()[artifact_start..]
+            .iter()
+            .map(|committed| {
+                if let Some(plan) = prepared
+                    .get_mut(&committed.hash())
+                    .and_then(VecDeque::pop_front)
+                {
+                    return Ok(plan);
+                }
+                DviPagePlan::compile_v10(committed.bytes())
+                    .map_err(|error| ExecError::InvalidShipoutArtifact(error.to_string()))
+            })
+            .collect::<Result<Vec<_>, _>>();
+        match plans {
+            Ok(plans) => {
+                self.stats.dvi_pages = plans;
+                self.lifecycle = ExecutionLifecycle::Complete;
+                ExecutionStepResult::Complete(self.stats.clone())
+            }
+            Err(error) => {
+                self.lifecycle = ExecutionLifecycle::Failed;
+                ExecutionStepResult::Failed(error)
+            }
+        }
+    }
+
+    fn handle_step_error(&mut self, error: ExecError) -> ExecutionStepResult {
+        if let Some(need) = resource_need(&error) {
+            self.suspension_serial = self.suspension_serial.saturating_add(1);
+            self.lifecycle = ExecutionLifecycle::Awaiting;
+            return ExecutionStepResult::AwaitingResources(ResourceSuspension {
+                requests: vec![need],
+                site: match self.next_step {
+                    ExecutionStep::JobStart | ExecutionStep::MainControl => {
+                        ResourceSite::MainControl
+                    }
+                    ExecutionStep::FinishEnd | ExecutionStep::Finalize => {
+                        ResourceSite::EndFinalization
+                    }
+                },
+                serial: self.suspension_serial,
+                blocked_step: self.next_step,
+            });
+        }
+        self.lifecycle = ExecutionLifecycle::Failed;
+        ExecutionStepResult::Failed(error)
+    }
+
+    fn into_parts(self) -> (ModeNest, ExecutionState, ExecutionStats) {
+        (
+            self.nest,
+            self.execution
+                .expect("terminal run retains execution state"),
+            self.stats,
+        )
+    }
+}
+
+fn resource_need(error: &ExecError) -> Option<tex_expand::ResourceNeed> {
+    match error {
+        ExecError::NeedResource(need) => Some(*need),
+        ExecError::Captured { error, .. } => resource_need(error),
+        _ => None,
+    }
+}
+
+struct StagedCheckpointSink<'a> {
+    destination: Option<&'a mut dyn CheckpointSink>,
+    checkpoints: Vec<crate::EngineCheckpoint>,
+}
+
+impl<'a> StagedCheckpointSink<'a> {
+    fn new(destination: Option<&'a mut dyn CheckpointSink>) -> Self {
+        Self {
+            destination,
+            checkpoints: Vec::new(),
+        }
+    }
+
+    fn deliver(
+        mut self,
+    ) -> (
+        Vec<crate::EngineCheckpoint>,
+        Option<&'a mut dyn CheckpointSink>,
+    ) {
+        let checkpoints = std::mem::take(&mut self.checkpoints);
+        (checkpoints, self.destination.take())
+    }
+}
+
+impl CheckpointSink for StagedCheckpointSink<'_> {
+    fn wants_checkpoint(&self, boundary: EngineBoundary) -> bool {
+        self.destination
+            .as_deref()
+            .is_some_and(|sink| sink.wants_checkpoint(boundary))
+    }
+
+    fn stop_requested(&self) -> bool {
+        self.destination
+            .as_deref()
+            .is_some_and(CheckpointSink::stop_requested)
+    }
+
+    fn wants_exact_state_identity(&self, boundary: EngineBoundary, root_anchor: usize) -> bool {
+        self.destination
+            .as_deref()
+            .is_some_and(|sink| sink.wants_exact_state_identity(boundary, root_anchor))
+    }
+
+    fn checkpoint(&mut self, checkpoint: crate::EngineCheckpoint) {
+        if let Some(destination) = self.destination.as_deref_mut() {
+            destination.checkpoint(checkpoint.clone());
+        }
+        self.checkpoints.push(checkpoint);
+    }
+}
+
 impl Default for Executor {
     fn default() -> Self {
         Self::new()
@@ -544,106 +1146,76 @@ where {
     where
         C: CheckpointSink,
     {
-        input.ensure_source_ids_at_least(stores.input_summary().next_source_id());
-        execution.job_clock = stores.world().job_clock();
-        let mut session = EngineSession::new(checkpoints);
-        if publish_job_start {
-            let every_job = stores.take_pending_every_job();
-            if every_job != TokenListId::EMPTY {
-                input.push_token_list(every_job, TokenListReplayKind::EveryJob);
-            }
-            session.publish(EngineBoundary::JobStart, &self.nest, input, stores);
-        }
-        let artifact_start = stores.world().artifact_commits().len();
-        let mut stats = ExecutionStats::default();
-        let exit = match run_outer_main_control_until(
-            &mut self.nest,
+        let job_name = execution.job_name.clone();
+        let detached = std::mem::replace(execution, ExecutionContext::new(&job_name));
+        let (state, input_resolver, font_resolver, image_resolver, recorder) =
+            detached.into_owned_parts();
+        let nest = std::mem::take(&mut self.nest);
+        let mut run = ExecutionRun::from_parts(&job_name, nest, state, publish_job_start);
+        let cancellation = Cancellation::new();
+        let mut services = ExecutionServices {
             input,
             stores,
-            execution,
-            &mut stats,
-            &mut session,
-        ) {
-            Ok(exit) => exit,
-            Err(err) => {
-                let summary = input.publication_summary(stores);
-                stores.set_input_summary(summary);
-                return Err(err);
-            }
+            input_resolver,
+            font_resolver,
+            image_resolver,
+            recorder,
+            checkpoints: Some(checkpoints),
         };
-        let result = match exit {
-            MainControlExit::EndOfInput => Ok(stats),
-            MainControlExit::Stopped => Ok(stats),
-            MainControlExit::End { .. } => {
-                if let Err(err) =
-                    output::finish_end(&mut self.nest, input, stores, execution, &mut stats)
-                {
-                    let summary = input.publication_summary(stores);
-                    stores.set_input_summary(summary);
-                    return Err(err.capture(input));
-                }
-                Ok(stats)
-            }
-            MainControlExit::NotConsumed { token } => Err(unimplemented_typesetting(
-                self.nest.current_mode(),
-                tex_expand::semantic_token(token),
-                token.origin(),
-                "non-assignment command",
-            )
-            .expect_err("unimplemented_typesetting always returns Err")
-            .capture(input)),
-        };
-        let dumped_format = result.as_ref().is_ok_and(|stats| stats.dumped_format);
-        let summary = if dumped_format {
-            // TeX's `\dump` ends INITEX immediately. The remaining source
-            // frames belong to the terminated job, while format images are a
-            // quiescent semantic-state boundary and intentionally exclude
-            // input cursors.
-            InputSummary::default()
-        } else {
-            input.publication_summary(stores)
-        };
-        if dumped_format {
-            // Page-builder bookkeeping is likewise job-local and is not part
-            // of a TeX format image.
-            stores.start_new_page();
-        }
-        stores.set_input_summary(summary);
-        result.and_then(|mut stats| {
-            stats.shipped_artifacts = stores.world().artifact_commits()[artifact_start..].to_vec();
-            let mut prepared = BTreeMap::<_, VecDeque<_>>::new();
-            for page in std::mem::take(&mut stats.prepared_dvi_pages) {
-                prepared.entry(page.hash).or_default().push_back(page.plan);
-            }
-            stats.dvi_pages = stores.world().committed_artifacts()[artifact_start..]
-                .iter()
-                .map(|committed| {
-                    if let Some(plan) = prepared
-                        .get_mut(&committed.hash())
-                        .and_then(VecDeque::pop_front)
-                    {
-                        return Ok(plan);
+        let result = loop {
+            let attempted_step = run.next_step();
+            match run.step(&mut services, &cancellation) {
+                ExecutionStepResult::Progress(progress) => {
+                    if attempted_step == ExecutionStep::MainControl && progress.stop_requested {
+                        run.next_step = ExecutionStep::Finalize;
+                        run.lifecycle = ExecutionLifecycle::Finishing;
                     }
-                    DviPagePlan::compile_v10(committed.bytes())
-                        .map_err(|error| ExecError::InvalidShipoutArtifact(error.to_string()))
-                })
-                .collect::<Result<Vec<_>, _>>()?;
-            Ok(stats)
-        })
+                }
+                ExecutionStepResult::Complete(stats) => break Ok(stats),
+                ExecutionStepResult::AwaitingResources(suspension) => {
+                    break Err(ExecError::NeedResource(suspension.requests[0]));
+                }
+                ExecutionStepResult::Failed(error) => break Err(error),
+                ExecutionStepResult::Cancelled => break Err(ExecError::ExecutionCancelled),
+            }
+        };
+        let (nest, state, _) = run.into_parts();
+        self.nest = nest;
+        let input_resolver = services.input_resolver.take();
+        let font_resolver = services.font_resolver.take();
+        let image_resolver = services.image_resolver.take();
+        let recorder = services.recorder.take();
+        let summary = services.input.publication_summary(services.stores);
+        if result.is_err() {
+            services.stores.set_input_summary(summary);
+        }
+        *execution = ExecutionContext::from_owned_state(
+            &job_name,
+            state,
+            input_resolver,
+            font_resolver,
+            image_resolver,
+            recorder,
+        );
+        result
     }
 }
 
-fn run_outer_main_control_until<C>(
+const EXECUTION_TEXT_SPAN_CHUNK: usize = 256;
+
+fn run_outer_main_control_step<C>(
     nest: &mut ModeNest,
     input: &mut InputStack,
     stores: &mut Universe,
     execution: &mut crate::ExecutionContext<'_>,
     stats: &mut ExecutionStats,
-    session: &mut EngineSession<'_, C>,
+    session_sink: &mut C,
+    mode_projection: &mut Option<(crate::ModeNestSummary, u64)>,
 ) -> Result<MainControlExit, ExecError>
 where
     C: CheckpointSink,
 {
+    let mut session = EngineSession::with_mode_projection(session_sink, mode_projection.take());
     let result = run_main_control_until_observing(
         nest,
         input,
@@ -662,9 +1234,10 @@ where
             if event.outer_paragraph_end {
                 session.publish(EngineBoundary::OuterParagraphEnd, nest, input, stores);
             }
-            session.stop_requested()
+            true
         },
     );
+    *mode_projection = session.into_mode_projection();
     result.map_err(|error| error.capture(input))
 }
 
@@ -815,7 +1388,12 @@ where
             && !stores.world().execution_tracing_enabled()
         {
             macro_text.clear();
-            if input.append_macro_text_span(stores, &mut macro_text) > 0 {
+            if input.append_macro_text_span_bounded(
+                stores,
+                &mut macro_text,
+                EXECUTION_TEXT_SPAN_CHUNK,
+            ) > 0
+            {
                 stats.delivered_tokens += macro_text.len();
                 stats.macro_text_span_tokens += macro_text.len();
                 for token in macro_text.drain(..) {
@@ -823,15 +1401,26 @@ where
                     let appended = assignments::try_append_character(nest, token, stores)?;
                     debug_assert!(appended);
                 }
+                if observe(nest, input, stores, BoundaryEvent::default()) {
+                    return Ok(MainControlExit::Stopped);
+                }
                 continue;
             }
-            if input.append_source_text_span(stores, &mut macro_text) > 0 {
+            if input.append_source_text_span_bounded(
+                stores,
+                &mut macro_text,
+                EXECUTION_TEXT_SPAN_CHUNK,
+            ) > 0
+            {
                 stats.delivered_tokens += macro_text.len();
                 stats.source_text_span_tokens += macro_text.len();
                 for token in macro_text.drain(..) {
                     execution.count_paragraph_token();
                     let appended = assignments::try_append_character(nest, token, stores)?;
                     debug_assert!(appended);
+                }
+                if observe(nest, input, stores, BoundaryEvent::default()) {
+                    return Ok(MainControlExit::Stopped);
                 }
                 continue;
             }

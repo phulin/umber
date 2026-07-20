@@ -15,6 +15,8 @@ use crate::Mode;
 
 #[derive(Debug)]
 pub enum ExecError {
+    ExecutionAlreadyTerminated,
+    ExecutionCancelled,
     Captured {
         error: Box<ExecError>,
         site: DiagnosticSite,
@@ -183,6 +185,8 @@ pub enum ExecError {
 impl fmt::Display for ExecError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::ExecutionAlreadyTerminated => f.write_str("execution run is already terminal"),
+            Self::ExecutionCancelled => f.write_str("execution run was cancelled"),
             Self::Captured { error, .. } => write!(f, "{error}"),
             Self::Expand(err) => write!(f, "{err}"),
             Self::NeedResource(need) => write!(
@@ -414,6 +418,8 @@ impl std::error::Error for ExecError {
             Self::FontParse(err) => Some(err),
             Self::PdfFontMap(err) => Some(err),
             Self::NeedResource(_)
+            | Self::ExecutionAlreadyTerminated
+            | Self::ExecutionCancelled
             | Self::FontOpen { .. }
             | Self::PdfGlyphToUnicode(_)
             | Self::EmptyModeNestSummary
@@ -499,7 +505,9 @@ impl ExecError {
     pub fn primary_origin(&self) -> Option<OriginId> {
         match self {
             Self::Captured { site, .. } => site.primary_origin(),
-            Self::NeedResource(_) => None,
+            Self::NeedResource(_) | Self::ExecutionAlreadyTerminated | Self::ExecutionCancelled => {
+                None
+            }
             Self::Expand(err) => err.primary_origin(),
             Self::ScanGlue(err) => err.primary_origin(),
             Self::UndefinedControlSequence { origin, .. }

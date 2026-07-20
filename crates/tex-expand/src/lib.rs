@@ -1101,7 +1101,7 @@ pub trait InputResolver {
 /// input policy is invoked only by primitives that explicitly access files.
 pub struct ExpansionContext<'a> {
     pub engine: EngineStateSnapshot,
-    pub job_name: &'a str,
+    pub job_name: String,
     pub job_clock: JobClock,
     input_resolver: Option<&'a mut dyn InputResolver>,
     pub(crate) recorder: Option<&'a mut dyn ReadRecorder>,
@@ -1127,18 +1127,40 @@ pub struct ExpansionContext<'a> {
     paragraph_barriers: BTreeSet<ParagraphExpansionBarrier>,
 }
 
+/// Owned expansion state retained between executor steps.
+///
+/// Host resolvers and read recorders deliberately do not appear here.  A
+/// caller installs those capabilities only while constructing an
+/// [`ExpansionContext`] for one bounded operation.
+pub struct ExpansionSessionState {
+    engine: EngineStateSnapshot,
+    job_clock: JobClock,
+    resolution_index: u64,
+    meaning_site_cache: Box<[Option<MeaningSiteCacheEntry>; MEANING_SITE_CACHE_LEN]>,
+    last_macro_replay_site: Option<MacroReplaySite>,
+    csname_depth: u32,
+    recoverable_diagnostics: Vec<RecoverableExpansionDiagnostic>,
+    fuel_limit: u64,
+    remaining_fuel: u64,
+    fuel_scope_depth: u32,
+    expanded_token_list_depth: u32,
+    paragraph_reads: Option<Vec<ReadDependency>>,
+    paragraph_read_tracking: bool,
+    paragraph_meanings: Vec<u32>,
+    paragraph_meaning_marks: Vec<u32>,
+    paragraph_local_meanings: Vec<(u32, u32)>,
+    paragraph_recording_generation: u32,
+    paragraph_barriers: BTreeSet<ParagraphExpansionBarrier>,
+}
+
 /// Default number of expansion-loop steps available to one expansion request.
 pub const DEFAULT_EXPANSION_FUEL: u64 = 250_000;
 
-impl<'a> ExpansionContext<'a> {
-    #[must_use]
-    pub fn new(job_name: &'a str) -> Self {
+impl Default for ExpansionSessionState {
+    fn default() -> Self {
         Self {
             engine: EngineStateSnapshot::default(),
-            job_name,
             job_clock: JobClock::DEFAULT,
-            input_resolver: None,
-            recorder: None,
             resolution_index: 0,
             meaning_site_cache: Box::new([None; MEANING_SITE_CACHE_LEN]),
             last_macro_replay_site: None,
@@ -1157,35 +1179,114 @@ impl<'a> ExpansionContext<'a> {
             paragraph_barriers: BTreeSet::new(),
         }
     }
+}
+
+impl ExpansionSessionState {
+    /// Replaces the recursive expansion-work budget used by each call-local
+    /// expansion context.
+    #[must_use]
+    pub fn with_fuel(mut self, fuel: u64) -> Self {
+        self.fuel_limit = fuel;
+        self.remaining_fuel = fuel;
+        self
+    }
+
+    #[doc(hidden)]
+    pub fn set_job_clock(&mut self, clock: JobClock) {
+        self.job_clock = clock;
+    }
+}
+
+impl<'a> ExpansionContext<'a> {
+    #[must_use]
+    pub fn new(job_name: &str) -> Self {
+        Self::from_state(job_name, ExpansionSessionState::default(), None, None)
+    }
 
     #[must_use]
-    pub fn with_input_resolver(
-        job_name: &'a str,
-        input_resolver: &'a mut dyn InputResolver,
+    pub fn with_input_resolver(job_name: &str, input_resolver: &'a mut dyn InputResolver) -> Self {
+        Self::from_state(
+            job_name,
+            ExpansionSessionState::default(),
+            Some(input_resolver),
+            None,
+        )
+    }
+
+    /// Rehydrates owned expansion state with capabilities borrowed for one
+    /// executor operation.
+    #[doc(hidden)]
+    pub fn from_state(
+        job_name: &str,
+        state: ExpansionSessionState,
+        input_resolver: Option<&'a mut dyn InputResolver>,
+        recorder: Option<&'a mut dyn ReadRecorder>,
     ) -> Self {
         Self {
-            engine: EngineStateSnapshot::default(),
-            job_name,
-            job_clock: JobClock::DEFAULT,
-            input_resolver: Some(input_resolver),
-            recorder: None,
-            resolution_index: 0,
-            meaning_site_cache: Box::new([None; MEANING_SITE_CACHE_LEN]),
-            last_macro_replay_site: None,
-            csname_depth: 0,
-            recoverable_diagnostics: Vec::new(),
-            fuel_limit: DEFAULT_EXPANSION_FUEL,
-            remaining_fuel: DEFAULT_EXPANSION_FUEL,
-            fuel_scope_depth: 0,
-            expanded_token_list_depth: 0,
-            paragraph_reads: None,
-            paragraph_read_tracking: false,
-            paragraph_meanings: Vec::new(),
-            paragraph_meaning_marks: Vec::new(),
-            paragraph_local_meanings: Vec::new(),
-            paragraph_recording_generation: 0,
-            paragraph_barriers: BTreeSet::new(),
+            engine: state.engine,
+            job_name: job_name.to_owned(),
+            job_clock: state.job_clock,
+            input_resolver,
+            recorder,
+            resolution_index: state.resolution_index,
+            meaning_site_cache: state.meaning_site_cache,
+            last_macro_replay_site: state.last_macro_replay_site,
+            csname_depth: state.csname_depth,
+            recoverable_diagnostics: state.recoverable_diagnostics,
+            fuel_limit: state.fuel_limit,
+            remaining_fuel: state.remaining_fuel,
+            fuel_scope_depth: state.fuel_scope_depth,
+            expanded_token_list_depth: state.expanded_token_list_depth,
+            paragraph_reads: state.paragraph_reads,
+            paragraph_read_tracking: state.paragraph_read_tracking,
+            paragraph_meanings: state.paragraph_meanings,
+            paragraph_meaning_marks: state.paragraph_meaning_marks,
+            paragraph_local_meanings: state.paragraph_local_meanings,
+            paragraph_recording_generation: state.paragraph_recording_generation,
+            paragraph_barriers: state.paragraph_barriers,
         }
+    }
+
+    /// Detaches every durable expansion field from call-local host services.
+    #[doc(hidden)]
+    #[must_use]
+    pub fn into_state(self) -> ExpansionSessionState {
+        self.into_parts().0
+    }
+
+    /// Detaches owned state while returning the call-local capabilities that
+    /// were installed on this context.
+    #[doc(hidden)]
+    pub fn into_parts(
+        self,
+    ) -> (
+        ExpansionSessionState,
+        Option<&'a mut dyn InputResolver>,
+        Option<&'a mut dyn ReadRecorder>,
+    ) {
+        let input_resolver = self.input_resolver;
+        let recorder = self.recorder;
+        let state = ExpansionSessionState {
+            engine: self.engine,
+            job_clock: self.job_clock,
+            resolution_index: self.resolution_index,
+            meaning_site_cache: self.meaning_site_cache,
+            last_macro_replay_site: self.last_macro_replay_site,
+            csname_depth: self.csname_depth,
+            recoverable_diagnostics: self.recoverable_diagnostics,
+            fuel_limit: self.fuel_limit,
+            remaining_fuel: self.remaining_fuel,
+            fuel_scope_depth: self.fuel_scope_depth,
+            expanded_token_list_depth: self.expanded_token_list_depth,
+            paragraph_reads: self.paragraph_reads,
+            paragraph_read_tracking: self.paragraph_read_tracking,
+            paragraph_meanings: self.paragraph_meanings,
+            paragraph_meaning_marks: self.paragraph_meaning_marks,
+            paragraph_local_meanings: self.paragraph_local_meanings,
+            paragraph_recording_generation: self.paragraph_recording_generation,
+            paragraph_barriers: self.paragraph_barriers,
+        };
+        (state, input_resolver, recorder)
     }
 
     /// Replaces the expansion work budget for this session.
@@ -1424,7 +1525,7 @@ impl<'a> ExpansionContext<'a> {
     pub fn with_nested<O>(&mut self, operation: impl FnOnce(&mut ExpansionContext<'a>) -> O) -> O {
         let mut nested = ExpansionContext {
             engine: self.engine,
-            job_name: self.job_name,
+            job_name: self.job_name.clone(),
             job_clock: self.job_clock,
             input_resolver: self.input_resolver.take(),
             recorder: self.recorder.take(),

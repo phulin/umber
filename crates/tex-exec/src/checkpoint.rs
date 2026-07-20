@@ -273,11 +273,18 @@ pub(crate) struct EngineSession<'a, C> {
 }
 
 impl<'a, C: CheckpointSink> EngineSession<'a, C> {
-    pub(crate) fn new(sink: &'a mut C) -> Self {
+    pub(crate) fn with_mode_projection(
+        sink: &'a mut C,
+        mode_projection: Option<(ModeNestSummary, u64)>,
+    ) -> Self {
         Self {
             sink,
-            mode_projection: None,
+            mode_projection,
         }
+    }
+
+    pub(crate) fn into_mode_projection(self) -> Option<(ModeNestSummary, u64)> {
+        self.mode_projection
     }
 
     pub(crate) fn publish(

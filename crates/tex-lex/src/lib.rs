@@ -2426,10 +2426,35 @@ impl InputStack {
         stores: &impl ExpansionState,
         tokens_out: &mut Vec<TracedTokenWord>,
     ) -> usize {
-        let Some(span) = self.take_macro_literal_span(stores, LiteralSpanPolicy::HorizontalText)
+        self.append_macro_text_span_bounded(stores, tokens_out, usize::MAX)
+    }
+
+    /// Appends at most `limit` ordinary macro-replay characters.
+    pub fn append_macro_text_span_bounded(
+        &mut self,
+        stores: &impl ExpansionState,
+        tokens_out: &mut Vec<TracedTokenWord>,
+        limit: usize,
+    ) -> usize {
+        if limit == 0 {
+            return 0;
+        }
+        let Some(mut span) =
+            self.take_macro_literal_span(stores, LiteralSpanPolicy::HorizontalText)
         else {
             return 0;
         };
+        if span.end - span.start > limit {
+            let bounded_end = span.start + limit;
+            let frame_index = self
+                .current_token_frame_index()
+                .expect("selected macro span retains its replay frame");
+            let InputFrame::TokenList(frame) = &mut self.frames[frame_index] else {
+                unreachable!("selected macro span retains its replay frame")
+            };
+            frame.index = bounded_end;
+            span.end = bounded_end;
+        }
         #[cfg(feature = "profiling-stats")]
         let started = should_sample_timer(&mut self.expansion_stats.builder_append_timer_events)
             .then(World::start_profiling_timer);
@@ -2464,6 +2489,19 @@ impl InputStack {
         stores: &mut impl ExpansionState,
         tokens_out: &mut Vec<TracedTokenWord>,
     ) -> usize {
+        self.append_source_text_span_bounded(stores, tokens_out, usize::MAX)
+    }
+
+    /// Appends at most `limit` directly backed physical-source characters.
+    pub fn append_source_text_span_bounded(
+        &mut self,
+        stores: &mut impl ExpansionState,
+        tokens_out: &mut Vec<TracedTokenWord>,
+        limit: usize,
+    ) -> usize {
+        if limit == 0 {
+            return 0;
+        }
         if self.has_active_alignment() {
             return 0;
         }
@@ -2492,7 +2530,7 @@ impl InputStack {
         let mut byte_offset = source.frame.byte_offset;
         let mut column = source.frame.column;
         let utf8_input_as_bytes = self.utf8_input_as_bytes && !source.scantokens;
-        while byte_offset < source.frame.cursor_len() {
+        while byte_offset < source.frame.cursor_len() && tokens_out.len() - start < limit {
             let (ch, width) = input_char_at(&source.frame, byte_offset, utf8_input_as_bytes)
                 .expect("byte cursor remains within the normalized line");
             let cat = stores.catcode(ch);

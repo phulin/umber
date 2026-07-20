@@ -37,8 +37,10 @@ pub use checkpoint::{
 pub use dispatch::{DispatchAction, ExecutionStats, dispatch_delivered_token};
 pub use error::ExecError;
 pub use executor::{
-    ExecutionContext, Executor, FontResolver, FontSource, PdfImagePageBox, PdfImageRequest,
-    PdfImageResolver,
+    Cancellation, ExecutionContext, ExecutionLifecycle, ExecutionProgress, ExecutionRun,
+    ExecutionServices, ExecutionState, ExecutionStep, ExecutionStepResult, Executor, FontResolver,
+    FontSource, PdfImagePageBox, PdfImageRequest, PdfImageResolver, ResourceSite,
+    ResourceSuspension,
 };
 pub use mode::{
     AlignColumn, AlignState, AlignmentKind, AlignmentPackSpec, Mode, ModeLevelSummary, ModeList,
