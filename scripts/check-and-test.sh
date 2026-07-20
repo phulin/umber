@@ -42,13 +42,13 @@ warn_missing_e2e_case \
   "$repo_root/tests/corpus/e2e/gentle.expected.dvi"
 warn_missing_e2e_case \
   "TRIP" \
-  "run scripts/trip.sh fetch to install the TRIP/e-TRIP corpus" \
+  "run scripts/fetch-conformance-inputs.sh to install the TRIP/e-TRIP corpus" \
   "$repo_root/third_party/trip/trip.tex" \
   "$repo_root/third_party/trip/trip.tfm" \
   "$repo_root/tests/corpus/e2e/trip.expected.dvi"
 warn_missing_e2e_case \
   "e-TRIP" \
-  "run scripts/trip.sh fetch to install the TRIP/e-TRIP corpus" \
+  "run scripts/fetch-conformance-inputs.sh to install the TRIP/e-TRIP corpus" \
   "$repo_root/third_party/trip/etrip.tex" \
   "$repo_root/third_party/trip/trip.tfm" \
   "$repo_root/tests/corpus/e2e/etrip.expected.dvi"

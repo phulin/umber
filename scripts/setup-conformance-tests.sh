@@ -36,14 +36,7 @@ printf '%s\n' 'Fetching/verifying external corpus' >&2
 "$corpus_sync_bin"
 printf '%s\n' 'External corpus acquisition complete.' >&2
 
-scripts/fetch-hyphen-corpus.sh
-if [[ ! -f third_party/hyphen/hyphen.tex ]]; then
-  printf '%s\n' \
-    'setup-conformance-tests: hyphen.tex is unavailable; ensure kpsewhich can locate it' >&2
-  exit 2
-fi
-scripts/fetch-font-corpus.sh
-scripts/trip.sh fetch
+scripts/fetch-conformance-inputs.sh
 
 for case in story gentle trip etrip; do
   scripts/regen-fixtures.sh --case "e2e/${case}"

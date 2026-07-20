@@ -260,7 +260,7 @@ Font metric parity tests use an optional local TFM corpus under
 installation with:
 
 ```bash
-scripts/fetch-font-corpus.sh
+scripts/fetch-conformance-inputs.sh
 ```
 
 The live `tftopl` corpus cross-check runs through
@@ -315,24 +315,17 @@ opcode without using the external corpus.
 
 The official Knuth TeX82 TRIP and e-TeX V2 e-TRIP conformance materials are
 pinned separately in `tests/trip-manifest.txt`. They are fetched into
-gitignored `third_party/trip/` only by `scripts/trip.sh`; do not commit the
-fetched CTAN files. The Cargo test returns cleanly unless both `trip.tex` and
-`trip.tfm` are present. The full
-standalone TRIP harness requires the
-special INITEX build documented by `tripman.tex` Appendix A and writes
-comparison work products under `target/trip/`.
+gitignored `third_party/trip/` by `scripts/fetch-conformance-inputs.sh`; do not
+commit the fetched CTAN files. The Cargo test returns cleanly unless both
+`trip.tex` and `trip.tfm` are present.
 The `e2e_conformance_trip` and `e2e_conformance_etrip` Cargo integration tests
 share an in-process two-phase format-create/format-load helper and then apply
 the same preamble-comment-only, byte-identical final-DVI assertion used by
-Story and Gentle. They never invoke `scripts/trip.sh` or an Umber subprocess.
+Story and Gentle. They never invoke an Umber subprocess.
 Run TRIP with
 `cargo test -p umber --test it e2e_conformance_trip -- --nocapture`.
 Run the required e-TRIP DVI gate with
 `cargo test -p umber --test it e2e_conformance_etrip -- --nocapture`.
-`scripts/trip.sh self-test` stays fetch-free and uses synthetic DVI and DVItype
-streams to exercise the special-reference phase's exact 64sp reconciliation
-boundary plus rejection of representative structural and semantic differences
-with actionable context. Umber's final-DVI oracle does not use that allowance.
 
 ## Proptest Budgets
 

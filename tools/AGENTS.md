@@ -31,12 +31,9 @@ It reconstructs columnar sample stacks, consumes Samply presymbolication
 sidecars including inline frames, and reports self/inclusive, subtree, and
 runtime-caller attribution for persistent engine profiles.
 
-`scripts/trip.sh` owns specialized official Knuth TeX82 TRIP and e-TeX V2
-e-TRIP preparation and standalone compatibility orchestration with shell plus
-ambient TeXware tools.
-Cargo integration tests do not invoke this script; they execute the same
-two-phase format workflow directly in Rust. The script fetches the pinned CTAN
-files in `tests/trip-manifest.txt`, reuses the pinned `trip.tfm`
-directly for e-TRIP, requires DVItype only for the
-standalone reference phase, and requires `UMBER_TRIP_INITEX` to point at
-Knuth's special TRIP INITEX build for a passing reference phase.
+`scripts/fetch-conformance-inputs.sh` acquires the external hyphenation and
+Computer Modern font inputs and fetches and verifies the pinned official Knuth
+TeX82 TRIP and e-TeX V2 e-TRIP materials. Cargo integration tests execute the
+two-phase format workflow directly in Rust and reuse the pinned `trip.tfm` for
+e-TRIP. Fixture regeneration independently runs the two-phase reference
+workload with pdfTeX.

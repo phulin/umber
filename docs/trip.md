@@ -7,10 +7,8 @@ external document corpus and share the same strict final-DVI oracle as Story
 and Gentle. Run them with:
 
 ```bash
-scripts/trip.sh
-scripts/trip.sh --offline
-scripts/trip.sh self-test
-scripts/build-trip-initex.sh
+scripts/fetch-conformance-inputs.sh
+scripts/fetch-conformance-inputs.sh --offline
 cargo test -p umber --test it e2e_conformance_trip -- --nocapture
 cargo test -p umber --test it e2e_conformance_etrip -- --nocapture
 scripts/regen-fixtures.sh --case e2e/trip
@@ -33,10 +31,9 @@ as `\the\count15` without exposing caller input, while the rendered digits are
 still collected into the mark or definition. TRIP page 3 exercises this with
 the numeric marks created by `\everypar`.
 
-`scripts/trip.sh` fetches official CTAN bytes into gitignored
-`third_party/trip/`, verifies SHA-256 hashes, uses the pinned official
-`trip.tfm`, runs the INITEX transcript phase, runs the format-loaded TRIP
-phase, and runs DVItype. The Cargo integration test first checks for
+`scripts/fetch-conformance-inputs.sh` fetches official CTAN bytes into
+gitignored `third_party/trip/` and verifies their SHA-256 hashes. The Cargo
+integration test first checks for
 `third_party/trip/trip.tex` and `trip.tfm`; when either is absent it returns
 without running TRIP. When both are present it uses a shared in-process Rust
 helper for format creation and the format-loaded run, then uses the shared
@@ -46,25 +43,9 @@ DVI after normalizing only the preamble comment. DVItype is diagnostic for
 Umber. Fixture regeneration independently executes both TRIP phases with
 pdfTeX and installs that locally generated DVI through
 `scripts/regen-fixtures.sh`; it never copies the official third-party DVI.
-The generated `tripin.log`, `trip.log`, `trip.fot`, and `tripos.tex` remain in
-`target/trip/` for diagnosis, but their parity belongs to the diagnostic tier
-and does not affect this DVI milestone. The self-test does not fetch or run
-TeX. It uses deterministic synthetic DVI and DVItype streams to prove both
-signs of the special-reference phase's exact 64sp reconciliation boundary,
-reject 65sp and structural or semantic changes across the DVI command classes,
-and verify that each
-rejection reports byte, page, opcode, and surrounding context as appropriate.
-It also seeds retained format, DVI, and DVItype outputs and proves that failing
-producers cannot reuse them.
-
-`--keep-work` retains diagnostic transcripts and diffs, but never a generated
-artifact as proof of a later invocation. Each Appendix A producer starts with
-its format, DVI, or DVItype output absent, handles the intentional TRIP engine
-exit status explicitly, and must create a fresh nonempty artifact. DVItype
-must additionally exit successfully in the standalone reference workflow.
-Thus a failed INITEX,
-format-loaded run, or DVItype conversion cannot be hidden by an earlier green
-run in the same `target/trip/` directory.
+The official `tripin.log`, `trip.log`, `trip.fot`, and `tripos.tex` remain
+pinned inputs for the future diagnostic transcript-parity tier; they do not
+affect the current DVI gate.
 
 ## Source Pins
 
@@ -118,83 +99,16 @@ Web2C change inputs, TRIP configuration, and upstream TRIP harness by SHA-256.
 The build records the exact configure/make commands and platform-specific tool
 hashes in `target/trip-initex/build-record.txt`.
 
-## Required Tools
+## Reference Toolchain
 
-The standalone DVItype phase requires `dvitype`, overridable with
-`UMBER_REF_DVITYPE`. The Cargo integration test does not require TeXware.
+The current Cargo DVI gate does not require TeXware or Knuth's special TRIP
+INITEX build. `scripts/build-trip-initex.sh` retains the hash-pinned Appendix A
+toolchain for future transcript-parity work; it writes provenance and wrappers
+under `target/trip-initex/`.
 
-The reference execution phase requires Knuth's special TRIP INITEX build from
-`tripman.tex` Appendix A. In particular, that build sets
-`mem_min=mem_bot=1`, `mem_top=mem_max=3000`, `error_line=64`,
-`half_error_line=32`, and `max_print_line=72`, with statistics enabled. Select
-it with:
-
-```bash
-UMBER_TRIP_INITEX=/absolute/path/to/special-initex scripts/trip.sh
-```
-
-Stock `pdftex -ini` or `tex -ini` is intentionally not accepted as a passing
-oracle; it produces different line wrapping, banners, and capacity statistics.
-
-Build and run the pinned tools with:
-
-```bash
-scripts/build-trip-initex.sh
-scripts/build-trip-initex.sh --offline # verifies/reuses the cached archive
-scripts/trip.sh reference --offline
-```
-
-The harness automatically finds `target/trip-initex/bin`; an alternate build
-can be selected with `UMBER_TRIP_TOOLS`. The wrappers set `LC_ALL=C`,
-`LANGUAGE=C`, and `TEXMFCNF` to the hash-pinned upstream
-`triptrap/texmf.cnf`. That file establishes Appendix A's memory and line
-settings and the normal TeX82 capacities that Web2C permits at runtime.
-
-## Normalization
-
-Appendix A item 6 permits slight floating-point differences, alternative
-`right`/`w`/`x` and `down`/`y`/`z` encodings, and characters, rules, and
-specials in almost the same positions. It does not specify a numeric movement
-tolerance. Umber makes that permission executable with a deliberately
-conservative project policy: corresponding movement operands may differ by at
-most 64 scaled points under the structural checks below. The numeric bound is
-Umber's policy, not a threshold quoted from Knuth.
-
-The standalone special-reference validation applies only these normalizations:
-
-- `trip.typ`: DVItype packaging text on line 1 and the quoted rendering of the
-  DVI preamble comment. Movement operands may be reconciled only when opcode,
-  byte offset, and all surrounding text match and the delta is at most 64
-  scaled points.
-- `trip.dvi`: DVI preamble comment bytes only, preserving the original comment
-  length. A structured DVI walk additionally permits at most 64 scaled points
-  of variation in movement operands while requiring identical opcode/operand
-  structure and exact identity for characters, rules, specials, fonts, page
-  structure, dimensions, and every non-movement operand.
-
-These Appendix A allowances validate the pinned reference toolchain only. The
-Umber end-to-end oracle does not apply movement reconciliation: after the DVI
-preamble comment is normalized, every byte must match the official
-`trip.dvi`. Any mismatch writes strict byte/page/opcode and disassembly context
-under `target/conformance-triage/trip/`. `scripts/trip.sh
-self-test` exercises the allowance boundary and adversarially changes movement
-encoding, characters, rules, specials, fonts, page
-structure/pointers/dimensions, and non-movement operands. Parallel DVItype
-cases prove that opcode, byte offset, and surrounding text must remain exact.
-Every rejected DVI case must retain actionable byte/page/opcode context.
-Diagnostic text normalization and parity are owned separately and are
-intentionally absent from this harness.
-
-## Current Divergence Policy
-
-The harness must not normalize or bless semantic Umber failures. A DVI or
-DVItype mismatch should be investigated against TeX82's `ship_out`,
-`hlist_out`/`vlist_out`, and `movement` procedures in `tex.web`; linked engine
-work belongs under `umber2-i8w`, not in special cases in this script. The
-committed-artifact and downstream DVI boundary is documented in
-[architecture.md §10, "Output drivers (`tex-out`)"].
-
-[architecture.md §10, "Output drivers (`tex-out`)"]: architecture.md#10-output-drivers-tex-out
+Umber's final-DVI oracle normalizes only the preamble comment and otherwise
+requires byte identity. Any mismatch writes byte, page, opcode, and
+disassembly context under `target/conformance-triage/trip/`.
 
 ## Umber format images
 

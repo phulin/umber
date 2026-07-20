@@ -26,8 +26,8 @@ Build the pinned TeX Live 2025 classic TeX and TeXware programs used for the
 official TRIP reference phase. The archive and every relevant in-archive input
 are hash-verified. After the first download, --offline performs no network I/O.
 
-The resulting wrappers are under target/trip-initex/bin. scripts/trip.sh uses
-them automatically when UMBER_TRIP_TOOLS=target/trip-initex/bin is set.
+The resulting wrappers are under target/trip-initex/bin for manual reference
+work and the future transcript-parity tier.
 EOF
 }
 

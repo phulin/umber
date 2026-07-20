@@ -567,7 +567,7 @@ fn corpus_font_paths(root: &Path) -> std::result::Result<Vec<(String, PathBuf)>,
         Ok(paths)
     } else {
         Err(format!(
-            "skipping tftopl corpus cross-check: missing {} in {}; run scripts/fetch-font-corpus.sh",
+            "skipping tftopl corpus cross-check: missing {} in {}; run scripts/fetch-conformance-inputs.sh",
             missing.join(", "),
             root.display()
         ))

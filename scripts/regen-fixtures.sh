@@ -335,7 +335,7 @@ regen_e2e_case() {
       [[ -f "${repo_root}/third_party/corpus/plain.tex" ]] || \
         die "missing third_party/corpus/plain.tex; run scripts/setup-conformance-tests.sh"
       [[ -f "${repo_root}/third_party/hyphen/hyphen.tex" ]] || \
-        die "missing third_party/hyphen/hyphen.tex; run scripts/fetch-hyphen-corpus.sh"
+        die "missing third_party/hyphen/hyphen.tex; run scripts/fetch-conformance-inputs.sh"
       build_parity_harness_once
       run_command "Regenerating e2e/${case} reference DVI fixture" \
         "$parity_harness_bin" \
@@ -368,9 +368,9 @@ regen_trip_pdftex_fixture() {
   [[ -n "$pdftex" && -x "$pdftex" ]] || \
     die "could not locate pdftex; set UMBER_REF_PDFTEX=/absolute/path/to/pdftex"
   [[ -f "${repo_root}/third_party/trip/trip.tex" ]] || \
-    die "missing third_party/trip/trip.tex; run scripts/trip.sh fetch"
+    die "missing third_party/trip/trip.tex; run scripts/fetch-conformance-inputs.sh"
   [[ -f "${repo_root}/third_party/trip/trip.tfm" ]] || \
-    die "missing third_party/trip/trip.tfm; run scripts/trip.sh fetch"
+    die "missing third_party/trip/trip.tfm; run scripts/fetch-conformance-inputs.sh"
 
   tmp_root="$(mktemp -d)"
   cp "${repo_root}/third_party/trip/trip.tex" "$tmp_root/trip.tex"
@@ -424,9 +424,9 @@ regen_etrip_pdftex_fixture() {
   [[ -n "$pdftex" && -x "$pdftex" ]] || \
     die "could not locate pdftex; set UMBER_REF_PDFTEX=/absolute/path/to/pdftex"
   [[ -f "${repo_root}/third_party/trip/etrip.tex" ]] || \
-    die "missing third_party/trip/etrip.tex; run scripts/trip.sh fetch"
+    die "missing third_party/trip/etrip.tex; run scripts/fetch-conformance-inputs.sh"
   [[ -f "${repo_root}/third_party/trip/trip.tfm" ]] || \
-    die "missing third_party/trip/trip.tfm; run scripts/trip.sh fetch"
+    die "missing third_party/trip/trip.tfm; run scripts/fetch-conformance-inputs.sh"
 
   tmp_root="$(mktemp -d)"
   {

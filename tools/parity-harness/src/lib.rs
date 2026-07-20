@@ -790,7 +790,7 @@ fn staged_source_dir(
     let hyphen = repo_root.join("third_party/hyphen/hyphen.tex");
     if !hyphen.is_file() {
         bail!(
-            "missing {}; run scripts/fetch-hyphen-corpus.sh before e2e parity",
+            "missing {}; run scripts/fetch-conformance-inputs.sh before e2e parity",
             hyphen.display()
         );
     }

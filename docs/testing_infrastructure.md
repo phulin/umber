@@ -285,38 +285,26 @@ conformance tests that run conditionally when their local inputs and oracles
 are present:
 
 ```bash
-scripts/trip.sh
-scripts/trip.sh --offline
-scripts/trip.sh self-test
-scripts/build-trip-initex.sh
+scripts/fetch-conformance-inputs.sh
+scripts/fetch-conformance-inputs.sh --offline
 cargo test -p umber --test it e2e_conformance_trip -- --nocapture
 cargo test -p umber --test it e2e_conformance_etrip -- --nocapture
 scripts/regen-fixtures.sh --case e2e/trip
 scripts/regen-fixtures.sh --case e2e/etrip
 ```
 
-`scripts/trip.sh` reads `tests/trip-manifest.txt`, fetches exact official TRIP
-and e-TRIP bytes into gitignored `third_party/trip/`, and verifies every SHA-256 before
-running. It uses the pinned canonical `trip.tfm`, then runs the documented
-INITEX and format-loaded TRIP phases.
+`scripts/fetch-conformance-inputs.sh` acquires the shared hyphenation and font
+inputs, reads `tests/trip-manifest.txt`, fetches exact official TRIP and e-TRIP
+bytes into gitignored `third_party/trip/`, and verifies every SHA-256. The tests
+use the pinned canonical `trip.tfm`, then run the documented INITEX and
+format-loaded TRIP phases in process.
 
-Cargo conformance tests do not invoke `scripts/trip.sh` or launch Umber as a
-subprocess. Story and Gentle call the engine directly through the staged
-fixture callback; TRIP and e-TRIP share one in-process two-phase format helper.
+Cargo conformance tests do not launch Umber as a subprocess. Story and Gentle
+call the engine directly through the staged fixture callback; TRIP and e-TRIP
+share one in-process two-phase format helper.
 `scripts/check-and-test.sh` checks these conditional corpus prerequisites before
 starting the workspace gate and prints a warning naming every e2e case that
 will be skipped and each missing file.
-
-This tier requires Knuth's special TRIP INITEX build described in
-`tripman.tex` Appendix A. Stock `pdftex -ini` or `tex -ini` is useful only as a
-failing sanity check because the official log line widths, memory limits, and
-capacity statistics depend on that special build.
-`UMBER_TRIP_INITEX=/absolute/path/to/initex` selects it.
-`scripts/build-trip-initex.sh` builds the hash-pinned TeX Live Web2C classic
-TeX plus DVItype; after its source archive is cached, both the build and
-reference phase run offline. The harness automatically uses
-`target/trip-initex/bin`; `UMBER_TRIP_TOOLS` can select another pinned build,
-and `UMBER_REF_DVITYPE` can select DVItype when it is not on `PATH`.
 
 The Umber integration test gates only the final DVI. Generated logs, terminal
 photo, and `tripos.tex` remain diagnostic outputs in the separate diagnostic
@@ -325,12 +313,9 @@ requires byte identity with the committed, locally pdfTeX-generated fixture.
 Regeneration executes the two-phase workload from `trip.tex` and `trip.tfm`
 and never copies the official `third_party/trip/trip.dvi`.
 
-DVItype remains diagnostic. Standalone reference-engine validation retains
-the narrowly bounded Appendix A movement reconciliation needed to validate the
-special reference toolchain; that allowance is never applied to Umber's final
-DVI. Failures write byte, page, opcode, and disassembly context under
-`target/conformance-triage/trip/`. See [TRIP](trip.md) for the exact source
-pins and normalization policy.
+DVItype remains diagnostic. Failures write byte, page, opcode, and
+disassembly context under `target/conformance-triage/trip/`. See
+[TRIP](trip.md) for the exact source pins and normalization policy.
 
 ## Specialized Guards
 
