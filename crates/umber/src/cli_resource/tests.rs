@@ -403,6 +403,59 @@ fn schema_three_format_closure_publishes_local_overrides_and_ignores_stale_hints
 }
 
 #[test]
+fn incompatible_format_schema_is_rejected_before_cache_lookup_or_acquisition() {
+    let directory = TempDir::new().expect("distribution tempdir");
+    let format_bytes = b"format that must not be acquired";
+    let format_digest = hex_digest(format_bytes);
+    let shard_digest = "0".repeat(64);
+    let incompatible_schema = Universe::FORMAT_SCHEMA_VERSION + 1;
+    let root = format!(
+        "{{\"schema\":3,\"distribution\":\"schema-preflight\",\"objectsBaseUrl\":\"https://example.invalid/objects/\",\"shardBits\":0,\"shardCount\":1,\"shards\":[\"{shard_digest}\"],\"formats\":{{\"latex\":{{\"object\":\"sha256-{format_digest}\",\"sha256\":\"{format_digest}\",\"bytes\":{},\"engine\":\"umber\",\"engineVersion\":\"{}\",\"formatSchema\":{incompatible_schema},\"sourceDistribution\":\"schema-preflight\",\"sourceManifestSha256\":\"{}\",\"sourceDateEpoch\":0}}}}}}\n",
+        format_bytes.len(),
+        crate::PACKAGE_VERSION,
+        "1".repeat(64)
+    );
+    std::fs::write(directory.path().join("manifest-v3.json"), root).expect("root manifest");
+
+    let cache_root = directory.path().join("cache");
+    let cached_object = cache_root
+        .join("objects")
+        .join(format!("sha256-{format_digest}"));
+    std::fs::create_dir_all(cached_object.parent().expect("cache objects directory"))
+        .expect("cache objects directory");
+    let lookup_sentinel = b"corrupt cache sentinel";
+    std::fs::write(&cached_object, lookup_sentinel).expect("cache lookup sentinel");
+
+    let mut resolver = DistributionResolver::new(
+        ObjectCache::new(&cache_root),
+        Some(directory.path().to_string_lossy().into_owned()),
+        None,
+        false,
+    );
+    let error = match resolver.resolve_format(
+        Path::new("latex.fmt"),
+        EngineMode::Latex,
+        &FetchCancellation::new(),
+    ) {
+        Ok(_) => panic!("incompatible format schema was accepted"),
+        Err(error) => error,
+    };
+
+    assert_eq!(
+        error.to_string(),
+        format!(
+            "format resource error: format latex uses schema {incompatible_schema}; this runtime requires schema {}",
+            Universe::FORMAT_SCHEMA_VERSION
+        )
+    );
+    assert_eq!(
+        std::fs::read(cached_object).expect("untouched lookup sentinel"),
+        lookup_sentinel,
+        "schema preflight must run before the object cache removes corrupt entries"
+    );
+}
+
+#[test]
 fn format_closure_batch_is_installed_for_an_exactly_two_attempt_retry() {
     for (engine, closure_len) in [(EngineMode::Latex, 57), (EngineMode::PdfLatex, 60)] {
         let directory = TempDir::new().expect("distribution tempdir");

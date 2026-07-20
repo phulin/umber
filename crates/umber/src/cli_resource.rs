@@ -11,7 +11,7 @@ use std::time::Duration;
 
 use sha2::{Digest, Sha256};
 use tex_fonts::AcceptedFontContainers;
-use tex_state::World;
+use tex_state::{Universe, World};
 use umber_distribution::{
     DependencyHint, FileKind as DistributionFileKind, FileRequestKey as DistributionFileRequestKey,
     ManifestShard, ShardFile, ShardedManifestRoot,
@@ -768,6 +768,13 @@ impl DistributionResolver {
                 "format {name} requires Umber {}, this runtime is {}",
                 entry.engine_version,
                 crate::PACKAGE_VERSION
+            )));
+        }
+        if entry.format_schema != Universe::FORMAT_SCHEMA_VERSION {
+            return Err(NativeRunError::Format(format!(
+                "format {name} uses schema {}; this runtime requires schema {}",
+                entry.format_schema,
+                Universe::FORMAT_SCHEMA_VERSION
             )));
         }
         if entry.engine != engine.name() && entry.engine != "umber" {

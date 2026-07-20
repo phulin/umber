@@ -113,6 +113,12 @@ when those three independent checks agree. The cache contains no process-local
 handles or job-local mutable state, consistent with
 [the frozen-format contract](frozen_format.md).
 
+Both native and browser packaged-format resolvers compare the manifest's engine
+version and format schema with the running Umber build before consulting their
+object cache or starting acquisition. These metadata checks provide an early,
+deterministic incompatible-format diagnostic; they do not replace transport
+digest validation or the authoritative Rust `Universe` decode after acquisition.
+
 ## Schema-10 verification receipt (2026-07-18)
 
 The closure-cache acceptance run used the `94232834` implementation base,
