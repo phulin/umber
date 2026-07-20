@@ -3415,6 +3415,58 @@ fn assert_semantic_edit_matches_cold(name: &str, original: &str, edited: &str) -
 }
 
 #[test]
+fn every_box_hooks_match_cold_execution_after_retained_paragraph_edit() {
+    let original = "\\font\\tenrm=cmr10\\relax\\tenrm\n\\everyhbox{\\global\\advance\\count20 by1}\\setbox0=\\hbox{X}\nalpha\\par\n\\message{HOOKS=\\the\\count20}\\shipout\\hbox{\\copy0}\\end";
+    let edited = original.replace("alpha", "omega");
+    let mut session = Session::start(
+        template(),
+        "every-box-retained",
+        RevisionId::new(1),
+        original.to_owned(),
+        usize::MAX,
+    )
+    .expect("incremental session");
+    session
+        .register_input_file(Path::new("cmr10.tfm"), CMR10.to_vec())
+        .expect("incremental font");
+    let initial = session.cold().expect("initial cold run");
+    assert!(initial.effects.iter().any(|effect| matches!(
+        effect,
+        tex_state::EffectRecord::StreamWrite { text, .. } if text.contains("HOOKS=1")
+    )));
+    let incremental = session
+        .advance(
+            RevisionId::new(2),
+            Edit {
+                base_revision: RevisionId::new(1),
+                expected_hash: ContentHash::from_bytes(original.as_bytes()),
+                range: 0..original.len(),
+                replacement: edited.clone(),
+            },
+        )
+        .expect("retained edit");
+    let mut cold = Session::start(
+        template(),
+        "every-box-retained",
+        RevisionId::new(2),
+        edited,
+        usize::MAX,
+    )
+    .expect("cold comparison");
+    cold.register_input_file(Path::new("cmr10.tfm"), CMR10.to_vec())
+        .expect("cold font");
+    let expected = cold.cold().expect("cold edited run");
+    assert_eq!(incremental.dvi_pages, expected.dvi_pages);
+    assert_eq!(incremental.artifacts, expected.artifacts);
+    assert_eq!(incremental.effects, expected.effects);
+    let reuse = incremental.reuse;
+    assert!(
+        reuse.restart_boundary.is_some() || reuse.suffixes_adopted > 0,
+        "the comparison should exercise retained execution: {reuse:?}"
+    );
+}
+
+#[test]
 fn cold_history_contains_only_named_restartable_boundaries() {
     let text = source("a");
     let mut session = Session::start(template(), "test", RevisionId::new(1), text, usize::MAX)

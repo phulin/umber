@@ -64,6 +64,7 @@ Use this crate when behavior mutates live engine state or depends on TeX's curre
 - `src/timing.rs`: process-local execution telemetry timer with an inert fallback for WASM hosts that do not provide `std::time::Instant`.
 - `src/tests.rs`: crate-internal test harness module and shared imports.
 - `src/tests/assignments.rs`: tests for registers, definitions, arithmetic, token assignments, and assignments.
+- `src/tests/boxes.rs`: focused TeX82 every-hbox/every-vbox timing, grouping, provenance, format, and rollback tests.
 - `src/tests/core.rs`: tests for mode nest behavior, execution context, dispatch, and core errors.
 - `src/tests/fonts.rs`: tests for font loading, font parameters, and font-related grouping semantics.
 - `src/tests/grouping_parity.rs`: grouping, after-token, magnification, and box-register tests that read committed reference micro fixtures.

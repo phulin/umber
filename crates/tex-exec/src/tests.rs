@@ -9,6 +9,7 @@ use tex_state::{InteractionMode, Universe};
 
 mod align;
 mod assignments;
+mod boxes;
 mod core;
 mod fonts;
 mod grouping_parity;
