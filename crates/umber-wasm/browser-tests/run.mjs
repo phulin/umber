@@ -27,6 +27,8 @@ const chrome =
 	(process.platform === "darwin"
 		? "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
 		: "/usr/bin/google-chrome");
+const chromeSandboxArguments =
+	process.env.CHROME_NO_SANDBOX === "1" ? ["--no-sandbox"] : [];
 const encoder = new TextEncoder();
 
 const digest = (bytes) => createHash("sha256").update(bytes).digest("hex");
@@ -255,6 +257,7 @@ const browser = spawn(
 	chrome,
 	[
 		"--headless=new",
+		...chromeSandboxArguments,
 		"--disable-gpu",
 		"--no-first-run",
 		"--no-default-browser-check",

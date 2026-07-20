@@ -43,4 +43,4 @@ jobs:
       - name: Native quality gate
         run: scripts/check-and-test.sh
       - name: Test optimized package in Firefox and Chrome
-        run: CHROME="$(command -v chrome)" scripts/check-wasm.sh
+        run: CHROME="$(command -v chrome)" CHROME_NO_SANDBOX=1 scripts/check-wasm.sh
