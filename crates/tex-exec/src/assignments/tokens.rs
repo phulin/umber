@@ -203,9 +203,9 @@ pub(super) fn token_meaning_for_let(
             },
         ),
         Token::Char { ch, cat } => Ok(Meaning::CharToken { ch, cat }),
-        token if token.is_frozen_end_template() => Ok(Meaning::ExpandablePrimitive(
-            tex_state::meaning::ExpandablePrimitive::EndTemplate,
-        )),
+        token if token.is_frozen_end_template() || token.is_frozen_endv() => Ok(
+            Meaning::ExpandablePrimitive(tex_state::meaning::ExpandablePrimitive::EndTemplate),
+        ),
         Token::Param(_) | Token::Frozen(_) => Err(ExecError::InvalidLetRhs {
             token,
             origin: traced.origin(),

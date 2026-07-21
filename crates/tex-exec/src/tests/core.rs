@@ -1896,6 +1896,32 @@ fn futurelet_assigns_second_token_meaning_and_preserves_order() {
 }
 
 #[test]
+fn let_copies_frozen_endv_alignment_meaning() {
+    let mut stores = Universe::new();
+    install_unexpandable_primitives(&mut stores);
+    let let_token = stores.symbol("let").expect("let primitive");
+    let alias = stores.intern("endv_alias");
+    let rhs = stores.intern_token_list(&[Token::Cs(alias.symbol()), stores.frozen_endv_token()]);
+    let mut input = InputStack::new(MemoryInput::new(""));
+    input.push_token_list(rhs, TokenListReplayKind::Inserted);
+    let mut context = crate::ExecutionContext::new("texput");
+
+    dispatch_delivered_token(
+        &mut ModeNest::new(),
+        TracedTokenWord::pack(Token::Cs(let_token.symbol()), OriginId::UNKNOWN),
+        &mut input,
+        &mut stores,
+        &mut context,
+    )
+    .expect("TeX's let copies the command of an inaccessible alignment token");
+
+    assert_eq!(
+        stores.meaning(alias.symbol()),
+        Meaning::ExpandablePrimitive(ExpandablePrimitive::EndTemplate)
+    );
+}
+
+#[test]
 fn def_accepts_active_character_target_and_expands_it() {
     let mut stores = Universe::new();
     install_unexpandable_primitives(&mut stores);
