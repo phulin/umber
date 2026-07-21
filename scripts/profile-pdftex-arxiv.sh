@@ -146,15 +146,7 @@ setup() {
 
 unpack_source() {
   local archive=$1 destination=$2
-  mkdir -p "$destination"
-  if tar tzf "$archive" >/dev/null 2>&1; then
-    tar xzf "$archive" -C "$destination"
-  elif gzip -t "$archive" >/dev/null 2>&1; then
-    gzip -dc "$archive" >"$destination/main.tex"
-  else
-    echo "arXiv returned a non-source payload: $archive" >&2
-    return 1
-  fi
+  python3 "$SCRIPT_DIR/arxiv_corpus.py" materialize "$archive" "$destination"
 }
 
 entrypoint() {
@@ -207,11 +199,10 @@ check_entrypoint() {
   echo 'entrypoint selection ok'
 }
 
-process_sample() {
+process_sample() (
   local id=$1 category=$2
   local key=${id//\//_}
   local archive="$ROOT/samples/$key.src"
-  local directory="$ROOT/samples/$key"
   local result="$ROOT/results/$key"
   mkdir -p "$result"
   rm -f "$result/summary.tsv"
@@ -219,16 +210,22 @@ process_sample() {
     curl -L --fail --show-error --silent --retry 3 \
       -o "$archive" "https://export.arxiv.org/e-print/$id"
   fi
-  # Generated aux files can change the primitive set on a second run. Keep the
-  # downloaded archive, but profile a freshly extracted source tree every time.
-  rm -rf "$directory"
-  unpack_source "$archive" "$directory"
+  # The archive is the durable input. Every reference run gets a disposable
+  # exact extraction so generated TeX artifacts never enter a shared view.
+  mkdir -p "$ROOT/work"
+  local run_root directory
+  run_root="$(mktemp -d "$ROOT/work/$key.XXXXXX")"
+  trap 'rm -rf -- "$run_root"' EXIT
+  directory="$run_root/source"
+  unpack_source "$archive" "$directory" >"$result/source-members.json"
   local main
   main="$(entrypoint "$directory")"
   [[ -n "$main" ]] || {
     echo "no TeX entrypoint found for $id" >&2
     return
   }
+  python3 "$SCRIPT_DIR/arxiv_corpus.py" identity "$archive" "${main#"$directory/"}" \
+    >"$result/source-identity.json"
   set +e
   (
     cd "$(dirname "$main")"
@@ -269,7 +266,7 @@ process_sample() {
   printf '%s\t%s\t%s\t%s\t%s\t%s\n' \
     "$id" "$category" "${main#"$directory/"}" "$rc" "$count" "$input_count" \
     | tee "$result/summary.tsv"
-}
+)
 
 smoke() {
   [[ -x "$PDFTEX" && -f "$FORMAT" ]] || {
@@ -322,7 +319,7 @@ readonly ACTION=${1:-all}
 case "$ACTION" in
   -h|--help|help) usage; exit 0 ;;
   setup|smoke|all)
-    for command in git curl make rg tar gzip kpsewhich; do
+    for command in git curl make rg tar gzip kpsewhich python3; do
       require "$command"
     done
     ;;

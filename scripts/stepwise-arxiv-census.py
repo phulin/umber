@@ -11,8 +11,11 @@ import os
 import re
 import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
+
+from arxiv_corpus import materialize, source_identity, verify_view
 
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -71,18 +74,6 @@ def sha256_file(path: Path) -> str:
     with path.open("rb") as source:
         for chunk in iter(lambda: source.read(1024 * 1024), b""):
             value.update(chunk)
-    return value.hexdigest()
-
-
-def sha256_tree(path: Path) -> str:
-    value = hashlib.sha256()
-    if not path.is_dir():
-        fail(f"source directory is missing: {path}")
-    for item in sorted(candidate for candidate in path.rglob("*") if candidate.is_file()):
-        relative = item.relative_to(path).as_posix().encode()
-        value.update(len(relative).to_bytes(8, "big"))
-        value.update(relative)
-        value.update(bytes.fromhex(sha256_file(item)))
     return value.hexdigest()
 
 
@@ -160,8 +151,8 @@ def artifact_hashes(results: Path, key: str, finalizer_status: str) -> dict[str,
     }
 
 
-def validate_record(record: dict, results: Path, paper: str, source_sha256: str) -> None:
-    if record.get("id") != paper or record.get("source_sha256") != source_sha256:
+def validate_record(record: dict, results: Path, paper: str, identity: dict) -> None:
+    if record.get("id") != paper or record.get("source_identity") != identity:
         fail(f"resumable row identity changed: {paper}")
     expected = artifact_hashes(results, paper.replace("/", "_"), record["finalizer_status"])
     if record.get("artifacts") != expected:
@@ -192,6 +183,7 @@ def outcome_digest(papers: list[dict], records: dict[str, dict]) -> str:
 def main() -> None:
     sample = env_path("UMBER_ARXIV_SAMPLE", ROOT / "scripts/pdftex-arxiv-sample-100.tsv")
     corpus = env_path("UMBER_ARXIV_CORPUS", ROOT / "third_party/arxiv-sample-100/sources")
+    archives = env_path("UMBER_ARXIV_ARCHIVES", corpus.parent / "archives")
     format_path = env_path("UMBER_ARXIV_FORMAT")
     distribution = env_path("UMBER_ARXIV_DISTRIBUTION")
     binary = env_path("UMBER_ARXIV_BINARY", ROOT / "target/debug/umber")
@@ -218,11 +210,23 @@ def main() -> None:
         papers = list(csv.DictReader(source, delimiter="\t"))[:limit]
     if len(papers) != limit or len({row["id"] for row in papers}) != limit:
         fail("sample does not contain the requested number of unique rows")
-    source_hashes = {
-        row["id"]: sha256_tree(corpus / row["id"].replace("/", "_")) for row in papers
-    }
+    source_identities = {}
+    entrypoints = {}
+    for row in papers:
+        paper_id = row["id"]
+        key = paper_id.replace("/", "_")
+        archive = archives / f"{key}.src"
+        if not archive.is_file():
+            fail(f"source archive is missing: {archive}")
+        source_dir = corpus / key
+        verify_view(archive, source_dir)
+        main_input = entrypoint(source_dir)
+        relative_entrypoint = (main_input.relative_to(source_dir).as_posix()
+                               if main_input is not None else "")
+        entrypoints[paper_id] = relative_entrypoint
+        source_identities[paper_id] = source_identity(archive, relative_entrypoint)
     immutable = {
-        "schema": 2,
+        "schema": 3,
         "binary_path": str(binary),
         "binary_sha256": sha256_file(binary),
         "format_path": str(format_path),
@@ -230,7 +234,7 @@ def main() -> None:
         "distribution_path": str(distribution),
         "distribution_manifest_sha256": sha256_file(manifest),
         "sample_sha256": sha256_file(sample),
-        "source_sha256": source_hashes,
+        "source_identities": source_identities,
         "limit": limit,
         "engine_fuel": fuel,
         "max_rss_mib": rss,
@@ -261,7 +265,7 @@ def main() -> None:
         record_path = results / "rows" / f"{paper['id'].replace('/', '_')}.json"
         if record_path.exists():
             record = json.loads(record_path.read_text())
-            validate_record(record, results, paper["id"], source_hashes[paper["id"]])
+            validate_record(record, results, paper["id"], source_identities[paper["id"]])
             records[paper["id"]] = record
     write_summary(results, papers, records)
 
@@ -295,11 +299,10 @@ def main() -> None:
             continue
         key = paper_id.replace("/", "_")
         source_dir = corpus / key
-        main_input = entrypoint(source_dir)
         row = {name: 0 for name in HEADER}
         row["id"] = paper_id
-        row["source_sha256"] = source_hashes[paper_id]
-        if main_input is None:
+        row["source_identity"] = source_identities[paper_id]
+        if not entrypoints[paper_id]:
             row.update(engine_status="no-entrypoint", finalizer_status="not-run", error_cluster="no-entrypoint")
             log_path = results / f"{key}.engine.log"
             log_path.write_text("no live document entrypoint\n")
@@ -308,17 +311,23 @@ def main() -> None:
             partial_log = results / f"{key}.engine.log.partial"
             partial_pdf = results / f"{key}.pdf.partial"
             partial_inputs = results / f"{key}.inputs.tsv.partial"
-            env = os.environ.copy()
-            env.update(UMBER_RESOURCE_TELEMETRY="1", UMBER_ENGINE_FUEL=str(fuel),
-                       TEXINPUTS=f"{main_input.parent}:{texinputs}", TEXFONTS=texfonts)
-            command = [sys.executable, str(guard), "--timeout-seconds", str(timeout),
-                       "--max-rss-mib", str(rss), "--term-grace-seconds", "2", "--",
-                       str(binary), "run", *run_flags, "--pdf", str(partial_pdf),
-                       "--input-records-out", str(partial_inputs), str(main_input)]
-            started = time.monotonic_ns()
-            with partial_log.open("wb") as output:
-                completed = subprocess.run(command, cwd=results, env=env, stdout=output, stderr=subprocess.STDOUT)
+            with tempfile.TemporaryDirectory(prefix=f"umber-arxiv-{key}-") as temporary:
+                run_source = Path(temporary) / "source"
+                materialize(archives / f"{key}.src", run_source)
+                main_input = run_source / entrypoints[paper_id]
+                env = os.environ.copy()
+                env.update(UMBER_RESOURCE_TELEMETRY="1", UMBER_ENGINE_FUEL=str(fuel),
+                           TEXINPUTS=f"{main_input.parent}:{texinputs}", TEXFONTS=texfonts)
+                command = [sys.executable, str(guard), "--timeout-seconds", str(timeout),
+                           "--max-rss-mib", str(rss), "--term-grace-seconds", "2", "--",
+                           str(binary), "run", *run_flags, "--pdf", str(partial_pdf),
+                           "--input-records-out", str(partial_inputs), str(main_input)]
+                started = time.monotonic_ns()
+                with partial_log.open("wb") as output:
+                    completed = subprocess.run(command, cwd=temporary, env=env,
+                                               stdout=output, stderr=subprocess.STDOUT)
             wall_ns = time.monotonic_ns() - started
+            verify_view(archives / f"{key}.src", source_dir)
             os.replace(partial_log, log_path)
             log = log_path.read_text(errors="replace")
             accepted = "RESOURCE_ENGINE_ACCEPTED" in log

@@ -5,12 +5,16 @@ root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 work=$(mktemp -d "${TMPDIR:-/tmp}/umber-arxiv-census-test.XXXXXX")
 trap 'rm -rf "$work"' EXIT HUP INT TERM
 
-mkdir -p "$work/corpus/ok" "$work/corpus/finalfail" "$work/corpus/enginefail"
+mkdir -p "$work/archive-input/ok" "$work/archive-input/finalfail" "$work/archive-input/enginefail"
+mkdir -p "$work/archives" "$work/corpus"
 mkdir -p "$work/distribution" "$work/texmf"
 printf 'id\tcategories\nok\ttest\nfinalfail\ttest\nenginefail\ttest\n' >"$work/sample.tsv"
-printf '\\documentclass{article}\n' >"$work/corpus/ok/main.tex"
-printf '\\documentclass{article}\n' >"$work/corpus/finalfail/main.tex"
-printf '\\documentclass{article}\n' >"$work/corpus/enginefail/main.tex"
+for paper in ok finalfail enginefail; do
+  printf '\\documentclass{article}\n' >"$work/archive-input/$paper/main.tex"
+  tar -czf "$work/archives/$paper.src" -C "$work/archive-input/$paper" main.tex
+  python3 "$root/scripts/arxiv_corpus.py" materialize \
+    "$work/archives/$paper.src" "$work/corpus/$paper" >/dev/null
+done
 printf 'format\n' >"$work/format.fmt"
 printf '{}\n' >"$work/distribution/manifest.json"
 
@@ -35,13 +39,14 @@ for argument in "$@"; do
   esac
 done
 main=$argument
+printf 'generated\n' >"$(dirname "$main")/document.aux"
 case "$main" in
-  */enginefail/*) echo 'invalid parameter token' >&2; exit 1 ;;
+  *enginefail*) echo 'invalid parameter token' >&2; exit 1 ;;
 esac
 echo RESOURCE_ENGINE_ACCEPTED >&2
 echo 'RESOURCE_TELEMETRY cold_starts=1 suspensions=2 local_step_retries=2 replayed_delivered_tokens=3 replayed_dispatches=3 cumulative_fuel=4 resource_wait_ns=5 engine_ns=6' >&2
 case "$main" in
-  */finalfail/*) echo 'action type missing' >&2; exit 1 ;;
+  *finalfail*) echo 'action type missing' >&2; exit 1 ;;
 esac
 printf 'pdf\n' >"$pdf"
 printf '1\tinput\n' >"$inputs"
@@ -52,6 +57,7 @@ run_census() {
   FAKE_UMBER_COUNT="$work/count" \
   UMBER_ARXIV_SAMPLE="$work/sample.tsv" \
   UMBER_ARXIV_CORPUS="$work/corpus" \
+  UMBER_ARXIV_ARCHIVES="$work/archives" \
   UMBER_ARXIV_FORMAT="$work/format.fmt" \
   UMBER_ARXIV_DISTRIBUTION="$work/distribution" \
   UMBER_ARXIV_BINARY="$work/fake-umber" \
@@ -66,6 +72,7 @@ run_census() {
 
 run_census
 test "$(cat "$work/count")" -eq 3
+test ! -e "$work/corpus/ok/document.aux"
 awk -F '\t' '$1 == "ok" { exit !($2 == "accepted" && $3 == "complete") }' "$work/results/summary.tsv"
 awk -F '\t' '$1 == "finalfail" { exit !($2 == "accepted" && $3 == "failed") }' "$work/results/summary.tsv"
 awk -F '\t' '$1 == "enginefail" { exit !($2 == "failed" && $3 == "not-run") }' "$work/results/summary.tsv"
@@ -76,6 +83,7 @@ test "$(cat "$work/count")" -eq 3
 FAKE_UMBER_COUNT="$work/count" \
 UMBER_ARXIV_SAMPLE="$work/sample.tsv" \
 UMBER_ARXIV_CORPUS="$work/corpus" \
+UMBER_ARXIV_ARCHIVES="$work/archives" \
 UMBER_ARXIV_FORMAT="$work/format.fmt" \
 UMBER_ARXIV_DISTRIBUTION="$work/distribution" \
 UMBER_ARXIV_BINARY="$work/fake-umber" \
