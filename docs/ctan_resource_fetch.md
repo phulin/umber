@@ -134,6 +134,11 @@ existing search-order semantics of `TexInputSearchPath` are preserved as the
 host policy that produces per-request candidate answers, and everything the
 chain returns still passes VFS digest, limit, conflict, and path validation
 in Rust. The restricted `|kpsewhich` pipe emulation stays host-side policy.
+Before publishing speculative manifest dependency hints, the native resolver
+checks each hinted logical key through that same ordered local search policy
+and omits hints already shadowed locally. Required distribution requests are
+unchanged, and the VFS continues to reject any true attempt to rebind an
+already provisioned request key to different content.
 
 The cache is a content-addressed store under the platform cache directory
 (`$XDG_CACHE_HOME/umber` / `~/Library/Caches/umber`), objects named by
