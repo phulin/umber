@@ -67,22 +67,30 @@ UMBER_ARXIV_DISTRIBUTION=/path/to/verified/texlive-snapshot \
   scripts/run-stepwise-arxiv-census.sh
 ```
 
-Every paper is launched independently through `scripts/run-umber-guarded.py`
-with cumulative engine fuel, wall-time, aggregate-RSS, process-group
-TERM-to-KILL, reap, and survivor enforcement. The TSV under
-`target/stepwise-arxiv-census/` records cold starts, suspensions, local replay,
-cumulative fuel, resource wait, engine time, guard status, and accepted-engine
-status. Failed rows also carry a stable error cluster so engine errors, Rust
-panics, unavailable distribution inputs, and guard terminations remain
-machine-separable. The runner requires an explicit verified local distribution,
-so snapshot-sensitive censuses cannot silently fall back to the hosted pin.
-Set `UMBER_ARXIV_OFFLINE=0` for the explicit-distribution warm pass; the default
-is an offline pass which proves the authenticated cache is sufficient. The
-default stops after accepted engine completion and finalization
-handoff. `UMBER_ARXIV_FINALIZE=1` performs a second guarded run and records the
-detached PDF-finalizer result separately, so map, encoding, PFB, or PK failures
-cannot be mistaken for engine failures. `UMBER_ARXIV_LIMIT=1` selects the
-pinned `1609.01918` reduction before a 100-paper census.
+The runner is serial and gives every paper one process through
+`scripts/run-umber-guarded.py`, with cumulative engine fuel, wall-time,
+aggregate-RSS, process-group TERM-to-KILL, reap, and survivor enforcement.
+`RESOURCE_ENGINE_ACCEPTED` marks the transfer of accepted state to detached PDF
+finalization in that process. A later map, encoding, PFB, PK, or PDF-lowering
+failure therefore remains a finalizer outcome without recompiling the paper.
+The TSV records both phase outcomes, replay telemetry, resource and engine time,
+estimated finalizer time, and guard status; failed rows retain stable clusters.
+
+Each completed row has an atomically published JSON receipt under `rows/`.
+Rerunning with the same binary, format, distribution manifest, sample, source
+tree, limits, and mode rehashes its artifacts and skips it. Only an interrupted
+row repeats. Changed identity or damaged evidence stops instead of mixing runs.
+The explicit verified local distribution prevents fallback to the hosted pin.
+The default is offline; set `UMBER_ARXIV_OFFLINE=0` for a warm cache-filling
+run.
+
+After a complete warm run, invoke the same results directory with
+`UMBER_ARXIV_OFFLINE=1 UMBER_ARXIV_VERIFY_ONLY=1`. No child is launched: the
+verifier rehashes immutable inputs and all durable row artifacts, then writes
+`offline-verification.json`. This uses the native acquisition contract that an
+acquired distribution object is digest verified and persisted in the
+content-addressed cache before engine use, so attestation does not require a
+second full compilation. `UMBER_ARXIV_LIMIT=1` selects `1609.01918` first.
 
 Snapshot scaling has a separate explicit performance tier:
 

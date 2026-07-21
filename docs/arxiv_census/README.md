@@ -67,3 +67,27 @@ engine subprocesses and 2,676 seconds in repeated PDF-finalizer subprocesses;
 resource waits account for 300.5 seconds inside engine time and orchestration
 for about 33 seconds. Rebuilding, cache acquisition, and orchestration are
 therefore not the dominant cost.
+
+The census runner now transfers accepted state directly into PDF finalization
+in the same guarded process and publishes each completed row atomically. The
+old 2,676-second `finalizer` bucket was a second full compile plus real PDF
+lowering, not finalization alone. Across the 68 accepted warm rows, first-pass
+engine and resource-wait telemetry totals 1,382.5 seconds; removing that
+duplicate pass projects about 4,742 seconds for the full census, 22.6% below
+6,125 seconds. A guarded `1609.01918` run measured 77.5 seconds in one process,
+versus 17 plus 77 seconds from the historical engine and finalizer log
+timestamps, an 18% representative wall-time reduction with the same outcome.
+Completed rows resume by immutable input and artifact identity. Offline
+reproducibility is attested without recompilation by rehashing those receipts,
+based on the acquisition layer's authenticated-before-use cache invariant; an
+independent semantic replay can still be requested separately when needed.
+
+The guarded format-load probe used the exact audit image at
+`target/pdflatex-format/pdflatex.fmt` (SHA-256
+`f640624c160500d6faafd88be3c381e94390e7edb4a547d82a4350eef73a96f4`). A
+minimal formatted article emitted the pinned `LaTeX2e <2025-11-01>` and L3
+banner and completed in 5.09 seconds; measured engine work was 0.713 seconds
+and resource wait was 0.445 seconds. Invalid image bytes were rejected as a
+truncated Umber format, while omitting `--format` completed in 0.01 seconds
+with undefined `\documentclass` and `\begin`. Census rows therefore deserialize
+the pinned format rather than rebuilding LaTeX or running initex.
