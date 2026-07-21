@@ -2760,7 +2760,14 @@ fn pdf_font_objects(
         .unwrap_or_else(|| base_font.clone());
     let subset_type1 = if subset_requested {
         type1
-            .map(|program| program.subset(&glyph_names, &subset_font_name))
+            .map(|program| {
+                program
+                    .subset(&glyph_names, &subset_font_name)
+                    .map_err(|error| PdfBuildError::Type1Subset {
+                        font: font.name.clone(),
+                        error,
+                    })
+            })
             .transpose()?
     } else {
         None
@@ -4292,12 +4299,21 @@ pub enum PdfBuildError {
     MissingFontUsage(String),
     PkFont(String),
     MissingPkFont(tex_fonts::PdfPkFontRequest),
-    MissingPkGlyph { font: String, code: u8 },
+    MissingPkGlyph {
+        font: String,
+        code: u8,
+    },
     MissingEncoding(Vec<u8>),
     MissingSpaceFontName(u32),
-    MissingBuiltinGlyphName { font: String, code: u8 },
+    MissingBuiltinGlyphName {
+        font: String,
+        code: u8,
+    },
     TrueTypeSubsetRequiresEncoding(String),
-    Type1Subset(tex_fonts::PdfType1SubsetError),
+    Type1Subset {
+        font: String,
+        error: tex_fonts::PdfType1SubsetError,
+    },
     TrueTypeSubset(tex_fonts::PdfTrueTypeSubsetError),
     MissingLiveFont(String),
     VirtualFontDepthExceeded(usize),
@@ -4306,15 +4322,33 @@ pub enum PdfBuildError {
     VirtualFontWorkExceeded(usize),
     VirtualFontOutputExceeded(usize),
     VirtualFontSpecialBytesExceeded(usize),
-    VirtualFontCycle { font: String, code: u8 },
-    MissingVirtualFontPacket { font: String, code: u32 },
+    VirtualFontCycle {
+        font: String,
+        code: u8,
+    },
+    MissingVirtualFontPacket {
+        font: String,
+        code: u32,
+    },
     VirtualFontHasNoLocalFonts(String),
-    MissingVirtualLocalFont { font: String, number: i32 },
+    MissingVirtualLocalFont {
+        font: String,
+        number: i32,
+    },
     InvalidVirtualLocalFontName(String),
     MissingVirtualLocalTfm(String),
-    InvalidVirtualLocalTfm { font: String, message: String },
-    VirtualFontCharacterOutOfRange { font: String, code: u32 },
-    MissingVirtualCharacter { font: String, code: u8 },
+    InvalidVirtualLocalTfm {
+        font: String,
+        message: String,
+    },
+    VirtualFontCharacterOutOfRange {
+        font: String,
+        code: u32,
+    },
+    MissingVirtualCharacter {
+        font: String,
+        code: u8,
+    },
     VirtualFontArithmeticOverflow,
     UnsupportedSpecial(String),
     MissingRasterImage(u32),
@@ -4429,7 +4463,9 @@ impl std::fmt::Display for PdfBuildError {
                 f,
                 "subset TrueType font {name:?} requires an explicit PDF encoding"
             ),
-            Self::Type1Subset(error) => error.fmt(f),
+            Self::Type1Subset { font, error } => {
+                write!(f, "cannot subset Type-1 PDF font {font:?}: {error:?}")
+            }
             Self::TrueTypeSubset(error) => error.fmt(f),
             Self::MissingLiveFont(name) => {
                 write!(f, "PDF artifact font {name:?} has no live metric source")
@@ -4536,12 +4572,6 @@ impl From<PdfModelError> for PdfBuildError {
 impl From<PdfSerializeError> for PdfBuildError {
     fn from(value: PdfSerializeError) -> Self {
         Self::Serialize(value)
-    }
-}
-
-impl From<tex_fonts::PdfType1SubsetError> for PdfBuildError {
-    fn from(value: tex_fonts::PdfType1SubsetError) -> Self {
-        Self::Type1Subset(value)
     }
 }
 

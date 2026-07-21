@@ -201,6 +201,14 @@ ordered `\pdfmapfile`/`\pdfmapline` operation history for every positioned text
 run; finalization cost therefore scales with the map plus document content,
 rather than their product.
 
+When a mapped Type-1 font has no external encoding, finalization resolves used
+character codes through the program's cleartext built-in encoding. The bounded
+PostScript token scan accepts both spaced entries (`dup 10 /name put`) and the
+compact form emitted by TeX Live fonts (`dup 10/name put`), including comments
+between tokens; it does not execute PostScript. A used code that intentionally
+resolves to `.notdef` remains a valid blank-glyph subset instead of being
+misclassified as a missing requested CharString.
+
 Finalization also builds pdfTeX's default document-information dictionary and
 registers it in the trailer through `pdf_writer`. `/Producer`, `/Creator`,
 `/Trapped`, and the `PTEX.Fullbanner` compatibility entry are deterministic;

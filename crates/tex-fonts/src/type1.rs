@@ -124,16 +124,25 @@ impl PdfType1Program {
     #[must_use]
     pub fn builtin_glyph_name(&self, code: u8) -> Option<Vec<u8>> {
         let cleartext = self.bytes.get(..self.length1 as usize)?;
-        let needle = format!("dup {code} /").into_bytes();
-        let start = cleartext
-            .windows(needle.len())
-            .position(|window| window == needle)?
-            + needle.len();
-        let end = cleartext[start..]
-            .iter()
-            .position(|byte| byte.is_ascii_whitespace())?
-            + start;
-        (end > start).then(|| cleartext[start..end].to_vec())
+        let mut tokens = PostScriptTokens::new(cleartext);
+        while let Some(token) = tokens.next() {
+            if token != PostScriptToken::Word(b"dup") {
+                continue;
+            }
+            let Some(PostScriptToken::Word(encoded_code)) = tokens.next() else {
+                continue;
+            };
+            let Some(PostScriptToken::LiteralName(glyph_name)) = tokens.next() else {
+                continue;
+            };
+            let Some(PostScriptToken::Word(b"put")) = tokens.next() else {
+                continue;
+            };
+            if encoded_code == code.to_string().as_bytes() && !glyph_name.is_empty() {
+                return Some(glyph_name.to_vec());
+            }
+        }
+        None
     }
 
     #[must_use]
@@ -212,6 +221,91 @@ impl PdfType1Program {
             .split(|byte| byte.is_ascii_whitespace() || matches!(byte, b'[' | b']' | b'{' | b'}'))
             .find(|token| !token.is_empty())
     }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum PostScriptToken<'a> {
+    Word(&'a [u8]),
+    LiteralName(&'a [u8]),
+    Delimiter,
+}
+
+struct PostScriptTokens<'a> {
+    bytes: &'a [u8],
+    cursor: usize,
+}
+
+impl<'a> PostScriptTokens<'a> {
+    const fn new(bytes: &'a [u8]) -> Self {
+        Self { bytes, cursor: 0 }
+    }
+}
+
+impl<'a> Iterator for PostScriptTokens<'a> {
+    type Item = PostScriptToken<'a>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        loop {
+            while self
+                .bytes
+                .get(self.cursor)
+                .is_some_and(u8::is_ascii_whitespace)
+            {
+                self.cursor += 1;
+            }
+            if self.bytes.get(self.cursor) != Some(&b'%') {
+                break;
+            }
+            while self
+                .bytes
+                .get(self.cursor)
+                .is_some_and(|byte| !matches!(byte, b'\r' | b'\n'))
+            {
+                self.cursor += 1;
+            }
+        }
+
+        let first = *self.bytes.get(self.cursor)?;
+        if first == b'/' {
+            self.cursor += 1;
+            let start = self.cursor;
+            while self
+                .bytes
+                .get(self.cursor)
+                .is_some_and(|byte| !is_postscript_separator(*byte))
+            {
+                self.cursor += 1;
+            }
+            return Some(PostScriptToken::LiteralName(
+                &self.bytes[start..self.cursor],
+            ));
+        }
+        if is_postscript_delimiter(first) {
+            self.cursor += 1;
+            return Some(PostScriptToken::Delimiter);
+        }
+
+        let start = self.cursor;
+        while self
+            .bytes
+            .get(self.cursor)
+            .is_some_and(|byte| !is_postscript_separator(*byte))
+        {
+            self.cursor += 1;
+        }
+        Some(PostScriptToken::Word(&self.bytes[start..self.cursor]))
+    }
+}
+
+const fn is_postscript_separator(byte: u8) -> bool {
+    byte.is_ascii_whitespace() || is_postscript_delimiter(byte)
+}
+
+const fn is_postscript_delimiter(byte: u8) -> bool {
+    matches!(
+        byte,
+        b'(' | b')' | b'<' | b'>' | b'[' | b']' | b'{' | b'}' | b'/' | b'%'
+    )
 }
 
 /// Reproduces pdfTeX's deterministic six-letter subset tag for a sorted glyph
@@ -352,7 +446,7 @@ fn subset_charstrings(
         .iter()
         .filter(|(_, _, name)| name == b".notdef" || glyph_names.contains(name))
         .collect::<Vec<_>>();
-    if kept.len() == 1 && !glyph_names.is_empty() {
+    if kept.len() == 1 && glyph_names.iter().any(|name| name.as_slice() != b".notdef") {
         return Err(PdfType1SubsetError::MissingRequestedGlyphs);
     }
     let mut subset = Vec::with_capacity(plaintext.len());
@@ -455,6 +549,56 @@ mod tests {
         assert_eq!(program.stem_v(), Some(69));
         assert_eq!(program.italic_angle(), Some(0));
         assert!(program.is_fixed_pitch());
+    }
+
+    #[test]
+    fn resolves_compact_builtin_entries_used_by_corpus_fonts() {
+        let header = b"%!PS\n/Encoding 256 array\n\
+            dup 10/uni03A9 put\n\
+            dup 1/acute put\n\
+            dup % encoding comments may separate tokens\n\
+              15/d15 put\n\
+            dup 0/minus put\n";
+        let mut pfb = vec![0x80, 1];
+        pfb.extend_from_slice(&(header.len() as u32).to_le_bytes());
+        pfb.extend_from_slice(header);
+        pfb.extend_from_slice(&[0x80, 2, 1, 0, 0, 0, 0, 0x80, 3]);
+        let program = PdfType1Program::from_pfb(&pfb).expect("valid synthetic PFB");
+
+        assert_eq!(
+            program.builtin_glyph_name(10).as_deref(),
+            Some(b"uni03A9".as_slice())
+        );
+        assert_eq!(
+            program.builtin_glyph_name(1).as_deref(),
+            Some(b"acute".as_slice())
+        );
+        assert_eq!(
+            program.builtin_glyph_name(15).as_deref(),
+            Some(b"d15".as_slice())
+        );
+        assert_eq!(
+            program.builtin_glyph_name(0).as_deref(),
+            Some(b"minus".as_slice())
+        );
+        assert_eq!(program.builtin_glyph_name(2), None);
+    }
+
+    #[test]
+    fn permits_a_subset_whose_only_requested_glyph_is_notdef() {
+        let pfb = include_bytes!("../../../tests/corpus/pdf/embedded_type1.pfb");
+        let program = PdfType1Program::from_pfb(pfb).expect("committed PFB");
+        let glyphs = [b".notdef".to_vec()].into_iter().collect::<BTreeSet<_>>();
+
+        let subset = program
+            .subset(&glyphs, b"AAAAAA+CMR10")
+            .expect("a blank encoded slot still forms a valid subset");
+        let decrypted = eexec_crypt(
+            &subset.bytes()[subset.length1 as usize..(subset.length1 + subset.length2) as usize],
+            false,
+        );
+        assert!(decrypted.windows(9).any(|window| window == b"/.notdef "));
+        assert!(!decrypted.windows(3).any(|window| window == b"/A "));
     }
 
     #[test]
