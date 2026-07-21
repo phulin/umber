@@ -24,7 +24,7 @@ ttf-parser = "0.25.1"
 woff2-patched = "0.4.0"
 
 [dev-dependencies]
-lopdf = { version = "=0.43.0", default-features = false }
+test-support = { path = "../test-support" }
 
 [lints]
 workspace = true

@@ -4,6 +4,69 @@ use crate::pdf::{
     UnvalidatedPdfDocument,
 };
 use std::collections::BTreeMap;
+use test_support::pdf_probe::{PdfProbe, ProbeDictionary, ProbeLimits, ProbeObjectId, ProbeValue};
+
+fn probe(bytes: &[u8]) -> PdfProbe {
+    PdfProbe::new(bytes, ProbeLimits::default()).expect("Hayro probe parses serialized PDF")
+}
+
+fn probe_id(raw: i32) -> ProbeObjectId {
+    ProbeObjectId::new(raw, 0)
+}
+
+fn probe_dictionary<'a>(value: &'a ProbeValue, context: &str) -> &'a ProbeDictionary {
+    value
+        .as_dictionary()
+        .unwrap_or_else(|| panic!("{context} is a dictionary"))
+}
+
+fn probe_stream<'a>(
+    value: &'a ProbeValue,
+    context: &str,
+) -> &'a test_support::pdf_probe::ProbeStream {
+    match value.resolved() {
+        ProbeValue::Stream(stream) => stream,
+        _ => panic!("{context} is a stream"),
+    }
+}
+
+fn find_bytes(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+    haystack
+        .windows(needle.len())
+        .position(|window| window == needle)
+}
+
+fn classic_xref_offsets_match(bytes: &[u8], object_ids: &[u32]) -> bool {
+    let Some(startxref) = bytes
+        .windows(b"startxref\n".len())
+        .rposition(|window| window == b"startxref\n")
+    else {
+        return false;
+    };
+    let offset_start = startxref + b"startxref\n".len();
+    let Some(offset_end) = bytes[offset_start..].iter().position(|byte| *byte == b'\n') else {
+        return false;
+    };
+    let Ok(xref_offset) = std::str::from_utf8(&bytes[offset_start..offset_start + offset_end])
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .ok_or(())
+    else {
+        return false;
+    };
+    if bytes.get(xref_offset..xref_offset + b"xref\n".len()) != Some(b"xref\n") {
+        return false;
+    }
+    let xref = &bytes[xref_offset..startxref];
+    object_ids.iter().all(|object_id| {
+        let header = format!("{object_id} 0 obj\n");
+        let Some(offset) = find_bytes(bytes, header.as_bytes()) else {
+            return false;
+        };
+        let entry = format!("{offset:010} 00000 n\r\n");
+        find_bytes(xref, entry.as_bytes()).is_some()
+    })
+}
 
 fn id(raw: u32) -> PdfObjectId {
     PdfObjectId::new(raw).expect("nonzero test id")
@@ -100,24 +163,39 @@ fn compact_serialization_is_deterministic_and_independently_parseable() {
     assert!(first_bytes.starts_with(b"%PDF-1.4\n"));
     assert!(first_bytes.ends_with(b"%%EOF"));
 
-    let parsed = lopdf::Document::load_mem(&first_bytes).expect("lopdf parses output");
-    assert_eq!(parsed.version, "1.4");
-    assert_eq!(parsed.get_pages().len(), 1);
+    assert!(classic_xref_offsets_match(&first_bytes, &[1, 2, 3, 4, 5]));
+    let mut corrupted_xref = first_bytes.clone();
+    let object_four = find_bytes(&first_bytes, b"4 0 obj\n").expect("object four offset");
+    let entry = format!("{object_four:010} 00000 n\r\n");
+    let entry_offset =
+        find_bytes(&corrupted_xref, entry.as_bytes()).expect("object four xref entry");
+    corrupted_xref[entry_offset] = if corrupted_xref[entry_offset] == b'9' {
+        b'8'
+    } else {
+        b'9'
+    };
+    assert!(!classic_xref_offsets_match(
+        &corrupted_xref,
+        &[1, 2, 3, 4, 5]
+    ));
+
+    let parsed = probe(&first_bytes);
+    assert_eq!(parsed.version(), (1, 4));
+    assert_eq!(parsed.pages().expect("ordered pages").len(), 1);
+    assert_eq!(parsed.root_id(), probe_id(1));
+    let trailer = parsed
+        .trailer()
+        .expect("project trailer")
+        .expect("classic trailer");
     assert_eq!(
-        parsed
-            .trailer
-            .get(b"Root")
-            .expect("root")
-            .as_reference()
-            .expect("root reference"),
-        (1, 0)
+        trailer.get(b"Root").and_then(ProbeValue::referenced_id),
+        Some(probe_id(1))
     );
-    let content = parsed
-        .get_object((4, 0))
-        .expect("content object")
-        .as_stream()
-        .expect("content stream");
-    assert_eq!(content.content, b"q\n10 20 30 40 re\nS\nQ\n");
+    let content = parsed.object(probe_id(4)).expect("content object");
+    assert_eq!(
+        probe_stream(&content, "content object").raw,
+        b"q\n10 20 30 40 re\nS\nQ\n"
+    );
 }
 
 #[test]
@@ -133,35 +211,33 @@ fn document_info_is_registered_in_the_pdf_writer_trailer() {
         ])),
     ));
     let document = input.validate().expect("document info dictionary is valid");
+    assert_eq!(document.info(), Some(info_id));
+    assert!(matches!(
+        &document
+            .objects()
+            .find(|object| object.id == info_id)
+            .expect("typed info object")
+            .object,
+        PdfObject::Value(PdfValue::Dictionary(_))
+    ));
     let bytes = document.to_pdf_bytes().expect("serialize info dictionary");
-    let parsed = lopdf::Document::load_mem(&bytes).expect("lopdf parses output");
+    let parsed = probe(&bytes);
+    let trailer = parsed
+        .trailer()
+        .expect("project trailer")
+        .expect("classic trailer");
     assert_eq!(
-        parsed
-            .trailer
-            .get(b"Info")
-            .expect("Info trailer entry")
-            .as_reference()
-            .expect("Info reference"),
-        (6, 0)
+        trailer.get(b"Info").and_then(ProbeValue::referenced_id),
+        Some(probe_id(6))
     );
-    let info = parsed
-        .get_object((6, 0))
-        .expect("Info object")
-        .as_dict()
-        .expect("Info dictionary");
+    let info = parsed.dictionary(probe_id(6)).expect("Info dictionary");
     assert_eq!(
-        info.get(b"Creator")
-            .expect("Creator")
-            .as_str()
-            .expect("Creator string"),
-        b"TeX"
+        info.get(b"Creator").map(ProbeValue::resolved),
+        Some(&ProbeValue::String(b"TeX".to_vec()))
     );
     assert_eq!(
-        info.get(b"Trapped")
-            .expect("Trapped")
-            .as_name()
-            .expect("Trapped name"),
-        b"False"
+        info.get(b"Trapped").map(ProbeValue::resolved),
+        Some(&ProbeValue::Name(b"False".to_vec()))
     );
 }
 
@@ -187,24 +263,26 @@ fn raw_page_entries_are_hashed_validated_and_serialized_verbatim() {
 
     let document = input.validate().expect("raw MediaBox satisfies page graph");
     let with_raw_hash = document.semantic_hash();
+    let typed_page = document
+        .objects()
+        .find(|object| object.id == id(3))
+        .expect("typed page object");
+    let PdfObject::Value(PdfValue::Dictionary(typed_page)) = &typed_page.object else {
+        panic!("typed page dictionary");
+    };
+    assert!(typed_page.raw_entries_contain(b"/Rotate 90"));
     let bytes = document.to_pdf_bytes().expect("serialize raw entries");
     assert!(
         bytes
             .windows(b"/MediaBox [1 2 300 400] /Rotate 90".len())
             .any(|window| window == b"/MediaBox [1 2 300 400] /Rotate 90")
     );
-    let parsed = lopdf::Document::load_mem(&bytes).expect("raw entries form valid PDF syntax");
-    let page = parsed
-        .get_object((3, 0))
-        .expect("page")
-        .as_dict()
-        .expect("dict");
+    let parsed = probe(&bytes);
+    let pages = parsed.pages().expect("project pages");
+    assert_eq!(pages[0].id, probe_id(3));
     assert_eq!(
-        page.get(b"Rotate")
-            .expect("rotate")
-            .as_i64()
-            .expect("integer rotation"),
-        90
+        pages[0].dictionary.get(b"Rotate").map(ProbeValue::resolved),
+        Some(&ProbeValue::Number(90.0))
     );
 
     let mut changed = sample_input(&[1, 2, 3, 4, 5]);
@@ -263,25 +341,15 @@ fn deterministic_flate_streams_are_declared_and_decode_exactly() {
         .expect("repeat compressed PDF");
     assert_eq!(first, second);
 
-    let parsed = lopdf::Document::load_mem(&first).expect("lopdf parses compressed output");
-    let content = parsed
-        .get_object((4, 0))
-        .expect("content object")
-        .as_stream()
-        .expect("content stream");
+    let parsed = probe(&first);
+    let content = parsed.object(probe_id(4)).expect("content object");
+    let content = probe_stream(&content, "content object");
     assert_eq!(
-        content
-            .dict
-            .get(b"Filter")
-            .expect("filter")
-            .as_name()
-            .expect("filter name"),
-        b"FlateDecode"
+        content.dictionary.get(b"Filter").map(ProbeValue::resolved),
+        Some(&ProbeValue::Name(b"FlateDecode".to_vec()))
     );
-    assert_eq!(
-        content.decompressed_content().expect("flate decodes"),
-        b"q\n10 20 30 40 re\nS\nQ\n"
-    );
+    assert_ne!(content.raw, content.decoded);
+    assert_eq!(content.decoded, b"q\n10 20 30 40 re\nS\nQ\n");
 }
 
 #[test]
@@ -364,6 +432,8 @@ fn raw_objects_and_trailer_extensions_keep_pdf_writer_framing() {
     }
     .validate()
     .expect("raw extension document validates");
+    assert_eq!(document.trailer().file_id, Some((vec![1; 16], vec![2; 16])));
+    assert_eq!(document.trailer().raw_entries, b"/Custom 7");
     let bytes = document.to_pdf_bytes().expect("raw extension serializes");
 
     assert!(
@@ -380,7 +450,34 @@ fn raw_objects_and_trailer_extensions_keep_pdf_writer_framing() {
         .position(|window| window == b"/ID[")
         .expect("typed ID entry");
     assert!(custom < id_entry, "raw trailer entries precede the file ID");
-    lopdf::Document::load_mem(&bytes).expect("independent parser accepts writer framing");
+    assert!(classic_xref_offsets_match(&bytes, &[1, 2, 3, 4, 5, 6]));
+    let parsed = probe(&bytes);
+    let trailer = parsed
+        .trailer()
+        .expect("project trailer")
+        .expect("classic trailer");
+    assert_eq!(
+        trailer.get(b"Custom").map(ProbeValue::resolved),
+        Some(&ProbeValue::Number(7.0))
+    );
+    let file_id = trailer
+        .get(b"ID")
+        .and_then(ProbeValue::as_array)
+        .expect("file ID array");
+    assert_eq!(
+        file_id,
+        [
+            ProbeValue::String(vec![1; 16]),
+            ProbeValue::String(vec![2; 16])
+        ]
+    );
+    let raw = parsed.object(probe_id(6)).expect("raw object");
+    assert_eq!(
+        probe_dictionary(&raw, "raw object")
+            .get(b"Extension")
+            .map(ProbeValue::resolved),
+        Some(&ProbeValue::Boolean(true))
+    );
 }
 
 #[test]
@@ -417,6 +514,16 @@ fn encoded_streams_preserve_their_filter_and_bytes_under_automatic_compression()
         },
     });
     let document = input.validate().expect("encoded stream document validates");
+    assert!(matches!(
+        &document
+            .objects()
+            .find(|object| object.id == id(6))
+            .expect("typed encoded stream")
+            .object,
+        PdfObject::EncodedStream { dictionary, data }
+            if dictionary.get(b"Filter") == Some(&PdfValue::Name("DCTDecode".into()))
+                && data == &encoded
+    ));
     let bytes = document
         .to_pdf_bytes_with_options(PdfSerializationOptions {
             pretty: false,
@@ -424,22 +531,12 @@ fn encoded_streams_preserve_their_filter_and_bytes_under_automatic_compression()
             object_compression: PdfObjectCompression::None,
         })
         .expect("encoded stream serializes");
-    let parsed = lopdf::Document::load_mem(&bytes).expect("encoded stream PDF parses");
-    let stream = parsed
-        .get_object((6, 0))
-        .expect("encoded stream object")
-        .as_stream()
-        .expect("stream");
-    assert_eq!(
-        stream
-            .dict
-            .get(b"Filter")
-            .expect("filter")
-            .as_name()
-            .expect("filter name"),
-        b"DCTDecode"
-    );
-    assert_eq!(stream.content, encoded);
+    let parsed = probe(&bytes);
+    assert_eq!(parsed.root_id(), probe_id(1));
+    assert_eq!(parsed.pages().expect("ordered pages").len(), 1);
+    assert!(find_bytes(&bytes, b"/Filter/DCTDecode").is_some());
+    let stream_payload = [b"stream\n".as_slice(), encoded.as_slice(), b"\nendstream"].concat();
+    assert!(find_bytes(&bytes, &stream_payload).is_some());
 }
 
 #[test]
@@ -475,24 +572,27 @@ fn adapter_emits_real_object_streams_for_levels_one_through_three() {
         assert!(first.windows(12).any(|window| window == b"/Type/ObjStm"));
         assert!(first.windows(10).any(|window| window == b"/Type/XRef"));
 
-        let parsed = lopdf::Document::load_mem(&first).expect("lopdf parses type-2 xrefs");
-        assert_eq!(parsed.get_pages().len(), 1);
-        assert!(
-            parsed
-                .get_object((2, 0))
-                .expect("compressed pages object")
-                .as_dict()
-                .is_ok()
-        );
-        let content = parsed
-            .get_object((4, 0))
-            .expect("ordinary content stream")
-            .as_stream()
-            .expect("content remains a stream");
+        let parsed = probe(&first);
+        assert_eq!(parsed.pages().expect("ordered pages").len(), 1);
+        let pages = parsed
+            .dictionary(probe_id(2))
+            .expect("compressed pages object");
+        assert_eq!(pages.id, Some(probe_id(2)));
         assert_eq!(
-            content.decompressed_content().expect("content flate data"),
-            b"q\n10 20 30 40 re\nS\nQ\n"
+            pages.get(b"Type").map(ProbeValue::resolved),
+            Some(&ProbeValue::Name(b"Pages".to_vec()))
         );
+        let trailer = parsed
+            .trailer()
+            .expect("project xref stream")
+            .expect("xref stream dictionary");
+        assert_eq!(
+            trailer.get(b"Type").map(ProbeValue::resolved),
+            Some(&ProbeValue::Name(b"XRef".to_vec()))
+        );
+        let content = parsed.object(probe_id(4)).expect("ordinary content stream");
+        let content = probe_stream(&content, "ordinary content stream");
+        assert_eq!(content.decoded, b"q\n10 20 30 40 re\nS\nQ\n");
     }
 }
 
@@ -527,39 +627,30 @@ fn pdf_writer_object_streams_parse_deterministically_at_levels_one_through_three
         let first = serialize(level);
         assert_eq!(first, serialize(level));
 
-        let document = lopdf::Document::load_mem(&first).expect("lopdf parses object stream");
+        assert!(first.windows(12).any(|window| window == b"/Type/ObjStm"));
+        assert!(first.windows(10).any(|window| window == b"/Type/XRef"));
+        let document = probe(&first);
         let pages = document
-            .get_object((2, 0))
-            .expect("type-2 xref resolves pages")
-            .as_dict()
-            .expect("pages dictionary");
+            .dictionary(probe_id(2))
+            .expect("type-2 xref resolves pages");
+        assert_eq!(pages.id, Some(probe_id(2)));
         assert_eq!(
-            pages
-                .get(b"Type")
-                .expect("pages type")
-                .as_name()
-                .expect("name"),
-            b"Pages"
+            pages.get(b"Type").map(ProbeValue::resolved),
+            Some(&ProbeValue::Name(b"Pages".to_vec()))
         );
         let marker = document
-            .get_object((3, 0))
-            .expect("second compressed object resolves")
-            .as_dict()
-            .expect("marker dictionary");
+            .dictionary(probe_id(3))
+            .expect("second compressed object resolves");
+        assert_eq!(marker.id, Some(probe_id(3)));
         assert_eq!(
-            marker
-                .get(b"Marker")
-                .expect("marker")
-                .as_str()
-                .expect("byte string"),
-            b"compressed object"
+            marker.get(b"Marker").map(ProbeValue::resolved),
+            Some(&ProbeValue::String(b"compressed object".to_vec()))
         );
         let ordinary = document
-            .get_object((4, 0))
-            .expect("ordinary stream resolves")
-            .as_stream()
-            .expect("ordinary stream object");
-        assert_eq!(ordinary.content, b"ordinary stream");
-        assert!(ordinary.dict.get(b"Filter").is_err());
+            .object(probe_id(4))
+            .expect("ordinary stream resolves");
+        let ordinary = probe_stream(&ordinary, "ordinary stream object");
+        assert_eq!(ordinary.raw, b"ordinary stream");
+        assert!(ordinary.dictionary.get(b"Filter").is_none());
     }
 }

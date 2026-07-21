@@ -1472,9 +1472,9 @@ name = "tex-out"
 version = "0.1.0"
 dependencies = [
  "flate2",
- "lopdf",
  "pdf-writer",
  "sha2 0.10.9",
+ "test-support",
  "tex-arith",
  "tex-content",
  "tex-fonts",
