@@ -88,6 +88,13 @@ image, form, and graphics-state resources are referenced rather than copied.
 Future primitive issues may add object kinds without adding a second PDF
 state store.
 
+A staged form record owns its consumed compact node-list root through the same
+rollback timeline as the PDF ledger. This ownership is distinct from temporary
+box-build and shipout allocation pins: closing an enclosing box cannot reclaim
+a lazy form payload, while rollback before `\pdfxform` removes the ledger entry
+and releases its survivor root together. Direct shipout may therefore normalize
+forms recursively without weakening node-handle liveness checks.
+
 Catalog open actions are distinct from verbatim catalog extension entries.
 The engine retains a typed shared action specification and reserves the action
 plus any internal destination, structure, or forward-page identity at scan

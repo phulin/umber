@@ -3365,14 +3365,19 @@ impl Universe {
         let semantic_id = self.stores.node_list_semantic_fragment(box_list);
         let attr = attr.map(|tokens| self.pdf_token_parameter(tokens));
         let resources = resources.map(|tokens| self.pdf_token_parameter(tokens));
-        self.pdf.initialize_form(
+        let form = self.pdf.initialize_form(
             identity,
             box_list,
             semantic_id,
             dimensions,
             (attr, resources),
             immediate,
-        )
+        )?;
+        // pdfTeX transfers the consumed box from the register into the form
+        // object. That owner must outlive temporary box-build and shipout
+        // allocation scopes, but must still disappear on aggregate rollback.
+        self.stores.pin_timeline_node_list(box_list);
+        Ok(form)
     }
 
     #[must_use]

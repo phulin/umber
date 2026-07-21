@@ -142,6 +142,16 @@ interior span. Snapshots and shipout scopes capture the pin-log length and drain
 only their suffix on rollback or release. Group exit does not independently
 truncate node pins. Format capture requires a quiescent empty runtime pin log.
 
+Rollback-coupled engine records that retain a node list after its originating
+allocation scope use a separate timeline pin log. In particular, a PDF form
+owns the box removed from its register until aggregate rollback removes that
+form. Box-build and shipout completion never drain timeline pins; snapshots
+capture both pin-log lengths, and rollback releases the corresponding suffixes
+before truncating survivor storage. This follows TeX.web §§1073--1086, where box
+construction transfers a live box pointer through `box_end`, and pdftex.web
+§1546, where `\pdfxform` clears the register but stores that pointer in the form
+object for later recursive traversal (§§773--775).
+
 At local refcount zero the root slot is removed. Its vectors enter the recycled
 pool only if `Arc::try_unwrap` proves that no related Universe still shares the
 payload; otherwise teardown is an O(1) shared-payload drop.

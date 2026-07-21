@@ -111,6 +111,7 @@ pub(crate) struct StoreSnapshot {
     font_mark: FontStoreMark,
     node_mark: NodeArenaMark,
     survivor_pin_mark: usize,
+    timeline_node_pin_mark: usize,
     code_tables_snapshot: CodeTablesSnapshot,
     hyphenation: Arc<HyphenationTable>,
     prepared_mag: Option<i32>,
@@ -184,6 +185,7 @@ pub struct Stores {
     nodes: NodeArena,
     survivors: SurvivorArena,
     survivor_pins: Vec<NodeListId>,
+    timeline_node_pins: Vec<NodeListId>,
     code_tables: CodeTables,
     hyphenation: Arc<HyphenationTable>,
     prepared_mag: Option<i32>,
@@ -247,6 +249,7 @@ impl Clone for Stores {
             nodes: self.nodes.clone(),
             survivors: self.survivors.clone(),
             survivor_pins: self.survivor_pins.clone(),
+            timeline_node_pins: self.timeline_node_pins.clone(),
             code_tables: self.code_tables.clone(),
             hyphenation: self.hyphenation.clone(),
             prepared_mag: self.prepared_mag,
@@ -306,6 +309,7 @@ impl Stores {
             && self.env.can_rollback_to(snapshot.env_snapshot)
             && snapshot.env_snapshot.journal_pos() <= self.env.current_journal_pos()
             && snapshot.survivor_pin_mark <= self.survivor_pins.len()
+            && snapshot.timeline_node_pin_mark <= self.timeline_node_pins.len()
     }
 
     /// Retargets an already-validated inherited snapshot to this fork's exact owner.
@@ -343,6 +347,7 @@ impl Stores {
             nodes: NodeArena::new(),
             survivors: SurvivorArena::new(),
             survivor_pins: Vec::new(),
+            timeline_node_pins: Vec::new(),
             code_tables: CodeTables::new(),
             hyphenation: Arc::new(HyphenationTable::new()),
             prepared_mag: None,
@@ -1810,6 +1815,17 @@ impl Stores {
         self.survivor_pins.push(id);
     }
 
+    /// Keeps a survivor root live for rollback-coupled timeline state.
+    ///
+    /// Unlike an allocation-scope pin, this ownership is not released when an
+    /// enclosing box build or shipout finishes. Aggregate rollback releases
+    /// only roots created after the restored snapshot.
+    pub fn pin_timeline_node_list(&mut self, id: NodeListId) {
+        self.assert_live_node_list(id);
+        self.survivors.inc_ref(id);
+        self.timeline_node_pins.push(id);
+    }
+
     /// Captures accepted-history ownership of one paragraph graph. The local
     /// survivor slot is held by the ordinary rollback pin log; the returned
     /// mount shares its immutable payload and precomputed mount summary.
@@ -2389,6 +2405,7 @@ impl Stores {
             font_mark: self.fonts.watermark(),
             node_mark: self.nodes.watermark(),
             survivor_pin_mark: self.survivor_pins.len(),
+            timeline_node_pin_mark: self.timeline_node_pins.len(),
             code_tables_snapshot: self.code_tables.checkpoint(),
             hyphenation: self.hyphenation.clone(),
             prepared_mag: self.prepared_mag,
@@ -2427,6 +2444,7 @@ impl Stores {
     pub(crate) fn rollback(&mut self, snapshot: &StoreSnapshot) {
         self.assert_valid_snapshot(snapshot);
         self.release_survivor_pins_to(snapshot.survivor_pin_mark);
+        self.release_timeline_node_pins_to(snapshot.timeline_node_pin_mark);
         self.account_rollback_box_refs(snapshot.env_snapshot);
         self.env.rollback_to(snapshot.env_snapshot);
         self.interner.truncate_to(snapshot.interner_mark);
@@ -2480,7 +2498,7 @@ impl Stores {
         // format capture forbids them because formats have a stricter job-start
         // contract. Use the serialized-size proxy only when that contract is
         // satisfied instead of turning retention accounting into a panic.
-        let serialized = if self.survivor_pins.is_empty() {
+        let serialized = if self.survivor_pins.is_empty() && self.timeline_node_pins.is_empty() {
             self.encode_frozen_format()
                 .map_or(0, |format| format.payload_len())
         } else {
@@ -2495,6 +2513,11 @@ impl Stores {
             .saturating_add(self.survivors.retained_payload_bytes())
             .saturating_add(
                 self.survivor_pins
+                    .capacity()
+                    .saturating_mul(mem::size_of::<NodeListId>()),
+            )
+            .saturating_add(
+                self.timeline_node_pins
                     .capacity()
                     .saturating_mul(mem::size_of::<NodeListId>()),
             );
@@ -2629,6 +2652,10 @@ impl Stores {
             snapshot.survivor_pin_mark <= self.survivor_pins.len(),
             "Stores snapshots are invalidated by an enclosing survivor-pin release"
         );
+        assert!(
+            snapshot.timeline_node_pin_mark <= self.timeline_node_pins.len(),
+            "Stores snapshots are invalidated by an enclosing timeline-node-pin release"
+        );
     }
 
     fn release_survivor_pins_to(&mut self, mark: usize) {
@@ -2637,6 +2664,16 @@ impl Stores {
                 .survivor_pins
                 .pop()
                 .expect("survivor pin length was checked");
+            self.survivors.dec_ref(id);
+        }
+    }
+
+    fn release_timeline_node_pins_to(&mut self, mark: usize) {
+        while self.timeline_node_pins.len() > mark {
+            let id = self
+                .timeline_node_pins
+                .pop()
+                .expect("timeline node pin length was checked");
             self.survivors.dec_ref(id);
         }
     }
