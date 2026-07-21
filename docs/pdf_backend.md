@@ -203,6 +203,20 @@ serializer uses `pdf_writer`'s typed image, form, resources, page, and content
 builders; imported dictionaries are converted to the detached typed value
 model before serialization, so `lopdf` is only an input parser.
 
+The recursive page-resource importer distinguishes streams that must be
+decoded from encoded raster payloads. A single-filter `/DCTDecode` image is
+validated into the detached typed image model and its JPEG bytes pass through
+without decompression; dimensions, bit depth, device color space, and soft-mask
+identity are checked first, and every imported encoded or decoded stream has a
+256 MiB ceiling below the detached document's aggregate 1 GiB budget.
+This matches pdfTeX.web §§1548 and 1551--1552, where `\pdfximage` registers a
+PDF image and `\pdfrefximage` defers writing it until shipout, together with
+the pdfTeX manual §§4.9.1--4.9.2 requirement that included PDF pages retain
+self-contained color-space information and are written on first reference.
+The corresponding `pdftoepdf.cc` `copyObject`/`copyStream` path copies
+resource streams from `getUndecodedStream`, including their filter dictionary,
+rather than requiring JPEG decompression.
+
 Image configuration is consumed at its pdfTeX scope. The live image resolution
 sets missing raster DPI, gamma and high-color controls transform PNG samples,
 and explicit/live/obsolete page-box controls are resolved while scanning the

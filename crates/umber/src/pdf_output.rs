@@ -3480,6 +3480,11 @@ struct ImportedPdfPage {
     group: Option<PdfObjectId>,
 }
 
+// Imported page resources are attacker-controlled input. Keep a per-stream
+// ceiling below the detached document's aggregate 1 GiB stream budget so a
+// single pass-through image cannot consume the whole finalization allowance.
+const MAX_IMPORTED_PDF_STREAM_BYTES: usize = 256 * 1024 * 1024;
+
 fn import_pdf_page(
     image: &tex_state::PdfExternalImageRecord,
     page: u32,
@@ -3494,9 +3499,21 @@ fn import_pdf_page(
         .get(&page)
         .copied()
         .ok_or_else(|| PdfBuildError::InvalidPdfPage(format!("page {page} does not exist")))?;
-    let data = document
-        .get_page_content(page_id)
-        .map_err(|error| PdfBuildError::InvalidPdfPage(error.to_string()))?;
+    let mut data = Vec::new();
+    for content_id in document.get_page_contents(page_id) {
+        let stream = document
+            .get_object(content_id)
+            .and_then(lopdf::Object::as_stream)
+            .map_err(|error| PdfBuildError::InvalidPdfPage(error.to_string()))?;
+        let remaining = MAX_IMPORTED_PDF_STREAM_BYTES
+            .checked_sub(data.len())
+            .and_then(|remaining| remaining.checked_sub(1))
+            .ok_or_else(|| {
+                imported_pdf_stream_limit_error("page content", MAX_IMPORTED_PDF_STREAM_BYTES)
+            })?;
+        data.extend_from_slice(&decompress_lopdf_stream_bounded(stream, remaining)?);
+        data.push(b'\n');
+    }
     let (direct_resources, resource_ids) = document
         .get_page_resources(page_id)
         .map_err(|error| PdfBuildError::InvalidPdfPage(error.to_string()))?;
@@ -3719,18 +3736,22 @@ fn import_lopdf_indirect(
         .map_err(|error| PdfBuildError::InvalidPdfPage(error.to_string()))?;
     let object = match source {
         lopdf::Object::Stream(stream) => {
-            let data = stream
-                .decompressed_content()
-                .map_err(|error| PdfBuildError::InvalidPdfPage(error.to_string()))?;
-            PdfObject::Stream {
-                dictionary: convert_lopdf_dictionary(
-                    document,
-                    &stream.dict,
-                    next_object,
-                    imported,
-                    objects,
-                )?,
-                data,
+            if let Some(image) =
+                import_lopdf_dct_image(document, stream, next_object, imported, objects)?
+            {
+                image
+            } else {
+                let data = decompress_lopdf_stream_bounded(stream, MAX_IMPORTED_PDF_STREAM_BYTES)?;
+                PdfObject::Stream {
+                    dictionary: convert_lopdf_dictionary(
+                        document,
+                        &stream.dict,
+                        next_object,
+                        imported,
+                        objects,
+                    )?,
+                    data,
+                }
             }
         }
         value => PdfObject::Value(convert_lopdf_value(
@@ -3743,6 +3764,166 @@ fn import_lopdf_indirect(
     };
     objects.push(PdfIndirectObject { id, object });
     Ok(id)
+}
+
+fn imported_pdf_stream_limit_error(kind: &str, limit: usize) -> PdfBuildError {
+    PdfBuildError::InvalidPdfPage(format!("{kind} stream exceeds {limit} bytes"))
+}
+
+fn decompress_lopdf_stream_bounded(
+    stream: &lopdf::Stream,
+    limit: usize,
+) -> Result<Vec<u8>, PdfBuildError> {
+    let filters = match stream.filters() {
+        Ok(filters) => filters,
+        Err(_) if stream.dict.get(b"Filter").is_err() => {
+            if stream.content.len() > limit {
+                return Err(imported_pdf_stream_limit_error("uncompressed", limit));
+            }
+            return Ok(stream.content.clone());
+        }
+        Err(error) => return Err(PdfBuildError::InvalidPdfPage(error.to_string())),
+    };
+    if filters.as_slice() != [b"FlateDecode".as_slice()] {
+        return Err(PdfBuildError::InvalidPdfPage(format!(
+            "resource stream filter {} is unsupported",
+            filters
+                .iter()
+                .map(|name| String::from_utf8_lossy(name))
+                .collect::<Vec<_>>()
+                .join(", ")
+        )));
+    }
+    if stream.dict.get(b"DecodeParms").is_ok() {
+        return Err(PdfBuildError::InvalidPdfPage(
+            "Flate resource stream decode parameters are unsupported".to_owned(),
+        ));
+    }
+    let read_limit = u64::try_from(limit)
+        .ok()
+        .and_then(|limit| limit.checked_add(1))
+        .unwrap_or(u64::MAX);
+    let mut decoder = flate2::read::ZlibDecoder::new(stream.content.as_slice()).take(read_limit);
+    let mut data = Vec::new();
+    decoder
+        .read_to_end(&mut data)
+        .map_err(|error| PdfBuildError::InvalidPdfPage(error.to_string()))?;
+    if data.len() > limit {
+        return Err(imported_pdf_stream_limit_error("decompressed", limit));
+    }
+    Ok(data)
+}
+
+fn import_lopdf_dct_image(
+    document: &lopdf::Document,
+    stream: &lopdf::Stream,
+    next_object: &mut u32,
+    imported: &mut BTreeMap<lopdf::ObjectId, PdfObjectId>,
+    objects: &mut Vec<PdfIndirectObject>,
+) -> Result<Option<PdfObject>, PdfBuildError> {
+    let filters = match stream.filters() {
+        Ok(filters) => filters,
+        Err(_) => return Ok(None),
+    };
+    if filters.as_slice() != [b"DCTDecode".as_slice()] {
+        return Ok(None);
+    }
+    if stream.content.len() > MAX_IMPORTED_PDF_STREAM_BYTES {
+        return Err(PdfBuildError::InvalidPdfPage(format!(
+            "encoded image stream exceeds {} bytes",
+            MAX_IMPORTED_PDF_STREAM_BYTES
+        )));
+    }
+    let subtype = stream
+        .dict
+        .get(b"Subtype")
+        .and_then(lopdf::Object::as_name)
+        .map_err(|_| PdfBuildError::InvalidPdfPage("DCT stream has no image subtype".to_owned()))?;
+    if subtype != b"Image" {
+        return Err(PdfBuildError::InvalidPdfPage(
+            "DCT resource stream is not an image".to_owned(),
+        ));
+    }
+    if stream.dict.get(b"DecodeParms").is_ok()
+        || stream.dict.get(b"Decode").is_ok()
+        || stream.dict.get(b"Mask").is_ok()
+    {
+        return Err(PdfBuildError::InvalidPdfPage(
+            "DCT image uses unsupported decode or mask parameters".to_owned(),
+        ));
+    }
+    let dimension = |key: &'static [u8]| -> Result<u32, PdfBuildError> {
+        let value = stream
+            .dict
+            .get(key)
+            .and_then(lopdf::Object::as_i64)
+            .map_err(|_| {
+                PdfBuildError::InvalidPdfPage(format!(
+                    "DCT image has no integer {}",
+                    String::from_utf8_lossy(key)
+                ))
+            })?;
+        u32::try_from(value)
+            .ok()
+            .filter(|value| *value != 0)
+            .ok_or_else(|| {
+                PdfBuildError::InvalidPdfPage(format!(
+                    "DCT image has invalid {}",
+                    String::from_utf8_lossy(key)
+                ))
+            })
+    };
+    let width = dimension(b"Width")?;
+    let height = dimension(b"Height")?;
+    let bits_per_component = u8::try_from(dimension(b"BitsPerComponent")?).map_err(|_| {
+        PdfBuildError::InvalidPdfPage("DCT image bit depth is too large".to_owned())
+    })?;
+    let color_space = stream
+        .dict
+        .get(b"ColorSpace")
+        .and_then(|value| document.dereference(value))
+        .and_then(|(_, value)| value.as_name())
+        .map_err(|_| {
+            PdfBuildError::InvalidPdfPage("DCT image color space is invalid".to_owned())
+        })?;
+    let color_space = match color_space {
+        b"DeviceGray" => PdfImageColorSpace::DeviceGray,
+        b"DeviceRGB" => PdfImageColorSpace::DeviceRgb,
+        b"DeviceCMYK" => PdfImageColorSpace::DeviceCmyk,
+        _ => {
+            return Err(PdfBuildError::InvalidPdfPage(format!(
+                "DCT image color space {} is unsupported",
+                String::from_utf8_lossy(color_space)
+            )));
+        }
+    };
+    let soft_mask = match stream.dict.get(b"SMask") {
+        Ok(lopdf::Object::Reference(source_id)) => Some(import_lopdf_indirect(
+            document,
+            *source_id,
+            next_object,
+            imported,
+            objects,
+        )?),
+        Ok(lopdf::Object::Name(name)) if name == b"None" => None,
+        Err(_) => None,
+        _ => {
+            return Err(PdfBuildError::InvalidPdfPage(
+                "DCT image soft mask is invalid".to_owned(),
+            ));
+        }
+    };
+    Ok(Some(PdfObject::ImageXObject {
+        image: PdfImageXObject {
+            width,
+            height,
+            bits_per_component,
+            color_space,
+            filter: PdfImageFilter::Dct,
+            soft_mask,
+        },
+        data: stream.content.clone(),
+    }))
 }
 
 fn pdf_number_from_f32(value: f32) -> Result<PdfNumber, PdfBuildError> {
@@ -4326,6 +4507,60 @@ mod tests {
         bytes
     }
 
+    fn test_pdf_page_with_dct_image() -> Vec<u8> {
+        let mut document = lopdf::Document::with_version("1.5");
+        let pages = document.new_object_id();
+        let page = document.new_object_id();
+        let image = document.add_object(lopdf::Stream::new(
+            lopdf::dictionary! {
+                "Type" => "XObject",
+                "Subtype" => "Image",
+                "Width" => 1,
+                "Height" => 1,
+                "BitsPerComponent" => 8,
+                "ColorSpace" => "DeviceRGB",
+                "Filter" => "DCTDecode",
+            },
+            b"bounded-pass-through-jpeg".to_vec(),
+        ));
+        let contents = document.add_object(lopdf::Stream::new(
+            lopdf::dictionary! {},
+            b"q /Im0 Do Q".to_vec(),
+        ));
+        document.objects.insert(
+            page,
+            lopdf::dictionary! {
+                "Type" => "Page",
+                "Parent" => pages,
+                "MediaBox" => vec![0.into(), 0.into(), 10.into(), 20.into()],
+                "Resources" => lopdf::dictionary! {
+                    "XObject" => lopdf::dictionary! { "Im0" => image },
+                },
+                "Contents" => contents,
+            }
+            .into(),
+        );
+        document.objects.insert(
+            pages,
+            lopdf::dictionary! {
+                "Type" => "Pages",
+                "Kids" => vec![page.into()],
+                "Count" => 1,
+            }
+            .into(),
+        );
+        let catalog = document.add_object(lopdf::dictionary! {
+            "Type" => "Catalog",
+            "Pages" => pages,
+        });
+        document.trailer.set("Root", catalog);
+        let mut bytes = Vec::new();
+        document
+            .save_to(&mut bytes)
+            .expect("serialize DCT-image PDF-page fixture");
+        bytes
+    }
+
     fn test_pdf_page_source(has_group: bool) -> tex_state::PdfExternalImageSource {
         let bytes = test_pdf_page(has_group);
         let page_box = tex_state::PdfPageBox {
@@ -4423,6 +4658,74 @@ mod tests {
                 PdfNumber::new(0, 0).expect("zero is a valid PDF number"),
             ])
         );
+    }
+
+    #[test]
+    fn imported_pdf_page_preserves_dct_image_as_a_typed_bounded_stream() {
+        let bytes = test_pdf_page_with_dct_image();
+        let page_box = tex_state::PdfPageBox {
+            left: Scaled::from_raw(0),
+            bottom: Scaled::from_raw(0),
+            right: Scaled::from_raw(10 * 65_536),
+            top: Scaled::from_raw(20 * 65_536),
+        };
+        let source = tex_state::PdfExternalImageSource {
+            identity: ContentHash::from_bytes(&bytes),
+            metadata: PdfExternalImageMetadata::PdfPage {
+                page_box,
+                rotation: tex_state::PdfPageRotation::None,
+                page: 1,
+                total_pages: 1,
+                has_page_group: false,
+                pdf_version: (1, 5),
+            },
+            natural_width: page_box.right,
+            natural_height: page_box.top,
+            bytes: bytes.into(),
+        };
+        let mut stores = Universe::default();
+        stores.enable_pdf_output();
+        stores
+            .allocate_pdf_external_image(
+                source,
+                tex_state::PdfExternalImageDimensions {
+                    width: page_box.right,
+                    height: page_box.top,
+                    depth: Scaled::from_raw(0),
+                },
+            )
+            .expect("allocate included page");
+        let image = stores
+            .pdf_external_images()
+            .first()
+            .expect("allocated image record");
+        let imported = import_pdf_page(
+            image,
+            1,
+            page_box,
+            tex_state::PdfPageRotation::None,
+            &mut 100,
+        )
+        .expect("import page with DCT image resource");
+        let (_, data) = imported
+            .dependencies
+            .iter()
+            .find_map(|object| match &object.object {
+                PdfObject::ImageXObject { image, data } => Some((image, data)),
+                _ => None,
+            })
+            .expect("typed image dependency");
+        assert_eq!(data, b"bounded-pass-through-jpeg");
+    }
+
+    #[test]
+    fn imported_pdf_stream_decompression_stops_at_the_caller_limit() {
+        let compressed = zlib(&[b'x'; 65]).expect("compress fixture");
+        let stream =
+            lopdf::Stream::new(lopdf::dictionary! { "Filter" => "FlateDecode" }, compressed);
+        let error = decompress_lopdf_stream_bounded(&stream, 64)
+            .expect_err("expanded stream must respect the import ceiling");
+        assert!(error.to_string().contains("exceeds 64 bytes"));
     }
 
     #[test]
