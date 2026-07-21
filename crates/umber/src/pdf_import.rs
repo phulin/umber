@@ -2,7 +2,7 @@ use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
-use hayro_syntax::object::{Dict, MaybeRef, Number, Object, ObjectIdentifier, Rect};
+use hayro_syntax::object::{Dict, MaybeRef, Number, Object, ObjectIdentifier, Rect, Stream};
 use hayro_syntax::page::{Page, Resources};
 use hayro_syntax::{Pdf, PdfVersion};
 use tex_exec::PdfImagePageBox;
@@ -28,6 +28,11 @@ pub(crate) struct ImportedPdfPage {
     pub(crate) dependencies: Vec<PdfIndirectObject>,
     pub(crate) group: Option<PdfObjectId>,
 }
+
+const MAX_IMPORTED_OBJECTS: usize = 100_000;
+const MAX_IMPORTED_VALUES: usize = 1_000_000;
+const MAX_IMPORTED_DEPTH: usize = 256;
+const MAX_IMPORTED_STREAM_BYTES: usize = 1 << 30;
 
 pub(crate) fn inspect_pdf_page(
     bytes: Arc<[u8]>,
@@ -80,6 +85,8 @@ pub(crate) fn import_pdf_page(
         next_object,
         imported: BTreeMap::new(),
         objects: Vec::new(),
+        values: 0,
+        stream_bytes: 0,
     };
     let resources = importer.import_resources(page)?;
     let group = page
@@ -164,6 +171,8 @@ struct Importer<'a, 'next> {
     next_object: &'next mut u32,
     imported: BTreeMap<ObjectIdentifier, PdfObjectId>,
     objects: Vec<PdfIndirectObject>,
+    values: usize,
+    stream_bytes: usize,
 }
 
 impl<'a> Importer<'a, '_> {
@@ -242,15 +251,41 @@ impl<'a> Importer<'a, '_> {
     }
 
     fn convert_maybe_ref(&mut self, source: MaybeRef<Object<'a>>) -> Result<PdfValue, String> {
+        self.convert_maybe_ref_at(source, 0)
+    }
+
+    fn convert_maybe_ref_at(
+        &mut self,
+        source: MaybeRef<Object<'a>>,
+        depth: usize,
+    ) -> Result<PdfValue, String> {
+        if depth > MAX_IMPORTED_DEPTH {
+            return Err(format!(
+                "PDF resource nesting exceeds limit {MAX_IMPORTED_DEPTH}"
+            ));
+        }
+        self.values = self
+            .values
+            .checked_add(1)
+            .ok_or_else(|| "PDF resource value capacity exhausted".to_owned())?;
+        if self.values > MAX_IMPORTED_VALUES {
+            return Err(format!(
+                "PDF resource values exceed limit {MAX_IMPORTED_VALUES}"
+            ));
+        }
         match source {
             MaybeRef::Ref(reference) => {
                 Ok(PdfValue::Reference(self.import_indirect(reference.into())?))
             }
-            MaybeRef::NotRef(value) => self.convert_value(value),
+            MaybeRef::NotRef(value) => self.convert_value_at(value, depth),
         }
     }
 
     fn convert_value(&mut self, source: Object<'a>) -> Result<PdfValue, String> {
+        self.convert_value_at(source, 0)
+    }
+
+    fn convert_value_at(&mut self, source: Object<'a>, depth: usize) -> Result<PdfValue, String> {
         Ok(match source {
             Object::Null(_) => PdfValue::Null,
             Object::Boolean(value) => PdfValue::Bool(value),
@@ -260,18 +295,24 @@ impl<'a> Importer<'a, '_> {
             Object::Array(values) => PdfValue::Array(
                 values
                     .raw_iter()
-                    .map(|value| self.convert_maybe_ref(value))
+                    .map(|value| self.convert_maybe_ref_at(value, depth + 1))
                     .collect::<Result<_, _>>()?,
             ),
-            Object::Dict(dictionary) => PdfValue::Dictionary(self.convert_dictionary(&dictionary)?),
+            Object::Dict(dictionary) => {
+                PdfValue::Dictionary(self.convert_dictionary_at(&dictionary, depth + 1)?)
+            }
             Object::Stream(_) => {
                 return Err("direct resource streams are unsupported".to_owned());
             }
         })
     }
 
-    fn convert_dictionary(&mut self, source: &Dict<'a>) -> Result<PdfDictionary, String> {
-        self.convert_dictionary_skipping(source, &[])
+    fn convert_dictionary_at(
+        &mut self,
+        source: &Dict<'a>,
+        depth: usize,
+    ) -> Result<PdfDictionary, String> {
+        self.convert_dictionary_skipping_at(source, &[], depth)
     }
 
     fn convert_dictionary_skipping(
@@ -279,13 +320,25 @@ impl<'a> Importer<'a, '_> {
         source: &Dict<'a>,
         skipped: &[&[u8]],
     ) -> Result<PdfDictionary, String> {
+        self.convert_dictionary_skipping_at(source, skipped, 0)
+    }
+
+    fn convert_dictionary_skipping_at(
+        &mut self,
+        source: &Dict<'a>,
+        skipped: &[&[u8]],
+        depth: usize,
+    ) -> Result<PdfDictionary, String> {
         let mut dictionary = PdfDictionary::new();
         for (name, value) in source.entries() {
             if skipped.contains(&name.as_ref()) {
                 continue;
             }
             dictionary
-                .insert(PdfName::new(name.as_ref()), self.convert_maybe_ref(value)?)
+                .insert(
+                    PdfName::new(name.as_ref()),
+                    self.convert_maybe_ref_at(value, depth)?,
+                )
                 .map_err(|error| error.to_string())?;
         }
         Ok(dictionary)
@@ -295,6 +348,11 @@ impl<'a> Importer<'a, '_> {
         if let Some(id) = self.imported.get(&source_id) {
             return Ok(*id);
         }
+        if self.imported.len() >= MAX_IMPORTED_OBJECTS {
+            return Err(format!(
+                "PDF resource objects exceed limit {MAX_IMPORTED_OBJECTS}"
+            ));
+        }
         let id = self.allocate_object()?;
         self.imported.insert(source_id, id);
         let source = self
@@ -302,17 +360,31 @@ impl<'a> Importer<'a, '_> {
             .get::<Object<'_>>(source_id)
             .ok_or_else(|| format!("referenced PDF object {source_id:?} is missing"))?;
         let object = match source {
-            Object::Stream(stream) => PdfObject::EncodedStream {
-                dictionary: self.convert_dictionary_skipping(stream.dict(), &[b"Length"])?,
-                data: match stream.raw_data() {
-                    Cow::Borrowed(data) => data.to_vec(),
-                    Cow::Owned(data) => data,
-                },
-            },
+            Object::Stream(stream) => self.import_stream(stream)?,
             value => PdfObject::Value(self.convert_value(value)?),
         };
         self.objects.push(PdfIndirectObject { id, object });
         Ok(id)
+    }
+
+    fn import_stream(&mut self, stream: Stream<'a>) -> Result<PdfObject, String> {
+        let raw_data = stream.raw_data();
+        self.stream_bytes = self
+            .stream_bytes
+            .checked_add(raw_data.len())
+            .ok_or_else(|| "PDF resource stream capacity exhausted".to_owned())?;
+        if self.stream_bytes > MAX_IMPORTED_STREAM_BYTES {
+            return Err(format!(
+                "PDF resource streams exceed limit {MAX_IMPORTED_STREAM_BYTES} bytes"
+            ));
+        }
+        Ok(PdfObject::EncodedStream {
+            dictionary: self.convert_dictionary_skipping(stream.dict(), &[b"Length"])?,
+            data: match raw_data {
+                Cow::Borrowed(data) => data.to_vec(),
+                Cow::Owned(data) => data,
+            },
+        })
     }
 
     fn allocate_object(&mut self) -> Result<PdfObjectId, String> {

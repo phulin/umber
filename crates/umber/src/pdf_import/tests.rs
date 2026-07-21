@@ -1,6 +1,52 @@
 use std::path::PathBuf;
 
+use lopdf::dictionary;
+
 use super::*;
+
+#[test]
+fn deeply_nested_resource_values_are_rejected() {
+    let mut document = lopdf::Document::with_version("1.7");
+    let pages = document.new_object_id();
+    let page = document.new_object_id();
+    let mut nested = lopdf::Object::Null;
+    for _ in 0..=MAX_IMPORTED_DEPTH {
+        nested = lopdf::Object::Array(vec![nested]);
+    }
+    document.objects.insert(
+        page,
+        lopdf::dictionary! {
+            "Type" => "Page",
+            "Parent" => pages,
+            "MediaBox" => vec![0.into(), 0.into(), 10.into(), 20.into()],
+            "Resources" => lopdf::dictionary! {
+                "Properties" => lopdf::dictionary! { "Deep" => nested },
+            },
+        }
+        .into(),
+    );
+    document.objects.insert(
+        pages,
+        lopdf::dictionary! {
+            "Type" => "Pages",
+            "Kids" => vec![page.into()],
+            "Count" => 1,
+        }
+        .into(),
+    );
+    let catalog = document.add_object(lopdf::dictionary! {
+        "Type" => "Catalog",
+        "Pages" => pages,
+    });
+    document.trailer.set("Root", catalog);
+    let mut bytes = Vec::new();
+    document.save_to(&mut bytes).expect("serialize nested PDF");
+
+    let error = import_pdf_page(bytes.into(), 1, &mut 100)
+        .err()
+        .expect("depth limit");
+    assert!(error.contains("nesting exceeds limit"), "{error}");
+}
 
 #[test]
 #[allow(clippy::disallowed_methods)] // Conditional external-fixture boundary.
