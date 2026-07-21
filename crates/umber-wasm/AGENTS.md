@@ -17,6 +17,8 @@ the manifest's validated content-addressed object name.
 - `src/options.rs`: strict conversion of JavaScript options (including engine mode) plus shared-VFS typed resource responses, domain/kind wire values, and request keys.
 - `src/result.rs`: binary-safe conversion of native typed resource batches and completed attempts to discriminated JS results.
 - `tests/it.rs`: wasm-bindgen boundary and lifecycle tests.
+- `tests/virtual_font_acquisition.rs`: focused host-neutral WASM coverage for
+  typed virtual-font resource retries and their recursive PDF resource closure.
 - `assets/plain-source.lock`: exact TeX Live 2025 Plain, hyphenation, and TFM source identities.
 - `assets/plain.fmt`: reproducible Umber-native Plain format image.
 - `assets/plain-format.json`: published digest and compatibility metadata.
