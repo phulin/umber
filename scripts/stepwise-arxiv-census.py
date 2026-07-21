@@ -20,9 +20,17 @@ HEADER = [
     "id", "engine_status", "finalizer_status", "cold_starts", "suspensions",
     "local_step_retries", "replayed_delivered_tokens", "replayed_dispatches",
     "cumulative_fuel", "resource_wait_ns", "engine_ns", "error_cluster",
-    "guard_status", "row_wall_ns", "finalizer_ns",
+    "guard_status", "row_wall_ns", "guard_overhead_ns", "finalizer_ns",
     "source_read_ns", "format_read_ns", "format_restore_ns", "setup_ns",
     "accepted_wall_ns", "pdf_font_resources_ns", "map_resolve_ns",
+    "startup_ns", "engine_core_ns", "savepoint_capture_ns",
+    "savepoint_restore_ns", "candidate_restore_ns", "resolver_index_ns",
+    "vfs_stage_ns", "request_extraction_ns", "engine_entry_exit_ns",
+    "resolver_ns", "local_lookup_ns", "manifest_lookup_ns", "object_load_ns",
+    "content_hash_ns", "response_build_ns", "resolver_overhead_ns", "preload_ns",
+    "provision_ns", "accepted_handoff_ns", "cli_overhead_ns",
+    "accepted_phase_sum_ns", "local_lookups", "local_hits", "manifest_lookups",
+    "manifest_cache_hits", "object_requests", "object_cache_hits",
     "positioning_ns", "vf_ns", "font_usage_ns", "destinations_ns",
     "annotations_ns", "pdf_object_ns", "font_embed_ns", "serialization_ns",
     "image_import_ns", "image_parse_copy_ns", "image_decode_ns",
@@ -128,13 +136,17 @@ def parse_telemetry(log: str) -> dict[str, int]:
 def parse_phase_telemetry(log: str) -> dict[str, int]:
     values = {}
     prefixes = ("RESOURCE_STARTUP_TELEMETRY ", "RESOURCE_ENGINE_ACCEPTED ",
+                "RESOURCE_HOST_TELEMETRY ",
                 "PDF_TELEMETRY ", "PDF_DRIVER_BUILD ", "PDF_DRIVER_TELEMETRY ")
     for line in log.splitlines():
         if line.startswith(prefixes):
             values.update({name: int(value) for name, value in re.findall(r" ([a-z_]+)=([0-9]+)", line)})
     values["pdf_font_resources_ns"] = values.pop("font_resources_ns", 0)
     values["pdf_object_ns"] = values.pop("object_ns", 0)
-    return {name: values.get(name, 0) for name in HEADER[15:]}
+    return {
+        name: values.get(name, 0)
+        for name in HEADER[HEADER.index("source_read_ns"):]
+    }
 
 
 def artifact_hashes(results: Path, key: str, finalizer_status: str) -> dict[str, str | None]:
@@ -315,6 +327,7 @@ def main() -> None:
             row.update(parse_phase_telemetry(log))
             row["guard_status"] = completed.returncode
             row["row_wall_ns"] = wall_ns
+            row["guard_overhead_ns"] = max(0, wall_ns - row.get("run_wall_ns", 0))
             row["finalizer_ns"] = max(0, wall_ns - telemetry["engine_ns"] - telemetry["resource_wait_ns"]) if accepted else 0
             row["engine_status"] = "accepted" if accepted else ("guard-timeout-or-rss" if completed.returncode == 124 else "failed")
             row["finalizer_status"] = ("complete" if completed.returncode == 0 else

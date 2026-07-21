@@ -101,7 +101,8 @@ fn run_tex(opts: &RunCliOptions) -> Result<(), CliError> {
             run_started.elapsed().as_nanos()
         );
     }
-    finalize_run(opts, accepted, run_started)
+    let accepted_wall = run_started.elapsed();
+    finalize_run(opts, accepted, run_started, accepted_wall)
 }
 
 #[allow(clippy::disallowed_methods)] // Process telemetry; TeX state never observes it.
@@ -109,13 +110,14 @@ fn finalize_run(
     opts: &RunCliOptions,
     mut accepted: umber::cli_resource::NativeAcceptedRun,
     run_started: std::time::Instant,
+    accepted_wall: std::time::Duration,
 ) -> Result<(), CliError> {
     let font_resources_started = std::time::Instant::now();
     if opts.pdf.is_some() && !accepted.pdf_draft_mode() {
         accepted.provide_pdf_font_programs()?;
     }
     let font_resources_ns = font_resources_started.elapsed().as_nanos();
-    let (output, finalization, input_path_map, resolved_inputs, main_input, telemetry) =
+    let (output, finalization, input_path_map, resolved_inputs, main_input, telemetry, host) =
         accepted.into_parts();
     if env::var_os("UMBER_RESOURCE_TELEMETRY").is_some_and(|value| value == "1") {
         eprintln!(
@@ -128,6 +130,64 @@ fn finalize_run(
             telemetry.execution.cumulative_fuel,
             telemetry.resource_wait_time.as_nanos(),
             telemetry.execution.engine_time.as_nanos(),
+        );
+        let engine_core = telemetry
+            .execution
+            .engine_time
+            .saturating_sub(telemetry.execution.savepoint_capture_time)
+            .saturating_sub(telemetry.execution.savepoint_restore_time);
+        let engine_entry_exit = host
+            .compile_attempt_time
+            .saturating_sub(telemetry.execution.engine_time)
+            .saturating_sub(telemetry.request_extraction_time)
+            .saturating_sub(telemetry.candidate_restore_time)
+            .saturating_sub(telemetry.resolver_index_time)
+            .saturating_sub(telemetry.vfs_stage_time);
+        let cli_overhead = accepted_wall
+            .saturating_sub(host.startup_time)
+            .saturating_sub(host.compile_attempt_time)
+            .saturating_sub(host.resolver_time)
+            .saturating_sub(host.preload_time)
+            .saturating_sub(host.provision_time)
+            .saturating_sub(host.accepted_handoff_time);
+        let resolver_accounted = host
+            .resolver
+            .local_lookup_time
+            .saturating_add(host.resolver.manifest_lookup_time)
+            .saturating_add(host.resolver.object_load_time)
+            .saturating_add(host.resolver.content_hash_time)
+            .saturating_add(host.resolver.response_build_time);
+        eprintln!(
+            "RESOURCE_HOST_TELEMETRY startup_ns={} engine_core_ns={} savepoint_capture_ns={} savepoint_restore_ns={} candidate_restore_ns={} resolver_index_ns={} vfs_stage_ns={} request_extraction_ns={} engine_entry_exit_ns={} resolver_ns={} local_lookup_ns={} manifest_lookup_ns={} object_load_ns={} content_hash_ns={} response_build_ns={} resolver_overhead_ns={} preload_ns={} provision_ns={} accepted_handoff_ns={} cli_overhead_ns={} accepted_phase_sum_ns={} local_lookups={} local_hits={} manifest_lookups={} manifest_cache_hits={} object_requests={} object_cache_hits={}",
+            host.startup_time.as_nanos(),
+            engine_core.as_nanos(),
+            telemetry.execution.savepoint_capture_time.as_nanos(),
+            telemetry.execution.savepoint_restore_time.as_nanos(),
+            telemetry.candidate_restore_time.as_nanos(),
+            telemetry.resolver_index_time.as_nanos(),
+            telemetry.vfs_stage_time.as_nanos(),
+            telemetry.request_extraction_time.as_nanos(),
+            engine_entry_exit.as_nanos(),
+            host.resolver_time.as_nanos(),
+            host.resolver.local_lookup_time.as_nanos(),
+            host.resolver.manifest_lookup_time.as_nanos(),
+            host.resolver.object_load_time.as_nanos(),
+            host.resolver.content_hash_time.as_nanos(),
+            host.resolver.response_build_time.as_nanos(),
+            host.resolver_time
+                .saturating_sub(resolver_accounted)
+                .as_nanos(),
+            host.preload_time.as_nanos(),
+            host.provision_time.as_nanos(),
+            host.accepted_handoff_time.as_nanos(),
+            cli_overhead.as_nanos(),
+            accepted_wall.as_nanos(),
+            host.resolver.local_lookups,
+            host.resolver.local_hits,
+            host.resolver.manifest_lookups,
+            host.resolver.manifest_cache_hits,
+            host.resolver.object_requests,
+            host.resolver.object_cache_hits,
         );
     }
     let virtual_font_resources = finalization.virtual_font_resources;

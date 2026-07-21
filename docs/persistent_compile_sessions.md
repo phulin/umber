@@ -228,6 +228,23 @@ state; shared bytes are not double-counted merely because both generations
 reference them. Candidate charges disappear on cancellation, terminal failure,
 or acceptance.
 
+Native CLI telemetry separates accepted-run wall time into mutually exclusive
+engine-core, step-savepoint capture and restore, candidate restore,
+resolver-index, VFS-stage, request-extraction, engine-entry/exit, resolver,
+preload, response-provision, accepted-handoff, and residual CLI phases. The
+candidate-restore phase includes the first lazy restore of a supplied format
+image; engine entry/exit includes final candidate acceptance outside timed
+executor steps.
+
+`resource_wait_ns` remains the interval from returning a resource request until
+successful provisioning confirms progress. It is not an I/O-only counter: it
+includes resolver CPU, cache reads and validation, response construction, and
+provisioning. `RESOURCE_HOST_TELEMETRY` separately reports local lookup,
+manifest lookup/parse, object load/validation, content hashing, response build,
+and residual resolver time plus lookup/cache hit counts. Retry savepoint
+restoration occurs in the following engine phase and is excluded from resource
+wait.
+
 `dispose()` releases resources, accepted history, and output. No session
 method succeeds after disposal.
 

@@ -74,7 +74,9 @@ aggregate-RSS, process-group TERM-to-KILL, reap, and survivor enforcement.
 finalization in that process. A later map, encoding, PFB, PK, or PDF-lowering
 failure therefore remains a finalizer outcome without recompiling the paper.
 The TSV records both phase outcomes, replay telemetry, resource and engine time,
-estimated finalizer time, and guard status; failed rows retain stable clusters.
+mutually exclusive accepted-run host phases, nested resolver/cache phases and
+hit counts, estimated finalizer time, and guard status; failed rows retain
+stable clusters.
 
 The `profile.test` build is the optimized profile used by `cargo run-dev` and
 shares its `target/debug/umber` artifact. A plain `cargo build` replaces that

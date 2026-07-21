@@ -384,11 +384,13 @@ fn inline_hint_fetches_without_loading_the_dependency_shard() {
         None,
         false,
     );
+    let mut telemetry = ResolverTelemetry::default();
     let resolved = resolver
         .resolve_batch_with_prefetch(
             &local_resolver(directory.path()),
             &needs(vec![file_request("article.cls")]),
             &FetchCancellation::new(),
+            &mut telemetry,
         )
         .expect("inline dependency hint");
     assert!(matches!(
@@ -402,6 +404,10 @@ fn inline_hint_fetches_without_loading_the_dependency_shard() {
                 && file.virtual_path == "/texlive/fonts/cmr10.tfm"
                 && file.bytes == dependency_bytes
     ));
+    assert_eq!(telemetry.object_requests, 2);
+    assert_eq!(telemetry.object_cache_hits, 0);
+    assert!(telemetry.local_lookups > 0);
+    assert!(telemetry.manifest_lookups > 0);
     assert_eq!(
         cache
             .load_object(&dependency_digest, dependency_bytes.len() as u64)

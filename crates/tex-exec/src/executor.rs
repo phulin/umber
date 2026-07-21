@@ -331,6 +331,8 @@ pub struct ExecutionTelemetry {
     pub replayed_dispatches: u64,
     pub cumulative_fuel: u64,
     pub engine_time: Duration,
+    pub savepoint_capture_time: Duration,
+    pub savepoint_restore_time: Duration,
 }
 
 #[derive(Debug)]
@@ -878,7 +880,12 @@ impl ExecutionRun {
         }
 
         let blocked_step = self.next_step;
+        let savepoint_timer = TelemetryTimer::start();
         let savepoint = self.capture_step_savepoint(services);
+        self.telemetry.savepoint_capture_time = self
+            .telemetry
+            .savepoint_capture_time
+            .saturating_add(savepoint_timer.elapsed());
         let checkpoint_destination = services.checkpoints.take();
         let mut staged = StagedCheckpointSink::new(checkpoint_destination);
         let mut staged_reads = Vec::new();
@@ -968,7 +975,12 @@ impl ExecutionRun {
                                 as u64,
                         );
                     services.checkpoints = staged.discard();
+                    let restore_timer = TelemetryTimer::start();
                     self.rollback_step_savepoint(services, savepoint);
+                    self.telemetry.savepoint_restore_time = self
+                        .telemetry
+                        .savepoint_restore_time
+                        .saturating_add(restore_timer.elapsed());
                 } else {
                     // A terminal TeX error historically leaves the live engine
                     // at its failure point.  Only a typed host-resource need

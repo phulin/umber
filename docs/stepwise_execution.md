@@ -261,6 +261,11 @@ and read observations are discarded, and the run enters `Failed`. Cancellation
 is checked before mutation. A Rust panic is not a supported suspension and does
 not promise recovery.
 
+On native hosts, observational telemetry times savepoint capture and rollback
+separately from the remaining engine step body. This distinguishes local retry
+cost from host resource resolution without changing the savepoint boundary or
+allowing a retry to skip restoration.
+
 The `Universe` snapshot and input snapshot must be taken and restored as one
 aggregate operation. No caller may roll back input, modes, paragraph recording,
 execution state, or `Universe` independently. A resource lookup may suspend

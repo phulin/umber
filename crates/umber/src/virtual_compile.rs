@@ -307,6 +307,10 @@ pub struct RetentionMetrics {
 pub struct CompileTelemetry {
     pub execution: tex_exec::ExecutionTelemetry,
     pub resource_wait_time: Duration,
+    pub request_extraction_time: Duration,
+    pub candidate_restore_time: Duration,
+    pub resolver_index_time: Duration,
+    pub vfs_stage_time: Duration,
 }
 
 /// One rendered text unit resolved against the accepted editor revision.
@@ -502,6 +506,10 @@ pub struct VirtualCompileSession {
     initial_revision: tex_incr::RevisionId,
     execution_telemetry: tex_exec::ExecutionTelemetry,
     resource_wait_time: Duration,
+    request_extraction_time: Duration,
+    candidate_restore_time: Duration,
+    resolver_index_time: Duration,
+    vfs_stage_time: Duration,
     #[cfg(not(target_arch = "wasm32"))]
     resource_wait_started: Option<Instant>,
 }
@@ -656,6 +664,10 @@ impl VirtualCompileSession {
             initial_revision,
             execution_telemetry: tex_exec::ExecutionTelemetry::default(),
             resource_wait_time: Duration::ZERO,
+            request_extraction_time: Duration::ZERO,
+            candidate_restore_time: Duration::ZERO,
+            resolver_index_time: Duration::ZERO,
+            vfs_stage_time: Duration::ZERO,
             #[cfg(not(target_arch = "wasm32"))]
             resource_wait_started: None,
         })
@@ -1217,7 +1229,10 @@ impl VirtualCompileSession {
         }
     }
 
+    #[allow(clippy::disallowed_methods)] // Process telemetry; TeX state never observes it.
     fn run_attempt(&mut self) -> Result<CompileAttemptResult, CompileError> {
+        #[cfg(not(target_arch = "wasm32"))]
+        let candidate_restore_started = Instant::now();
         let mut retained = if let Some(candidate) = self.candidate.take() {
             candidate
         } else if self.incremental.is_none() {
@@ -1286,9 +1301,17 @@ impl VirtualCompileSession {
         } else {
             unreachable!("candidate creation covers initial and accepted sessions")
         };
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            self.candidate_restore_time = self
+                .candidate_restore_time
+                .saturating_add(candidate_restore_started.elapsed());
+        }
 
         let mut pending_files = retained.files;
 
+        #[cfg(not(target_arch = "wasm32"))]
+        let resolver_index_started = Instant::now();
         let resolved_paths = pending_files
             .resolved_paths()
             .map(|(key, path)| (key.clone(), path.clone()))
@@ -1297,6 +1320,14 @@ impl VirtualCompileSession {
             .unavailable_keys()
             .cloned()
             .collect::<BTreeSet<_>>();
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            self.resolver_index_time = self
+                .resolver_index_time
+                .saturating_add(resolver_index_started.elapsed());
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        let vfs_stage_started = Instant::now();
         let mut build =
             pending_files.begin_build(BuildPlan::new(BuildId::new(u64::from(self.attempts))));
         let mut stage = build
@@ -1312,6 +1343,12 @@ impl VirtualCompileSession {
             self.accepted_font_containers,
             self.html,
         );
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            self.vfs_stage_time = self
+                .vfs_stage_time
+                .saturating_add(vfs_stage_started.elapsed());
+        }
         let (input_resolver, font_resolver, image_resolver) = resolvers.resolvers();
         let cancellation = tex_exec::Cancellation::new();
         let drive = match &mut retained.execution {
@@ -1327,6 +1364,8 @@ impl VirtualCompileSession {
             RetainedExecution::Initial { candidate, .. }
             | RetainedExecution::Pending(candidate) => candidate.execution_telemetry(),
         };
+        #[cfg(not(target_arch = "wasm32"))]
+        let request_extraction_started = Instant::now();
         let (file_misses, file_probes, font_misses, fatal) = resolvers.finish();
 
         if !file_misses.is_empty() || !file_probes.is_empty() || !font_misses.is_empty() {
@@ -1440,6 +1479,12 @@ impl VirtualCompileSession {
             retained.suspension_serial = suspension.serial;
             self.candidate = Some(retained);
             self.start_resource_wait();
+            #[cfg(not(target_arch = "wasm32"))]
+            {
+                self.request_extraction_time = self
+                    .request_extraction_time
+                    .saturating_add(request_extraction_started.elapsed());
+            }
             return Ok(CompileAttemptResult::NeedResources(NeedResources {
                 required,
                 probes,
@@ -1470,6 +1515,8 @@ impl VirtualCompileSession {
             }
         }
         if self.engine.supports_pdf_output() {
+            #[cfg(not(target_arch = "wasm32"))]
+            let pdf_request_extraction_started = Instant::now();
             let stores = match &mut retained.execution {
                 RetainedExecution::Initial { candidate, .. }
                 | RetainedExecution::Pending(candidate) => candidate
@@ -1517,6 +1564,12 @@ impl VirtualCompileSession {
                 retained.suspension_serial = retained.suspension_serial.saturating_add(1);
                 self.candidate = Some(retained);
                 self.start_resource_wait();
+                #[cfg(not(target_arch = "wasm32"))]
+                {
+                    self.request_extraction_time = self
+                        .request_extraction_time
+                        .saturating_add(pdf_request_extraction_started.elapsed());
+                }
                 return Ok(CompileAttemptResult::NeedResources(NeedResources {
                     required,
                     probes,
@@ -1716,6 +1769,10 @@ impl VirtualCompileSession {
         CompileTelemetry {
             execution: self.execution_telemetry,
             resource_wait_time: self.resource_wait_time,
+            request_extraction_time: self.request_extraction_time,
+            candidate_restore_time: self.candidate_restore_time,
+            resolver_index_time: self.resolver_index_time,
+            vfs_stage_time: self.vfs_stage_time,
         }
     }
 

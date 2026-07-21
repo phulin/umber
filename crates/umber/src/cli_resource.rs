@@ -8,6 +8,7 @@ use std::fmt;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
+use std::time::Instant;
 
 use sha2::{Digest, Sha256};
 use tex_fonts::AcceptedFontContainers;
@@ -120,6 +121,7 @@ pub struct NativeAcceptedRun {
     resolved_inputs: Vec<(PathBuf, usize)>,
     main_input: (PathBuf, usize),
     telemetry: CompileTelemetry,
+    host_telemetry: NativeHostTelemetry,
     distribution: DistributionResolver,
     local: LocalResolver,
 }
@@ -131,7 +133,36 @@ pub type NativeAcceptedParts = (
     Vec<(PathBuf, usize)>,
     (PathBuf, usize),
     CompileTelemetry,
+    NativeHostTelemetry,
 );
+
+/// Mutually exclusive native host phases around the engine's typed resource loop.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct NativeHostTelemetry {
+    pub startup_time: Duration,
+    pub compile_attempt_time: Duration,
+    pub resolver_time: Duration,
+    pub preload_time: Duration,
+    pub provision_time: Duration,
+    pub accepted_handoff_time: Duration,
+    pub resolver: ResolverTelemetry,
+}
+
+/// Nested resolver phases and cache outcomes. Phase durations are mutually exclusive.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct ResolverTelemetry {
+    pub local_lookup_time: Duration,
+    pub manifest_lookup_time: Duration,
+    pub object_load_time: Duration,
+    pub content_hash_time: Duration,
+    pub response_build_time: Duration,
+    pub local_lookups: u64,
+    pub local_hits: u64,
+    pub manifest_lookups: u64,
+    pub manifest_cache_hits: u64,
+    pub object_requests: u64,
+    pub object_cache_hits: u64,
+}
 
 impl NativeAcceptedRun {
     #[must_use]
@@ -175,20 +206,24 @@ impl NativeAcceptedRun {
             self.resolved_inputs,
             self.main_input,
             self.telemetry,
+            self.host_telemetry,
         )
     }
 }
 
+#[allow(clippy::disallowed_methods)] // Process telemetry; TeX state never observes it.
 pub fn run_for_finalization(
     options: &NativeRunOptions,
 ) -> Result<NativeAcceptedRun, NativeRunError> {
     let cancellation = FetchCancellation::new();
     let mut session = NativeCompileSession::new(options, &cancellation)?;
     let output = session.compile(&cancellation)?;
+    let accepted_handoff_started = Instant::now();
     let input_path_map = session.local.input_path_map();
     let resolved_inputs = session.local.resolved_inputs();
     let main_input = (options.input.clone(), session.source.len());
     let telemetry = session.session.compile_telemetry();
+    let mut host_telemetry = session.host_telemetry;
     let NativeCompileSession {
         session,
         distribution,
@@ -203,6 +238,7 @@ pub fn run_for_finalization(
         .world_mut()
         .retarget_output_backend(&World::real())
         .map_err(|error| NativeRunError::Compile(error.to_string()))?;
+    host_telemetry.accepted_handoff_time = accepted_handoff_started.elapsed();
     Ok(NativeAcceptedRun {
         output,
         finalization,
@@ -210,6 +246,7 @@ pub fn run_for_finalization(
         resolved_inputs,
         main_input,
         telemetry,
+        host_telemetry,
         distribution,
         local,
     })
@@ -223,6 +260,7 @@ pub struct NativeCompileSession {
     local: LocalResolver,
     source: String,
     pending_source: Option<String>,
+    host_telemetry: NativeHostTelemetry,
 }
 
 impl NativeCompileSession {
@@ -336,15 +374,21 @@ impl NativeCompileSession {
                 setup_started.elapsed().as_nanos()
             );
         }
+        let startup_time = setup_started.elapsed();
         Ok(Self {
             session,
             distribution,
             local,
             source,
             pending_source: None,
+            host_telemetry: NativeHostTelemetry {
+                startup_time,
+                ..NativeHostTelemetry::default()
+            },
         })
     }
 
+    #[allow(clippy::disallowed_methods)] // Process telemetry; TeX state never observes it.
     pub fn compile(
         &mut self,
         cancellation: &FetchCancellation,
@@ -354,7 +398,13 @@ impl NativeCompileSession {
                 self.session.discard_suspended_candidate();
                 return Err(NativeRunError::Cancelled);
             }
-            match self.session.compile_attempt() {
+            let compile_attempt_started = Instant::now();
+            let attempt = self.session.compile_attempt();
+            self.host_telemetry.compile_attempt_time = self
+                .host_telemetry
+                .compile_attempt_time
+                .saturating_add(compile_attempt_started.elapsed());
+            match attempt {
                 CompileAttemptResult::Complete(output) => {
                     if let Some(source) = self.pending_source.take() {
                         self.source = source;
@@ -365,10 +415,12 @@ impl NativeCompileSession {
                     return Err(NativeRunError::Compile(error.to_string()));
                 }
                 CompileAttemptResult::NeedResources(batch) => {
+                    let resolver_started = Instant::now();
                     let resolved = match self.distribution.resolve_batch_with_prefetch(
                         &self.local,
                         &batch,
                         cancellation,
+                        &mut self.host_telemetry.resolver,
                     ) {
                         Ok(resolved) => resolved,
                         Err(error) => {
@@ -376,20 +428,34 @@ impl NativeCompileSession {
                             return Err(error);
                         }
                     };
+                    self.host_telemetry.resolver_time = self
+                        .host_telemetry
+                        .resolver_time
+                        .saturating_add(resolver_started.elapsed());
                     if cancellation.is_cancelled() {
                         self.session.discard_suspended_candidate();
                         return Err(NativeRunError::Cancelled);
                     }
+                    let preload_started = Instant::now();
                     for file in resolved.prefetched {
                         if let Err(error) = self.session.preload_resolved_file(file) {
                             self.session.discard_suspended_candidate();
                             return Err(NativeRunError::Compile(error.to_string()));
                         }
                     }
+                    self.host_telemetry.preload_time = self
+                        .host_telemetry
+                        .preload_time
+                        .saturating_add(preload_started.elapsed());
+                    let provision_started = Instant::now();
                     if let Err(error) = self.session.provide_resources(resolved.responses) {
                         self.session.discard_suspended_candidate();
                         return Err(NativeRunError::Compile(error.to_string()));
                     }
+                    self.host_telemetry.provision_time = self
+                        .host_telemetry
+                        .provision_time
+                        .saturating_add(provision_started.elapsed());
                 }
             }
         }
@@ -664,15 +730,22 @@ impl DistributionResolver {
         batch: &NeedResources,
         cancellation: &FetchCancellation,
     ) -> Result<Vec<ResourceResponse>, NativeRunError> {
-        self.resolve_batch_with_prefetch(local, batch, cancellation)
-            .map(|resolved| resolved.responses)
+        self.resolve_batch_with_prefetch(
+            local,
+            batch,
+            cancellation,
+            &mut ResolverTelemetry::default(),
+        )
+        .map(|resolved| resolved.responses)
     }
 
+    #[allow(clippy::disallowed_methods)] // Process telemetry; TeX state never observes it.
     fn resolve_batch_with_prefetch(
         &mut self,
         local: &LocalResolver,
         batch: &NeedResources,
         cancellation: &FetchCancellation,
+        telemetry: &mut ResolverTelemetry,
     ) -> Result<ResolvedDistributionBatch, NativeRunError> {
         check_cancelled(cancellation)?;
         let mut responses = Vec::new();
@@ -680,7 +753,14 @@ impl DistributionResolver {
         for request in batch.required.iter().chain(&batch.probes) {
             match request {
                 ResourceRequest::File(request) => {
-                    if let Some(file) = local.resolve(request) {
+                    let started = Instant::now();
+                    telemetry.local_lookups = telemetry.local_lookups.saturating_add(1);
+                    let resolved = local.resolve(request);
+                    telemetry.local_lookup_time = telemetry
+                        .local_lookup_time
+                        .saturating_add(started.elapsed());
+                    if let Some(file) = resolved {
+                        telemetry.local_hits = telemetry.local_hits.saturating_add(1);
                         responses.push(ResourceResponse::File(file));
                     } else {
                         unresolved.push(request.clone());
@@ -696,7 +776,14 @@ impl DistributionResolver {
             let ResourceRequest::File(request) = request else {
                 continue;
             };
-            if let Some(file) = local.resolve(request) {
+            let started = Instant::now();
+            telemetry.local_lookups = telemetry.local_lookups.saturating_add(1);
+            let resolved = local.resolve(request);
+            telemetry.local_lookup_time = telemetry
+                .local_lookup_time
+                .saturating_add(started.elapsed());
+            if let Some(file) = resolved {
+                telemetry.local_hits = telemetry.local_hits.saturating_add(1);
                 responses.push(ResourceResponse::File(file));
             } else {
                 unresolved_hints.push(request.clone());
@@ -708,7 +795,17 @@ impl DistributionResolver {
                 prefetched: Vec::new(),
             });
         }
-        let root = self.load(cancellation)?.root.clone();
+        let manifest_started = Instant::now();
+        telemetry.manifest_lookups = telemetry.manifest_lookups.saturating_add(1);
+        if self.loaded.is_some() {
+            telemetry.manifest_cache_hits = telemetry.manifest_cache_hits.saturating_add(1);
+        }
+        let root = &self.load(cancellation)?.root;
+        let shard_bits = root.shard_bits;
+        let objects_base_url = root.objects_base_url.clone();
+        telemetry.manifest_lookup_time = telemetry
+            .manifest_lookup_time
+            .saturating_add(manifest_started.elapsed());
         let mut original_files = BTreeMap::new();
         for request in &unresolved {
             let Some(key) = distribution_file_key(request)? else {
@@ -720,7 +817,7 @@ impl DistributionResolver {
         let mut keys_by_shard = BTreeMap::<u32, Vec<String>>::new();
         for key in original_files.keys() {
             keys_by_shard
-                .entry(shard_index(key, root.shard_bits))
+                .entry(shard_index(key, shard_bits))
                 .or_default()
                 .push(key.clone());
         }
@@ -736,14 +833,26 @@ impl DistributionResolver {
             }
             original_hints.insert(key.clone(), request.key().clone());
             hinted_keys
-                .entry(shard_index(&key, root.shard_bits))
+                .entry(shard_index(&key, shard_bits))
                 .or_default()
                 .push(key);
         }
         let mut required = BTreeMap::<String, ShardFile>::new();
         let mut hints = BTreeMap::<String, DependencyHint>::new();
         for (index, keys) in keys_by_shard {
+            let manifest_started = Instant::now();
+            telemetry.manifest_lookups = telemetry.manifest_lookups.saturating_add(1);
+            if self
+                .loaded
+                .as_ref()
+                .is_some_and(|loaded| loaded.shards.contains_key(&index))
+            {
+                telemetry.manifest_cache_hits = telemetry.manifest_cache_hits.saturating_add(1);
+            }
             let shard = self.load_shard(index, cancellation)?;
+            telemetry.manifest_lookup_time = telemetry
+                .manifest_lookup_time
+                .saturating_add(manifest_started.elapsed());
             for key in keys {
                 let Some(entry) = shard.files.get(&key) else {
                     let original = original_files
@@ -760,12 +869,26 @@ impl DistributionResolver {
                 }
             }
             if let Some(keys) = hinted_keys.remove(&index) {
-                collect_closure_hints(&shard, keys, &required, &mut hints);
+                collect_closure_hints(shard, keys, &required, &mut hints);
             }
         }
         for (index, keys) in hinted_keys {
+            let manifest_started = Instant::now();
+            telemetry.manifest_lookups = telemetry.manifest_lookups.saturating_add(1);
+            if self
+                .loaded
+                .as_ref()
+                .is_some_and(|loaded| loaded.shards.contains_key(&index))
+            {
+                telemetry.manifest_cache_hits = telemetry.manifest_cache_hits.saturating_add(1);
+            }
             match self.load_shard(index, cancellation) {
-                Ok(shard) => collect_closure_hints(&shard, keys, &required, &mut hints),
+                Ok(shard) => {
+                    telemetry.manifest_lookup_time = telemetry
+                        .manifest_lookup_time
+                        .saturating_add(manifest_started.elapsed());
+                    collect_closure_hints(shard, keys, &required, &mut hints);
+                }
                 Err(NativeRunError::Cancelled) => return Err(NativeRunError::Cancelled),
                 Err(_) => {}
             }
@@ -777,7 +900,14 @@ impl DistributionResolver {
             let ResourceRequest::File(request) = distribution_request(distribution_key)? else {
                 continue;
             };
-            if local.resolve(&request).is_some() {
+            let started = Instant::now();
+            telemetry.local_lookups = telemetry.local_lookups.saturating_add(1);
+            let resolved = local.resolve(&request);
+            telemetry.local_lookup_time = telemetry
+                .local_lookup_time
+                .saturating_add(started.elapsed());
+            if resolved.is_some() {
+                telemetry.local_hits = telemetry.local_hits.saturating_add(1);
                 locally_shadowed_hints.insert(manifest_key.clone());
             }
         }
@@ -817,14 +947,27 @@ impl DistributionResolver {
         }
         let mut fetch_requests = required_fetches.clone();
         fetch_requests.extend(hint_fetches);
-        let fetched = match self.fetch_objects(&root, &fetch_requests, cancellation) {
+        telemetry.object_requests = telemetry
+            .object_requests
+            .saturating_add(fetch_requests.len() as u64);
+        let object_started = Instant::now();
+        let fetched = match self.fetch_objects(&objects_base_url, &fetch_requests, cancellation) {
             Ok(fetched) => fetched,
             Err(NativeRunError::Cancelled) => return Err(NativeRunError::Cancelled),
             Err(_) if fetch_requests.len() > required_fetches.len() => {
-                self.fetch_objects(&root, &required_fetches, cancellation)?
+                self.fetch_objects(&objects_base_url, &required_fetches, cancellation)?
             }
             Err(error) => return Err(error),
         };
+        telemetry.object_load_time = telemetry
+            .object_load_time
+            .saturating_add(object_started.elapsed());
+        telemetry.object_cache_hits = telemetry.object_cache_hits.saturating_add(
+            fetched
+                .iter()
+                .filter(|(_, _, cache_hit)| *cache_hit)
+                .count() as u64,
+        );
         if fetched.iter().any(|(_, _, cache_hit)| !cache_hit) {
             eprintln!("umber: acquired {} distribution resource(s)", fetched.len());
         }
@@ -832,6 +975,8 @@ impl DistributionResolver {
             .into_iter()
             .map(|(key, bytes, _)| (key, bytes))
             .collect::<BTreeMap<_, _>>();
+        let response_started = Instant::now();
+        let hash_before = telemetry.content_hash_time;
         for (manifest_key, entry) in required {
             let data = bytes
                 .remove(&manifest_key)
@@ -839,9 +984,14 @@ impl DistributionResolver {
             let key = original_files
                 .remove(&manifest_key)
                 .expect("original file request");
+            let hash_started = Instant::now();
+            let expected_digest = FileContentId::for_bytes(&data);
+            telemetry.content_hash_time = telemetry
+                .content_hash_time
+                .saturating_add(hash_started.elapsed());
             responses.push(ResourceResponse::File(ResolvedFile {
                 request: key,
-                expected_digest: Some(FileContentId::for_bytes(&data)),
+                expected_digest: Some(expected_digest),
                 virtual_path: entry.virtual_path,
                 bytes: data,
             }));
@@ -853,9 +1003,14 @@ impl DistributionResolver {
             let entry = hints
                 .get(&manifest_key)
                 .expect("fetched closure hint has manifest metadata");
+            let hash_started = Instant::now();
+            let expected_digest = FileContentId::for_bytes(&data);
+            telemetry.content_hash_time = telemetry
+                .content_hash_time
+                .saturating_add(hash_started.elapsed());
             responses.push(ResourceResponse::File(ResolvedFile {
                 request: key,
-                expected_digest: Some(FileContentId::for_bytes(&data)),
+                expected_digest: Some(expected_digest),
                 virtual_path: entry.virtual_path.clone(),
                 bytes: data,
             }));
@@ -870,13 +1025,23 @@ impl DistributionResolver {
             let ResourceRequest::File(request) = distribution_request(distribution_key)? else {
                 continue;
             };
+            let hash_started = Instant::now();
+            let expected_digest = FileContentId::for_bytes(&data);
+            telemetry.content_hash_time = telemetry
+                .content_hash_time
+                .saturating_add(hash_started.elapsed());
             prefetched.push(ResolvedFile {
                 request: request.key().clone(),
-                expected_digest: Some(FileContentId::for_bytes(&data)),
+                expected_digest: Some(expected_digest),
                 virtual_path: entry.virtual_path,
                 bytes: data,
             });
         }
+        telemetry.response_build_time = telemetry.response_build_time.saturating_add(
+            response_started
+                .elapsed()
+                .saturating_sub(telemetry.content_hash_time.saturating_sub(hash_before)),
+        );
         Ok(ResolvedDistributionBatch {
             responses,
             prefetched,
@@ -902,6 +1067,7 @@ impl DistributionResolver {
                 prefetch_hints: Vec::new(),
             },
             cancellation,
+            &mut ResolverTelemetry::default(),
         )?;
         for response in resolved.responses {
             match response {
@@ -1031,7 +1197,7 @@ impl DistributionResolver {
 
     fn fetch_objects(
         &self,
-        root: &ShardedManifestRoot,
+        objects_base_url: &str,
         requests: &[FetchRequest],
         cancellation: &FetchCancellation,
     ) -> Result<Vec<(String, Vec<u8>, bool)>, NativeRunError> {
@@ -1076,7 +1242,7 @@ impl DistributionResolver {
         }
         let client = FetchClient::new(FetchClientConfig::default());
         client
-            .fetch_batch_cancellable(&self.cache, &root.objects_base_url, requests, cancellation)
+            .fetch_batch_cancellable(&self.cache, objects_base_url, requests, cancellation)
             .map_err(map_fetch_error)
             .map(|objects| {
                 objects
@@ -1090,15 +1256,22 @@ impl DistributionResolver {
         &mut self,
         index: u32,
         cancellation: &FetchCancellation,
-    ) -> Result<ManifestShard, NativeRunError> {
+    ) -> Result<&ManifestShard, NativeRunError> {
         check_cancelled(cancellation)?;
         let loaded = self.load(cancellation)?;
-        if let Some(shard) = loaded.shards.get(&index) {
-            return Ok(shard.clone());
+        if loaded.shards.contains_key(&index) {
+            return Ok(self
+                .loaded
+                .as_ref()
+                .expect("root loaded before shard")
+                .shards
+                .get(&index)
+                .expect("checked shard remains loaded"));
         }
-        let root = loaded.root.clone();
+        let shard_bits = loaded.root.shard_bits;
         let local_root = loaded.local_root.clone();
-        let digest = root
+        let digest = loaded
+            .root
             .shard_digest(index)
             .expect("canonical shard index is bounded by shardBits")
             .to_owned();
@@ -1119,7 +1292,14 @@ impl DistributionResolver {
                     "shard:{index}"
                 )]));
             } else {
-                let url = format!("{}sha256-{digest}", root.objects_base_url);
+                let url = format!(
+                    "{}sha256-{digest}",
+                    self.loaded
+                        .as_ref()
+                        .expect("root loaded before shard")
+                        .root
+                        .objects_base_url
+                );
                 fetch_manifest_cancellable(&url, &digest, Duration::from_secs(30), cancellation)
                     .map_err(|error| match error {
                         ManifestFetchError::Cancelled => NativeRunError::Cancelled,
@@ -1138,10 +1318,13 @@ impl DistributionResolver {
         let shard = ManifestShard::parse(text)
             .map_err(|error| NativeRunError::ManifestParse(error.to_string()))?;
         shard
-            .validate_identity(&root, index)
+            .validate_identity(
+                &self.loaded.as_ref().expect("root loaded before shard").root,
+                index,
+            )
             .map_err(|error| NativeRunError::ManifestParse(error.to_string()))?;
         for key in shard.files.keys() {
-            if shard_index(key, root.shard_bits) != index {
+            if shard_index(key, shard_bits) != index {
                 return Err(NativeRunError::ManifestParse(format!(
                     "lookup key {key} is not in its canonical shard"
                 )));
@@ -1152,7 +1335,13 @@ impl DistributionResolver {
             .expect("root loaded before shard")
             .shards
             .insert(index, shard.clone());
-        Ok(shard)
+        Ok(self
+            .loaded
+            .as_ref()
+            .expect("root loaded before shard")
+            .shards
+            .get(&index)
+            .expect("inserted shard remains loaded"))
     }
 
     fn load(

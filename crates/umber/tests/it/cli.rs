@@ -305,6 +305,7 @@ fn pdftex_rule_page_is_published_only_to_an_explicit_distinct_pdf_path() {
     for marker in [
         "RESOURCE_STARTUP_TELEMETRY",
         "RESOURCE_ENGINE_ACCEPTED",
+        "RESOURCE_HOST_TELEMETRY",
         "PDF_TELEMETRY",
         "PDF_DRIVER_BUILD",
         "PDF_DRIVER_TELEMETRY",
