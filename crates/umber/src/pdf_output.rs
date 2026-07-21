@@ -3315,6 +3315,9 @@ fn raster_image_streams(
     if metadata.width == 0 || metadata.height == 0 {
         return Err(PdfBuildError::InvalidRasterDimensions);
     }
+    if metadata.format == PdfRasterFormat::Png {
+        validate_png_decoded_size(metadata)?;
+    }
     let color_space = match metadata.color_space {
         PdfRasterColorSpace::Gray => PdfImageColorSpace::DeviceGray,
         PdfRasterColorSpace::Rgb => PdfImageColorSpace::DeviceRgb,
@@ -3403,6 +3406,34 @@ fn raster_image_streams(
     Ok(streams)
 }
 
+fn validate_png_decoded_size(
+    metadata: tex_state::PdfRasterImageMetadata,
+) -> Result<(), PdfBuildError> {
+    let components = match metadata.png_color_type {
+        Some(0 | 3) => 1usize,
+        Some(2) => 3,
+        Some(4) => 2,
+        Some(6) => 4,
+        _ => return Err(PdfBuildError::InvalidPng),
+    };
+    let row_bytes = usize::try_from(metadata.width)
+        .ok()
+        .and_then(|width| width.checked_mul(components))
+        .and_then(|samples| samples.checked_mul(usize::from(metadata.bits_per_component)))
+        .and_then(|bits| bits.checked_add(7))
+        .map(|bits| bits / 8)
+        .ok_or(PdfBuildError::InvalidPng)?;
+    let height = usize::try_from(metadata.height).map_err(|_| PdfBuildError::InvalidPng)?;
+    let decoded_bytes = row_bytes
+        .checked_add(1)
+        .and_then(|row| row.checked_mul(height))
+        .ok_or(PdfBuildError::InvalidPng)?;
+    if decoded_bytes > MAX_IMPORTED_PDF_STREAM_BYTES {
+        return Err(PdfBuildError::InvalidPng);
+    }
+    Ok(())
+}
+
 fn strip_png_16(samples: &[u8]) -> Vec<u8> {
     samples.chunks_exact(2).map(|sample| sample[0]).collect()
 }
@@ -3428,6 +3459,7 @@ fn image_resource_name(
 }
 
 fn png_idat(bytes: &[u8]) -> Result<Vec<u8>, PdfBuildError> {
+    validate_png_crc(bytes)?;
     let mut cursor = 8usize;
     let mut data = Vec::new();
     while cursor.checked_add(12).is_some_and(|end| end <= bytes.len()) {
@@ -3452,6 +3484,50 @@ fn png_idat(bytes: &[u8]) -> Result<Vec<u8>, PdfBuildError> {
     (!data.is_empty())
         .then_some(data)
         .ok_or(PdfBuildError::InvalidPng)
+}
+
+fn strict_png_decoder() -> png::StreamingDecoder {
+    let mut options = png::DecodeOptions::default();
+    options.set_ignore_adler32(false);
+    options.set_ignore_crc(false);
+    options.set_ignore_text_chunk(true);
+    options.set_ignore_iccp_chunk(true);
+    options.set_skip_ancillary_crc_failures(false);
+    png::StreamingDecoder::new_with_options(options)
+}
+
+fn validate_png_crc(bytes: &[u8]) -> Result<(), PdfBuildError> {
+    let mut decoder = strict_png_decoder();
+    let mut input = bytes;
+    let mut saw_iend = false;
+    let mut stalled_updates = 0u8;
+    while !input.is_empty() && !saw_iend {
+        let (consumed, decoded) = decoder
+            .update(input, None)
+            .map_err(|_| PdfBuildError::InvalidPng)?;
+        input = &input[consumed..];
+        if let png::Decoded::ChunkBegin(length, _) = decoded
+            && usize::try_from(length)
+                .ok()
+                .is_none_or(|length| length > bytes.len() || length > MAX_IMPORTED_PDF_STREAM_BYTES)
+        {
+            return Err(PdfBuildError::InvalidPng);
+        }
+        saw_iend = matches!(decoded, png::Decoded::ChunkComplete(kind) if kind == png::chunk::IEND);
+        if consumed == 0 {
+            stalled_updates = stalled_updates.saturating_add(1);
+            if stalled_updates > 8 {
+                return Err(PdfBuildError::InvalidPng);
+            }
+        } else {
+            stalled_updates = 0;
+        }
+    }
+    if saw_iend && input.is_empty() {
+        Ok(())
+    } else {
+        Err(PdfBuildError::InvalidPng)
+    }
 }
 
 fn inflate(bytes: &[u8]) -> Result<Vec<u8>, PdfBuildError> {
@@ -3550,13 +3626,10 @@ fn png_alpha_streams(
     telemetry.raw_bytes = telemetry
         .raw_bytes
         .saturating_add(row_bytes.saturating_mul(height));
-    let started = std::time::Instant::now();
-    let compressed = png_idat(bytes)?;
-    telemetry.parse_copy_ns += started.elapsed().as_nanos();
     if metadata.bits_per_component == 8 {
         return png_alpha_streams_filtered(
-            &compressed,
-            metadata.color_space,
+            bytes,
+            metadata,
             width,
             height,
             row_bytes,
@@ -3564,6 +3637,9 @@ fn png_alpha_streams(
             telemetry,
         );
     }
+    let started = std::time::Instant::now();
+    let compressed = png_idat(bytes)?;
+    telemetry.parse_copy_ns += started.elapsed().as_nanos();
     let started = std::time::Instant::now();
     let mut decoder = flate2::read::ZlibDecoder::new(compressed.as_slice());
     let mut filtered = Vec::new();
@@ -3609,14 +3685,15 @@ fn png_alpha_streams(
 
 #[allow(clippy::disallowed_methods)] // Process telemetry; PDF content never observes it.
 fn png_alpha_streams_filtered(
-    compressed: &[u8],
-    color_space: PdfRasterColorSpace,
+    png_bytes: &[u8],
+    metadata: tex_state::PdfRasterImageMetadata,
     width: usize,
     height: usize,
     row_bytes: usize,
     pixel_bytes: usize,
     telemetry: &mut ImageImportTelemetry,
 ) -> Result<(Vec<u8>, PdfImageFilter, Vec<u8>, PdfImageFilter), PdfBuildError> {
+    let color_space = metadata.color_space;
     let color_components = usize::from(raster_color_components(color_space));
     let color_row_bytes = width
         .checked_mul(color_components)
@@ -3627,12 +3704,19 @@ fn png_alpha_streams_filtered(
     telemetry.alpha_bytes = telemetry
         .alpha_bytes
         .saturating_add((width + 1).saturating_mul(height));
+    let filtered_row_bytes = row_bytes.checked_add(1).ok_or(PdfBuildError::InvalidPng)?;
+    let decoder_buffer_bytes = (32 * 1024usize)
+        .checked_add(8 * 1024)
+        .and_then(|size| size.checked_add(filtered_row_bytes.checked_mul(2)?))
+        .ok_or(PdfBuildError::InvalidPng)?;
     telemetry.peak_row_bytes = telemetry.peak_row_bytes.max(
-        (row_bytes + 1)
+        decoder_buffer_bytes
             .saturating_add(color_row_bytes + 1)
             .saturating_add(width + 1),
     );
-    let mut decoder = flate2::read::ZlibDecoder::new(compressed);
+    let mut decoder = strict_png_decoder();
+    let mut decoder_buffer = vec![0; decoder_buffer_bytes];
+    let mut decoder_region = png::UnfilterRegion::default();
     let mut color_encoder = flate2::write::ZlibEncoder::new(
         Vec::new(),
         flate2::Compression::new(DERIVED_IMAGE_COMPRESSION_LEVEL),
@@ -3641,49 +3725,84 @@ fn png_alpha_streams_filtered(
         Vec::new(),
         flate2::Compression::new(DERIVED_IMAGE_COMPRESSION_LEVEL),
     );
-    let mut row = vec![0; row_bytes + 1];
     let mut color_row = vec![0; color_row_bytes + 1];
     let mut alpha_row = vec![0; width + 1];
-    for _ in 0..height {
+    let mut input = png_bytes;
+    let mut rows = 0usize;
+    let mut saw_iend = false;
+    let mut stalled_updates = 0u8;
+    while !input.is_empty() && !saw_iend {
         let started = std::time::Instant::now();
-        decoder
-            .read_exact(&mut row)
+        let (consumed, decoded) = decoder
+            .update(input, Some(&mut decoder_region.as_buf(&mut decoder_buffer)))
             .map_err(|_| PdfBuildError::InvalidPng)?;
+        input = &input[consumed..];
         telemetry.decode_ns += started.elapsed().as_nanos();
-
-        let started = std::time::Instant::now();
-        if row[0] > 4 {
+        if let png::Decoded::ChunkBegin(length, _) = decoded
+            && usize::try_from(length).ok().is_none_or(|length| {
+                length > png_bytes.len() || length > MAX_IMPORTED_PDF_STREAM_BYTES
+            })
+        {
             return Err(PdfBuildError::InvalidPng);
         }
-        color_row[0] = row[0];
-        alpha_row[0] = row[0];
-        for (index, pixel) in row[1..].chunks_exact(pixel_bytes).enumerate() {
-            let color_start = 1 + index * color_components;
-            color_row[color_start..color_start + color_components]
-                .copy_from_slice(&pixel[..color_components]);
-            alpha_row[index + 1] = pixel[color_components];
+        if let Some(info) = decoder.info()
+            && (info.width != metadata.width
+                || info.height != metadata.height
+                || info.bit_depth != png::BitDepth::Eight
+                || info.color_type
+                    != match metadata.png_color_type {
+                        Some(4) => png::ColorType::GrayscaleAlpha,
+                        Some(6) => png::ColorType::Rgba,
+                        _ => return Err(PdfBuildError::InvalidPng),
+                    }
+                || info.interlaced)
+        {
+            return Err(PdfBuildError::InvalidPng);
         }
-        telemetry.transform_ns += started.elapsed().as_nanos();
-
-        let started = std::time::Instant::now();
-        color_encoder
-            .write_all(&color_row)
-            .map_err(|_| PdfBuildError::InvalidPng)?;
-        alpha_encoder
-            .write_all(&alpha_row)
-            .map_err(|_| PdfBuildError::InvalidPng)?;
-        telemetry.encode_ns += started.elapsed().as_nanos();
+        rows = rows
+            .checked_add(split_available_png_rows(
+                &mut decoder_buffer,
+                &mut decoder_region,
+                filtered_row_bytes,
+                pixel_bytes,
+                color_components,
+                &mut color_row,
+                &mut alpha_row,
+                &mut color_encoder,
+                &mut alpha_encoder,
+                telemetry,
+            )?)
+            .ok_or(PdfBuildError::InvalidPng)?;
+        if matches!(decoded, png::Decoded::ImageDataFlushed) {
+            decoder_region.available = decoder_region.filled;
+            rows = rows
+                .checked_add(split_available_png_rows(
+                    &mut decoder_buffer,
+                    &mut decoder_region,
+                    filtered_row_bytes,
+                    pixel_bytes,
+                    color_components,
+                    &mut color_row,
+                    &mut alpha_row,
+                    &mut color_encoder,
+                    &mut alpha_encoder,
+                    telemetry,
+                )?)
+                .ok_or(PdfBuildError::InvalidPng)?;
+        }
+        saw_iend = matches!(decoded, png::Decoded::ChunkComplete(kind) if kind == png::chunk::IEND);
+        if consumed == 0 {
+            stalled_updates = stalled_updates.saturating_add(1);
+            if stalled_updates > 8 {
+                return Err(PdfBuildError::InvalidPng);
+            }
+        } else {
+            stalled_updates = 0;
+        }
     }
-    let started = std::time::Instant::now();
-    let mut extra = [0];
-    if decoder
-        .read(&mut extra)
-        .map_err(|_| PdfBuildError::InvalidPng)?
-        != 0
-    {
+    if !saw_iend || !input.is_empty() || rows != height || decoder_region.filled != 0 {
         return Err(PdfBuildError::InvalidPng);
     }
-    telemetry.decode_ns += started.elapsed().as_nanos();
     let started = std::time::Instant::now();
     let color = color_encoder
         .finish()
@@ -3700,6 +3819,54 @@ fn png_alpha_streams_filtered(
         alpha,
         PdfImageFilter::FlatePngPredictor { colors: 1 },
     ))
+}
+
+#[allow(clippy::too_many_arguments)]
+#[allow(clippy::disallowed_methods)] // Process telemetry; PDF content never observes it.
+fn split_available_png_rows(
+    decoder_buffer: &mut [u8],
+    decoder_region: &mut png::UnfilterRegion,
+    filtered_row_bytes: usize,
+    pixel_bytes: usize,
+    color_components: usize,
+    color_row: &mut [u8],
+    alpha_row: &mut [u8],
+    color_encoder: &mut flate2::write::ZlibEncoder<Vec<u8>>,
+    alpha_encoder: &mut flate2::write::ZlibEncoder<Vec<u8>>,
+    telemetry: &mut ImageImportTelemetry,
+) -> Result<usize, PdfBuildError> {
+    let rows = decoder_region.available / filtered_row_bytes;
+    for row in decoder_buffer[..rows * filtered_row_bytes].chunks_exact(filtered_row_bytes) {
+        let started = std::time::Instant::now();
+        if row[0] > 4 {
+            return Err(PdfBuildError::InvalidPng);
+        }
+        color_row[0] = row[0];
+        alpha_row[0] = row[0];
+        for (index, pixel) in row[1..].chunks_exact(pixel_bytes).enumerate() {
+            let color_start = 1 + index * color_components;
+            color_row[color_start..color_start + color_components]
+                .copy_from_slice(&pixel[..color_components]);
+            alpha_row[index + 1] = pixel[color_components];
+        }
+        telemetry.transform_ns += started.elapsed().as_nanos();
+
+        let started = std::time::Instant::now();
+        color_encoder
+            .write_all(color_row)
+            .map_err(|_| PdfBuildError::InvalidPng)?;
+        alpha_encoder
+            .write_all(alpha_row)
+            .map_err(|_| PdfBuildError::InvalidPng)?;
+        telemetry.encode_ns += started.elapsed().as_nanos();
+    }
+    let consumed = rows * filtered_row_bytes;
+    if consumed != 0 {
+        decoder_buffer.copy_within(consumed..decoder_region.filled, 0);
+        decoder_region.available -= consumed;
+        decoder_region.filled -= consumed;
+    }
+    Ok(rows)
 }
 
 #[allow(clippy::disallowed_methods)] // Process telemetry; PDF content never observes it.
@@ -5027,68 +5194,98 @@ mod tests {
         run_input_collecting_artifacts(&mut input, stores, context).expect("image page ships")
     }
 
-    fn test_png(color_type: u8, scanline: &[u8]) -> Vec<u8> {
-        fn chunk(kind: &[u8; 4], data: &[u8], target: &mut Vec<u8>) {
-            target.extend_from_slice(&(data.len() as u32).to_be_bytes());
-            target.extend_from_slice(kind);
-            target.extend_from_slice(data);
-            target.extend_from_slice(&[0; 4]);
+    fn append_png_chunk(kind: &[u8; 4], data: &[u8], target: &mut Vec<u8>) {
+        let mut crc = flate2::Crc::new();
+        crc.update(kind);
+        crc.update(data);
+        target.extend_from_slice(&(data.len() as u32).to_be_bytes());
+        target.extend_from_slice(kind);
+        target.extend_from_slice(data);
+        target.extend_from_slice(&crc.sum().to_be_bytes());
+    }
+
+    fn corrupt_png_chunk_crc(png: &mut [u8], wanted: &[u8; 4]) {
+        let mut cursor = 8usize;
+        while cursor + 12 <= png.len() {
+            let length = u32::from_be_bytes(
+                png[cursor..cursor + 4]
+                    .try_into()
+                    .expect("test chunk length is four bytes"),
+            ) as usize;
+            let end = cursor + length + 12;
+            if &png[cursor + 4..cursor + 8] == wanted {
+                png[end - 1] ^= 1;
+                return;
+            }
+            cursor = end;
         }
+        panic!("test PNG lacks requested chunk");
+    }
+
+    fn refresh_png_chunk_crc(png: &mut [u8], wanted: &[u8; 4]) {
+        let mut cursor = 8usize;
+        while cursor + 12 <= png.len() {
+            let length = u32::from_be_bytes(
+                png[cursor..cursor + 4]
+                    .try_into()
+                    .expect("test chunk length is four bytes"),
+            ) as usize;
+            let end = cursor + length + 12;
+            if &png[cursor + 4..cursor + 8] == wanted {
+                let mut crc = flate2::Crc::new();
+                crc.update(&png[cursor + 4..end - 4]);
+                png[end - 4..end].copy_from_slice(&crc.sum().to_be_bytes());
+                return;
+            }
+            cursor = end;
+        }
+        panic!("test PNG lacks requested chunk");
+    }
+
+    fn test_png(color_type: u8, scanline: &[u8]) -> Vec<u8> {
         let mut png = b"\x89PNG\r\n\x1a\n".to_vec();
         let mut header = Vec::new();
         header.extend_from_slice(&2u32.to_be_bytes());
         header.extend_from_slice(&1u32.to_be_bytes());
         header.extend_from_slice(&[8, color_type, 0, 0, 0]);
-        chunk(b"IHDR", &header, &mut png);
-        chunk(b"IDAT", &zlib(scanline).expect("compress PNG"), &mut png);
-        chunk(b"IEND", &[], &mut png);
+        append_png_chunk(b"IHDR", &header, &mut png);
+        append_png_chunk(b"IDAT", &zlib(scanline).expect("compress PNG"), &mut png);
+        append_png_chunk(b"IEND", &[], &mut png);
         png
     }
 
     fn test_gamma_png(scanline: &[u8], gamma: u32) -> Vec<u8> {
-        fn chunk(kind: &[u8; 4], data: &[u8], target: &mut Vec<u8>) {
-            target.extend_from_slice(&(data.len() as u32).to_be_bytes());
-            target.extend_from_slice(kind);
-            target.extend_from_slice(data);
-            target.extend_from_slice(&[0; 4]);
-        }
         let mut png = b"\x89PNG\r\n\x1a\n".to_vec();
         let mut header = Vec::new();
         header.extend_from_slice(&2u32.to_be_bytes());
         header.extend_from_slice(&1u32.to_be_bytes());
         header.extend_from_slice(&[8, 0, 0, 0, 0]);
-        chunk(b"IHDR", &header, &mut png);
-        chunk(b"gAMA", &gamma.to_be_bytes(), &mut png);
-        chunk(
+        append_png_chunk(b"IHDR", &header, &mut png);
+        append_png_chunk(b"gAMA", &gamma.to_be_bytes(), &mut png);
+        append_png_chunk(
             b"IDAT",
             &zlib(scanline).expect("compress gamma PNG"),
             &mut png,
         );
-        chunk(b"IEND", &[], &mut png);
+        append_png_chunk(b"IEND", &[], &mut png);
         png
     }
 
     fn test_indexed_png() -> Vec<u8> {
-        fn chunk(kind: &[u8; 4], data: &[u8], target: &mut Vec<u8>) {
-            target.extend_from_slice(&(data.len() as u32).to_be_bytes());
-            target.extend_from_slice(kind);
-            target.extend_from_slice(data);
-            target.extend_from_slice(&[0; 4]);
-        }
         let mut png = b"\x89PNG\r\n\x1a\n".to_vec();
         let mut header = Vec::new();
         header.extend_from_slice(&2u32.to_be_bytes());
         header.extend_from_slice(&1u32.to_be_bytes());
         header.extend_from_slice(&[1, 3, 0, 0, 0]);
-        chunk(b"IHDR", &header, &mut png);
-        chunk(b"PLTE", &[255, 0, 0, 0, 0, 255], &mut png);
-        chunk(b"tRNS", &[32, 224], &mut png);
-        chunk(
+        append_png_chunk(b"IHDR", &header, &mut png);
+        append_png_chunk(b"PLTE", &[255, 0, 0, 0, 0, 255], &mut png);
+        append_png_chunk(b"tRNS", &[32, 224], &mut png);
+        append_png_chunk(
             b"IDAT",
             &zlib(&[0, 0b0100_0000]).expect("compress indexed PNG"),
             &mut png,
         );
-        chunk(b"IEND", &[], &mut png);
+        append_png_chunk(b"IEND", &[], &mut png);
         png
     }
 
@@ -5778,6 +5975,7 @@ mod tests {
         for scanline in [
             vec![0, 255, 0, 0, 64, 0, 0, 255],
             vec![0, 255, 0, 0, 64, 0, 0, 255, 192, 7],
+            vec![5, 255, 0, 0, 64, 0, 0, 255, 192],
         ] {
             let png = test_png(6, &scanline);
             assert!(matches!(
@@ -5790,6 +5988,82 @@ mod tests {
                 Err(PdfBuildError::InvalidPng)
             ));
         }
+    }
+
+    #[test]
+    fn png_streaming_decoder_rejects_crc_and_declared_chunk_bounds() {
+        let alpha_metadata = tex_state::PdfRasterImageMetadata {
+            format: PdfRasterFormat::Png,
+            width: 2,
+            height: 1,
+            bits_per_component: 8,
+            color_space: PdfRasterColorSpace::Rgb,
+            alpha: true,
+            png_color_type: Some(6),
+        };
+        let gray_metadata = tex_state::PdfRasterImageMetadata {
+            format: PdfRasterFormat::Png,
+            width: 2,
+            height: 1,
+            bits_per_component: 8,
+            color_space: PdfRasterColorSpace::Gray,
+            alpha: false,
+            png_color_type: Some(0),
+        };
+        let stores = Universe::default();
+        let parameters = output_parameters(&stores);
+        for chunk in [b"IHDR", b"IDAT", b"IEND"] {
+            let mut png = test_png(6, &[0, 255, 0, 0, 64, 0, 0, 255, 192]);
+            corrupt_png_chunk_crc(&mut png, chunk);
+            assert!(matches!(
+                raster_image_streams(
+                    &png,
+                    alpha_metadata,
+                    parameters,
+                    &mut ImageImportTelemetry::default(),
+                ),
+                Err(PdfBuildError::InvalidPng)
+            ));
+        }
+
+        let mut ancillary_crc = test_gamma_png(&[0, 7, 9], 100_000);
+        corrupt_png_chunk_crc(&mut ancillary_crc, b"gAMA");
+        assert!(matches!(
+            raster_image_streams(
+                &ancillary_crc,
+                gray_metadata,
+                parameters,
+                &mut ImageImportTelemetry::default(),
+            ),
+            Err(PdfBuildError::InvalidPng)
+        ));
+
+        let mut oversized_chunk = test_png(6, &[0, 255, 0, 0, 64, 0, 0, 255, 192]);
+        oversized_chunk[8..12].copy_from_slice(&u32::MAX.to_be_bytes());
+        assert!(matches!(
+            raster_image_streams(
+                &oversized_chunk,
+                alpha_metadata,
+                parameters,
+                &mut ImageImportTelemetry::default(),
+            ),
+            Err(PdfBuildError::InvalidPng)
+        ));
+
+        let oversized_dimensions = tex_state::PdfRasterImageMetadata {
+            width: u32::MAX,
+            height: u32::MAX,
+            ..alpha_metadata
+        };
+        assert!(matches!(
+            raster_image_streams(
+                &test_png(6, &[0, 255, 0, 0, 64, 0, 0, 255, 192]),
+                oversized_dimensions,
+                parameters,
+                &mut ImageImportTelemetry::default(),
+            ),
+            Err(PdfBuildError::InvalidPng)
+        ));
     }
 
     #[test]
@@ -5853,6 +6127,7 @@ mod tests {
     fn png_hicolor_control_and_pdf_version_match_pdftex_sixteen_bit_policy() {
         let mut png = test_gamma_png(&[0, 0x12, 0x34], 100_000);
         png[24] = 16;
+        refresh_png_chunk_crc(&mut png, b"IHDR");
         let metadata = tex_state::PdfRasterImageMetadata {
             format: PdfRasterFormat::Png,
             width: 1,

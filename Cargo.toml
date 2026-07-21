@@ -44,6 +44,7 @@ chrono = { version = "0.4", default-features = false, features = ["clock"] }
 flate2 = "1"
 md-5 = "0.10"
 pdf-writer = { git = "https://github.com/phulin/pdf-writer.git", rev = "030c3b1ad0e528b13ee3e6ca4605c91fbeaa3d91" }
+png = "0.18.1"
 posix-regex = "0.1.4"
 proptest = "1"
 quick-xml = "0.38"
