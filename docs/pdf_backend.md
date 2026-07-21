@@ -147,10 +147,11 @@ crate-owned dictionary framing. `pdf_writer`
 supports positive signed-32-bit references and signed-32-bit integers; the
 adapter preflights the broader detached types and returns typed range errors
 instead of entering a panicking crate path. All output remains private until
-`Pdf::finish` succeeds. A hermetic test parses both compressed and
-uncompressed results with an independently pinned `lopdf` development
-dependency. Final bytes include no wall
-clock, random identifier, host path, hash-map
+`Pdf::finish` succeeds. Hermetic tests parse both compressed and uncompressed
+results through the independent Hayro probe specified in
+[Lightweight PDF test architecture](pdf_test_architecture.md), while the
+explicit external-validator gate checks final file conformance. Final bytes
+include no wall clock, random identifier, host path, hash-map
 iteration order, or allocation address. Failure builds into a private buffer
 and returns a typed error without publishing a prefix.
 
@@ -226,7 +227,9 @@ translation, recursively remapped inherited resources, and typed transparency
 group references. Repeated references reuse the registered object. The
 serializer uses `pdf_writer`'s typed image, form, resources, page, and content
 builders; imported dictionaries are converted to the detached typed value
-model before serialization, so `lopdf` is only an input parser.
+model before serialization. The lightweight input parser is `hayro-syntax`;
+the test-only observation boundary is specified separately in
+[Lightweight PDF test architecture](pdf_test_architecture.md).
 
 PNG syntax and chunk CRC validation use the maintained pure-Rust `png` crate.
 For non-interlaced 8-bit gray-alpha and RGBA sources, its low-level
