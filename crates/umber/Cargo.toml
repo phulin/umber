@@ -39,8 +39,8 @@ umber-distribution = { path = "../umber-distribution" }
 umber-vfs = { path = "../umber-vfs" }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-ctrlc = "3.4"
 umber-fetch = { path = "../umber-fetch" }
+umber-interrupt = { path = "../umber-interrupt" }
 
 [dev-dependencies]
 parity-harness = { path = "../../tools/parity-harness" }

@@ -242,7 +242,7 @@ fn install_interrupt_handler(
     interrupted: Arc<AtomicBool>,
     active: Arc<Mutex<Option<FetchCancellation>>>,
 ) -> Result<(), WatchError> {
-    ctrlc::set_handler(move || {
+    umber_interrupt::set_handler(move || {
         interrupted.store(true, Ordering::Release);
         if let Ok(active) = active.lock()
             && let Some(cancellation) = active.as_ref()
@@ -264,7 +264,7 @@ pub(super) enum WatchError {
     Usage(&'static str),
     Io(std::io::Error),
     Native(NativeRunError),
-    InterruptHandler(ctrlc::Error),
+    InterruptHandler(umber_interrupt::InstallError),
     WorkerPanic,
 }
 
