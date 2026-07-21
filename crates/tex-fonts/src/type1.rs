@@ -431,7 +431,13 @@ fn subset_charstrings(
         if cursor > plaintext.len() {
             return Err(PdfType1SubsetError::MalformedCharStrings);
         }
-        while plaintext.get(cursor).is_some_and(|byte| *byte != b'\n') {
+        while plaintext
+            .get(cursor)
+            .is_some_and(|byte| !matches!(byte, b'\r' | b'\n'))
+        {
+            cursor += 1;
+        }
+        if plaintext.get(cursor) == Some(&b'\r') {
             cursor += 1;
         }
         if plaintext.get(cursor) == Some(&b'\n') {
@@ -598,6 +604,36 @@ mod tests {
             false,
         );
         assert!(decrypted.windows(9).any(|window| window == b"/.notdef "));
+        assert!(!decrypted.windows(3).any(|window| window == b"/A "));
+    }
+
+    #[test]
+    fn subsets_charstrings_separated_by_postscript_carriage_returns() {
+        let clear = b"%!PS /FontName /Fixture def\r";
+        let plaintext = b"/CharStrings 3 dict dup begin\r\
+            /.notdef 1 RD x ND\r\
+            /space 1 RD y ND\r\
+            /A 1 RD z ND\r\
+            end\r";
+        let encrypted = eexec_crypt(plaintext, true);
+        let mut pfb = vec![0x80, 1];
+        pfb.extend_from_slice(&(clear.len() as u32).to_le_bytes());
+        pfb.extend_from_slice(clear);
+        pfb.extend_from_slice(&[0x80, 2]);
+        pfb.extend_from_slice(&(encrypted.len() as u32).to_le_bytes());
+        pfb.extend_from_slice(&encrypted);
+        pfb.extend_from_slice(&[0x80, 3]);
+        let program = PdfType1Program::from_pfb(&pfb).expect("valid synthetic PFB");
+        let glyphs = [b"space".to_vec()].into_iter().collect::<BTreeSet<_>>();
+
+        let subset = program
+            .subset(&glyphs, b"AAAAAA+Fixture")
+            .expect("CR-only CharStrings subset");
+        let decrypted = eexec_crypt(
+            &subset.bytes()[subset.length1 as usize..(subset.length1 + subset.length2) as usize],
+            false,
+        );
+        assert!(decrypted.windows(7).any(|window| window == b"/space "));
         assert!(!decrypted.windows(3).any(|window| window == b"/A "));
     }
 

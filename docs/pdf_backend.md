@@ -207,7 +207,8 @@ PostScript token scan accepts both spaced entries (`dup 10 /name put`) and the
 compact form emitted by TeX Live fonts (`dup 10/name put`), including comments
 between tokens; it does not execute PostScript. A used code that intentionally
 resolves to `.notdef` remains a valid blank-glyph subset instead of being
-misclassified as a missing requested CharString.
+misclassified as a missing requested CharString. Type-1 subset parsing accepts
+PostScript's CR, LF, and CRLF line endings between encrypted CharStrings.
 
 Finalization also builds pdfTeX's default document-information dictionary and
 registers it in the trailer through `pdf_writer`. `/Producer`, `/Creator`,
