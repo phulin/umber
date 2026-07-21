@@ -60,6 +60,14 @@ PDF resources for real leaves, and computes glyph usage from the expanded
 positioned stream. Virtual TFM names never become page font resources merely
 because their source artifact contained characters.
 
+Positioned interword spaces carry extraction/accessibility state but do not
+execute a VF packet. During lowering Umber rebinds those spaces to an adjacent
+real leaf selected by the same virtual run. This preserves their exact anchors
+without retaining a virtual-root PDF resource; leading spaces wait for the
+first expanded leaf, trailing spaces use the last expanded leaf, and a run
+whose packets emit no real character drops its otherwise unrepresentable
+spaces.
+
 Section 32e's `literal(s, scan_special, false)` call delegates to section
 32c's `literal` procedure: non-`PDF:` specials are silently ignored;
 `PDF:direct:` retains text state, `PDF:page:` ends text without moving the

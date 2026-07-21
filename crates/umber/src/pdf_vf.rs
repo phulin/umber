@@ -101,32 +101,71 @@ impl Lowerer<'_> {
                 .stores
                 .font_by_source_identity(font.semantic_identity)
                 .ok_or_else(|| PdfBuildError::MissingLiveFont(font.name.clone()))?;
+            let mut run_lowered = Vec::new();
+            let mut pending_spaces = Vec::new();
+            let mut leaf_font = None;
             for index in 0..run.units.len() {
                 match (run.units[index], run.physical_codes[index]) {
-                    (TextUnit::Code(_), Some(code)) => self.expand_character(
-                        page,
-                        &mut lowered,
-                        root,
-                        code,
-                        (run.positions[index], run.baseline),
-                        1,
-                    )?,
+                    (TextUnit::Code(_), Some(code)) => {
+                        let expansion_start = run_lowered.len();
+                        self.expand_character(
+                            page,
+                            &mut run_lowered,
+                            root,
+                            code,
+                            (run.positions[index], run.baseline),
+                            1,
+                        )?;
+                        let first_leaf = run_lowered[expansion_start..].iter().find_map(|event| {
+                            let PositionedEvent::TextRun(run) = event else {
+                                return None;
+                            };
+                            Some(run.font_id)
+                        });
+                        if let Some(first_leaf) = first_leaf {
+                            if !pending_spaces.is_empty() {
+                                let spaces = pending_spaces
+                                    .drain(..)
+                                    .map(|(position, source)| {
+                                        virtual_space(first_leaf, position, run.baseline, source)
+                                    })
+                                    .collect::<Vec<_>>();
+                                run_lowered.splice(expansion_start..expansion_start, spaces);
+                            }
+                            leaf_font = run_lowered[expansion_start..]
+                                .iter()
+                                .filter_map(|event| {
+                                    let PositionedEvent::TextRun(run) = event else {
+                                        return None;
+                                    };
+                                    Some(run.font_id)
+                                })
+                                .next_back()
+                                .or(leaf_font);
+                        }
+                    }
                     (TextUnit::Space, _) => {
-                        // A positioned space carries accessibility state, not a
-                        // virtual character packet. Preserve its exact anchor.
-                        lowered.push(PositionedEvent::TextRun(PositionedTextRun {
-                            x: run.positions[index],
-                            baseline: run.baseline,
-                            font_id: run.font_id,
-                            units: vec![TextUnit::Space],
-                            positions: vec![run.positions[index]],
-                            physical_codes: vec![None],
-                            sources: vec![run.sources[index]],
-                        }));
+                        let space = (run.positions[index], run.sources[index]);
+                        if let Some(font_id) = leaf_font {
+                            run_lowered.push(virtual_space(
+                                font_id,
+                                space.0,
+                                run.baseline,
+                                space.1,
+                            ));
+                        } else {
+                            pending_spaces.push(space);
+                        }
                     }
                     _ => {}
                 }
             }
+            if let Some(font_id) = leaf_font {
+                run_lowered.extend(pending_spaces.into_iter().map(|(position, source)| {
+                    virtual_space(font_id, position, run.baseline, source)
+                }));
+            }
+            lowered.extend(run_lowered);
         }
         page.events = lowered;
         Ok(())
@@ -469,6 +508,23 @@ impl Lowerer<'_> {
         }
         Ok(())
     }
+}
+
+fn virtual_space(
+    font_id: u32,
+    position: Scaled,
+    baseline: Scaled,
+    source: Option<tex_out::positioned::PositionedSourceRef>,
+) -> PositionedEvent {
+    PositionedEvent::TextRun(PositionedTextRun {
+        x: position,
+        baseline,
+        font_id,
+        units: vec![TextUnit::Space],
+        positions: vec![position],
+        physical_codes: vec![None],
+        sources: vec![source],
+    })
 }
 
 fn scale_fix(value: i32, size: Scaled) -> Result<Scaled, PdfBuildError> {

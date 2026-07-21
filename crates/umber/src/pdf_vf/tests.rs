@@ -243,3 +243,66 @@ fn empty_resource_set_leaves_non_virtual_page_unchanged() {
     .expect("non-VF no-op");
     assert_eq!(pages, before);
 }
+
+#[test]
+fn multiple_virtual_roots_rebind_positioned_spaces_to_real_leaves() {
+    let cmr_vf = vf(b"cmex10", b"A");
+    let cmsy_vf = vf(b"cmex10", b"A");
+    let mut resources = resources(cmr_vf, "cmex10", CMEX10);
+    resources.virtual_fonts.insert(
+        "cmsy10".to_owned(),
+        CachedVirtualFont {
+            content_id: FileContentId::for_bytes(&cmsy_vf),
+            program: tex_fonts::VfProgram::parse(&cmsy_vf).expect("second root VF"),
+        },
+    );
+
+    let mut stores = Universe::new();
+    let cmr = stores.intern_font(loaded("cmr10", CMR10));
+    let cmsy = stores.intern_font(loaded("cmsy10", CMSY10));
+    let mut first = page(&mut stores, cmr);
+    let mut second = page(&mut stores, cmsy);
+    for positioned in [&mut first, &mut second] {
+        let run = match &mut positioned.events[0] {
+            PositionedEvent::TextRun(run) => run,
+            other => panic!("expected text run, got {other:?}"),
+        };
+        run.units.insert(0, TextUnit::Space);
+        run.positions.insert(0, Scaled::from_raw(90));
+        run.physical_codes.insert(0, None);
+        run.sources.insert(0, None);
+        run.units.push(TextUnit::Space);
+        run.positions.push(Scaled::from_raw(200));
+        run.physical_codes.push(None);
+        run.sources.push(None);
+    }
+    let mut pages = vec![first, second];
+
+    lower_pages(&mut stores, &mut pages, &resources, PdfVfLimits::default())
+        .expect("both VF roots lower");
+
+    for positioned in &pages {
+        let runs = positioned
+            .events
+            .iter()
+            .filter_map(|event| match event {
+                PositionedEvent::TextRun(run) => Some(run),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            runs.iter()
+                .flat_map(|run| run.units.iter())
+                .filter(|unit| matches!(unit, TextUnit::Space))
+                .count(),
+            2
+        );
+        assert!(runs.iter().all(|run| {
+            positioned
+                .fonts
+                .iter()
+                .find(|font| font.font_id == run.font_id)
+                .is_some_and(|font| font.name == "cmex10")
+        }));
+    }
+}
