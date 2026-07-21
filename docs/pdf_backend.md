@@ -169,6 +169,13 @@ already-provided exact resource and emits a Type3 font with one CharProc per
 used glyph. Both request and decoded program types live below the native
 CLI/WASM boundary and perform no filesystem or process access.
 
+Detached finalization resolves the effective font map once per document and
+uses that immutable name-indexed snapshot for font selection, encoding lookup,
+tagged-space decisions, and font-object construction. It does not replay the
+ordered `\pdfmapfile`/`\pdfmapline` operation history for every positioned text
+run; finalization cost therefore scales with the map plus document content,
+rather than their product.
+
 Finalization also builds pdfTeX's default document-information dictionary and
 registers it in the trailer through `pdf_writer`. `/Producer`, `/Creator`,
 `/Trapped`, and the `PTEX.Fullbanner` compatibility entry are deterministic;

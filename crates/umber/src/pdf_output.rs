@@ -104,7 +104,12 @@ pub fn pdf_from_committed_artifacts_at_dpi(
     let version = pdf_version(parameters)?;
     let options = serialization_options(parameters)?;
     let page_records = stores.pdf_pages().to_vec();
-    let font_usage = collect_font_usage(stores, artifacts, &page_records)?;
+    let resolved_font_map = stores
+        .resolved_pdf_font_map_lines()
+        .into_iter()
+        .map(|entry| (entry.tex_name.clone(), entry))
+        .collect::<BTreeMap<_, _>>();
+    let font_usage = collect_font_usage(stores, artifacts, &page_records, &resolved_font_map)?;
     let positioned_pages = positioned_pages(stores, artifacts, &page_records)?;
     let shipped_destinations = lower_page_destinations(
         stores,
@@ -367,10 +372,7 @@ pub fn pdf_from_committed_artifacts_at_dpi(
                                     font_usage.get(&resource.object_number()).ok_or_else(|| {
                                         PdfBuildError::MissingFontUsage(font.name.clone())
                                     })?;
-                                let mapped = stores
-                                    .resolved_pdf_font_map_lines()
-                                    .into_iter()
-                                    .any(|entry| entry.tex_name == font.name.as_bytes());
+                                let mapped = resolved_font_map.contains_key(font.name.as_bytes());
                                 let ids = if mapped {
                                     let descriptor = object_id(next_object)?;
                                     let program = object_id(
@@ -417,6 +419,7 @@ pub fn pdf_from_committed_artifacts_at_dpi(
                                     &resource_name,
                                     used_codes,
                                     driver_dpi,
+                                    &resolved_font_map,
                                 )?);
                             }
                             id
@@ -433,7 +436,8 @@ pub fn pdf_from_committed_artifacts_at_dpi(
                         parameters.decimal_digits,
                     );
                     let font_size = scaled_to_bp_f32(font.at_size, parameters.decimal_digits);
-                    let explicit_space = font_has_explicit_space(stores, font.name.as_bytes());
+                    let explicit_space =
+                        font_has_explicit_space(stores, &resolved_font_map, font.name.as_bytes());
                     let mut segment = Vec::new();
                     let mut segment_x = None;
                     for ((unit, position), physical_code) in run
@@ -953,10 +957,7 @@ pub fn pdf_from_committed_artifacts_at_dpi(
                         let used_codes = font_usage
                             .get(&resource.object_number())
                             .ok_or_else(|| PdfBuildError::MissingFontUsage(font.name.clone()))?;
-                        let mapped = stores
-                            .resolved_pdf_font_map_lines()
-                            .into_iter()
-                            .any(|entry| entry.tex_name == font.name.as_bytes());
+                        let mapped = resolved_font_map.contains_key(font.name.as_bytes());
                         let ids = if mapped {
                             let descriptor = object_id(next_object)?;
                             let program = object_id(
@@ -1003,6 +1004,7 @@ pub fn pdf_from_committed_artifacts_at_dpi(
                             &resource_name,
                             used_codes,
                             driver_dpi,
+                            &resolved_font_map,
                         )?);
                     }
                     let bytes = run
@@ -1127,6 +1129,7 @@ fn collect_font_usage(
     stores: &Universe,
     artifacts: &[CommittedArtifact],
     page_records: &[tex_state::PdfPageRecord],
+    resolved_font_map: &BTreeMap<Vec<u8>, tex_fonts::PdfFontMapEntry>,
 ) -> Result<BTreeMap<u32, BTreeSet<u8>>, PdfBuildError> {
     let mut usage = BTreeMap::<u32, BTreeSet<u8>>::new();
     let mut interword_space_enabled = false;
@@ -1158,8 +1161,8 @@ fn collect_font_usage(
                 .pdf_font_resource_by_identity(font.semantic_identity)
                 .ok_or_else(|| PdfBuildError::MissingFontResource(font.name.clone()))?;
             let codes = usage.entry(resource.object_number()).or_default();
-            let explicit_space =
-                interword_space_enabled && font_has_explicit_space(stores, font.name.as_bytes());
+            let explicit_space = interword_space_enabled
+                && font_has_explicit_space(stores, resolved_font_map, font.name.as_bytes());
             codes.extend(run.units.iter().zip(&run.physical_codes).filter_map(
                 |(unit, physical_code)| match unit {
                     tex_out::positioned::TextUnit::Code(_) => *physical_code,
@@ -2468,11 +2471,13 @@ fn ensure_fallback_space_font(
     Ok(allocated)
 }
 
-fn font_has_explicit_space(stores: &Universe, tex_name: &[u8]) -> bool {
-    stores
-        .resolved_pdf_font_map_lines()
-        .into_iter()
-        .find(|entry| entry.tex_name == tex_name)
+fn font_has_explicit_space(
+    stores: &Universe,
+    resolved_font_map: &BTreeMap<Vec<u8>, tex_fonts::PdfFontMapEntry>,
+    tex_name: &[u8],
+) -> bool {
+    resolved_font_map
+        .get(tex_name)
         .and_then(|entry| entry.encoding_files.first().cloned())
         .and_then(|encoding| stores.pdf_encoding(&encoding))
         .is_some_and(|encoding| encoding.glyph_names()[32] == b"space")
@@ -2485,11 +2490,9 @@ fn pdf_font_objects(
     resource_name: &[u8],
     used_codes: &BTreeSet<u8>,
     driver_dpi: i32,
+    resolved_font_map: &BTreeMap<Vec<u8>, tex_fonts::PdfFontMapEntry>,
 ) -> Result<Vec<PdfIndirectObject>, PdfBuildError> {
-    let mapped = stores
-        .resolved_pdf_font_map_lines()
-        .into_iter()
-        .find(|entry| entry.tex_name == font.name.as_bytes());
+    let mapped = resolved_font_map.get(font.name.as_bytes());
     let subset_requested = mapped
         .as_ref()
         .is_some_and(|entry| entry.program == tex_fonts::PdfFontMapProgram::Subset);
