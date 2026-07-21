@@ -96,6 +96,10 @@ dependency-ordered completeness plan for the PDF engine layer.
 model, canonical writer, checkpoint identity, and structural/rendering parity
 contracts.
 
+`virtual_fonts.md` defines the canonical bounded VF parser, immutable local
+font and character-packet model, recursion metadata, authority mapping, and
+the acquisition/lowering ownership boundaries.
+
 `pdftex_font_microtype.md` defines immutable copied/letterspaced/expanded font
 identity, expansion and protrusion arithmetic, line-material ownership, margin
 enquiries, and the detached `pdf_writer` resource boundary.
