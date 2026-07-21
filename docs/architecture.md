@@ -243,6 +243,20 @@ the output routine when configured, and resumes page building afterward.
 Outermost completed shipout is both an effect commit boundary and one of the
 named incremental checkpoint opportunities.
 
+The canonical lifetime is fixed by TeX.web §§274 and 281: `new_save_level`
+opens each box or output group and `unsave` restores its local definitions only
+when that exact group ends. Box construction follows §§1073--1087, especially
+`box_end`, `begin_box`, `scan_box`, and `package`; output fire-up and teardown
+follow §§1015--1028, with §1025 entering an internal-vertical `output_group`
+and §1026 ending the paragraph, unsaving that group, splicing held-over
+material, and resuming the page builder. A resource suspension is an Umber
+execution boundary, not a TeX group boundary: the aggregate step rollback
+unwinds descendant groups to the pre-step lineage, then replay recreates the
+same groups and keeps their local definitions live until their matching TeX
+closers. pdfTeX.web retains these group, box, and output transitions; its
+output teardown additionally flushes page discards and uses the pdfTeX ignored
+depth sentinel, without changing assignment lifetime.
+
 ## 9. Fonts and metrics (`tex-arith`, `tex-fonts`, `tex-state`)
 
 Classic TeX layout uses immutable TFM metrics and exact scaled arithmetic.

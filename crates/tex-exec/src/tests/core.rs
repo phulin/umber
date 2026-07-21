@@ -233,6 +233,76 @@ fn resource_suspension_rolls_back_groups_entered_by_blocked_dispatch() {
     assert_eq!(resolver.request_indices, vec![0, 0]);
 }
 
+#[test]
+fn resource_suspension_preserves_local_box_state_only_until_box_exit() {
+    let mut stores = Universe::new();
+    tex_expand::install_expandable_primitives(&mut stores);
+    install_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(
+        "\\def\\expected{alive}\\setbox0=\\vbox{\\def\\currbox{alive}\\input child \\
+         \\ifx\\currbox\\expected\\global\\count0=1\\else\\global\\count0=2\\fi}\\
+         \\ifx\\currbox\\undefined\\global\\count1=1\\else\\global\\count1=2\\fi\\end",
+    ));
+    let mut resolver = SuspendScannerInputOnce {
+        suspended: false,
+        request_indices: Vec::new(),
+    };
+    let mut run =
+        ExecutionRun::new("local-box-state-resource-rollback").with_cumulative_fuel_limit(100_000);
+    let cancellation = Cancellation::new();
+
+    assert!(matches!(
+        run.step(
+            &mut ExecutionServices::new(&mut input, &mut stores),
+            &cancellation,
+        ),
+        ExecutionStepResult::Progress(_)
+    ));
+    let universe_before = stores.snapshot().state_hash();
+    let currbox = stores.intern("currbox").symbol();
+
+    let ExecutionStepResult::AwaitingResources(suspension) = run.step(
+        &mut ExecutionServices::new(&mut input, &mut stores).with_input_resolver(&mut resolver),
+        &cancellation,
+    ) else {
+        panic!("resource request inside the open vbox must suspend")
+    };
+    assert_eq!(suspension.requests, vec![tex_expand::ResourceNeed::new(0)]);
+    assert_eq!(stores.snapshot().state_hash(), universe_before);
+    assert_eq!(tex_state::ExpansionState::execution_group_depth(&stores), 0);
+    assert_eq!(
+        stores.meaning(currbox),
+        tex_state::meaning::Meaning::Undefined
+    );
+
+    loop {
+        match run.step(
+            &mut ExecutionServices::new(&mut input, &mut stores).with_input_resolver(&mut resolver),
+            &cancellation,
+        ) {
+            ExecutionStepResult::Progress(_) => {}
+            ExecutionStepResult::Complete(_) => break,
+            other => panic!("vbox replay must complete, got {other:?}"),
+        }
+    }
+
+    assert_eq!(resolver.request_indices, vec![0, 0]);
+    assert_eq!(
+        stores.count(0),
+        1,
+        "local definition must survive the replay"
+    );
+    assert_eq!(
+        stores.count(1),
+        1,
+        "local definition must end with the vbox group"
+    );
+    assert_eq!(
+        stores.meaning(currbox),
+        tex_state::meaning::Meaning::Undefined
+    );
+}
+
 impl tex_expand::InputResolver for SuspendInputOnce {
     fn open_input(
         &mut self,
