@@ -790,6 +790,23 @@ fn u_template_macro_argument_interleaves_cell_body_and_v_template() {
 }
 
 #[test]
+fn hash_brace_macro_delimiter_preserves_alignment_cell_boundary() {
+    let stores = run_boxed_alignment_source(
+        "\\def\\dispatch{\\def\\next@##1##{\\finish{##1}}\\next@}\
+         \\def\\finish#1#2#3!@{\\hbox{#2}}\
+         \\halign{\\dispatch#!@\\cr M{X}tail&\\cr}",
+    );
+    let rows = vlist_rows(&stores, box_zero_vlist(&stores));
+    let cells = row_cells(&stores, rows[0]);
+    let [Node::HList(wrapped)] = stores.nodes(cells[0].children).testing_decoded() else {
+        panic!("cell should contain the box built after the delimiter match");
+    };
+
+    assert_eq!(rows.len(), 1);
+    assert_eq!(cell_text(&stores, wrapped), "X");
+}
+
+#[test]
 fn captures_mid_preamble_tabskip_boundaries() {
     let (stores, state) = scan_halign_preamble("{#a&\\tabskip=3pt#b&\\tabskip=5pt#c\\cr}");
 

@@ -312,6 +312,18 @@ fn scan_delimited_argument(
                 }
             }
             if matched {
+                // TeX.web §394 stores a `#{` parameter delimiter and the
+                // replacement's opening brace as one physical brace token.
+                // `get_token` has already incremented alignment state for it;
+                // cancel that increment before the brace is replayed from the
+                // replacement text. pdfTeX.web §418 is unchanged.
+                if delimiter
+                    .tokens
+                    .last()
+                    .is_some_and(|token| is_begin_group(*token))
+                {
+                    input.undo_alignment_delivery(tex_lex::AlignmentTokenDelivery::LeftBrace);
+                }
                 let len = argument.len() - start;
                 let stripped_len = strip_outer_group(&argument[start..]).len();
                 if stripped_len != len {

@@ -136,6 +136,13 @@ Macro bodies and parameter patterns are durable content. Macro arguments and
 temporary rendered values remain transient unless a durable state or future
 memoization boundary explicitly publishes them.
 
+Macro delimiter matching follows TeX.web §§391--399 (pdfTeX.web §§415--423),
+including overlapping-prefix recovery and §397's narrow paragraph-token
+exception. A definition whose parameter text ends in `#{` uses the same left
+brace as both delimiter and replacement token; matching it cancels the
+delimiter delivery's alignment-state increment before replacement replay, as
+required by TeX.web §394 (pdfTeX.web §418).
+
 Each top-level request for an expanded token has a fixed work budget. Nested
 expansion performed while satisfying that request shares the same remaining
 budget, so a recursive macro or primitive cannot reset the guard. Once a token
