@@ -471,10 +471,11 @@ fn project_stream(
 ) -> Result<ProbeStream> {
     state.check_depth(depth)?;
     let raw = stream.raw_data().into_owned();
+    // Raw encoded bytes remain the authoritative observation for filters that
+    // Hayro cannot decode. Strict filter validity belongs to the external gate.
     let decoded = stream
         .decoded()
-        .map_err(|error| anyhow!("failed to decode PDF stream: {error:?}"))?
-        .into_owned();
+        .map_or_else(|_| Vec::new(), |decoded| decoded.into_owned());
     state.add_stream_bytes(raw.len().saturating_add(decoded.len()))?;
     let operations = project_operations(xref, &decoded, state)?;
     Ok(ProbeStream {

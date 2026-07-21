@@ -1,175 +1,153 @@
 //! Canonical structure projection for hermetic PDF parity fixtures.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use anyhow::{Context, Result, bail};
-use lopdf::{Dictionary, Document, Object, ObjectId, content::Content};
-use sha2::{Digest, Sha256};
+use sha2::Digest;
+
+use crate::pdf_probe::{
+    PdfProbe, ProbeDictionary, ProbeLimits, ProbeObjectId, ProbeOperation, ProbeStream, ProbeValue,
+};
 
 /// Parses a PDF and projects catalog, ordered pages, resources, media boxes,
 /// and decoded content operations without preserving object numbers or byte
 /// layout.
 pub fn normalize_structure(bytes: &[u8]) -> Result<String> {
-    let document = Document::load_mem(bytes).context("failed to parse PDF")?;
-    let catalog = document.catalog().context("PDF has no catalog")?;
+    let probe = PdfProbe::new(bytes, ProbeLimits::default()).context("failed to parse PDF")?;
+    let catalog = probe.root().context("PDF has no catalog")?;
     require_name(
         catalog.get(b"Type").context("catalog has no Type")?,
         b"Catalog",
     )?;
-    let pages = document.get_pages();
+    let pages = probe.pages()?;
+    let pages_by_id = pages
+        .iter()
+        .map(|page| (page.id, page.number))
+        .collect::<BTreeMap<_, _>>();
+    let (major, minor) = probe.version();
     let mut normalized = format!(
-        "pdf-structure-v1\nversion {}\ncatalog /Catalog\npages {}\n",
-        document.version,
+        "pdf-structure-v1\nversion {major}.{minor}\ncatalog /Catalog\npages {}\n",
         pages.len()
     );
 
-    for (number, page_id) in pages {
-        let page = document
-            .get_dictionary(page_id)
-            .with_context(|| format!("page {number} is not a dictionary"))?;
-        require_name(page.get(b"Type").context("page has no Type")?, b"Page")?;
-        normalized.push_str(&format!("page {number}\n"));
-        normalized.push_str("media-box ");
-        let media_box = page
-            .get_deref(b"MediaBox", &document)
-            .context("page has no MediaBox")?
-            .as_array()
-            .context("MediaBox is not an array")?;
-        if media_box.len() != 4 {
-            bail!("MediaBox must contain four numbers");
-        }
-        normalized.push_str(
-            &media_box
+    for page in &pages {
+        require_name(
+            page.dictionary.get(b"Type").context("page has no Type")?,
+            b"Page",
+        )?;
+        normalized.push_str(&format!(
+            "page {}\nmedia-box {}\n",
+            page.number,
+            page.media_box
                 .iter()
-                .map(canonical_number)
+                .map(|value| canonical_number(*value))
                 .collect::<Result<Vec<_>>>()?
-                .join(" "),
-        );
-        normalized.push('\n');
-
+                .join(" ")
+        ));
         normalized.push_str("resources ");
         let resources = page
-            .get_deref(b"Resources", &document)
+            .dictionary
+            .get(b"Resources")
             .context("page has no Resources")?;
-        normalized.push_str(&canonical_object(&document, resources, 0)?);
+        normalized.push_str(&canonical_value(
+            resources,
+            &pages_by_id,
+            0,
+            &mut Vec::new(),
+        )?);
         normalized.push('\n');
-
-        if let Ok(beads) = page.get(b"B") {
+        if let Some(beads) = page.dictionary.get(b"B") {
             normalized.push_str("beads ");
-            normalized.push_str(&canonical_object(&document, beads, 0)?);
+            normalized.push_str(&canonical_value(beads, &pages_by_id, 0, &mut Vec::new())?);
             normalized.push('\n');
         }
-
-        let content = document
-            .get_and_decode_page_content(page_id)
-            .with_context(|| format!("failed to decode page {number} content"))?;
-        let omit_noop_wrapper = content.operations.len() == 2
-            && content.operations[0].operator == "q"
-            && content.operations[0].operands.is_empty()
-            && content.operations[1].operator == "Q"
-            && content.operations[1].operands.is_empty();
-        for operation in content
-            .operations
-            .into_iter()
-            .filter(|_| !omit_noop_wrapper)
-        {
-            normalized.push_str("content");
-            for operand in operation.operands {
-                normalized.push(' ');
-                normalized.push_str(&canonical_object(&document, &operand, 0)?);
+        if let Some(content) = &page.content {
+            let omit_noop_wrapper = content.operations.len() == 2
+                && content.operations[0].operator == b"q"
+                && content.operations[0].operands.is_empty()
+                && content.operations[1].operator == b"Q"
+                && content.operations[1].operands.is_empty();
+            if !omit_noop_wrapper {
+                append_operations(
+                    &mut normalized,
+                    &content.operations,
+                    &pages_by_id,
+                    "content",
+                )?;
             }
-            normalized.push(' ');
-            normalized.push_str(&operation.operator);
-            normalized.push('\n');
         }
     }
-    append_document_extensions(&document, &mut normalized)?;
+    append_document_extensions(&probe, &catalog, &pages_by_id, &mut normalized)?;
     Ok(normalized)
 }
 
-fn append_document_extensions(document: &Document, normalized: &mut String) -> Result<()> {
-    let catalog = document.catalog().context("PDF has no catalog")?;
-    let pages_by_id = document
-        .get_pages()
-        .into_iter()
-        .map(|(number, id)| (id, number))
-        .collect::<BTreeMap<_, _>>();
+fn append_document_extensions(
+    probe: &PdfProbe,
+    catalog: &ProbeDictionary,
+    pages: &BTreeMap<ProbeObjectId, usize>,
+    normalized: &mut String,
+) -> Result<()> {
     let mut extensions = Vec::new();
-
-    let catalog_entries = selected_dictionary(
-        document,
-        catalog,
-        &[b"PageMode".as_slice(), b"ViewerPreferences".as_slice()],
-    )?;
+    let catalog_entries =
+        selected_dictionary(catalog, &[b"PageMode", b"ViewerPreferences"], pages)?;
     if !catalog_entries.is_empty() {
         extensions.push(format!("catalog-extensions {catalog_entries}"));
     }
-    if let Ok(action) = catalog.get(b"OpenAction") {
-        extensions.push(format!(
-            "open-action {}",
-            canonical_action(document, action, &pages_by_id)?
-        ));
+    if let Some(action) = catalog.get(b"OpenAction") {
+        extensions.push(format!("open-action {}", canonical_action(action, pages)?));
     }
-    if let Ok(names) = catalog.get(b"Names") {
-        extensions.push(format!("names {}", canonical_object(document, names, 0)?));
-    }
-    if let Ok(outlines) = catalog.get(b"Outlines") {
-        extensions.push(format!(
-            "outlines {}",
-            canonical_object(document, outlines, 0)?
-        ));
-    }
-    if let Ok(threads) = catalog.get(b"Threads") {
-        extensions.push(format!(
-            "threads {}",
-            canonical_object(document, threads, 0)?
-        ));
+    for (key, label) in [
+        (b"Names".as_slice(), "names"),
+        (b"Outlines", "outlines"),
+        (b"Threads", "threads"),
+    ] {
+        if let Some(value) = catalog.get(key) {
+            extensions.push(format!(
+                "{label} {}",
+                canonical_value(value, pages, 0, &mut Vec::new())?
+            ));
+        }
     }
 
-    if let Ok(info) = document.trailer.get(b"Info") {
-        let (_, info) = document
-            .dereference(info)
-            .context("failed to resolve Info dictionary")?;
-        let info = info.as_dict().context("Info is not a dictionary")?;
-        let selected = selected_dictionary(
-            document,
-            info,
-            &[b"Title".as_slice(), b"Subject".as_slice()],
-        )?;
+    let trailer = probe.trailer()?.context("PDF has no trailer")?;
+    if let Some(info) = trailer.get(b"Info").and_then(ProbeValue::as_dictionary) {
+        let selected = selected_dictionary(info, &[b"Title", b"Subject"], pages)?;
         if !selected.is_empty() {
             extensions.push(format!("info {selected}"));
         }
     }
-
-    let trailer = selected_dictionary(document, &document.trailer, &[b"Custom".as_slice()])?;
-    if !trailer.is_empty() {
-        extensions.push(format!("trailer {trailer}"));
+    let selected = selected_dictionary(&trailer, &[b"Custom"], pages)?;
+    if !selected.is_empty() {
+        extensions.push(format!("trailer {selected}"));
     }
 
-    let mut user_objects = Vec::new();
-    for object in document.objects.values() {
-        match object {
-            Object::Dictionary(dictionary) if dictionary.has(b"Kind") => {
-                user_objects.push(format!(
+    let size = trailer.get(b"Size").map(number).transpose()?.unwrap_or(0.0) as i32;
+    let mut user_objects = BTreeSet::new();
+    for number in 1..size {
+        let Ok(value) = probe.object(ProbeObjectId::new(number, 0)) else {
+            continue;
+        };
+        match value.resolved() {
+            ProbeValue::Dictionary(dictionary) if dictionary.get(b"Kind").is_some() => {
+                user_objects.insert(format!(
                     "object {}",
-                    canonical_dictionary(document, dictionary)?
+                    canonical_dictionary(dictionary, pages, &[])?
                 ));
             }
-            Object::Stream(stream)
-                if stream.dict.has(b"Subtype") && !is_form_xobject(&stream.dict) =>
+            ProbeValue::Stream(stream)
+                if stream.dictionary.get(b"Subtype").is_some()
+                    && !is_form_xobject(&stream.dictionary) =>
             {
-                let dictionary = canonical_dictionary_without(document, &stream.dict, b"Length")?;
-                let data = stream
-                    .decompressed_content()
-                    .context("failed to decode user PDF stream")?;
-                user_objects.push(format!("stream {dictionary} data <{}>", hex(&data)));
+                user_objects.insert(format!(
+                    "stream {} data <{}>",
+                    canonical_dictionary(&stream.dictionary, pages, &[b"Length"])?,
+                    hex(&stream.decoded)
+                ));
             }
             _ => {}
         }
     }
-    user_objects.sort();
     extensions.extend(user_objects);
-
     if !extensions.is_empty() {
         normalized.push_str("document-extensions\n");
         for extension in extensions {
@@ -181,18 +159,18 @@ fn append_document_extensions(document: &Document, normalized: &mut String) -> R
 }
 
 fn selected_dictionary(
-    document: &Document,
-    dictionary: &Dictionary,
+    dictionary: &ProbeDictionary,
     keys: &[&[u8]],
+    pages: &BTreeMap<ProbeObjectId, usize>,
 ) -> Result<String> {
     let entries = keys
         .iter()
-        .filter_map(|key| dictionary.get(key).ok().map(|value| (*key, value)))
+        .filter_map(|key| dictionary.get(*key).map(|value| (*key, value)))
         .map(|(key, value)| {
             Ok(format!(
                 "/{} {}",
                 String::from_utf8_lossy(key),
-                canonical_object(document, value, 0)?
+                canonical_value(value, pages, 0, &mut Vec::new())?
             ))
         })
         .collect::<Result<Vec<_>>>()?;
@@ -203,51 +181,18 @@ fn selected_dictionary(
     })
 }
 
-fn canonical_dictionary(document: &Document, dictionary: &Dictionary) -> Result<String> {
-    canonical_dictionary_without(document, dictionary, b"")
-}
-
-fn canonical_dictionary_without(
-    document: &Document,
-    dictionary: &Dictionary,
-    omitted: &[u8],
-) -> Result<String> {
-    let mut entries = dictionary
+fn canonical_action(value: &ProbeValue, pages: &BTreeMap<ProbeObjectId, usize>) -> Result<String> {
+    let dictionary = value
+        .as_dictionary()
+        .context("OpenAction is not a dictionary")?;
+    let entries = dictionary
+        .entries
         .iter()
-        .filter(|(key, _)| key.as_slice() != omitted)
-        .collect::<Vec<_>>();
-    entries.sort_unstable_by(|(left, _), (right, _)| left.cmp(right));
-    let entries = entries
-        .into_iter()
-        .map(|(key, value)| {
-            Ok(format!(
-                "/{} {}",
-                String::from_utf8_lossy(key),
-                canonical_object(document, value, 0)?
-            ))
-        })
-        .collect::<Result<Vec<_>>>()?;
-    Ok(format!("<<{}>>", entries.join(" ")))
-}
-
-fn canonical_action(
-    document: &Document,
-    action: &Object,
-    pages_by_id: &BTreeMap<ObjectId, u32>,
-) -> Result<String> {
-    let (_, action) = document
-        .dereference(action)
-        .context("failed to resolve OpenAction")?;
-    let action = action.as_dict().context("OpenAction is not a dictionary")?;
-    let mut entries = action.iter().collect::<Vec<_>>();
-    entries.sort_unstable_by(|(left, _), (right, _)| left.cmp(right));
-    let entries = entries
-        .into_iter()
         .map(|(key, value)| {
             let value = if key == b"D" {
-                canonical_action_destination(document, value, pages_by_id)?
+                canonical_action_destination(value, pages)?
             } else {
-                canonical_object(document, value, 0)?
+                canonical_value(value, pages, 0, &mut Vec::new())?
             };
             Ok(format!("/{} {value}", String::from_utf8_lossy(key)))
         })
@@ -256,171 +201,201 @@ fn canonical_action(
 }
 
 fn canonical_action_destination(
-    document: &Document,
-    destination: &Object,
-    pages_by_id: &BTreeMap<ObjectId, u32>,
+    value: &ProbeValue,
+    pages: &BTreeMap<ProbeObjectId, usize>,
 ) -> Result<String> {
-    let Object::Array(values) = destination else {
-        return canonical_object(document, destination, 0);
+    let Some(values) = value.as_array() else {
+        return canonical_value(value, pages, 0, &mut Vec::new());
     };
-    let values = values
-        .iter()
-        .map(|value| match value {
-            Object::Reference(id) if pages_by_id.contains_key(id) => {
-                Ok(format!("page {}", pages_by_id[id]))
-            }
-            _ => canonical_object(document, value, 0),
-        })
-        .collect::<Result<Vec<_>>>()?;
-    Ok(format!("[{}]", values.join(" ")))
+    Ok(format!(
+        "[{}]",
+        values
+            .iter()
+            .map(|value| {
+                if let Some(page) = value.referenced_id().and_then(|id| pages.get(&id)) {
+                    Ok(format!("page {page}"))
+                } else {
+                    canonical_value(value, pages, 0, &mut Vec::new())
+                }
+            })
+            .collect::<Result<Vec<_>>>()?
+            .join(" ")
+    ))
 }
 
-fn require_name(object: &Object, expected: &[u8]) -> Result<()> {
-    let actual = object.as_name().context("object is not a name")?;
-    if actual != expected {
-        bail!(
-            "expected name /{}, found /{}",
-            String::from_utf8_lossy(expected),
-            String::from_utf8_lossy(actual)
-        );
-    }
-    Ok(())
-}
-
-fn canonical_object(document: &Document, object: &Object, depth: usize) -> Result<String> {
-    canonical_object_inner(document, object, depth, &mut Vec::new())
-}
-
-fn canonical_object_inner(
-    document: &Document,
-    object: &Object,
+fn canonical_value(
+    value: &ProbeValue,
+    pages: &BTreeMap<ProbeObjectId, usize>,
     depth: usize,
-    references: &mut Vec<ObjectId>,
+    references: &mut Vec<ProbeObjectId>,
 ) -> Result<String> {
     if depth > 32 {
         bail!("PDF fixture object nesting exceeds 32 levels");
     }
-    if let Object::Reference(id) = object {
-        if let Some((number, _)) = document
-            .get_pages()
-            .into_iter()
-            .find(|(_, page_id)| page_id == id)
-        {
-            return Ok(format!("page {number}"));
-        }
-        if let Some(index) = references.iter().position(|existing| existing == id) {
-            return Ok(format!("@{index}"));
-        }
-        let object = document
-            .get_object(*id)
-            .context("failed to resolve PDF object reference")?;
-        references.push(*id);
-        let normalized = canonical_object_inner(document, object, depth + 1, references);
-        references.pop();
-        return normalized;
+    if let Some(id) = value.referenced_id()
+        && let Some(page) = pages.get(&id)
+    {
+        return Ok(format!("page {page}"));
     }
-    Ok(match object {
-        Object::Null => "null".to_owned(),
-        Object::Boolean(value) => value.to_string(),
-        Object::Integer(_) | Object::Real(_) => canonical_number(object)?,
-        Object::Name(name) => format!("/{}", String::from_utf8_lossy(name)),
-        Object::String(bytes, _) => format!("<{}>", hex(bytes)),
-        Object::Array(values) => {
-            let values = values
-                .iter()
-                .map(|value| canonical_object_inner(document, value, depth + 1, references))
-                .collect::<Result<Vec<_>>>()?;
-            format!("[{}]", values.join(" "))
-        }
-        Object::Dictionary(dictionary) => {
-            let mut entries = dictionary.iter().collect::<Vec<_>>();
-            entries.sort_unstable_by(|(left, _), (right, _)| left.cmp(right));
-            let entries = entries
-                .into_iter()
-                .map(|(key, value)| {
-                    Ok(format!(
-                        "/{} {}",
-                        String::from_utf8_lossy(key),
-                        canonical_object_inner(document, value, depth + 1, references)?
-                    ))
-                })
-                .collect::<Result<Vec<_>>>()?;
-            format!("<<{}>>", entries.join(" "))
-        }
-        Object::Stream(stream) => {
-            if is_form_xobject(&stream.dict) {
-                canonical_form_stream(document, stream, depth + 1)?
-            } else {
-                let dictionary = canonical_object(
-                    document,
-                    &Object::Dictionary(stream.dict.clone()),
-                    depth + 1,
-                )?;
-                format!(
-                    "stream {} bytes {} sha256 {:x}",
-                    dictionary,
-                    stream.content.len(),
-                    Sha256::digest(&stream.content)
-                )
+    Ok(match value {
+        ProbeValue::Reference { id, target } => {
+            if let Some(index) = references.iter().position(|existing| existing == id) {
+                return Ok(format!("@{index}"));
             }
+            references.push(*id);
+            let result = canonical_value(target, pages, depth + 1, references);
+            references.pop();
+            result?
         }
-        Object::Reference(_) => unreachable!("references were handled above"),
+        ProbeValue::BackReference(id) => format!(
+            "@{}",
+            references
+                .iter()
+                .position(|existing| existing == id)
+                .unwrap_or(0)
+        ),
+        ProbeValue::UnresolvedReference(id) => format!("{} {} R", id.number, id.generation),
+        ProbeValue::Null => "null".into(),
+        ProbeValue::Boolean(value) => value.to_string(),
+        ProbeValue::Number(value) => canonical_number(*value)?,
+        ProbeValue::String(bytes) => format!("<{}>", hex(bytes)),
+        ProbeValue::Name(name) => format!("/{}", String::from_utf8_lossy(name)),
+        ProbeValue::Array(values) => format!(
+            "[{}]",
+            values
+                .iter()
+                .map(|value| canonical_value(value, pages, depth + 1, references))
+                .collect::<Result<Vec<_>>>()?
+                .join(" ")
+        ),
+        ProbeValue::Dictionary(dictionary) => {
+            canonical_dictionary_inner(dictionary, pages, &[], depth + 1, references)?
+        }
+        ProbeValue::Stream(stream) if is_form_xobject(&stream.dictionary) => {
+            canonical_form_stream(stream, pages, depth + 1, references)?
+        }
+        ProbeValue::Stream(stream) => format!(
+            "stream {} bytes {} sha256 {}",
+            canonical_dictionary(&stream.dictionary, pages, &[])?,
+            stream.raw.len(),
+            hex(&sha2::Sha256::digest(&stream.raw))
+        ),
     })
 }
 
-fn is_form_xobject(dictionary: &Dictionary) -> bool {
+fn canonical_dictionary(
+    dictionary: &ProbeDictionary,
+    pages: &BTreeMap<ProbeObjectId, usize>,
+    omitted: &[&[u8]],
+) -> Result<String> {
+    canonical_dictionary_inner(dictionary, pages, omitted, 0, &mut Vec::new())
+}
+
+fn canonical_dictionary_inner(
+    dictionary: &ProbeDictionary,
+    pages: &BTreeMap<ProbeObjectId, usize>,
+    omitted: &[&[u8]],
+    depth: usize,
+    references: &mut Vec<ProbeObjectId>,
+) -> Result<String> {
+    let entries = dictionary
+        .entries
+        .iter()
+        .filter(|(key, _)| !omitted.contains(&key.as_slice()))
+        .map(|(key, value)| {
+            Ok(format!(
+                "/{} {}",
+                String::from_utf8_lossy(key),
+                canonical_value(value, pages, depth + 1, references)?
+            ))
+        })
+        .collect::<Result<Vec<_>>>()?;
+    Ok(format!("<<{}>>", entries.join(" ")))
+}
+
+fn is_form_xobject(dictionary: &ProbeDictionary) -> bool {
     dictionary
         .get(b"Subtype")
-        .ok()
-        .and_then(|value| value.as_name().ok())
-        == Some(b"Form".as_slice())
+        .is_some_and(|value| matches!(value.resolved(), ProbeValue::Name(name) if name == b"Form"))
 }
 
 fn canonical_form_stream(
-    document: &Document,
-    stream: &lopdf::Stream,
+    stream: &ProbeStream,
+    pages: &BTreeMap<ProbeObjectId, usize>,
     depth: usize,
+    references: &mut Vec<ProbeObjectId>,
 ) -> Result<String> {
-    let mut semantic_dictionary = stream.dict.clone();
-    for private_metadata in [
-        b"PTEX.FileName".as_slice(),
-        b"PTEX.InfoDict".as_slice(),
-        b"PTEX.PageNumber".as_slice(),
-    ] {
-        semantic_dictionary.remove(private_metadata);
-    }
-    let dictionary = canonical_dictionary_without(document, &semantic_dictionary, b"Length")?;
-    let bytes = stream
-        .decompressed_content()
-        .context("failed to decode Form XObject stream")?;
-    let content = Content::decode(&bytes).context("failed to parse Form XObject content")?;
+    let dictionary = canonical_dictionary_inner(
+        &stream.dictionary,
+        pages,
+        &[
+            b"Length",
+            b"PTEX.FileName",
+            b"PTEX.InfoDict",
+            b"PTEX.PageNumber",
+        ],
+        depth + 1,
+        references,
+    )?;
     let mut normalized = format!("form-stream {dictionary}");
-    for operation in content.operations {
+    for operation in &stream.operations {
         normalized.push_str(" content");
-        for operand in operation.operands {
+        for operand in &operation.operands {
             normalized.push(' ');
-            normalized.push_str(&canonical_object(document, &operand, depth)?);
+            normalized.push_str(&canonical_value(operand, pages, depth + 1, references)?);
         }
         normalized.push(' ');
-        normalized.push_str(&operation.operator);
+        normalized.push_str(&String::from_utf8_lossy(&operation.operator));
+    }
+    if depth > 32 {
+        bail!("PDF fixture object nesting exceeds 32 levels");
     }
     Ok(normalized)
 }
 
-fn canonical_number(object: &Object) -> Result<String> {
-    let value = match object {
-        Object::Integer(value) => *value as f64,
-        Object::Real(value) => f64::from(*value),
+fn append_operations(
+    output: &mut String,
+    operations: &[ProbeOperation],
+    pages: &BTreeMap<ProbeObjectId, usize>,
+    prefix: &str,
+) -> Result<()> {
+    for operation in operations {
+        output.push_str(prefix);
+        for operand in &operation.operands {
+            output.push(' ');
+            output.push_str(&canonical_value(operand, pages, 0, &mut Vec::new())?);
+        }
+        output.push(' ');
+        output.push_str(&String::from_utf8_lossy(&operation.operator));
+        output.push('\n');
+    }
+    Ok(())
+}
+
+fn require_name(value: &ProbeValue, expected: &[u8]) -> Result<()> {
+    match value.resolved() {
+        ProbeValue::Name(actual) if actual == expected => Ok(()),
+        ProbeValue::Name(actual) => bail!(
+            "expected name /{}, found /{}",
+            String::from_utf8_lossy(expected),
+            String::from_utf8_lossy(actual)
+        ),
+        _ => bail!("object is not a name"),
+    }
+}
+
+fn number(value: &ProbeValue) -> Result<f64> {
+    match value.resolved() {
+        ProbeValue::Number(value) => Ok(*value),
         _ => bail!("expected PDF number"),
-    };
+    }
+}
+
+fn canonical_number(value: f64) -> Result<String> {
     if !value.is_finite() {
         bail!("PDF number is not finite");
     }
     let milli = (value * 1_000.0).round() as i64;
-    Ok(format_milli(milli))
-}
-
-fn format_milli(milli: i64) -> String {
     let negative = milli < 0;
     let absolute = milli.unsigned_abs();
     let whole = absolute / 1_000;
@@ -437,7 +412,7 @@ fn format_milli(milli: i64) -> String {
     if negative {
         value.insert(0, '-');
     }
-    value
+    Ok(value)
 }
 
 fn hex(bytes: &[u8]) -> String {

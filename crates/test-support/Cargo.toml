@@ -6,7 +6,6 @@ edition.workspace = true
 [dependencies]
 anyhow.workspace = true
 hayro-syntax.workspace = true
-lopdf = { version = "=0.43.0", default-features = false }
 sha2.workspace = true
 similar.workspace = true
 tempfile.workspace = true

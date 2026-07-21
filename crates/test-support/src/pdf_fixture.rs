@@ -39,6 +39,14 @@ impl Dictionary {
         self
     }
 
+    /// Serialize this dictionary for use as a nested raw PDF value.
+    #[must_use]
+    pub fn to_bytes(&self) -> Vec<u8> {
+        let mut output = Vec::new();
+        self.write(&mut output, None);
+        output
+    }
+
     fn contains(&self, key: &str) -> bool {
         self.entries.iter().any(|(existing, _)| existing == key)
     }
