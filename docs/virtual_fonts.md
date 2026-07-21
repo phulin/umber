@@ -40,6 +40,39 @@ Resource acquisition belongs to `umber`/`umber-wasm` adapters and the shared
 VFS resource protocol. Recursive lowering belongs to the PDF finalizer. DVI
 output is not changed by this parser.
 
+## PDF packet execution mapping
+
+The detached lowerer follows `pdftex.web` section 32e, specifically the
+`do_vf_packet` module and its `Do typesetting the DVI commands in virtual
+character packet` fragment. A packet starts in its first declared local font;
+its h/v coordinates begin at the virtual character anchor; and w/x/y/z begin
+at zero. Push/pop saves all six values. The packet restores its entry h/v on
+return, while a containing `set` command advances by the selected local TFM
+character width and `put` does not. Packet dimensions are fix-word values
+scaled by the containing virtual-font instance size. Positive-height,
+positive-width rules become positioned PDF rectangles; other rules only
+retain the `set_rule` advance.
+
+The same module's `output_one_char` fragment classifies the selected local
+font recursively and reaches PDF font selection only for a real leaf. Umber
+therefore instantiates retained local TFM bytes at the declared size, reserves
+PDF resources for real leaves, and computes glyph usage from the expanded
+positioned stream. Virtual TFM names never become page font resources merely
+because their source artifact contained characters.
+
+Section 32e's `literal(s, scan_special, false)` call delegates to section
+32c's `literal` procedure: non-`PDF:` specials are silently ignored;
+`PDF:direct:` retains text state, `PDF:page:` ends text without moving the
+origin, and an unqualified `PDF:` special uses the current packet origin.
+Umber lowers those three cases to the existing typed PDF-literal operation.
+
+The reference constants `vf_max_recursion=10` and `vf_stack_size=100` remain
+defaults. Umber additionally rejects an active `(font instance, character)`
+cycle explicitly and bounds aggregate executed commands, emitted operations,
+and retained special bytes. All cursor, dimension, work, and output accounting
+uses checked arithmetic. These finalizer-only mutations occur after engine
+acceptance and do not alter committed artifacts or DVI construction.
+
 ## Typed acquisition and retry closure
 
 The PDF-mode compile session retains a completed engine candidate before
@@ -59,9 +92,11 @@ resolvers preserve the original typed request in their responses.
 
 Positive and authoritative-negative bindings retain the shared VFS atomic
 registration, conflict, byte-budget, and required-progress rules. The session
-attempt limit bounds advancing closure rounds. Acquired VF and local-TFM models
-cross the accepted-finalization boundary for recursive PDF lowering; this phase
-does not alter DVI construction or execute VF packets.
+attempt limit bounds advancing closure rounds. Acquired VF programs plus exact
+local-TFM bytes cross the accepted-finalization boundary. The bytes allow one
+logical local TFM to be instantiated at each size declared by its containing
+virtual-font instance without another host read. Recursive packet execution
+then occurs only in PDF finalization and does not alter DVI construction.
 
 This ordering maps directly to `pdftex.web` section 32e: its introductory font
 processing module classifies a font by probing its VF on first PDF use; `do_vf`

@@ -22,6 +22,7 @@ mod input_search;
 mod latex_project;
 mod memory_output;
 mod pdf_output;
+mod pdf_vf;
 mod pdftex;
 mod virtual_compile;
 
@@ -39,6 +40,7 @@ pub use memory_output::{
 };
 pub use pdf_output::{
     PdfBuildError, pdf_from_committed_artifacts, pdf_from_committed_artifacts_at_dpi,
+    pdf_from_committed_artifacts_with_virtual_fonts,
 };
 pub use pdftex::PDFTEX_PRIMITIVE_NAMES;
 pub use tex_fonts::{

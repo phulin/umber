@@ -15,6 +15,9 @@ pub struct CachedVirtualFont {
 #[derive(Clone, Debug)]
 pub struct CachedLocalTfm {
     pub content_id: FileContentId,
+    /// Exact bytes retained so detached finalization can instantiate this TFM
+    /// at the size declared by each containing virtual font.
+    pub bytes: Vec<u8>,
     pub font: TfmFont,
 }
 
@@ -102,6 +105,7 @@ pub(super) fn discover(
                         logical.clone(),
                         CachedLocalTfm {
                             content_id: file.content_id(),
+                            bytes: file.bytes().to_vec(),
                             font,
                         },
                     );

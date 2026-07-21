@@ -178,11 +178,14 @@ sections 3.1 and 3.1.6, separately defines map lookup for outline fonts and PK
 fallback for a used real font absent from the maps. For example, TeX Live's
 `ptmb7t.vf` selects local font `ptmb8r`; the `ptmb8r` map entry then selects
 `8r.enc` and `utmb8a.pfb`. A `ptmb7t.<dpi>pk` request is therefore not the
-canonical fallback for that font. Umber does not yet parse or lower virtual
-font programs, so its current real-font-only finalizer cannot publish this
-otherwise available chain; virtual-font support is tracked as
-`umber2-65ku.59`, rather than being hidden by a synthetic map entry or a
-generated PK substitute.
+canonical fallback for that font. Umber parses the retained VF closure and
+recursively lowers used virtual characters before PDF font usage and page
+resources are finalized. Thus only the reached real local fonts participate
+in map lookup, outline embedding, or PK fallback. Packet movement, rules, and
+recognized `PDF:` specials retain their exact positioned order, and bounded
+failures reject cycles, excessive recursion/stack/work/output, or invalid
+local character references. This finalizer-only expansion leaves committed
+artifacts and DVI output unchanged.
 
 Detached finalization resolves the effective font map once per document and
 uses that immutable name-indexed snapshot for font selection, encoding lookup,

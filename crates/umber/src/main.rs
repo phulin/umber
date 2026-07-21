@@ -118,6 +118,7 @@ fn finalize_run(
             telemetry.execution.engine_time.as_nanos(),
         );
     }
+    let virtual_font_resources = finalization.virtual_font_resources;
     let mut stores = finalization.stores;
     let dumped_format = finalization.dumped_format;
     #[cfg_attr(not(feature = "profiling-stats"), allow(unused_variables))]
@@ -281,7 +282,11 @@ fn finalize_run(
         {
             eprintln!("pdfTeX warning: \\pdfdraftmode enabled, not changing output pdf");
         } else {
-            let pdf = umber::pdf_from_committed_artifacts(&mut stores, &committed_artifacts)?;
+            let pdf = umber::pdf_from_committed_artifacts_with_virtual_fonts(
+                &mut stores,
+                &committed_artifacts,
+                &virtual_font_resources,
+            )?;
             driver_files.push(DriverFile::new(output.clone(), pdf));
         }
     }

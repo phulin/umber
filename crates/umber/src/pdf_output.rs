@@ -87,7 +87,25 @@ pub fn pdf_from_committed_artifacts(
     stores: &mut Universe,
     artifacts: &[CommittedArtifact],
 ) -> Result<Vec<u8>, PdfBuildError> {
-    pdf_from_committed_artifacts_at_dpi(stores, artifacts, DEFAULT_PDF_PK_RESOLUTION)
+    pdf_from_committed_artifacts_with_virtual_fonts(
+        stores,
+        artifacts,
+        &crate::PdfVirtualFontResources::default(),
+    )
+}
+
+/// Builds one deterministic PDF with the accepted virtual-font resource closure.
+pub fn pdf_from_committed_artifacts_with_virtual_fonts(
+    stores: &mut Universe,
+    artifacts: &[CommittedArtifact],
+    virtual_fonts: &crate::PdfVirtualFontResources,
+) -> Result<Vec<u8>, PdfBuildError> {
+    pdf_from_committed_artifacts_at_dpi_with_virtual_fonts(
+        stores,
+        artifacts,
+        DEFAULT_PDF_PK_RESOLUTION,
+        virtual_fonts,
+    )
 }
 
 /// Builds a PDF using an explicit host bitmap-device DPI when
@@ -96,6 +114,20 @@ pub fn pdf_from_committed_artifacts_at_dpi(
     stores: &mut Universe,
     artifacts: &[CommittedArtifact],
     driver_dpi: i32,
+) -> Result<Vec<u8>, PdfBuildError> {
+    pdf_from_committed_artifacts_at_dpi_with_virtual_fonts(
+        stores,
+        artifacts,
+        driver_dpi,
+        &crate::PdfVirtualFontResources::default(),
+    )
+}
+
+fn pdf_from_committed_artifacts_at_dpi_with_virtual_fonts(
+    stores: &mut Universe,
+    artifacts: &[CommittedArtifact],
+    driver_dpi: i32,
+    virtual_fonts: &crate::PdfVirtualFontResources,
 ) -> Result<Vec<u8>, PdfBuildError> {
     let parameters = output_parameters(stores);
     if parameters.output <= 0 {
@@ -109,8 +141,27 @@ pub fn pdf_from_committed_artifacts_at_dpi(
         .into_iter()
         .map(|entry| (entry.tex_name.clone(), entry))
         .collect::<BTreeMap<_, _>>();
-    let font_usage = collect_font_usage(stores, artifacts, &page_records, &resolved_font_map)?;
-    let positioned_pages = positioned_pages(stores, artifacts, &page_records)?;
+    let mut positioned_pages = positioned_pages(stores, artifacts, &page_records)?;
+    let page_count = positioned_pages.len();
+    positioned_pages.extend(positioned_forms(stores)?);
+    crate::pdf_vf::lower_pages(
+        stores,
+        &mut positioned_pages,
+        virtual_fonts,
+        crate::pdf_vf::PdfVfLimits::default(),
+    )?;
+    let positioned_forms = positioned_pages.split_off(page_count);
+    let positioned_forms = stores
+        .pdf_forms()
+        .map(|form| form.object())
+        .zip(positioned_forms)
+        .collect::<BTreeMap<_, _>>();
+    let font_usage = collect_font_usage(
+        stores,
+        &positioned_pages,
+        &positioned_forms,
+        &resolved_font_map,
+    )?;
     let shipped_destinations = lower_page_destinations(
         stores,
         artifacts,
@@ -853,11 +904,10 @@ pub fn pdf_from_committed_artifacts_at_dpi(
         let form = stores
             .pdf_form(object)
             .ok_or(PdfBuildError::ReferencedFormNotFound(object))?;
-        let staged = stores
-            .pdf_form_artifact(object)
+        let positioned = positioned_forms
+            .get(&object)
+            .cloned()
             .ok_or(PdfBuildError::MissingFormArtifact(object))?;
-        let artifact = tex_out::PageArtifact::from_bytes(staged.bytes())?;
-        let positioned = tex_out::positioned::lower_page(&artifact, 0)?;
         let total_height = form
             .height()
             .checked_add(form.depth())
@@ -1127,16 +1177,13 @@ pub fn pdf_from_committed_artifacts_at_dpi(
 
 fn collect_font_usage(
     stores: &Universe,
-    artifacts: &[CommittedArtifact],
-    page_records: &[tex_state::PdfPageRecord],
+    positioned_pages: &[PositionedPage],
+    positioned_forms: &BTreeMap<u32, PositionedPage>,
     resolved_font_map: &BTreeMap<Vec<u8>, tex_fonts::PdfFontMapEntry>,
 ) -> Result<BTreeMap<u32, BTreeSet<u8>>, PdfBuildError> {
     let mut usage = BTreeMap::<u32, BTreeSet<u8>>::new();
     let mut interword_space_enabled = false;
-    for (page_index, record) in page_records.iter().copied().enumerate() {
-        let bytes = artifact_bytes(stores, artifacts, record.artifact())?;
-        let artifact = tex_out::PageArtifact::from_bytes(&bytes)?;
-        let positioned = tex_out::positioned::lower_page(&artifact, page_index as u32)?;
+    for positioned in positioned_pages {
         for event in &positioned.events {
             let PositionedEvent::TextRun(run) = event else {
                 if let PositionedEvent::PdfAccessibility(control) = event {
@@ -1176,12 +1223,7 @@ fn collect_font_usage(
             codes.extend(stores.included_pdf_font_chars(live_font));
         }
     }
-    for form in stores.pdf_forms() {
-        let Some(staged) = stores.pdf_form_artifact(form.object()) else {
-            continue;
-        };
-        let artifact = tex_out::PageArtifact::from_bytes(staged.bytes())?;
-        let positioned = tex_out::positioned::lower_page(&artifact, 0)?;
+    for positioned in positioned_forms.values() {
         for event in &positioned.events {
             let PositionedEvent::TextRun(run) = event else {
                 continue;
@@ -1253,6 +1295,19 @@ fn positioned_pages(
                 &artifact,
                 page_index as u32,
             )?)
+        })
+        .collect()
+}
+
+fn positioned_forms(stores: &Universe) -> Result<Vec<PositionedPage>, PdfBuildError> {
+    stores
+        .pdf_forms()
+        .map(|form| {
+            let staged = stores
+                .pdf_form_artifact(form.object())
+                .ok_or(PdfBuildError::MissingFormArtifact(form.object()))?;
+            let artifact = tex_out::PageArtifact::from_bytes(staged.bytes())?;
+            Ok(tex_out::positioned::lower_page(&artifact, 0)?)
         })
         .collect()
 }
@@ -4113,6 +4168,22 @@ pub enum PdfBuildError {
     Type1Subset(tex_fonts::PdfType1SubsetError),
     TrueTypeSubset(tex_fonts::PdfTrueTypeSubsetError),
     MissingLiveFont(String),
+    VirtualFontDepthExceeded(usize),
+    VirtualFontStackExceeded(usize),
+    VirtualFontStackUnderflow,
+    VirtualFontWorkExceeded(usize),
+    VirtualFontOutputExceeded(usize),
+    VirtualFontSpecialBytesExceeded(usize),
+    VirtualFontCycle { font: String, code: u8 },
+    MissingVirtualFontPacket { font: String, code: u32 },
+    VirtualFontHasNoLocalFonts(String),
+    MissingVirtualLocalFont { font: String, number: i32 },
+    InvalidVirtualLocalFontName(String),
+    MissingVirtualLocalTfm(String),
+    InvalidVirtualLocalTfm { font: String, message: String },
+    VirtualFontCharacterOutOfRange { font: String, code: u32 },
+    MissingVirtualCharacter { font: String, code: u8 },
+    VirtualFontArithmeticOverflow,
     UnsupportedSpecial(String),
     MissingRasterImage(u32),
     UnsupportedPdfPageImage(u32),
@@ -4230,6 +4301,55 @@ impl std::fmt::Display for PdfBuildError {
             Self::TrueTypeSubset(error) => error.fmt(f),
             Self::MissingLiveFont(name) => {
                 write!(f, "PDF artifact font {name:?} has no live metric source")
+            }
+            Self::VirtualFontDepthExceeded(limit) => {
+                write!(f, "virtual-font recursion exceeds depth {limit}")
+            }
+            Self::VirtualFontStackExceeded(limit) => {
+                write!(f, "virtual-font stack exceeds depth {limit}")
+            }
+            Self::VirtualFontStackUnderflow => f.write_str("virtual-font stack underflow"),
+            Self::VirtualFontWorkExceeded(limit) => {
+                write!(f, "virtual-font packet execution exceeds {limit} commands")
+            }
+            Self::VirtualFontOutputExceeded(limit) => {
+                write!(f, "virtual-font lowering exceeds {limit} output operations")
+            }
+            Self::VirtualFontSpecialBytesExceeded(limit) => {
+                write!(f, "virtual-font specials exceed {limit} bytes")
+            }
+            Self::VirtualFontCycle { font, code } => {
+                write!(f, "virtual-font cycle at {font} character {code}")
+            }
+            Self::MissingVirtualFontPacket { font, code } => {
+                write!(f, "virtual font {font} has no packet for character {code}")
+            }
+            Self::VirtualFontHasNoLocalFonts(font) => {
+                write!(f, "virtual font {font} has no default local font")
+            }
+            Self::MissingVirtualLocalFont { font, number } => {
+                write!(f, "virtual font {font} has no local font {number}")
+            }
+            Self::InvalidVirtualLocalFontName(font) => {
+                write!(f, "virtual font {font} has a non-UTF-8 local font name")
+            }
+            Self::MissingVirtualLocalTfm(font) => {
+                write!(f, "virtual font requires unavailable local TFM {font}")
+            }
+            Self::InvalidVirtualLocalTfm { font, message } => {
+                write!(f, "local TFM {font} is invalid: {message}")
+            }
+            Self::VirtualFontCharacterOutOfRange { font, code } => {
+                write!(
+                    f,
+                    "virtual font {font} references character {code} outside 0..=255"
+                )
+            }
+            Self::MissingVirtualCharacter { font, code } => {
+                write!(f, "virtual-font local font {font} has no character {code}")
+            }
+            Self::VirtualFontArithmeticOverflow => {
+                f.write_str("virtual-font positioned arithmetic overflowed")
             }
             Self::UnsupportedSpecial(class) => {
                 write!(f, "PDF output does not support special class {class:?}")
