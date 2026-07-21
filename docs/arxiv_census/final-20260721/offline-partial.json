@@ -1,0 +1,23 @@
+{
+  "completed_rows": 74,
+  "engine_failures": 20,
+  "engine_guard_terminations": 4,
+  "finalizer_guard_terminations": 2,
+  "offline_pdf_complete": 41,
+  "offline_engine_accepted_finalizer_incomplete": 13,
+  "outcome_mismatches_against_warm": 0,
+  "partial_summary_sha256": "2e28622dd625600ea3ac66304e82f43cab84eb7b5ac3edc8adc5bcf2703d39ab",
+  "stopped_by_user": true,
+  "wall_seconds": 4246,
+  "warm_timing": {
+    "engine_log_wall_seconds": 3416,
+    "engine_phase_median_seconds": 23,
+    "engine_phase_p90_seconds": 94,
+    "finalizer_log_wall_seconds": 2676,
+    "finalizer_phase_median_seconds": 29,
+    "finalizer_phase_p90_seconds": 80,
+    "orchestrator_overhead_seconds": 33,
+    "resource_wait_seconds": 300.5,
+    "wall_seconds": 6125
+  }
+}

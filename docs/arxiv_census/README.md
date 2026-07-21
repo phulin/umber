@@ -58,3 +58,12 @@ The regenerated local distribution proves `1204.5690` completes through the
 generated `pdftex.map` path. It does not prove hosted reproducibility: the
 production immutable pin still lacks that map, and blocked issue
 `umber2-65ku.19` owns publication, public verification, and pin rotation.
+
+The requested offline replay was stopped after 74 rows because of its runtime;
+all completed rows matched the warm engine/finalizer outcome exactly. The
+machine receipt `offline-partial.json` records counts, the partial-summary
+digest, and phase timing. The 6,125-second warm run spent 3,416 seconds in
+engine subprocesses and 2,676 seconds in repeated PDF-finalizer subprocesses;
+resource waits account for 300.5 seconds inside engine time and orchestration
+for about 33 seconds. Rebuilding, cache acquisition, and orchestration are
+therefore not the dominant cost.
