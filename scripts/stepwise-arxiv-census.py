@@ -21,6 +21,16 @@ HEADER = [
     "local_step_retries", "replayed_delivered_tokens", "replayed_dispatches",
     "cumulative_fuel", "resource_wait_ns", "engine_ns", "error_cluster",
     "guard_status", "row_wall_ns", "finalizer_ns",
+    "source_read_ns", "format_read_ns", "format_restore_ns", "setup_ns",
+    "accepted_wall_ns", "pdf_font_resources_ns", "map_resolve_ns",
+    "positioning_ns", "vf_ns", "font_usage_ns", "destinations_ns",
+    "annotations_ns", "pdf_object_ns", "font_embed_ns", "serialization_ns",
+    "image_import_ns", "image_parse_copy_ns", "image_decode_ns",
+    "image_transform_ns", "image_encode_ns", "image_cache_hits",
+    "validation_ns", "pdf_build_ns", "materialize_ns",
+    "run_wall_ns", "images", "raster_images", "pdf_images",
+    "image_input_bytes", "unique_images", "lowered_images", "objects",
+    "output_bytes",
 ]
 TELEMETRY_FIELDS = HEADER[3:11]
 
@@ -110,6 +120,18 @@ def parse_telemetry(log: str) -> dict[str, int]:
     line = next((line for line in reversed(log.splitlines()) if line.startswith("RESOURCE_TELEMETRY ")), "")
     values = {name: int(value) for name, value in re.findall(r" ([a-z_]+)=([0-9]+)", line)}
     return {name: values.get(name, 0) for name in TELEMETRY_FIELDS}
+
+
+def parse_phase_telemetry(log: str) -> dict[str, int]:
+    values = {}
+    prefixes = ("RESOURCE_STARTUP_TELEMETRY ", "RESOURCE_ENGINE_ACCEPTED ",
+                "PDF_TELEMETRY ", "PDF_DRIVER_BUILD ", "PDF_DRIVER_TELEMETRY ")
+    for line in log.splitlines():
+        if line.startswith(prefixes):
+            values.update({name: int(value) for name, value in re.findall(r" ([a-z_]+)=([0-9]+)", line)})
+    values["pdf_font_resources_ns"] = values.pop("font_resources_ns", 0)
+    values["pdf_object_ns"] = values.pop("object_ns", 0)
+    return {name: values.get(name, 0) for name in HEADER[15:]}
 
 
 def artifact_hashes(results: Path, key: str, finalizer_status: str) -> dict[str, str | None]:
@@ -287,6 +309,7 @@ def main() -> None:
             accepted = "RESOURCE_ENGINE_ACCEPTED" in log
             telemetry = parse_telemetry(log)
             row.update(telemetry)
+            row.update(parse_phase_telemetry(log))
             row["guard_status"] = completed.returncode
             row["row_wall_ns"] = wall_ns
             row["finalizer_ns"] = max(0, wall_ns - telemetry["engine_ns"] - telemetry["resource_wait_ns"]) if accepted else 0

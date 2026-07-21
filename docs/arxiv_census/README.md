@@ -71,12 +71,49 @@ therefore not the dominant cost.
 The census runner now transfers accepted state directly into PDF finalization
 in the same guarded process and publishes each completed row atomically. The
 old 2,676-second `finalizer` bucket was a second full compile plus real PDF
-lowering, not finalization alone. Across the 68 accepted warm rows, first-pass
-engine and resource-wait telemetry totals 1,382.5 seconds; removing that
-duplicate pass projects about 4,742 seconds for the full census, 22.6% below
-6,125 seconds. A guarded `1609.01918` run measured 77.5 seconds in one process,
-versus 17 plus 77 seconds from the historical engine and finalizer log
-timestamps, an 18% representative wall-time reduction with the same outcome.
+lowering, not finalization alone. The first single-pass `1609.01918` diagnostic
+still used an unoptimized development binary and took 77.5 seconds. The
+repository's intended `profile.test`/`cargo run-dev` artifact took 9.57 seconds
+before PDF fixes and 3.89 seconds afterward, versus 17 plus 77 seconds from the
+historical engine and finalizer log timestamps. This is a 24.2x reduction from
+the original two-process row and preserves its accepted/complete outcome.
+
+The optimized pre-fix PDF build spent 2.03 seconds lowering virtual fonts and
+3.92 seconds collecting font usage. Virtual-character expansion cloned a whole
+VF program and packet for every character, then usage collection rescanned all
+PDF font operations for every expanded glyph run. Shared immutable program
+ownership, borrowed packets, cached live-to-artifact font identities, adjacent
+leaf-run coalescing, and one metadata projection per distinct font reduce those
+phases to 0.242 seconds and 0.005 seconds. That VF phase processes 51,055
+characters and 52,785 packet commands with only 25 program lookups and 38
+local-font constructions; the complete PDF build is 0.473 seconds, including
+0.109 seconds to serialize 206 objects into a 0.996 MB PDF. Scaling the
+historical 32 failed first passes by the measured 4.4x optimized-engine ratio
+and the 68 accepted combined passes by the measured 19.9x row ratio projects
+roughly 9 minutes for 100 rows, versus 102 minutes.
+
+A non-VF accepted paper (`2402.06118`) confirms that the remaining work follows
+its inputs rather than a hidden per-glyph finalizer loop: 9,107 positioned
+events pass through VF lowering unchanged in 0.048 milliseconds. Before the
+image fix, 0.931 of its 1.05-second PDF build imported three distinct RGBA PNGs
+totaling 7.64 MB: IDAT extraction/copy took 0.004 seconds, inflate 0.079,
+unfilter/split 0.231, and re-encoding 0.615. Splitting the still-filtered PNG
+rows into color and alpha predictors and using the fast bounded encoder reduces
+transform and encode to 0.124 and 0.099 seconds. Image import is 0.312 seconds
+and the complete PDF build is 0.429 seconds; validation and serialization take
+0.10 and 1.67 milliseconds, and `pdfinfo` validates the resulting 18-page,
+8.37 MB PDF.
+
+JPEG data and opaque PNG IDAT streams were already validated and passed through
+without decode/re-encode. Image source resolution now caches an immutable
+`PdfExternalImageSource` by the complete request, so a repeated request does not
+reread, rehash, or reparse its shared bytes. Detached lowering also reuses one
+raster XObject and soft-mask pair by content identity plus metadata, including
+across pages and forms. Distinct PDF-page image allocations intentionally remain
+distinct because their form/group object identity is observable; repeated
+references to one allocation already share its imported form. All PNG decoded-
+length, filter-byte, dimension, imported-stream, and aggregate PDF bounds remain
+in force.
 Completed rows resume by immutable input and artifact identity. Offline
 reproducibility is attested without recompilation by rehashing those receipts,
 based on the acquisition layer's authenticated-before-use cache invariant; an
@@ -86,8 +123,10 @@ The guarded format-load probe used the exact audit image at
 `target/pdflatex-format/pdflatex.fmt` (SHA-256
 `f640624c160500d6faafd88be3c381e94390e7edb4a547d82a4350eef73a96f4`). A
 minimal formatted article emitted the pinned `LaTeX2e <2025-11-01>` and L3
-banner and completed in 5.09 seconds; measured engine work was 0.713 seconds
-and resource wait was 0.445 seconds. Invalid image bytes were rejected as a
+banner. It took 5.13 seconds with the invalid development-profile census build
+and 1.10 seconds with the required optimized artifact. In the optimized run,
+format reading took 0.26 milliseconds and restore took 0.13 milliseconds;
+engine work was 0.133 seconds and resource wait was 0.052 seconds. Invalid image bytes were rejected as a
 truncated Umber format, while omitting `--format` completed in 0.01 seconds
 with undefined `\documentclass` and `\begin`. Census rows therefore deserialize
 the pinned format rather than rebuilding LaTeX or running initex.

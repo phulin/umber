@@ -80,7 +80,9 @@ fn lex_dump(path: &str) -> Result<(), CliError> {
     Ok(())
 }
 
+#[allow(clippy::disallowed_methods)] // Process telemetry; TeX state never observes it.
 fn run_tex(opts: &RunCliOptions) -> Result<(), CliError> {
+    let run_started = std::time::Instant::now();
     let accepted =
         umber::cli_resource::run_for_finalization(&umber::cli_resource::NativeRunOptions {
             input: opts.input.clone(),
@@ -94,18 +96,25 @@ fn run_tex(opts: &RunCliOptions) -> Result<(), CliError> {
             expansion_fuel: opts.expansion_fuel,
         })?;
     if env::var_os("UMBER_RESOURCE_TELEMETRY").is_some_and(|value| value == "1") {
-        eprintln!("RESOURCE_ENGINE_ACCEPTED");
+        eprintln!(
+            "RESOURCE_ENGINE_ACCEPTED accepted_wall_ns={}",
+            run_started.elapsed().as_nanos()
+        );
     }
-    finalize_run(opts, accepted)
+    finalize_run(opts, accepted, run_started)
 }
 
+#[allow(clippy::disallowed_methods)] // Process telemetry; TeX state never observes it.
 fn finalize_run(
     opts: &RunCliOptions,
     mut accepted: umber::cli_resource::NativeAcceptedRun,
+    run_started: std::time::Instant,
 ) -> Result<(), CliError> {
+    let font_resources_started = std::time::Instant::now();
     if opts.pdf.is_some() && !accepted.pdf_draft_mode() {
         accepted.provide_pdf_font_programs()?;
     }
+    let font_resources_ns = font_resources_started.elapsed().as_nanos();
     let (output, finalization, input_path_map, resolved_inputs, main_input, telemetry) =
         accepted.into_parts();
     if env::var_os("UMBER_RESOURCE_TELEMETRY").is_some_and(|value| value == "1") {
@@ -285,11 +294,18 @@ fn finalize_run(
         {
             eprintln!("pdfTeX warning: \\pdfdraftmode enabled, not changing output pdf");
         } else {
+            let pdf_started = std::time::Instant::now();
             let pdf = umber::pdf_from_committed_artifacts_with_virtual_fonts(
                 &mut stores,
                 &committed_artifacts,
                 &virtual_font_resources,
             )?;
+            if env::var_os("UMBER_RESOURCE_TELEMETRY").is_some_and(|value| value == "1") {
+                eprintln!(
+                    "PDF_DRIVER_BUILD pdf_build_ns={}",
+                    pdf_started.elapsed().as_nanos()
+                );
+            }
             driver_files.push(DriverFile::new(output.clone(), pdf));
         }
     }
@@ -343,6 +359,7 @@ fn finalize_run(
         ));
     }
     let effect_pos = stores.world().effect_pos();
+    let materialize_started = std::time::Instant::now();
     let finalization = PlannedFinalization::new(effect_pos, driver_files)?;
     if opts.show_fixtures {
         print!("{}", String::from_utf8_lossy(&output.terminal));
@@ -352,6 +369,14 @@ fn finalize_run(
     finalization
         .commit_effects(&mut stores)?
         .materialize(&mut stores)?;
+    if env::var_os("UMBER_RESOURCE_TELEMETRY").is_some_and(|value| value == "1") {
+        eprintln!(
+            "PDF_DRIVER_TELEMETRY font_resources_ns={} materialize_ns={} run_wall_ns={}",
+            font_resources_ns,
+            materialize_started.elapsed().as_nanos(),
+            run_started.elapsed().as_nanos()
+        );
+    }
     Ok(())
 }
 

@@ -27,7 +27,7 @@ use tex_state::{
     PdfLinkRecord, PdfOutputParameters, PdfRasterColorSpace, PdfRasterFormat, Universe, WorldError,
 };
 
-use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
 use std::io::{Read, Write};
 
 pub(crate) const DEFAULT_PDF_PK_RESOLUTION: i32 = 600;
@@ -123,12 +123,14 @@ pub fn pdf_from_committed_artifacts_at_dpi(
     )
 }
 
+#[allow(clippy::disallowed_methods)] // Process telemetry; PDF content never observes it.
 fn pdf_from_committed_artifacts_at_dpi_with_virtual_fonts(
     stores: &mut Universe,
     artifacts: &[CommittedArtifact],
     driver_dpi: i32,
     virtual_fonts: &crate::PdfVirtualFontResources,
 ) -> Result<Vec<u8>, PdfBuildError> {
+    let total_started = std::time::Instant::now();
     let parameters = output_parameters(stores);
     if parameters.output <= 0 {
         return Err(PdfBuildError::PdfOutputDisabled);
@@ -136,32 +138,41 @@ fn pdf_from_committed_artifacts_at_dpi_with_virtual_fonts(
     let version = pdf_version(parameters)?;
     let options = serialization_options(parameters)?;
     let page_records = stores.pdf_pages().to_vec();
+    let map_started = std::time::Instant::now();
     let resolved_font_map = stores
         .resolved_pdf_font_map_lines()
         .into_iter()
         .map(|entry| (entry.tex_name.clone(), entry))
         .collect::<BTreeMap<_, _>>();
+    let map_resolve_ns = map_started.elapsed().as_nanos();
+    let positioning_started = std::time::Instant::now();
     let mut positioned_pages = positioned_pages(stores, artifacts, &page_records)?;
     let page_count = positioned_pages.len();
     positioned_pages.extend(positioned_forms(stores)?);
+    let positioning_ns = positioning_started.elapsed().as_nanos();
+    let vf_started = std::time::Instant::now();
     crate::pdf_vf::lower_pages(
         stores,
         &mut positioned_pages,
         virtual_fonts,
         crate::pdf_vf::PdfVfLimits::default(),
     )?;
+    let vf_ns = vf_started.elapsed().as_nanos();
     let positioned_forms = positioned_pages.split_off(page_count);
     let positioned_forms = stores
         .pdf_forms()
         .map(|form| form.object())
         .zip(positioned_forms)
         .collect::<BTreeMap<_, _>>();
+    let font_usage_started = std::time::Instant::now();
     let font_usage = collect_font_usage(
         stores,
         &positioned_pages,
         &positioned_forms,
         &resolved_font_map,
     )?;
+    let font_usage_ns = font_usage_started.elapsed().as_nanos();
+    let destinations_started = std::time::Instant::now();
     let shipped_destinations = lower_page_destinations(
         stores,
         artifacts,
@@ -169,13 +180,16 @@ fn pdf_from_committed_artifacts_at_dpi_with_virtual_fonts(
         &positioned_pages,
         parameters.decimal_digits,
     )?;
+    let destinations_ns = destinations_started.elapsed().as_nanos();
     let page_link_margins = page_records
         .iter()
         .map(|record| record.link_margin())
         .collect::<Vec<_>>();
+    let annotations_started = std::time::Instant::now();
     let mut page_annotations =
         lower_page_annotations(stores, &positioned_pages, &page_link_margins)?;
     assign_annotation_objects(stores, &mut page_annotations)?;
+    let annotations_ns = annotations_started.elapsed().as_nanos();
     let include_info = stores.int_param(IntParam::PDF_OMIT_INFO_DICT) == 0;
     let document_ids = stores
         .finalize_pdf_document_objects(include_info)
@@ -212,6 +226,8 @@ fn pdf_from_committed_artifacts_at_dpi_with_virtual_fonts(
     let mut interword_space_enabled = false;
     let mut fallback_space_font = None;
     let mut referenced_forms = BTreeSet::<u32>::new();
+    let object_started = std::time::Instant::now();
+    let mut font_embed_ns = 0_u128;
     referenced_forms.extend(
         stores
             .pdf_forms()
@@ -308,13 +324,39 @@ fn pdf_from_committed_artifacts_at_dpi_with_virtual_fonts(
     }
 
     let mut pdf_image_groups = BTreeMap::<u32, Option<PdfObjectId>>::new();
+    let mut pdf_image_objects = BTreeMap::<u32, PdfObjectId>::new();
+    let mut lowered_images = HashMap::<(ContentHash, PdfExternalImageMetadata), PdfObjectId>::new();
+    let image_import_started = std::time::Instant::now();
+    let mut image_telemetry = ImageImportTelemetry::default();
+    let mut image_count = 0usize;
+    let mut raster_image_count = 0usize;
+    let mut pdf_image_count = 0usize;
+    let mut image_input_bytes = 0usize;
+    let mut unique_image_identities = BTreeSet::new();
     for image in stores.pdf_external_images() {
+        image_count += 1;
+        image_input_bytes = image_input_bytes.saturating_add(image.bytes().len());
+        unique_image_identities.insert(image.identity());
+        let cache_key = (image.identity(), image.metadata());
+        if matches!(image.metadata(), PdfExternalImageMetadata::Raster(_))
+            && let Some(&object) = lowered_images.get(&cache_key)
+        {
+            image_telemetry.cache_hits += 1;
+            pdf_image_objects.insert(image.id().raw(), object);
+            continue;
+        }
         match image.metadata() {
             PdfExternalImageMetadata::Raster(metadata) => {
-                let (color_data, filter, bits, color_space, alpha_data) =
-                    raster_image_streams(image.bytes(), metadata, parameters)?;
+                raster_image_count += 1;
+                let (color_data, filter, bits, color_space, alpha_data) = raster_image_streams(
+                    image.bytes(),
+                    metadata,
+                    parameters,
+                    &mut image_telemetry,
+                )?;
+                let image_object = object_id(image.id().raw())?;
                 objects.push(PdfIndirectObject {
-                    id: object_id(image.id().raw())?,
+                    id: image_object,
                     object: PdfObject::ImageXObject {
                         image: PdfImageXObject {
                             width: metadata.width,
@@ -327,7 +369,7 @@ fn pdf_from_committed_artifacts_at_dpi_with_virtual_fonts(
                         data: color_data,
                     },
                 });
-                if let Some(alpha_data) = alpha_data {
+                if let Some((alpha_data, alpha_filter)) = alpha_data {
                     let mask = image.mask_object().ok_or(PdfBuildError::InvalidPng)?;
                     objects.push(PdfIndirectObject {
                         id: object_id(mask)?,
@@ -341,13 +383,15 @@ fn pdf_from_committed_artifacts_at_dpi_with_virtual_fonts(
                                     metadata.bits_per_component
                                 },
                                 color_space: PdfImageColorSpace::DeviceGray,
-                                filter: PdfImageFilter::Flate,
+                                filter: alpha_filter,
                                 soft_mask: None,
                             },
                             data: alpha_data,
                         },
                     });
                 }
+                pdf_image_objects.insert(image.id().raw(), image_object);
+                lowered_images.insert(cache_key, image_object);
             }
             PdfExternalImageMetadata::PdfPage {
                 page_box,
@@ -355,13 +399,17 @@ fn pdf_from_committed_artifacts_at_dpi_with_virtual_fonts(
                 page,
                 ..
             } => {
+                pdf_image_count += 1;
                 let imported = import_pdf_page(image, page, page_box, rotation, &mut next_object)?;
+                let image_object = imported.form.id;
                 pdf_image_groups.insert(image.id().raw(), imported.group);
+                pdf_image_objects.insert(image.id().raw(), image_object);
                 objects.extend(imported.dependencies);
                 objects.push(imported.form);
             }
         }
     }
+    let image_import_ns = image_import_started.elapsed().as_nanos();
 
     for (page_index, record) in page_records.iter().copied().enumerate() {
         let bytes = artifact_bytes(stores, artifacts, record.artifact())?;
@@ -463,6 +511,7 @@ fn pdf_from_committed_artifacts_at_dpi_with_virtual_fonts(
                                         char_procs,
                                     }
                                 };
+                                let font_started = std::time::Instant::now();
                                 objects.extend(pdf_font_objects(
                                     stores,
                                     ids,
@@ -472,6 +521,7 @@ fn pdf_from_committed_artifacts_at_dpi_with_virtual_fonts(
                                     driver_dpi,
                                     &resolved_font_map,
                                 )?);
+                                font_embed_ns += font_started.elapsed().as_nanos();
                             }
                             id
                         }
@@ -703,7 +753,11 @@ fn pdf_from_committed_artifacts_at_dpi_with_virtual_fonts(
                                 }
                             }
                             let name = image_resource_name(&image, parameters);
-                            page_images.insert(name.clone(), object_id(object)?);
+                            let image_object = pdf_image_objects
+                                .get(&object)
+                                .copied()
+                                .ok_or(PdfBuildError::MissingRasterImage(object))?;
+                            page_images.insert(name.clone(), image_object);
                             let total_height = height
                                 .checked_add(depth)
                                 .ok_or(PdfBuildError::PageGeometryOverflow)?;
@@ -1047,6 +1101,7 @@ fn pdf_from_committed_artifacts_at_dpi_with_virtual_fonts(
                                 char_procs,
                             }
                         };
+                        let font_started = std::time::Instant::now();
                         objects.extend(pdf_font_objects(
                             stores,
                             ids,
@@ -1056,6 +1111,7 @@ fn pdf_from_committed_artifacts_at_dpi_with_virtual_fonts(
                             driver_dpi,
                             &resolved_font_map,
                         )?);
+                        font_embed_ns += font_started.elapsed().as_nanos();
                     }
                     let bytes = run
                         .units
@@ -1161,6 +1217,9 @@ fn pdf_from_committed_artifacts_at_dpi_with_virtual_fonts(
         Some((digest.clone(), digest))
     };
 
+    let object_ns = object_started.elapsed().as_nanos();
+    let object_count = objects.len();
+    let validation_started = std::time::Instant::now();
     let document = UnvalidatedPdfDocument {
         version,
         catalog: catalog_id,
@@ -1172,7 +1231,43 @@ fn pdf_from_committed_artifacts_at_dpi_with_virtual_fonts(
         },
     }
     .validate()?;
-    Ok(document.to_pdf_bytes_with_options(options)?)
+    let validation_ns = validation_started.elapsed().as_nanos();
+    let serialization_started = std::time::Instant::now();
+    let bytes = document.to_pdf_bytes_with_options(options)?;
+    if std::env::var_os("UMBER_RESOURCE_TELEMETRY").is_some_and(|value| value == "1") {
+        eprintln!(
+            "PDF_TELEMETRY map_resolve_ns={} positioning_ns={} vf_ns={} font_usage_ns={} destinations_ns={} annotations_ns={} object_ns={} image_import_ns={} image_parse_copy_ns={} image_decode_ns={} image_transform_ns={} image_encode_ns={} image_cache_hits={} font_embed_ns={} validation_ns={} serialization_ns={} total_ns={} pages={} forms={} fonts={} images={} raster_images={} pdf_images={} image_input_bytes={} unique_images={} lowered_images={} objects={} output_bytes={}",
+            map_resolve_ns,
+            positioning_ns,
+            vf_ns,
+            font_usage_ns,
+            destinations_ns,
+            annotations_ns,
+            object_ns,
+            image_import_ns,
+            image_telemetry.parse_copy_ns,
+            image_telemetry.decode_ns,
+            image_telemetry.transform_ns,
+            image_telemetry.encode_ns,
+            image_telemetry.cache_hits,
+            font_embed_ns,
+            validation_ns,
+            serialization_started.elapsed().as_nanos(),
+            total_started.elapsed().as_nanos(),
+            page_count,
+            positioned_forms.len(),
+            font_usage.len(),
+            image_count,
+            raster_image_count,
+            pdf_image_count,
+            image_input_bytes,
+            unique_image_identities.len(),
+            image_count.saturating_sub(image_telemetry.cache_hits),
+            object_count,
+            bytes.len()
+        );
+    }
+    Ok(bytes)
 }
 
 fn collect_font_usage(
@@ -1181,9 +1276,38 @@ fn collect_font_usage(
     positioned_forms: &BTreeMap<u32, PositionedPage>,
     resolved_font_map: &BTreeMap<Vec<u8>, tex_fonts::PdfFontMapEntry>,
 ) -> Result<BTreeMap<u32, BTreeSet<u8>>, PdfBuildError> {
+    let mut font_metadata = BTreeMap::new();
+    for font in positioned_pages
+        .iter()
+        .chain(positioned_forms.values())
+        .flat_map(|positioned| &positioned.fonts)
+    {
+        if font_metadata.contains_key(&font.semantic_identity) {
+            continue;
+        }
+        let resource = stores
+            .pdf_font_resource_by_identity(font.semantic_identity)
+            .ok_or_else(|| PdfBuildError::MissingFontResource(font.name.clone()))?;
+        let live_font = stores
+            .font_by_source_identity(font.semantic_identity)
+            .ok_or_else(|| PdfBuildError::MissingLiveFont(font.name.clone()))?;
+        font_metadata.insert(
+            font.semantic_identity,
+            (
+                resource,
+                stores.included_pdf_font_chars(live_font),
+                font_has_explicit_space(stores, resolved_font_map, font.name.as_bytes()),
+            ),
+        );
+    }
     let mut usage = BTreeMap::<u32, BTreeSet<u8>>::new();
     let mut interword_space_enabled = false;
     for positioned in positioned_pages {
+        let fonts = positioned
+            .fonts
+            .iter()
+            .map(|font| (font.font_id, font))
+            .collect::<BTreeMap<_, _>>();
         for event in &positioned.events {
             let PositionedEvent::TextRun(run) = event else {
                 if let PositionedEvent::PdfAccessibility(control) = event {
@@ -1199,17 +1323,15 @@ fn collect_font_usage(
                 }
                 continue;
             };
-            let font = positioned
-                .fonts
-                .iter()
-                .find(|font| font.font_id == run.font_id)
+            let font = fonts
+                .get(&run.font_id)
+                .copied()
                 .ok_or(PdfBuildError::MissingPositionedFont(run.font_id))?;
-            let resource = stores
-                .pdf_font_resource_by_identity(font.semantic_identity)
+            let (resource, included, has_explicit_space) = font_metadata
+                .get(&font.semantic_identity)
                 .ok_or_else(|| PdfBuildError::MissingFontResource(font.name.clone()))?;
             let codes = usage.entry(resource.object_number()).or_default();
-            let explicit_space = interword_space_enabled
-                && font_has_explicit_space(stores, resolved_font_map, font.name.as_bytes());
+            let explicit_space = interword_space_enabled && *has_explicit_space;
             codes.extend(run.units.iter().zip(&run.physical_codes).filter_map(
                 |(unit, physical_code)| match unit {
                     tex_out::positioned::TextUnit::Code(_) => *physical_code,
@@ -1217,34 +1339,32 @@ fn collect_font_usage(
                     tex_out::positioned::TextUnit::Space => None,
                 },
             ));
-            let live_font = stores
-                .font_by_source_identity(font.semantic_identity)
-                .ok_or_else(|| PdfBuildError::MissingLiveFont(font.name.clone()))?;
-            codes.extend(stores.included_pdf_font_chars(live_font));
+            codes.extend(included);
         }
     }
     for positioned in positioned_forms.values() {
+        let fonts = positioned
+            .fonts
+            .iter()
+            .map(|font| (font.font_id, font))
+            .collect::<BTreeMap<_, _>>();
         for event in &positioned.events {
             let PositionedEvent::TextRun(run) = event else {
                 continue;
             };
-            let font = positioned
-                .fonts
-                .iter()
-                .find(|font| font.font_id == run.font_id)
+            let font = fonts
+                .get(&run.font_id)
+                .copied()
                 .ok_or(PdfBuildError::MissingPositionedFont(run.font_id))?;
-            let resource = stores
-                .pdf_font_resource_by_identity(font.semantic_identity)
+            let (resource, included, _) = font_metadata
+                .get(&font.semantic_identity)
                 .ok_or_else(|| PdfBuildError::MissingFontResource(font.name.clone()))?;
             let codes = usage.entry(resource.object_number()).or_default();
             codes.extend(run.units.iter().map(|unit| match unit {
                 tex_out::positioned::TextUnit::Code(code) => *code,
                 tex_out::positioned::TextUnit::Space => b' ',
             }));
-            let live_font = stores
-                .font_by_source_identity(font.semantic_identity)
-                .ok_or_else(|| PdfBuildError::MissingLiveFont(font.name.clone()))?;
-            codes.extend(stores.included_pdf_font_chars(live_font));
+            codes.extend(included);
         }
     }
     Ok(usage)
@@ -3156,13 +3276,24 @@ type RasterStreams = (
     PdfImageFilter,
     u8,
     PdfImageColorSpace,
-    Option<Vec<u8>>,
+    Option<(Vec<u8>, PdfImageFilter)>,
 );
 
+#[derive(Default)]
+struct ImageImportTelemetry {
+    parse_copy_ns: u128,
+    decode_ns: u128,
+    transform_ns: u128,
+    encode_ns: u128,
+    cache_hits: usize,
+}
+
+#[allow(clippy::disallowed_methods)] // Process telemetry; PDF content never observes it.
 fn raster_image_streams(
     bytes: &[u8],
     metadata: tex_state::PdfRasterImageMetadata,
     parameters: PdfOutputParameters,
+    telemetry: &mut ImageImportTelemetry,
 ) -> Result<RasterStreams, PdfBuildError> {
     if metadata.width == 0 || metadata.height == 0 {
         return Err(PdfBuildError::InvalidRasterDimensions);
@@ -3174,34 +3305,45 @@ fn raster_image_streams(
     };
     let streams: Result<RasterStreams, PdfBuildError> = match metadata.format {
         PdfRasterFormat::Jpeg => Ok((
-            bytes.to_vec(),
+            {
+                let started = std::time::Instant::now();
+                let copy = bytes.to_vec();
+                telemetry.parse_copy_ns += started.elapsed().as_nanos();
+                copy
+            },
             PdfImageFilter::Dct,
             metadata.bits_per_component,
             color_space,
             None,
         )),
         PdfRasterFormat::Png if metadata.png_color_type == Some(3) => {
-            let (color, alpha) = png_indexed_streams(bytes, metadata)?;
+            let (color, alpha) = png_indexed_streams(bytes, metadata, telemetry)?;
             Ok((
                 color,
                 PdfImageFilter::Flate,
                 8,
                 PdfImageColorSpace::DeviceRgb,
-                alpha,
+                alpha.map(|alpha| (alpha, PdfImageFilter::Flate)),
             ))
         }
         PdfRasterFormat::Png if metadata.alpha => {
-            let (color, alpha) = png_alpha_streams(bytes, metadata)?;
+            let (color, color_filter, alpha, alpha_filter) =
+                png_alpha_streams(bytes, metadata, telemetry)?;
             Ok((
                 color,
-                PdfImageFilter::Flate,
+                color_filter,
                 metadata.bits_per_component,
                 color_space,
-                Some(alpha),
+                Some((alpha, alpha_filter)),
             ))
         }
         PdfRasterFormat::Png => Ok((
-            png_idat(bytes)?,
+            {
+                let started = std::time::Instant::now();
+                let data = png_idat(bytes)?;
+                telemetry.parse_copy_ns += started.elapsed().as_nanos();
+                data
+            },
             PdfImageFilter::FlatePngPredictor {
                 colors: raster_color_components(metadata.color_space),
             },
@@ -3224,8 +3366,11 @@ fn raster_image_streams(
         streams.0 = zlib(&strip_png_16(&samples))?;
         streams.1 = PdfImageFilter::Flate;
         streams.2 = 8;
-        if let Some(alpha) = streams.4.take() {
-            streams.4 = Some(zlib(&strip_png_16(&inflate(&alpha)?))?);
+        if let Some((alpha, _)) = streams.4.take() {
+            streams.4 = Some((
+                zlib(&strip_png_16(&inflate(&alpha)?))?,
+                PdfImageFilter::Flate,
+            ));
         }
     }
     if metadata.format == PdfRasterFormat::Png && parameters.image_apply_gamma > 0 {
@@ -3365,10 +3510,12 @@ fn apply_png_gamma(
     Ok(())
 }
 
+#[allow(clippy::disallowed_methods)] // Process telemetry; PDF content never observes it.
 fn png_alpha_streams(
     bytes: &[u8],
     metadata: tex_state::PdfRasterImageMetadata,
-) -> Result<(Vec<u8>, Vec<u8>), PdfBuildError> {
+    telemetry: &mut ImageImportTelemetry,
+) -> Result<(Vec<u8>, PdfImageFilter, Vec<u8>, PdfImageFilter), PdfBuildError> {
     if !matches!(metadata.bits_per_component, 8 | 16) {
         return Err(PdfBuildError::InvalidPng);
     }
@@ -3380,33 +3527,82 @@ fn png_alpha_streams(
         .checked_mul(pixel_bytes)
         .ok_or(PdfBuildError::InvalidPng)?;
     let height = usize::try_from(metadata.height).map_err(|_| PdfBuildError::InvalidPng)?;
+    let started = std::time::Instant::now();
     let compressed = png_idat(bytes)?;
+    telemetry.parse_copy_ns += started.elapsed().as_nanos();
+    let started = std::time::Instant::now();
     let mut decoder = flate2::read::ZlibDecoder::new(compressed.as_slice());
     let mut filtered = Vec::new();
     decoder
         .read_to_end(&mut filtered)
         .map_err(|_| PdfBuildError::InvalidPng)?;
+    telemetry.decode_ns += started.elapsed().as_nanos();
     if filtered.len() != (row_bytes + 1).saturating_mul(height) {
         return Err(PdfBuildError::InvalidPng);
     }
-    let mut previous = vec![0u8; row_bytes];
-    let mut current = vec![0u8; row_bytes];
-    let mut color = Vec::with_capacity(row_bytes * height);
-    let mut alpha = Vec::with_capacity(width * component_bytes * height);
+    let started = std::time::Instant::now();
+    if metadata.bits_per_component == 16 {
+        let mut previous = vec![0u8; row_bytes];
+        let mut current = vec![0u8; row_bytes];
+        let mut color = Vec::with_capacity(row_bytes * height);
+        let mut alpha = Vec::with_capacity(width * component_bytes * height);
+        for row in filtered.chunks_exact(row_bytes + 1) {
+            unfilter_png_row(row[0], &row[1..], &previous, &mut current, pixel_bytes)?;
+            for pixel in current.chunks_exact(pixel_bytes) {
+                color.extend_from_slice(&pixel[..color_components * component_bytes]);
+                alpha.extend_from_slice(&pixel[color_components * component_bytes..]);
+            }
+            std::mem::swap(&mut previous, &mut current);
+        }
+        telemetry.transform_ns += started.elapsed().as_nanos();
+        let started = std::time::Instant::now();
+        let streams = (zlib(&color)?, zlib(&alpha)?);
+        telemetry.encode_ns += started.elapsed().as_nanos();
+        return Ok((
+            streams.0,
+            PdfImageFilter::Flate,
+            streams.1,
+            PdfImageFilter::Flate,
+        ));
+    }
+    let color_row_bytes = width
+        .checked_mul(color_components * component_bytes)
+        .ok_or(PdfBuildError::InvalidPng)?;
+    let alpha_row_bytes = width
+        .checked_mul(component_bytes)
+        .ok_or(PdfBuildError::InvalidPng)?;
+    let mut color = Vec::with_capacity((color_row_bytes + 1).saturating_mul(height));
+    let mut alpha = Vec::with_capacity((alpha_row_bytes + 1).saturating_mul(height));
     for row in filtered.chunks_exact(row_bytes + 1) {
-        unfilter_png_row(row[0], &row[1..], &previous, &mut current, pixel_bytes)?;
-        for pixel in current.chunks_exact(pixel_bytes) {
+        if row[0] > 4 {
+            return Err(PdfBuildError::InvalidPng);
+        }
+        color.push(row[0]);
+        alpha.push(row[0]);
+        for pixel in row[1..].chunks_exact(pixel_bytes) {
             color.extend_from_slice(&pixel[..color_components * component_bytes]);
             alpha.extend_from_slice(&pixel[color_components * component_bytes..]);
         }
-        std::mem::swap(&mut previous, &mut current);
     }
-    Ok((zlib(&color)?, zlib(&alpha)?))
+    telemetry.transform_ns += started.elapsed().as_nanos();
+    let started = std::time::Instant::now();
+    let streams = (zlib(&color)?, zlib(&alpha)?);
+    telemetry.encode_ns += started.elapsed().as_nanos();
+    Ok((
+        streams.0,
+        PdfImageFilter::FlatePngPredictor {
+            colors: raster_color_components(metadata.color_space),
+        },
+        streams.1,
+        PdfImageFilter::FlatePngPredictor { colors: 1 },
+    ))
 }
 
+#[allow(clippy::disallowed_methods)] // Process telemetry; PDF content never observes it.
 fn png_indexed_streams(
     bytes: &[u8],
     metadata: tex_state::PdfRasterImageMetadata,
+    telemetry: &mut ImageImportTelemetry,
 ) -> Result<(Vec<u8>, Option<Vec<u8>>), PdfBuildError> {
     let palette = png_chunk(bytes, b"PLTE").ok_or(PdfBuildError::InvalidPng)?;
     if palette.len() % 3 != 0 || !matches!(metadata.bits_per_component, 1 | 2 | 4 | 8) {
@@ -3420,15 +3616,20 @@ fn png_indexed_streams(
         .and_then(|bits| bits.checked_add(7))
         .map(|bits| bits / 8)
         .ok_or(PdfBuildError::InvalidPng)?;
+    let started = std::time::Instant::now();
     let compressed = png_idat(bytes)?;
+    telemetry.parse_copy_ns += started.elapsed().as_nanos();
+    let started = std::time::Instant::now();
     let mut decoder = flate2::read::ZlibDecoder::new(compressed.as_slice());
     let mut filtered = Vec::new();
     decoder
         .read_to_end(&mut filtered)
         .map_err(|_| PdfBuildError::InvalidPng)?;
+    telemetry.decode_ns += started.elapsed().as_nanos();
     if filtered.len() != (row_bytes + 1).saturating_mul(height) {
         return Err(PdfBuildError::InvalidPng);
     }
+    let started = std::time::Instant::now();
     let mut previous = vec![0u8; row_bytes];
     let mut current = vec![0u8; row_bytes];
     let mut color = Vec::with_capacity(width * height * 3);
@@ -3458,7 +3659,11 @@ fn png_indexed_streams(
         }
         std::mem::swap(&mut previous, &mut current);
     }
-    Ok((zlib(&color)?, alpha.map(|data| zlib(&data)).transpose()?))
+    telemetry.transform_ns += started.elapsed().as_nanos();
+    let started = std::time::Instant::now();
+    let streams = (zlib(&color)?, alpha.map(|data| zlib(&data)).transpose()?);
+    telemetry.encode_ns += started.elapsed().as_nanos();
+    Ok(streams)
 }
 
 fn png_chunk<'a>(bytes: &'a [u8], wanted: &[u8; 4]) -> Option<&'a [u8]> {
@@ -3525,7 +3730,9 @@ fn paeth(left: u8, up: u8, upper_left: u8) -> u8 {
 }
 
 fn zlib(bytes: &[u8]) -> Result<Vec<u8>, PdfBuildError> {
-    let mut encoder = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::default());
+    // Generated image planes retain PNG prediction, so fast deflate bounds
+    // finalization latency without discarding useful source compression structure.
+    let mut encoder = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::fast());
     encoder
         .write_all(bytes)
         .map_err(|_| PdfBuildError::InvalidPng)?;
@@ -5373,6 +5580,75 @@ mod tests {
     }
 
     #[test]
+    fn repeated_rgba_content_shares_one_image_and_mask_pair() {
+        let png = test_png(6, &[0, 255, 0, 0, 64, 0, 0, 255, 192]);
+        let image = tex_state::PdfExternalImageSource {
+            identity: ContentHash::from_bytes(&png),
+            metadata: PdfExternalImageMetadata::Raster(tex_state::PdfRasterImageMetadata {
+                format: PdfRasterFormat::Png,
+                width: 2,
+                height: 1,
+                bits_per_component: 8,
+                color_space: PdfRasterColorSpace::Rgb,
+                alpha: true,
+                png_color_type: Some(6),
+            }),
+            natural_width: Scaled::from_raw(2 * 65_536),
+            natural_height: Scaled::from_raw(65_536),
+            bytes: png.into(),
+        };
+        let mut stores = Universe::default();
+        prepare_pdftex_run_stores(&mut stores);
+        let result = run_with_images(
+            &mut stores,
+            concat!(
+                "\\pdfoutput=1 ",
+                "\\pdfximage \"first.png\"\\edef\\first{\\the\\pdflastximage}",
+                "\\pdfximage \"second.png\"",
+                "\\shipout\\hbox{\\pdfrefximage\\first\\pdfrefximage\\pdflastximage}\\end",
+            ),
+            [image.clone(), image],
+        );
+        let pdf = pdf_from_committed_artifacts(&mut stores, &result.committed_artifacts)
+            .expect("lower repeated alpha image");
+        let parsed = lopdf::Document::load_mem(&pdf).expect("parse repeated-image PDF");
+        let image_objects = parsed
+            .objects
+            .values()
+            .filter(|object| {
+                object.as_stream().ok().is_some_and(|stream| {
+                    stream
+                        .dict
+                        .get(b"Subtype")
+                        .ok()
+                        .and_then(|value| value.as_name().ok())
+                        == Some(b"Image")
+                })
+            })
+            .count();
+        assert_eq!(image_objects, 2, "one color image and one shared mask");
+
+        let page_id = parsed.get_pages()[&1];
+        let (direct_resources, resource_ids) =
+            parsed.get_page_resources(page_id).expect("page resources");
+        let resources = direct_resources.unwrap_or_else(|| {
+            parsed
+                .get_dictionary(resource_ids[0])
+                .expect("indirect resources")
+        });
+        let xobjects = resources
+            .get(b"XObject")
+            .expect("XObject dictionary")
+            .as_dict()
+            .expect("direct XObject dictionary");
+        let references = xobjects
+            .iter()
+            .map(|(_, value)| value.as_reference().expect("image reference"))
+            .collect::<BTreeSet<_>>();
+        assert_eq!(references.len(), 1, "both resource names share one object");
+    }
+
+    #[test]
     fn png_gamma_controls_match_the_pinned_pdftex_sample_oracle() {
         let source_samples = [
             0, 0, 1, 17, 34, 51, 68, 85, 102, 119, 136, 153, 170, 187, 204, 221, 238, 255,
@@ -5454,8 +5730,13 @@ mod tests {
             parameters.image_hicolor = hicolor;
             parameters.image_apply_gamma = 0;
 
-            let (samples, filter, bits, color_space, alpha) =
-                raster_image_streams(&png, metadata, parameters).expect("transform 16-bit PNG");
+            let (samples, filter, bits, color_space, alpha) = raster_image_streams(
+                &png,
+                metadata,
+                parameters,
+                &mut ImageImportTelemetry::default(),
+            )
+            .expect("transform 16-bit PNG");
             assert_eq!(color_space, PdfImageColorSpace::DeviceGray);
             assert!(alpha.is_none());
             assert_eq!(

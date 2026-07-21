@@ -245,6 +245,37 @@ fn empty_resource_set_leaves_non_virtual_page_unchanged() {
 }
 
 #[test]
+fn repeated_virtual_characters_share_one_leaf_run() {
+    let root_vf = vf(b"cmsy10", b"A");
+    let resources = resources(root_vf, "cmsy10", CMSY10);
+    let mut stores = Universe::new();
+    let root = stores.intern_font(loaded("cmr10", CMR10));
+    let mut positioned = page(&mut stores, root);
+    let run = match &mut positioned.events[0] {
+        PositionedEvent::TextRun(run) => run,
+        other => panic!("expected text run, got {other:?}"),
+    };
+    run.units
+        .extend([TextUnit::Code(b'A'), TextUnit::Code(b'A')]);
+    run.positions
+        .extend([Scaled::from_raw(200), Scaled::from_raw(300)]);
+    run.physical_codes.extend([Some(b'A'), Some(b'A')]);
+    run.sources.extend([None, None]);
+    let mut pages = vec![positioned];
+
+    lower_pages(&mut stores, &mut pages, &resources, PdfVfLimits::default())
+        .expect("repeated VF characters lower");
+
+    assert_eq!(pages[0].events.len(), 1);
+    let PositionedEvent::TextRun(run) = &pages[0].events[0] else {
+        panic!("expected coalesced text run");
+    };
+    assert_eq!(run.units, [TextUnit::Code(b'A'); 3]);
+    assert_eq!(run.positions.len(), 3);
+    assert_eq!(run.physical_codes, [Some(b'A'); 3]);
+}
+
+#[test]
 fn multiple_virtual_roots_rebind_positioned_spaces_to_real_leaves() {
     let cmr_vf = vf(b"cmex10", b"A");
     let cmsy_vf = vf(b"cmex10", b"A");

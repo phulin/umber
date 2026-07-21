@@ -281,6 +281,7 @@ fn pdftex_rule_page_is_published_only_to_an_explicit_distinct_pdf_path() {
 
     let output = Command::new(env!("CARGO_BIN_EXE_umber"))
         .env("SOURCE_DATE_EPOCH", PINNED_SOURCE_DATE_EPOCH)
+        .env("UMBER_RESOURCE_TELEMETRY", "1")
         .arg("run")
         .arg("--pdftex")
         .arg("--pdf")
@@ -300,6 +301,16 @@ fn pdftex_rule_page_is_published_only_to_an_explicit_distinct_pdf_path() {
     assert!(pdf_bytes.starts_with(b"%PDF-1.4"));
     assert!(pdf_bytes.ends_with(b"%%EOF"));
     assert!(fs::metadata(&dvi).expect("published DVI").len() > 0);
+    let telemetry = String::from_utf8_lossy(&output.stderr);
+    for marker in [
+        "RESOURCE_STARTUP_TELEMETRY",
+        "RESOURCE_ENGINE_ACCEPTED",
+        "PDF_TELEMETRY",
+        "PDF_DRIVER_BUILD",
+        "PDF_DRIVER_TELEMETRY",
+    ] {
+        assert!(telemetry.contains(marker), "missing {marker}:\n{telemetry}");
+    }
 
     let rejected = Command::new(env!("CARGO_BIN_EXE_umber"))
         .env("SOURCE_DATE_EPOCH", PINNED_SOURCE_DATE_EPOCH)

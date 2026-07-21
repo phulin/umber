@@ -5,6 +5,7 @@ mod tests;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use tex_arith::{FontSizeSpec, Scaled, tfm_fix_word_to_scaled};
 use tex_fonts::{LoadedFont, PDFTEX_VF_MAX_RECURSION, VfCommand};
@@ -48,21 +49,57 @@ pub(crate) fn lower_pages(
     limits: PdfVfLimits,
 ) -> Result<(), PdfBuildError> {
     if resources.virtual_fonts.is_empty() {
+        if std::env::var_os("UMBER_RESOURCE_TELEMETRY").is_some_and(|value| value == "1") {
+            let events = pages.iter().map(|page| page.events.len()).sum::<usize>();
+            eprintln!(
+                "PDF_VF_TELEMETRY pages={} input_events={} output_events={} virtual_runs=0 characters=0 packet_commands=0 program_lookups=0 local_instances=0",
+                pages.len(),
+                events,
+                events
+            );
+        }
         return Ok(());
     }
     let mut lowerer = Lowerer {
         stores,
         resources,
+        programs: resources
+            .virtual_fonts
+            .iter()
+            .map(|(name, cached)| (name.clone(), Arc::new(cached.program.clone())))
+            .collect(),
         limits,
         instances: BTreeMap::new(),
-        active: BTreeSet::new(),
+        font_programs: BTreeMap::new(),
+        real_fonts: BTreeSet::new(),
+        active: Vec::new(),
+        page_font_ids: BTreeMap::new(),
         commands: 0,
         output_operations: 0,
         special_bytes: 0,
         stack_depth: 0,
+        input_events: 0,
+        output_events: 0,
+        virtual_runs: 0,
+        characters: 0,
+        program_lookups: 0,
+        local_instances: 0,
     };
-    for page in pages {
+    for page in &mut *pages {
         lowerer.lower_page(page)?;
+    }
+    if std::env::var_os("UMBER_RESOURCE_TELEMETRY").is_some_and(|value| value == "1") {
+        eprintln!(
+            "PDF_VF_TELEMETRY pages={} input_events={} output_events={} virtual_runs={} characters={} packet_commands={} program_lookups={} local_instances={}",
+            pages.len(),
+            lowerer.input_events,
+            lowerer.output_events,
+            lowerer.virtual_runs,
+            lowerer.characters,
+            lowerer.commands,
+            lowerer.program_lookups,
+            lowerer.local_instances
+        );
     }
     Ok(())
 }
@@ -70,18 +107,35 @@ pub(crate) fn lower_pages(
 struct Lowerer<'a> {
     stores: &'a mut Universe,
     resources: &'a PdfVirtualFontResources,
+    programs: BTreeMap<String, Arc<tex_fonts::VfProgram>>,
     limits: PdfVfLimits,
-    instances: BTreeMap<(String, i32), FontId>,
-    active: BTreeSet<(String, i32, u32)>,
+    instances: BTreeMap<(FontId, i32), FontId>,
+    font_programs: BTreeMap<FontId, (Arc<str>, Arc<tex_fonts::VfProgram>)>,
+    real_fonts: BTreeSet<FontId>,
+    active: Vec<(FontId, u32)>,
+    page_font_ids: BTreeMap<FontId, u32>,
     commands: usize,
     output_operations: usize,
     special_bytes: usize,
     stack_depth: usize,
+    input_events: usize,
+    output_events: usize,
+    virtual_runs: usize,
+    characters: usize,
+    program_lookups: usize,
+    local_instances: usize,
 }
 
 impl Lowerer<'_> {
     fn lower_page(&mut self, page: &mut PositionedPage) -> Result<(), PdfBuildError> {
         let original = std::mem::take(&mut page.events);
+        self.page_font_ids.clear();
+        for font in &page.fonts {
+            if let Some(live) = self.stores.font_by_source_identity(font.semantic_identity) {
+                self.page_font_ids.insert(live, font.font_id);
+            }
+        }
+        self.input_events += original.len();
         let mut lowered = Vec::with_capacity(original.len());
         for event in original {
             let PositionedEvent::TextRun(run) = &event else {
@@ -97,6 +151,7 @@ impl Lowerer<'_> {
                 lowered.push(event);
                 continue;
             }
+            self.virtual_runs += 1;
             let root = self
                 .stores
                 .font_by_source_identity(font.semantic_identity)
@@ -108,6 +163,7 @@ impl Lowerer<'_> {
                 match (run.units[index], run.physical_codes[index]) {
                     (TextUnit::Code(_), Some(code)) => {
                         let expansion_start = run_lowered.len();
+                        self.characters += 1;
                         self.expand_character(
                             page,
                             &mut run_lowered,
@@ -167,6 +223,7 @@ impl Lowerer<'_> {
             }
             lowered.extend(run_lowered);
         }
+        self.output_events += lowered.len();
         page.events = lowered;
         Ok(())
     }
@@ -180,34 +237,52 @@ impl Lowerer<'_> {
         origin: (Scaled, Scaled),
         depth: usize,
     ) -> Result<(), PdfBuildError> {
-        let font = self.stores.font(font_id);
-        let name = font.name().to_owned();
-        let size = font.size();
-        let Some(cached) = self.resources.virtual_fonts.get(&name) else {
+        if self.real_fonts.contains(&font_id) {
             self.emit_character(page, output, font_id, code, origin.0, origin.1)?;
             return Ok(());
+        }
+        let (name, program) = if let Some(cached) = self.font_programs.get(&font_id) {
+            cached.clone()
+        } else {
+            let font = self.stores.font(font_id);
+            let name: Arc<str> = Arc::from(font.name());
+            let Some(program) = self.programs.get(name.as_ref()).cloned() else {
+                self.real_fonts.insert(font_id);
+                self.emit_character(page, output, font_id, code, origin.0, origin.1)?;
+                return Ok(());
+            };
+            self.program_lookups += 1;
+            self.font_programs
+                .insert(font_id, (Arc::clone(&name), Arc::clone(&program)));
+            (name, program)
         };
+        let size = self.stores.font(font_id).size();
         if depth > self.limits.max_recursion {
             return Err(PdfBuildError::VirtualFontDepthExceeded(
                 self.limits.max_recursion,
             ));
         }
-        let key = (name.clone(), size.raw(), u32::from(code));
-        if !self.active.insert(key.clone()) {
-            return Err(PdfBuildError::VirtualFontCycle { font: name, code });
+        let key = (font_id, u32::from(code));
+        if self.active.contains(&key) {
+            return Err(PdfBuildError::VirtualFontCycle {
+                font: name.to_string(),
+                code,
+            });
         }
+        self.active.push(key);
         let result = self.execute_packet(
             page,
             output,
             &name,
+            font_id,
             size,
-            cached.program.clone(),
+            program,
             u32::from(code),
             origin.0,
             origin.1,
             depth,
         );
-        self.active.remove(&key);
+        self.active.pop();
         result
     }
 
@@ -217,32 +292,34 @@ impl Lowerer<'_> {
         page: &mut PositionedPage,
         output: &mut Vec<PositionedEvent>,
         name: &str,
+        parent_font: FontId,
         size: Scaled,
-        program: tex_fonts::VfProgram,
+        program: Arc<tex_fonts::VfProgram>,
         code: u32,
         mut h: Scaled,
         mut v: Scaled,
         depth: usize,
     ) -> Result<(), PdfBuildError> {
-        let packet = program.packet(code).cloned().ok_or_else(|| {
-            PdfBuildError::MissingVirtualFontPacket {
-                font: name.to_owned(),
-                code,
-            }
-        })?;
+        let packet =
+            program
+                .packet(code)
+                .ok_or_else(|| PdfBuildError::MissingVirtualFontPacket {
+                    font: name.to_owned(),
+                    code,
+                })?;
         let default_number = program
             .local_fonts()
             .first()
             .ok_or_else(|| PdfBuildError::VirtualFontHasNoLocalFonts(name.to_owned()))?
             .number;
-        let mut current = self.local_instance(&program, name, size, default_number)?;
+        let mut current = self.local_instance(&program, parent_font, name, size, default_number)?;
         let mut w = Scaled::from_raw(0);
         let mut x = Scaled::from_raw(0);
         let mut y = Scaled::from_raw(0);
         let mut z = Scaled::from_raw(0);
         let mut stack = Vec::with_capacity(packet.metadata.max_stack_depth);
 
-        for command in packet.commands {
+        for command in &packet.commands {
             self.commands =
                 self.commands
                     .checked_add(1)
@@ -256,14 +333,14 @@ impl Lowerer<'_> {
             }
             match command {
                 VfCommand::SetCharacter { code, move_cursor } => {
-                    let code = u8::try_from(code).map_err(|_| {
+                    let code = u8::try_from(*code).map_err(|_| {
                         PdfBuildError::VirtualFontCharacterOutOfRange {
                             font: name.to_owned(),
-                            code,
+                            code: *code,
                         }
                     })?;
                     self.expand_character(page, output, current, code, (h, v), depth + 1)?;
-                    if move_cursor {
+                    if *move_cursor {
                         h = checked_add(h, self.character_width(current, code)?)?;
                     }
                 }
@@ -272,8 +349,8 @@ impl Lowerer<'_> {
                     width,
                     move_cursor,
                 } => {
-                    let height = scale_fix(height, size)?;
-                    let width = scale_fix(width, size)?;
+                    let height = scale_fix(*height, size)?;
+                    let width = scale_fix(*width, size)?;
                     if height.raw() > 0 && width.raw() > 0 {
                         self.count_output()?;
                         output.push(PositionedEvent::Rule(PositionedRule {
@@ -283,7 +360,7 @@ impl Lowerer<'_> {
                             height,
                         }));
                     }
-                    if move_cursor {
+                    if *move_cursor {
                         h = checked_add(h, width)?;
                     }
                 }
@@ -304,30 +381,30 @@ impl Lowerer<'_> {
                     (h, v, w, x, y, z) = state;
                     self.stack_depth -= 1;
                 }
-                VfCommand::MoveRight(value) => h = checked_add(h, scale_fix(value, size)?)?,
+                VfCommand::MoveRight(value) => h = checked_add(h, scale_fix(*value, size)?)?,
                 VfCommand::MoveW => h = checked_add(h, w)?,
                 VfCommand::SetW(value) => {
-                    w = scale_fix(value, size)?;
+                    w = scale_fix(*value, size)?;
                     h = checked_add(h, w)?;
                 }
                 VfCommand::MoveX => h = checked_add(h, x)?,
                 VfCommand::SetX(value) => {
-                    x = scale_fix(value, size)?;
+                    x = scale_fix(*value, size)?;
                     h = checked_add(h, x)?;
                 }
-                VfCommand::MoveDown(value) => v = checked_add(v, scale_fix(value, size)?)?,
+                VfCommand::MoveDown(value) => v = checked_add(v, scale_fix(*value, size)?)?,
                 VfCommand::MoveY => v = checked_add(v, y)?,
                 VfCommand::SetY(value) => {
-                    y = scale_fix(value, size)?;
+                    y = scale_fix(*value, size)?;
                     v = checked_add(v, y)?;
                 }
                 VfCommand::MoveZ => v = checked_add(v, z)?,
                 VfCommand::SetZ(value) => {
-                    z = scale_fix(value, size)?;
+                    z = scale_fix(*value, size)?;
                     v = checked_add(v, z)?;
                 }
                 VfCommand::SelectFont(number) => {
-                    current = self.local_instance(&program, name, size, number)?;
+                    current = self.local_instance(&program, parent_font, name, size, *number)?;
                 }
                 VfCommand::Special(bytes) => self.emit_special(output, h, v, bytes)?,
             }
@@ -339,10 +416,15 @@ impl Lowerer<'_> {
     fn local_instance(
         &mut self,
         program: &tex_fonts::VfProgram,
+        parent_font: FontId,
         parent: &str,
         parent_size: Scaled,
         number: i32,
     ) -> Result<FontId, PdfBuildError> {
+        let key = (parent_font, number);
+        if let Some(font) = self.instances.get(&key) {
+            return Ok(*font);
+        }
         let local = program
             .local_fonts()
             .iter()
@@ -354,10 +436,6 @@ impl Lowerer<'_> {
         let name = String::from_utf8(local.logical_name())
             .map_err(|_| PdfBuildError::InvalidVirtualLocalFontName(parent.to_owned()))?;
         let size = scale_fix(local.scaled_size, parent_size)?;
-        let key = (name.clone(), size.raw());
-        if let Some(font) = self.instances.get(&key) {
-            return Ok(*font);
-        }
         let cached = self
             .resources
             .local_tfms
@@ -392,6 +470,7 @@ impl Lowerer<'_> {
             .ensure_pdf_font_resource(font)
             .map_err(|_| PdfBuildError::ObjectCapacity)?;
         self.instances.insert(key, font);
+        self.local_instances += 1;
         Ok(font)
     }
 
@@ -404,12 +483,8 @@ impl Lowerer<'_> {
         x: Scaled,
         baseline: Scaled,
     ) -> Result<(), PdfBuildError> {
-        let artifact_font_id = if let Some(font) = page
-            .fonts
-            .iter()
-            .find(|font| self.stores.font(font_id).source_identity() == font.semantic_identity)
-        {
-            font.font_id
+        let artifact_font_id = if let Some(font) = self.page_font_ids.get(&font_id) {
+            *font
         } else {
             let next = page
                 .fonts
@@ -433,9 +508,20 @@ impl Lowerer<'_> {
                 semantic_identity: font.source_identity(),
                 construction: FontResourceConstruction::Loaded,
             });
+            self.page_font_ids.insert(font_id, next);
             next
         };
         self.count_output()?;
+        if let Some(PositionedEvent::TextRun(run)) = output.last_mut()
+            && run.font_id == artifact_font_id
+            && run.baseline == baseline
+        {
+            run.units.push(TextUnit::Code(code));
+            run.positions.push(x);
+            run.physical_codes.push(Some(code));
+            run.sources.push(None);
+            return Ok(());
+        }
         output.push(PositionedEvent::TextRun(PositionedTextRun {
             x,
             baseline,
@@ -453,7 +539,7 @@ impl Lowerer<'_> {
         output: &mut Vec<PositionedEvent>,
         x: Scaled,
         y: Scaled,
-        bytes: Vec<u8>,
+        bytes: &[u8],
     ) -> Result<(), PdfBuildError> {
         let Some(payload) = bytes
             .strip_prefix(b"PDF:")

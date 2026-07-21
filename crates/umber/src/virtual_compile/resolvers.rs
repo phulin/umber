@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::Path;
 
 use tex_exec::{FontResolver, PdfImagePageBox, PdfImageRequest, PdfImageResolver};
@@ -10,8 +10,8 @@ use tex_fonts::{
 use tex_lex::WorldInput;
 use tex_state::scaled::Scaled;
 use tex_state::{
-    FileContent, InputReadState, PdfExternalImageMetadata, PdfExternalImageSource, PdfPageBox,
-    PdfPageRotation, PdfRasterColorSpace, PdfRasterFormat, PdfRasterImageMetadata,
+    FileContent, InputOrigin, InputReadState, PdfExternalImageMetadata, PdfExternalImageSource,
+    PdfPageBox, PdfPageRotation, PdfRasterColorSpace, PdfRasterFormat, PdfRasterImageMetadata,
 };
 
 use super::path::RequestedFile;
@@ -62,6 +62,7 @@ impl<'a> VirtualRunResolvers<'a> {
             ),
             image: VirtualImageResolver {
                 files: VirtualFileResolver::new(snapshot, resolved_paths, unavailable_files),
+                cache: HashMap::new(),
             },
         }
     }
@@ -119,6 +120,7 @@ impl<'a> VirtualRunResolvers<'a> {
 
 struct VirtualImageResolver<'a> {
     files: VirtualFileResolver<'a>,
+    cache: HashMap<PdfImageRequest, PdfExternalImageSource>,
 }
 
 impl PdfImageResolver for VirtualImageResolver<'_> {
@@ -128,12 +130,19 @@ impl PdfImageResolver for VirtualImageResolver<'_> {
         request: &PdfImageRequest,
         request_index: u64,
     ) -> ResourceResult<PdfExternalImageSource> {
+        if let Some(source) = self.cache.get(request) {
+            return Ok(ResourceLookup::Available(source.clone()));
+        }
         match self
             .files
             .open(input, FileKind::Image, &request.name, request_index)?
         {
             ResourceLookup::Available(content) => {
-                parse_image(&content, request).map(ResourceLookup::Available)
+                let source = parse_image(&content, request)?;
+                if content.origin() == InputOrigin::External {
+                    self.cache.insert(request.clone(), source.clone());
+                }
+                Ok(ResourceLookup::Available(source))
             }
             ResourceLookup::Unavailable => Ok(ResourceLookup::Unavailable),
             ResourceLookup::NeedResource(need) => Ok(ResourceLookup::NeedResource(need)),

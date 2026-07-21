@@ -61,7 +61,7 @@ hard-maximum-exceeding values fail before execution.
 The explicit stepwise arXiv validation tier is:
 
 ```bash
-cargo build -q -p umber
+cargo build -q --profile test -p umber --bin umber
 UMBER_ARXIV_FORMAT=/path/to/pdflatex.umberfmt \
 UMBER_ARXIV_DISTRIBUTION=/path/to/verified/texlive-snapshot \
   scripts/run-stepwise-arxiv-census.sh
@@ -75,6 +75,14 @@ finalization in that process. A later map, encoding, PFB, PK, or PDF-lowering
 failure therefore remains a finalizer outcome without recompiling the paper.
 The TSV records both phase outcomes, replay telemetry, resource and engine time,
 estimated finalizer time, and guard status; failed rows retain stable clusters.
+
+The `profile.test` build is the optimized profile used by `cargo run-dev` and
+shares its `target/debug/umber` artifact. A plain `cargo build` replaces that
+path with the unoptimized development profile and is not a valid census binary.
+The run identity records the exact binary path and hash. Row receipts retain
+startup/format restore, engine, resource wait, VF lowering, font-usage, PDF
+object/font embedding, image parse/copy, decode, transform, encode/cache,
+serialization, materialization, and whole-run timings.
 
 Each completed row has an atomically published JSON receipt under `rows/`.
 Rerunning with the same binary, format, distribution manifest, sample, source

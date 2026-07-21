@@ -73,7 +73,7 @@ pub enum PdfImagePageBox {
     Art,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct PdfImageRequest {
     pub name: String,
     pub page: u32,

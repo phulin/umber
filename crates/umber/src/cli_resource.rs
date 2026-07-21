@@ -235,18 +235,23 @@ impl NativeCompileSession {
         Self::new_with_cache(options, cancellation, cache)
     }
 
+    #[allow(clippy::disallowed_methods)] // Process telemetry; TeX state never observes it.
     fn new_with_cache(
         options: &NativeRunOptions,
         cancellation: &FetchCancellation,
         cache: ObjectCache,
     ) -> Result<Self, NativeRunError> {
+        let setup_started = std::time::Instant::now();
+        let source_started = std::time::Instant::now();
         let main = read(&options.input)?;
+        let source_read_ns = source_started.elapsed().as_nanos();
         let mut distribution = DistributionResolver::new(
             cache,
             options.distribution.clone(),
             options.distribution_sha256.clone(),
             options.offline,
         );
+        let format_started = std::time::Instant::now();
         let (format, format_prefetch_hints) = match &options.format {
             Some(path) if path.exists() => (Some(read(path)?), Vec::new()),
             Some(path) => {
@@ -255,6 +260,7 @@ impl NativeCompileSession {
             }
             None => (None, Vec::new()),
         };
+        let format_read_ns = format_started.elapsed().as_nanos();
         let mut initial_prefetch_hints = options
             .initial_prefetch_keys
             .iter()
@@ -290,6 +296,7 @@ impl NativeCompileSession {
                 })
                 .transpose()?)
             .unwrap_or(SessionLimits::default().engine_fuel);
+        let restore_started = std::time::Instant::now();
         let mut session = VirtualCompileSession::new(SessionOptions {
             main_path: format!("/job/{name}"),
             job_name: Some(job_name),
@@ -311,6 +318,7 @@ impl NativeCompileSession {
             },
         })
         .map_err(|error| NativeRunError::Compile(error.to_string()))?;
+        let format_restore_ns = restore_started.elapsed().as_nanos();
         session
             .add_user_file(name, main.clone())
             .map_err(|error| NativeRunError::Compile(error.to_string()))?;
@@ -319,6 +327,15 @@ impl NativeCompileSession {
             Ok(source) => source,
             Err(error) => error.into_bytes().into_iter().map(char::from).collect(),
         };
+        if env::var_os("UMBER_RESOURCE_TELEMETRY").is_some_and(|value| value == "1") {
+            eprintln!(
+                "RESOURCE_STARTUP_TELEMETRY source_read_ns={} format_read_ns={} format_restore_ns={} setup_ns={}",
+                source_read_ns,
+                format_read_ns,
+                format_restore_ns,
+                setup_started.elapsed().as_nanos()
+            );
+        }
         Ok(Self {
             session,
             distribution,
