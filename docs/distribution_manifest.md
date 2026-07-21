@@ -103,12 +103,47 @@ requires byte-identical directory trees. `--shard-existing STAGING
 re-reading TeX Live, while `--verify-sharded STAGING` performs the complete
 offline integrity check used by the R2 publication script.
 
-The production `texlive-2026-r79639` 8-bit output has 154,153 unique objects,
-3,672,643,852 object bytes, and root digest
-`7c2784bca891844d37465083b93466b78429c7282d7ba915f40a08d150651fd0`.
-The deployed immutable public key is `manifest-v2.json`; the already cached
-schema-1 `manifest.json` is not overwritten. Publication remains manifest-last:
-all content and shard objects are uploaded and checked before that root key.
+The production `texlive-20260301` 8-bit output has 152,560 unique objects,
+3,520,195,192 object bytes, and root digest
+`43a31da364e4607957a38da10dabff227657d607d1845d502204adfd5d002e4b`.
+The deployed immutable public key is `manifest-v3.json`. Publication remains
+manifest-last: all content and shard objects are uploaded and checked before
+that root key.
+
+### 2026-07-21 successor publication receipt
+
+The successor snapshot adds the generated `texmf-var` aggregate
+`pdftex.map` as a deterministic third publisher root; this is a
+hosting/resource correction and does not change core TeX, e-TeX, or pdfTeX
+semantics. The clean schema-3 staging verifier accepted all 256 shards,
+152,560 objects, and 3,520,195,192 object bytes. Publication to the new
+immutable `texlive/texlive-20260301` prefix completed through the repository
+publisher with zero object differences and exact remote inventory equality
+before the first manifest write. The public manifest digest is
+`43a31da364e4607957a38da10dabff227657d607d1845d502204adfd5d002e4b`;
+the manifest and deterministic first, middle, and last object representatives
+passed HTTPS digest and browser CORS checks.
+
+Authenticated public shard lookup and payload fetch additionally verified the
+default map and representative arXiv 1204.5690 font closure:
+
+| key                    | SHA-256                                                            |     bytes |
+| ---------------------- | ------------------------------------------------------------------ | --------: |
+| `tex:pdftex.map`       | `622cafc1a370ada71b298ee0396620bc49decb82c7472a5daa75124612f57f0b` | 5,541,360 |
+| `tex:cm-super-ts1.enc` | `558da5de87db45ed719dda9c679e6b164d520b21d9100357dcf17124291ed97c` |     2,900 |
+| `tex:cmbx10.pfb`       | `ca41102968b817bf6e8b22fd6de205ca23bf5088218511cce0c8129e1577cb70` |    34,811 |
+| `tex:cmr10.pfb`        | `fdcede8794018df5f2b58f0905fb20a2b418ed8f67b73ee12445855dfbe5b1be` |    35,752 |
+| `tex:cmsy10.pfb`       | `62ee8cef552017551cd3e026a483e700730103eceaad959c87b7730017f59cff` |    32,569 |
+| `tex:sfrm0800.pfb`     | `5882372155f6b14414ffd9572947fb1415dc81ff4bc12b673219594e927bb44a` |   164,227 |
+
+The native CLI was rebuilt with that URL and digest as its defaults, then run
+from a clean cache on the pristine arXiv 1204.5690 archive with `TEXFONTS`
+explicitly unset and no paper edits. The cold pass authenticated and cached the
+hosted inputs; its immediate warm continuation accepted the document and
+finalized an eight-page, 1,044,673-byte PDF with 26 embedded fonts. This proves
+that the default map, encoding, and font-program path no longer depends on a
+host font tree. The authored browser resolver exports the identical production
+URL and digest.
 
 `scripts/build-texlive-snapshot.sh` now performs verified builds for both
 `latex.fmt` and `pdflatex.fmt`. It derives their 61-key common and 64-key PDF
@@ -131,7 +166,7 @@ object verification and is not suitable for production publication.
 Native object and manifest cache namespaces are shared across authenticated
 distributions; content addressing prevents byte confusion but does not make a
 cache listing snapshot-exclusive. A default-hosted Umber run can therefore
-repopulate older `texlive-2026-r79639` manifest entries immediately after a
+repopulate hosted `texlive-20260301` manifest entries immediately after a
 purge. For snapshot-sensitive corpus work, first stop concurrent Umber runs,
 clear only the Umber `objects` and `manifests` namespaces, and warm with an
 explicit `--distribution` path to the regenerated 2026-03-01 staging root.

@@ -70,8 +70,8 @@ tex:citesort.sty
 ```
 
 The hosted root is
-`texlive-2026-r79639/manifest-v2.json`, whose bytes hash to the compiled-in pin
-`7c2784bca891844d37465083b93466b78429c7282d7ba915f40a08d150651fd0`.
+`texlive-20260301/manifest-v3.json`, whose bytes hash to the compiled-in pin
+`43a31da364e4607957a38da10dabff227657d607d1845d502204adfd5d002e4b`.
 For each key, SHA-256 of the UTF-8 key selects the high-byte shard (the root has
 `shardBits = 8`). Fetching the root-declared `sha256-<digest>` object, checking
 that object's digest, and querying `.files[$key]` returns `null`. This checks
@@ -82,11 +82,11 @@ The following Bash fragment performs that complete verification. It fails if
 the root pin or any shard digest differs, or if any requested key is present:
 
 ```bash
-snapshot_root=/tmp/umber-texlive-r79639-manifest.json
-snapshot_origin=https://assets.umber.ink/texlive/texlive-2026-r79639
-curl -fsSL "$snapshot_origin/manifest-v2.json" -o "$snapshot_root"
+snapshot_root=/tmp/umber-texlive-20260301-manifest.json
+snapshot_origin=https://assets.umber.ink/texlive/texlive-20260301
+curl -fsSL "$snapshot_origin/manifest-v3.json" -o "$snapshot_root"
 test "$(shasum -a 256 "$snapshot_root" | awk '{print $1}')" = \
-  7c2784bca891844d37465083b93466b78429c7282d7ba915f40a08d150651fd0
+  43a31da364e4607957a38da10dabff227657d607d1845d502204adfd5d002e4b
 
 for snapshot_key in \
   tex:iopart.cls tex:iopams.sty tex:aa.cls tex:astron.sty \

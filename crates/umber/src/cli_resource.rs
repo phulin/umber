@@ -30,9 +30,9 @@ use crate::{
 };
 
 pub const DEFAULT_DISTRIBUTION_URL: &str =
-    "https://assets.umber.ink/texlive/texlive-2026-r79639/manifest-v2.json";
+    "https://assets.umber.ink/texlive/texlive-20260301/manifest-v3.json";
 pub const DEFAULT_DISTRIBUTION_SHA256: &str =
-    "7c2784bca891844d37465083b93466b78429c7282d7ba915f40a08d150651fd0";
+    "43a31da364e4607957a38da10dabff227657d607d1845d502204adfd5d002e4b";
 
 const MAX_INDEX_SHARD_BYTES: u64 = 32 * 1024 * 1024;
 
