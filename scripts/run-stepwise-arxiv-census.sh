@@ -5,17 +5,23 @@ root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 sample=${UMBER_ARXIV_SAMPLE:-$root/scripts/pdftex-arxiv-sample-100.tsv}
 corpus=${UMBER_ARXIV_CORPUS:-$root/third_party/arxiv-sample-100/sources}
 format=${UMBER_ARXIV_FORMAT:-}
+distribution=${UMBER_ARXIV_DISTRIBUTION:-}
 binary=${UMBER_ARXIV_BINARY:-$root/target/debug/umber}
 results=${UMBER_ARXIV_RESULTS:-$root/target/stepwise-arxiv-census}
 limit=${UMBER_ARXIV_LIMIT:-100}
 timeout=${UMBER_ARXIV_TIMEOUT_SECONDS:-30}
 rss=${UMBER_ARXIV_MAX_RSS_MIB:-1536}
 fuel=${UMBER_ARXIV_ENGINE_FUEL:-100000000}
+offline=${UMBER_ARXIV_OFFLINE:-1}
 texmf=${UMBER_ARXIV_TEXMF:-$root/third_party/texlive-20260301-texmf/texmf-dist}
 guard=$root/scripts/run-umber-guarded.py
 
 if [[ -z $format || ! -f $format ]]; then
   echo "UMBER_ARXIV_FORMAT must name a validated pdflatex format image" >&2
+  exit 2
+fi
+if [[ -z $distribution || ! -f $distribution/manifest.json ]]; then
+  echo "UMBER_ARXIV_DISTRIBUTION must name a verified local distribution" >&2
   exit 2
 fi
 if [[ ! -x $binary ]]; then
@@ -26,16 +32,26 @@ if [[ ! $limit =~ ^[1-9][0-9]*$ || $limit -gt 100 ]]; then
   echo "UMBER_ARXIV_LIMIT must be in 1..100" >&2
   exit 2
 fi
+if [[ $offline != 0 && $offline != 1 ]]; then
+  echo "UMBER_ARXIV_OFFLINE must be 0 or 1" >&2
+  exit 2
+fi
+
+run_flags=(--pdflatex --distribution "$distribution" --format "$format")
+if [[ $offline == 1 ]]; then
+  run_flags+=(--offline)
+fi
 
 entrypoint() {
   local directory=$1 candidate
+  local documentclass='^[[:space:]]*\\documentclass([[:space:]]|\[|\{|$)'
   for candidate in main.tex manuscript.tex arxiv_version.tex paper.tex ms.tex; do
-    if [[ -f $directory/$candidate ]] && rg -q -F '\documentclass' "$directory/$candidate"; then
+    if [[ -f $directory/$candidate ]] && rg -q "$documentclass" "$directory/$candidate"; then
       printf '%s\n' "$directory/$candidate"
       return
     fi
   done
-  rg -l -F '\documentclass' "$directory" -g '*.tex' \
+  rg -l "$documentclass" "$directory" -g '*.tex' \
     | rg -v '/(supp|supplement|appendix)[^/]*\.tex$' \
     | LC_ALL=C sort \
     | head -1
@@ -89,12 +105,12 @@ while IFS=$'\t' read -r id _category; do
   fi
 
   set +e
-  UMBER_RESOURCE_TELEMETRY=1 UMBER_ENGINE_FUEL=$fuel \
+  (cd "$results" && UMBER_RESOURCE_TELEMETRY=1 UMBER_ENGINE_FUEL=$fuel \
     TEXINPUTS="$(dirname "$main"):$texmf/tex/latex//:$texmf/tex/generic//:$texmf/tex/plain//:" \
     TEXFONTS="$texmf/fonts/tfm//:" \
     python3 "$guard" --timeout-seconds "$timeout" --max-rss-mib "$rss" \
-      --term-grace-seconds 2 -- "$binary" run --pdflatex --offline --format "$format" "$main" \
-      >"$log" 2>&1
+      --term-grace-seconds 2 -- "$binary" run "${run_flags[@]}" "$main" \
+      >"$log" 2>&1)
   status=$?
   set -e
 
@@ -121,11 +137,11 @@ while IFS=$'\t' read -r id _category; do
     pdf=$results/$key.pdf
     final_log=$results/$key.finalizer.log
     set +e
-    TEXINPUTS="$(dirname "$main"):$texmf/tex/latex//:$texmf/tex/generic//:$texmf/tex/plain//:" \
+    (cd "$results" && TEXINPUTS="$(dirname "$main"):$texmf/tex/latex//:$texmf/tex/generic//:$texmf/tex/plain//:" \
       TEXFONTS="$texmf/fonts/tfm//:" \
       python3 "$guard" --timeout-seconds "$timeout" --max-rss-mib "$rss" \
-        --term-grace-seconds 2 -- "$binary" run --pdflatex --offline --format "$format" \
-        --pdf "$pdf" "$main" >"$final_log" 2>&1
+        --term-grace-seconds 2 -- "$binary" run "${run_flags[@]}" --pdf "$pdf" "$main" \
+        >"$final_log" 2>&1)
     final_status=$?
     set -e
     finalizer_status=failed

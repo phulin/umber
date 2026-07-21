@@ -63,6 +63,7 @@ The explicit stepwise arXiv validation tier is:
 ```bash
 cargo build -q -p umber
 UMBER_ARXIV_FORMAT=/path/to/pdflatex.umberfmt \
+UMBER_ARXIV_DISTRIBUTION=/path/to/verified/texlive-snapshot \
   scripts/run-stepwise-arxiv-census.sh
 ```
 
@@ -73,7 +74,11 @@ TERM-to-KILL, reap, and survivor enforcement. The TSV under
 cumulative fuel, resource wait, engine time, guard status, and accepted-engine
 status. Failed rows also carry a stable error cluster so engine errors, Rust
 panics, unavailable distribution inputs, and guard terminations remain
-machine-separable. The default stops after accepted engine completion and finalization
+machine-separable. The runner requires an explicit verified local distribution,
+so snapshot-sensitive censuses cannot silently fall back to the hosted pin.
+Set `UMBER_ARXIV_OFFLINE=0` for the explicit-distribution warm pass; the default
+is an offline pass which proves the authenticated cache is sufficient. The
+default stops after accepted engine completion and finalization
 handoff. `UMBER_ARXIV_FINALIZE=1` performs a second guarded run and records the
 detached PDF-finalizer result separately, so map, encoding, PFB, or PK failures
 cannot be mistaken for engine failures. `UMBER_ARXIV_LIMIT=1` selects the

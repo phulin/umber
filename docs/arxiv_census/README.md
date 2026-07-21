@@ -1,6 +1,6 @@
 # Pinned arXiv 100-document census
 
-This directory preserves two complete, machine-readable 100-row captures of
+This directory preserves complete, machine-readable 100-row captures of
 the corpus selected by `scripts/pdftex-arxiv-sample-100.tsv`. Each capture has:
 
 - `metadata.json`: engine, format, manifest, timeout, concurrency, and (for the
@@ -42,3 +42,19 @@ The seven source-side impossibilities are stable corpus facts and are explained
 in `docs/arxiv_corpus.md`. All engine and hosted-snapshot clusters are tracked
 as children of Beads epic `umber2-65ku`; they are observations, not permission
 to patch paper sources or special-case the corpus.
+
+## 2026-07-21 completion audit
+
+`final-20260721/` is the fresh exact-100-row audit at commit `05ef9919`. It uses
+the coherent regenerated 2026-03-01 distribution and format with serial guarded
+children capped at 100,000,000 engine fuel, 1,536 MiB RSS, and 120 seconds.
+Fifty rows produce PDFs. Corrected reference accounting identifies 79 clean
+rows: 41 produce PDFs and all remaining 38 link exactly once to focused Beads
+blockers `umber2-65ku.61` through `.70`. The other 21 rows retain the independent
+reference-failure classifications recorded in `docs/arxiv_corpus.md` and the
+epic audit.
+
+The regenerated local distribution proves `1204.5690` completes through the
+generated `pdftex.map` path. It does not prove hosted reproducibility: the
+production immutable pin still lacks that map, and blocked issue
+`umber2-65ku.19` owns publication, public verification, and pin rotation.

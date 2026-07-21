@@ -1,0 +1,12 @@
+{
+  "binary_sha256": "542ec17c0ed1da81daeef554e8d31c2673c6f88d4d67507c77520fe92a1f107f",
+  "distribution_manifest_sha256": "08f96e6c483ea2491c90037596d3de93d8875f8ce2af4c72be7f5236cd8067f7",
+  "engine_fuel": 100000000,
+  "format_sha256": "f640624c160500d6faafd88be3c381e94390e7edb4a547d82a4350eef73a96f4",
+  "git_commit": "05ef991983cc529d5a84c269df590b83a0a251ae",
+  "max_rss_mib": 1536,
+  "mode": "warm",
+  "rows": 100,
+  "sample_sha256": "bac78153b3d9fa4455020288511c1766e95dc9da551bd47f38e7e162ff09f11c",
+  "timeout_seconds": 120
+}
