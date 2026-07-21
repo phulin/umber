@@ -82,6 +82,29 @@ root-only repair fallback. The local probe then reads `/Root`, `/Info`, `/ID`,
 and selected raw extensions through the ordinary `Dict` API. No public page or
 object API change is required.
 
+This boundary is implemented by `test_support::pdf_probe`. The workspace pins
+the immutable `phulin/hayro` revision
+`abf6c167f6b877a18a077b9ff76dad36573e271d`, based directly on the 0.7.2
+release commit; its sole compatibility addition retains the selected trailer
+byte range and exposes the accessor above. Once an
+equivalent accessor is released upstream, replace the git pin with that release;
+the probe itself uses no other fork-specific API.
+
+Each public projection starts a fresh `ProbeLimits` accounting scope. Depth
+counts nested arrays, dictionaries, streams, and resolved references; object
+counting covers indirect resolutions; value counting covers projected values
+and content instructions; and stream bytes count all raw and decoded bytes
+materialized by the query. References carry their indirect ID alongside the
+resolved target, active cycles become stable back-reference markers, and missing
+xref targets remain explicit unresolved-reference markers. Ordered pages also
+project inherited boxes, rotation, and resource layers from ancestor to child.
+
+The probe stores both raw and decoded stream bytes, decoded SHA-256, and lenient
+untyped operations. A malformed filtered stream may decode to empty bytes under
+Hayro's recovery behavior; retaining the raw bytes and complete decoded digest
+makes that recovery observable without turning the probe into a second strict
+validator. Strict syntax acceptance remains the external validator's role.
+
 Hayro's operation iterator is intentionally lenient and does not report a
 terminal parse error. The local projection therefore records both canonical
 operations and the byte length plus SHA-256 of the complete decoded stream.

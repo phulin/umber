@@ -5,6 +5,7 @@ mod corpus;
 pub mod dvi;
 pub mod pdf;
 pub mod pdf_fixture;
+pub mod pdf_probe;
 
 #[allow(clippy::disallowed_methods)] // host tool, not engine code
 mod imp {

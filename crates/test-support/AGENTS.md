@@ -17,6 +17,9 @@ Keep reusable test harness code here when multiple crates or integration tests n
 - `src/dvi.rs`: shared DVI fixture setup, preamble-comment normalization, exact comparison, and byte-difference context.
 - `src/lib.rs`: public fixture assertion/read helpers, TeX/reference log normalizers, and PL font parsing utilities.
 - `src/pdf.rs`: canonical PDF page/content plus document-object and dictionary structure normalizer.
+- `src/pdf_probe.rs`: bounded Hayro-backed semantic PDF object, page, stream, and content-operation probe.
+- `src/pdf_probe/tests.rs`: classic/xref-stream, object-stream, budget, cycle, inheritance, and malformed-input probe coverage.
+- `src/pdf_probe/fixtures/xref-object-stream.pdf`: committed uncompressed xref-stream/object-stream compatibility fixture.
 - `src/pdf_fixture.rs`: dependency-free deterministic classic-xref PDF input fixture writer.
 - `src/pdf_fixture/tests.rs`: framing, stream, page/group, ICCBased-DCT, cycle, and nesting fixture coverage.
 - `src/tests.rs`: crate self-test that reads the committed hello fixture.
