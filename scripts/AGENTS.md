@@ -13,7 +13,9 @@ Read the repository-root `AGENTS.md` first. This file adds the directory map for
 - `test-publish-texlive-r2.sh`: hermetic mock-rclone/curl contract test for resumable, manifest-last R2 publication.
 - `run-umber-guarded.py`: canonical process-group watchdog for Umber and tests that execute Umber; enforces wall-time and aggregate-RSS ceilings, TERM-to-KILL escalation, reap, and survivor checks through sandbox-compatible native macOS and Linux process inspection.
 - `test-run-umber-guarded.sh`: forced-timeout and RSS-limit self-test proving the shared Umber watchdog kills and reaps descendants.
-- `run-stepwise-arxiv-census.sh`: guarded per-paper stepwise-resource census with separate accepted-engine and optional detached-finalizer outcomes.
+- `run-stepwise-arxiv-census.sh`: stable entry point for the serial guarded arXiv census.
+- `stepwise-arxiv-census.py`: single-pass, row-atomic, resumable arXiv census runner and offline evidence verifier.
+- `test-stepwise-arxiv-census.sh`: hermetic single-pass, failure-attribution, resume, and verify-only census contract test.
 - `archive-stepwise-arxiv-census.py`: validate and archive an exact 100-row guarded census with immutable identities, reference-clean accounting, blocker links, and cluster totals.
 - `build-texlive-snapshot.sh`: deterministic full TeX Live runtime snapshot staging with package dependency hints and production inventory floors.
 - `write-latex-wasm-publish-config.sh`: deterministic schema-3 publisher configuration for the focused LaTeX WASM bundle, pinned to the measured production 8-bit shard policy.

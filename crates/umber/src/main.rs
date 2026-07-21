@@ -93,6 +93,9 @@ fn run_tex(opts: &RunCliOptions) -> Result<(), CliError> {
             offline: opts.offline,
             expansion_fuel: opts.expansion_fuel,
         })?;
+    if env::var_os("UMBER_RESOURCE_TELEMETRY").is_some_and(|value| value == "1") {
+        eprintln!("RESOURCE_ENGINE_ACCEPTED");
+    }
     finalize_run(opts, accepted)
 }
 

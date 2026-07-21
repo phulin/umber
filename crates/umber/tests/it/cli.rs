@@ -401,6 +401,7 @@ fn pdf_lowering_failure_does_not_publish_any_driver_output() {
 
     let output = Command::new(env!("CARGO_BIN_EXE_umber"))
         .env("SOURCE_DATE_EPOCH", PINNED_SOURCE_DATE_EPOCH)
+        .env("UMBER_RESOURCE_TELEMETRY", "1")
         .arg("run")
         .arg("--pdftex")
         .arg("--pdf")
@@ -414,6 +415,10 @@ fn pdf_lowering_failure_does_not_publish_any_driver_output() {
     assert!(!output.status.success());
     assert!(
         String::from_utf8_lossy(&output.stderr).contains("PDF output does not support special")
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("RESOURCE_ENGINE_ACCEPTED"),
+        "accepted-engine telemetry must precede detached finalization"
     );
     assert!(!pdf.exists(), "failed PDF finalization published a file");
     assert!(

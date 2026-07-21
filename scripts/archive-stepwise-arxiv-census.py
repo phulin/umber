@@ -103,6 +103,8 @@ def main() -> None:
         key = paper.replace("/", "_")
         engine_log = args.results / f"{key}.engine.log"
         final_log = args.results / f"{key}.finalizer.log"
+        if not final_log.exists() and row["engine_status"] == "accepted":
+            final_log = engine_log
         pdf = args.results / f"{key}.pdf"
         record = {
             "ordinal": ordinal,
@@ -129,17 +131,22 @@ def main() -> None:
 
     args.output.mkdir(parents=True, exist_ok=True)
     commit = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
+    run_identity_path = args.results / "run-identity.json"
+    run_identity = json.loads(run_identity_path.read_text()) if run_identity_path.exists() else None
+    limits = run_identity["immutable"] if run_identity else {}
     metadata = {
         "git_commit": commit,
         "mode": args.mode,
         "rows": 100,
-        "engine_fuel": 100000000,
-        "max_rss_mib": 1536,
-        "timeout_seconds": 120,
+        "engine_fuel": limits.get("engine_fuel", 100000000),
+        "max_rss_mib": limits.get("max_rss_mib", 1536),
+        "timeout_seconds": limits.get("timeout_seconds", 120),
         "binary_sha256": digest(args.binary),
         "format_sha256": digest(args.format),
         "distribution_manifest_sha256": digest(args.distribution / "manifest.json"),
         "sample_sha256": digest(args.sample),
+        "single_pass": run_identity is not None,
+        "run_identity_sha256": digest(run_identity_path) if run_identity_path.exists() else None,
     }
     (args.output / "metadata.json").write_text(json.dumps(metadata, indent=2, sort_keys=True) + "\n")
     with (args.output / "results.jsonl").open("w") as output:
