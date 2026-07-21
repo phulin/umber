@@ -98,6 +98,12 @@ logical local TFM to be instantiated at each size declared by its containing
 virtual-font instance without another host read. Recursive packet execution
 then occurs only in PDF finalization and does not alter DVI construction.
 
+The native post-acceptance compatibility loader excludes every positively
+classified virtual root from its legacy real-font PK fallback. Map, encoding,
+and outline resources for reached real leaves are already owned by the typed
+closure, so a virtual TFM name can never be reinterpreted as
+`name.<dpi>pk` during that handoff.
+
 This ordering maps directly to `pdftex.web` section 32e: its introductory font
 processing module classifies a font by probing its VF on first PDF use; `do_vf`
 and `Open vf_file` make absence the real-font fallback; and `vf_def_font` plus

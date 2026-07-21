@@ -146,9 +146,17 @@ impl NativeAcceptedRun {
         let cancellation = FetchCancellation::new();
         let distribution = &mut self.distribution;
         let local = &self.local;
-        crate::provide_pdf_font_resources_at_dpi(
+        let virtual_names = self
+            .finalization
+            .virtual_font_resources
+            .virtual_fonts
+            .keys()
+            .map(|name| name.as_bytes().to_vec())
+            .collect();
+        crate::provide_pdf_font_resources_excluding_at_dpi(
             &mut self.finalization.stores,
             crate::pdf_output::DEFAULT_PDF_PK_RESOLUTION,
+            &virtual_names,
             |_stores, logical_name| {
                 distribution
                     .resolve_generic_asset(local, logical_name, &cancellation)

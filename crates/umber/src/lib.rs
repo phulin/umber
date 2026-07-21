@@ -243,11 +243,23 @@ impl FileSessionResolvers {
 pub(crate) fn provide_pdf_font_resources_at_dpi(
     stores: &mut Universe,
     driver_dpi: i32,
+    acquire: impl FnMut(&mut Universe, &[u8]) -> Result<Vec<u8>, String>,
+) -> Result<(), String> {
+    provide_pdf_font_resources_excluding_at_dpi(stores, driver_dpi, &BTreeSet::new(), acquire)
+}
+
+pub(crate) fn provide_pdf_font_resources_excluding_at_dpi(
+    stores: &mut Universe,
+    driver_dpi: i32,
+    excluded_names: &BTreeSet<Vec<u8>>,
     mut acquire: impl FnMut(&mut Universe, &[u8]) -> Result<Vec<u8>, String>,
 ) -> Result<(), String> {
     let used_names = stores
         .pdf_font_resources()
-        .map(|resource| stores.font(resource.font()).name().as_bytes().to_vec())
+        .filter_map(|resource| {
+            let name = stores.font(resource.font()).name().as_bytes().to_vec();
+            (!excluded_names.contains(&name)).then_some(name)
+        })
         .collect::<BTreeSet<_>>();
     if used_names.is_empty() {
         return Ok(());
@@ -343,8 +355,9 @@ pub(crate) fn provide_pdf_font_resources_at_dpi(
         .pdf_font_resources()
         .filter_map(|resource| {
             let font = stores.font(resource.font());
-            (!mapped_names.contains(font.name().as_bytes()))
-                .then(|| pdf_output::pk_font_request(stores, resource.font(), driver_dpi))
+            (used_names.contains(font.name().as_bytes())
+                && !mapped_names.contains(font.name().as_bytes()))
+            .then(|| pdf_output::pk_font_request(stores, resource.font(), driver_dpi))
         })
         .collect::<Result<BTreeSet<_>, _>>()?;
     for request in requests {
@@ -359,6 +372,9 @@ pub(crate) fn provide_pdf_font_resources_at_dpi(
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod pdf_font_resources_tests;
 
 struct FileInputResolver(TexInputSearchPath);
 
