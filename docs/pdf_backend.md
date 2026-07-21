@@ -169,6 +169,21 @@ already-provided exact resource and emits a Type3 font with one CharProc per
 used glyph. Both request and decoded program types live below the native
 CLI/WASM boundary and perform no filesystem or process access.
 
+That PK rule applies only after virtual-font resolution. pdfTeX.web section
+32e initializes each newly used font by probing `name.vf`; when present it
+loads the local font definitions and expands each virtual character packet,
+recursively, so map lookup and the real-font PK fallback apply to the packet's
+local fonts rather than to the virtual TFM name. The pdfTeX manual chapter 3,
+sections 3.1 and 3.1.6, separately defines map lookup for outline fonts and PK
+fallback for a used real font absent from the maps. For example, TeX Live's
+`ptmb7t.vf` selects local font `ptmb8r`; the `ptmb8r` map entry then selects
+`8r.enc` and `utmb8a.pfb`. A `ptmb7t.<dpi>pk` request is therefore not the
+canonical fallback for that font. Umber does not yet parse or lower virtual
+font programs, so its current real-font-only finalizer cannot publish this
+otherwise available chain; virtual-font support is tracked as
+`umber2-65ku.59`, rather than being hidden by a synthetic map entry or a
+generated PK substitute.
+
 Detached finalization resolves the effective font map once per document and
 uses that immutable name-indexed snapshot for font selection, encoding lookup,
 tagged-space decisions, and font-object construction. It does not replay the
