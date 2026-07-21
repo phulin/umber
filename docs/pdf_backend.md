@@ -209,6 +209,9 @@ between tokens; it does not execute PostScript. A used code that intentionally
 resolves to `.notdef` remains a valid blank-glyph subset instead of being
 misclassified as a missing requested CharString. Type-1 subset parsing accepts
 PostScript's CR, LF, and CRLF line endings between encrypted CharStrings.
+This is downstream font-program/PDF finalization behavior, not core TeX or
+pdfTeX primitive semantics; it does not change token processing, execution,
+layout, or committed shipout artifacts.
 
 Finalization also builds pdfTeX's default document-information dictionary and
 registers it in the trailer through `pdf_writer`. `/Producer`, `/Creator`,
