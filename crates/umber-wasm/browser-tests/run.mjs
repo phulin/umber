@@ -90,12 +90,27 @@ const plainMetadata = JSON.parse(
 const corruptPlain = Uint8Array.from(plain);
 corruptPlain[corruptPlain.byteLength - 1] ^= 1;
 const corruptPlainSha256 = digest(corruptPlain);
+const cmr10Entry = objectEntry("/texlive/fonts/cmr10.tfm", cmr10);
+const cmtt10Entry = objectEntry("/texlive/fonts/cmtt10.tfm", cmtt10);
 const files = {
-	"tex:remote.tex": objectEntry("/texlive/tex/remote.tex", remote),
-	"tfm:cmr10.tfm": objectEntry("/texlive/fonts/cmr10.tfm", cmr10),
-	"tfm:cmtt10.tfm": objectEntry("/texlive/fonts/cmtt10.tfm", cmtt10),
+	"tex:remote.tex": objectEntry("/texlive/tex/remote.tex", remote, [
+		dependencyEntry("tfm:cmr10.tfm", cmr10Entry),
+		dependencyEntry("tfm:cmtt10.tfm", cmtt10Entry),
+	]),
+	"tfm:cmr10.tfm": cmr10Entry,
+	"tfm:cmtt10.tfm": cmtt10Entry,
 	"tex:corrupt.tex": objectEntry("/texlive/tex/corrupt.tex", corruptExpected),
 };
+
+function dependencyEntry(key, entry) {
+	return {
+		key,
+		virtualPath: entry.virtualPath,
+		object: entry.object,
+		sha256: entry.sha256,
+		bytes: entry.bytes,
+	};
+}
 const objectBytes = new Map([
 	[files["tex:remote.tex"].object, remote],
 	[files["tfm:cmr10.tfm"].object, cmr10],
@@ -140,6 +155,8 @@ const statistics = {
 	maximumActive: 0,
 };
 let nativeDviSha256;
+let browserObjectOverlap;
+let releaseBrowserObjectOverlap;
 
 const server = http.createServer(async (request, response) => {
 	try {
@@ -166,7 +183,8 @@ const server = http.createServer(async (request, response) => {
 			return send(response, 200, cmr10, "application/octet-stream");
 		}
 		if (url.pathname.startsWith("/objects/")) {
-			const bytes = objectBytes.get(url.pathname.slice("/objects/".length));
+			const object = url.pathname.slice("/objects/".length);
+			const bytes = objectBytes.get(object);
 			if (bytes === undefined)
 				return send(response, 404, "missing", "text/plain");
 			statistics.networkRequests += 1;
@@ -176,7 +194,19 @@ const server = http.createServer(async (request, response) => {
 				statistics.maximumActive,
 				statistics.active,
 			);
-			await new Promise((resolve) => setTimeout(resolve, 25));
+			if (
+				browserObjectOverlap !== undefined &&
+				object !== `sha256-${shardDigest}`
+			) {
+				if (statistics.active >= 2) releaseBrowserObjectOverlap();
+				await withTimeout(
+					browserObjectOverlap,
+					2_000,
+					"browser object downloads did not overlap",
+				);
+			} else {
+				await new Promise((resolve) => setTimeout(resolve, 25));
+			}
 			statistics.active -= 1;
 			response.setHeader(
 				"cache-control",
@@ -251,6 +281,9 @@ Object.assign(statistics, {
 	objectRequests: 0,
 	active: 0,
 	maximumActive: 0,
+});
+browserObjectOverlap = new Promise((resolve) => {
+	releaseBrowserObjectOverlap = resolve;
 });
 const profile = await mkdtemp(path.join(os.tmpdir(), "umber-chrome-"));
 const browser = spawn(
@@ -408,6 +441,16 @@ function waitForClose(child, timeout) {
 		}, timeout);
 		child.once("close", onClose);
 	});
+}
+
+function withTimeout(operation, timeout, message) {
+	let timer;
+	return Promise.race([
+		operation,
+		new Promise((_, reject) => {
+			timer = setTimeout(() => reject(new Error(message)), timeout);
+		}),
+	]).finally(() => clearTimeout(timer));
 }
 
 async function protocol(url) {
