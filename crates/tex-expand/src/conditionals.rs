@@ -76,8 +76,8 @@ pub(crate) fn complete_if_evaluation(
     frame_token: ConditionFrameToken,
 ) -> Result<Dispatch, ExpandError> {
     let current = input
-        .current_condition()
-        .expect("the evaluating conditional frame remains current");
+        .condition(frame_token)
+        .expect("the evaluating conditional frame remains live");
     let context = current.context();
     let metadata = ConditionMetadata::new(current.if_type(), current.inverted());
     let previous = input
@@ -101,8 +101,8 @@ pub(crate) fn complete_ifcase_evaluation(
     frame_token: ConditionFrameToken,
 ) -> Result<Dispatch, ExpandError> {
     let current = input
-        .current_condition()
-        .expect("the evaluating ifcase frame remains current");
+        .condition(frame_token)
+        .expect("the evaluating ifcase frame remains live");
     let context = current.context();
     let take_initial_limb = selected_case == 0;
     let previous = input

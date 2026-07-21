@@ -143,6 +143,16 @@ is delivered, the next independent request receives a fresh budget; ordinary
 long-running jobs therefore are not charged for unrelated, already-completed
 expansion chains.
 
+Conditional frames follow TeX82's `cond_ptr`/`if_limit` model in `tex.web`
+§§489 and 494–510 (the corresponding pdfTeX program is `pdftex.web` §§515 and
+519–536). `tex-lex::InputStack` owns the live frame stack and stable frame
+tokens; `tex-expand::conditionals` owns `pass_text`-style skipping, delimiter
+legality, and evaluation. In particular, TeX's `change_if_limit` rule in
+§§498–500 updates the exact saved outer frame even when operand expansion has
+left newer conditional frames above it. Umber therefore reads and replaces
+evaluation metadata by `ConditionFrameToken`, never from the merely innermost
+frame.
+
 Expanded-token-list builders copy the result of `\unexpanded` and the
 token-list form of `\the` without expanding it further, matching TeX's direct
 `the_toks` splice. Once those tokens return to ordinary `get_x_token`

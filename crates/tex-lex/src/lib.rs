@@ -2888,6 +2888,18 @@ impl InputStack {
         Some(std::mem::replace(frame, condition))
     }
 
+    /// Returns the live conditional frame identified by `token`.
+    #[must_use]
+    pub fn condition(&self, token: ConditionFrameToken) -> Option<ConditionFrameSummary> {
+        let index = self.condition_frame_indices.iter().rev().copied().find(|index| {
+            matches!(self.frames[*index], InputFrame::Condition { token: frame_token, .. } if frame_token == token)
+        })?;
+        let InputFrame::Condition { condition, .. } = self.frames[index] else {
+            unreachable!("condition index names a condition frame")
+        };
+        Some(condition)
+    }
+
     /// Updates the innermost live conditional frame.
     pub fn update_current_condition(
         &mut self,

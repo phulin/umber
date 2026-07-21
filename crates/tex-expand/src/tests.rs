@@ -5,7 +5,7 @@ use crate::{
 };
 use ahash::AHashMap;
 use tex_lex::MacroArguments;
-use tex_lex::{InputStack, MemoryInput, TokenListReplayKind};
+use tex_lex::{ConditionFrameSummary, InputStack, MemoryInput, TokenListReplayKind};
 use tex_state::glue::{GlueSpec, Order};
 use tex_state::ids::TokenListId;
 use tex_state::interner::Symbol;
@@ -5089,6 +5089,43 @@ fn ifdim_operand_nested_conditional_completes_exact_outer_frame() {
         "n"
     );
     assert!(input.current_condition().is_none());
+}
+
+#[test]
+fn conditional_completion_preserves_saved_outer_frame_metadata() {
+    let mut stores = Universe::new();
+    let mut input = InputStack::new(MemoryInput::new(""));
+    let outer_context = TracedTokenWord::pack(char_token('o'), OriginId::UNKNOWN);
+    let nested_context = TracedTokenWord::pack(char_token('n'), OriginId::UNKNOWN);
+    let outer = crate::conditionals::begin_if_evaluation(
+        &mut input,
+        outer_context,
+        crate::conditionals::ConditionMetadata::new(7, true),
+    );
+    let nested = input.push_condition(
+        ConditionFrameSummary::new_if(nested_context, true)
+            .with_if_type(19)
+            .with_inverted(false),
+    );
+
+    crate::conditionals::complete_if_evaluation(
+        &mut input,
+        &mut tex_state::ExpansionContext::new(&mut stores),
+        &mut ExpansionContext::new("test"),
+        true,
+        outer,
+    )
+    .expect("complete saved outer condition");
+
+    let completed = input.condition(outer).expect("outer frame remains live");
+    assert_eq!(completed.context(), outer_context);
+    assert_eq!(completed.if_type(), 7);
+    assert!(completed.inverted());
+    assert_eq!(input.current_condition_token(), Some(nested));
+    assert_eq!(
+        input.current_condition().map(|frame| frame.context()),
+        Some(nested_context)
+    );
 }
 
 #[test]
