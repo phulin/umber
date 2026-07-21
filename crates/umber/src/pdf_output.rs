@@ -148,7 +148,16 @@ fn pdf_from_committed_artifacts_at_dpi_with_virtual_fonts(
     let positioning_started = std::time::Instant::now();
     let mut positioned_pages = positioned_pages(stores, artifacts, &page_records)?;
     let page_count = positioned_pages.len();
-    positioned_pages.extend(positioned_forms(stores)?);
+    let positioned_form_entries = positioned_forms(stores)?;
+    let positioned_form_objects = positioned_form_entries
+        .iter()
+        .map(|(object, _)| *object)
+        .collect::<Vec<_>>();
+    positioned_pages.extend(
+        positioned_form_entries
+            .into_iter()
+            .map(|(_, positioned)| positioned),
+    );
     let positioning_ns = positioning_started.elapsed().as_nanos();
     let vf_started = std::time::Instant::now();
     crate::pdf_vf::lower_pages(
@@ -159,9 +168,8 @@ fn pdf_from_committed_artifacts_at_dpi_with_virtual_fonts(
     )?;
     let vf_ns = vf_started.elapsed().as_nanos();
     let positioned_forms = positioned_pages.split_off(page_count);
-    let positioned_forms = stores
-        .pdf_forms()
-        .map(|form| form.object())
+    let positioned_forms = positioned_form_objects
+        .into_iter()
         .zip(positioned_forms)
         .collect::<BTreeMap<_, _>>();
     let font_usage_started = std::time::Instant::now();
@@ -1429,15 +1437,17 @@ fn positioned_pages(
         .collect()
 }
 
-fn positioned_forms(stores: &Universe) -> Result<Vec<PositionedPage>, PdfBuildError> {
+fn positioned_forms(stores: &Universe) -> Result<Vec<(u32, PositionedPage)>, PdfBuildError> {
     stores
         .pdf_forms()
-        .map(|form| {
-            let staged = stores
-                .pdf_form_artifact(form.object())
-                .ok_or(PdfBuildError::MissingFormArtifact(form.object()))?;
-            let artifact = tex_out::PageArtifact::from_bytes(staged.bytes())?;
-            Ok(tex_out::positioned::lower_page(&artifact, 0)?)
+        .filter_map(|form| {
+            stores.pdf_form_artifact(form.object()).map(|staged| {
+                let artifact = tex_out::PageArtifact::from_bytes(staged.bytes())?;
+                Ok((
+                    form.object(),
+                    tex_out::positioned::lower_page(&artifact, 0)?,
+                ))
+            })
         })
         .collect()
 }
@@ -7374,6 +7384,35 @@ mod tests {
                 .decoded
                 .windows(2)
                 .any(|window| window == b"re")
+        );
+    }
+
+    #[test]
+    fn referenced_form_keeps_its_identity_after_an_untraversed_lazy_form() {
+        let (mut stores, run) = run(concat!(
+            "\\pdfoutput=1\\pdfcompresslevel=0",
+            "\\setbox0=\\hbox{\\vrule width1pt height1pt}\\pdfxform0",
+            "\\setbox0=\\hbox{\\vrule width2pt height2pt}\\pdfxform0",
+            "\\shipout\\hbox{\\pdfrefxform3}\\end",
+        ));
+        assert!(
+            stores.pdf_form_artifact(1).is_none(),
+            "the unreferenced lazy form must remain untraversed"
+        );
+        assert!(
+            stores.pdf_form_artifact(3).is_some(),
+            "the referenced form must retain its traversal artifact"
+        );
+
+        let pdf = pdf_from_committed_artifacts(&mut stores, &run.committed_artifacts)
+            .expect("the later referenced form finalizes");
+        let parsed = probe(&pdf);
+        let form_object = object(&parsed, 3);
+        let decoded = &stream(&form_object).decoded;
+        assert!(decoded.windows(2).any(|window| window == b"re"));
+        assert!(
+            pdf.windows(b"/Fm2 Do".len())
+                .any(|window| window == b"/Fm2 Do")
         );
     }
 

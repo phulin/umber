@@ -95,6 +95,17 @@ a lazy form payload, while rollback before `\pdfxform` removes the ledger entry
 and releases its survivor root together. Direct shipout may therefore normalize
 forms recursively without weakening node-handle liveness checks.
 
+Finalization detaches only forms that have traversal artifacts (plus immediate
+forms, whose creation performs that traversal). An unreferenced lazy form
+legitimately remains in the object ledger without an artifact and is omitted
+from the emitted graph. Each detached positioned form carries its original PDF
+object identity through virtual-font lowering; it is never re-associated by
+ordinal position with the complete form ledger. Consequently an untraversed
+earlier form cannot either block a later referenced form or lend that later
+form the wrong object identity. This is downstream PDF artifact liveness and
+finalizer ordering, not core TeX execution semantics: token processing,
+assignment, list construction, and committed traversal artifacts are unchanged.
+
 Catalog open actions are distinct from verbatim catalog extension entries.
 The engine retains a typed shared action specification and reserves the action
 plus any internal destination, structure, or forward-page identity at scan
