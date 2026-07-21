@@ -236,11 +236,11 @@ defaults pin the verified 8-bit-sharded `texlive-2026-r79639` staging bundle,
 bucket `umber-assets`, public origin `https://assets.umber.ink`, 154,153
 objects, 3,672,643,852 object bytes, and `manifest-v2.json` SHA-256
 `7c2784bca891844d37465083b93466b78429c7282d7ba915f40a08d150651fd0`.
-The ignored repository `.env` must contain `CLOUDFLARE_ACCOUNT_ID`,
-`R2_ACCESS_KEY_ID`, and `R2_SECRET_ACCESS_KEY`; the latter two are the R2 S3
-access-key pair, not a Wrangler API token. The script parses only those exact
-dotenv keys, passes them through rclone's process environment, and neither
-prints them nor creates a persistent rclone config.
+The ignored repository `.env` must contain `R2_S3_ACCOUNT_ID`,
+`R2_S3_ACCESS_KEY_ID`, and `R2_S3_SECRET_ACCESS_KEY`; the latter two are the R2
+S3 access-key pair, not a Wrangler API token. The script parses only those
+exact dotenv keys, passes them through rclone's process environment, and
+neither prints them nor creates a persistent rclone config.
 
 Run `scripts/publish-texlive-r2.sh --dry-run` first, then rerun without
 `--dry-run` for publication or after any interruption. The command uses

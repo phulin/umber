@@ -43,8 +43,8 @@ options:
   --curl PATH                   curl executable
   --publisher PATH              sharded-manifest verifier executable
 
-The dotenv file must define CLOUDFLARE_ACCOUNT_ID, R2_ACCESS_KEY_ID, and
-R2_SECRET_ACCESS_KEY. It is parsed as data, never sourced. Credentials are
+The dotenv file must define R2_S3_ACCOUNT_ID, R2_S3_ACCESS_KEY_ID, and
+R2_S3_SECRET_ACCESS_KEY. It is parsed as data, never sourced. Credentials are
 passed to rclone only through its per-process environment configuration.
 EOF
 }
@@ -59,14 +59,6 @@ sha256() {
     sha256sum "$1" | awk '{print $1}'
   else
     shasum -a 256 "$1" | awk '{print $1}'
-  fi
-}
-
-file_size() {
-  if stat -f '%z' "$1" >/dev/null 2>&1; then
-    stat -f '%z' "$1"
-  else
-    stat -c '%s' "$1"
   fi
 }
 
@@ -136,12 +128,12 @@ command -v "$curl" >/dev/null 2>&1 || fail "curl executable not found: $curl"
 
 "$publisher" --verify-sharded "$staging" || fail "staged sharded manifest verification failed"
 
-account_id="$(dotenv_value CLOUDFLARE_ACCOUNT_ID)"
-access_key_id="$(dotenv_value R2_ACCESS_KEY_ID)"
-secret_access_key="$(dotenv_value R2_SECRET_ACCESS_KEY)"
-[[ -n "$account_id" ]] || fail "CLOUDFLARE_ACCOUNT_ID is missing from $env_file"
-[[ -n "$access_key_id" ]] || fail "R2_ACCESS_KEY_ID is missing from $env_file"
-[[ -n "$secret_access_key" ]] || fail "R2_SECRET_ACCESS_KEY is missing from $env_file"
+account_id="$(dotenv_value R2_S3_ACCOUNT_ID)"
+access_key_id="$(dotenv_value R2_S3_ACCESS_KEY_ID)"
+secret_access_key="$(dotenv_value R2_S3_SECRET_ACCESS_KEY)"
+[[ -n "$account_id" ]] || fail "R2_S3_ACCOUNT_ID is missing from $env_file"
+[[ -n "$access_key_id" ]] || fail "R2_S3_ACCESS_KEY_ID is missing from $env_file"
+[[ -n "$secret_access_key" ]] || fail "R2_S3_SECRET_ACCESS_KEY is missing from $env_file"
 
 # Keep secrets out of argv, logs, and persistent rclone configuration.
 export RCLONE_CONFIG_UMBER_R2_TYPE=s3
@@ -155,12 +147,14 @@ unset access_key_id secret_access_key
 tmp_root="$(mktemp -d "${TMPDIR:-/tmp}/umber-r2-publish.XXXXXX")"
 trap 'rm -rf "$tmp_root"' EXIT
 
-local_inventory="$tmp_root/local-inventory"
-while IFS= read -r -d '' object; do
-  printf '%s\t%s\n' "$(file_size "$object")" "${object##*/}"
-done < <(find "$staging/objects" -type f -print0) > "$local_inventory"
-local_objects="$(wc -l < "$local_inventory" | tr -d ' ')"
-local_bytes="$(awk -F $'\t' '{ total += $1 } END { printf "%.0f", total }' "$local_inventory")"
+local_objects="$(find "$staging/objects" -type f | wc -l | tr -d ' ')"
+if stat -f '%z' "$staging/manifest.json" >/dev/null 2>&1; then
+  local_bytes="$(find "$staging/objects" -type f -exec stat -f '%z' {} + |
+    awk '{ total += $1 } END { printf "%.0f", total }')"
+else
+  local_bytes="$(find "$staging/objects" -type f -exec stat -c '%s' {} + |
+    awk '{ total += $1 } END { printf "%.0f", total }')"
+fi
 [[ "$local_objects" == "$expected_objects" ]] || fail "staged object count $local_objects does not match expected $expected_objects"
 [[ "$local_bytes" == "$expected_bytes" ]] || fail "staged object bytes $local_bytes does not match expected $expected_bytes"
 actual_manifest_sha256="$(sha256 "$staging/manifest.json")"

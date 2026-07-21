@@ -27,9 +27,9 @@ manifest_sha256="$(sha256 "$bundle/manifest.json")"
 
 env_file="$tmp_root/.env"
 cat > "$env_file" <<'EOF'
-CLOUDFLARE_ACCOUNT_ID=test-account
-R2_ACCESS_KEY_ID=test-access-key
-R2_SECRET_ACCESS_KEY=secret-must-not-leak
+R2_S3_ACCOUNT_ID=test-account
+R2_S3_ACCESS_KEY_ID=test-access-key
+R2_S3_SECRET_ACCESS_KEY=secret-must-not-leak
 EOF
 
 log="$tmp_root/rclone.log"
