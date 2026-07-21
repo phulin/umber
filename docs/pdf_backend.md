@@ -234,13 +234,28 @@ validated into the detached typed image model and its JPEG bytes pass through
 without decompression; dimensions, bit depth, device color space, and soft-mask
 identity are checked first, and every imported encoded or decoded stream has a
 256 MiB ceiling below the detached document's aggregate 1 GiB budget.
+Single-filter `/FlateDecode` resources are decoded before their filter keys are
+removed. A direct decode-parameter dictionary, or the one dictionary slot for
+a one-filter array, accepts the PDF defaults and PNG predictors 10--15 with
+positive `Colors` and `Columns` and `BitsPerComponent` 1, 2, 4, 8, or 16.
+Prediction is reversed one row at a time so both row allocation and final
+output remain under the caller's stream limit. TIFF predictor 2, unknown keys,
+invalid parameter types or ranges, invalid PNG row tags, partial rows, filter
+chains, and oversized output remain hard errors.
+
 This matches pdfTeX.web §§1548 and 1551--1552, where `\pdfximage` registers a
 PDF image and `\pdfrefximage` defers writing it until shipout, together with
 the pdfTeX manual §§4.9.1--4.9.2 requirement that included PDF pages retain
 self-contained color-space information and are written on first reference.
-The corresponding `pdftoepdf.cc` `copyObject`/`copyStream` path copies
-resource streams from `getUndecodedStream`, including their filter dictionary,
-rather than requiring JPEG decompression.
+The corresponding pdfTeX 1.40.27 `pdftoepdf.cc` source at TeX Live commit
+`651721339efa033920bff37b16783f636239a4f4` copies resource streams in
+`copyObject` lines 602--613 from `getUndecodedStream` together with the complete
+stream dictionary; its included-page content path at lines 990--1015 likewise
+copies `/Filter` and `/DecodeParms`. Thus pdfTeX preserves the encoded contract
+rather than discarding decode parameters. Umber's detached stream model instead
+normalizes supported Flate resources to decoded bytes. Its predictor validation
+follows PDF Reference 1.7 §3.3.3, Table 3.7 and the predictor-function rules and
+Table 3.8 on pages 74--77; encoded JPEG resources remain pass-through.
 
 Image configuration is consumed at its pdfTeX scope. The live image resolution
 sets missing raster DPI, gamma and high-color controls transform PNG samples,

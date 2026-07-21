@@ -3852,10 +3852,9 @@ fn decompress_lopdf_stream_bounded(
                 .join(", ")
         )));
     }
-    if stream.dict.get(b"DecodeParms").is_ok() {
-        return Err(PdfBuildError::InvalidPdfPage(
-            "Flate resource stream decode parameters are unsupported".to_owned(),
-        ));
+    let decode_parameters = flate_decode_parameters(stream)?;
+    if let Some(parameters) = decode_parameters {
+        return decompress_png_predictor_bounded(stream, parameters, limit);
     }
     let read_limit = u64::try_from(limit)
         .ok()
@@ -3870,6 +3869,201 @@ fn decompress_lopdf_stream_bounded(
         return Err(imported_pdf_stream_limit_error("decompressed", limit));
     }
     Ok(data)
+}
+
+#[derive(Clone, Copy)]
+struct FlatePngPredictor {
+    row_bytes: usize,
+    bytes_per_pixel: usize,
+}
+
+fn flate_decode_parameters(
+    stream: &lopdf::Stream,
+) -> Result<Option<FlatePngPredictor>, PdfBuildError> {
+    let parameters = match stream.dict.get(b"DecodeParms") {
+        Err(_) | Ok(lopdf::Object::Null) => return Ok(None),
+        Ok(lopdf::Object::Dictionary(parameters)) => parameters,
+        Ok(lopdf::Object::Array(parameters)) if parameters.len() == 1 => match &parameters[0] {
+            lopdf::Object::Null => return Ok(None),
+            lopdf::Object::Dictionary(parameters) => parameters,
+            _ => {
+                return Err(invalid_flate_decode_parameters(
+                    "array entry is not a dictionary",
+                ));
+            }
+        },
+        Ok(_) => return Err(invalid_flate_decode_parameters("value is not a dictionary")),
+    };
+    for (name, _) in parameters.iter() {
+        if !matches!(
+            name.as_slice(),
+            b"Predictor" | b"Colors" | b"BitsPerComponent" | b"Columns"
+        ) {
+            return Err(invalid_flate_decode_parameters(&format!(
+                "unsupported key {}",
+                String::from_utf8_lossy(name)
+            )));
+        }
+    }
+    let integer = |name: &'static [u8], default: i64| -> Result<i64, PdfBuildError> {
+        match parameters.get(name) {
+            Ok(value) => value.as_i64().map_err(|_| {
+                invalid_flate_decode_parameters(&format!(
+                    "{} is not an integer",
+                    String::from_utf8_lossy(name)
+                ))
+            }),
+            Err(_) => Ok(default),
+        }
+    };
+    let predictor = integer(b"Predictor", 1)?;
+    if predictor == 1 {
+        return Ok(None);
+    }
+    if !(10..=15).contains(&predictor) {
+        return Err(invalid_flate_decode_parameters(&format!(
+            "predictor {predictor} is unsupported"
+        )));
+    }
+    let colors = positive_usize(integer(b"Colors", 1)?, "Colors")?;
+    let columns = positive_usize(integer(b"Columns", 1)?, "Columns")?;
+    let bits_per_component = positive_usize(integer(b"BitsPerComponent", 8)?, "BitsPerComponent")?;
+    if !matches!(bits_per_component, 1 | 2 | 4 | 8 | 16) {
+        return Err(invalid_flate_decode_parameters(
+            "BitsPerComponent must be 1, 2, 4, 8, or 16",
+        ));
+    }
+    let bits_per_pixel = colors.checked_mul(bits_per_component).ok_or_else(|| {
+        invalid_flate_decode_parameters("sample width overflows the supported range")
+    })?;
+    let row_bits = bits_per_pixel.checked_mul(columns).ok_or_else(|| {
+        invalid_flate_decode_parameters("row width overflows the supported range")
+    })?;
+    let bytes_per_pixel = bits_per_pixel
+        .checked_add(7)
+        .map(|bits| bits / 8)
+        .ok_or_else(|| {
+            invalid_flate_decode_parameters("sample width overflows the supported range")
+        })?;
+    let row_bytes = row_bits
+        .checked_add(7)
+        .map(|bits| bits / 8)
+        .ok_or_else(|| {
+            invalid_flate_decode_parameters("row width overflows the supported range")
+        })?;
+    Ok(Some(FlatePngPredictor {
+        row_bytes,
+        bytes_per_pixel,
+    }))
+}
+
+fn positive_usize(value: i64, name: &str) -> Result<usize, PdfBuildError> {
+    usize::try_from(value)
+        .ok()
+        .filter(|value| *value != 0)
+        .ok_or_else(|| invalid_flate_decode_parameters(&format!("{name} must be positive")))
+}
+
+fn invalid_flate_decode_parameters(detail: &str) -> PdfBuildError {
+    PdfBuildError::InvalidPdfPage(format!(
+        "Flate resource stream decode parameters are invalid: {detail}"
+    ))
+}
+
+fn decompress_png_predictor_bounded(
+    stream: &lopdf::Stream,
+    parameters: FlatePngPredictor,
+    limit: usize,
+) -> Result<Vec<u8>, PdfBuildError> {
+    if parameters.row_bytes > limit {
+        return Err(imported_pdf_stream_limit_error("decompressed", limit));
+    }
+    let mut decoder = flate2::read::ZlibDecoder::new(stream.content.as_slice());
+    let mut previous = vec![0_u8; parameters.row_bytes];
+    let mut encoded = vec![0_u8; parameters.row_bytes];
+    let mut decoded = vec![0_u8; parameters.row_bytes];
+    let mut data = Vec::new();
+    loop {
+        let mut tag = [0_u8];
+        let count = decoder
+            .read(&mut tag)
+            .map_err(|error| PdfBuildError::InvalidPdfPage(error.to_string()))?;
+        if count == 0 {
+            break;
+        }
+        decoder.read_exact(&mut encoded).map_err(|error| {
+            invalid_flate_decode_parameters(&format!("PNG predictor row is truncated: {error}"))
+        })?;
+        let next_len = data
+            .len()
+            .checked_add(parameters.row_bytes)
+            .ok_or_else(|| imported_pdf_stream_limit_error("decompressed", limit))?;
+        if next_len > limit {
+            return Err(imported_pdf_stream_limit_error("decompressed", limit));
+        }
+        decode_png_predictor_row(
+            tag[0],
+            parameters.bytes_per_pixel,
+            &previous,
+            &encoded,
+            &mut decoded,
+        )?;
+        data.extend_from_slice(&decoded);
+        std::mem::swap(&mut previous, &mut decoded);
+    }
+    Ok(data)
+}
+
+fn decode_png_predictor_row(
+    tag: u8,
+    bytes_per_pixel: usize,
+    previous: &[u8],
+    encoded: &[u8],
+    decoded: &mut [u8],
+) -> Result<(), PdfBuildError> {
+    if tag > 4 {
+        return Err(invalid_flate_decode_parameters(&format!(
+            "PNG predictor row has invalid algorithm tag {tag}"
+        )));
+    }
+    for index in 0..encoded.len() {
+        let left = index
+            .checked_sub(bytes_per_pixel)
+            .map(|left| decoded[left])
+            .unwrap_or(0);
+        let above = previous[index];
+        let upper_left = index
+            .checked_sub(bytes_per_pixel)
+            .map(|left| previous[left])
+            .unwrap_or(0);
+        let prediction = match tag {
+            0 => 0,
+            1 => left,
+            2 => above,
+            3 => ((u16::from(left) + u16::from(above)) / 2) as u8,
+            4 => png_paeth(left, above, upper_left),
+            _ => unreachable!("algorithm tag was range-checked"),
+        };
+        decoded[index] = encoded[index].wrapping_add(prediction);
+    }
+    Ok(())
+}
+
+fn png_paeth(left: u8, above: u8, upper_left: u8) -> u8 {
+    let left = i32::from(left);
+    let above = i32::from(above);
+    let upper_left = i32::from(upper_left);
+    let estimate = left + above - upper_left;
+    let left_distance = (estimate - left).abs();
+    let above_distance = (estimate - above).abs();
+    let upper_left_distance = (estimate - upper_left).abs();
+    if left_distance <= above_distance && left_distance <= upper_left_distance {
+        left as u8
+    } else if above_distance <= upper_left_distance {
+        above as u8
+    } else {
+        upper_left as u8
+    }
 }
 
 fn import_lopdf_dct_image(
@@ -4849,6 +5043,104 @@ mod tests {
         let error = decompress_lopdf_stream_bounded(&stream, 64)
             .expect_err("expanded stream must respect the import ceiling");
         assert!(error.to_string().contains("exceeds 64 bytes"));
+    }
+
+    #[test]
+    fn imported_pdf_stream_decodes_bounded_png_predictor_parameters() {
+        let predicted = [
+            1, 10, 20, 30, 40, 5, 5, 5, 5, // Sub
+            2, 1, 1, 1, 1, 1, 1, 1, 1, // Up
+        ];
+        let compressed = zlib(&predicted).expect("compress predictor fixture");
+        let stream = lopdf::Stream::new(
+            lopdf::dictionary! {
+                "Filter" => "FlateDecode",
+                "DecodeParms" => lopdf::dictionary! {
+                    "Predictor" => 15,
+                    "Columns" => 2,
+                    "Colors" => 4,
+                },
+            },
+            compressed,
+        );
+        let decoded = decompress_lopdf_stream_bounded(&stream, 16)
+            .expect("PNG predictor parameters are supported");
+        assert_eq!(
+            decoded,
+            [
+                10, 20, 30, 40, 15, 25, 35, 45, 11, 21, 31, 41, 16, 26, 36, 46
+            ]
+        );
+    }
+
+    #[test]
+    fn imported_pdf_stream_rejects_malformed_or_unsupported_decode_parameters() {
+        let cases = [
+            (
+                lopdf::dictionary! { "Predictor" => 2 },
+                "predictor 2 is unsupported",
+            ),
+            (
+                lopdf::dictionary! { "Predictor" => 15, "Colors" => 0 },
+                "Colors must be positive",
+            ),
+            (
+                lopdf::dictionary! { "Predictor" => 15, "BitsPerComponent" => 3 },
+                "BitsPerComponent must be 1, 2, 4, 8, or 16",
+            ),
+            (
+                lopdf::dictionary! { "Predictor" => 15, "EarlyChange" => 1 },
+                "unsupported key EarlyChange",
+            ),
+        ];
+        for (parameters, expected) in cases {
+            let stream = lopdf::Stream::new(
+                lopdf::dictionary! {
+                    "Filter" => "FlateDecode",
+                    "DecodeParms" => parameters,
+                },
+                zlib(&[0, 1]).expect("compress malformed-parameter fixture"),
+            );
+            let error = decompress_lopdf_stream_bounded(&stream, 16)
+                .expect_err("invalid parameters must be rejected");
+            assert!(error.to_string().contains(expected), "{error}");
+        }
+
+        for (predicted, expected) in [
+            (&[5, 1, 2][..], "invalid algorithm tag 5"),
+            (&[0, 1][..], "PNG predictor row is truncated"),
+        ] {
+            let stream = lopdf::Stream::new(
+                lopdf::dictionary! {
+                    "Filter" => "FlateDecode",
+                    "DecodeParms" => lopdf::dictionary! {
+                        "Predictor" => 15,
+                        "Columns" => 2,
+                    },
+                },
+                zlib(predicted).expect("compress malformed-row fixture"),
+            );
+            let error = decompress_lopdf_stream_bounded(&stream, 16)
+                .expect_err("malformed predictor rows must be rejected");
+            assert!(error.to_string().contains(expected), "{error}");
+        }
+    }
+
+    #[test]
+    fn imported_pdf_png_predictor_stops_at_the_caller_limit() {
+        let stream = lopdf::Stream::new(
+            lopdf::dictionary! {
+                "Filter" => "FlateDecode",
+                "DecodeParms" => lopdf::dictionary! {
+                    "Predictor" => 15,
+                    "Columns" => 4,
+                },
+            },
+            zlib(&[0, 1, 2, 3, 4, 0, 5, 6, 7, 8]).expect("compress bounded predictor fixture"),
+        );
+        let error = decompress_lopdf_stream_bounded(&stream, 7)
+            .expect_err("predictor output must respect the import ceiling");
+        assert!(error.to_string().contains("exceeds 7 bytes"));
     }
 
     #[test]
