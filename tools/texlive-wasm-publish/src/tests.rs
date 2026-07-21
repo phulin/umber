@@ -183,10 +183,10 @@ fn format_input_closures_are_canonical_and_verified() -> Result<()> {
     corrupt_root
         .formats
         .get_mut("plain")
-        .unwrap()
+        .expect("plain format")
         .input_closure
         .as_mut()
-        .unwrap()
+        .expect("plain closure")
         .keys
         .insert(0, "tex:missing.tex".to_owned());
     let mut bytes = serde_json::to_vec(&corrupt_root)?;
@@ -469,6 +469,66 @@ fn derives_bounded_cross_package_and_package_peer_hints_from_tlpdb() -> Result<(
         manifest.files["tex:beta.sty"].dependencies,
         ["tex:beta.cfg"]
     );
+    Ok(())
+}
+
+#[test]
+fn large_package_peer_hints_rotate_with_bounded_deterministic_output() -> Result<()> {
+    const FILE_COUNT: usize = 24;
+    const PEER_BUDGET: usize = 16;
+
+    let fixture = TempDir::new()?;
+    let root_path = fixture.path().join("root");
+    fs::create_dir_all(&root_path)?;
+    let mut database_contents = format!("name large\nrunfiles size={FILE_COUNT}\n");
+    for index in 0..FILE_COUNT {
+        let relative = format!("tex/latex/large/file-{index:02}.sty");
+        write(&root_path, &relative, format!("file {index}\n").as_bytes())?;
+        database_contents.push_str(&format!(" texmf-dist/{relative}\n"));
+    }
+    let database = fixture.path().join("texlive.tlpdb");
+    fs::write(&database, database_contents)?;
+    let mut config = config(vec![root("runtime", &root_path)?]);
+    config.dependencies.clear();
+    config.package_database = Some(database);
+
+    let output_a = fixture.path().join("out-a");
+    let output_b = fixture.path().join("out-b");
+    let manifest = publish(&config, &output_a)?;
+    publish(&config, &output_b)?;
+
+    let package_keys = (0..FILE_COUNT)
+        .map(|index| format!("tex:file-{index:02}.sty"))
+        .collect::<std::collections::BTreeSet<_>>();
+    let mut covered = std::collections::BTreeSet::new();
+    let mut peer_sets = std::collections::BTreeSet::new();
+    for key in &package_keys {
+        let dependencies = &manifest.files[key].dependencies;
+        assert_eq!(dependencies.len(), PEER_BUDGET);
+        assert!(!dependencies.contains(key));
+        assert!(
+            dependencies
+                .iter()
+                .all(|dependency| package_keys.contains(dependency))
+        );
+        covered.extend(dependencies.iter().cloned());
+        peer_sets.insert(dependencies.clone());
+    }
+    assert_eq!(covered, package_keys);
+    assert!(
+        peer_sets.len() > 1,
+        "peer windows must rotate between owners"
+    );
+    assert_eq!(
+        fs::read(output_a.join("manifest.json"))?,
+        fs::read(output_b.join("manifest.json"))?
+    );
+    assert_eq!(
+        directory_bytes(&output_a.join("objects"))?,
+        directory_bytes(&output_b.join("objects"))?
+    );
+    verify_sharded_snapshot(&output_a)?;
+    verify_sharded_snapshot(&output_b)?;
     Ok(())
 }
 

@@ -72,6 +72,14 @@ publisher verifies that every inline record exactly matches its authoritative
 entry. Hints remain transport optimization only and do not change engine
 resource semantics.
 
+The TeX Live package database supplies same-package peer hints and direct
+package dependency representatives. For packages with more than 16 preferred
+runfiles, each file receives the next 16 peers in canonical key order, wrapping
+at the end of the package. These deterministic rotating windows collectively
+cover the package as files are discovered while keeping peer metadata linear
+in package size. Cross-package representatives share the existing total budget
+of 32 sorted hints per owner.
+
 After the pinned root and selected shard digest validate, absence of a key
 from its canonical shard is authoritative distribution absence. No other
 shard may contain the key. The staged verifier rejects noncanonical JSON,

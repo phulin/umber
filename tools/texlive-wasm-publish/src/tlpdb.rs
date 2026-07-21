@@ -1,4 +1,5 @@
 use std::collections::{BTreeMap, BTreeSet};
+use std::ops::Bound::{Excluded, Unbounded};
 
 use anyhow::{Result, bail};
 
@@ -77,10 +78,8 @@ impl PackageDatabase {
         let mut result = BTreeMap::new();
         for (owner, package) in key_packages {
             let mut hints = BTreeSet::new();
-            if let Some(peers) = package_keys.get(package)
-                && peers.len() <= MAX_PACKAGE_PEERS
-            {
-                hints.extend(peers.iter().filter(|key| *key != &owner).cloned());
+            if let Some(peers) = package_keys.get(package) {
+                extend_peer_hints(&mut hints, &owner, peers);
             }
             for dependency in self.dependencies.get(package).into_iter().flatten() {
                 let Some(keys) = package_keys.get(dependency.as_str()) else {
@@ -98,6 +97,16 @@ impl PackageDatabase {
         }
         result
     }
+}
+
+fn extend_peer_hints(hints: &mut BTreeSet<String>, owner: &str, peers: &BTreeSet<String>) {
+    hints.extend(
+        peers
+            .range::<str, _>((Excluded(owner), Unbounded))
+            .chain(peers.range::<str, _>((Unbounded, Excluded(owner))))
+            .take(MAX_PACKAGE_PEERS)
+            .cloned(),
+    );
 }
 
 fn is_preferred_key(key: &str, relative: &str) -> bool {
