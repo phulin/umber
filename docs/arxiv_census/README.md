@@ -95,14 +95,25 @@ roughly 9 minutes for 100 rows, versus 102 minutes.
 A non-VF accepted paper (`2402.06118`) confirms that the remaining work follows
 its inputs rather than a hidden per-glyph finalizer loop: 9,107 positioned
 events pass through VF lowering unchanged in 0.048 milliseconds. Before the
-image fix, 0.931 of its 1.05-second PDF build imported three distinct RGBA PNGs
-totaling 7.64 MB: IDAT extraction/copy took 0.004 seconds, inflate 0.079,
-unfilter/split 0.231, and re-encoding 0.615. Splitting the still-filtered PNG
-rows into color and alpha predictors and using the fast bounded encoder reduces
-transform and encode to 0.124 and 0.099 seconds. Image import is 0.312 seconds
-and the complete PDF build is 0.429 seconds; validation and serialization take
-0.10 and 1.67 milliseconds, and `pdfinfo` validates the resulting 18-page,
-8.37 MB PDF.
+image fixes, 0.931 of its 1.05-second PDF build imported three distinct RGBA
+PNGs totaling 7.64 MB. Their 4,241 rows contain 16,164,821 pixels, or 64,659,284
+decoded RGBA bytes; preserving the source predictors produces 48,498,704 color
+bytes and 16,169,062 alpha bytes, including one filter byte per derived row.
+The original default encoder spent 0.704 seconds recompressing those streams.
+The level-1 encoder reduces that stage to a 0.097-second median while retaining
+an 8.37 MB PDF, versus 6.90 MB at level 6; level 0 would expose roughly 64.7 MB
+of derived image data and is not a reasonable alternative.
+
+The alpha path now inflates one filtered scanline, separates it into filtered
+color and soft-mask scanlines, and feeds both encoders immediately. It no
+longer retains the complete 64.66 MB RGBA buffer plus 48.50 MB color and 16.17
+MB alpha buffers; the largest row workspace is 47,187 bytes. Across three
+identical-input runs, median inflate, split, and encode times are 0.068, 0.059,
+and 0.097 seconds, corresponding to 957, 1,094, and 665 MB/s over their relevant
+uncompressed byte counts. Median image import is 0.226 seconds and the complete
+PDF build is 0.351 seconds. All three PDFs have the same SHA-256 digest, and
+Poppler extraction gives byte-identical pixels before and after the streaming
+change.
 
 JPEG data and opaque PNG IDAT streams were already validated and passed through
 without decode/re-encode. Image source resolution now caches an immutable
@@ -113,7 +124,15 @@ across pages and forms. Distinct PDF-page image allocations intentionally remain
 distinct because their form/group object identity is observable; repeated
 references to one allocation already share its imported form. All PNG decoded-
 length, filter-byte, dimension, imported-stream, and aggregate PDF bounds remain
-in force.
+in force. The PDF-specific color/soft-mask separation cannot be delegated to a
+general image decoder. A focused future evaluation may replace Umber's custom
+PNG syntax and inflate handling, while adding full chunk-checksum validation,
+with the maintained pure-Rust `png` crate. Its ordinary reader exposes
+unfiltered pixels and would discard the predictors used here, so only a proven
+low-level streaming integration should replace the current bounded path. The
+broad `image` crate is not a suitable
+replacement because it adds unrelated formats and full-image decoding without
+providing PDF predictor or soft-mask construction.
 Completed rows resume by immutable input and artifact identity. Offline
 reproducibility is attested without recompilation by rehashing those receipts,
 based on the acquisition layer's authenticated-before-use cache invariant; an

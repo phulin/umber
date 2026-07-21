@@ -1236,7 +1236,7 @@ fn pdf_from_committed_artifacts_at_dpi_with_virtual_fonts(
     let bytes = document.to_pdf_bytes_with_options(options)?;
     if std::env::var_os("UMBER_RESOURCE_TELEMETRY").is_some_and(|value| value == "1") {
         eprintln!(
-            "PDF_TELEMETRY map_resolve_ns={} positioning_ns={} vf_ns={} font_usage_ns={} destinations_ns={} annotations_ns={} object_ns={} image_import_ns={} image_parse_copy_ns={} image_decode_ns={} image_transform_ns={} image_encode_ns={} image_cache_hits={} font_embed_ns={} validation_ns={} serialization_ns={} total_ns={} pages={} forms={} fonts={} images={} raster_images={} pdf_images={} image_input_bytes={} unique_images={} lowered_images={} objects={} output_bytes={}",
+            "PDF_TELEMETRY map_resolve_ns={} positioning_ns={} vf_ns={} font_usage_ns={} destinations_ns={} annotations_ns={} object_ns={} image_import_ns={} image_parse_copy_ns={} image_decode_ns={} image_transform_ns={} image_encode_ns={} image_cache_hits={} image_pixels={} image_rows={} image_raw_bytes={} image_color_bytes={} image_alpha_bytes={} image_peak_row_bytes={} image_deflate_level={} image_deflate_window_bits={} font_embed_ns={} validation_ns={} serialization_ns={} total_ns={} pages={} forms={} fonts={} images={} raster_images={} pdf_images={} image_input_bytes={} unique_images={} lowered_images={} objects={} output_bytes={}",
             map_resolve_ns,
             positioning_ns,
             vf_ns,
@@ -1250,6 +1250,14 @@ fn pdf_from_committed_artifacts_at_dpi_with_virtual_fonts(
             image_telemetry.transform_ns,
             image_telemetry.encode_ns,
             image_telemetry.cache_hits,
+            image_telemetry.pixels,
+            image_telemetry.rows,
+            image_telemetry.raw_bytes,
+            image_telemetry.color_bytes,
+            image_telemetry.alpha_bytes,
+            image_telemetry.peak_row_bytes,
+            DERIVED_IMAGE_COMPRESSION_LEVEL,
+            DERIVED_IMAGE_WINDOW_BITS,
             font_embed_ns,
             validation_ns,
             serialization_started.elapsed().as_nanos(),
@@ -3286,7 +3294,16 @@ struct ImageImportTelemetry {
     transform_ns: u128,
     encode_ns: u128,
     cache_hits: usize,
+    pixels: usize,
+    rows: usize,
+    raw_bytes: usize,
+    color_bytes: usize,
+    alpha_bytes: usize,
+    peak_row_bytes: usize,
 }
+
+const DERIVED_IMAGE_COMPRESSION_LEVEL: u32 = 1;
+const DERIVED_IMAGE_WINDOW_BITS: u8 = 15;
 
 #[allow(clippy::disallowed_methods)] // Process telemetry; PDF content never observes it.
 fn raster_image_streams(
@@ -3527,9 +3544,26 @@ fn png_alpha_streams(
         .checked_mul(pixel_bytes)
         .ok_or(PdfBuildError::InvalidPng)?;
     let height = usize::try_from(metadata.height).map_err(|_| PdfBuildError::InvalidPng)?;
+    let pixels = width.checked_mul(height).ok_or(PdfBuildError::InvalidPng)?;
+    telemetry.pixels = telemetry.pixels.saturating_add(pixels);
+    telemetry.rows = telemetry.rows.saturating_add(height);
+    telemetry.raw_bytes = telemetry
+        .raw_bytes
+        .saturating_add(row_bytes.saturating_mul(height));
     let started = std::time::Instant::now();
     let compressed = png_idat(bytes)?;
     telemetry.parse_copy_ns += started.elapsed().as_nanos();
+    if metadata.bits_per_component == 8 {
+        return png_alpha_streams_filtered(
+            &compressed,
+            metadata.color_space,
+            width,
+            height,
+            row_bytes,
+            pixel_bytes,
+            telemetry,
+        );
+    }
     let started = std::time::Instant::now();
     let mut decoder = flate2::read::ZlibDecoder::new(compressed.as_slice());
     let mut filtered = Vec::new();
@@ -3541,48 +3575,25 @@ fn png_alpha_streams(
         return Err(PdfBuildError::InvalidPng);
     }
     let started = std::time::Instant::now();
-    if metadata.bits_per_component == 16 {
-        let mut previous = vec![0u8; row_bytes];
-        let mut current = vec![0u8; row_bytes];
-        let mut color = Vec::with_capacity(row_bytes * height);
-        let mut alpha = Vec::with_capacity(width * component_bytes * height);
-        for row in filtered.chunks_exact(row_bytes + 1) {
-            unfilter_png_row(row[0], &row[1..], &previous, &mut current, pixel_bytes)?;
-            for pixel in current.chunks_exact(pixel_bytes) {
-                color.extend_from_slice(&pixel[..color_components * component_bytes]);
-                alpha.extend_from_slice(&pixel[color_components * component_bytes..]);
-            }
-            std::mem::swap(&mut previous, &mut current);
-        }
-        telemetry.transform_ns += started.elapsed().as_nanos();
-        let started = std::time::Instant::now();
-        let streams = (zlib(&color)?, zlib(&alpha)?);
-        telemetry.encode_ns += started.elapsed().as_nanos();
-        return Ok((
-            streams.0,
-            PdfImageFilter::Flate,
-            streams.1,
-            PdfImageFilter::Flate,
-        ));
-    }
-    let color_row_bytes = width
-        .checked_mul(color_components * component_bytes)
-        .ok_or(PdfBuildError::InvalidPng)?;
-    let alpha_row_bytes = width
-        .checked_mul(component_bytes)
-        .ok_or(PdfBuildError::InvalidPng)?;
-    let mut color = Vec::with_capacity((color_row_bytes + 1).saturating_mul(height));
-    let mut alpha = Vec::with_capacity((alpha_row_bytes + 1).saturating_mul(height));
+    let mut previous = vec![0u8; row_bytes];
+    let mut current = vec![0u8; row_bytes];
+    let mut color = Vec::with_capacity(row_bytes * height);
+    let mut alpha = Vec::with_capacity(width * component_bytes * height);
+    telemetry.color_bytes = telemetry.color_bytes.saturating_add(
+        width
+            .saturating_mul(color_components * component_bytes)
+            .saturating_mul(height),
+    );
+    telemetry.alpha_bytes = telemetry
+        .alpha_bytes
+        .saturating_add(width.saturating_mul(component_bytes).saturating_mul(height));
     for row in filtered.chunks_exact(row_bytes + 1) {
-        if row[0] > 4 {
-            return Err(PdfBuildError::InvalidPng);
-        }
-        color.push(row[0]);
-        alpha.push(row[0]);
-        for pixel in row[1..].chunks_exact(pixel_bytes) {
+        unfilter_png_row(row[0], &row[1..], &previous, &mut current, pixel_bytes)?;
+        for pixel in current.chunks_exact(pixel_bytes) {
             color.extend_from_slice(&pixel[..color_components * component_bytes]);
             alpha.extend_from_slice(&pixel[color_components * component_bytes..]);
         }
+        std::mem::swap(&mut previous, &mut current);
     }
     telemetry.transform_ns += started.elapsed().as_nanos();
     let started = std::time::Instant::now();
@@ -3590,10 +3601,103 @@ fn png_alpha_streams(
     telemetry.encode_ns += started.elapsed().as_nanos();
     Ok((
         streams.0,
-        PdfImageFilter::FlatePngPredictor {
-            colors: raster_color_components(metadata.color_space),
-        },
+        PdfImageFilter::Flate,
         streams.1,
+        PdfImageFilter::Flate,
+    ))
+}
+
+#[allow(clippy::disallowed_methods)] // Process telemetry; PDF content never observes it.
+fn png_alpha_streams_filtered(
+    compressed: &[u8],
+    color_space: PdfRasterColorSpace,
+    width: usize,
+    height: usize,
+    row_bytes: usize,
+    pixel_bytes: usize,
+    telemetry: &mut ImageImportTelemetry,
+) -> Result<(Vec<u8>, PdfImageFilter, Vec<u8>, PdfImageFilter), PdfBuildError> {
+    let color_components = usize::from(raster_color_components(color_space));
+    let color_row_bytes = width
+        .checked_mul(color_components)
+        .ok_or(PdfBuildError::InvalidPng)?;
+    telemetry.color_bytes = telemetry
+        .color_bytes
+        .saturating_add((color_row_bytes + 1).saturating_mul(height));
+    telemetry.alpha_bytes = telemetry
+        .alpha_bytes
+        .saturating_add((width + 1).saturating_mul(height));
+    telemetry.peak_row_bytes = telemetry.peak_row_bytes.max(
+        (row_bytes + 1)
+            .saturating_add(color_row_bytes + 1)
+            .saturating_add(width + 1),
+    );
+    let mut decoder = flate2::read::ZlibDecoder::new(compressed);
+    let mut color_encoder = flate2::write::ZlibEncoder::new(
+        Vec::new(),
+        flate2::Compression::new(DERIVED_IMAGE_COMPRESSION_LEVEL),
+    );
+    let mut alpha_encoder = flate2::write::ZlibEncoder::new(
+        Vec::new(),
+        flate2::Compression::new(DERIVED_IMAGE_COMPRESSION_LEVEL),
+    );
+    let mut row = vec![0; row_bytes + 1];
+    let mut color_row = vec![0; color_row_bytes + 1];
+    let mut alpha_row = vec![0; width + 1];
+    for _ in 0..height {
+        let started = std::time::Instant::now();
+        decoder
+            .read_exact(&mut row)
+            .map_err(|_| PdfBuildError::InvalidPng)?;
+        telemetry.decode_ns += started.elapsed().as_nanos();
+
+        let started = std::time::Instant::now();
+        if row[0] > 4 {
+            return Err(PdfBuildError::InvalidPng);
+        }
+        color_row[0] = row[0];
+        alpha_row[0] = row[0];
+        for (index, pixel) in row[1..].chunks_exact(pixel_bytes).enumerate() {
+            let color_start = 1 + index * color_components;
+            color_row[color_start..color_start + color_components]
+                .copy_from_slice(&pixel[..color_components]);
+            alpha_row[index + 1] = pixel[color_components];
+        }
+        telemetry.transform_ns += started.elapsed().as_nanos();
+
+        let started = std::time::Instant::now();
+        color_encoder
+            .write_all(&color_row)
+            .map_err(|_| PdfBuildError::InvalidPng)?;
+        alpha_encoder
+            .write_all(&alpha_row)
+            .map_err(|_| PdfBuildError::InvalidPng)?;
+        telemetry.encode_ns += started.elapsed().as_nanos();
+    }
+    let started = std::time::Instant::now();
+    let mut extra = [0];
+    if decoder
+        .read(&mut extra)
+        .map_err(|_| PdfBuildError::InvalidPng)?
+        != 0
+    {
+        return Err(PdfBuildError::InvalidPng);
+    }
+    telemetry.decode_ns += started.elapsed().as_nanos();
+    let started = std::time::Instant::now();
+    let color = color_encoder
+        .finish()
+        .map_err(|_| PdfBuildError::InvalidPng)?;
+    let alpha = alpha_encoder
+        .finish()
+        .map_err(|_| PdfBuildError::InvalidPng)?;
+    telemetry.encode_ns += started.elapsed().as_nanos();
+    Ok((
+        color,
+        PdfImageFilter::FlatePngPredictor {
+            colors: raster_color_components(color_space),
+        },
+        alpha,
         PdfImageFilter::FlatePngPredictor { colors: 1 },
     ))
 }
@@ -3732,7 +3836,10 @@ fn paeth(left: u8, up: u8, upper_left: u8) -> u8 {
 fn zlib(bytes: &[u8]) -> Result<Vec<u8>, PdfBuildError> {
     // Generated image planes retain PNG prediction, so fast deflate bounds
     // finalization latency without discarding useful source compression structure.
-    let mut encoder = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::fast());
+    let mut encoder = flate2::write::ZlibEncoder::new(
+        Vec::new(),
+        flate2::Compression::new(DERIVED_IMAGE_COMPRESSION_LEVEL),
+    );
     encoder
         .write_all(bytes)
         .map_err(|_| PdfBuildError::InvalidPng)?;
@@ -5520,7 +5627,10 @@ mod tests {
 
     #[test]
     fn rgba_png_ximage_uses_a_typed_soft_mask() {
-        let png = test_png(6, &[0, 255, 0, 0, 64, 0, 0, 255, 192]);
+        // The second pixel is Sub-filtered against the first. Keeping those
+        // filtered component bytes valid after removing alpha is the key fast
+        // path: PDF's predictor changes from four to three components.
+        let png = test_png(6, &[1, 255, 0, 0, 64, 1, 0, 255, 128]);
         let image = tex_state::PdfExternalImageSource {
             identity: ContentHash::from_bytes(&png),
             metadata: PdfExternalImageMetadata::Raster(tex_state::PdfRasterImageMetadata {
@@ -5559,6 +5669,10 @@ mod tests {
                 .as_reference()
                 .expect("indirect mask"),
             (2, 0)
+        );
+        assert_eq!(
+            image.decompressed_content().expect("color samples"),
+            vec![255, 0, 0, 0, 0, 255]
         );
         let mask = parsed
             .get_object((2, 0))
@@ -5646,6 +5760,36 @@ mod tests {
             .map(|(_, value)| value.as_reference().expect("image reference"))
             .collect::<BTreeSet<_>>();
         assert_eq!(references.len(), 1, "both resource names share one object");
+    }
+
+    #[test]
+    fn streamed_rgba_split_rejects_short_and_overlong_scanlines() {
+        let metadata = tex_state::PdfRasterImageMetadata {
+            format: PdfRasterFormat::Png,
+            width: 2,
+            height: 1,
+            bits_per_component: 8,
+            color_space: PdfRasterColorSpace::Rgb,
+            alpha: true,
+            png_color_type: Some(6),
+        };
+        let stores = Universe::default();
+        let parameters = output_parameters(&stores);
+        for scanline in [
+            vec![0, 255, 0, 0, 64, 0, 0, 255],
+            vec![0, 255, 0, 0, 64, 0, 0, 255, 192, 7],
+        ] {
+            let png = test_png(6, &scanline);
+            assert!(matches!(
+                raster_image_streams(
+                    &png,
+                    metadata,
+                    parameters,
+                    &mut ImageImportTelemetry::default(),
+                ),
+                Err(PdfBuildError::InvalidPng)
+            ));
+        }
     }
 
     #[test]
