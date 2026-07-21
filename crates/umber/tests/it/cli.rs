@@ -400,16 +400,16 @@ fn pdfdraftmode_does_not_replace_the_requested_pdf_output() {
 
 #[test]
 #[allow(clippy::disallowed_methods)] // host-side temporary files and command execution.
-fn pdf_lowering_failure_does_not_publish_any_driver_output() {
-    let temp_dir = tempfile::tempdir().expect("create PDF failure temp dir");
+fn pdf_lowering_omits_dvi_special_and_publishes_all_driver_output() {
+    let temp_dir = tempfile::tempdir().expect("create DVI-special temp dir");
     let source = temp_dir.path().join("text.tex");
     let pdf = temp_dir.path().join("text.pdf");
     let dvi = temp_dir.path().join("text.dvi");
     fs::write(
         &source,
-        "\\pdfoutput=1\\shipout\\vbox{\\special{unsupported}}\\end\n",
+        "\\pdfoutput=1\\shipout\\vbox{\\special{dvi-only-payload}}\\end\n",
     )
-    .expect("write unsupported PDF special fixture");
+    .expect("write DVI-special fixture");
 
     let output = Command::new(env!("CARGO_BIN_EXE_umber"))
         .env("SOURCE_DATE_EPOCH", PINNED_SOURCE_DATE_EPOCH)
@@ -422,20 +422,30 @@ fn pdf_lowering_failure_does_not_publish_any_driver_output() {
         .arg(&dvi)
         .arg(&source)
         .output()
-        .expect("run unsupported PDF special fixture");
+        .expect("run DVI-special PDF fixture");
 
-    assert!(!output.status.success());
     assert!(
-        String::from_utf8_lossy(&output.stderr).contains("PDF output does not support special")
+        output.status.success(),
+        "DVI-special PDF run failed:\n{}",
+        String::from_utf8_lossy(&output.stderr)
     );
     assert!(
         String::from_utf8_lossy(&output.stderr).contains("RESOURCE_ENGINE_ACCEPTED"),
         "accepted-engine telemetry must precede detached finalization"
     );
-    assert!(!pdf.exists(), "failed PDF finalization published a file");
+    let pdf_bytes = fs::read(&pdf).expect("PDF output was published");
     assert!(
-        !dvi.exists(),
-        "failed PDF finalization published peer output"
+        !pdf_bytes
+            .windows(b"dvi-only-payload".len())
+            .any(|window| window == b"dvi-only-payload"),
+        "DVI-only special leaked into PDF output"
+    );
+    let dvi_bytes = fs::read(&dvi).expect("DVI peer output was published");
+    assert!(
+        dvi_bytes
+            .windows(b"dvi-only-payload".len())
+            .any(|window| window == b"dvi-only-payload"),
+        "DVI peer output lost its special payload"
     );
 }
 

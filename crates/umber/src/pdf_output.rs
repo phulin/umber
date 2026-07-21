@@ -659,6 +659,7 @@ fn pdf_from_committed_artifacts_at_dpi_with_virtual_fonts(
                     }
                 },
                 PositionedEvent::PdfAnnotation(_) => {}
+                PositionedEvent::Special(special) if special.class == "dvi" => {}
                 PositionedEvent::Special(special) => {
                     return Err(PdfBuildError::UnsupportedSpecial(special.class));
                 }
@@ -1134,6 +1135,7 @@ fn pdf_from_committed_artifacts_at_dpi_with_virtual_fonts(
                         bytes,
                     }));
                 }
+                PositionedEvent::Special(special) if special.class == "dvi" => {}
                 PositionedEvent::Special(special) => {
                     return Err(PdfBuildError::UnsupportedSpecial(special.class));
                 }
@@ -7342,6 +7344,42 @@ mod tests {
                 .decoded
                 .windows(2)
                 .any(|window| window == b"re")
+        );
+    }
+
+    #[test]
+    fn dvi_specials_are_omitted_from_pdf_pages_and_forms() {
+        let (mut stores, run) = run(concat!(
+            "\\pdfoutput=1\\pdfcompresslevel=0",
+            "\\setbox0=\\hbox{\\special{form-dvi-special}\\vrule width2pt height3pt}",
+            "\\pdfxform0",
+            "\\shipout\\hbox{\\special{page-dvi-special}\\pdfrefxform1}\\end",
+        ));
+
+        let page = tex_out::PageArtifact::from_bytes(run.committed_artifacts[0].bytes())
+            .expect("parse committed page");
+        assert!(page.effects.iter().any(|effect| matches!(
+            effect,
+            tex_out::PageEffect::Special { class, payload }
+                if class == "dvi" && payload == b"page-dvi-special"
+        )));
+        let form = stores.pdf_form_artifact(1).expect("committed form");
+        let form = tex_out::PageArtifact::from_bytes(form.bytes()).expect("parse committed form");
+        assert!(form.effects.iter().any(|effect| matches!(
+            effect,
+            tex_out::PageEffect::Special { class, payload }
+                if class == "dvi" && payload == b"form-dvi-special"
+        )));
+
+        let pdf = pdf_from_committed_artifacts(&mut stores, &run.committed_artifacts)
+            .expect("DVI-class specials do not block PDF assembly");
+        assert!(
+            !pdf.windows(b"page-dvi-special".len())
+                .any(|window| window == b"page-dvi-special")
+        );
+        assert!(
+            !pdf.windows(b"form-dvi-special".len())
+                .any(|window| window == b"form-dvi-special")
         );
     }
 

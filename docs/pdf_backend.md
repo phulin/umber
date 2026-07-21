@@ -188,6 +188,12 @@ failures reject cycles, excessive recursion/stack/work/output, or invalid
 local character references. This finalizer-only expansion leaves committed
 artifacts and DVI output unchanged.
 
+Ordinary `\special` nodes remain tagged as class `dvi` in committed page and
+form artifacts. DVI serialization preserves their payloads, while PDF
+finalization omits them as non-PDF specials, matching pdfTeX's PDF-output
+behavior. An unrecognized non-DVI special class remains a typed finalization
+error rather than being copied into a PDF content stream.
+
 Detached finalization resolves the effective font map once per document and
 uses that immutable name-indexed snapshot for font selection, encoding lookup,
 tagged-space decisions, and font-object construction. It does not replay the
