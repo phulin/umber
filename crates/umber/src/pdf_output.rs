@@ -5082,14 +5082,18 @@ mod tests {
             &mut 100,
         )
         .expect("import page with DCT image resource");
-        let (_, data) = imported
+        let (dictionary, data) = imported
             .dependencies
             .iter()
             .find_map(|object| match &object.object {
-                PdfObject::ImageXObject { image, data } => Some((image, data)),
+                PdfObject::EncodedStream { dictionary, data } => Some((dictionary, data)),
                 _ => None,
             })
-            .expect("typed image dependency");
+            .expect("encoded image dependency");
+        assert!(matches!(
+            dictionary.get(b"Filter"),
+            Some(PdfValue::Name(name)) if name.as_bytes() == b"DCTDecode"
+        ));
         assert_eq!(data, b"bounded-pass-through-jpeg");
     }
 
