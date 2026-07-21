@@ -1,0 +1,3 @@
+id	reason
+2606.03364	declared pdflatex fails under pinned TeX Live 2025 because its TeX Live 2023 minted frozen cache is incompatible
+2607.12706	declared pdflatex fails because numeric unsrt bibliography conflicts with the document's author-year natbib mode

@@ -18,9 +18,19 @@
   },
   "metadataRows": 3107014,
   "eligibleRows": 60329,
-  "candidatesExamined": 109,
+  "candidatesExamined": 111,
   "acceptedDocuments": 100,
-  "acceptance": "source bundle unpacks and contains a live LaTeX documentclass entrypoint",
+  "acceptance": "source bundle unpacks, contains a live LaTeX documentclass entrypoint, and is not listed in the exclusions TSV",
   "manifest": "pdftex-arxiv-recent-sample-100.tsv",
-  "sourceLock": "pdftex-arxiv-recent-sample-100.lock.tsv"
+  "sourceLock": "pdftex-arxiv-recent-sample-100.lock.tsv",
+  "exclusions": "pdftex-arxiv-recent-sample-100.exclusions.tsv",
+  "referenceValidation": {
+    "date": "2026-07-21",
+    "result": "100/100",
+    "declaredCompilers": {
+      "latex": 2,
+      "pdflatex": 94,
+      "xelatex": 4
+    }
+  }
 }

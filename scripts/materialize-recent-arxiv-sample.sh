@@ -3,10 +3,11 @@ set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 selector="$repo_root/scripts/profile-pdftex-arxiv.sh"
-candidates=${1:?usage: $0 CANDIDATES_TSV DESTINATION OUTPUT_TSV LOCK_TSV}
-destination=${2:?usage: $0 CANDIDATES_TSV DESTINATION OUTPUT_TSV LOCK_TSV}
-output=${3:?usage: $0 CANDIDATES_TSV DESTINATION OUTPUT_TSV LOCK_TSV}
-lock=${4:?usage: $0 CANDIDATES_TSV DESTINATION OUTPUT_TSV LOCK_TSV}
+candidates=${1:?usage: $0 CANDIDATES_TSV DESTINATION OUTPUT_TSV LOCK_TSV [EXCLUSIONS_TSV]}
+destination=${2:?usage: $0 CANDIDATES_TSV DESTINATION OUTPUT_TSV LOCK_TSV [EXCLUSIONS_TSV]}
+output=${3:?usage: $0 CANDIDATES_TSV DESTINATION OUTPUT_TSV LOCK_TSV [EXCLUSIONS_TSV]}
+lock=${4:?usage: $0 CANDIDATES_TSV DESTINATION OUTPUT_TSV LOCK_TSV [EXCLUSIONS_TSV]}
+exclusions=${5:-}
 sample_size=${ARXIV_RECENT_SAMPLE_SIZE:-100}
 candidate_limit=${ARXIV_RECENT_CANDIDATE_LIMIT:-150}
 jobs=${ARXIV_RECENT_JOBS:-4}
@@ -19,6 +20,13 @@ jobs=${ARXIV_RECENT_JOBS:-4}
   echo "invalid candidate TSV header" >&2
   exit 2
 }
+if [[ -n $exclusions ]]; then
+  [[ -f $exclusions ]] || { echo "exclusions TSV not found: $exclusions" >&2; exit 2; }
+  [[ $(sed -n '1p' "$exclusions") == $'id\treason' ]] || {
+    echo "invalid exclusions TSV header" >&2
+    exit 2
+  }
+fi
 
 mkdir -p "$destination/archives" "$destination/sources" "$destination/audit"
 
@@ -30,11 +38,17 @@ download() {
   mv "$archive.part" "$archive"
 }
 
+is_excluded() {
+  [[ -n $exclusions ]] && awk -F '\t' -v id="$1" \
+    'NR > 1 && $1 == id { found = 1 } END { exit !found }' "$exclusions"
+}
+
 export destination
 seen=0
 while IFS=$'\t' read -r identifier _; do
   [[ $identifier == id ]] && continue
   (( ++seen > candidate_limit )) && break
+  is_excluded "$identifier" && continue
   while (( $(jobs -pr | wc -l) >= jobs )); do
     sleep 0.1
   done
@@ -59,6 +73,7 @@ seen=0
 while IFS=$'\t' read -r identifier categories submitted digest; do
   [[ $identifier == id ]] && continue
   (( ++seen > candidate_limit )) && break
+  is_excluded "$identifier" && continue
   key=${identifier//\//_}
   archive="$destination/archives/$key.src"
   source_directory="$destination/sources/$key"

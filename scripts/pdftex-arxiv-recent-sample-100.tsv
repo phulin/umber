@@ -50,11 +50,9 @@ id	categories
 2607.03652	cs.AR cs.AI
 2605.20861	astro-ph.SR astro-ph.IM
 2605.29849	eess.SY cs.LG cs.SY
-2607.12706	cs.SD
 2606.27434	astro-ph.HE
 2607.10002	cond-mat.mtrl-sci
 2607.08846	astro-ph.GA
-2606.03364	cs.DC cs.DB cs.PF cs.SE
 2606.04385	cs.CV
 2605.26349	cs.RO
 2607.04563	cs.CL
@@ -99,3 +97,5 @@ id	categories
 2605.23808	cs.FL
 2607.07455	eess.SP
 2606.06346	math.ST stat.ME stat.TH
+2606.29305	cond-mat.str-el
+2606.12829	nlin.SI
