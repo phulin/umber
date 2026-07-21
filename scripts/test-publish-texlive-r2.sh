@@ -123,6 +123,15 @@ grep -q -- '--dry-run' "$log" || fail "dry run did not reach rclone"
 ! grep -q 'secret-must-not-leak' "$dry_output" || fail "dry run exposed a credential"
 
 : > "$log"
+"$repo_root/scripts/publish-texlive-r2.sh" "${common[@]}" \
+  --env-file "$tmp_root/absent.env" --rclone-remote existing_r2 --dry-run \
+  > "$tmp_root/configured-remote-output" 2>&1
+grep -q 'existing_r2:umber-assets/texlive/test-snapshot/objects' "$log" || \
+  fail "configured remote was not used"
+! grep -q -- '--config /dev/null' "$log" || \
+  fail "configured remote was isolated from its config file"
+
+: > "$log"
 if MOCK_FAIL_COPY=1 "$repo_root/scripts/publish-texlive-r2.sh" "${common[@]}" > "$tmp_root/fail-output" 2>&1; then
   fail "injected object upload failure unexpectedly succeeded"
 fi
@@ -140,6 +149,7 @@ grep -q -- '--transfers 3' "$log" || fail "bounded transfer count was not forwar
 grep -q -- '--checkers 4' "$log" || fail "bounded checker count was not forwarded"
 grep -q -- '--retries 2' "$log" || fail "retry count was not forwarded"
 grep -q -- '--immutable' "$log" || fail "immutable copy protection was not enabled"
+grep -q -- '--s3-no-check-bucket' "$log" || fail "bucket creation checks were not disabled"
 ! grep -q 'secret-must-not-leak' "$log" || fail "rclone argv exposed a credential"
 ! grep -Eq '(^| )sync( |$)|delete' "$log" || fail "publication used a deleting operation"
 

@@ -2,20 +2,22 @@
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-staging="/private/tmp/umber-texlive-2026/staging/texlive-2026-r79639"
-snapshot="texlive/texlive-2026-r79639"
+staging="${repo_root}/target/texlive-snapshot"
+snapshot="texlive/texlive-20260301"
 bucket="umber-assets"
 public_origin="https://assets.umber.ink"
 env_file="$repo_root/.env"
 rclone="${RCLONE:-rclone}"
+rclone_remote="umber_r2"
+use_configured_remote=0
 curl="${CURL:-curl}"
 publisher="${PUBLISHER:-$repo_root/tools/texlive-wasm-publish/target/release/texlive-wasm-publish}"
 transfers=8
 checkers=16
 retries=5
-expected_objects=154153
-expected_bytes=3672643852
-expected_manifest_sha256="7c2784bca891844d37465083b93466b78429c7282d7ba915f40a08d150651fd0"
+expected_objects=152560
+expected_bytes=3520195192
+expected_manifest_sha256="43a31da364e4607957a38da10dabff227657d607d1845d502204adfd5d002e4b"
 dry_run=0
 
 usage() {
@@ -24,7 +26,7 @@ usage: scripts/publish-texlive-r2.sh [options]
 
 Resume-safe, manifest-last publication of the verified TeX Live 2026 staging
 bundle to Cloudflare R2. The destination defaults to
-umber-assets:texlive/texlive-2026-r79639.
+umber-assets:texlive/texlive-20260301.
 
 options:
   --staging PATH                 staged bundle containing objects/ and manifest.json
@@ -40,10 +42,12 @@ options:
   --expected-bytes N            exact staged/remote object bytes
   --expected-manifest-sha256 H  exact manifest digest
   --rclone PATH                 rclone executable
+  --rclone-remote NAME          existing configured rclone remote
   --curl PATH                   curl executable
   --publisher PATH              sharded-manifest verifier executable
 
-The dotenv file must define R2_S3_ACCOUNT_ID, R2_S3_ACCESS_KEY_ID, and
+Without --rclone-remote, the dotenv file must define R2_S3_ACCOUNT_ID,
+R2_S3_ACCESS_KEY_ID, and
 R2_S3_SECRET_ACCESS_KEY. It is parsed as data, never sourced. Credentials are
 passed to rclone only through its per-process environment configuration.
 EOF
@@ -102,6 +106,7 @@ while [[ $# -gt 0 ]]; do
     --expected-manifest-sha256) expected_manifest_sha256="${2:-}"; shift 2 ;;
     --dry-run) dry_run=1; shift ;;
     --rclone) rclone="${2:-}"; shift 2 ;;
+    --rclone-remote) rclone_remote="${2:-}"; use_configured_remote=1; shift 2 ;;
     --curl) curl="${2:-}"; shift 2 ;;
     --publisher) publisher="${2:-}"; shift 2 ;;
     --help|-h) usage; exit 0 ;;
@@ -121,28 +126,31 @@ positive_integer "$retries" || fail "--retries must be a positive integer"
 positive_integer "$expected_objects" || fail "--expected-objects must be a positive integer"
 positive_integer "$expected_bytes" || fail "--expected-bytes must be a positive integer"
 [[ "$expected_manifest_sha256" =~ ^[0-9a-f]{64}$ ]] || fail "invalid expected manifest SHA-256"
-[[ -f "$env_file" ]] || fail "credential file not found: $env_file"
 command -v "$rclone" >/dev/null 2>&1 || fail "rclone executable not found: $rclone"
 command -v "$curl" >/dev/null 2>&1 || fail "curl executable not found: $curl"
 [[ -x "$publisher" ]] || fail "publisher/verifier executable not found: $publisher"
+[[ "$rclone_remote" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || fail "invalid rclone remote name"
 
 "$publisher" --verify-sharded "$staging" || fail "staged sharded manifest verification failed"
 
-account_id="$(dotenv_value R2_S3_ACCOUNT_ID)"
-access_key_id="$(dotenv_value R2_S3_ACCESS_KEY_ID)"
-secret_access_key="$(dotenv_value R2_S3_SECRET_ACCESS_KEY)"
-[[ -n "$account_id" ]] || fail "R2_S3_ACCOUNT_ID is missing from $env_file"
-[[ -n "$access_key_id" ]] || fail "R2_S3_ACCESS_KEY_ID is missing from $env_file"
-[[ -n "$secret_access_key" ]] || fail "R2_S3_SECRET_ACCESS_KEY is missing from $env_file"
+if (( use_configured_remote == 0 )); then
+  [[ -f "$env_file" ]] || fail "credential file not found: $env_file"
+  account_id="$(dotenv_value R2_S3_ACCOUNT_ID)"
+  access_key_id="$(dotenv_value R2_S3_ACCESS_KEY_ID)"
+  secret_access_key="$(dotenv_value R2_S3_SECRET_ACCESS_KEY)"
+  [[ -n "$account_id" ]] || fail "R2_S3_ACCOUNT_ID is missing from $env_file"
+  [[ -n "$access_key_id" ]] || fail "R2_S3_ACCESS_KEY_ID is missing from $env_file"
+  [[ -n "$secret_access_key" ]] || fail "R2_S3_SECRET_ACCESS_KEY is missing from $env_file"
 
-# Keep secrets out of argv, logs, and persistent rclone configuration.
-export RCLONE_CONFIG_UMBER_R2_TYPE=s3
-export RCLONE_CONFIG_UMBER_R2_PROVIDER=Cloudflare
-export RCLONE_CONFIG_UMBER_R2_ACCESS_KEY_ID="$access_key_id"
-export RCLONE_CONFIG_UMBER_R2_SECRET_ACCESS_KEY="$secret_access_key"
-export RCLONE_CONFIG_UMBER_R2_ENDPOINT="https://${account_id}.r2.cloudflarestorage.com"
-export RCLONE_CONFIG_UMBER_R2_NO_CHECK_BUCKET=true
-unset access_key_id secret_access_key
+  # Keep secrets out of argv, logs, and persistent rclone configuration.
+  export RCLONE_CONFIG_UMBER_R2_TYPE=s3
+  export RCLONE_CONFIG_UMBER_R2_PROVIDER=Cloudflare
+  export RCLONE_CONFIG_UMBER_R2_ACCESS_KEY_ID="$access_key_id"
+  export RCLONE_CONFIG_UMBER_R2_SECRET_ACCESS_KEY="$secret_access_key"
+  export RCLONE_CONFIG_UMBER_R2_ENDPOINT="https://${account_id}.r2.cloudflarestorage.com"
+  export RCLONE_CONFIG_UMBER_R2_NO_CHECK_BUCKET=true
+  unset access_key_id secret_access_key
+fi
 
 tmp_root="$(mktemp -d "${TMPDIR:-/tmp}/umber-r2-publish.XXXXXX")"
 trap 'rm -rf "$tmp_root"' EXIT
@@ -161,16 +169,19 @@ actual_manifest_sha256="$(sha256 "$staging/manifest.json")"
 [[ "$actual_manifest_sha256" == "$expected_manifest_sha256" ]] || fail "staged manifest digest $actual_manifest_sha256 does not match expected $expected_manifest_sha256"
 
 common_flags=(
-  --config /dev/null
   --transfers "$transfers"
   --checkers "$checkers"
   --retries "$retries"
   --low-level-retries 10
   --retries-sleep 10s
   --stats 30s
+  --s3-no-check-bucket
 )
-remote_objects="umber_r2:${bucket}/${snapshot}/objects"
-remote_manifest="umber_r2:${bucket}/${snapshot}/manifest-v3.json"
+if (( use_configured_remote == 0 )); then
+  common_flags=(--config /dev/null "${common_flags[@]}")
+fi
+remote_objects="${rclone_remote}:${bucket}/${snapshot}/objects"
+remote_manifest="${rclone_remote}:${bucket}/${snapshot}/manifest-v3.json"
 
 printf 'Validated staging: objects=%s bytes=%s manifest_sha256=%s\n' \
   "$local_objects" "$local_bytes" "$actual_manifest_sha256"

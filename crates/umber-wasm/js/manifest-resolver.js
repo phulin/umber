@@ -24,9 +24,9 @@ const DEFAULT_CACHED_BYTES = 64 * 1024 * 1024;
 const MAX_CACHED_BYTES = 256 * 1024 * 1024;
 
 export const TEXLIVE_2026_MANIFEST_URL =
-	"https://assets.umber.ink/texlive/texlive-2026-r79639/manifest-v2.json";
+	"https://assets.umber.ink/texlive/texlive-20260301/manifest-v3.json";
 export const TEXLIVE_2026_MANIFEST_SHA256 =
-	"7c2784bca891844d37465083b93466b78429c7282d7ba915f40a08d150651fd0";
+	"43a31da364e4607957a38da10dabff227657d607d1845d502204adfd5d002e4b";
 
 export class HttpManifestResolver {
 	static async create(options) {

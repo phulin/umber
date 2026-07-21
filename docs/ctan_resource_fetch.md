@@ -232,15 +232,19 @@ builder. Do not introduce a custom Worker or multipart upload service for this
 path.
 
 The production command is `scripts/publish-texlive-r2.sh`. Its checked-in
-defaults pin the verified 8-bit-sharded `texlive-2026-r79639` staging bundle,
-bucket `umber-assets`, public origin `https://assets.umber.ink`, 154,153
-objects, 3,672,643,852 object bytes, and `manifest-v2.json` SHA-256
-`7c2784bca891844d37465083b93466b78429c7282d7ba915f40a08d150651fd0`.
-The ignored repository `.env` must contain `R2_S3_ACCOUNT_ID`,
+defaults pin the verified 8-bit-sharded `texlive-20260301` staging bundle,
+bucket `umber-assets`, public origin `https://assets.umber.ink`, 152,560
+objects, 3,520,195,192 object bytes, and `manifest-v3.json` SHA-256
+`43a31da364e4607957a38da10dabff227657d607d1845d502204adfd5d002e4b`.
+By default, the ignored repository `.env` must contain `R2_S3_ACCOUNT_ID`,
 `R2_S3_ACCESS_KEY_ID`, and `R2_S3_SECRET_ACCESS_KEY`; the latter two are the R2
 S3 access-key pair, not a Wrangler API token. The script parses only those
 exact dotenv keys, passes them through rclone's process environment, and
-neither prints them nor creates a persistent rclone config.
+neither prints them nor creates a persistent rclone config. An operator with an
+existing authenticated rclone profile may instead pass `--rclone-remote NAME`;
+that path does not read `.env` and leaves credential storage to rclone. Both
+paths disable rclone's bucket-creation preflight: the release credential needs
+object read/write access, not account-level bucket creation authority.
 
 Run `scripts/publish-texlive-r2.sh --dry-run` first, then rerun without
 `--dry-run` for publication or after any interruption. The command uses
