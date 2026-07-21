@@ -70,6 +70,12 @@ UMBER_ARXIV_DISTRIBUTION=/path/to/verified/texlive-snapshot \
 The runner is serial and gives every paper one process through
 `scripts/run-umber-guarded.py`, with cumulative engine fuel, wall-time,
 aggregate-RSS, process-group TERM-to-KILL, reap, and survivor enforcement.
+Before running, it verifies each shared source view exactly against its pinned
+archive. Source identity records the archive hash, normalized member-manifest
+hash, member count, and entrypoint instead of hashing a mutable directory. Each
+child receives a new exact archive extraction in a temporary directory, and
+the canonical view is reverified after the child exits. Mutation, missing
+members, and generated extras fail the hermetic tooling tests.
 `RESOURCE_ENGINE_ACCEPTED` marks the transfer of accepted state to detached PDF
 finalization in that process. A later map, encoding, PFB, PK, or PDF-lowering
 failure therefore remains a finalizer outcome without recompiling the paper.

@@ -9,6 +9,37 @@ engine failures. The corpus inputs are retained outside Git under
 `third_party/arxiv-sample-100`; the committed TSV fixes the 100 identifiers,
 while the SHA-256 values below fix the source bundles used for this audit.
 
+## Immutable archive and extracted-view boundary
+
+The `.src` bundle under `third_party/arxiv-sample-100/archives` is the
+authoritative source for each paper. Corpus identity is the tuple of its
+SHA-256, the SHA-256 of the canonical JSON member inventory, and the selected
+entrypoint. The member inventory sorts paths bytewise and records each regular
+file's path, byte length, and SHA-256. It rejects traversal, duplicate paths,
+links, and other non-file archive members.
+
+`scripts/arxiv_corpus.py verify ARCHIVE VIEW` requires the extracted view to
+contain every archive file with identical bytes and no extra file. Its
+`materialize` action creates a fresh exact view, while `replace` additionally
+requires a separate backup path and writes a provenance receipt containing the
+old tree's complete hashed inventory. Reference runners extract the archive
+into a new per-run temporary directory; generated `.aux`, `.log`, `.fls`, PDF,
+and EPS-conversion outputs therefore cannot become source inputs on later runs.
+The canonical view is verified again after each census child exits.
+
+Derived reference artifacts have their own hashes and provenance under
+`third_party/arxiv-sample-100/reference-artifacts`, outside both `archives` and
+`sources`. In particular, the corrected `1609.01918` view has exactly the 11
+archive files, archive SHA-256
+`e882888d80dd010f690e2091d7690a43656568804bf7942daff1eb4658f82e24`,
+member-manifest SHA-256
+`e92006963a75430e0bc9573693df22a40aa07cd874f735dcf2352681ca6dbf49`,
+and entrypoint `ms.tex`. Its five previously generated
+`*-eps-converted-to.pdf` files and empty `msNotes.bib` are preserved, with
+their exact identities and the complete pre-migration tree backup, under
+`reference-artifacts/1609.01918/pre-pristine-20260721/`; none is a source
+member.
+
 ## External publisher inputs
 
 Six source bundles declare document classes or packages which are neither in
