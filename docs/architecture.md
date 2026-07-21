@@ -136,6 +136,16 @@ Macro bodies and parameter patterns are durable content. Macro arguments and
 temporary rendered values remain transient unless a durable state or future
 memoization boundary explicitly publishes them.
 
+Macro-definition scanning follows TeX.web §§473--479 (unchanged in
+pdfTeX.web §§497--503). The `mac_param` test is a command-meaning test, so a
+control sequence or active character whose current meaning is a parameter
+character starts the same parameter scan as a literal catcode-6 character.
+An illegal replacement follower uses §479's `back_error` recovery: the
+follower is replayed and the saved parameter token is stored literally.
+Umber maps these rules in `tex-expand::scan`; its `Token::Param` represents
+TeX's stored `out_param`, not the live `mac_param` command, and therefore is
+not accepted as a parameter follower.
+
 Macro delimiter matching follows TeX.web §§391--399 (pdfTeX.web §§415--423),
 including overlapping-prefix recovery and §397's narrow paragraph-token
 exception. A definition whose parameter text ends in `#{` uses the same left

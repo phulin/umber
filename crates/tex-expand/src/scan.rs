@@ -37,6 +37,9 @@ pub enum MacroScanDiagnostic {
         name: String,
         context: TracedTokenWord,
     },
+    IllegalParameterNumber {
+        context: TracedTokenWord,
+    },
 }
 
 struct ScannedParameterText {
@@ -217,8 +220,9 @@ pub fn scan_toks(
     flags: MeaningFlags,
     context: TracedTokenWord,
 ) -> Result<ScannedMacro, ScanToksError> {
-    let parameter_text = scan_parameter_text(input, stores, context)?;
-    let replacement_text = scan_replacement_text(input, stores, context)?;
+    let mut diagnostics = Vec::new();
+    let parameter_text = scan_parameter_text(input, stores, context, &mut diagnostics)?;
+    let replacement_text = scan_replacement_text(input, stores, context, &mut diagnostics)?;
     let replacement_text = append_hash_brace(stores, replacement_text, parameter_text.hash_brace);
     Ok(ScannedMacro {
         meaning: MacroMeaning::new(
@@ -231,7 +235,7 @@ pub fn scan_toks(
             parameter_text.text.origin_list(),
             replacement_text.origin_list(),
         ),
-        diagnostics: Vec::new(),
+        diagnostics,
     })
 }
 
@@ -277,8 +281,8 @@ pub fn scan_toks_expanded_with_driver(
 ) -> Result<ScannedMacro, ScanToksError>
 where
 {
-    let parameter_text = scan_parameter_text(input, stores, context)?;
     let mut diagnostics = Vec::new();
+    let parameter_text = scan_parameter_text(input, stores, context, &mut diagnostics)?;
     let replacement_result = expansion.with_expanded_token_list(|expansion| {
         scan_expanded_replacement_with_driver(input, stores, context, expansion, &mut diagnostics)
     });
@@ -311,7 +315,7 @@ where
     let mut builder = stores.token_list_builder();
     let mut origins = stores.origin_list_builder();
     let mut brace_level = 1_u32;
-    let mut pending_parameter = false;
+    let mut pending_parameter: Option<TracedTokenWord> = None;
 
     loop {
         // Literal spans are safe only while the scanner has no interpretation
@@ -321,7 +325,7 @@ where
         // digit must still be interpreted as Param(n), not copied literally.
         // `brace_level` needs no separate gate: begin/end-group tokens are
         // excluded by ExpandedReplacement's lexical span policy.
-        if !pending_parameter
+        if pending_parameter.is_none()
             && input.append_macro_literal_span(
                 stores,
                 &mut builder,
@@ -490,25 +494,17 @@ where
         // `\noexpand` gives a parameter character the same one-token
         // suppression semantics.
         if stored_unexpanded
-            && matches!(
-                token,
-                Token::Char {
-                    cat: Catcode::Parameter,
-                    ..
-                } | Token::Param(_)
-            )
+            && (has_parameter_meaning(stores, token) || matches!(token, Token::Param(_)))
         {
             push_scanned_token(&mut builder, &mut origins, traced, token);
             continue;
         }
 
-        if pending_parameter {
-            pending_parameter = false;
+        if let Some(parameter) = pending_parameter.take() {
             match token {
-                Token::Char {
-                    cat: Catcode::Parameter,
-                    ..
-                } => push_scanned_token(&mut builder, &mut origins, traced, token),
+                token if has_parameter_meaning(stores, token) => {
+                    push_scanned_token(&mut builder, &mut origins, traced, token)
+                }
                 Token::Char {
                     ch: '1'..='9',
                     cat: Catcode::Other,
@@ -518,23 +514,22 @@ where
                     traced,
                     Token::param(token_digit(token).expect("digit token was matched")),
                 ),
-                Token::Param(slot @ 1..=9) => {
-                    push_scanned_token(&mut builder, &mut origins, traced, Token::param(slot))
-                }
                 _ => {
-                    return Err(ScanToksError::InvalidParameterTokenInReplacementText {
-                        context: traced,
-                    });
+                    // TeX.web §479's `back_error; cur_tok:=s` keeps the
+                    // invalid follower for the next scanner iteration and
+                    // stores the saved parameter character literally.
+                    diagnostics
+                        .push(MacroScanDiagnostic::IllegalParameterNumber { context: traced });
+                    unread_token(input, stores, traced);
+                    let token = traced_semantic_token(parameter);
+                    push_scanned_token(&mut builder, &mut origins, parameter, token);
                 }
             }
             continue;
         }
 
         match token {
-            Token::Char {
-                cat: Catcode::Parameter,
-                ..
-            } => pending_parameter = true,
+            token if has_parameter_meaning(stores, token) => pending_parameter = Some(traced),
             Token::Char {
                 cat: Catcode::BeginGroup,
                 ..
@@ -1027,11 +1022,12 @@ fn scan_parameter_text(
     input: &mut InputStack,
     stores: &mut tex_state::ExpansionContext<'_>,
     context: TracedTokenWord,
+    diagnostics: &mut Vec<MacroScanDiagnostic>,
 ) -> Result<ScannedParameterText, ScanToksError> {
     let mut builder = stores.token_list_builder();
     let mut origins = stores.origin_list_builder();
     let mut next_parameter = 1;
-    let mut pending_parameter = false;
+    let mut pending_parameter: Option<TracedTokenWord> = None;
 
     loop {
         let traced = crate::next_semantic_raw_token(input, stores)?
@@ -1048,8 +1044,7 @@ fn scan_parameter_text(
             });
         }
 
-        if pending_parameter {
-            pending_parameter = false;
+        if let Some(parameter) = pending_parameter.take() {
             match token {
                 Token::Char {
                     ch: '1'..='9',
@@ -1094,9 +1089,27 @@ fn scan_parameter_text(
                     });
                 }
                 _ => {
-                    return Err(ScanToksError::InvalidParameterTokenInParameterText {
-                        context: traced,
-                    });
+                    // TeX.web §476 uses `back_error` for a nonconsecutive
+                    // follower: replay it, insert the expected match token,
+                    // and continue scanning the parameter delimiter.
+                    diagnostics
+                        .push(MacroScanDiagnostic::IllegalParameterNumber { context: traced });
+                    unread_token(input, stores, traced);
+                    if next_parameter <= 9 {
+                        let inserted = Token::param(next_parameter);
+                        let origin = stores.inserted_origin(
+                            InsertedOriginKind::ErrorRecovery,
+                            inserted,
+                            parameter.origin(),
+                        );
+                        push_scanned_token(
+                            &mut builder,
+                            &mut origins,
+                            TracedTokenWord::pack(inserted, origin),
+                            inserted,
+                        );
+                        next_parameter += 1;
+                    }
                 }
             }
             continue;
@@ -1112,10 +1125,7 @@ fn scan_parameter_text(
                     hash_brace: None,
                 });
             }
-            Token::Char {
-                cat: Catcode::Parameter,
-                ..
-            } => pending_parameter = true,
+            token if has_parameter_meaning(stores, token) => pending_parameter = Some(traced),
             _ => push_scanned_token(&mut builder, &mut origins, traced, token),
         }
     }
@@ -1125,11 +1135,12 @@ fn scan_replacement_text(
     input: &mut InputStack,
     stores: &mut tex_state::ExpansionContext<'_>,
     context: TracedTokenWord,
+    diagnostics: &mut Vec<MacroScanDiagnostic>,
 ) -> Result<TracedTokenList, ScanToksError> {
     let mut builder = stores.token_list_builder();
     let mut origins = stores.origin_list_builder();
     let mut brace_level = 1_u32;
-    let mut pending_parameter = false;
+    let mut pending_parameter: Option<TracedTokenWord> = None;
 
     loop {
         let traced = crate::next_semantic_raw_token(input, stores)?
@@ -1141,13 +1152,11 @@ fn scan_replacement_text(
             return Ok(finish_traced_list(stores, &mut builder, &mut origins));
         }
 
-        if pending_parameter {
-            pending_parameter = false;
+        if let Some(parameter) = pending_parameter.take() {
             match token {
-                Token::Char {
-                    cat: Catcode::Parameter,
-                    ..
-                } => push_scanned_token(&mut builder, &mut origins, traced, token),
+                token if has_parameter_meaning(stores, token) => {
+                    push_scanned_token(&mut builder, &mut origins, traced, token)
+                }
                 Token::Char {
                     ch: '1'..='9',
                     cat: Catcode::Other,
@@ -1157,23 +1166,21 @@ fn scan_replacement_text(
                     traced,
                     Token::param(token_digit(token).expect("digit token was matched")),
                 ),
-                Token::Param(slot @ 1..=9) => {
-                    push_scanned_token(&mut builder, &mut origins, traced, Token::param(slot))
-                }
                 _ => {
-                    return Err(ScanToksError::InvalidParameterTokenInReplacementText {
-                        context: traced,
-                    });
+                    // TeX.web §479 recovers by backing up the invalid
+                    // follower and storing the saved parameter character.
+                    diagnostics
+                        .push(MacroScanDiagnostic::IllegalParameterNumber { context: traced });
+                    unread_token(input, stores, traced);
+                    let token = traced_semantic_token(parameter);
+                    push_scanned_token(&mut builder, &mut origins, parameter, token);
                 }
             }
             continue;
         }
 
         match token {
-            Token::Char {
-                cat: Catcode::Parameter,
-                ..
-            } => pending_parameter = true,
+            token if has_parameter_meaning(stores, token) => pending_parameter = Some(traced),
             Token::Char {
                 cat: Catcode::BeginGroup,
                 ..
@@ -1272,6 +1279,35 @@ fn has_begin_group_meaning(stores: &impl ExpansionState, token: Token) -> bool {
             stores.meaning(symbol),
             Meaning::CharToken {
                 cat: Catcode::BeginGroup,
+                ..
+            }
+        ),
+        Token::Char { .. } | Token::Param(_) | Token::Frozen(_) => false,
+    }
+}
+
+fn has_parameter_meaning(stores: &impl ExpansionState, token: Token) -> bool {
+    match token {
+        Token::Char {
+            cat: Catcode::Parameter,
+            ..
+        } => true,
+        Token::Char {
+            ch,
+            cat: Catcode::Active,
+        } => stores.active_character_symbol(ch).is_some_and(|symbol| {
+            matches!(
+                stores.meaning(symbol),
+                Meaning::CharToken {
+                    cat: Catcode::Parameter,
+                    ..
+                }
+            )
+        }),
+        Token::Cs(symbol) => matches!(
+            stores.meaning(symbol),
+            Meaning::CharToken {
+                cat: Catcode::Parameter,
                 ..
             }
         ),

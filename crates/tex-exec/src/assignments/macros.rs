@@ -73,6 +73,12 @@ pub(super) fn execute_def(
                     &format!("\n! Undefined control sequence \\{name}.\n"),
                 );
             }
+            MacroScanDiagnostic::IllegalParameterNumber { .. } => {
+                stores.world_mut().write_text(
+                    tex_state::PrintSink::TerminalAndLog,
+                    "\n! Illegal parameter number in definition.\n",
+                );
+            }
         }
     }
     let global = apply_globaldefs(global, stores);

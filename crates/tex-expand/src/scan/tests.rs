@@ -1,5 +1,5 @@
 use super::{
-    MacroScanDiagnostic, ScanToksError, append_hash_brace, scan_general_text_expanded_with_driver,
+    MacroScanDiagnostic, append_hash_brace, scan_general_text_expanded_with_driver,
     scan_general_text_expanded_with_expanded_open, scan_toks, scan_toks_expanded,
     scan_toks_expanded_with_driver,
 };
@@ -765,7 +765,7 @@ fn expanded_definition_copies_literal_hash_from_token_register() {
 }
 
 #[test]
-fn definition_accepts_internal_parameter_after_parameter_marker() {
+fn definition_recovers_internal_parameter_after_parameter_marker() {
     let mut stores = Universe::new();
     let replay = stores.intern_token_list(&[
         char_token('{', Catcode::BeginGroup),
@@ -784,11 +784,33 @@ fn definition_accepts_internal_parameter_after_parameter_marker() {
         MeaningFlags::EMPTY,
         context,
     )
-    .expect("an internal parameter token is a valid parameter follower");
+    .expect("an internal out_param token is backed up after a parameter marker");
 
     assert_eq!(
         stores.tokens(scanned.replacement_text()),
-        &[Token::param(1)]
+        &[char_token('#', Catcode::Parameter), Token::param(1)]
+    );
+    assert!(matches!(
+        scanned.diagnostics(),
+        [MacroScanDiagnostic::IllegalParameterNumber { .. }]
+    ));
+}
+
+#[test]
+fn definition_recovers_parameter_before_nested_group() {
+    let (_stores, params, replacement) = scan("{A#{B}C}");
+
+    assert!(params.is_empty());
+    assert_eq!(
+        replacement,
+        vec![
+            char_token('A', Catcode::Letter),
+            char_token('#', Catcode::Parameter),
+            char_token('{', Catcode::BeginGroup),
+            char_token('B', Catcode::Letter),
+            char_token('}', Catcode::EndGroup),
+            char_token('C', Catcode::Letter),
+        ]
     );
 }
 
@@ -894,31 +916,35 @@ fn expanded_definition_tracks_braces_returned_by_nested_expanded() {
 }
 
 #[test]
-fn expanded_definition_rejects_invalid_parameter_from_macro_argument_replay() {
+fn expanded_definition_recovers_invalid_parameter_from_macro_argument_replay() {
     let mut stores = Universe::new();
     install_passthrough_macro(&mut stores, "passthrough");
     let mut input = InputStack::new(MemoryInput::new("{\\passthrough{#x}}"));
     let context =
         TracedTokenWord::pack(Token::Cs(stores.intern("xdef").symbol()), OriginId::UNKNOWN);
 
-    let error = scan_toks_expanded_with_driver(
+    let scanned = scan_toks_expanded_with_driver(
         &mut input,
         &mut tex_state::ExpansionContext::new(&mut stores),
         MeaningFlags::EMPTY,
         context,
         &mut ExpansionContext::new("texput"),
     )
-    .expect_err("invalid parameter follower must not be swallowed by a literal span");
+    .expect("TeX backs up the invalid follower and retains a literal parameter token");
 
-    let ScanToksError::InvalidParameterTokenInReplacementText { context } = error else {
-        panic!("unexpected error: {error}");
-    };
     assert_eq!(
-        context.token(),
-        Some(char_token('x', Catcode::Letter)),
-        "the diagnostic must retain the offending replayed token"
+        stores.tokens(scanned.replacement_text()),
+        &[
+            char_token('#', Catcode::Parameter),
+            char_token('x', Catcode::Letter),
+        ]
     );
-    assert_ne!(context.origin(), OriginId::UNKNOWN);
+    assert!(matches!(
+        scanned.diagnostics(),
+        [MacroScanDiagnostic::IllegalParameterNumber { context }]
+            if context.token() == Some(char_token('x', Catcode::Letter))
+                && context.origin() != OriginId::UNKNOWN
+    ));
 }
 
 #[test]
@@ -1060,4 +1086,34 @@ fn scans_doubled_hash_as_literal_parameter_character_in_body() {
 
     assert!(params.is_empty());
     assert_eq!(replacement, vec![char_token('#', Catcode::Parameter)]);
+}
+
+#[test]
+fn definition_uses_parameter_character_alias_command_meaning() {
+    let mut stores = Universe::new();
+    let hash = stores.intern("hash");
+    stores.set_meaning(
+        hash,
+        Meaning::CharToken {
+            ch: '#',
+            cat: Catcode::Parameter,
+        },
+    );
+    let mut input = InputStack::new(MemoryInput::new("#1{\\hash1\\hash\\hash}"));
+    let context =
+        TracedTokenWord::pack(Token::Cs(stores.intern("def").symbol()), OriginId::UNKNOWN);
+
+    let scanned = scan_toks(
+        &mut input,
+        &mut tex_state::ExpansionContext::new(&mut stores),
+        MeaningFlags::EMPTY,
+        context,
+    )
+    .expect("a control sequence let to a parameter character has mac_param command meaning");
+
+    assert_eq!(
+        stores.tokens(scanned.replacement_text()),
+        &[Token::param(1), Token::Cs(hash.symbol())]
+    );
+    assert!(scanned.diagnostics().is_empty());
 }
