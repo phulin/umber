@@ -228,6 +228,18 @@ serializer uses `pdf_writer`'s typed image, form, resources, page, and content
 builders; imported dictionaries are converted to the detached typed value
 model before serialization, so `lopdf` is only an input parser.
 
+PNG syntax and chunk CRC validation use the maintained pure-Rust `png` crate.
+For non-interlaced 8-bit gray-alpha and RGBA sources, its low-level
+`StreamingDecoder` inflates into a fixed lookback-plus-row buffer while the PDF
+adapter preserves each source filter byte and immediately writes separate color
+and grayscale soft-mask predictor rows. The decoder buffer and both output rows
+are dimension-checked before allocation, declared chunk lengths cannot exceed
+the bounded source, Adler-32 and critical or ancillary CRC failures are hard
+errors, and decoding must consume exactly the declared rows through `IEND`.
+Opaque source IDAT bytes remain pass-through after the same strict syntax/CRC
+scan. Reader is retained only as benchmark evidence: because it exposes
+unfiltered pixels, it cannot preserve this encoded PDF contract.
+
 The recursive page-resource importer distinguishes streams that must be
 decoded from encoded raster payloads. A single-filter `/DCTDecode` image is
 validated into the detached typed image model and its JPEG bytes pass through

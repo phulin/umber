@@ -1,0 +1,12 @@
+[package]
+name = "png-import-prototype"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[workspace]
+
+[dependencies]
+flate2 = "1"
+png = "0.18.1"
+sha2 = "0.10"

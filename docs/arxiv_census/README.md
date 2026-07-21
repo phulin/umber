@@ -125,14 +125,34 @@ distinct because their form/group object identity is observable; repeated
 references to one allocation already share its imported form. All PNG decoded-
 length, filter-byte, dimension, imported-stream, and aggregate PDF bounds remain
 in force. The PDF-specific color/soft-mask separation cannot be delegated to a
-general image decoder. A focused future evaluation may replace Umber's custom
-PNG syntax and inflate handling, while adding full chunk-checksum validation,
-with the maintained pure-Rust `png` crate. Its ordinary reader exposes
-unfiltered pixels and would discard the predictors used here, so only a proven
-low-level streaming integration should replace the current bounded path. The
-broad `image` crate is not a suitable
-replacement because it adds unrelated formats and full-image decoding without
-providing PDF predictor or soft-mask construction.
+general image decoder. The focused `png` 0.18.1 evaluation compared the former
+custom path, `png::Reader`, and low-level `StreamingDecoder` over the same three
+RGBA inputs and 16,164,821 pixels. Host-only nine-iteration medians were 157.513,
+137.617, and 125.462 milliseconds respectively. Reader discarded source
+filters, increased the derived streams from 7,179,894 to 9,857,012 bytes, and
+used an estimated 178,256-byte row working set. StreamingDecoder retained the
+7,179,894 bytes and exact per-image stream hashes with a bounded 111,740-byte
+lookback-and-row working set, versus 47,187 bytes for the custom decoder.
+
+The low-level path was therefore adopted for non-interlaced 8-bit alpha PNGs.
+It replaces custom IDAT gathering and `flate2` inflation there, strictly checks
+Adler-32 and every critical or ancillary chunk CRC, rejects oversized declared
+chunks before their payload can allocate, and still feeds source-filtered color
+and grayscale soft-mask rows directly to the deterministic level-1 encoders.
+Other PNG pass-through and transformation paths use the same strict syntax/CRC
+validation before their existing PDF-specific work. Five guarded exact-row
+runs gave 0.207-second median image import and 0.316-second median PDF build,
+down from 0.226 and 0.351 seconds. A matched guarded end-to-end measurement used
+465.4 MiB maximum RSS versus 451.4 MiB for the former path, and remained far
+below the 1,536 MiB ceiling. With `SOURCE_DATE_EPOCH=1772323200`, repeated PDFs
+and the former custom result all had SHA-256
+`7c444e36043a952e6350137958a57f015534d617e96d7299006643a6f39adc6c`,
+8,367,454 bytes, and identical Poppler pixels across all 18 pages. The added
+`png`/`fdeflate` code increased the optimized binary's `__text` by 54,436 bytes
+and its stripped file by 138,352 bytes; `wasm32-unknown-unknown` still checks.
+The broad `image` crate remains unsuitable because it adds unrelated formats
+and full-image decoding without providing PDF predictor or soft-mask
+construction.
 Completed rows resume by immutable input and artifact identity. Offline
 reproducibility is attested without recompilation by rehashing those receipts,
 based on the acquisition layer's authenticated-before-use cache invariant; an
