@@ -43,6 +43,15 @@ implementations. G and B provide precise local diagnostics; H and N provide a
 fast portable semantic gate; E catches shared assumptions and file-level
 conformance. No single oracle is treated as sufficient.
 
+The F helper is `test_support::pdf_fixture`. Callers provide explicit object
+numbers and raw PDF value syntax through insertion-ordered dictionaries. The
+writer owns `/Length`, `/Size`, classic generation-zero xref entries, and
+`startxref`, and verifies the resulting offsets and payload spans before
+returning bytes. Filtered-stream input is already encoded by the caller; the
+helper only declares its filter. Raw object bodies and `nested_array` preserve
+focused malformed, cycle, and depth-limit cases without adding a general PDF
+value model or encoder.
+
 ## Required Hayro boundary
 
 Pinned `hayro-syntax` 0.7.2 already supplies all stable identity and content
