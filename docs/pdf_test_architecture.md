@@ -1,6 +1,7 @@
 # Lightweight PDF test architecture
 
-Status: implemented architecture for the lightweight PDF test stack.
+Status: implemented and dependency-audited architecture for the lightweight PDF
+test stack.
 
 This document fixes the replacement oracle mix for the `tex-out` serializer,
 the `umber` PDF importer and output driver, shared PDF fixture normalization,
@@ -230,3 +231,26 @@ validation. CI and release invocation is
 At every step `cargo test --tests` remains hermetic. The final dependency audit
 must show no `lopdf` package or source reference and no change to the normal
 `umber-wasm` production dependency graph.
+
+## Final dependency and artifact audit
+
+The completed migration leaves no `lopdf` entry in a workspace manifest,
+Rust source file, Cargo metadata, or `Cargo.lock`. Mentions in this document
+and `docs/AGENTS.md` are retained only as the historical migration inventory.
+
+The normal `umber-wasm` WebAssembly dependency topology is unchanged from the
+pre-migration graph. Its existing `hayro-syntax` 0.7.2 edge now resolves to the
+documented compatibility revision above; the revision adds trailer access but
+does not add a package edge. The final audit compares
+`cargo tree -p umber-wasm --target wasm32-unknown-unknown --edges normal`
+before and after the migration with workspace paths and source provenance
+normalized.
+
+The dependency-removal audit does not rewrite committed PDF bytes, normalized
+structures, raster expectations, or extraction attestations. The only PDF
+corpus correction made during the epic is the separately reviewed
+`object_dictionaries` fixture repair required by the strict external validator.
+The final gates are the focused `tex-out`, `test-support`, and `umber` native
+tests, the default native test suite, `scripts/check.sh`,
+`scripts/check-wasm.sh`, and `scripts/check-pdf-external.sh --ci` where the
+pinned qpdf and Poppler tools are available.
