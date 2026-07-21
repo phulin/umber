@@ -367,6 +367,60 @@ fn expanded_definition_records_and_discards_undefined_control_sequences() {
 }
 
 #[test]
+fn expanded_definition_consumes_undefined_control_sequence_delimiter_raw() {
+    // latex.ltx constructs `\@qend` with this exact scanner shape. `\@nil`
+    // is intentionally undefined: tex.web §§391--400 require macro_call to
+    // compare delimiter tokens using raw get_token delivery before expansion.
+    let mut stores = Universe::new();
+    crate::install_expandable_primitives(&mut stores);
+    let expandafter = stores.intern("expandafter");
+    let string = stores.intern("string");
+    let end = stores.intern("end");
+    let nil = stores.intern("@nil");
+    let cdr = stores.intern("@cdr");
+    let parameters =
+        stores.intern_token_list(&[Token::param(1), Token::param(2), Token::Cs(nil.symbol())]);
+    let replacement = stores.intern_token_list(&[Token::param(2)]);
+    stores.set_macro_meaning(
+        cdr,
+        MacroMeaning::new(MeaningFlags::EMPTY, parameters, replacement),
+    );
+    let definition = stores.intern_token_list(&[
+        char_token('{', Catcode::BeginGroup),
+        Token::Cs(expandafter.symbol()),
+        Token::Cs(cdr.symbol()),
+        Token::Cs(string.symbol()),
+        Token::Cs(end.symbol()),
+        Token::Cs(nil.symbol()),
+        char_token('}', Catcode::EndGroup),
+    ]);
+    let mut input = InputStack::new(MemoryInput::new(""));
+    input.push_token_list(definition, TokenListReplayKind::Inserted);
+    let context =
+        TracedTokenWord::pack(Token::Cs(stores.intern("edef").symbol()), OriginId::UNKNOWN);
+
+    let scanned = scan_toks_expanded_with_driver(
+        &mut input,
+        &mut tex_state::ExpansionContext::new(&mut stores),
+        MeaningFlags::EMPTY,
+        context,
+        &mut ExpansionContext::new("texput").with_fuel(10_000),
+    )
+    .expect("undefined delimiter must be consumed before expanded scanning resumes");
+
+    assert_eq!(
+        stores.tokens(scanned.replacement_text()),
+        &[
+            char_token('e', Catcode::Other),
+            char_token('n', Catcode::Other),
+            char_token('d', Catcode::Other),
+        ]
+    );
+    assert!(scanned.diagnostics().is_empty());
+    assert_eq!(stores.meaning(nil), Meaning::Undefined);
+}
+
+#[test]
 fn expanded_definition_expandafter_forces_only_its_protected_target() {
     // e-TeX manual section 3.1: protected macros resist `\edef`, but an
     // explicit `\expandafter` still expands its target by one step.
