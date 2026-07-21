@@ -25,6 +25,8 @@ Use this crate for font-domain parsing and metric representation that does not r
 - `src/pdf_map.rs`: host-neutral pdfTeX/dvips map directive and entry parsing; logical resource names only.
 - `src/pdf_pk.rs`: bounded host-neutral PK bitmap font decoding, normalized glyph masks, and content identity.
 - `src/pdf_truetype.rs`: validated SFNT bytes and PDF descriptor metrics normalized through `ttf-parser`.
+- `src/pdf_vf.rs`: bounded host-neutral TeX VF parsing, typed packet programs, local-font declarations, and recursion metadata.
+- `src/pdf_vf/tests.rs`: hermetic VF grammar, command, malformed-input, and configured-bound tests.
 - `src/opentype/`: validated OpenType resource contracts, canonical identities, bounded SFNT/WOFF2 decoding, immutable metric/cmap/table projections, and cached rustybuzz faces.
 - `src/opentype/math.rs`: strict bounded OpenType MATH parsing and immutable constants, glyph-info, kern, variant, construction, and assembly records.
 - `src/opentype/math/tests.rs`: synthetic complete-table and malformed MATH validation tests.

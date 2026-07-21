@@ -6,6 +6,7 @@ pub mod pdf_encoding;
 pub mod pdf_map;
 pub mod pdf_pk;
 pub mod pdf_truetype;
+pub mod pdf_vf;
 pub mod tfm;
 pub mod type1;
 
@@ -36,6 +37,10 @@ pub use pdf_map::{
 pub use pdf_pk::{PdfPkFont, PdfPkFontError, PdfPkFontIdentity, PdfPkFontRequest, PdfPkGlyph};
 pub use pdf_truetype::{
     PdfTrueTypeProgram, PdfTrueTypeProgramError, PdfTrueTypeProgramIdentity, PdfTrueTypeSubsetError,
+};
+pub use pdf_vf::{
+    PDFTEX_VF_MAX_RECURSION, VfCharacterReference, VfCommand, VfLimits, VfLocalFont, VfPacket,
+    VfPacketMetadata, VfParseError, VfProgram, VfProgramIdentity,
 };
 pub use tfm::{
     CharacterTag, ExtensibleRecipe, FontParameter, FontParameterKind, FontParameters, Header,
