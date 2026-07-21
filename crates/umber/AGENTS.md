@@ -32,6 +32,8 @@ Use this crate when behavior is about driving the engine, presenting CLI output,
 - `src/lib.rs`: shared engine session, file resolvers, typed effect-before-driver finalization, run helpers, and one-artifact-at-a-time DVI construction.
 - `src/memory_output.rs`: exact committed terminal/log/DVI/aux collection for successful memory-backed runs, aggregate output limits, and auxiliary publication into VFS stage transactions.
 - `src/memory_output/tests.rs`: final-commit idempotence, output accounting, and memory-boundary tests.
+- `src/pdf_import.rs`: lightweight PDF syntax inspection and lossless selected-page resource import through `hayro-syntax`.
+- `src/pdf_import/tests.rs`: synthetic and conditional pinned-corpus PDF import regressions.
 - `src/pdftex.rs`: pinned pdfTeX 1.40.27 primitive inventory and explicit placeholder registration for pdfTeX mode.
 - `src/pdf_output.rs`: deterministic committed-artifact lowering into the checkpointed PDF object graph.
 - `src/pdf_font_resources_tests.rs`: post-acceptance real-font fallback and virtual-root exclusion tests.

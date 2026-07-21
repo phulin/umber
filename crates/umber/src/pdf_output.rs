@@ -4031,86 +4031,12 @@ fn import_pdf_page(
     rotation: tex_state::PdfPageRotation,
     next_object: &mut u32,
 ) -> Result<ImportedPdfPage, PdfBuildError> {
-    let document = lopdf::Document::load_mem(image.bytes())
-        .map_err(|error| PdfBuildError::InvalidPdfPage(error.to_string()))?;
-    let page_id = document
-        .get_pages()
-        .get(&page)
-        .copied()
-        .ok_or_else(|| PdfBuildError::InvalidPdfPage(format!("page {page} does not exist")))?;
-    let mut data = Vec::new();
-    for content_id in document.get_page_contents(page_id) {
-        let stream = document
-            .get_object(content_id)
-            .and_then(lopdf::Object::as_stream)
-            .map_err(|error| PdfBuildError::InvalidPdfPage(error.to_string()))?;
-        let remaining = MAX_IMPORTED_PDF_STREAM_BYTES
-            .checked_sub(data.len())
-            .and_then(|remaining| remaining.checked_sub(1))
-            .ok_or_else(|| {
-                imported_pdf_stream_limit_error("page content", MAX_IMPORTED_PDF_STREAM_BYTES)
-            })?;
-        data.extend_from_slice(&decompress_lopdf_stream_bounded(stream, remaining)?);
-        data.push(b'\n');
-    }
-    let (direct_resources, resource_ids) = document
-        .get_page_resources(page_id)
-        .map_err(|error| PdfBuildError::InvalidPdfPage(error.to_string()))?;
-    let mut dependencies = Vec::new();
-    let mut imported = BTreeMap::new();
-    let resources = if let Some(resources) = direct_resources {
-        convert_lopdf_dictionary(
-            &document,
-            resources,
-            next_object,
-            &mut imported,
-            &mut dependencies,
-        )?
-    } else if let Some(resource_id) = resource_ids.first() {
-        let resources = document
-            .get_dictionary(*resource_id)
-            .map_err(|error| PdfBuildError::InvalidPdfPage(error.to_string()))?;
-        convert_lopdf_dictionary(
-            &document,
-            resources,
-            next_object,
-            &mut imported,
-            &mut dependencies,
-        )?
-    } else {
-        PdfDictionary::new()
-    };
-    let page_dictionary = document
-        .get_dictionary(page_id)
-        .map_err(|error| PdfBuildError::InvalidPdfPage(error.to_string()))?;
-    let group = page_dictionary
-        .get(b"Group")
-        .ok()
-        .map(|value| {
-            let value = convert_lopdf_value(
-                &document,
-                value,
-                next_object,
-                &mut imported,
-                &mut dependencies,
-            )?;
-            match value {
-                PdfValue::Reference(id) => Ok(id),
-                PdfValue::Dictionary(dictionary) => {
-                    let id = allocate_output_object(next_object)?;
-                    dependencies.push(indirect_dictionary(id, dictionary));
-                    Ok(id)
-                }
-                _ => Err(PdfBuildError::InvalidPdfPage(
-                    "page Group is not a dictionary".to_owned(),
-                )),
-            }
-        })
-        .transpose()?;
+    let imported = crate::pdf_import::import_pdf_page(image.shared_bytes(), page, next_object)
+        .map_err(PdfBuildError::InvalidPdfPage)?;
     let mut dictionary = PdfDictionary::new();
     dictionary.insert("FormType", PdfValue::Integer(1))?;
-    dictionary.insert("Resources", PdfValue::Dictionary(resources))?;
-    if let Some(group) = group {
+    dictionary.insert("Resources", PdfValue::Dictionary(imported.resources))?;
+    if let Some(group) = imported.group {
         dictionary.insert("Group", PdfValue::Reference(group))?;
     }
     let zero = PdfNumber::new(0, 0)?;
@@ -4173,7 +4099,7 @@ fn import_pdf_page(
             id: object_id(image.id().raw())?,
             object: PdfObject::FormXObject {
                 dictionary,
-                data,
+                data: imported.data,
                 bbox: [
                     zero,
                     zero,
@@ -4183,480 +4109,9 @@ fn import_pdf_page(
                 matrix: Some(matrix).filter(|matrix| *matrix != [one, zero, zero, one, zero, zero]),
             },
         },
-        dependencies,
-        group,
+        dependencies: imported.dependencies,
+        group: imported.group,
     })
-}
-
-fn allocate_output_object(next_object: &mut u32) -> Result<PdfObjectId, PdfBuildError> {
-    let id = object_id(*next_object)?;
-    *next_object = next_object
-        .checked_add(1)
-        .ok_or(PdfBuildError::ObjectCapacity)?;
-    Ok(id)
-}
-
-fn convert_lopdf_dictionary(
-    document: &lopdf::Document,
-    source: &lopdf::Dictionary,
-    next_object: &mut u32,
-    imported: &mut BTreeMap<lopdf::ObjectId, PdfObjectId>,
-    objects: &mut Vec<PdfIndirectObject>,
-) -> Result<PdfDictionary, PdfBuildError> {
-    let mut dictionary = PdfDictionary::new();
-    for (name, value) in source.iter() {
-        if matches!(name.as_slice(), b"Length" | b"Filter" | b"DecodeParms") {
-            continue;
-        }
-        dictionary.insert(
-            PdfName::new(name.clone()),
-            convert_lopdf_value(document, value, next_object, imported, objects)?,
-        )?;
-    }
-    Ok(dictionary)
-}
-
-fn convert_lopdf_value(
-    document: &lopdf::Document,
-    source: &lopdf::Object,
-    next_object: &mut u32,
-    imported: &mut BTreeMap<lopdf::ObjectId, PdfObjectId>,
-    objects: &mut Vec<PdfIndirectObject>,
-) -> Result<PdfValue, PdfBuildError> {
-    Ok(match source {
-        lopdf::Object::Null => PdfValue::Null,
-        lopdf::Object::Boolean(value) => PdfValue::Bool(*value),
-        lopdf::Object::Integer(value) => PdfValue::Integer(*value),
-        lopdf::Object::Real(value) => PdfValue::Number(pdf_number_from_f32(*value)?),
-        lopdf::Object::Name(name) => PdfValue::Name(PdfName::new(name.clone())),
-        lopdf::Object::String(bytes, _) => PdfValue::String(bytes.clone()),
-        lopdf::Object::Array(values) => PdfValue::Array(
-            values
-                .iter()
-                .map(|value| convert_lopdf_value(document, value, next_object, imported, objects))
-                .collect::<Result<_, _>>()?,
-        ),
-        lopdf::Object::Dictionary(dictionary) => PdfValue::Dictionary(convert_lopdf_dictionary(
-            document,
-            dictionary,
-            next_object,
-            imported,
-            objects,
-        )?),
-        lopdf::Object::Reference(source_id) => PdfValue::Reference(import_lopdf_indirect(
-            document,
-            *source_id,
-            next_object,
-            imported,
-            objects,
-        )?),
-        lopdf::Object::Stream(_) => {
-            return Err(PdfBuildError::InvalidPdfPage(
-                "direct resource streams are unsupported".to_owned(),
-            ));
-        }
-    })
-}
-
-fn import_lopdf_indirect(
-    document: &lopdf::Document,
-    source_id: lopdf::ObjectId,
-    next_object: &mut u32,
-    imported: &mut BTreeMap<lopdf::ObjectId, PdfObjectId>,
-    objects: &mut Vec<PdfIndirectObject>,
-) -> Result<PdfObjectId, PdfBuildError> {
-    if let Some(id) = imported.get(&source_id) {
-        return Ok(*id);
-    }
-    let id = allocate_output_object(next_object)?;
-    imported.insert(source_id, id);
-    let source = document
-        .get_object(source_id)
-        .map_err(|error| PdfBuildError::InvalidPdfPage(error.to_string()))?;
-    let object = match source {
-        lopdf::Object::Stream(stream) => {
-            if let Some(image) =
-                import_lopdf_dct_image(document, stream, next_object, imported, objects)?
-            {
-                image
-            } else {
-                let data = decompress_lopdf_stream_bounded(stream, MAX_IMPORTED_PDF_STREAM_BYTES)?;
-                PdfObject::Stream {
-                    dictionary: convert_lopdf_dictionary(
-                        document,
-                        &stream.dict,
-                        next_object,
-                        imported,
-                        objects,
-                    )?,
-                    data,
-                }
-            }
-        }
-        value => PdfObject::Value(convert_lopdf_value(
-            document,
-            value,
-            next_object,
-            imported,
-            objects,
-        )?),
-    };
-    objects.push(PdfIndirectObject { id, object });
-    Ok(id)
-}
-
-fn imported_pdf_stream_limit_error(kind: &str, limit: usize) -> PdfBuildError {
-    PdfBuildError::InvalidPdfPage(format!("{kind} stream exceeds {limit} bytes"))
-}
-
-fn decompress_lopdf_stream_bounded(
-    stream: &lopdf::Stream,
-    limit: usize,
-) -> Result<Vec<u8>, PdfBuildError> {
-    let filters = match stream.filters() {
-        Ok(filters) => filters,
-        Err(_) if stream.dict.get(b"Filter").is_err() => {
-            if stream.content.len() > limit {
-                return Err(imported_pdf_stream_limit_error("uncompressed", limit));
-            }
-            return Ok(stream.content.clone());
-        }
-        Err(error) => return Err(PdfBuildError::InvalidPdfPage(error.to_string())),
-    };
-    if filters.as_slice() != [b"FlateDecode".as_slice()] {
-        return Err(PdfBuildError::InvalidPdfPage(format!(
-            "resource stream filter {} is unsupported",
-            filters
-                .iter()
-                .map(|name| String::from_utf8_lossy(name))
-                .collect::<Vec<_>>()
-                .join(", ")
-        )));
-    }
-    let decode_parameters = flate_decode_parameters(stream)?;
-    if let Some(parameters) = decode_parameters {
-        return decompress_png_predictor_bounded(stream, parameters, limit);
-    }
-    let read_limit = u64::try_from(limit)
-        .ok()
-        .and_then(|limit| limit.checked_add(1))
-        .unwrap_or(u64::MAX);
-    let mut decoder = flate2::read::ZlibDecoder::new(stream.content.as_slice()).take(read_limit);
-    let mut data = Vec::new();
-    decoder
-        .read_to_end(&mut data)
-        .map_err(|error| PdfBuildError::InvalidPdfPage(error.to_string()))?;
-    if data.len() > limit {
-        return Err(imported_pdf_stream_limit_error("decompressed", limit));
-    }
-    Ok(data)
-}
-
-#[derive(Clone, Copy)]
-struct FlatePngPredictor {
-    row_bytes: usize,
-    bytes_per_pixel: usize,
-}
-
-fn flate_decode_parameters(
-    stream: &lopdf::Stream,
-) -> Result<Option<FlatePngPredictor>, PdfBuildError> {
-    let parameters = match stream.dict.get(b"DecodeParms") {
-        Err(_) | Ok(lopdf::Object::Null) => return Ok(None),
-        Ok(lopdf::Object::Dictionary(parameters)) => parameters,
-        Ok(lopdf::Object::Array(parameters)) if parameters.len() == 1 => match &parameters[0] {
-            lopdf::Object::Null => return Ok(None),
-            lopdf::Object::Dictionary(parameters) => parameters,
-            _ => {
-                return Err(invalid_flate_decode_parameters(
-                    "array entry is not a dictionary",
-                ));
-            }
-        },
-        Ok(_) => return Err(invalid_flate_decode_parameters("value is not a dictionary")),
-    };
-    for (name, _) in parameters.iter() {
-        if !matches!(
-            name.as_slice(),
-            b"Predictor" | b"Colors" | b"BitsPerComponent" | b"Columns"
-        ) {
-            return Err(invalid_flate_decode_parameters(&format!(
-                "unsupported key {}",
-                String::from_utf8_lossy(name)
-            )));
-        }
-    }
-    let integer = |name: &'static [u8], default: i64| -> Result<i64, PdfBuildError> {
-        match parameters.get(name) {
-            Ok(value) => value.as_i64().map_err(|_| {
-                invalid_flate_decode_parameters(&format!(
-                    "{} is not an integer",
-                    String::from_utf8_lossy(name)
-                ))
-            }),
-            Err(_) => Ok(default),
-        }
-    };
-    let predictor = integer(b"Predictor", 1)?;
-    if predictor == 1 {
-        return Ok(None);
-    }
-    if !(10..=15).contains(&predictor) {
-        return Err(invalid_flate_decode_parameters(&format!(
-            "predictor {predictor} is unsupported"
-        )));
-    }
-    let colors = positive_usize(integer(b"Colors", 1)?, "Colors")?;
-    let columns = positive_usize(integer(b"Columns", 1)?, "Columns")?;
-    let bits_per_component = positive_usize(integer(b"BitsPerComponent", 8)?, "BitsPerComponent")?;
-    if !matches!(bits_per_component, 1 | 2 | 4 | 8 | 16) {
-        return Err(invalid_flate_decode_parameters(
-            "BitsPerComponent must be 1, 2, 4, 8, or 16",
-        ));
-    }
-    let bits_per_pixel = colors.checked_mul(bits_per_component).ok_or_else(|| {
-        invalid_flate_decode_parameters("sample width overflows the supported range")
-    })?;
-    let row_bits = bits_per_pixel.checked_mul(columns).ok_or_else(|| {
-        invalid_flate_decode_parameters("row width overflows the supported range")
-    })?;
-    let bytes_per_pixel = bits_per_pixel
-        .checked_add(7)
-        .map(|bits| bits / 8)
-        .ok_or_else(|| {
-            invalid_flate_decode_parameters("sample width overflows the supported range")
-        })?;
-    let row_bytes = row_bits
-        .checked_add(7)
-        .map(|bits| bits / 8)
-        .ok_or_else(|| {
-            invalid_flate_decode_parameters("row width overflows the supported range")
-        })?;
-    Ok(Some(FlatePngPredictor {
-        row_bytes,
-        bytes_per_pixel,
-    }))
-}
-
-fn positive_usize(value: i64, name: &str) -> Result<usize, PdfBuildError> {
-    usize::try_from(value)
-        .ok()
-        .filter(|value| *value != 0)
-        .ok_or_else(|| invalid_flate_decode_parameters(&format!("{name} must be positive")))
-}
-
-fn invalid_flate_decode_parameters(detail: &str) -> PdfBuildError {
-    PdfBuildError::InvalidPdfPage(format!(
-        "Flate resource stream decode parameters are invalid: {detail}"
-    ))
-}
-
-fn decompress_png_predictor_bounded(
-    stream: &lopdf::Stream,
-    parameters: FlatePngPredictor,
-    limit: usize,
-) -> Result<Vec<u8>, PdfBuildError> {
-    if parameters.row_bytes > limit {
-        return Err(imported_pdf_stream_limit_error("decompressed", limit));
-    }
-    let mut decoder = flate2::read::ZlibDecoder::new(stream.content.as_slice());
-    let mut previous = vec![0_u8; parameters.row_bytes];
-    let mut encoded = vec![0_u8; parameters.row_bytes];
-    let mut decoded = vec![0_u8; parameters.row_bytes];
-    let mut data = Vec::new();
-    loop {
-        let mut tag = [0_u8];
-        let count = decoder
-            .read(&mut tag)
-            .map_err(|error| PdfBuildError::InvalidPdfPage(error.to_string()))?;
-        if count == 0 {
-            break;
-        }
-        decoder.read_exact(&mut encoded).map_err(|error| {
-            invalid_flate_decode_parameters(&format!("PNG predictor row is truncated: {error}"))
-        })?;
-        let next_len = data
-            .len()
-            .checked_add(parameters.row_bytes)
-            .ok_or_else(|| imported_pdf_stream_limit_error("decompressed", limit))?;
-        if next_len > limit {
-            return Err(imported_pdf_stream_limit_error("decompressed", limit));
-        }
-        decode_png_predictor_row(
-            tag[0],
-            parameters.bytes_per_pixel,
-            &previous,
-            &encoded,
-            &mut decoded,
-        )?;
-        data.extend_from_slice(&decoded);
-        std::mem::swap(&mut previous, &mut decoded);
-    }
-    Ok(data)
-}
-
-fn decode_png_predictor_row(
-    tag: u8,
-    bytes_per_pixel: usize,
-    previous: &[u8],
-    encoded: &[u8],
-    decoded: &mut [u8],
-) -> Result<(), PdfBuildError> {
-    if tag > 4 {
-        return Err(invalid_flate_decode_parameters(&format!(
-            "PNG predictor row has invalid algorithm tag {tag}"
-        )));
-    }
-    for index in 0..encoded.len() {
-        let left = index
-            .checked_sub(bytes_per_pixel)
-            .map(|left| decoded[left])
-            .unwrap_or(0);
-        let above = previous[index];
-        let upper_left = index
-            .checked_sub(bytes_per_pixel)
-            .map(|left| previous[left])
-            .unwrap_or(0);
-        let prediction = match tag {
-            0 => 0,
-            1 => left,
-            2 => above,
-            3 => ((u16::from(left) + u16::from(above)) / 2) as u8,
-            4 => png_paeth(left, above, upper_left),
-            _ => unreachable!("algorithm tag was range-checked"),
-        };
-        decoded[index] = encoded[index].wrapping_add(prediction);
-    }
-    Ok(())
-}
-
-fn png_paeth(left: u8, above: u8, upper_left: u8) -> u8 {
-    let left = i32::from(left);
-    let above = i32::from(above);
-    let upper_left = i32::from(upper_left);
-    let estimate = left + above - upper_left;
-    let left_distance = (estimate - left).abs();
-    let above_distance = (estimate - above).abs();
-    let upper_left_distance = (estimate - upper_left).abs();
-    if left_distance <= above_distance && left_distance <= upper_left_distance {
-        left as u8
-    } else if above_distance <= upper_left_distance {
-        above as u8
-    } else {
-        upper_left as u8
-    }
-}
-
-fn import_lopdf_dct_image(
-    document: &lopdf::Document,
-    stream: &lopdf::Stream,
-    next_object: &mut u32,
-    imported: &mut BTreeMap<lopdf::ObjectId, PdfObjectId>,
-    objects: &mut Vec<PdfIndirectObject>,
-) -> Result<Option<PdfObject>, PdfBuildError> {
-    let filters = match stream.filters() {
-        Ok(filters) => filters,
-        Err(_) => return Ok(None),
-    };
-    if filters.as_slice() != [b"DCTDecode".as_slice()] {
-        return Ok(None);
-    }
-    if stream.content.len() > MAX_IMPORTED_PDF_STREAM_BYTES {
-        return Err(PdfBuildError::InvalidPdfPage(format!(
-            "encoded image stream exceeds {} bytes",
-            MAX_IMPORTED_PDF_STREAM_BYTES
-        )));
-    }
-    let subtype = stream
-        .dict
-        .get(b"Subtype")
-        .and_then(lopdf::Object::as_name)
-        .map_err(|_| PdfBuildError::InvalidPdfPage("DCT stream has no image subtype".to_owned()))?;
-    if subtype != b"Image" {
-        return Err(PdfBuildError::InvalidPdfPage(
-            "DCT resource stream is not an image".to_owned(),
-        ));
-    }
-    if stream.dict.get(b"DecodeParms").is_ok()
-        || stream.dict.get(b"Decode").is_ok()
-        || stream.dict.get(b"Mask").is_ok()
-    {
-        return Err(PdfBuildError::InvalidPdfPage(
-            "DCT image uses unsupported decode or mask parameters".to_owned(),
-        ));
-    }
-    let dimension = |key: &'static [u8]| -> Result<u32, PdfBuildError> {
-        let value = stream
-            .dict
-            .get(key)
-            .and_then(lopdf::Object::as_i64)
-            .map_err(|_| {
-                PdfBuildError::InvalidPdfPage(format!(
-                    "DCT image has no integer {}",
-                    String::from_utf8_lossy(key)
-                ))
-            })?;
-        u32::try_from(value)
-            .ok()
-            .filter(|value| *value != 0)
-            .ok_or_else(|| {
-                PdfBuildError::InvalidPdfPage(format!(
-                    "DCT image has invalid {}",
-                    String::from_utf8_lossy(key)
-                ))
-            })
-    };
-    let width = dimension(b"Width")?;
-    let height = dimension(b"Height")?;
-    let bits_per_component = u8::try_from(dimension(b"BitsPerComponent")?).map_err(|_| {
-        PdfBuildError::InvalidPdfPage("DCT image bit depth is too large".to_owned())
-    })?;
-    let color_space = stream
-        .dict
-        .get(b"ColorSpace")
-        .and_then(|value| document.dereference(value))
-        .and_then(|(_, value)| value.as_name())
-        .map_err(|_| {
-            PdfBuildError::InvalidPdfPage("DCT image color space is invalid".to_owned())
-        })?;
-    let color_space = match color_space {
-        b"DeviceGray" => PdfImageColorSpace::DeviceGray,
-        b"DeviceRGB" => PdfImageColorSpace::DeviceRgb,
-        b"DeviceCMYK" => PdfImageColorSpace::DeviceCmyk,
-        _ => {
-            return Err(PdfBuildError::InvalidPdfPage(format!(
-                "DCT image color space {} is unsupported",
-                String::from_utf8_lossy(color_space)
-            )));
-        }
-    };
-    let soft_mask = match stream.dict.get(b"SMask") {
-        Ok(lopdf::Object::Reference(source_id)) => Some(import_lopdf_indirect(
-            document,
-            *source_id,
-            next_object,
-            imported,
-            objects,
-        )?),
-        Ok(lopdf::Object::Name(name)) if name == b"None" => None,
-        Err(_) => None,
-        _ => {
-            return Err(PdfBuildError::InvalidPdfPage(
-                "DCT image soft mask is invalid".to_owned(),
-            ));
-        }
-    };
-    Ok(Some(PdfObject::ImageXObject {
-        image: PdfImageXObject {
-            width,
-            height,
-            bits_per_component,
-            color_space,
-            filter: PdfImageFilter::Dct,
-            soft_mask,
-        },
-        data: stream.content.clone(),
-    }))
 }
 
 fn pdf_number_from_f32(value: f32) -> Result<PdfNumber, PdfBuildError> {
@@ -5413,6 +4868,98 @@ mod tests {
         }
     }
 
+    fn test_pdf_page_with_icc_jpeg_source() -> (tex_state::PdfExternalImageSource, Vec<u8>) {
+        let mut document = lopdf::Document::with_version("1.6");
+        let pages = document.new_object_id();
+        let page = document.new_object_id();
+        let icc_bytes = vec![b'I'; 1_024];
+        let mut icc_stream = lopdf::Stream::new(
+            lopdf::dictionary! {
+                "N" => 3,
+                "Alternate" => "DeviceRGB",
+            },
+            icc_bytes,
+        );
+        icc_stream.compress().expect("compress ICC fixture");
+        let icc = document.add_object(icc_stream);
+        let jpeg = vec![
+            0xff, 0xd8, 0xff, 0xe0, b'U', b'm', b'b', b'e', b'r', 0xff, 0xd9,
+        ];
+        let image = document.add_object(lopdf::Stream::new(
+            lopdf::dictionary! {
+                "Type" => "XObject",
+                "Subtype" => "Image",
+                "Width" => 1,
+                "Height" => 1,
+                "BitsPerComponent" => 8,
+                "ColorSpace" => vec![
+                    lopdf::Object::Name(b"ICCBased".to_vec()),
+                    lopdf::Object::Reference(icc),
+                ],
+                "Filter" => "DCTDecode",
+            },
+            jpeg.clone(),
+        ));
+        let contents = document.add_object(lopdf::Stream::new(
+            lopdf::dictionary! {},
+            b"q 1 0 0 1 0 0 cm /Im0 Do Q".to_vec(),
+        ));
+        document.objects.insert(
+            page,
+            lopdf::dictionary! {
+                "Type" => "Page",
+                "Parent" => pages,
+                "MediaBox" => vec![0.into(), 0.into(), 10.into(), 20.into()],
+                "Resources" => lopdf::dictionary! {
+                    "XObject" => lopdf::dictionary! { "Im0" => image },
+                },
+                "Contents" => contents,
+            }
+            .into(),
+        );
+        document.objects.insert(
+            pages,
+            lopdf::dictionary! {
+                "Type" => "Pages",
+                "Kids" => vec![page.into()],
+                "Count" => 1,
+            }
+            .into(),
+        );
+        let catalog = document.add_object(lopdf::dictionary! {
+            "Type" => "Catalog",
+            "Pages" => pages,
+        });
+        document.trailer.set("Root", catalog);
+        let mut bytes = Vec::new();
+        document
+            .save_to(&mut bytes)
+            .expect("serialize ICC JPEG page fixture");
+        let page_box = tex_state::PdfPageBox {
+            left: Scaled::from_raw(0),
+            bottom: Scaled::from_raw(0),
+            right: Scaled::from_raw(10 * 65_536),
+            top: Scaled::from_raw(20 * 65_536),
+        };
+        (
+            tex_state::PdfExternalImageSource {
+                identity: ContentHash::from_bytes(&bytes),
+                metadata: PdfExternalImageMetadata::PdfPage {
+                    page_box,
+                    rotation: tex_state::PdfPageRotation::None,
+                    page: 1,
+                    total_pages: 1,
+                    has_page_group: false,
+                    pdf_version: (1, 6),
+                },
+                natural_width: page_box.right,
+                natural_height: page_box.top,
+                bytes: bytes.into(),
+            },
+            jpeg,
+        )
+    }
+
     #[test]
     fn imported_pdf_page_applies_clockwise_quarter_turn_to_form_geometry() {
         let mut source = test_pdf_page_source(false);
@@ -5544,114 +5091,6 @@ mod tests {
             })
             .expect("typed image dependency");
         assert_eq!(data, b"bounded-pass-through-jpeg");
-    }
-
-    #[test]
-    fn imported_pdf_stream_decompression_stops_at_the_caller_limit() {
-        let compressed = zlib(&[b'x'; 65]).expect("compress fixture");
-        let stream =
-            lopdf::Stream::new(lopdf::dictionary! { "Filter" => "FlateDecode" }, compressed);
-        let error = decompress_lopdf_stream_bounded(&stream, 64)
-            .expect_err("expanded stream must respect the import ceiling");
-        assert!(error.to_string().contains("exceeds 64 bytes"));
-    }
-
-    #[test]
-    fn imported_pdf_stream_decodes_bounded_png_predictor_parameters() {
-        let predicted = [
-            1, 10, 20, 30, 40, 5, 5, 5, 5, // Sub
-            2, 1, 1, 1, 1, 1, 1, 1, 1, // Up
-        ];
-        let compressed = zlib(&predicted).expect("compress predictor fixture");
-        let stream = lopdf::Stream::new(
-            lopdf::dictionary! {
-                "Filter" => "FlateDecode",
-                "DecodeParms" => lopdf::dictionary! {
-                    "Predictor" => 15,
-                    "Columns" => 2,
-                    "Colors" => 4,
-                },
-            },
-            compressed,
-        );
-        let decoded = decompress_lopdf_stream_bounded(&stream, 16)
-            .expect("PNG predictor parameters are supported");
-        assert_eq!(
-            decoded,
-            [
-                10, 20, 30, 40, 15, 25, 35, 45, 11, 21, 31, 41, 16, 26, 36, 46
-            ]
-        );
-    }
-
-    #[test]
-    fn imported_pdf_stream_rejects_malformed_or_unsupported_decode_parameters() {
-        let cases = [
-            (
-                lopdf::dictionary! { "Predictor" => 2 },
-                "predictor 2 is unsupported",
-            ),
-            (
-                lopdf::dictionary! { "Predictor" => 15, "Colors" => 0 },
-                "Colors must be positive",
-            ),
-            (
-                lopdf::dictionary! { "Predictor" => 15, "BitsPerComponent" => 3 },
-                "BitsPerComponent must be 1, 2, 4, 8, or 16",
-            ),
-            (
-                lopdf::dictionary! { "Predictor" => 15, "EarlyChange" => 1 },
-                "unsupported key EarlyChange",
-            ),
-        ];
-        for (parameters, expected) in cases {
-            let stream = lopdf::Stream::new(
-                lopdf::dictionary! {
-                    "Filter" => "FlateDecode",
-                    "DecodeParms" => parameters,
-                },
-                zlib(&[0, 1]).expect("compress malformed-parameter fixture"),
-            );
-            let error = decompress_lopdf_stream_bounded(&stream, 16)
-                .expect_err("invalid parameters must be rejected");
-            assert!(error.to_string().contains(expected), "{error}");
-        }
-
-        for (predicted, expected) in [
-            (&[5, 1, 2][..], "invalid algorithm tag 5"),
-            (&[0, 1][..], "PNG predictor row is truncated"),
-        ] {
-            let stream = lopdf::Stream::new(
-                lopdf::dictionary! {
-                    "Filter" => "FlateDecode",
-                    "DecodeParms" => lopdf::dictionary! {
-                        "Predictor" => 15,
-                        "Columns" => 2,
-                    },
-                },
-                zlib(predicted).expect("compress malformed-row fixture"),
-            );
-            let error = decompress_lopdf_stream_bounded(&stream, 16)
-                .expect_err("malformed predictor rows must be rejected");
-            assert!(error.to_string().contains(expected), "{error}");
-        }
-    }
-
-    #[test]
-    fn imported_pdf_png_predictor_stops_at_the_caller_limit() {
-        let stream = lopdf::Stream::new(
-            lopdf::dictionary! {
-                "Filter" => "FlateDecode",
-                "DecodeParms" => lopdf::dictionary! {
-                    "Predictor" => 15,
-                    "Columns" => 4,
-                },
-            },
-            zlib(&[0, 1, 2, 3, 4, 0, 5, 6, 7, 8]).expect("compress bounded predictor fixture"),
-        );
-        let error = decompress_lopdf_stream_bounded(&stream, 7)
-            .expect_err("predictor output must respect the import ceiling");
-        assert!(error.to_string().contains("exceeds 7 bytes"));
     }
 
     #[test]
@@ -6316,6 +5755,89 @@ mod tests {
         );
         let content = parsed.get_page_content(page_id).expect("page content");
         assert!(content.windows(7).any(|window| window == b"/Im1 Do"));
+    }
+
+    #[test]
+    fn pdf_page_ximage_preserves_icc_based_jpeg_resources() {
+        let (image, jpeg) = test_pdf_page_with_icc_jpeg_source();
+        let mut stores = Universe::default();
+        prepare_pdftex_run_stores(&mut stores);
+        let result = run_with_image(
+            &mut stores,
+            concat!(
+                "\\pdfoutput=1 \\pdfcompresslevel=9 ",
+                "\\pdfximage \"page.pdf\"",
+                "\\shipout\\hbox{\\pdfrefximage\\pdflastximage}\\end",
+            ),
+            image,
+        );
+        let pdf = pdf_from_committed_artifacts(&mut stores, &result.committed_artifacts)
+            .expect("lower ICC JPEG PDF-page image");
+        let parsed = lopdf::Document::load_mem(&pdf).expect("parse imported ICC JPEG PDF");
+        let form = parsed
+            .get_object((1, 0))
+            .expect("included form")
+            .as_stream()
+            .expect("form stream");
+        let resources = form
+            .dict
+            .get(b"Resources")
+            .expect("form resources")
+            .as_dict()
+            .expect("resource dictionary");
+        let image_id = resources
+            .get(b"XObject")
+            .expect("XObject resources")
+            .as_dict()
+            .expect("XObject dictionary")
+            .get(b"Im0")
+            .expect("image resource")
+            .as_reference()
+            .expect("indirect image");
+        let imported_image = parsed
+            .get_object(image_id)
+            .expect("imported image")
+            .as_stream()
+            .expect("image stream");
+        assert_eq!(
+            imported_image
+                .dict
+                .get(b"Filter")
+                .expect("JPEG filter")
+                .as_name()
+                .expect("filter name"),
+            b"DCTDecode"
+        );
+        assert_eq!(imported_image.content, jpeg);
+        let color_space = imported_image
+            .dict
+            .get(b"ColorSpace")
+            .expect("image color space")
+            .as_array()
+            .expect("ICCBased color space");
+        assert_eq!(
+            color_space[0].as_name().expect("color-space family"),
+            b"ICCBased"
+        );
+        let profile_id = color_space[1].as_reference().expect("indirect ICC profile");
+        let profile = parsed
+            .get_object(profile_id)
+            .expect("ICC profile")
+            .as_stream()
+            .expect("ICC stream");
+        assert_eq!(
+            profile
+                .dict
+                .get(b"N")
+                .expect("ICC component count")
+                .as_i64()
+                .expect("integer component count"),
+            3
+        );
+        assert_eq!(
+            profile.decompressed_content().expect("decode ICC profile"),
+            vec![b'I'; 1_024]
+        );
     }
 
     #[test]

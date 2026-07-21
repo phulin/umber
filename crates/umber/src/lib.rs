@@ -21,6 +21,7 @@ mod html_output;
 mod input_search;
 mod latex_project;
 mod memory_output;
+mod pdf_import;
 mod pdf_output;
 mod pdf_vf;
 mod pdftex;

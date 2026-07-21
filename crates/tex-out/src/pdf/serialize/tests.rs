@@ -406,6 +406,43 @@ fn automatic_compression_rejects_existing_filter_policy() {
 }
 
 #[test]
+fn encoded_streams_preserve_their_filter_and_bytes_under_automatic_compression() {
+    let mut input = sample_input(&[1, 2, 3, 4, 5]);
+    let encoded = b"already encoded image bytes".to_vec();
+    input.objects.push(PdfIndirectObject {
+        id: id(6),
+        object: PdfObject::EncodedStream {
+            dictionary: dictionary([("Filter", PdfValue::Name("DCTDecode".into()))]),
+            data: encoded.clone(),
+        },
+    });
+    let document = input.validate().expect("encoded stream document validates");
+    let bytes = document
+        .to_pdf_bytes_with_options(PdfSerializationOptions {
+            pretty: false,
+            stream_compression: PdfStreamCompression::Flate { level: 9 },
+            object_compression: PdfObjectCompression::None,
+        })
+        .expect("encoded stream serializes");
+    let parsed = lopdf::Document::load_mem(&bytes).expect("encoded stream PDF parses");
+    let stream = parsed
+        .get_object((6, 0))
+        .expect("encoded stream object")
+        .as_stream()
+        .expect("stream");
+    assert_eq!(
+        stream
+            .dict
+            .get(b"Filter")
+            .expect("filter")
+            .as_name()
+            .expect("filter name"),
+        b"DCTDecode"
+    );
+    assert_eq!(stream.content, encoded);
+}
+
+#[test]
 fn model_version_validation_remains_typed_before_serialization() {
     assert!(PdfVersion::new(2, 0).is_ok());
     assert_eq!(

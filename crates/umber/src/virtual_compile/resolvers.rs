@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::Path;
 
-use tex_exec::{FontResolver, PdfImagePageBox, PdfImageRequest, PdfImageResolver};
+use tex_exec::{FontResolver, PdfImageRequest, PdfImageResolver};
 use tex_expand::{InputResolver, ResourceLookup, ResourceNeed, ResourceResult};
 use tex_fonts::{
     AcceptedFontContainers, FontFeaturePolicy, FontPurposes, FontRequest, FontRequestKey,
@@ -11,7 +11,7 @@ use tex_lex::WorldInput;
 use tex_state::scaled::Scaled;
 use tex_state::{
     FileContent, InputOrigin, InputReadState, PdfExternalImageMetadata, PdfExternalImageSource,
-    PdfPageBox, PdfPageRotation, PdfRasterColorSpace, PdfRasterFormat, PdfRasterImageMetadata,
+    PdfPageBox, PdfRasterColorSpace, PdfRasterFormat, PdfRasterImageMetadata,
 };
 
 use super::path::RequestedFile;
@@ -215,51 +215,19 @@ fn parse_pdf_image(
     content: &FileContent,
     request: &PdfImageRequest,
 ) -> Result<PdfExternalImageSource, String> {
-    let document = lopdf::Document::load_mem(content.bytes()).map_err(|error| error.to_string())?;
-    let pdf_version = parse_pdf_version(&document.version)?;
-    let page_id = document
-        .get_pages()
-        .get(&request.page)
-        .copied()
-        .ok_or_else(|| format!("page {} does not exist", request.page))?;
-    let keys: &[&[u8]] = match request.page_box {
-        PdfImagePageBox::Media => &[b"MediaBox"],
-        PdfImagePageBox::Crop => &[b"CropBox", b"MediaBox"],
-        PdfImagePageBox::Bleed => &[b"BleedBox", b"CropBox", b"MediaBox"],
-        PdfImagePageBox::Trim => &[b"TrimBox", b"CropBox", b"MediaBox"],
-        PdfImagePageBox::Art => &[b"ArtBox", b"CropBox", b"MediaBox"],
-    };
-    let coordinates = keys
-        .iter()
-        .find_map(|key| inherited_box(&document, page_id, key).transpose())
-        .transpose()?
-        .ok_or_else(|| "selected PDF page box is missing".to_owned())?;
+    let inspected = crate::pdf_import::inspect_pdf_page(
+        content.shared_bytes(),
+        request.page,
+        request.page_box,
+    )?;
+    let coordinates = inspected.page_box;
     let page_box = PdfPageBox {
         left: pdf_points_to_scaled(coordinates[0]),
         bottom: pdf_points_to_scaled(coordinates[1]),
         right: pdf_points_to_scaled(coordinates[2]),
         top: pdf_points_to_scaled(coordinates[3]),
     };
-    let page_dictionary = document
-        .get_dictionary(page_id)
-        .map_err(|error| error.to_string())?;
-    let has_page_group = page_dictionary.get(b"Group").is_ok();
-    let rotation = match inherited_integer(&document, page_id, b"Rotate")?
-        .unwrap_or(0)
-        .rem_euclid(360)
-    {
-        0 => PdfPageRotation::None,
-        90 => PdfPageRotation::Clockwise90,
-        180 => PdfPageRotation::UpsideDown,
-        270 => PdfPageRotation::Clockwise270,
-        rotation => {
-            return Err(format!(
-                "PDF page rotation {rotation} is not a multiple of 90"
-            ));
-        }
-    };
-    let total_pages = u32::try_from(document.get_pages().len())
-        .map_err(|_| "external PDF page count exceeds u32".to_owned())?;
+    let rotation = inspected.rotation;
     let box_width = page_box.right - page_box.left;
     let box_height = page_box.top - page_box.bottom;
     let (natural_width, natural_height) = if rotation.swaps_axes() {
@@ -273,28 +241,14 @@ fn parse_pdf_image(
             page_box,
             rotation,
             page: request.page,
-            total_pages,
-            has_page_group,
-            pdf_version,
+            total_pages: inspected.total_pages,
+            has_page_group: inspected.has_page_group,
+            pdf_version: inspected.pdf_version,
         },
         natural_width,
         natural_height,
         bytes: content.shared_bytes(),
     })
-}
-
-fn parse_pdf_version(version: &str) -> Result<(u8, u8), String> {
-    let (major, minor) = version
-        .split_once('.')
-        .ok_or_else(|| format!("invalid PDF version {version:?}"))?;
-    Ok((
-        major
-            .parse()
-            .map_err(|_| format!("invalid PDF version {version:?}"))?,
-        minor
-            .parse()
-            .map_err(|_| format!("invalid PDF version {version:?}"))?,
-    ))
 }
 
 fn png_has_chunk(bytes: &[u8], wanted: &[u8; 4]) -> bool {
@@ -318,58 +272,6 @@ fn png_has_chunk(bytes: &[u8], wanted: &[u8; 4]) -> bool {
         cursor = next;
     }
     false
-}
-
-fn inherited_box(
-    document: &lopdf::Document,
-    mut id: lopdf::ObjectId,
-    key: &[u8],
-) -> Result<Option<[f64; 4]>, String> {
-    loop {
-        let dictionary = document
-            .get_dictionary(id)
-            .map_err(|error| error.to_string())?;
-        if let Ok(value) = dictionary.get(key) {
-            let (_, value) = document
-                .dereference(value)
-                .map_err(|error| error.to_string())?;
-            let values = value.as_array().map_err(|error| error.to_string())?;
-            if values.len() != 4 {
-                return Err("PDF page box must contain four numbers".to_owned());
-            }
-            let mut result = [0.0; 4];
-            for (slot, value) in result.iter_mut().zip(values) {
-                *slot = f64::from(value.as_float().map_err(|error| error.to_string())?);
-            }
-            return Ok(Some(result));
-        }
-        let Ok(parent) = dictionary.get(b"Parent") else {
-            return Ok(None);
-        };
-        id = parent.as_reference().map_err(|error| error.to_string())?;
-    }
-}
-
-fn inherited_integer(
-    document: &lopdf::Document,
-    mut id: lopdf::ObjectId,
-    key: &[u8],
-) -> Result<Option<i64>, String> {
-    loop {
-        let dictionary = document
-            .get_dictionary(id)
-            .map_err(|error| error.to_string())?;
-        if let Ok(value) = dictionary.get(key) {
-            let (_, value) = document
-                .dereference(value)
-                .map_err(|error| error.to_string())?;
-            return value.as_i64().map(Some).map_err(|error| error.to_string());
-        }
-        let Ok(parent) = dictionary.get(b"Parent") else {
-            return Ok(None);
-        };
-        id = parent.as_reference().map_err(|error| error.to_string())?;
-    }
 }
 
 fn jpeg_dimensions(bytes: &[u8]) -> Result<(u32, u32, u8, u8), String> {
@@ -760,7 +662,7 @@ mod tests {
     use lopdf::dictionary;
     use tex_exec::{PdfImagePageBox, PdfImageRequest};
     use tex_expand::{ResourceLookup, ResourceNeed};
-    use tex_state::{InputOpenState, PdfExternalImageMetadata, PdfPageRotation, Universe, World};
+    use tex_state::{InputOpenState, PdfExternalImageMetadata, Universe, World};
     use umber_vfs::{VfsLimits, VirtualFs};
 
     #[test]
@@ -931,7 +833,7 @@ mod tests {
         else {
             panic!("expected PDF-page metadata");
         };
-        assert_eq!(rotation, PdfPageRotation::Clockwise90);
+        assert_eq!(rotation, tex_state::PdfPageRotation::Clockwise90);
         assert_eq!(source.natural_width, page_box.top - page_box.bottom);
         assert_eq!(source.natural_height, page_box.right - page_box.left);
     }

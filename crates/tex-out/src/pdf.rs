@@ -486,6 +486,11 @@ pub enum PdfObject {
         dictionary: PdfDictionary,
         data: Vec<u8>,
     },
+    /// A stream whose bytes already use the filters declared by `dictionary`.
+    EncodedStream {
+        dictionary: PdfDictionary,
+        data: Vec<u8>,
+    },
     /// A typed reusable Form XObject serialized through `pdf_writer::FormXObject`.
     FormXObject {
         dictionary: PdfDictionary,
@@ -879,6 +884,7 @@ fn validate_document(
     for indirect in &document.objects {
         match &indirect.object {
             PdfObject::Stream { dictionary, data }
+            | PdfObject::EncodedStream { dictionary, data }
             | PdfObject::FormXObject {
                 dictionary, data, ..
             } => {
@@ -940,7 +946,9 @@ fn validate_object_values(
     let mut stack = Vec::new();
     match object {
         PdfObject::Value(value) => stack.push((value, 1_usize)),
-        PdfObject::Stream { dictionary, .. } | PdfObject::FormXObject { dictionary, .. } => {
+        PdfObject::Stream { dictionary, .. }
+        | PdfObject::EncodedStream { dictionary, .. }
+        | PdfObject::FormXObject { dictionary, .. } => {
             stack.extend(dictionary.iter().map(|(_, value)| (value, 1)))
         }
         PdfObject::Raw(_) => {}
@@ -1177,11 +1185,21 @@ fn validate_page(
     let contents_valid = match page.get(b"Contents") {
         value @ Some(PdfValue::Reference(_)) => reference_value(value)
             .and_then(|id| object(document, id))
-            .is_some_and(|object| matches!(object, PdfObject::Stream { .. })),
+            .is_some_and(|object| {
+                matches!(
+                    object,
+                    PdfObject::Stream { .. } | PdfObject::EncodedStream { .. }
+                )
+            }),
         Some(PdfValue::Array(values)) => values.iter().all(|value| {
             reference_value(Some(value))
                 .and_then(|id| object(document, id))
-                .is_some_and(|object| matches!(object, PdfObject::Stream { .. }))
+                .is_some_and(|object| {
+                    matches!(
+                        object,
+                        PdfObject::Stream { .. } | PdfObject::EncodedStream { .. }
+                    )
+                })
         }),
         _ => false,
     };
@@ -1245,6 +1263,11 @@ fn hash_object(object: &PdfObject, hasher: &mut CanonicalHasher) {
         }
         PdfObject::Stream { dictionary, data } => {
             hasher.byte(1);
+            hash_dictionary(dictionary, hasher);
+            hasher.bytes(data);
+        }
+        PdfObject::EncodedStream { dictionary, data } => {
+            hasher.byte(21);
             hash_dictionary(dictionary, hasher);
             hasher.bytes(data);
         }

@@ -371,6 +371,11 @@ impl PdfExternalImageRecord {
     }
 
     #[must_use]
+    pub fn shared_bytes(&self) -> Arc<[u8]> {
+        Arc::clone(&self.bytes)
+    }
+
+    #[must_use]
     pub const fn mask_object(&self) -> Option<u32> {
         self.mask_object
     }

@@ -262,6 +262,9 @@ impl PdfDocument {
                     data,
                     options.stream_compression,
                 )?,
+                PdfObject::EncodedStream { dictionary, data } => {
+                    write_encoded_stream(&mut pdf, reference, dictionary, data)?
+                }
                 PdfObject::FormXObject {
                     dictionary,
                     data,
@@ -306,6 +309,7 @@ impl PdfDocument {
                                 .primitive(Raw(data));
                         }
                         PdfObject::Stream { .. }
+                        | PdfObject::EncodedStream { .. }
                         | PdfObject::FormXObject { .. }
                         | PdfObject::ImageXObject { .. }
                         | PdfObject::Annotation(_)
@@ -523,7 +527,9 @@ fn validate_object_scalars(object: &PdfObject) -> Result<(), PdfSerializeError> 
     let mut stack = Vec::new();
     match object {
         PdfObject::Value(value) => stack.push(value),
-        PdfObject::Stream { dictionary, .. } | PdfObject::FormXObject { dictionary, .. } => {
+        PdfObject::Stream { dictionary, .. }
+        | PdfObject::EncodedStream { dictionary, .. }
+        | PdfObject::FormXObject { dictionary, .. } => {
             stack.extend(dictionary.iter().map(|(_, value)| value));
         }
         PdfObject::Raw(_) => {}
@@ -642,6 +648,18 @@ fn write_stream(
             stream.finish();
         }
     }
+    Ok(())
+}
+
+fn write_encoded_stream(
+    pdf: &mut Pdf,
+    reference: Ref,
+    dictionary: &PdfDictionary,
+    data: &[u8],
+) -> Result<(), PdfSerializeError> {
+    let mut stream = pdf.stream(reference, data);
+    write_dictionary_entries(&mut stream, dictionary, None)?;
+    stream.finish();
     Ok(())
 }
 

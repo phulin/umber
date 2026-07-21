@@ -24,7 +24,7 @@ profiling-stats = [
 [dependencies]
 bib-engine = { path = "../bib-engine" }
 flate2.workspace = true
-lopdf = { version = "=0.43.0", default-features = false }
+hayro-syntax = { version = "=0.7.2", default-features = false, features = ["std", "unsafe"] }
 md-5.workspace = true
 png.workspace = true
 sha2.workspace = true
@@ -44,6 +44,7 @@ umber-fetch = { path = "../umber-fetch" }
 umber-interrupt = { path = "../umber-interrupt" }
 
 [dev-dependencies]
+lopdf = { version = "=0.43.0", default-features = false }
 parity-harness = { path = "../../tools/parity-harness" }
 proptest.workspace = true
 tempfile.workspace = true
