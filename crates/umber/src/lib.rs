@@ -49,8 +49,9 @@ pub use tex_fonts::{
 pub use tex_incr::{RenderedOutputId, ReuseMetrics, RevisionId, SameHistoryStop};
 pub use umber_vfs::FileContentId;
 pub use virtual_compile::{
-    AcceptedFinalization, CompileAttemptResult, CompileDiagnostic, CompileError, CompileTelemetry,
-    EngineMode, FileKind, FileRequest, FileRequestKey, NeedResources, RenderedSourceLocation,
+    AcceptedFinalization, CachedLocalTfm, CachedVirtualFont, CompileAttemptResult,
+    CompileDiagnostic, CompileError, CompileTelemetry, EngineMode, FileKind, FileRequest,
+    FileRequestKey, NeedResources, PdfVirtualFontResources, RenderedSourceLocation,
     RenderedSourceResult, RequestKeyError, ResolvedFile, ResourceDomain, ResourceRequest,
     ResourceResponse, RetentionMetrics, SessionLimits, SessionOptions, SessionWebFont, SourcePatch,
     VfsLimitError, VfsLimitKind, VfsLimits, VirtualCompileSession, VirtualPath, VirtualPathError,

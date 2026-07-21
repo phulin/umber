@@ -238,6 +238,59 @@ fn verified_shard_absence_returns_typed_unavailable() {
 }
 
 #[test]
+fn native_virtual_font_resolution_preserves_typed_identity_and_reuses_cache() {
+    let directory = TempDir::new().expect("distribution tempdir");
+    let vf = b"typed-vf-object";
+    let digest = hex_digest(vf);
+    let object = format!("sha256-{digest}");
+    let objects = directory.path().join("objects");
+    std::fs::create_dir_all(&objects).expect("objects directory");
+    std::fs::write(objects.join(&object), vf).expect("VF object");
+    let shard = format!(
+        "{{\"schema\":1,\"distribution\":\"vf-cache\",\"index\":0,\"files\":{{\"tex:root.vf\":{{\"virtualPath\":\"/texlive/fonts/vf/root.vf\",\"object\":\"{object}\",\"sha256\":\"{digest}\",\"bytes\":{}}}}}}}\n",
+        vf.len()
+    );
+    write_sharded_root(directory.path(), "vf-cache", 0, &[(shard.as_str(), true)]);
+    let cache = directory.path().join("cache");
+    let key = crate::FileRequestKey::new(FileKind::VirtualFont, "root.vf").expect("VF key");
+    let batch = needs(vec![ResourceRequest::File(FileRequest::new(
+        key.clone(),
+        "root",
+    ))]);
+    let cancellation = FetchCancellation::new();
+    let mut cold = DistributionResolver::new(
+        ObjectCache::new(&cache),
+        Some(directory.path().to_string_lossy().into_owned()),
+        None,
+        false,
+    );
+    let responses = cold
+        .resolve_batch(&local_resolver(directory.path()), &batch, &cancellation)
+        .expect("cold VF acquisition");
+    assert!(matches!(
+        responses.as_slice(),
+        [ResourceResponse::File(file)]
+            if file.request == key && file.bytes == vf
+    ));
+
+    std::fs::remove_file(objects.join(object)).expect("remove distribution VF object");
+    let mut warm = DistributionResolver::new(
+        ObjectCache::new(&cache),
+        Some(directory.path().to_string_lossy().into_owned()),
+        None,
+        true,
+    );
+    let responses = warm
+        .resolve_batch(&local_resolver(directory.path()), &batch, &cancellation)
+        .expect("warm offline VF acquisition");
+    assert!(matches!(
+        responses.as_slice(),
+        [ResourceResponse::File(file)]
+            if file.request == key && file.bytes == vf
+    ));
+}
+
+#[test]
 fn verified_schema_v2_root_returns_typed_font_unavailable() {
     let directory = TempDir::new().expect("distribution tempdir");
     let shard = "{\"schema\":1,\"distribution\":\"absence\",\"index\":0,\"files\":{}}\n";

@@ -188,9 +188,17 @@ export async function shardIndex(key, shardBits, crypto) {
 export function encodeRequest(request) {
 	if (
 		!isRecord(request) ||
-		!["tex", "tfm", "bib-aux", "classic-bib-data", "bib-style"].includes(
-			request.kind,
-		)
+		![
+			"tex",
+			"tfm",
+			"vf",
+			"font-map",
+			"font-encoding",
+			"font-program",
+			"bib-aux",
+			"classic-bib-data",
+			"bib-style",
+		].includes(request.kind)
 	) {
 		throw new ManifestResolverError(
 			"invalid-request",
@@ -199,6 +207,10 @@ export function encodeRequest(request) {
 	}
 	const kind =
 		{
+			vf: "tex",
+			"font-map": "tex",
+			"font-encoding": "tex",
+			"font-program": "tex",
 			"classic-bib-data": "classic-bib",
 			"bib-style": "bst",
 		}[request.kind] ?? request.kind;
@@ -218,7 +230,16 @@ export function decodeKey(key) {
 }
 
 export function resourceDomain(kind) {
-	return kind === "tex" || kind === "tfm" ? "tex" : "bibliography";
+	return [
+		"tex",
+		"tfm",
+		"vf",
+		"font-map",
+		"font-encoding",
+		"font-program",
+	].includes(kind)
+		? "tex"
+		: "bibliography";
 }
 
 export function isFormatName(name) {

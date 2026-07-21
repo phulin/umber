@@ -125,6 +125,180 @@ fn probes(result: CompileAttemptResult) -> Vec<FileRequest> {
     }
 }
 
+fn minimal_vf_with_local(name: &[u8]) -> Vec<u8> {
+    let mut bytes = vec![247, 202, 0];
+    bytes.extend_from_slice(&0_u32.to_be_bytes());
+    bytes.extend_from_slice(&(10_i32 << 20).to_be_bytes());
+    bytes.extend_from_slice(&[243, 0]);
+    bytes.extend_from_slice(&0_u32.to_be_bytes());
+    bytes.extend_from_slice(&(1_i32 << 20).to_be_bytes());
+    bytes.extend_from_slice(&(10_i32 << 20).to_be_bytes());
+    bytes.push(0);
+    bytes.push(u8::try_from(name.len()).expect("short fixture font name"));
+    bytes.extend_from_slice(name);
+    bytes.push(248);
+    while !bytes.len().is_multiple_of(4) {
+        bytes.push(248);
+    }
+    bytes
+}
+
+fn fixture_encoding() -> Vec<u8> {
+    let mut bytes = b"/FixtureEncoding [".to_vec();
+    for _ in 0..256 {
+        bytes.extend_from_slice(b" /.notdef");
+    }
+    bytes.extend_from_slice(b" ] def\n");
+    bytes
+}
+
+fn fixture_pfb() -> Vec<u8> {
+    let mut bytes = vec![0x80, 0x01];
+    bytes.extend_from_slice(&1_u32.to_le_bytes());
+    bytes.push(b'a');
+    bytes.extend_from_slice(&[0x80, 0x02]);
+    bytes.extend_from_slice(&1_u32.to_le_bytes());
+    bytes.push(0);
+    bytes.extend_from_slice(&[0x80, 0x03]);
+    bytes
+}
+
+#[test]
+fn pdf_virtual_font_closure_uses_typed_bounded_retries() {
+    let mut session = VirtualCompileSession::new(SessionOptions {
+        engine: EngineMode::PdfTex,
+        ..SessionOptions::default()
+    })
+    .expect("PDF session");
+    session
+        .add_user_file(
+            "main.tex",
+            b"\\pdfoutput=1 \\font\\root=cmr10\\relax \\root \\shipout\\hbox{A}\\end".to_vec(),
+        )
+        .expect("main source");
+
+    let root_requests = requests(session.compile_attempt());
+    let [root_tfm] = root_requests.as_slice() else {
+        panic!("expected root TFM request");
+    };
+    assert_eq!(root_tfm.key().kind(), FileKind::Tfm);
+    session
+        .provide_resolved_file(root_tfm.key().clone(), "/texlive/cmr10.tfm", CMR10.to_vec())
+        .expect("root TFM");
+    let first_attempt = session.compile_attempt();
+    let CompileAttemptResult::NeedResources(first) = first_attempt else {
+        panic!("completed engine should discover PDF resources: {first_attempt:?}");
+    };
+    let vf = first
+        .probes
+        .iter()
+        .find_map(|request| match request {
+            ResourceRequest::File(request) if request.key().kind() == FileKind::VirtualFont => {
+                Some(request.clone())
+            }
+            _ => None,
+        })
+        .expect("typed VF probe");
+    assert_eq!(vf.key().name(), "cmr10.vf");
+    assert_eq!(vf.original_name(), "cmr10.vf");
+    assert!(first.required.is_empty());
+    let vf_bytes = minimal_vf_with_local(b"cmsy10");
+    session
+        .provide_resolved_file(vf.key().clone(), "/texlive/cmr10.vf", vf_bytes.clone())
+        .expect("virtual font");
+
+    let local_requests = requests(session.compile_attempt());
+    let [local_tfm] = local_requests.as_slice() else {
+        panic!("expected local TFM request");
+    };
+    assert_eq!(local_tfm.key().kind(), FileKind::Tfm);
+    assert_eq!(local_tfm.key().name(), "cmsy10.tfm");
+    assert_eq!(local_tfm.original_name(), "cmsy10.tfm");
+    session
+        .provide_resolved_file(
+            local_tfm.key().clone(),
+            "/texlive/cmsy10.tfm",
+            CMSY10.to_vec(),
+        )
+        .expect("local TFM");
+
+    let local_probes = probes(session.compile_attempt());
+    let [local_vf] = local_probes.as_slice() else {
+        panic!("expected recursive VF probe");
+    };
+    assert_eq!(local_vf.key().name(), "cmsy10.vf");
+    session
+        .provide_resources(vec![ResourceResponse::FileUnavailable(
+            local_vf.key().clone(),
+        )])
+        .expect("authoritative non-VF response");
+
+    let map_requests = requests(session.compile_attempt());
+    let [map] = map_requests.as_slice() else {
+        panic!("expected default map request");
+    };
+    assert_eq!(map.key().kind(), FileKind::PdfFontMap);
+    session
+        .provide_resolved_file(
+            map.key().clone(),
+            "/texlive/pdftex.map",
+            b"cmsy10 FixturePS <[fixture.enc <fixture.pfb\n".to_vec(),
+        )
+        .expect("font map");
+
+    let resources = requests(session.compile_attempt());
+    assert_eq!(resources.len(), 2);
+    let encoding = resources
+        .iter()
+        .find(|request| request.key().kind() == FileKind::PdfEncoding)
+        .expect("typed encoding request");
+    let program = resources
+        .iter()
+        .find(|request| request.key().kind() == FileKind::PdfFontProgram)
+        .expect("typed program request");
+    session
+        .provide_resolved_file(
+            encoding.key().clone(),
+            "/texlive/fixture.enc",
+            fixture_encoding(),
+        )
+        .expect("encoding");
+    session
+        .provide_resolved_file(program.key().clone(), "/texlive/fixture.pfb", fixture_pfb())
+        .expect("font program");
+
+    assert!(matches!(
+        session.compile_attempt(),
+        CompileAttemptResult::Complete(_)
+    ));
+    assert!(session.attempts() <= 7);
+    let finalization = session
+        .into_accepted_finalization()
+        .expect("accepted resources");
+    let cached = finalization
+        .virtual_font_resources
+        .virtual_fonts
+        .get("cmr10")
+        .expect("VF retained by logical identity");
+    assert_eq!(
+        cached.content_id,
+        umber_vfs::FileContentId::for_bytes(&vf_bytes)
+    );
+    assert!(
+        finalization
+            .virtual_font_resources
+            .local_tfms
+            .contains_key("cmsy10")
+    );
+    assert!(finalization.stores.pdf_encoding(b"fixture.enc").is_some());
+    assert!(
+        finalization
+            .stores
+            .pdf_type1_program(b"fixture.pfb")
+            .is_some()
+    );
+}
+
 fn provide_cmu_font(session: &mut VirtualCompileSession, request: FontRequest) {
     session
         .provide_resolved_font(ResolvedFont {

@@ -40,6 +40,36 @@ Resource acquisition belongs to `umber`/`umber-wasm` adapters and the shared
 VFS resource protocol. Recursive lowering belongs to the PDF finalizer. DVI
 output is not changed by this parser.
 
+## Typed acquisition and retry closure
+
+The PDF-mode compile session retains a completed engine candidate before
+acceptance and probes `vf:<font>.vf` for each used TFM-backed PDF font. An
+authoritative negative classifies that font as real. A positive response is
+parsed once, retained with both its VFS content identity and VF program
+identity, and contributes required `tfm:<local>.tfm` requests. Each local TFM
+then receives the same VF probe, so nested declarations reach a bounded fixed
+point without executing packets.
+
+After the VF/TFM frontier settles, real fonts drive typed `font-map`,
+`font-encoding`, and `font-program` requests. The default-map optimization is
+unchanged: an implicit `pdftex.map` is not requested when authoritative inline
+map operations already cover every real font. These semantic wire kinds map to
+the existing immutable `tex:<name>` distribution keys; native and browser
+resolvers preserve the original typed request in their responses.
+
+Positive and authoritative-negative bindings retain the shared VFS atomic
+registration, conflict, byte-budget, and required-progress rules. The session
+attempt limit bounds advancing closure rounds. Acquired VF and local-TFM models
+cross the accepted-finalization boundary for recursive PDF lowering; this phase
+does not alter DVI construction or execute VF packets.
+
+This ordering maps directly to `pdftex.web` section 32e: its introductory font
+processing module classifies a font by probing its VF on first PDF use; `do_vf`
+and `Open vf_file` make absence the real-font fallback; and `vf_def_font` plus
+`Process the font definitions` load each local TFM before packet
+interpretation. Umber separates those synchronous Web2C reads into typed
+resumable host requests while preserving that classification order.
+
 ## Validation and bounds
 
 `VfLimits` makes every non-format capacity explicit. The defaults cap input,
@@ -65,3 +95,9 @@ Hermetic synthetic fixtures cover both packet headers, local-font definitions,
 typed movement/rule/font/special/character commands, recursion metadata,
 truncation and malformed ordering/opcodes, and each configurable bound. Live
 `vftovp` or pdfTeX execution is not part of the default Cargo correctness tier.
+
+Session fixtures additionally cover a nested VF-to-local-TFM frontier, map,
+encoding, and program acquisition, authoritative non-VF fallback, bounded
+round count, and retained content identities. Native resolver fixtures prove
+cold acquisition plus offline content-addressed reuse; authored browser tests
+prove the same typed request survives `tex:` shard selection.

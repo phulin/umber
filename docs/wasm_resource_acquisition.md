@@ -225,6 +225,14 @@ payloads without a second index lookup. Only verified absence in the canonical
 shard produces `file-unavailable`; shard transport and verification failures
 remain actionable resolver errors.
 
+PDF virtual-font discovery uses the ordinary file-response loop after engine
+execution reaches a retained candidate. Its `vf`, `font-map`, `font-encoding`,
+and `font-program` wire kinds resolve through authenticated `tex:<name>` shard
+entries, but the resolver returns the original semantic kind rather than the
+manifest transport kind. Recursive local metrics remain `tfm` requests. This
+keeps native and WASM retry identity identical while preserving the manifest
+schema.
+
 Format startup is a distinct, pre-session acquisition. The worker compares an
 inline format entry's `engineVersion` and `formatSchema` with the WASM exports
 before downloading it, then passes the verified object as a `Uint8Array` to the

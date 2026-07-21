@@ -249,6 +249,23 @@ test("fetches canonical shards, deduplicates payloads, and uses inline hints wit
 	);
 });
 
+test("typed virtual-font requests resolve through tex shards without losing identity", async () => {
+	const data = await fixture();
+	const { resolver } = resolverFor(data);
+	const downloads = await resolver.resolve([
+		{ type: "file", domain: "tex", kind: "vf", name: "plain.tex" },
+	]);
+	assert.deepEqual(
+		downloads.map(({ type, domain, kind, name }) => ({
+			type,
+			domain,
+			kind,
+			name,
+		})),
+		[{ type: "file", domain: "tex", kind: "vf", name: "plain.tex" }],
+	);
+});
+
 test("verified shard absence is typed unavailable while shard transport failure is actionable", async () => {
 	const data = await fixture();
 	const calls = [];

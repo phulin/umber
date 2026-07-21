@@ -36,6 +36,7 @@ Use this crate when behavior is about driving the engine, presenting CLI output,
 - `src/pdf_output.rs`: deterministic committed-artifact lowering into the checkpointed PDF object graph.
 - `src/virtual_compile.rs`: host-neutral persistent compile session, revision-checked root patches, shared-VFS file/OpenType resource retries, atomic response registration, retained immutable resources, and composed resource accounting.
 - `src/virtual_compile/path.rs`: logical TeX/TFM request normalization over `umber-vfs` canonical paths.
+- `src/virtual_compile/pdf_resources.rs`: post-execution typed VF/local-TFM/map/encoding/program closure discovery and immutable parsed cache.
 - `src/virtual_compile/resolvers.rs`: VFS-snapshot-backed input/font resolvers that register selected bytes through World, with typed missing-file and logical OpenType-font side state.
 - `src/virtual_compile/tests.rs`: native retry, path, precedence, limits, format, effect-isolation, font batching, and DVI coverage.
 - `src/main.rs`: `umber` binary entry point, CLI argument parsing, `lex-dump`/`expand-dump`/`run` dispatch, token formatting, and real-run file resolvers.

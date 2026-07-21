@@ -324,6 +324,14 @@ impl PendingRevision {
 }
 
 impl RevisionCandidate {
+    /// Borrows the reached engine state after execution has completed but
+    /// before the candidate is accepted. Downstream resource finalizers may
+    /// use this boundary to install already validated immutable resources;
+    /// incomplete candidates never expose speculative live state.
+    pub fn completed_universe_mut(&mut self) -> Option<&mut Universe> {
+        self.completed.as_ref().map(|_| &mut self.universe)
+    }
+
     /// Drives committed executor steps until the candidate either needs a
     /// resource or completes. Resolver selection is call-local so a newly
     /// provisioned immutable generation is observed only by the replayed step.

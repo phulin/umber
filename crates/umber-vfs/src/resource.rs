@@ -60,13 +60,28 @@ pub enum FileKind {
     ClassicBibData = 11,
     /// An executable classic BibTeX style program.
     BibStyle = 12,
+    /// A classic TeX virtual-font program probed for a TFM-backed font.
+    VirtualFont = 13,
+    /// A pdfTeX/dvips font-map file.
+    PdfFontMap = 14,
+    /// A PostScript encoding vector selected by a PDF font map.
+    PdfEncoding = 15,
+    /// An outline font program selected by a PDF font map.
+    PdfFontProgram = 16,
 }
 
 impl FileKind {
     #[must_use]
     pub const fn domain(self) -> ResourceDomain {
         match self {
-            Self::TexInput | Self::Tfm | Self::FormatImage | Self::Image => ResourceDomain::Tex,
+            Self::TexInput
+            | Self::Tfm
+            | Self::FormatImage
+            | Self::Image
+            | Self::VirtualFont
+            | Self::PdfFontMap
+            | Self::PdfEncoding
+            | Self::PdfFontProgram => ResourceDomain::Tex,
             Self::BibControl
             | Self::BibData
             | Self::BibConfiguration
@@ -93,6 +108,10 @@ impl FileKind {
             Self::BibAux => "bib-aux",
             Self::ClassicBibData => "classic-bib-data",
             Self::BibStyle => "bib-style",
+            Self::VirtualFont => "vf",
+            Self::PdfFontMap => "font-map",
+            Self::PdfEncoding => "font-encoding",
+            Self::PdfFontProgram => "font-program",
         }
     }
 
@@ -111,6 +130,10 @@ impl FileKind {
             "bib-aux" => Some(Self::BibAux),
             "classic-bib-data" => Some(Self::ClassicBibData),
             "bib-style" => Some(Self::BibStyle),
+            "vf" => Some(Self::VirtualFont),
+            "font-map" => Some(Self::PdfFontMap),
+            "font-encoding" => Some(Self::PdfEncoding),
+            "font-program" => Some(Self::PdfFontProgram),
             _ => None,
         }
     }
@@ -131,6 +154,10 @@ impl fmt::Display for FileKind {
             Self::BibAux => "classic bibliography auxiliary",
             Self::ClassicBibData => "classic bibliography data",
             Self::BibStyle => "classic bibliography style",
+            Self::VirtualFont => "virtual font",
+            Self::PdfFontMap => "PDF font map",
+            Self::PdfEncoding => "PDF font encoding",
+            Self::PdfFontProgram => "PDF font program",
         })
     }
 }

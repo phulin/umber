@@ -87,6 +87,10 @@ fn extension(kind: FileKind) -> &'static str {
     match kind {
         FileKind::TexInput => "tex",
         FileKind::Tfm => "tfm",
+        FileKind::VirtualFont => "vf",
+        FileKind::PdfFontMap => "map",
+        FileKind::PdfEncoding => "enc",
+        FileKind::PdfFontProgram => "",
         FileKind::Image => "",
         _ => unreachable!("the TeX resolver only accepts TeX file kinds"),
     }

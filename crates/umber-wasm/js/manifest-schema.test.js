@@ -5,6 +5,7 @@ import test from "node:test";
 import {
 	decodeKey,
 	encodeRequest,
+	resourceDomain,
 	shardIndex,
 	validateRootManifest,
 } from "./manifest-schema.js";
@@ -32,6 +33,16 @@ test("classic request keys share the Rust distribution vocabulary", () => {
 		kind: "bib-style",
 		name: "plain.bst",
 	});
+});
+
+test("typed PDF font resources retain wire identity over tex manifest keys", () => {
+	for (const kind of ["vf", "font-map", "font-encoding", "font-program"]) {
+		assert.equal(
+			encodeRequest({ kind, name: "fixture.bin" }),
+			"tex:fixture.bin",
+		);
+		assert.equal(resourceDomain(kind), "tex");
+	}
 });
 
 test("root validation requires a consistent power-of-two shard table", () => {

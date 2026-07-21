@@ -60,6 +60,13 @@ translation. Hash its UTF-8 bytes with SHA-256 and interpret the first
 may be 0 through 16, so every supported shard count is a configurable power of
 two.
 
+The host protocol has finer PDF-font semantic kinds than the immutable
+manifest vocabulary. `vf`, `font-map`, `font-encoding`, and `font-program`
+requests all select the existing `tex:<name>` entry. Native and browser
+resolvers retain the original semantic request key in positive and negative
+responses; only shard selection uses the transport key. This translation adds
+no alias object or mutable identity layer.
+
 Every digest-addressed shard is compact canonical JSON with schema 1,
 distribution identity, its numeric `index` (which also makes empty shard
 objects distinct), and a `files` map sorted by canonical lookup key. File

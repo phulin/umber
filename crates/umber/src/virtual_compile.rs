@@ -19,7 +19,9 @@ use crate::{
 };
 
 mod path;
+mod pdf_resources;
 mod resolvers;
+pub use pdf_resources::{CachedLocalTfm, CachedVirtualFont, PdfVirtualFontResources};
 pub(crate) use resolvers::parse_image;
 
 use path::user_path_for_key;
@@ -346,6 +348,7 @@ pub struct AcceptedFinalization {
     pub stores: Universe,
     pub dumped_format: bool,
     pub expansion_stats: tex_lex::ExpansionStats,
+    pub virtual_font_resources: PdfVirtualFontResources,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -494,6 +497,7 @@ pub struct VirtualCompileSession {
     pending_patch: Option<(tex_incr::RevisionId, tex_incr::Edit)>,
     candidate: Option<RetainedCandidate>,
     response_generation: u64,
+    virtual_font_resources: PdfVirtualFontResources,
     last_reuse: Option<tex_incr::ReuseMetrics>,
     initial_revision: tex_incr::RevisionId,
     execution_telemetry: tex_exec::ExecutionTelemetry,
@@ -647,6 +651,7 @@ impl VirtualCompileSession {
             pending_patch: None,
             candidate: None,
             response_generation: 0,
+            virtual_font_resources: PdfVirtualFontResources::default(),
             last_reuse: None,
             initial_revision,
             execution_telemetry: tex_exec::ExecutionTelemetry::default(),
@@ -680,6 +685,7 @@ impl VirtualCompileSession {
             stores,
             dumped_format,
             expansion_stats,
+            virtual_font_resources: self.virtual_font_resources,
         })
     }
 
@@ -1460,6 +1466,61 @@ impl VirtualCompileSession {
                     file: None,
                     line: None,
                     column: None,
+                }));
+            }
+        }
+        if self.engine.supports_pdf_output() {
+            let stores = match &mut retained.execution {
+                RetainedExecution::Initial { candidate, .. }
+                | RetainedExecution::Pending(candidate) => candidate
+                    .completed_universe_mut()
+                    .expect("a completed drive exposes its candidate universe"),
+            };
+            let discovery =
+                pdf_resources::discover(stores, &self.files, &mut self.virtual_font_resources)
+                    .map_err(CompileError::Font)?;
+            if !discovery.required.is_empty() || !discovery.probes.is_empty() {
+                stage.discard();
+                build.discard();
+                let required = discovery
+                    .required
+                    .into_iter()
+                    .map(ResourceRequest::File)
+                    .collect::<Vec<_>>();
+                let probes = discovery
+                    .probes
+                    .into_iter()
+                    .map(ResourceRequest::File)
+                    .collect::<Vec<_>>();
+                let awaiting = required
+                    .iter()
+                    .chain(&probes)
+                    .map(resource_request_key)
+                    .collect::<BTreeSet<_>>();
+                if awaiting.iter().any(|key| self.resource_is_bound(key)) {
+                    return Err(CompileError::NoProgress);
+                }
+                self.awaiting = Some(awaiting);
+                self.files.expect(&FileRequestBatch::with_probes(
+                    required.iter().filter_map(|request| match request {
+                        ResourceRequest::File(request) => Some(request.clone()),
+                        ResourceRequest::Font(_) => None,
+                    }),
+                    probes.iter().filter_map(|request| match request {
+                        ResourceRequest::File(request) => Some(request.clone()),
+                        ResourceRequest::Font(_) => None,
+                    }),
+                    std::iter::empty(),
+                ));
+                retained.files = pending_files;
+                retained.response_generation = self.response_generation;
+                retained.suspension_serial = retained.suspension_serial.saturating_add(1);
+                self.candidate = Some(retained);
+                self.start_resource_wait();
+                return Ok(CompileAttemptResult::NeedResources(NeedResources {
+                    required,
+                    probes,
+                    prefetch_hints: Vec::new(),
                 }));
             }
         }

@@ -306,6 +306,7 @@ fn committed_embedded_font_fixtures_match_bytes_structure_and_attestations() {
 #[allow(clippy::disallowed_methods)]
 fn check_embedded_font_case(case: &str) {
     let temp = tempfile::tempdir().expect("create embedded-font parity directory");
+    let distribution = write_empty_distribution(temp.path());
     let source_name = format!("{case}.tex");
     fs::copy(
         corpus_root().join("pdf").join(&source_name),
@@ -370,10 +371,14 @@ fn check_embedded_font_case(case: &str) {
 
     let actual_path = temp.path().join(format!("{case}.umber.pdf"));
     let output = Command::new(env!("CARGO_BIN_EXE_umber"))
-        .args(["run", "--pdftex", "--pdf"])
-        .env("SOURCE_DATE_EPOCH", PINNED_SOURCE_DATE_EPOCH)
-        .env("TEXFONTS", temp.path())
+        .args(["run", "--pdftex"])
+        .arg("--distribution")
+        .arg(&distribution)
+        .arg("--pdf")
         .arg(&actual_path)
+        .env("SOURCE_DATE_EPOCH", PINNED_SOURCE_DATE_EPOCH)
+        .env("XDG_CACHE_HOME", temp.path().join("cache"))
+        .env("TEXFONTS", temp.path())
         .arg(temp.path().join(&source_name))
         .output()
         .expect("run embedded-font PDF fixture");
@@ -464,6 +469,22 @@ fn check_embedded_font_case(case: &str) {
         digest(&expected_extract),
     );
     assert_eq!(read_fixture("pdf", case, "render"), expected_attestation);
+}
+
+#[allow(clippy::disallowed_methods)] // Hermetic host-side distribution fixture.
+fn write_empty_distribution(root: &std::path::Path) -> std::path::PathBuf {
+    let distribution = root.join("distribution");
+    let objects = distribution.join("objects");
+    fs::create_dir_all(&objects).expect("create empty distribution");
+    let shard = b"{\"schema\":1,\"distribution\":\"pdf-fixture\",\"index\":0,\"files\":{}}\n";
+    let shard_digest = digest(shard);
+    fs::write(objects.join(format!("sha256-{shard_digest}")), shard)
+        .expect("write empty distribution shard");
+    let root = format!(
+        "{{\"schema\":2,\"distribution\":\"pdf-fixture\",\"objectsBaseUrl\":\"https://example.invalid/objects/\",\"shardBits\":0,\"shardCount\":1,\"shards\":[\"{shard_digest}\"]}}\n"
+    );
+    fs::write(distribution.join("manifest-v2.json"), root).expect("write empty distribution root");
+    distribution
 }
 
 fn digest(bytes: &[u8]) -> String {

@@ -489,7 +489,11 @@ impl LocalResolver {
             FileKind::Tfm => self
                 .font
                 .read_from_world(&mut world, Path::new(request.original_name())),
-            FileKind::GenericAsset => self
+            FileKind::GenericAsset
+            | FileKind::VirtualFont
+            | FileKind::PdfFontMap
+            | FileKind::PdfEncoding
+            | FileKind::PdfFontProgram => self
                 .font
                 .read_program_from_world(&mut world, Path::new(request.original_name())),
             _ => return None,
@@ -1223,6 +1227,10 @@ fn distribution_file_key(
         FileKind::ClassicBibData => DistributionFileKind::ClassicBib,
         FileKind::BibStyle => DistributionFileKind::BibStyle,
         FileKind::GenericAsset => DistributionFileKind::Tex,
+        FileKind::VirtualFont
+        | FileKind::PdfFontMap
+        | FileKind::PdfEncoding
+        | FileKind::PdfFontProgram => DistributionFileKind::Tex,
         _ => return Ok(None),
     };
     DistributionFileRequestKey::new(kind, request.key().name())

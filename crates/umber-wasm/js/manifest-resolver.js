@@ -208,8 +208,12 @@ export class HttpManifestResolver {
 						results.set(job.key, {
 							type: "file",
 							...(() => {
-								const decoded = decodeKey(job.key);
-								return { domain: resourceDomain(decoded.kind), ...decoded };
+								const identity = job.request ?? decodeKey(job.key);
+								return {
+									domain: identity.domain ?? resourceDomain(identity.kind),
+									kind: identity.kind,
+									name: identity.name,
+								};
 							})(),
 							virtualPath: job.entry.virtualPath,
 							bytes,

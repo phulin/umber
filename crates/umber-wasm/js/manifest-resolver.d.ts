@@ -7,6 +7,10 @@ export const TEXLIVE_2026_MANIFEST_SHA256: string;
 export type FileKind =
 	| "tex"
 	| "tfm"
+	| "vf"
+	| "font-map"
+	| "font-encoding"
+	| "font-program"
 	| "bib-aux"
 	| "classic-bib-data"
 	| "bib-style";
