@@ -106,6 +106,22 @@ There is one semantic mutation boundary:
 No downstream crate receives `&mut Env`, raw restore hooks, partial checkpoint
 mutation, or constructors for opaque handles.
 
+This boundary maps to TeX.web §§268--283: `eq_define` (§277) and
+`eq_word_define` (§278) save an outer value once per level, global definitions
+set level one (§§279--280), and `unsave` (§§281--283) restores a saved value
+unless the live entry is global. `\let` uses that same definition path in
+§§1219--1221; it has no separate restoration rule. Alignments open one outer
+and one per-entry `align_group`, replace the latter after each cell, and unsave
+both at completion (TeX.web §§773--800, especially §§774, 791, and 800).
+Recovery inserts a closer for the actual current group rather than restoring a
+different cell (§1064). pdfTeX.web preserves these rules at §§288--303,
+§§1395--1397, §§947--974, and §1240; its extended save-stack records do not
+change ordinary equivalent restoration. In Umber, `Env` meaning cells and
+journal records implement `eqtb` and the save stack, while alignment template
+delivery and group entry/exit remain `tex-expand`/`tex-exec` responsibilities.
+An alignment-token accounting error must therefore be repaired before group
+exit, not by redirecting an `Env` restore to a different control sequence.
+
 Optional paragraph replay recording overlays this boundary without changing
 rollback history. While active, count-register and integer-parameter setters
 save each touched cell's paragraph-entry value in an Env-owned recorder.

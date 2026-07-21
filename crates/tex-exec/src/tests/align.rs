@@ -793,17 +793,28 @@ fn u_template_macro_argument_interleaves_cell_body_and_v_template() {
 fn hash_brace_macro_delimiter_preserves_alignment_cell_boundary() {
     let stores = run_boxed_alignment_source(
         "\\def\\dispatch{\\def\\next@##1##{\\finish{##1}}\\next@}\
-         \\def\\finish#1#2#3!@{\\hbox{#2}}\
-         \\halign{\\dispatch#!@\\cr M{X}tail&\\cr}",
+         \\def\\finish#1#2#3!@{\\global\\count7=123\\hbox{#2}}\
+         \\halign{\\dispatch#!@\\cr M{X}tail&\\cr N{Y}tail&\\cr}",
     );
     let rows = vlist_rows(&stores, box_zero_vlist(&stores));
-    let cells = row_cells(&stores, rows[0]);
-    let [Node::HList(wrapped)] = stores.nodes(cells[0].children).testing_decoded() else {
+    let first_cells = row_cells(&stores, rows[0]);
+    let second_cells = row_cells(&stores, rows[1]);
+    let [Node::HList(first)] = stores.nodes(first_cells[0].children).testing_decoded() else {
         panic!("cell should contain the box built after the delimiter match");
     };
+    let [Node::HList(second)] = stores.nodes(second_cells[0].children).testing_decoded() else {
+        panic!("second cell should contain the box built after group restoration");
+    };
 
-    assert_eq!(rows.len(), 1);
-    assert_eq!(cell_text(&stores, wrapped), "X");
+    assert_eq!(rows.len(), 2);
+    assert_eq!(cell_text(&stores, first), "X");
+    assert_eq!(cell_text(&stores, second), "Y");
+    assert_eq!(stores.count(7), 123, "global cell assignment survives");
+    assert_eq!(
+        stores.meaning(stores.symbol("let").expect("installed primitive")),
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Let),
+        "per-cell align-group restoration must not alter unrelated meanings"
+    );
 }
 
 #[test]
