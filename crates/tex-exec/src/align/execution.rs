@@ -474,6 +474,36 @@ enum CellTerminator {
     Span,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum DoEndV {
+    NotApplicable,
+    FinishCell,
+    Recovered,
+}
+
+/// Applies the stack and group gates at the front of TeX82's `do_endv`.
+///
+/// The cell driver owns `fin_col`/`fin_row`, but aliases can reach ordinary
+/// main control while an intervening group is still open. Keeping this gate
+/// shared makes both paths validate the same exhausted v-template sentinel
+/// before applying `off_save` and replaying end-v.
+pub(crate) fn do_endv(
+    command: TracedTokenWord,
+    input: &mut InputStack,
+    stores: &mut Universe,
+) -> Result<DoEndV, ExecError> {
+    if !tex_expand::semantic_token(command).is_frozen_endv()
+        || !input.has_exhausted_alignment_v_template(stores)
+    {
+        return Ok(DoEndV::NotApplicable);
+    }
+    if stores.innermost_group_kind() == Some(tex_state::GroupKind::Align) {
+        return Ok(DoEndV::FinishCell);
+    }
+    crate::assignments::off_save_alignment(command, input, stores)?;
+    Ok(DoEndV::Recovered)
+}
+
 fn run_cell_body_until_terminator(
     _align_level: usize,
     nest: &mut ModeNest,
@@ -523,18 +553,16 @@ fn run_cell_body_until_terminator(
             Err(error) => return Err(error.into()),
         };
         let semantic = tex_expand::semantic_token(token);
-        if semantic.is_frozen_endv()
-            && stores.innermost_group_kind() != Some(tex_state::GroupKind::Align)
-        {
-            // TeX.web §1131 do_endv finishes an entry only when the current
-            // group is align_group. Any intervening group needs §1064
-            // off_save first, including an ordinary group opened by a control
-            // sequence brace alias that did not change align_state. The
-            // inserted closer runs before this inaccessible token is retried.
-            crate::assignments::off_save_alignment(token, input, stores)?;
-            continue;
-        }
         if semantic.is_frozen_endv() {
+            match do_endv(token, input, stores)? {
+                DoEndV::Recovered => continue,
+                DoEndV::FinishCell => {}
+                DoEndV::NotApplicable => {
+                    return Err(ExecError::MissingToken {
+                        context: "exhausted alignment v-template",
+                    });
+                }
+            }
             let terminator = input
                 .finish_alignment_cell()
                 .ok_or(ExecError::MissingToken {

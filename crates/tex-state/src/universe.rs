@@ -7729,6 +7729,7 @@ fn hash_token_list_replay_kind(kind: TokenListReplayKind, hasher: &mut StateHash
         TokenListReplayKind::Inserted => 7,
         TokenListReplayKind::AlignmentUTemplate => 8,
         TokenListReplayKind::ScantokensEveryEof => 9,
+        TokenListReplayKind::AlignmentVTemplate => 14,
     });
 }
 

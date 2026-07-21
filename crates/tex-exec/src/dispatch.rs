@@ -61,6 +61,12 @@ pub(crate) fn dispatch_delivered_token_with_context(
     execution: &mut crate::ExecutionContext<'_>,
 ) -> Result<DispatchAction, ExecError> {
     let token = tex_expand::semantic_token(traced);
+    if token.is_frozen_endv() {
+        match crate::align::do_endv(traced, input, stores)? {
+            crate::align::DoEndV::Recovered => return Ok(DispatchAction::Continue),
+            crate::align::DoEndV::NotApplicable | crate::align::DoEndV::FinishCell => {}
+        }
+    }
     let origin = traced.origin();
     if stores.origin_is_inserted_kind(origin, InsertedOriginKind::NoExpand) {
         return Ok(DispatchAction::Continue);

@@ -4,6 +4,7 @@ mod execution;
 pub(crate) use execution::FinishedAlignment;
 #[cfg(test)]
 pub(crate) use execution::append_finished_alignment;
+pub(crate) use execution::{DoEndV, do_endv};
 
 mod noalign;
 mod packaging;

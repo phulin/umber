@@ -2025,6 +2025,24 @@ fn exhausted_nested_replays_finish_before_reading_below_marked_boundary() {
 }
 
 #[test]
+fn do_endv_stack_walk_accepts_only_empty_frames_above_v_template() {
+    let mut stores = Universe::new();
+    let list = stores.intern_token_list(&[char_token('x', Catcode::Letter)]);
+    let mut input = InputStack::new(MemoryInput::new("a"));
+    input.push_token_list(list, TokenListReplayKind::AlignmentVTemplate);
+
+    assert_eq!(
+        input.next_token(&mut stores).expect("v-template token"),
+        Some(char_token('x', Catcode::Letter))
+    );
+    input.push_token_list(TokenListId::EMPTY, TokenListReplayKind::Inserted);
+    assert!(input.has_exhausted_alignment_v_template(&stores));
+
+    input.push_token_list(list, TokenListReplayKind::Inserted);
+    assert!(!input.has_exhausted_alignment_v_template(&stores));
+}
+
+#[test]
 fn token_list_replay_uses_frame_origin_list_without_changing_semantic_identity() {
     let mut stores = Universe::new();
     let tokens = [

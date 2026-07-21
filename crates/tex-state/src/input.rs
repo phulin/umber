@@ -187,6 +187,8 @@ pub enum TokenListReplayKind {
     /// `\everyeof` replay whose retirement closes a traced `\scantokens` file.
     ScantokensEveryEof,
     AlignmentUTemplate,
+    /// TeX82's v-template frame, retained when exhausted until `do_endv`.
+    AlignmentVTemplate,
 }
 
 /// The family of TeX conditional represented by an open condition frame.

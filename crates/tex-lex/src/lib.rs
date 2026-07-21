@@ -2291,9 +2291,32 @@ impl InputStack {
             None
         };
         if let Some(v_template) = v_template {
-            self.push_token_list(v_template, TokenListReplayKind::Inserted);
+            self.push_token_list(v_template, TokenListReplayKind::AlignmentVTemplate);
         }
         terminates
+    }
+
+    /// Whether TeX82's `do_endv` stack walk reaches an exhausted v-template.
+    ///
+    /// Empty token-list frames above it are admissible, matching tex.web
+    /// §1131. A nonempty token list or a source frame makes the preambles
+    /// interwoven instead.
+    #[must_use]
+    pub fn has_exhausted_alignment_v_template(&self, stores: &impl ExpansionState) -> bool {
+        for &frame_index in self.token_frame_indices.iter().rev() {
+            match &self.frames[frame_index] {
+                InputFrame::TokenList(frame) if frame.index >= frame.len(stores) => {
+                    if frame.replay_kind == TokenListReplayKind::AlignmentVTemplate {
+                        return true;
+                    }
+                }
+                InputFrame::TokenList(_) | InputFrame::Source(_) => return false,
+                InputFrame::Condition { .. } => {
+                    unreachable!("condition frames are excluded from token_frame_indices")
+                }
+            }
+        }
+        false
     }
 
     /// Reverses the alignment brace accounting for a token that was consumed

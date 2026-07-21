@@ -1242,6 +1242,46 @@ fn v_template_ending_in_macro_delivers_frozen_endv_after_frame_retirement() {
 }
 
 #[test]
+fn let_aliased_frozen_endv_finishes_cell_through_do_endv() {
+    let stores = run_boxed_alignment_source(
+        "\\def\\capture{\\afterassignment\\execute\\let\\endt=}\\def\\execute{\\endt}\\halign{#\\cr x\\capture\\cr}",
+    );
+    let vbox = box_zero_vlist(&stores);
+    let rows = vlist_rows(&stores, vbox);
+
+    assert_eq!(rows.len(), 1);
+    assert_eq!(cell_text(&stores, row_cells(&stores, rows[0])[0]), "x");
+}
+
+#[test]
+fn futurelet_aliased_frozen_endv_recovers_intervening_group_before_do_endv() {
+    let stores = run_boxed_alignment_source(
+        "\\def\\capture{\\futurelet\\endt\\consume}\\def\\consume{\\begingroup\\afterassignment\\execute\\let\\scratch=}\\def\\execute{\\endt}\\halign{#\\cr x\\capture\\cr}",
+    );
+    let vbox = box_zero_vlist(&stores);
+    let rows = vlist_rows(&stores, vbox);
+
+    assert_eq!(rows.len(), 1);
+    assert_eq!(cell_text(&stores, row_cells(&stores, rows[0])[0]), "x");
+    assert!(support::terminal_effect_text(&stores).contains("Missing \\endgroup inserted"));
+}
+
+#[test]
+fn aliased_frozen_endv_alignment_replays_identically_after_rollback() {
+    let mut stores = support::stores_with_fonts();
+    let checkpoint = stores.snapshot();
+    let source = "\\def\\capture{\\futurelet\\endt\\consume}\\def\\consume{\\afterassignment\\execute\\let\\scratch=}\\def\\execute{\\endt}\\setbox0=\\vbox{\\halign{#\\cr x\\capture\\cr}}";
+
+    run_alignment_source_in(&mut stores, source);
+    let first_hash = stores.snapshot().state_hash();
+
+    stores.rollback(&checkpoint);
+    run_alignment_source_in(&mut stores, source);
+
+    assert_eq!(stores.snapshot().state_hash(), first_hash);
+}
+
+#[test]
 fn frozen_endv_recovers_open_box_groups_before_finishing_cell() {
     let stores = run_boxed_alignment_source(
         "\\let\\bgroup={\\let\\egroup=}\\def\\open{\\hbox\\bgroup\\begingroup\\bgroup}\\halign{\\open#\\cr x\\cr}",
