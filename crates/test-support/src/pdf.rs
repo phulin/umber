@@ -45,12 +45,9 @@ pub fn normalize_structure(bytes: &[u8]) -> Result<String> {
                 .join(" ")
         ));
         normalized.push_str("resources ");
-        let resources = page
-            .dictionary
-            .get(b"Resources")
-            .context("page has no Resources")?;
+        let resources = effective_page_resources(&page.dictionary)?;
         normalized.push_str(&canonical_value(
-            resources,
+            &ProbeValue::Dictionary(resources),
             &pages_by_id,
             0,
             &mut Vec::new(),
@@ -79,6 +76,59 @@ pub fn normalize_structure(bytes: &[u8]) -> Result<String> {
     }
     append_document_extensions(&probe, &catalog, &pages_by_id, &mut normalized)?;
     Ok(normalized)
+}
+
+fn effective_page_resources(page: &ProbeDictionary) -> Result<ProbeDictionary> {
+    let mut layers = Vec::new();
+    collect_page_resource_layers(page, 0, &mut layers)?;
+    let mut effective = ProbeDictionary {
+        id: None,
+        entries: BTreeMap::new(),
+    };
+    for layer in layers {
+        for (key, value) in layer.entries {
+            let merged = effective
+                .entries
+                .get(&key)
+                .and_then(ProbeValue::as_dictionary)
+                .zip(value.as_dictionary())
+                .map(|(parent, child)| {
+                    let mut dictionary = parent.clone();
+                    dictionary.id = child.id;
+                    dictionary.entries.extend(child.entries.clone());
+                    ProbeValue::Dictionary(dictionary)
+                })
+                .unwrap_or(value);
+            effective.entries.insert(key, merged);
+        }
+    }
+    if effective.entries.is_empty() {
+        bail!("page has no Resources");
+    }
+    Ok(effective)
+}
+
+fn collect_page_resource_layers(
+    dictionary: &ProbeDictionary,
+    depth: usize,
+    layers: &mut Vec<ProbeDictionary>,
+) -> Result<()> {
+    if depth > 32 {
+        bail!("PDF page resource inheritance exceeds 32 levels");
+    }
+    if let Some(parent) = dictionary
+        .get(b"Parent")
+        .and_then(ProbeValue::as_dictionary)
+    {
+        collect_page_resource_layers(parent, depth + 1, layers)?;
+    }
+    if let Some(resources) = dictionary
+        .get(b"Resources")
+        .and_then(ProbeValue::as_dictionary)
+    {
+        layers.push(resources.clone());
+    }
+    Ok(())
 }
 
 fn append_document_extensions(
@@ -424,3 +474,6 @@ fn hex(bytes: &[u8]) -> String {
     }
     output
 }
+
+#[cfg(test)]
+mod tests;

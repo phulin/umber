@@ -35,7 +35,14 @@ fn annotation_fixture_matches_page_ownership_and_rectangles() {
     assert_eq!(umber.iter().map(Vec::len).collect::<Vec<_>>(), [2, 1]);
 }
 
-fn annotation_projection(bytes: &[u8]) -> Vec<Vec<(Vec<f64>, Vec<u8>)>> {
+#[derive(Debug, PartialEq)]
+struct AnnotationProjection {
+    rectangle: Vec<f64>,
+    subtype: Vec<u8>,
+    action_subtype: Option<Vec<u8>>,
+}
+
+fn annotation_projection(bytes: &[u8]) -> Vec<Vec<AnnotationProjection>> {
     let document = PdfProbe::new(bytes, ProbeLimits::default()).expect("parse annotation fixture");
     let mut owned = std::collections::BTreeSet::new();
     document
@@ -49,6 +56,13 @@ fn annotation_projection(bytes: &[u8]) -> Vec<Vec<(Vec<f64>, Vec<u8>)>> {
                     let id = entry.referenced_id().expect("indirect annotation");
                     assert!(owned.insert(id), "annotation object is shared by pages");
                     let annotation = entry.as_dictionary().expect("annotation dictionary");
+                    if let Some(owner) = annotation.get(b"P") {
+                        assert_eq!(
+                            owner.referenced_id(),
+                            Some(page.id),
+                            "annotation /P does not reference its owning page"
+                        );
+                    }
                     assert_eq!(
                         match annotation.get(b"Type").expect("annotation type").resolved() {
                             ProbeValue::Name(name) => name.as_slice(),
@@ -71,7 +85,19 @@ fn annotation_projection(bytes: &[u8]) -> Vec<Vec<(Vec<f64>, Vec<u8>)>> {
                         panic!("annotation subtype is a name");
                     };
                     let subtype = subtype.clone();
-                    (rect, subtype)
+                    let action_subtype = annotation
+                        .get(b"A")
+                        .and_then(ProbeValue::as_dictionary)
+                        .and_then(|action| action.get(b"S"))
+                        .map(|value| match value.resolved() {
+                            ProbeValue::Name(name) => name.clone(),
+                            _ => panic!("annotation action subtype is a name"),
+                        });
+                    AnnotationProjection {
+                        rectangle: rect,
+                        subtype,
+                        action_subtype,
+                    }
                 })
                 .collect()
         })
