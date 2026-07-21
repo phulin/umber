@@ -659,7 +659,9 @@ mod tests {
         CompileAttemptResult, EngineMode, FileKind, ResolvedFile, ResourceRequest,
         ResourceResponse, SessionOptions, VirtualCompileSession,
     };
-    use lopdf::dictionary;
+    use test_support::pdf_fixture::{
+        Dictionary as FixtureDictionary, PdfFixture, array, name, reference,
+    };
     use tex_exec::{PdfImagePageBox, PdfImageRequest};
     use tex_expand::{ResourceLookup, ResourceNeed};
     use tex_state::{InputOpenState, PdfExternalImageMetadata, Universe, World};
@@ -779,38 +781,43 @@ mod tests {
 
     #[test]
     fn inherited_quarter_turn_swaps_pdf_page_natural_dimensions() {
-        let mut document = lopdf::Document::with_version("1.5");
-        let pages = document.new_object_id();
-        let page = document.new_object_id();
-        let contents = document.add_object(lopdf::Stream::new(lopdf::dictionary! {}, Vec::new()));
-        document.objects.insert(
-            page,
-            lopdf::dictionary! {
-                "Type" => "Page",
-                "Parent" => pages,
-                "MediaBox" => vec![0.into(), 0.into(), 10.into(), 20.into()],
-                "Resources" => lopdf::dictionary! {},
-                "Contents" => contents,
-            }
-            .into(),
-        );
-        document.objects.insert(
-            pages,
-            lopdf::dictionary! {
-                "Type" => "Pages",
-                "Kids" => vec![page.into()],
-                "Count" => 1,
-                "Rotate" => 90,
-            }
-            .into(),
-        );
-        let catalog = document.add_object(lopdf::dictionary! {
-            "Type" => "Catalog",
-            "Pages" => pages,
-        });
-        document.trailer.set("Root", catalog);
-        let mut bytes = Vec::new();
-        document.save_to(&mut bytes).expect("serialize rotated PDF");
+        let mut document = PdfFixture::new("1.5").expect("create rotated PDF");
+        document
+            .add_dictionary(
+                1,
+                FixtureDictionary::new()
+                    .entry("Type", name("Catalog"))
+                    .entry("Pages", reference(2)),
+            )
+            .expect("catalog");
+        document
+            .add_dictionary(
+                2,
+                FixtureDictionary::new()
+                    .entry("Type", name("Pages"))
+                    .entry("Kids", array([reference(3)]))
+                    .entry("Count", b"1")
+                    .entry("Rotate", b"90"),
+            )
+            .expect("page tree");
+        document
+            .add_dictionary(
+                3,
+                FixtureDictionary::new()
+                    .entry("Type", name("Page"))
+                    .entry("Parent", reference(2))
+                    .entry("MediaBox", b"[0 0 10 20]")
+                    .entry("Resources", b"<<>>")
+                    .entry("Contents", reference(4)),
+            )
+            .expect("page");
+        document
+            .add_stream(4, FixtureDictionary::new(), b"")
+            .expect("contents");
+        document
+            .set_trailer_entry("Root", reference(1))
+            .expect("root");
+        let bytes = document.finish().expect("serialize rotated PDF");
 
         let mut world = World::default();
         world

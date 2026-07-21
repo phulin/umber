@@ -44,7 +44,6 @@ umber-fetch = { path = "../umber-fetch" }
 umber-interrupt = { path = "../umber-interrupt" }
 
 [dev-dependencies]
-lopdf = { version = "=0.43.0", default-features = false }
 parity-harness = { path = "../../tools/parity-harness" }
 proptest.workspace = true
 tempfile.workspace = true

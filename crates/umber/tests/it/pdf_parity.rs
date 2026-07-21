@@ -3,7 +3,10 @@ use std::process::Command;
 
 use sha2::{Digest, Sha256};
 use test_support::{
-    corpus_cases, corpus_root, pdf::normalize_structure, read_binary_fixture, read_fixture,
+    corpus_cases, corpus_root,
+    pdf::normalize_structure,
+    pdf_probe::{PdfProbe, ProbeLimits, ProbeValue},
+    read_binary_fixture, read_fixture,
 };
 use tex_state::Universe;
 
@@ -33,50 +36,41 @@ fn annotation_fixture_matches_page_ownership_and_rectangles() {
 }
 
 fn annotation_projection(bytes: &[u8]) -> Vec<Vec<(Vec<f64>, Vec<u8>)>> {
-    let document = lopdf::Document::load_mem(bytes).expect("parse annotation fixture");
+    let document = PdfProbe::new(bytes, ProbeLimits::default()).expect("parse annotation fixture");
     let mut owned = std::collections::BTreeSet::new();
     document
-        .get_pages()
-        .into_values()
-        .map(|page_id| {
-            let page = document
-                .get_object(page_id)
-                .and_then(lopdf::Object::as_dict)
-                .expect("page dictionary");
-            page.get(b"Annots")
-                .and_then(lopdf::Object::as_array)
-                .expect("page annotation array")
+        .pages()
+        .expect("ordered pages")
+        .into_iter()
+        .map(|page| {
+            page.annotations
                 .iter()
                 .map(|entry| {
-                    let id = entry.as_reference().expect("indirect annotation");
+                    let id = entry.referenced_id().expect("indirect annotation");
                     assert!(owned.insert(id), "annotation object is shared by pages");
-                    let annotation = document
-                        .get_object(id)
-                        .and_then(lopdf::Object::as_dict)
-                        .expect("annotation dictionary");
+                    let annotation = entry.as_dictionary().expect("annotation dictionary");
                     assert_eq!(
-                        annotation
-                            .get(b"Type")
-                            .and_then(lopdf::Object::as_name)
-                            .expect("annotation type"),
+                        match annotation.get(b"Type").expect("annotation type").resolved() {
+                            ProbeValue::Name(name) => name.as_slice(),
+                            _ => panic!("annotation Type is not a name"),
+                        },
                         b"Annot"
                     );
                     let rect = annotation
                         .get(b"Rect")
-                        .and_then(lopdf::Object::as_array)
+                        .and_then(ProbeValue::as_array)
                         .expect("annotation rectangle")
                         .iter()
-                        .map(|number| match number {
-                            lopdf::Object::Integer(value) => *value as f64,
-                            lopdf::Object::Real(value) => f64::from(*value),
+                        .map(|number| match number.resolved() {
+                            ProbeValue::Number(value) => *value,
                             _ => panic!("annotation rectangle value is numeric"),
                         })
                         .collect();
-                    let subtype = annotation
-                        .get(b"Subtype")
-                        .and_then(lopdf::Object::as_name)
-                        .expect("annotation subtype")
-                        .to_vec();
+                    let subtype = annotation.get(b"Subtype").expect("annotation subtype");
+                    let ProbeValue::Name(subtype) = subtype.resolved() else {
+                        panic!("annotation subtype is a name");
+                    };
+                    let subtype = subtype.clone();
                     (rect, subtype)
                 })
                 .collect()
@@ -447,16 +441,6 @@ fn check_embedded_font_case(case: &str) {
         assert!(
             !expected_extract.trim_ascii().is_empty(),
             "pinned Poppler extraction for {case} is empty"
-        );
-    } else {
-        let extracted = lopdf::Document::load_mem(&actual)
-            .expect("parse embedded-font PDF")
-            .extract_text(&[1])
-            .expect("extract embedded-font text");
-        assert_eq!(
-            extracted.trim().as_bytes(),
-            expected_extract.trim_ascii(),
-            "lopdf extraction drift for {case}"
         );
     }
 
