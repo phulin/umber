@@ -1,0 +1,26 @@
+{
+  "schema": 1,
+  "metadataSnapshot": {
+    "archiveSha256": "f90d139de346652b0a39190701188aa516b8b168c86722daed2cea052e058a2b",
+    "archiveBytes": 1791227888,
+    "member": "arxiv-metadata-oai-snapshot.json",
+    "memberBytes": 5409797280,
+    "memberCrc32": "888e01b2",
+    "memberModified": "2026-07-18T23:53:28"
+  },
+  "firstSubmissionWindow": {
+    "startInclusive": "2026-05-18",
+    "endInclusive": "2026-07-18"
+  },
+  "randomOrder": {
+    "algorithm": "ascending SHA-256(seed + NUL + arXiv id)",
+    "seed": "umber-recent-arxiv-v1"
+  },
+  "metadataRows": 3107014,
+  "eligibleRows": 60329,
+  "candidatesExamined": 109,
+  "acceptedDocuments": 100,
+  "acceptance": "source bundle unpacks and contains a live LaTeX documentclass entrypoint",
+  "manifest": "pdftex-arxiv-recent-sample-100.tsv",
+  "sourceLock": "pdftex-arxiv-recent-sample-100.lock.tsv"
+}

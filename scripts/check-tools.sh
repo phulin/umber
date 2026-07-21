@@ -4,6 +4,8 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repo_root"
 
+scripts/profile-pdftex-arxiv.sh check-entrypoint
+
 # Explicit gate for host-side regeneration, profiling, and triage tools that
 # are intentionally absent from the routine native correctness build.
 

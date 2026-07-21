@@ -23,7 +23,7 @@ require() {
 
 usage() {
   cat <<EOF
-usage: $0 [setup|smoke|all|check-sample]
+usage: $0 [setup|smoke|all|check-sample|check-entrypoint|select-entrypoint DIRECTORY]
 
 Build a pinned instrumented pdfTeX and profile the committed 100-paper sample.
 Each result preserves primitive usage, the raw recorder inputs.fls, and a
@@ -33,6 +33,10 @@ host-independent files.txt containing normalized /texlive paths.
   smoke         download/profile the sample with the existing build
   all           run setup followed by smoke (default)
   check-sample  validate the sample header, row count, and unique identifiers
+  check-entrypoint
+                test entrypoint selection against live and commented declarations
+  select-entrypoint DIRECTORY
+                print the entrypoint selected for an extracted source bundle
 
 Environment:
   PDFTEX_PROFILE_ROOT    disposable build/cache root (default: /tmp/umber-pdftex-primitive-trace)
@@ -155,16 +159,40 @@ unpack_source() {
 
 entrypoint() {
   local directory=$1 candidate
+  local documentclass='^[[:space:]]*\\documentclass([[:space:]]*\[[^]]*\])?[[:space:]]*\{'
   for candidate in main.tex manuscript.tex arxiv_version.tex paper.tex; do
-    if [[ -f "$directory/$candidate" ]] && rg -q -F '\documentclass' "$directory/$candidate"; then
+    if [[ -f "$directory/$candidate" ]] && rg -q "$documentclass" "$directory/$candidate"; then
       printf '%s\n' "$directory/$candidate"
       return
     fi
   done
-  rg -l -F '\documentclass' "$directory" -g '*.tex' \
+  rg -l "$documentclass" "$directory" -g '*.tex' \
     | rg -v '/(supp|supplement|appendix)[^/]*\.tex$' \
     | sort \
     | head -1
+}
+
+check_entrypoint() {
+  local fixture selected
+  fixture="$(mktemp -d "${TMPDIR:-/tmp}/umber-arxiv-entrypoint.XXXXXX")"
+  printf '%% \\documentclass{standalone}\nfragment\n' >"$fixture/a-fragment.tex"
+  printf '  %% \\documentclass{article}\ncommented\n' >"$fixture/main.tex"
+  printf '\\documentclass{article}\n\\begin{document}\n\\end{document}\n' \
+    >"$fixture/z-document.tex"
+  selected="$(entrypoint "$fixture")"
+  if [[ "$selected" != "$fixture/z-document.tex" ]]; then
+    rm -rf -- "$fixture"
+    echo "entrypoint check selected ${selected:-nothing}, expected z-document.tex" >&2
+    return 1
+  fi
+  printf '\\documentclass{article}\n' >"$fixture/paper.tex"
+  selected="$(entrypoint "$fixture")"
+  rm -rf -- "$fixture"
+  if [[ "$selected" != */paper.tex ]]; then
+    echo "entrypoint check did not preserve preferred paper.tex precedence" >&2
+    return 1
+  fi
+  echo 'entrypoint selection ok'
 }
 
 process_sample() {
@@ -287,6 +315,11 @@ case "$ACTION" in
     done
     ;;
   check-sample) require awk ;;
+  check-entrypoint) require mktemp; require rg ;;
+  select-entrypoint)
+    require rg
+    [[ $# -eq 2 && -d "${2:-}" ]] || { usage >&2; exit 2; }
+    ;;
   *) usage >&2; exit 2 ;;
 esac
 
@@ -295,4 +328,6 @@ case "$ACTION" in
   smoke) smoke ;;
   all) setup; smoke ;;
   check-sample) validate_sample ;;
+  check-entrypoint) check_entrypoint ;;
+  select-entrypoint) entrypoint "$2" ;;
 esac
