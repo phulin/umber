@@ -26,6 +26,46 @@ pub(super) fn regenerate_area() -> Result<()> {
     Ok(())
 }
 
+pub(super) fn check_raster_attestations() -> Result<()> {
+    let renderer = locate_tool("UMBER_PDF_RENDERER", "pdftoppm")?;
+    require_version(&renderer, "-v", RENDERER_VERSION)?;
+    let extractor = locate_tool("UMBER_PDF_EXTRACTOR", "pdftotext")?;
+    require_version(&extractor, "-v", EXTRACTOR_VERSION)?;
+    let temp = TempDir::new().context("failed to create PDF raster gate directory")?;
+
+    for case in corpus_cases("pdf") {
+        let name = case.name();
+        let fixture_root = corpus_root().join("pdf");
+        let pdf = fixture_root.join(format!("{name}.expected.umber.pdf"));
+        let expected_pgm = fixture_root.join(format!("{name}.expected.pgm"));
+        if !pdf.is_file() || !expected_pgm.is_file() {
+            continue;
+        }
+        let actual = render(&renderer, &pdf, temp.path().join(name))?;
+        let expected = fs::read(&expected_pgm)
+            .with_context(|| format!("failed to read {}", expected_pgm.display()))?;
+        let font_case = name.starts_with("embedded_") || name.starts_with("pk_bitmap_");
+        let matches = if font_case {
+            pixels_within(&expected, &actual, 2)
+        } else {
+            expected == actual
+        };
+        if !matches {
+            bail!("rendered Umber pixels differ from the attested raster for pdf/{name}");
+        }
+        if font_case {
+            let expected_extract = fixture_root.join(format!("{name}.expected.extract"));
+            let expected = fs::read(&expected_extract)
+                .with_context(|| format!("failed to read {}", expected_extract.display()))?;
+            if extract(&extractor, &pdf)? != expected {
+                bail!("extracted Umber text differs from the attestation for pdf/{name}");
+            }
+        }
+        eprintln!("Poppler attestation passed: pdf/{name}");
+    }
+    Ok(())
+}
+
 pub(super) fn regenerate_case(case: &str) -> Result<()> {
     let source = corpus_root().join("pdf").join(format!("{case}.tex"));
     if !source.is_file() {

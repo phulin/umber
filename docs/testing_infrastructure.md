@@ -271,6 +271,21 @@ ordinary cargo test invokes neither external tool: it rebuilds the exact Umber
 bytes, normalizes the committed reference and current output, and verifies the
 SHA-256 chain connecting both committed PDFs to the equal raster.
 
+The independent host-tool gate is versioned as
+`scripts/check-pdf-external.sh`. Its qpdf 12.3.2 matrix checks representative
+classic trailers, all three object-compression policies, imported PDF and
+raster/alpha/DCT images, Type 1/TrueType/PK/subset/tagged fonts, annotations,
+forms, and navigation actions. Separately, Poppler 25.08.0 re-renders every
+committed Umber PDF and compares it with the pinned PGM (exactly for ordinary
+cases and with gray-value delta two for font cases); font extraction must also
+match the committed UTF-8 bytes. Run `scripts/check-pdf-external.sh --local`
+for development. A missing tool produces an explicit skip only in this mode;
+an installed tool with the wrong version still fails. CI and release jobs must
+install the pinned qpdf and Poppler versions and run
+`scripts/check-pdf-external.sh --ci`, where missing tools and every validator
+warning are fatal. `UMBER_PDF_VALIDATOR`, `UMBER_PDF_RENDERER`, and
+`UMBER_PDF_EXTRACTOR` may select explicit executable paths.
+
 ## External Document Corpus
 
 External document inputs live outside committed fixtures. The line-oriented

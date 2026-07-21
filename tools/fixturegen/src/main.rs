@@ -46,6 +46,10 @@ fn run() -> Result<()> {
         Some("--classic-bibtex-differential") => {
             classic_bibtex::run(&repo_root(), args.collect())
         }
+        Some("--check-pdf-raster") => {
+            ensure_no_extra_args(args)?;
+            pdf::check_raster_attestations()
+        }
         Some("--area") => {
             let area = args.next().context("missing area after --area")?;
             ensure_no_extra_args(args)?;
@@ -78,7 +82,7 @@ fn run() -> Result<()> {
 
 fn print_usage() {
     eprintln!(
-        "usage: fixturegen --area AREA | --case AREA/CASE | --case AREA CASE\n\
+        "usage: fixturegen --area AREA | --case AREA/CASE | --case AREA CASE | --check-pdf-raster\n\
          areas: hello lexer expand lexer_dynamic exec etex_exec typeset tex_exec tex_exec_io pdf fonts"
     );
 }

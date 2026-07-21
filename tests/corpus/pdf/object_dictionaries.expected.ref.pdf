@@ -49,7 +49,7 @@ endobj
 endobj
 8 0 obj
 <<
-/EmbeddedFiles << >>
+/EmbeddedFiles << /Names [(payload) << /Type /Filespec /F (payload.bin) >>] >>
 >>
 endobj
 9 0 obj
@@ -83,8 +83,8 @@ xref
 0000000099 00000 n 
 0000000415 00000 n 
 0000000472 00000 n 
-0000000514 00000 n 
-0000000655 00000 n 
+0000000572 00000 n 
+0000000713 00000 n 
 trailer
 << /Size 11
 /Root 9 0 R
@@ -92,5 +92,5 @@ trailer
 /Custom true
 /ID [<95E1CAD27741C91D014E5DC18B0F75F8> <95E1CAD27741C91D014E5DC18B0F75F8>] >>
 startxref
-963
+1021
 %%EOF

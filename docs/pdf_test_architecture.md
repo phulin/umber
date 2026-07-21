@@ -207,10 +207,16 @@ The explicit validator gate must include at least:
 - graph edges: `annotations_running`, `form_xobjects`, and
   `navigation_structures`.
 
-The command is versioned in the repository, fails on any validator warning in
-CI/release mode, and may explicitly skip for a missing tool only in nongating
-local mode. Poppler rendering and extraction remain pinned by the existing
-attestations rather than being folded into qpdf validation.
+The implemented command is `scripts/check-pdf-external.sh`. It pins qpdf
+12.3.2 and Poppler 25.08.0, fails on any validator warning in `--ci` mode, and
+may explicitly skip for a missing tool only in nongating `--local` mode. Its
+focused unit-test invocations export temporary xref/object-stream and
+raster/alpha/DCT artifacts for qpdf without adding an external process to the
+Rust tests. Poppler rendering and extraction remain separate comparisons
+against the committed attestations rather than being folded into qpdf
+validation. CI and release invocation is
+`scripts/check-pdf-external.sh --ci`; local invocation is the same command with
+`--local`.
 
 ## Delivery order
 

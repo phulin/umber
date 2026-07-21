@@ -4566,6 +4566,19 @@ mod tests {
     use tex_lex::{InputStack, MemoryInput};
     use tex_state::{JobClock, World};
 
+    const EXTERNAL_GATE_OUTPUT_DIR: &str = "UMBER_PDF_EXTERNAL_GATE_DIR";
+
+    #[allow(clippy::disallowed_methods)] // Opt-in host-side external validator boundary.
+    fn export_external_gate_pdf(name: &str, pdf: &[u8]) {
+        let Some(directory) = std::env::var_os(EXTERNAL_GATE_OUTPUT_DIR) else {
+            return;
+        };
+        let path = std::path::PathBuf::from(directory).join(format!("{name}.pdf"));
+        std::fs::create_dir_all(path.parent().expect("gate artifact has a parent"))
+            .expect("create external PDF gate directory");
+        std::fs::write(path, pdf).expect("write external PDF gate artifact");
+    }
+
     struct StaticImageResolver {
         source: tex_state::PdfExternalImageSource,
     }
@@ -5316,6 +5329,7 @@ mod tests {
         );
         let pdf = pdf_from_committed_artifacts(&mut stores, &result.committed_artifacts)
             .expect("lower raster image");
+        export_external_gate_pdf("raster-png", &pdf);
         let parsed = probe(&pdf);
         let image_object = object(&parsed, 1);
         let image_stream = stream(&image_object);
@@ -5374,6 +5388,7 @@ mod tests {
         );
         let pdf = pdf_from_committed_artifacts(&mut stores, &result.committed_artifacts)
             .expect("lower alpha image");
+        export_external_gate_pdf("raster-alpha", &pdf);
         let parsed = probe(&pdf);
         let image_object = object(&parsed, 1);
         let image = stream(&image_object);
@@ -5716,7 +5731,22 @@ mod tests {
 
     #[test]
     fn jpeg_bytes_are_preserved_behind_a_typed_dct_filter() {
-        let jpeg = vec![0xff, 0xd8, 0xff, 0xd9];
+        // Valid optimized 1x1 grayscale JFIF. The external qpdf gate decodes
+        // this stream, so marker-only bytes would weaken that check.
+        let jpeg = vec![
+            0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46, 0x00, 0x01, 0x01, 0x00,
+            0x00, 0x01, 0x00, 0x01, 0x00, 0x00, 0xff, 0xdb, 0x00, 0x43, 0x00, 0x10, 0x0b, 0x0c,
+            0x0e, 0x0c, 0x0a, 0x10, 0x0e, 0x0d, 0x0e, 0x12, 0x11, 0x10, 0x13, 0x18, 0x28, 0x1a,
+            0x18, 0x16, 0x16, 0x18, 0x31, 0x23, 0x25, 0x1d, 0x28, 0x3a, 0x33, 0x3d, 0x3c, 0x39,
+            0x33, 0x38, 0x37, 0x40, 0x48, 0x5c, 0x4e, 0x40, 0x44, 0x57, 0x45, 0x37, 0x38, 0x50,
+            0x6d, 0x51, 0x57, 0x5f, 0x62, 0x67, 0x68, 0x67, 0x3e, 0x4d, 0x71, 0x79, 0x70, 0x64,
+            0x78, 0x5c, 0x65, 0x67, 0x63, 0xff, 0xc0, 0x00, 0x0b, 0x08, 0x00, 0x01, 0x00, 0x01,
+            0x01, 0x01, 0x11, 0x00, 0xff, 0xc4, 0x00, 0x14, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0xff, 0xc4,
+            0x00, 0x14, 0x10, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xff, 0xda, 0x00, 0x08, 0x01, 0x01, 0x00, 0x00,
+            0x3f, 0x00, 0x1f, 0xff, 0xd9,
+        ];
         let image = tex_state::PdfExternalImageSource {
             identity: ContentHash::from_bytes(&jpeg),
             metadata: PdfExternalImageMetadata::Raster(tex_state::PdfRasterImageMetadata {
@@ -5724,7 +5754,7 @@ mod tests {
                 width: 1,
                 height: 1,
                 bits_per_component: 8,
-                color_space: PdfRasterColorSpace::Rgb,
+                color_space: PdfRasterColorSpace::Gray,
                 alpha: false,
                 png_color_type: None,
             }),
@@ -5741,6 +5771,7 @@ mod tests {
         );
         let pdf = pdf_from_committed_artifacts(&mut stores, &result.committed_artifacts)
             .expect("lower JPEG image");
+        export_external_gate_pdf("dct-jpeg", &pdf);
         let parsed = probe(&pdf);
         let jpeg_object = object(&parsed, 1);
         let stream = stream(&jpeg_object);
@@ -7087,6 +7118,7 @@ mod tests {
             let second = pdf_from_committed_artifacts(&mut stores, &run.committed_artifacts)
                 .expect("object-stream PDF repeats");
             assert_eq!(first, second);
+            export_external_gate_pdf(&format!("object-compression-{level}"), &first);
             assert!(first.windows(12).any(|window| window == b"/Type/ObjStm"));
             assert!(first.windows(10).any(|window| window == b"/Type/XRef"));
 
