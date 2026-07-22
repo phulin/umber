@@ -20,7 +20,7 @@ Use this crate for font-domain parsing and metric representation that does not r
 - `AGENTS.md`: crate-specific guidance for future agents working on `tex-fonts`.
 - `Cargo.toml`: crate manifest, dependencies, and package metadata for `tex-fonts`.
 - `src/lib.rs`: public module wiring and re-exports for font metric and TFM APIs.
-- `src/metrics.rs`: immutable loaded-font records, selected OpenType artifact bindings, and backend-neutral metric query types.
+- `src/metrics.rs`: immutable loaded-font records, versioned classic/mapped layout policy and encoding identity, selected OpenType artifact bindings, and backend-neutral metric query types.
 - `src/pdf_encoding.rs`: host-neutral parsing of named 256-entry PostScript encoding vectors.
 - `src/pdf_map.rs`: host-neutral pdfTeX/dvips map directive and entry parsing; logical resource names only.
 - `src/pdf_pk.rs`: bounded host-neutral PK bitmap font decoding, normalized glyph masks, and content identity.

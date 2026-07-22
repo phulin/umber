@@ -1,6 +1,6 @@
 # OpenType Font Resources for Native and Web Rendering
 
-Status: implemented foundation and linear completion plan. This document
+Status: mapped TFM text policy implemented; later instance/bidi coverage remains. This document
 defines the font-resource architecture shared by native and WebAssembly
 execution. OpenType font data is the modern source of truth for layout and
 rendering. Native sessions accept OpenType or TrueType SFNT containers;
@@ -279,6 +279,29 @@ the same accepted run claims TFM geometry. Cache and artifact identity include
 the layout policy, TFM identity when present, OpenType program and instance,
 encoding-map version, fontdimen-synthesis version, and fallback result.
 
+The implemented policy contract is version 1. `VirtualCompileSession` defaults
+to `OpenTypePreferred` with an explicitly recorded `ClassicTfmExact` fallback;
+callers may instead select the typed `Error` fallback or the compilation-wide
+`ClassicTfmExact` policy. The WASM options expose these as
+`fontLayoutPolicy` and `fontMappingFallback`. Native compatibility CLI runs
+select classic mode explicitly. A mapped bundle must be registered before a
+compile begins and is keyed by `(TFM name, TFM SHA-256)`. Conflicting bundles,
+declared-object mismatches, response-byte mismatches, and mapped scalars absent
+from the validated cmap fail before the font becomes live.
+
+Mapping discovery waits until the TFM bytes are available, because basename is
+not identity. The matching WOFF2 is then acquired through the ordinary typed
+font request. Mapping entries feed rustybuzz; cluster advances are projected
+back onto the original byte-code nodes, so DVI retains legal byte opcodes while
+using the same OpenType-derived geometry as HTML. Artifact schema 21 records
+the policy, explicit fallback result, map version and identity, OpenType
+program/object/instance identities, and fontdimen-synthesis version.
+
+Mapped TFM fonts keep their classic tables for math-family reads. A mapped
+font that is later found to own a virtual-font program produces the typed
+`UnsupportedMappedVirtualFont` capability error during PDF VF lowering; it is
+never executed with a mixture of OpenType advances and VF packet semantics.
+
 ## Native integration
 
 Native applications resolve `FontRequest` values from explicit files,
@@ -483,12 +506,12 @@ ordinary WOFF2-backed SVG text where cmap can reproduce the chosen glyph and
 SVG outline fallback for glyph-id-only variants and assembly parts. MathML
 does not own layout.
 
-### Next 2: OpenType-preferred mappings for TFM-style text
+### Completed: OpenType-preferred mappings for TFM-style text
 
-Tracked by `umber2-y2ei.12`; depends on positioned math.
+Tracked by `umber2-y2ei.12`; implemented after positioned math.
 
-Make `OpenTypePreferred` the modern authoring/HTML default. Resolve exact
-client mappings for TFM-style text selections, use the WOFF2's Unicode map,
+`OpenTypePreferred` is the modern authoring/HTML default. It resolves exact
+client mappings for TFM-style text selections, uses the WOFF2's Unicode map,
 fontdimens, and rustybuzz metrics for layout, and retain `ClassicTfmExact` for
 old documents, virtual fonts, and explicit parity work.
 

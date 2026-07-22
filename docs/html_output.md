@@ -1,6 +1,6 @@
 # Coordinate-Identical HTML Output
 
-Status: implementation contract for artifact schema 13 and HTML schema 1,
+Status: implementation contract for artifact schema 21 and HTML schema 1,
 plus the linear OpenType completion contract below.
 
 HTML is a downstream view of committed `PageArtifact` values. It is not a page
@@ -108,9 +108,9 @@ never named. Artifact text is already in shipped visual order, so schema 1
 forces LTR visual ordering with `unicode-bidi: isolate-override`; semantic
 bidirectional reconstruction is outside this schema.
 
-## Planned OpenType-preferred text and positioned math
+## Implemented OpenType-preferred text and positioned math
 
-The modern session policy may map TFM-style text syntax to an exact WOFF2
+The modern session policy maps TFM-style text syntax to an exact WOFF2
 bundle keyed by TFM content identity. The bundle's code-to-Unicode map feeds
 the existing rustybuzz shape/break/reshape path, so OpenType cluster advances
 rather than TFM widths locate line breaks and later events. The chosen policy,
@@ -147,7 +147,9 @@ not participate in layout.
 
 ## Font and asset contract
 
-Artifact schema 13 records the selected OpenType program, transport-object,
+Artifact schema 21 records the selected layout policy, explicit mapping
+fallback result, encoding-map version and identity, fontdimen-synthesis
+version, selected OpenType program, transport-object,
 and instance identities beside the classic TeX metric identity. A downstream
 `HtmlFontResolver` is only an asset-access adapter: host-neutral sessions bind
 it to the already validated and retained resource rather than performing a

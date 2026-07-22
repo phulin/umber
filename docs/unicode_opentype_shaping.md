@@ -1,6 +1,6 @@
 # Native Unicode and OpenType/TrueType Shaping
 
-Status: text-shaping foundation implemented; remaining work is tracked in the
+Status: text shaping and mapped TFM text implemented; remaining work is tracked in the
 single linear `umber2-y2ei` plan. This document defines the engine-side shaping
 architecture used by OpenType-only fonts and by TFM-style text selections that
 the modern layout policy maps to OpenType resources.
@@ -306,7 +306,10 @@ outside the linear HTML epic and does not block its release.
 5. **In progress.** Positioned OpenType MATH layout and HTML rendering
    (`umber2-y2ei.9`): formula geometry, variants, and assemblies are
    implemented; fixed positioned artifact/HTML lowering remains.
-6. OpenType-preferred mappings for TFM-style text (`umber2-y2ei.12`).
+6. **Implemented.** OpenType-preferred mappings for TFM-style text
+   (`umber2-y2ei.12`): exact TFM-identity bundle selection, explicit Unicode
+   mapping, cluster-advance layout, synthesized text fontdimens, retained
+   WOFF2 HTML reuse, and identity-bearing classic fallback.
 7. Advanced instances, variations, and feature policy (`umber2-y2ei.8`).
 8. Complex-script and bidi reordering (`umber2-y2ei.11.7`).
 9. Full native/WASM/browser coverage (`umber2-y2ei.7`).

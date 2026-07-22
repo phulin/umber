@@ -31,7 +31,7 @@ Use this crate for stable, driver-facing artifact structures and serialization c
 - `src/html.rs`: deterministic coordinate-locked standalone HTML serializer, explicit web-font resolution, asset modes, escaping, and limits.
 - `src/html/tests.rs`: deterministic-byte, exact-metadata, mapping-failure, and injection regression tests.
 - `src/lib.rs`: Crate documentation, module wiring, tests module registration, and public re-exports.
-- `src/model.rs`: Detached page artifact, classic/OpenType font identities, node, glue, kern, and output effect data model.
+- `src/model.rs`: Detached page artifact, versioned font-layout/classic/OpenType identities, node, glue, kern, and output effect data model.
 - `src/pdf.rs`: validated detached PDF object/page/resource graph, canonical ordering, and semantic identity.
 - `src/pdf/tests.rs`: PDF graph validation, canonical identity, and budget tests.
 - `src/pdf/serialize.rs`: deterministic `pdf_writer` adapter, typed errors, version selection, and stream compression policy.
