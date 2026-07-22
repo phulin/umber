@@ -31,6 +31,21 @@ decoded program identity, feature-policy version, and request key.
 
 ## Reproduction and audit
 
+Build the complete immutable HTML R2 release candidate with:
+
+```bash
+scripts/build-html-r2.sh
+```
+
+The builder verifies the pinned TeX Live tree, regenerates the schema-2 LaTeX
+and pdfLaTeX format closures, stages the repository-owned format inputs under
+a separate authenticated root, and publishes the profile twice. It requires
+the two directory trees to match byte for byte, repeats the complete sharded
+verification, and applies independent HTML file, object, byte, font, mapping,
+and license ceilings. The production placement is
+`html/umber-html-mvp-v1/manifest-v4.json`; it is not a valid application pin
+until the manifest-last R2 publication and public HTTPS/CORS audit complete.
+
 From the repository root, regenerate the canonical catalog with:
 
 ```bash

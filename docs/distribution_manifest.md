@@ -184,6 +184,10 @@ rebuild removes unreferenced staging objects. `scripts/publish-texlive-r2.sh
 --profile html` requires a distinct `html/` immutable prefix and explicit root
 SHA-256, audits the complete remote object inventory, verifies public HTTPS
 digests and CORS, and writes `manifest-v4.json` only after those checks.
+`scripts/build-html-r2.sh` is the production staging entry point for this
+profile. It performs the two-clean-build comparison against the pinned source
+tree and exact contract-version-1 catalog before the publication script may
+address `html/umber-html-mvp-v1/manifest-v4.json`.
 
 The production `texlive-20260301` 8-bit output has 152,560 unique objects,
 3,520,195,192 object bytes, and root digest
