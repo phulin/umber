@@ -12,9 +12,17 @@ printf 'id\tcategories\nok\ttest\nfinalfail\ttest\nenginefail\ttest\n' >"$work/s
 for paper in ok finalfail enginefail; do
   printf '\\documentclass{article}\n' >"$work/archive-input/$paper/main.tex"
   tar -czf "$work/archives/$paper.src" -C "$work/archive-input/$paper" main.tex
-  python3 "$root/scripts/arxiv_corpus.py" materialize \
-    "$work/archives/$paper.src" "$work/corpus/$paper" >/dev/null
 done
+python3 - "$work/archives/ok.src" <<'PY'
+import io, sys, tarfile
+with tarfile.open(sys.argv[1], "w:gz") as archive:
+    for name, data in (("main.tex", b"\\documentclass{article}\n"),
+                       ("figures/Intro/Drone.png", b"upper"),
+                       ("figures/Intro/drone.png", b"lower")):
+        member = tarfile.TarInfo(name)
+        member.size = len(data)
+        archive.addfile(member, io.BytesIO(data))
+PY
 printf 'format\n' >"$work/format.fmt"
 printf '{}\n' >"$work/distribution/manifest.json"
 
@@ -41,6 +49,10 @@ done
 main=$argument
 printf 'generated\n' >"$(dirname "$main")/document.aux"
 case "$main" in
+  *ok*)
+    test "$(cat "$(dirname "$main")/figures/Intro/Drone.png")" = upper
+    test "$(cat "$(dirname "$main")/figures/Intro/drone.png")" = lower
+    ;;
   *enginefail*) echo 'invalid parameter token' >&2; exit 1 ;;
 esac
 echo RESOURCE_ENGINE_ACCEPTED >&2

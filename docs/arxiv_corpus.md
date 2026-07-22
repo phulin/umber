@@ -22,10 +22,20 @@ links, and other non-file archive members.
 contain every archive file with identical bytes and no extra file. Its
 `materialize` action creates a fresh exact view, while `replace` additionally
 requires a separate backup path and writes a provenance receipt containing the
-old tree's complete hashed inventory. Reference runners extract the archive
-into a new per-run temporary directory; generated `.aux`, `.log`, `.fls`, PDF,
-and EPS-conversion outputs therefore cannot become source inputs on later runs.
-The canonical view is verified again after each census child exits.
+old tree's complete hashed inventory. `stage -- COMMAND` gives reference tools
+a disposable case-sensitive directory in `UMBER_ARXIV_STAGE`: it uses an
+ordinary temporary directory on case-sensitive hosts and a mounted sparse,
+case-sensitive APFS image on case-insensitive macOS hosts. The image is detached
+and deleted when the command exits. Reference runners materialize each archive
+inside that boundary, so case-distinct members such as
+`figures/Intro/Drone.png` and `figures/Intro/drone.png` remain independently
+addressable and generated `.aux`, `.log`, `.fls`, PDF, and EPS-conversion
+outputs cannot become source inputs on later runs.
+
+Archive inventory, entrypoint selection, and identity are computed directly
+from archive bytes, not from a host extraction. Persistent convenience views
+may therefore be absent on a case-insensitive host without changing corpus
+identity or weakening path, type, byte-length, or SHA-256 verification.
 
 Derived reference artifacts have their own hashes and provenance under
 `third_party/arxiv-sample-100/reference-artifacts`, outside both `archives` and

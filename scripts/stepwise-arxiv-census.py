@@ -9,13 +9,13 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
-import tempfile
 import time
 from pathlib import Path
 
-from arxiv_corpus import materialize, source_identity, verify_view
+from arxiv_corpus import archive_file_bytes, case_sensitive_stage, materialize, source_identity
 
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -83,19 +83,19 @@ def atomic_json(path: Path, value: object) -> None:
     os.replace(temporary, path)
 
 
-def entrypoint(directory: Path) -> Path | None:
+def archive_entrypoint(archive: Path) -> str:
     declaration = re.compile(rb"^[ \t]*\\documentclass(?:[ \t]|\[|\{|$)", re.MULTILINE)
-    candidates = []
+    files = archive_file_bytes(archive)
     for name in ("main.tex", "manuscript.tex", "arxiv_version.tex", "paper.tex", "ms.tex"):
-        path = directory / name
-        if path.is_file() and declaration.search(path.read_bytes()):
-            return path
-    for path in directory.rglob("*.tex"):
-        if re.search(r"/(supp|supplement|appendix)[^/]*\.tex$", path.as_posix()):
-            continue
-        if declaration.search(path.read_bytes()):
-            candidates.append(path)
-    return min(candidates, key=lambda path: path.as_posix()) if candidates else None
+        if name in files and declaration.search(files[name]):
+            return name
+    candidates = [
+        name for name, data in files.items()
+        if name.endswith(".tex")
+        and not re.search(r"/(supp|supplement|appendix)[^/]*\.tex$", f"/{name}")
+        and declaration.search(data)
+    ]
+    return min(candidates) if candidates else ""
 
 
 def error_cluster(log: str, status: int) -> str:
@@ -180,6 +180,73 @@ def outcome_digest(papers: list[dict], records: dict[str, dict]) -> str:
     return hashlib.sha256(json.dumps(stable, separators=(",", ":")).encode()).hexdigest()
 
 
+def run_paper(
+    paper_id: str, key: str, stage: Path, archives: Path,
+    entrypoints: dict[str, str], source_identities: dict[str, dict[str, str | int]],
+    results: Path, guard: Path, timeout: int, rss: int, binary: Path,
+    run_flags: list[str], fuel: int, texinputs: str, texfonts: str,
+) -> dict:
+    row = {name: 0 for name in HEADER}
+    row["id"] = paper_id
+    row["source_identity"] = source_identities[paper_id]
+    log_path = results / f"{key}.engine.log"
+    if not entrypoints[paper_id]:
+        row.update(engine_status="no-entrypoint", finalizer_status="not-run",
+                   error_cluster="no-entrypoint")
+        log_path.write_text("no live document entrypoint\n")
+        row["artifacts"] = artifact_hashes(results, key, row["finalizer_status"])
+        return row
+
+    partial_log = results / f"{key}.engine.log.partial"
+    partial_pdf = results / f"{key}.pdf.partial"
+    partial_inputs = results / f"{key}.inputs.tsv.partial"
+    temporary = stage / key
+    run_source = temporary / "source"
+    temporary.mkdir()
+    started = time.monotonic_ns()
+    try:
+        materialize(archives / f"{key}.src", run_source)
+        main_input = run_source / entrypoints[paper_id]
+        env = os.environ.copy()
+        env.update(UMBER_RESOURCE_TELEMETRY="1", UMBER_ENGINE_FUEL=str(fuel),
+                   TEXINPUTS=f"{main_input.parent}:{texinputs}", TEXFONTS=texfonts)
+        command = [sys.executable, str(guard), "--timeout-seconds", str(timeout),
+                   "--max-rss-mib", str(rss), "--term-grace-seconds", "2", "--",
+                   str(binary), "run", *run_flags, "--pdf", str(partial_pdf),
+                   "--input-records-out", str(partial_inputs), str(main_input)]
+        with partial_log.open("wb") as output:
+            completed = subprocess.run(command, cwd=temporary, env=env,
+                                       stdout=output, stderr=subprocess.STDOUT)
+    finally:
+        shutil.rmtree(temporary)
+    wall_ns = time.monotonic_ns() - started
+    os.replace(partial_log, log_path)
+    log = log_path.read_text(errors="replace")
+    accepted = "RESOURCE_ENGINE_ACCEPTED" in log
+    telemetry = parse_telemetry(log)
+    row.update(telemetry)
+    row.update(parse_phase_telemetry(log))
+    row["guard_status"] = completed.returncode
+    row["row_wall_ns"] = wall_ns
+    row["guard_overhead_ns"] = max(0, wall_ns - row.get("run_wall_ns", 0))
+    row["finalizer_ns"] = (max(0, wall_ns - telemetry["engine_ns"]
+                               - telemetry["resource_wait_ns"]) if accepted else 0)
+    row["engine_status"] = ("accepted" if accepted else
+                            "guard-timeout-or-rss" if completed.returncode == 124 else
+                            "failed")
+    row["finalizer_status"] = ("complete" if completed.returncode == 0 else
+                               "guard-timeout-or-rss" if accepted and completed.returncode == 124 else
+                               "failed" if accepted else "not-run")
+    row["error_cluster"] = error_cluster(log, completed.returncode)
+    if completed.returncode == 0:
+        if partial_pdf.exists():
+            os.replace(partial_pdf, results / f"{key}.pdf")
+        if partial_inputs.exists():
+            os.replace(partial_inputs, results / f"{key}.inputs.tsv")
+    row["artifacts"] = artifact_hashes(results, key, row["finalizer_status"])
+    return row
+
+
 def main() -> None:
     sample = env_path("UMBER_ARXIV_SAMPLE", ROOT / "scripts/pdftex-arxiv-sample-100.tsv")
     corpus = env_path("UMBER_ARXIV_CORPUS", ROOT / "third_party/arxiv-sample-100/sources")
@@ -218,11 +285,7 @@ def main() -> None:
         archive = archives / f"{key}.src"
         if not archive.is_file():
             fail(f"source archive is missing: {archive}")
-        source_dir = corpus / key
-        verify_view(archive, source_dir)
-        main_input = entrypoint(source_dir)
-        relative_entrypoint = (main_input.relative_to(source_dir).as_posix()
-                               if main_input is not None else "")
+        relative_entrypoint = archive_entrypoint(archive)
         entrypoints[paper_id] = relative_entrypoint
         source_identities[paper_id] = source_identity(archive, relative_entrypoint)
     immutable = {
@@ -293,65 +356,20 @@ def main() -> None:
         run_flags.append("--offline")
     texinputs = f"{texmf}/tex/latex//:{texmf}/tex/generic//:{texmf}/tex/plain//:"
     texfonts = f"{texmf}/fonts/tfm//:"
-    for paper in papers:
-        paper_id = paper["id"]
-        if paper_id in records:
-            continue
-        key = paper_id.replace("/", "_")
-        source_dir = corpus / key
-        row = {name: 0 for name in HEADER}
-        row["id"] = paper_id
-        row["source_identity"] = source_identities[paper_id]
-        if not entrypoints[paper_id]:
-            row.update(engine_status="no-entrypoint", finalizer_status="not-run", error_cluster="no-entrypoint")
-            log_path = results / f"{key}.engine.log"
-            log_path.write_text("no live document entrypoint\n")
-        else:
-            log_path = results / f"{key}.engine.log"
-            partial_log = results / f"{key}.engine.log.partial"
-            partial_pdf = results / f"{key}.pdf.partial"
-            partial_inputs = results / f"{key}.inputs.tsv.partial"
-            with tempfile.TemporaryDirectory(prefix=f"umber-arxiv-{key}-") as temporary:
-                run_source = Path(temporary) / "source"
-                materialize(archives / f"{key}.src", run_source)
-                main_input = run_source / entrypoints[paper_id]
-                env = os.environ.copy()
-                env.update(UMBER_RESOURCE_TELEMETRY="1", UMBER_ENGINE_FUEL=str(fuel),
-                           TEXINPUTS=f"{main_input.parent}:{texinputs}", TEXFONTS=texfonts)
-                command = [sys.executable, str(guard), "--timeout-seconds", str(timeout),
-                           "--max-rss-mib", str(rss), "--term-grace-seconds", "2", "--",
-                           str(binary), "run", *run_flags, "--pdf", str(partial_pdf),
-                           "--input-records-out", str(partial_inputs), str(main_input)]
-                started = time.monotonic_ns()
-                with partial_log.open("wb") as output:
-                    completed = subprocess.run(command, cwd=temporary, env=env,
-                                               stdout=output, stderr=subprocess.STDOUT)
-            wall_ns = time.monotonic_ns() - started
-            verify_view(archives / f"{key}.src", source_dir)
-            os.replace(partial_log, log_path)
-            log = log_path.read_text(errors="replace")
-            accepted = "RESOURCE_ENGINE_ACCEPTED" in log
-            telemetry = parse_telemetry(log)
-            row.update(telemetry)
-            row.update(parse_phase_telemetry(log))
-            row["guard_status"] = completed.returncode
-            row["row_wall_ns"] = wall_ns
-            row["guard_overhead_ns"] = max(0, wall_ns - row.get("run_wall_ns", 0))
-            row["finalizer_ns"] = max(0, wall_ns - telemetry["engine_ns"] - telemetry["resource_wait_ns"]) if accepted else 0
-            row["engine_status"] = "accepted" if accepted else ("guard-timeout-or-rss" if completed.returncode == 124 else "failed")
-            row["finalizer_status"] = ("complete" if completed.returncode == 0 else
-                                       "guard-timeout-or-rss" if accepted and completed.returncode == 124 else
-                                       "failed" if accepted else "not-run")
-            row["error_cluster"] = error_cluster(log, completed.returncode)
-            if completed.returncode == 0:
-                if partial_pdf.exists():
-                    os.replace(partial_pdf, results / f"{key}.pdf")
-                if partial_inputs.exists():
-                    os.replace(partial_inputs, results / f"{key}.inputs.tsv")
-        row["artifacts"] = artifact_hashes(results, key, row["finalizer_status"])
-        atomic_json(results / "rows" / f"{key}.json", row)
-        records[paper_id] = row
-        write_summary(results, papers, records)
+    with case_sensitive_stage(prefix="umber-arxiv-census-") as stage:
+        for paper in papers:
+            paper_id = paper["id"]
+            if paper_id in records:
+                continue
+            key = paper_id.replace("/", "_")
+            row = run_paper(
+                paper_id, key, stage, archives, entrypoints, source_identities,
+                results, guard, timeout, rss, binary, run_flags, fuel, texinputs,
+                texfonts,
+            )
+            atomic_json(results / "rows" / f"{key}.json", row)
+            records[paper_id] = row
+            write_summary(results, papers, records)
 
     print(f"stepwise arXiv census: {results / 'summary.tsv'}")
 

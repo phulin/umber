@@ -199,7 +199,7 @@ check_entrypoint() {
   echo 'entrypoint selection ok'
 }
 
-process_sample() (
+process_sample_staged() (
   local id=$1 category=$2
   local key=${id//\//_}
   local archive="$ROOT/samples/$key.src"
@@ -212,10 +212,8 @@ process_sample() (
   fi
   # The archive is the durable input. Every reference run gets a disposable
   # exact extraction so generated TeX artifacts never enter a shared view.
-  mkdir -p "$ROOT/work"
   local run_root directory
-  run_root="$(mktemp -d "$ROOT/work/$key.XXXXXX")"
-  trap 'rm -rf -- "$run_root"' EXIT
+  run_root="${UMBER_ARXIV_STAGE:?}"
   directory="$run_root/source"
   unpack_source "$archive" "$directory" >"$result/source-members.json"
   local main
@@ -267,6 +265,11 @@ process_sample() (
     "$id" "$category" "${main#"$directory/"}" "$rc" "$count" "$input_count" \
     | tee "$result/summary.tsv"
 )
+
+process_sample() {
+  python3 "$SCRIPT_DIR/arxiv_corpus.py" stage -- \
+    "$0" process-sample-staged "$1" "$2"
+}
 
 smoke() {
   [[ -x "$PDFTEX" && -f "$FORMAT" ]] || {
@@ -329,6 +332,9 @@ case "$ACTION" in
     require rg
     [[ $# -eq 2 && -d "${2:-}" ]] || { usage >&2; exit 2; }
     ;;
+  process-sample-staged)
+    [[ $# -eq 3 && -n "${UMBER_ARXIV_STAGE:-}" ]] || { usage >&2; exit 2; }
+    ;;
   *) usage >&2; exit 2 ;;
 esac
 
@@ -339,4 +345,5 @@ case "$ACTION" in
   check-sample) validate_sample ;;
   check-entrypoint) check_entrypoint ;;
   select-entrypoint) entrypoint "$2" ;;
+  process-sample-staged) process_sample_staged "$2" "$3" ;;
 esac
