@@ -608,7 +608,7 @@ pub(crate) fn break_hlist(
     if let Some(first) = first {
         tex_typeset::linebreak::plan_with_nodes(first, hlist)
     } else {
-        let mut hyphenated = super::hyphenation::hyphenated_hlist(stores, &hlist);
+        let mut hyphenated = super::hyphenation::hyphenated_hlist(stores, hlist);
         super::hmode::reshape_open_type_runs(stores, &mut hyphenated);
         tex_typeset::linebreak::plan_with_nodes(
             line_break_hyphenated(stores, &hyphenated, &line_params),

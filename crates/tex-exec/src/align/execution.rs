@@ -132,7 +132,7 @@ fn finish_alignment_level(
         .ok_or(ExecError::MissingToken {
             context: "alignment state",
         })?;
-    let nodes = level.list().nodes().to_vec();
+    let nodes = level.list_mut().take_nodes();
     let finished = super::widths::finish_alignment(&state, &nodes, stores)?;
     Ok(FinishedAlignment {
         nodes: finished,
@@ -256,8 +256,8 @@ fn fin_row(
 ) -> Result<(), ExecError> {
     let kind = align_kind(nest, align_level)?;
     flush_pending_hchars(nest, stores)?;
-    let row_level = nest.pop()?;
-    let nodes = row_level.list().nodes().to_vec();
+    let mut row_level = nest.pop()?;
+    let nodes = row_level.list_mut().take_nodes();
     let children = stores.freeze_node_list(&nodes);
     let row = super::packaging::make_unset_node(
         stores,
@@ -444,11 +444,12 @@ fn package_cell(
         crate::assignments::end_paragraph(nest, stores)?;
     }
     flush_pending_hchars(nest, stores)?;
-    let cell_level = nest.pop()?;
+    let mut cell_level = nest.pop()?;
+    let nodes = cell_level.list_mut().take_nodes();
     let nodes = if kind == AlignmentKind::HAlign {
-        crate::math::finish_math_lists(stores, cell_level.list().nodes(), false)
+        crate::math::finish_math_lists_owned(stores, nodes, false)
     } else {
-        cell_level.list().nodes().to_vec()
+        nodes
     };
     let children = stores.freeze_node_list(&nodes);
     let cell = super::packaging::make_unset_node(
@@ -692,6 +693,8 @@ pub(super) fn run_one_main_control_token(
         Err(error) => return Err(error.into()),
     };
     stats.delivered_tokens += 1;
+    #[cfg(feature = "profiling-stats")]
+    super::record_template_token(tex_expand::semantic_token(token), stores);
     if tex_expand::semantic_token(token).is_frozen_endv() {
         return Ok(TemplateStep::EndV);
     }

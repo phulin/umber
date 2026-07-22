@@ -643,6 +643,14 @@ impl<'a> ExecutionContext<'a> {
         }
     }
 
+    pub(crate) fn count_paragraph_tokens(&mut self, count: usize) {
+        if let Some(recording) = &mut self.cold_paragraph_recording
+            && recording.barriers.is_empty()
+        {
+            recording.delivered_tokens = recording.delivered_tokens.saturating_add(count);
+        }
+    }
+
     pub(crate) fn update_cold_paragraph_start(
         &mut self,
         starting_span: Option<tex_state::RootSpanId>,
@@ -1875,6 +1883,10 @@ where
             {
                 stats.delivered_tokens += macro_text.len();
                 stats.macro_text_span_tokens += macro_text.len();
+                if assignments::try_append_tfm_character_span(nest, &macro_text, stores)? {
+                    execution.count_paragraph_tokens(macro_text.len());
+                    continue;
+                }
                 for token in macro_text.drain(..) {
                     execution.count_paragraph_token();
                     let appended = assignments::try_append_character(nest, token, stores)?;
@@ -1893,6 +1905,10 @@ where
             {
                 stats.delivered_tokens += macro_text.len();
                 stats.source_text_span_tokens += macro_text.len();
+                if assignments::try_append_tfm_character_span(nest, &macro_text, stores)? {
+                    execution.count_paragraph_tokens(macro_text.len());
+                    continue;
+                }
                 for token in macro_text.drain(..) {
                     execution.count_paragraph_token();
                     let appended = assignments::try_append_character(nest, token, stores)?;

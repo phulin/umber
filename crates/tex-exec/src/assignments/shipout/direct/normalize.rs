@@ -1,4 +1,5 @@
 use super::*;
+use smallvec::SmallVec;
 use tex_lex::MemoryInput;
 
 pub(super) struct PageOverlay {
@@ -106,36 +107,43 @@ fn normalize_list(
     overlay: &mut PageOverlay,
 ) -> Result<(), ExecError> {
     check_depth(depth)?;
-    let permutation = direction_permutation(stores, list);
-    if let Some(order) = permutation.as_ref() {
-        overlay.directions.push(DirectionPermutation {
+    let (active_indices, permutation) = {
+        let nodes = stores.nodes(list);
+        if !nodes.requires_shipout_normalization() {
+            return Ok(());
+        }
+        let permutation = direction_permutation(nodes);
+        let mut active_indices = SmallVec::<[usize; 32]>::new();
+        if let Some(order) = permutation.as_deref() {
+            active_indices.extend(order.iter().copied().filter(|&index| {
+                nodes
+                    .node_requires_shipout_normalization(index)
+                    .expect("direction permutation index belongs to the frozen list")
+            }));
+        } else {
+            active_indices.extend((0..nodes.len()).filter(|&index| {
+                nodes
+                    .node_requires_shipout_normalization(index)
+                    .expect("normalization index belongs to the frozen list")
+            }));
+        }
+        (active_indices, permutation)
+    };
+    if let Some(order) = permutation {
+        overlay
+            .directions
+            .push(DirectionPermutation { list, order });
+    }
+    for index in active_indices {
+        normalize_index(
+            stores,
+            expansion,
             list,
-            order: order.clone(),
-        });
-        for &index in order {
-            normalize_index(
-                stores,
-                expansion,
-                list,
-                index,
-                suppress_deferred_streams,
-                NormalizeLocation { in_hlist, depth },
-                overlay,
-            )?;
-        }
-    } else {
-        let len = stores.nodes(list).len();
-        for index in 0..len {
-            normalize_index(
-                stores,
-                expansion,
-                list,
-                index,
-                suppress_deferred_streams,
-                NormalizeLocation { in_hlist, depth },
-                overlay,
-            )?;
-        }
+            index,
+            suppress_deferred_streams,
+            NormalizeLocation { in_hlist, depth },
+            overlay,
+        )?;
     }
     Ok(())
 }
@@ -657,7 +665,7 @@ fn expand_pdf_literal_tokens(
     Ok(text.into_bytes())
 }
 
-fn direction_permutation(stores: &Universe, list: NodeListId) -> Option<Vec<usize>> {
+fn direction_permutation(nodes: NodeList<'_>) -> Option<Vec<usize>> {
     struct Segment {
         right_to_left: bool,
         chunks: Vec<Vec<usize>>,
@@ -684,7 +692,6 @@ fn direction_permutation(stores: &Universe, list: NodeListId) -> Option<Vec<usiz
         }
     }
 
-    let nodes = stores.nodes(list);
     if !nodes.contains_direction() {
         return None;
     }

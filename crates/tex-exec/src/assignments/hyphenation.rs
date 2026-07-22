@@ -46,8 +46,8 @@ pub(super) fn execute_hyphenation(
     Ok(())
 }
 
-pub(crate) fn hyphenated_hlist(stores: &mut Universe, nodes: &[Node]) -> Vec<Node> {
-    let mut out = Vec::with_capacity(nodes.len());
+pub(crate) fn hyphenated_hlist(stores: &mut Universe, nodes: Vec<Node>) -> Vec<Node> {
+    let mut out: Option<Vec<Node>> = None;
     let mut index = 0;
     let mut auto_breaking = true;
     let mut language = 0;
@@ -62,18 +62,20 @@ pub(crate) fn hyphenated_hlist(stores: &mut Universe, nodes: &[Node]) -> Vec<Nod
             Node::MathOff(_) => auto_breaking = true,
             _ => {}
         }
-        out.push(node.clone());
+        if let Some(out) = &mut out {
+            out.push(node.clone());
+        }
         index += 1;
 
         if auto_breaking
             && matches!(node, Node::Glue { .. })
             && let Some(next) =
-                hyphenate_after_glue(stores, nodes, index, language, left, right, &mut out)
+                hyphenate_after_glue(stores, &nodes, index, language, left, right, &mut out)
         {
             index = next;
         }
     }
-    out
+    out.unwrap_or(nodes)
 }
 
 /// Returns legal character boundaries for pass-1 OpenType shaping.
@@ -120,7 +122,7 @@ pub(crate) fn test_hyphenated_word(stores: &mut Universe, nodes: &[Node]) -> Vec
     paragraph.push(boundary.clone());
     paragraph.extend_from_slice(nodes);
     paragraph.push(boundary);
-    let mut hyphenated = hyphenated_hlist(stores, &paragraph);
+    let mut hyphenated = hyphenated_hlist(stores, paragraph);
     hyphenated.remove(0);
     hyphenated.pop();
     hyphenated
@@ -146,7 +148,7 @@ fn hyphenate_after_glue(
     mut language: u8,
     mut left: usize,
     mut right: usize,
-    out: &mut Vec<Node>,
+    out: &mut Option<Vec<Node>>,
 ) -> Option<usize> {
     let mut index = start;
     let (word_start, font) = loop {
@@ -176,7 +178,6 @@ fn hyphenate_after_glue(
     }
 
     let mut word = Vec::new();
-    let mut word_nodes = Vec::new();
     index = word_start;
     while let Some(node) = nodes.get(index) {
         match node {
@@ -194,7 +195,6 @@ fn hyphenate_after_glue(
                     lower,
                     origin: *origin,
                 });
-                word_nodes.push(node.clone());
                 index += 1;
             }
             Node::Lig {
@@ -226,14 +226,12 @@ fn hyphenate_after_glue(
                         origin,
                     });
                 }
-                word_nodes.push(node.clone());
                 index += 1;
             }
             Node::Kern {
                 kind: KernKind::Font,
                 ..
             } => {
-                word_nodes.push(node.clone());
                 index += 1;
             }
             _ => break,
@@ -246,31 +244,39 @@ fn hyphenate_after_glue(
 
     let lowercase: String = word.iter().map(|ch| ch.lower).collect();
     let positions = stores.hyphen_positions_for_language(language, &lowercase, left, right);
-    out.extend_from_slice(&nodes[start..word_start]);
     if positions.is_empty() {
-        out.extend(word_nodes);
-    } else {
-        let trailing_font_kern = word_nodes.last().and_then(|node| match node {
-            Node::Kern {
-                amount,
-                kind: KernKind::Font,
-            } => Some(Node::Kern {
-                amount: *amount,
-                kind: KernKind::Font,
-            }),
-            _ => None,
-        });
-        let no_left_boundary = matches!(
-            out.last(),
-            Some(Node::Kern {
-                kind: KernKind::Font,
-                ..
-            })
-        );
-        append_hyphenated_word(stores, &word, &positions, no_left_boundary, out);
-        if let Some(kern) = trailing_font_kern {
-            out.push(kern);
+        if let Some(out) = out {
+            out.extend_from_slice(&nodes[start..index]);
         }
+        return Some(index);
+    }
+
+    let out = out.get_or_insert_with(|| {
+        let mut out = Vec::with_capacity(nodes.len());
+        out.extend_from_slice(&nodes[..start]);
+        out
+    });
+    out.extend_from_slice(&nodes[start..word_start]);
+    let trailing_font_kern = nodes[word_start..index].last().and_then(|node| match node {
+        Node::Kern {
+            amount,
+            kind: KernKind::Font,
+        } => Some(Node::Kern {
+            amount: *amount,
+            kind: KernKind::Font,
+        }),
+        _ => None,
+    });
+    let no_left_boundary = matches!(
+        out.last(),
+        Some(Node::Kern {
+            kind: KernKind::Font,
+            ..
+        })
+    );
+    append_hyphenated_word(stores, &word, &positions, no_left_boundary, out);
+    if let Some(kern) = trailing_font_kern {
+        out.push(kern);
     }
     Some(index)
 }

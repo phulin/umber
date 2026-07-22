@@ -5,47 +5,104 @@ use super::state_hash::{
     hash_fraction_thickness, hash_glue_kind, hash_kern_kind, hash_math_char, hash_noad_kind,
     hash_optional_delimiter, hash_optional_scaled, hash_print_sink, hash_sign,
 };
-use crate::ids::NodeListId;
+use crate::ids::{FontId, NodeListId};
 use crate::math::MathField;
 use crate::node::{BoxNode, LeaderPayload, Node, Whatsit};
-use crate::node_arena::{NodeSemanticId, NodeSemanticIdBuilder};
+use crate::node_arena::{NodeSemanticId, NodeSemanticIdBuilder, SidecarNeeds};
 use crate::state_hash::StateHasher;
 
 impl Stores {
     pub(super) fn compute_node_semantic_id(&self, nodes: &[Node]) -> NodeSemanticId {
         let mut identity = NodeSemanticIdBuilder::new();
-        for node in nodes {
-            identity.push(|hasher| self.hash_node_semantic_identity(node, hasher));
+        let mut index = 0;
+        while index < nodes.len() {
+            if let Node::Char { font, .. } = nodes[index] {
+                let end = same_font_char_run_end(nodes, index, font);
+                self.push_char_run_identity(&mut identity, font, &nodes[index..end]);
+                index = end;
+            } else {
+                identity.push(|hasher| self.hash_node_semantic_identity(&nodes[index], hasher));
+                index += 1;
+            }
         }
         identity.finish()
     }
 
-    pub(super) fn validate_and_compute_node_semantic_id(
+    pub(super) fn validate_and_plan_node_list(
         &mut self,
         nodes: &[Node],
-    ) -> NodeSemanticId {
+    ) -> (NodeSemanticId, SidecarNeeds) {
         let mut identity = NodeSemanticIdBuilder::new();
-        for node in nodes {
-            self.assert_live_handles_in_node(node);
-            if let Node::Char { font, .. } | Node::Lig { font, .. } = node {
-                let font = self.resolve_stored_font(*font);
-                self.fonts.seal_semantic_identity(font);
+        let mut needs = SidecarNeeds::default();
+        let mut index = 0;
+        while index < nodes.len() {
+            if let Node::Char { font, .. } = nodes[index] {
+                let end = same_font_char_run_end(nodes, index, font);
+                self.assert_live_font(font);
+                let stored_font = self.resolve_stored_font(font);
+                self.fonts.seal_semantic_identity(stored_font);
+                self.push_char_run_identity(&mut identity, font, &nodes[index..end]);
+                index = end;
+            } else {
+                let node = &nodes[index];
+                needs.preflight_and_count(node);
+                self.assert_live_handles_in_node(node);
+                if let Node::Lig { font, .. } = node {
+                    let stored_font = self.resolve_stored_font(*font);
+                    self.fonts.seal_semantic_identity(stored_font);
+                }
+                identity.push(|hasher| self.hash_node_semantic_identity(node, hasher));
+                index += 1;
             }
-            identity.push(|hasher| self.hash_node_semantic_identity(node, hasher));
+        }
+        (identity.finish(), needs)
+    }
+
+    // Used by transitional format restoration, which is not reached in the
+    // ordinary native test configuration.
+    #[allow(dead_code)]
+    pub(super) fn compute_and_seal_node_semantic_id(&mut self, nodes: &[Node]) -> NodeSemanticId {
+        let mut identity = NodeSemanticIdBuilder::new();
+        let mut index = 0;
+        while index < nodes.len() {
+            if let Node::Char { font, .. } = nodes[index] {
+                let end = same_font_char_run_end(nodes, index, font);
+                let stored_font = self.resolve_stored_font(font);
+                self.fonts.seal_semantic_identity(stored_font);
+                self.push_char_run_identity(&mut identity, font, &nodes[index..end]);
+                index = end;
+            } else {
+                let node = &nodes[index];
+                if let Node::Lig { font, .. } = node {
+                    let stored_font = self.resolve_stored_font(*font);
+                    self.fonts.seal_semantic_identity(stored_font);
+                }
+                identity.push(|hasher| self.hash_node_semantic_identity(node, hasher));
+                index += 1;
+            }
         }
         identity.finish()
     }
 
-    pub(super) fn compute_and_seal_node_semantic_id(&mut self, nodes: &[Node]) -> NodeSemanticId {
-        let mut identity = NodeSemanticIdBuilder::new();
-        for node in nodes {
-            if let Node::Char { font, .. } | Node::Lig { font, .. } = node {
-                let font = self.resolve_stored_font(*font);
-                self.fonts.seal_semantic_identity(font);
+    fn push_char_run_identity(
+        &self,
+        identity: &mut NodeSemanticIdBuilder,
+        font: FontId,
+        nodes: &[Node],
+    ) {
+        identity.push_run(nodes.len(), |hasher| {
+            // Tag 24 is reserved for the v3 node-list stream's maximal
+            // same-font character-run encoding. Origins are non-semantic.
+            hasher.tag(24);
+            self.hash_font_semantic(font, hasher);
+            hasher.usize(nodes.len());
+            for node in nodes {
+                let Node::Char { ch, .. } = node else {
+                    unreachable!("character run contains a non-character node")
+                };
+                hasher.u32(*ch as u32);
             }
-            identity.push(|hasher| self.hash_node_semantic_identity(node, hasher));
-        }
-        identity.finish()
+        });
     }
 
     pub(crate) fn node_semantic_id(&self, id: NodeListId) -> NodeSemanticId {
@@ -454,6 +511,14 @@ impl Stores {
             Whatsit::PdfEndThread => hasher.tag(25),
         }
     }
+}
+
+fn same_font_char_run_end(nodes: &[Node], start: usize, font: FontId) -> usize {
+    let mut end = start + 1;
+    while matches!(nodes.get(end), Some(Node::Char { font: next, .. }) if *next == font) {
+        end += 1;
+    }
+    end
 }
 
 fn hash_pdf_destination_kind(

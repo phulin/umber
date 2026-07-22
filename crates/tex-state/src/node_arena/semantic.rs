@@ -57,9 +57,9 @@ impl NodeSemanticId {
 
 /// Current node semantic-identity scheme. Changing node tags, dependency
 /// framing, or child-identity semantics requires a version migration.
-pub(crate) const NODE_SEMANTIC_ID_VERSION: u8 = 2;
-const NODE_STREAM_V2_DOMAIN: u64 = 0x6e6f_6432_5f73_7472;
-const NODE_ID_V2_DOMAIN: u64 = 0x6e6f_6432_5f69_6465;
+pub(crate) const NODE_SEMANTIC_ID_VERSION: u8 = 3;
+const NODE_STREAM_V3_DOMAIN: u64 = 0x6e6f_6433_5f73_7472;
+const NODE_ID_V3_DOMAIN: u64 = 0x6e6f_6433_5f69_6465;
 
 pub(crate) struct NodeSemanticIdBuilder {
     stream: StateHasher,
@@ -70,7 +70,7 @@ impl NodeSemanticIdBuilder {
     #[must_use]
     pub(crate) fn new() -> Self {
         Self {
-            stream: StateHasher::new(NODE_STREAM_V2_DOMAIN),
+            stream: StateHasher::new(NODE_STREAM_V3_DOMAIN),
             len: 0,
         }
     }
@@ -80,9 +80,16 @@ impl NodeSemanticIdBuilder {
         self.len += 1;
     }
 
+    /// Appends one length-framed encoding for several logical nodes.
+    pub(crate) fn push_run(&mut self, len: usize, encode: impl FnOnce(&mut StateHasher)) {
+        debug_assert!(len > 0);
+        encode(&mut self.stream);
+        self.len += len;
+    }
+
     #[must_use]
     pub(crate) fn finish(self) -> NodeSemanticId {
-        let mut hasher = StateHasher::new(NODE_ID_V2_DOMAIN);
+        let mut hasher = StateHasher::new(NODE_ID_V3_DOMAIN);
         hasher.u8(NODE_SEMANTIC_ID_VERSION);
         hasher.usize(self.len);
         self.stream.finish_fragment().apply(&mut hasher);

@@ -100,9 +100,7 @@ impl NodeStorage {
         for word in source_words {
             count_sidecar(word.tag(), &mut needs);
         }
-        for (have, add) in self.sidecar_lengths().into_iter().zip(needs.as_array()) {
-            preflight_capacity(have, add, "node sidecar exceeds u32 entries");
-        }
+        self.preflight_sidecars(needs);
         self.words.reserve(source_words.len());
         self.origins.reserve(source_words.len());
         self.reserve_sidecars(needs);
@@ -111,7 +109,13 @@ impl NodeStorage {
             let side = word.payload() as usize;
             let copied = match word.tag() {
                 0 | 2..=8 | 23 => word,
-                1 => copy_vec_row(1, &mut self.ligatures, &source.storage.ligatures, side),
+                1 => {
+                    let word =
+                        copy_vec_row(1, &mut self.ligatures, &source.storage.ligatures, side);
+                    #[cfg(feature = "profiling-stats")]
+                    self.record_last_ligature_payload();
+                    word
+                }
                 9 | 10 => {
                     let row = self.boxes.copy_row(&source.storage.boxes, side);
                     pending.push(ChildPatch::Box {
@@ -158,7 +162,12 @@ impl NodeStorage {
                     });
                     NodeWord::sidecar(16, row)
                 }
-                17 => copy_vec_row(17, &mut self.whatsits, &source.storage.whatsits, side),
+                17 => {
+                    let word = copy_vec_row(17, &mut self.whatsits, &source.storage.whatsits, side);
+                    #[cfg(feature = "profiling-stats")]
+                    self.record_last_whatsit_payload();
+                    word
+                }
                 18 => {
                     let row = self.noads.copy_row(&source.storage.noads, side);
                     let index = row as usize;
@@ -230,17 +239,16 @@ impl NodeStorage {
         #[cfg(feature = "profiling-stats")]
         {
             let capacity_after = self.capacity_signature();
-            let growth_events = capacity_before
-                .iter()
-                .zip(capacity_after)
-                .filter(|(before, after)| **before != *after)
-                .count();
+            let growth_by_column = core::array::from_fn(|index| {
+                u8::from(capacity_before[index] != capacity_after[index])
+            });
             crate::measurement::record_node_append(
                 source_words.len(),
                 needs.as_array(),
-                growth_events,
+                growth_by_column,
                 self.retained_payload_bytes()
                     .saturating_sub(retained_before),
+                true,
             );
             self.record_peak();
         }

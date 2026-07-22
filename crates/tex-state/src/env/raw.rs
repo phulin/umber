@@ -1,7 +1,7 @@
 #[cfg(feature = "shadow")]
 use super::shadow_set;
 use super::{
-    Env, RegisterBank, SEGMENT_LEN, barrier, font_bank_word, is_dense_register, register_index,
+    Env, RegisterBank, SEGMENT_LEN, font_bank_word, is_dense_register, register_index,
     segment_index, segment_offset, u16_index,
 };
 use crate::cell::{BankTag, CellId};
@@ -176,10 +176,10 @@ impl Env {
             let Some(segment) = segment else {
                 continue;
             };
-            for (offset, &word) in segment.iter().enumerate() {
-                if word != 0 {
+            for (offset, &meaning) in segment.iter().enumerate() {
+                if meaning != crate::meaning::Meaning::Undefined {
                     let index = ((segment_index as u32) << super::SEGMENT_BITS) | offset as u32;
-                    f(CellId::new(BankTag::Meaning, index), word);
+                    f(CellId::new(BankTag::Meaning, index), meaning.encode());
                 }
             }
         }
@@ -243,7 +243,7 @@ impl Env {
         self.afterassignment
     }
 
-    pub(super) fn meaning_word(&self, index: u32) -> Option<u64> {
+    pub(super) fn meaning_value(&self, index: u32) -> Option<crate::meaning::Meaning> {
         let segment = segment_index(index);
         let offset = segment_offset(index);
         self.meaning_cells
@@ -252,7 +252,12 @@ impl Env {
             .map(|cells| cells[offset])
     }
 
-    pub(super) fn set_meaning_word(&mut self, index: u32, word: u64, global: bool) {
+    pub(super) fn set_meaning_value(
+        &mut self,
+        index: u32,
+        meaning: crate::meaning::Meaning,
+        global: bool,
+    ) {
         self.ensure_meaning_segment(index);
         let segment = segment_index(index);
         let offset = segment_offset(index);
@@ -268,15 +273,30 @@ impl Env {
             CellId::new(BankTag::Meaning, index)
         };
 
-        barrier(
-            &mut cells[offset],
-            &mut stamps[offset],
-            &mut self.journal,
-            #[cfg(feature = "shadow")]
+        let old = cells[offset];
+        let old_word = old.encode();
+        let new_word = meaning.encode();
+        if old == meaning {
+            if cell.is_global() {
+                self.journal
+                    .push_undo(crate::journal::UndoRec::new(cell, old_word, new_word));
+            }
+            return;
+        }
+        if stamps[offset] < self.epoch {
+            self.journal
+                .push_undo(crate::journal::UndoRec::new(cell, old_word, new_word));
+            stamps[offset] = self.epoch;
+        } else if cell.is_global() {
+            self.journal
+                .push_undo(crate::journal::UndoRec::new(cell, old_word, new_word));
+        }
+        cells[offset] = meaning;
+        #[cfg(feature = "shadow")]
+        shadow_set(
             &mut self.shadow,
-            self.epoch,
-            cell,
-            word,
+            CellId::new(cell.bank(), cell.index()),
+            new_word,
         );
     }
 
@@ -288,7 +308,8 @@ impl Env {
         }
         let segment = required_len - 1;
         if self.meaning_cells[segment].is_none() {
-            self.meaning_cells[segment] = Some(Box::new([0; SEGMENT_LEN]));
+            self.meaning_cells[segment] =
+                Some(vec![crate::meaning::Meaning::Undefined; SEGMENT_LEN].into_boxed_slice());
             self.meaning_stamps[segment] = Some(Box::new([Epoch::ZERO; SEGMENT_LEN]));
         }
     }
@@ -300,7 +321,8 @@ impl Env {
         let offset = segment_offset(index);
         self.meaning_cells[segment]
             .as_mut()
-            .expect("ensured meaning segment")[offset] = word;
+            .expect("ensured meaning segment")[offset] =
+            crate::meaning::Meaning::decode_stored(word);
     }
 
     #[allow(dead_code)]

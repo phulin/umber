@@ -251,7 +251,7 @@ mod widths;
 
 pub use post::{LineMaterializer, post_line_break, post_line_break_owned};
 
-use widths::{Widths, line_badness, line_widths_nodes, line_widths_view, node_width_at};
+use widths::{Widths, add_node_width, line_badness, line_widths_nodes, line_widths_view};
 
 /// Validates pdfTeX's paragraph-wide expansion-step and limit invariants.
 ///
@@ -888,6 +888,7 @@ struct LegalBreakpoints<'a, S> {
     auto_breaking: bool,
     last_position: Option<usize>,
     terminal_emitted: bool,
+    include_font_expansion: bool,
 }
 
 impl<'a, S: TypesetState> LegalBreakpoints<'a, S> {
@@ -901,6 +902,7 @@ impl<'a, S: TypesetState> LegalBreakpoints<'a, S> {
             auto_breaking: true,
             last_position: None,
             terminal_emitted: false,
+            include_font_expansion: params.pdf_adjust_spacing > 1,
         }
     }
 
@@ -921,7 +923,13 @@ impl<'a, S: TypesetState> LegalBreakpoints<'a, S> {
             };
         let mut next_width = line_width;
         for index in width_position..next_position {
-            next_width.add_assign(node_width_at(self.state, self.nodes, index));
+            add_node_width(
+                &mut next_width,
+                self.state,
+                self.nodes,
+                index,
+                self.include_font_expansion,
+            );
         }
         Breakpoint {
             position,
@@ -943,8 +951,13 @@ impl<S: TypesetState> Iterator for LegalBreakpoints<'_, S> {
         while self.index < self.nodes.len() {
             let i = self.index;
             let before = self.prefix;
-            self.prefix
-                .add_assign(node_width_at(self.state, self.nodes, i));
+            add_node_width(
+                &mut self.prefix,
+                self.state,
+                self.nodes,
+                i,
+                self.include_font_expansion,
+            );
             self.index += 1;
 
             let definition = match &self.nodes[i] {
@@ -975,6 +988,7 @@ impl<S: TypesetState> Iterator for LegalBreakpoints<'_, S> {
                         self.state.nodes(*pre),
                         0,
                         self.state.nodes(*pre).len(),
+                        self.include_font_expansion,
                     ),
                     before,
                 )),

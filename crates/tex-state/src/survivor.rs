@@ -40,6 +40,10 @@ pub struct SurvivorMeasurement {
     pub peak_promotion_scratch_logical_bytes: u64,
     pub peak_promotion_scratch_retained_bytes: u64,
     pub source_words: u64,
+    pub epoch_source_words: u64,
+    pub survivor_source_words: u64,
+    pub epoch_source_lists: u64,
+    pub survivor_source_lists: u64,
     pub child_bearing_nodes: u64,
     pub remap_entries: u64,
     pub pending_entries: u64,
@@ -62,6 +66,10 @@ mod measurement {
     pub static PEAK_SCRATCH_LOGICAL: AtomicU64 = AtomicU64::new(0);
     pub static PEAK_SCRATCH_RETAINED: AtomicU64 = AtomicU64::new(0);
     pub static SOURCE_WORDS: AtomicU64 = AtomicU64::new(0);
+    pub static EPOCH_SOURCE_WORDS: AtomicU64 = AtomicU64::new(0);
+    pub static SURVIVOR_SOURCE_WORDS: AtomicU64 = AtomicU64::new(0);
+    pub static EPOCH_SOURCE_LISTS: AtomicU64 = AtomicU64::new(0);
+    pub static SURVIVOR_SOURCE_LISTS: AtomicU64 = AtomicU64::new(0);
     pub static CHILD_BEARING_NODES: AtomicU64 = AtomicU64::new(0);
     pub static REMAP_ENTRIES: AtomicU64 = AtomicU64::new(0);
     pub static PENDING_ENTRIES: AtomicU64 = AtomicU64::new(0);
@@ -89,6 +97,10 @@ mod measurement {
             peak_promotion_scratch_logical_bytes: PEAK_SCRATCH_LOGICAL.load(Ordering::Relaxed),
             peak_promotion_scratch_retained_bytes: PEAK_SCRATCH_RETAINED.load(Ordering::Relaxed),
             source_words: SOURCE_WORDS.load(Ordering::Relaxed),
+            epoch_source_words: EPOCH_SOURCE_WORDS.load(Ordering::Relaxed),
+            survivor_source_words: SURVIVOR_SOURCE_WORDS.load(Ordering::Relaxed),
+            epoch_source_lists: EPOCH_SOURCE_LISTS.load(Ordering::Relaxed),
+            survivor_source_lists: SURVIVOR_SOURCE_LISTS.load(Ordering::Relaxed),
             child_bearing_nodes: CHILD_BEARING_NODES.load(Ordering::Relaxed),
             remap_entries: REMAP_ENTRIES.load(Ordering::Relaxed),
             pending_entries: PENDING_ENTRIES.load(Ordering::Relaxed),
@@ -1151,6 +1163,16 @@ impl<'a> PromotionCopy<'a> {
         {
             let child_patches = self.pending.len() - pending_before;
             measurement::SOURCE_WORDS.fetch_add(u64::from(len), Ordering::Relaxed);
+            match id.arena() {
+                ArenaRef::Epoch => {
+                    measurement::EPOCH_SOURCE_WORDS.fetch_add(u64::from(len), Ordering::Relaxed);
+                    measurement::EPOCH_SOURCE_LISTS.fetch_add(1, Ordering::Relaxed);
+                }
+                ArenaRef::Survivor(_) => {
+                    measurement::SURVIVOR_SOURCE_WORDS.fetch_add(u64::from(len), Ordering::Relaxed);
+                    measurement::SURVIVOR_SOURCE_LISTS.fetch_add(1, Ordering::Relaxed);
+                }
+            }
             measurement::CHILD_BEARING_NODES.fetch_add(child_patches as u64, Ordering::Relaxed);
             measurement::REMAP_ENTRIES.fetch_add(1, Ordering::Relaxed);
             measurement::PENDING_ENTRIES.fetch_add(child_patches as u64, Ordering::Relaxed);

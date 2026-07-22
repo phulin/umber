@@ -42,6 +42,19 @@ fn mode_summary_shares_roots_and_restored_mutation_detaches() {
 }
 
 #[test]
+fn pushing_a_shared_mode_nest_preserves_the_snapshot_root() {
+    let mut nest = ModeNest::new();
+    let summary = nest.summary();
+
+    nest.push(Mode::Horizontal);
+
+    assert!(!Arc::ptr_eq(&nest.levels, &summary.levels));
+    assert_eq!(summary.levels.len(), 1);
+    assert_eq!(nest.depth(), 2);
+    assert_eq!(nest.current_mode(), Mode::Horizontal);
+}
+
+#[test]
 fn mode_projection_is_canonical_and_content_sensitive() {
     let mut first = ModeNest::new();
     first.push(Mode::Horizontal);

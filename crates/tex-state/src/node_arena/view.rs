@@ -271,6 +271,27 @@ impl<'a> NodeList<'a> {
             .iter()
             .any(|word| word.tag() == 23)
     }
+    /// Reports whether shipout must decode this list during its mutable
+    /// normalization phase. Inline leaves are already canonical; only nested
+    /// lists, executable whatsits, math nodes, direction markers, and node
+    /// kinds rejected by shipout require inspection.
+    #[must_use]
+    pub fn requires_shipout_normalization(self) -> bool {
+        self.storage.words[self.start..self.end]
+            .iter()
+            .any(|word| !shipout_normalization_inert_tag(word.tag()))
+    }
+    /// Reports whether one node requires inspection during shipout
+    /// normalization, using only its compact tag.
+    #[must_use]
+    pub fn node_requires_shipout_normalization(self, index: usize) -> Option<bool> {
+        if index >= self.len() {
+            return None;
+        }
+        Some(!shipout_normalization_inert_tag(
+            self.storage.words[self.start + index].tag(),
+        ))
+    }
     /// Returns the maximal same-font run of inline byte-character words at
     /// `index`. Ligatures and every non-character word deliberately terminate
     /// a run so callers retain their ordinary semantic handling.
@@ -338,6 +359,10 @@ impl<'a> NodeList<'a> {
     pub fn testing_decoded(self) -> &'static [Node] {
         Box::leak(self.to_vec().into_boxed_slice())
     }
+}
+
+pub(super) const fn shipout_normalization_inert_tag(tag: u8) -> bool {
+    matches!(tag, 0..=6 | 12 | 15)
 }
 
 /// Lazy byte codes from one contiguous same-font inline character run.

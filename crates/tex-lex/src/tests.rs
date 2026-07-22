@@ -1103,6 +1103,32 @@ fn line_reader_reuses_only_complete_normalization_keys() {
 }
 
 #[test]
+fn immutable_world_lines_bypass_source_local_normalization_cache() {
+    let mut stores = Universe::new();
+    stores.set_int_param(IntParam::END_LINE_CHAR, 13);
+    stores
+        .world_mut()
+        .set_memory_file("repeat.tex", b"same\nsame\n".to_vec())
+        .expect("seed immutable input");
+    let content = stores
+        .world_mut()
+        .read_file("repeat.tex")
+        .expect("open immutable input");
+    let mut reader = LineReader::new(super::WorldInput::from_content(content));
+
+    assert_eq!(
+        reader.next_event(&stores).expect("first line"),
+        Some(LineEvent::Text("same\r".into()))
+    );
+    assert_eq!(
+        reader.next_event(&stores).expect("second line"),
+        Some(LineEvent::Text("same\r".into()))
+    );
+    assert_eq!(reader.normalization_cache().hits(), 0);
+    assert!(reader.normalization_cache().is_empty());
+}
+
+#[test]
 fn layout_cursor_scalar_crossing_direct_boundary_uses_fragment_span() {
     let mut fragments = FragmentStore::new();
     let (fragment, registration) = fragments
@@ -1435,6 +1461,38 @@ fn source_text_span_preserves_utf8_cursor_and_catcode_seams() {
     assert_eq!(
         input.current_source_frame().expect("live frame").offset(),
         5
+    );
+}
+
+#[test]
+fn source_text_span_canonicalizes_and_collapses_spaces() {
+    let mut stores = Universe::new();
+    stores.set_int_param(IntParam::END_LINE_CHAR, -1);
+    let mut input = InputStack::new(MemoryInput::new("a   b c"));
+    let first = input
+        .next_traced_token(&mut stores)
+        .expect("valid source")
+        .expect("first token");
+    assert_eq!(first.token(), Some(char_token('a', Catcode::Letter)));
+
+    let mut text = Vec::new();
+    assert_eq!(input.append_source_text_span(&mut stores, &mut text), 4);
+    assert_eq!(
+        text.iter()
+            .filter_map(|word| word.token())
+            .collect::<Vec<_>>(),
+        vec![
+            char_token(' ', Catcode::Space),
+            char_token('b', Catcode::Letter),
+            char_token(' ', Catcode::Space),
+            char_token('c', Catcode::Letter),
+        ]
+    );
+    assert_source_origin(&stores, text[0].origin(), 1, 1, 1);
+    assert_source_origin(&stores, text[1].origin(), 4, 1, 4);
+    assert_eq!(
+        input.current_source_frame().expect("live frame").offset(),
+        7
     );
 }
 
@@ -2344,6 +2402,31 @@ fn macro_body_replay_without_origin_list_delivers_unknown_origin() {
 
     assert_eq!(replayed.token(), Some(token));
     assert_eq!(replayed.origin(), tex_state::token::OriginId::UNKNOWN);
+}
+
+#[test]
+fn horizontal_macro_text_span_includes_canonical_space_tokens() {
+    let mut stores = Universe::new();
+    let tokens = [
+        char_token('a', Catcode::Letter),
+        char_token(' ', Catcode::Space),
+        char_token('b', Catcode::Other),
+    ];
+    let token_list = stores.intern_token_list(&tokens);
+    let origin = stores.source_origin(tex_state::SourceId::new(1), 10, 2, 3);
+    let origins = stores.allocate_origin_list(&[origin; 3]);
+    let mut input = InputStack::new(MemoryInput::new(""));
+    input.push_macro_body_with_origins(token_list, origins, MacroArguments::new());
+    let mut text = Vec::new();
+
+    assert_eq!(input.append_macro_text_span(&stores, &mut text), 3);
+    assert_eq!(
+        text.iter()
+            .filter_map(|word| word.token())
+            .collect::<Vec<_>>(),
+        tokens
+    );
+    assert!(text.iter().all(|word| word.origin() == origin));
 }
 
 #[test]

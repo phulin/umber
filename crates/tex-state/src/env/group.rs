@@ -3,6 +3,9 @@ use crate::cell::BankTag;
 use crate::journal::{BoxUndoRec, Entry, JournalPos, Marker, UndoRec};
 use crate::token::Token;
 use ahash::AHashMap;
+use smallvec::SmallVec;
+
+pub(crate) type ChangedCells = SmallVec<[crate::cell::CellId; 8]>;
 
 #[derive(Clone, Copy, Debug)]
 struct GlobalCompactionState<T> {
@@ -344,9 +347,7 @@ impl Env {
     /// Leaves the innermost group and reports whether meaning cells were
     /// restored or compacted while crossing the boundary.
     #[must_use]
-    pub(crate) fn leave_group_observing_meanings(
-        &mut self,
-    ) -> (Vec<Token>, bool, Vec<crate::cell::CellId>) {
+    pub(crate) fn leave_group_observing_meanings(&mut self) -> (Vec<Token>, bool, ChangedCells) {
         self.leave_group_unchecked()
     }
 
@@ -368,7 +369,7 @@ impl Env {
     pub(crate) fn leave_group_with_kind_observing_meanings(
         &mut self,
         expected: GroupKind,
-    ) -> Result<(Vec<Token>, bool, Vec<crate::cell::CellId>), GroupMismatch> {
+    ) -> Result<(Vec<Token>, bool, ChangedCells), GroupMismatch> {
         let Some(actual) = self.innermost_group_kind() else {
             return Err(GroupMismatch::new_no_group(expected));
         };
@@ -378,7 +379,7 @@ impl Env {
         Ok(self.leave_group_unchecked())
     }
 
-    fn leave_group_unchecked(&mut self) -> (Vec<Token>, bool, Vec<crate::cell::CellId>) {
+    fn leave_group_unchecked(&mut self) -> (Vec<Token>, bool, ChangedCells) {
         self.record_paragraph_group_frame_mutation();
         let Some(boundary) = self.group_boundaries.pop() else {
             panic!("leave_group without matching group marker");
@@ -401,7 +402,7 @@ impl Env {
                 )),
                 Entry::Marker(_) => None,
             })
-            .collect::<Vec<_>>();
+            .collect::<ChangedCells>();
         changed_cells.sort_unstable();
         changed_cells.dedup();
         let has_globals =
@@ -410,7 +411,6 @@ impl Env {
                 Entry::BoxUndo(id) => self.journal.box_undo(id).survives_group(leaving_depth),
                 Entry::Marker(_) => false,
             });
-
         let meaning_changed = if has_globals {
             self.leave_group_with_globals(
                 marker_index,

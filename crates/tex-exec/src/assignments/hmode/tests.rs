@@ -88,14 +88,14 @@ fn sentence_space_factor_does_not_jump_after_an_uppercase_letter() {
     stores.set_sfcode('.', 3000);
     let mut nest = ModeNest::new();
 
-    update_space_factor(&mut nest, &stores, 'A');
+    update_space_factor(nest.current_list_mut(), &stores, 'A');
     assert_eq!(nest.current_list().space_factor(), 999);
 
-    update_space_factor(&mut nest, &stores, '.');
+    update_space_factor(nest.current_list_mut(), &stores, '.');
     assert_eq!(nest.current_list().space_factor(), 1000);
 
-    update_space_factor(&mut nest, &stores, 'a');
-    update_space_factor(&mut nest, &stores, '.');
+    update_space_factor(nest.current_list_mut(), &stores, 'a');
+    update_space_factor(nest.current_list_mut(), &stores, '.');
     assert_eq!(nest.current_list().space_factor(), 3000);
 }
 
@@ -406,7 +406,7 @@ fn flushing_a_character_run_appends_its_right_boundary_kern() {
     ));
     let mut nest = ModeNest::new();
     nest.current_list_mut()
-        .begin_pending_hchars(font, 'A', OriginId::UNKNOWN);
+        .begin_pending_hchars(font, 'A', OriginId::UNKNOWN, false);
 
     flush_pending_hchars(&mut nest, &mut stores).expect("character run flushes");
 

@@ -131,6 +131,10 @@ impl ModeList {
         Arc::make_mut(&mut self.nodes).extend(nodes);
     }
 
+    pub(crate) fn reconstitution_target(&mut self) -> &mut Vec<Node> {
+        Arc::make_mut(&mut self.nodes)
+    }
+
     pub(crate) fn push_reconstituted(
         &mut self,
         insertion: Option<(usize, Node)>,
@@ -157,9 +161,21 @@ impl ModeList {
         }
     }
 
-    pub(crate) fn begin_pending_hchars(&mut self, font: FontId, ch: char, origin: OriginId) {
+    pub(crate) fn begin_pending_hchars(
+        &mut self,
+        font: FontId,
+        ch: char,
+        origin: OriginId,
+        retain_source: bool,
+    ) {
         debug_assert!(self.pending_hchars.is_none());
-        self.pending_hchars = Some(PendingHRun::new(font, ch, origin, self.nodes.len()));
+        self.pending_hchars = Some(PendingHRun::new(
+            font,
+            ch,
+            origin,
+            self.nodes.len(),
+            retain_source,
+        ));
     }
 
     pub(crate) fn pending_hchars(&self) -> Option<&PendingHRun> {
@@ -527,12 +543,22 @@ pub(crate) struct PendingHRun {
 }
 
 impl PendingHRun {
-    pub(crate) fn new(font: FontId, ch: char, origin: OriginId, node_start: usize) -> Self {
+    pub(crate) fn new(
+        font: FontId,
+        ch: char,
+        origin: OriginId,
+        node_start: usize,
+        retain_source: bool,
+    ) -> Self {
         Self {
             first: PendingHChar { font, ch, origin },
             current: PendingHRunChar::new(font, ch, origin),
             node_start,
-            source: vec![PendingHChar { font, ch, origin }],
+            source: if retain_source {
+                vec![PendingHChar { font, ch, origin }]
+            } else {
+                Vec::new()
+            },
             script: tex_shape::character_script(ch),
         }
     }
@@ -805,8 +831,13 @@ impl ModeNest {
     /// Creates the outer main vertical nest level.
     #[must_use]
     pub fn new() -> Self {
+        // Every usable nested mode starts above the mandatory outer vertical
+        // level. Allocate that first nested slot together with the base so the
+        // common first push does not replace and copy a one-element buffer.
+        let mut levels = Vec::with_capacity(2);
+        levels.push(ModeLevelSummary::new(Mode::Vertical));
         Self {
-            levels: Arc::new(vec![ModeLevelSummary::new(Mode::Vertical)]),
+            levels: Arc::new(levels),
         }
     }
 
@@ -845,7 +876,25 @@ impl ModeNest {
         if matches!(mode, Mode::Horizontal | Mode::RestrictedHorizontal) {
             level.list_mut().set_space_factor(1000);
         }
-        Arc::make_mut(&mut self.levels).push(level);
+        self.levels_mut_for_push().push(level);
+    }
+
+    fn levels_mut_for_push(&mut self) -> &mut Vec<ModeLevelSummary> {
+        if Arc::get_mut(&mut self.levels).is_none() {
+            // `Arc::make_mut` clones a shared Vec at its exact length. A
+            // subsequent push would therefore allocate and copy that freshly
+            // detached buffer a second time. Detach directly with the slot
+            // that this operation is about to consume.
+            let mut levels = Vec::with_capacity(
+                self.levels
+                    .len()
+                    .checked_add(1)
+                    .expect("mode nest depth overflow"),
+            );
+            levels.extend(self.levels.iter().cloned());
+            self.levels = Arc::new(levels);
+        }
+        Arc::get_mut(&mut self.levels).expect("mode nest root was made unique")
     }
 
     pub fn pop(&mut self) -> Result<ModeLevelSummary, ExecError> {

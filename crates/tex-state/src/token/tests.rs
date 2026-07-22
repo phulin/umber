@@ -118,6 +118,24 @@ fn frozen_alignment_tokens_round_trip_as_distinct_non_symbol_tokens() {
 }
 
 #[test]
+fn invariant_fast_decode_matches_checked_decode_for_every_token_kind() {
+    let tokens = [
+        Token::Char {
+            ch: '🙂',
+            cat: Catcode::Active,
+        },
+        Token::Cs(Symbol::new((1 << 30) - 1)),
+        Token::param(9),
+        Token::frozen_endv(),
+    ];
+    for token in tokens {
+        let packed = TracedTokenWord::pack(token, OriginId::from_raw(42));
+        assert_eq!(packed.semantic_token(), token);
+        assert_eq!(packed.token(), Some(token));
+    }
+}
+
+#[test]
 fn packed_token_decode_rejects_unrepresentable_payloads() {
     let origin = OriginId::from_raw(99);
     let bad_frozen = TracedTokenWord::from_raw(

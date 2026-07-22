@@ -25,6 +25,9 @@ mod timing;
 mod transaction;
 mod vertical;
 
+#[cfg(feature = "profiling-stats")]
+pub use align::{AlignmentTemplateMeasurement, alignment_template_measurement};
+
 pub use assignments::{
     cached_pretolerance_plan, install_etex_unexpandable_primitives,
     install_unexpandable_primitives, register_etex_unexpandable_primitives,

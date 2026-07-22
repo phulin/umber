@@ -8,6 +8,8 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::time::{Duration, Instant};
 
+#[cfg(feature = "profiling-stats")]
+use tex_exec::{AlignmentTemplateMeasurement, alignment_template_measurement};
 use tex_exec::{Cancellation, CheckpointSink, EngineCheckpoint, PdfImageRequest, PdfImageResolver};
 use tex_expand::{InputResolver, ResourceLookup, ResourceResult};
 use tex_incr::{
@@ -19,7 +21,8 @@ use tex_lex::ExpansionStats;
 use tex_lex::{InputSource, InputStack, MemoryInput, WorldInput};
 #[cfg(feature = "profiling-stats")]
 use tex_state::measurement::{
-    ExactIdentityMeasurement, StateHashMeasurement, exact_identity_measurement,
+    ExactIdentityMeasurement, NODE_APPEND_CAPACITY_COLUMNS, NodeAppendMeasurement,
+    StateHashMeasurement, exact_identity_measurement, node_append_measurement,
     state_hash_measurement,
 };
 #[cfg(feature = "profiling-stats")]
@@ -200,6 +203,10 @@ fn run() -> Result<(), String> {
         }
     }
 
+    #[cfg(feature = "profiling-stats")]
+    let node_append_before = node_append_measurement();
+    #[cfg(feature = "profiling-stats")]
+    let alignment_template_before = alignment_template_measurement();
     let started = Instant::now();
     let mut last = execute_once(&template, options.checkpoints)?;
     let _ = black_box(last.pages);
@@ -217,7 +224,114 @@ fn run() -> Result<(), String> {
     }
 
     print_summary(&options, &last, elapsed);
+    #[cfg(feature = "profiling-stats")]
+    {
+        let node_append = node_append_delta(node_append_measurement(), node_append_before);
+        println!(
+            "gentle-profile node append: calls={} words={} sidecar_rows={:?} capacity_growth_events={} retained_payload_bytes_grown={}",
+            node_append.calls,
+            node_append.words,
+            node_append.sidecar_rows,
+            node_append.capacity_growth_events,
+            node_append.retained_payload_bytes_grown,
+        );
+        let growth_columns = NODE_APPEND_CAPACITY_COLUMNS
+            .iter()
+            .zip(node_append.capacity_growth_by_column)
+            .filter(|(_, count)| *count != 0)
+            .map(|(name, count)| format!("{name}={count}"))
+            .collect::<Vec<_>>()
+            .join(",");
+        println!("gentle-profile node growth columns: {growth_columns}");
+        let compact_growth_columns = NODE_APPEND_CAPACITY_COLUMNS
+            .iter()
+            .zip(node_append.compact_copy_growth_by_column)
+            .filter(|(_, count)| *count != 0)
+            .map(|(name, count)| format!("{name}={count}"))
+            .collect::<Vec<_>>()
+            .join(",");
+        println!(
+            "gentle-profile compact-copy growth: calls={} words={} columns={compact_growth_columns}",
+            node_append.compact_copy_calls, node_append.compact_copy_words,
+        );
+        let templates =
+            alignment_template_delta(alignment_template_measurement(), alignment_template_before);
+        println!(
+            "gentle-profile alignment u-templates: invocations={} delivered_tokens={} character_tokens={} control_sequence_tokens={} relax_commands={} font_commands={} unexpandable_commands={} inert_glue_commands={} other_commands={}",
+            templates.invocations,
+            templates.delivered_tokens,
+            templates.character_tokens,
+            templates.control_sequence_tokens,
+            templates.relax_commands,
+            templates.font_commands,
+            templates.unexpandable_commands,
+            templates.inert_glue_commands,
+            templates.other_commands,
+        );
+    }
     Ok(())
+}
+
+#[cfg(feature = "profiling-stats")]
+fn alignment_template_delta(
+    after: AlignmentTemplateMeasurement,
+    before: AlignmentTemplateMeasurement,
+) -> AlignmentTemplateMeasurement {
+    AlignmentTemplateMeasurement {
+        invocations: after.invocations.saturating_sub(before.invocations),
+        delivered_tokens: after
+            .delivered_tokens
+            .saturating_sub(before.delivered_tokens),
+        character_tokens: after
+            .character_tokens
+            .saturating_sub(before.character_tokens),
+        control_sequence_tokens: after
+            .control_sequence_tokens
+            .saturating_sub(before.control_sequence_tokens),
+        relax_commands: after.relax_commands.saturating_sub(before.relax_commands),
+        font_commands: after.font_commands.saturating_sub(before.font_commands),
+        unexpandable_commands: after
+            .unexpandable_commands
+            .saturating_sub(before.unexpandable_commands),
+        inert_glue_commands: after
+            .inert_glue_commands
+            .saturating_sub(before.inert_glue_commands),
+        other_commands: after.other_commands.saturating_sub(before.other_commands),
+    }
+}
+
+#[cfg(feature = "profiling-stats")]
+fn node_append_delta(
+    after: NodeAppendMeasurement,
+    before: NodeAppendMeasurement,
+) -> NodeAppendMeasurement {
+    NodeAppendMeasurement {
+        calls: after.calls.saturating_sub(before.calls),
+        words: after.words.saturating_sub(before.words),
+        sidecar_rows: core::array::from_fn(|index| {
+            after.sidecar_rows[index].saturating_sub(before.sidecar_rows[index])
+        }),
+        capacity_growth_events: after
+            .capacity_growth_events
+            .saturating_sub(before.capacity_growth_events),
+        capacity_growth_by_column: core::array::from_fn(|index| {
+            after.capacity_growth_by_column[index]
+                .saturating_sub(before.capacity_growth_by_column[index])
+        }),
+        compact_copy_calls: after
+            .compact_copy_calls
+            .saturating_sub(before.compact_copy_calls),
+        compact_copy_words: after
+            .compact_copy_words
+            .saturating_sub(before.compact_copy_words),
+        compact_copy_growth_by_column: core::array::from_fn(|index| {
+            after.compact_copy_growth_by_column[index]
+                .saturating_sub(before.compact_copy_growth_by_column[index])
+        }),
+        retained_payload_bytes_grown: after
+            .retained_payload_bytes_grown
+            .saturating_sub(before.retained_payload_bytes_grown),
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -450,7 +564,7 @@ fn run_cold_memo_policy(
             last_state_hash.peak_changed_cell_scratch_bytes,
         );
         println!(
-            "gentle-profile isolated cold survivor: fresh_promotions={} recycled_promotions={} releases={} promotion_nanos={} source_words={}",
+            "gentle-profile isolated cold survivor: fresh_promotions={} recycled_promotions={} releases={} promotion_nanos={} source_words={} epoch_source_words={} survivor_source_words={} epoch_source_lists={} survivor_source_lists={}",
             last_survivor.fresh_promotions,
             last_survivor.recycled_promotions,
             last_survivor.releases_to_recycling,
@@ -458,6 +572,10 @@ fn run_cold_memo_policy(
                 .fresh_promotion_nanos
                 .saturating_add(last_survivor.recycled_promotion_nanos),
             last_survivor.source_words,
+            last_survivor.epoch_source_words,
+            last_survivor.survivor_source_words,
+            last_survivor.epoch_source_lists,
+            last_survivor.survivor_source_lists,
         );
     }
     Ok(())
@@ -1971,6 +2089,18 @@ fn survivor_delta(after: SurvivorMeasurement, before: SurvivorMeasurement) -> Su
             .shared_payload_drop_nanos
             .saturating_sub(before.shared_payload_drop_nanos),
         source_words: after.source_words.saturating_sub(before.source_words),
+        epoch_source_words: after
+            .epoch_source_words
+            .saturating_sub(before.epoch_source_words),
+        survivor_source_words: after
+            .survivor_source_words
+            .saturating_sub(before.survivor_source_words),
+        epoch_source_lists: after
+            .epoch_source_lists
+            .saturating_sub(before.epoch_source_lists),
+        survivor_source_lists: after
+            .survivor_source_lists
+            .saturating_sub(before.survivor_source_lists),
         child_bearing_nodes: after
             .child_bearing_nodes
             .saturating_sub(before.child_bearing_nodes),

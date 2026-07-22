@@ -69,6 +69,11 @@ fn owned_and_borrowed_semantic_hash_paths_match_every_node_variant() {
             ch: 'x',
             origin: crate::token::OriginId::UNKNOWN,
         },
+        Node::Char {
+            font: NULL_FONT,
+            ch: 'y',
+            origin: crate::token::OriginId::UNKNOWN,
+        },
         Node::Lig {
             font: NULL_FONT,
             ch: 'f',
@@ -212,11 +217,19 @@ fn node_semantic_ids_are_canonical_and_compose_from_children() {
 #[test]
 fn owned_node_freeze_reuses_the_source_vector_and_preserves_identity() {
     let mut borrowed = Stores::new();
-    let borrowed_id = borrowed.freeze_node_list(&[Node::Penalty(17), Node::Penalty(23)]);
+    let expected = vec![
+        Node::Penalty(17),
+        Node::Whatsit(Whatsit::Special {
+            class: "owned".into(),
+            payload: vec![1, 2, 3, 4],
+        }),
+        Node::Penalty(23),
+    ];
+    let borrowed_id = borrowed.freeze_node_list(&expected);
 
     let mut owned = Stores::new();
     let mut nodes = Vec::with_capacity(8);
-    nodes.extend([Node::Penalty(17), Node::Penalty(23)]);
+    nodes.extend(expected.clone());
     let capacity = nodes.capacity();
     let owned_id = owned.freeze_node_list_owned(&mut nodes);
 
@@ -226,6 +239,7 @@ fn owned_node_freeze_reuses_the_source_vector_and_preserves_identity() {
         borrowed.node_semantic_id(borrowed_id),
         owned.node_semantic_id(owned_id)
     );
+    assert_eq!(owned.nodes(owned_id).to_vec(), expected);
 }
 
 #[test]

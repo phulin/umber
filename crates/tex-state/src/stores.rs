@@ -4,7 +4,6 @@
 //! `Universe` for checkpointing and rollback so the whole timeline tuple is
 //! restored atomically.
 
-use crate::cell::CellId;
 use crate::code_tables::{
     CodeTableGenerations, CodeTables, CodeTablesSnapshot, DelCode, LcCode, MathCode, SfCode, UcCode,
 };
@@ -1550,31 +1549,69 @@ impl Stores {
         left: LigKernChar,
         right: LigKernChar,
     ) -> Option<LigKernCommand> {
-        if let LigKernChar::Char(code) = left
-            && self.pdf_font_code(PdfFontCode::Tag, font, code) & 1 == 0
-        {
+        let loaded = self.font(font);
+        self.lig_kern_command_with_loaded(font, loaded, left, right)
+    }
+
+    #[must_use]
+    pub fn tfm_lig_kern_command(
+        &self,
+        font: FontId,
+        left: LigKernChar,
+        right: LigKernChar,
+    ) -> Option<LigKernCommand> {
+        let loaded = self.font(font);
+        if !loaded.uses_tfm_metrics() {
             return None;
         }
-        if self.env.pdf_no_ligatures(font) {
-            return self
-                .font(font)
-                .metrics()
-                .lig_kern_command(left, right)
-                .filter(|command| matches!(command, LigKernCommand::Kern(_)));
+        self.lig_kern_command_with_loaded(font, loaded, left, right)
+    }
+
+    fn lig_kern_command_with_loaded(
+        &self,
+        font: FontId,
+        loaded: &LoadedFont,
+        left: LigKernChar,
+        right: LigKernChar,
+    ) -> Option<LigKernCommand> {
+        let metrics = loaded.metrics();
+        let start = metrics.lig_kern_start(left)?;
+        if let LigKernChar::Char(code) = left {
+            let tag = self
+                .env
+                .pdf_font_code(pdf_font_code_bank(PdfFontCode::Tag), font, code)
+                .unwrap_or(1);
+            if tag & 1 == 0 {
+                return None;
+            }
         }
-        self.font(font).metrics().lig_kern_command(left, right)
+        let command = metrics.lig_kern_command_from_start(start, right);
+        if self.env.pdf_no_ligatures(font) {
+            return command.filter(|command| matches!(command, LigKernCommand::Kern(_)));
+        }
+        command
     }
 
     #[must_use]
     pub fn pdf_font_code(&self, table: PdfFontCode, font: FontId, code: u8) -> i32 {
-        self.assert_live_font(font);
+        self.pdf_font_code_with_loaded(table, font, code, self.font(font))
+    }
+
+    fn pdf_font_code_with_loaded(
+        &self,
+        table: PdfFontCode,
+        font: FontId,
+        code: u8,
+        loaded: &LoadedFont,
+    ) -> i32 {
         let bank = pdf_font_code_bank(table);
         self.env
             .pdf_font_code(bank, font, code)
             .unwrap_or_else(|| match table {
                 PdfFontCode::Ef => 1000,
                 PdfFontCode::Tag => {
-                    self.font_char_metrics(font, code)
+                    loaded
+                        .character_metrics(char::from(code))
                         .map_or(0, |metrics| match metrics.tag {
                             CharTag::None => 0,
                             CharTag::LigKern { .. } => 1,
@@ -1777,25 +1814,24 @@ impl Stores {
 
     /// Appends and freezes a node list in the owned epoch arena.
     pub fn freeze_node_list(&mut self, nodes: &[Node]) -> NodeListId {
-        let semantic_id = self.validate_and_compute_node_semantic_id(nodes);
-        self.nodes.append_with_semantic_id(nodes, semantic_id)
+        let (semantic_id, needs) = self.validate_and_plan_node_list(nodes);
+        self.nodes
+            .append_preflighted_with_semantic_id(nodes, semantic_id, needs)
     }
 
     /// Freezes an owned decoded node vector and clears it for allocation reuse.
     pub fn freeze_node_list_owned(&mut self, nodes: &mut Vec<Node>) -> NodeListId {
-        let semantic_id = self.validate_and_compute_node_semantic_id(nodes);
-        let id = self.nodes.append_with_semantic_id(nodes, semantic_id);
-        nodes.clear();
-        id
+        let (semantic_id, needs) = self.validate_and_plan_node_list(nodes);
+        self.nodes
+            .append_owned_preflighted_with_semantic_id(nodes, semantic_id, needs)
     }
 
     /// Freezes the current node-list builder value and clears it for reuse.
     pub fn finish_node_list(&mut self, builder: &mut NodeListBuilder) -> NodeListId {
-        self.assert_live_handles_in_nodes(builder.as_slice());
-        let semantic_id = self.compute_and_seal_node_semantic_id(builder.as_slice());
-        let id = self
-            .nodes
-            .append_with_semantic_id(builder.as_slice(), semantic_id);
+        let (semantic_id, needs) = self.validate_and_plan_node_list(builder.as_slice());
+        let id =
+            self.nodes
+                .append_preflighted_with_semantic_id(builder.as_slice(), semantic_id, needs);
         builder.clear();
         id
     }
@@ -2064,7 +2100,7 @@ impl Stores {
         &mut self,
     ) -> (
         Vec<Token>,
-        Vec<CellId>,
+        crate::env::group::ChangedCells,
         CodeTableGenerations,
         CodeTableGenerations,
     ) {
@@ -2089,7 +2125,7 @@ impl Stores {
     ) -> Result<
         (
             Vec<Token>,
-            Vec<CellId>,
+            crate::env::group::ChangedCells,
             CodeTableGenerations,
             CodeTableGenerations,
         ),

@@ -15,7 +15,7 @@ use tex_state::node::{
     BoxNode as StateBoxNode, Direction, DiscKind as StateDiscKind, GlueKind as StateGlueKind,
     KernKind as StateKernKind, LeaderPayload as StateLeaderPayload, Node, Sign, Whatsit,
 };
-use tex_state::node_arena::NodeRef;
+use tex_state::node_arena::{NodeList, NodeRef};
 use tex_state::token::{Catcode, OriginId, Token};
 use tex_state::{EffectRecord, PrintSink, Universe, VerifiedArtifact};
 
@@ -529,6 +529,40 @@ fn emit_char_run(
     emission: &mut EmissionState,
 ) -> Result<(), ExecError> {
     let font = run.font();
+    let loaded = stores.font(font);
+    if !matches!(
+        loaded.construction(),
+        tex_fonts::FontConstruction::Letterspaced { .. }
+    ) {
+        let font_id = font_resource_id(stores, font, emission);
+        if let Some(dvi) = dvi.as_deref_mut() {
+            dvi.add_fonts(&emission.fonts).map_err(invalid_artifact)?;
+        }
+        for (offset, (code, origin)) in run.codes().zip(run.origins()).enumerate() {
+            let width = loaded
+                .character_metrics(char::from(code))
+                .map(|metrics| metrics.width)
+                .ok_or(ExecError::UnsupportedShipoutNode {
+                    node: "missing character metrics",
+                })?;
+            match deferred.node_origins(start + offset, 1) {
+                Some(tex_state::DeferredNodeOrigins::Stable(recipe, slots)) => {
+                    emission.node_deferred(recipe, slots)
+                }
+                Some(tex_state::DeferredNodeOrigins::Lazy(resolver)) => {
+                    emission.node_lazy(resolver, [origin])
+                }
+                None => emission.node([origin]),
+            }
+            output.char(font_id, u32::from(code), width)?;
+            if let Some(dvi) = dvi.as_deref_mut() {
+                dvi.char(font_id, u32::from(code), width)
+                    .map_err(invalid_artifact)?;
+            }
+        }
+        return Ok(());
+    }
+
     for (offset, (code, origin)) in run.codes().zip(run.origins()).enumerate() {
         let width = stores
             .font_character_metrics(font, char::from(code))

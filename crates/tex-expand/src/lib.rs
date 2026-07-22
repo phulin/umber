@@ -2930,7 +2930,5 @@ pub(crate) fn expansion_suppressed_origin_list(
 }
 
 pub fn semantic_token(token: TracedTokenWord) -> Token {
-    token
-        .token()
-        .expect("expansion must only receive valid traced tokens")
+    token.semantic_token()
 }

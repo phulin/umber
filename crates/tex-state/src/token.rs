@@ -285,12 +285,54 @@ impl TracedTokenWord {
         }
     }
 
+    /// Unpacks the semantic token through the validity invariant established
+    /// by [`Self::pack`]. Unlike [`Self::token`], this hot-path operation does
+    /// not revalidate an opaque value that external code cannot construct.
+    #[must_use]
+    #[inline(always)]
+    pub fn semantic_token(self) -> Token {
+        let kind = self.0 >> Self::KIND_SHIFT;
+        let payload = ((self.0 >> Self::PAYLOAD_SHIFT) as u32) & Self::PAYLOAD_MASK;
+        match kind {
+            Self::KIND_CHAR => {
+                let raw_cat = (payload & 0xF) as usize;
+                let usv = (payload >> Self::CATCODE_BITS) & Self::USV_MASK;
+                let ch = char::from_u32(usv).expect("packed traced-token scalar is valid");
+                let cat = ALL_CATCODES[raw_cat];
+                Token::Char { ch, cat }
+            }
+            Self::KIND_CS => Token::Cs(Symbol::new(payload)),
+            Self::KIND_PARAM => Token::Param(payload as u8),
+            Self::KIND_FROZEN => Token::Frozen(FrozenToken(payload as u16)),
+            _ => unreachable!("two-bit traced-token kind"),
+        }
+    }
+
     /// Unpacks both token and origin, or `None` if the raw token bits are invalid.
     #[must_use]
     pub fn unpack(self) -> Option<(Token, OriginId)> {
         Some((self.token()?, self.origin()))
     }
 }
+
+const ALL_CATCODES: [Catcode; 16] = [
+    Catcode::Escape,
+    Catcode::BeginGroup,
+    Catcode::EndGroup,
+    Catcode::MathShift,
+    Catcode::AlignmentTab,
+    Catcode::EndLine,
+    Catcode::Parameter,
+    Catcode::Superscript,
+    Catcode::Subscript,
+    Catcode::Ignored,
+    Catcode::Space,
+    Catcode::Letter,
+    Catcode::Other,
+    Catcode::Active,
+    Catcode::Comment,
+    Catcode::Invalid,
+];
 
 const _: () = assert!(core::mem::size_of::<TracedTokenWord>() == 8);
 

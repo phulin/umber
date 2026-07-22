@@ -13,6 +13,8 @@ pub(super) fn replay_template(
     execution: &mut crate::ExecutionContext<'_>,
 ) -> Result<(), ExecError> {
     {
+        #[cfg(feature = "profiling-stats")]
+        super::record_template_invocation();
         // TeX82's end_token_list callback ends a u_template even when its
         // final token expands and pops the template below a macro frame. A
         // live-frame marker gives this synchronous replay the same boundary;

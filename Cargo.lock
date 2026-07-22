@@ -1261,6 +1261,7 @@ dependencies = [
  "flate2",
  "proptest",
  "serde",
+ "smallvec",
  "tempfile",
  "test-support",
  "tex-arith",

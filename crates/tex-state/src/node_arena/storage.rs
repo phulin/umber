@@ -64,7 +64,8 @@ pub(super) struct StorageMark {
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub(super) struct SidecarNeeds {
+pub(crate) struct SidecarNeeds {
+    any: bool,
     pub(super) ligatures: u32,
     pub(super) boxes: u32,
     pub(super) unsets: u32,
@@ -82,9 +83,28 @@ pub(super) struct SidecarNeeds {
 }
 
 impl SidecarNeeds {
-    fn count(&mut self, node: &Node) {
+    pub(crate) fn preflight_and_count(&mut self, node: &Node) {
         let target = match node {
-            Node::Lig { .. } => Some(&mut self.ligatures),
+            Node::Lig {
+                ch, orig, origins, ..
+            } => {
+                assert!(
+                    (*ch as u32) <= u8::MAX as u32,
+                    "ligature glyph exceeds TFM byte domain"
+                );
+                assert!(!orig.is_empty(), "ligature source must not be empty");
+                assert!(orig.len() <= 63, "ligature source exceeds TeX word limit");
+                assert_eq!(
+                    orig.len(),
+                    origins.len(),
+                    "ligature source/provenance length mismatch"
+                );
+                assert!(
+                    orig.iter().all(|ch| (*ch as u32) <= u8::MAX as u32),
+                    "ligature original exceeds TFM byte domain"
+                );
+                Some(&mut self.ligatures)
+            }
             Node::HList(_) | Node::VList(_) => Some(&mut self.boxes),
             Node::Unset(_) => Some(&mut self.unsets),
             Node::Rule { .. } => Some(&mut self.rules),
@@ -111,10 +131,12 @@ impl SidecarNeeds {
             | Node::Nonscript => None,
         };
         if let Some(target) = target {
+            self.any = true;
             *target = target.checked_add(1).expect("sidecar count overflow");
         }
     }
 
+    #[cfg(feature = "profiling-stats")]
     pub(super) fn as_array(self) -> [u32; 14] {
         [
             self.ligatures,
@@ -155,6 +177,13 @@ pub(crate) struct NodeStorage {
     pub(super) choices: Vec<crate::math::MathChoice>,
     pub(super) math_lists: Vec<crate::math::MathListNode>,
     pub(super) adjusts: Vec<NodeListId>,
+    /// Exact totals for heap allocations owned below ligature and whatsit
+    /// sidecar rows. Profiling reads these after every append, so keep the
+    /// totals incrementally instead of rescanning all accumulated rows.
+    #[cfg(feature = "profiling-stats")]
+    pub(super) nested_payload_logical: u64,
+    #[cfg(feature = "profiling-stats")]
+    pub(super) nested_payload_retained: u64,
 }
 
 impl NodeStorage {
@@ -215,6 +244,8 @@ impl NodeStorage {
         assert!(mark.choices as usize <= self.choices.len());
         assert!(mark.math_lists as usize <= self.math_lists.len());
         assert!(mark.adjusts as usize <= self.adjusts.len());
+        #[cfg(feature = "profiling-stats")]
+        self.remove_nested_payloads_from(mark.ligatures as usize, mark.whatsits as usize);
         self.words.truncate(mark.words as usize);
         self.origins.truncate(mark.words as usize);
         self.ligatures.truncate(mark.ligatures as usize);
@@ -234,6 +265,17 @@ impl NodeStorage {
     }
 
     pub(crate) fn append(&mut self, nodes: &[Node]) -> (u32, u32) {
+        // Validate every encoding and selected table before reserving or
+        // publishing either rows or words. Publication below is infallible
+        // apart from process-aborting allocation failure.
+        let mut needs = SidecarNeeds::default();
+        for node in nodes {
+            needs.preflight_and_count(node);
+        }
+        self.append_preflighted(nodes, needs)
+    }
+
+    pub(crate) fn append_preflighted(&mut self, nodes: &[Node], needs: SidecarNeeds) -> (u32, u32) {
         #[cfg(feature = "profiling-stats")]
         let capacity_before = self.capacity_signature();
         #[cfg(feature = "profiling-stats")]
@@ -243,20 +285,14 @@ impl NodeStorage {
         start
             .checked_add(len)
             .expect("node arena span overflows u32");
-        // Validate every encoding and selected table before reserving or
-        // publishing either rows or words. Publication below is infallible
-        // apart from process-aborting allocation failure.
-        let mut needs = SidecarNeeds::default();
-        for node in nodes {
-            preflight_encoding(node);
-            needs.count(node);
-        }
-        for (have, add) in self.sidecar_lengths().into_iter().zip(needs.as_array()) {
-            preflight_capacity(have, add, "node sidecar exceeds u32 entries");
+        if needs.any {
+            self.preflight_sidecars(needs);
         }
         self.words.reserve(nodes.len());
         self.origins.reserve(nodes.len());
-        self.reserve_sidecars(needs);
+        if needs.any {
+            self.reserve_sidecars(needs);
+        }
         for node in nodes {
             let word = self.encode(node);
             self.words.push(word);
@@ -269,58 +305,123 @@ impl NodeStorage {
         #[cfg(feature = "profiling-stats")]
         {
             let capacity_after = self.capacity_signature();
-            let growth_events = capacity_before
-                .iter()
-                .zip(capacity_after)
-                .filter(|(before, after)| **before != *after)
-                .count();
+            let growth_by_column = core::array::from_fn(|index| {
+                u8::from(capacity_before[index] != capacity_after[index])
+            });
             let retained_after = self.retained_payload_bytes();
             crate::measurement::record_node_append(
                 nodes.len(),
                 needs.as_array(),
-                growth_events,
+                growth_by_column,
                 retained_after.saturating_sub(retained_before),
+                false,
             );
             self.record_peak();
         }
         (start, len)
     }
 
-    pub(super) fn sidecar_lengths(&self) -> [u32; 14] {
-        let m = self.mark();
-        [
-            m.ligatures,
-            m.boxes,
-            m.unsets,
-            m.rules,
-            m.leaders,
-            m.discs,
-            m.marks,
-            m.insertions,
-            m.whatsits,
-            m.noads,
-            m.fractions,
-            m.choices,
-            m.math_lists,
-            m.adjusts,
-        ]
+    pub(crate) fn append_owned_preflighted(
+        &mut self,
+        nodes: &mut Vec<Node>,
+        needs: SidecarNeeds,
+    ) -> (u32, u32) {
+        #[cfg(feature = "profiling-stats")]
+        let capacity_before = self.capacity_signature();
+        #[cfg(feature = "profiling-stats")]
+        let retained_before = self.retained_payload_bytes();
+        let start = checked_len(self.words.len(), "node arena exceeds u32 entries");
+        let len = checked_len(nodes.len(), "node list exceeds u32 entries");
+        start
+            .checked_add(len)
+            .expect("node arena span overflows u32");
+        if needs.any {
+            self.preflight_sidecars(needs);
+        }
+        self.words.reserve(nodes.len());
+        self.origins.reserve(nodes.len());
+        if needs.any {
+            self.reserve_sidecars(needs);
+        }
+        for node in nodes.drain(..) {
+            let origin = match &node {
+                Node::Char { origin, .. } => *origin,
+                Node::Lig { origins, .. } => origins.first().copied().unwrap_or(OriginId::UNKNOWN),
+                _ => OriginId::UNKNOWN,
+            };
+            let word = self.encode_owned(node);
+            self.words.push(word);
+            self.origins.push(origin);
+        }
+        #[cfg(feature = "profiling-stats")]
+        {
+            let capacity_after = self.capacity_signature();
+            let growth_by_column = core::array::from_fn(|index| {
+                u8::from(capacity_before[index] != capacity_after[index])
+            });
+            let retained_after = self.retained_payload_bytes();
+            crate::measurement::record_node_append(
+                len as usize,
+                needs.as_array(),
+                growth_by_column,
+                retained_after.saturating_sub(retained_before),
+                false,
+            );
+            self.record_peak();
+        }
+        (start, len)
+    }
+
+    pub(super) fn preflight_sidecars(&self, needs: SidecarNeeds) {
+        macro_rules! preflight_if_needed {
+            ($field:ident, $message:literal) => {
+                if needs.$field != 0 {
+                    preflight_capacity(
+                        checked_len(self.$field.len(), $message),
+                        needs.$field,
+                        $message,
+                    );
+                }
+            };
+        }
+        preflight_if_needed!(ligatures, "ligature sidecar exceeds u32 entries");
+        preflight_if_needed!(boxes, "box sidecar exceeds u32 entries");
+        preflight_if_needed!(unsets, "unset sidecar exceeds u32 entries");
+        preflight_if_needed!(rules, "rule sidecar exceeds u32 entries");
+        preflight_if_needed!(leaders, "leader sidecar exceeds u32 entries");
+        preflight_if_needed!(discs, "disc sidecar exceeds u32 entries");
+        preflight_if_needed!(marks, "mark sidecar exceeds u32 entries");
+        preflight_if_needed!(insertions, "insertion sidecar exceeds u32 entries");
+        preflight_if_needed!(whatsits, "whatsit sidecar exceeds u32 entries");
+        preflight_if_needed!(noads, "noad sidecar exceeds u32 entries");
+        preflight_if_needed!(fractions, "fraction sidecar exceeds u32 entries");
+        preflight_if_needed!(choices, "choice sidecar exceeds u32 entries");
+        preflight_if_needed!(math_lists, "math-list sidecar exceeds u32 entries");
+        preflight_if_needed!(adjusts, "adjust sidecar exceeds u32 entries");
     }
 
     pub(super) fn reserve_sidecars(&mut self, needs: SidecarNeeds) {
-        self.ligatures.reserve(needs.ligatures as usize);
-        self.boxes.reserve(needs.boxes as usize);
-        self.unsets.reserve(needs.unsets as usize);
-        self.rules.reserve(needs.rules as usize);
-        self.leaders.reserve(needs.leaders as usize);
-        self.discs.reserve(needs.discs as usize);
-        self.marks.reserve(needs.marks as usize);
-        self.insertions.reserve(needs.insertions as usize);
-        self.whatsits.reserve(needs.whatsits as usize);
-        self.noads.reserve(needs.noads as usize);
-        self.fractions.reserve(needs.fractions as usize);
-        self.choices.reserve(needs.choices as usize);
-        self.math_lists.reserve(needs.math_lists as usize);
-        self.adjusts.reserve(needs.adjusts as usize);
+        macro_rules! reserve_if_needed {
+            ($field:ident) => {
+                if needs.$field != 0 {
+                    self.$field.reserve(needs.$field as usize);
+                }
+            };
+        }
+        reserve_if_needed!(ligatures);
+        reserve_if_needed!(boxes);
+        reserve_if_needed!(unsets);
+        reserve_if_needed!(rules);
+        reserve_if_needed!(leaders);
+        reserve_if_needed!(discs);
+        reserve_if_needed!(marks);
+        reserve_if_needed!(insertions);
+        reserve_if_needed!(whatsits);
+        reserve_if_needed!(noads);
+        reserve_if_needed!(fractions);
+        reserve_if_needed!(choices);
+        reserve_if_needed!(math_lists);
+        reserve_if_needed!(adjusts);
     }
 
     fn encode(&mut self, node: &Node) -> NodeWord {
@@ -339,11 +440,14 @@ impl NodeStorage {
                 // epoch-bearing handle and a packed character handle cannot look
                 // like two distinct resources with the same public font id.
                 let font = crate::ids::FontId::new(font.raw());
-                push_sidecar(
+                let word = push_sidecar(
                     1,
                     &mut self.ligatures,
                     (font, *ch, orig.clone(), origins.clone()),
-                )
+                );
+                #[cfg(feature = "profiling-stats")]
+                self.record_last_ligature_payload();
+                word
             }
             Node::Kern { amount, kind } => NodeWord::new(
                 2,
@@ -398,12 +502,104 @@ impl NodeStorage {
                     *content,
                 )),
             ),
-            Node::Whatsit(value) => push_sidecar(17, &mut self.whatsits, value.clone()),
+            Node::Whatsit(value) => {
+                let word = push_sidecar(17, &mut self.whatsits, value.clone());
+                #[cfg(feature = "profiling-stats")]
+                self.record_last_whatsit_payload();
+                word
+            }
             Node::MathNoad(value) => NodeWord::sidecar(18, self.noads.push(value.clone())),
             Node::FractionNoad(value) => push_sidecar(19, &mut self.fractions, value.clone()),
             Node::MathChoice(value) => push_sidecar(20, &mut self.choices, value.clone()),
             Node::MathList(value) => push_sidecar(21, &mut self.math_lists, *value),
             Node::Adjust(value) => push_sidecar(22, &mut self.adjusts, *value),
+        }
+    }
+
+    // Keep the complete match here instead of forwarding non-owning variants
+    // to `encode`: this is the hot owned-freeze loop, and a second tag dispatch
+    // measurably gives back part of the move-encoding win.
+    fn encode_owned(&mut self, node: Node) -> NodeWord {
+        match node {
+            Node::Char { font, ch, .. } => {
+                NodeWord::new(0, (ch as u64) | ((font.raw() as u64) << 21))
+            }
+            Node::Lig {
+                font,
+                ch,
+                orig,
+                origins,
+            } => {
+                let font = crate::ids::FontId::new(font.raw());
+                let word = push_sidecar(1, &mut self.ligatures, (font, ch, orig, origins));
+                #[cfg(feature = "profiling-stats")]
+                self.record_last_ligature_payload();
+                word
+            }
+            Node::Kern { amount, kind } => NodeWord::new(
+                2,
+                amount.raw() as u32 as u64 | ((kern_code(kind) as u64) << 32),
+            ),
+            Node::Glue {
+                spec,
+                kind,
+                leader: None,
+            } => NodeWord::new(3, spec.raw() as u64 | ((glue_code(kind) as u64) << 32)),
+            Node::Penalty(value) => NodeWord::new(4, value as u32 as u64),
+            Node::MathOn(value) => NodeWord::new(5, value.raw() as u32 as u64),
+            Node::MathOff(value) => NodeWord::new(6, value.raw() as u32 as u64),
+            Node::Direction(direction) => NodeWord::new(23, direction as u64),
+            Node::MathStyle(style) => NodeWord::new(7, style_code(style) as u64),
+            Node::Nonscript => NodeWord::new(8, 0),
+            Node::HList(value) => NodeWord::sidecar(9, self.boxes.push(value)),
+            Node::VList(value) => NodeWord::sidecar(10, self.boxes.push(value)),
+            Node::Unset(value) => NodeWord::sidecar(11, self.unsets.push(value)),
+            Node::Rule {
+                width,
+                height,
+                depth,
+            } => push_sidecar(12, &mut self.rules, (width, height, depth)),
+            Node::Glue {
+                spec,
+                kind,
+                leader: Some(value),
+            } => push_sidecar(13, &mut self.leaders, (spec, kind, value)),
+            Node::Disc {
+                kind,
+                pre,
+                post,
+                replace,
+            } => push_sidecar(14, &mut self.discs, (kind, pre, post, replace)),
+            Node::Mark { class, tokens } => push_sidecar(15, &mut self.marks, (class, tokens)),
+            Node::Ins {
+                class,
+                size,
+                split_top_skip,
+                split_max_depth,
+                floating_penalty,
+                content,
+            } => NodeWord::sidecar(
+                16,
+                self.insertions.push((
+                    class,
+                    size,
+                    split_top_skip,
+                    split_max_depth,
+                    floating_penalty,
+                    content,
+                )),
+            ),
+            Node::Whatsit(value) => {
+                let word = push_sidecar(17, &mut self.whatsits, value);
+                #[cfg(feature = "profiling-stats")]
+                self.record_last_whatsit_payload();
+                word
+            }
+            Node::MathNoad(value) => NodeWord::sidecar(18, self.noads.push(value)),
+            Node::FractionNoad(value) => push_sidecar(19, &mut self.fractions, value),
+            Node::MathChoice(value) => push_sidecar(20, &mut self.choices, value),
+            Node::MathList(value) => push_sidecar(21, &mut self.math_lists, value),
+            Node::Adjust(value) => push_sidecar(22, &mut self.adjusts, value),
         }
     }
 
@@ -465,28 +661,6 @@ fn push_sidecar<T>(tag: u8, table: &mut Vec<T>, value: T) -> NodeWord {
     let i = checked_len(table.len(), "node sidecar exceeds u32 entries");
     table.push(value);
     NodeWord::sidecar(tag, i)
-}
-fn preflight_encoding(node: &Node) {
-    if let Node::Lig {
-        ch, orig, origins, ..
-    } = node
-    {
-        assert!(
-            (*ch as u32) <= u8::MAX as u32,
-            "ligature glyph exceeds TFM byte domain"
-        );
-        assert!(!orig.is_empty(), "ligature source must not be empty");
-        assert!(orig.len() <= 63, "ligature source exceeds TeX word limit");
-        assert_eq!(
-            orig.len(),
-            origins.len(),
-            "ligature source/provenance length mismatch"
-        );
-        assert!(
-            orig.iter().all(|ch| (*ch as u32) <= u8::MAX as u32),
-            "ligature original exceeds TFM byte domain"
-        );
-    }
 }
 fn kern_code(v: KernKind) -> u8 {
     match v {

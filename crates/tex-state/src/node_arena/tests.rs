@@ -387,6 +387,54 @@ fn direction_predicate_scans_compact_tags_without_decoding_nodes() {
 }
 
 #[test]
+fn shipout_normalization_predicate_rejects_inert_compact_tags() {
+    let mut arena = NodeArena::new();
+    let empty = arena.append(&[]);
+    let inert = arena.append(&[
+        Node::Penalty(1),
+        Node::MathOn(scaled(2)),
+        Node::MathOff(scaled(3)),
+    ]);
+    let nested = arena.append(&[Node::HList(BoxNode::new(BoxNodeFields {
+        width: scaled(1),
+        height: scaled(2),
+        depth: scaled(3),
+        shift: scaled(4),
+        display: false,
+        glue_set: GlueSetRatio::ZERO,
+        glue_sign: Sign::Normal,
+        glue_order: Order::Normal,
+        children: empty,
+    }))]);
+    let math = arena.append(&[Node::MathStyle(MathStyle::Display)]);
+    let directed = arena.append(&[Node::Direction(Direction::BeginR)]);
+    let mixed = arena.append(&[
+        Node::Penalty(1),
+        Node::Direction(Direction::BeginR),
+        Node::Penalty(2),
+    ]);
+
+    assert!(!arena.get_epoch(inert).requires_shipout_normalization());
+    assert!(arena.get_epoch(nested).requires_shipout_normalization());
+    assert!(arena.get_epoch(math).requires_shipout_normalization());
+    assert!(arena.get_epoch(directed).requires_shipout_normalization());
+    let mixed = arena.get_epoch(mixed);
+    assert_eq!(mixed.node_requires_shipout_normalization(0), Some(false));
+    assert_eq!(mixed.node_requires_shipout_normalization(1), Some(true));
+    assert_eq!(mixed.node_requires_shipout_normalization(2), Some(false));
+    assert_eq!(mixed.node_requires_shipout_normalization(3), None);
+
+    for tag in 0..=23 {
+        assert_eq!(
+            super::view::shipout_normalization_inert_tag(tag),
+            matches!(tag, 0..=6 | 12 | 15),
+            "compact tag {tag}"
+        );
+    }
+    assert!(!super::view::shipout_normalization_inert_tag(24));
+}
+
+#[test]
 fn every_rare_kind_round_trips_through_its_sidecar() {
     let mut arena = NodeArena::new();
     let empty = arena.append(&[]);

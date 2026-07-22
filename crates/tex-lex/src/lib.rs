@@ -277,6 +277,11 @@ pub trait InputSource: fmt::Debug + Send {
         false
     }
 
+    /// Whether repeated physical-line values should share normalization work.
+    fn cache_normalized_lines(&self) -> bool {
+        true
+    }
+
     /// Allows a physical file source to preserve arbitrary bytes for classic
     /// 8-bit TeX tokenization. Generated/scantokens sources remain Unicode.
     fn set_utf8_input_as_bytes(&mut self, _enabled: bool) {}
@@ -304,6 +309,10 @@ where
 
     fn is_scantokens(&self) -> bool {
         (**self).is_scantokens()
+    }
+
+    fn cache_normalized_lines(&self) -> bool {
+        (**self).cache_normalized_lines()
     }
 
     fn set_utf8_input_as_bytes(&mut self, enabled: bool) {
@@ -362,13 +371,40 @@ impl From<WorldError> for InputSourceError {
 /// One valid UTF-8 physical line and its exact range in the source backing.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PhysicalLine {
-    text: String,
+    text: PhysicalLineText,
     bytes_as_chars: bool,
     byte_projection: bool,
     start: usize,
     content_end: usize,
     terminator_start: usize,
     terminator_end: usize,
+}
+
+#[derive(Clone, Debug)]
+enum PhysicalLineText {
+    Owned(String),
+    Shared {
+        backing: Arc<[u8]>,
+        range: std::ops::Range<usize>,
+    },
+}
+
+impl PartialEq for PhysicalLineText {
+    fn eq(&self, other: &Self) -> bool {
+        self.as_str() == other.as_str()
+    }
+}
+
+impl Eq for PhysicalLineText {}
+
+impl PhysicalLineText {
+    fn as_str(&self) -> &str {
+        match self {
+            Self::Owned(text) => text,
+            Self::Shared { backing, range } => std::str::from_utf8(&backing[range.clone()])
+                .expect("shared physical-line backing was validated as UTF-8"),
+        }
+    }
 }
 
 /// Exact content identity of one physical line, including terminator spelling.
@@ -423,7 +459,7 @@ impl PhysicalLine {
             .expect("physical line byte range overflowed");
         assert!(terminator_end >= content_end);
         Self {
-            text,
+            text: PhysicalLineText::Owned(text),
             bytes_as_chars: false,
             byte_projection: false,
             start,
@@ -441,8 +477,9 @@ impl PhysicalLine {
             2 => LineTerminator::CrLf,
             _ => unreachable!("physical input supports only LF and CRLF terminators"),
         };
-        let mut framed = Vec::with_capacity(self.text.len() + 2);
-        framed.extend_from_slice(self.text.as_bytes());
+        let text = self.text.as_str();
+        let mut framed = Vec::with_capacity(text.len() + 2);
+        framed.extend_from_slice(text.as_bytes());
         match terminator {
             LineTerminator::Missing => {}
             LineTerminator::Lf => framed.push(b'\n'),
@@ -697,6 +734,10 @@ impl InputSource for WorldInput {
 
     fn is_scantokens(&self) -> bool {
         self.scantokens
+    }
+
+    fn cache_normalized_lines(&self) -> bool {
+        self.input_record.is_none()
     }
 
     fn set_utf8_input_as_bytes(&mut self, enabled: bool) {
@@ -1414,7 +1455,7 @@ impl LiteralSpanPolicy {
             (
                 Self::HorizontalText,
                 Token::Char {
-                    cat: Catcode::Letter | Catcode::Other,
+                    cat: Catcode::Letter | Catcode::Other | Catcode::Space,
                     ..
                 },
             ) => true,
@@ -2725,10 +2766,11 @@ impl InputStack {
     /// Appends directly backed physical-source characters that horizontal
     /// main control can consume without expansion or provenance allocation.
     ///
-    /// The run is deliberately limited to current-catcode `Letter` and
-    /// `Other` scalars. Every other category remains a seam for the ordinary
-    /// lexer, including superscript notation, active and structural tokens,
-    /// whitespace, synthetic end lines, and degraded source origins.
+    /// The run accepts current-catcode `Letter`, `Other`, and `Space` scalars.
+    /// Spaces are canonicalized and collapsed with the ordinary TeX lexer
+    /// state machine, allowing one run to cross word boundaries. Every other
+    /// category remains a seam, including superscript notation, active and
+    /// structural tokens, synthetic end lines, and degraded source origins.
     pub fn append_source_text_span(
         &mut self,
         stores: &mut impl ExpansionState,
@@ -2774,39 +2816,61 @@ impl InputStack {
         let start = tokens_out.len();
         let mut byte_offset = source.frame.byte_offset;
         let mut column = source.frame.column;
+        let mut state = source.frame.state;
         let utf8_input_as_bytes = self.utf8_input_as_bytes && !source.scantokens;
         while byte_offset < source.frame.cursor_len() && tokens_out.len() - start < limit {
             let (ch, width) = input_char_at(&source.frame, byte_offset, utf8_input_as_bytes)
                 .expect("byte cursor remains within the normalized line");
             let cat = stores.catcode(ch);
-            if !matches!(cat, Catcode::Letter | Catcode::Other) {
+            if !matches!(cat, Catcode::Letter | Catcode::Other | Catcode::Space) {
                 break;
             }
             let next = byte_offset + width;
-            let Some(physical_start) = source
-                .frame
-                .origin_line_start
-                .checked_add(byte_offset as u64)
-            else {
-                break;
+            let (next_state, token) = match cat {
+                Catcode::Letter | Catcode::Other => {
+                    (LexerState::MidLine, Some(Token::Char { ch, cat }))
+                }
+                Catcode::Space if state == LexerState::MidLine => (
+                    LexerState::SkippingBlanks,
+                    Some(Token::Char {
+                        ch: ' ',
+                        cat: Catcode::Space,
+                    }),
+                ),
+                Catcode::Space => (state, None),
+                _ => unreachable!("span admission checked the catcode"),
             };
-            let Some(physical_end) = source.frame.origin_line_start.checked_add(next as u64) else {
-                break;
-            };
-            let Some(origin) = registration.direct_origin(physical_start, physical_end) else {
-                break;
-            };
-            tokens_out.push(TracedTokenWord::pack(Token::Char { ch, cat }, origin));
+            if let Some(token) = token {
+                let Some(physical_start) = source
+                    .frame
+                    .origin_line_start
+                    .checked_add(byte_offset as u64)
+                else {
+                    break;
+                };
+                let Some(physical_end) = source.frame.origin_line_start.checked_add(next as u64)
+                else {
+                    break;
+                };
+                let Some(origin) = registration.direct_origin(physical_start, physical_end) else {
+                    break;
+                };
+                tokens_out.push(TracedTokenWord::pack(token, origin));
+            }
+            state = next_state;
             byte_offset = next;
             column += 1;
         }
         let appended = tokens_out.len() - start;
-        if appended == 0 {
+        if byte_offset == source.frame.byte_offset {
             return 0;
         }
         source.frame.byte_offset = byte_offset;
         source.frame.column = column;
-        source.frame.state = LexerState::MidLine;
+        source.frame.state = state;
+        if appended == 0 {
+            return 0;
+        }
         #[cfg(feature = "profiling-stats")]
         {
             self.expansion_stats.source_text_spans += 1;
@@ -5860,11 +5924,16 @@ where
         let Some(line) = self.source.read_line()? else {
             return Ok(None);
         };
-        Ok(Some(self.normalization_cache.normalize(
-            &line,
-            stores.endlinechar(),
-            self.source.is_scantokens(),
-        )))
+        let normalized = if self.source.cache_normalized_lines() {
+            self.normalization_cache.normalize(
+                &line,
+                stores.endlinechar(),
+                self.source.is_scantokens(),
+            )
+        } else {
+            normalize_line(&line, stores.endlinechar())
+        };
+        Ok(Some(normalized))
     }
 }
 
@@ -5882,21 +5951,21 @@ struct NormalizedLine {
 }
 
 fn normalize_line(line: &PhysicalLine, endlinechar: i32) -> NormalizedLine {
-    let stripped = line.text.trim_end_matches(' ');
+    let stripped = line.text.as_str().trim_end_matches(' ');
     let cursor_len = if line.bytes_as_chars {
         stripped.chars().count()
     } else {
         stripped.len()
     };
     let normalized_end_anchor = line.start + cursor_len;
-    let mut normalized = stripped.to_owned();
-    let mut synthetic_endline_start = None;
-    if let Ok(value) = u32::try_from(endlinechar)
-        && let Some(ch) = char::from_u32(value)
-    {
-        synthetic_endline_start = Some(cursor_len);
+    let endline = u32::try_from(endlinechar).ok().and_then(char::from_u32);
+    let mut normalized =
+        String::with_capacity(stripped.len() + endline.map(char::len_utf8).unwrap_or_default());
+    normalized.push_str(stripped);
+    let synthetic_endline_start = endline.map(|ch| {
         normalized.push(ch);
-    }
+        cursor_len
+    });
     NormalizedLine {
         text: normalized,
         bytes_as_chars: line.bytes_as_chars,
@@ -5910,7 +5979,7 @@ fn normalize_line(line: &PhysicalLine, endlinechar: i32) -> NormalizedLine {
     }
 }
 
-fn next_physical_line(bytes: &[u8], next_offset: &mut usize) -> Option<PhysicalLine> {
+fn next_physical_line(bytes: &Arc<[u8]>, next_offset: &mut usize) -> Option<PhysicalLine> {
     let start = *next_offset;
     if start >= bytes.len() {
         return None;
@@ -5930,12 +5999,12 @@ fn next_physical_line(bytes: &[u8], next_offset: &mut usize) -> Option<PhysicalL
         }
         None => (bytes.len(), bytes.len()),
     };
-    let text = std::str::from_utf8(&bytes[start..terminator_start])
-        .expect("input backing was validated as UTF-8")
-        .to_owned();
     *next_offset = terminator_end;
     Some(PhysicalLine {
-        text,
+        text: PhysicalLineText::Shared {
+            backing: Arc::clone(bytes),
+            range: start..terminator_start,
+        },
         bytes_as_chars: false,
         byte_projection: false,
         start,
@@ -5972,7 +6041,7 @@ fn next_physical_byte_line(bytes: &[u8], next_offset: &mut usize) -> Option<Phys
         .collect();
     *next_offset = terminator_end;
     Some(PhysicalLine {
-        text,
+        text: PhysicalLineText::Owned(text),
         bytes_as_chars: true,
         byte_projection: false,
         start,
