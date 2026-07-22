@@ -23,6 +23,7 @@ mod output_resources;
 mod path;
 mod pdf_resources;
 mod resolvers;
+mod resource_resolver;
 pub use output_resources::{
     DriverResourceClosure, MissingOutputResource, OUTPUT_RESOURCE_PLAN_VERSION, OutputResourcePlan,
     PlannedResource, ResourceClosureOwner, ResourcePlanError, ResourcePurpose, ResourceReason,
@@ -30,6 +31,10 @@ pub use output_resources::{
 };
 pub use pdf_resources::{CachedLocalTfm, CachedVirtualFont, PdfVirtualFontResources};
 pub(crate) use resolvers::parse_image;
+pub use resource_resolver::{
+    CompositeResolverError, CompositeResourceResolver, ProviderFailure, ProviderResponse,
+    TypedResourceProvider,
+};
 
 use path::user_path_for_key;
 use resolvers::{FontResolutionPolicy, VirtualRunResolvers};

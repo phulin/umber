@@ -44,6 +44,11 @@ Use this crate when behavior is about driving the engine, presenting CLI output,
 - `src/virtual_compile/output_resources.rs`: versioned output-neutral engine/DVI/PDF/HTML resource-closure planning, placement validation, reason attribution, and bounded union deduplication.
 - `src/virtual_compile/output_resources/tests.rs`: exact capability-combination, placement, union, and budget planner coverage.
 - `src/virtual_compile/pdf_resources.rs`: post-execution typed VF/local-TFM/map/encoding/program closure discovery and immutable parsed cache.
+- `src/virtual_compile/resource_resolver.rs`: output-neutral ordered typed-provider
+  facade with provider-scoped misses, exact response matching, cancellation, and
+  final authoritative absence.
+- `src/virtual_compile/resource_resolver/tests.rs`: precedence, exact-kind,
+  provider-failure, and cancellation coverage for composite acquisition.
 - `src/virtual_compile/resolvers.rs`: VFS-snapshot-backed input/font resolvers that register selected bytes through World, with typed missing-file and logical OpenType-font side state.
 - `src/virtual_compile/tests.rs`: native retry, path, precedence, limits, format, effect-isolation, font batching, and DVI coverage.
 - `src/main.rs`: `umber` binary entry point, CLI argument parsing, `lex-dump`/`expand-dump`/`run` dispatch, token formatting, and real-run file resolvers.
