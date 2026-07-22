@@ -1224,7 +1224,7 @@ fn run_rejects_a_manifest_that_mismatches_its_pin() {
 
 #[test]
 #[allow(clippy::disallowed_methods)] // host-side temporary distribution and command execution.
-fn run_offline_miss_names_the_exact_manifest_request_key() {
+fn run_offline_local_mirror_miss_names_the_exact_object_digest() {
     let temp_dir = tempfile::tempdir().expect("create offline miss temp dir");
     let source = temp_dir.path().join("main.tex");
     let distribution = temp_dir.path().join("distribution");
@@ -1256,7 +1256,13 @@ fn run_offline_miss_names_the_exact_manifest_request_key() {
         .output()
         .expect("run offline miss");
     assert!(!output.status.success());
-    assert!(String::from_utf8_lossy(&output.stderr).contains("tex:remote.tex"));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("failed to read ")
+            && stderr.contains(&format!("sha256-{digest}"))
+            && !stderr.contains("tex:remote.tex"),
+        "{stderr}"
+    );
 }
 
 fn hex_sha256(bytes: &[u8]) -> String {
