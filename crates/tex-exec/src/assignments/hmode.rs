@@ -81,7 +81,6 @@ pub(crate) fn try_append_tfm_character_span(
         let mut space_factor = list.space_factor();
         let emitted = list.reconstitution_target();
         let context = TfmRunContext {
-            node_start: emitted.len(),
             font,
             insert_hyphen_discs: mode == Mode::Horizontal,
         };
@@ -177,7 +176,7 @@ fn flush_pending_hchar_run(nest: &mut ModeNest, stores: &mut Universe, insert_hy
     let boundary = (!no_boundary)
         .then(|| boundary_command_node(stores, pending.first, true))
         .flatten()
-        .map(|node| (pending.node_start, node));
+        .map(|node| (pending.insertion_index, node));
     let right_boundary_kern = (!no_boundary)
         .then(|| right_boundary_kern(stores, &pending.current))
         .flatten();
@@ -640,7 +639,6 @@ fn append_pending_hchar(
 
 #[derive(Clone, Copy)]
 struct TfmRunContext {
-    node_start: usize,
     font: FontId,
     insert_hyphen_discs: bool,
 }
@@ -666,7 +664,7 @@ fn append_tfm_hchar(
             context.font,
             ch,
             origin,
-            context.node_start + emitted.len(),
+            emitted.len(),
             false,
         ));
         return true;

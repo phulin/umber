@@ -537,7 +537,8 @@ pub struct PendingHChar {
 pub(crate) struct PendingHRun {
     pub(crate) first: PendingHChar,
     pub(crate) current: PendingHRunChar,
-    pub(crate) node_start: usize,
+    /// Absolute position in this mode list where a left-boundary node belongs.
+    pub(crate) insertion_index: usize,
     pub(crate) source: Vec<PendingHChar>,
     pub(crate) script: tex_shape::Script,
 }
@@ -547,13 +548,13 @@ impl PendingHRun {
         font: FontId,
         ch: char,
         origin: OriginId,
-        node_start: usize,
+        insertion_index: usize,
         retain_source: bool,
     ) -> Self {
         Self {
             first: PendingHChar { font, ch, origin },
             current: PendingHRunChar::new(font, ch, origin),
-            node_start,
+            insertion_index,
             source: if retain_source {
                 vec![PendingHChar { font, ch, origin }]
             } else {
@@ -774,7 +775,7 @@ fn hash_mode_list(list: &ModeList, projection: &mut EngineBoundaryHasher<'_>) {
             projection.bool(true);
             projection.font(pending.first.font);
             projection.u32(pending.first.ch as u32);
-            projection.usize(pending.node_start);
+            projection.usize(pending.insertion_index);
             projection.usize(pending.source.len());
             for source in &pending.source {
                 projection.font(source.font);

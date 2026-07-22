@@ -420,6 +420,56 @@ fn flushing_a_character_run_appends_its_right_boundary_kern() {
 }
 
 #[test]
+fn batched_tfm_run_records_an_absolute_insertion_index() {
+    use tex_fonts::{CharMetrics, FontMetrics, LoadedFont};
+
+    let mut characters = vec![None; 256];
+    characters[usize::from(b'A')] = Some(CharMetrics {
+        width: Scaled::from_raw(Scaled::UNITY),
+        height: Scaled::from_raw(0),
+        depth: Scaled::from_raw(0),
+        italic_correction: Scaled::from_raw(0),
+        tag: tex_fonts::metrics::CharTag::None,
+    });
+    let mut stores = Universe::new();
+    let font = stores.intern_font(LoadedFont::new(
+        "batched-tfm",
+        "batched-tfm.tfm",
+        [0; 32],
+        0,
+        Scaled::from_raw(10 * Scaled::UNITY),
+        Scaled::from_raw(10 * Scaled::UNITY),
+        vec![Scaled::from_raw(0); 7],
+        FontMetrics::new(characters, Vec::new(), None, None, Vec::new()),
+    ));
+    let mut emitted = vec![
+        Node::Kern {
+            amount: Scaled::from_raw(1),
+            kind: KernKind::Explicit,
+        },
+        Node::Kern {
+            amount: Scaled::from_raw(2),
+            kind: KernKind::Explicit,
+        },
+    ];
+    let mut pending = None;
+
+    assert!(append_tfm_hchar(
+        &mut pending,
+        &mut emitted,
+        &mut stores,
+        TfmRunContext {
+            font,
+            insert_hyphen_discs: false,
+        },
+        'A',
+        OriginId::UNKNOWN,
+    ));
+
+    assert_eq!(pending.expect("pending TFM run").insertion_index, 2);
+}
+
+#[test]
 fn accent_delta_rounds_half_scaled_points_like_tex82() {
     assert_eq!(
         tex_state::scaled::text_accent_delta(
