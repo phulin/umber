@@ -409,7 +409,16 @@ test("rejects no progress, unresolved keys, and engine diagnostics actionably", 
 	});
 
 	await t.test("engine diagnostic", async () => {
-		const diagnostic = { message: "Undefined control sequence", line: 2 };
+		const diagnostic = {
+			message: "Undefined control sequence",
+			location: {
+				file: "/job/main.tex",
+				byteStart: 3,
+				byteEnd: 13,
+				line: 2,
+				column: 1,
+			},
+		};
 		const wasm = bindings([{ kind: "error", diagnostic }]);
 		await assert.rejects(
 			compile(

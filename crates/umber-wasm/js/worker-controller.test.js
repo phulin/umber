@@ -94,12 +94,23 @@ test("standard entry transfers binary copies and tears down after success", asyn
 
 test("tears down after typed failure and worker protocol failures", async (t) => {
 	await t.test("compile failure", async () => {
+		const diagnostic = {
+			code: "compile",
+			message: "bad TeX",
+			location: {
+				file: "/job/main.tex",
+				byteStart: 4,
+				byteEnd: 10,
+				line: 1,
+				column: 5,
+			},
+		};
 		const Worker = fakeWorker((worker) => {
 			queueMicrotask(() =>
 				worker.emit("message", {
 					data: {
 						kind: "error",
-						error: { code: "compile", message: "bad TeX" },
+						error: { code: "compile", message: "bad TeX", diagnostic },
 					},
 				}),
 			);
@@ -107,7 +118,9 @@ test("tears down after typed failure and worker protocol failures", async (t) =>
 		await assert.rejects(
 			request(Worker),
 			(error) =>
-				error instanceof WorkerCompileError && error.code === "compile",
+				error instanceof WorkerCompileError &&
+				error.code === "compile" &&
+				error.diagnostic === diagnostic,
 		);
 		assert.equal(Worker.instances[0].terminated, 1);
 	});

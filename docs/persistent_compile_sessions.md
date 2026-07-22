@@ -194,6 +194,23 @@ the corresponding `acceptedInputObservations` value only after acceptance.
 Callers that do not support its `schemaVersion` must preserve the complete
 immutable snapshot and cold-recompile fallback.
 
+Engine execution failures carry one optional atomic primary source location
+through `VirtualCompileSession`, `LatexProjectSession`, and the WASM package.
+The native `CompileDiagnostic.location` and JavaScript `Diagnostic.location`
+contain the logical authored path, zero-based half-open UTF-8 `byteStart` and
+`byteEnd`, and one-based `line` and `column`. The session resolves the captured
+`DiagnosticSite` against the failed candidate's private universe and proposed
+editor layout before discarding either, so root edits and World-backed included
+files use the same engine-native provenance. The project coordinator preserves
+that value unchanged across TeX passes; direct sessions, authored facades, and
+workers transfer the same object.
+
+The location is all-or-nothing. Unknown, stale, deleted, foreign, incomplete,
+or synthetic provenance yields no `location`, never partial coordinates.
+Host/configuration/resource-boundary failures and bibliography diagnostics
+without their own source provenance remain locationless; adapters do not infer
+ranges from rendered messages or current cursors.
+
 When the session is configured with a schema-10 format, initial startup first
 loads its validated frozen stores into a fresh `World` carrying the requested
 job clock, then reconstructs only the selected driver's process-local

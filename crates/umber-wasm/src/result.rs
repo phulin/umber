@@ -301,8 +301,11 @@ fn project_diagnostic(error: LatexProjectError) -> Result<JsValue, JsValue> {
     let object = Object::new();
     set(&object, "code", &JsValue::from_str(code))?;
     set(&object, "message", &JsValue::from_str(&message))?;
+    if let LatexProjectError::Compile(CompileError::Diagnostic(diagnostic)) = &error {
+        set_diagnostic_location(&object, diagnostic.location.as_ref())?;
+    }
     if let LatexProjectError::Bibliography(bib_engine::BibliographyFailure::Biblatex(failure)) =
-        error
+        &error
     {
         let diagnostics = Array::new();
         for diagnostic in failure.diagnostics() {
@@ -358,24 +361,42 @@ fn diagnostic(error: CompileError) -> Result<JsValue, JsValue> {
         CompileError::Diagnostic(diagnostic) => diagnostic,
         error => CompileDiagnostic {
             message: error.to_string(),
-            file: None,
-            line: None,
-            column: None,
+            location: None,
         },
     };
     let object = Object::new();
     set(&object, "code", &JsValue::from_str(code))?;
     set(&object, "message", &JsValue::from_str(&diagnostic.message))?;
-    if let Some(file) = diagnostic.file {
-        set(&object, "file", &JsValue::from_str(&file))?;
-    }
-    if let Some(line) = diagnostic.line {
-        set(&object, "line", &usize_value(line))?;
-    }
-    if let Some(column) = diagnostic.column {
-        set(&object, "column", &usize_value(column))?;
-    }
+    set_diagnostic_location(&object, diagnostic.location.as_ref())?;
     Ok(object.into())
+}
+
+fn set_diagnostic_location(
+    diagnostic: &Object,
+    location: Option<&umber::CompileSourceLocation>,
+) -> Result<(), JsValue> {
+    let Some(location) = location else {
+        return Ok(());
+    };
+    let value = Object::new();
+    set(&value, "file", &JsValue::from_str(&location.file))?;
+    set(
+        &value,
+        "byteStart",
+        &JsValue::from_f64(location.byte_start as f64),
+    )?;
+    set(
+        &value,
+        "byteEnd",
+        &JsValue::from_f64(location.byte_end as f64),
+    )?;
+    set(&value, "line", &JsValue::from_f64(f64::from(location.line)))?;
+    set(
+        &value,
+        "column",
+        &JsValue::from_f64(f64::from(location.column)),
+    )?;
+    set(diagnostic, "location", &value)
 }
 
 pub(crate) const fn compile_error_code(error: &CompileError) -> &'static str {

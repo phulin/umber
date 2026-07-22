@@ -930,10 +930,14 @@ fn unavailable_file_response_crosses_the_wire_and_counts_as_progress() {
         .expect("duplicate negative response");
     let result = session.advance().expect("retry after negative response");
     assert_eq!(string_field(result.as_ref(), "kind"), "error");
-    assert_ne!(
-        string_field(&field(result.as_ref(), "diagnostic"), "code"),
-        "no-progress"
-    );
+    let diagnostic = field(result.as_ref(), "diagnostic");
+    assert_ne!(string_field(&diagnostic, "code"), "no-progress");
+    let location = field(&diagnostic, "location");
+    assert_eq!(string_field(&location, "file"), "/job/main.tex");
+    assert_eq!(field(&location, "byteStart").as_f64(), Some(0.0));
+    assert_eq!(field(&location, "byteEnd").as_f64(), Some(6.0));
+    assert_eq!(field(&location, "line").as_f64(), Some(1.0));
+    assert_eq!(field(&location, "column").as_f64(), Some(1.0));
 }
 
 #[wasm_bindgen_test]

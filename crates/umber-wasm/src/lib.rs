@@ -181,9 +181,18 @@ export interface CompileOutput {
 export interface Diagnostic {
   code: string;
   message: string;
-  file?: string;
-  line?: number;
-  column?: number;
+  location?: CompileSourceLocation;
+}
+
+export interface CompileSourceLocation {
+  /** Logical authored-source path. */
+  file: string;
+  /** Zero-based half-open offsets into the exact UTF-8 authored bytes. */
+  byteStart: number;
+  byteEnd: number;
+  /** One-based presentation coordinates. */
+  line: number;
+  column: number;
 }
 
 export interface BibliographyDiagnostic {
