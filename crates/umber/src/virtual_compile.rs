@@ -7,8 +7,8 @@ use std::time::Duration;
 use std::time::Instant;
 
 use tex_fonts::{
-    AcceptedFontContainers, FontLayoutPolicy, FontLimits, FontMappingFallbackPolicy, FontRequest,
-    FontRequestKey, OpenTypeFont, PdfPkFontRequest, ResolvedFont,
+    AcceptedFontContainers, FontLayoutPolicy, FontLimits, FontMappingFallbackPolicy, FontPurposes,
+    FontRequest, FontRequestKey, OpenTypeFont, PdfPkFontRequest, ResolvedFont,
 };
 use tex_out::html::{HtmlFontAsset, HtmlFontAssets, HtmlFontKey};
 use tex_state::{ContentHash, JobClock, Universe, World};
@@ -1959,6 +1959,84 @@ impl VirtualCompileSession {
                 }));
             }
         }
+        if self.outputs.contains(OutputCapability::Html) {
+            #[cfg(not(target_arch = "wasm32"))]
+            let html_request_extraction_started = Instant::now();
+            let artifacts = match &mut retained.execution {
+                RetainedExecution::Initial { candidate, .. }
+                | RetainedExecution::Pending(candidate) => candidate
+                    .completed_universe_mut()
+                    .expect("a completed drive exposes its candidate universe")
+                    .world()
+                    .committed_artifacts(),
+            };
+            let required = discover_html_paint_resources(
+                artifacts,
+                &self.resolved_fonts,
+                &self.unavailable_fonts,
+                self.accepted_font_containers,
+            )?;
+            if !required.is_empty() {
+                stage.discard();
+                build.discard();
+                for request in &required {
+                    let ResourceRequest::Font(request) = request else {
+                        unreachable!("HTML paint discovery emits only font resources")
+                    };
+                    self.font_requests
+                        .entry(request.key.clone())
+                        .or_insert_with(|| request.clone());
+                }
+                let mut planner = output_resources::OutputResourcePlanner::new(
+                    self.outputs,
+                    self.font_layout_policy,
+                    self.limits.resolved_files,
+                );
+                for request in &required {
+                    for purpose in [
+                        ResourcePurpose::HtmlLegacyMapping,
+                        ResourcePurpose::HtmlFontTransport,
+                        ResourcePurpose::HtmlLicense,
+                    ] {
+                        planner
+                            .add(
+                                ResourceClosureOwner::Html,
+                                purpose,
+                                ResourceRequestMode::Required,
+                                request.clone(),
+                            )
+                            .map_err(|error| CompileError::OutputCapability {
+                                capability: OutputCapability::Html,
+                                message: error.to_string(),
+                            })?;
+                    }
+                }
+                self.last_resource_plan =
+                    planner
+                        .finish()
+                        .map_err(|error| CompileError::OutputCapability {
+                            capability: OutputCapability::Html,
+                            message: error.to_string(),
+                        })?;
+                self.awaiting = Some(required.iter().map(resource_request_key).collect());
+                retained.files = pending_files;
+                retained.response_generation = self.response_generation;
+                retained.suspension_serial = retained.suspension_serial.saturating_add(1);
+                self.candidate = Some(retained);
+                self.start_resource_wait();
+                #[cfg(not(target_arch = "wasm32"))]
+                {
+                    self.request_extraction_time = self
+                        .request_extraction_time
+                        .saturating_add(html_request_extraction_started.elapsed());
+                }
+                return Ok(CompileAttemptResult::NeedResources(NeedResources {
+                    required,
+                    probes: Vec::new(),
+                    prefetch_hints: Vec::new(),
+                }));
+            }
+        }
         let execution = match retained.execution {
             RetainedExecution::Initial {
                 mut session,
@@ -2337,11 +2415,118 @@ impl HtmlFontAssets for SessionFontResolver<'_> {
                 embeddable: mapped_bundle.is_none_or(|mapping| mapping.embeddable),
             });
         }
-        Err(format!(
-            "classic TFM font {} has no retained OpenType resource",
-            font.name
-        ))
+        let (key, supplied, mapping) = self
+            .resolved
+            .iter()
+            .find_map(|(key, supplied)| {
+                let mapping = self.responses.get(key)?.legacy_mapping.as_ref()?;
+                (key.logical_name() == font.name
+                    && mapping.tfm_sha256 == font.tfm_content_hash.bytes())
+                .then_some((key, supplied, mapping))
+            })
+            .ok_or_else(|| {
+                format!(
+                    "unsupported HTML legacy mapping for classic TFM font {} ({})",
+                    font.name,
+                    font.tfm_content_hash.hex()
+                )
+            })?;
+        if supplied.container != tex_fonts::FontContainer::Woff2 {
+            return Err(format!(
+                "HTML reuse for retained {:?} font {} is not supported",
+                supplied.container, font.name
+            ));
+        }
+        let response = self.responses.get(key).expect("selected response exists");
+        let provenance = response
+            .provenance
+            .clone()
+            .ok_or_else(|| format!("retained font {} has no embedding provenance", font.name))?;
+        for text in mapping.encoding.iter().flatten() {
+            if text
+                .chars()
+                .any(|scalar| supplied.cmap.glyph(scalar).is_none())
+            {
+                return Err(format!(
+                    "mapped bundle for {} contains Unicode text absent from the retained cmap",
+                    font.name
+                ));
+            }
+        }
+        Ok(HtmlFontAsset {
+            key: HtmlFontKey::from(font),
+            woff2: supplied.transport_bytes.to_vec(),
+            sha256: supplied.object_identity.bytes(),
+            encoding: mapping.encoding.clone(),
+            provenance,
+            embeddable: mapping.embeddable,
+        })
     }
+}
+
+fn discover_html_paint_resources(
+    artifacts: &[tex_state::CommittedArtifact],
+    resolved: &BTreeMap<FontRequestKey, OpenTypeFont>,
+    unavailable: &BTreeSet<FontRequestKey>,
+    accepted_containers: AcceptedFontContainers,
+) -> Result<Vec<ResourceRequest>, CompileError> {
+    let mut classic_fonts = BTreeMap::<FontRequestKey, (String, [u8; 32])>::new();
+    for artifact in artifacts {
+        let page = tex_out::PageArtifact::from_bytes(artifact.bytes()).map_err(|error| {
+            CompileError::OutputCapability {
+                capability: OutputCapability::Html,
+                message: error.to_string(),
+            }
+        })?;
+        for font in &page.fonts {
+            if font.opentype.is_some() {
+                continue;
+            }
+            let key = FontRequestKey::new(
+                &font.name,
+                0,
+                tex_fonts::VariationSelection::default(),
+                tex_fonts::FontFeaturePolicy::default(),
+            )
+            .map_err(|error| CompileError::OutputCapability {
+                capability: OutputCapability::Html,
+                message: format!(
+                    "invalid classic font paint request for {}: {error}",
+                    font.name
+                ),
+            })?;
+            classic_fonts
+                .entry(key)
+                .or_insert((font.name.clone(), font.tfm_content_hash.bytes()));
+        }
+    }
+    let mut required = Vec::new();
+    for (key, (name, tfm_sha256)) in classic_fonts {
+        if let Some(font) = resolved.get(&key) {
+            let _ = font;
+            continue;
+        }
+        if unavailable.contains(&key) {
+            return Err(CompileError::OutputCapability {
+                capability: OutputCapability::Html,
+                message: format!(
+                    "unsupported HTML legacy mapping for classic TFM font {name} ({})",
+                    hex_sha256(tfm_sha256)
+                ),
+            });
+        }
+        required.push(ResourceRequest::Font(FontRequest {
+            key,
+            accepted_containers,
+            purposes: FontPurposes::HTML,
+        }));
+    }
+    required.sort_by_key(resource_sort_key);
+    Ok(required)
+}
+
+fn hex_sha256(bytes: [u8; 32]) -> String {
+    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
 fn check_limit(resource: &'static str, attempted: usize, limit: usize) -> Result<(), CompileError> {

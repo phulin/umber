@@ -144,11 +144,20 @@ needs it, before font-dependent layout. Because the selected font object is
 retained, HTML generation reuses it and does not introduce a distinct
 post-layout font-finalization state.
 
+The deliberate exception is paint-only acquisition under `ClassicTfmExact`.
+Once execution has exposed the reached-font set but before candidate
+acceptance, an HTML driver closure may suspend for an exact TFM-keyed mapping,
+licensed WOFF2 transport, and provenance. The typed response is retained for
+painting only and never enters engine metric or shaping state, so the already
+computed TFM geometry and any simultaneous DVI remain unchanged. This is part
+of the ordinary `AwaitingResources` protocol, not a post-finalization callback.
+
 Format images are subject to the same ordering rule. An
 `OpenTypePreferred` session fails before executing document input when a
 loaded format contains classic-only font records; it never attaches a web font
 to an already laid-out classic artifact. Clients may run such formats under
-the explicit `ClassicTfmExact` compatibility policy, without modern HTML.
+the explicit `ClassicTfmExact` compatibility policy; requested HTML then uses
+the paint-only driver closure above without changing format or layout state.
 
 The initial file MVP may still restart compilation after a file miss while the
 general session is introduced. The completed architecture resumes from the

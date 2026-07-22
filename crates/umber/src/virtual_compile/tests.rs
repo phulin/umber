@@ -491,6 +491,98 @@ fn mapped_tfm_text_uses_one_opentype_authority_for_layout_and_html() {
 }
 
 #[test]
+fn classic_tfm_html_acquires_exact_paint_resource_without_changing_dvi() {
+    let source = b"\\font\\tenrm=cmr10\\relax \\tenrm \\shipout\\hbox{Classic A}\\end";
+    let mut dvi_only = VirtualCompileSession::new(SessionOptions {
+        outputs: OutputCapabilitySet::DVI,
+        font_layout_policy: tex_fonts::FontLayoutPolicy::ClassicTfmExact,
+        ..SessionOptions::default()
+    })
+    .expect("DVI session");
+    dvi_only
+        .add_user_file("cmr10.tfm", CMR10.to_vec())
+        .expect("TFM");
+    dvi_only
+        .add_user_file("main.tex", source.to_vec())
+        .expect("source");
+    let CompileAttemptResult::Complete(dvi_output) = dvi_only.compile_attempt() else {
+        panic!("DVI-only classic compile should complete without a paint request");
+    };
+
+    let mut html = VirtualCompileSession::new(SessionOptions {
+        outputs: OutputCapabilitySet::DVI.with(OutputCapability::Html),
+        font_layout_policy: tex_fonts::FontLayoutPolicy::ClassicTfmExact,
+        ..SessionOptions::default()
+    })
+    .expect("HTML session");
+    html.add_user_file("cmr10.tfm", CMR10.to_vec())
+        .expect("TFM");
+    html.add_user_file("main.tex", source.to_vec())
+        .expect("source");
+    let required = resources(html.compile_attempt());
+    let [ResourceRequest::Font(request)] = required.as_slice() else {
+        panic!("classic HTML should request one exact paint resource: {required:?}");
+    };
+    assert_eq!(request.key.logical_name(), "cmr10");
+    assert_eq!(request.purposes, tex_fonts::FontPurposes::HTML);
+    let plan = html.output_resource_plan();
+    let planned = plan.union.first().expect("planned HTML paint resource");
+    assert_eq!(planned.reasons.len(), 3);
+    assert!(planned.reasons.iter().all(|reason| {
+        reason.owner == ResourceClosureOwner::Html
+            && matches!(
+                reason.purpose,
+                ResourcePurpose::HtmlLegacyMapping
+                    | ResourcePurpose::HtmlFontTransport
+                    | ResourcePurpose::HtmlLicense
+            )
+    }));
+    provide_cmu_font(&mut html, request.clone());
+    let CompileAttemptResult::Complete(html_output) = html.compile_attempt() else {
+        panic!("classic HTML compile should complete with its exact paint resource");
+    };
+    assert_eq!(html_output.dvi, dvi_output.dvi);
+    let rendered = String::from_utf8(html_output.html.expect("HTML")).expect("UTF-8");
+    assert!(rendered.contains(">Classic A</text>"));
+    assert!(rendered.contains("data:font/woff2;base64,"));
+}
+
+#[test]
+fn classic_tfm_html_reports_unsupported_exact_mapping() {
+    let mut session = VirtualCompileSession::new(SessionOptions {
+        outputs: OutputCapabilitySet::HTML,
+        font_layout_policy: tex_fonts::FontLayoutPolicy::ClassicTfmExact,
+        ..SessionOptions::default()
+    })
+    .expect("HTML session");
+    session
+        .add_user_file("cmr10.tfm", CMR10.to_vec())
+        .expect("TFM");
+    session
+        .add_user_file(
+            "main.tex",
+            b"\\font\\tenrm=cmr10\\relax \\tenrm \\shipout\\hbox{A}\\end".to_vec(),
+        )
+        .expect("source");
+    let required = resources(session.compile_attempt());
+    let [ResourceRequest::Font(request)] = required.as_slice() else {
+        panic!("classic HTML paint request");
+    };
+    session
+        .provide_resources(vec![ResourceResponse::FontUnavailable(request.key.clone())])
+        .expect("typed absence");
+    let CompileAttemptResult::Error(CompileError::OutputCapability {
+        capability: OutputCapability::Html,
+        message,
+    }) = session.compile_attempt()
+    else {
+        panic!("unsupported classic mapping should be an HTML capability error");
+    };
+    assert!(message.contains("unsupported HTML legacy mapping"));
+    assert!(message.contains("cmr10"));
+}
+
+#[test]
 fn mapped_tfm_policy_rejects_missing_and_conflicting_exact_bundles() {
     let mut missing = VirtualCompileSession::new(SessionOptions {
         font_layout_policy: tex_fonts::FontLayoutPolicy::OpenTypePreferred,
@@ -2627,7 +2719,7 @@ fn rendered_source_location_survives_paragraph_line_breaking() {
 
 #[test]
 fn modern_math_session_html_is_canonical_and_scriptless() {
-    let source = b"\\font\\tenrm=cmr10 \\font\\sy=cmsy10 \\font\\ex=cmex10 \\textfont0=\\tenrm \\textfont2=\\sy \\scriptfont2=\\sy \\scriptscriptfont2=\\sy \\textfont3=\\ex \\scriptfont3=\\ex \\scriptscriptfont3=\\ex \\mathcode`A=\"0041 \\shipout\\hbox{X$A$}\\end";
+    let source = b"\\font\\tenrm=cmr10 \\font\\sy=cmsy10 \\font\\ex=cmex10 \\textfont0=\\tenrm \\scriptfont0=\\tenrm \\scriptscriptfont0=\\tenrm \\textfont2=\\sy \\scriptfont2=\\sy \\scriptscriptfont2=\\sy \\textfont3=\\ex \\scriptfont3=\\ex \\scriptscriptfont3=\\ex \\mathcode`A=\"0041 \\tenrm \\shipout\\hbox{X${A\\over A}$}\\end";
     let mut session = VirtualCompileSession::new(SessionOptions {
         outputs: OutputCapabilitySet::DVI.with(OutputCapability::Html),
         font_layout_policy: tex_fonts::FontLayoutPolicy::OpenTypePreferred,
@@ -2666,6 +2758,10 @@ fn modern_math_session_html_is_canonical_and_scriptless() {
     };
     let html = String::from_utf8(output.html.expect("HTML output")).expect("HTML UTF-8");
     assert!(html.contains("class=\"umber-page\""));
+    assert!(html.contains("class=\"umber-run-text\""));
+    assert!(html.contains(">X</text>"));
+    assert!(html.contains("A</text>"));
+    assert!(html.contains("class=\"umber-rule\""));
     assert!(!html.contains("<script"));
 }
 

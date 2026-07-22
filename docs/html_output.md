@@ -241,6 +241,16 @@ the session cache. Client distribution policy remains outside engine state,
 while validated selection identities enter the immutable loaded-font record
 and committed artifact at `\font` load and shipout respectively.
 
+For `ClassicTfmExact`, reaching a classic font in a committed page starts an
+HTML-driver closure before the candidate is accepted. That closure requests
+the exact TFM-identity mapping, WOFF2 transport, embedding authority, and
+provenance through the ordinary typed `ResourceResponse` loop. The response is
+paint-only: the committed artifact and DVI retain their original TFM geometry,
+font parameters, ligatures, line breaks, and coordinates. Final serialization
+still receives only the resulting read-only retained-resource view. A missing
+or mismatched mapping is an HTML capability error rather than a layout-policy
+upgrade or a platform-font substitution.
+
 ## Page, accessibility, and printing
 
 Each page is an isolated fixed-size `section` with `position: relative`,
