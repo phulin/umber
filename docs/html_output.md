@@ -70,6 +70,16 @@ faces, rejects fallback for every emitted character, and measures page,
 negative-rule, run-anchor, and baseline metadata. Comparisons tolerate 1/30
 CSS px after scaling; screenshots are diagnostic only.
 
+The final non-bidi vertical gate also compiles an explicit OpenType-only run
+containing non-Latin left-to-right Unicode symbols, accented text, a kerning
+pair, and a ligature sample. Native/WASM shaping fixtures independently cover
+Greek, Cyrillic, and combining-mark positioning above the legacy TFM range.
+The browser compile requires exactly one ordinary client-resolved
+WOFF2 request, one content-derived CSS family with no fallback family, exact
+DOM text, and retained engine x/baseline metadata in both Firefox and the
+optimized Chromium package fixture. Bidi, RTL joining, mirrored characters,
+and mixed-direction paragraphs remain outside this gate.
+
 ## Text grouping and shaping
 
 Every horizontal box that contains emitting text owns browser-shaped runs.

@@ -333,8 +333,13 @@ subpixel ink bounds are intentionally outside parity.
    (`umber2-y2ei.8`): collections, bounded `fvar` axes and named instances,
    integer feature overrides, script/language identity, shared immutable
    program storage, HTML instance CSS, and optional local `hb-shape` checks.
-8. Complex-script and bidi reordering (`umber2-y2ei.11.7`).
-9. Full native/WASM/browser coverage (`umber2-y2ei.7`).
+8. **Deferred by user direction.** Complex-script and bidi reordering
+   (`umber2-y2ei.11.7`).
+9. **Implemented for the explicitly non-bidi surface.** Full
+   native/WASM/browser coverage (`umber2-y2ei.7`): explicit and mapped LTR
+   text, advanced instances, positioned math, retained assets, workers,
+   cancellation, and cache reuse. This gate makes no bidi, RTL joining,
+   mirroring, or mixed-direction claim.
 10. Superseded-path removal and release review (`umber2-y2ei.10`).
 
 Each stage should land as its own coherent change with fixtures, per the

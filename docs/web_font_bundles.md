@@ -1,6 +1,7 @@
 # OpenType Font Resources for Native and Web Rendering
 
-Status: mapped TFM text and advanced OpenType instances implemented; bidi coverage remains. This document
+Status: non-bidi native, WASM, and browser vertical coverage implemented;
+paragraph bidi remains explicitly deferred. This document
 defines the font-resource architecture shared by native and WebAssembly
 execution. OpenType font data is the modern source of truth for layout and
 rendering. Native sessions accept OpenType or TrueType SFNT containers;
@@ -571,23 +572,40 @@ metrics, cmap, shaping faces, and instance identities. The optional
 complex-shaping fixtures with local C HarfBuzz, reports diffs, and skips
 successfully when `hb-shape` is unavailable; it is not a build or CI input.
 
-### Next 4: bidi and complex scripts
+### Deferred: bidi and complex scripts
 
 Tracked by `umber2-y2ei.11.7`; depends on advanced instances and features.
 
-Add Unicode Bidi Algorithm level resolution, mixed-direction segmentation,
-mirroring, run reordering, and pass-2 visual-order materialization for RTL and
-reordering scripts without changing LTR output.
+This user-deferred stage will add Unicode Bidi Algorithm level resolution,
+mixed-direction segmentation, mirroring, run reordering, and pass-2
+visual-order materialization for RTL and reordering scripts. The non-bidi
+vertical gate below does not claim any of that behavior.
 
-### Next 5: native, WASM, and browser vertical coverage
+### Completed: native, WASM, and browser vertical coverage
 
-Tracked by `umber2-y2ei.7`; depends on bidi and complex scripts.
+Tracked by `umber2-y2ei.7`. Its dependency on the deferred bidi stage was
+removed by explicit user direction.
 
-Exercise equivalent native and WOFF2 resources, mapped TFM-style text,
+The gate exercises equivalent native and WOFF2 resources, mapped TFM-style text,
 non-Latin Unicode, positioned math, variations, embedded and manifest assets,
 workers, caching, Chromium, and Firefox. Tests wait for the exact
 content-derived face, reject fallback, and compare engine coordinates while
 allowing only the documented rasterization differences.
+
+The CI gate composes the existing hermetic ownership tests rather than adding
+font-name exceptions: `tex-fonts` proves native SFNT/WOFF2 program and MATH
+projection identity; `tex-shape`, `tex-typeset`, and `tex-out` prove shaping,
+instance, mapping, positioned-math, embedded, and manifest contracts;
+`umber-wasm` proves the same parsing and artifact schema in WASM; and the
+Firefox plus optimized Chromium fixtures install generated output. The browser
+fixture includes explicit OpenType non-Latin LTR Unicode symbols, accented
+text, kerning and ligature samples, mapped TFM-style text, fixed math
+text/rules and glyph-id outline fallback. Native/WASM shaping fixtures cover
+Greek, Cyrillic, and combining-mark positioning above the legacy TFM range.
+The browser waits for the content-derived face, verifies no
+fallback family or uncovered scalar, and retains the documented 1/30 CSS-pixel
+coordinate tolerance. Worker cancellation and persistent cold/warm/offline
+cache reuse remain part of that same gate.
 
 ### Next 6: remove superseded delivery paths and release
 
