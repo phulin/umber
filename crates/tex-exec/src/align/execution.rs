@@ -319,7 +319,7 @@ fn execute_cell(
         } else {
             column_templates.v_template
         };
-        if !omit {
+        let escaped_endv = if !omit {
             if let Some(token) = initial {
                 push_traced_tokens(input, stores, [token]);
             }
@@ -331,7 +331,7 @@ fn execute_cell(
                     input,
                     stores,
                     execution,
-                )?;
+                )?
             } else {
                 super::template::replay_template(
                     column_templates.u_template,
@@ -340,15 +340,37 @@ fn execute_cell(
                     input,
                     stores,
                     execution,
-                )?;
+                )?
             }
         } else {
             input.begin_alignment_cell(None, v_template, stores.execution_group_depth());
-        }
+            None
+        };
         align_state_mut(nest, align_level)?.start_cell(column, span_count);
 
-        let terminator =
-            run_cell_body_until_terminator(align_level, nest, input, stores, execution)?;
+        let terminator = if let Some(command) = escaped_endv {
+            match do_template_driver_endv(command, input, stores)? {
+                DoEndV::FinishCell => {
+                    let terminator =
+                        input
+                            .finish_alignment_cell(stores)
+                            .ok_or(ExecError::MissingToken {
+                                context: "alignment cell terminator",
+                            })?;
+                    classify_cell_terminator(stores, terminator)?
+                }
+                DoEndV::Recovered => {
+                    run_cell_body_until_terminator(align_level, nest, input, stores, execution)?
+                }
+                DoEndV::NotApplicable => {
+                    return Err(ExecError::MissingToken {
+                        context: "exhausted alignment v-template",
+                    });
+                }
+            }
+        } else {
+            run_cell_body_until_terminator(align_level, nest, input, stores, execution)?
+        };
         match terminator {
             CellTerminator::Span => {
                 flush_pending_hchars(nest, stores)?;
@@ -494,7 +516,12 @@ pub(crate) fn do_endv(
     stores: &mut Universe,
 ) -> Result<DoEndV, ExecError> {
     if !tex_expand::semantic_token(command).is_frozen_endv()
-        || !input.has_exhausted_alignment_v_template(stores)
+        || !(input.has_exhausted_alignment_v_template(stores)
+            || input.is_template_driver_endv(command)
+            || (command
+                .token()
+                .is_some_and(tex_state::token::Token::is_frozen_endv)
+                && input.has_terminating_alignment_cell()))
     {
         return Ok(DoEndV::NotApplicable);
     }
@@ -502,6 +529,32 @@ pub(crate) fn do_endv(
         input.retire_orphaned_alignment_v_templates();
         return Ok(DoEndV::Recovered);
     }
+    if stores.innermost_group_kind() == Some(tex_state::GroupKind::Align) {
+        return Ok(DoEndV::FinishCell);
+    }
+    crate::assignments::off_save_alignment(command, input, stores)?;
+    Ok(DoEndV::Recovered)
+}
+
+/// Handles an end-v command that returns directly to the synchronous
+/// u-template driver after nested lookahead has retired its source replay.
+///
+/// The driver and active cell together are the exact ownership proof that
+/// ordinary main control obtains from `do_endv`'s input-stack walk. Group
+/// recovery remains identical, and all commands outside this narrow return
+/// path continue through the strict stack gate above.
+fn do_template_driver_endv(
+    command: TracedTokenWord,
+    input: &mut InputStack,
+    stores: &mut Universe,
+) -> Result<DoEndV, ExecError> {
+    if !tex_expand::semantic_token(command).is_frozen_endv()
+        || !input.has_terminating_alignment_cell()
+    {
+        return Ok(DoEndV::NotApplicable);
+    }
+    let marked = input.mark_template_driver_endv(command);
+    debug_assert!(marked, "terminating cell must accept its driver end-v");
     if stores.innermost_group_kind() == Some(tex_state::GroupKind::Align) {
         return Ok(DoEndV::FinishCell);
     }
@@ -668,7 +721,7 @@ fn classify_cell_terminator(
 
 pub(super) enum TemplateStep {
     Continue,
-    EndV,
+    EndV(TracedTokenWord),
 }
 
 pub(super) fn run_one_main_control_token(
@@ -696,7 +749,7 @@ pub(super) fn run_one_main_control_token(
     #[cfg(feature = "profiling-stats")]
     super::record_template_token(tex_expand::semantic_token(token), stores);
     if tex_expand::semantic_token(token).is_frozen_endv() {
-        return Ok(TemplateStep::EndV);
+        return Ok(TemplateStep::EndV(token));
     }
     dispatch_and_drain(nest, token, input, stores, execution, stats)?;
     Ok(TemplateStep::Continue)

@@ -11,7 +11,7 @@ pub(super) fn replay_template(
     input: &mut InputStack,
     stores: &mut Universe,
     execution: &mut crate::ExecutionContext<'_>,
-) -> Result<(), ExecError> {
+) -> Result<Option<tex_state::token::TracedTokenWord>, ExecError> {
     {
         #[cfg(feature = "profiling-stats")]
         super::record_template_invocation();
@@ -29,25 +29,13 @@ pub(super) fn replay_template(
         let mut stats = ExecutionStats::default();
         loop {
             if template_finished(input, stores, replay_marker) {
-                return Ok(());
+                return Ok(None);
             }
             match super::execution::run_one_main_control_token(
                 nest, input, stores, execution, &mut stats,
             )? {
                 super::execution::TemplateStep::Continue => {}
-                super::execution::TemplateStep::EndV => {
-                    // Malformed preambles can cause the cell terminator to fire
-                    // while a u-template replay is still retiring. Preserve the
-                    // pending alignment-cell boundary by replaying a fresh frozen
-                    // end marker for the cell-body driver instead of panicking.
-                    let end = stores.intern_token_list(&[stores.frozen_end_template_token()]);
-                    input.push_token_list(end, TokenListReplayKind::Inserted);
-                    stores.world_mut().write_text(
-                        tex_state::PrintSink::TerminalAndLog,
-                        "\n! Missing alignment template material inserted.\n",
-                    );
-                    return Ok(());
-                }
+                super::execution::TemplateStep::EndV(command) => return Ok(Some(command)),
             }
         }
     }
@@ -60,7 +48,7 @@ pub(super) fn expand_spanned_column_template_at_span_time(
     input: &mut InputStack,
     stores: &mut Universe,
     execution: &mut crate::ExecutionContext<'_>,
-) -> Result<(), ExecError> {
+) -> Result<Option<tex_state::token::TracedTokenWord>, ExecError> {
     // Architecture §7 makes alignment the only impure kernel: span-time
     // template expansion is the single explicit gullet interleave while the
     // mutable alignment state on the mode nest is live.

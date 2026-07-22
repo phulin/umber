@@ -1802,6 +1802,7 @@ struct AlignmentCellInput {
     phase: AlignmentCellPhase,
     v_template: TokenListId,
     terminator: Option<TracedTokenWord>,
+    template_driver_endv: Option<TracedTokenWord>,
 }
 
 #[derive(Clone, Debug)]
@@ -2180,6 +2181,7 @@ impl InputStack {
             phase: u_template.map_or(AlignmentCellPhase::Body, AlignmentCellPhase::UTemplate),
             v_template,
             terminator: None,
+            template_driver_endv: None,
         });
     }
 
@@ -2224,6 +2226,47 @@ impl InputStack {
         self.alignment_inputs
             .last()
             .is_some_and(|alignment| alignment.cell.is_some())
+    }
+
+    /// Whether the active cell owns a v-template whose terminator was already
+    /// intercepted.
+    #[must_use]
+    pub fn has_terminating_alignment_cell(&self) -> bool {
+        self.alignment_inputs.last().is_some_and(|alignment| {
+            alignment.cell.as_ref().is_some_and(|cell| {
+                matches!(cell.phase, AlignmentCellPhase::VTemplate(_)) && cell.terminator.is_some()
+            })
+        })
+    }
+
+    /// Records the exact end-v command returned to the synchronous template
+    /// driver so group recovery may replay it through ordinary main control.
+    pub fn mark_template_driver_endv(&mut self, command: TracedTokenWord) -> bool {
+        let Some(cell) = self
+            .alignment_inputs
+            .last_mut()
+            .and_then(|alignment| alignment.cell.as_mut())
+        else {
+            return false;
+        };
+        if !matches!(cell.phase, AlignmentCellPhase::VTemplate(_)) || cell.terminator.is_none() {
+            return false;
+        }
+        cell.template_driver_endv = Some(command);
+        true
+    }
+
+    /// Whether `command` is the exact template-driver end-v being replayed by
+    /// alignment group recovery.
+    #[must_use]
+    pub fn is_template_driver_endv(&self, command: TracedTokenWord) -> bool {
+        self.alignment_inputs.last().is_some_and(|alignment| {
+            alignment.cell.as_ref().is_some_and(|cell| {
+                cell.template_driver_endv == Some(command)
+                    && matches!(cell.phase, AlignmentCellPhase::VTemplate(_))
+                    && cell.terminator.is_some()
+            })
+        })
     }
 
     /// Retires v-template frames that no active cell can own.
@@ -4952,7 +4995,9 @@ impl InputStack {
         };
         if matches!(
             frame.replay_kind,
-            TokenListReplayKind::MacroBody | TokenListReplayKind::Unexpanded
+            TokenListReplayKind::MacroBody
+                | TokenListReplayKind::MacroArgument
+                | TokenListReplayKind::Unexpanded
         ) {
             return None;
         }

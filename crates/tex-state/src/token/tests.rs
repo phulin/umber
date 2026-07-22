@@ -118,6 +118,19 @@ fn frozen_alignment_tokens_round_trip_as_distinct_non_symbol_tokens() {
 }
 
 #[test]
+fn expanded_text_boundary_is_distinct_from_alignment_and_primitive_tokens() {
+    let boundary = Token::expanded_text_boundary();
+
+    assert_ne!(boundary, Token::frozen_end_template());
+    assert_ne!(boundary, Token::frozen_endv());
+    assert!(boundary.is_expanded_text_boundary());
+    let Token::Frozen(frozen) = boundary else {
+        panic!("boundary must remain inaccessible");
+    };
+    assert_eq!(frozen.primitive_index(), None);
+}
+
+#[test]
 fn invariant_fast_decode_matches_checked_decode_for_every_token_kind() {
     let tokens = [
         Token::Char {

@@ -343,6 +343,25 @@ fn get_x_token_converts_frozen_end_template_without_losing_origin() {
 }
 
 #[test]
+fn get_x_token_does_not_convert_expanded_text_boundary_to_endv() {
+    let mut stores = Universe::new();
+    let boundary = stores.expanded_text_boundary_token();
+    let tokens = stores.intern_token_list(&[boundary]);
+    let mut input = InputStack::new(MemoryInput::new(""));
+    input.push_token_list(tokens, TokenListReplayKind::Inserted);
+
+    let delivered = crate::get_x_token(
+        &mut input,
+        &mut tex_state::ExpansionContext::new(&mut stores),
+    )
+    .expect("private boundary expansion")
+    .expect("private boundary delivery");
+
+    assert_eq!(crate::semantic_token(delivered), boundary);
+    assert!(!crate::semantic_token(delivered).is_frozen_endv());
+}
+
+#[test]
 fn preamble_span_operation_expands_exactly_one_token() {
     let mut stores = Universe::new();
     let first = stores.intern("first");

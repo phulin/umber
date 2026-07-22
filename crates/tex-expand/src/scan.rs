@@ -689,11 +689,10 @@ fn expand_replacement_text(
     // primitives commonly read one token ahead while scanning their operands
     // (`\the\count15` is the canonical case). A replay marker alone cannot
     // delimit that read because the raw frame is retired before the primitive
-    // pushes its rendered result. The frozen alignment sentinel is already an
-    // engine-owned token that expansion turns into `frozen_endv`; it cannot be
-    // manufactured by source input, so it provides an exact synchronous
-    // boundary without exposing the caller's next token.
-    let boundary = TracedTokenWord::pack(stores.frozen_end_template_token(), OriginId::UNKNOWN);
+    // pushes its rendered result. A dedicated engine-owned token provides an
+    // exact synchronous boundary without impersonating an alignment template
+    // sentinel if nested lookahead carries it across replay frames.
+    let boundary = TracedTokenWord::pack(stores.expanded_text_boundary_token(), OriginId::UNKNOWN);
     let replay = input.push_transient_tokens(vec![boundary], TokenListReplayKind::Inserted);
     input.push_token_list_with_origins(
         replacement_text,
@@ -767,8 +766,7 @@ fn collect_expanded_text_inner(
         expansion.observe_read(read);
         let token = read.token();
         let traced = read.traced_token();
-        if matches!(boundary, ExpandedTextBoundary::Replay(_))
-            && (token.is_frozen_end_template() || token.is_frozen_endv())
+        if matches!(boundary, ExpandedTextBoundary::Replay(_)) && token.is_expanded_text_boundary()
         {
             let ExpandedTextBoundary::Replay(replay) = boundary else {
                 unreachable!();

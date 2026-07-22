@@ -311,6 +311,17 @@ as an orphan and cannot invoke `off_save`; this enforces TeX.web §1131's
 otherwise implicit invariant that a reachable v-template belongs to the live
 alignment entry.
 
+Expanded replacement collection uses its own inaccessible boundary rather
+than borrowing `frozen_end_template`. TeX.web §§473--478 delimit `scan_toks`
+expansion independently of §780's alignment-only conversion, and conflating
+those sentinels lets nested LaTeX lookahead manufacture a false end-v command.
+When nested `\futurelet` carries the real frozen marker back after Umber's
+synchronous template driver has retired its replay frame, the driver records
+that exact traced command across §1131 `off_save` recovery. Literal frozen
+markers owned by an already-terminating cell may use the same representation
+seam; control-sequence aliases still require either the ordinary exhausted
+v-template walk or the exact driver-issued replay proof.
+
 ## 6. Execution engine
 
 `tex-exec` owns primitive dispatch, grouping, assignments, modes, box building,

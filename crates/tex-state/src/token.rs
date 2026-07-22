@@ -9,6 +9,7 @@ pub struct FrozenToken(u16);
 impl FrozenToken {
     pub(crate) const END_TEMPLATE: Self = Self(0);
     pub(crate) const END_V: Self = Self(1);
+    pub(crate) const EXPANDED_TEXT_BOUNDARY: Self = Self(u16::MAX);
     const PRIMITIVE_BASE: u16 = 2;
 
     pub(crate) const fn primitive(index: u16) -> Self {
@@ -17,7 +18,7 @@ impl FrozenToken {
 
     #[must_use]
     pub const fn primitive_index(self) -> Option<u16> {
-        if self.0 >= Self::PRIMITIVE_BASE {
+        if self.0 >= Self::PRIMITIVE_BASE && self.0 != Self::EXPANDED_TEXT_BOUNDARY.0 {
             Some(self.0 - Self::PRIMITIVE_BASE)
         } else {
             None
@@ -99,6 +100,11 @@ impl Token {
         Self::Frozen(FrozenToken::END_V)
     }
 
+    #[must_use]
+    pub(crate) const fn expanded_text_boundary() -> Self {
+        Self::Frozen(FrozenToken::EXPANDED_TEXT_BOUNDARY)
+    }
+
     pub(crate) const fn frozen_primitive(index: u16) -> Self {
         Self::Frozen(FrozenToken::primitive(index))
     }
@@ -113,6 +119,11 @@ impl Token {
     #[must_use]
     pub const fn is_frozen_endv(self) -> bool {
         matches!(self, Self::Frozen(FrozenToken::END_V))
+    }
+
+    #[must_use]
+    pub const fn is_expanded_text_boundary(self) -> bool {
+        matches!(self, Self::Frozen(FrozenToken::EXPANDED_TEXT_BOUNDARY))
     }
 }
 

@@ -110,6 +110,10 @@ pub trait ExpansionState {
     fn frozen_endv_token(&self) -> Token {
         Token::frozen_endv()
     }
+    #[doc(hidden)]
+    fn expanded_text_boundary_token(&self) -> Token {
+        Token::expanded_text_boundary()
+    }
     /// Current execution-group depth used by TeX82 alignment `get_next`.
     fn execution_group_depth(&self) -> u32 {
         0
@@ -7766,6 +7770,7 @@ fn hash_token(stores: &Stores, token: Token, hasher: &mut StateHasher) {
         }
         Token::Frozen(crate::token::FrozenToken::END_TEMPLATE) => hasher.tag(3),
         Token::Frozen(crate::token::FrozenToken::END_V) => hasher.tag(4),
+        Token::Frozen(crate::token::FrozenToken::EXPANDED_TEXT_BOUNDARY) => hasher.tag(6),
         Token::Frozen(frozen) => {
             hasher.tag(5);
             hasher.u16(
