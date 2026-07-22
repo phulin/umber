@@ -210,6 +210,39 @@ fn high_segment_pgfkeys_call_preserves_second_argument_and_retires_condition() {
 }
 
 #[test]
+fn high_segment_package_let_state_survives_lower_meaning_writes() {
+    let mut stores = Universe::new();
+    tex_expand::install_expandable_primitives(&mut stores);
+    install_unexpandable_primitives(&mut stores);
+    for index in 0..65_536_u32 {
+        stores.intern(&format!("package-padding-{index}"));
+    }
+    let mut input = InputStack::new(MemoryInput::new(concat!(
+        r"\catcode`\@=11 ",
+        r"\def\markbooktabs{\gdef\booktabsresult{B}}",
+        r"\def\markvoidbox{\gdef\voidboxresult{V}}",
+        r"\def\markenumitem{\gdef\enumitemresult{E}}",
+        r"\def\packagecall{",
+        r"\let\@BTswitch\markbooktabs",
+        r"\let\voidb\markvoidbox",
+        r"\let\enit@resuming\markenumitem",
+        r"\let\relax\relax",
+        r"\@BTswitch\voidb\enit@resuming}",
+        r"\packagecall",
+    )));
+
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("high-segment package-local aliases should remain defined");
+
+    assert_eq!(macro_text(&stores, "booktabsresult"), "B");
+    assert_eq!(macro_text(&stores, "voidboxresult"), "V");
+    assert_eq!(macro_text(&stores, "enumitemresult"), "E");
+    let output = terminal_effect_text(&stores);
+    assert!(!output.contains("Undefined control sequence"), "{output}");
+}
+
+#[test]
 fn resource_suspension_rolls_back_groups_entered_by_blocked_dispatch() {
     let mut stores = Universe::new();
     tex_expand::install_expandable_primitives(&mut stores);
