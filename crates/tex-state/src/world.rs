@@ -3344,7 +3344,7 @@ fn effect_retained_bytes(effect: &EffectRecord) -> usize {
 }
 
 fn real_job_clock() -> JobClock {
-    source_date_epoch().map_or_else(system_clock_seconds, unix_seconds_to_job_clock)
+    source_date_epoch().map_or_else(system_job_clock, unix_seconds_to_job_clock)
 }
 
 fn source_date_epoch() -> Option<u64> {
@@ -3356,11 +3356,9 @@ fn parse_source_date_epoch(value: Option<OsString>) -> Option<u64> {
     value.to_str()?.parse().ok()
 }
 
-fn system_clock_seconds() -> JobClock {
-    let seconds = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |duration| duration.as_secs());
-    unix_seconds_to_job_clock(seconds)
+fn system_job_clock() -> JobClock {
+    let now: chrono::DateTime<chrono::Local> = SystemTime::now().into();
+    datetime_to_job_clock(&now)
 }
 
 fn system_time_micros() -> u64 {
@@ -3382,6 +3380,18 @@ fn unix_seconds_to_job_clock(seconds: u64) -> JobClock {
         day,
         month,
         year,
+    }
+}
+
+fn datetime_to_job_clock<Tz: chrono::TimeZone>(date: &chrono::DateTime<Tz>) -> JobClock {
+    use chrono::{Datelike as _, Timelike as _};
+
+    JobClock {
+        time: (date.hour() * 60 + date.minute()) as i32,
+        second: date.second() as i32,
+        day: date.day() as i32,
+        month: date.month() as i32,
+        year: date.year(),
     }
 }
 

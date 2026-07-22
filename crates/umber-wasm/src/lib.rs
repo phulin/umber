@@ -90,6 +90,7 @@ export interface SessionOptions {
   engine?: "tex82" | "etex" | "pdftex" | "latex" | "pdflatex";
   /** Explicit downstream products, independent from engine compatibility. */
   outputs: Array<"dvi" | "pdf" | "html">;
+  /** Local compilation date/time. Defaults to the browser clock at session creation. */
   clock?: { year: number; month: number; day: number; minutes: number };
   limits?: Partial<SessionLimits>;
   fontLayoutPolicy?: "opentype-preferred" | "classic-tfm-exact";

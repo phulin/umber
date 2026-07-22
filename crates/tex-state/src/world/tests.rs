@@ -694,6 +694,37 @@ fn unix_clock_conversion_uses_utc_time_and_date() {
 }
 
 #[test]
+fn host_clock_conversion_uses_the_local_calendar_day() {
+    use chrono::FixedOffset;
+
+    let utc = chrono::DateTime::from_timestamp(1_735_689_300, 0).expect("valid UTC timestamp");
+    let west = utc.with_timezone(&FixedOffset::west_opt(8 * 60 * 60).expect("valid offset"));
+    let east =
+        utc.with_timezone(&FixedOffset::east_opt(5 * 60 * 60 + 30 * 60).expect("valid offset"));
+
+    assert_eq!(
+        datetime_to_job_clock(&west),
+        JobClock {
+            time: 955,
+            second: 0,
+            day: 31,
+            month: 12,
+            year: 2024,
+        }
+    );
+    assert_eq!(
+        datetime_to_job_clock(&east),
+        JobClock {
+            time: 325,
+            second: 0,
+            day: 1,
+            month: 1,
+            year: 2025,
+        }
+    );
+}
+
+#[test]
 fn source_date_epoch_parser_accepts_unsigned_epoch_seconds() {
     assert_eq!(
         parse_source_date_epoch(Some("1783604160".into())),

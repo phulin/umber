@@ -706,6 +706,55 @@ fn pdftex_engine_option_reports_the_pinned_identity() {
 }
 
 #[wasm_bindgen_test]
+fn omitted_clock_uses_the_browser_local_date() {
+    let before = Date::new_0();
+    let mut session = session("main.tex");
+    session
+        .add_user_file(
+            "main.tex",
+            &bytes(b"\\message{clock=\\the\\time/\\the\\day/\\the\\month/\\the\\year}\\end"),
+        )
+        .expect("add clock source");
+    let complete = session.compile_attempt().expect("complete clock attempt");
+    let after = Date::new_0();
+    let terminal = field(&field(complete.as_ref(), "output"), "terminal")
+        .as_string()
+        .expect("terminal text");
+
+    let before_clock = browser_clock_message(&before);
+    let after_clock = browser_clock_message(&after);
+    assert!(
+        terminal.contains(&before_clock) || terminal.contains(&after_clock),
+        "expected {before_clock} or {after_clock} in {terminal}"
+    );
+}
+
+#[wasm_bindgen_test]
+fn explicit_clock_remains_a_deterministic_override() {
+    let session_options = options("main.tex");
+    let clock = Object::new();
+    set(&clock, "year", &JsValue::from_f64(2002.0));
+    set(&clock, "month", &JsValue::from_f64(3.0));
+    set(&clock, "day", &JsValue::from_f64(4.0));
+    set(&clock, "minutes", &JsValue::from_f64(5.0));
+    set(&session_options, "clock", &clock);
+    let mut session =
+        CompilerSession::new(session_options.unchecked_ref::<JsSessionOptions>()).expect("session");
+    session
+        .add_user_file(
+            "main.tex",
+            &bytes(b"\\message{clock=\\the\\time/\\the\\day/\\the\\month/\\the\\year}\\end"),
+        )
+        .expect("add clock source");
+    let complete = session.compile_attempt().expect("complete clock attempt");
+    let terminal = field(&field(complete.as_ref(), "output"), "terminal")
+        .as_string()
+        .expect("terminal text");
+
+    assert!(terminal.contains("clock=5/4/3/2002"), "{terminal}");
+}
+
+#[wasm_bindgen_test]
 fn explicit_output_capabilities_cover_every_nonempty_combination() {
     for requested in [
         &["dvi"][..],
@@ -1729,6 +1778,16 @@ fn options(main_path: &str) -> Object {
     outputs.push(&JsValue::from_str("dvi"));
     set(&options, "outputs", &outputs);
     options
+}
+
+fn browser_clock_message(date: &Date) -> String {
+    format!(
+        "clock={}/{}/{}/{}",
+        date.get_hours() * 60 + date.get_minutes(),
+        date.get_date(),
+        date.get_month() + 1,
+        date.get_full_year()
+    )
 }
 
 fn source_patch(

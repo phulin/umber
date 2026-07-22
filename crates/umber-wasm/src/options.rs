@@ -1,5 +1,5 @@
 use bib_engine::{BibOptionsBuilder, BibliographyMode, OutputFormat, OutputRequest};
-use js_sys::{Array, Reflect, Uint8Array};
+use js_sys::{Array, Date, Reflect, Uint8Array};
 use umber::{
     BibliographyProjectOptions, EngineMode, FeatureSetting, FileContentId, FileKind, FileRequest,
     FileRequestKey, FixedPointLimits, FontContainer, FontFeaturePolicy, FontLanguage,
@@ -17,6 +17,7 @@ pub(crate) fn parse_options(value: &JsValue) -> Result<SessionOptions, JsValue> 
     require_object(value, "session options")?;
     let mut options = SessionOptions {
         main_path: required_string(value, "mainPath")?,
+        clock: browser_job_clock(),
         ..SessionOptions::default()
     };
     options.job_name = optional_string(value, "jobName")?;
@@ -110,11 +111,23 @@ pub(crate) fn parse_options(value: &JsValue) -> Result<SessionOptions, JsValue> 
         options.clock.month = integer::<i32>(&clock, "month")?;
         options.clock.day = integer::<i32>(&clock, "day")?;
         options.clock.time = integer::<i32>(&clock, "minutes")?;
+        options.clock.second = 0;
     }
     if let Some(limits) = optional_object(value, "limits")? {
         options.limits = parse_limits(&limits)?;
     }
     Ok(options)
+}
+
+fn browser_job_clock() -> tex_state::JobClock {
+    let now = Date::new_0();
+    tex_state::JobClock {
+        time: (now.get_hours() * 60 + now.get_minutes()) as i32,
+        second: now.get_seconds() as i32,
+        day: now.get_date() as i32,
+        month: (now.get_month() + 1) as i32,
+        year: now.get_full_year() as i32,
+    }
 }
 
 pub(crate) fn parse_project_options(value: &JsValue) -> Result<LatexProjectOptions, JsValue> {
