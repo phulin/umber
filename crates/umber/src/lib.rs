@@ -518,7 +518,7 @@ impl PlannedFinalization {
     pub fn new(effect_pos: EffectPos, files: Vec<DriverFile>) -> Result<Self, FinalizationError> {
         let mut paths = BTreeSet::new();
         for file in &files {
-            if !paths.insert(file.path.clone()) {
+            if !paths.insert(lexically_normalize_path(&file.path)) {
                 return Err(FinalizationError::ConflictingDriverPath(file.path.clone()));
             }
         }
@@ -540,6 +540,32 @@ impl PlannedFinalization {
 
     /// Explicit fixture policy: retain effect records and materialize nothing.
     pub fn discard_uncommitted(self) {}
+}
+
+fn lexically_normalize_path(path: &Path) -> PathBuf {
+    use std::path::Component;
+
+    let mut normalized = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                if normalized
+                    .components()
+                    .next_back()
+                    .is_some_and(|last| matches!(last, Component::Normal(_)))
+                {
+                    normalized.pop();
+                } else if !normalized.has_root() {
+                    normalized.push(component.as_os_str());
+                }
+            }
+            Component::Prefix(_) | Component::RootDir | Component::Normal(_) => {
+                normalized.push(component.as_os_str());
+            }
+        }
+    }
+    normalized
 }
 
 /// Finalization state that may materialize downstream files safely.
@@ -1482,6 +1508,34 @@ mod tests {
         assert!(matches!(
             result,
             Err(FinalizationError::ConflictingDriverPath(path)) if path == std::path::Path::new("same.out")
+        ));
+    }
+
+    #[test]
+    fn lexically_aliased_driver_paths_are_rejected_before_finalization() {
+        let stores = Universe::with_world(World::memory());
+        let result = PlannedFinalization::new(
+            stores.world().effect_pos(),
+            vec![
+                DriverFile::new(PathBuf::from("out"), vec![1]),
+                DriverFile::new(PathBuf::from("./out"), vec![2]),
+            ],
+        );
+        assert!(matches!(
+            result,
+            Err(FinalizationError::ConflictingDriverPath(path)) if path == std::path::Path::new("./out")
+        ));
+
+        let result = PlannedFinalization::new(
+            stores.world().effect_pos(),
+            vec![
+                DriverFile::new(PathBuf::from("build/out"), vec![1]),
+                DriverFile::new(PathBuf::from("build/tmp/../out"), vec![2]),
+            ],
+        );
+        assert!(matches!(
+            result,
+            Err(FinalizationError::ConflictingDriverPath(path)) if path == std::path::Path::new("build/tmp/../out")
         ));
     }
 

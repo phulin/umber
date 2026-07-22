@@ -213,6 +213,9 @@ Effects are recorded in execution order and published at explicit commit
 boundaries. A failed or rolled-back transaction cannot leak writes, artifact
 receipts, DVI plans, or auxiliary output. Virtual compile sessions clone or
 fork accepted `World` state so output inspection does not mutate the session.
+After an effect commit, native downstream files publish as one recoverable
+staged set: a failed destination rename restores all pre-publication files and
+removes every newly installed member.
 
 Native search, browser fetch, caching, authentication, and URL selection are
 host policies. The engine reports typed missing resources and accepts validated

@@ -321,8 +321,12 @@ limit, and required minimum. Unsupported direction changes, ambiguous text
 mappings, malformed allowed specials, coordinate overflow, and unavailable
 fonts are actionable errors in parity mode; no partial HTML is published.
 
-Native finalization stages requested outputs and commits engine effects before
-atomically publishing driver files. The host-neutral compile session fixes its
+Native finalization stages the complete requested output set and commits engine
+effects before publication. Existing destinations move to rollback siblings;
+if any staged-file rename fails, every prior destination is restored and no new
+member remains published. Collision validation uses lexically normalized output
+paths, so aliases such as `out` and `./out` cannot name distinct members of the
+set. The host-neutral compile session fixes its
 output capabilities before execution: HTML-only shipout commits artifacts and
 Unicode render provenance without preparing DVI page plans, while a session
 that requests DVI (alone or with HTML) applies the unchanged TeX82 byte-code

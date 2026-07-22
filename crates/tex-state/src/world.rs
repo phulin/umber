@@ -1491,6 +1491,8 @@ pub struct World {
     execution_trace: Vec<ExecutionTraceEvent>,
     #[cfg(test)]
     effect_commit_fault: Option<EffectCommitFault>,
+    #[cfg(test)]
+    publish_rename_fault: Option<usize>,
 }
 
 #[cfg(test)]
@@ -1530,6 +1532,8 @@ impl Clone for World {
             execution_trace: self.execution_trace.clone(),
             #[cfg(test)]
             effect_commit_fault: self.effect_commit_fault,
+            #[cfg(test)]
+            publish_rename_fault: self.publish_rename_fault,
         }
     }
 }
@@ -1738,6 +1742,8 @@ impl World {
             execution_trace: Vec::new(),
             #[cfg(test)]
             effect_commit_fault: None,
+            #[cfg(test)]
+            publish_rename_fault: None,
         }
     }
 
@@ -1773,6 +1779,11 @@ impl World {
     #[cfg(test)]
     pub(crate) fn fail_effect_commit_after_partial(&mut self, position: EffectPos) {
         self.effect_commit_fault = Some(EffectCommitFault::AfterPartial(position));
+    }
+
+    #[cfg(test)]
+    pub(crate) fn fail_publish_rename_at(&mut self, index: usize) {
+        self.publish_rename_fault = Some(index);
     }
 
     /// Adds or replaces one file in an in-memory world.
@@ -2022,15 +2033,18 @@ impl World {
 
     /// Stages a set of complete downstream files before publishing any of them.
     ///
-    /// Real files are written to unique siblings and then atomically renamed,
-    /// so readers never observe truncated contents. Parent directories are
-    /// created only after every path has been validated. Memory worlds publish
-    /// the complete set in one mutation pass.
+    /// Real files are written to unique siblings before any destination is
+    /// changed. Existing destinations are moved to rollback siblings, and a
+    /// failed publish restores the entire prior set. Readers never observe
+    /// truncated contents. Memory worlds publish the complete set in one
+    /// mutation pass.
     pub fn publish_files(&mut self, files: Vec<(PathBuf, Vec<u8>)>) -> Result<(), WorldError> {
         static NEXT_TEMP_OUTPUT: AtomicU64 = AtomicU64::new(0);
+        #[cfg(test)]
+        let publish_rename_fault = self.publish_rename_fault.take();
         match &mut self.backend {
             WorldBackend::Real { .. } => {
-                let mut staged = Vec::with_capacity(files.len());
+                let mut staged: Vec<StagedPublication> = Vec::with_capacity(files.len());
                 for (path, bytes) in files {
                     let parent = path
                         .parent()
@@ -2067,23 +2081,78 @@ impl World {
                     })();
                     if let Err(error) = result {
                         let _ = std::fs::remove_file(&temporary);
-                        for (_, temporary) in &staged {
-                            let _ = std::fs::remove_file(temporary);
-                        }
+                        cleanup_staged_publication(&staged);
                         return Err(WorldError::new("stage file", Some(path), error.to_string()));
                     }
-                    staged.push((path, temporary));
+                    staged.push((path, temporary, None));
                 }
-                for (path, temporary) in &staged {
-                    if let Err(error) = std::fs::rename(temporary, path) {
-                        for (_, remaining) in &staged {
-                            let _ = std::fs::remove_file(remaining);
+
+                for index in 0..staged.len() {
+                    let path = staged[index].0.clone();
+                    match std::fs::symlink_metadata(&path) {
+                        Ok(metadata)
+                            if metadata.file_type().is_file()
+                                || metadata.file_type().is_symlink() =>
+                        {
+                            let file_name = path.file_name().expect("staged path has a file name");
+                            let nonce = NEXT_TEMP_OUTPUT.fetch_add(1, Ordering::Relaxed);
+                            let rollback = path.with_file_name(format!(
+                                ".{}.{}.{}.rollback",
+                                file_name.to_string_lossy(),
+                                std::process::id(),
+                                nonce
+                            ));
+                            if let Err(error) = std::fs::rename(&path, &rollback) {
+                                rollback_staged_publication(&staged, 0);
+                                return Err(WorldError::new(
+                                    "prepare file publication",
+                                    Some(path),
+                                    error.to_string(),
+                                ));
+                            }
+                            staged[index].2 = Some(rollback);
                         }
+                        Ok(_) => {
+                            rollback_staged_publication(&staged, 0);
+                            return Err(WorldError::new(
+                                "publish file",
+                                Some(path),
+                                "output path exists but is not a regular file",
+                            ));
+                        }
+                        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+                        Err(error) => {
+                            rollback_staged_publication(&staged, 0);
+                            return Err(WorldError::new(
+                                "prepare file publication",
+                                Some(path),
+                                error.to_string(),
+                            ));
+                        }
+                    }
+                }
+
+                for (published, (path, temporary, _)) in staged.iter().enumerate() {
+                    #[cfg(test)]
+                    let result = if publish_rename_fault == Some(published) {
+                        Err(io::Error::other("injected publish rename failure"))
+                    } else {
+                        std::fs::rename(temporary, path)
+                    };
+                    #[cfg(not(test))]
+                    let result = std::fs::rename(temporary, path);
+                    if let Err(error) = result {
+                        rollback_staged_publication(&staged, published);
                         return Err(WorldError::new(
                             "publish file",
                             Some(path.clone()),
                             error.to_string(),
                         ));
+                    }
+                }
+                for (_, _, backup) in &staged {
+                    if let Some(backup) = backup {
+                        let _ = std::fs::remove_file(backup);
                     }
                 }
                 Ok(())
@@ -3243,6 +3312,26 @@ impl Default for World {
 enum WorldBackend {
     Real { artifact_dir: PathBuf },
     Memory(MemoryBackend),
+}
+
+type StagedPublication = (PathBuf, PathBuf, Option<PathBuf>);
+
+fn cleanup_staged_publication(staged: &[StagedPublication]) {
+    for (_, temporary, _) in staged {
+        let _ = std::fs::remove_file(temporary);
+    }
+}
+
+fn rollback_staged_publication(staged: &[StagedPublication], published: usize) {
+    for (path, _, _) in staged.iter().take(published) {
+        let _ = std::fs::remove_file(path);
+    }
+    for (path, _, backup) in staged.iter().rev() {
+        if let Some(backup) = backup {
+            let _ = std::fs::rename(backup, path);
+        }
+    }
+    cleanup_staged_publication(staged);
 }
 
 fn verify_stored_artifact(

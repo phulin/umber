@@ -1030,6 +1030,88 @@ fn real_world_has_no_memory_output_view() {
 }
 
 #[test]
+fn failed_file_set_publish_restores_every_destination() {
+    let temp = tempfile::tempdir().expect("temp dir");
+    let first = temp.path().join("index.html");
+    let second = temp.path().join("assets/font.woff2");
+    let third = temp.path().join("assets/manifest.json");
+    std::fs::create_dir_all(second.parent().expect("asset parent")).expect("asset directory");
+    std::fs::write(&first, b"old html").expect("old html");
+    std::fs::write(&third, b"old manifest").expect("old manifest");
+
+    let mut world = World::real_with_artifact_dir(temp.path().join("artifacts"));
+    world.fail_publish_rename_at(1);
+    let error = world
+        .publish_files(vec![
+            (first.clone(), b"new html".to_vec()),
+            (second.clone(), b"new font".to_vec()),
+            (third.clone(), b"new manifest".to_vec()),
+        ])
+        .expect_err("injected rename failure");
+
+    assert!(
+        error
+            .to_string()
+            .contains("injected publish rename failure")
+    );
+    assert_eq!(std::fs::read(&first).expect("restored html"), b"old html");
+    assert!(!second.exists(), "new asset must not remain published");
+    assert_eq!(
+        std::fs::read(&third).expect("restored manifest"),
+        b"old manifest"
+    );
+    let entries = std::fs::read_dir(second.parent().expect("asset parent"))
+        .expect("read asset directory")
+        .map(|entry| entry.expect("directory entry").file_name())
+        .collect::<Vec<_>>();
+    assert_eq!(entries, vec![std::ffi::OsString::from("manifest.json")]);
+}
+
+#[test]
+fn file_set_publish_replaces_all_destinations_after_staging() {
+    let temp = tempfile::tempdir().expect("temp dir");
+    let html = temp.path().join("index.html");
+    let manifest = temp.path().join("assets/manifest.json");
+    std::fs::create_dir_all(manifest.parent().expect("asset parent")).expect("asset directory");
+    std::fs::write(&html, b"old html").expect("old html");
+    std::fs::write(&manifest, b"old manifest").expect("old manifest");
+
+    let mut world = World::real_with_artifact_dir(temp.path().join("artifacts"));
+    world
+        .publish_files(vec![
+            (html.clone(), b"new html".to_vec()),
+            (manifest.clone(), b"new manifest".to_vec()),
+        ])
+        .expect("publish complete file set");
+
+    assert_eq!(std::fs::read(html).expect("new html"), b"new html");
+    assert_eq!(
+        std::fs::read(manifest).expect("new manifest"),
+        b"new manifest"
+    );
+}
+
+#[test]
+fn invalid_later_destination_restores_earlier_backup() {
+    let temp = tempfile::tempdir().expect("temp dir");
+    let first = temp.path().join("index.html");
+    let invalid = temp.path().join("assets");
+    std::fs::write(&first, b"old html").expect("old html");
+    std::fs::create_dir(&invalid).expect("conflicting directory");
+
+    let mut world = World::real_with_artifact_dir(temp.path().join("artifacts"));
+    world
+        .publish_files(vec![
+            (first.clone(), b"new html".to_vec()),
+            (invalid.clone(), b"asset".to_vec()),
+        ])
+        .expect_err("directory destination must fail");
+
+    assert_eq!(std::fs::read(first).expect("restored html"), b"old html");
+    assert!(invalid.is_dir());
+}
+
+#[test]
 fn commit_flushes_prefix_once_and_drops_history() {
     let mut world = World::memory();
     let slot = StreamSlot::new(2);
