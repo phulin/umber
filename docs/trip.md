@@ -14,12 +14,16 @@ cargo test -p umber --test it e2e_conformance_etrip -- --nocapture
 scripts/regen-fixtures.sh --case e2e/trip
 scripts/regen-fixtures.sh --case e2e/etrip
 scripts/setup-conformance-tests.sh
+scripts/trip.sh
 ```
 
-When running either in-process conformance test during hang or memory-growth
-work, use `scripts/run-umber-guarded.py` with a targeted timeout no greater
-than 120 seconds, an aggregate RSS ceiling no greater than 6144 MiB, and a
-TERM grace no greater than five seconds. The two-phase helper also selects the
+`scripts/trip.sh` is the canonical guarded entry point for hang and
+memory-growth work. It defaults to a 120-second wall limit, 6144 MiB aggregate
+RSS limit, 30-second output-progress limit, and five-second TERM grace, then
+kills and reaps the complete process group. Override these with
+`UMBER_TRIP_TIMEOUT_SECONDS`, `UMBER_TRIP_MAX_RSS_MIB`,
+`UMBER_TRIP_PROGRESS_TIMEOUT_SECONDS`, and `UMBER_TRIP_TERM_GRACE_SECONDS`.
+Arguments replace its default filtered TRIP/e-TRIP Cargo command. The helper selects the
 finite default expansion-fuel budget explicitly. The format-loaded TRIP path
 contains a deliberate nested `\message` construction at line 419: `\the` of
 a token register must stay unexpanded while the complete message text is being

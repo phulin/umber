@@ -14,11 +14,13 @@ Read the repository-root `AGENTS.md` first. This file adds the directory map for
 - `measure-sharded-manifest.py`: read-only replay of normalized pdfTeX file traces over candidate schema-v2 shard counts.
 - `publish-texlive-r2.sh`: verified staged full or HTML-profile publication to distinct immutable Cloudflare R2 prefixes; HTML requires an explicit root pin and publishes `manifest-v4.json`; browser CORS policy lives beside it in `texlive-r2-cors.json`.
 - `test-publish-texlive-r2.sh`: hermetic mock-rclone/curl contract test for resumable, manifest-last R2 publication.
-- `run-umber-guarded.py`: canonical process-group watchdog for Umber and tests that execute Umber; enforces wall-time and aggregate-RSS ceilings, TERM-to-KILL escalation, reap, and survivor checks through sandbox-compatible native macOS and Linux process inspection.
+- `run-umber-guarded.py`: canonical process-group watchdog for Umber and tests that execute Umber; enforces wall-time, aggregate-RSS, and optional progress-file ceilings, TERM-to-KILL escalation, reap, and survivor checks through sandbox-compatible native macOS and Linux process inspection.
+- `trip.sh`: guarded TRIP/e-TRIP entry point with documented wall-time, RSS,
+  output-progress, fuel, and termination defaults.
 - `arxiv_corpus.py`: safe exact arXiv archive inventory, identity, verification,
   and case-sensitive disposable materialization boundary.
 - `test-arxiv-corpus.sh`: hermetic archive/view identity contract, including mutation and extra-file rejection.
-- `test-run-umber-guarded.sh`: forced-timeout and RSS-limit self-test proving the shared Umber watchdog kills and reaps descendants.
+- `test-run-umber-guarded.sh`: forced-timeout, progress-stall, and RSS-limit self-test proving the shared Umber watchdog kills and reaps descendants.
 - `check-pdf-external.sh`: opt-in pinned qpdf structural validation plus pinned Poppler raster/text attestation over the representative PDF matrix; `--ci` makes missing tools fatal.
 - `run-stepwise-arxiv-census.sh`: stable entry point for the serial guarded arXiv census.
 - `stepwise-arxiv-census.py`: single-pass, row-atomic, resumable arXiv census runner and offline evidence verifier.

@@ -124,6 +124,8 @@ def parse_args():
     parser.add_argument("--timeout-seconds", type=float, required=True)
     parser.add_argument("--max-rss-mib", type=int, required=True)
     parser.add_argument("--term-grace-seconds", type=float, default=5)
+    parser.add_argument("--progress-file")
+    parser.add_argument("--progress-timeout-seconds", type=float)
     parser.add_argument("command", nargs=argparse.REMAINDER)
     args = parser.parse_args()
     if args.command[:1] == ["--"]:
@@ -136,6 +138,13 @@ def parse_args():
         parser.error("aggregate RSS limit must be in (0, 6144] MiB")
     if not 0 <= args.term_grace_seconds <= 5:
         parser.error("TERM grace must be in [0, 5] seconds")
+    if args.progress_timeout_seconds is not None:
+        if args.progress_file is None:
+            parser.error("--progress-timeout-seconds requires --progress-file")
+        if not 0 < args.progress_timeout_seconds <= args.timeout_seconds:
+            parser.error("progress timeout must be in (0, timeout] seconds")
+    elif args.progress_file is not None:
+        parser.error("--progress-file requires --progress-timeout-seconds")
     return args
 
 
@@ -146,6 +155,8 @@ def main():
     deadline = time.monotonic() + args.timeout_seconds
     rss_limit_kib = args.max_rss_mib * 1024
     reason = None
+    progress_signature = None
+    last_progress = time.monotonic()
     while child.poll() is None:
         rss_kib = sum(row[2] for row in group_rows(pgid))
         if rss_kib > rss_limit_kib:
@@ -154,6 +165,21 @@ def main():
         if time.monotonic() >= deadline:
             reason = f"timeout exceeded {args.timeout_seconds:g} seconds"
             break
+        if args.progress_file is not None:
+            try:
+                stat = os.stat(args.progress_file)
+                signature = (stat.st_size, stat.st_mtime_ns)
+            except FileNotFoundError:
+                signature = None
+            if signature != progress_signature:
+                progress_signature = signature
+                last_progress = time.monotonic()
+            elif time.monotonic() - last_progress >= args.progress_timeout_seconds:
+                reason = (
+                    "no progress-file change for "
+                    f"{args.progress_timeout_seconds:g} seconds"
+                )
+                break
         time.sleep(0.1)
 
     if reason is not None:
