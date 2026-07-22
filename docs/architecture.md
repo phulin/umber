@@ -153,6 +153,14 @@ brace as both delimiter and replacement token; matching it cancels the
 delimiter delivery's alignment-state increment before replacement replay, as
 required by TeX.web §394 (pdfTeX.web §418).
 
+The same canonical `macro_call` audit also fixes the token-lifetime boundary:
+argument matching uses TeX's raw `get_token`, and only literal begin/end-group
+command codes affect brace depth. e-TeX's `etex.ch` change at this routine adds
+protected-macro handling but does not change raw argument collection; its
+conditional changes add tracing and extended predicates without coupling the
+condition stack to macro arguments. Umber accordingly keeps matched arguments
+on their owning replay frame while conditional frames remain independent.
+
 Each top-level request for an expanded token has a fixed work budget. Nested
 expansion performed while satisfying that request shares the same remaining
 budget, so a recursive macro or primitive cannot reset the guard. Once a token
@@ -169,6 +177,11 @@ legality, and evaluation. In particular, TeX's `change_if_limit` rule in
 left newer conditional frames above it. Umber therefore reads and replaces
 evaluation metadata by `ConditionFrameToken`, never from the merely innermost
 frame.
+
+Control-sequence meanings are stored in lazily allocated 65,536-slot segments.
+Allocating or writing a lower segment is growth-only: it must never truncate a
+higher segment, because package-generated `\csname` definitions routinely
+cross that boundary and remain live across later macro calls and conditionals.
 
 Expanded-token-list builders copy the result of `\unexpanded` and the
 token-list form of `\the` without expanding it further, matching TeX's direct

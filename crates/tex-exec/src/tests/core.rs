@@ -186,6 +186,30 @@ fn resource_suspension_inside_integer_scanning_rolls_back_and_resumes() {
 }
 
 #[test]
+fn high_segment_pgfkeys_call_preserves_second_argument_and_retires_condition() {
+    let mut stores = Universe::new();
+    tex_expand::install_expandable_primitives(&mut stores);
+    install_unexpandable_primitives(&mut stores);
+    stores.intern("low-slot-csname");
+    for index in 0..65_536_u32 {
+        stores.intern(&format!("padding-{index}"));
+    }
+    let mut input = InputStack::new(MemoryInput::new(concat!(
+        r"\catcode`\@=11 ",
+        r"\long\def\pgfkeys@@set#1#2{\gdef\result{#2}}",
+        r"\csname low-slot-csname\endcsname ",
+        r"\iftrue\pgfkeys@@set{/pgfplots/table}{second-argument}\fi\end",
+    )));
+
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("high-segment macro call inside a conditional should complete");
+
+    assert_eq!(macro_text(&stores, "result"), "second-argument");
+    assert!(input.current_condition().is_none());
+}
+
+#[test]
 fn resource_suspension_rolls_back_groups_entered_by_blocked_dispatch() {
     let mut stores = Universe::new();
     tex_expand::install_expandable_primitives(&mut stores);

@@ -282,8 +282,10 @@ impl Env {
 
     fn ensure_meaning_segment(&mut self, index: u32) {
         let required_len = segment_index(index) + 1;
-        self.meaning_cells.resize_with(required_len, || None);
-        self.meaning_stamps.resize_with(required_len, || None);
+        if self.meaning_cells.len() < required_len {
+            self.meaning_cells.resize_with(required_len, || None);
+            self.meaning_stamps.resize_with(required_len, || None);
+        }
         let segment = required_len - 1;
         if self.meaning_cells[segment].is_none() {
             self.meaning_cells[segment] = Some(Box::new([0; SEGMENT_LEN]));

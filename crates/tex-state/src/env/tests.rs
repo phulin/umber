@@ -18,6 +18,19 @@ fn default_get_before_any_set_is_undefined() {
 }
 
 #[test]
+fn lower_meaning_write_preserves_allocated_higher_segments() {
+    let mut env = Env::new();
+    let low = Symbol::new(7);
+    let high = Symbol::new(SEGMENT_LEN as u32 + 7);
+
+    env.set(high, Meaning::CharGiven('H'));
+    env.set(low, Meaning::CharGiven('L'));
+
+    assert_eq!(env.get(low), Meaning::CharGiven('L'));
+    assert_eq!(env.get(high), Meaning::CharGiven('H'));
+}
+
+#[test]
 fn fontdimen_key_codec_is_injective_at_both_field_boundaries() {
     use crate::font::{MAX_FONT_DIMEN, MAX_FONT_DIMEN_FONT_ID};
     use crate::stores::FontParameterError;
