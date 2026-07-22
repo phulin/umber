@@ -324,6 +324,16 @@ revision, complete generated VFS generation, bibliography diagnostics, final
 TeX output, and retained rendered-source session together. A resource miss or
 terminal failure therefore cannot replace any part of the prior accepted
 project. Existing `VirtualCompileSession` behavior and latency are unchanged.
+
+`umber::TexFixedPointSession` is the bibliography-free form of the same
+host-neutral coordinator. It accepts only TeX session options and shared
+fixed-point limits, iterates private generated generations, and publishes the
+stable root, final TeX output, generated files, and observation ledger in one
+transaction. `LatexProjectSession` and `TexFixedPointSession` share pass and
+attempt bounds, deterministic signature history, non-adjacent oscillation
+detection, suspended TeX-pass resumption, and candidate rollback. A stable
+generated signature accepts the just-completed pass without scheduling an
+extra run.
 `umber-wasm::ProjectSession` is the binary-safe representation adapter for this
 state machine. Its project options name the BCF and requested bibliography
 outputs, its attempt values reuse the shared resource wire protocol, and its

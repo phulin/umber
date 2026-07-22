@@ -13,6 +13,7 @@ use umber_vfs::{
     BuildId, BuildPlan, FileProvisioner, FileRequestBatch, ProducerId, ResolvedFile, VirtualPath,
 };
 
+use crate::fixed_point::{FixedPointCandidate, FixedPointCoordinator, FixedPointFailure};
 use crate::{
     CompileAttemptResult, CompileError, MemoryOutputFile, MemoryRunOutput, NeedResources,
     ResolvedPkFont, ResourceRequest, ResourceResponse, SessionOptions, SourcePatch,
@@ -29,20 +30,7 @@ use support::{
     generated_signature, merge_tex_files, project_vfs_limits,
 };
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct LatexProjectLimits {
-    pub attempts: u32,
-    pub passes: u32,
-}
-
-impl Default for LatexProjectLimits {
-    fn default() -> Self {
-        Self {
-            attempts: 32,
-            passes: 8,
-        }
-    }
-}
+pub type LatexProjectLimits = crate::FixedPointLimits;
 
 /// Backend-neutral bibliography policy for a project session.
 #[derive(Clone, Debug)]
@@ -177,6 +165,30 @@ impl fmt::Display for LatexProjectError {
 
 impl std::error::Error for LatexProjectError {}
 
+fn project_fixed_point_error(error: FixedPointFailure) -> LatexProjectError {
+    match error {
+        FixedPointFailure::InvalidLimit { name, value } => {
+            LatexProjectError::InvalidLimit { name, value }
+        }
+        FixedPointFailure::AttemptLimit { limit } => {
+            LatexProjectError::Compile(CompileError::AttemptLimit { limit })
+        }
+        FixedPointFailure::NoProgress => LatexProjectError::Compile(CompileError::NoProgress),
+        FixedPointFailure::PassLimit { limit } => LatexProjectError::PassLimit { limit },
+        FixedPointFailure::Oscillation {
+            first_pass,
+            repeated_pass,
+        } => LatexProjectError::Oscillation {
+            first_pass,
+            repeated_pass,
+        },
+    }
+}
+
+fn project_fixed_point_stop(error: FixedPointFailure) -> CandidateStop {
+    CandidateStop::Failed(project_fixed_point_error(error))
+}
+
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
 enum ProjectRequestKey {
     File(umber_vfs::FileRequestKey),
@@ -188,6 +200,7 @@ enum ProjectRequestKey {
 /// automatic backend selection.
 pub struct LatexProjectSession {
     options: LatexProjectOptions,
+    bibliography_enabled: bool,
     files: FileProvisioner,
     detector: BibliographyDetector,
     bibliography: Option<BibliographySession>,
@@ -199,7 +212,7 @@ pub struct LatexProjectSession {
     pk_font_responses: BTreeMap<PdfPkFontRequest, ResolvedPkFont>,
     unavailable_pk_fonts: BTreeSet<PdfPkFontRequest>,
     awaiting: BTreeSet<ProjectRequestKey>,
-    attempts: u32,
+    fixed_point: FixedPointCoordinator,
     accepted_revision: Option<tex_incr::RevisionId>,
     accepted_root: Option<Vec<u8>>,
     pending_root: Option<(tex_incr::RevisionId, Vec<u8>)>,
@@ -213,8 +226,7 @@ struct ProjectCandidate {
     revision: tex_incr::RevisionId,
     root: Vec<u8>,
     generated: BTreeMap<VirtualPath, Vec<u8>>,
-    seen: BTreeMap<ProjectConvergenceKey, u32>,
-    pass: u32,
+    fixed_point: FixedPointCandidate<ProjectConvergenceKey>,
     tex: Option<Box<VirtualCompileSession>>,
     tex_awaiting: bool,
     observations: Vec<crate::AcceptedInputObservation>,
@@ -224,19 +236,37 @@ struct ProjectCandidate {
 
 impl LatexProjectSession {
     pub fn new(options: LatexProjectOptions) -> Result<Self, LatexProjectError> {
-        for (name, value, hard) in [
-            ("attempt", options.limits.attempts, 128),
-            ("pass", options.limits.passes, 64),
-        ] {
-            if value == 0 || value > hard {
-                return Err(LatexProjectError::InvalidLimit { name, value });
-            }
-        }
+        Self::new_inner(options, true)
+    }
+
+    pub(crate) fn new_tex_only(
+        tex: SessionOptions,
+        limits: crate::FixedPointLimits,
+    ) -> Result<Self, LatexProjectError> {
+        let disabled_path = VirtualPath::user("/job/__umber_tex_only_disabled")
+            .expect("internal TeX-only detector path is valid");
+        Self::new_inner(
+            LatexProjectOptions {
+                tex,
+                bibliography: BibliographyProjectOptions::auto(disabled_path),
+                limits,
+            },
+            false,
+        )
+    }
+
+    fn new_inner(
+        options: LatexProjectOptions,
+        bibliography_enabled: bool,
+    ) -> Result<Self, LatexProjectError> {
+        let fixed_point =
+            FixedPointCoordinator::new(options.limits).map_err(project_fixed_point_error)?;
         Ok(Self {
             files: FileProvisioner::new(project_vfs_limits(&options.tex))
                 .map_err(|error| LatexProjectError::Transaction(error.to_string()))?,
             detector: BibliographyDetector::new(options.bibliography.detector),
             options,
+            bibliography_enabled,
             bibliography: None,
             bibliography_backend: None,
             published_bibliography_paths: BTreeSet::new(),
@@ -246,7 +276,7 @@ impl LatexProjectSession {
             pk_font_responses: BTreeMap::new(),
             unavailable_pk_fonts: BTreeSet::new(),
             awaiting: BTreeSet::new(),
-            attempts: 0,
+            fixed_point,
             accepted_revision: None,
             accepted_root: None,
             pending_root: None,
@@ -468,7 +498,7 @@ impl LatexProjectSession {
         if cancelled {
             self.candidate = None;
             self.awaiting.clear();
-            self.attempts = 0;
+            self.fixed_point.reset_attempts();
         }
         cancelled
     }
@@ -479,16 +509,8 @@ impl LatexProjectSession {
         {
             return LatexProjectAttempt::Complete(Box::new(output.clone()));
         }
-        if self.attempts >= self.options.limits.attempts {
-            self.reject_pending();
-            return LatexProjectAttempt::Error(LatexProjectError::Compile(
-                CompileError::AttemptLimit {
-                    limit: self.options.limits.attempts,
-                },
-            ));
-        }
-        if !self.awaiting.is_empty()
-            && !self.awaiting.iter().any(|key| match key {
+        let made_progress = self.awaiting.is_empty()
+            || self.awaiting.iter().any(|key| match key {
                 ProjectRequestKey::File(key) => {
                     self.file_responses.contains_key(key)
                         || self.files.unavailable_keys().any(|missing| missing == key)
@@ -500,14 +522,11 @@ impl LatexProjectSession {
                     self.pk_font_responses.contains_key(key)
                         || self.unavailable_pk_fonts.contains(key)
                 }
-            })
-        {
+            });
+        if let Err(error) = self.fixed_point.start_attempt(made_progress) {
             self.reject_pending();
-            return LatexProjectAttempt::Error(LatexProjectError::Compile(
-                CompileError::NoProgress,
-            ));
+            return LatexProjectAttempt::Error(project_fixed_point_error(error));
         }
-        self.attempts += 1;
         match self.run_candidate() {
             Ok(output) => LatexProjectAttempt::Complete(Box::new(output)),
             Err(CandidateStop::Need(needs)) => {
@@ -551,17 +570,14 @@ impl LatexProjectSession {
             for path in &self.published_bibliography_paths {
                 generated.remove(path);
             }
-            let mut seen = BTreeMap::new();
-            seen.insert(
-                (self.bibliography_backend, generated_signature(&generated)),
-                0u32,
-            );
+            let fixed_point = self
+                .fixed_point
+                .begin((self.bibliography_backend, generated_signature(&generated)));
             ProjectCandidate {
                 revision,
                 root,
                 generated,
-                seen,
-                pass: 1,
+                fixed_point,
                 tex: None,
                 tex_awaiting: false,
                 observations: Vec::new(),
@@ -569,7 +585,8 @@ impl LatexProjectSession {
                 detection_observed: false,
             }
         };
-        while candidate.pass <= self.options.limits.passes {
+        loop {
+            let pass = candidate.fixed_point.pass();
             let mut bibliography = None;
             let before = (
                 self.bibliography_backend,
@@ -603,7 +620,7 @@ impl LatexProjectSession {
                     dependencies.into_iter(),
                     &snapshot,
                     candidate.revision,
-                    Some(candidate.pass),
+                    Some(pass),
                 );
                 if candidate
                     .observations
@@ -621,13 +638,34 @@ impl LatexProjectSession {
                 candidate.observations.extend(observations);
                 candidate.tex_observed = true;
             }
+            if !self.bibliography_enabled {
+                let after = (None, generated_signature(&candidate.generated));
+                if after == before {
+                    return self.accept_candidate(
+                        candidate.revision,
+                        candidate.root,
+                        pass,
+                        tex_output,
+                        None,
+                        candidate.generated,
+                        tex_session,
+                        candidate.observations,
+                    );
+                }
+                candidate
+                    .fixed_point
+                    .observe_changed(after, self.options.limits)
+                    .map_err(project_fixed_point_stop)?;
+                candidate.tex_observed = false;
+                continue;
+            }
             if !candidate.detection_observed {
                 let detection_observations =
                     crate::input_observation::bibliography_detection_observations(
                         &self.options.bibliography.mode,
                         &snapshot,
                         candidate.revision,
-                        candidate.pass,
+                        pass,
                     );
                 if candidate
                     .observations
@@ -710,7 +748,7 @@ impl LatexProjectSession {
                                     inputs,
                                     &snapshot,
                                     candidate.revision,
-                                    candidate.pass,
+                                    pass,
                                     owner,
                                 );
                             if candidate
@@ -750,7 +788,7 @@ impl LatexProjectSession {
                 return self.accept_candidate(
                     candidate.revision,
                     candidate.root,
-                    candidate.pass,
+                    pass,
                     tex_output,
                     bibliography,
                     candidate.generated,
@@ -758,19 +796,13 @@ impl LatexProjectSession {
                     candidate.observations,
                 );
             }
-            if let Some(first_pass) = candidate.seen.insert(after, candidate.pass) {
-                return Err(CandidateStop::Failed(LatexProjectError::Oscillation {
-                    first_pass,
-                    repeated_pass: candidate.pass,
-                }));
-            }
-            candidate.pass += 1;
+            candidate
+                .fixed_point
+                .observe_changed(after, self.options.limits)
+                .map_err(project_fixed_point_stop)?;
             candidate.tex_observed = false;
             candidate.detection_observed = false;
         }
-        Err(CandidateStop::Failed(LatexProjectError::PassLimit {
-            limit: self.options.limits.passes,
-        }))
     }
 
     fn selected_job(&self, selected: BibliographyJob) -> BibliographyJob {
@@ -927,7 +959,9 @@ impl LatexProjectSession {
                 root.clone(),
             )
             .map_err(|e| LatexProjectError::Transaction(e.to_string()))?;
-        let mut build = pending.begin_build(BuildPlan::new(BuildId::new(u64::from(self.attempts))));
+        let mut build = pending.begin_build(BuildPlan::new(BuildId::new(u64::from(
+            self.fixed_point.attempts(),
+        ))));
         let mut stage = build
             .begin_stage(PROJECT_PRODUCER)
             .map_err(|e| LatexProjectError::Transaction(e.to_string()))?;

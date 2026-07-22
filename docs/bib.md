@@ -593,7 +593,10 @@ The existing single-pass `EngineSession` and `VirtualCompileSession` APIs
 remain available. Callers opt into project orchestration rather than silently
 changing the meaning or latency of a one-pass compile operation.
 
-This orchestration is implemented by `umber::LatexProjectSession`. Its public
+This orchestration is implemented by `umber::LatexProjectSession`. The
+bibliography-free `umber::TexFixedPointSession` reuses its TeX candidate,
+resource-resumption, convergence-policy, rollback, and atomic-publication
+machinery without running bibliography detection. Its public
 attempt result mirrors the existing host-neutral resource loop, while
 `LatexProjectOutput` retains the converged TeX output, bibliography result,
 complete generated-file generation, accepted revision, and exact root content

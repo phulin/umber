@@ -26,9 +26,12 @@ Use this crate when behavior is about driving the engine, presenting CLI output,
 - `src/input_search.rs`: deterministic driver-owned TeX input and TFM font path resolution through World-backed reads.
 - `src/input_search/tests.rs`: focused TeX input/font area ordering, extension, and input-record coverage.
 - `src/input_observation.rs`: versioned accepted input-dependency projection shared by native and WebAssembly sessions.
-- `src/latex_project.rs`: host-neutral transactional LaTeX/bibliography multipass orchestration, convergence, and atomic project acceptance.
+- `src/fixed_point.rs`: shared deterministic pass/attempt bounds and non-adjacent fixed-point oscillation policy.
+- `src/latex_project.rs`: host-neutral transactional TeX and optional bibliography multipass orchestration, convergence, and atomic project acceptance.
 - `src/latex_project/support.rs`: project candidate VFS assembly, generated-file identity, and shared resource conversion helpers.
 - `src/latex_project/tests.rs`: project convergence, bibliography publication, and rollback coverage.
+- `src/tex_fixed_point.rs`: public bibliography-free TeX fixed-point adapter over the shared project candidate machinery.
+- `src/tex_fixed_point/tests.rs`: TeX-only convergence, resource resumption, bounds, oscillation, and rollback coverage.
 - `src/lib.rs`: shared engine session, file resolvers, typed effect-before-driver finalization, run helpers, and one-artifact-at-a-time DVI construction.
 - `src/memory_output.rs`: exact committed terminal/log/DVI/aux collection for successful memory-backed runs, aggregate output limits, and auxiliary publication into VFS stage transactions.
 - `src/memory_output/tests.rs`: final-commit idempotence, output accounting, and memory-boundary tests.

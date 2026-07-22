@@ -3,8 +3,9 @@
 > **Status:** implementation in progress. Accepted engine generations retain
 > bounded positive and authoritative-negative input observations, expose a
 > versioned native/WASM projection, and validate retained dependencies against
-> the candidate VFS snapshot before reuse. Decoupled stabilization remains to
-> be implemented.
+> the candidate VFS snapshot before reuse. The reusable native TeX-only
+> fixed-point coordinator is implemented; provisional editor and WebAssembly
+> stabilization surfaces remain to be implemented.
 
 This document defines how persistent editor compilation should compose
 root-buffer edits, generated TeX inputs such as `.aux` and `.toc` files, and
@@ -57,17 +58,19 @@ new balanced performance and retention gate.
 
 ### Multipass project sessions
 
-`LatexProjectSession` already runs bounded fixed-point jobs. It executes TeX
-over a candidate generated generation,
-optionally executes a bibliography backend, compares generated signatures, detects
-oscillation, and accept the root, generated files, and final output atomically.
+`LatexProjectSession` runs bounded fixed-point jobs. It executes TeX over a
+candidate generated generation, optionally executes a bibliography backend,
+compares generated signatures, detects oscillation, and accepts the root,
+generated files, and final output atomically. `TexFixedPointSession` exposes
+the same machinery without bibliography configuration or detection.
 The WebAssembly `ProjectSession` exposes the same state machine.
 
 Each TeX pass currently starts a fresh `VirtualCompileSession`, including the
 first pass after an editor patch. The authored JavaScript facade selects the
-project surface only when bibliography options are present. The existing
-driver therefore supplies convergence and transaction policy, but it is not a
-general, latency-decoupled editor `stabilize` operation and does not use the
+project surface only when bibliography options are present. The shared driver
+supplies convergence and transaction policy, and the TeX-only native surface
+is available, but it is not yet a general, latency-decoupled editor `stabilize`
+operation and does not use the
 single-pass incremental fast path for the provisional edited pass.
 
 ## Generated-input correctness gap
@@ -224,7 +227,8 @@ boundary.
 
 Stabilization repeatedly compiles the unchanged root against the latest private
 generated generation until the selected generated-input signature is stable.
-It must reuse the existing project-session rules for:
+`TexFixedPointSession` provides this bibliography-free native coordinator and
+reuses the existing project-session rules for:
 
 - private generated generations;
 - deterministic signature comparison;
@@ -233,10 +237,11 @@ It must reuse the existing project-session rules for:
 - resource suspension without pass reconstruction; and
 - atomic publication of stable root, output, and generated files.
 
-The first implementation may use fresh cold TeX sessions for stabilization
-passes. The provisional output remains available while stabilization runs. A
-failure leaves the last accepted display and stable state intact and returns a
-typed error; it must not partially publish a later generated generation.
+The coordinator uses fresh cold TeX sessions for stabilization passes and
+retains a suspended session across resource responses. A failure leaves the
+last accepted stable state intact and returns a typed error; it does not
+partially publish a later generated generation. The provisional editor output
+will remain separately available once editor integration is added.
 
 Generated-byte equality after the provisional pass is already sufficient to
 avoid an unnecessary rerun. A label-table parser is neither required nor a
@@ -289,7 +294,8 @@ accepted observable relative to cold execution.
 ### Phase 2: expose general editor stabilization
 
 1. Extract or generalize the existing project convergence coordinator so it
-   can run TeX-only jobs without bibliography configuration.
+   can run TeX-only jobs without bibliography configuration. **Implemented:**
+   `umber::TexFixedPointSession` and the shared `FixedPointLimits` policy.
 2. Keep the one-pass incremental result available as provisional display.
 3. Add an explicit idle/save stabilization operation and stable/provisional
    status at the native and WebAssembly boundaries.

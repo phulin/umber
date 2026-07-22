@@ -17,6 +17,7 @@ use tex_state::{
 
 #[cfg(not(target_arch = "wasm32"))]
 pub mod cli_resource;
+mod fixed_point;
 mod input_observation;
 mod input_search;
 mod latex_project;
@@ -25,10 +26,12 @@ mod pdf_import;
 mod pdf_output;
 mod pdf_vf;
 mod pdftex;
+mod tex_fixed_point;
 mod virtual_compile;
 
 pub const PACKAGE_VERSION: &str = env!("CARGO_PKG_VERSION");
 
+pub use fixed_point::FixedPointLimits;
 pub use input_observation::{
     ACCEPTED_INPUT_OBSERVATION_SCHEMA_VERSION, AcceptedInputObservation,
     AcceptedInputObservationLedger, InputObservationNamespace, InputObservationOutcome,
@@ -48,6 +51,10 @@ pub use pdf_output::{
     pdf_from_committed_artifacts_with_virtual_fonts,
 };
 pub use pdftex::PDFTEX_PRIMITIVE_NAMES;
+pub use tex_fixed_point::{
+    TexFixedPointAttempt, TexFixedPointError, TexFixedPointOptions, TexFixedPointOutput,
+    TexFixedPointSession,
+};
 pub use tex_fonts::{
     AcceptedFontContainers, FeatureSetting, FontContainer, FontFeaturePolicy, FontLanguage,
     FontLayoutPolicy, FontMappingFallbackPolicy, FontObjectIdentity, FontProgramIdentity,
