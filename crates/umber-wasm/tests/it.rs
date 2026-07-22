@@ -6,7 +6,11 @@ use bib_engine::{
 };
 use js_sys::{Array, Date, Object, Reflect, Uint8Array};
 use tex_state::{Universe, World};
-use umber::prepare_run_stores;
+use umber::{
+    CompileAttemptResult, EditorCompileSession as NativeEditorSession, EditorSessionOptions,
+    EditorStabilizationAttempt, EngineMode, FixedPointLimits, ResourceRequest, ResourceResponse,
+    SessionOptions, TexFixedPointError, TexFixedPointOutput, prepare_run_stores,
+};
 use umber_wasm::{
     CompilerSession, EditorSession, JsEditorSessionOptions, JsProjectSessionOptions,
     JsSessionOptions, JsSourcePatch, ProjectSession, accepted_input_observation_schema_version,
@@ -114,6 +118,70 @@ fn editor_stabilization_resumes_the_retained_resource_wait() {
     let stable = session.stabilize_attempt().expect("resumed pass");
     assert_eq!(string_field(stable.as_ref(), "kind"), "stable");
     assert_eq!(field(stable.as_ref(), "revision").as_f64(), Some(1.0));
+}
+
+#[wasm_bindgen_test]
+fn editor_fixed_point_outputs_and_failures_match_native() {
+    let fixtures = [
+        include_bytes!("../../../tests/corpus/stabilization/primitive-generated.tex").as_slice(),
+        include_bytes!("../../../tests/corpus/stabilization/latex-references.tex").as_slice(),
+    ];
+    for source in fixtures {
+        let native = native_stabilize(source, FixedPointLimits::default())
+            .unwrap_or_else(|error| panic!("native stabilization failed: {error:?}"));
+        let wasm = wasm_stabilize(source, None);
+        assert_eq!(string_field(wasm.as_ref(), "kind"), "stable");
+        assert_eq!(
+            field(wasm.as_ref(), "passes").as_f64(),
+            Some(f64::from(native.passes))
+        );
+        let output = field(wasm.as_ref(), "output");
+        let tex = field(&output, "tex");
+        assert_eq!(
+            Uint8Array::new(&field(&tex, "dvi")).to_vec(),
+            native.tex.dvi
+        );
+        assert_eq!(
+            wasm_generated_files(&output),
+            native_generated_files(&native)
+        );
+    }
+
+    let oscillating = br#"\openin0=flip.aux
+\ifeof0 \def\state{A}\else \closein0 \input flip.aux \fi
+\def\statea{A}
+\immediate\openout1=flip.aux
+\ifx\state\statea
+  \immediate\write1{\string\def\string\state{B}}
+\else
+  \immediate\write1{\string\def\string\state{A}}
+\fi
+\immediate\closeout1
+\end
+"#;
+    for (limits, expected_code) in [
+        (
+            FixedPointLimits {
+                attempts: 32,
+                passes: 1,
+            },
+            "pass-limit",
+        ),
+        (FixedPointLimits::default(), "oscillation"),
+    ] {
+        let native = native_stabilize(oscillating, limits).expect_err("typed native failure");
+        assert!(matches!(
+            (&native, expected_code),
+            (TexFixedPointError::PassLimit { limit: 1 }, "pass-limit")
+                | (TexFixedPointError::Oscillation { .. }, "oscillation")
+        ));
+        let wasm = wasm_stabilize(oscillating, Some(limits));
+        assert_eq!(string_field(wasm.as_ref(), "kind"), "error");
+        assert_eq!(
+            string_field(&field(wasm.as_ref(), "diagnostic"), "code"),
+            expected_code
+        );
+    }
 }
 
 #[wasm_bindgen_test]
@@ -1408,6 +1476,164 @@ fn remint_and_assert_deleted_rendered_query(mut fixture: RenderedQueryFixture) {
 fn session(main_path: &str) -> CompilerSession {
     let options = options(main_path);
     CompilerSession::new(options.unchecked_ref::<JsSessionOptions>()).expect("construct session")
+}
+
+fn native_stabilize(
+    source: &[u8],
+    limits: FixedPointLimits,
+) -> Result<Box<TexFixedPointOutput>, TexFixedPointError> {
+    let mut session = NativeEditorSession::new(EditorSessionOptions {
+        tex: SessionOptions {
+            engine: EngineMode::Tex82,
+            ..SessionOptions::default()
+        },
+        stabilization: limits,
+    })
+    .expect("native editor");
+    session
+        .add_user_file("/job/main.tex", source.to_vec())
+        .expect("native source");
+    session
+        .add_user_file(
+            "/job/cmr10.tfm",
+            include_bytes!("../../tex-fonts/tests/fixtures/cm/cmr10.tfm").to_vec(),
+        )
+        .expect("native TFM");
+    loop {
+        match session.advance() {
+            CompileAttemptResult::Complete(_) => break,
+            CompileAttemptResult::Error(error) => return Err(TexFixedPointError::Compile(error)),
+            CompileAttemptResult::NeedResources(needs) => {
+                let responses = needs
+                    .required
+                    .into_iter()
+                    .chain(needs.probes)
+                    .map(|request| match request {
+                        ResourceRequest::File(request) => {
+                            ResourceResponse::FileUnavailable(request.key().clone())
+                        }
+                        request => panic!("unexpected native resource: {request:?}"),
+                    })
+                    .collect();
+                session
+                    .provide_resources(responses)
+                    .expect("native resources");
+            }
+        }
+    }
+    loop {
+        match session.stabilize_attempt() {
+            EditorStabilizationAttempt::Complete(output) => return Ok(output),
+            EditorStabilizationAttempt::Error(error) => return Err(error),
+            EditorStabilizationAttempt::NeedResources(needs) => {
+                let responses = needs
+                    .required
+                    .into_iter()
+                    .chain(needs.probes)
+                    .map(|request| match request {
+                        ResourceRequest::File(request) => {
+                            ResourceResponse::FileUnavailable(request.key().clone())
+                        }
+                        request => panic!("unexpected native resource: {request:?}"),
+                    })
+                    .collect();
+                session
+                    .provide_resources(responses)
+                    .expect("native stabilization resources");
+            }
+        }
+    }
+}
+
+fn wasm_stabilize(source: &[u8], limits: Option<FixedPointLimits>) -> JsValue {
+    let options = options("main.tex");
+    if let Some(limits) = limits {
+        let value = Object::new();
+        set(
+            &value,
+            "attempts",
+            &JsValue::from_f64(f64::from(limits.attempts)),
+        );
+        set(
+            &value,
+            "passes",
+            &JsValue::from_f64(f64::from(limits.passes)),
+        );
+        set(&options, "stabilizationLimits", value.as_ref());
+    }
+    let mut session =
+        EditorSession::new(options.unchecked_ref::<JsEditorSessionOptions>()).expect("WASM editor");
+    session
+        .add_user_file("main.tex", &bytes(source))
+        .expect("WASM source");
+    session
+        .add_user_file(
+            "cmr10.tfm",
+            &bytes(include_bytes!(
+                "../../tex-fonts/tests/fixtures/cm/cmr10.tfm"
+            )),
+        )
+        .expect("WASM TFM");
+    loop {
+        let attempt = session.advance().expect("WASM advance");
+        if string_field(attempt.as_ref(), "kind") != "need-resources" {
+            assert!(
+                matches!(
+                    string_field(attempt.as_ref(), "kind").as_str(),
+                    "provisional" | "stable"
+                ),
+                "unexpected WASM advance result"
+            );
+            break;
+        }
+        provide_unavailable_editor_resources(&mut session, &attempt);
+    }
+    loop {
+        let attempt = session.stabilize_attempt().expect("WASM stabilization");
+        if string_field(attempt.as_ref(), "kind") != "need-resources" {
+            return attempt.into();
+        }
+        provide_unavailable_editor_resources(&mut session, &attempt);
+    }
+}
+
+fn provide_unavailable_editor_resources(session: &mut EditorSession, attempt: &JsValue) {
+    let responses = Array::new();
+    for request in Array::from(&field(attempt, "required"))
+        .iter()
+        .chain(Array::from(&field(attempt, "probes")).iter())
+    {
+        let request: Object = request.unchecked_into();
+        let response = Object::new();
+        for name in ["domain", "kind", "name"] {
+            set(&response, name, &field(request.as_ref(), name));
+        }
+        set(&response, "type", &JsValue::from_str("file-unavailable"));
+        responses.push(&response);
+    }
+    session
+        .provide_resources(&responses)
+        .expect("WASM unavailable resources");
+}
+
+fn wasm_generated_files(output: &JsValue) -> Vec<(String, Vec<u8>)> {
+    Array::from(&field(output, "generatedFiles"))
+        .iter()
+        .map(|file| {
+            (
+                string_field(&file, "path"),
+                Uint8Array::new(&field(&file, "bytes")).to_vec(),
+            )
+        })
+        .collect()
+}
+
+fn native_generated_files(output: &TexFixedPointOutput) -> Vec<(String, Vec<u8>)> {
+    output
+        .generated_files
+        .iter()
+        .map(|file| (file.path.to_string_lossy().into_owned(), file.bytes.clone()))
+        .collect()
 }
 
 fn file_response(request: &Object, path: &str, contents: &[u8]) -> Object {

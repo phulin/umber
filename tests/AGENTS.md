@@ -108,6 +108,12 @@ primitive-only preambles that pin plain-format defaults such as `\output`,
 `\maxdepth`, and interline glue whenever plain-format defaults would
 otherwise leak into byte output.
 
+`tests/corpus/stabilization` contains hermetic generated-input fixed-point
+fixtures shared by native and WebAssembly conformance tests. These sources use
+only engine primitives and repository-owned TFM data; the LaTeX-surface case
+defines its compact document-command vocabulary in the source so the default
+test tier does not depend on a live TeX installation or a generated format.
+
 `tests/corpus/tex_exec` contains small reference-observation sources and
 normalized `<case>.expected.ref` outputs used by `tex-exec` crate-internal
 tests for grouping, after-token ordering, magnification diagnostics, and

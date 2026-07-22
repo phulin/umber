@@ -1,0 +1,35 @@
+\let\TeXend\end
+\font\bodyfont=cmr10
+\bodyfont
+\def\documentclass#1{}
+\def\begin#1{}
+\def\end#1{\TeXend}
+\def\sectionref{unknown}
+\def\pagerefvalue{unknown}
+\def\tocvalue{Contents pending}
+\def\newlabel#1#2{\gdef\sectionref{1}\gdef\pagerefvalue{1}}
+\def\contentsline#1#2#3{\gdef\tocvalue{#2}}
+\def\loadreferences{%
+  \openin0=main.aux
+  \ifeof0\else\closein0\input main.aux\fi
+  \openin2=main.toc
+  \ifeof2\else\closein2\input main.toc\fi}
+\def\tableofcontents{\tocvalue\par}
+\def\section#1{\par#1\par
+  \immediate\write3{\string\contentsline{section}{Introduction}{1}}}
+\def\label#1{\immediate\write1{\string\newlabel{sec:intro}{{1}{1}}}}
+\def\ref#1{\sectionref}
+\def\pageref#1{\pagerefvalue}
+\documentclass{article}
+\begin{document}
+\loadreferences
+\immediate\openout1=main.aux
+\immediate\openout3=main.toc
+\tableofcontents
+\section{Introduction}\label{sec:intro}
+Section~\ref{sec:intro} is on page~\pageref{sec:intro}.
+\immediate\closeout1
+\immediate\closeout3
+\shipout\vbox{\hsize=180pt\parindent=0pt\tableofcontents
+  Section~\ref{sec:intro} is on page~\pageref{sec:intro}.\par}
+\end{document}

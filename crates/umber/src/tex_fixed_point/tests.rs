@@ -2,6 +2,12 @@ use crate::{EngineMode, ResourceRequest, ResourceResponse};
 
 use super::*;
 
+const PRIMITIVE_GENERATED: &[u8] =
+    include_bytes!("../../../../tests/corpus/stabilization/primitive-generated.tex");
+const LATEX_REFERENCES: &[u8] =
+    include_bytes!("../../../../tests/corpus/stabilization/latex-references.tex");
+const CMR10_TFM: &[u8] = include_bytes!("../../../tex-fonts/tests/fixtures/cm/cmr10.tfm");
+
 fn options() -> TexFixedPointOptions {
     TexFixedPointOptions {
         tex: SessionOptions {
@@ -10,6 +16,164 @@ fn options() -> TexFixedPointOptions {
         },
         limits: FixedPointLimits::default(),
     }
+}
+
+fn finish(
+    session: &mut TexFixedPointSession,
+) -> Result<Box<TexFixedPointOutput>, TexFixedPointError> {
+    loop {
+        match session.compile_attempt() {
+            TexFixedPointAttempt::Complete(output) => return Ok(output),
+            TexFixedPointAttempt::Error(error) => return Err(error),
+            TexFixedPointAttempt::NeedResources(needs) => {
+                let responses = needs
+                    .required
+                    .into_iter()
+                    .chain(needs.probes)
+                    .map(|request| match request {
+                        ResourceRequest::File(request) => {
+                            ResourceResponse::FileUnavailable(request.key().clone())
+                        }
+                        request => panic!("unexpected non-file resource request: {request:?}"),
+                    })
+                    .collect();
+                session.provide_resources(responses)?;
+            }
+        }
+    }
+}
+
+fn generated<'a>(output: &'a TexFixedPointOutput, path: &str) -> &'a [u8] {
+    output
+        .generated_files
+        .iter()
+        .find(|file| file.path == std::path::Path::new(path))
+        .unwrap_or_else(|| panic!("missing generated file {path}"))
+        .bytes
+        .as_slice()
+}
+
+#[test]
+fn primitive_and_latex_reference_fixtures_reach_cold_identical_fixed_points() {
+    for (engine, source, expected_files) in [
+        (
+            EngineMode::Tex82,
+            PRIMITIVE_GENERATED,
+            &["/job/optional.aux", "/job/state.aux", "/job/unused.aux"][..],
+        ),
+        (
+            EngineMode::Tex82,
+            LATEX_REFERENCES,
+            &["/job/main.aux", "/job/main.toc"][..],
+        ),
+    ] {
+        let case_options = TexFixedPointOptions {
+            tex: SessionOptions {
+                engine,
+                ..SessionOptions::default()
+            },
+            limits: FixedPointLimits::default(),
+        };
+        let run = |options: TexFixedPointOptions| {
+            let mut session = TexFixedPointSession::new(options).expect("session");
+            session
+                .add_user_file("/job/main.tex", source.to_vec())
+                .expect("source");
+            if std::ptr::eq(source, LATEX_REFERENCES) {
+                session
+                    .add_user_file("/job/cmr10.tfm", CMR10_TFM.to_vec())
+                    .expect("TFM");
+            }
+            let output = finish(&mut session)
+                .unwrap_or_else(|error| panic!("{engine:?} fixed point failed: {error:?}"));
+            (session, output)
+        };
+        let (first_session, first) = run(case_options.clone());
+        let (_, cold) = run(case_options);
+
+        assert_eq!(first.as_ref(), cold.as_ref());
+        assert_eq!(first.passes, 2);
+        assert_eq!(
+            first
+                .generated_files
+                .iter()
+                .map(|file| file.path.to_string_lossy().into_owned())
+                .collect::<Vec<_>>(),
+            expected_files
+        );
+        assert_eq!(first.generated_fingerprint.len(), expected_files.len());
+        assert!(!first.tex.dvi.is_empty());
+
+        let ledger = first_session
+            .accepted_input_observations()
+            .expect("accepted observation ledger");
+        for path in expected_files
+            .iter()
+            .filter(|path| !path.ends_with("unused.aux"))
+        {
+            assert!(ledger.observations().iter().any(|item| {
+                item.path().as_str() == *path
+                    && item.outcome() == crate::InputObservationOutcome::Missing
+            }));
+            assert!(ledger.observations().iter().any(|item| {
+                item.path().as_str() == *path
+                    && matches!(item.outcome(), crate::InputObservationOutcome::Present(_))
+            }));
+        }
+    }
+}
+
+#[test]
+fn changed_consumed_input_matches_cold_and_changed_unused_output_is_selected() {
+    let mut session = TexFixedPointSession::new(options()).expect("session");
+    session
+        .add_user_file("/job/main.tex", PRIMITIVE_GENERATED.to_vec())
+        .expect("source");
+    let accepted = finish(&mut session).expect("initial fixed point");
+
+    let mut changed = PRIMITIVE_GENERATED.to_vec();
+    let stable = changed
+        .windows(b"stable".len())
+        .position(|window| window == b"stable")
+        .expect("consumed generated value");
+    changed.splice(stable..stable + b"stable".len(), b"updated".iter().copied());
+    let unused = changed
+        .windows(b"unused-v1".len())
+        .position(|window| window == b"unused-v1")
+        .expect("unused generated value");
+    changed.splice(
+        unused..unused + b"unused-v1".len(),
+        b"unused-v2".iter().copied(),
+    );
+    session
+        .apply_patch(SourcePatch {
+            base_revision: accepted.revision,
+            next_revision: tex_incr::RevisionId::new(2),
+            expected_hash: accepted.content_hash,
+            range: 0..PRIMITIVE_GENERATED.len(),
+            replacement: String::from_utf8(changed.clone()).expect("ASCII fixture"),
+        })
+        .expect("patch");
+    let changed_output = finish(&mut session).expect("changed fixed point");
+
+    let mut cold = TexFixedPointSession::new(options()).expect("cold session");
+    cold.add_user_file("/job/main.tex", changed)
+        .expect("cold source");
+    let cold_output = finish(&mut cold).expect("cold fixed point");
+    assert_eq!(changed_output.tex, cold_output.tex);
+    assert_eq!(changed_output.generated_files, cold_output.generated_files);
+    assert_eq!(
+        changed_output.generated_fingerprint,
+        cold_output.generated_fingerprint
+    );
+    assert_eq!(changed_output.passes, cold_output.passes);
+    assert!(
+        String::from_utf8_lossy(generated(&changed_output, "/job/state.aux")).contains("updated")
+    );
+    assert_eq!(
+        generated(&changed_output, "/job/unused.aux"),
+        b"unused-v2\n"
+    );
 }
 
 #[test]

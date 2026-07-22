@@ -1,0 +1,25 @@
+\openin0=state.aux
+\ifeof0
+  \def\state{cold}
+\else
+  \closein0
+  \input state.aux
+\fi
+\openin2=optional.aux
+\ifeof2
+  \def\optional{missing}
+\else
+  \closein2
+  \input optional.aux
+\fi
+\immediate\openout1=state.aux
+\immediate\write1{\string\def\string\state{stable}}
+\immediate\closeout1
+\immediate\openout3=optional.aux
+\immediate\write3{\string\def\string\optional{present}}
+\immediate\closeout3
+\immediate\openout4=unused.aux
+\immediate\write4{unused-v1}
+\immediate\closeout4
+\shipout\hbox{\state/\optional}
+\end
