@@ -1167,6 +1167,12 @@ impl Stores {
             .with_source_map(self.source_map.stats())
     }
 
+    pub(crate) fn macro_invocation_provenance_stats(
+        &self,
+    ) -> crate::provenance::MacroInvocationProvenanceStats {
+        self.provenance.macro_invocation_stats()
+    }
+
     /// Registers immutable source backing on this aggregate timeline.
     pub(crate) fn register_source(
         &mut self,

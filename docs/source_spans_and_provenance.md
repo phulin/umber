@@ -335,6 +335,16 @@ arguments reuse their call-site origin lists. A replay frame carries one shared
 and parent invocation. Delivering body or argument tokens never allocates
 per-token wrapper records.
 
+Invocation records use fixed-width archived `(packed key, record)` slots in
+1,024-record immutable chunks. A sparse affine run index replaces a
+per-record hash-table entry: an unbranched timeline needs one run, while forks
+add runs only where their process-global key ranges diverge. This storage is
+charged conservatively at 64 retained bytes per invocation, including chunk
+and run-index metadata. The production arena admits at most 1,048,576 such
+charges (64 MiB); after that diagnostic-only allocations degrade to unknown
+without aborting TeX execution. The on-demand macro memory report scans the
+fixed-width records so measurement adds no expansion-path counter writes.
+
 The input stack maintains the active invocation head in O(1). When nested
 frames retire before one delivery attempt completes, it retains only the
 innermost retired head; its parent links preserve the complete outer chain.
@@ -493,6 +503,15 @@ The tagged representation preserves and tests:
   exhaustion, and logical `u64` registration exhaustion;
 - origin-list compatibility with both packed forms;
 - whether snapshot serialization or debug tooling exposes raw origin values.
+
+The explicit `state_budgets` performance tier enforces at most 64 retained
+bytes per macro invocation over a 2,048-call, 32,768-output-token run. Story
+and Gentle conformance runs report and enforce the same ceiling while retaining
+their byte-identical DVI checks. A representative run measured 60 bytes per
+invocation for Story (222 invocations) and 58 for Gentle (14,018 invocations).
+Retained-byte accounting includes archived packed keys, unused tail capacity,
+chunk pointers, and affine key-run capacity; origin-list and source-map storage
+remain separately visible in total provenance bytes.
 
 No raw `OriginId` encoding is a stable artifact format. If provenance is ever
 serialized, it must use an explicit versioned logical representation rather

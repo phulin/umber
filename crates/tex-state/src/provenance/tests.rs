@@ -231,6 +231,40 @@ fn all_mandatory_origin_record_kinds_round_trip() {
 }
 
 #[test]
+fn macro_invocation_accounting_tracks_live_parent_chains_and_rollback() {
+    let mut stores = Universe::new();
+    let empty = stores.intern_token_list(&[]);
+    let definition = stores.intern_macro(MacroMeaning::new(MeaningFlags::EMPTY, empty, empty));
+    let definition_origin = stores.source_origin(SourceId::new(1), 0, 1, 1);
+    let invocation_origin = stores.source_origin(SourceId::new(2), 10, 2, 3);
+    let snapshot = stores.snapshot();
+    let parent = stores.macro_invocation_origin(
+        definition,
+        invocation_origin,
+        definition_origin,
+        OriginId::UNKNOWN,
+    );
+    let child =
+        stores.macro_invocation_origin(definition, invocation_origin, definition_origin, parent);
+
+    let stats = stores.macro_invocation_provenance_stats();
+    assert_eq!(stats.invocations(), 2);
+    assert!(stats.retained_bytes() > 0);
+    assert_eq!(
+        stores.origin(child),
+        OriginRecord::MacroInvocation(MacroInvocationOrigin::new(
+            definition,
+            invocation_origin,
+            definition_origin,
+            parent,
+        ))
+    );
+
+    stores.rollback(&snapshot);
+    assert_eq!(stores.macro_invocation_provenance_stats().invocations(), 0);
+}
+
+#[test]
 fn provenance_capacity_index_guards_reserve_overflow_values() {
     assert_eq!(super::u32_len(u32::MAX as usize), Some(u32::MAX));
     assert_eq!(super::u32_index(u32::MAX as usize - 1), Some(u32::MAX - 1));

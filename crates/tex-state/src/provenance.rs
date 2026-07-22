@@ -56,6 +56,21 @@ impl OriginRecordArchive {
             .saturating_add(self.tail.capacity())
     }
 
+    fn retained_metadata_bytes(&self) -> usize {
+        self.sealed
+            .capacity()
+            .saturating_mul(mem::size_of::<Arc<[ArchivedOriginRecord]>>())
+    }
+
+    fn macro_invocation_records(&self) -> usize {
+        self.sealed
+            .iter()
+            .flat_map(|chunk| chunk.iter())
+            .chain(self.tail.iter())
+            .filter(|(_, record)| matches!(record, OriginRecord::MacroInvocation(_)))
+            .count()
+    }
+
     fn get_slot(&self, slot: usize) -> Option<OriginRecord> {
         let chunk = slot / ORIGIN_RECORD_ARCHIVE_CHUNK;
         let offset = slot % ORIGIN_RECORD_ARCHIVE_CHUNK;
@@ -179,6 +194,7 @@ pub struct ProvenanceStats {
     origin_list_spans: usize,
     origin_list_entries: usize,
     origin_record_capacity: usize,
+    origin_record_metadata_retained_bytes: usize,
     origin_list_span_capacity: usize,
     origin_list_entry_capacity: usize,
     source_regions: usize,
@@ -212,6 +228,7 @@ impl ProvenanceStats {
             origin_list_spans,
             origin_list_entries,
             origin_record_capacity: 0,
+            origin_record_metadata_retained_bytes: 0,
             origin_list_span_capacity: 0,
             origin_list_entry_capacity: 0,
             source_regions: 0,
@@ -226,6 +243,7 @@ impl ProvenanceStats {
         origin_list_spans: usize,
         origin_list_entries: usize,
         origin_record_capacity: usize,
+        origin_record_metadata_retained_bytes: usize,
         origin_list_span_capacity: usize,
         origin_list_entry_capacity: usize,
     ) -> Self {
@@ -234,6 +252,7 @@ impl ProvenanceStats {
             origin_list_spans,
             origin_list_entries,
             origin_record_capacity,
+            origin_record_metadata_retained_bytes,
             origin_list_span_capacity,
             origin_list_entry_capacity,
             source_regions: 0,
@@ -283,7 +302,7 @@ impl ProvenanceStats {
 
     #[must_use]
     pub const fn estimated_bytes(self) -> usize {
-        self.origin_records * mem::size_of::<OriginRecord>()
+        self.origin_records * mem::size_of::<ArchivedOriginRecord>()
             + self.origin_list_spans * mem::size_of::<(u32, u32)>()
             + self.origin_list_entries * mem::size_of::<OriginId>()
             + self.source_map_bytes
@@ -291,10 +310,19 @@ impl ProvenanceStats {
 
     #[must_use]
     pub const fn retained_bytes(self) -> usize {
-        self.origin_record_capacity * mem::size_of::<OriginRecord>()
+        self.origin_record_capacity * mem::size_of::<ArchivedOriginRecord>()
+            + self.origin_record_metadata_retained_bytes
             + self.origin_list_span_capacity * mem::size_of::<(u32, u32)>()
             + self.origin_list_entry_capacity * mem::size_of::<OriginId>()
             + self.source_map_retained_bytes
+    }
+
+    /// Retained bytes charged to the fixed-width origin-record arena and its
+    /// packed-key index, excluding origin lists and source-map storage.
+    #[must_use]
+    pub const fn origin_record_retained_bytes(self) -> usize {
+        self.origin_record_capacity * mem::size_of::<ArchivedOriginRecord>()
+            + self.origin_record_metadata_retained_bytes
     }
 
     #[must_use]
@@ -330,6 +358,9 @@ impl ProvenanceStats {
             origin_record_capacity: self
                 .origin_record_capacity
                 .saturating_sub(baseline.origin_record_capacity),
+            origin_record_metadata_retained_bytes: self
+                .origin_record_metadata_retained_bytes
+                .saturating_sub(baseline.origin_record_metadata_retained_bytes),
             origin_list_span_capacity: self
                 .origin_list_span_capacity
                 .saturating_sub(baseline.origin_list_span_capacity),
@@ -346,6 +377,38 @@ impl ProvenanceStats {
             source_map_retained_bytes: self
                 .source_map_retained_bytes
                 .saturating_sub(baseline.source_map_retained_bytes),
+        }
+    }
+}
+
+/// On-demand retained-memory accounting for macro-invocation provenance.
+///
+/// Computing this report scans fixed-width origin records and is intentionally
+/// separate from [`ProvenanceStats`] so ordinary statistics stay O(1) and
+/// macro expansion does not write profiling-only counters.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct MacroInvocationProvenanceStats {
+    invocations: usize,
+    retained_bytes: usize,
+}
+
+impl MacroInvocationProvenanceStats {
+    #[must_use]
+    pub const fn invocations(self) -> usize {
+        self.invocations
+    }
+
+    #[must_use]
+    pub const fn retained_bytes(self) -> usize {
+        self.retained_bytes
+    }
+
+    #[must_use]
+    pub const fn bytes_per_invocation(self) -> usize {
+        if self.invocations == 0 {
+            0
+        } else {
+            self.retained_bytes.div_ceil(self.invocations)
         }
     }
 }
@@ -834,7 +897,13 @@ impl OriginKeyRuns {
     }
 }
 
-const DEFAULT_ORIGIN_RECORD_LIMIT: usize = 1_048_576;
+/// Conservative logical charge for one record plus its packed key/index
+/// metadata. Straight-line macro workloads currently retain less than this;
+/// using the charge for admission keeps branch-heavy key runs within the same
+/// documented aggregate budget.
+const ORIGIN_RECORD_BUDGET_CHARGE: usize = 64;
+const ORIGIN_RECORD_BUDGET_BYTES: usize = 64 * 1024 * 1024;
+const DEFAULT_ORIGIN_RECORD_LIMIT: usize = ORIGIN_RECORD_BUDGET_BYTES / ORIGIN_RECORD_BUDGET_CHARGE;
 const DEFAULT_ORIGIN_LIST_SPAN_LIMIT: usize = 262_144;
 const DEFAULT_ORIGIN_LIST_ENTRY_LIMIT: usize = 2_097_152;
 
@@ -1128,9 +1197,29 @@ impl ProvenanceStore {
             self.spans.len(),
             self.origins.len(),
             self.records.capacity(),
+            self.records.retained_metadata_bytes()
+                + self.record_keys.runs.capacity() * mem::size_of::<OriginKeyRun>(),
             self.spans.capacity(),
             self.origins.capacity(),
         )
+    }
+
+    /// Scans live fixed-width records to report the macro-invocation share of
+    /// retained arena and packed-key storage.
+    #[must_use]
+    pub(crate) fn macro_invocation_stats(&self) -> MacroInvocationProvenanceStats {
+        let invocations = self.records.macro_invocation_records();
+        let records = self.records.len();
+        let record_bytes = self.stats().origin_record_retained_bytes();
+        let retained_bytes = if records == 0 {
+            0
+        } else {
+            record_bytes.saturating_mul(invocations).div_ceil(records)
+        };
+        MacroInvocationProvenanceStats {
+            invocations,
+            retained_bytes,
+        }
     }
 
     /// Takes a rollback watermark for aggregate snapshots.

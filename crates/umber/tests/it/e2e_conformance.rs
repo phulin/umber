@@ -6,6 +6,8 @@ use parity_harness::{compare_dvi_files, run_named_fixture_document};
 use tex_exec::{ExecutionContext, FontResolver};
 use tex_expand::InputResolver;
 use tex_lex::{InputStack, WorldInput};
+use tex_state::provenance::MacroInvocationProvenanceStats;
+use tex_state::provenance::ProvenanceStats;
 use tex_state::{InputReadState, JobClock, Universe, World};
 
 use umber::{EngineMode, EngineSession, dvi_from_page_plans};
@@ -35,6 +37,8 @@ fn target_dir(repo_root: &Path) -> PathBuf {
 struct InProcessRun {
     dvi: Option<Vec<u8>>,
     format: Option<Vec<u8>>,
+    provenance: ProvenanceStats,
+    macro_provenance: MacroInvocationProvenanceStats,
 }
 
 struct InProcessInputResolver {
@@ -191,7 +195,14 @@ fn run_file_in_process(
     } else {
         None
     };
-    Ok(InProcessRun { dvi, format })
+    let provenance = stores.provenance_stats();
+    let macro_provenance = stores.macro_invocation_provenance_stats();
+    Ok(InProcessRun {
+        dvi,
+        format,
+        provenance,
+        macro_provenance,
+    })
 }
 
 fn plain_inputs_available(root: &Path, document: &str, fixture: &Path) -> bool {
@@ -214,8 +225,24 @@ fn run_plain_fixture_case(document: &str, fixture_name: &str) {
         return;
     }
     run_named_fixture_document(&root, document, &fixture, |path| {
-        run_file_in_process(path, None, EngineMode::Tex82)?
-            .dvi
+        let run = run_file_in_process(path, None, EngineMode::Tex82)?;
+        let macro_stats = run.macro_provenance;
+        let invocations = macro_stats.invocations();
+        if invocations == 0 {
+            return Err(format!("{document} executed no macro invocations"));
+        }
+        let macro_bytes = macro_stats.retained_bytes();
+        let bytes_per_invocation = macro_stats.bytes_per_invocation();
+        eprintln!(
+            "{fixture_name} provenance: invocations={invocations} macro_retained_bytes={macro_bytes} bytes_per_invocation={bytes_per_invocation} total_retained_bytes={}",
+            run.provenance.retained_bytes(),
+        );
+        if bytes_per_invocation > 64 {
+            return Err(format!(
+                "{document} macro provenance retained {bytes_per_invocation} bytes/invocation (budget: 64)"
+            ));
+        }
+        run.dvi
             .ok_or_else(|| "Umber did not produce DVI".to_owned())
     })
     .unwrap_or_else(|error| panic!("{error:#}"));

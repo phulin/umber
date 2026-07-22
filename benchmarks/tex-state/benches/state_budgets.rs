@@ -32,6 +32,7 @@ const CONTROL_SEQUENCE_LINE: &str = "\\alpha\\beta\\gamma\\delta\\epsilon\\zeta\
 const LONG_LINE_SCALARS: usize = 65_536;
 const MACRO_CALLS: usize = 2_048;
 const MACRO_BODY_LEN: usize = 16;
+const MACRO_PROVENANCE_RETAINED_BYTES_PER_INVOCATION_BUDGET: usize = 64;
 const SCANNER_REPETITIONS: usize = 1_024;
 const TRANSIENT_BOX_OVERWRITES: usize = 20_000;
 const DEEP_BOX_LOCALITY_JOURNAL: usize = 20_000;
@@ -999,6 +1000,7 @@ fn provenance_expansion(c: &mut Criterion) {
 }
 
 fn provenance_memory_invariants(c: &mut Criterion) {
+    assert_macro_long_run_budget();
     if std::env::var_os("UMBER_PROVENANCE_REPORT").is_some() {
         print_provenance_report();
     }
@@ -1296,6 +1298,22 @@ fn macro_long_run_growth() -> ProvenanceStats {
     let count = drain_expansion(&mut stores, &mut input);
     assert_eq!(count, MACRO_CALLS * MACRO_BODY_LEN);
     stores.provenance_stats().saturating_sub(baseline)
+}
+
+fn assert_macro_long_run_budget() {
+    let (mut stores, mut input, _) = macro_heavy_case();
+    let count = drain_expansion(&mut stores, &mut input);
+    assert_eq!(count, MACRO_CALLS * MACRO_BODY_LEN);
+    let macro_stats = stores.macro_invocation_provenance_stats();
+    assert_eq!(macro_stats.invocations(), MACRO_CALLS);
+    assert!(
+        macro_stats.retained_bytes()
+            <= MACRO_CALLS * MACRO_PROVENANCE_RETAINED_BYTES_PER_INVOCATION_BUDGET,
+        "macro provenance retained {} bytes for {} invocations (budget: {} bytes/invocation)",
+        macro_stats.retained_bytes(),
+        MACRO_CALLS,
+        MACRO_PROVENANCE_RETAINED_BYTES_PER_INVOCATION_BUDGET,
+    );
 }
 
 fn discarded_fork_growth_after_rollback() -> ProvenanceStats {

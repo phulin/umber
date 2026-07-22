@@ -45,10 +45,10 @@ use crate::pdf::{
     PdfRawObjectId, PdfRawObjectInitializeError, PdfRawObjectRecord, PdfState, PdfStateCursor,
     PdfStateSnapshot, PdfTokenParameter,
 };
-use crate::provenance::ProvenanceStats;
 use crate::provenance::{
     InsertedOriginKind, OriginListBuilder, OriginRecord, SynthesizedOriginKind, SyntheticOriginKind,
 };
+use crate::provenance::{MacroInvocationProvenanceStats, ProvenanceStats};
 use crate::scaled::Scaled;
 use crate::source_map::{
     GeneratedSource, RegisteredSource, SourceBacking, SourceDescriptor, SourceMapError, SourcePos,
@@ -4259,6 +4259,13 @@ impl Universe {
     #[must_use]
     pub fn provenance_stats(&self) -> ProvenanceStats {
         self.stores.provenance_stats()
+    }
+
+    /// Computes on-demand retained-memory accounting for live macro
+    /// invocation provenance without adding expansion-path counters.
+    #[must_use]
+    pub fn macro_invocation_provenance_stats(&self) -> MacroInvocationProvenanceStats {
+        self.stores.macro_invocation_provenance_stats()
     }
 
     /// Registers a source backing after validating any World identity.

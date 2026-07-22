@@ -129,6 +129,19 @@ default cargo-test tier because its workload deliberately materializes large
 input, page, mode, stream, hyphenation, provenance, and Unicode code-table
 state.
 
+Macro-invocation provenance has an assertion-bearing state performance tier:
+
+```bash
+cargo bench --manifest-path benchmarks/tex-state/Cargo.toml \
+  --bench state_budgets provenance_memory/macro_long_run_arena_growth
+```
+
+Before timing, the benchmark expands 2,048 calls with 16-token bodies and
+fails above 64 retained bytes per invocation. The charge includes archived
+packed keys plus chunk and affine key-index metadata. Production admits at
+most 1,048,576 record charges, a 64 MiB logical provenance-record budget;
+excess diagnostic history degrades to unknown rather than aborting execution.
+
 Classic BibTeX has its own release-only performance and persistence tier:
 
 ```bash
@@ -327,6 +340,12 @@ oracle. Each document names a manifest-pinned
 `format_source`; the harness stages that source, the document, hyphenation
 input, and required TFMs, then feeds Umber a wrapper that inputs the format
 source before the document through the ordinary input path.
+
+The Story and Gentle callbacks also scan fixed-width provenance records after
+execution, print invocation count, macro-attributed retained bytes,
+bytes-per-invocation, and total provenance retention, and fail above the same
+64-byte per-invocation budget as `state_budgets`. This scan is outside macro
+expansion and therefore does not require profiling-only hot-path counters.
 
 This follows TeX82's ordinary `start_input` stack behavior (sections 23 and
 29). Format dumping is a terminal INITEX cleanup operation (sections 46, 50,
