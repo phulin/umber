@@ -1,14 +1,14 @@
 # Coordinate-Identical HTML Output
 
-Status: implementation contract for artifact schema 21 and HTML schema 1,
+Status: implementation contract for artifact schema 22 and HTML schema 1,
 plus the linear OpenType completion contract below.
 
 HTML is a downstream view of committed `PageArtifact` values. It is not a page
 builder and never observes `Universe`, node handles, or mutable font state. DVI
 remains the glyph-position conformance driver. HTML preserves the TeX page,
 box, rule, leader, special-anchor, and text-container coordinates described
-below while delegating glyph advances, shaping, ligatures, and kerning inside a
-text run to the browser.
+below. Rustybuzz owns layout shaping and line breaking; the browser rasterizes
+the identical retained font instance inside fixed positioned runs.
 
 The next schema revision keeps this fixed-page model, makes
 `OpenTypePreferred` the modern font authority, and adds engine-positioned
@@ -100,8 +100,10 @@ splits at math boundaries. Mixed text/rules, shifted boxes, manual boxes, and
 direction changes therefore retain exact anchors without pretending that a
 whole TeX line has one semantic string.
 
-The browser policy is `font-kerning: normal`, `font-variant-ligatures:
-common-ligatures`, `font-synthesis: none`, and `font-optical-sizing: none`.
+Artifact schema 22 emits the selected integer-valued
+`font-feature-settings`, signed 16.16 `font-variation-settings`, direction,
+script metadata, and BCP-47 language on each OpenType run. The browser policy
+also keeps `font-synthesis: none` and `font-optical-sizing: none`.
 The resolved face name is content-derived and is the only member of the CSS
 font-family list. A load failure is fatal in parity mode; platform fallback is
 never named. Artifact text is already in shipped visual order, so schema 1
@@ -147,10 +149,11 @@ not participate in layout.
 
 ## Font and asset contract
 
-Artifact schema 21 records the selected layout policy, explicit mapping
+Artifact schema 22 records the selected layout policy, explicit mapping
 fallback result, encoding-map version and identity, fontdimen-synthesis
-version, selected OpenType program, transport-object,
-and instance identities beside the classic TeX metric identity. A downstream
+version, selected OpenType program, transport-object, collection face,
+default/named/explicit resolved variation, feature policy, direction, script,
+language, and instance identities beside the classic TeX metric identity. A downstream
 `HtmlFontResolver` is only an asset-access adapter: host-neutral sessions bind
 it to the already validated and retained resource rather than performing a
 second acquisition. Legacy native TFM-only artifacts may still use an explicit
@@ -160,7 +163,7 @@ driver binding during migration. The resulting `WebFont` contains:
 - WOFF2 bytes and their SHA-256 content identity;
 - one total mapping from every used 8-bit TeX code to Unicode text;
 - a redistribution/provenance string and an affirmative embed license; and
-- fixed OpenType feature and variation settings.
+- fixed OpenType feature, variation, direction, script, and language settings.
 
 Bindings are keyed by the complete TeX and OpenType identities, not by
 basename. Duplicate, missing, corrupt, unlicensed, or incomplete bindings are

@@ -1,6 +1,6 @@
 # OpenType Font Resources for Native and Web Rendering
 
-Status: mapped TFM text policy implemented; later instance/bidi coverage remains. This document
+Status: mapped TFM text and advanced OpenType instances implemented; bidi coverage remains. This document
 defines the font-resource architecture shared by native and WebAssembly
 execution. OpenType font data is the modern source of truth for layout and
 rendering. Native sessions accept OpenType or TrueType SFNT containers;
@@ -155,10 +155,27 @@ representation to identify the same logical font program while retaining
 different transport digests. A distribution that claims such equivalence must
 publish the expected program identity, and Umber verifies it after decoding.
 
-Font instances add the selected size, face index, variation coordinates,
-feature policy, synthetic-style prohibition, and writing direction to the
-program identity. Artifacts record the complete instance identity required to
-reproduce their font selection.
+Font instances add the selected size, face index, default/named/explicit
+variation selection, resolved coordinates, versioned integer-valued feature
+overrides, synthetic-style and optical-sizing prohibition, writing direction,
+script, and BCP-47 language to the program identity. Artifacts record those
+inputs, not only their digest, so HTML installs the same instance.
+
+`fvar` parsing is bounded by the font limits. Axis records retain exact signed
+16.16 minimum/default/maximum values, hidden flags, and name identifiers;
+named instances retain their subfamily and optional PostScript name identifiers
+and are resolved to exact coordinates before metrics, cmap projection, and
+rustybuzz face construction. Unknown axes, named instances, duplicate tags or
+names, out-of-range coordinates, malformed record sizes, and oversized axis or
+collection counts fail before publication. Default selection does not enable
+implicit `opsz`; optical sizing and synthetic bold/italic remain disabled.
+
+Feature policy version 1 preserves rustybuzz's required and script-default
+shaping behavior and applies canonical, sorted global OpenType overrides with
+full unsigned integer values (zero disables; larger values select alternates).
+A requested feature absent from the selected script/language system is
+explicitly ignored under this version, matching HarfBuzz behavior. Changing
+that rule requires a policy-version and instance-identity change.
 
 ## Resource protocol
 
@@ -181,6 +198,9 @@ pub struct FontRequestKey {
     pub face_index: u32,
     pub variation: VariationSelection,
     pub feature_policy: FontFeaturePolicy,
+    pub direction: WritingDirection,
+    pub script: Option<OpenTypeTag>,
+    pub language: Option<FontLanguage>,
 }
 
 pub enum ResourceResponse {
@@ -293,7 +313,7 @@ Mapping discovery waits until the TFM bytes are available, because basename is
 not identity. The matching WOFF2 is then acquired through the ordinary typed
 font request. Mapping entries feed rustybuzz; cluster advances are projected
 back onto the original byte-code nodes, so DVI retains legal byte opcodes while
-using the same OpenType-derived geometry as HTML. Artifact schema 21 records
+using the same OpenType-derived geometry as HTML. Artifact schema 22 records
 the policy, explicit fallback result, map version and identity, OpenType
 program/object/instance identities, and fontdimen-synthesis version.
 
@@ -515,14 +535,18 @@ client mappings for TFM-style text selections, uses the WOFF2's Unicode map,
 fontdimens, and rustybuzz metrics for layout, and retain `ClassicTfmExact` for
 old documents, virtual fonts, and explicit parity work.
 
-### Next 3: advanced OpenType instances and features
+### Completed: advanced OpenType instances and features
 
 Tracked by `umber2-y2ei.8`; depends on the mapped-text policy.
 
-Add collections, variation axes, named/default instances, complete feature and
-script/language identity, mark positioning coverage, resource sharing across
-instances, and an optional local `hb-shape` fixture cross-check. The engine
-continues to own layout shaping.
+Collections, bounded variation axes, named/default/coordinate instances,
+integer feature values, script/language/direction identity, mark positioning,
+and exact HTML CSS installation are implemented. Sibling selections reuse one
+retained transport object and decoded SFNT allocation while keeping separate
+metrics, cmap, shaping faces, and instance identities. The optional
+`scripts/check-hb-shape-fixtures.sh` diagnostic compares committed mark and
+complex-shaping fixtures with local C HarfBuzz, reports diffs, and skips
+successfully when `hb-shape` is unavailable; it is not a build or CI input.
 
 ### Next 4: bidi and complex scripts
 

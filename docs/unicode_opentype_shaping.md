@@ -1,6 +1,6 @@
 # Native Unicode and OpenType/TrueType Shaping
 
-Status: text shaping and mapped TFM text implemented; remaining work is tracked in the
+Status: text shaping, mapped TFM text, and advanced instances implemented; remaining work is tracked in the
 single linear `umber2-y2ei` plan. This document defines the engine-side shaping
 architecture used by OpenType-only fonts and by TFM-style text selections that
 the modern layout policy maps to OpenType resources.
@@ -124,6 +124,14 @@ pub enum FontMetricsSource {
     OpenType(OpenTypeFontShaped), // validated cmap/metrics; cached face follows in Stage 2
 }
 ```
+
+The advanced instance stage adds an explicit-context entry point carrying a
+validated ISO 15924 script tag and canonical BCP-47 language. These inputs,
+direction, face, resolved default/named/explicit variation coordinates, and
+integer feature overrides are all instance-identity inputs. When script is
+omitted the original deterministic Unicode-script inference remains. Missing
+features follow versioned policy 1 and are explicitly ignored by rustybuzz;
+malformed selection inputs fail before shaping.
 
 During Stage 1, `OpenTypeFontShaped` also retains the accompanying TFM tables
 for classic-only lig/kern, math, and font-parameter enquiries. Character
@@ -310,7 +318,10 @@ outside the linear HTML epic and does not block its release.
    (`umber2-y2ei.12`): exact TFM-identity bundle selection, explicit Unicode
    mapping, cluster-advance layout, synthesized text fontdimens, retained
    WOFF2 HTML reuse, and identity-bearing classic fallback.
-7. Advanced instances, variations, and feature policy (`umber2-y2ei.8`).
+7. **Implemented.** Advanced instances, variations, and feature policy
+   (`umber2-y2ei.8`): collections, bounded `fvar` axes and named instances,
+   integer feature overrides, script/language identity, shared immutable
+   program storage, HTML instance CSS, and optional local `hb-shape` checks.
 8. Complex-script and bidi reordering (`umber2-y2ei.11.7`).
 9. Full native/WASM/browser coverage (`umber2-y2ei.7`).
 10. Superseded-path removal and release review (`umber2-y2ei.10`).
