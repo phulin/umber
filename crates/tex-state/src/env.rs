@@ -42,7 +42,7 @@ const SEGMENT_MASK: u32 = (SEGMENT_LEN as u32) - 1;
 const FONT_DIMEN_BITS: u32 = 17;
 const MATH_FAMILY_FONT_COUNT: usize = 3 * MATH_FAMILY_COUNT as usize;
 
-type MeaningSegment = Box<[u64; SEGMENT_LEN]>;
+type MeaningSegment = Box<[Meaning]>;
 type StampSegment = Box<[Epoch; SEGMENT_LEN]>;
 
 #[derive(Clone, Copy, Debug)]
@@ -290,10 +290,7 @@ impl Env {
     /// Returns the meaning at a dense interner slot.
     #[must_use]
     pub(crate) fn get_meaning_slot(&self, slot: u32) -> Meaning {
-        let Some(word) = self.meaning_word(slot) else {
-            return Meaning::Undefined;
-        };
-        Meaning::decode_stored(word)
+        self.meaning_value(slot).unwrap_or(Meaning::Undefined)
     }
 
     /// Sets the local meaning for a symbol validated by the owning store.
@@ -310,7 +307,7 @@ impl Env {
 
     /// Sets a meaning by dense interner slot after aggregate validation.
     pub(crate) fn set_meaning_slot(&mut self, slot: u32, meaning: Meaning, global: bool) {
-        self.set_meaning_word(slot, meaning.encode(), global);
+        self.set_meaning_value(slot, meaning, global);
     }
 
     /// Test-only local meaning write for isolated `Env` barrier coverage.
