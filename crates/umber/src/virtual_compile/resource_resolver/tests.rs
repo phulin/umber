@@ -127,3 +127,39 @@ fn failure_and_cancellation_never_become_authoritative_absence() {
         Err(CompositeResolverError::Cancelled)
     );
 }
+
+#[test]
+fn pk_identity_retains_name_dpi_and_mode_across_provider_misses() {
+    let ljfour = ResourceRequest::PkFont(tex_fonts::PdfPkFontRequest::new(
+        b"cmr10".to_vec(),
+        600,
+        b"ljfour".to_vec(),
+    ));
+    let cx = ResourceRequest::PkFont(tex_fonts::PdfPkFontRequest::new(
+        b"cmr10".to_vec(),
+        600,
+        b"cx".to_vec(),
+    ));
+    let mut resolver = CompositeResourceResolver::new(vec![provider(
+        "client-vfs",
+        Ok(vec![
+            ProviderResponse::Miss(ljfour.clone()),
+            ProviderResponse::Miss(cx.clone()),
+        ]),
+    )]);
+    let responses = resolver
+        .resolve(
+            &NeedResources {
+                required: vec![ljfour, cx],
+                probes: Vec::new(),
+                prefetch_hints: Vec::new(),
+            },
+            || false,
+        )
+        .expect("typed misses");
+    assert!(matches!(
+        responses.as_slice(),
+        [ResourceResponse::PkFontUnavailable(first), ResourceResponse::PkFontUnavailable(second)]
+            if first.mode() == b"ljfour" && second.mode() == b"cx"
+    ));
+}

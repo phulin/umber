@@ -4,9 +4,10 @@ use umber::{
     BibliographyProjectOptions, EngineMode, FeatureSetting, FileContentId, FileKind, FileRequest,
     FileRequestKey, FontContainer, FontFeaturePolicy, FontLanguage, FontObjectIdentity,
     FontProgramIdentity, FontRequestKey, LatexProjectLimits, LatexProjectOptions,
-    LegacyFontMapping, OpenTypeTag, OutputCapability, OutputCapabilitySet, ResolvedFile,
-    ResolvedFont, ResourceDomain, ResourceRequest, ResourceResponse, SessionLimits, SessionOptions,
-    SourcePatch, VariationCoordinate, VariationSelection, WritingDirection,
+    LegacyFontMapping, OpenTypeTag, OutputCapability, OutputCapabilitySet, PdfPkFontRequest,
+    ResolvedFile, ResolvedFont, ResolvedPkFont, ResourceDomain, ResourceRequest, ResourceResponse,
+    SessionLimits, SessionOptions, SourcePatch, VariationCoordinate, VariationSelection,
+    WritingDirection,
 };
 use wasm_bindgen::{JsCast, JsValue};
 
@@ -306,12 +307,29 @@ pub(crate) fn parse_resource_responses(value: &JsValue) -> Result<Vec<ResourceRe
                 "font-unavailable" => Ok(ResourceResponse::FontUnavailable(
                     parse_font_request_key(&response)?,
                 )),
-                _ => Err(js_error(
-                    "resource response type must be 'file', 'file-unavailable', 'font', or 'font-unavailable'",
+                "pk-font" => Ok(ResourceResponse::PkFont(ResolvedPkFont {
+                    request: parse_pk_font_request(&response)?,
+                    virtual_path: required_string(&response, "virtualPath")?,
+                    bytes: required_bytes(&response, "bytes")?,
+                    expected_sha256: optional_string(&response, "expectedSha256")?
+                        .map(|digest| parse_digest(&digest))
+                        .transpose()?,
+                })),
+                "pk-font-unavailable" => Ok(ResourceResponse::PkFontUnavailable(
+                    parse_pk_font_request(&response)?,
                 )),
+                _ => Err(js_error("resource response type is not recognized")),
             }
         })
         .collect()
+}
+
+fn parse_pk_font_request(value: &JsValue) -> Result<PdfPkFontRequest, JsValue> {
+    Ok(PdfPkFontRequest::new(
+        required_bytes(value, "texName")?,
+        integer::<u32>(value, "dpi")?,
+        required_bytes(value, "mode")?,
+    ))
 }
 
 fn parse_resolved_font(value: &JsValue) -> Result<ResolvedFont, JsValue> {

@@ -199,6 +199,7 @@ fn same_request(left: &ResourceRequest, right: &ResourceRequest) -> bool {
     match (left, right) {
         (ResourceRequest::File(left), ResourceRequest::File(right)) => left.key() == right.key(),
         (ResourceRequest::Font(left), ResourceRequest::Font(right)) => left.key == right.key,
+        (ResourceRequest::PkFont(left), ResourceRequest::PkFont(right)) => left == right,
         _ => false,
     }
 }
@@ -217,6 +218,12 @@ fn response_matches_request(response: &ResourceResponse, request: &ResourceReque
         (ResourceResponse::FontUnavailable(key), ResourceRequest::Font(request)) => {
             key == &request.key
         }
+        (ResourceResponse::PkFont(font), ResourceRequest::PkFont(request)) => {
+            &font.request == request
+        }
+        (ResourceResponse::PkFontUnavailable(key), ResourceRequest::PkFont(request)) => {
+            key == request
+        }
         _ => false,
     }
 }
@@ -225,6 +232,7 @@ fn unavailable(request: ResourceRequest) -> ResourceResponse {
     match request {
         ResourceRequest::File(request) => ResourceResponse::FileUnavailable(request.key().clone()),
         ResourceRequest::Font(request) => ResourceResponse::FontUnavailable(request.key),
+        ResourceRequest::PkFont(request) => ResourceResponse::PkFontUnavailable(request),
     }
 }
 

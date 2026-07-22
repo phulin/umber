@@ -1,3 +1,4 @@
+use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::path::Path;
@@ -7,7 +8,7 @@ use std::time::Instant;
 
 use tex_fonts::{
     AcceptedFontContainers, FontLayoutPolicy, FontLimits, FontMappingFallbackPolicy, FontRequest,
-    FontRequestKey, OpenTypeFont, ResolvedFont,
+    FontRequestKey, OpenTypeFont, PdfPkFontRequest, ResolvedFont,
 };
 use tex_out::html::{HtmlFontAsset, HtmlFontAssets, HtmlFontKey};
 use tex_state::{ContentHash, JobClock, Universe, World};
@@ -51,6 +52,15 @@ pub use umber_vfs::{
 pub enum ResourceRequest {
     File(FileRequest),
     Font(FontRequest),
+    PkFont(PdfPkFontRequest),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ResolvedPkFont {
+    pub request: PdfPkFontRequest,
+    pub virtual_path: String,
+    pub bytes: Vec<u8>,
+    pub expected_sha256: Option<[u8; 32]>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -59,6 +69,8 @@ pub enum ResourceResponse {
     FileUnavailable(FileRequestKey),
     Font(ResolvedFont),
     FontUnavailable(FontRequestKey),
+    PkFont(ResolvedPkFont),
+    PkFontUnavailable(PdfPkFontRequest),
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -559,6 +571,7 @@ struct FontResponseFingerprint {
 enum ResourceRequestKey {
     File(FileRequestKey),
     Font(FontRequestKey),
+    PkFont(PdfPkFontRequest),
 }
 
 pub struct VirtualCompileSession {
@@ -577,6 +590,8 @@ pub struct VirtualCompileSession {
     font_requests: BTreeMap<FontRequestKey, FontRequest>,
     resolved_fonts: BTreeMap<FontRequestKey, OpenTypeFont>,
     unavailable_fonts: BTreeSet<FontRequestKey>,
+    resolved_pk_fonts: BTreeMap<PdfPkFontRequest, ResolvedPkFont>,
+    unavailable_pk_fonts: BTreeSet<PdfPkFontRequest>,
     font_responses: BTreeMap<FontRequestKey, FontResponseFingerprint>,
     accepted_font_containers: AcceptedFontContainers,
     font_layout_policy: FontLayoutPolicy,
@@ -747,6 +762,8 @@ impl VirtualCompileSession {
             font_requests: BTreeMap::new(),
             resolved_fonts: BTreeMap::new(),
             unavailable_fonts: BTreeSet::new(),
+            resolved_pk_fonts: BTreeMap::new(),
+            unavailable_pk_fonts: BTreeSet::new(),
             font_responses: BTreeMap::new(),
             accepted_font_containers: options.accepted_font_containers,
             font_layout_policy: options.font_layout_policy,
@@ -1044,12 +1061,17 @@ impl VirtualCompileSession {
         let mut staged_fonts = self.resolved_fonts.clone();
         let mut staged_unavailable_fonts = self.unavailable_fonts.clone();
         let mut staged_font_responses = self.font_responses.clone();
+        let mut staged_pk_fonts = self.resolved_pk_fonts.clone();
+        let mut staged_unavailable_pk_fonts = self.unavailable_pk_fonts.clone();
         let original_files = std::mem::replace(&mut self.files, staged_files);
         let original_fonts = std::mem::replace(&mut self.resolved_fonts, staged_fonts);
         let original_unavailable_fonts =
             std::mem::replace(&mut self.unavailable_fonts, staged_unavailable_fonts);
         let original_font_responses =
             std::mem::replace(&mut self.font_responses, staged_font_responses);
+        let original_pk_fonts = std::mem::replace(&mut self.resolved_pk_fonts, staged_pk_fonts);
+        let original_unavailable_pk_fonts =
+            std::mem::replace(&mut self.unavailable_pk_fonts, staged_unavailable_pk_fonts);
         let original_font_cached_bytes = self.font_cached_bytes;
         let result = responses
             .into_iter()
@@ -1064,6 +1086,10 @@ impl VirtualCompileSession {
                 ResourceResponse::FontUnavailable(request) => {
                     self.provide_unavailable_font(request)
                 }
+                ResourceResponse::PkFont(font) => self.provide_resolved_pk_font_inner(font),
+                ResourceResponse::PkFontUnavailable(request) => {
+                    self.provide_unavailable_pk_font(request)
+                }
             });
         if result.is_err() {
             staged_files = std::mem::replace(&mut self.files, original_files);
@@ -1072,11 +1098,18 @@ impl VirtualCompileSession {
                 std::mem::replace(&mut self.unavailable_fonts, original_unavailable_fonts);
             staged_font_responses =
                 std::mem::replace(&mut self.font_responses, original_font_responses);
+            staged_pk_fonts = std::mem::replace(&mut self.resolved_pk_fonts, original_pk_fonts);
+            staged_unavailable_pk_fonts = std::mem::replace(
+                &mut self.unavailable_pk_fonts,
+                original_unavailable_pk_fonts,
+            );
             drop((
                 staged_files,
                 staged_fonts,
                 staged_unavailable_fonts,
                 staged_font_responses,
+                staged_pk_fonts,
+                staged_unavailable_pk_fonts,
             ));
             self.font_cached_bytes = original_font_cached_bytes;
         } else {
@@ -1265,6 +1298,106 @@ impl VirtualCompileSession {
             ));
         }
         self.unavailable_fonts.insert(key);
+        Ok(())
+    }
+
+    fn provide_resolved_pk_font_inner(
+        &mut self,
+        response: ResolvedPkFont,
+    ) -> Result<(), CompileError> {
+        let key = ResourceRequestKey::PkFont(response.request.clone());
+        if !self
+            .awaiting
+            .as_ref()
+            .is_some_and(|awaiting| awaiting.contains(&key))
+        {
+            return Err(CompileError::UnexpectedResourceResponse(format!(
+                "PK font {}",
+                String::from_utf8_lossy(&response.request.logical_name())
+            )));
+        }
+        if self.unavailable_pk_fonts.contains(&response.request) {
+            return Err(CompileError::ConflictingResolvedBinding(format!(
+                "PK font {}",
+                String::from_utf8_lossy(&response.request.logical_name())
+            )));
+        }
+        VirtualPath::distribution(&response.virtual_path).map_err(|error| {
+            CompileError::InvalidVirtualPath {
+                path: response.virtual_path.clone(),
+                message: error.to_string(),
+            }
+        })?;
+        check_limit(
+            "one PK font resource bytes",
+            response.bytes.len(),
+            self.limits.one_file_bytes,
+        )?;
+        let digest: [u8; 32] = Sha256::digest(&response.bytes).into();
+        if response
+            .expected_sha256
+            .is_some_and(|expected| expected != digest)
+        {
+            return Err(CompileError::Font(format!(
+                "PK font {} content digest does not match",
+                String::from_utf8_lossy(&response.request.logical_name())
+            )));
+        }
+        tex_fonts::PdfPkFont::parse(&response.bytes)
+            .map_err(|error| CompileError::Font(error.to_string()))?;
+        if let Some(existing) = self.resolved_pk_fonts.get(&response.request) {
+            if existing == &response {
+                return Ok(());
+            }
+            return Err(CompileError::ConflictingResolvedBinding(format!(
+                "PK font {}",
+                String::from_utf8_lossy(&response.request.logical_name())
+            )));
+        }
+        let attempted = self
+            .cached_file_bytes()
+            .checked_add(response.bytes.len())
+            .ok_or(CompileError::LimitExceeded {
+                resource: "cached resource bytes",
+                limit: self.limits.cached_file_bytes,
+                attempted: usize::MAX,
+            })?;
+        check_limit(
+            "cached resource bytes",
+            attempted,
+            self.limits.cached_file_bytes,
+        )?;
+        self.font_cached_bytes = self
+            .font_cached_bytes
+            .checked_add(response.bytes.len())
+            .expect("combined cache limit checked overflow");
+        self.resolved_pk_fonts
+            .insert(response.request.clone(), response);
+        Ok(())
+    }
+
+    fn provide_unavailable_pk_font(
+        &mut self,
+        request: PdfPkFontRequest,
+    ) -> Result<(), CompileError> {
+        let key = ResourceRequestKey::PkFont(request.clone());
+        if !self
+            .awaiting
+            .as_ref()
+            .is_some_and(|awaiting| awaiting.contains(&key))
+        {
+            return Err(CompileError::UnexpectedResourceResponse(format!(
+                "PK font {}",
+                String::from_utf8_lossy(&request.logical_name())
+            )));
+        }
+        if self.resolved_pk_fonts.contains_key(&request) {
+            return Err(CompileError::ConflictingResolvedBinding(format!(
+                "PK font {}",
+                String::from_utf8_lossy(&request.logical_name())
+            )));
+        }
+        self.unavailable_pk_fonts.insert(request);
         Ok(())
     }
 
@@ -1566,6 +1699,9 @@ impl VirtualCompileSession {
                         ResourceRequest::Font(request) => {
                             ResourceRequestKey::Font(request.key.clone())
                         }
+                        ResourceRequest::PkFont(request) => {
+                            ResourceRequestKey::PkFont(request.clone())
+                        }
                     })
                     .collect::<BTreeSet<_>>();
                 hints
@@ -1590,6 +1726,14 @@ impl VirtualCompileSession {
                                     return false;
                                 }
                                 ResourceRequestKey::Font(request.key.clone())
+                            }
+                            ResourceRequest::PkFont(request) => {
+                                if self.resolved_pk_fonts.contains_key(request)
+                                    || self.unavailable_pk_fonts.contains(request)
+                                {
+                                    return false;
+                                }
+                                ResourceRequestKey::PkFont(request.clone())
                             }
                         };
                         !required_keys.contains(&key)
@@ -1663,15 +1807,15 @@ impl VirtualCompileSession {
             self.files.expect(&FileRequestBatch::with_probes(
                 required.iter().filter_map(|request| match request {
                     ResourceRequest::File(request) => Some(request.clone()),
-                    ResourceRequest::Font(_) => None,
+                    ResourceRequest::Font(_) | ResourceRequest::PkFont(_) => None,
                 }),
                 probes.iter().filter_map(|request| match request {
                     ResourceRequest::File(request) => Some(request.clone()),
-                    ResourceRequest::Font(_) => None,
+                    ResourceRequest::Font(_) | ResourceRequest::PkFont(_) => None,
                 }),
                 prefetch_hints.iter().filter_map(|request| match request {
                     ResourceRequest::File(request) => Some(request.clone()),
-                    ResourceRequest::Font(_) => None,
+                    ResourceRequest::Font(_) | ResourceRequest::PkFont(_) => None,
                 }),
             ));
             retained.files = pending_files;
@@ -1723,25 +1867,22 @@ impl VirtualCompileSession {
                     .completed_universe_mut()
                     .expect("a completed drive exposes its candidate universe"),
             };
-            let discovery =
-                pdf_resources::discover(stores, &self.files, &mut self.virtual_font_resources)
-                    .map_err(|message| CompileError::OutputCapability {
-                        capability: OutputCapability::Pdf,
-                        message,
-                    })?;
+            let discovery = pdf_resources::discover(
+                stores,
+                &self.files,
+                &mut self.virtual_font_resources,
+                &self.resolved_pk_fonts,
+                &self.unavailable_pk_fonts,
+            )
+            .map_err(|message| CompileError::OutputCapability {
+                capability: OutputCapability::Pdf,
+                message,
+            })?;
             if !discovery.required.is_empty() || !discovery.probes.is_empty() {
                 stage.discard();
                 build.discard();
-                let required = discovery
-                    .required
-                    .into_iter()
-                    .map(ResourceRequest::File)
-                    .collect::<Vec<_>>();
-                let probes = discovery
-                    .probes
-                    .into_iter()
-                    .map(ResourceRequest::File)
-                    .collect::<Vec<_>>();
+                let required = discovery.required;
+                let probes = discovery.probes;
                 let mut planner = output_resources::OutputResourcePlanner::new(
                     self.outputs,
                     self.font_layout_policy,
@@ -1792,11 +1933,11 @@ impl VirtualCompileSession {
                 self.files.expect(&FileRequestBatch::with_probes(
                     required.iter().filter_map(|request| match request {
                         ResourceRequest::File(request) => Some(request.clone()),
-                        ResourceRequest::Font(_) => None,
+                        ResourceRequest::Font(_) | ResourceRequest::PkFont(_) => None,
                     }),
                     probes.iter().filter_map(|request| match request {
                         ResourceRequest::File(request) => Some(request.clone()),
-                        ResourceRequest::Font(_) => None,
+                        ResourceRequest::Font(_) | ResourceRequest::PkFont(_) => None,
                     }),
                     std::iter::empty(),
                 ));
@@ -1976,6 +2117,9 @@ impl VirtualCompileSession {
             ResourceRequestKey::Font(key) => {
                 self.resolved_fonts.contains_key(key) || self.unavailable_fonts.contains(key)
             }
+            ResourceRequestKey::PkFont(key) => {
+                self.resolved_pk_fonts.contains_key(key) || self.unavailable_pk_fonts.contains(key)
+            }
         }
     }
 
@@ -1990,6 +2134,8 @@ impl VirtualCompileSession {
         self.files.clear_generated_outputs();
         self.resolved_fonts.clear();
         self.unavailable_fonts.clear();
+        self.resolved_pk_fonts.clear();
+        self.unavailable_pk_fonts.clear();
         self.font_responses.clear();
         self.font_requests.clear();
         self.font_cached_bytes = 0;
@@ -2058,6 +2204,7 @@ fn resource_request_key(request: &ResourceRequest) -> ResourceRequestKey {
     match request {
         ResourceRequest::File(request) => ResourceRequestKey::File(request.key().clone()),
         ResourceRequest::Font(request) => ResourceRequestKey::Font(request.key.clone()),
+        ResourceRequest::PkFont(request) => ResourceRequestKey::PkFont(request.clone()),
     }
 }
 
@@ -2068,6 +2215,15 @@ fn resource_sort_key(request: &ResourceRequest) -> (u8, String) {
             format!("{:?}:{}", request.key().kind(), request.key().name()),
         ),
         ResourceRequest::Font(request) => (1, request.key.logical_name().to_owned()),
+        ResourceRequest::PkFont(request) => (
+            2,
+            format!(
+                "{}:{}:{}",
+                String::from_utf8_lossy(request.tex_name()),
+                request.dpi(),
+                String::from_utf8_lossy(request.mode())
+            ),
+        ),
     }
 }
 

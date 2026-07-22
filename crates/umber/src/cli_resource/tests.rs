@@ -162,6 +162,7 @@ fn needs(required: Vec<ResourceRequest>) -> NeedResources {
 fn local_resolver(root: &Path) -> LocalResolver {
     LocalResolver {
         base: root.to_owned(),
+        roots: vec![root.to_owned()],
         input: TexInputSearchPath::new(root, Vec::new()),
         font: TexFontSearchPath::new(root.to_owned(), Vec::new()),
         html_fonts: None,
@@ -188,6 +189,34 @@ fn local_resolver_handles_each_classic_bibliography_kind() {
         );
         assert_eq!(resolver.resolve(&request).expect("resolved").bytes, bytes);
     }
+}
+
+#[test]
+fn explicit_local_distribution_preserves_typed_pk_key_path_and_digest() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let bytes = include_bytes!("../../../../tests/corpus/pdf/cmr10.600pk");
+    std::fs::write(directory.path().join("cmr10.600pk"), bytes).expect("PK fixture");
+    let request = tex_fonts::PdfPkFontRequest::new(b"cmr10".to_vec(), 600, b"ljfour".to_vec());
+    let mut resolver = DistributionResolver::new(
+        ObjectCache::new(directory.path().join("cache")),
+        None,
+        None,
+        true,
+    );
+    let responses = resolver
+        .resolve_batch(
+            &local_resolver(directory.path()),
+            &needs(vec![ResourceRequest::PkFont(request.clone())]),
+            &FetchCancellation::new(),
+        )
+        .expect("offline local PK resolution");
+    let [ResourceResponse::PkFont(resolved)] = responses.as_slice() else {
+        panic!("typed PK response");
+    };
+    assert_eq!(resolved.request, request);
+    assert_eq!(resolved.virtual_path, "/texlive/local/asset/cmr10.600pk");
+    assert_eq!(resolved.bytes, bytes);
+    assert_eq!(resolved.expected_sha256, Some(Sha256::digest(bytes).into()));
 }
 
 fn write_sharded_root(

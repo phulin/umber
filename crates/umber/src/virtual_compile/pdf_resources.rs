@@ -4,7 +4,7 @@ use tex_fonts::{TfmFont, VfProgram};
 use tex_state::Universe;
 use umber_vfs::{FileContentId, FileProvisioner};
 
-use super::{FileKind, FileRequest, FileRequestKey};
+use super::{FileKind, FileRequest, FileRequestKey, ResolvedPkFont, ResourceRequest};
 
 #[derive(Clone, Debug)]
 pub struct CachedVirtualFont {
@@ -30,14 +30,16 @@ pub struct PdfVirtualFontResources {
 }
 
 pub(super) struct Discovery {
-    pub required: Vec<FileRequest>,
-    pub probes: Vec<FileRequest>,
+    pub required: Vec<ResourceRequest>,
+    pub probes: Vec<ResourceRequest>,
 }
 
 pub(super) fn discover(
     stores: &mut Universe,
     files: &FileProvisioner,
     cache: &mut PdfVirtualFontResources,
+    pk_fonts: &BTreeMap<tex_fonts::PdfPkFontRequest, ResolvedPkFont>,
+    unavailable_pk_fonts: &BTreeSet<tex_fonts::PdfPkFontRequest>,
 ) -> Result<Discovery, String> {
     let mut required = BTreeMap::<FileRequestKey, FileRequest>::new();
     let mut probes = BTreeMap::<FileRequestKey, FileRequest>::new();
@@ -119,8 +121,8 @@ pub(super) fn discover(
 
     if !required.is_empty() || !probes.is_empty() {
         return Ok(Discovery {
-            required: required.into_values().collect(),
-            probes: probes.into_values().collect(),
+            required: required.into_values().map(ResourceRequest::File).collect(),
+            probes: probes.into_values().map(ResourceRequest::File).collect(),
         });
     }
 
@@ -200,9 +202,7 @@ pub(super) fn discover(
         }
         if let Some(program) = entry.font_file {
             let name = utf8_name("PDF font program", &program)?;
-            let is_truetype = name.rsplit_once('.').is_some_and(|(_, ext)| {
-                ext.eq_ignore_ascii_case("ttf") || ext.eq_ignore_ascii_case("woff2")
-            });
+            let is_truetype = crate::pdf_output::is_pdf_sfnt_program(name.as_bytes());
             let present = if is_truetype {
                 stores.pdf_truetype_program(name.as_bytes()).is_some()
             } else {
@@ -231,9 +231,57 @@ pub(super) fn discover(
         }
     }
 
+    let mapped_names = stores
+        .resolved_pdf_font_map_lines()
+        .into_iter()
+        .map(|entry| entry.tex_name)
+        .collect::<BTreeSet<_>>();
+    let virtual_names = cache
+        .virtual_fonts
+        .keys()
+        .map(|name| name.as_bytes().to_vec())
+        .collect::<BTreeSet<_>>();
+    let pk_requests = stores
+        .pdf_font_resources()
+        .filter_map(|resource| {
+            let font = stores.font(resource.font());
+            (!mapped_names.contains(font.name().as_bytes())
+                && !virtual_names.contains(font.name().as_bytes()))
+            .then(|| {
+                crate::pdf_output::pk_font_request(
+                    stores,
+                    resource.font(),
+                    crate::pdf_output::DEFAULT_PDF_PK_RESOLUTION,
+                )
+            })
+        })
+        .collect::<Result<BTreeSet<_>, _>>()?;
+    let mut pk_required = Vec::new();
+    for request in pk_requests {
+        if stores.pdf_pk_font(&request).is_some() {
+            continue;
+        }
+        if unavailable_pk_fonts.contains(&request) {
+            return Err(format!(
+                "required PK font {} is unavailable",
+                String::from_utf8_lossy(&request.logical_name())
+            ));
+        }
+        if let Some(resolved) = pk_fonts.get(&request) {
+            stores
+                .provide_pdf_pk_font(request, &resolved.bytes)
+                .map_err(|error| format!("PK font: {error}"))?;
+        } else {
+            pk_required.push(ResourceRequest::PkFont(request));
+        }
+    }
     Ok(Discovery {
-        required: required.into_values().collect(),
-        probes: probes.into_values().collect(),
+        required: required
+            .into_values()
+            .map(ResourceRequest::File)
+            .chain(pk_required)
+            .collect(),
+        probes: probes.into_values().map(ResourceRequest::File).collect(),
     })
 }
 

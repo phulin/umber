@@ -95,7 +95,7 @@ fn requests(result: CompileAttemptResult) -> Vec<FileRequest> {
             .into_iter()
             .filter_map(|request| match request {
                 ResourceRequest::File(request) => Some(request),
-                ResourceRequest::Font(_) => None,
+                ResourceRequest::Font(_) | ResourceRequest::PkFont(_) => None,
             })
             .collect(),
         other => panic!("expected missing files, got {other:#?}"),
@@ -121,7 +121,7 @@ fn probes(result: CompileAttemptResult) -> Vec<FileRequest> {
                 .into_iter()
                 .filter_map(|request| match request {
                     ResourceRequest::File(request) => Some(request),
-                    ResourceRequest::Font(_) => None,
+                    ResourceRequest::Font(_) | ResourceRequest::PkFont(_) => None,
                 })
                 .collect()
         }
@@ -323,6 +323,67 @@ fn pdf_virtual_font_closure_uses_typed_bounded_retries() {
 }
 
 #[test]
+fn pdf_bitmap_fallback_crosses_the_typed_session_boundary() {
+    let mut session = VirtualCompileSession::new(SessionOptions {
+        engine: EngineMode::PdfTex,
+        outputs: OutputCapabilitySet::PDF,
+        font_layout_policy: tex_fonts::FontLayoutPolicy::ClassicTfmExact,
+        ..SessionOptions::default()
+    })
+    .expect("PDF session");
+    session
+        .add_user_file("cmr10.tfm", CMR10.to_vec())
+        .expect("TFM");
+    session
+        .add_user_file(
+            "main.tex",
+            b"\\pdfoutput=1 \\font\\tenrm=cmr10\\relax \\tenrm \\shipout\\hbox{A}\\end".to_vec(),
+        )
+        .expect("source");
+
+    let vf = probes(session.compile_attempt()).pop().expect("VF probe");
+    session
+        .provide_resources(vec![ResourceResponse::FileUnavailable(vf.key().clone())])
+        .expect("non-virtual font");
+    let map = requests(session.compile_attempt())
+        .pop()
+        .expect("map request");
+    session
+        .provide_resolved_file(
+            map.key().clone(),
+            "/texlive/fonts/map/pdftex.map",
+            Vec::new(),
+        )
+        .expect("empty authoritative map");
+
+    let pk_resources = resources(session.compile_attempt());
+    let [ResourceRequest::PkFont(request)] = pk_resources.as_slice() else {
+        panic!("expected one typed PK request");
+    };
+    assert_eq!(request.tex_name(), b"cmr10");
+    assert_eq!(request.dpi(), 600);
+    assert_eq!(request.logical_name(), b"cmr10.600pk");
+    assert_eq!(
+        session.output_resource_plan().union[0].reasons[0].purpose,
+        ResourcePurpose::PdfBitmapProgram
+    );
+    let bytes = include_bytes!("../../../../tests/corpus/pdf/cmr10.600pk").to_vec();
+    let expected_sha256 = Some(sha2::Sha256::digest(&bytes).into());
+    session
+        .provide_resources(vec![ResourceResponse::PkFont(ResolvedPkFont {
+            request: request.clone(),
+            virtual_path: "/texlive/fonts/pk/ljfour/public/cm/cmr10.600pk".into(),
+            bytes,
+            expected_sha256,
+        })])
+        .expect("typed PK response");
+    let CompileAttemptResult::Complete(output) = session.compile_attempt() else {
+        panic!("PK-backed PDF session should complete");
+    };
+    assert_eq!(output.outputs, OutputCapabilitySet::PDF);
+}
+
+#[test]
 fn dvi_only_pdftex_session_skips_the_pdf_font_closure() {
     let mut session = VirtualCompileSession::new(SessionOptions {
         engine: EngineMode::PdfTex,
@@ -491,7 +552,7 @@ fn typed_font_response_obeys_the_per_resource_byte_limit_atomically() {
         .into_iter()
         .find_map(|request| match request {
             ResourceRequest::Font(request) => Some(request),
-            ResourceRequest::File(_) => None,
+            ResourceRequest::File(_) | ResourceRequest::PkFont(_) => None,
         })
         .expect("font request");
     assert!(matches!(
@@ -527,7 +588,7 @@ fn dvi_only_mapping_does_not_require_embedding_permission() {
         .into_iter()
         .find_map(|request| match request {
             ResourceRequest::Font(request) => Some(request),
-            ResourceRequest::File(_) => None,
+            ResourceRequest::File(_) | ResourceRequest::PkFont(_) => None,
         })
         .expect("font request");
     let mut response = cmu_response(request);
@@ -994,7 +1055,9 @@ fn preloaded_and_partitioned_positive_negative_resources_are_exactly_equivalent(
                             )
                             .expect("partitioned input");
                     }
-                    ResourceRequest::Font(_) => panic!("classic DVI run requests no OpenType font"),
+                    ResourceRequest::Font(_) | ResourceRequest::PkFont(_) => {
+                        panic!("classic DVI run requests no output font")
+                    }
                 }
             }
             CompileAttemptResult::Complete(partitioned_output) => {
@@ -1757,7 +1820,7 @@ fn valid_tfm_produces_a_nonempty_dvi() {
         .iter()
         .find_map(|request| match request {
             ResourceRequest::File(request) => Some(request.clone()),
-            ResourceRequest::Font(_) => None,
+            ResourceRequest::Font(_) | ResourceRequest::PkFont(_) => None,
         })
         .expect("TFM request");
     session
@@ -1796,6 +1859,7 @@ fn opentype_only_font_needs_no_tfm_and_exposes_synthesized_fontdimens() {
     let font = match missing.into_iter().next().expect("font request") {
         ResourceRequest::Font(font) => font,
         ResourceRequest::File(file) => panic!("unexpected TFM request: {file:?}"),
+        ResourceRequest::PkFont(pk) => panic!("unexpected PK request: {pk:?}"),
     };
     provide_cmu_font(&mut session, font);
     let CompileAttemptResult::Complete(output) = session.compile_attempt() else {
@@ -1827,7 +1891,7 @@ fn html_only_opentype_retains_unicode_while_requested_dvi_rejects_it() {
         .into_iter()
         .find_map(|request| match request {
             ResourceRequest::Font(font) => Some(font),
-            ResourceRequest::File(_) => None,
+            ResourceRequest::File(_) | ResourceRequest::PkFont(_) => None,
         })
         .expect("OpenType request");
     provide_cmu_font(&mut html_only, font);
@@ -1876,7 +1940,7 @@ fn html_only_opentype_retains_unicode_while_requested_dvi_rejects_it() {
         .into_iter()
         .find_map(|request| match request {
             ResourceRequest::Font(font) => Some(font),
-            ResourceRequest::File(_) => None,
+            ResourceRequest::File(_) | ResourceRequest::PkFont(_) => None,
         })
         .expect("OpenType request");
     provide_cmu_font(&mut joint, font);
@@ -1954,7 +2018,7 @@ fn opentype_only_font_rejects_classic_math_family_assignment() {
         .into_iter()
         .find_map(|request| match request {
             ResourceRequest::Font(font) => Some(font),
-            ResourceRequest::File(_) => None,
+            ResourceRequest::File(_) | ResourceRequest::PkFont(_) => None,
         })
         .expect("font request");
     provide_cmu_font(&mut session, font);
@@ -1989,7 +2053,7 @@ fn font_batches_accept_partial_unordered_responses_and_reject_conflicts() {
         .iter()
         .find_map(|request| match request {
             ResourceRequest::Font(request) => Some(request.clone()),
-            ResourceRequest::File(_) => None,
+            ResourceRequest::File(_) | ResourceRequest::PkFont(_) => None,
         })
         .expect("font request");
 
@@ -2223,7 +2287,7 @@ fn unavailable_font_answers_are_idempotent_and_conflict_with_bytes() {
         .iter()
         .find_map(|request| match request {
             ResourceRequest::Font(request) => Some(request.clone()),
-            ResourceRequest::File(_) => None,
+            ResourceRequest::File(_) | ResourceRequest::PkFont(_) => None,
         })
         .expect("font request");
     session
@@ -2335,7 +2399,7 @@ fn invalid_mixed_batch_publishes_nothing() {
         .iter()
         .find_map(|request| match request {
             ResourceRequest::Font(request) => Some(request.clone()),
-            ResourceRequest::File(_) => None,
+            ResourceRequest::File(_) | ResourceRequest::PkFont(_) => None,
         })
         .expect("font request");
     let invalid_font = ResolvedFont {
@@ -2377,7 +2441,7 @@ fn requested_html_and_dvi_share_one_committed_compile() {
         .iter()
         .find_map(|request| match request {
             ResourceRequest::Font(request) => Some(request.clone()),
-            ResourceRequest::File(_) => None,
+            ResourceRequest::File(_) | ResourceRequest::PkFont(_) => None,
         })
         .expect("font request");
     provide_cmu_font(&mut session, font);
@@ -2486,7 +2550,7 @@ fn accepted_user_tfm_remains_available_across_incremental_patch() {
         .into_iter()
         .filter_map(|request| match request {
             ResourceRequest::Font(request) => Some(request),
-            ResourceRequest::File(_) => None,
+            ResourceRequest::File(_) | ResourceRequest::PkFont(_) => None,
         })
     {
         provide_cmu_font(&mut session, font);
@@ -2530,7 +2594,7 @@ fn rendered_source_location_survives_paragraph_line_breaking() {
         .into_iter()
         .filter_map(|request| match request {
             ResourceRequest::Font(request) => Some(request),
-            ResourceRequest::File(_) => None,
+            ResourceRequest::File(_) | ResourceRequest::PkFont(_) => None,
         })
         .collect::<Vec<_>>();
     assert!(!fonts.is_empty(), "font requests");
@@ -2590,7 +2654,7 @@ fn modern_math_session_html_is_canonical_and_scriptless() {
                     .into_iter()
                     .filter_map(|request| match request {
                         ResourceRequest::Font(request) => Some(request),
-                        ResourceRequest::File(_) => None,
+                        ResourceRequest::File(_) | ResourceRequest::PkFont(_) => None,
                     })
                     .collect::<Vec<_>>();
                 assert_eq!(fonts.len(), 1, "one font dependency per suspension");

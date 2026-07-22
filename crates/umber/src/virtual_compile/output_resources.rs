@@ -44,6 +44,7 @@ pub enum ResourcePurpose {
     PdfFontMap,
     PdfEncoding,
     PdfFontProgram,
+    PdfBitmapProgram,
     HtmlLegacyMapping,
     HtmlFontTransport,
     HtmlLicense,
@@ -293,6 +294,7 @@ impl OutputResourcePlanner {
 pub(super) fn engine_purpose(request: &ResourceRequest) -> ResourcePurpose {
     match request {
         ResourceRequest::Font(_) => ResourcePurpose::LayoutProgram,
+        ResourceRequest::PkFont(_) => ResourcePurpose::PdfBitmapProgram,
         ResourceRequest::File(file) => match file.key().kind() {
             FileKind::Tfm => ResourcePurpose::LayoutMetric,
             FileKind::FormatImage => ResourcePurpose::FormatImage,
@@ -304,6 +306,7 @@ pub(super) fn engine_purpose(request: &ResourceRequest) -> ResourcePurpose {
 pub(super) fn pdf_purpose(request: &ResourceRequest) -> ResourcePurpose {
     match request {
         ResourceRequest::Font(_) => ResourcePurpose::PdfFontProgram,
+        ResourceRequest::PkFont(_) => ResourcePurpose::PdfBitmapProgram,
         ResourceRequest::File(file) => match file.key().kind() {
             FileKind::VirtualFont => ResourcePurpose::PdfVirtualFont,
             FileKind::Tfm => ResourcePurpose::PdfLocalMetric,

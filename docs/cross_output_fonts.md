@@ -252,6 +252,15 @@ platform fallback. Manifest transport aliases such as mapping semantic VF,
 ENC, map, and program kinds through `tex:<name>` do not change semantic
 identity or precedence.
 
+The implemented local/client legacy preservation path carries PK leaves as
+the distinct typed `(TeX name bytes, resolved DPI, frozen mode)` request
+through both facades. Native TeX-style search is confined to the explicit
+local-distribution adapter; it returns a canonical `/texlive/local/...` path
+and exact digest with the bytes. Client VFS providers return the same fields
+directly. VF, local TFM, ordered map, encoding, and outline-program discovery
+remains in the PDF driver closure, and the PK program is parsed and retained
+before session acceptance.
+
 ## 7. Exact HTML MVP catalog
 
 The version-1 hosted HTML catalog contains exactly these font selections:

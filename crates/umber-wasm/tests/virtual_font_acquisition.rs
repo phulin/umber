@@ -13,6 +13,11 @@ fn pdf_virtual_font_closure_crosses_typed_bounded_retries() {
     let options = Object::new();
     set(&options, "mainPath", &JsValue::from_str("main.tex"));
     set(&options, "engine", &JsValue::from_str("pdftex"));
+    set(
+        &options,
+        "fontLayoutPolicy",
+        &JsValue::from_str("classic-tfm-exact"),
+    );
     let outputs = Array::new();
     outputs.push(&JsValue::from_str("pdf"));
     set(&options, "outputs", &outputs);
@@ -80,6 +85,63 @@ fn pdf_virtual_font_closure_crosses_typed_bounded_retries() {
     let complete = session.advance().expect("completed bounded closure");
     assert_eq!(string_field(complete.as_ref(), "kind"), "complete");
     assert!(session.attempts().expect("attempt count") <= 7);
+}
+
+#[wasm_bindgen_test]
+fn pdf_pk_fallback_keeps_complete_key_over_the_client_vfs_protocol() {
+    let options = Object::new();
+    set(&options, "mainPath", &JsValue::from_str("main.tex"));
+    set(&options, "engine", &JsValue::from_str("pdftex"));
+    set(
+        &options,
+        "fontLayoutPolicy",
+        &JsValue::from_str("classic-tfm-exact"),
+    );
+    let outputs = Array::new();
+    outputs.push(&JsValue::from_str("pdf"));
+    set(&options, "outputs", &outputs);
+    let mut session =
+        CompilerSession::new(options.unchecked_ref::<JsSessionOptions>()).expect("PDF session");
+    session
+        .add_user_file(
+            "main.tex",
+            &bytes(b"\\pdfoutput=1 \\font\\root=cmr10\\relax \\root \\shipout\\hbox{A}\\end"),
+        )
+        .expect("main source");
+    let tfm = request(&mut session, "required", "tfm");
+    provide(&mut session, &tfm, "/texlive/cmr10.tfm", CMR10);
+    let vf = request(&mut session, "probes", "vf");
+    provide_unavailable(&mut session, &vf);
+    let map = request(&mut session, "required", "font-map");
+    provide(&mut session, &map, "/texlive/pdftex.map", b"");
+
+    let attempt = session.advance().expect("PK request");
+    let pk = Array::from(&field(attempt.as_ref(), "required")).get(0);
+    assert_eq!(string_field(&pk, "type"), "pk-font");
+    assert_eq!(Uint8Array::new(&field(&pk, "texName")).to_vec(), b"cmr10");
+    assert_eq!(field(&pk, "dpi").as_f64(), Some(600.0));
+    let response = Object::new();
+    for name in ["texName", "dpi", "mode"] {
+        set(&response, name, &field(&pk, name));
+    }
+    set(&response, "type", &JsValue::from_str("pk-font"));
+    set(
+        &response,
+        "virtualPath",
+        &JsValue::from_str("/texlive/fonts/pk/ljfour/public/cm/cmr10.600pk"),
+    );
+    set(
+        &response,
+        "bytes",
+        bytes(include_bytes!("../../../tests/corpus/pdf/cmr10.600pk")).as_ref(),
+    );
+    session
+        .provide_resources(&Array::of1(&response))
+        .expect("typed PK response");
+    assert_eq!(
+        string_field(session.advance().expect("complete").as_ref(), "kind"),
+        "complete"
+    );
 }
 
 fn request(session: &mut CompilerSession, collection: &str, kind: &str) -> JsValue {

@@ -47,8 +47,8 @@ pub use pdftex::PDFTEX_PRIMITIVE_NAMES;
 pub use tex_fonts::{
     AcceptedFontContainers, FeatureSetting, FontContainer, FontFeaturePolicy, FontLanguage,
     FontLayoutPolicy, FontMappingFallbackPolicy, FontObjectIdentity, FontProgramIdentity,
-    FontPurposes, FontRequest, FontRequestKey, LegacyFontMapping, OpenTypeTag, ResolvedFont,
-    VariationCoordinate, VariationInstance, VariationSelection, WritingDirection,
+    FontPurposes, FontRequest, FontRequestKey, LegacyFontMapping, OpenTypeTag, PdfPkFontRequest,
+    ResolvedFont, VariationCoordinate, VariationInstance, VariationSelection, WritingDirection,
 };
 pub use tex_incr::{RenderedOutputId, ReuseMetrics, RevisionId, SameHistoryStop};
 pub use umber_vfs::FileContentId;
@@ -59,11 +59,11 @@ pub use virtual_compile::{
     FileRequestKey, MissingOutputResource, NeedResources, OUTPUT_RESOURCE_PLAN_VERSION,
     OutputCapability, OutputCapabilitySet, OutputResourcePlan, PdfVirtualFontResources,
     PlannedResource, ProviderFailure, ProviderResponse, RenderedSourceLocation,
-    RenderedSourceResult, RequestKeyError, ResolvedFile, ResourceClosureOwner, ResourceDomain,
-    ResourcePlanError, ResourcePurpose, ResourceReason, ResourceRequest, ResourceRequestMode,
-    ResourceResponse, RetentionMetrics, SessionLimits, SessionOptions, SourcePatch,
-    TypedResourceProvider, VfsLimitError, VfsLimitKind, VfsLimits, VirtualCompileSession,
-    VirtualPath, VirtualPathError,
+    RenderedSourceResult, RequestKeyError, ResolvedFile, ResolvedPkFont, ResourceClosureOwner,
+    ResourceDomain, ResourcePlanError, ResourcePurpose, ResourceReason, ResourceRequest,
+    ResourceRequestMode, ResourceResponse, RetentionMetrics, SessionLimits, SessionOptions,
+    SourcePatch, TypedResourceProvider, VfsLimitError, VfsLimitKind, VfsLimits,
+    VirtualCompileSession, VirtualPath, VirtualPathError,
 };
 
 /// The only checkpoint policy supported by composed engine sessions.
@@ -330,12 +330,7 @@ pub(crate) fn provide_pdf_font_resources_excluding_at_dpi(
         .filter_map(|entry| entry.font_file)
         .collect::<std::collections::BTreeSet<_>>();
     for name in names {
-        let is_truetype = name
-            .rsplit(|byte| *byte == b'.')
-            .next()
-            .is_some_and(|extension| {
-                extension.eq_ignore_ascii_case(b"ttf") || extension.eq_ignore_ascii_case(b"woff2")
-            });
+        let is_truetype = pdf_output::is_pdf_sfnt_program(&name);
         if (is_truetype && stores.pdf_truetype_program(&name).is_some())
             || (!is_truetype && stores.pdf_type1_program(&name).is_some())
         {

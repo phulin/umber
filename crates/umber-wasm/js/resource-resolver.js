@@ -93,6 +93,7 @@ function deduplicateRequests(requests) {
 
 function requestIdentity(request) {
 	if (request?.type === "font") return fontRequestIdentity(request);
+	if (request?.type === "pk-font") return pkFontRequestIdentity(request);
 	if (request?.type === "legacy-font-mapping")
 		return legacyMappingRequestIdentity(request);
 	return encodeRequest(request);
@@ -111,7 +112,26 @@ function responseIdentity(response) {
 		});
 	if (response?.type === "file" || response?.type === "file-unavailable")
 		return encodeRequest({ ...response, type: "file" });
+	if (response?.type === "pk-font" || response?.type === "pk-font-unavailable")
+		return pkFontRequestIdentity({ ...response, type: "pk-font" });
 	throw new TypeError("resource provider returned an unknown response type");
+}
+
+function pkFontRequestIdentity(request) {
+	if (
+		!(request?.texName instanceof Uint8Array) ||
+		!(request?.mode instanceof Uint8Array)
+	)
+		throw new TypeError("PK font names and modes must be Uint8Array values");
+	if (
+		!Number.isSafeInteger(request.dpi) ||
+		request.dpi < 0 ||
+		request.dpi > 0xffff_ffff
+	)
+		throw new TypeError("PK font DPI must be an unsigned 32-bit integer");
+	const hex = (bytes) =>
+		[...bytes].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+	return `pk-font:${hex(request.texName)}:${request.dpi}:${hex(request.mode)}`;
 }
 
 function unavailableResponse(request) {

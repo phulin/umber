@@ -12,7 +12,7 @@ use wasm_bindgen::prelude::*;
 #[wasm_bindgen(typescript_custom_section)]
 const TYPESCRIPT_TYPES: &str = r#"
 export type ResourceDomain = "tex" | "bibliography" | "generic";
-export type FileKind = "tex" | "tfm" | "format" | "bib-control" | "bib-data" | "bib-configuration" | "xml-schema" | "asset" | "image" | "bib-aux" | "classic-bib-data" | "bib-style";
+export type FileKind = "tex" | "tfm" | "format" | "bib-control" | "bib-data" | "bib-configuration" | "xml-schema" | "asset" | "image" | "bib-aux" | "classic-bib-data" | "bib-style" | "vf" | "font-map" | "font-encoding" | "font-program";
 
 export interface FileRequestKey {
   domain: ResourceDomain;
@@ -41,7 +41,14 @@ export interface FontRequest extends FontRequestKey {
   acceptedContainers: Array<"woff2">;
 }
 
-export type ResourceRequest = FileRequest | FontRequest;
+export interface PkFontRequest {
+  type: "pk-font";
+  texName: Uint8Array;
+  dpi: number;
+  mode: Uint8Array;
+}
+
+export type ResourceRequest = FileRequest | FontRequest | PkFontRequest;
 export type ResourceResponse =
   | (FileRequestKey & { type: "file"; virtualPath: string; bytes: Uint8Array; expectedContentId?: string })
   | (FileRequestKey & { type: "file-unavailable" })
@@ -58,7 +65,9 @@ export type ResourceResponse =
         embeddable: boolean;
       };
     })
-  | (FontRequestKey & { type: "font-unavailable" });
+  | (FontRequestKey & { type: "font-unavailable" })
+  | (PkFontRequest & { virtualPath: string; bytes: Uint8Array; expectedSha256?: string })
+  | (Omit<PkFontRequest, "type"> & { type: "pk-font-unavailable" });
 
 export interface SessionLimits {
   attempts: number;

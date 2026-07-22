@@ -166,6 +166,12 @@ fn resource_requests(requests: Vec<ResourceRequest>) -> Result<Array, JsValue> {
                 }
                 set(&object, "acceptedContainers", &accepted)?;
             }
+            ResourceRequest::PkFont(request) => {
+                set(&object, "type", &JsValue::from_str("pk-font"))?;
+                set(&object, "texName", &typed_array(request.tex_name()))?;
+                set(&object, "dpi", &JsValue::from_f64(f64::from(request.dpi())))?;
+                set(&object, "mode", &typed_array(request.mode()))?;
+            }
         }
         result.push(&object);
     }

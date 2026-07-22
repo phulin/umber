@@ -7,7 +7,7 @@ use bib_engine::{
     BibliographyDetector, BibliographyDetectorOptions, BibliographyFailure, BibliographyJob,
     BibliographyMode, BibliographyResult, BibliographySession, ClassicBibJob, ClassicBibOptions,
 };
-use tex_fonts::{FontRequestKey, ResolvedFont};
+use tex_fonts::{FontRequestKey, PdfPkFontRequest, ResolvedFont};
 use tex_state::ContentHash;
 use umber_vfs::{
     BuildId, BuildPlan, FileProvisioner, FileRequestBatch, ProducerId, ResolvedFile, VirtualPath,
@@ -15,7 +15,8 @@ use umber_vfs::{
 
 use crate::{
     CompileAttemptResult, CompileError, MemoryOutputFile, MemoryRunOutput, NeedResources,
-    ResourceRequest, ResourceResponse, SessionOptions, SourcePatch, VirtualCompileSession,
+    ResolvedPkFont, ResourceRequest, ResourceResponse, SessionOptions, SourcePatch,
+    VirtualCompileSession,
 };
 
 const PROJECT_PRODUCER: ProducerId = ProducerId::new(3);
@@ -180,6 +181,7 @@ impl std::error::Error for LatexProjectError {}
 enum ProjectRequestKey {
     File(umber_vfs::FileRequestKey),
     Font(FontRequestKey),
+    PkFont(PdfPkFontRequest),
 }
 
 /// Transactional TeX--bibliography--TeX project session with explicit or
@@ -194,6 +196,8 @@ pub struct LatexProjectSession {
     file_responses: BTreeMap<umber_vfs::FileRequestKey, ResolvedFile>,
     font_responses: BTreeMap<FontRequestKey, ResolvedFont>,
     unavailable_fonts: BTreeSet<FontRequestKey>,
+    pk_font_responses: BTreeMap<PdfPkFontRequest, ResolvedPkFont>,
+    unavailable_pk_fonts: BTreeSet<PdfPkFontRequest>,
     awaiting: BTreeSet<ProjectRequestKey>,
     attempts: u32,
     accepted_revision: Option<tex_incr::RevisionId>,
@@ -235,6 +239,8 @@ impl LatexProjectSession {
             file_responses: BTreeMap::new(),
             font_responses: BTreeMap::new(),
             unavailable_fonts: BTreeSet::new(),
+            pk_font_responses: BTreeMap::new(),
+            unavailable_pk_fonts: BTreeSet::new(),
             awaiting: BTreeSet::new(),
             attempts: 0,
             accepted_revision: None,
@@ -337,6 +343,8 @@ impl LatexProjectSession {
         let mut file_responses = self.file_responses.clone();
         let mut font_responses = self.font_responses.clone();
         let mut unavailable_fonts = self.unavailable_fonts.clone();
+        let mut pk_font_responses = self.pk_font_responses.clone();
+        let mut unavailable_pk_fonts = self.unavailable_pk_fonts.clone();
         for response in responses {
             match response {
                 ResourceResponse::File(file) => {
@@ -394,12 +402,46 @@ impl LatexProjectSession {
                     }
                     unavailable_fonts.insert(request);
                 }
+                ResourceResponse::PkFont(font) => {
+                    let key = ProjectRequestKey::PkFont(font.request.clone());
+                    if !self.awaiting.contains(&key) {
+                        return Err(LatexProjectError::UnexpectedResource(
+                            String::from_utf8_lossy(&font.request.logical_name()).into_owned(),
+                        ));
+                    }
+                    if unavailable_pk_fonts.contains(&font.request)
+                        || pk_font_responses
+                            .get(&font.request)
+                            .is_some_and(|old| old != &font)
+                    {
+                        return Err(LatexProjectError::ConflictingResource(
+                            String::from_utf8_lossy(&font.request.logical_name()).into_owned(),
+                        ));
+                    }
+                    pk_font_responses.insert(font.request.clone(), font);
+                }
+                ResourceResponse::PkFontUnavailable(request) => {
+                    let key = ProjectRequestKey::PkFont(request.clone());
+                    if !self.awaiting.contains(&key) {
+                        return Err(LatexProjectError::UnexpectedResource(
+                            String::from_utf8_lossy(&request.logical_name()).into_owned(),
+                        ));
+                    }
+                    if pk_font_responses.contains_key(&request) {
+                        return Err(LatexProjectError::ConflictingResource(
+                            String::from_utf8_lossy(&request.logical_name()).into_owned(),
+                        ));
+                    }
+                    unavailable_pk_fonts.insert(request);
+                }
             }
         }
         self.files = files;
         self.file_responses = file_responses;
         self.font_responses = font_responses;
         self.unavailable_fonts = unavailable_fonts;
+        self.pk_font_responses = pk_font_responses;
+        self.unavailable_pk_fonts = unavailable_pk_fonts;
         if let Some(candidate) = self.candidate.as_mut()
             && candidate.tex_awaiting
         {
@@ -448,6 +490,10 @@ impl LatexProjectSession {
                 }
                 ProjectRequestKey::Font(key) => {
                     self.font_responses.contains_key(key) || self.unavailable_fonts.contains(key)
+                }
+                ProjectRequestKey::PkFont(key) => {
+                    self.pk_font_responses.contains_key(key)
+                        || self.unavailable_pk_fonts.contains(key)
                 }
             })
         {
@@ -722,6 +768,15 @@ impl LatexProjectSession {
                                     missing.push(request);
                                 }
                             }
+                            ResourceRequest::PkFont(pk) => {
+                                if let Some(response) = self.pk_font_responses.get(pk) {
+                                    supplied.push(ResourceResponse::PkFont(response.clone()));
+                                } else if self.unavailable_pk_fonts.contains(pk) {
+                                    supplied.push(ResourceResponse::PkFontUnavailable(pk.clone()));
+                                } else {
+                                    missing.push(request);
+                                }
+                            }
                         }
                     }
                     for request in needs.probes {
@@ -840,16 +895,17 @@ impl LatexProjectSession {
             .map(|request| match request {
                 ResourceRequest::File(file) => ProjectRequestKey::File(file.key().clone()),
                 ResourceRequest::Font(font) => ProjectRequestKey::Font(font.key.clone()),
+                ResourceRequest::PkFont(pk) => ProjectRequestKey::PkFont(pk.clone()),
             })
             .collect();
         self.files.expect(&FileRequestBatch::with_probes(
             needs.required.iter().filter_map(|request| match request {
                 ResourceRequest::File(file) => Some(file.clone()),
-                ResourceRequest::Font(_) => None,
+                ResourceRequest::Font(_) | ResourceRequest::PkFont(_) => None,
             }),
             needs.probes.iter().filter_map(|request| match request {
                 ResourceRequest::File(file) => Some(file.clone()),
-                ResourceRequest::Font(_) => None,
+                ResourceRequest::Font(_) | ResourceRequest::PkFont(_) => None,
             }),
             [],
         ));

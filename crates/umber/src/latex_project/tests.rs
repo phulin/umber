@@ -323,7 +323,9 @@ fn finish_classic_project(session: &mut LatexProjectSession) -> LatexProjectOutp
                                 expected_digest: None,
                             })
                         }
-                        ResourceRequest::Font(_) => panic!("unexpected font request"),
+                        ResourceRequest::Font(_) | ResourceRequest::PkFont(_) => {
+                            panic!("unexpected font request")
+                        }
                     })
                     .collect();
                 session
@@ -467,7 +469,9 @@ fn fatal_classic_execution_rolls_back_to_the_last_accepted_project() {
                                 expected_digest: None,
                             })
                         }
-                        ResourceRequest::Font(_) => panic!("unexpected font request"),
+                        ResourceRequest::Font(_) | ResourceRequest::PkFont(_) => {
+                            panic!("unexpected font request")
+                        }
                     })
                     .collect();
                 session.provide_resources(responses).expect("resources");

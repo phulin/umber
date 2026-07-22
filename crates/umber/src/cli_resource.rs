@@ -25,8 +25,8 @@ use umber_fetch::{
 use crate::{
     AcceptedFinalization, CompileAttemptResult, CompileTelemetry, EngineMode, FileContentId,
     FileKind, FileRequest, MemoryRunOutput, NeedResources, OutputCapability, OutputCapabilitySet,
-    ResolvedFile, ResourceRequest, ResourceResponse, SessionLimits, SessionOptions, SourcePatch,
-    TexFontSearchPath, TexInputSearchPath, VirtualCompileSession,
+    ResolvedFile, ResolvedPkFont, ResourceRequest, ResourceResponse, SessionLimits, SessionOptions,
+    SourcePatch, TexFontSearchPath, TexInputSearchPath, VirtualCompileSession,
 };
 
 pub const DEFAULT_DISTRIBUTION_URL: &str =
@@ -543,6 +543,7 @@ fn contiguous_edit(old: &str, new: &str) -> (std::ops::Range<usize>, String) {
 
 struct LocalResolver {
     base: PathBuf,
+    roots: Vec<PathBuf>,
     input: TexInputSearchPath,
     font: TexFontSearchPath,
     html_fonts: Option<crate::DirectoryFontResourceResolver>,
@@ -562,10 +563,16 @@ impl LocalResolver {
                 .unwrap_or_default()
         };
         let base = main.parent().unwrap_or_else(|| Path::new(".")).to_owned();
+        let input_areas = areas("TEXINPUTS");
+        let font_areas = areas("TEXFONTS");
+        let mut roots = vec![base.clone()];
+        roots.extend(input_areas.iter().cloned());
+        roots.extend(font_areas.iter().cloned());
         Self {
             base: base.clone(),
-            input: TexInputSearchPath::new(&base, areas("TEXINPUTS")),
-            font: TexFontSearchPath::new(base, areas("TEXFONTS")),
+            roots,
+            input: TexInputSearchPath::new(&base, input_areas),
+            font: TexFontSearchPath::new(base, font_areas),
             html_fonts: html_font_dir.map(crate::DirectoryFontResourceResolver::new),
             input_paths: RefCell::new(BTreeMap::new()),
             resolved_inputs: RefCell::new(Vec::new()),
@@ -602,7 +609,7 @@ impl LocalResolver {
             .borrow_mut()
             .push((content.path().to_owned(), bytes.len()));
         let digest = FileContentId::for_bytes(&bytes);
-        let virtual_path = PathBuf::from(format!("/texlive/local/{digest}"));
+        let virtual_path = self.virtual_path(request.key().kind(), content.path(), digest);
         self.input_paths
             .borrow_mut()
             .insert(virtual_path.clone(), content.path().to_owned());
@@ -631,6 +638,47 @@ impl LocalResolver {
             .transpose()
     }
 
+    fn resolve_pk_font(&self, request: &tex_fonts::PdfPkFontRequest) -> Option<ResolvedPkFont> {
+        let name = String::from_utf8(request.logical_name()).ok()?;
+        let mut world = World::real();
+        let content = self
+            .font
+            .read_program_from_world(&mut world, Path::new(&name))
+            .ok()?;
+        let bytes = content.bytes().to_vec();
+        self.resolved_inputs
+            .borrow_mut()
+            .push((content.path().to_owned(), bytes.len()));
+        let digest: [u8; 32] = Sha256::digest(&bytes).into();
+        let virtual_path = self.virtual_path(
+            FileKind::GenericAsset,
+            content.path(),
+            FileContentId::for_bytes(&bytes),
+        );
+        Some(ResolvedPkFont {
+            request: request.clone(),
+            virtual_path: virtual_path.to_string_lossy().into_owned(),
+            bytes,
+            expected_sha256: Some(digest),
+        })
+    }
+
+    fn virtual_path(&self, kind: FileKind, path: &Path, digest: FileContentId) -> PathBuf {
+        let relative = self
+            .roots
+            .iter()
+            .filter_map(|root| path.strip_prefix(root).ok())
+            .min_by_key(|path| path.components().count());
+        relative.map_or_else(
+            || PathBuf::from(format!("/texlive/local/{}/{digest}", kind.wire_name())),
+            |relative| {
+                Path::new("/texlive/local")
+                    .join(kind.wire_name())
+                    .join(relative)
+            },
+        )
+    }
+
     fn resolve_classic_bibliography(&self, request: &FileRequest) -> Option<ResolvedFile> {
         let (variable, extension) = match request.key().kind() {
             FileKind::BibAux => ("TEXINPUTS", ".aux"),
@@ -653,7 +701,7 @@ impl LocalResolver {
             .borrow_mut()
             .push((path.clone(), bytes.len()));
         let digest = FileContentId::for_bytes(&bytes);
-        let virtual_path = PathBuf::from(format!("/texlive/local/{digest}"));
+        let virtual_path = self.virtual_path(request.key().kind(), &path, digest);
         self.input_paths
             .borrow_mut()
             .insert(virtual_path.clone(), path);
@@ -794,6 +842,33 @@ impl DistributionResolver {
                         || ResourceResponse::FontUnavailable(request.key.clone()),
                         ResourceResponse::Font,
                     ));
+                }
+                ResourceRequest::PkFont(request) => {
+                    let started = Instant::now();
+                    telemetry.local_lookups = telemetry.local_lookups.saturating_add(1);
+                    let resolved = local.resolve_pk_font(request);
+                    telemetry.local_lookup_time = telemetry
+                        .local_lookup_time
+                        .saturating_add(started.elapsed());
+                    if let Some(font) = resolved {
+                        telemetry.local_hits = telemetry.local_hits.saturating_add(1);
+                        responses.push(ResourceResponse::PkFont(font));
+                    } else {
+                        let file =
+                            self.resolve_generic_file(local, &request.logical_name(), cancellation);
+                        match file {
+                            Ok(file) => responses.push(ResourceResponse::PkFont(ResolvedPkFont {
+                                request: request.clone(),
+                                virtual_path: file.virtual_path,
+                                expected_sha256: Some(Sha256::digest(&file.bytes).into()),
+                                bytes: file.bytes,
+                            })),
+                            Err(NativeRunError::DistributionUnavailable(_)) => {
+                                responses.push(ResourceResponse::PkFontUnavailable(request.clone()))
+                            }
+                            Err(error) => return Err(error),
+                        }
+                    }
                 }
             }
         }
@@ -1053,6 +1128,16 @@ impl DistributionResolver {
         logical_name: &[u8],
         cancellation: &FetchCancellation,
     ) -> Result<Vec<u8>, NativeRunError> {
+        self.resolve_generic_file(local, logical_name, cancellation)
+            .map(|file| file.bytes)
+    }
+
+    fn resolve_generic_file(
+        &mut self,
+        local: &LocalResolver,
+        logical_name: &[u8],
+        cancellation: &FetchCancellation,
+    ) -> Result<ResolvedFile, NativeRunError> {
         let name = std::str::from_utf8(logical_name).map_err(|_| {
             NativeRunError::Selection("PDF resource name is not valid UTF-8".to_owned())
         })?;
@@ -1070,7 +1155,7 @@ impl DistributionResolver {
         )?;
         for response in resolved.responses {
             match response {
-                ResourceResponse::File(file) if file.request == key => return Ok(file.bytes),
+                ResourceResponse::File(file) if file.request == key => return Ok(file),
                 ResourceResponse::FileUnavailable(unavailable) if unavailable == key => {
                     return Err(NativeRunError::DistributionUnavailable(vec![format!(
                         "tex:{name}"

@@ -32,6 +32,16 @@ use std::io::{Read, Write};
 
 pub(crate) const DEFAULT_PDF_PK_RESOLUTION: i32 = 600;
 
+pub(crate) fn is_pdf_sfnt_program(name: &[u8]) -> bool {
+    name.rsplit(|byte| *byte == b'.')
+        .next()
+        .is_some_and(|extension| {
+            extension.eq_ignore_ascii_case(b"ttf")
+                || extension.eq_ignore_ascii_case(b"otf")
+                || extension.eq_ignore_ascii_case(b"woff2")
+        })
+}
+
 fn parse_pdf_matrix(payload: &[u8]) -> Result<[f32; 4], PdfBuildError> {
     let text =
         std::str::from_utf8(payload).map_err(|_| PdfBuildError::InvalidMatrix(payload.to_vec()))?;
@@ -2717,13 +2727,7 @@ fn pdf_font_objects(
             font.name.as_bytes().to_vec(),
         ));
     }
-    let is_truetype = program_name.is_some_and(|name| {
-        name.rsplit(|byte| *byte == b'.')
-            .next()
-            .is_some_and(|extension| {
-                extension.eq_ignore_ascii_case(b"ttf") || extension.eq_ignore_ascii_case(b"woff2")
-            })
-    });
+    let is_truetype = program_name.is_some_and(is_pdf_sfnt_program);
     let type1 = (!is_truetype)
         .then(|| program_name.and_then(|name| stores.pdf_type1_program(name)))
         .flatten();
@@ -4621,6 +4625,14 @@ impl From<tex_fonts::PdfTrueTypeSubsetError> for PdfBuildError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sfnt_program_classification_includes_truetype_opentype_and_woff2() {
+        for name in [b"font.ttf".as_slice(), b"font.otf", b"font.woff2"] {
+            assert!(is_pdf_sfnt_program(name));
+        }
+        assert!(!is_pdf_sfnt_program(b"font.pfb"));
+    }
     use crate::{
         DirectFontResolver, RejectingMemoryInputResolver, RunResult, dvi_from_page_plans,
         prepare_pdftex_run_stores, run_input_collecting_artifacts,

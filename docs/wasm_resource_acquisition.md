@@ -62,6 +62,7 @@ or TeX input string becomes a URL inside Rust.
 pub enum ResourceRequest {
     File(FileRequest),
     Font(FontRequest),
+    PkFont(PdfPkFontRequest),
 }
 
 pub struct NeedResources {
@@ -81,6 +82,8 @@ pub enum ResourceResponse {
     FileUnavailable(FileRequestKey),
     Font(ResolvedFont),
     FontUnavailable(FontRequestKey),
+    PkFont(ResolvedPkFont),
+    PkFontUnavailable(PdfPkFontRequest),
 }
 ```
 
@@ -257,6 +260,14 @@ entries, but the resolver returns the original semantic kind rather than the
 manifest transport kind. Recursive local metrics remain `tfm` requests. This
 keeps native and WASM retry identity identical while preserving the manifest
 schema.
+
+Unmapped real PDF leaves use the distinct `pk-font` request rather than a
+generic file request. Its identity retains the TeX name bytes, resolved DPI,
+and frozen mode; the response carries the canonical client/distribution path,
+exact bytes, and optional SHA-256 assertion. Rust validates and retains the PK
+program before accepting the output transaction. Native directories and WASM
+client VFS providers therefore produce the same request and program identity,
+while HTML-only and DVI-only sessions never issue the request.
 
 Format startup is a distinct, pre-session acquisition. The worker compares an
 inline format entry's `engineVersion` and `formatSchema` with the WASM exports

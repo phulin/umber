@@ -149,3 +149,23 @@ test("unexpected and duplicate provider bindings are rejected", async () => {
 		/duplicate response/,
 	);
 });
+
+test("PK requests preserve byte names, DPI, and frozen mode", async () => {
+	const request = {
+		type: "pk-font",
+		texName: new Uint8Array([0x63, 0x6d, 0x72, 0x31, 0x30]),
+		dpi: 600,
+		mode: new Uint8Array([0x6c, 0x6a, 0x66, 0x6f, 0x75, 0x72]),
+	};
+	const responses = await new CompositeResourceResolver([
+		{
+			async resolve(requests) {
+				return requests.map(unavailable);
+			},
+		},
+	]).resolve([request]);
+	assert.equal(responses[0].type, "pk-font-unavailable");
+	assert.deepEqual(responses[0].texName, request.texName);
+	assert.deepEqual(responses[0].mode, request.mode);
+	assert.equal(responses[0].dpi, 600);
+});
