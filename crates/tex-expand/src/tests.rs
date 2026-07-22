@@ -3177,6 +3177,40 @@ fn nested_macro_calls_replay_arguments_from_outer_frozen_frame() {
 }
 
 #[test]
+fn materialized_macro_argument_parameter_token_is_delivered_once() {
+    let mut stores = Universe::new();
+    let identity = stores.intern("identity");
+    let parameters = stores.intern_token_list(&[Token::param(1)]);
+    let body = stores.intern_token_list(&[char_token('a'), Token::param(1), char_token('b')]);
+    stores.set_macro_meaning(
+        identity,
+        MacroMeaning::new(MeaningFlags::EMPTY, parameters, body),
+    );
+    let invocation = stores.intern_token_list(&[
+        Token::Cs(identity.symbol()),
+        char_token('{'),
+        Token::param(1),
+        char_token('}'),
+    ]);
+    let mut input = InputStack::new(MemoryInput::new(""));
+    input.push_token_list(invocation, TokenListReplayKind::Inserted);
+    let mut expansion = ExpansionContext::new("texput").with_fuel(16);
+    let mut output = Vec::new();
+
+    while let Some(token) = crate::get_x_token_with_context(
+        &mut input,
+        &mut tex_state::ExpansionContext::new(&mut stores),
+        &mut expansion,
+    )
+    .expect("finite macro-argument replay")
+    {
+        output.push(crate::semantic_token(token));
+    }
+
+    assert_eq!(output, [char_token('a'), Token::param(1), char_token('b')]);
+}
+
+#[test]
 fn identical_macro_bodies_keep_shared_body_identity_with_distinct_arguments() {
     let mut stores = Universe::new();
     let left = stores.intern("left");

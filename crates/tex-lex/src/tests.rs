@@ -251,6 +251,39 @@ fn macro_argument_replay_and_snapshots_share_the_matched_buffer() {
 }
 
 #[test]
+fn macro_argument_replay_does_not_recursively_substitute_parameter_tokens() {
+    let mut stores = Universe::new();
+    let body = stores.intern_token_list(&[
+        char_token('a', Catcode::Letter),
+        Token::param(1),
+        char_token('b', Catcode::Letter),
+    ]);
+    let parameter = TracedTokenWord::pack(Token::param(1), OriginId::UNKNOWN);
+    let mut ranges = [None; MACRO_ARGUMENT_SLOTS];
+    ranges[0] = Some(MacroArgumentRange::new(0, 1));
+    let arguments = MacroArguments::from_parts(vec![parameter], ranges);
+    let mut input = InputStack::new(MemoryInput::new(""));
+    input.push_macro_body(body, arguments);
+
+    assert_eq!(
+        [
+            input.next_token(&mut stores).expect("body prefix"),
+            input
+                .next_token(&mut stores)
+                .expect("literal argument token"),
+            input.next_token(&mut stores).expect("body suffix"),
+            input.next_token(&mut stores).expect("exhausted replay"),
+        ],
+        [
+            Some(char_token('a', Catcode::Letter)),
+            Some(Token::param(1)),
+            Some(char_token('b', Catcode::Letter)),
+            None,
+        ]
+    );
+}
+
+#[test]
 fn nested_token_list_resolves_current_macro_parameter() {
     let mut stores = Universe::new();
     let body_token = char_token('b', Catcode::Letter);

@@ -4982,9 +4982,11 @@ impl InputStack {
     /// current macro invocation.
     ///
     /// TeX.web's `get_next` uses the current `param_start` for `out_param`
-    /// regardless of the token-list kind being read. Macro-body frames handle
-    /// their own parameter tokens in the ordinary replay path; all other
-    /// token-list frames inherit the nearest active macro body's arguments.
+    /// while collecting nested input. Macro-body frames handle their own
+    /// parameter tokens in the ordinary replay path, while a macro-argument
+    /// frame is the already-collected result of that process and must replay
+    /// its payload literally. Other nested token-list frames inherit the
+    /// nearest active macro body's arguments.
     fn take_nested_macro_argument(
         &mut self,
         frame_index: usize,
