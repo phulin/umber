@@ -189,6 +189,51 @@ fn probes(result: CompileAttemptResult) -> Vec<FileRequest> {
     }
 }
 
+fn apply_text_replacement(
+    session: &mut VirtualCompileSession,
+    revision: u64,
+    source: &str,
+    needle: &str,
+    replacement: &str,
+) -> String {
+    let start = source.find(needle).expect("replacement text");
+    let mut next = source.to_owned();
+    next.replace_range(start..start + needle.len(), replacement);
+    session
+        .apply_patch(SourcePatch {
+            next_revision: RevisionId::new(revision),
+            base_revision: session.revision().expect("accepted revision"),
+            expected_hash: session.content_hash().expect("accepted source hash"),
+            range: start..start + needle.len(),
+            replacement: replacement.to_owned(),
+        })
+        .expect("valid replacement patch");
+    next
+}
+
+fn answer_single_file(result: CompileAttemptResult, bytes: Option<&[u8]>) -> ResourceResponse {
+    let resources = match result {
+        CompileAttemptResult::NeedResources(resources) => resources,
+        other => panic!("expected one file resource, got {other:#?}"),
+    };
+    let mut requests = resources.required;
+    requests.extend(resources.probes);
+    let [ResourceRequest::File(request)] = requests.as_slice() else {
+        panic!("expected exactly one file resource: {requests:#?}");
+    };
+    bytes.map_or_else(
+        || ResourceResponse::FileUnavailable(request.key().clone()),
+        |bytes| {
+            ResourceResponse::File(ResolvedFile {
+                request: request.key().clone(),
+                virtual_path: format!("/texlive/{}", request.key().name()),
+                bytes: bytes.to_vec(),
+                expected_digest: None,
+            })
+        },
+    )
+}
+
 #[test]
 fn accepted_dependencies_record_required_positive_and_shadowing_negative_paths() {
     let mut session = session("\\input generated.aux \\end");
@@ -286,6 +331,238 @@ fn accepted_dependencies_record_authoritative_probe_but_not_its_resource_wait() 
     assert_eq!(
         dependencies[0].access(),
         tex_state::InputDependencyAccess::AuthoritativeProbe
+    );
+}
+
+#[test]
+fn generated_probe_missing_to_present_restarts_from_job_start_and_matches_cold() {
+    let source = concat!(
+        "\\openin0=state.aux ",
+        "\\ifeof0 \\message{missing}\\else \\message{present}\\fi \\closein0 ",
+        "\\immediate\\openout1=state.aux \\immediate\\write1{generated} ",
+        "\\immediate\\closeout1 \\message{old-tail}\\end"
+    );
+    let mut incremental = session(source);
+    let response = answer_single_file(incremental.compile_attempt(), None);
+    incremental
+        .provide_resources(vec![response])
+        .expect("authoritative initial absence");
+    assert!(matches!(
+        incremental.compile_attempt(),
+        CompileAttemptResult::Complete(_)
+    ));
+    let generated_path = VirtualPath::user("state.aux").expect("generated path");
+    let generated = incremental
+        .files
+        .snapshot()
+        .get(&generated_path)
+        .expect("live accepted snapshot")
+        .expect("generated file")
+        .bytes()
+        .to_vec();
+
+    let next = apply_text_replacement(&mut incremental, 2, source, "old-tail", "new-tail");
+    let CompileAttemptResult::Complete(actual) = incremental.compile_attempt() else {
+        panic!("generated file must satisfy the next probe");
+    };
+    assert_eq!(
+        incremental
+            .reuse_metrics()
+            .expect("replacement metrics")
+            .reexecuted_bytes,
+        next.len()
+    );
+    assert!(
+        incremental
+            .reuse_metrics()
+            .expect("replacement metrics")
+            .restart_boundary
+            .is_none()
+    );
+
+    let mut cold = session(&next);
+    cold.add_user_file("state.aux", generated)
+        .expect("incoming generated snapshot");
+    let CompileAttemptResult::Complete(expected) = cold.compile_attempt() else {
+        panic!("cold comparison must complete");
+    };
+    assert_eq!(actual, expected);
+}
+
+#[test]
+fn changed_required_generated_input_retries_one_job_start_candidate_and_matches_cold() {
+    let source = concat!(
+        "\\input state.aux ",
+        "\\immediate\\openout1=state.aux ",
+        "\\immediate\\write1{\\string\\message{new-input}} ",
+        "\\immediate\\closeout1 \\message{old-tail}\\end"
+    );
+    let mut incremental = session(source);
+    incremental
+        .add_user_file("state.aux", b"\\message{old-input}\n".to_vec())
+        .expect("old incoming input");
+    assert!(matches!(
+        incremental.compile_attempt(),
+        CompileAttemptResult::Complete(_)
+    ));
+    let generated_path = VirtualPath::user("state.aux").expect("generated path");
+    let generated = incremental
+        .files
+        .snapshot()
+        .get(&generated_path)
+        .expect("live accepted snapshot")
+        .expect("changed generated file")
+        .bytes()
+        .to_vec();
+
+    let next = apply_text_replacement(
+        &mut incremental,
+        2,
+        source,
+        "\\message{old-tail}",
+        "\\input later \\message{new-tail}",
+    );
+    let response = answer_single_file(incremental.compile_attempt(), Some(b"\\relax\n"));
+    assert_eq!(
+        incremental
+            .candidate
+            .as_ref()
+            .expect("suspended private candidate")
+            .suspension_serial,
+        1
+    );
+    incremental
+        .provide_resources(vec![response])
+        .expect("resume resource");
+    let CompileAttemptResult::Complete(actual) = incremental.compile_attempt() else {
+        panic!("resumed candidate must complete");
+    };
+    assert_eq!(
+        incremental
+            .reuse_metrics()
+            .expect("replacement metrics")
+            .reexecuted_bytes,
+        next.len()
+    );
+    assert!(
+        incremental
+            .reuse_metrics()
+            .expect("replacement metrics")
+            .restart_boundary
+            .is_none()
+    );
+
+    let mut cold = session(&next);
+    cold.add_user_file("state.aux", generated)
+        .expect("incoming generated snapshot");
+    let response = answer_single_file(cold.compile_attempt(), Some(b"\\relax\n"));
+    cold.provide_resources(vec![response])
+        .expect("cold comparison resource");
+    let CompileAttemptResult::Complete(expected) = cold.compile_attempt() else {
+        panic!("cold comparison must complete");
+    };
+    assert_eq!(actual, expected);
+}
+
+#[test]
+fn generated_probe_present_to_missing_restarts_from_job_start_and_matches_cold() {
+    let producing = concat!(
+        "\\immediate\\openout1=state.aux \\immediate\\write1{present} ",
+        "\\immediate\\closeout1 \\message{one}\\end"
+    );
+    let consuming = concat!(
+        "\\openin0=state.aux ",
+        "\\ifeof0 \\message{missing}\\else \\message{present}\\fi \\closein0 ",
+        "\\message{two}\\end"
+    );
+    let mut incremental = session(producing);
+    assert!(matches!(
+        incremental.compile_attempt(),
+        CompileAttemptResult::Complete(_)
+    ));
+    incremental
+        .apply_patch(SourcePatch {
+            next_revision: RevisionId::new(2),
+            base_revision: RevisionId::new(1),
+            expected_hash: incremental.content_hash().expect("accepted source hash"),
+            range: 0..producing.len(),
+            replacement: consuming.to_owned(),
+        })
+        .expect("replace producer with consumer");
+    assert!(matches!(
+        incremental.compile_attempt(),
+        CompileAttemptResult::Complete(_)
+    ));
+    assert!(
+        incremental
+            .files
+            .snapshot()
+            .get(&VirtualPath::user("state.aux").expect("generated path"))
+            .expect("live accepted snapshot")
+            .is_none()
+    );
+
+    let next = apply_text_replacement(&mut incremental, 3, consuming, "two", "three");
+    let response = answer_single_file(incremental.compile_attempt(), None);
+    incremental
+        .provide_resources(vec![response])
+        .expect("authoritative current absence");
+    let CompileAttemptResult::Complete(actual) = incremental.compile_attempt() else {
+        panic!("missing-input candidate must complete");
+    };
+    assert_eq!(
+        incremental
+            .reuse_metrics()
+            .expect("replacement metrics")
+            .reexecuted_bytes,
+        next.len()
+    );
+    assert!(
+        incremental
+            .reuse_metrics()
+            .expect("replacement metrics")
+            .restart_boundary
+            .is_none()
+    );
+
+    let mut cold = session(&next);
+    let response = answer_single_file(cold.compile_attempt(), None);
+    cold.provide_resources(vec![response])
+        .expect("cold authoritative absence");
+    let CompileAttemptResult::Complete(expected) = cold.compile_attempt() else {
+        panic!("cold comparison must complete");
+    };
+    assert_eq!(actual, expected);
+}
+
+#[test]
+fn unchanged_consumed_input_and_changed_unconsumed_output_preserve_checkpoint_reuse() {
+    let source = concat!(
+        "\\input stable.tex \\font\\f=cmr10 \\f reusable paragraph\\par ",
+        "\\immediate\\openout1=unused.aux \\immediate\\write1{old-output} ",
+        "\\immediate\\closeout1 \\message{tail}\\end"
+    );
+    let mut session = session(source);
+    session
+        .add_user_file("stable.tex", b"\\relax\n".to_vec())
+        .expect("stable consumed input");
+    session
+        .add_user_file("cmr10.tfm", CMR10.to_vec())
+        .expect("paragraph font");
+    assert!(matches!(
+        session.compile_attempt(),
+        CompileAttemptResult::Complete(_)
+    ));
+
+    let _next = apply_text_replacement(&mut session, 2, source, "old-output", "new-output");
+    assert!(matches!(
+        session.compile_attempt(),
+        CompileAttemptResult::Complete(_)
+    ));
+    let reuse = session.reuse_metrics().expect("incremental reuse metrics");
+    assert!(
+        reuse.restart_boundary.is_some(),
+        "unchanged semantic dependencies must preserve normal restart selection: {reuse:?}"
     );
 }
 

@@ -1596,10 +1596,50 @@ impl VirtualCompileSession {
     fn run_attempt(&mut self) -> Result<CompileAttemptResult, CompileError> {
         #[cfg(not(target_arch = "wasm32"))]
         let candidate_restore_started = Instant::now();
-        let mut retained = if let Some(candidate) = self.candidate.take() {
+        let existing_candidate = self.candidate.take();
+        let mut pending_files = existing_candidate
+            .as_ref()
+            .map_or_else(|| self.files.clone(), |candidate| candidate.files.clone());
+        if existing_candidate.is_none()
+            && let (Some(session), Some((_, edit))) =
+                (self.incremental.as_ref(), self.pending_patch.as_ref())
+        {
+            let mut source = session.source().to_owned();
+            source.replace_range(edit.range.clone(), &edit.replacement);
+            pending_files
+                .register_user(self.main_path.clone(), session.source_file_bytes(&source))
+                .map_err(map_user_registration)?;
+        }
+
+        #[cfg(not(target_arch = "wasm32"))]
+        let resolver_index_started = Instant::now();
+        let resolved_paths = pending_files
+            .resolved_paths()
+            .map(|(key, path)| (key.clone(), path.clone()))
+            .collect::<BTreeMap<_, _>>();
+        let unavailable_files = pending_files
+            .unavailable_keys()
+            .cloned()
+            .collect::<BTreeSet<_>>();
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            self.resolver_index_time = self
+                .resolver_index_time
+                .saturating_add(resolver_index_started.elapsed());
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        let vfs_stage_started = Instant::now();
+        let candidate_files = pending_files.clone();
+        let mut build =
+            pending_files.begin_build(BuildPlan::new(BuildId::new(u64::from(self.attempts))));
+        let mut stage = build
+            .begin_stage(ProducerId::new(1))
+            .map_err(map_transaction)?;
+        let snapshot = stage.snapshot();
+
+        let mut retained = if let Some(candidate) = existing_candidate {
             candidate
         } else if self.incremental.is_none() {
-            let snapshot = self.files.snapshot();
             let source = snapshot
                 .get(&self.main_path)
                 .map_err(|error| CompileError::World(error.to_string()))?
@@ -1646,7 +1686,7 @@ impl VirtualCompileSession {
                 .map_err(|error| CompileError::Incremental(error.to_string()))?;
             candidate.set_cumulative_fuel_limit(self.limits.engine_fuel);
             RetainedCandidate {
-                files: self.files.clone(),
+                files: candidate_files.clone(),
                 execution: RetainedExecution::Initial { session, candidate },
                 response_generation: self.response_generation,
                 suspension_serial: 0,
@@ -1656,19 +1696,20 @@ impl VirtualCompileSession {
                 .pending_patch
                 .as_ref()
                 .expect("accepted sessions execute only pending patches");
-            let mut candidate = session
-                .start_advance_candidate(*next_revision, edit.clone())
-                .map_err(|error| CompileError::Incremental(error.to_string()))?;
+            let dependencies_match = accepted_dependencies_match_snapshot(
+                session.accepted_input_dependencies(),
+                &snapshot,
+                &self.main_path,
+            )?;
+            let mut candidate = if dependencies_match {
+                session.start_advance_candidate(*next_revision, edit.clone())
+            } else {
+                session.start_advance_candidate_from_job_start(*next_revision, edit.clone())
+            }
+            .map_err(|error| CompileError::Incremental(error.to_string()))?;
             candidate.set_cumulative_fuel_limit(self.limits.engine_fuel);
-            let mut files = self.files.clone();
-            let mut source = session.source().to_owned();
-            source.replace_range(edit.range.clone(), &edit.replacement);
-            let source = session.source_file_bytes(&source);
-            files
-                .register_user(self.main_path.clone(), source)
-                .map_err(map_user_registration)?;
             RetainedCandidate {
-                files,
+                files: candidate_files,
                 execution: RetainedExecution::Pending(candidate),
                 response_generation: self.response_generation,
                 suspension_serial: 0,
@@ -1682,33 +1723,6 @@ impl VirtualCompileSession {
                 .candidate_restore_time
                 .saturating_add(candidate_restore_started.elapsed());
         }
-
-        let mut pending_files = retained.files;
-
-        #[cfg(not(target_arch = "wasm32"))]
-        let resolver_index_started = Instant::now();
-        let resolved_paths = pending_files
-            .resolved_paths()
-            .map(|(key, path)| (key.clone(), path.clone()))
-            .collect::<BTreeMap<_, _>>();
-        let unavailable_files = pending_files
-            .unavailable_keys()
-            .cloned()
-            .collect::<BTreeSet<_>>();
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            self.resolver_index_time = self
-                .resolver_index_time
-                .saturating_add(resolver_index_started.elapsed());
-        }
-        #[cfg(not(target_arch = "wasm32"))]
-        let vfs_stage_started = Instant::now();
-        let mut build =
-            pending_files.begin_build(BuildPlan::new(BuildId::new(u64::from(self.attempts))));
-        let mut stage = build
-            .begin_stage(ProducerId::new(1))
-            .map_err(map_transaction)?;
-        let snapshot = stage.snapshot();
         let mut resolvers = VirtualRunResolvers::new(
             &snapshot,
             &resolved_paths,
@@ -2654,6 +2668,36 @@ fn check_format_image_bytes(attempted: usize) -> Result<(), CompileError> {
         attempted,
         SessionLimits::FORMAT_IMAGE_BYTES,
     )
+}
+
+fn accepted_dependencies_match_snapshot<'a>(
+    dependencies: impl Iterator<Item = &'a tex_state::InputDependency>,
+    snapshot: &umber_vfs::VfsSnapshot,
+    main_path: &VirtualPath,
+) -> Result<bool, CompileError> {
+    for dependency in dependencies {
+        let Some(path) = crate::input_observation::virtual_path(dependency.path()) else {
+            return Ok(false);
+        };
+        if &path == main_path {
+            continue;
+        }
+        let file = snapshot
+            .get(&path)
+            .map_err(|error| CompileError::World(error.to_string()))?;
+        let matches = match (dependency.outcome(), file) {
+            (tex_state::InputDependencyOutcome::Missing, None) => true,
+            (tex_state::InputDependencyOutcome::Present(expected), Some(file)) => {
+                ContentHash::from_bytes(file.bytes()) == expected
+            }
+            (tex_state::InputDependencyOutcome::Missing, Some(_))
+            | (tex_state::InputDependencyOutcome::Present(_), None) => false,
+        };
+        if !matches {
+            return Ok(false);
+        }
+    }
+    Ok(true)
 }
 
 fn memory_run_output_bytes(output: &MemoryRunOutput) -> usize {

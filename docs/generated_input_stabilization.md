@@ -1,9 +1,10 @@
 # Generated-input correctness and editor stabilization
 
 > **Status:** implementation in progress. Accepted engine generations retain
-> bounded positive and authoritative-negative input observations and expose a
-> versioned native/WASM projection; incoming-snapshot validation and decoupled
-> stabilization remain to be implemented.
+> bounded positive and authoritative-negative input observations, expose a
+> versioned native/WASM projection, and validate retained dependencies against
+> the candidate VFS snapshot before reuse. Decoupled stabilization remains to
+> be implemented.
 
 This document defines how persistent editor compilation should compose
 root-buffer edits, generated TeX inputs such as `.aux` and `.toc` files, and
@@ -71,11 +72,11 @@ single-pass incremental fast path for the provisional edited pass.
 
 ## Generated-input correctness gap
 
-The retained single-pass path validates recorded inputs before starting an
-edited revision, but the memory-backed validation compares each record with
-the accepted `World`'s own retained file map. The candidate's incoming VFS
-stage snapshot is created later. Restart selection itself considers only root
-buffer positions and bytes.
+The retained single-pass path now assembles the candidate's private root/VFS
+generation and opens its stage snapshot before constructing an edited engine
+candidate. Positive and authoritative-negative dependencies from the accepted
+generation are compared with that exact immutable snapshot. Only an exact
+match enters ordinary restart selection and checkpoint restore.
 
 Generated outputs are published into the accepted VFS generated layer after a
 successful pass. Consequently, the next patch can observe a different
@@ -92,13 +93,15 @@ There are three required transition classes:
   in the accepted generation.
 
 Successful `InputRecord`s continue to provide content-addressed source and
-provenance identity. A separate copy-on-write `World` dependency map now
+provenance identity. A separate copy-on-write `World` dependency map
 reduces semantic observations by canonical path, retaining successful reads
 and authoritative misses with their access class across checkpoint forks and
-restoring the prior map root on rollback. The VFS resolver records a lookup
+restores the prior map root on rollback. The VFS resolver records a lookup
 only after it resolves to immutable bytes or authoritative absence; unresolved
-resource waits and speculative prefetch hints never enter the map. Incoming
-snapshot validation remains the next implementation step.
+resource waits and speculative prefetch hints never enter the map. A mismatch
+selects a private edited candidate that executes from `JobStart`, disables
+paragraph replay for that pass, and retains the accepted generation until all
+engine, output, and VFS publication checks succeed.
 
 The sharp failure sequence is:
 

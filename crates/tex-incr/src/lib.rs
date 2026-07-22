@@ -895,6 +895,31 @@ impl Session {
         next_revision: RevisionId,
         edit: Edit,
     ) -> Result<RevisionCandidate, SessionError> {
+        self.start_advance_candidate_with_policy(next_revision, edit, false)
+    }
+
+    /// Creates a private edited-revision candidate that executes from
+    /// [`EngineBoundary::JobStart`] while preserving accepted history until
+    /// the candidate is committed.
+    ///
+    /// This entry point is for hosts that have already found an accepted
+    /// external-input dependency mismatch against the exact immutable input
+    /// snapshot supplied to the candidate. It deliberately bypasses retained
+    /// checkpoint restore and paragraph replay for this pass.
+    pub fn start_advance_candidate_from_job_start(
+        &self,
+        next_revision: RevisionId,
+        edit: Edit,
+    ) -> Result<RevisionCandidate, SessionError> {
+        self.start_advance_candidate_with_policy(next_revision, edit, true)
+    }
+
+    fn start_advance_candidate_with_policy(
+        &self,
+        next_revision: RevisionId,
+        edit: Edit,
+        force_job_start: bool,
+    ) -> Result<RevisionCandidate, SessionError> {
         let revision_setup_started = Timer::start();
         self.validate_edit(next_revision, &edit)?;
         let old_source = self.source.clone();
@@ -915,13 +940,19 @@ impl Session {
             expanded_replacement.len(),
             LayoutGeneration::new(next_revision.raw()),
         )?;
-        let restart = select_restart(&old_history, &old_source, &next, &edit);
+        let restart = if force_job_start {
+            None
+        } else {
+            select_restart(&old_history, &old_source, &next, &edit)
+        };
         let map = EditMap::new(edit.range.clone(), edit.replacement.len());
-        self.substrate
-            .as_ref()
-            .ok_or(SessionError::MissingAcceptedSubstrate)?
-            .world()
-            .validate_recorded_inputs()?;
+        if !force_job_start {
+            self.substrate
+                .as_ref()
+                .ok_or(SessionError::MissingAcceptedSubstrate)?
+                .world()
+                .validate_recorded_inputs()?;
+        }
         let setup = Box::new(AdvanceSetup {
             next_revision,
             old_source,

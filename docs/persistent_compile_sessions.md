@@ -164,6 +164,15 @@ binding for later checkpoint-input validation, so input identity, provenance,
 and same-run pending-output precedence remain unchanged. Successful committed
 auxiliary files publish through the same stage transaction in deterministic
 path order.
+
+Before an edited candidate is constructed, the driver installs its synthetic
+root in a private provisioner generation and opens the exact stage snapshot
+that its resolvers will read. It compares every accepted positive and
+authoritative-negative dependency with that snapshot. An exact match permits
+ordinary checkpoint selection; any mismatch creates a private candidate that
+executes from `JobStart` without paragraph replay. This is a reuse decision,
+not a patch rejection, and the same private candidate remains live across
+resource suspension and retry.
 A resource request, diagnostic failure, or output-limit failure discards that
 stage, so the session retains no parallel byte maps, file-accounting counters,
 or partially published generated files.
