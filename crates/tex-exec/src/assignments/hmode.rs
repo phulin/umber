@@ -592,11 +592,16 @@ fn shape_open_type_chars(
     let font = stores.font(first.font);
     let shaping_font = font.shaping_font().expect("OpenType run font");
     let features = font.shaping_features().expect("OpenType feature policy");
-    let text = chars.iter().map(|entry| entry.ch).collect::<String>();
-    let byte_starts = text
-        .char_indices()
-        .map(|(index, _)| index)
-        .collect::<Vec<_>>();
+    let mut text = String::new();
+    let mut byte_starts = Vec::with_capacity(chars.len());
+    for entry in chars {
+        byte_starts.push(text.len());
+        if let Some(mapped) = font.mapped_text(entry.ch) {
+            text.push_str(mapped);
+        } else {
+            text.push(entry.ch);
+        }
+    }
     let break_bytes = break_positions
         .iter()
         .filter_map(|&position| byte_starts.get(position).copied())
@@ -610,18 +615,19 @@ fn shape_open_type_chars(
     );
     let mut cluster_advances = BTreeMap::<usize, i64>::new();
     for glyph in shaped.glyphs {
-        *cluster_advances.entry(glyph.cluster as usize).or_default() +=
-            i64::from(glyph.x_advance.raw());
+        let cluster_byte = glyph.cluster as usize;
+        let source_index = byte_starts
+            .partition_point(|&start| start <= cluster_byte)
+            .saturating_sub(1);
+        *cluster_advances.entry(source_index).or_default() += i64::from(glyph.x_advance.raw());
     }
     let cluster_starts = cluster_advances.keys().copied().collect::<Vec<_>>();
     let mut adjustments = vec![Scaled::from_raw(0); chars.len()];
-    for (cluster_index, &start_byte) in cluster_starts.iter().enumerate() {
-        let end_byte = cluster_starts
+    for (cluster_index, &start) in cluster_starts.iter().enumerate() {
+        let end = cluster_starts
             .get(cluster_index + 1)
             .copied()
-            .unwrap_or(text.len());
-        let start = byte_starts.partition_point(|&byte| byte < start_byte);
-        let end = byte_starts.partition_point(|&byte| byte < end_byte);
+            .unwrap_or(chars.len());
         if start >= end {
             continue;
         }
@@ -632,7 +638,7 @@ fn shape_open_type_chars(
                     .map_or(0, |metrics| metrics.width.raw()),
             )
         });
-        let shaped = cluster_advances[&start_byte];
+        let shaped = cluster_advances[&start];
         adjustments[end - 1] = Scaled::from_raw(
             i32::try_from(shaped - nominal).expect("shaped cluster adjustment fits Scaled"),
         );

@@ -251,6 +251,11 @@ impl Lowerer<'_> {
                 self.emit_character(page, output, font_id, code, origin.0, origin.1)?;
                 return Ok(());
             };
+            if font.encoding_map().is_some() {
+                return Err(PdfBuildError::UnsupportedMappedVirtualFont(
+                    name.to_string(),
+                ));
+            }
             self.program_lookups += 1;
             self.font_programs
                 .insert(font_id, (Arc::clone(&name), Arc::clone(&program)));
@@ -504,6 +509,8 @@ impl Lowerer<'_> {
                 tfm_checksum: font.checksum(),
                 design_size: font.design_size(),
                 at_size: font.size(),
+                layout_policy: font.layout_policy(),
+                mapping_fallback: font.mapping_fallback(),
                 opentype: None,
                 semantic_identity: font.source_identity(),
                 construction: FontResourceConstruction::Loaded,

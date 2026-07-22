@@ -39,6 +39,9 @@ fn manifest_reuses_one_retained_object_and_program_derived_family() {
         object_identity: tex_fonts::FontObjectIdentity::for_bytes(bytes),
         instance_identity: tex_fonts::FontInstanceIdentity::from_bytes([8; 32]),
         container: tex_fonts::FontContainer::Woff2,
+        encoding_map_version: None,
+        encoding_map_identity: None,
+        fontdimen_synthesis_version: None,
     });
     let options = HtmlOptions {
         asset_mode: AssetMode::Manifest {
@@ -356,6 +359,8 @@ fn page() -> crate::PageArtifact {
         tfm_checksum: 123,
         design_size: sp(655_360),
         at_size: sp(655_360),
+        layout_policy: tex_fonts::FontLayoutPolicy::ClassicTfmExact,
+        mapping_fallback: None,
         opentype: None,
         semantic_identity: tex_fonts::FontSourceIdentity::from_bytes([7; 32]),
         construction: crate::FontResourceConstruction::Loaded,

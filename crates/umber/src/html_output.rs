@@ -166,6 +166,8 @@ mod tests {
             tfm_checksum: 0,
             design_size: Scaled::from_raw(1),
             at_size: Scaled::from_raw(1),
+            layout_policy: tex_fonts::FontLayoutPolicy::ClassicTfmExact,
+            mapping_fallback: None,
             opentype: None,
             semantic_identity: tex_fonts::FontSourceIdentity::from_bytes(tfm.bytes()),
             construction: tex_out::FontResourceConstruction::Loaded,

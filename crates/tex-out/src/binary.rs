@@ -9,7 +9,9 @@ use std::fmt;
 use tex_arith::Scaled;
 
 const MAGIC: &[u8; 4] = b"UMPG";
-const VERSION: u8 = 20;
+const VERSION: u8 = 21;
+const FONT_LAYOUT_VERSION: u8 = 21;
+const PAGE_SIZE_VERSION: u8 = 20;
 const PRE_PAGE_SIZE_VERSION: u8 = 19;
 const IMAGE_VERSION: u8 = 18;
 const ANNOTATION_VERSION: u8 = 17;
@@ -301,6 +303,7 @@ pub(crate) fn from_bytes(
     reader.expect_magic()?;
     let version = reader.u8()?;
     if version != VERSION
+        && version != PAGE_SIZE_VERSION
         && version != PRE_PAGE_SIZE_VERSION
         && version != IMAGE_VERSION
         && version != ANNOTATION_VERSION
@@ -316,7 +319,7 @@ pub(crate) fn from_bytes(
     let banner = reader.str()?;
     let h_offset = reader.scaled()?;
     let v_offset = reader.scaled()?;
-    let (page_origin_x, page_origin_y, page_width, page_height) = if version >= VERSION {
+    let (page_origin_x, page_origin_y, page_width, page_height) = if version >= PAGE_SIZE_VERSION {
         (
             reader.scaled()?,
             reader.scaled()?,
@@ -1346,6 +1349,16 @@ impl Writer {
         self.raw(&[value]);
     }
 
+    fn optional_u8(&mut self, value: Option<u8>) {
+        match value {
+            Some(value) => {
+                self.u8(1);
+                self.u8(value);
+            }
+            None => self.u8(0),
+        }
+    }
+
     fn u32(&mut self, value: u32) {
         self.raw(&value.to_le_bytes());
     }
@@ -1437,6 +1450,15 @@ impl Writer {
             self.u32(font.tfm_checksum);
             self.scaled(font.design_size);
             self.scaled(font.at_size);
+            self.u8(match font.layout_policy {
+                tex_fonts::FontLayoutPolicy::OpenTypePreferred => 1,
+                tex_fonts::FontLayoutPolicy::ClassicTfmExact => 2,
+            });
+            self.u8(match font.mapping_fallback {
+                None => 0,
+                Some(tex_fonts::FontMappingFallbackPolicy::Error) => 1,
+                Some(tex_fonts::FontMappingFallbackPolicy::ClassicTfmExact) => 2,
+            });
             match &font.opentype {
                 Some(opentype) => {
                     self.u8(1);
@@ -1444,6 +1466,15 @@ impl Writer {
                     self.raw(&opentype.object_identity.bytes());
                     self.raw(&opentype.instance_identity.bytes());
                     self.u8(opentype.container as u8);
+                    self.optional_u8(opentype.encoding_map_version);
+                    match opentype.encoding_map_identity {
+                        Some(identity) => {
+                            self.u8(1);
+                            self.raw(&identity);
+                        }
+                        None => self.u8(0),
+                    }
+                    self.optional_u8(opentype.fontdimen_synthesis_version);
                 }
                 None => self.u8(0),
             }
@@ -1961,6 +1992,7 @@ impl Reader<'_> {
         let version = self.u8()?;
         if version != VERSION
             && version != PRE_PAGE_SIZE_VERSION
+            && version != PAGE_SIZE_VERSION
             && version != IMAGE_VERSION
             && version != ANNOTATION_VERSION
             && version != PRE_ANNOTATION_VERSION
@@ -1975,21 +2007,22 @@ impl Reader<'_> {
         let banner = self.str()?;
         let h_offset = self.scaled()?;
         let v_offset = self.scaled()?;
-        let (page_origin_x, page_origin_y, page_width, page_height) = if version >= VERSION {
-            (
-                self.scaled()?,
-                self.scaled()?,
-                self.scaled()?,
-                self.scaled()?,
-            )
-        } else {
-            (
-                Scaled::from_raw(0),
-                Scaled::from_raw(0),
-                Scaled::from_raw(0),
-                Scaled::from_raw(0),
-            )
-        };
+        let (page_origin_x, page_origin_y, page_width, page_height) =
+            if version >= PAGE_SIZE_VERSION {
+                (
+                    self.scaled()?,
+                    self.scaled()?,
+                    self.scaled()?,
+                    self.scaled()?,
+                )
+            } else {
+                (
+                    Scaled::from_raw(0),
+                    Scaled::from_raw(0),
+                    Scaled::from_raw(0),
+                    Scaled::from_raw(0),
+                )
+            };
         let job = crate::JobInfo {
             mag,
             banner,
@@ -2043,6 +2076,14 @@ impl Reader<'_> {
 
     fn u8(&mut self) -> Result<u8, ParseError> {
         Ok(self.take(1)?[0])
+    }
+
+    fn optional_u8(&mut self, kind: &'static str) -> Result<Option<u8>, ParseError> {
+        match self.u8()? {
+            0 => Ok(None),
+            1 => Ok(Some(self.u8()?)),
+            tag => Err(ParseError::InvalidTag { kind, tag }),
+        }
     }
 
     fn u32(&mut self) -> Result<u32, ParseError> {
@@ -2134,7 +2175,9 @@ impl Reader<'_> {
     }
 
     fn fonts(&mut self, version: u8) -> Result<Vec<FontResource>, ParseError> {
-        let len = self.collection_len(if version >= FONT_CONSTRUCTION_VERSION {
+        let len = self.collection_len(if version >= FONT_LAYOUT_VERSION {
+            127
+        } else if version >= FONT_CONSTRUCTION_VERSION {
             125
         } else if version >= OPENTYPE_FONT_VERSION {
             53
@@ -2149,6 +2192,32 @@ impl Reader<'_> {
             let tfm_checksum = self.u32()?;
             let design_size = self.scaled()?;
             let at_size = self.scaled()?;
+            let (layout_policy, mapping_fallback) = if version >= FONT_LAYOUT_VERSION {
+                let policy = match self.u8()? {
+                    1 => tex_fonts::FontLayoutPolicy::OpenTypePreferred,
+                    2 => tex_fonts::FontLayoutPolicy::ClassicTfmExact,
+                    tag => {
+                        return Err(ParseError::InvalidTag {
+                            kind: "font layout policy",
+                            tag,
+                        });
+                    }
+                };
+                let fallback = match self.u8()? {
+                    0 => None,
+                    1 => Some(tex_fonts::FontMappingFallbackPolicy::Error),
+                    2 => Some(tex_fonts::FontMappingFallbackPolicy::ClassicTfmExact),
+                    tag => {
+                        return Err(ParseError::InvalidTag {
+                            kind: "font mapping fallback",
+                            tag,
+                        });
+                    }
+                };
+                (policy, fallback)
+            } else {
+                (tex_fonts::FontLayoutPolicy::ClassicTfmExact, None)
+            };
             let opentype = if version >= OPENTYPE_FONT_VERSION {
                 match self.u8()? {
                     0 => None,
@@ -2171,11 +2240,35 @@ impl Reader<'_> {
                                 });
                             }
                         };
+                        let (
+                            encoding_map_version,
+                            encoding_map_identity,
+                            fontdimen_synthesis_version,
+                        ) = if version >= FONT_LAYOUT_VERSION {
+                            let map_version = self.optional_u8("encoding map version")?;
+                            let map_identity = match self.u8()? {
+                                0 => None,
+                                1 => Some(self.identity()?),
+                                tag => {
+                                    return Err(ParseError::InvalidTag {
+                                        kind: "encoding map identity",
+                                        tag,
+                                    });
+                                }
+                            };
+                            let fontdimen = self.optional_u8("fontdimen synthesis version")?;
+                            (map_version, map_identity, fontdimen)
+                        } else {
+                            (None, None, None)
+                        };
                         Some(crate::OpenTypeFontResource {
                             program_identity,
                             object_identity,
                             instance_identity,
                             container,
+                            encoding_map_version,
+                            encoding_map_identity,
+                            fontdimen_synthesis_version,
                         })
                     }
                     tag => {
@@ -2246,6 +2339,8 @@ impl Reader<'_> {
                 tfm_checksum,
                 design_size,
                 at_size,
+                layout_policy,
+                mapping_fallback,
                 opentype,
                 semantic_identity,
                 construction,

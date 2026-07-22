@@ -90,6 +90,50 @@ pub(super) fn execute_font_definition(
             }
             loaded
         }
+        crate::FontSource::MappedTfm {
+            metrics,
+            opentype,
+            encoding_map,
+        } => {
+            let tfm = tex_fonts::TfmFont::parse_with_size(metrics.bytes(), size_spec)?;
+            let parameters = tfm
+                .parameters
+                .values
+                .iter()
+                .map(|parameter| parameter.value)
+                .collect();
+            LoadedFont::new(
+                font_display_name(&font_name),
+                metrics.path().to_owned(),
+                metrics.hash().bytes(),
+                tfm.header.checksum,
+                tfm.header.design_size,
+                tfm.font_size,
+                parameters,
+                tfm.font_metrics(),
+            )
+            .with_mapped_opentype(opentype, encoding_map)
+        }
+        crate::FontSource::ClassicTfmFallback { metrics } => {
+            let tfm = tex_fonts::TfmFont::parse_with_size(metrics.bytes(), size_spec)?;
+            let parameters = tfm
+                .parameters
+                .values
+                .iter()
+                .map(|parameter| parameter.value)
+                .collect();
+            LoadedFont::new(
+                font_display_name(&font_name),
+                metrics.path().to_owned(),
+                metrics.hash().bytes(),
+                tfm.header.checksum,
+                tfm.header.design_size,
+                tfm.font_size,
+                parameters,
+                tfm.font_metrics(),
+            )
+            .with_classic_mapping_fallback()
+        }
         crate::FontSource::OpenType(selection) => {
             let logical_name = opentype_name.unwrap_or(&font_name);
             let design_size = Scaled::from_raw(10 * Scaled::UNITY);

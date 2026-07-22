@@ -112,7 +112,10 @@ fn operator_nucleus(
         && let Some(fetched) = fetch(ctx.state, ch, ctx.style)
         && let Ok(code) = u8::try_from(u32::from(fetched.ch))
         && let Some(next) = ctx.state.font_next_larger(fetched.font, code)
-        && ctx.state.font_char_metrics(fetched.font, next).is_some()
+        && ctx
+            .state
+            .classic_math_char_metrics(fetched.font, next)
+            .is_some()
     {
         ch.character = char::from(next);
         field = MathField::MathChar(ch);

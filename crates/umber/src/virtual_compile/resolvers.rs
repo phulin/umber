@@ -4,8 +4,8 @@ use std::path::Path;
 use tex_exec::{FontResolver, PdfImageRequest, PdfImageResolver};
 use tex_expand::{InputResolver, ResourceLookup, ResourceNeed, ResourceResult};
 use tex_fonts::{
-    AcceptedFontContainers, FontFeaturePolicy, FontPurposes, FontRequest, FontRequestKey,
-    OpenTypeFont, VariationSelection,
+    AcceptedFontContainers, FontFeaturePolicy, FontLayoutPolicy, FontMappingFallbackPolicy,
+    FontPurposes, FontRequest, FontRequestKey, LegacyEncodingMap, OpenTypeFont, VariationSelection,
 };
 use tex_lex::WorldInput;
 use tex_state::scaled::Scaled;
@@ -15,12 +15,19 @@ use tex_state::{
 };
 
 use super::path::RequestedFile;
-use super::{CompileError, FileKind, FileRequest, FileRequestKey, VirtualPath};
+use super::{CompileError, FileKind, FileRequest, FileRequestKey, SessionWebFont, VirtualPath};
 use umber_vfs::VfsSnapshot;
 pub(super) struct VirtualRunResolvers<'a> {
     input: VirtualFileResolver<'a>,
     font: VirtualFontResolver<'a>,
     image: VirtualImageResolver<'a>,
+}
+
+pub(super) struct FontResolutionPolicy<'a> {
+    pub accepted_containers: AcceptedFontContainers,
+    pub layout: FontLayoutPolicy,
+    pub fallback: FontMappingFallbackPolicy,
+    pub mapped_fonts: &'a BTreeMap<(String, String), SessionWebFont>,
 }
 
 struct VirtualFileResolver<'a> {
@@ -46,8 +53,7 @@ impl<'a> VirtualRunResolvers<'a> {
         unavailable_files: &'a BTreeSet<FileRequestKey>,
         resolved_fonts: &'a BTreeMap<FontRequestKey, OpenTypeFont>,
         unavailable_fonts: &'a BTreeSet<FontRequestKey>,
-        accepted_font_containers: AcceptedFontContainers,
-        require_opentype: bool,
+        policy: FontResolutionPolicy<'a>,
     ) -> Self {
         Self {
             input: VirtualFileResolver::new(snapshot, resolved_paths, unavailable_files),
@@ -57,8 +63,7 @@ impl<'a> VirtualRunResolvers<'a> {
                 unavailable_files,
                 resolved_fonts,
                 unavailable_fonts,
-                accepted_font_containers,
-                require_opentype,
+                policy,
             ),
             image: VirtualImageResolver {
                 files: VirtualFileResolver::new(snapshot, resolved_paths, unavailable_files),
@@ -544,7 +549,9 @@ struct VirtualFontResolver<'a> {
     resolved_fonts: &'a BTreeMap<FontRequestKey, OpenTypeFont>,
     unavailable_fonts: &'a BTreeSet<FontRequestKey>,
     accepted_font_containers: AcceptedFontContainers,
-    require_opentype: bool,
+    layout_policy: FontLayoutPolicy,
+    fallback: FontMappingFallbackPolicy,
+    mapped_fonts: &'a BTreeMap<(String, String), SessionWebFont>,
     font_misses: BTreeMap<FontRequestKey, (u64, FontRequest)>,
 }
 
@@ -555,15 +562,16 @@ impl<'a> VirtualFontResolver<'a> {
         unavailable_files: &'a BTreeSet<FileRequestKey>,
         resolved_fonts: &'a BTreeMap<FontRequestKey, OpenTypeFont>,
         unavailable_fonts: &'a BTreeSet<FontRequestKey>,
-        accepted_font_containers: AcceptedFontContainers,
-        require_opentype: bool,
+        policy: FontResolutionPolicy<'a>,
     ) -> Self {
         Self {
             files: VirtualFileResolver::new(snapshot, resolved_paths, unavailable_files),
             resolved_fonts,
             unavailable_fonts,
-            accepted_font_containers,
-            require_opentype,
+            accepted_font_containers: policy.accepted_containers,
+            layout_policy: policy.layout,
+            fallback: policy.fallback,
+            mapped_fonts: policy.mapped_fonts,
             font_misses: BTreeMap::new(),
         }
     }
@@ -590,7 +598,7 @@ impl FontResolver for VirtualFontResolver<'_> {
         } else {
             Some(self.files.open(input, FileKind::Tfm, name, request_index))
         };
-        if !self.require_opentype && opentype_only.is_none() {
+        if self.layout_policy == FontLayoutPolicy::ClassicTfmExact && opentype_only.is_none() {
             return tfm
                 .expect("classic selection has a TFM request")
                 .map(|lookup| {
@@ -600,11 +608,37 @@ impl FontResolver for VirtualFontResolver<'_> {
                     })
                 });
         }
+        let tfm_content = match tfm {
+            Some(Ok(ResourceLookup::Available(metrics))) => Some(metrics),
+            Some(other) => return other.map(|lookup| lookup.map(|_| unreachable!())),
+            None => None,
+        };
         let logical_name = opentype_only.unwrap_or_else(|| {
             path.file_stem()
                 .and_then(|stem| stem.to_str())
                 .unwrap_or(name)
         });
+        let mapped_bundle = tfm_content.as_ref().and_then(|metrics| {
+            self.mapped_fonts
+                .get(&(logical_name.to_owned(), metrics.hash().hex()))
+        });
+        if opentype_only.is_none() && mapped_bundle.is_none() {
+            return match self.fallback {
+                FontMappingFallbackPolicy::ClassicTfmExact => Ok(ResourceLookup::Available(
+                    tex_exec::FontSource::ClassicTfmFallback {
+                        metrics: tfm_content.expect("TFM-style selection has metrics"),
+                    },
+                )),
+                FontMappingFallbackPolicy::Error => Err(format!(
+                    "no OpenType mapping bundle for {logical_name} with TFM identity {}",
+                    tfm_content
+                        .as_ref()
+                        .expect("TFM-style selection has metrics")
+                        .hash()
+                        .hex()
+                )),
+            };
+        }
         let key = FontRequestKey::new(
             logical_name,
             0,
@@ -630,19 +664,46 @@ impl FontResolver for VirtualFontResolver<'_> {
                 request_index,
             )));
         };
+        if let Some(bundle) = mapped_bundle
+            && (font.object_identity.bytes() != bundle.sha256
+                || font.transport_bytes.as_ref() != bundle.woff2.as_slice())
+        {
+            return Err(format!(
+                "mapped font response for {logical_name} conflicts with the exact TFM bundle"
+            ));
+        }
+        if let Some(bundle) = mapped_bundle {
+            for (code, text) in bundle.encoding.iter().enumerate() {
+                if let Some(text) = text
+                    && text.chars().any(|scalar| font.cmap.glyph(scalar).is_none())
+                {
+                    return Err(format!(
+                        "mapped font {logical_name} has no cmap glyph for encoding code {code:02x}"
+                    ));
+                }
+            }
+        }
         let selection = tex_fonts::OpenTypeProgramSelection {
             font: font.clone(),
             variation: key.variation,
             features: key.feature_policy,
             direction: tex_fonts::WritingDirection::LeftToRight,
         };
-        match tfm {
-            Some(tfm) => tfm.map(|lookup| {
-                lookup.map(|metrics| tex_exec::FontSource::Tfm {
+        match tfm_content {
+            Some(metrics) => {
+                let encoding_map = LegacyEncodingMap::new(
+                    mapped_bundle
+                        .expect("mapped TFM selection has a bundle")
+                        .encoding
+                        .clone(),
+                )
+                .map_err(str::to_owned)?;
+                Ok(ResourceLookup::Available(tex_exec::FontSource::MappedTfm {
                     metrics,
-                    opentype: Some(selection),
-                })
-            }),
+                    opentype: selection,
+                    encoding_map,
+                }))
+            }
             None => Ok(ResourceLookup::Available(tex_exec::FontSource::OpenType(
                 selection,
             ))),

@@ -1229,11 +1229,18 @@ fn register_font_resource(stores: &Universe, font: FontId, emission: &mut Emissi
         tfm_checksum: loaded.checksum(),
         design_size: loaded.design_size(),
         at_size: loaded.size(),
+        layout_policy: loaded.layout_policy(),
+        mapping_fallback: loaded.mapping_fallback(),
         opentype: loaded.opentype().map(|font| tex_out::OpenTypeFontResource {
             program_identity: font.program_identity,
             object_identity: font.object_identity,
             instance_identity: font.instance_identity,
             container: font.container,
+            encoding_map_version: loaded.encoding_map().map(|map| map.version()),
+            encoding_map_identity: loaded.encoding_map().map(|map| map.identity()),
+            fontdimen_synthesis_version: loaded
+                .encoding_map()
+                .map(|_| tex_fonts::OPENTYPE_FONTDIMEN_SYNTHESIS_VERSION),
         }),
         semantic_identity: loaded.source_identity(),
         construction,

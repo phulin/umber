@@ -354,6 +354,8 @@ impl NativeCompileSession {
             } else {
                 AcceptedFontContainers::NATIVE_WITH_COLLECTIONS
             },
+            font_layout_policy: tex_fonts::FontLayoutPolicy::ClassicTfmExact,
+            font_mapping_fallback: tex_fonts::FontMappingFallbackPolicy::ClassicTfmExact,
         })
         .map_err(|error| NativeRunError::Compile(error.to_string()))?;
         let format_restore_ns = restore_started.elapsed().as_nanos();

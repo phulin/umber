@@ -14,7 +14,7 @@ mod style;
 mod variants;
 
 use tex_fonts::metrics::ExtensibleRecipe as MetricExtensibleRecipe;
-use tex_fonts::{LigKernChar, LigKernCommand, MathMetricsSource};
+use tex_fonts::{CharMetrics, LigKernChar, LigKernCommand, MathMetricsSource};
 use tex_state::Universe;
 use tex_state::env::banks::{DimenParam, GlueParam, IntParam};
 use tex_state::ids::{FontId, GlueId};
@@ -55,6 +55,9 @@ pub trait MathTypesetState: TypesetState {
         right: LigKernChar,
     ) -> Option<LigKernCommand>;
     fn font_skew_char(&self, font: FontId) -> i32;
+    fn classic_math_char_metrics(&self, font: FontId, code: u8) -> Option<CharMetrics> {
+        self.font_char_metrics(font, code)
+    }
     fn math_metrics_source(&self, _font: FontId) -> MathMetricsSource<'_> {
         MathMetricsSource::ClassicTfmExact
     }
@@ -97,6 +100,10 @@ impl MathTypesetState for Universe {
 
     fn font_skew_char(&self, font: FontId) -> i32 {
         Universe::font_skew_char(self, font)
+    }
+
+    fn classic_math_char_metrics(&self, font: FontId, code: u8) -> Option<CharMetrics> {
+        Universe::font(self, font).metrics().character(code)
     }
 
     fn math_metrics_source(&self, font: FontId) -> MathMetricsSource<'_> {

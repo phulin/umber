@@ -4326,6 +4326,7 @@ pub enum PdfBuildError {
     },
     TrueTypeSubset(tex_fonts::PdfTrueTypeSubsetError),
     MissingLiveFont(String),
+    UnsupportedMappedVirtualFont(String),
     VirtualFontDepthExceeded(usize),
     VirtualFontStackExceeded(usize),
     VirtualFontStackUnderflow,
@@ -4480,6 +4481,10 @@ impl std::fmt::Display for PdfBuildError {
             Self::MissingLiveFont(name) => {
                 write!(f, "PDF artifact font {name:?} has no live metric source")
             }
+            Self::UnsupportedMappedVirtualFont(name) => write!(
+                f,
+                "mapped OpenType text font {name:?} cannot execute a classic virtual-font program"
+            ),
             Self::VirtualFontDepthExceeded(limit) => {
                 write!(f, "virtual-font recursion exceeds depth {limit}")
             }

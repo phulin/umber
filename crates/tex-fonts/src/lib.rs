@@ -12,13 +12,15 @@ pub mod type1;
 
 pub use metrics::{
     CharMetrics, CharTag as MetricCharTag, ExtensibleRecipe as MetricExtensibleRecipe,
-    FontConstruction, FontConstructionError, FontContentHash, FontMetrics, FontMetricsSource,
-    FontMetricsValidationError, FontSourceIdentity, LigKernChar, LigKernCommand,
-    LigKernInstruction, LigKernIter, LigKernStep as MetricLigKernStep, LigatureCommand, LoadedFont,
-    MAX_LIG_KERN_PROGRAM_LEN, MathKernCorner, MathMetricsSource, MathVariantDirection,
-    OPENTYPE_FONTDIMEN_SYNTHESIS_VERSION, OpenTypeFontSelection, OpenTypeFontShaped,
-    OpenTypeMathAssembly, OpenTypeMathAssemblyPart, OpenTypeMathConstruction, OpenTypeMathGlyph,
-    OpenTypeMathMetrics, OpenTypeMathVariant, OpenTypeProgramSelection, ShapingFont,
+    FONT_LAYOUT_POLICY_VERSION, FontConstruction, FontConstructionError, FontContentHash,
+    FontLayoutPolicy, FontMappingFallbackPolicy, FontMetrics, FontMetricsSource,
+    FontMetricsValidationError, FontSourceIdentity, LEGACY_ENCODING_MAP_VERSION, LegacyEncodingMap,
+    LigKernChar, LigKernCommand, LigKernInstruction, LigKernIter, LigKernStep as MetricLigKernStep,
+    LigatureCommand, LoadedFont, MAX_LIG_KERN_PROGRAM_LEN, MathKernCorner, MathMetricsSource,
+    MathVariantDirection, OPENTYPE_FONTDIMEN_SYNTHESIS_VERSION, OpenTypeFontSelection,
+    OpenTypeFontShaped, OpenTypeMathAssembly, OpenTypeMathAssemblyPart, OpenTypeMathConstruction,
+    OpenTypeMathGlyph, OpenTypeMathMetrics, OpenTypeMathVariant, OpenTypeProgramSelection,
+    ShapingFont,
 };
 pub use opentype::{
     AcceptedFontContainers, CharacterMap, FeatureSetting, FontContainer, FontFeaturePolicy,

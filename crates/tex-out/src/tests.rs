@@ -28,6 +28,16 @@ fn version_19_artifacts_decode_with_unconfigured_page_geometry() {
     let mut bytes = artifact.to_bytes().expect("artifact serializes");
     let banner_len = u32::from_le_bytes(bytes[9..13].try_into().expect("banner length")) as usize;
     let page_geometry = 13 + banner_len + 8;
+    let font_start = page_geometry + 16 + 4;
+    let name_len = u32::from_le_bytes(
+        bytes[font_start + 4..font_start + 8]
+            .try_into()
+            .expect("font-name length"),
+    ) as usize;
+    let layout = font_start + 8 + name_len + 32 + 4 + 4 + 4;
+    let opentype_extensions = layout + 2 + 1 + 32 + 32 + 32 + 1;
+    bytes.drain(opentype_extensions..opentype_extensions + 37);
+    bytes.drain(layout..layout + 2);
     bytes.drain(page_geometry..page_geometry + 16);
     bytes[4] = 19;
 
@@ -74,7 +84,7 @@ fn pdf_destinations_round_trip_nullable_zoom_and_running_rectangle_dimensions() 
     let bytes = artifact
         .to_bytes()
         .expect("destination artifact serializes");
-    assert_eq!(bytes[4], 20);
+    assert_eq!(bytes[4], 21);
     assert_eq!(
         PageArtifact::from_bytes(&bytes).expect("destination artifact parses"),
         artifact
@@ -309,7 +319,7 @@ fn rejects_unknown_version() {
 #[test]
 fn rejects_pre_content_identity_v2_artifact_version() {
     let mut bytes = sample_artifact().to_bytes().expect("artifact serializes");
-    assert_eq!(bytes[4], 20);
+    assert_eq!(bytes[4], 21);
     bytes[4] = 11;
 
     assert_eq!(
@@ -692,11 +702,16 @@ fn sample_artifact() -> PageArtifact {
             tfm_checksum: 0x1234_5678,
             design_size: Scaled::from_raw(655_360),
             at_size: Scaled::from_raw(655_360),
+            layout_policy: tex_fonts::FontLayoutPolicy::OpenTypePreferred,
+            mapping_fallback: None,
             opentype: Some(OpenTypeFontResource {
                 program_identity: tex_fonts::FontProgramIdentity::from_bytes([1; 32]),
                 object_identity: tex_fonts::FontObjectIdentity::from_bytes([2; 32]),
                 instance_identity: tex_fonts::FontInstanceIdentity::from_bytes([3; 32]),
                 container: tex_fonts::FontContainer::Woff2,
+                encoding_map_version: Some(tex_fonts::LEGACY_ENCODING_MAP_VERSION),
+                encoding_map_identity: Some([12; 32]),
+                fontdimen_synthesis_version: Some(tex_fonts::OPENTYPE_FONTDIMEN_SYNTHESIS_VERSION),
             }),
             semantic_identity: tex_fonts::FontSourceIdentity::from_bytes([4; 32]),
             construction: crate::FontResourceConstruction::Loaded,

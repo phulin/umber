@@ -69,6 +69,8 @@ fn page(stores: &mut Universe, root: FontId) -> PositionedPage {
             tfm_checksum: font.checksum(),
             design_size: font.design_size(),
             at_size: font.size(),
+            layout_policy: font.layout_policy(),
+            mapping_fallback: font.mapping_fallback(),
             opentype: None,
             semantic_identity: font.source_identity(),
             construction: FontResourceConstruction::Loaded,

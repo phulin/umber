@@ -755,7 +755,7 @@ pub(crate) fn fetch(
             Some(FetchedChar {
                 font,
                 ch: ch.character,
-                metrics: state.font_char_metrics(font, code)?,
+                metrics: state.classic_math_char_metrics(font, code)?,
                 glyph_id: None,
                 top_accent_attachment: None,
             })
@@ -815,7 +815,9 @@ pub(crate) fn source_node(ctx: &mut Context<'_, impl MathTypesetState>, node: &N
     match node {
         Node::Char { font, ch, origin } => {
             let code = u8::try_from(u32::from(*ch)).ok();
-            if let Some(metrics) = code.and_then(|code| ctx.state.font_char_metrics(*font, code)) {
+            if let Some(metrics) =
+                code.and_then(|code| ctx.state.classic_math_char_metrics(*font, code))
+            {
                 MathNode::Char {
                     font: *font,
                     ch: *ch,

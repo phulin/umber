@@ -19,6 +19,92 @@ pub const MIN_TEX_FONT_PARAMETERS: usize = 7;
 /// a new version rather than silently changing existing document layout.
 pub const OPENTYPE_FONTDIMEN_SYNTHESIS_VERSION: u8 = 1;
 
+/// Version of the policy contract selecting classic or mapped OpenType layout.
+pub const FONT_LAYOUT_POLICY_VERSION: u8 = 1;
+
+/// Version of the legacy-code to Unicode mapping contract.
+pub const LEGACY_ENCODING_MAP_VERSION: u8 = 1;
+
+/// Compilation-wide authority used to lay out TFM-style font selections.
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub enum FontLayoutPolicy {
+    /// Prefer an exact TFM-identity-keyed OpenType mapping bundle.
+    OpenTypePreferred,
+    /// Preserve byte-indexed TFM metrics and lig/kern behavior exactly.
+    #[default]
+    ClassicTfmExact,
+}
+
+/// Explicit result when an OpenType-preferred selection has no usable mapping.
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub enum FontMappingFallbackPolicy {
+    /// Missing mappings are a typed capability failure.
+    Error,
+    /// Record and use the byte-compatible classic TFM authority.
+    #[default]
+    ClassicTfmExact,
+}
+
+/// Immutable explicit map from each legacy byte code to Unicode text.
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub struct LegacyEncodingMap {
+    version: u8,
+    identity: [u8; 32],
+    entries: Box<[Option<String>]>,
+}
+
+impl LegacyEncodingMap {
+    pub fn new(entries: Vec<Option<String>>) -> Result<Self, &'static str> {
+        if entries.len() != 256 {
+            return Err("legacy encoding map must contain exactly 256 entries");
+        }
+        if entries
+            .iter()
+            .flatten()
+            .any(|entry| entry.is_empty() || entry.chars().any(char::is_control))
+        {
+            return Err("legacy encoding map entries must be nonempty printable Unicode text");
+        }
+        let mut hasher = Sha256::new();
+        hasher.update(b"umber-legacy-encoding-map-v1");
+        for entry in &entries {
+            match entry {
+                None => hasher.update([0]),
+                Some(entry) => {
+                    hasher.update([1]);
+                    hasher.update((entry.len() as u64).to_le_bytes());
+                    hasher.update(entry.as_bytes());
+                }
+            }
+        }
+        Ok(Self {
+            version: LEGACY_ENCODING_MAP_VERSION,
+            identity: hasher.finalize().into(),
+            entries: entries.into_boxed_slice(),
+        })
+    }
+
+    #[must_use]
+    pub const fn version(&self) -> u8 {
+        self.version
+    }
+
+    #[must_use]
+    pub const fn identity(&self) -> [u8; 32] {
+        self.identity
+    }
+
+    #[must_use]
+    pub fn entries(&self) -> &[Option<String>] {
+        &self.entries
+    }
+
+    #[must_use]
+    pub fn text(&self, code: u8) -> Option<&str> {
+        self.entries[usize::from(code)].as_deref()
+    }
+}
+
 /// Maximum lig/kern program length addressable by the runtime `u16` cursor.
 ///
 /// Length 65,536 is valid: its final instruction has index `u16::MAX` and
@@ -44,6 +130,9 @@ pub struct LoadedFont {
     opentype: Option<OpenTypeFontSelection>,
     construction: FontConstruction,
     classic_math_capable: bool,
+    layout_policy: FontLayoutPolicy,
+    fallback: Option<FontMappingFallbackPolicy>,
+    encoding_map: Option<LegacyEncodingMap>,
 }
 
 /// Host-neutral provenance for an immutable font instance.
@@ -582,6 +671,9 @@ impl LoadedFont {
             opentype: None,
             construction: FontConstruction::Loaded,
             classic_math_capable: true,
+            layout_policy: FontLayoutPolicy::ClassicTfmExact,
+            fallback: None,
+            encoding_map: None,
         }
     }
 
@@ -595,46 +687,7 @@ impl LoadedFont {
         size: Scaled,
         selection: OpenTypeProgramSelection,
     ) -> Self {
-        let space = selection
-            .font
-            .cmap
-            .glyph(' ')
-            .and_then(|glyph| {
-                selection
-                    .font
-                    .metrics
-                    .horizontal_advances
-                    .get(usize::from(glyph))
-            })
-            .and_then(|advance| {
-                selection
-                    .font
-                    .metrics
-                    .units_to_sp(i32::from(*advance), size.raw())
-                    .ok()
-            })
-            .map_or(Scaled::from_raw(0), Scaled::from_raw);
-        let x_height = selection
-            .font
-            .metadata
-            .x_height
-            .and_then(|height| {
-                selection
-                    .font
-                    .metrics
-                    .units_to_sp(i32::from(height), size.raw())
-                    .ok()
-            })
-            .map_or(Scaled::from_raw(0), Scaled::from_raw);
-        let parameters = vec![
-            Scaled::from_raw(0),
-            space,
-            round_scaled_ratio(space, 1, 2),
-            round_scaled_ratio(space, 1, 3),
-            x_height,
-            size,
-            Scaled::from_raw(0),
-        ];
+        let parameters = synthesized_opentype_parameters(&selection, size);
         let content_hash = selection.font.object_identity.bytes();
         let mut loaded = Self::new(
             name,
@@ -648,6 +701,7 @@ impl LoadedFont {
         )
         .with_opentype(selection);
         loaded.classic_math_capable = false;
+        loaded.layout_policy = FontLayoutPolicy::OpenTypePreferred;
         loaded
     }
 
@@ -689,6 +743,55 @@ impl LoadedFont {
         self
     }
 
+    /// Selects a TFM-identity-keyed OpenType mapping for ordinary text while
+    /// retaining the TFM tables as the explicit math/virtual compatibility authority.
+    #[must_use]
+    pub fn with_mapped_opentype(
+        mut self,
+        selection: OpenTypeProgramSelection,
+        encoding_map: LegacyEncodingMap,
+    ) -> Self {
+        self.parameters = synthesized_opentype_parameters(&selection, self.size);
+        self.source_parameters = self.parameters.clone();
+        self = self.with_opentype(selection);
+        self.layout_policy = FontLayoutPolicy::OpenTypePreferred;
+        self.fallback = None;
+        self.encoding_map = Some(encoding_map);
+        // Mapped TFM selections deliberately keep classic math authority even
+        // when the paired text program happens to contain a MATH table.
+        self.classic_math_capable = true;
+        self
+    }
+
+    /// Records the explicit classic result of an OpenType-preferred lookup.
+    #[must_use]
+    pub fn with_classic_mapping_fallback(mut self) -> Self {
+        self.layout_policy = FontLayoutPolicy::OpenTypePreferred;
+        self.fallback = Some(FontMappingFallbackPolicy::ClassicTfmExact);
+        self
+    }
+
+    #[must_use]
+    pub const fn layout_policy(&self) -> FontLayoutPolicy {
+        self.layout_policy
+    }
+
+    #[must_use]
+    pub const fn mapping_fallback(&self) -> Option<FontMappingFallbackPolicy> {
+        self.fallback
+    }
+
+    #[must_use]
+    pub const fn encoding_map(&self) -> Option<&LegacyEncodingMap> {
+        self.encoding_map.as_ref()
+    }
+
+    #[must_use]
+    pub fn mapped_text(&self, ch: char) -> Option<&str> {
+        let map = self.encoding_map.as_ref()?;
+        map.text(u8::try_from(ch as u32).ok()?)
+    }
+
     #[must_use]
     pub const fn opentype(&self) -> Option<&OpenTypeFontSelection> {
         self.opentype.as_ref()
@@ -710,6 +813,9 @@ impl LoadedFont {
     /// explicit byte-compatible classic TeX fallback.
     #[must_use]
     pub const fn math_metrics_source(&self) -> MathMetricsSource<'_> {
+        if self.encoding_map.is_some() {
+            return MathMetricsSource::ClassicTfmExact;
+        }
         match &self.metrics {
             FontMetricsSource::OpenType(font) if font.font.math.is_some() => {
                 MathMetricsSource::OpenType(OpenTypeMathMetrics {
@@ -757,7 +863,7 @@ impl LoadedFont {
     #[must_use]
     pub fn source_identity(&self) -> FontSourceIdentity {
         let mut hasher = Sha256::new();
-        hasher.update(b"umber-font-source-v1");
+        hasher.update(b"umber-font-source-v2");
         hasher.update((self.name.len() as u64).to_le_bytes());
         hasher.update(self.name.as_bytes());
         hasher.update(self.content_hash);
@@ -767,6 +873,27 @@ impl LoadedFont {
         hasher.update((self.parameters.len() as u64).to_le_bytes());
         for parameter in &self.parameters {
             hasher.update(parameter.raw().to_le_bytes());
+        }
+        hasher.update([FONT_LAYOUT_POLICY_VERSION]);
+        hasher.update([match self.layout_policy {
+            FontLayoutPolicy::OpenTypePreferred => 1,
+            FontLayoutPolicy::ClassicTfmExact => 2,
+        }]);
+        hasher.update([match self.fallback {
+            None => 0,
+            Some(FontMappingFallbackPolicy::Error) => 1,
+            Some(FontMappingFallbackPolicy::ClassicTfmExact) => 2,
+        }]);
+        if let Some(map) = &self.encoding_map {
+            hasher.update([map.version()]);
+            hasher.update(map.identity());
+            hasher.update([OPENTYPE_FONTDIMEN_SYNTHESIS_VERSION]);
+        } else {
+            hasher.update([0, 0]);
+        }
+        if let Some(opentype) = &self.opentype {
+            hasher.update(opentype.program_identity.bytes());
+            hasher.update(opentype.instance_identity.bytes());
         }
         match self.construction {
             FontConstruction::Loaded => hasher.update([0]),
@@ -935,6 +1062,15 @@ impl LoadedFont {
 
     #[must_use]
     pub fn character_exists(&self, ch: char) -> bool {
+        if let Some(map) = &self.encoding_map {
+            let Some(mapped) = u8::try_from(ch as u32).ok().and_then(|code| map.text(code)) else {
+                return false;
+            };
+            return mapped.chars().all(|scalar| match &self.metrics {
+                FontMetricsSource::OpenType(font) => font.font.cmap.glyph(scalar).is_some(),
+                FontMetricsSource::Tfm(_) => false,
+            });
+        }
         match &self.metrics {
             FontMetricsSource::Tfm(metrics) => u8::try_from(ch as u32)
                 .ok()
@@ -945,6 +1081,15 @@ impl LoadedFont {
 
     #[must_use]
     pub fn character_width(&self, ch: char) -> Option<Scaled> {
+        if let Some(map) = &self.encoding_map {
+            let mapped = map.text(u8::try_from(ch as u32).ok()?)?;
+            let FontMetricsSource::OpenType(font) = &self.metrics else {
+                return None;
+            };
+            return mapped.chars().try_fold(Scaled::from_raw(0), |sum, scalar| {
+                sum.checked_add(font.character_width(scalar, self.size)?)
+            });
+        }
         match &self.metrics {
             FontMetricsSource::Tfm(metrics) => {
                 let code = u8::try_from(ch as u32).ok()?;
@@ -956,6 +1101,22 @@ impl LoadedFont {
 
     #[must_use]
     pub fn character_metrics(&self, ch: char) -> Option<CharMetrics> {
+        if let Some(map) = &self.encoding_map {
+            let mapped = map.text(u8::try_from(ch as u32).ok()?)?;
+            let FontMetricsSource::OpenType(font) = &self.metrics else {
+                return None;
+            };
+            let mut chars = mapped.chars();
+            let first = font.character_metrics(chars.next()?, self.size)?;
+            return chars.try_fold(first, |mut aggregate, scalar| {
+                let next = font.character_metrics(scalar, self.size)?;
+                aggregate.width = aggregate.width.checked_add(next.width)?;
+                aggregate.height = aggregate.height.max(next.height);
+                aggregate.depth = aggregate.depth.max(next.depth);
+                aggregate.italic_correction = next.italic_correction;
+                Some(aggregate)
+            });
+        }
         match &self.metrics {
             FontMetricsSource::Tfm(metrics) => metrics.character(u8::try_from(ch as u32).ok()?),
             FontMetricsSource::OpenType(font) => font.character_metrics(ch, self.size),
@@ -1448,6 +1609,52 @@ fn round_scaled_ratio(value: Scaled, numerator: i32, denominator: i32) -> Scaled
         -((-product + denominator / 2) / denominator)
     };
     Scaled::from_raw(i32::try_from(rounded).expect("bounded letterspace ratio fits i32"))
+}
+
+fn synthesized_opentype_parameters(
+    selection: &OpenTypeProgramSelection,
+    size: Scaled,
+) -> Vec<Scaled> {
+    let space = selection
+        .font
+        .cmap
+        .glyph(' ')
+        .and_then(|glyph| {
+            selection
+                .font
+                .metrics
+                .horizontal_advances
+                .get(usize::from(glyph))
+        })
+        .and_then(|advance| {
+            selection
+                .font
+                .metrics
+                .units_to_sp(i32::from(*advance), size.raw())
+                .ok()
+        })
+        .map_or(Scaled::from_raw(0), Scaled::from_raw);
+    let x_height = selection
+        .font
+        .metadata
+        .x_height
+        .and_then(|height| {
+            selection
+                .font
+                .metrics
+                .units_to_sp(i32::from(height), size.raw())
+                .ok()
+        })
+        .map_or(Scaled::from_raw(0), Scaled::from_raw);
+    vec![
+        Scaled::from_raw(0),
+        space,
+        round_scaled_ratio(space, 1, 2),
+        round_scaled_ratio(space, 1, 3),
+        x_height,
+        size,
+        Scaled::from_raw(0),
+    ]
 }
 
 fn scale_expanded_metric(value: Scaled, ratio: i16) -> Scaled {

@@ -99,6 +99,14 @@ pub enum FontSource {
         metrics: FileContent,
         opentype: Option<tex_fonts::OpenTypeProgramSelection>,
     },
+    /// A TFM-style text selection upgraded by an exact content-identity map.
+    MappedTfm {
+        metrics: FileContent,
+        opentype: tex_fonts::OpenTypeProgramSelection,
+        encoding_map: tex_fonts::LegacyEncodingMap,
+    },
+    /// An explicitly recorded classic fallback under `OpenTypePreferred`.
+    ClassicTfmFallback { metrics: FileContent },
     /// A validated OpenType program selected without any TFM dependency.
     OpenType(tex_fonts::OpenTypeProgramSelection),
 }

@@ -312,6 +312,112 @@ fn provide_cmu_font(session: &mut VirtualCompileSession, request: FontRequest) {
         .expect("provide OpenType font");
 }
 
+fn cmu_mapped_bundle() -> SessionWebFont {
+    cmu_mapped_bundle_for("cmr10", CMR10)
+}
+
+fn cmu_mapped_bundle_for(name: &str, tfm: &[u8]) -> SessionWebFont {
+    let woff2 = include_bytes!("../../../umber-wasm/assets/cmu-serif-500-roman.woff2").to_vec();
+    let mut encoding = vec![None; 256];
+    for code in 32_u8..=126 {
+        encoding[usize::from(code)] = Some(char::from(code).to_string());
+    }
+    encoding[0] = Some("Γ".to_owned());
+    SessionWebFont {
+        name: name.to_owned(),
+        tfm_content_hash_hex: tex_state::ContentHash::from_bytes(tfm).hex(),
+        sha256: tex_fonts::FontObjectIdentity::for_bytes(&woff2).bytes(),
+        woff2,
+        encoding,
+        provenance: "CMU Serif under the SIL OFL".to_owned(),
+        embeddable: true,
+    }
+}
+
+#[test]
+fn mapped_tfm_text_uses_one_opentype_authority_for_layout_and_html() {
+    let source = b"\\font\\tenrm=cmr10\\relax \\tenrm \\textfont0=\\tenrm \\shipout\\hbox{\\char0 AV office}\\end";
+    let mut modern = VirtualCompileSession::new(SessionOptions {
+        html: true,
+        font_layout_policy: tex_fonts::FontLayoutPolicy::OpenTypePreferred,
+        font_mapping_fallback: tex_fonts::FontMappingFallbackPolicy::Error,
+        ..SessionOptions::default()
+    })
+    .expect("modern session");
+    modern
+        .add_html_font(cmu_mapped_bundle())
+        .expect("exact mapped bundle");
+    modern
+        .add_user_file("cmr10.tfm", CMR10.to_vec())
+        .expect("TFM");
+    modern
+        .add_user_file("main.tex", source.to_vec())
+        .expect("source");
+    let requested = resources(modern.compile_attempt());
+    let [ResourceRequest::Font(request)] = requested.as_slice() else {
+        panic!("mapped selection should request its exact OpenType program: {requested:?}");
+    };
+    provide_cmu_font(&mut modern, request.clone());
+    let CompileAttemptResult::Complete(modern_output) = modern.compile_attempt() else {
+        panic!("mapped compile should complete");
+    };
+    let html = String::from_utf8(modern_output.html.clone().expect("HTML")).expect("UTF-8");
+    assert!(html.contains(">ΓAV office</text>"));
+    assert!(html.contains("data:font/woff2;base64,"));
+
+    let mut classic = VirtualCompileSession::new(SessionOptions {
+        font_layout_policy: tex_fonts::FontLayoutPolicy::ClassicTfmExact,
+        ..SessionOptions::default()
+    })
+    .expect("classic");
+    classic
+        .add_user_file("cmr10.tfm", CMR10.to_vec())
+        .expect("TFM");
+    classic
+        .add_user_file("main.tex", source.to_vec())
+        .expect("source");
+    let CompileAttemptResult::Complete(classic_output) = classic.compile_attempt() else {
+        panic!("classic compile should complete");
+    };
+    assert_ne!(
+        modern_output.dvi, classic_output.dvi,
+        "mapped advances must affect layout"
+    );
+}
+
+#[test]
+fn mapped_tfm_policy_rejects_missing_and_conflicting_exact_bundles() {
+    let mut missing = VirtualCompileSession::new(SessionOptions {
+        font_layout_policy: tex_fonts::FontLayoutPolicy::OpenTypePreferred,
+        font_mapping_fallback: tex_fonts::FontMappingFallbackPolicy::Error,
+        ..SessionOptions::default()
+    })
+    .expect("strict modern session");
+    missing
+        .add_user_file("cmr10.tfm", CMR10.to_vec())
+        .expect("TFM");
+    missing
+        .add_user_file("main.tex", b"\\font\\tenrm=cmr10\\relax\\end".to_vec())
+        .expect("source");
+    assert!(matches!(
+        missing.compile_attempt(),
+        CompileAttemptResult::Error(CompileError::Diagnostic(diagnostic))
+            if diagnostic.message.contains("no OpenType mapping bundle")
+    ));
+
+    let mut conflicting = VirtualCompileSession::new(SessionOptions::default()).expect("session");
+    let bundle = cmu_mapped_bundle();
+    conflicting
+        .add_html_font(bundle.clone())
+        .expect("first bundle");
+    let mut changed = bundle;
+    changed.encoding[65] = Some("B".to_owned());
+    assert!(matches!(
+        conflicting.add_html_font(changed),
+        Err(CompileError::Html(message)) if message.contains("conflicting mapped font bundle")
+    ));
+}
+
 fn cmu_response(request: FontRequest) -> ResolvedFont {
     ResolvedFont {
         request: request.key,
@@ -1593,6 +1699,10 @@ fn font_batches_accept_partial_unordered_responses_and_reject_conflicts() {
         ..SessionOptions::default()
     })
     .expect("HTML session");
+    session.add_html_font(cmu_mapped_bundle()).expect("bundle");
+    session
+        .add_user_file("cmr10.tfm", CMR10.to_vec())
+        .expect("TFM");
     session
         .add_user_file(
             "main.tex",
@@ -1600,13 +1710,6 @@ fn font_batches_accept_partial_unordered_responses_and_reject_conflicts() {
         )
         .expect("main source");
     let missing = resources(session.compile_attempt());
-    let file = missing
-        .iter()
-        .find_map(|request| match request {
-            ResourceRequest::File(request) => Some(request.clone()),
-            ResourceRequest::Font(_) => None,
-        })
-        .expect("TFM request");
     let font = missing
         .iter()
         .find_map(|request| match request {
@@ -1629,16 +1732,6 @@ fn font_batches_accept_partial_unordered_responses_and_reject_conflicts() {
         Err(CompileError::ConflictingResolvedBinding(_))
     ));
 
-    let remaining = resources(session.compile_attempt());
-    assert_eq!(remaining, vec![ResourceRequest::File(file.clone())]);
-    session
-        .provide_resources(vec![ResourceResponse::File(ResolvedFile {
-            request: file.key().clone(),
-            virtual_path: "/texlive/fonts/tfm/public/cm/cmr10.tfm".to_owned(),
-            bytes: CMR10.to_vec(),
-            expected_digest: None,
-        })])
-        .expect("TFM response");
     assert!(matches!(
         session.compile_attempt(),
         CompileAttemptResult::Complete(_)
@@ -1844,6 +1937,10 @@ fn unavailable_font_answers_are_idempotent_and_conflict_with_bytes() {
         ..SessionOptions::default()
     })
     .expect("HTML session");
+    session.add_html_font(cmu_mapped_bundle()).expect("bundle");
+    session
+        .add_user_file("cmr10.tfm", CMR10.to_vec())
+        .expect("TFM");
     session
         .add_user_file("main.tex", b"\\font\\tenrm=cmr10\\relax \\end".to_vec())
         .expect("main source");
@@ -1953,17 +2050,14 @@ fn invalid_mixed_batch_publishes_nothing() {
         ..SessionOptions::default()
     })
     .expect("HTML session");
+    session.add_html_font(cmu_mapped_bundle()).expect("bundle");
+    session
+        .add_user_file("cmr10.tfm", CMR10.to_vec())
+        .expect("TFM");
     session
         .add_user_file("main.tex", b"\\font\\tenrm=cmr10\\relax \\end".to_vec())
         .expect("main source");
     let missing = resources(session.compile_attempt());
-    let file = missing
-        .iter()
-        .find_map(|request| match request {
-            ResourceRequest::File(request) => Some(request.clone()),
-            ResourceRequest::Font(_) => None,
-        })
-        .expect("TFM request");
     let font = missing
         .iter()
         .find_map(|request| match request {
@@ -1981,15 +2075,7 @@ fn invalid_mixed_batch_publishes_nothing() {
     };
     assert!(
         session
-            .provide_resources(vec![
-                ResourceResponse::File(ResolvedFile {
-                    request: file.key().clone(),
-                    virtual_path: "/texlive/fonts/tfm/public/cm/cmr10.tfm".to_owned(),
-                    bytes: CMR10.to_vec(),
-                    expected_digest: None,
-                }),
-                ResourceResponse::Font(invalid_font),
-            ])
+            .provide_resources(vec![ResourceResponse::Font(invalid_font)])
             .is_err()
     );
     assert_eq!(session.resolved_file_count(), 0);
@@ -2003,6 +2089,10 @@ fn requested_html_and_dvi_share_one_committed_compile() {
         ..SessionOptions::default()
     })
     .expect("HTML session");
+    session.add_html_font(cmu_mapped_bundle()).expect("bundle");
+    session
+        .add_user_file("cmr10.tfm", CMR10.to_vec())
+        .expect("TFM");
     session
         .add_user_file(
             "main.tex",
@@ -2010,13 +2100,6 @@ fn requested_html_and_dvi_share_one_committed_compile() {
         )
         .expect("main source");
     let missing = resources(session.compile_attempt());
-    let file = missing
-        .iter()
-        .find_map(|request| match request {
-            ResourceRequest::File(request) => Some(request.clone()),
-            ResourceRequest::Font(_) => None,
-        })
-        .expect("TFM request");
     let font = missing
         .iter()
         .find_map(|request| match request {
@@ -2024,13 +2107,6 @@ fn requested_html_and_dvi_share_one_committed_compile() {
             ResourceRequest::File(_) => None,
         })
         .expect("font request");
-    session
-        .provide_resolved_file(
-            file.key().clone(),
-            "/texlive/fonts/tfm/public/cm/cmr10.tfm",
-            CMR10.to_vec(),
-        )
-        .expect("TFM");
     provide_cmu_font(&mut session, font);
     let CompileAttemptResult::Complete(output) = session.compile_attempt() else {
         panic!("HTML compile should complete");
@@ -2127,6 +2203,7 @@ fn accepted_user_tfm_remains_available_across_incremental_patch() {
         ..SessionOptions::default()
     })
     .expect("HTML session");
+    session.add_html_font(cmu_mapped_bundle()).expect("bundle");
     session
         .add_user_file("cmr10.tfm", CMR10.to_vec())
         .expect("TFM");
@@ -2171,6 +2248,7 @@ fn rendered_source_location_survives_paragraph_line_breaking() {
         ..SessionOptions::default()
     })
     .expect("HTML session");
+    session.add_html_font(cmu_mapped_bundle()).expect("bundle");
     session
         .add_user_file("cmr10.tfm", CMR10.to_vec())
         .expect("TFM");
@@ -2217,9 +2295,19 @@ fn rendered_source_location_survives_math_layout() {
     let source = b"\\font\\tenrm=cmr10 \\font\\sy=cmsy10 \\font\\ex=cmex10 \\textfont0=\\tenrm \\textfont2=\\sy \\scriptfont2=\\sy \\scriptscriptfont2=\\sy \\textfont3=\\ex \\scriptfont3=\\ex \\scriptscriptfont3=\\ex \\mathcode`A=\"0041 \\shipout\\hbox{$A$}\\end";
     let mut session = VirtualCompileSession::new(SessionOptions {
         html: true,
+        font_layout_policy: tex_fonts::FontLayoutPolicy::ClassicTfmExact,
         ..SessionOptions::default()
     })
     .expect("HTML session");
+    session
+        .add_html_font(cmu_mapped_bundle())
+        .expect("text bundle");
+    session
+        .add_html_font(cmu_mapped_bundle_for("cmsy10", CMSY10))
+        .expect("symbol bundle");
+    session
+        .add_html_font(cmu_mapped_bundle_for("cmex10", CMEX10))
+        .expect("extension bundle");
     session
         .add_user_file("cmr10.tfm", CMR10.to_vec())
         .expect("TFM");

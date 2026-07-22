@@ -229,7 +229,7 @@ fn search_variant_chain(
     for size in delimiter_font_sizes(size) {
         let font = state.math_family_font(size, family);
         let mut current = code;
-        while let Some(metrics) = state.font_char_metrics(font, current) {
+        while let Some(metrics) = state.classic_math_char_metrics(font, current) {
             if state.font_extensible_recipe(font, current).is_some() {
                 return Some(DelimiterCandidate {
                     font,
@@ -297,7 +297,7 @@ fn extensible_box(
     let repeat_size = height_plus_depth(ctx.state, font, repeated);
     let repeated_metrics = ctx
         .state
-        .font_char_metrics(font, repeated)
+        .classic_math_char_metrics(font, repeated)
         .expect("TFM parser validates extensible repeated pieces");
     let mut total = Scaled::from_raw(0);
     for code in [recipe.bottom, recipe.middle, recipe.top]
@@ -369,7 +369,7 @@ fn stack_into_box(
 fn height_plus_depth(state: &impl MathTypesetState, font: FontId, code: u8) -> Scaled {
     // AppG rule 15, rule 19
     state
-        .font_char_metrics(font, code)
+        .classic_math_char_metrics(font, code)
         .map_or(Scaled::from_raw(0), |metrics| {
             add(metrics.height, metrics.depth)
         })

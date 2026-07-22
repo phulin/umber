@@ -56,6 +56,26 @@ pub(crate) fn parse_options(value: &JsValue) -> Result<SessionOptions, JsValue> 
         };
     }
     options.html = !field(value, "html")?.is_undefined() && !field(value, "html")?.is_null();
+    options.font_layout_policy = match optional_string(value, "fontLayoutPolicy")?.as_deref() {
+        None => umber::FontLayoutPolicy::OpenTypePreferred,
+        Some("classic-tfm-exact") => umber::FontLayoutPolicy::ClassicTfmExact,
+        Some("opentype-preferred") => umber::FontLayoutPolicy::OpenTypePreferred,
+        Some(_) => {
+            return Err(js_error(
+                "fontLayoutPolicy must be 'opentype-preferred' or 'classic-tfm-exact'",
+            ));
+        }
+    };
+    options.font_mapping_fallback = match optional_string(value, "fontMappingFallback")?.as_deref()
+    {
+        None | Some("classic-tfm-exact") => umber::FontMappingFallbackPolicy::ClassicTfmExact,
+        Some("error") => umber::FontMappingFallbackPolicy::Error,
+        Some(_) => {
+            return Err(js_error(
+                "fontMappingFallback must be 'error' or 'classic-tfm-exact'",
+            ));
+        }
+    };
     if let Some(clock) = optional_object(value, "clock")? {
         options.clock.year = integer::<i32>(&clock, "year")?;
         options.clock.month = integer::<i32>(&clock, "month")?;

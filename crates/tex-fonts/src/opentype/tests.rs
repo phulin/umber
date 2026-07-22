@@ -354,6 +354,65 @@ fn opentype_only_font_synthesizes_versioned_text_fontdimens() {
 }
 
 #[test]
+fn mapped_tfm_identity_records_policy_map_and_classic_math_authority() {
+    let request = wasm_request();
+    let font = OpenTypeFont::parse(
+        &request,
+        ResolvedFont {
+            request: request.key.clone(),
+            container: FontContainer::Woff2,
+            bytes: include_bytes!("../../../umber-wasm/assets/cmu-serif-500-roman.woff2").to_vec(),
+            declared_object_sha256: None,
+            declared_program_identity: None,
+            provenance: None,
+        },
+        FontLimits::default(),
+    )
+    .expect("fixture font");
+    let selection = || crate::OpenTypeProgramSelection {
+        font: font.clone(),
+        variation: VariationSelection::default(),
+        features: FontFeaturePolicy::default(),
+        direction: WritingDirection::LeftToRight,
+    };
+    let mut first_entries = vec![None; 256];
+    first_entries[65] = Some("A".to_owned());
+    let mut second_entries = first_entries.clone();
+    second_entries[65] = Some("B".to_owned());
+    let size = tex_arith::Scaled::from_raw(10 * tex_arith::Scaled::UNITY);
+    let make = |map| {
+        crate::LoadedFont::new(
+            "cmr10",
+            "cmr10.tfm",
+            [7; 32],
+            0,
+            size,
+            size,
+            vec![],
+            crate::FontMetrics::default(),
+        )
+        .with_mapped_opentype(
+            selection(),
+            crate::LegacyEncodingMap::new(map).expect("map"),
+        )
+    };
+    let first = make(first_entries);
+    let second = make(second_entries);
+    assert_eq!(
+        first.layout_policy(),
+        crate::FontLayoutPolicy::OpenTypePreferred
+    );
+    assert!(first.character_exists('A'));
+    assert_ne!(first.source_identity(), second.source_identity());
+    assert!(matches!(
+        first.math_metrics_source(),
+        crate::MathMetricsSource::ClassicTfmExact
+    ));
+    assert_eq!(first.encoding_map().expect("map").version(), 1);
+    assert_eq!(crate::FONT_LAYOUT_POLICY_VERSION, 1);
+}
+
+#[test]
 fn opentype_unit_scaling_uses_shared_boundary_rounding() {
     let metrics = OpenTypeMetrics {
         units_per_em: 2,

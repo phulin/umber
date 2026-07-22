@@ -492,6 +492,8 @@ fn page(root: PageNode) -> crate::PageArtifact {
                 tfm_checksum: 0,
                 design_size: sp(655_360),
                 at_size: sp(655_360),
+                layout_policy: tex_fonts::FontLayoutPolicy::ClassicTfmExact,
+                mapping_fallback: None,
                 opentype: None,
                 semantic_identity: tex_fonts::FontSourceIdentity::from_bytes([font_id; 32]),
                 construction: crate::FontResourceConstruction::Loaded,

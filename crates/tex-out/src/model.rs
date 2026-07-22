@@ -126,6 +126,7 @@ pub enum ArtifactValidationError {
     DuplicateFont { font_id: u32 },
     EmptyFontName { font_id: u32 },
     InvalidFontSize { font_id: u32 },
+    InvalidFontLayoutIdentity { font_id: u32 },
     MissingFont { font_id: u32 },
     MissingFontSource { font_id: u32, source_font_id: u32 },
     FontSourceIdentityMismatch { font_id: u32, source_font_id: u32 },
@@ -187,6 +188,8 @@ pub struct FontResource {
     pub tfm_checksum: u32,
     pub design_size: Scaled,
     pub at_size: Scaled,
+    pub layout_policy: tex_fonts::FontLayoutPolicy,
+    pub mapping_fallback: Option<tex_fonts::FontMappingFallbackPolicy>,
     pub opentype: Option<OpenTypeFontResource>,
     pub semantic_identity: tex_fonts::FontSourceIdentity,
     pub construction: FontResourceConstruction,
@@ -218,6 +221,9 @@ pub struct OpenTypeFontResource {
     pub object_identity: tex_fonts::FontObjectIdentity,
     pub instance_identity: tex_fonts::FontInstanceIdentity,
     pub container: tex_fonts::FontContainer,
+    pub encoding_map_version: Option<u8>,
+    pub encoding_map_identity: Option<[u8; 32]>,
+    pub fontdimen_synthesis_version: Option<u8>,
 }
 
 /// A driver-facing shipped node.
@@ -565,6 +571,29 @@ fn validate_artifact(
         }
         if font.design_size.raw() <= 0 || font.at_size.raw() <= 0 {
             return Err(ArtifactValidationError::InvalidFontSize {
+                font_id: font.font_id,
+            });
+        }
+        let mapped_parts = font
+            .opentype
+            .as_ref()
+            .map_or((false, false, false), |opentype| {
+                (
+                    opentype.encoding_map_version.is_some(),
+                    opentype.encoding_map_identity.is_some(),
+                    opentype.fontdimen_synthesis_version.is_some(),
+                )
+            });
+        let mapped_complete = mapped_parts == (true, true, true);
+        let mapped_absent = mapped_parts == (false, false, false);
+        if (!mapped_complete && !mapped_absent)
+            || (mapped_complete
+                && font.layout_policy != tex_fonts::FontLayoutPolicy::OpenTypePreferred)
+            || (font.mapping_fallback.is_some()
+                && (font.layout_policy != tex_fonts::FontLayoutPolicy::OpenTypePreferred
+                    || font.opentype.is_some()))
+        {
+            return Err(ArtifactValidationError::InvalidFontLayoutIdentity {
                 font_id: font.font_id,
             });
         }

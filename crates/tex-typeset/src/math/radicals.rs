@@ -175,7 +175,7 @@ pub(super) fn make_math_accent(
     while accent_glyph_id.is_none()
         && let Some(next) = ctx.state.font_next_larger(accent_font, accent_code)
     {
-        let Some(next_metrics) = ctx.state.font_char_metrics(accent_font, next) else {
+        let Some(next_metrics) = ctx.state.classic_math_char_metrics(accent_font, next) else {
             break;
         };
         if next_metrics.width > accentee_width {

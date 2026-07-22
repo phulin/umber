@@ -71,6 +71,8 @@ export interface SessionOptions {
   clock?: { year: number; month: number; day: number; minutes: number };
   limits?: Partial<SessionLimits>;
   html?: { fonts: HtmlFontInput[] };
+  fontLayoutPolicy?: "opentype-preferred" | "classic-tfm-exact";
+  fontMappingFallback?: "error" | "classic-tfm-exact";
 }
 
 export type BibliographyOutputFormat = "bbl" | "bibtex" | "biblatex-xml" | "bbl-xml" | "dot";
