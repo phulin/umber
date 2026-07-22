@@ -72,7 +72,6 @@ pub(super) fn run(mut args: impl Iterator<Item = String>) -> Result<(), WatchErr
         initial_prefetch_keys: Vec::new(),
         engine: EngineMode::Tex82,
         outputs: umber::OutputCapabilitySet::DVI,
-        html_font_dir: None,
         html_asset_directory: None,
         distribution,
         distribution_sha256,

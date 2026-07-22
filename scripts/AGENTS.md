@@ -22,3 +22,5 @@ Read the repository-root `AGENTS.md` first. This file adds the directory map for
 - `archive-stepwise-arxiv-census.py`: validate and archive an exact 100-row guarded census with immutable identities, reference-clean accounting, blocker links, and cluster totals.
 - `build-texlive-snapshot.sh`: deterministic full TeX Live runtime snapshot staging with package dependency hints and production inventory floors.
 - `write-latex-wasm-publish-config.sh`: deterministic schema-3 publisher configuration for the focused LaTeX WASM bundle, pinned to the measured production 8-bit shard policy.
+- `build-wasm-package.sh`: builds the authored npm runtime with format fixtures
+  only; font catalogs and font payload fixtures stay outside the package.

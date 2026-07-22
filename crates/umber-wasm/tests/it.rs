@@ -469,6 +469,35 @@ fn explicit_output_capabilities_cover_every_nonempty_combination() {
 }
 
 #[wasm_bindgen_test]
+fn removed_output_options_name_the_outputs_replacement() {
+    for legacy in ["dvi", "html"] {
+        let value = Object::new();
+        set(&value, "mainPath", &JsValue::from_str("main.tex"));
+        set(
+            &value,
+            legacy,
+            if legacy == "dvi" {
+                JsValue::TRUE
+            } else {
+                Object::new().into()
+            }
+            .as_ref(),
+        );
+        let error = CompilerSession::new(value.unchecked_ref::<JsSessionOptions>())
+            .err()
+            .expect("legacy output option must fail");
+        assert!(string_field(&error, "message").contains("outputs"));
+    }
+
+    let missing = Object::new();
+    set(&missing, "mainPath", &JsValue::from_str("main.tex"));
+    let error = CompilerSession::new(missing.unchecked_ref::<JsSessionOptions>())
+        .err()
+        .expect("implicit output must fail");
+    assert!(string_field(&error, "message").contains("outputs"));
+}
+
+#[wasm_bindgen_test]
 fn pdftex_return_value_reports_invalid_object_recovery() {
     let session_options = options("main.tex");
     set(&session_options, "engine", &JsValue::from_str("pdftex"));
@@ -541,8 +570,8 @@ fn pdftex_ximage_enquiries_survive_binary_resource_retry() {
 #[wasm_bindgen_test]
 async fn generated_html_projects_exact_geometry_at_firefox_zoom_levels() {
     let session_options = options("main.tex");
-    set(&session_options, "html", Object::new().as_ref());
-    set(&session_options, "dvi", &JsValue::FALSE);
+    let outputs = Array::of1(&JsValue::from_str("html"));
+    set(&session_options, "outputs", &outputs);
     let mut session = CompilerSession::new(session_options.unchecked_ref::<JsSessionOptions>())
         .expect("HTML session");
     let tfm = include_bytes!("../../tex-fonts/tests/fixtures/cm/cmr10.tfm");
@@ -643,7 +672,8 @@ async fn generated_html_projects_exact_geometry_at_firefox_zoom_levels() {
     assert_eq!(field(stale.as_ref(), "accepted").as_f64(), Some(1.0));
 
     let other_options = options("main.tex");
-    set(&other_options, "html", Object::new().as_ref());
+    let other_outputs = Array::of1(&JsValue::from_str("html"));
+    set(&other_options, "outputs", &other_outputs);
     let mut other = CompilerSession::new(other_options.unchecked_ref::<JsSessionOptions>())
         .expect("second HTML session");
     other
@@ -1027,7 +1057,10 @@ fn rendered_query_fixture(original: &str) -> RenderedQueryFixture {
 
 fn initial_rendered_query_session(original: &str) -> CompilerSession {
     let options = options("main.tex");
-    set(&options, "html", Object::new().as_ref());
+    let outputs = Array::new();
+    outputs.push(&JsValue::from_str("dvi"));
+    outputs.push(&JsValue::from_str("html"));
+    set(&options, "outputs", &outputs);
     let mut session =
         CompilerSession::new(options.unchecked_ref::<JsSessionOptions>()).expect("HTML session");
     session
@@ -1240,6 +1273,9 @@ fn assert_format_error(format: &[u8], expected: &str) {
 fn options(main_path: &str) -> Object {
     let options = Object::new();
     set(&options, "mainPath", &JsValue::from_str(main_path));
+    let outputs = Array::new();
+    outputs.push(&JsValue::from_str("dvi"));
+    set(&options, "outputs", &outputs);
     options
 }
 

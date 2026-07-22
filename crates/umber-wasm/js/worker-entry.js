@@ -1,6 +1,10 @@
 import { compile } from "./compile.js";
 import { HttpManifestResolver } from "./manifest-resolver.js";
-import { CompositeResourceResolver } from "./resource-resolver.js";
+import {
+	CompositeResourceResolver,
+	resourceRequestIdentity,
+	resourceResponseIdentity,
+} from "./resource-resolver.js";
 
 export async function runCompileMessage(message, dependencies = {}) {
 	if (message?.kind !== "compile" || !Array.isArray(message.userFiles)) {
@@ -22,26 +26,25 @@ export async function runCompileMessage(message, dependencies = {}) {
 			maxFiles: message.options?.limits?.resolvedFiles,
 			maxBytes: message.options?.limits?.cachedFileBytes,
 		}));
-	const fontResources = new Map(
-		(message.resolver.fontResources ?? []).map((font) => [
-			font.logicalName,
-			font,
+	const resourceResponses = new Map(
+		(message.resolver.resourceResponses ?? []).map((response) => [
+			resourceResponseIdentity(response),
+			response,
 		]),
 	);
 	const resolver =
-		fontResources.size === 0
+		resourceResponses.size === 0
 			? manifestResolver
 			: new CompositeResourceResolver([
 					{
 						async resolve(requests, options) {
-							return requests.concat(options?.probes ?? []).map((request) => {
-								if (request.type !== "font")
-									return { ...request, type: `${request.type}-unavailable` };
-								const resource = fontResources.get(request.logicalName);
-								return resource === undefined
-									? { ...request, type: "font-unavailable" }
-									: { ...request, ...resource, type: "font" };
-							});
+							return requests.concat(options?.probes ?? []).map(
+								(request) =>
+									resourceResponses.get(resourceRequestIdentity(request)) ?? {
+										...request,
+										type: `${request.type}-unavailable`,
+									},
+							);
 						},
 					},
 					manifestResolver,

@@ -17,7 +17,6 @@ use tex_state::{
 
 #[cfg(not(target_arch = "wasm32"))]
 pub mod cli_resource;
-mod html_output;
 mod input_search;
 mod latex_project;
 mod memory_output;
@@ -29,7 +28,6 @@ mod virtual_compile;
 
 pub const PACKAGE_VERSION: &str = env!("CARGO_PKG_VERSION");
 
-pub use html_output::DirectoryFontResourceResolver;
 pub use input_search::{TexFontSearchPath, TexInputSearchPath};
 pub use latex_project::{
     BibliographyProjectOptions, LatexProjectAttempt, LatexProjectError, LatexProjectLimits,

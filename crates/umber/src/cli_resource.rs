@@ -43,7 +43,6 @@ pub struct NativeRunOptions {
     pub initial_prefetch_keys: Vec<String>,
     pub engine: EngineMode,
     pub outputs: OutputCapabilitySet,
-    pub html_font_dir: Option<PathBuf>,
     pub html_asset_directory: Option<String>,
     pub distribution: Option<String>,
     pub distribution_sha256: Option<String>,
@@ -374,7 +373,7 @@ impl NativeCompileSession {
         session
             .add_user_file(name, main.clone())
             .map_err(|error| NativeRunError::Compile(error.to_string()))?;
-        let local = LocalResolver::from_environment(&options.input, options.html_font_dir.clone());
+        let local = LocalResolver::from_environment(&options.input);
         let source = match String::from_utf8(main) {
             Ok(source) => source,
             Err(error) => error.into_bytes().into_iter().map(char::from).collect(),
@@ -546,13 +545,12 @@ struct LocalResolver {
     roots: Vec<PathBuf>,
     input: TexInputSearchPath,
     font: TexFontSearchPath,
-    html_fonts: Option<crate::DirectoryFontResourceResolver>,
     input_paths: RefCell<BTreeMap<PathBuf, PathBuf>>,
     resolved_inputs: RefCell<Vec<(PathBuf, usize)>>,
 }
 
 impl LocalResolver {
-    fn from_environment(main: &Path, html_font_dir: Option<PathBuf>) -> Self {
+    fn from_environment(main: &Path) -> Self {
         let areas = |name| {
             env::var_os(name)
                 .map(|value| {
@@ -573,7 +571,6 @@ impl LocalResolver {
             roots,
             input: TexInputSearchPath::new(&base, input_areas),
             font: TexFontSearchPath::new(base, font_areas),
-            html_fonts: html_font_dir.map(crate::DirectoryFontResourceResolver::new),
             input_paths: RefCell::new(BTreeMap::new()),
             resolved_inputs: RefCell::new(Vec::new()),
         }
@@ -625,17 +622,8 @@ impl LocalResolver {
         &self,
         request: &tex_fonts::FontRequest,
     ) -> Result<Option<tex_fonts::ResolvedFont>, NativeRunError> {
-        self.html_fonts
-            .as_ref()
-            .map(|resolver| {
-                resolver.resolve(request).map_err(|message| {
-                    NativeRunError::Selection(format!(
-                        "invalid font resource bundle for {}: {message}",
-                        request.key.logical_name()
-                    ))
-                })
-            })
-            .transpose()
+        let _ = request;
+        Ok(None)
     }
 
     fn resolve_pk_font(&self, request: &tex_fonts::PdfPkFontRequest) -> Option<ResolvedPkFont> {

@@ -1,4 +1,3 @@
-import { loadComputerModernTextFont } from "/package/cm-fonts.js";
 import { compile } from "/package/compile.js";
 import { HttpManifestResolver } from "/package/manifest-resolver.js";
 import { renderedSourceLocationFromPoint } from "/package/source-map.js";
@@ -62,6 +61,7 @@ async function integration() {
 	const files = new Map([["main.tex", source]]);
 	const sessionOptions = {
 		mainPath: "main.tex",
+		outputs: ["dvi"],
 		clock: { year: 1970, month: 1, day: 1, minutes: 0 },
 	};
 	const first = await compileInWorker(sessionOptions, files, resolver);
@@ -122,13 +122,28 @@ async function integration() {
 			response.arrayBuffer(),
 		),
 	);
-	const htmlFont = await loadComputerModernTextFont(
-		"cmr10",
-		contentHash(cmr10),
+	const htmlFontBytes = new Uint8Array(
+		await fetch("/fixture-cmu-serif.woff2").then((response) =>
+			response.arrayBuffer(),
+		),
 	);
+	const encoding = Array(256).fill(null);
+	for (let code = 32; code <= 126; code += 1)
+		encoding[code] = String.fromCodePoint(code);
+	const htmlFontPayload = {
+		container: "woff2",
+		bytes: htmlFontBytes,
+		objectSha256: await sha256Hex(htmlFontBytes),
+		provenance: "browser-only licensed fixture",
+		legacyMapping: {
+			tfmSha256: contentHash(cmr10),
+			encoding,
+			embeddable: true,
+		},
+	};
 	const htmlOptions = {
 		mainPath: "html.tex",
-		html: {},
+		outputs: ["dvi", "html"],
 	};
 	const htmlFiles = new Map([
 		[
@@ -144,16 +159,20 @@ async function integration() {
 	const retainedMissing = retained.advance();
 	assert(
 		retainedMissing.kind === "need-resources",
-		`retained session did not request its HTML font (${htmlFont.tfmContentHash}): ${JSON.stringify(retainedMissing)}`,
+		`retained session did not request its HTML font: ${JSON.stringify(retainedMissing)}`,
 	);
+	const fontRequest = retainedMissing.required.find(
+		(request) => request.type === "font",
+	);
+	assert(
+		fontRequest !== undefined,
+		"retained session omitted its typed font request",
+	);
+	const htmlFont = { ...fontRequest, ...htmlFontPayload, type: "font" };
 	retained.provideResources(
 		retainedMissing.required.map((request) => ({
 			...request,
-			container: "woff2",
-			bytes: htmlFont.bytes,
-			objectSha256: htmlFont.objectSha256,
-			provenance: htmlFont.provenance,
-			legacyMapping: htmlFont.legacyMapping,
+			...htmlFontPayload,
 		})),
 	);
 	const retainedAttempt = retained.advance();
@@ -193,7 +212,7 @@ async function integration() {
 	const workerHtml = await compileInWorker(
 		htmlOptions,
 		new Map([...htmlFiles, ["cmr10.tfm", cmr10]]),
-		{ ...resolver, fontResources: [htmlFont] },
+		{ ...resolver, resourceResponses: [htmlFont] },
 	);
 	assert(workerHtml.dvi.byteLength > 0, "worker HTML returned no DVI");
 	assert(workerHtml.html instanceof Uint8Array, "worker returned no HTML");
@@ -208,7 +227,11 @@ async function integration() {
 	);
 
 	const plain = await compileInWorker(
-		{ mainPath: "main.tex", fontLayoutPolicy: "classic-tfm-exact" },
+		{
+			mainPath: "main.tex",
+			outputs: ["dvi"],
+			fontLayoutPolicy: "classic-tfm-exact",
+		},
 		new Map([["main.tex", encode("Plain browser format.\\par\\bye")]]),
 		{ ...resolver, format: "plain" },
 	);
@@ -232,7 +255,7 @@ async function integration() {
 	const corruptFormatError = await rejected(
 		() =>
 			compileInWorker(
-				{ mainPath: "main.tex" },
+				{ mainPath: "main.tex", outputs: ["dvi"] },
 				new Map([["main.tex", encode("\\end")]]),
 				{ ...resolver, format: "plain-corrupt" },
 			),
@@ -243,7 +266,7 @@ async function integration() {
 		"corrupt browser format did not preserve its checksum diagnostic",
 	);
 	const directOutput = await compile(
-		{ mainPath: "main.tex" },
+		{ mainPath: "main.tex", outputs: ["dvi"] },
 		new Map([["main.tex", encode("\\shipout\\hbox{}\\end")]]),
 		direct,
 	);
@@ -257,6 +280,7 @@ async function integration() {
 	const projectOutput = await compile(
 		{
 			mainPath: "/job/main.tex",
+			outputs: ["dvi"],
 			bibliography: {
 				controlPath: "/job/main.bcf",
 				outputs: [{ path: "/job/main.bbl", format: "bbl" }],
@@ -278,7 +302,7 @@ async function integration() {
 	const missingInputError = await rejected(
 		() =>
 			compileInWorker(
-				{ mainPath: "main.tex" },
+				{ mainPath: "main.tex", outputs: ["dvi"] },
 				new Map([["main.tex", encode("\\input absent \\end")]]),
 				resolver,
 			),
@@ -291,7 +315,11 @@ async function integration() {
 	await rejected(
 		() =>
 			compileInWorker(
-				{ mainPath: "main.tex", limits: { userSourceBytes: 1 } },
+				{
+					mainPath: "main.tex",
+					outputs: ["dvi"],
+					limits: { userSourceBytes: 1 },
+				},
 				new Map([["main.tex", encode("\\end")]]),
 				resolver,
 			),
@@ -300,7 +328,7 @@ async function integration() {
 	await rejected(
 		() =>
 			compileInWorker(
-				{ mainPath: "main.tex" },
+				{ mainPath: "main.tex", outputs: ["dvi"] },
 				new Map([["main.tex", encode("\\def\\loop{\\loop}\\loop")]]),
 				resolver,
 				{ timeoutMs: 50 },
@@ -340,7 +368,7 @@ async function compileExplicitOpenType(woff2) {
 	const text = "αβ ЖЯ µ £ ¥ é AV office";
 	const requests = [];
 	const output = await compile(
-		{ mainPath: "unicode.tex", dvi: false, html: {} },
+		{ mainPath: "unicode.tex", outputs: ["html"] },
 		new Map([
 			[
 				"unicode.tex",

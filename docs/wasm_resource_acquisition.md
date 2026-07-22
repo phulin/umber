@@ -16,8 +16,13 @@ and deployment policy.
 The WASM `SessionOptions.outputs` array is the representation adapter for the
 same Rust-owned nonempty `OutputCapabilitySet` used by native and project
 sessions. JavaScript forwards that selection and never derives drivers from
-the engine name. The deprecated version-1 `dvi`/`html` fields are translated
-only when `outputs` is absent.
+the engine name. The removed version-1 `dvi`/`html` fields produce a migration
+error naming `outputs`; no binding infers PDF from an engine name or DVI from
+omission.
+
+Workers accept optional application/private `resourceResponses` using the same
+complete typed request/response schema as the main-realm resolver. The former
+logical-name-only `fontResources` option is rejected with a migration error.
 
 The completed design must:
 

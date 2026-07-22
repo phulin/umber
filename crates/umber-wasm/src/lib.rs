@@ -87,13 +87,9 @@ export interface SessionOptions {
   formatPrefetchHints?: FileRequest[];
   engine?: "tex82" | "etex" | "pdftex" | "latex" | "pdflatex";
   /** Explicit downstream products, independent from engine compatibility. */
-  outputs?: Array<"dvi" | "pdf" | "html">;
-  /** @deprecated Use outputs. Version-1 compatibility adapter only. */
-  dvi?: boolean;
+  outputs: Array<"dvi" | "pdf" | "html">;
   clock?: { year: number; month: number; day: number; minutes: number };
   limits?: Partial<SessionLimits>;
-  /** @deprecated Use outputs. Version-1 compatibility adapter only. */
-  html?: {};
   fontLayoutPolicy?: "opentype-preferred" | "classic-tfm-exact";
   fontMappingFallback?: "error" | "classic-tfm-exact";
 }

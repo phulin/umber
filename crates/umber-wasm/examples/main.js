@@ -6,7 +6,7 @@ import { compileInWorker } from "../worker-controller.js";
 
 const source = new TextEncoder().encode("Hello from Umber.\\par\\bye");
 const output = await compileInWorker(
-	{ mainPath: "main.tex" },
+	{ mainPath: "main.tex", outputs: ["dvi"] },
 	new Map([["main.tex", source]]),
 	{
 		manifestUrl: TEXLIVE_2026_MANIFEST_URL,

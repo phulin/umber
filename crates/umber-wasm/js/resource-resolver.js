@@ -33,20 +33,20 @@ export class CompositeResourceResolver {
 
 		const ordered = deduplicateRequests(requests.concat(probes));
 		const pending = new Map(
-			ordered.map((request) => [requestIdentity(request), request]),
+			ordered.map((request) => [resourceRequestIdentity(request), request]),
 		);
 		const accepted = new Map();
 
 		for (const provider of this.providers) {
 			if (pending.size === 0) break;
 			throwIfAborted(signal);
-			const providerProbeKeys = new Set(probes.map(requestIdentity));
+			const providerProbeKeys = new Set(probes.map(resourceRequestIdentity));
 			const providerPending = [...pending.values()];
 			const providerProbes = providerPending.filter((request) =>
-				providerProbeKeys.has(requestIdentity(request)),
+				providerProbeKeys.has(resourceRequestIdentity(request)),
 			);
 			const providerRequests = providerPending.filter(
-				(request) => !providerProbeKeys.has(requestIdentity(request)),
+				(request) => !providerProbeKeys.has(resourceRequestIdentity(request)),
 			);
 			const responses = await provider.resolve(providerRequests, {
 				signal,
@@ -60,7 +60,7 @@ export class CompositeResourceResolver {
 				throw new TypeError("resource provider must return an iterable");
 			const seen = new Set();
 			for (const response of responses) {
-				const identity = responseIdentity(response);
+				const identity = resourceResponseIdentity(response);
 				if (seen.has(identity))
 					throw new TypeError(
 						`resource provider returned duplicate response ${identity}`,
@@ -78,20 +78,22 @@ export class CompositeResourceResolver {
 
 		for (const [identity, request] of pending)
 			accepted.set(identity, unavailableResponse(request));
-		return ordered.map((request) => accepted.get(requestIdentity(request)));
+		return ordered.map((request) =>
+			accepted.get(resourceRequestIdentity(request)),
+		);
 	}
 }
 
 function deduplicateRequests(requests) {
 	const unique = new Map();
 	for (const request of requests) {
-		const identity = requestIdentity(request);
+		const identity = resourceRequestIdentity(request);
 		if (!unique.has(identity)) unique.set(identity, request);
 	}
 	return [...unique.values()];
 }
 
-function requestIdentity(request) {
+export function resourceRequestIdentity(request) {
 	if (request?.type === "font") return fontRequestIdentity(request);
 	if (request?.type === "pk-font") return pkFontRequestIdentity(request);
 	if (request?.type === "legacy-font-mapping")
@@ -99,7 +101,7 @@ function requestIdentity(request) {
 	return encodeRequest(request);
 }
 
-function responseIdentity(response) {
+export function resourceResponseIdentity(response) {
 	if (response?.type === "font" || response?.type === "font-unavailable")
 		return fontRequestIdentity({ ...response, type: "font" });
 	if (

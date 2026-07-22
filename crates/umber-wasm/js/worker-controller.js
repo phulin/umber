@@ -190,39 +190,47 @@ function prepareMessage(options, userFiles, resolver, wasmUrl) {
 			throw new WorkerCompileError("invalid-options", "html must be an object");
 		}
 	}
-	let fontResources;
 	if (resolver.fontResources !== undefined) {
-		if (!Array.isArray(resolver.fontResources)) {
+		throw new WorkerCompileError(
+			"removed-option",
+			"resolver.fontResources was removed; use resolver.resourceResponses with complete typed request/response keys, or add a provider through CompositeResourceResolver",
+		);
+	}
+	let resourceResponses;
+	if (resolver.resourceResponses !== undefined) {
+		if (!Array.isArray(resolver.resourceResponses)) {
 			throw new WorkerCompileError(
-				"invalid-font-resources",
-				"resolver.fontResources must be an array",
+				"invalid-resource-responses",
+				"resolver.resourceResponses must be an array",
 			);
 		}
-		let fontBytes = 0;
-		fontResources = resolver.fontResources.map((font, index) => {
-			requireBytes(font?.bytes, `font resource ${index} bytes`);
-			if (font.bytes.byteLength > limits.oneFileBytes)
+		let resourceBytes = 0;
+		resourceResponses = resolver.resourceResponses.map((response, index) => {
+			if (response?.bytes !== undefined)
+				requireBytes(response.bytes, `resource response ${index} bytes`);
+			if ((response?.bytes?.byteLength ?? 0) > limits.oneFileBytes)
 				throw workerLimitError(
-					"one font resource bytes",
+					"one resource response bytes",
 					limits.oneFileBytes,
-					font.bytes.byteLength,
+					response.bytes.byteLength,
 				);
-			fontBytes += font.bytes.byteLength;
-			if (fontBytes > limits.cachedFileBytes)
+			resourceBytes += response?.bytes?.byteLength ?? 0;
+			if (resourceBytes > limits.cachedFileBytes)
 				throw workerLimitError(
-					"font resource bytes",
+					"resource response bytes",
 					limits.cachedFileBytes,
-					fontBytes,
+					resourceBytes,
 				);
-			const bytes = font.bytes.slice();
-			transfer.push(bytes.buffer);
+			const bytes = response?.bytes?.slice();
+			if (bytes !== undefined) transfer.push(bytes.buffer);
 			return {
-				...font,
-				bytes,
-				legacyMapping: font.legacyMapping && {
-					...font.legacyMapping,
-					encoding: font.legacyMapping.encoding.slice(),
+				...response,
+				...(bytes === undefined ? {} : { bytes }),
+				legacyMapping: response.legacyMapping && {
+					...response.legacyMapping,
+					encoding: response.legacyMapping.encoding.slice(),
 				},
+				unicodeMap: response.unicodeMap?.slice(),
 			};
 		});
 	}
@@ -289,7 +297,7 @@ function prepareMessage(options, userFiles, resolver, wasmUrl) {
 				offline: resolver.offline,
 				concurrency: resolver.concurrency,
 				format: resolver.format,
-				fontResources,
+				resourceResponses,
 			},
 			wasmUrl,
 		},

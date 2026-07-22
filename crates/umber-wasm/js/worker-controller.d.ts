@@ -26,7 +26,8 @@ export function compileInWorker(
 		| "concurrency"
 	> & {
 		format?: string;
-		fontResources?: import("./cm-fonts.js").ComputerModernFontResource[];
+		/** Exact application/private responses, matched by the complete typed request key. */
+		resourceResponses?: import("./resource-resolver.js").TypedResourceResponse[];
 	},
 	control?: WorkerCompileControl,
 ): Promise<CompileOutput>;

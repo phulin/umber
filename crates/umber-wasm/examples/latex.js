@@ -8,7 +8,7 @@ const source = new TextEncoder().encode(
 	"\\documentclass{article}\\begin{document}Hello from Umber LaTeX.\\end{document}",
 );
 const output = await compileInWorker(
-	{ mainPath: "document.tex", jobName: "document" },
+	{ mainPath: "document.tex", jobName: "document", outputs: ["dvi"] },
 	new Map([
 		["document.tex", source],
 		["document.aux", new Uint8Array()],

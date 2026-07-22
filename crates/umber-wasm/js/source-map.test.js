@@ -48,15 +48,25 @@ function element(dataset = {}) {
 	};
 }
 
-test("maps OT1 caret offsets to revision-bound rendered units", () => {
+function asciiEncoding() {
+	const encoding = Array(256).fill(null);
+	for (let code = 32; code <= 126; code += 1)
+		encoding[code] = String.fromCodePoint(code);
+	return encoding;
+}
+
+test("maps application-supplied encoding offsets to revision-bound rendered units", () => {
 	const { document } = fixture({ offset: 1 });
-	assert.deepEqual(renderedSourceKeyFromPoint(document, 12, 34), {
-		page: 2,
-		event: 4,
-		unit: 1,
-		output: "0123456789abcdef0123456789abcdef",
-		revision: 9,
-	});
+	assert.deepEqual(
+		renderedSourceKeyFromPoint(document, 12, 34, { encoding: asciiEncoding() }),
+		{
+			page: 2,
+			event: 4,
+			unit: 1,
+			output: "0123456789abcdef0123456789abcdef",
+			revision: 9,
+		},
+	);
 });
 
 test("uses UTF-16 lengths from the selected font encoding", () => {
@@ -116,7 +126,9 @@ test("preserves spaces as units and delegates one typed session query", () => {
 		},
 	};
 	assert.equal(
-		renderedSourceLocationFromPoint(session, document, 12, 34),
+		renderedSourceLocationFromPoint(session, document, 12, 34, {
+			encoding: asciiEncoding(),
+		}),
 		expected,
 	);
 });

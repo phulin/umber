@@ -6,6 +6,20 @@ import { outputTransfers, runCompileMessage } from "./worker-entry.js";
 
 const manifestSha256 = "1".repeat(64);
 
+function privateFontResponse(bytes) {
+	return {
+		type: "font",
+		logicalName: "cmr10",
+		faceIndex: 0,
+		variationInstance: "default",
+		variations: [],
+		features: [],
+		direction: "ltr",
+		container: "woff2",
+		bytes,
+	};
+}
+
 function fakeWorker(behavior) {
 	return class FakeWorker {
 		static instances = [];
@@ -193,7 +207,7 @@ test("preflights all worker input limits before copying or construction", async 
 				limits: { oneFileBytes: 1 },
 			},
 			files: new Map(),
-			fontResources: [{ logicalName: "cmr10", bytes: new Uint8Array([1, 2]) }],
+			resourceResponses: [privateFontResponse(new Uint8Array([1, 2]))],
 		},
 		{
 			name: "user file count",
@@ -217,7 +231,7 @@ test("preflights all worker input limits before copying or construction", async 
 					{
 						manifestUrl: "https://cdn.example.test/manifest.json",
 						manifestSha256,
-						fontResources: fixture.fontResources,
+						resourceResponses: fixture.resourceResponses,
 					},
 					{ Worker },
 				),
@@ -245,13 +259,13 @@ test("worker copies typed font resources without detaching caller bytes", async 
 		{
 			manifestUrl: "https://cdn.example.test/manifest.json",
 			manifestSha256,
-			fontResources: [{ logicalName: "cmr10", bytes: woff2 }],
+			resourceResponses: [privateFontResponse(woff2)],
 		},
 		{ Worker },
 	);
 	const worker = Worker.instances[0];
 	assert.equal(worker.transfer.length, 1);
-	assert.notEqual(worker.message.resolver.fontResources[0].bytes, woff2);
+	assert.notEqual(worker.message.resolver.resourceResponses[0].bytes, woff2);
 	assert.equal(woff2.byteLength, 4);
 	worker.emit("message", {
 		data: {
@@ -383,7 +397,7 @@ test("worker runtime selects a compatible manifest format", async () => {
 	]);
 });
 
-test("worker runtime replaces manifest font absence with a typed font resource", async () => {
+test("worker runtime resolves an exact application-private typed response before the manifest", async () => {
 	const request = {
 		type: "font",
 		logicalName: "cmr10",
@@ -425,9 +439,7 @@ test("worker runtime replaces manifest font absence with a typed font resource",
 		dispose() {}
 	}
 	const resource = {
-		logicalName: "cmr10",
-		container: "woff2",
-		bytes: new Uint8Array([1, 2, 3]),
+		...privateFontResponse(new Uint8Array([1, 2, 3])),
 		provenance: "fixture license",
 	};
 	await runCompileMessage(
@@ -435,7 +447,7 @@ test("worker runtime replaces manifest font absence with a typed font resource",
 			kind: "compile",
 			options: { mainPath: "main.tex" },
 			userFiles: [["main.tex", new Uint8Array()]],
-			resolver: { manifestUrl: "unused", fontResources: [resource] },
+			resolver: { manifestUrl: "unused", resourceResponses: [resource] },
 		},
 		{
 			bindings: { CompilerSession: Session },
@@ -446,7 +458,28 @@ test("worker runtime replaces manifest font absence with a typed font resource",
 			},
 		},
 	);
-	assert.deepEqual(provided, [{ ...request, ...resource, type: "font" }]);
+	assert.deepEqual(provided, [resource]);
+});
+
+test("removed fontResources option names the typed replacement API", async () => {
+	const Worker = fakeWorker();
+	await assert.rejects(
+		compileInWorker(
+			{ mainPath: "main.tex", outputs: ["html"] },
+			new Map(),
+			{
+				manifestUrl: "https://cdn.example.test/manifest.json",
+				manifestSha256,
+				fontResources: [],
+			},
+			{ Worker },
+		),
+		(error) =>
+			error instanceof WorkerCompileError &&
+			error.code === "removed-option" &&
+			/resourceResponses/.test(error.message),
+	);
+	assert.equal(Worker.instances.length, 0);
 });
 
 test("worker runtime uses injected bindings and returns unique output transfers", async () => {

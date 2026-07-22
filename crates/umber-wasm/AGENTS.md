@@ -22,7 +22,8 @@ the manifest's validated content-addressed object name.
 - `assets/plain-source.lock`: exact TeX Live 2025 Plain, hyphenation, and TFM source identities.
 - `assets/plain.fmt`: reproducible Umber-native Plain format image.
 - `assets/plain-format.json`: published digest and compatibility metadata.
-- `assets/cmu-serif-500-roman.woff2` / `assets/CMU-OFL.txt`: pinned browser-shapeable Computer Modern Unicode face and embedding license.
+- `assets/cmu-serif-500-roman.woff2` / `assets/CMU-OFL.txt`: repository-only
+  conformance fixtures and license; the npm runtime inventory excludes both.
 - `js/`: authored ES modules and Node acceptance tests, including the unified resource facade and optional application-manifest file/font resolver.
 - `browser-tests/`: dependency-free local HTTP and headless-Chrome package integration fixture.
 - `browser-tests/node-project.mjs`: packaged Node TeX-bibliography-TeX acceptance test.

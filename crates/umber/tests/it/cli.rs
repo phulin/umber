@@ -767,185 +767,25 @@ fn run_leaders_corpus_matches_committed_dvi() {
 }
 
 #[test]
-#[allow(clippy::disallowed_methods)] // host-side temporary bundle and command execution.
-fn run_html_and_dvi_share_one_run_and_publish_deterministically() {
+#[allow(clippy::disallowed_methods)] // host-side command execution.
+fn removed_html_font_directory_names_the_typed_replacement() {
     let setup = dvi::DviCaseSetup::new("dvi", "boxes_rules");
-    let font_dir = setup.run_dir().join("web-fonts");
-    fs::create_dir(&font_dir).expect("create web-font bundle");
-    install_test_web_font(&font_dir, &setup.run_dir().join("cmr10.tfm"), "cmr10");
-
-    let invoke = |dvi: &str, html: &str, assets: &str| {
-        Command::new(env!("CARGO_BIN_EXE_umber"))
-            .env("SOURCE_DATE_EPOCH", PINNED_SOURCE_DATE_EPOCH)
-            .current_dir(setup.run_dir())
-            .args([
-                "run",
-                setup.source_file_name(),
-                "--dvi",
-                dvi,
-                "--html",
-                html,
-                "--html-font-dir",
-                "web-fonts",
-                "--html-assets",
-                assets,
-            ])
-            .output()
-            .expect("run simultaneous DVI and HTML")
-    };
-    for (dvi, html, assets) in [
-        ("first.dvi", "first.html", "assets"),
-        ("second.dvi", "second.html", "assets"),
-    ] {
-        let output = invoke(dvi, html, assets);
-        assert!(
-            output.status.success(),
-            "simultaneous output failed:\n{}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-    }
-
-    let first_dvi = fs::read(setup.run_dir().join("first.dvi")).expect("read first DVI");
-    let second_dvi = fs::read(setup.run_dir().join("second.dvi")).expect("read second DVI");
-    dvi::assert_dvi_matches(
-        &first_dvi,
-        &second_dvi,
-        "modern retained-font DVI determinism",
-    );
-    let first = fs::read(setup.run_dir().join("first.html")).expect("read first HTML");
-    let second = fs::read(setup.run_dir().join("second.html")).expect("read second HTML");
-    let html = String::from_utf8(first).expect("HTML is UTF-8");
-    let second_html = String::from_utf8(second).expect("second HTML is UTF-8");
-    assert!(html.contains("data-umber-baseline-sp="));
-    assert!(html.contains("assets/"));
-    assert!(second_html.contains("data-umber-baseline-sp="));
-    assert!(second_html.contains("assets/"));
-}
-
-#[test]
-#[allow(clippy::disallowed_methods)] // host-side focused corpus and temporary font bundles.
-fn focused_html_corpora_pass_the_dvi_coordinate_oracle() {
-    for area in ["dvi", "page", "math", "align", "leaders"] {
-        for case in corpus_cases(area) {
-            let setup = dvi::DviCaseSetup::new(area, case.name());
-            let font_dir = setup.run_dir().join("web-fonts");
-            fs::create_dir(&font_dir).expect("create web-font bundle");
-            for tfm in setup
-                .extra_inputs()
-                .iter()
-                .filter(|path| path.extension().is_some_and(|ext| ext == "tfm"))
-            {
-                let name = tfm
-                    .file_stem()
-                    .and_then(|name| name.to_str())
-                    .expect("TFM name is UTF-8");
-                install_test_web_font(&font_dir, tfm, name);
-            }
-            let output = Command::new(env!("CARGO_BIN_EXE_umber"))
-                .env("SOURCE_DATE_EPOCH", PINNED_SOURCE_DATE_EPOCH)
-                .current_dir(setup.run_dir())
-                .args([
-                    "run",
-                    setup.source_file_name(),
-                    "--dvi",
-                    "actual.dvi",
-                    "--html",
-                    "actual.html",
-                    "--html-font-dir",
-                    "web-fonts",
-                    "--html-assets",
-                    "assets",
-                ])
-                .output()
-                .expect("run focused HTML coordinate case");
-            assert!(
-                output.status.success(),
-                "HTML coordinate oracle failed for {area}/{}:\n{}",
-                case.name(),
-                String::from_utf8_lossy(&output.stderr)
-            );
-            assert!(
-                !fs::read(setup.actual_dvi_path())
-                    .expect("read DVI output")
-                    .is_empty()
-            );
-            assert!(
-                !fs::read(setup.run_dir().join("actual.html"))
-                    .expect("read HTML output")
-                    .is_empty()
-            );
-        }
-    }
-}
-
-#[allow(clippy::disallowed_methods)] // host-side temporary web-font bundle.
-fn install_test_web_font(directory: &std::path::Path, tfm: &std::path::Path, name: &str) {
-    let tfm = fs::read(tfm).expect("read TFM fixture");
-    let woff2 = include_bytes!("../../../umber-wasm/assets/cmu-serif-500-roman.woff2");
-    let woff_digest: [u8; 32] = Sha256::digest(woff2).into();
-    fs::write(directory.join(format!("{name}.woff2")), woff2).expect("write WOFF2");
-    fs::write(
-        directory.join(format!("{name}.woff2.sha256")),
-        hex(&woff_digest),
-    )
-    .expect("write WOFF2 digest");
-    fs::write(
-        directory.join(format!("{name}.tfm-hash")),
-        tex_out::ContentHash::from_bytes(&tfm).hex(),
-    )
-    .expect("write TFM identity");
-    fs::write(
-        directory.join(format!("{name}.license")),
-        "Computer Modern Unicode 0.7.0; SIL Open Font License 1.1",
-    )
-    .expect("write license");
-    let mapping = (0u16..=255)
-        .map(|code| {
-            let mapped = match code {
-                0 => "Γ".to_owned(),
-                1 => "Δ".to_owned(),
-                2 => "Θ".to_owned(),
-                3 => "Λ".to_owned(),
-                4 => "Ξ".to_owned(),
-                5 => "Π".to_owned(),
-                6 => "Σ".to_owned(),
-                7 => "Υ".to_owned(),
-                8 => "Φ".to_owned(),
-                9 => "Ψ".to_owned(),
-                10 => "Ω".to_owned(),
-                16 => "ı".to_owned(),
-                17 => "ȷ".to_owned(),
-                18 => "`".to_owned(),
-                19 => "´".to_owned(),
-                20 => "ˇ".to_owned(),
-                21 => "˘".to_owned(),
-                22 => "¯".to_owned(),
-                23 => "˚".to_owned(),
-                24 => "¸".to_owned(),
-                25 => "ß".to_owned(),
-                26 => "æ".to_owned(),
-                27 => "œ".to_owned(),
-                28 => "ø".to_owned(),
-                29 => "Æ".to_owned(),
-                30 => "Œ".to_owned(),
-                31 => "Ø".to_owned(),
-                45 => "‐".to_owned(),
-                32..=126 => char::from_u32(u32::from(code)).expect("ASCII").to_string(),
-                127 => "¨".to_owned(),
-                // This corpus gate compares exact coordinates, not glyph artwork.
-                // The single bundled Roman face stands in for math faces here, so
-                // retain a cmap-backed placeholder for codes outside its OT1 map.
-                _ => "A".to_owned(),
-            };
-            format!("{code:02x}\t{mapped}")
-        })
-        .collect::<Vec<_>>()
-        .join("\n");
-    fs::write(directory.join(format!("{name}.map")), mapping).expect("write encoding map");
-}
-
-fn hex(bytes: &[u8]) -> String {
-    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+    let output = Command::new(env!("CARGO_BIN_EXE_umber"))
+        .current_dir(setup.run_dir())
+        .args([
+            "run",
+            setup.source_file_name(),
+            "--html",
+            "actual.html",
+            "--html-font-dir",
+            "web-fonts",
+        ])
+        .output()
+        .expect("run removed HTML font option");
+    assert!(!output.status.success());
+    let error = String::from_utf8_lossy(&output.stderr);
+    assert!(error.contains("--html-font-dir was removed"));
+    assert!(error.contains("typed resource resolver API"));
 }
 
 #[test]

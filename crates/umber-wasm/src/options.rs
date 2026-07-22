@@ -76,22 +76,14 @@ pub(crate) fn parse_options(value: &JsValue) -> Result<SessionOptions, JsValue> 
             ));
         }
         options.outputs = outputs.ok_or_else(|| js_error("outputs must be a nonempty array"))?;
+    } else if has_value(value, "dvi")? || has_value(value, "html")? {
+        return Err(js_error(
+            "session options dvi/html were removed; use the nonempty outputs array",
+        ));
     } else {
-        // Version-1 compatibility adapter for the former DVI-plus-HTML shape.
-        let mut outputs = optional_bool(value, "dvi")?
-            .unwrap_or(true)
-            .then_some(OutputCapabilitySet::DVI);
-        if !field(value, "html")?.is_undefined() && !field(value, "html")?.is_null() {
-            outputs = Some(outputs.map_or(OutputCapabilitySet::HTML, |set| {
-                set.with(OutputCapability::Html)
-            }));
-        }
-        if options.engine.supports_pdf_output() {
-            outputs = Some(outputs.map_or(OutputCapabilitySet::PDF, |set| {
-                set.with(OutputCapability::Pdf)
-            }));
-        }
-        options.outputs = outputs.ok_or_else(|| js_error("at least one output is required"))?;
+        return Err(js_error(
+            "session options require a nonempty outputs array; outputs are never inferred from engine",
+        ));
     }
     options.font_layout_policy = match optional_string(value, "fontLayoutPolicy")?.as_deref() {
         None => umber::FontLayoutPolicy::OpenTypePreferred,
@@ -534,17 +526,6 @@ fn required_bytes(object: &JsValue, name: &str) -> Result<Vec<u8>, JsValue> {
 fn required_bool(object: &JsValue, name: &str) -> Result<bool, JsValue> {
     field(object, name)?
         .as_bool()
-        .ok_or_else(|| js_error(&format!("{name} must be a boolean")))
-}
-
-fn optional_bool(object: &JsValue, name: &str) -> Result<Option<bool>, JsValue> {
-    let value = field(object, name)?;
-    if absent(&value) {
-        return Ok(None);
-    }
-    value
-        .as_bool()
-        .map(Some)
         .ok_or_else(|| js_error(&format!("{name} must be a boolean")))
 }
 

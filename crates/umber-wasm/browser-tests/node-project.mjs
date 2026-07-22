@@ -18,6 +18,7 @@ const source = new TextEncoder().encode(
 const output = await compile(
 	{
 		mainPath: "/job/main.tex",
+		outputs: ["dvi"],
 		bibliography: {
 			controlPath: "/job/main.bcf",
 			outputs: [{ path: "/job/main.bbl", format: "bbl" }],

@@ -22,6 +22,11 @@ export interface ResourceProvider {
 	): Promise<readonly TypedResourceResponse[]>;
 }
 
+export function resourceRequestIdentity(request: TypedResourceRequest): string;
+export function resourceResponseIdentity(
+	response: TypedResourceResponse,
+): string;
+
 /** Ordered provider composition with provider-scoped misses and final absence. */
 export class CompositeResourceResolver implements ResourceProvider {
 	constructor(providers: Iterable<ResourceProvider>);

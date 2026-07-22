@@ -34,23 +34,20 @@
 			"types": "./html-preview.d.ts",
 			"import": "./html-preview.js"
 		},
-		"./cm-fonts": {
-			"types": "./cm-fonts.d.ts",
-			"import": "./cm-fonts.js"
-		},
 		"./source-map": {
 			"types": "./source-map.d.ts",
 			"import": "./source-map.js"
 		},
 		"./plain.fmt": "./assets/plain.fmt",
-		"./plain-format.json": "./assets/plain-format.json",
-		"./cmu-serif.woff2": "./assets/cmu-serif-500-roman.woff2"
+		"./plain-format.json": "./assets/plain-format.json"
 	},
 	"files": [
 		"*.js",
 		"*.d.ts",
 		"*.wasm",
-		"assets/",
+		"assets/plain.fmt",
+		"assets/plain-format.json",
+		"assets/plain-source.lock",
 		"examples/",
 		"THIRD_PARTY_NOTICES.md"
 	],

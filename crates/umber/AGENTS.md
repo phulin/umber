@@ -28,7 +28,6 @@ Use this crate when behavior is about driving the engine, presenting CLI output,
 - `src/latex_project.rs`: host-neutral transactional LaTeX/bibliography multipass orchestration, convergence, and atomic project acceptance.
 - `src/latex_project/support.rs`: project candidate VFS assembly, generated-file identity, and shared resource conversion helpers.
 - `src/latex_project/tests.rs`: project convergence, bibliography publication, and rollback coverage.
-- `src/html_output.rs`: exact native typed font-resource resolver with TFM identity, WOFF2 digest, complete legacy mapping, and embedding-license validation.
 - `src/lib.rs`: shared engine session, file resolvers, typed effect-before-driver finalization, run helpers, and one-artifact-at-a-time DVI construction.
 - `src/memory_output.rs`: exact committed terminal/log/DVI/aux collection for successful memory-backed runs, aggregate output limits, and auxiliary publication into VFS stage transactions.
 - `src/memory_output/tests.rs`: final-commit idempotence, output accounting, and memory-boundary tests.

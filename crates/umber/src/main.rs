@@ -105,7 +105,6 @@ fn run_tex(opts: &RunCliOptions) -> Result<(), CliError> {
             initial_prefetch_keys: opts.initial_prefetch_keys.clone(),
             engine: opts.engine,
             outputs,
-            html_font_dir: opts.html_font_dir.clone(),
             html_asset_directory: opts
                 .html_assets
                 .as_ref()
@@ -459,7 +458,6 @@ struct RunCliOptions {
     dvi: Option<PathBuf>,
     pdf: Option<PathBuf>,
     html: Option<PathBuf>,
-    html_font_dir: Option<PathBuf>,
     html_assets: Option<PathBuf>,
     format: Option<PathBuf>,
     format_out: Option<PathBuf>,
@@ -481,7 +479,6 @@ impl RunCliOptions {
         let mut dvi = None;
         let mut pdf = None;
         let mut html = None;
-        let mut html_font_dir = None;
         let mut html_assets = None;
         let mut format = None;
         let mut format_out = None;
@@ -591,13 +588,9 @@ impl RunCliOptions {
                     html = Some(PathBuf::from(path));
                 }
                 "--html-font-dir" => {
-                    if html_font_dir.is_some() {
-                        return Err(CliError::Usage("run accepts at most one --html-font-dir"));
-                    }
-                    let Some(path) = args.next() else {
-                        return Err(CliError::Usage("missing path for --html-font-dir"));
-                    };
-                    html_font_dir = Some(PathBuf::from(path));
+                    return Err(CliError::Usage(
+                        "--html-font-dir was removed; configure the authenticated HTML root with --distribution and --distribution-sha256, or provide application/private fonts through the typed resource resolver API",
+                    ));
                 }
                 "--html-assets" => {
                     if html_assets.is_some() {
@@ -678,9 +671,6 @@ impl RunCliOptions {
         if html_assets.is_some() && html.is_none() {
             return Err(CliError::Usage("--html-assets requires --html"));
         }
-        if html_font_dir.is_some() && html.is_none() {
-            return Err(CliError::Usage("--html-font-dir requires --html"));
-        }
         if dvi
             .as_ref()
             .zip(html.as_ref())
@@ -705,7 +695,6 @@ impl RunCliOptions {
             dvi,
             pdf,
             html,
-            html_font_dir,
             html_assets,
             format,
             format_out,

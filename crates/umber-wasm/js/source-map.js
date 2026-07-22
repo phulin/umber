@@ -1,7 +1,3 @@
-import { ot1TextEncoding } from "./cm-fonts.js";
-
-const DEFAULT_ENCODING = ot1TextEncoding();
-
 /** Converts a browser point in canonical Umber HTML into a rendered-source key. */
 export function renderedSourceKeyFromPoint(document, x, y, options = {}) {
 	if (!document || typeof document.caretPositionFromPoint !== "function") {
@@ -61,7 +57,7 @@ function selectEncoding(font, options) {
 	const encodings = options.encodings;
 	const selected =
 		encodings instanceof Map ? encodings.get(font) : encodings?.[font];
-	return selected ?? options.encoding ?? DEFAULT_ENCODING;
+	return selected ?? options.encoding ?? null;
 }
 
 function parseCodes(value) {

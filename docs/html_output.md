@@ -347,8 +347,11 @@ with the DVI coordinate oracle before the existing byte-level DVI comparison.
 
 ## Packaging and operational budgets
 
-The packaged CM Unicode face is 222,840 bytes and is shared by content hash in
-manifest mode. The optimized browser fixture's one-page embedded-font result is
+The repository's optional CM Unicode conformance fixture is 222,840 bytes and
+is shared by content hash in manifest mode, but it is excluded from the npm
+runtime inventory. Production HTML fonts come from the application-configured,
+digest-pinned root manifest or an application/private typed provider. The
+optimized browser fixture's one-page embedded-font result is
 299,553 HTML bytes; embedded mode intentionally pays base64 expansion per
 document, while manifest mode emits the face once. HTML/font inputs and outputs
 use `Uint8Array`, worker transfer lists, the 64 MiB one-file ceiling, 256 MiB

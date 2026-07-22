@@ -67,8 +67,6 @@ for (const required of [
 	"manifest-resolver.d.ts",
 	"html-preview.js",
 	"html-preview.d.ts",
-	"cm-fonts.js",
-	"cm-fonts.d.ts",
 	"source-map.js",
 	"source-map.d.ts",
 	"umber_wasm.js",
@@ -77,6 +75,13 @@ for (const required of [
 ]) {
 	assert(packageFiles.includes(required), `package is missing ${required}`);
 }
+const packagedAssets = await readdir(path.join(packageDirectory, "assets"));
+assert(
+	!packagedAssets.some((name) =>
+		/\.(?:woff2?|otf|ttf|pf[ab]|enc|map|vf|pk)$/i.test(name),
+	),
+	`font payload leaked into npm runtime assets: ${packagedAssets.join(", ")}`,
+);
 
 const remote = encoder.encode("\\message{remote-loaded}");
 const cmr10 = await readFile(
@@ -87,6 +92,9 @@ const cmtt10 = await readFile(
 );
 const mathWoff2 = await readFile(
 	path.join(repository, "crates/tex-fonts/tests/fixtures/stix-two-math.woff2"),
+);
+const cmuWoff2 = await readFile(
+	path.join(repository, "crates/umber-wasm/assets/cmu-serif-500-roman.woff2"),
 );
 const corruptExpected = encoder.encode("expected object");
 const corruptActual = encoder.encode("tampered object");
@@ -191,6 +199,9 @@ const server = http.createServer(async (request, response) => {
 		}
 		if (url.pathname === "/fixture-cmr10.tfm") {
 			return send(response, 200, cmr10, "application/octet-stream");
+		}
+		if (url.pathname === "/fixture-cmu-serif.woff2") {
+			return send(response, 200, cmuWoff2, "font/woff2");
 		}
 		if (url.pathname === "/fixture-stix-two-math.woff2") {
 			return send(response, 200, mathWoff2, "font/woff2");
