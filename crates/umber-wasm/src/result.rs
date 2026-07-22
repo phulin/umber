@@ -633,6 +633,7 @@ pub(crate) const fn compile_error_code(error: &CompileError) -> &'static str {
         CompileError::AttemptLimit { .. } => "attempt-limit",
         CompileError::NoProgress => "no-progress",
         CompileError::ConflictingResolvedBinding(_)
+        | CompileError::ConflictingHtmlFontBinding { .. }
         | CompileError::DistributionPathCollision(_) => "conflicting-resource",
         CompileError::UnexpectedResourceResponse(_) => "unexpected-resource",
         CompileError::InvalidVirtualPath { .. }

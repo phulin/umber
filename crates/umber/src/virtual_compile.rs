@@ -478,6 +478,11 @@ pub enum CompileError {
     },
     NoProgress,
     ConflictingResolvedBinding(String),
+    ConflictingHtmlFontBinding {
+        name: String,
+        expected_tfm_identity: [u8; 32],
+        conflicting_tfm_identity: [u8; 32],
+    },
     UnexpectedResourceResponse(String),
     FileProvision(ProvisionError),
     Font(String),
@@ -533,6 +538,16 @@ impl fmt::Display for CompileError {
                     "resolved request {name} was rebound to different content"
                 )
             }
+            Self::ConflictingHtmlFontBinding {
+                name,
+                expected_tfm_identity,
+                conflicting_tfm_identity,
+            } => write!(
+                f,
+                "HTML font {name} has conflicting TFM identities {} and {}",
+                hex_sha256(*expected_tfm_identity),
+                hex_sha256(*conflicting_tfm_identity),
+            ),
             Self::UnexpectedResourceResponse(name) => {
                 write!(f, "resource response {name} was not requested")
             }
@@ -2659,9 +2674,12 @@ fn discover_html_paint_resources(
                     font.name
                 ),
             })?;
-            classic_fonts
-                .entry(key)
-                .or_insert((font.name.clone(), font.tfm_content_hash.bytes()));
+            register_classic_html_paint_font(
+                &mut classic_fonts,
+                key,
+                &font.name,
+                font.tfm_content_hash.bytes(),
+            )?;
         }
     }
     let mut required = Vec::new();
@@ -2687,6 +2705,28 @@ fn discover_html_paint_resources(
     }
     required.sort_by_key(resource_sort_key);
     Ok(required)
+}
+
+fn register_classic_html_paint_font(
+    fonts: &mut BTreeMap<FontRequestKey, (String, [u8; 32])>,
+    key: FontRequestKey,
+    name: &str,
+    identity: [u8; 32],
+) -> Result<(), CompileError> {
+    match fonts.entry(key) {
+        std::collections::btree_map::Entry::Vacant(entry) => {
+            entry.insert((name.to_owned(), identity));
+            Ok(())
+        }
+        std::collections::btree_map::Entry::Occupied(entry) if entry.get().1 != identity => {
+            Err(CompileError::ConflictingHtmlFontBinding {
+                name: name.to_owned(),
+                expected_tfm_identity: entry.get().1,
+                conflicting_tfm_identity: identity,
+            })
+        }
+        std::collections::btree_map::Entry::Occupied(_) => Ok(()),
+    }
 }
 
 fn hex_sha256(bytes: [u8; 32]) -> String {

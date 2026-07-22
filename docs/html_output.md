@@ -217,7 +217,11 @@ map a font after layout. The resulting `HtmlFontAsset` contains:
 - fixed OpenType feature, variation, direction, script, and language settings.
 
 Bindings are keyed by the complete TeX and OpenType identities, not by
-basename. Duplicate, missing, corrupt, unlicensed, or incomplete bindings are
+basename. Repeated classic-font occurrences with the same logical name and
+TFM content identity are idempotent and produce one paint request. Reusing
+that name for a different TFM identity fails before acquisition with a typed
+conflict that reports both identities; it never silently keeps or replaces
+one binding. Missing, corrupt, unlicensed, or incomplete bindings are likewise
 typed failures. The content-derived CSS family uses program identity, while
 manifest paths use exact object identity.
 Before serialization, the driver bounds and fully decodes each WOFF2, parses

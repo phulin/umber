@@ -1196,6 +1196,51 @@ fn resource_batches_use_rust_atomic_validation_and_idempotency() {
 }
 
 #[wasm_bindgen_test]
+fn html_font_bindings_distinguish_idempotent_duplicates_from_conflicts() {
+    let options = options("main.tex");
+    let outputs = Array::new();
+    outputs.push(&JsValue::from_str("dvi"));
+    outputs.push(&JsValue::from_str("html"));
+    set(&options, "outputs", &outputs);
+    let mut session =
+        CompilerSession::new(options.unchecked_ref::<JsSessionOptions>()).expect("HTML session");
+    session
+        .add_user_file(
+            "cmr10.tfm",
+            &bytes(include_bytes!(
+                "../../tex-fonts/tests/fixtures/cm/cmr10.tfm"
+            )),
+        )
+        .expect("add TFM");
+    session
+        .add_user_file(
+            "main.tex",
+            &bytes(b"\\font\\tenrm=cmr10\\relax \\tenrm \\shipout\\hbox{A}\\end"),
+        )
+        .expect("add source");
+
+    let missing = session.advance().expect("font request");
+    let request: Object = Array::from(&field(missing.as_ref(), "required"))
+        .get(0)
+        .unchecked_into();
+    let response = html_font_response(&request);
+    session
+        .provide_resources(&Array::of1(&response))
+        .expect("initial font binding");
+    session
+        .provide_resources(&Array::of1(&response))
+        .expect("byte-identical duplicate binding");
+
+    let conflict = Object::assign(&Object::new(), &response);
+    set(&conflict, "bytes", bytes(b"different font bytes").as_ref());
+    let error = session
+        .provide_resources(&Array::of1(&conflict))
+        .expect_err("different bytes must conflict");
+    assert_eq!(string_field(&error, "code"), "conflicting-resource");
+    assert!(string_field(&error, "message").contains("cmr10"));
+}
+
+#[wasm_bindgen_test]
 fn resource_batches_use_rust_limits() {
     let request = Object::new();
     set(&request, "type", &JsValue::from_str("file"));
@@ -1709,12 +1754,19 @@ fn provide_file(
 }
 
 fn provide_requested_html_font(session: &mut CompilerSession) {
-    let woff2 = include_bytes!("../assets/cmu-serif-500-roman.woff2");
     let missing = session.advance().expect("font request");
     assert_eq!(string_field(missing.as_ref(), "kind"), "need-resources");
     let required = Array::from(&field(missing.as_ref(), "required"));
     assert_eq!(required.length(), 1);
     let request: Object = required.get(0).unchecked_into();
+    let response = html_font_response(&request);
+    session
+        .provide_resources(&Array::of1(&response))
+        .expect("provide HTML font");
+}
+
+fn html_font_response(request: &Object) -> Object {
+    let woff2 = include_bytes!("../assets/cmu-serif-500-roman.woff2");
     let response = Object::assign(&Object::new(), &request);
     set(&response, "container", &JsValue::from_str("woff2"));
     set(&response, "bytes", bytes(woff2).as_ref());
@@ -1724,9 +1776,7 @@ fn provide_requested_html_font(session: &mut CompilerSession) {
         &JsValue::from_str("test CM fixture"),
     );
     set(&response, "legacyMapping", legacy_font_mapping().as_ref());
-    session
-        .provide_resources(&Array::of1(&response))
-        .expect("provide HTML font");
+    response
 }
 
 fn legacy_font_mapping() -> Object {

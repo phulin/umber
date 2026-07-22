@@ -145,6 +145,13 @@ commits. Response registration is atomic across files and fonts. Duplicate
 identical responses do not advance response progress and cannot drive a
 suspended candidate.
 
+HTML paint discovery applies the same immutability rule before it requests a
+classic font bundle. Repeated page artifacts may name the same byte-identical
+TFM and collapse to one request, while the same logical font name paired with
+different TFM content identities is a typed conflict reporting both hashes.
+The WASM boundary exposes this and supplied-font rebinding through the stable
+`conflicting-resource` error code.
+
 Domain-qualified file request identity, deterministic file batching, generic
 registration, and file limits are owned by `umber-vfs`. The compile session
 adds TeX lookup/default-extension policy and combines file requests with font

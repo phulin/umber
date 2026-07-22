@@ -1292,6 +1292,41 @@ fn classic_tfm_html_acquires_exact_paint_resource_without_changing_dvi() {
 }
 
 #[test]
+fn classic_html_font_names_bind_one_tfm_identity() {
+    let key = FontRequestKey::new(
+        "cmr10",
+        0,
+        tex_fonts::VariationSelection::default(),
+        tex_fonts::FontFeaturePolicy::default(),
+    )
+    .expect("font key");
+    let first = ContentHash::from_bytes(b"first TFM").bytes();
+    let conflicting = ContentHash::from_bytes(b"conflicting TFM").bytes();
+    let mut fonts = BTreeMap::new();
+
+    register_classic_html_paint_font(&mut fonts, key.clone(), "cmr10", first)
+        .expect("initial binding");
+    register_classic_html_paint_font(&mut fonts, key.clone(), "cmr10", first)
+        .expect("byte-identical duplicate");
+    assert_eq!(fonts.len(), 1);
+
+    let error = register_classic_html_paint_font(&mut fonts, key, "cmr10", conflicting)
+        .expect_err("different TFM identity must conflict");
+    assert_eq!(
+        error,
+        CompileError::ConflictingHtmlFontBinding {
+            name: "cmr10".to_owned(),
+            expected_tfm_identity: first,
+            conflicting_tfm_identity: conflicting,
+        }
+    );
+    let message = error.to_string();
+    assert!(message.contains("cmr10"));
+    assert!(message.contains(&hex_sha256(first)));
+    assert!(message.contains(&hex_sha256(conflicting)));
+}
+
+#[test]
 fn classic_tfm_html_reports_unsupported_exact_mapping() {
     let mut session = VirtualCompileSession::new(SessionOptions {
         outputs: OutputCapabilitySet::HTML,
