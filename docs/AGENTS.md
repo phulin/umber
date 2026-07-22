@@ -146,3 +146,8 @@ identity, construct and upstream-test ownership census, committed fixture
 manifest, and the hermetic `--area bibtex` regeneration boundary. The reviewed
 two-backend architecture and phase exit criteria remain fixed by
 `classic_bibtex_bst.md` at commit `c676cfb0`.
+
+`classic_bibtex_bst.md` defines the proposed classic BibTeX backend and `.bst`
+stack-language compiler/VM, its separation from the Biber-compatible pipeline,
+shared raw-input and orchestration boundaries, compatibility fixtures, bounded
+execution model, phased integration, and exit criteria.
