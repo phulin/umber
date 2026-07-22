@@ -86,6 +86,16 @@ fn main() -> Result<()> {
             format.metadata = parent.join(&format.metadata);
         }
     }
+    if let Some(html) = &mut config.html {
+        if html.catalog.is_relative() {
+            html.catalog = parent.join(&html.catalog);
+        }
+        for source in html.object_sources.values_mut() {
+            if source.is_relative() {
+                *source = parent.join(&*source);
+            }
+        }
+    }
     if let Some(package_database) = &mut config.package_database
         && package_database.is_relative()
     {

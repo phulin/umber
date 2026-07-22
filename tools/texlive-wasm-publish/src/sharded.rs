@@ -6,8 +6,10 @@ use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use umber_distribution::{
-    FORMAT_INPUT_CLOSURE_SCHEMA, FileRequestKey, FormatInputClosure, MAX_FORMAT_INPUTS, Manifest,
-    ManifestFile, ManifestFormat,
+    DependencyHint, FORMAT_INPUT_CLOSURE_SCHEMA, FileRequestKey, FontManifestRecord,
+    FormatInputClosure, HTML_INDEX_SHARD_SCHEMA, HTML_SHARDED_ROOT_SCHEMA,
+    LegacyMappingManifestRecord, MAX_FORMAT_INPUTS, Manifest, ManifestFile, ManifestFormat,
+    ManifestShard, ShardFile,
 };
 
 pub const ROOT_SCHEMA: u32 = 3;
@@ -27,13 +29,14 @@ pub struct RootManifest {
     pub formats: BTreeMap<String, RootFormat>,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct IndexShard {
     pub schema: u32,
     pub distribution: String,
     pub index: u32,
     pub files: BTreeMap<String, ShardFile>,
+    pub fonts: BTreeMap<String, FontManifestRecord>,
+    pub legacy_mappings: BTreeMap<String, LegacyMappingManifestRecord>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -42,27 +45,6 @@ pub struct FetchEntry {
     pub object: String,
     pub sha256: String,
     pub bytes: u64,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct DependencyHint {
-    pub key: String,
-    pub virtual_path: String,
-    pub object: String,
-    pub sha256: String,
-    pub bytes: u64,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct ShardFile {
-    pub virtual_path: String,
-    pub object: String,
-    pub sha256: String,
-    pub bytes: u64,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub dependencies: Vec<DependencyHint>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -94,9 +76,27 @@ pub struct ShardedPublication {
     pub shards: Vec<IndexShard>,
     pub files: BTreeMap<String, ManifestFile>,
     pub formats: BTreeMap<String, ManifestFormat>,
+    pub fonts: BTreeMap<String, FontManifestRecord>,
+    pub legacy_mappings: BTreeMap<String, LegacyMappingManifestRecord>,
 }
 
 pub fn shard_manifest(manifest: &Manifest, shard_bits: u8) -> Result<ShardedPublication> {
+    shard_manifest_records(
+        manifest,
+        shard_bits,
+        ROOT_SCHEMA,
+        &BTreeMap::new(),
+        &BTreeMap::new(),
+    )
+}
+
+fn shard_manifest_records(
+    manifest: &Manifest,
+    shard_bits: u8,
+    root_schema: u32,
+    fonts: &BTreeMap<String, FontManifestRecord>,
+    legacy_mappings: &BTreeMap<String, LegacyMappingManifestRecord>,
+) -> Result<ShardedPublication> {
     validate_shard_bits(shard_bits)?;
     let shard_count = 1_usize << shard_bits;
     let mut shard_files = vec![BTreeMap::new(); shard_count];
@@ -129,19 +129,36 @@ pub fn shard_manifest(manifest: &Manifest, shard_bits: u8) -> Result<ShardedPubl
             },
         );
     }
+    let mut shard_fonts = vec![BTreeMap::new(); shard_count];
+    for (key, record) in fonts {
+        shard_fonts[shard_index(key, shard_bits)].insert(key.clone(), record.clone());
+    }
+    let mut shard_mappings = vec![BTreeMap::new(); shard_count];
+    for (key, record) in legacy_mappings {
+        shard_mappings[shard_index(key, shard_bits)].insert(key.clone(), record.clone());
+    }
+    let shard_schema = if root_schema == HTML_SHARDED_ROOT_SCHEMA {
+        HTML_INDEX_SHARD_SCHEMA
+    } else {
+        SHARD_SCHEMA
+    };
     let shards = shard_files
         .into_iter()
+        .zip(shard_fonts)
+        .zip(shard_mappings)
         .enumerate()
-        .map(|(index, files)| IndexShard {
-            schema: SHARD_SCHEMA,
+        .map(|(index, ((files, fonts), legacy_mappings))| IndexShard {
+            schema: shard_schema,
             distribution: manifest.distribution.clone(),
             index: u32::try_from(index).expect("bounded shard index fits u32"),
             files,
+            fonts,
+            legacy_mappings,
         })
         .collect();
     Ok(ShardedPublication {
         root: RootManifest {
-            schema: ROOT_SCHEMA,
+            schema: root_schema,
             distribution: manifest.distribution.clone(),
             objects_base_url: manifest.objects_base_url.clone(),
             shard_bits,
@@ -156,6 +173,8 @@ pub fn shard_manifest(manifest: &Manifest, shard_bits: u8) -> Result<ShardedPubl
         shards,
         files: manifest.files.clone(),
         formats: manifest.formats.clone(),
+        fonts: fonts.clone(),
+        legacy_mappings: legacy_mappings.clone(),
     })
 }
 
@@ -164,12 +183,35 @@ pub fn write_sharded_manifest(
     shard_bits: u8,
     output: &Path,
 ) -> Result<ShardedPublication> {
-    let mut publication = shard_manifest(manifest, shard_bits)?;
+    write_publication(shard_manifest(manifest, shard_bits)?, output)
+}
+
+pub fn write_html_sharded_manifest(
+    manifest: &Manifest,
+    shard_bits: u8,
+    output: &Path,
+    fonts: &BTreeMap<String, FontManifestRecord>,
+    legacy_mappings: &BTreeMap<String, LegacyMappingManifestRecord>,
+) -> Result<ShardedPublication> {
+    let publication = shard_manifest_records(
+        manifest,
+        shard_bits,
+        HTML_SHARDED_ROOT_SCHEMA,
+        fonts,
+        legacy_mappings,
+    )?;
+    write_publication(publication, output)
+}
+
+fn write_publication(
+    mut publication: ShardedPublication,
+    output: &Path,
+) -> Result<ShardedPublication> {
     let objects = output.join("objects");
     fs::create_dir_all(&objects)
         .with_context(|| format!("create output directory {}", objects.display()))?;
     for shard in &publication.shards {
-        let bytes = canonical_json(shard)?;
+        let bytes = canonical_shard(shard).into_bytes();
         let digest = sha256(&bytes);
         let object = format!("sha256-{digest}");
         fs::write(objects.join(&object), &bytes)
@@ -198,8 +240,25 @@ pub fn verify_sharded_snapshot(output: &Path) -> Result<ShardedPublication> {
         if sha256(&bytes) != *digest {
             bail!("object for shard {index} does not match its declared digest");
         }
-        let shard: IndexShard = parse_canonical(&bytes, "index shard")?;
-        if shard.schema != SHARD_SCHEMA
+        let text = std::str::from_utf8(&bytes).context("index shard is not UTF-8")?;
+        let parsed = ManifestShard::parse(text).context("parse index shard")?;
+        if parsed.to_json().as_bytes() != bytes {
+            bail!("index shard is not canonically serialized");
+        }
+        let shard = IndexShard {
+            schema: parsed.schema,
+            distribution: parsed.distribution,
+            index: parsed.index,
+            files: parsed.files,
+            fonts: parsed.fonts,
+            legacy_mappings: parsed.legacy_mappings,
+        };
+        let expected_shard_schema = if root.schema == HTML_SHARDED_ROOT_SCHEMA {
+            HTML_INDEX_SHARD_SCHEMA
+        } else {
+            SHARD_SCHEMA
+        };
+        if shard.schema != expected_shard_schema
             || shard.distribution != root.distribution
             || shard.index != index as u32
         {
@@ -264,6 +323,47 @@ pub fn verify_sharded_snapshot(output: &Path) -> Result<ShardedPublication> {
             validate_format_input_closure(name, closure, &files)?;
         }
     }
+    let fonts = shards
+        .iter()
+        .flat_map(|shard| {
+            shard
+                .fonts
+                .iter()
+                .map(|(key, value)| (key.clone(), value.clone()))
+        })
+        .collect::<BTreeMap<_, _>>();
+    let legacy_mappings = shards
+        .iter()
+        .flat_map(|shard| {
+            shard
+                .legacy_mappings
+                .iter()
+                .map(|(key, value)| (key.clone(), value.clone()))
+        })
+        .collect::<BTreeMap<_, _>>();
+    for (key, record) in &fonts {
+        read_verified_object_entry(output, &record.object, key)?;
+        read_verified_object_entry(
+            output,
+            &record.license.object,
+            &format!("license for {key}"),
+        )?;
+    }
+    for (key, record) in &legacy_mappings {
+        read_verified_object_entry(output, &record.object, key)?;
+        read_verified_object_entry(
+            output,
+            &record.license.object,
+            &format!("license for {key}"),
+        )?;
+        let font_key = record.font_request.manifest_key().to_string();
+        let font = fonts
+            .get(&font_key)
+            .with_context(|| format!("legacy mapping {key} references absent font {font_key}"))?;
+        if font.object != record.object || font.license != record.license {
+            bail!("legacy mapping {key} does not match its declared font and license objects");
+        }
+    }
     Ok(ShardedPublication {
         root,
         shards,
@@ -288,6 +388,8 @@ pub fn verify_sharded_snapshot(output: &Path) -> Result<ShardedPublication> {
             })
             .collect(),
         formats,
+        fonts,
+        legacy_mappings,
     })
 }
 
@@ -304,7 +406,7 @@ pub fn shard_index(key: &str, shard_bits: u8) -> usize {
 fn validate_root(root: &RootManifest) -> Result<()> {
     validate_shard_bits(root.shard_bits)?;
     let expected = 1_u32 << root.shard_bits;
-    if root.schema != ROOT_SCHEMA
+    if !matches!(root.schema, ROOT_SCHEMA | HTML_SHARDED_ROOT_SCHEMA)
         || root.shard_count != expected
         || root.shards.len() != expected as usize
     {
@@ -398,6 +500,34 @@ fn canonical_json<T: Serialize>(value: &T) -> Result<Vec<u8>> {
     Ok(bytes)
 }
 
+fn canonical_shard(shard: &IndexShard) -> String {
+    ManifestShard {
+        schema: shard.schema,
+        distribution: shard.distribution.clone(),
+        index: shard.index,
+        files: shard.files.clone(),
+        fonts: shard.fonts.clone(),
+        legacy_mappings: shard.legacy_mappings.clone(),
+    }
+    .to_json()
+}
+
+fn read_verified_object_entry(
+    output: &Path,
+    entry: &umber_distribution::ObjectEntry,
+    label: &str,
+) -> Result<Vec<u8>> {
+    read_verified_object(
+        output,
+        &FetchEntry {
+            object: entry.object.clone(),
+            sha256: entry.sha256.clone(),
+            bytes: entry.bytes,
+        },
+        label,
+    )
+}
+
 fn parse_canonical<T>(bytes: &[u8], label: &str) -> Result<T>
 where
     T: Serialize + for<'de> Deserialize<'de>,
@@ -487,6 +617,18 @@ pub fn referenced_objects(publication: &ShardedPublication) -> BTreeSet<String> 
                 .iter()
                 .map(|digest| format!("sha256-{digest}")),
         )
+        .chain(publication.fonts.values().flat_map(|record| {
+            [
+                record.object.object.clone(),
+                record.license.object.object.clone(),
+            ]
+        }))
+        .chain(publication.legacy_mappings.values().flat_map(|record| {
+            [
+                record.object.object.clone(),
+                record.license.object.object.clone(),
+            ]
+        }))
         .collect()
 }
 

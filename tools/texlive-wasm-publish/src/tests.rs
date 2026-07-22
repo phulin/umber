@@ -4,11 +4,13 @@ use std::path::Path;
 use std::process::Command;
 
 use anyhow::Result;
+use sha2::{Digest, Sha256};
 use tempfile::TempDir;
+use umber_distribution::{FontRequestKey, LegacyMappingRequestKey};
 
 use super::{
-    FormatConfig, InventoryConfig, PublishConfig, RootConfig, publish, shard_index, tree_sha256,
-    verify_sharded_snapshot,
+    FormatConfig, HtmlInventoryConfig, HtmlProfileConfig, InventoryConfig, PublicationProfile,
+    PublishConfig, RootConfig, publish, shard_index, tree_sha256, verify_sharded_snapshot,
 };
 
 fn write(root: &Path, relative: &str, bytes: &[u8]) -> Result<()> {
@@ -16,6 +18,157 @@ fn write(root: &Path, relative: &str, bytes: &[u8]) -> Result<()> {
     fs::create_dir_all(path.parent().expect("fixture file has a parent"))?;
     fs::write(path, bytes)?;
     Ok(())
+}
+
+fn digest(bytes: &[u8]) -> String {
+    format!("{:x}", Sha256::digest(bytes))
+}
+
+fn html_config(fixture: &TempDir) -> Result<PublishConfig> {
+    let root_path = fixture.path().join("html-root");
+    fs::create_dir_all(&root_path)?;
+    write(&root_path, "tex/plain/base/plain.tex", b"plain runtime")?;
+    write(&root_path, "tex/latex/base/article.cls", b"class runtime")?;
+    let tfm_bytes = b"exact tfm";
+    write(&root_path, "fonts/tfm/public/cm/cmr10.tfm", tfm_bytes)?;
+    for (relative, bytes) in [
+        ("fonts/afm/public/cm/cmr10.afm", b"afm".as_slice()),
+        ("fonts/enc/dvips/cm/cm.enc", b"enc".as_slice()),
+        ("fonts/map/pdftex/cm/cm.map", b"map".as_slice()),
+        ("fonts/pk/modeless/cm/cmr10.pk", b"pk".as_slice()),
+        ("fonts/type1/public/cm/cmr10.pfb", b"type1".as_slice()),
+        ("fonts/truetype/public/cm/cmr10.ttf", b"ttf".as_slice()),
+        ("fonts/opentype/public/cm/cmr10.otf", b"otf".as_slice()),
+        ("fonts/vf/public/cm/cmr10.vf", b"vf".as_slice()),
+    ] {
+        write(&root_path, relative, bytes)?;
+    }
+
+    let format_bytes = [b"UMBRFMT\0".as_slice(), &10_u32.to_le_bytes()].concat();
+    let format_path = fixture.path().join("plain.fmt");
+    fs::write(&format_path, &format_bytes)?;
+    let format_metadata = fixture.path().join("plain-format.json");
+    fs::write(
+        &format_metadata,
+        serde_json::to_vec_pretty(&serde_json::json!({
+            "schema": 2,
+            "name": "plain-html",
+            "object": format!("sha256-{}", digest(&format_bytes)),
+            "sha256": digest(&format_bytes),
+            "bytes": format_bytes.len(),
+            "engine": "umber",
+            "engineVersion": "fixture",
+            "formatSchema": 10,
+            "sourceDistribution": "fixture",
+            "sourceManifestSha256": "1".repeat(64),
+            "sourceDateEpoch": 1,
+            "inputClosure": {"schema": 1, "keys": ["tex:plain.tex", "tfm:cmr10.tfm"]}
+        }))?,
+    )?;
+
+    let font_bytes = b"fixture woff2";
+    let license_bytes = b"fixture license";
+    let font_digest = digest(font_bytes);
+    let license_digest = digest(license_bytes);
+    let font_path = fixture.path().join("fixture.woff2");
+    let license_path = fixture.path().join("LICENSE.txt");
+    fs::write(&font_path, font_bytes)?;
+    fs::write(&license_path, license_bytes)?;
+    let font_key = FontRequestKey::new("fixture-serif")?
+        .manifest_key()
+        .to_string();
+    let tfm_digest = digest(tfm_bytes);
+    let mapping_key =
+        LegacyMappingRequestKey::new(&tfm_digest, 1, "html-layout", Some("OT1".to_owned()))?
+            .manifest_key()
+            .to_string();
+    let unicode_map = std::iter::once(serde_json::Value::String("A".to_owned()))
+        .chain(std::iter::repeat_n(serde_json::Value::Null, 255))
+        .collect::<Vec<_>>();
+    let provenance = serde_json::json!({
+        "identity": "2".repeat(64),
+        "upstream": "Fixture Serif",
+        "upstreamVersion": "1",
+        "sourceUrl": "https://example.test/font",
+        "conversionTool": "fixture",
+        "conversionVersion": "1"
+    });
+    let license = serde_json::json!({
+        "identity": "3".repeat(64),
+        "object": format!("sha256-{license_digest}"),
+        "sha256": license_digest,
+        "bytes": license_bytes.len(),
+        "spdx": "OFL-1.1",
+        "embeddable": true,
+        "redistributable": true
+    });
+    let object = serde_json::json!({
+        "object": format!("sha256-{font_digest}"),
+        "sha256": font_digest,
+        "bytes": font_bytes.len(),
+        "container": "woff2",
+        "programIdentity": "4".repeat(64)
+    });
+    let catalog_path = fixture.path().join("html-catalog.json");
+    fs::write(
+        &catalog_path,
+        serde_json::to_vec_pretty(&serde_json::json!({
+            "schema": 2,
+            "distribution": "html-fixture-v1",
+            "index": 0,
+            "files": {},
+            "fonts": {
+                font_key.clone(): {
+                    "schema": 1,
+                    "object": object["object"], "sha256": object["sha256"], "bytes": object["bytes"],
+                    "container": object["container"], "programIdentity": object["programIdentity"],
+                    "featurePolicyVersion": 1,
+                    "provenance": provenance.clone(), "license": license.clone()
+                }
+            },
+            "legacyMappings": {
+                mapping_key: {
+                    "schema": 1, "tfmSha256": tfm_digest, "fontKey": font_key,
+                    "object": object["object"], "sha256": object["sha256"], "bytes": object["bytes"],
+                    "container": object["container"], "programIdentity": object["programIdentity"],
+                    "unicodeMap": unicode_map, "mappingVersion": 1, "fontdimenVersion": 1,
+                    "featurePolicyVersion": 1, "fallback": "classic-tfm-exact",
+                    "provenance": provenance, "license": license
+                }
+            }
+        }))?,
+    )?;
+    Ok(PublishConfig {
+        schema: 4,
+        distribution: "html-fixture-v1".to_owned(),
+        objects_base_url: "https://cdn.example.test/html/objects/".to_owned(),
+        shard_bits: 2,
+        roots: vec![root("fixture", &root_path)?],
+        dependencies: BTreeMap::new(),
+        formats: vec![FormatConfig {
+            path: format_path,
+            metadata: format_metadata,
+        }],
+        package_database: None,
+        inventory: None,
+        profile: PublicationProfile::Html,
+        html: Some(HtmlProfileConfig {
+            runtime_file_keys: vec!["tex:article.cls".to_owned()],
+            catalog: catalog_path,
+            object_sources: BTreeMap::from([
+                (font_digest, font_path),
+                (license_digest, license_path),
+            ]),
+            inventory: HtmlInventoryConfig {
+                maximum_logical_files: 3,
+                maximum_objects: 16,
+                maximum_bytes: 1_000_000,
+                maximum_fonts: 1,
+                maximum_legacy_mappings: 1,
+                maximum_licenses: 1,
+            },
+        }),
+    })
 }
 
 fn root(name: &str, path: &Path) -> Result<RootConfig> {
@@ -40,6 +193,8 @@ fn config(roots: Vec<RootConfig>) -> PublishConfig {
         formats: Vec::new(),
         package_database: None,
         inventory: None,
+        profile: PublicationProfile::Full,
+        html: None,
     }
 }
 
@@ -529,6 +684,103 @@ fn large_package_peer_hints_rotate_with_bounded_deterministic_output() -> Result
     );
     verify_sharded_snapshot(&output_a)?;
     verify_sharded_snapshot(&output_b)?;
+    Ok(())
+}
+
+#[test]
+fn html_profile_is_reproducible_bounded_and_contains_only_html_resources() -> Result<()> {
+    let fixture = TempDir::new()?;
+    let config = html_config(&fixture)?;
+    let output_a = fixture.path().join("html-a");
+    let output_b = fixture.path().join("html-b");
+    fs::create_dir_all(output_a.join("objects"))?;
+    fs::write(output_a.join("objects/stale-object"), b"stale")?;
+
+    let publication = publish(&config, &output_a)?;
+    publish(&config, &output_b)?;
+    assert_eq!(publication.root.schema, 4);
+    assert_eq!(publication.files.len(), 3);
+    assert!(publication.files.contains_key("tex:plain.tex"));
+    assert!(publication.files.contains_key("tex:article.cls"));
+    assert!(publication.files.contains_key("tfm:cmr10.tfm"));
+    assert_eq!(publication.fonts.len(), 1);
+    assert_eq!(publication.legacy_mappings.len(), 1);
+    for forbidden in [".afm", ".enc", ".map", ".pk", ".pfb", ".ttf", ".otf", ".vf"] {
+        assert!(
+            publication
+                .files
+                .values()
+                .all(|file| !file.virtual_path.ends_with(forbidden)),
+            "published forbidden HTML class {forbidden}"
+        );
+    }
+    assert!(!output_a.join("objects/stale-object").exists());
+    assert_eq!(
+        fs::read(output_a.join("manifest.json"))?,
+        fs::read(output_b.join("manifest.json"))?
+    );
+    assert_eq!(
+        directory_bytes(&output_a.join("objects"))?,
+        directory_bytes(&output_b.join("objects"))?
+    );
+
+    let license = &publication
+        .fonts
+        .values()
+        .next()
+        .expect("font")
+        .license
+        .object;
+    fs::write(output_a.join("objects").join(&license.object), b"corrupt")?;
+    let error = verify_sharded_snapshot(&output_a).expect_err("corrupt license must fail");
+    assert!(error.to_string().contains("license"));
+    Ok(())
+}
+
+#[test]
+fn html_profile_rejects_every_pdf_and_dvi_only_class_and_inventory_overflow() -> Result<()> {
+    let fixture = TempDir::new()?;
+    let base = html_config(&fixture)?;
+    for key in [
+        "tex:cmr10.afm",
+        "tex:cm.enc",
+        "tex:cm.map",
+        "tex:cmr10.pk",
+        "tex:cmr10.pfb",
+        "tex:cmr10.ttf",
+        "tex:cmr10.otf",
+        "tex:cmr10.vf",
+    ] {
+        let mut config = base.clone();
+        config
+            .html
+            .as_mut()
+            .expect("HTML config")
+            .runtime_file_keys
+            .push(key.to_owned());
+        let error = publish(
+            &config,
+            &fixture
+                .path()
+                .join(format!("reject-{}", key.replace(':', "-"))),
+        )
+        .expect_err("forbidden HTML class must fail");
+        assert!(
+            error.to_string().contains("PDF/DVI-only"),
+            "{key}: {error:#}"
+        );
+    }
+
+    let mut bounded = base;
+    bounded
+        .html
+        .as_mut()
+        .expect("HTML config")
+        .inventory
+        .maximum_bytes = 1;
+    let error = publish(&bounded, &fixture.path().join("over-budget"))
+        .expect_err("HTML byte ceiling must fail");
+    assert!(error.to_string().contains("exceeds ceiling"));
     Ok(())
 }
 

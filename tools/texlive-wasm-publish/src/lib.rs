@@ -14,13 +14,14 @@ use anyhow::{Context, Result, bail};
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use umber_distribution::{
-    FORMAT_INPUT_CLOSURE_SCHEMA, FileRequestKey, FormatInputClosure, MAX_FORMAT_INPUTS,
-    ManifestFile, ManifestFormat,
+    FORMAT_INPUT_CLOSURE_SCHEMA, FileRequestKey, FontManifestRecord, FormatInputClosure,
+    HTML_INDEX_SHARD_SCHEMA, HTML_SHARDED_ROOT_SCHEMA, LegacyMappingManifestRecord,
+    MAX_FORMAT_INPUTS, ManifestFile, ManifestFormat, ManifestShard,
 };
 
 pub use sharded::{
     IndexShard, RootManifest, ShardedPublication, prune_unreferenced_objects, shard_index,
-    verify_sharded_snapshot, write_sharded_manifest,
+    verify_sharded_snapshot, write_html_sharded_manifest, write_sharded_manifest,
 };
 
 pub use scan::tree_sha256;
@@ -44,6 +45,39 @@ pub struct PublishConfig {
     pub package_database: Option<PathBuf>,
     #[serde(default)]
     pub inventory: Option<InventoryConfig>,
+    #[serde(default)]
+    pub profile: PublicationProfile,
+    #[serde(default)]
+    pub html: Option<HtmlProfileConfig>,
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq)]
+#[serde(rename_all = "kebab-case")]
+pub enum PublicationProfile {
+    #[default]
+    Full,
+    Html,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct HtmlProfileConfig {
+    #[serde(default)]
+    pub runtime_file_keys: Vec<String>,
+    pub catalog: PathBuf,
+    pub object_sources: BTreeMap<String, PathBuf>,
+    pub inventory: HtmlInventoryConfig,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct HtmlInventoryConfig {
+    pub maximum_logical_files: usize,
+    pub maximum_objects: usize,
+    pub maximum_bytes: u64,
+    pub maximum_fonts: usize,
+    pub maximum_legacy_mappings: usize,
+    pub maximum_licenses: usize,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -96,6 +130,9 @@ struct FormatInputClosureMetadata {
 
 pub fn publish(config: &PublishConfig, output: &Path) -> Result<ShardedPublication> {
     validate_config(config)?;
+    if config.profile == PublicationProfile::Html {
+        return publish_html(config, output);
+    }
     let candidates = scan_roots(&config.roots)?;
     let winners = flatten_candidates(candidates)?;
     let dependencies = publication_dependencies(config, &winners)?;
@@ -165,6 +202,253 @@ pub fn publish(config: &PublishConfig, output: &Path) -> Result<ShardedPublicati
     let publication = sharded::write_sharded_manifest(&manifest, config.shard_bits, output)?;
     remove_stale_objects(&objects, &sharded::referenced_objects(&publication))?;
     sharded::verify_sharded_snapshot(output).context("verify staged sharded snapshot")
+}
+
+fn publish_html(config: &PublishConfig, output: &Path) -> Result<ShardedPublication> {
+    let html = config
+        .html
+        .as_ref()
+        .context("HTML publication profile requires html configuration")?;
+    let candidates = scan_roots(&config.roots)?;
+    let mut winners = flatten_candidates(candidates)?;
+
+    let mut formats = BTreeMap::new();
+    let mut format_objects = Vec::new();
+    let mut selected_keys = html
+        .runtime_file_keys
+        .iter()
+        .cloned()
+        .collect::<BTreeSet<_>>();
+    if selected_keys.len() != html.runtime_file_keys.len() {
+        bail!("HTML runtimeFileKeys contains duplicate keys");
+    }
+    for format in &config.formats {
+        let (name, manifest_format, bytes) = load_format(format)?;
+        let closure = manifest_format.input_closure.as_ref().with_context(|| {
+            format!("HTML format {name:?} must carry an authenticated input closure")
+        })?;
+        selected_keys.extend(closure.keys.iter().cloned());
+        if formats
+            .insert(name.clone(), manifest_format.clone())
+            .is_some()
+        {
+            bail!("duplicate published format name {name:?}");
+        }
+        format_objects.push((manifest_format.object.clone(), bytes));
+    }
+    if formats.is_empty() {
+        bail!("HTML publication profile requires at least one selected format");
+    }
+
+    let dependencies = publication_dependencies(config, &winners)?;
+    let mut selected = BTreeMap::new();
+    for key in selected_keys {
+        FileRequestKey::from_manifest_key(&key)
+            .with_context(|| format!("invalid HTML runtime file key {key:?}"))?;
+        let candidate = winners.remove(&key).with_context(|| {
+            format!("HTML runtime file key {key:?} is absent from pinned roots")
+        })?;
+        validate_html_candidate(&key, &candidate)?;
+        selected.insert(key, candidate);
+    }
+    let selected_dependencies = dependencies
+        .into_iter()
+        .filter(|(owner, _)| selected.contains_key(owner))
+        .map(|(owner, hints)| {
+            let hints = hints
+                .into_iter()
+                .filter(|hint| selected.contains_key(hint))
+                .collect();
+            (owner, hints)
+        })
+        .collect::<BTreeMap<_, _>>();
+    validate_dependencies(&selected_dependencies, &selected)?;
+
+    let catalog_text = fs::read_to_string(&html.catalog)
+        .with_context(|| format!("read HTML catalog {}", html.catalog.display()))?;
+    let catalog = ManifestShard::parse(&catalog_text).context("parse HTML catalog")?;
+    if catalog.schema != HTML_INDEX_SHARD_SCHEMA
+        || catalog.distribution != config.distribution
+        || catalog.index != 0
+        || !catalog.files.is_empty()
+    {
+        bail!("HTML catalog must be a schema-2, file-free shard zero for this distribution");
+    }
+    validate_html_catalog(&catalog.fonts, &catalog.legacy_mappings, &selected)?;
+
+    let objects = output.join("objects");
+    fs::create_dir_all(&objects)
+        .with_context(|| format!("create output directory {}", objects.display()))?;
+    let mut files = BTreeMap::new();
+    for (key, candidate) in selected {
+        let bytes = fs::read(&candidate.source)
+            .with_context(|| format!("read {}", candidate.source.display()))?;
+        let object = format!("sha256-{}", candidate.sha256);
+        fs::write(objects.join(&object), &bytes).context("write HTML runtime object")?;
+        files.insert(
+            key.clone(),
+            ManifestFile {
+                virtual_path: format!("/texlive/{}", candidate.relative),
+                object,
+                sha256: candidate.sha256,
+                bytes: u64::try_from(bytes.len()).context("file length exceeds u64")?,
+                dependencies: selected_dependencies.get(&key).cloned().unwrap_or_default(),
+            },
+        );
+    }
+    for (object, bytes) in format_objects {
+        fs::write(objects.join(object), bytes).context("write HTML format object")?;
+    }
+    stage_html_catalog_objects(html, &catalog, &objects)?;
+
+    let manifest = Manifest {
+        schema: umber_distribution::MANIFEST_SCHEMA,
+        distribution: config.distribution.clone(),
+        objects_base_url: config.objects_base_url.clone(),
+        files,
+        fonts: BTreeMap::new(),
+        formats,
+    };
+    let publication = write_html_sharded_manifest(
+        &manifest,
+        config.shard_bits,
+        output,
+        &catalog.fonts,
+        &catalog.legacy_mappings,
+    )?;
+    remove_stale_objects(&objects, &sharded::referenced_objects(&publication))?;
+    validate_html_inventory(&html.inventory, output, &publication)?;
+    verify_sharded_snapshot(output).context("verify staged HTML sharded snapshot")
+}
+
+fn validate_html_candidate(key: &str, candidate: &Candidate) -> Result<()> {
+    let allowed = candidate.relative.starts_with("tex/")
+        || (candidate.relative.starts_with("fonts/tfm/")
+            && candidate.relative.to_ascii_lowercase().ends_with(".tfm"));
+    if !allowed {
+        bail!(
+            "HTML profile rejects PDF/DVI-only runtime class for {key}: {}",
+            candidate.relative
+        );
+    }
+    Ok(())
+}
+
+fn validate_html_catalog(
+    fonts: &BTreeMap<String, FontManifestRecord>,
+    mappings: &BTreeMap<String, LegacyMappingManifestRecord>,
+    files: &BTreeMap<String, Candidate>,
+) -> Result<()> {
+    if fonts.is_empty() || mappings.is_empty() {
+        bail!("HTML catalog must declare font and legacy mapping records");
+    }
+    for (key, mapping) in mappings {
+        if !files.iter().any(|(file_key, candidate)| {
+            file_key.starts_with("tfm:") && candidate.sha256 == mapping.request.tfm_sha256()
+        }) {
+            bail!("legacy mapping {key} does not reference a selected exact TFM object");
+        }
+        let font_key = mapping.font_request.manifest_key().to_string();
+        let font = fonts
+            .get(&font_key)
+            .with_context(|| format!("legacy mapping {key} references absent font {font_key}"))?;
+        if font.object != mapping.object || font.license != mapping.license {
+            bail!("legacy mapping {key} does not match its font and license objects");
+        }
+    }
+    Ok(())
+}
+
+fn stage_html_catalog_objects(
+    html: &HtmlProfileConfig,
+    catalog: &ManifestShard,
+    objects: &Path,
+) -> Result<()> {
+    let expected = catalog
+        .fonts
+        .values()
+        .flat_map(|record| [&record.object, &record.license.object])
+        .chain(
+            catalog
+                .legacy_mappings
+                .values()
+                .flat_map(|record| [&record.object, &record.license.object]),
+        )
+        .map(|entry| (entry.sha256.clone(), entry.clone()))
+        .collect::<BTreeMap<_, _>>();
+    if html.object_sources.keys().collect::<BTreeSet<_>>() != expected.keys().collect() {
+        bail!("HTML objectSources must exactly cover the catalog font and license digests");
+    }
+    for (digest, entry) in expected {
+        let source = &html.object_sources[&digest];
+        let bytes = fs::read(source)
+            .with_context(|| format!("read HTML catalog object {}", source.display()))?;
+        if format!("{:x}", Sha256::digest(&bytes)) != digest
+            || bytes.len() as u64 != entry.bytes
+            || entry.object != format!("sha256-{digest}")
+        {
+            bail!("HTML catalog object {digest} does not match its declared digest and length");
+        }
+        fs::write(objects.join(&entry.object), bytes).context("write HTML catalog object")?;
+    }
+    Ok(())
+}
+
+fn validate_html_inventory(
+    limits: &HtmlInventoryConfig,
+    output: &Path,
+    publication: &ShardedPublication,
+) -> Result<()> {
+    let mut objects = 0_usize;
+    let mut bytes = 0_u64;
+    for entry in fs::read_dir(output.join("objects")).context("read HTML object inventory")? {
+        let entry = entry.context("read HTML object inventory entry")?;
+        let metadata = entry
+            .metadata()
+            .context("inspect HTML object inventory entry")?;
+        if metadata.is_file() {
+            objects += 1;
+            bytes = bytes
+                .checked_add(metadata.len())
+                .context("HTML object inventory byte count overflow")?;
+        }
+    }
+    let licenses = publication
+        .fonts
+        .values()
+        .map(|record| &record.license.identity)
+        .chain(
+            publication
+                .legacy_mappings
+                .values()
+                .map(|record| &record.license.identity),
+        )
+        .collect::<BTreeSet<_>>()
+        .len();
+    if publication.files.len() > limits.maximum_logical_files
+        || objects > limits.maximum_objects
+        || bytes > limits.maximum_bytes
+        || publication.fonts.len() > limits.maximum_fonts
+        || publication.legacy_mappings.len() > limits.maximum_legacy_mappings
+        || licenses > limits.maximum_licenses
+    {
+        bail!(
+            "HTML publication inventory exceeds ceiling: files {} (max {}), objects {} (max {}), bytes {} (max {}), fonts {} (max {}), mappings {} (max {}), licenses {} (max {})",
+            publication.files.len(),
+            limits.maximum_logical_files,
+            objects,
+            limits.maximum_objects,
+            bytes,
+            limits.maximum_bytes,
+            publication.fonts.len(),
+            limits.maximum_fonts,
+            publication.legacy_mappings.len(),
+            limits.maximum_legacy_mappings,
+            licenses,
+            limits.maximum_licenses,
+        );
+    }
+    Ok(())
 }
 
 fn publication_dependencies(
@@ -346,12 +630,22 @@ fn remove_stale_objects(objects: &Path, expected: &BTreeSet<String>) -> Result<(
 }
 
 fn validate_config(config: &PublishConfig) -> Result<()> {
-    if config.schema != sharded::ROOT_SCHEMA {
+    let expected_schema = match config.profile {
+        PublicationProfile::Full => sharded::ROOT_SCHEMA,
+        PublicationProfile::Html => HTML_SHARDED_ROOT_SCHEMA,
+    };
+    if config.schema != expected_schema {
         bail!(
             "unsupported root manifest schema {}; expected {}",
             config.schema,
-            sharded::ROOT_SCHEMA
+            expected_schema
         );
+    }
+    if config.profile == PublicationProfile::Full && config.html.is_some() {
+        bail!("full publication profile cannot contain html configuration");
+    }
+    if config.profile == PublicationProfile::Html && config.inventory.is_some() {
+        bail!("HTML publication uses its independent html.inventory ceilings");
     }
     if config.distribution.is_empty() || config.distribution.contains(char::is_whitespace) {
         bail!("distribution must be a non-empty identifier without whitespace");
