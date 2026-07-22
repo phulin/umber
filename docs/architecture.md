@@ -178,6 +178,16 @@ left newer conditional frames above it. Umber therefore reads and replaces
 evaluation metadata by `ConditionFrameToken`, never from the merely innermost
 frame.
 
+TeX.web §§379 and 510 recover an `\else`, `\or`, or `\fi` encountered while
+its condition is still evaluating by backing up that token behind the
+inaccessible `frozen_relax`; pdfTeX.web §§403 and 534 retain the same rule,
+and e-TeX does not replace it. The frozen primitive identity is essential:
+packages such as `bm` temporarily redefine live `\relax`, so replaying that
+mutable control sequence can feed the same conditional delimiter back into
+recovery forever. Umber replays one atomic frozen-relax/delimiter pair, making
+the canonical recovery independent of the live meaning and bounded in both
+expansion work and host stack use.
+
 Control-sequence meanings are stored in lazily allocated 65,536-slot segments.
 Allocating or writing a lower segment is growth-only: it must never truncate a
 higher segment, because package-generated `\csname` definitions routinely

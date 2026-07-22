@@ -4446,6 +4446,37 @@ fn iffontchar_recovers_a_missing_font_identifier_as_nullfont() {
 }
 
 #[test]
+fn bm_rebound_relax_conditional_recovery_uses_bounded_stack() {
+    std::thread::Builder::new()
+        .name("bounded-conditional-recovery".to_owned())
+        .stack_size(256 * 1024)
+        .spawn(|| {
+            let mut stores = Universe::new();
+            crate::install_expandable_primitives(&mut stores);
+            crate::install_etex_expandable_primitives(&mut stores);
+            stores.register_primitive_meaning("relax", Meaning::Relax);
+            let live_relax = stores.intern("relax");
+            stores.set_macro_meaning(
+                live_relax,
+                MacroMeaning::new(MeaningFlags::EMPTY, TokenListId::EMPTY, TokenListId::EMPTY),
+            );
+            let mut input = InputStack::new(MemoryInput::new(r"\iffontchar\else\fi"));
+
+            assert_eq!(
+                next_expanded_chars(
+                    &mut input,
+                    &mut tex_state::ExpansionContext::new(&mut stores),
+                ),
+                ""
+            );
+            assert_eq!(input.condition_depth(), 0);
+        })
+        .expect("spawn bounded-stack recovery probe")
+        .join()
+        .expect("bounded-stack conditional recovery completes");
+}
+
+#[test]
 fn etex_mark_class_primitives_scan_class_and_expand_its_marks() {
     let mut stores = Universe::new();
     crate::install_etex_expandable_primitives(&mut stores);
