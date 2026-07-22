@@ -85,6 +85,12 @@ suspension serial identifies the active wait, and only the rolled-back step is
 replayed. Earlier committed steps and their generated/effect state are neither
 published nor recomputed.
 
+Reconstructing a suspended candidate's synthetic root uses the incremental
+session's source-file encoder, including its legacy 8-bit byte projection. The
+internal Unicode editor representation is never encoded directly into the VFS.
+This keeps accepted root bytes and content identities identical at native and
+WebAssembly byte-array boundaries after resource retry.
+
 ## Patch contract
 
 A patch is one UTF-8 byte-range replacement against the root editor buffer:

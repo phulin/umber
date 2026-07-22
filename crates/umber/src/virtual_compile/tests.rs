@@ -234,6 +234,72 @@ fn answer_single_file(result: CompileAttemptResult, bytes: Option<&[u8]>) -> Res
     )
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct AcceptedSessionState {
+    revision: RevisionId,
+    content_hash: ContentHash,
+    output: MemoryRunOutput,
+    file_generation: umber_vfs::StorageIdentity,
+    generated: Option<Vec<u8>>,
+    history: Vec<(RevisionId, tex_incr::BoundaryKey, usize, usize, u64)>,
+    observations: crate::AcceptedInputObservationLedger,
+}
+
+fn accepted_session_state(session: &VirtualCompileSession) -> AcceptedSessionState {
+    let snapshot = session.files.snapshot();
+    let generated_path = VirtualPath::user("state.aux").expect("generated path");
+    AcceptedSessionState {
+        revision: session.revision().expect("accepted revision"),
+        content_hash: session.content_hash().expect("accepted content hash"),
+        output: session
+            .accepted_output
+            .clone()
+            .expect("accepted session output"),
+        file_generation: snapshot.generation_identity(),
+        generated: snapshot
+            .get(&generated_path)
+            .expect("generated lookup")
+            .map(|file| file.bytes().to_vec()),
+        history: session
+            .incremental
+            .as_ref()
+            .expect("accepted incremental session")
+            .history()
+            .iter()
+            .map(|record| {
+                (
+                    record.revision(),
+                    record.key(),
+                    record.effect_prefix(),
+                    record.artifact_prefix(),
+                    record.state_hash(),
+                )
+            })
+            .collect(),
+        observations: session
+            .accepted_input_observations()
+            .expect("accepted observations"),
+    }
+}
+
+fn generated_input_fallback_session() -> (VirtualCompileSession, String) {
+    let source = concat!(
+        "\\input state.aux ",
+        "\\immediate\\openout1=state.aux ",
+        "\\immediate\\write1{\\string\\message{new-input}} ",
+        "\\immediate\\closeout1 \\message{accepted}\\end"
+    );
+    let mut session = session(source);
+    session
+        .add_user_file("state.aux", b"\\message{old-input}\n".to_vec())
+        .expect("old incoming generated input");
+    assert!(matches!(
+        session.compile_attempt(),
+        CompileAttemptResult::Complete(_)
+    ));
+    (session, source.to_owned())
+}
+
 #[test]
 fn accepted_dependencies_record_required_positive_and_shadowing_negative_paths() {
     let mut session = session("\\input generated.aux \\end");
@@ -462,6 +528,215 @@ fn changed_required_generated_input_retries_one_job_start_candidate_and_matches_
         panic!("cold comparison must complete");
     };
     assert_eq!(actual, expected);
+}
+
+#[test]
+fn job_start_fallback_failure_and_output_limit_preserve_every_accepted_root() {
+    let (mut failed, source) = generated_input_fallback_session();
+    let accepted = accepted_session_state(&failed);
+    apply_text_replacement(
+        &mut failed,
+        2,
+        &source,
+        "\\message{accepted}",
+        "\\input candidate-failed",
+    );
+    let request = requests(failed.compile_attempt());
+    assert_eq!(accepted_session_state(&failed), accepted);
+    failed
+        .provide_resources(vec![ResourceResponse::FileUnavailable(
+            request[0].key().clone(),
+        )])
+        .expect("authoritative candidate failure");
+    assert!(matches!(
+        failed.compile_attempt(),
+        CompileAttemptResult::Error(CompileError::Diagnostic(_))
+    ));
+    assert_eq!(accepted_session_state(&failed), accepted);
+    assert_eq!(
+        failed.compile_attempt(),
+        CompileAttemptResult::Complete(accepted.output.clone())
+    );
+
+    let (mut limited, source) = generated_input_fallback_session();
+    let accepted = accepted_session_state(&limited);
+    limited.limits.output_bytes = memory_run_output_bytes(&accepted.output).saturating_add(32);
+    let replacement = format!("\\message{{{}}}", "x".repeat(512));
+    apply_text_replacement(
+        &mut limited,
+        2,
+        &source,
+        "\\message{accepted}",
+        &replacement,
+    );
+    assert!(matches!(
+        limited.compile_attempt(),
+        CompileAttemptResult::Error(CompileError::LimitExceeded { .. })
+    ));
+    assert_eq!(accepted_session_state(&limited), accepted);
+}
+
+#[test]
+fn job_start_fallback_suspension_no_progress_and_cancellation_preserve_accepted_state() {
+    let (mut no_progress, source) = generated_input_fallback_session();
+    let accepted = accepted_session_state(&no_progress);
+    apply_text_replacement(
+        &mut no_progress,
+        2,
+        &source,
+        "\\message{accepted}",
+        "\\input later \\message{candidate}",
+    );
+    let first_request = requests(no_progress.compile_attempt());
+    assert_eq!(accepted_session_state(&no_progress), accepted);
+    assert_eq!(no_progress.revision(), Some(RevisionId::new(1)));
+    assert!(matches!(
+        no_progress.compile_attempt(),
+        CompileAttemptResult::Error(CompileError::NoProgress)
+    ));
+    assert_eq!(accepted_session_state(&no_progress), accepted);
+
+    let (mut cancelled, source) = generated_input_fallback_session();
+    let accepted = accepted_session_state(&cancelled);
+    apply_text_replacement(
+        &mut cancelled,
+        2,
+        &source,
+        "\\message{accepted}",
+        "\\input later \\message{candidate}",
+    );
+    let request = requests(cancelled.compile_attempt());
+    assert_eq!(request, first_request);
+    assert_eq!(accepted_session_state(&cancelled), accepted);
+    assert!(cancelled.discard_suspended_candidate());
+    assert_eq!(accepted_session_state(&cancelled), accepted);
+    assert_eq!(requests(cancelled.compile_attempt()), request);
+    assert!(cancelled.cancel_pending_patch());
+    assert_eq!(accepted_session_state(&cancelled), accepted);
+    assert_eq!(
+        cancelled.compile_attempt(),
+        CompileAttemptResult::Complete(accepted.output.clone())
+    );
+}
+
+#[test]
+fn resumed_job_start_fallback_publishes_root_stage_and_revision_together() {
+    let (mut session, source) = generated_input_fallback_session();
+    let accepted = accepted_session_state(&session);
+    let next = apply_text_replacement(
+        &mut session,
+        2,
+        &source,
+        "\\message{accepted}",
+        "\\input later \\message{candidate}",
+    );
+    let response = answer_single_file(session.compile_attempt(), Some(b"\\relax\n"));
+    assert_eq!(accepted_session_state(&session), accepted);
+    session
+        .provide_resources(vec![response])
+        .expect("resume fallback candidate");
+    let CompileAttemptResult::Complete(output) = session.compile_attempt() else {
+        panic!("resumed fallback must complete");
+    };
+    assert_ne!(accepted_session_state(&session), accepted);
+    assert_eq!(session.revision(), Some(RevisionId::new(2)));
+    assert_eq!(
+        session
+            .files
+            .snapshot()
+            .get(&session.main_path)
+            .expect("root lookup")
+            .expect("accepted root")
+            .bytes(),
+        next.as_bytes()
+    );
+    assert_eq!(session.accepted_output.as_ref(), Some(&output));
+    assert!(
+        session
+            .incremental
+            .as_ref()
+            .expect("incremental session")
+            .history()
+            .iter()
+            .all(|record| record.revision() == RevisionId::new(2))
+    );
+    assert_eq!(
+        session
+            .accepted_input_observations()
+            .expect("accepted observations")
+            .revision(),
+        RevisionId::new(2)
+    );
+}
+
+#[test]
+fn resumed_job_start_fallback_preserves_legacy_root_byte_representation() {
+    let mut source = concat!(
+        "\\input state.aux ",
+        "\\immediate\\openout1=state.aux ",
+        "\\immediate\\write1{\\string\\message{new-input}} ",
+        "\\immediate\\closeout1 %"
+    )
+    .as_bytes()
+    .to_vec();
+    source.push(0xff);
+    source.extend_from_slice(b"\n\\message{old}\\end");
+    let mut session = VirtualCompileSession::new(SessionOptions::default()).expect("session");
+    session
+        .add_user_file("main.tex", source.clone())
+        .expect("legacy root");
+    session
+        .add_user_file("state.aux", b"\\message{old-input}\n".to_vec())
+        .expect("old incoming generated input");
+    assert!(matches!(
+        session.compile_attempt(),
+        CompileAttemptResult::Complete(_)
+    ));
+
+    let old = b"\\message{old}";
+    let physical_start = source
+        .windows(old.len())
+        .position(|window| window == old)
+        .expect("old message");
+    let editor_start = session
+        .incremental
+        .as_ref()
+        .expect("accepted incremental session")
+        .source()
+        .find("\\message{old}")
+        .expect("editor message");
+    let replacement = "\\input later \\message{new}";
+    session
+        .apply_patch(SourcePatch {
+            next_revision: RevisionId::new(2),
+            base_revision: RevisionId::new(1),
+            expected_hash: session.content_hash().expect("accepted hash"),
+            range: editor_start..editor_start + old.len(),
+            replacement: replacement.to_owned(),
+        })
+        .expect("legacy patch");
+    source.splice(
+        physical_start..physical_start + old.len(),
+        replacement.bytes(),
+    );
+    let response = answer_single_file(session.compile_attempt(), Some(b"\\relax\n"));
+    session
+        .provide_resources(vec![response])
+        .expect("resume legacy candidate");
+    assert!(matches!(
+        session.compile_attempt(),
+        CompileAttemptResult::Complete(_)
+    ));
+    assert_eq!(
+        session
+            .files
+            .snapshot()
+            .get(&session.main_path)
+            .expect("root lookup")
+            .expect("accepted root")
+            .bytes(),
+        source
+    );
 }
 
 #[test]

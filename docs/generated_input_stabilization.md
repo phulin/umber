@@ -185,6 +185,13 @@ paragraph replay for that pass. It must preserve:
 - cold-equivalent diagnostics, effects, artifacts, DVI/PDF, and generated
   files.
 
+Candidate retry also preserves the root file's representation. In particular,
+an editor session initialized from legacy 8-bit bytes must rebuild its private
+VFS root with the session's byte-projection encoder after every resource
+response; it must not accidentally publish the UTF-8 encoding of the internal
+editor string. Native byte slices and WebAssembly `Uint8Array` inputs therefore
+retain the same accepted root bytes and content identity across suspension.
+
 The public editor revision remains the root-buffer revision. Internal
 stabilization passes over an unchanged root must not invent observable editor
 revisions merely to satisfy engine bookkeeping.

@@ -51,6 +51,96 @@ fn compiler_exposes_versioned_accepted_input_observations() {
 }
 
 #[wasm_bindgen_test]
+fn generated_input_fallback_keeps_root_revision_and_binary_representation_across_retry() {
+    let mut source = concat!(
+        "\\input state.aux ",
+        "\\immediate\\openout1=state.aux ",
+        "\\immediate\\write1{\\string\\message{new-input}} ",
+        "\\immediate\\closeout1 %"
+    )
+    .as_bytes()
+    .to_vec();
+    source.push(0xff);
+    source.extend_from_slice(b"\n\\message{old}\\end");
+    let mut session = session("main.tex");
+    session
+        .add_user_file("main.tex", &bytes(&source))
+        .expect("binary main source");
+    session
+        .add_user_file("state.aux", &bytes(b"\\message{old-input}\n"))
+        .expect("old incoming generated input");
+    assert_eq!(
+        string_field(session.advance().expect("initial compile").as_ref(), "kind"),
+        "complete"
+    );
+
+    let old = b"\\message{old}";
+    let physical_start = source
+        .windows(old.len())
+        .position(|window| window == old)
+        .expect("old message");
+    let editor_start = physical_start + 1;
+    let replacement = "\\input later \\message{new}";
+    let hash = session
+        .accepted_content_hash()
+        .expect("content hash getter")
+        .expect("accepted hash");
+    let patch = source_patch(
+        2,
+        1,
+        &hash,
+        editor_start,
+        editor_start + old.len(),
+        replacement,
+    );
+    session
+        .apply_patch(patch.unchecked_ref::<JsSourcePatch>())
+        .expect("binary root patch");
+    let suspended = session.advance().expect("fallback suspension");
+    assert_eq!(string_field(suspended.as_ref(), "kind"), "need-resources");
+    assert_eq!(session.revision().expect("revision getter"), Some(1));
+    let old_ledger = session
+        .accepted_input_observations()
+        .expect("ledger getter")
+        .expect("accepted ledger");
+    assert_eq!(field(old_ledger.as_ref(), "revision").as_f64(), Some(1.0));
+
+    let required = Array::from(&field(suspended.as_ref(), "required"));
+    assert_eq!(required.length(), 1);
+    provide_file(
+        &mut session,
+        &required.get(0),
+        "/texlive/later.tex",
+        b"\\relax\n",
+    )
+    .expect("fallback resource");
+    let completed = session.advance().expect("completed fallback");
+    assert_eq!(string_field(completed.as_ref(), "kind"), "complete");
+    assert_eq!(session.revision().expect("revision getter"), Some(2));
+
+    source.splice(
+        physical_start..physical_start + old.len(),
+        replacement.bytes(),
+    );
+    let ledger = session
+        .accepted_input_observations()
+        .expect("ledger getter")
+        .expect("accepted ledger");
+    assert_eq!(field(ledger.as_ref(), "revision").as_f64(), Some(2.0));
+    let observations = Array::from(&field(ledger.as_ref(), "observations"));
+    let root = observations
+        .iter()
+        .find(|observation| string_field(observation, "path") == "/job/main.tex")
+        .expect("root observation");
+    let outcome = field(&root, "outcome");
+    assert_eq!(string_field(&outcome, "kind"), "present");
+    assert_eq!(
+        string_field(&outcome, "contentHash"),
+        tex_state::ContentHash::from_bytes(&source).hex()
+    );
+}
+
+#[wasm_bindgen_test]
 fn project_binding_validates_options_and_disposes() {
     let project_options = options("/job/main.tex");
     let bibliography = Object::new();

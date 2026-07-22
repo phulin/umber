@@ -1262,8 +1262,9 @@ impl VirtualCompileSession {
         if let (Some((_, edit)), Some(session)) = (&self.pending_patch, self.incremental.as_ref()) {
             let mut source = session.source().to_owned();
             source.replace_range(edit.range.clone(), &edit.replacement);
+            let source = session.source_file_bytes(&source);
             refreshed
-                .register_user(self.main_path.clone(), source.into_bytes())
+                .register_user(self.main_path.clone(), source)
                 .map_err(map_user_registration)?;
         }
         self.candidate
