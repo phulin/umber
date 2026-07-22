@@ -371,6 +371,11 @@ try {
 				return evaluated.result.value;
 			});
 			assert(result.ok, result.error);
+			assert.equal(result.value.explicitOpenType.requestCount, 1);
+			assert.match(result.value.explicitOpenType.text, /^µ £ ¥ é AV office$/u);
+			assert.match(result.value.explicitOpenType.fontFamily, /umber-font-/);
+			assert(Number.isFinite(result.value.explicitOpenType.xSp));
+			assert(Number.isFinite(result.value.explicitOpenType.baselineSp));
 			const geometryMatrix = [];
 			for (const deviceScaleFactor of [1, 2]) {
 				await cdp.call("Emulation.setDeviceMetricsOverride", {

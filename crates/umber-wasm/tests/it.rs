@@ -505,33 +505,39 @@ async fn generated_html_projects_exact_geometry_at_firefox_zoom_levels() {
     session
         .add_user_file("cmr10.tfm", &bytes(tfm))
         .expect("add TFM");
-    let source = b"\\font\\tenrm=cmr10\\relax\\shipout\\hbox{\\kern-2pt\\vrule width3pt height4pt depth1pt\\tenrm AV office}\\end";
+    let source = "\\font\\tenrm=cmr10\\relax\\font\\ot=opentype:firefox-ltr at 10pt \\shipout\\hbox{\\kern-2pt\\vrule width3pt height4pt depth1pt\\tenrm AV office\\ot µ £ ¥ é}\\end".as_bytes();
     session
         .add_user_file("main.tex", &bytes(source))
         .expect("add source");
     register_html_font(&mut session);
-    let missing = session.advance().expect("font request");
-    assert_eq!(string_field(missing.as_ref(), "kind"), "need-resources");
-    let required = Array::from(&field(missing.as_ref(), "required"));
-    assert_eq!(required.length(), 1);
-    let request: Object = required.get(0).unchecked_into();
-    let response = Object::assign(&Object::new(), &request);
-    set(&response, "container", &JsValue::from_str("woff2"));
-    set(
-        &response,
-        "bytes",
-        bytes(include_bytes!("../assets/cmu-serif-500-roman.woff2")).as_ref(),
-    );
-    set(
-        &response,
-        "provenance",
-        &JsValue::from_str("test CM Unicode fixture under the SIL OFL"),
-    );
-    let responses = Array::of1(&response);
-    session
-        .provide_resources(&responses)
-        .expect("provide retained WOFF2 once");
-    let complete = session.advance().expect("HTML compile");
+    let mut request_count = 0;
+    let mut complete = session.advance().expect("font request");
+    while string_field(complete.as_ref(), "kind") == "need-resources" {
+        let required = Array::from(&field(complete.as_ref(), "required"));
+        request_count += required.length();
+        let responses = Array::new();
+        for request in required.iter() {
+            let request: Object = request.unchecked_into();
+            let response = Object::assign(&Object::new(), &request);
+            set(&response, "container", &JsValue::from_str("woff2"));
+            set(
+                &response,
+                "bytes",
+                bytes(include_bytes!("../assets/cmu-serif-500-roman.woff2")).as_ref(),
+            );
+            set(
+                &response,
+                "provenance",
+                &JsValue::from_str("test CM Unicode fixture under the SIL OFL"),
+            );
+            responses.push(&response);
+        }
+        session
+            .provide_resources(&responses)
+            .expect("provide retained WOFF2 batch");
+        complete = session.advance().expect("resume HTML compile");
+    }
+    assert_eq!(request_count, 2);
     if string_field(complete.as_ref(), "kind") != "complete" {
         let diagnostic = field(complete.as_ref(), "diagnostic");
         panic!("{}", string_field(&diagnostic, "message"));
@@ -618,9 +624,10 @@ async fn generated_html_projects_exact_geometry_at_firefox_zoom_levels() {
           const iframe = document.createElement('iframe');
           iframe.style.cssText = 'border:0;width:900px;height:500px';
           return new Promise((resolve, reject) => {
-            iframe.addEventListener('load', () => {
+            iframe.addEventListener('load', async () => {
               try {
                 const doc = iframe.contentDocument;
+                await doc.fonts.ready;
                 const page = doc.querySelector('.umber-page');
                 const mag = Number(page.dataset.umberMag);
                 const px = raw => Number(raw) * mag * 48 / (65536 * 5 * 7227);
@@ -628,6 +635,12 @@ async fn generated_html_projects_exact_geometry_at_firefox_zoom_levels() {
                 const originY = Number(page.dataset.umberOriginYSp);
                 const close = (a, b) => Math.abs(a - b) <= 1 / 30 + 1e-6;
                 let ok = doc.documentElement.outerHTML.includes('umber-html/1');
+                ok = ok && [...doc.querySelectorAll('.umber-run-text')].every(run => {
+                  const style = iframe.contentWindow.getComputedStyle(run.parentElement);
+                  return !style.fontFamily.includes(',')
+                    && style.fontFamily.includes('umber-font-')
+                    && doc.fonts.check(`${style.fontSize} ${style.fontFamily}`, run.textContent);
+                });
                 for (const zoom of [1, 1.25, 2]) {
                   page.style.zoom = String(zoom);
                   const pageRect = page.getBoundingClientRect();

@@ -178,6 +178,7 @@ async function integration() {
 	const generatedGeometry = await installAndMeasureGeneratedHtml(
 		htmlFirst.html,
 	);
+	const explicitOpenType = await compileExplicitOpenType(htmlFont.woff2);
 	const mathGeometry = await verifyPositionedMathPrototype();
 	const clickSource = assertClickToSource(
 		retained,
@@ -322,7 +323,93 @@ async function integration() {
 		htmlBytes: htmlFirst.html.byteLength,
 		clickSource,
 		geometry: generatedGeometry,
+		explicitOpenType,
 		mathGeometry,
+	};
+}
+
+async function compileExplicitOpenType(woff2) {
+	const text = "µ £ ¥ é AV office";
+	const requests = [];
+	const output = await compile(
+		{ mainPath: "unicode.tex", html: {} },
+		new Map([
+			[
+				"unicode.tex",
+				encode(
+					`\\font\\ot=opentype:vertical-ltr at 12pt \\shipout\\hbox{\\ot ${text}}\\end`,
+				),
+			],
+		]),
+		{
+			async resolve(batch) {
+				return batch.map((request) => {
+					assert(request.type === "font", "explicit OpenType requested a TFM");
+					assert(
+						request.logicalName === "vertical-ltr",
+						"explicit OpenType logical name was rewritten",
+					);
+					assert(request.direction === "ltr", "LTR request changed direction");
+					requests.push(request);
+					return {
+						...request,
+						container: "woff2",
+						bytes: woff2,
+						provenance: "pinned vertical LTR fixture",
+					};
+				});
+			},
+		},
+	);
+	assert(requests.length === 1, "explicit face was not acquired exactly once");
+	assert(
+		output.html instanceof Uint8Array,
+		"explicit OpenType returned no HTML",
+	);
+	const iframe = await installGeneratedHtml(
+		output.html,
+		"explicit-opentype-fixture",
+	);
+	const doc = iframe.contentDocument;
+	const runs = [...doc.querySelectorAll(".umber-run-text")];
+	assert(
+		runs.length === 1,
+		"explicit LTR text did not remain one positioned run",
+	);
+	assert(runs[0].textContent === text, "explicit Unicode DOM text changed");
+	const parent = runs[0].parentElement;
+	const style = iframe.contentWindow.getComputedStyle(parent);
+	assert(style.direction === "ltr", "explicit run was not installed as LTR");
+	assert(
+		style.fontFamily.includes("umber-font-"),
+		"explicit run did not use its content-derived face",
+	);
+	assert(
+		!style.fontFamily.includes(","),
+		"explicit run gained a fallback family",
+	);
+	assert(
+		doc.fonts.check(`${style.fontSize} ${style.fontFamily}`, text),
+		"exact explicit face did not finish loading",
+	);
+	assert(
+		fontCovers(doc, style, text),
+		"explicit face would fall back for LTR text",
+	);
+	const run = parent.closest(".umber-run");
+	assert(run?.dataset.umberXSp !== undefined, "explicit run lost engine x");
+	assert(
+		run?.dataset.umberBaselineSp !== undefined,
+		"explicit run lost engine baseline",
+	);
+	const fontFamily = style.fontFamily;
+	iframe.remove();
+	return {
+		text,
+		requestCount: requests.length,
+		fontFamily,
+		xSp: Number(run.dataset.umberXSp),
+		baselineSp: Number(run.dataset.umberBaselineSp),
 	};
 }
 
@@ -396,8 +483,13 @@ function assertClickToSource(session, source, encoding) {
 }
 
 async function installAndMeasureGeneratedHtml(bytes) {
+	await installGeneratedHtml(bytes, "generated-html-fixture");
+	return measureGeneratedHtml(1);
+}
+
+async function installGeneratedHtml(bytes, id) {
 	const iframe = document.createElement("iframe");
-	iframe.id = "generated-html-fixture";
+	iframe.id = id;
 	iframe.style.cssText = "border:0;width:900px;height:500px";
 	document.body.append(iframe);
 	const loaded = new Promise((resolve) =>
@@ -426,7 +518,7 @@ async function installAndMeasureGeneratedHtml(bytes) {
 			"generated face lacks a mapped glyph and would fall back",
 		);
 	}
-	return measureGeneratedHtml(1);
+	return iframe;
 }
 
 function fontCovers(doc, style, text) {
