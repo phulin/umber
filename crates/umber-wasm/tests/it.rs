@@ -6,10 +6,10 @@ use bib_engine::{
 };
 use js_sys::{Array, Date, Object, Reflect, Uint8Array};
 use tex_state::{Universe, World};
-use umber::prepare_run_stores;
+use umber::{FontObjectIdentity, prepare_run_stores};
 use umber_wasm::{
-    CompilerSession, JsFileRequestKey, JsProjectSessionOptions, JsSessionOptions, JsSourcePatch,
-    ProjectSession, format_schema_version, package_version,
+    CompilerSession, JsFileRequestKey, JsHtmlFontInput, JsProjectSessionOptions, JsSessionOptions,
+    JsSourcePatch, ProjectSession, format_schema_version, package_version,
 };
 use wasm_bindgen::{JsCast, JsValue};
 use wasm_bindgen_futures::JsFuture;
@@ -321,6 +321,7 @@ async fn generated_html_projects_exact_geometry_at_firefox_zoom_levels() {
     session
         .add_user_file("main.tex", &bytes(source))
         .expect("add source");
+    register_html_font(&mut session);
     let missing = session.advance().expect("font request");
     assert_eq!(string_field(missing.as_ref(), "kind"), "need-resources");
     let required = Array::from(&field(missing.as_ref(), "required"));
@@ -918,6 +919,8 @@ fn file_response(request: &Object, path: &str, contents: &[u8]) -> Object {
 }
 
 fn provide_requested_html_font(session: &mut CompilerSession) {
+    register_html_font(session);
+    let woff2 = include_bytes!("../assets/cmu-serif-500-roman.woff2");
     let missing = session.advance().expect("font request");
     assert_eq!(string_field(missing.as_ref(), "kind"), "need-resources");
     let required = Array::from(&field(missing.as_ref(), "required"));
@@ -925,11 +928,7 @@ fn provide_requested_html_font(session: &mut CompilerSession) {
     let request: Object = required.get(0).unchecked_into();
     let response = Object::assign(&Object::new(), &request);
     set(&response, "container", &JsValue::from_str("woff2"));
-    set(
-        &response,
-        "bytes",
-        bytes(include_bytes!("../assets/cmu-serif-500-roman.woff2")).as_ref(),
-    );
+    set(&response, "bytes", bytes(woff2).as_ref());
     set(
         &response,
         "provenance",
@@ -938,6 +937,43 @@ fn provide_requested_html_font(session: &mut CompilerSession) {
     session
         .provide_resources(&Array::of1(&response))
         .expect("provide HTML font");
+}
+
+fn register_html_font(session: &mut CompilerSession) {
+    let tfm = include_bytes!("../../tex-fonts/tests/fixtures/cm/cmr10.tfm");
+    let woff2 = include_bytes!("../assets/cmu-serif-500-roman.woff2");
+    let font = Object::new();
+    set(&font, "name", &JsValue::from_str("cmr10"));
+    set(
+        &font,
+        "tfmContentHash",
+        &JsValue::from_str(&tex_state::ContentHash::from_bytes(tfm).hex()),
+    );
+    set(&font, "woff2", bytes(woff2).as_ref());
+    let digest = FontObjectIdentity::for_bytes(woff2)
+        .bytes()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
+    set(&font, "sha256", &JsValue::from_str(&digest));
+    let encoding = Array::new_with_length(256);
+    for code in 32_u8..=126 {
+        encoding.set(
+            u32::from(code),
+            JsValue::from_str(&char::from(code).to_string()),
+        );
+    }
+    encoding.set(0, JsValue::from_str("Γ"));
+    set(&font, "encoding", &encoding);
+    set(
+        &font,
+        "provenance",
+        &JsValue::from_str("test CM fixture under the SIL OFL"),
+    );
+    set(&font, "embeddable", &JsValue::TRUE);
+    session
+        .add_html_font(font.unchecked_ref::<JsHtmlFontInput>())
+        .expect("register exact HTML mapping");
 }
 
 fn session_with_format(main_path: &str, format: &[u8]) -> CompilerSession {
