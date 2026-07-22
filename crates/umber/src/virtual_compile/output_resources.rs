@@ -144,6 +144,9 @@ impl std::error::Error for MissingOutputResource {}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ResourcePlanError {
+    UnsupportedHtmlVirtualFont {
+        request: super::FileRequestKey,
+    },
     HtmlIneligible {
         kind: FileKind,
         purpose: ResourcePurpose,
@@ -157,6 +160,11 @@ pub enum ResourcePlanError {
 impl fmt::Display for ResourcePlanError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::UnsupportedHtmlVirtualFont { request } => write!(
+                f,
+                "HTML output does not support virtual font request {:?}",
+                request.name()
+            ),
             Self::HtmlIneligible { kind, purpose } => write!(
                 f,
                 "HTML resource closure cannot request {kind} for {purpose:?}"
@@ -218,6 +226,11 @@ impl OutputResourcePlanner {
                 FileKind::TexInput | FileKind::FormatImage | FileKind::Tfm
             )
         {
+            if file.key().kind() == FileKind::VirtualFont {
+                return Err(ResourcePlanError::UnsupportedHtmlVirtualFont {
+                    request: file.key().clone(),
+                });
+            }
             return Err(ResourcePlanError::HtmlIneligible {
                 kind: file.key().kind(),
                 purpose,

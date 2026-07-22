@@ -117,8 +117,27 @@ fn all_output_combinations_and_layout_policies_have_exact_closures() {
 
 #[test]
 fn html_rejects_pdf_and_dvi_only_resource_classes() {
+    let mut planner = OutputResourcePlanner::new(
+        OutputCapabilitySet::HTML,
+        FontLayoutPolicy::ClassicTfmExact,
+        8,
+    );
+    let error = planner
+        .add(
+            ResourceClosureOwner::Html,
+            ResourcePurpose::HtmlFontTransport,
+            ResourceRequestMode::Required,
+            file(FileKind::VirtualFont, "future-family.vf"),
+        )
+        .expect_err("HTML must reject virtual fonts explicitly");
+    assert!(matches!(
+        error,
+        ResourcePlanError::UnsupportedHtmlVirtualFont { ref request }
+            if request.kind() == FileKind::VirtualFont
+                && request.name() == "future-family.vf"
+    ));
+
     for kind in [
-        FileKind::VirtualFont,
         FileKind::PdfFontMap,
         FileKind::PdfEncoding,
         FileKind::PdfFontProgram,

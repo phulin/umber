@@ -1,4 +1,5 @@
 use super::*;
+use std::collections::BTreeSet;
 
 const MANIFEST_FIXTURE: &str = include_str!("../../../tests/corpus/distribution/manifest.json");
 const SELECTION_FIXTURE: &str = include_str!("../../../tests/corpus/distribution/selection.case");
@@ -245,6 +246,147 @@ fn html_font_shard_rejects_identity_policy_mapping_and_license_failures() {
             1,
         );
     assert!(ManifestShard::parse(&conflict).is_err());
+}
+
+#[test]
+fn mixed_html_catalog_extensions_preserve_v1_identity_and_shared_objects() {
+    let original = ManifestShard::parse(&html_shard_fixture()).expect("MVP shard");
+    let mut extended = original.clone();
+    let base_font = original.fonts.values().next().expect("base font").clone();
+    let advanced_font_request = FontRequestKey::new(base_font.request.logical_name())
+        .expect("advanced font name")
+        .with_context(FontRequestContext {
+            face_index: 0,
+            variation_instance: VariationInstance::Named(300),
+            variations: Vec::new(),
+            features: vec![FeatureSetting {
+                tag: *b"liga",
+                value: 0,
+            }],
+            direction: WritingDirection::LeftToRight,
+            script: Some(*b"latn"),
+            language: Some("en".to_owned()),
+        })
+        .expect("advanced instance");
+    let mut advanced_font = base_font.clone();
+    advanced_font.request = advanced_font_request.clone();
+    extended.fonts.insert(
+        advanced_font_request.manifest_key().to_string(),
+        advanced_font,
+    );
+
+    let math_font_request = FontRequestKey::new("future-math-family")
+        .expect("additional family")
+        .with_context(FontRequestContext {
+            face_index: 0,
+            variation_instance: VariationInstance::Default,
+            variations: Vec::new(),
+            features: Vec::new(),
+            direction: WritingDirection::LeftToRight,
+            script: Some(*b"math"),
+            language: None,
+        })
+        .expect("math family request");
+    let mut math_font = base_font.clone();
+    math_font.request = math_font_request.clone();
+    extended
+        .fonts
+        .insert(math_font_request.manifest_key().to_string(), math_font);
+
+    let base_mapping = original
+        .legacy_mappings
+        .values()
+        .next()
+        .expect("base mapping")
+        .clone();
+    let second_mapping_request =
+        LegacyMappingRequestKey::new("9".repeat(64), 1, "html-layout", Some("T1".to_owned()))
+            .expect("additional encoding mapping");
+    let mut second_mapping = base_mapping.clone();
+    second_mapping.request = second_mapping_request.clone();
+    second_mapping.font_request = advanced_font_request.clone();
+    second_mapping.unicode_map[0] = Some("Γ".to_owned());
+    extended.legacy_mappings.insert(
+        second_mapping_request.manifest_key().to_string(),
+        second_mapping,
+    );
+
+    let reparsed = ManifestShard::parse(&extended.to_json()).expect("mixed v1 catalog");
+    assert_eq!(reparsed, extended);
+    assert_eq!(
+        ManifestShard::parse(&original.to_json()),
+        Ok(original.clone())
+    );
+    assert_eq!(reparsed.fonts.len(), 3);
+    assert_eq!(reparsed.legacy_mappings.len(), 2);
+
+    let program_identities = reparsed
+        .fonts
+        .values()
+        .map(|record| record.declared_program_identity.as_deref())
+        .collect::<BTreeSet<_>>();
+    let font_objects = reparsed
+        .fonts
+        .values()
+        .map(|record| (record.object.sha256.clone(), record.object.bytes))
+        .collect::<BTreeSet<_>>();
+    let mapping_objects = reparsed
+        .legacy_mappings
+        .values()
+        .map(|record| (record.object.sha256.clone(), record.object.bytes))
+        .collect::<BTreeSet<_>>();
+    assert_eq!(program_identities.len(), 1, "instances share one program");
+    assert_eq!(font_objects.len(), 1, "font records share one WOFF2 object");
+    assert_eq!(
+        mapping_objects, font_objects,
+        "TFM mappings reuse that object"
+    );
+    assert_ne!(base_font.request, advanced_font_request);
+    assert_ne!(base_mapping.request, second_mapping_request);
+    assert_eq!(second_mapping_request.tfm_sha256(), "9".repeat(64));
+    assert!(
+        second_mapping_request
+            .manifest_key()
+            .to_string()
+            .ends_with("5431")
+    );
+
+    let basename_only =
+        LegacyMappingRequestKey::new("8".repeat(64), 1, "html-layout", Some("T1".to_owned()))
+            .expect("unmapped exact identity");
+    let selection = select_shard(
+        &reparsed,
+        &[
+            ManifestRequest::Font(advanced_font_request),
+            ManifestRequest::LegacyMapping(second_mapping_request),
+            ManifestRequest::LegacyMapping(basename_only.clone()),
+        ],
+    );
+    assert_eq!(selection.jobs.len(), 2);
+    assert_eq!(
+        selection.misses,
+        [ManifestMiss::LegacyMapping(basename_only)]
+    );
+}
+
+#[test]
+fn v1_reader_accepts_original_records_and_rejects_future_record_versions() {
+    let original = html_shard_fixture();
+    assert!(ManifestShard::parse(&original).is_ok());
+    for unsupported in [
+        original.replacen(
+            "\"schema\": 1,\n      \"object\"",
+            "\"schema\": 2,\n      \"object\"",
+            1,
+        ),
+        original.replacen(
+            "\"schema\": 1,\n      \"tfmSha256\"",
+            "\"schema\": 2,\n      \"tfmSha256\"",
+            1,
+        ),
+    ] {
+        assert!(ManifestShard::parse(&unsupported).is_err());
+    }
 }
 
 #[test]

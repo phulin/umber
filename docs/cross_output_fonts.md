@@ -320,6 +320,26 @@ New parsers continue accepting version-1 records unchanged. Existing request,
 mapping, artifact, object, program, instance, and cache identities are never
 reinterpreted when a catalog grows.
 
+The compatibility proof constructs a mixed, non-production catalog from the
+version-1 fixture. It adds a second exact TFM digest and `T1` mapping that
+reuse one WOFF2 object, a named OpenType instance that reuses the original
+program identity, and an explicit additional math-family selection. Rust and
+authored JavaScript accept that mixed catalog without changing the original
+records, count the shared transport once by object identity, and preserve the
+distinct complete request and mapping keys. Their version-1 readers still
+accept the MVP fixture and reject a font or mapping record whose schema is
+changed to 2. This is schema evolution evidence, not authorization to publish
+the synthetic entries or placeholder semantics for them.
+
+HTML virtual-font support remains follow-up `umber2-nobk.12`. It attaches at
+the HTML branch of `umber::OutputResourcePlanner`: after exact root-VF and
+recursive local-TFM closure validation, but before `tex-out` HTML
+serialization, it may lower bounded packets into positioned real-font leaf
+events carrying exact leaf mapping and font instance identities. Until that
+versioned record and lowering exist, the planner returns
+`ResourcePlanError::UnsupportedHtmlVirtualFont` with the unchanged typed VF
+request. It never retries the VF name as a real font or basename mapping.
+
 ## 9. Ownership, lifetime, and caches
 
 The host/application owns provider configuration, credentials, I/O,

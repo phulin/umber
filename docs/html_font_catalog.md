@@ -54,3 +54,12 @@ Additional Computer Modern faces or sizes, other legacy encodings, virtual
 fonts, Type 1/PK conversion, OS-font discovery, and automatic SFNT conversion
 are unsupported by this MVP catalog. They require additive records or a later
 versioned policy; they must not change the meaning of this inventory.
+
+Compatibility tests exercise those additive seams with synthetic records only:
+another exact TFM/encoding mapping, an advanced instance, and another explicit
+family all preserve the MVP request, record, object, program, and license
+identities while sharing the existing synthetic transport object. The
+committed production inventory above remains exactly three selections. HTML VF
+requests remain the typed `UnsupportedHtmlVirtualFont` outcome; the future
+closure and positioned-leaf insertion point is tracked by `umber2-nobk.12` and
+specified in section 8 of the cross-output contract.

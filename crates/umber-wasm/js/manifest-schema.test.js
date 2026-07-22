@@ -38,6 +38,46 @@ const htmlShardFixture = () =>
 		[JSON.stringify("A"), ...Array(255).fill("null")].join(","),
 	);
 
+const extendedHtmlShardFixture = () => {
+	const value = JSON.parse(htmlShardFixture());
+	const [baseFontKey] = Object.keys(value.fonts);
+	const [baseMappingKey] = Object.keys(value.legacyMappings);
+	const advancedFontKey = fontRequestIdentity({
+		logicalName: "cmu-serif-roman",
+		faceIndex: 0,
+		variationInstance: { namedNameId: 300 },
+		variations: [],
+		features: [{ tag: "liga", value: 0 }],
+		direction: "ltr",
+		script: "latn",
+		language: "en",
+	});
+	value.fonts[advancedFontKey] = structuredClone(value.fonts[baseFontKey]);
+	const mathFontKey = fontRequestIdentity({
+		logicalName: "future-math-family",
+		faceIndex: 0,
+		variationInstance: "default",
+		variations: [],
+		features: [],
+		direction: "ltr",
+		script: "math",
+	});
+	value.fonts[mathFontKey] = structuredClone(value.fonts[baseFontKey]);
+
+	const secondMapping = structuredClone(value.legacyMappings[baseMappingKey]);
+	secondMapping.tfmSha256 = "9".repeat(64);
+	secondMapping.fontKey = advancedFontKey;
+	secondMapping.unicodeMap[0] = "Γ";
+	const secondMappingKey = legacyMappingRequestIdentity({
+		tfmSha256: secondMapping.tfmSha256,
+		layoutPolicyVersion: 1,
+		purpose: "html-layout",
+		encodingCatalog: "T1",
+	});
+	value.legacyMappings[secondMappingKey] = secondMapping;
+	return value;
+};
+
 test("font request identity isolates advanced instance inputs", () => {
 	const base = {
 		logicalName: "fixture",
@@ -80,6 +120,65 @@ test("shared HTML font fixture canonicalizes, selects, and serializes identicall
 	assert.equal(
 		await shardIndex(mappingKey, root.shardBits, webcrypto, true),
 		0,
+	);
+});
+
+test("mixed MVP and extension records preserve complete identities and shared objects", () => {
+	const root = validateRootManifest(JSON.parse(htmlRootFixture));
+	const original = validateIndexShard(JSON.parse(htmlShardFixture()), root, 0);
+	const extended = validateIndexShard(extendedHtmlShardFixture(), root, 0);
+	assert.equal(Object.keys(original.fonts).length, 1);
+	assert.equal(Object.keys(extended.fonts).length, 3);
+	assert.equal(Object.keys(extended.legacyMappings).length, 2);
+
+	const fontRecords = Object.values(extended.fonts);
+	assert.equal(new Set(fontRecords.map((record) => record.sha256)).size, 1);
+	assert.equal(
+		new Set(fontRecords.map((record) => record.programIdentity)).size,
+		1,
+	);
+	assert.equal(
+		new Set(
+			Object.values(extended.legacyMappings).map((record) => record.sha256),
+		).size,
+		1,
+	);
+	const requests = fontRecords.map((record) => record.request);
+	assert.equal(
+		requests.filter((request) => request.logicalName === "cmu-serif-roman")
+			.length,
+		2,
+	);
+	assert.ok(
+		requests.some((request) => request.logicalName === "future-math-family"),
+	);
+	const mappings = Object.values(extended.legacyMappings);
+	assert.deepEqual(
+		new Set(mappings.map((record) => record.request.encodingCatalog)),
+		new Set(["OT1", "T1"]),
+	);
+	assert.equal(
+		serializeIndexShard(extended),
+		`${JSON.stringify(extendedHtmlShardFixture())}\n`,
+	);
+});
+
+test("version-one reader keeps MVP records and rejects future record versions", () => {
+	const root = validateRootManifest(JSON.parse(htmlRootFixture));
+	const original = JSON.parse(htmlShardFixture());
+	assert.doesNotThrow(() => validateIndexShard(original, root, 0));
+
+	const futureFont = structuredClone(original);
+	Object.values(futureFont.fonts)[0].schema = 2;
+	assert.throws(
+		() => validateIndexShard(futureFont, root, 0),
+		/unsupported font record schema 2/,
+	);
+	const futureMapping = structuredClone(original);
+	Object.values(futureMapping.legacyMappings)[0].schema = 2;
+	assert.throws(
+		() => validateIndexShard(futureMapping, root, 0),
+		/unsupported legacy mapping record schema 2/,
 	);
 });
 

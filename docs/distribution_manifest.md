@@ -46,6 +46,15 @@ profile absence. Root/shard HTTP, authentication, JSON, digest, or partition
 failure remains an actionable resolver error and never becomes an unavailable
 font response.
 
+The extension-seam tests derive a synthetic mixed catalog from that shared
+schema-1 fixture. Two exact TFM identities and two distinct encoding-catalog
+identities select complete OpenType instance keys while reusing one declared
+program and content-addressed WOFF2 object; an additional explicit family
+record uses the same unchanged font-record grammar. Unique fetch/cache work is
+deduplicated by object digest, not by collapsing the semantic record keys.
+An exact unmapped TFM digest stays a `LegacyMapping` miss and is never retried
+by TeX basename. No new production record version or catalog entry is implied.
+
 ## Trust root
 
 The deployed release pin names `manifest-v2.json` and its SHA-256 digest. The file is a
