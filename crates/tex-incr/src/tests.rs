@@ -456,6 +456,144 @@ fn paragraph_front_end_hit_survives_prefix_shift_and_unrelated_register_write() 
     );
 }
 
+struct UnavailableImageResolver;
+
+impl tex_exec::PdfImageResolver for UnavailableImageResolver {
+    fn open_image(
+        &mut self,
+        _input: &mut dyn InputReadState,
+        _request: &tex_exec::PdfImageRequest,
+        _request_index: u64,
+    ) -> ResourceResult<tex_state::PdfExternalImageSource> {
+        Ok(ResourceLookup::Unavailable)
+    }
+}
+
+#[test]
+fn external_input_delta_replays_paragraphs_from_job_start_without_new_revision() {
+    let mut universe = template();
+    universe.enable_pure_memo(tex_state::PureMemoConfig::default());
+    let source = concat!(
+        "\\font\\tenrm=cmr10\\relax\\tenrm \\input refs \\hsize=20pt ",
+        "\\vrule width3pt height2pt\\par ",
+        "\\vrule width\\refwidth height2pt\\par ",
+        "\\vrule width4pt height2pt\\par ",
+        "\\vfill\\eject\\end",
+    );
+    let mut session = Session::start(
+        universe,
+        "external-input-paragraph-replay",
+        RevisionId::new(1),
+        source,
+        usize::MAX,
+    )
+    .expect("session starts");
+    session
+        .register_input_file(Path::new("cmr10.tfm"), CMR10.to_vec())
+        .expect("font fixture");
+    let mut old_inputs = StagedInputResolver::default();
+    old_inputs
+        .files
+        .insert("refs".to_owned(), "\\def\\refwidth{1pt}".to_owned());
+    let mut fonts = DirectFontResolver;
+    let initial = session
+        .cold_with_resolvers(&mut old_inputs, &mut fonts)
+        .expect("initial external-input run");
+    let initial_artifacts = initial
+        .artifacts
+        .iter()
+        .map(CommittedArtifact::hash)
+        .collect::<Vec<_>>();
+    let before = session.pure_memo_stats();
+
+    let mut candidate = session
+        .start_external_input_delta_candidate()
+        .expect("JobStart delta candidate");
+    assert_eq!(
+        candidate.retention_metrics().memo_result_bytes,
+        before.retained_bytes,
+        "candidate telemetry must carry the accepted memo-runtime charge",
+    );
+    assert_eq!(
+        session
+            .artifacts
+            .iter()
+            .map(CommittedArtifact::hash)
+            .collect::<Vec<_>>(),
+        initial_artifacts,
+        "constructing the candidate must not mutate accepted output",
+    );
+    let mut new_inputs = StagedInputResolver::default();
+    new_inputs
+        .files
+        .insert("refs".to_owned(), "\\def\\refwidth{2pt}".to_owned());
+    let mut images = UnavailableImageResolver;
+    assert!(matches!(
+        candidate
+            .drive_with_resource_resolvers(
+                &mut new_inputs,
+                &mut fonts,
+                &mut images,
+                &Cancellation::new(),
+            )
+            .expect("delta execution"),
+        RevisionCandidateResult::Complete
+    ));
+    let pending = session
+        .finish_advance_candidate(candidate)
+        .expect("finish unchanged-root delta");
+    assert_eq!(pending.revision(), RevisionId::new(1));
+    assert_eq!(
+        pending.reuse().restart_boundary.map(|key| key.boundary),
+        Some(EngineBoundary::JobStart),
+    );
+    assert_eq!(pending.reuse().suffixes_adopted, 0);
+    assert_eq!(
+        pending.reuse().same_history_stop,
+        SameHistoryStop::NotAttempted
+    );
+    let accepted = session.accept_pending(pending).expect("accept delta rerun");
+    assert_eq!(accepted.revision, RevisionId::new(1));
+    assert_eq!(
+        accepted.content_hash,
+        ContentHash::from_bytes(source.as_bytes())
+    );
+    assert!(
+        session.pure_memo_stats().paragraph_line_hits > before.paragraph_line_hits,
+        "unchanged paragraphs should mount retained finished lines",
+    );
+
+    let mut cold_universe = template();
+    cold_universe.enable_pure_memo(tex_state::PureMemoConfig::default());
+    let mut cold = Session::start(
+        cold_universe,
+        "external-input-paragraph-replay",
+        RevisionId::new(1),
+        source,
+        usize::MAX,
+    )
+    .expect("cold comparison starts");
+    let cold = cold
+        .cold_with_resolvers(&mut new_inputs, &mut fonts)
+        .expect("cold comparison runs");
+    assert_eq!(
+        accepted.dvi_bytes().expect("delta DVI"),
+        cold.dvi_bytes().expect("cold DVI"),
+    );
+    assert_eq!(
+        accepted
+            .history
+            .iter()
+            .map(BoundaryRecord::key)
+            .collect::<Vec<_>>(),
+        cold.history
+            .iter()
+            .map(BoundaryRecord::key)
+            .collect::<Vec<_>>(),
+        "JobStart replay must publish the cold named-boundary schedule",
+    );
+}
+
 #[test]
 fn cold_middle_paragraph_and_carried_suffix_keep_generation_observation_tables() {
     let mut universe = template();

@@ -914,6 +914,46 @@ impl Session {
         self.start_advance_candidate_with_policy(next_revision, edit, true)
     }
 
+    /// Creates a private unchanged-root candidate for a changed external-input
+    /// snapshot.
+    ///
+    /// The candidate restores only the accepted [`EngineBoundary::JobStart`]
+    /// root, retains the accepted paragraph history for typed dependency
+    /// validation, and preserves the accepted editor revision and source
+    /// layout. It deliberately disables suffix adoption: an external input
+    /// that has not yet been consumed can leave an earlier checkpoint equal
+    /// even though its future execution differs against the new snapshot.
+    /// Dropping the candidate leaves all accepted state untouched.
+    pub fn start_external_input_delta_candidate(&self) -> Result<RevisionCandidate, SessionError> {
+        let revision_setup_started = Timer::start();
+        let restart = self
+            .history
+            .iter()
+            .position(|record| record.key.boundary == EngineBoundary::JobStart)
+            .ok_or(SessionError::MissingAcceptedSubstrate)?;
+        let fragments = self.fragments.clone();
+        let next_layout = EditorLayout::new(
+            self.layout.path(),
+            self.layout.generation(),
+            self.layout.pieces().to_vec(),
+            &fragments,
+        )?;
+        let setup = Box::new(AdvanceSetup {
+            next_revision: self.revision,
+            old_source: self.source.clone(),
+            old_history: self.history.clone(),
+            old_effects: self.effects.clone(),
+            old_artifacts: self.artifacts.clone(),
+            old_pages: self.dvi_pages.clone(),
+            next: self.source.clone(),
+            fragments,
+            next_layout,
+            map: EditMap::new(0..0, 0),
+            revision_setup_latency: revision_setup_started.elapsed(),
+        });
+        self.start_restored_candidate(setup, restart, false)
+    }
+
     fn start_advance_candidate_with_policy(
         &self,
         next_revision: RevisionId,
@@ -967,9 +1007,9 @@ impl Session {
             revision_setup_latency: revision_setup_started.elapsed(),
         });
 
-        let mut memo = self.pure_memo.clone();
         match restart {
             None => {
+                let mut memo = self.pure_memo.clone();
                 let mut universe = self.template.clone();
                 universe.begin_retained_session()?;
                 let root = if self.root_source_is_byte_projection {
@@ -1001,59 +1041,59 @@ impl Session {
                     kind: RevisionCandidateKind::Replacement { setup },
                 })
             }
-            Some(restart) => {
-                let substrate = self
-                    .substrate
-                    .as_ref()
-                    .ok_or(SessionError::MissingAcceptedSubstrate)?;
-                let anchor = &setup.old_history[restart];
-                let mut universe = self.template.clone();
-                let mut input = InputStack::new(MemoryInput::new(String::new()));
-                let mut executor = Executor::new();
-                let restart_fork_latency = executor.restore_editor_checkpoint(
-                    &mut input,
-                    &mut universe,
-                    substrate,
-                    anchor.checkpoint(),
-                    &setup.old_source,
-                    &setup.next,
-                    &setup.fragments,
-                    &setup.next_layout,
-                    LayoutCursor::new(&setup.next_layout, &setup.fragments)?,
-                )?;
-                input.set_utf8_input_as_bytes(self.utf8_input_as_bytes);
-                for (path, bytes) in &self.registered_inputs {
-                    universe.world_mut().set_memory_file(path, bytes.clone())?;
-                }
-                memo.begin_paragraph_history(true);
-                universe.install_pure_memo_runtime(std::mem::take(&mut memo));
-                let nest = std::mem::take(executor.nest_mut());
-                Ok(RevisionCandidate {
-                    input,
-                    universe,
-                    run: ExecutionRun::from_parts(
-                        &self.job_name,
-                        nest,
-                        ExecutionState::default(),
-                        false,
-                    )
-                    .with_dvi_output(self.dvi_output),
-                    sink: CandidateSink::Advance(ResumeSink::new(
-                        &setup.old_history,
-                        restart,
-                        &setup.map,
-                    )),
-                    memo,
-                    completed: None,
-                    suspension_serial: 0,
-                    kind: RevisionCandidateKind::Incremental {
-                        setup,
-                        restart,
-                        restart_fork_latency,
-                    },
-                })
-            }
+            Some(restart) => self.start_restored_candidate(setup, restart, true),
         }
+    }
+
+    fn start_restored_candidate(
+        &self,
+        setup: Box<AdvanceSetup>,
+        restart: usize,
+        allow_convergence: bool,
+    ) -> Result<RevisionCandidate, SessionError> {
+        let substrate = self
+            .substrate
+            .as_ref()
+            .ok_or(SessionError::MissingAcceptedSubstrate)?;
+        let anchor = &setup.old_history[restart];
+        let mut universe = self.template.clone();
+        let mut input = InputStack::new(MemoryInput::new(String::new()));
+        let mut executor = Executor::new();
+        let restart_fork_latency = executor.restore_editor_checkpoint(
+            &mut input,
+            &mut universe,
+            substrate,
+            anchor.checkpoint(),
+            &setup.old_source,
+            &setup.next,
+            &setup.fragments,
+            &setup.next_layout,
+            LayoutCursor::new(&setup.next_layout, &setup.fragments)?,
+        )?;
+        input.set_utf8_input_as_bytes(self.utf8_input_as_bytes);
+        for (path, bytes) in &self.registered_inputs {
+            universe.world_mut().set_memory_file(path, bytes.clone())?;
+        }
+        let mut memo = self.pure_memo.clone();
+        memo.begin_paragraph_history(true);
+        universe.install_pure_memo_runtime(std::mem::take(&mut memo));
+        let nest = std::mem::take(executor.nest_mut());
+        let sink = ResumeSink::new(&setup.old_history, restart, &setup.map, allow_convergence);
+        Ok(RevisionCandidate {
+            input,
+            universe,
+            run: ExecutionRun::from_parts(&self.job_name, nest, ExecutionState::default(), false)
+                .with_dvi_output(self.dvi_output),
+            sink: CandidateSink::Advance(sink),
+            memo,
+            completed: None,
+            suspension_serial: 0,
+            kind: RevisionCandidateKind::Incremental {
+                setup,
+                restart,
+                restart_fork_latency,
+            },
+        })
     }
 
     /// Converts a completed edited candidate into a private pending revision.
@@ -1179,7 +1219,9 @@ impl Session {
             .records
             .last()
             .map_or(setup.next.len(), |record| record.key.position);
-        let same_history_stop = if sink.convergence_old_index.is_some() {
+        let same_history_stop = if !sink.allow_convergence {
+            SameHistoryStop::NotAttempted
+        } else if sink.convergence_old_index.is_some() {
             SameHistoryStop::Matched
         } else if sink.schedule_diverged {
             SameHistoryStop::ScheduleDiverged
@@ -2472,10 +2514,11 @@ struct ResumeSink {
     same_history_attempts: usize,
     same_history_hash_mismatches: usize,
     trace_validation_latency: Duration,
+    allow_convergence: bool,
 }
 
 impl ResumeSink {
-    fn new(old: &[BoundaryRecord], restart: usize, map: &EditMap) -> Self {
+    fn new(old: &[BoundaryRecord], restart: usize, map: &EditMap, allow_convergence: bool) -> Self {
         let mut occurrences = HashMap::new();
         for record in &old[..=restart] {
             occurrences
@@ -2510,6 +2553,7 @@ impl ResumeSink {
             same_history_attempts: 0,
             same_history_hash_mismatches: 0,
             trace_validation_latency: Duration::ZERO,
+            allow_convergence,
         }
     }
 }
@@ -2528,7 +2572,7 @@ impl CheckpointSink for ResumeSink {
 
     fn checkpoint(&mut self, checkpoint: EngineCheckpoint) {
         push_checkpoint(&mut self.records, &mut self.occurrences, checkpoint);
-        if self.schedule_diverged {
+        if !self.allow_convergence || self.schedule_diverged {
             return;
         }
         let Some((old_index, expected_key, expected_record)) =
@@ -2623,7 +2667,7 @@ fn execute_advance(
     for (path, bytes) in registered_inputs {
         scratch.world_mut().set_memory_file(path, bytes.clone())?;
     }
-    let mut sink = ResumeSink::new(old_history, restart, map);
+    let mut sink = ResumeSink::new(old_history, restart, map, true);
     let mut context = match image_resolver {
         Some(image_resolver) => ExecutionContext::with_resource_resolvers(
             job_name,
@@ -2668,7 +2712,9 @@ fn execute_advance(
         .last()
         .map_or(source.len(), |record| record.key.position);
     let reexecuted_bytes = reexecuted_through.saturating_sub(anchor.key.position);
-    let same_history_stop = if sink.convergence_old_index.is_some() {
+    let same_history_stop = if !sink.allow_convergence {
+        SameHistoryStop::NotAttempted
+    } else if sink.convergence_old_index.is_some() {
         SameHistoryStop::Matched
     } else if sink.schedule_diverged {
         SameHistoryStop::ScheduleDiverged

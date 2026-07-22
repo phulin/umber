@@ -46,6 +46,14 @@ substrate and one scratch fork. Convergence discards scratch semantic state and
 adopts the accepted suffix. A nonconvergent edit promotes scratch and its new
 paragraph history. There is no separate begin/accept/discard cache protocol.
 
+An unchanged-root external-input rerun is another scratch fork of the accepted
+substrate. It restores only the executor-owned `JobStart` checkpoint, preserves
+the accepted editor revision and identity source layout, and reuses the same
+ordered paragraph history. It never restores a later checkpoint. Its current
+conservative sink also declines suffix adoption because equality before a
+changed external input is consumed is not equality of future execution; the
+ordinary typed paragraph observations remain the only selective replay test.
+
 ## Source alignment
 
 Replay uses edit-stable fragment coordinates from
