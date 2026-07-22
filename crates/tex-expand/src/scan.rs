@@ -114,9 +114,6 @@ pub enum ScanToksError {
     TooManyRecoverableErrors {
         context: TracedTokenWord,
     },
-    MissingGeneralTextBeginGroup {
-        context: TracedTokenWord,
-    },
 }
 
 impl fmt::Display for ScanToksError {
@@ -155,13 +152,6 @@ impl fmt::Display for ScanToksError {
             }
             Self::TooManyRecoverableErrors { .. } => {
                 write!(f, "100 errors occurred while scanning a macro definition")
-            }
-            Self::MissingGeneralTextBeginGroup { context } => {
-                write!(
-                    f,
-                    "expected begin-group token before general text, got {:?}",
-                    traced_semantic_token(*context)
-                )
             }
         }
     }
@@ -209,8 +199,7 @@ impl ScanToksError {
             | Self::TooManyParameters { context }
             | Self::InvalidParameterTokenInParameterText { context }
             | Self::InvalidParameterTokenInReplacementText { context }
-            | Self::TooManyRecoverableErrors { context }
-            | Self::MissingGeneralTextBeginGroup { context } => Some(context.origin()),
+            | Self::TooManyRecoverableErrors { context } => Some(context.origin()),
         }
     }
 }
@@ -634,17 +623,7 @@ pub(crate) fn scan_general_text_expanded_with_expanded_open(
     mode: &mut dyn ExpansionMode,
     context: TracedTokenWord,
 ) -> Result<TracedTokenList, ScanToksError> {
-    let open = loop {
-        let token = mode
-            .next_expanded_token(input, stores, expansion)?
-            .ok_or(ScanToksError::EndOfInputInReplacementText { context })?;
-        if !is_space_or_relax(stores, traced_semantic_token(token)) {
-            break token;
-        }
-    };
-    if !has_begin_group_meaning(stores, traced_semantic_token(open)) {
-        return Err(ScanToksError::MissingGeneralTextBeginGroup { context: open });
-    }
+    scan_general_text_open(input, stores, expansion, mode, context)?;
     collect_expanded_text(
         input,
         stores,
@@ -1285,6 +1264,17 @@ pub(crate) fn scan_general_text_with_expanded_open(
 ) -> Result<TracedTokenList, ScanToksError>
 where
 {
+    scan_general_text_open(input, stores, expansion, mode, context)?;
+    scan_general_text_body(input, stores, context)
+}
+
+fn scan_general_text_open(
+    input: &mut InputStack,
+    stores: &mut tex_state::ExpansionContext<'_>,
+    expansion: &mut ExpansionContext<'_>,
+    mode: &mut dyn ExpansionMode,
+    context: TracedTokenWord,
+) -> Result<(), ScanToksError> {
     let open = loop {
         let token = mode
             .next_expanded_token(input, stores, expansion)?
@@ -1294,9 +1284,15 @@ where
         }
     };
     if !has_begin_group_meaning(stores, traced_semantic_token(open)) {
-        return Err(ScanToksError::MissingGeneralTextBeginGroup { context: open });
+        // TeX.web §403's `scan_left_brace` backs up the rejected token,
+        // reports the missing brace, and continues as though it had inserted
+        // an opening brace. e-TeX's `scan_general_text` calls that exact
+        // helper, so every expandable general-text consumer recovers here.
+        unread_token(input, stores, open);
+        input.account_inserted_alignment_left_brace();
+        expansion.report_missing_general_text_begin_group(open);
     }
-    scan_general_text_body(input, stores, context)
+    Ok(())
 }
 
 fn has_begin_group_meaning(stores: &impl ExpansionState, token: Token) -> bool {

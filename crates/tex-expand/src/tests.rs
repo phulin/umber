@@ -1750,6 +1750,37 @@ fn unexpanded_accepts_a_control_sequence_with_begin_group_meaning() {
 }
 
 #[test]
+fn unexpanded_recovers_a_missing_opening_brace_without_losing_the_body_token() {
+    // TeX.web §403 and e-TeX's `scan_general_text` back up the rejected
+    // token, insert the compulsory opening brace, and absorb through the next
+    // matching right brace.
+    let mut stores = Universe::new();
+    install_expandable_primitives(&mut stores);
+    crate::install_etex_expandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new("\\unexpanded X}"));
+    let mut expansion = ExpansionContext::new("texput");
+
+    let delivered = crate::get_x_token_with_context(
+        &mut input,
+        &mut tex_state::ExpansionContext::new(&mut stores),
+        &mut expansion,
+    )
+    .expect("missing-brace recovery must remain expandable")
+    .expect("the backed-up body token must be replayed");
+
+    assert_eq!(semantic_token(delivered), char_token('X'));
+    assert!(matches!(
+        expansion
+            .take_recoverable_diagnostics()
+            .collect::<Vec<_>>()
+            .as_slice(),
+        [crate::RecoverableExpansionDiagnostic::MissingGeneralTextBeginGroup {
+            context
+        }] if semantic_token(*context) == char_token('X')
+    ));
+}
+
+#[test]
 fn detokenize_outputs_space_and_other_character_tokens() {
     let mut stores = Universe::new();
     crate::install_etex_expandable_primitives(&mut stores);

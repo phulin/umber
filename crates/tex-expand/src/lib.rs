@@ -725,6 +725,9 @@ pub enum RecoverableExpansionDiagnostic {
     InvalidTheTarget {
         context: TracedTokenWord,
     },
+    MissingGeneralTextBeginGroup {
+        context: TracedTokenWord,
+    },
 }
 
 /// A host resource lookup that distinguishes authoritative absence from a
@@ -1798,6 +1801,11 @@ impl<'a> ExpansionContext<'a> {
     fn report_invalid_the_target(&mut self, context: TracedTokenWord) {
         self.recoverable_diagnostics
             .push(RecoverableExpansionDiagnostic::InvalidTheTarget { context });
+    }
+
+    fn report_missing_general_text_begin_group(&mut self, context: TracedTokenWord) {
+        self.recoverable_diagnostics
+            .push(RecoverableExpansionDiagnostic::MissingGeneralTextBeginGroup { context });
     }
 
     #[inline(always)]

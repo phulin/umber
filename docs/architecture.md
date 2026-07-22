@@ -245,6 +245,14 @@ processing they expand normally. Raw `\expandafter` dispatch therefore
 preserves the one-token suppression of `\noexpand`, but historical
 `\unexpanded` provenance does not alter its target expansion.
 
+e-TeX general-text consumers share TeX.web §403's `scan_left_brace`
+recovery. Expansion skips spaces and live `\relax` meanings while looking for
+the compulsory opener; if the first remaining token is not a begin-group
+meaning, it is backed up, a recoverable missing-brace diagnostic is recorded,
+and the balanced scan proceeds from a synthetic opening brace. The synthetic
+brace participates in alignment accounting, so recovery cannot leave an
+active alignment at a false brace depth.
+
 The token-list form of `\the` uses a dedicated `TheToksOutput` replay reason,
 not e-TeX `\unexpanded`: TeX.web §366 requires nested `\expandafter` targets to
 resume ordinary expansion (including `\csname` termination), while §§473–478

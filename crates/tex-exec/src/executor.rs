@@ -55,6 +55,12 @@ fn report_recoverable_expansion_diagnostics(
                     ),
                 );
             }
+            tex_expand::RecoverableExpansionDiagnostic::MissingGeneralTextBeginGroup { .. } => {
+                stores.world_mut().write_text(
+                    tex_state::PrintSink::TerminalAndLog,
+                    "\n! Missing { inserted.\nA left brace was mandatory here, so I've put one in.\n",
+                );
+            }
         }
     }
 }
