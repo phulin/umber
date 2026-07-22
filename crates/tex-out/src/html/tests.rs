@@ -514,6 +514,97 @@ fn allowlisted_color_link_and_destination_are_typed_and_escaped() {
         "{html}"
     );
     assert!(html.contains("id=\"umber-dest-section.1\""));
+    assert!(html.contains(
+        "class=\"umber-a11y\" role=\"group\" aria-label=\"Page 1\"><p class=\"umber-a11y-line\"><a href=\"https://example.test/path?a=1&amp;b=2\" rel=\"noreferrer noopener\">A</a></p>"
+    ));
+}
+
+#[test]
+fn accessibility_tree_separates_pages_and_lines_without_moving_geometry() {
+    let mut page = page();
+    page.testing_mut().effects = vec![
+        PageEffect::Special {
+            class: "html".to_owned(),
+            payload: b"link https://example.test/target".to_vec(),
+        },
+        PageEffect::Special {
+            class: "html".to_owned(),
+            payload: b"endlink".to_vec(),
+        },
+    ];
+    let line = |children| {
+        PageNode::HList(BoxNode {
+            width: sp(200),
+            height: sp(40),
+            depth: sp(5),
+            shift: sp(0),
+            glue_set: GlueSetRatio::ZERO,
+            glue_sign: GlueSign::Normal,
+            glue_order: GlueOrder::Normal,
+            children,
+        })
+    };
+    page.testing_mut().root = PageNode::VList(BoxNode {
+        width: sp(200),
+        height: sp(90),
+        depth: sp(0),
+        shift: sp(0),
+        glue_set: GlueSetRatio::ZERO,
+        glue_sign: GlueSign::Normal,
+        glue_order: GlueOrder::Normal,
+        children: vec![
+            line(vec![
+                PageNode::WhatsitAnchor { effect_index: 0 },
+                PageNode::Char {
+                    font_id: 7,
+                    ch: b'A' as u32,
+                    width: sp(30),
+                },
+                PageNode::WhatsitAnchor { effect_index: 1 },
+            ]),
+            line(vec![PageNode::Char {
+                font_id: 7,
+                ch: b'B' as u32,
+                width: sp(30),
+            }]),
+        ],
+    });
+    let resolver = SingleScalarResolver;
+    let output = write_html(&[page.clone(), page], &resolver, &HtmlOptions::default())
+        .expect("accessible positioned HTML");
+    let html = String::from_utf8(output.html).expect("UTF-8");
+
+    assert_eq!(html.matches("role=\"group\" aria-label=\"Page ").count(), 2);
+    assert!(html.contains("role=\"group\" aria-label=\"Page 1\""));
+    assert!(html.contains("role=\"group\" aria-label=\"Page 2\""));
+    assert_eq!(html.matches("<p class=\"umber-a11y-line\">").count(), 4);
+    assert_eq!(
+        html.matches("<a href=\"https://example.test/target\" rel=\"noreferrer noopener\">A</a>")
+            .count(),
+        2
+    );
+    assert_eq!(
+        html.matches("<p class=\"umber-a11y-line\">B</p>").count(),
+        2
+    );
+
+    // The semantic tree is geometry-free; exact positioned events retain the
+    // same integer anchors and remain independently hidden from accessibility.
+    assert_eq!(
+        html.matches("class=\"umber-run\" aria-hidden=\"true\"")
+            .count(),
+        4
+    );
+    assert_eq!(
+        html.matches("class=\"umber-run\" aria-hidden=\"true\" data-umber-event=\"3\" data-umber-x-sp=\"17\" data-umber-baseline-sp=\"53\"")
+            .count(),
+        2
+    );
+    assert_eq!(
+        html.matches("class=\"umber-run\" aria-hidden=\"true\" data-umber-event=\"7\" data-umber-x-sp=\"17\" data-umber-baseline-sp=\"98\"")
+            .count(),
+        2
+    );
 }
 
 #[test]

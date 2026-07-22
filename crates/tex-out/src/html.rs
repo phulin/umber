@@ -464,6 +464,7 @@ const BASE_CSS: &str = concat!(
     ".umber-math-baseline{fill:transparent;pointer-events:none}\n",
     ".umber-special{position:absolute;width:0;height:0;overflow:hidden;pointer-events:none}\n",
     ".umber-a11y{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}\n",
+    ".umber-a11y-line{display:block;margin:0;padding:0}\n",
     "@media print{.umber-document{background:#fff}.umber-page{break-after:page;margin:0}}\n",
 );
 
@@ -704,9 +705,7 @@ fn write_page(
     fonts: &BTreeMap<HtmlFontKey, ResolvedFont>,
     options: &HtmlOptions,
 ) -> Result<(), HtmlError> {
-    out.push_str("<section class=\"umber-page\" aria-label=\"Page ");
-    out.push_str(&page.page_index.to_string());
-    out.push_str("\" data-umber-page=\"");
+    out.push_str("<section class=\"umber-page\" data-umber-page=\"");
     out.push_str(&page.page_index.to_string());
     out.push_str("\" data-umber-revision=\"");
     out.push_str(&options.revision.to_string());
@@ -733,11 +732,13 @@ fn write_page(
         .iter()
         .map(|font| (font.font_id, font))
         .collect::<BTreeMap<_, _>>();
-    let mut accessible = String::new();
+    let mut accessible = AccessiblePage::default();
+    let mut box_stack = Vec::new();
     let mut special_state = SpecialState::default();
     for (ordinal, event) in page.events.iter().enumerate() {
         match event {
             PositionedEvent::Box(event) => {
+                box_stack.push((event.id, event.kind));
                 out.push_str("<div class=\"umber-box\" aria-hidden=\"true\" data-umber-event=\"");
                 out.push_str(&ordinal.to_string());
                 out.push_str("\" data-umber-kind=\"");
@@ -780,7 +781,7 @@ fn write_page(
                 let text_budget = options
                     .max_html_bytes
                     .checked_sub(out.len())
-                    .and_then(|remaining| remaining.checked_sub(accessible.len()))
+                    .and_then(|remaining| remaining.checked_sub(accessible.markup.len()))
                     .unwrap_or(0)
                     / 6;
                 let mapped_encoding = artifact_font
@@ -788,7 +789,11 @@ fn write_page(
                     .as_ref()
                     .is_none_or(|opentype| opentype.encoding_map_version.is_some());
                 let text = map_text(event.units.as_slice(), font, mapped_encoding, text_budget)?;
-                accessible.push_str(&text);
+                accessible.push_run(
+                    accessible_line(&box_stack),
+                    &text,
+                    special_state.link.as_deref(),
+                );
                 out.push_str("<svg class=\"umber-run\" aria-hidden=\"true\" data-umber-event=\"");
                 out.push_str(&ordinal.to_string());
                 out.push('"');
@@ -930,7 +935,9 @@ fn write_page(
             PositionedEvent::PdfAnnotation(_)
             | PositionedEvent::PdfDestination(_)
             | PositionedEvent::PdfGraphics(_) => {}
-            PositionedEvent::BoxEnd(_) => {}
+            PositionedEvent::BoxEnd(event) => {
+                debug_assert_eq!(box_stack.pop().map(|(id, _)| id), Some(event.id));
+            }
             PositionedEvent::PdfThread(_) | PositionedEvent::PdfEndThread { .. } => {}
         }
         check_html_size(out, options)?;
@@ -941,10 +948,64 @@ fn write_page(
         });
     }
     write_math(out, page, fonts, options)?;
-    out.push_str("</div><div class=\"umber-a11y\">");
-    escape_text(&accessible, out);
+    accessible.finish();
+    out.push_str("</div><div class=\"umber-a11y\" role=\"group\" aria-label=\"Page ");
+    out.push_str(&page.page_index.to_string());
+    out.push_str("\">");
+    out.push_str(&accessible.markup);
     out.push_str("</div></section>\n");
     Ok(())
+}
+
+#[derive(Default)]
+struct AccessiblePage {
+    markup: String,
+    open_line: Option<u32>,
+    line_is_open: bool,
+}
+
+impl AccessiblePage {
+    fn push_run(&mut self, line: Option<u32>, text: &str, link: Option<&str>) {
+        if !self.line_is_open || self.open_line != line {
+            self.finish_line();
+            self.markup.push_str("<p class=\"umber-a11y-line\">");
+            self.open_line = line;
+            self.line_is_open = true;
+        }
+        if let Some(link) = link {
+            self.markup.push_str("<a href=\"");
+            escape_attr(link, &mut self.markup);
+            self.markup.push_str("\" rel=\"noreferrer noopener\">");
+        }
+        escape_text(text, &mut self.markup);
+        if link.is_some() {
+            self.markup.push_str("</a>");
+        }
+    }
+
+    fn finish(&mut self) {
+        self.finish_line();
+    }
+
+    fn finish_line(&mut self) {
+        if self.line_is_open {
+            self.markup.push_str("</p>");
+            self.open_line = None;
+            self.line_is_open = false;
+        }
+    }
+}
+
+fn accessible_line(box_stack: &[(u32, BoxKind)]) -> Option<u32> {
+    box_stack
+        .iter()
+        .enumerate()
+        .rev()
+        .find(|(index, (_, kind))| {
+            *kind == BoxKind::Horizontal
+                && (*index == 0 || box_stack[*index - 1].1 == BoxKind::Vertical)
+        })
+        .map(|(_, (id, _))| *id)
 }
 
 fn write_feature_settings(out: &mut String, policy: &tex_fonts::FontFeaturePolicy) {

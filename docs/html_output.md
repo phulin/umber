@@ -271,10 +271,16 @@ rectangles. Printing uses the same fixed page boxes and does not reflow lines.
 
 Visible runs are selectable and carry `aria-hidden="true"`. A separate
 artifact-order accessibility layer contains escaped semantic text in normal
-reading order but is visually clipped and cannot affect page geometry. The
-document language and page labels are explicit serializer options with stable
-defaults. Copy/paste fidelity is best-effort for mapped source text and is not
-a coordinate claim.
+reading order but is visually clipped and cannot affect page geometry. Each
+page is an accessibility group named `Page N`. Outer horizontal boxes in the
+current vertical context become semantic paragraphs, so font changes and
+nested horizontal boxes remain within one reading line while successive TeX
+lines have structural separators. Allowed HTML link scopes are mirrored as
+ordinary anchors around their semantic text; visible SVG anchors remain
+`aria-hidden` and retain sole ownership of painted geometry. The document
+language and page labels are explicit serializer options with stable defaults.
+Copy/paste fidelity is best-effort for mapped source text and is not a
+coordinate claim.
 
 The authored WASM package's `source-map.js` helper is the canonical bridge from
 a browser point to this metadata. It uses `caretPositionFromPoint`,
@@ -379,7 +385,8 @@ serialization; the 256 MiB HTML limit is therefore also the practical
 peak-memory guard.
 
 The accessibility layer preserves artifact event order, escaped mapped text,
-document language, and page labels. It does not claim paragraph semantics,
-math accessibility, or perfect copy/paste reconstruction. High zoom, print,
+line paragraphs, allowed link destinations, document language, and page
+labels. It does not infer higher-level document sections, math accessibility,
+or perfect copy/paste reconstruction. High zoom, print,
 and longer browser-shaped runs may overflow or clip at the fixed TeX page edge;
 they never participate in layout or move another exact event.
