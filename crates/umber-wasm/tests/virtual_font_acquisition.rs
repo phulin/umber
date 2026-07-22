@@ -1,7 +1,7 @@
 #![cfg(target_arch = "wasm32")]
 
 use js_sys::{Array, Object, Reflect, Uint8Array};
-use umber_wasm::{CompilerSession, JsFileRequestKey, JsSessionOptions};
+use umber_wasm::{CompilerSession, JsSessionOptions};
 use wasm_bindgen::{JsCast, JsValue};
 use wasm_bindgen_test::wasm_bindgen_test;
 
@@ -93,12 +93,12 @@ fn find_kind(requests: &Array, kind: &str) -> JsValue {
 }
 
 fn provide(session: &mut CompilerSession, request: &JsValue, path: &str, contents: &[u8]) {
+    let response = Object::assign(&Object::new(), request.unchecked_ref());
+    set(&response, "type", &JsValue::from_str("file"));
+    set(&response, "virtualPath", &JsValue::from_str(path));
+    set(&response, "bytes", bytes(contents).as_ref());
     session
-        .provide_resolved_file(
-            request.unchecked_ref::<JsFileRequestKey>(),
-            path,
-            &bytes(contents),
-        )
+        .provide_resources(&Array::of1(&response))
         .expect("provide resolved file");
 }
 

@@ -8,8 +8,8 @@ use crate::{
 };
 
 use super::{
-    AssetMode, HtmlError, HtmlFontKey, HtmlFontResolver, HtmlOptions, RenderedOutputId, WebFont,
-    write_html, write_positioned_html,
+    AssetMode, HtmlError, HtmlFontAsset, HtmlFontAssets, HtmlFontKey, HtmlOptions,
+    RenderedOutputId, write_html, write_positioned_html,
 };
 
 fn sp(raw: i32) -> Scaled {
@@ -65,8 +65,8 @@ fn manifest_reuses_one_retained_object_and_program_derived_family() {
         },
         ..HtmlOptions::default()
     };
-    let mut resolver = Resolver { missing_b: false };
-    let output = write_html(&[page.clone(), page], &mut resolver, &options).expect("manifest HTML");
+    let resolver = Resolver { missing_b: false };
+    let output = write_html(&[page.clone(), page], &resolver, &options).expect("manifest HTML");
     assert_eq!(output.assets.len(), 1);
     assert!(output.assets[0].path.starts_with("sha256-"));
     let html = String::from_utf8(output.html).expect("UTF-8 HTML");
@@ -103,6 +103,7 @@ fn parsed_font(name: &str, bytes: &[u8]) -> tex_fonts::OpenTypeFont {
             declared_object_sha256: None,
             declared_program_identity: None,
             provenance: None,
+            legacy_mapping: None,
         },
         tex_fonts::FontLimits::default(),
     )
@@ -118,9 +119,9 @@ enum BrokenFont {
     Cmap,
 }
 
-impl HtmlFontResolver for BrokenFont {
-    fn resolve(&mut self, font: &FontResource) -> Result<WebFont, String> {
-        let mut web = Resolver { missing_b: false }.resolve(font)?;
+impl HtmlFontAssets for BrokenFont {
+    fn font_asset(&self, font: &FontResource) -> Result<HtmlFontAsset, String> {
+        let mut web = Resolver { missing_b: false }.font_asset(font)?;
         match self {
             Self::Container => web.woff2 = b"wOF2not-a-font".to_vec(),
             Self::Cmap => web.encoding[usize::from(b'A')] = Some("\u{10ffff}".to_owned()),
@@ -130,15 +131,15 @@ impl HtmlFontResolver for BrokenFont {
     }
 }
 
-impl HtmlFontResolver for Resolver {
-    fn resolve(&mut self, font: &FontResource) -> Result<WebFont, String> {
+impl HtmlFontAssets for Resolver {
+    fn font_asset(&self, font: &FontResource) -> Result<HtmlFontAsset, String> {
         let bytes = include_bytes!("../../../umber-wasm/assets/cmu-serif-500-roman.woff2").to_vec();
         let mut encoding = vec![None; 256];
         encoding[usize::from(b'A')] = Some("A".to_owned());
         if !self.missing_b {
             encoding[usize::from(b'B')] = Some("<&B".to_owned());
         }
-        Ok(WebFont {
+        Ok(HtmlFontAsset {
             key: HtmlFontKey::from(font),
             sha256: Sha256::digest(&bytes).into(),
             woff2: bytes,
@@ -151,9 +152,9 @@ impl HtmlFontResolver for Resolver {
 
 struct SingleScalarResolver;
 
-impl HtmlFontResolver for SingleScalarResolver {
-    fn resolve(&mut self, font: &FontResource) -> Result<WebFont, String> {
-        let mut web = Resolver { missing_b: false }.resolve(font)?;
+impl HtmlFontAssets for SingleScalarResolver {
+    fn font_asset(&self, font: &FontResource) -> Result<HtmlFontAsset, String> {
+        let mut web = Resolver { missing_b: false }.font_asset(font)?;
         web.encoding[usize::from(b'B')] = Some("B".to_owned());
         Ok(web)
     }
@@ -161,11 +162,11 @@ impl HtmlFontResolver for SingleScalarResolver {
 
 struct MathResolver;
 
-impl HtmlFontResolver for MathResolver {
-    fn resolve(&mut self, font: &FontResource) -> Result<WebFont, String> {
+impl HtmlFontAssets for MathResolver {
+    fn font_asset(&self, font: &FontResource) -> Result<HtmlFontAsset, String> {
         let bytes =
             include_bytes!("../../../tex-fonts/tests/fixtures/stix-two-math.woff2").to_vec();
-        Ok(WebFont {
+        Ok(HtmlFontAsset {
             key: HtmlFontKey::from(font),
             sha256: Sha256::digest(&bytes).into(),
             woff2: bytes,
@@ -269,8 +270,8 @@ fn positioned_math_uses_ssty_text_rules_and_validated_outline_paths() {
         }),
         MathOutputEvent::End,
     ];
-    let output = write_html(&[page], &mut MathResolver, &HtmlOptions::default())
-        .expect("positioned math HTML");
+    let output =
+        write_html(&[page], &MathResolver, &HtmlOptions::default()).expect("positioned math HTML");
     let html = String::from_utf8(output.html).expect("UTF-8 HTML");
     assert!(html.contains("class=\"umber-math\""));
     assert!(html.contains("data-umber-math=\"91\" data-umber-x-sp=\"-20\""));
@@ -308,7 +309,7 @@ fn positioned_math_rejects_unpublished_programs_and_unreproducible_cmap_glyphs()
         fontdimen_synthesis_version: None,
     });
     assert!(matches!(
-        write_html(&[page.clone()], &mut MathResolver, &HtmlOptions::default()),
+        write_html(&[page.clone()], &MathResolver, &HtmlOptions::default()),
         Err(HtmlError::CorruptFontAsset { .. })
     ));
 
@@ -340,7 +341,7 @@ fn positioned_math_rejects_unpublished_programs_and_unreproducible_cmap_glyphs()
         MathOutputEvent::End,
     ];
     assert!(matches!(
-        write_html(&[page], &mut MathResolver, &HtmlOptions::default()),
+        write_html(&[page], &MathResolver, &HtmlOptions::default()),
         Err(HtmlError::MathGlyphMismatch { .. })
     ));
 }
@@ -367,11 +368,11 @@ fn serialization_is_deterministic_exact_and_escaped() {
         revision: 42,
         ..HtmlOptions::default()
     };
-    let mut first_resolver = Resolver { missing_b: false };
+    let first_resolver = Resolver { missing_b: false };
     let first =
-        write_html(std::slice::from_ref(&page), &mut first_resolver, &options).expect("first HTML");
-    let mut second_resolver = Resolver { missing_b: false };
-    let second = write_html(&[page], &mut second_resolver, &options).expect("second HTML");
+        write_html(std::slice::from_ref(&page), &first_resolver, &options).expect("first HTML");
+    let second_resolver = Resolver { missing_b: false };
+    let second = write_html(&[page], &second_resolver, &options).expect("second HTML");
     assert_eq!(first, second);
     let html = String::from_utf8(first.html).expect("UTF-8 HTML");
     assert!(html.contains("data-umber-page=\"1\" data-umber-revision=\"42\""));
@@ -389,12 +390,8 @@ fn serialization_is_deterministic_exact_and_escaped() {
 
 #[test]
 fn single_scalar_runs_use_exact_tex_character_positions() {
-    let output = write_html(
-        &[page()],
-        &mut SingleScalarResolver,
-        &HtmlOptions::default(),
-    )
-    .expect("positioned HTML");
+    let output = write_html(&[page()], &SingleScalarResolver, &HtmlOptions::default())
+        .expect("positioned HTML");
     let html = String::from_utf8(output.html).expect("UTF-8 HTML");
 
     assert!(html.contains("x=\"0.00034457px 0.00095265px\""), "{html}");
@@ -405,10 +402,10 @@ fn configured_physical_dimensions_build_the_page_box() {
     let mut page = page();
     page.testing_mut().job.page_width = sp(1_000);
     page.testing_mut().job.page_height = sp(2_000);
-    let mut resolver = Resolver { missing_b: false };
+    let resolver = Resolver { missing_b: false };
 
     let output =
-        write_html(&[page], &mut resolver, &HtmlOptions::default()).expect("physical page HTML");
+        write_html(&[page], &resolver, &HtmlOptions::default()).expect("physical page HTML");
     let html = String::from_utf8(output.html).expect("UTF-8 HTML");
 
     assert!(html.contains("data-umber-width-sp=\"1000\""));
@@ -421,10 +418,10 @@ fn plain_tex_fallback_surrounds_content_with_the_dvi_origin() {
     let mut page = page();
     page.testing_mut().job.page_origin_x = sp(4_736_286);
     page.testing_mut().job.page_origin_y = sp(4_736_286);
-    let mut resolver = Resolver { missing_b: false };
+    let resolver = Resolver { missing_b: false };
 
     let output =
-        write_html(&[page], &mut resolver, &HtmlOptions::default()).expect("plain TeX page HTML");
+        write_html(&[page], &resolver, &HtmlOptions::default()).expect("plain TeX page HTML");
     let html = String::from_utf8(output.html).expect("UTF-8 HTML");
 
     assert!(html.contains("data-umber-width-sp=\"9472806\""));
@@ -439,9 +436,9 @@ fn plain_tex_fallback_surrounds_content_with_the_dvi_origin() {
 
 #[test]
 fn unavailable_text_mapping_is_actionable() {
-    let mut resolver = Resolver { missing_b: true };
+    let resolver = Resolver { missing_b: true };
     let error =
-        write_html(&[page()], &mut resolver, &HtmlOptions::default()).expect_err("mapping failure");
+        write_html(&[page()], &resolver, &HtmlOptions::default()).expect_err("mapping failure");
     assert_eq!(
         error,
         HtmlError::MissingTextMapping {
@@ -454,15 +451,11 @@ fn unavailable_text_mapping_is_actionable() {
 #[test]
 fn invalid_woff2_and_uncovered_mappings_fail_before_serialization() {
     assert!(matches!(
-        write_html(
-            &[page()],
-            &mut BrokenFont::Container,
-            &HtmlOptions::default()
-        ),
+        write_html(&[page()], &BrokenFont::Container, &HtmlOptions::default()),
         Err(HtmlError::CorruptFontAsset { .. })
     ));
     assert!(matches!(
-        write_html(&[page()], &mut BrokenFont::Cmap, &HtmlOptions::default()),
+        write_html(&[page()], &BrokenFont::Cmap, &HtmlOptions::default()),
         Err(HtmlError::MissingFontGlyph {
             code: b'A',
             ch: '\u{10ffff}',
@@ -511,8 +504,8 @@ fn allowlisted_color_link_and_destination_are_typed_and_escaped() {
         PageNode::WhatsitAnchor { effect_index: 3 },
         PageNode::WhatsitAnchor { effect_index: 4 },
     ];
-    let mut resolver = Resolver { missing_b: false };
-    let output = write_html(&[page], &mut resolver, &HtmlOptions::default()).expect("special HTML");
+    let resolver = Resolver { missing_b: false };
+    let output = write_html(&[page], &resolver, &HtmlOptions::default()).expect("special HTML");
     let html = String::from_utf8(output.html).expect("UTF-8");
     assert!(html.contains("<svg class=\"umber-run\""));
     assert!(
@@ -530,9 +523,9 @@ fn dangerous_link_special_fails_without_markup_injection() {
         class: "html".to_owned(),
         payload: b"link javascript:alert(1)".to_vec(),
     };
-    let mut resolver = Resolver { missing_b: false };
+    let resolver = Resolver { missing_b: false };
     assert!(matches!(
-        write_html(&[page], &mut resolver, &HtmlOptions::default()),
+        write_html(&[page], &resolver, &HtmlOptions::default()),
         Err(HtmlError::InvalidSpecial { .. })
     ));
 }
@@ -545,45 +538,45 @@ fn positioned_entry_point_and_embedded_assets_obey_caller_limits() {
         max_pages: 1,
         ..HtmlOptions::default()
     };
-    let mut resolver = Resolver { missing_b: false };
+    let resolver = Resolver { missing_b: false };
     assert_eq!(
         write_positioned_html(
             &[positioned.clone(), positioned.clone()],
-            &mut resolver,
+            &resolver,
             &options
         )
         .expect_err("page limit"),
         HtmlError::TooManyPages { count: 2, limit: 1 }
     );
     options.max_positioned_events = 0;
-    let mut resolver = Resolver { missing_b: false };
+    let resolver = Resolver { missing_b: false };
     assert!(matches!(
-        write_positioned_html(std::slice::from_ref(&positioned), &mut resolver, &options),
+        write_positioned_html(std::slice::from_ref(&positioned), &resolver, &options),
         Err(HtmlError::Positioned(
             crate::positioned::PositionedError::TooManyEvents { limit: 0 }
         ))
     ));
     options.max_positioned_events = usize::MAX;
     options.max_text_run_units = 1;
-    let mut resolver = Resolver { missing_b: false };
+    let resolver = Resolver { missing_b: false };
     assert!(matches!(
-        write_positioned_html(std::slice::from_ref(&positioned), &mut resolver, &options),
+        write_positioned_html(std::slice::from_ref(&positioned), &resolver, &options),
         Err(HtmlError::Positioned(
             crate::positioned::PositionedError::TextRunTooLong { limit: 1 }
         ))
     ));
     options.max_text_run_units = usize::MAX;
     options.max_total_asset_bytes = 3;
-    let mut resolver = Resolver { missing_b: false };
+    let resolver = Resolver { missing_b: false };
     assert!(matches!(
-        write_positioned_html(std::slice::from_ref(&positioned), &mut resolver, &options),
+        write_positioned_html(std::slice::from_ref(&positioned), &resolver, &options),
         Err(HtmlError::AssetsTooLarge { .. })
     ));
     options.max_total_asset_bytes = usize::MAX;
     options.max_html_bytes = 64;
-    let mut resolver = Resolver { missing_b: false };
+    let resolver = Resolver { missing_b: false };
     assert!(matches!(
-        write_positioned_html(&[positioned], &mut resolver, &options),
+        write_positioned_html(&[positioned], &resolver, &options),
         Err(HtmlError::HtmlTooLarge { .. })
     ));
 }
@@ -595,9 +588,9 @@ fn unclosed_special_scope_is_rejected() {
         class: "html".to_owned(),
         payload: b"color push red".to_vec(),
     };
-    let mut resolver = Resolver { missing_b: false };
+    let resolver = Resolver { missing_b: false };
     assert!(matches!(
-        write_html(&[page], &mut resolver, &HtmlOptions::default()),
+        write_html(&[page], &resolver, &HtmlOptions::default()),
         Err(HtmlError::InvalidSpecial { .. })
     ));
 }

@@ -3,10 +3,10 @@ use js_sys::{Array, Reflect, Uint8Array};
 use umber::{
     BibliographyProjectOptions, EngineMode, FeatureSetting, FileContentId, FileKind, FileRequest,
     FileRequestKey, FontContainer, FontFeaturePolicy, FontLanguage, FontObjectIdentity,
-    FontProgramIdentity, FontRequestKey, LatexProjectLimits, LatexProjectOptions, OpenTypeTag,
-    ResolvedFile, ResolvedFont, ResourceDomain, ResourceRequest, ResourceResponse, SessionLimits,
-    SessionOptions, SessionWebFont, SourcePatch, VariationCoordinate, VariationSelection,
-    WritingDirection,
+    FontProgramIdentity, FontRequestKey, LatexProjectLimits, LatexProjectOptions,
+    LegacyFontMapping, OpenTypeTag, ResolvedFile, ResolvedFont, ResourceDomain, ResourceRequest,
+    ResourceResponse, SessionLimits, SessionOptions, SourcePatch, VariationCoordinate,
+    VariationSelection, WritingDirection,
 };
 use wasm_bindgen::{JsCast, JsValue};
 
@@ -194,39 +194,6 @@ fn parse_virtual_path(value: &str) -> Result<bib_engine::VirtualPath, JsValue> {
     bib_engine::VirtualPath::user(value).map_err(crate::boundary_error)
 }
 
-pub(crate) fn parse_html_font(value: &JsValue) -> Result<SessionWebFont, JsValue> {
-    require_object(value, "HTML font")?;
-    let woff2 = required_bytes(value, "woff2")?;
-    let digest = parse_digest(&required_string(value, "sha256")?)?;
-    let encoding_value = field(value, "encoding")?;
-    if !Array::is_array(&encoding_value) {
-        return Err(js_error("HTML font encoding must be an array"));
-    }
-    let array = Array::from(&encoding_value);
-    if array.length() != 256 {
-        return Err(js_error("HTML font encoding must contain 256 entries"));
-    }
-    let mut encoding = Vec::with_capacity(256);
-    for value in array.iter() {
-        if value.is_null() || value.is_undefined() {
-            encoding.push(None);
-        } else {
-            encoding.push(Some(value.as_string().ok_or_else(|| {
-                js_error("HTML font encoding entries must be strings or null")
-            })?));
-        }
-    }
-    Ok(SessionWebFont {
-        name: required_string(value, "name")?,
-        tfm_content_hash_hex: required_string(value, "tfmContentHash")?,
-        woff2,
-        sha256: digest,
-        encoding,
-        provenance: required_string(value, "provenance")?,
-        embeddable: required_bool(value, "embeddable")?,
-    })
-}
-
 pub(crate) fn parse_source_patch(value: &JsValue) -> Result<SourcePatch, JsValue> {
     require_object(value, "source patch")?;
     let start = integer::<usize>(value, "start")?;
@@ -319,6 +286,35 @@ fn parse_resolved_font(value: &JsValue) -> Result<ResolvedFont, JsValue> {
         "woff2" => FontContainer::Woff2,
         _ => return Err(js_error("WASM font container must be 'woff2'")),
     };
+    let mapping_value = field(value, "legacyMapping")?;
+    let legacy_mapping = if absent(&mapping_value) {
+        None
+    } else {
+        require_object(&mapping_value, "legacy font mapping")?;
+        let encoding_value = field(&mapping_value, "encoding")?;
+        if !Array::is_array(&encoding_value) || Array::from(&encoding_value).length() != 256 {
+            return Err(js_error(
+                "legacy font mapping encoding must contain 256 entries",
+            ));
+        }
+        let encoding = Array::from(&encoding_value)
+            .iter()
+            .map(|entry| {
+                if entry.is_null() || entry.is_undefined() {
+                    Ok(None)
+                } else {
+                    entry.as_string().map(Some).ok_or_else(|| {
+                        js_error("legacy font mapping entries must be strings or null")
+                    })
+                }
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        Some(LegacyFontMapping {
+            tfm_sha256: parse_digest(&required_string(&mapping_value, "tfmSha256")?)?,
+            encoding,
+            embeddable: required_bool(&mapping_value, "embeddable")?,
+        })
+    };
     Ok(ResolvedFont {
         request,
         container,
@@ -330,6 +326,7 @@ fn parse_resolved_font(value: &JsValue) -> Result<ResolvedFont, JsValue> {
             .map(|digest| parse_digest(&digest).map(FontProgramIdentity::from_bytes))
             .transpose()?,
         provenance: optional_string(value, "provenance")?,
+        legacy_mapping,
     })
 }
 

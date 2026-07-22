@@ -128,7 +128,7 @@ async function integration() {
 	);
 	const htmlOptions = {
 		mainPath: "html.tex",
-		html: { fonts: [htmlFont] },
+		html: {},
 	};
 	const htmlFiles = new Map([
 		[
@@ -139,7 +139,6 @@ async function integration() {
 		],
 	]);
 	const retained = new CompilerSession(htmlOptions);
-	retained.addHtmlFont(htmlFont);
 	retained.addUserFile("cmr10.tfm", cmr10);
 	retained.addUserFile("html.tex", htmlFiles.get("html.tex"));
 	const retainedMissing = retained.advance();
@@ -151,8 +150,10 @@ async function integration() {
 		retainedMissing.required.map((request) => ({
 			...request,
 			container: "woff2",
-			bytes: htmlFont.woff2,
+			bytes: htmlFont.bytes,
+			objectSha256: htmlFont.objectSha256,
 			provenance: htmlFont.provenance,
+			legacyMapping: htmlFont.legacyMapping,
 		})),
 	);
 	const retainedAttempt = retained.advance();
@@ -178,33 +179,40 @@ async function integration() {
 	const generatedGeometry = await installAndMeasureGeneratedHtml(
 		htmlFirst.html,
 	);
-	const explicitOpenType = await compileExplicitOpenType(htmlFont.woff2);
+	const explicitOpenType = await compileExplicitOpenType(htmlFont.bytes);
 	const mathGeometry = await verifyPositionedMathPrototype();
 	const clickSource = assertClickToSource(
 		retained,
 		htmlFiles.get("html.tex"),
-		htmlFont.encoding,
+		htmlFont.legacyMapping.encoding,
 	);
 	retained.dispose();
 	globalThis.__umberGeneratedGeometry = (zoom = 1) =>
 		measureGeneratedHtml(zoom);
 
+	const workerHtml = await compileInWorker(
+		htmlOptions,
+		new Map([...htmlFiles, ["cmr10.tfm", cmr10]]),
+		{ ...resolver, fontResources: [htmlFont] },
+	);
+	assert(workerHtml.dvi.byteLength > 0, "worker HTML returned no DVI");
+	assert(workerHtml.html instanceof Uint8Array, "worker returned no HTML");
+	const plainPageMargins = serializedPageMargins(workerHtml.html);
+	assert(
+		plainPageMargins.left === plainPageMargins.right,
+		`worker HTML horizontal margins differ: ${JSON.stringify(plainPageMargins)}`,
+	);
+	assert(
+		plainPageMargins.top === plainPageMargins.bottom,
+		`worker HTML vertical margins differ: ${JSON.stringify(plainPageMargins)}`,
+	);
+
 	const plain = await compileInWorker(
-		{ mainPath: "main.tex", html: { fonts: [htmlFont] } },
+		{ mainPath: "main.tex", fontLayoutPolicy: "classic-tfm-exact" },
 		new Map([["main.tex", encode("Plain browser format.\\par\\bye")]]),
 		{ ...resolver, format: "plain" },
 	);
 	assert(plain.dvi.byteLength > 0, "Plain format returned no DVI");
-	assert(plain.html instanceof Uint8Array, "Plain format returned no HTML");
-	const plainPageMargins = serializedPageMargins(plain.html);
-	assert(
-		plainPageMargins.left === plainPageMargins.right,
-		`Plain horizontal margins differ: ${JSON.stringify(plainPageMargins)}`,
-	);
-	assert(
-		plainPageMargins.top === plainPageMargins.bottom,
-		`Plain vertical margins differ: ${JSON.stringify(plainPageMargins)}`,
-	);
 
 	const direct = await HttpManifestResolver.create({
 		manifestUrl,

@@ -411,6 +411,10 @@ impl FontStore {
             .expect("font id is not live in this Universe timeline")
     }
 
+    pub(crate) fn iter(&self) -> impl Iterator<Item = &LoadedFont> {
+        self.fonts.iter()
+    }
+
     pub(crate) fn expansion(&self, id: FontId) -> Option<FontExpansion> {
         assert!(
             self.contains(id),

@@ -186,13 +186,14 @@ test("preflights all worker input limits before copying or construction", async 
 			]),
 		},
 		{
-			name: "one HTML font",
+			name: "one font resource",
 			options: {
 				mainPath: "main.tex",
-				html: { fonts: [{ woff2: new Uint8Array([1, 2]) }] },
+				html: {},
 				limits: { oneFileBytes: 1 },
 			},
 			files: new Map(),
+			fontResources: [{ logicalName: "cmr10", bytes: new Uint8Array([1, 2]) }],
 		},
 		{
 			name: "user file count",
@@ -216,6 +217,7 @@ test("preflights all worker input limits before copying or construction", async 
 					{
 						manifestUrl: "https://cdn.example.test/manifest.json",
 						manifestSha256,
+						fontResources: fixture.fontResources,
 					},
 					{ Worker },
 				),
@@ -231,21 +233,25 @@ test("preflights all worker input limits before copying or construction", async 
 	}
 });
 
-test("worker copies and transfers HTML font assets without detaching caller bytes", async () => {
+test("worker copies typed font resources without detaching caller bytes", async () => {
 	const Worker = fakeWorker();
 	const woff2 = new Uint8Array([119, 79, 70, 50]);
 	const promise = compileInWorker(
 		{
 			mainPath: "main.tex",
-			html: { fonts: [{ name: "cmr10", woff2, encoding: [] }] },
+			html: {},
 		},
 		new Map(),
-		{ manifestUrl: "https://cdn.example.test/manifest.json", manifestSha256 },
+		{
+			manifestUrl: "https://cdn.example.test/manifest.json",
+			manifestSha256,
+			fontResources: [{ logicalName: "cmr10", bytes: woff2 }],
+		},
 		{ Worker },
 	);
 	const worker = Worker.instances[0];
 	assert.equal(worker.transfer.length, 1);
-	assert.notEqual(worker.message.options.html.fonts[0].woff2, woff2);
+	assert.notEqual(worker.message.resolver.fontResources[0].bytes, woff2);
 	assert.equal(woff2.byteLength, 4);
 	worker.emit("message", {
 		data: {
@@ -375,6 +381,72 @@ test("worker runtime selects a compatible manifest format", async () => {
 			expected: { engineVersion: "0.1.0", formatSchema: 4 },
 		},
 	]);
+});
+
+test("worker runtime replaces manifest font absence with a typed font resource", async () => {
+	const request = {
+		type: "font",
+		logicalName: "cmr10",
+		faceIndex: 0,
+		variationInstance: "default",
+		variations: [],
+		features: [],
+		direction: "ltr",
+		acceptedContainers: ["woff2"],
+	};
+	let provided;
+	class Session {
+		constructor() {
+			this.round = 0;
+		}
+		addUserFile() {}
+		advance() {
+			if (this.round++ === 0) {
+				return {
+					kind: "need-resources",
+					required: [request],
+					probes: [],
+					prefetchHints: [],
+				};
+			}
+			return {
+				kind: "complete",
+				output: {
+					terminal: "ok",
+					log: new Uint8Array(),
+					dvi: new Uint8Array(),
+					files: [],
+				},
+			};
+		}
+		provideResources(responses) {
+			provided = responses;
+		}
+		dispose() {}
+	}
+	const resource = {
+		logicalName: "cmr10",
+		container: "woff2",
+		bytes: new Uint8Array([1, 2, 3]),
+		provenance: "fixture license",
+	};
+	await runCompileMessage(
+		{
+			kind: "compile",
+			options: { mainPath: "main.tex" },
+			userFiles: [["main.tex", new Uint8Array()]],
+			resolver: { manifestUrl: "unused", fontResources: [resource] },
+		},
+		{
+			bindings: { CompilerSession: Session },
+			resolver: {
+				async resolve() {
+					return [{ ...request, type: "font-unavailable" }];
+				},
+			},
+		},
+	);
+	assert.deepEqual(provided, [{ ...request, ...resource, type: "font" }]);
 });
 
 test("worker runtime uses injected bindings and returns unique output transfers", async () => {

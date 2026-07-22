@@ -511,6 +511,16 @@ impl FontInstanceIdentity {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct LegacyFontMapping {
+    /// SHA-256 identity of the exact TFM object whose byte codes are mapped.
+    pub tfm_sha256: [u8; 32],
+    /// Exactly 256 entries; absent entries are not renderable through this mapping.
+    pub encoding: Vec<Option<String>>,
+    /// The client has affirmatively authorized embedding the supplied font object.
+    pub embeddable: bool,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ResolvedFont {
     pub request: FontRequestKey,
     pub container: FontContainer,
@@ -518,13 +528,15 @@ pub struct ResolvedFont {
     pub declared_object_sha256: Option<FontObjectIdentity>,
     pub declared_program_identity: Option<FontProgramIdentity>,
     pub provenance: Option<String>,
+    /// Optional exact legacy-code mapping carried by the same typed response.
+    pub legacy_mapping: Option<LegacyFontMapping>,
 }
 
 impl ResolvedFont {
     /// Canonical versioned response encoding. The resource bytes remain binary.
     #[must_use]
     pub fn to_wire_bytes(&self) -> Vec<u8> {
-        let mut out = b"UFRS\x02".to_vec();
+        let mut out = b"UFRS\x03".to_vec();
         encode_key(&self.request, &mut out);
         out.push(self.container as u8);
         encode_optional_identity(
@@ -537,12 +549,24 @@ impl ResolvedFont {
             &mut out,
         );
         encode_optional_string(self.provenance.as_deref(), &mut out);
+        match &self.legacy_mapping {
+            None => out.push(0),
+            Some(mapping) => {
+                out.push(1);
+                out.extend_from_slice(&mapping.tfm_sha256);
+                out.push(u8::from(mapping.embeddable));
+                out.extend_from_slice(&(mapping.encoding.len() as u32).to_be_bytes());
+                for entry in &mapping.encoding {
+                    encode_optional_string(entry.as_deref(), &mut out);
+                }
+            }
+        }
         encode_bytes(&self.bytes, &mut out);
         out
     }
 
     pub fn from_wire_bytes(bytes: &[u8]) -> Result<Self, FontWireError> {
-        let mut input = WireReader::new(bytes, b"UFRS\x02")?;
+        let mut input = WireReader::new(bytes, b"UFRS\x03")?;
         let request = decode_key(&mut input)?;
         let container = match input.byte()? {
             1 => FontContainer::OpenType,
@@ -556,6 +580,31 @@ impl ResolvedFont {
         let declared_program_identity =
             decode_optional_identity(&mut input)?.map(FontProgramIdentity::from_bytes);
         let provenance = decode_optional_string(&mut input)?;
+        let legacy_mapping = match input.byte()? {
+            0 => None,
+            1 => {
+                let tfm_sha256 = input.array()?;
+                let embeddable = match input.byte()? {
+                    0 => false,
+                    1 => true,
+                    value => return Err(FontWireError::InvalidBoolean(value)),
+                };
+                let count = input.u32()? as usize;
+                if count != 256 {
+                    return Err(FontWireError::InvalidLegacyMappingCount(count));
+                }
+                let mut encoding = Vec::with_capacity(count);
+                for _ in 0..count {
+                    encoding.push(decode_optional_string(&mut input)?);
+                }
+                Some(LegacyFontMapping {
+                    tfm_sha256,
+                    encoding,
+                    embeddable,
+                })
+            }
+            value => return Err(FontWireError::InvalidBoolean(value)),
+        };
         let bytes = input.bytes()?.to_vec();
         input.finish()?;
         Ok(Self {
@@ -565,6 +614,7 @@ impl ResolvedFont {
             declared_object_sha256,
             declared_program_identity,
             provenance,
+            legacy_mapping,
         })
     }
 }
@@ -656,6 +706,7 @@ pub enum FontWireError {
     InvalidVariationInstance(u8),
     InvalidDirection(u8),
     InvalidSelection(FontSelectionError),
+    InvalidLegacyMappingCount(usize),
     LengthOverflow,
 }
 

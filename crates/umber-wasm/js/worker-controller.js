@@ -189,41 +189,42 @@ function prepareMessage(options, userFiles, resolver, wasmUrl) {
 		if (!clonedOptions.html || typeof clonedOptions.html !== "object") {
 			throw new WorkerCompileError("invalid-options", "html must be an object");
 		}
-		if (!Array.isArray(clonedOptions.html.fonts)) {
+	}
+	let fontResources;
+	if (resolver.fontResources !== undefined) {
+		if (!Array.isArray(resolver.fontResources)) {
 			throw new WorkerCompileError(
-				"invalid-html-fonts",
-				"html.fonts must be an array",
+				"invalid-font-resources",
+				"resolver.fontResources must be an array",
 			);
 		}
 		let fontBytes = 0;
-		const fonts = clonedOptions.html.fonts.map((font, index) => {
-			if (!font || typeof font !== "object") {
-				throw new WorkerCompileError(
-					"invalid-html-fonts",
-					`html.fonts[${index}] must be an object`,
-				);
-			}
-			requireBytes(font.woff2, `html font ${index} woff2`);
-			if (font.woff2.byteLength > limits.oneFileBytes) {
+		fontResources = resolver.fontResources.map((font, index) => {
+			requireBytes(font?.bytes, `font resource ${index} bytes`);
+			if (font.bytes.byteLength > limits.oneFileBytes)
 				throw workerLimitError(
-					"one HTML font bytes",
+					"one font resource bytes",
 					limits.oneFileBytes,
-					font.woff2.byteLength,
+					font.bytes.byteLength,
 				);
-			}
-			fontBytes += font.woff2.byteLength;
-			if (fontBytes > limits.cachedFileBytes) {
+			fontBytes += font.bytes.byteLength;
+			if (fontBytes > limits.cachedFileBytes)
 				throw workerLimitError(
-					"HTML font bytes",
+					"font resource bytes",
 					limits.cachedFileBytes,
 					fontBytes,
 				);
-			}
-			const woff2 = font.woff2.slice();
-			transfer.push(woff2.buffer);
-			return { ...font, encoding: font.encoding?.slice(), woff2 };
+			const bytes = font.bytes.slice();
+			transfer.push(bytes.buffer);
+			return {
+				...font,
+				bytes,
+				legacyMapping: font.legacyMapping && {
+					...font.legacyMapping,
+					encoding: font.legacyMapping.encoding.slice(),
+				},
+			};
 		});
-		clonedOptions.html = { ...clonedOptions.html, fonts };
 	}
 	if (clonedOptions.format !== undefined) {
 		requireBytes(clonedOptions.format, "format");
@@ -288,6 +289,7 @@ function prepareMessage(options, userFiles, resolver, wasmUrl) {
 				offline: resolver.offline,
 				concurrency: resolver.concurrency,
 				format: resolver.format,
+				fontResources,
 			},
 			wasmUrl,
 		},

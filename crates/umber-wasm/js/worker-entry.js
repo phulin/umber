@@ -14,13 +14,43 @@ export async function runCompileMessage(message, dependencies = {}) {
 				: { module_or_path: message.wasmUrl },
 		);
 	}
-	const resolver =
+	const manifestResolver =
 		dependencies.resolver ??
 		(await (dependencies.createResolver ?? HttpManifestResolver.create)({
 			...message.resolver,
 			maxFiles: message.options?.limits?.resolvedFiles,
 			maxBytes: message.options?.limits?.cachedFileBytes,
 		}));
+	const fontResources = new Map(
+		(message.resolver.fontResources ?? []).map((font) => [
+			font.logicalName,
+			font,
+		]),
+	);
+	const resolver =
+		fontResources.size === 0
+			? manifestResolver
+			: {
+					...manifestResolver,
+					resolve: async (requests, options) => {
+						const responses = await manifestResolver.resolve(requests, options);
+						return responses.map((response) => {
+							if (
+								response.type !== "font" &&
+								response.type !== "font-unavailable"
+							)
+								return response;
+							const request = response.request ?? response;
+							const resource = fontResources.get(request.logicalName);
+							return resource === undefined
+								? response
+								: { ...request, ...resource, type: "font" };
+						});
+					},
+					resolveFormat: manifestResolver.resolveFormat?.bind(manifestResolver),
+					formatPrefetchHints:
+						manifestResolver.formatPrefetchHints?.bind(manifestResolver),
+				};
 	let options = message.options;
 	if (message.resolver.format !== undefined) {
 		const format = await resolver.resolveFormat(message.resolver.format, {

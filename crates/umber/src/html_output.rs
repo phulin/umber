@@ -1,61 +1,70 @@
 use std::path::{Path, PathBuf};
 
 use sha2::{Digest, Sha256};
-use tex_out::FontResource;
-use tex_out::html::{HtmlFontKey, HtmlFontResolver, WebFont};
+use tex_fonts::{FontContainer, FontRequest, LegacyFontMapping, ResolvedFont};
 
-/// Native driver resolver for an explicit, deterministic web-font bundle.
+/// Native typed-resource resolver for an explicit, deterministic font bundle.
 ///
 /// For font `cmr10`, the directory contains `cmr10.woff2`,
 /// `cmr10.woff2.sha256`, `cmr10.tfm-hash`, `cmr10.map`, and `cmr10.license`.
 /// The map has `HH<TAB>UTF-8` lines; `-` denotes an intentionally unmapped
 /// code. All 256 codes must occur exactly once.
-pub struct DirectoryHtmlFontResolver<'a> {
+pub struct DirectoryFontResourceResolver {
     root: PathBuf,
-    world: &'a mut tex_state::World,
 }
 
-impl<'a> DirectoryHtmlFontResolver<'a> {
+impl DirectoryFontResourceResolver {
     #[must_use]
-    pub fn new(root: impl Into<PathBuf>, world: &'a mut tex_state::World) -> Self {
-        Self {
-            root: root.into(),
-            world,
-        }
+    pub fn new(root: impl Into<PathBuf>) -> Self {
+        Self { root: root.into() }
     }
-}
+    pub fn resolve(&self, request: &FontRequest) -> Result<ResolvedFont, String> {
+        let mut world = tex_state::World::real();
+        self.resolve_with_world(request, &mut world)
+    }
 
-impl HtmlFontResolver for DirectoryHtmlFontResolver<'_> {
-    fn resolve(&mut self, font: &FontResource) -> Result<WebFont, String> {
-        let stem = safe_stem(&font.name)?;
-        let tfm_hash = read_text(self.world, &self.root.join(format!("{stem}.tfm-hash")))?;
-        if tfm_hash.trim() != font.tfm_content_hash.hex() {
-            return Err(format!("TFM content hash mismatch for {}", font.name));
-        }
-        let woff2 = read(self.world, &self.root.join(format!("{stem}.woff2")))?;
+    fn resolve_with_world(
+        &self,
+        request: &FontRequest,
+        world: &mut tex_state::World,
+    ) -> Result<ResolvedFont, String> {
+        let stem = safe_stem(request.key.logical_name())?;
+        let tfm_hash = parse_digest(&read_text(
+            world,
+            &self.root.join(format!("{stem}.tfm-hash")),
+        )?)?;
+        let woff2 = read(world, &self.root.join(format!("{stem}.woff2")))?;
         let expected = parse_digest(&read_text(
-            self.world,
+            world,
             &self.root.join(format!("{stem}.woff2.sha256")),
         )?)?;
         let actual: [u8; 32] = Sha256::digest(&woff2).into();
         if actual != expected {
-            return Err(format!("WOFF2 SHA-256 mismatch for {}", font.name));
+            return Err(format!(
+                "WOFF2 SHA-256 mismatch for {}",
+                request.key.logical_name()
+            ));
         }
-        let encoding = parse_map(&read_text(
-            self.world,
-            &self.root.join(format!("{stem}.map")),
-        )?)?;
-        let provenance = read_text(self.world, &self.root.join(format!("{stem}.license")))?;
+        let encoding = parse_map(&read_text(world, &self.root.join(format!("{stem}.map")))?)?;
+        let provenance = read_text(world, &self.root.join(format!("{stem}.license")))?;
         if provenance.trim().is_empty() {
-            return Err(format!("empty embedding license for {}", font.name));
+            return Err(format!(
+                "empty embedding license for {}",
+                request.key.logical_name()
+            ));
         }
-        Ok(WebFont {
-            key: HtmlFontKey::from(font),
-            woff2,
-            sha256: actual,
-            encoding,
-            provenance,
-            embeddable: true,
+        Ok(ResolvedFont {
+            request: request.key.clone(),
+            container: FontContainer::Woff2,
+            bytes: woff2,
+            declared_object_sha256: Some(tex_fonts::FontObjectIdentity::from_bytes(actual)),
+            declared_program_identity: None,
+            provenance: Some(provenance),
+            legacy_mapping: Some(LegacyFontMapping {
+                tfm_sha256: tfm_hash,
+                encoding,
+                embeddable: true,
+            }),
         })
     }
 }
@@ -66,7 +75,7 @@ fn safe_stem(name: &str) -> Result<&str, String> {
             .bytes()
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
     {
-        Err(format!("unsafe web-font bundle name {name:?}"))
+        Err(format!("unsafe font-resource bundle name {name:?}"))
     } else {
         Ok(name)
     }
@@ -130,7 +139,6 @@ fn parse_map(value: &str) -> Result<Vec<Option<String>>, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tex_arith::Scaled;
     use tex_out::ContentHash;
 
     #[test]
@@ -159,24 +167,20 @@ mod tests {
         world
             .set_memory_file(root.join("cmr10.map"), map.into_bytes())
             .expect("map");
-        let font = FontResource {
-            font_id: 1,
-            name: "cmr10".to_owned(),
-            tfm_content_hash: tfm,
-            tfm_checksum: 0,
-            design_size: Scaled::from_raw(1),
-            at_size: Scaled::from_raw(1),
-            layout_policy: tex_fonts::FontLayoutPolicy::ClassicTfmExact,
-            mapping_fallback: None,
-            opentype: None,
-            semantic_identity: tex_fonts::FontSourceIdentity::from_bytes(tfm.bytes()),
-            construction: tex_out::FontResourceConstruction::Loaded,
+        let request = FontRequest {
+            key: tex_fonts::FontRequestKey::new("cmr10", 0, Default::default(), Default::default())
+                .expect("key"),
+            accepted_containers: tex_fonts::AcceptedFontContainers::WASM,
+            purposes: tex_fonts::FontPurposes::LAYOUT_AND_HTML,
         };
-        let web = DirectoryHtmlFontResolver::new(root, &mut world)
-            .resolve(&font)
+        let font = DirectoryFontResourceResolver::new(root)
+            .resolve_with_world(&request, &mut world)
             .expect("resolve");
-        assert_eq!(web.encoding[65].as_deref(), Some("A"));
-        assert_eq!(web.sha256, digest);
+        assert_eq!(
+            font.legacy_mapping.as_ref().expect("mapping").encoding[65].as_deref(),
+            Some("A")
+        );
+        assert_eq!(font.declared_object_sha256.expect("digest").bytes(), digest);
     }
 
     fn hex(bytes: &[u8]) -> String {

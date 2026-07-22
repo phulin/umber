@@ -44,6 +44,8 @@ pub struct NativeRunOptions {
     pub engine: EngineMode,
     pub dvi: bool,
     pub html: bool,
+    pub html_font_dir: Option<PathBuf>,
+    pub html_asset_directory: Option<String>,
     pub distribution: Option<String>,
     pub distribution_sha256: Option<String>,
     pub offline: bool,
@@ -351,12 +353,22 @@ impl NativeCompileSession {
             },
             dvi: options.dvi,
             html: options.html,
+            html_asset_mode: options.html_asset_directory.as_ref().map_or(
+                tex_out::html::AssetMode::Embedded,
+                |relative_directory| tex_out::html::AssetMode::Manifest {
+                    relative_directory: relative_directory.clone(),
+                },
+            ),
             accepted_font_containers: if options.html {
                 AcceptedFontContainers::WASM
             } else {
                 AcceptedFontContainers::NATIVE_WITH_COLLECTIONS
             },
-            font_layout_policy: tex_fonts::FontLayoutPolicy::ClassicTfmExact,
+            font_layout_policy: if options.html {
+                tex_fonts::FontLayoutPolicy::OpenTypePreferred
+            } else {
+                tex_fonts::FontLayoutPolicy::ClassicTfmExact
+            },
             font_mapping_fallback: tex_fonts::FontMappingFallbackPolicy::ClassicTfmExact,
         })
         .map_err(|error| NativeRunError::Compile(error.to_string()))?;
@@ -364,7 +376,7 @@ impl NativeCompileSession {
         session
             .add_user_file(name, main.clone())
             .map_err(|error| NativeRunError::Compile(error.to_string()))?;
-        let local = LocalResolver::from_environment(&options.input);
+        let local = LocalResolver::from_environment(&options.input, options.html_font_dir.clone());
         let source = match String::from_utf8(main) {
             Ok(source) => source,
             Err(error) => error.into_bytes().into_iter().map(char::from).collect(),
@@ -440,17 +452,8 @@ impl NativeCompileSession {
                         self.session.discard_suspended_candidate();
                         return Err(NativeRunError::Cancelled);
                     }
-                    let preload_started = Instant::now();
-                    for file in resolved.prefetched {
-                        if let Err(error) = self.session.preload_resolved_file(file) {
-                            self.session.discard_suspended_candidate();
-                            return Err(NativeRunError::Compile(error.to_string()));
-                        }
-                    }
-                    self.host_telemetry.preload_time = self
-                        .host_telemetry
-                        .preload_time
-                        .saturating_add(preload_started.elapsed());
+                    // Prefetch hints remain client-cache concerns; only requested
+                    // resources cross the typed provisioning boundary.
                     let provision_started = Instant::now();
                     if let Err(error) = self.session.provide_resources(resolved.responses) {
                         self.session.discard_suspended_candidate();
@@ -544,12 +547,13 @@ struct LocalResolver {
     base: PathBuf,
     input: TexInputSearchPath,
     font: TexFontSearchPath,
+    html_fonts: Option<crate::DirectoryFontResourceResolver>,
     input_paths: RefCell<BTreeMap<PathBuf, PathBuf>>,
     resolved_inputs: RefCell<Vec<(PathBuf, usize)>>,
 }
 
 impl LocalResolver {
-    fn from_environment(main: &Path) -> Self {
+    fn from_environment(main: &Path, html_font_dir: Option<PathBuf>) -> Self {
         let areas = |name| {
             env::var_os(name)
                 .map(|value| {
@@ -564,6 +568,7 @@ impl LocalResolver {
             base: base.clone(),
             input: TexInputSearchPath::new(&base, areas("TEXINPUTS")),
             font: TexFontSearchPath::new(base, areas("TEXFONTS")),
+            html_fonts: html_font_dir.map(crate::DirectoryFontResourceResolver::new),
             input_paths: RefCell::new(BTreeMap::new()),
             resolved_inputs: RefCell::new(Vec::new()),
         }
@@ -609,6 +614,23 @@ impl LocalResolver {
             expected_digest: Some(digest),
             bytes,
         })
+    }
+
+    fn resolve_font(
+        &self,
+        request: &tex_fonts::FontRequest,
+    ) -> Result<Option<tex_fonts::ResolvedFont>, NativeRunError> {
+        self.html_fonts
+            .as_ref()
+            .map(|resolver| {
+                resolver.resolve(request).map_err(|message| {
+                    NativeRunError::Selection(format!(
+                        "invalid font resource bundle for {}: {message}",
+                        request.key.logical_name()
+                    ))
+                })
+            })
+            .transpose()
     }
 
     fn resolve_classic_bibliography(&self, request: &FileRequest) -> Option<ResolvedFile> {
@@ -700,7 +722,6 @@ struct ResolvedFormat {
 
 struct ResolvedDistributionBatch {
     responses: Vec<ResourceResponse>,
-    prefetched: Vec<ResolvedFile>,
 }
 
 struct DistributionResolver {
@@ -771,7 +792,10 @@ impl DistributionResolver {
                     }
                 }
                 ResourceRequest::Font(request) => {
-                    responses.push(ResourceResponse::FontUnavailable(request.key.clone()));
+                    responses.push(local.resolve_font(request)?.map_or_else(
+                        || ResourceResponse::FontUnavailable(request.key.clone()),
+                        ResourceResponse::Font,
+                    ));
                 }
             }
         }
@@ -794,10 +818,7 @@ impl DistributionResolver {
             }
         }
         if unresolved.is_empty() && unresolved_hints.is_empty() {
-            return Ok(ResolvedDistributionBatch {
-                responses,
-                prefetched: Vec::new(),
-            });
+            return Ok(ResolvedDistributionBatch { responses });
         }
         let manifest_started = Instant::now();
         telemetry.manifest_lookups = telemetry.manifest_lookups.saturating_add(1);
@@ -1019,37 +1040,13 @@ impl DistributionResolver {
                 bytes: data,
             }));
         }
-        let mut prefetched = Vec::new();
-        for (manifest_key, entry) in hints {
-            let Some(data) = bytes.remove(&manifest_key) else {
-                continue;
-            };
-            let distribution_key = DistributionFileRequestKey::from_manifest_key(&manifest_key)
-                .map_err(|error| NativeRunError::Selection(error.to_string()))?;
-            let ResourceRequest::File(request) = distribution_request(distribution_key)? else {
-                continue;
-            };
-            let hash_started = Instant::now();
-            let expected_digest = FileContentId::for_bytes(&data);
-            telemetry.content_hash_time = telemetry
-                .content_hash_time
-                .saturating_add(hash_started.elapsed());
-            prefetched.push(ResolvedFile {
-                request: request.key().clone(),
-                expected_digest: Some(expected_digest),
-                virtual_path: entry.virtual_path,
-                bytes: data,
-            });
-        }
+        drop(hints);
         telemetry.response_build_time = telemetry.response_build_time.saturating_add(
             response_started
                 .elapsed()
                 .saturating_sub(telemetry.content_hash_time.saturating_sub(hash_before)),
         );
-        Ok(ResolvedDistributionBatch {
-            responses,
-            prefetched,
-        })
+        Ok(ResolvedDistributionBatch { responses })
     }
 
     fn resolve_generic_asset(

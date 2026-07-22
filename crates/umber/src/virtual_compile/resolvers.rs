@@ -15,7 +15,9 @@ use tex_state::{
 };
 
 use super::path::RequestedFile;
-use super::{CompileError, FileKind, FileRequest, FileRequestKey, SessionWebFont, VirtualPath};
+use super::{
+    CompileError, FileKind, FileRequest, FileRequestKey, FontResponseFingerprint, VirtualPath,
+};
 use umber_vfs::VfsSnapshot;
 pub(super) struct VirtualRunResolvers<'a> {
     input: VirtualFileResolver<'a>,
@@ -27,7 +29,7 @@ pub(super) struct FontResolutionPolicy<'a> {
     pub accepted_containers: AcceptedFontContainers,
     pub layout: FontLayoutPolicy,
     pub fallback: FontMappingFallbackPolicy,
-    pub mapped_fonts: &'a BTreeMap<(String, String), SessionWebFont>,
+    pub font_responses: &'a BTreeMap<FontRequestKey, FontResponseFingerprint>,
 }
 
 struct VirtualFileResolver<'a> {
@@ -551,7 +553,7 @@ struct VirtualFontResolver<'a> {
     accepted_font_containers: AcceptedFontContainers,
     layout_policy: FontLayoutPolicy,
     fallback: FontMappingFallbackPolicy,
-    mapped_fonts: &'a BTreeMap<(String, String), SessionWebFont>,
+    font_responses: &'a BTreeMap<FontRequestKey, FontResponseFingerprint>,
     font_misses: BTreeMap<FontRequestKey, (u64, FontRequest)>,
 }
 
@@ -571,7 +573,7 @@ impl<'a> VirtualFontResolver<'a> {
             accepted_font_containers: policy.accepted_containers,
             layout_policy: policy.layout,
             fallback: policy.fallback,
-            mapped_fonts: policy.mapped_fonts,
+            font_responses: policy.font_responses,
             font_misses: BTreeMap::new(),
         }
     }
@@ -618,27 +620,6 @@ impl FontResolver for VirtualFontResolver<'_> {
                 .and_then(|stem| stem.to_str())
                 .unwrap_or(name)
         });
-        let mapped_bundle = tfm_content.as_ref().and_then(|metrics| {
-            self.mapped_fonts
-                .get(&(logical_name.to_owned(), metrics.hash().hex()))
-        });
-        if opentype_only.is_none() && mapped_bundle.is_none() {
-            return match self.fallback {
-                FontMappingFallbackPolicy::ClassicTfmExact => Ok(ResourceLookup::Available(
-                    tex_exec::FontSource::ClassicTfmFallback {
-                        metrics: tfm_content.expect("TFM-style selection has metrics"),
-                    },
-                )),
-                FontMappingFallbackPolicy::Error => Err(format!(
-                    "no OpenType mapping bundle for {logical_name} with TFM identity {}",
-                    tfm_content
-                        .as_ref()
-                        .expect("TFM-style selection has metrics")
-                        .hash()
-                        .hex()
-                )),
-            };
-        }
         let key = FontRequestKey::new(
             logical_name,
             0,
@@ -648,7 +629,21 @@ impl FontResolver for VirtualFontResolver<'_> {
         .map_err(|error| error.to_string())?;
         let Some(font) = self.resolved_fonts.get(&key) else {
             if self.unavailable_fonts.contains(&key) {
-                return Ok(ResourceLookup::Unavailable);
+                return if let Some(metrics) = tfm_content {
+                    match self.fallback {
+                        FontMappingFallbackPolicy::ClassicTfmExact => {
+                            Ok(ResourceLookup::Available(
+                                tex_exec::FontSource::ClassicTfmFallback { metrics },
+                            ))
+                        }
+                        FontMappingFallbackPolicy::Error => Err(format!(
+                            "no OpenType mapping resource for {logical_name} with TFM identity {}",
+                            metrics.hash().hex()
+                        )),
+                    }
+                } else {
+                    Ok(ResourceLookup::Unavailable)
+                };
             }
             self.font_misses.entry(key.clone()).or_insert_with(|| {
                 (
@@ -664,13 +659,21 @@ impl FontResolver for VirtualFontResolver<'_> {
                 request_index,
             )));
         };
-        if let Some(bundle) = mapped_bundle
-            && (font.object_identity.bytes() != bundle.sha256
-                || font.transport_bytes.as_ref() != bundle.woff2.as_slice())
-        {
-            return Err(format!(
-                "mapped font response for {logical_name} conflicts with the exact TFM bundle"
-            ));
+        let mapped_bundle = self
+            .font_responses
+            .get(&key)
+            .and_then(|response| response.legacy_mapping.as_ref());
+        if let Some(metrics) = &tfm_content {
+            let Some(bundle) = mapped_bundle else {
+                return Err(format!(
+                    "OpenType response for {logical_name} omitted its typed legacy mapping"
+                ));
+            };
+            if bundle.tfm_sha256 != metrics.hash().bytes() {
+                return Err(format!(
+                    "OpenType response for {logical_name} has the wrong TFM mapping identity"
+                ));
+            }
         }
         if let Some(bundle) = mapped_bundle {
             for (code, text) in bundle.encoding.iter().enumerate() {

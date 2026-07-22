@@ -90,7 +90,17 @@ fn run_tex(opts: &RunCliOptions) -> Result<(), CliError> {
             initial_prefetch_keys: opts.initial_prefetch_keys.clone(),
             engine: opts.engine,
             dvi: opts.dvi.is_some(),
-            html: false,
+            html: opts.html.is_some(),
+            html_font_dir: opts.html_font_dir.clone(),
+            html_asset_directory: opts
+                .html_assets
+                .as_ref()
+                .map(|path| {
+                    path.to_str()
+                        .map(str::to_owned)
+                        .ok_or(CliError::Usage("--html-assets must be valid UTF-8"))
+                })
+                .transpose()?,
             distribution: opts.distribution.clone(),
             distribution_sha256: opts.distribution_sha256.clone(),
             offline: opts.offline,
@@ -370,35 +380,23 @@ fn finalize_run(
             driver_files.push(DriverFile::new(output.clone(), pdf));
         }
     }
-    if let Some(output) = &opts.html {
-        let font_dir = opts
-            .html_font_dir
+    if let Some(html_path) = &opts.html {
+        let html = output
+            .html
             .as_ref()
-            .ok_or(CliError::Usage("--html requires --html-font-dir <path>"))?;
-        let mut resolver = umber::DirectoryHtmlFontResolver::new(font_dir, stores.world_mut());
-        let mut html_options = tex_out::html::HtmlOptions::default();
+            .ok_or(CliError::Usage("the accepted session returned no HTML"))?;
         if let Some(asset_dir) = &opts.html_assets {
-            let relative_directory = asset_dir
-                .to_str()
-                .ok_or(CliError::Usage("--html-assets must be valid UTF-8"))?
-                .to_owned();
-            html_options.asset_mode = tex_out::html::AssetMode::Manifest { relative_directory };
-        }
-        let html = umber::html_from_committed_artifacts(
-            &committed_artifacts,
-            &mut resolver,
-            &html_options,
-        )?;
-        if let Some(asset_dir) = &opts.html_assets {
-            let base = output.parent().unwrap_or_else(|| std::path::Path::new("."));
-            for asset in html.assets {
+            let base = html_path
+                .parent()
+                .unwrap_or_else(|| std::path::Path::new("."));
+            for asset in &output.html_assets {
                 driver_files.push(DriverFile::new(
-                    base.join(asset_dir).join(asset.path),
-                    asset.bytes,
+                    base.join(asset_dir).join(&asset.path),
+                    asset.bytes.clone(),
                 ));
             }
         }
-        driver_files.push(DriverFile::new(output.clone(), html.html));
+        driver_files.push(DriverFile::new(html_path.clone(), html.clone()));
     }
     if dumped_format {
         let output = opts

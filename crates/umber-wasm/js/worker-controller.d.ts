@@ -24,6 +24,9 @@ export function compileInWorker(
 		| "persistentCache"
 		| "offline"
 		| "concurrency"
-	> & { format?: string },
+	> & {
+		format?: string;
+		fontResources?: import("./cm-fonts.js").ComputerModernFontResource[];
+	},
 	control?: WorkerCompileControl,
 ): Promise<CompileOutput>;

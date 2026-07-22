@@ -26,12 +26,12 @@ pub use opentype::{
     AcceptedFontContainers, CharacterMap, FONT_FEATURE_POLICY_VERSION, FeatureSetting,
     FontContainer, FontFeaturePolicy, FontInstanceContext, FontInstanceIdentity, FontLanguage,
     FontLimits, FontMetadata, FontObjectIdentity, FontParseError, FontProgramIdentity,
-    FontPurposes, FontRequest, FontRequestKey, FontSelectionError, FontWireError, MathAdjustment,
-    MathConstant, MathConstants, MathGlyphAssembly, MathGlyphConstruction, MathGlyphInfo,
-    MathGlyphPart, MathGlyphVariant, MathKern, MathKernInfo, MathTables, MathValue, MathVariants,
-    NamedVariationInstance, OpenTypeFont, OpenTypeMetrics, OpenTypeTag, ResolvedFont,
-    ShapingTables, VariationAxis, VariationCoordinate, VariationInstance, VariationModel,
-    VariationSelection, WritingDirection,
+    FontPurposes, FontRequest, FontRequestKey, FontSelectionError, FontWireError,
+    LegacyFontMapping, MathAdjustment, MathConstant, MathConstants, MathGlyphAssembly,
+    MathGlyphConstruction, MathGlyphInfo, MathGlyphPart, MathGlyphVariant, MathKern, MathKernInfo,
+    MathTables, MathValue, MathVariants, NamedVariationInstance, OpenTypeFont, OpenTypeMetrics,
+    OpenTypeTag, ResolvedFont, ShapingTables, VariationAxis, VariationCoordinate,
+    VariationInstance, VariationModel, VariationSelection, WritingDirection,
 };
 pub use pdf_encoding::{PdfEncoding, PdfEncodingError};
 pub use pdf_map::{

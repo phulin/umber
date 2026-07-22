@@ -25,6 +25,9 @@ pub const FONT_LAYOUT_POLICY_VERSION: u8 = 1;
 /// Version of the legacy-code to Unicode mapping contract.
 pub const LEGACY_ENCODING_MAP_VERSION: u8 = 1;
 
+const MAX_LEGACY_ENCODING_ENTRY_BYTES: usize = 256;
+const MAX_LEGACY_ENCODING_BYTES: usize = 64 * 1024;
+
 /// Compilation-wide authority used to lay out TFM-style font selections.
 #[derive(Clone, Copy, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum FontLayoutPolicy {
@@ -64,6 +67,21 @@ impl LegacyEncodingMap {
             .any(|entry| entry.is_empty() || entry.chars().any(char::is_control))
         {
             return Err("legacy encoding map entries must be nonempty printable Unicode text");
+        }
+        if entries
+            .iter()
+            .flatten()
+            .any(|entry| entry.len() > MAX_LEGACY_ENCODING_ENTRY_BYTES)
+        {
+            return Err("legacy encoding map entry exceeds 256 UTF-8 bytes");
+        }
+        let total_bytes = entries
+            .iter()
+            .flatten()
+            .try_fold(0usize, |total, entry| total.checked_add(entry.len()))
+            .ok_or("legacy encoding map text length overflow")?;
+        if total_bytes > MAX_LEGACY_ENCODING_BYTES {
+            return Err("legacy encoding map exceeds 65536 UTF-8 bytes");
         }
         let mut hasher = Sha256::new();
         hasher.update(b"umber-legacy-encoding-map-v1");

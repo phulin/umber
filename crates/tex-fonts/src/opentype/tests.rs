@@ -1,5 +1,7 @@
 use sha2::{Digest, Sha256};
 
+use crate::LegacyEncodingMap;
+
 use super::*;
 
 fn key() -> FontRequestKey {
@@ -32,6 +34,7 @@ fn woff2_and_decoded_ttf_have_one_program_identity_and_projection() {
             declared_object_sha256: Some(FontObjectIdentity::for_bytes(&woff2)),
             declared_program_identity: None,
             provenance: Some("CMU Serif under the SIL OFL".to_owned()),
+            legacy_mapping: None,
             bytes: woff2,
         },
         FontLimits::default(),
@@ -52,6 +55,7 @@ fn woff2_and_decoded_ttf_have_one_program_identity_and_projection() {
             )),
             declared_program_identity: Some(web.identity),
             provenance: None,
+            legacy_mapping: None,
             bytes: ttf,
         },
         FontLimits::default(),
@@ -120,6 +124,7 @@ fn stix_math_is_identical_from_woff2_and_native_sfnt() {
             declared_object_sha256: None,
             declared_program_identity: None,
             provenance: Some("STIX Two Math under the SIL OFL".to_owned()),
+            legacy_mapping: None,
         },
         FontLimits::default(),
     )
@@ -138,6 +143,7 @@ fn stix_math_is_identical_from_woff2_and_native_sfnt() {
             declared_object_sha256: None,
             declared_program_identity: Some(web.identity),
             provenance: None,
+            legacy_mapping: None,
         },
         FontLimits::default(),
     )
@@ -213,6 +219,7 @@ fn stix_direct_math_metrics_cover_basic_layout_queries_and_classic_fallback() {
             declared_object_sha256: None,
             declared_program_identity: None,
             provenance: Some("STIX Two Math under the SIL OFL".to_owned()),
+            legacy_mapping: None,
         },
         FontLimits::default(),
     )
@@ -304,6 +311,7 @@ fn opentype_only_font_synthesizes_versioned_text_fontdimens() {
             declared_object_sha256: None,
             declared_program_identity: None,
             provenance: None,
+            legacy_mapping: None,
         },
         FontLimits::default(),
     )
@@ -365,6 +373,7 @@ fn mapped_tfm_identity_records_policy_map_and_classic_math_authority() {
             declared_object_sha256: None,
             declared_program_identity: None,
             provenance: None,
+            legacy_mapping: None,
         },
         FontLimits::default(),
     )
@@ -583,6 +592,7 @@ fn sibling_instances_share_validated_program_storage() {
             declared_object_sha256: None,
             declared_program_identity: None,
             provenance: None,
+            legacy_mapping: None,
         },
         FontLimits::default(),
     )
@@ -613,6 +623,7 @@ fn sibling_instances_share_validated_program_storage() {
             declared_object_sha256: None,
             declared_program_identity: Some(first.identity),
             provenance: None,
+            legacy_mapping: None,
         },
         FontLimits::default(),
         Some(&first),
@@ -650,6 +661,7 @@ fn collection_faces_are_selected_and_bounded() {
                 declared_object_sha256: None,
                 declared_program_identity: None,
                 provenance: None,
+                legacy_mapping: None,
             },
             FontLimits::default(),
         )
@@ -687,6 +699,7 @@ fn collection_faces_are_selected_and_bounded() {
                 declared_object_sha256: None,
                 declared_program_identity: None,
                 provenance: None,
+                legacy_mapping: None,
             },
             limits,
         ),
@@ -779,13 +792,45 @@ fn canonical_request_and_binary_response_encodings_round_trip() {
         declared_object_sha256: Some(FontObjectIdentity::from_bytes([3; 32])),
         declared_program_identity: Some(FontProgramIdentity::from_bytes([4; 32])),
         provenance: Some("fixture".to_owned()),
+        legacy_mapping: Some(LegacyFontMapping {
+            tfm_sha256: [5; 32],
+            encoding: vec![None; 256],
+            embeddable: true,
+        }),
     };
     let encoded = response.to_wire_bytes();
-    assert_eq!(&encoded[..5], b"UFRS\x02");
+    assert_eq!(&encoded[..5], b"UFRS\x03");
     assert_eq!(ResolvedFont::from_wire_bytes(&encoded), Ok(response));
+    let invalid_mapping_count = ResolvedFont {
+        request: key(),
+        container: FontContainer::Woff2,
+        bytes: vec![],
+        declared_object_sha256: None,
+        declared_program_identity: None,
+        provenance: None,
+        legacy_mapping: Some(LegacyFontMapping {
+            tfm_sha256: [0; 32],
+            encoding: vec![None; 255],
+            embeddable: true,
+        }),
+    };
+    assert_eq!(
+        ResolvedFont::from_wire_bytes(&invalid_mapping_count.to_wire_bytes()),
+        Err(FontWireError::InvalidLegacyMappingCount(255))
+    );
     assert_eq!(
         FontRequest::from_wire_bytes(b"UFRQ\x03"),
         Err(FontWireError::UnsupportedVersion)
+    );
+}
+
+#[test]
+fn legacy_encoding_map_bounds_untrusted_text() {
+    let mut entries = vec![None; 256];
+    entries[0] = Some("x".repeat(257));
+    assert_eq!(
+        LegacyEncodingMap::new(entries),
+        Err("legacy encoding map entry exceeds 256 UTF-8 bytes")
     );
 }
 
@@ -829,6 +874,7 @@ fn mismatches_and_malformed_containers_fail_before_publication() {
         declared_object_sha256: Some(FontObjectIdentity::from_bytes([7; 32])),
         declared_program_identity: None,
         provenance: None,
+        legacy_mapping: None,
     };
     assert_eq!(
         OpenTypeFont::parse(&request, mismatch, FontLimits::default()),

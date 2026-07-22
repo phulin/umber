@@ -48,13 +48,16 @@ export async function loadComputerModernTextFont(
 			`Computer Modern font fetch failed: HTTP ${response.status}`,
 		);
 	return {
-		name,
-		tfmContentHash,
-		woff2: new Uint8Array(await response.arrayBuffer()),
-		sha256: SHA256,
-		encoding: options.encoding ?? ot1TextEncoding(),
+		logicalName: name,
+		container: "woff2",
+		bytes: new Uint8Array(await response.arrayBuffer()),
+		objectSha256: SHA256,
 		provenance:
 			"Computer Modern Unicode 0.7.0, SIL Open Font License 1.1; packaged from computer-modern@0.1.3",
-		embeddable: true,
+		legacyMapping: {
+			tfmSha256: tfmContentHash,
+			encoding: options.encoding ?? ot1TextEncoding(),
+			embeddable: true,
+		},
 	};
 }

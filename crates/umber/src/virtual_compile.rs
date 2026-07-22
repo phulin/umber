@@ -9,7 +9,7 @@ use tex_fonts::{
     AcceptedFontContainers, FontLayoutPolicy, FontLimits, FontMappingFallbackPolicy, FontRequest,
     FontRequestKey, OpenTypeFont, ResolvedFont,
 };
-use tex_out::html::{HtmlFontKey, HtmlFontResolver, WebFont};
+use tex_out::html::{HtmlFontAsset, HtmlFontAssets, HtmlFontKey};
 use tex_state::{ContentHash, JobClock, Universe, World};
 
 use crate::{
@@ -168,6 +168,8 @@ pub struct SessionOptions {
     pub dvi: bool,
     /// Request embedded standalone HTML.
     pub html: bool,
+    /// HTML asset publication policy fixed before execution.
+    pub html_asset_mode: tex_out::html::AssetMode,
     /// Font containers the host can provide. Browser sessions use WOFF2.
     pub accepted_font_containers: AcceptedFontContainers,
     /// Versioned authority for unprefixed TFM-style font selections.
@@ -188,6 +190,7 @@ impl Default for SessionOptions {
             limits: SessionLimits::default(),
             dvi: true,
             html: false,
+            html_asset_mode: tex_out::html::AssetMode::Embedded,
             accepted_font_containers: AcceptedFontContainers::WASM,
             font_layout_policy: FontLayoutPolicy::OpenTypePreferred,
             font_mapping_fallback: FontMappingFallbackPolicy::ClassicTfmExact,
@@ -270,18 +273,6 @@ impl EngineMode {
     pub const fn supports_pdf_output(self) -> bool {
         matches!(self, Self::PdfTex | Self::PdfLatex)
     }
-}
-
-/// One explicitly provisioned web font for a host-neutral compile session.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct SessionWebFont {
-    pub name: String,
-    pub tfm_content_hash_hex: String,
-    pub woff2: Vec<u8>,
-    pub sha256: [u8; 32],
-    pub encoding: Vec<Option<String>>,
-    pub provenance: String,
-    pub embeddable: bool,
 }
 
 /// One atomic root-buffer replacement for a persistent compile session.
@@ -477,6 +468,7 @@ struct FontResponseFingerprint {
     declared_object: Option<tex_fonts::FontObjectIdentity>,
     declared_program: Option<tex_fonts::FontProgramIdentity>,
     provenance: Option<String>,
+    legacy_mapping: Option<tex_fonts::LegacyFontMapping>,
 }
 
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
@@ -507,8 +499,7 @@ pub struct VirtualCompileSession {
     font_mapping_fallback: FontMappingFallbackPolicy,
     dvi: bool,
     html: bool,
-    html_fonts: BTreeMap<(String, String), SessionWebFont>,
-    html_font_bytes: usize,
+    html_asset_mode: tex_out::html::AssetMode,
     incremental: Option<tex_incr::Session>,
     accepted_output: Option<MemoryRunOutput>,
     pending_patch: Option<(tex_incr::RevisionId, tex_incr::Edit)>,
@@ -668,8 +659,7 @@ impl VirtualCompileSession {
             font_mapping_fallback: options.font_mapping_fallback,
             dvi: options.dvi,
             html: options.html,
-            html_fonts: BTreeMap::new(),
-            html_font_bytes: 0,
+            html_asset_mode: options.html_asset_mode,
             incremental: None,
             accepted_output: None,
             pending_patch: None,
@@ -715,67 +705,6 @@ impl VirtualCompileSession {
             expansion_stats,
             virtual_font_resources: self.virtual_font_resources,
         })
-    }
-
-    pub fn add_html_font(&mut self, font: SessionWebFont) -> Result<(), CompileError> {
-        if self.accepted_output.is_some() || self.candidate.is_some() {
-            return Err(CompileError::SessionAlreadyStarted);
-        }
-        check_limit(
-            "one HTML font bytes",
-            font.woff2.len(),
-            self.limits.one_file_bytes,
-        )?;
-        if font.encoding.len() != 256 {
-            return Err(CompileError::Html(format!(
-                "HTML font {} encoding has {} entries, expected 256",
-                font.name,
-                font.encoding.len()
-            )));
-        }
-        if tex_fonts::FontObjectIdentity::for_bytes(&font.woff2).bytes() != font.sha256 {
-            return Err(CompileError::Html(format!(
-                "mapped font {} WOFF2 SHA-256 does not match its declared identity",
-                font.name
-            )));
-        }
-        tex_fonts::LegacyEncodingMap::new(font.encoding.clone())
-            .map_err(|message| CompileError::Html(message.to_owned()))?;
-        if font.tfm_content_hash_hex.len() != 64
-            || !font
-                .tfm_content_hash_hex
-                .bytes()
-                .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
-        {
-            return Err(CompileError::Html(
-                "HTML font TFM identity must be 64 lowercase hex digits".to_owned(),
-            ));
-        }
-        let key = (font.name.clone(), font.tfm_content_hash_hex.clone());
-        if let Some(existing) = self.html_fonts.get(&key) {
-            if existing != &font {
-                return Err(CompileError::Html(format!(
-                    "conflicting mapped font bundle for {} with TFM identity {}",
-                    key.0, key.1
-                )));
-            }
-            return Ok(());
-        }
-        let attempted = self.html_font_bytes.checked_add(font.woff2.len()).ok_or(
-            CompileError::LimitExceeded {
-                resource: "cached HTML font bytes",
-                limit: self.limits.cached_file_bytes,
-                attempted: usize::MAX,
-            },
-        )?;
-        check_limit(
-            "cached HTML font bytes",
-            attempted,
-            self.limits.cached_file_bytes,
-        )?;
-        self.html_fonts.insert(key, font);
-        self.html_font_bytes = attempted;
-        Ok(())
     }
 
     pub fn add_user_file(&mut self, path: &str, bytes: Vec<u8>) -> Result<(), CompileError> {
@@ -963,7 +892,7 @@ impl VirtualCompileSession {
         })
     }
 
-    pub fn provide_resolved_file(
+    pub(crate) fn restore_cached_file(
         &mut self,
         request: FileRequestKey,
         virtual_path: &str,
@@ -994,9 +923,14 @@ impl VirtualCompileSession {
         self.refresh_candidate_files()
     }
 
-    /// Installs a trusted manifest hint before the engine requests it.
-    pub fn preload_resolved_file(&mut self, response: ResolvedFile) -> Result<(), CompileError> {
-        self.provide_file_inner(response, false, true)
+    #[cfg(test)]
+    pub(crate) fn provide_resolved_file(
+        &mut self,
+        request: FileRequestKey,
+        virtual_path: &str,
+        bytes: Vec<u8>,
+    ) -> Result<(), CompileError> {
+        self.restore_cached_file(request, virtual_path, bytes)
     }
 
     pub fn provide_resources(
@@ -1095,22 +1029,6 @@ impl VirtualCompileSession {
         Ok(())
     }
 
-    pub fn provide_resolved_font(&mut self, response: ResolvedFont) -> Result<(), CompileError> {
-        let key = ResourceRequestKey::Font(response.request.clone());
-        let was_bound = self.resource_is_bound(&key);
-        self.provide_resolved_font_inner(response)?;
-        if self
-            .awaiting
-            .as_ref()
-            .is_some_and(|awaiting| awaiting.contains(&key))
-            && !was_bound
-            && self.resource_is_bound(&key)
-        {
-            self.response_generation = self.response_generation.saturating_add(1);
-        }
-        self.refresh_candidate_files()
-    }
-
     fn provide_resolved_font_inner(&mut self, response: ResolvedFont) -> Result<(), CompileError> {
         let key = response.request.clone();
         let request = self.font_requests.get(&key).ok_or_else(|| {
@@ -1121,12 +1039,18 @@ impl VirtualCompileSession {
                 key.logical_name().to_owned(),
             ));
         }
+        check_limit(
+            "one font resource bytes",
+            response.bytes.len(),
+            self.limits.one_file_bytes,
+        )?;
         let fingerprint = FontResponseFingerprint {
             container: response.container,
             object: tex_fonts::FontObjectIdentity::for_bytes(&response.bytes),
             declared_object: response.declared_object_sha256,
             declared_program: response.declared_program_identity,
             provenance: response.provenance.clone(),
+            legacy_mapping: response.legacy_mapping.clone(),
         };
         if let Some(existing) = self.font_responses.get(&key) {
             if existing == &fingerprint {
@@ -1143,11 +1067,62 @@ impl VirtualCompileSession {
         let shares_object = shared.is_some();
         let font = OpenTypeFont::parse_reusing(request, response, FontLimits::default(), shared)
             .map_err(|error| CompileError::Font(error.to_string()))?;
-        let additional_bytes = if shares_object {
+        if self.html && fingerprint.provenance.as_deref().is_none_or(str::is_empty) {
+            return Err(CompileError::Font(format!(
+                "font {} has no embedding provenance",
+                key.logical_name()
+            )));
+        }
+        if let Some(mapping) = &fingerprint.legacy_mapping {
+            if self.html && !mapping.embeddable {
+                return Err(CompileError::Font(format!(
+                    "font {} is not licensed for embedding",
+                    key.logical_name()
+                )));
+            }
+            tex_fonts::LegacyEncodingMap::new(mapping.encoding.clone())
+                .map_err(|message| CompileError::Font(message.to_owned()))?;
+            for text in mapping.encoding.iter().flatten() {
+                if text.chars().any(|scalar| font.cmap.glyph(scalar).is_none()) {
+                    return Err(CompileError::Font(format!(
+                        "font {} mapping contains a scalar absent from its cmap",
+                        key.logical_name()
+                    )));
+                }
+            }
+        }
+        let transport_bytes = if shares_object {
             0
         } else {
             font.transport_bytes.len()
         };
+        let metadata_bytes = fingerprint
+            .provenance
+            .as_ref()
+            .map_or(0, String::len)
+            .checked_add(fingerprint.legacy_mapping.as_ref().map_or(0, |mapping| {
+                32usize.saturating_add(1).saturating_add(
+                    mapping
+                        .encoding
+                        .iter()
+                        .flatten()
+                        .map(String::len)
+                        .sum::<usize>(),
+                )
+            }))
+            .ok_or(CompileError::LimitExceeded {
+                resource: "cached resource bytes",
+                limit: self.limits.cached_file_bytes,
+                attempted: usize::MAX,
+            })?;
+        let additional_bytes =
+            transport_bytes
+                .checked_add(metadata_bytes)
+                .ok_or(CompileError::LimitExceeded {
+                    resource: "cached resource bytes",
+                    limit: self.limits.cached_file_bytes,
+                    attempted: usize::MAX,
+                })?;
         let attempted = self
             .cached_file_bytes()
             .checked_add(additional_bytes)
@@ -1161,12 +1136,11 @@ impl VirtualCompileSession {
             attempted,
             self.limits.cached_file_bytes,
         )?;
-        let font_bytes = additional_bytes;
         self.resolved_fonts.insert(key.clone(), font);
         self.font_responses.insert(key.clone(), fingerprint);
         self.font_cached_bytes = self
             .font_cached_bytes
-            .checked_add(font_bytes)
+            .checked_add(additional_bytes)
             .expect("combined cache limit checked overflow");
         Ok(())
     }
@@ -1290,6 +1264,17 @@ impl VirtualCompileSession {
                 let mut template = Universe::from_format(world, format)
                     .map_err(|error| CompileError::Format(error.to_string()))?;
                 self.engine.install_after_format(&mut template);
+                if self.font_layout_policy == FontLayoutPolicy::OpenTypePreferred
+                    && let Some(font) = template
+                        .loaded_fonts()
+                        .skip(1)
+                        .find(|font| font.layout_policy() != FontLayoutPolicy::OpenTypePreferred)
+                {
+                    return Err(CompileError::Font(format!(
+                        "format preloads classic TFM font {}; OpenTypePreferred requires fonts to be selected through typed resources before layout",
+                        font.name()
+                    )));
+                }
                 template
             } else {
                 let mut template = Universe::with_world(world);
@@ -1388,7 +1373,7 @@ impl VirtualCompileSession {
                 accepted_containers: self.accepted_font_containers,
                 layout: self.font_layout_policy,
                 fallback: self.font_mapping_fallback,
-                mapped_fonts: &self.html_fonts,
+                font_responses: &self.font_responses,
             },
         );
         #[cfg(not(target_arch = "wasm32"))]
@@ -1706,12 +1691,12 @@ impl VirtualCompileSession {
                     .expect("a prepared patch has an accepted incremental session")
                     .output_id(),
             };
-            let mut resolver = SessionFontResolver {
-                fonts: &self.html_fonts,
+            let assets = SessionFontResolver {
                 resolved: &self.resolved_fonts,
                 responses: &self.font_responses,
             };
             let html_options = tex_out::html::HtmlOptions {
+                asset_mode: self.html_asset_mode.clone(),
                 revision: execution.revision().raw(),
                 output_id,
                 max_html_bytes: remaining,
@@ -1720,12 +1705,8 @@ impl VirtualCompileSession {
                 ..tex_out::html::HtmlOptions::default()
             };
             Some(
-                crate::html_from_committed_artifacts(
-                    execution.artifacts(),
-                    &mut resolver,
-                    &html_options,
-                )
-                .map_err(|error| CompileError::Html(error.to_string()))?,
+                crate::html_from_committed_artifacts(execution.artifacts(), &assets, &html_options)
+                    .map_err(|error| CompileError::Html(error.to_string()))?,
             )
         } else {
             None
@@ -1875,13 +1856,12 @@ fn resource_sort_key(request: &ResourceRequest) -> (u8, String) {
 }
 
 struct SessionFontResolver<'a> {
-    fonts: &'a BTreeMap<(String, String), SessionWebFont>,
     resolved: &'a BTreeMap<FontRequestKey, OpenTypeFont>,
     responses: &'a BTreeMap<FontRequestKey, FontResponseFingerprint>,
 }
 
-impl HtmlFontResolver for SessionFontResolver<'_> {
-    fn resolve(&mut self, font: &tex_out::FontResource) -> Result<WebFont, String> {
+impl HtmlFontAssets for SessionFontResolver<'_> {
+    fn font_asset(&self, font: &tex_out::FontResource) -> Result<HtmlFontAsset, String> {
         if let Some(binding) = &font.opentype {
             let (key, supplied) = self
                 .resolved
@@ -1944,15 +1924,11 @@ impl HtmlFontResolver for SessionFontResolver<'_> {
             let provenance = response.provenance.clone().ok_or_else(|| {
                 format!("retained font {} has no embedding provenance", font.name)
             })?;
-            let mapped_bundle = self
-                .fonts
-                .get(&(font.name.clone(), font.tfm_content_hash.hex()));
+            let mapped_bundle = response.legacy_mapping.as_ref();
             let mut encoding = if let Some(bundle) = mapped_bundle {
-                if bundle.sha256 != supplied.object_identity.bytes()
-                    || bundle.woff2.as_slice() != supplied.transport_bytes.as_ref()
-                {
+                if bundle.tfm_sha256 != font.tfm_content_hash.bytes() {
                     return Err(format!(
-                        "retained mapped bundle for {} conflicts with the layout font",
+                        "retained mapping for {} has the wrong TFM identity",
                         font.name
                     ));
                 }
@@ -1980,30 +1956,19 @@ impl HtmlFontResolver for SessionFontResolver<'_> {
                     ));
                 }
             }
-            return Ok(WebFont {
+            return Ok(HtmlFontAsset {
                 key: HtmlFontKey::from(font),
                 woff2: supplied.transport_bytes.to_vec(),
                 sha256: supplied.object_identity.bytes(),
                 encoding,
                 provenance,
-                embeddable: true,
+                embeddable: mapped_bundle.is_none_or(|mapping| mapping.embeddable),
             });
         }
-        let lookup = (font.name.clone(), font.tfm_content_hash.hex());
-        let supplied = self.fonts.get(&lookup).ok_or_else(|| {
-            format!(
-                "no HTML font was supplied for {} with TFM identity {}",
-                font.name, lookup.1
-            )
-        })?;
-        Ok(WebFont {
-            key: HtmlFontKey::from(font),
-            woff2: supplied.woff2.clone(),
-            sha256: supplied.sha256,
-            encoding: supplied.encoding.clone(),
-            provenance: supplied.provenance.clone(),
-            embeddable: supplied.embeddable,
-        })
+        Err(format!(
+            "classic TFM font {} has no retained OpenType resource",
+            font.name
+        ))
     }
 }
 

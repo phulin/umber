@@ -263,6 +263,10 @@ impl Clone for Stores {
 }
 
 impl Stores {
+    pub(crate) fn loaded_fonts(&self) -> impl Iterator<Item = &LoadedFont> {
+        self.fonts.iter()
+    }
+
     pub(crate) fn retain_diagnostic_origins_from(&mut self, fork: &Self, roots: &[OriginId]) {
         self.provenance
             .retain_origin_graph_from(&fork.provenance, roots);

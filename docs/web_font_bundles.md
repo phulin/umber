@@ -304,11 +304,14 @@ The implemented policy contract is version 1. `VirtualCompileSession` defaults
 to `OpenTypePreferred` with an explicitly recorded `ClassicTfmExact` fallback;
 callers may instead select the typed `Error` fallback or the compilation-wide
 `ClassicTfmExact` policy. The WASM options expose these as
-`fontLayoutPolicy` and `fontMappingFallback`. Native compatibility CLI runs
-select classic mode explicitly. A mapped bundle must be registered before a
-compile begins and is keyed by `(TFM name, TFM SHA-256)`. Conflicting bundles,
-declared-object mismatches, response-byte mismatches, and mapped scalars absent
-from the validated cmap fail before the font becomes live.
+`fontLayoutPolicy` and `fontMappingFallback`. Native and WASM callers provide
+a mapped font only as the typed response to the ordinary `FontRequest`.
+`ResolvedFont.legacy_mapping` carries the exact TFM SHA-256, 256-entry code
+map, and affirmative embedding permission beside the same font bytes and
+provenance used for layout. There is no preliminary bundle registration call.
+Conflicting responses, wrong TFM identities, declared-object mismatches,
+unlicensed embedding, and mapped scalars absent from the validated cmap fail
+before the font becomes live.
 
 Mapping discovery waits until the TFM bytes are available, because basename is
 not identity. The matching WOFF2 is then acquired through the ordinary typed
@@ -613,14 +616,15 @@ fallback family or uncovered scalar, and retains the documented 1/30 CSS-pixel
 coordinate tolerance. Worker cancellation and persistent cold/warm/offline
 cache reuse remain part of that same gate.
 
-### Next 6: remove superseded delivery paths and release
+### Stage 6: superseded delivery paths removed
 
 Tracked by `umber2-y2ei.10`; depends on full vertical coverage.
 
-Delete superseded web-font binding, preload, separate encoding-map, and
-post-finalization acquisition APIs. Migrate supported callers, finish resource
-lifetime/security/performance/licensing review, and ship the modern policy
-with `ClassicTfmExact` as the explicit compatibility mode.
+The release cleanup removed the superseded web-font binding, preload,
+separate encoding-map, and post-finalization acquisition APIs. Supported
+callers use `advance`/`provideResources` or the JavaScript resolver facade.
+`OpenTypePreferred` is the modern default and `ClassicTfmExact` is the explicit
+compatibility mode.
 
 ## Exit criteria
 

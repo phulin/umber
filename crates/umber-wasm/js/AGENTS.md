@@ -16,7 +16,7 @@ Run authored tests with `node --test crates/umber-wasm/js/*.test.js`.
 - `worker-controller.test.js`: transfer fidelity and teardown tests.
 - `worker-entry.js`: dedicated module-worker compile entry and transfer response.
 - `html-preview.js` / `html-preview.d.ts`: CSP-validated scriptless iframe installer for canonical generated HTML.
-- `cm-fonts.js` / `cm-fonts.d.ts`: packaged CM Unicode face loader and explicit OT1 text mapping helper.
+- `cm-fonts.js` / `cm-fonts.d.ts`: packaged CM Unicode typed font-resource loader with its exact OT1 mapping and license metadata.
 - `source-map.js` / `source-map.d.ts`: DOM point to revision-checked rendered-source query helper.
 - `manifest-resolver.js`: validated immutable-manifest HTTP resolver.
 - `manifest-schema.js`: immutable manifest, lookup-key, path, and compatibility validation.

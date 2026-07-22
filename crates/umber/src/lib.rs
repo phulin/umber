@@ -29,7 +29,7 @@ mod virtual_compile;
 
 pub const PACKAGE_VERSION: &str = env!("CARGO_PKG_VERSION");
 
-pub use html_output::DirectoryHtmlFontResolver;
+pub use html_output::DirectoryFontResourceResolver;
 pub use input_search::{TexFontSearchPath, TexInputSearchPath};
 pub use latex_project::{
     BibliographyProjectOptions, LatexProjectAttempt, LatexProjectError, LatexProjectLimits,
@@ -47,8 +47,8 @@ pub use pdftex::PDFTEX_PRIMITIVE_NAMES;
 pub use tex_fonts::{
     AcceptedFontContainers, FeatureSetting, FontContainer, FontFeaturePolicy, FontLanguage,
     FontLayoutPolicy, FontMappingFallbackPolicy, FontObjectIdentity, FontProgramIdentity,
-    FontPurposes, FontRequest, FontRequestKey, OpenTypeTag, ResolvedFont, VariationCoordinate,
-    VariationInstance, VariationSelection, WritingDirection,
+    FontPurposes, FontRequest, FontRequestKey, LegacyFontMapping, OpenTypeTag, ResolvedFont,
+    VariationCoordinate, VariationInstance, VariationSelection, WritingDirection,
 };
 pub use tex_incr::{RenderedOutputId, ReuseMetrics, RevisionId, SameHistoryStop};
 pub use umber_vfs::FileContentId;
@@ -57,8 +57,8 @@ pub use virtual_compile::{
     CompileDiagnostic, CompileError, CompileTelemetry, EngineMode, FileKind, FileRequest,
     FileRequestKey, NeedResources, PdfVirtualFontResources, RenderedSourceLocation,
     RenderedSourceResult, RequestKeyError, ResolvedFile, ResourceDomain, ResourceRequest,
-    ResourceResponse, RetentionMetrics, SessionLimits, SessionOptions, SessionWebFont, SourcePatch,
-    VfsLimitError, VfsLimitKind, VfsLimits, VirtualCompileSession, VirtualPath, VirtualPathError,
+    ResourceResponse, RetentionMetrics, SessionLimits, SessionOptions, SourcePatch, VfsLimitError,
+    VfsLimitKind, VfsLimits, VirtualCompileSession, VirtualPath, VirtualPathError,
 };
 
 /// The only checkpoint policy supported by composed engine sessions.
@@ -1225,23 +1225,23 @@ pub fn write_dvi_from_artifacts<W: std::io::Write>(
 ///
 /// Font acquisition is an explicit downstream capability and never reaches
 /// back into live engine state.
-pub fn html_from_committed_artifacts<R: tex_out::html::HtmlFontResolver>(
+pub fn html_from_committed_artifacts<R: tex_out::html::HtmlFontAssets>(
     artifacts: &[CommittedArtifact],
-    resolver: &mut R,
+    assets: &R,
     options: &tex_out::html::HtmlOptions,
 ) -> Result<tex_out::html::HtmlOutput, HtmlBuildError> {
     let pages = artifacts
         .iter()
         .map(|artifact| tex_out::PageArtifact::from_bytes(artifact.bytes()))
         .collect::<Result<Vec<_>, _>>()?;
-    Ok(tex_out::html::write_html(&pages, resolver, options)?)
+    Ok(tex_out::html::write_html(&pages, assets, options)?)
 }
 
 /// Replays durable artifacts through the HTML driver one page at a time.
-pub fn html_from_artifacts<R: tex_out::html::HtmlFontResolver>(
+pub fn html_from_artifacts<R: tex_out::html::HtmlFontAssets>(
     stores: &Universe,
     artifacts: &[ContentHash],
-    resolver: &mut R,
+    assets: &R,
     options: &tex_out::html::HtmlOptions,
 ) -> Result<tex_out::html::HtmlOutput, HtmlBuildError> {
     let mut pages = Vec::with_capacity(artifacts.len());
@@ -1252,7 +1252,7 @@ pub fn html_from_artifacts<R: tex_out::html::HtmlFontResolver>(
             .ok_or(HtmlBuildError::MissingArtifact(hash))?;
         pages.push(tex_out::PageArtifact::from_bytes(&bytes)?);
     }
-    Ok(tex_out::html::write_html(&pages, resolver, options)?)
+    Ok(tex_out::html::write_html(&pages, assets, options)?)
 }
 
 /// Runs in-memory TeX through the `umber run` executor setup.

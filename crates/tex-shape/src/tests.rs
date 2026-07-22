@@ -41,6 +41,7 @@ fn loaded_font(
             declared_object_sha256: Some(FontObjectIdentity::for_bytes(bytes)),
             declared_program_identity: None,
             provenance: Some("committed SIL Open Font License 1.1 fixture".to_owned()),
+            legacy_mapping: None,
             bytes: bytes.to_vec(),
         },
         FontLimits::default(),

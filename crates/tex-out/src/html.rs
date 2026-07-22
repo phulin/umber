@@ -46,7 +46,7 @@ impl From<&FontResource> for HtmlFontKey {
 
 /// A fully explicit browser font and TeX-code mapping.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct WebFont {
+pub struct HtmlFontAsset {
     pub key: HtmlFontKey,
     pub woff2: Vec<u8>,
     pub sha256: [u8; 32],
@@ -58,8 +58,9 @@ pub struct WebFont {
 
 /// Downstream font acquisition. Implementations must resolve exact keys and
 /// must not use platform font fallback.
-pub trait HtmlFontResolver {
-    fn resolve(&mut self, font: &FontResource) -> Result<WebFont, String>;
+pub trait HtmlFontAssets {
+    /// Returns an already-retained, already-selected asset; this must not acquire resources.
+    fn font_asset(&self, font: &FontResource) -> Result<HtmlFontAsset, String>;
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -219,27 +220,33 @@ impl std::fmt::Display for HtmlError {
                 write!(f, "HTML page {page} references missing font {font_id}")
             }
             Self::FontResolution { font, message } => {
-                write!(f, "failed to resolve web font {font}: {message}")
+                write!(
+                    f,
+                    "retained HTML font asset {font} is unavailable: {message}"
+                )
             }
             Self::FontKeyMismatch { font } => {
                 write!(
                     f,
-                    "web font resolver returned the wrong identity for {font}"
+                    "retained HTML font asset has the wrong identity for {font}"
                 )
             }
             Self::InvalidEncodingLength { font, count } => {
                 write!(
                     f,
-                    "web font {font} encoding has {count} entries, expected 256"
+                    "HTML font asset {font} mapping has {count} entries, expected 256"
                 )
             }
             Self::MissingTextMapping { font, code } => {
-                write!(f, "web font {font} has no text mapping for code {code}")
+                write!(
+                    f,
+                    "HTML font asset {font} has no text mapping for code {code}"
+                )
             }
             Self::MissingFontGlyph { font, code, ch } => {
                 write!(
                     f,
-                    "web font {font} has no glyph for code {code} mapping {ch:?}"
+                    "HTML font asset {font} has no glyph for code {code} mapping {ch:?}"
                 )
             }
             Self::MissingMathFontInstance => {
@@ -256,14 +263,17 @@ impl std::fmt::Display for HtmlError {
                 f.write_str("HTML math event stream is not properly nested")
             }
             Self::UnsafeTextMapping { font, code } => {
-                write!(f, "web font {font} code {code} maps to unsafe HTML text")
+                write!(
+                    f,
+                    "HTML font asset {font} code {code} maps to unsafe HTML text"
+                )
             }
-            Self::EmptyFontAsset { font } => write!(f, "web font {font} has no WOFF2 bytes"),
+            Self::EmptyFontAsset { font } => write!(f, "HTML font asset {font} has no WOFF2 bytes"),
             Self::CorruptFontAsset { font } => {
-                write!(f, "web font {font} does not match its SHA-256")
+                write!(f, "HTML font asset {font} does not match its SHA-256")
             }
             Self::UnlicensedFont { font } => {
-                write!(f, "web font {font} is not licensed for embedding")
+                write!(f, "HTML font asset {font} is not licensed for embedding")
             }
             Self::AssetTooLarge { bytes, limit } => {
                 write!(
@@ -315,9 +325,9 @@ impl From<crate::dvi::coordinates::CoordinateError> for HtmlError {
     }
 }
 
-pub fn write_html<R: HtmlFontResolver>(
+pub fn write_html<R: HtmlFontAssets>(
     pages: &[PageArtifact],
-    resolver: &mut R,
+    assets: &R,
     options: &HtmlOptions,
 ) -> Result<HtmlOutput, HtmlError> {
     if pages.is_empty() {
@@ -361,12 +371,12 @@ pub fn write_html<R: HtmlFontResolver>(
             Ok::<PositionedPage, HtmlError>(positioned)
         })
         .collect::<Result<Vec<_>, _>>()?;
-    write_positioned_html(&positioned, resolver, options)
+    write_positioned_html(&positioned, assets, options)
 }
 
-pub fn write_positioned_html<R: HtmlFontResolver>(
+pub fn write_positioned_html<R: HtmlFontAssets>(
     pages: &[PositionedPage],
-    resolver: &mut R,
+    assets: &R,
     options: &HtmlOptions,
 ) -> Result<HtmlOutput, HtmlError> {
     if pages.is_empty() {
@@ -402,8 +412,8 @@ pub fn write_positioned_html<R: HtmlFontResolver>(
             if resolved.contains_key(&key) {
                 continue;
             }
-            let web = resolver
-                .resolve(font)
+            let web = assets
+                .font_asset(font)
                 .map_err(|message| HtmlError::FontResolution {
                     font: font.name.clone(),
                     message,
@@ -459,7 +469,7 @@ const BASE_CSS: &str = concat!(
 
 #[derive(Clone)]
 struct ResolvedFont {
-    web: WebFont,
+    web: HtmlFontAsset,
     digest_hex: String,
     family: String,
     sfnt: Vec<u8>,
@@ -467,7 +477,7 @@ struct ResolvedFont {
 
 fn validate_font(
     font: &FontResource,
-    web: WebFont,
+    web: HtmlFontAsset,
     options: &HtmlOptions,
 ) -> Result<ResolvedFont, HtmlError> {
     let key = HtmlFontKey::from(font);
@@ -541,6 +551,7 @@ fn validate_font(
                 declared_object_sha256: Some(opentype.object_identity),
                 declared_program_identity: Some(opentype.program_identity),
                 provenance: None,
+                legacy_mapping: None,
             },
             tex_fonts::FontLimits::default(),
         )

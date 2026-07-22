@@ -73,6 +73,8 @@ pub(super) fn run(mut args: impl Iterator<Item = String>) -> Result<(), WatchErr
         engine: EngineMode::Tex82,
         dvi: true,
         html: false,
+        html_font_dir: None,
+        html_asset_directory: None,
         distribution,
         distribution_sha256,
         offline,

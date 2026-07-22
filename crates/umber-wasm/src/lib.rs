@@ -4,7 +4,7 @@ mod options;
 mod result;
 
 use js_sys::{Array, Uint8Array};
-use options::{parse_options, parse_project_options, parse_request_key, parse_resource_responses};
+use options::{parse_options, parse_project_options, parse_resource_responses};
 use result::attempt_result;
 use umber::{LatexProjectSession, VirtualCompileSession};
 use wasm_bindgen::prelude::*;
@@ -52,6 +52,11 @@ export type ResourceResponse =
       objectSha256?: string;
       programIdentity?: string;
       provenance?: string;
+      legacyMapping?: {
+        tfmSha256: string;
+        encoding: Array<string | null>;
+        embeddable: boolean;
+      };
     })
   | (FontRequestKey & { type: "font-unavailable" });
 
@@ -76,7 +81,7 @@ export interface SessionOptions {
   dvi?: boolean;
   clock?: { year: number; month: number; day: number; minutes: number };
   limits?: Partial<SessionLimits>;
-  html?: { fonts: HtmlFontInput[] };
+  html?: {};
   fontLayoutPolicy?: "opentype-preferred" | "classic-tfm-exact";
   fontMappingFallback?: "error" | "classic-tfm-exact";
 }
@@ -127,16 +132,6 @@ export interface RetentionMetrics {
   outputBytes: number;
   resourceBytes: number;
   protectedOverageBytes: number;
-}
-
-export interface HtmlFontInput {
-  name: string;
-  tfmContentHash: string;
-  woff2: Uint8Array;
-  sha256: string;
-  encoding: Array<string | null>;
-  provenance: string;
-  embeddable: boolean;
 }
 
 export interface CompileOutputFile {
@@ -204,9 +199,6 @@ extern "C" {
     #[wasm_bindgen(typescript_type = "FileRequestKey")]
     pub type JsFileRequestKey;
 
-    #[wasm_bindgen(typescript_type = "HtmlFontInput")]
-    pub type JsHtmlFontInput;
-
     #[wasm_bindgen(typescript_type = "SourcePatch")]
     pub type JsSourcePatch;
 
@@ -261,28 +253,6 @@ impl CompilerSession {
     pub fn add_user_file(&mut self, path: &str, bytes: &Uint8Array) -> Result<(), JsValue> {
         self.session_mut()?
             .add_user_file(path, bytes.to_vec())
-            .map_err(compile_boundary_error)
-    }
-
-    #[wasm_bindgen(js_name = addHtmlFont)]
-    pub fn add_html_font(&mut self, font: &JsHtmlFontInput) -> Result<(), JsValue> {
-        let font = options::parse_html_font(font.as_ref())?;
-        self.session_mut()?
-            .add_html_font(font)
-            .map_err(compile_boundary_error)
-    }
-
-    #[wasm_bindgen(js_name = provideResolvedFile)]
-    pub fn provide_resolved_file(
-        &mut self,
-        request: &JsFileRequestKey,
-        #[allow(non_snake_case)] virtualPath: &str,
-        bytes: &Uint8Array,
-    ) -> Result<(), JsValue> {
-        let request = parse_request_key(request.as_ref())
-            .map_err(|error| tag_js_error(error, "invalid-resource"))?;
-        self.session_mut()?
-            .provide_resolved_file(request, virtualPath, bytes.to_vec())
             .map_err(compile_boundary_error)
     }
 

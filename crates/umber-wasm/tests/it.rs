@@ -6,10 +6,10 @@ use bib_engine::{
 };
 use js_sys::{Array, Date, Object, Reflect, Uint8Array};
 use tex_state::{Universe, World};
-use umber::{FontObjectIdentity, prepare_run_stores};
+use umber::prepare_run_stores;
 use umber_wasm::{
-    CompilerSession, JsFileRequestKey, JsHtmlFontInput, JsProjectSessionOptions, JsSessionOptions,
-    JsSourcePatch, ProjectSession, format_schema_version, package_version,
+    CompilerSession, JsProjectSessionOptions, JsSessionOptions, JsSourcePatch, ProjectSession,
+    format_schema_version, package_version,
 };
 use wasm_bindgen::{JsCast, JsValue};
 use wasm_bindgen_futures::JsFuture;
@@ -254,6 +254,7 @@ fn opentype_math_woff2_projects_authoritative_data_and_explicit_fallback_in_wasm
                 declared_object_sha256: None,
                 declared_program_identity: None,
                 provenance: Some("pinned browser fixture".to_owned()),
+                legacy_mapping: None,
             },
             FontLimits::default(),
         )
@@ -339,12 +340,7 @@ fn typed_attempts_preserve_binary_inputs_and_clear_cached_allocations() {
     assert_eq!(string_field(&request, "originalName"), "remote");
 
     let remote = b"%\0\n\\input second ";
-    session
-        .provide_resolved_file(
-            request.unchecked_ref::<JsFileRequestKey>(),
-            "/texlive/tex/remote.tex",
-            &bytes(remote),
-        )
+    provide_file(&mut session, &request, "/texlive/tex/remote.tex", remote)
         .expect("provide binary remote input");
     let second = session.compile_attempt().expect("second missing attempt");
     assert_eq!(string_field(second.as_ref(), "kind"), "need-resources");
@@ -352,13 +348,13 @@ fn typed_attempts_preserve_binary_inputs_and_clear_cached_allocations() {
     let second_request = second_files.get(0);
     assert_eq!(string_field(&second_request, "name"), "second.tex");
     let second_bytes = b"%\0\n";
-    session
-        .provide_resolved_file(
-            second_request.unchecked_ref(),
-            "/texlive/tex/second.tex",
-            &bytes(second_bytes),
-        )
-        .expect("provide second binary input");
+    provide_file(
+        &mut session,
+        &second_request,
+        "/texlive/tex/second.tex",
+        second_bytes,
+    )
+    .expect("provide second binary input");
     let complete = session.compile_attempt().expect("complete retry");
     assert_eq!(string_field(complete.as_ref(), "kind"), "complete");
     assert_eq!(
@@ -477,13 +473,7 @@ fn pdftex_ximage_enquiries_survive_binary_resource_retry() {
     png.extend_from_slice(&40_u32.to_be_bytes());
     png.extend_from_slice(&20_u32.to_be_bytes());
     png.extend_from_slice(&[8, 2, 0, 0, 0]);
-    session
-        .provide_resolved_file(
-            request.unchecked_ref::<JsFileRequestKey>(),
-            "/texlive/figure.png",
-            &bytes(&png),
-        )
-        .expect("provide PNG");
+    provide_file(&mut session, &request, "/texlive/figure.png", &png).expect("provide PNG");
 
     let complete = session.compile_attempt().expect("complete retry");
     assert_eq!(string_field(complete.as_ref(), "kind"), "complete");
@@ -510,7 +500,6 @@ async fn generated_html_projects_exact_geometry_at_firefox_zoom_levels() {
     session
         .add_user_file("main.tex", &bytes(source))
         .expect("add source");
-    register_html_font(&mut session);
     let mut request_count = 0;
     let mut complete = session.advance().expect("font request");
     while string_field(complete.as_ref(), "kind") == "need-resources" {
@@ -531,6 +520,9 @@ async fn generated_html_projects_exact_geometry_at_firefox_zoom_levels() {
                 "provenance",
                 &JsValue::from_str("test CM Unicode fixture under the SIL OFL"),
             );
+            if string_field(&request, "logicalName") == "cmr10" {
+                set(&response, "legacyMapping", legacy_font_mapping().as_ref());
+            }
             responses.push(&response);
         }
         session
@@ -701,11 +693,7 @@ fn errors_are_typed_and_invalid_boundary_values_throw() {
     let request = Object::new();
     set(&request, "kind", &JsValue::from_str("other"));
     set(&request, "name", &JsValue::from_str("x.tex"));
-    assert!(
-        missing_main
-            .provide_resolved_file(request.unchecked_ref(), "/texlive/x.tex", &bytes(b"x"),)
-            .is_err()
-    );
+    assert!(provide_file(&mut missing_main, request.as_ref(), "/texlive/x.tex", b"x").is_err());
 
     let limited_options = options("main.tex");
     let limits = Object::new();
@@ -899,23 +887,18 @@ fn formatted_session_survives_multiple_resource_retries() {
     let first = session.advance().expect("first resource request");
     assert_eq!(string_field(first.as_ref(), "kind"), "need-resources");
     let first_request = Array::from(&field(first.as_ref(), "required")).get(0);
-    session
-        .provide_resolved_file(
-            first_request.unchecked_ref(),
-            "/texlive/first.tex",
-            &bytes(b"\\input second "),
-        )
-        .expect("provide first input");
+    provide_file(
+        &mut session,
+        &first_request,
+        "/texlive/first.tex",
+        b"\\input second ",
+    )
+    .expect("provide first input");
 
     let second = session.advance().expect("second resource request");
     assert_eq!(string_field(second.as_ref(), "kind"), "need-resources");
     let second_request = Array::from(&field(second.as_ref(), "required")).get(0);
-    session
-        .provide_resolved_file(
-            second_request.unchecked_ref(),
-            "/texlive/second.tex",
-            &bytes(b""),
-        )
+    provide_file(&mut session, &second_request, "/texlive/second.tex", b"")
         .expect("provide second input");
     assert_eq!(
         string_field(session.advance().expect("complete retry").as_ref(), "kind"),
@@ -1122,8 +1105,19 @@ fn file_response(request: &Object, path: &str, contents: &[u8]) -> Object {
     response
 }
 
+fn provide_file(
+    session: &mut CompilerSession,
+    request: &JsValue,
+    path: &str,
+    contents: &[u8],
+) -> Result<(), JsValue> {
+    let request: Object = request.clone().unchecked_into();
+    let response = file_response(&request, path, contents);
+    set(&response, "type", &JsValue::from_str("file"));
+    session.provide_resources(&Array::of1(&response))
+}
+
 fn provide_requested_html_font(session: &mut CompilerSession) {
-    register_html_font(session);
     let woff2 = include_bytes!("../assets/cmu-serif-500-roman.woff2");
     let missing = session.advance().expect("font request");
     assert_eq!(string_field(missing.as_ref(), "kind"), "need-resources");
@@ -1138,28 +1132,20 @@ fn provide_requested_html_font(session: &mut CompilerSession) {
         "provenance",
         &JsValue::from_str("test CM fixture"),
     );
+    set(&response, "legacyMapping", legacy_font_mapping().as_ref());
     session
         .provide_resources(&Array::of1(&response))
         .expect("provide HTML font");
 }
 
-fn register_html_font(session: &mut CompilerSession) {
+fn legacy_font_mapping() -> Object {
     let tfm = include_bytes!("../../tex-fonts/tests/fixtures/cm/cmr10.tfm");
-    let woff2 = include_bytes!("../assets/cmu-serif-500-roman.woff2");
-    let font = Object::new();
-    set(&font, "name", &JsValue::from_str("cmr10"));
+    let mapping = Object::new();
     set(
-        &font,
-        "tfmContentHash",
+        &mapping,
+        "tfmSha256",
         &JsValue::from_str(&tex_state::ContentHash::from_bytes(tfm).hex()),
     );
-    set(&font, "woff2", bytes(woff2).as_ref());
-    let digest = FontObjectIdentity::for_bytes(woff2)
-        .bytes()
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect::<String>();
-    set(&font, "sha256", &JsValue::from_str(&digest));
     let encoding = Array::new_with_length(256);
     for code in 32_u8..=126 {
         encoding.set(
@@ -1168,21 +1154,19 @@ fn register_html_font(session: &mut CompilerSession) {
         );
     }
     encoding.set(0, JsValue::from_str("Γ"));
-    set(&font, "encoding", &encoding);
-    set(
-        &font,
-        "provenance",
-        &JsValue::from_str("test CM fixture under the SIL OFL"),
-    );
-    set(&font, "embeddable", &JsValue::TRUE);
-    session
-        .add_html_font(font.unchecked_ref::<JsHtmlFontInput>())
-        .expect("register exact HTML mapping");
+    set(&mapping, "encoding", &encoding);
+    set(&mapping, "embeddable", &JsValue::TRUE);
+    mapping
 }
 
 fn session_with_format(main_path: &str, format: &[u8]) -> CompilerSession {
     let options = options(main_path);
     set(&options, "format", bytes(format).as_ref());
+    set(
+        &options,
+        "fontLayoutPolicy",
+        &JsValue::from_str("classic-tfm-exact"),
+    );
     CompilerSession::new(options.unchecked_ref::<JsSessionOptions>()).expect("construct session")
 }
 

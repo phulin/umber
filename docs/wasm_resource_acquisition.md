@@ -126,6 +126,12 @@ needs it, before font-dependent layout. Because the selected font object is
 retained, HTML generation reuses it and does not introduce a distinct
 post-layout font-finalization state.
 
+Format images are subject to the same ordering rule. An
+`OpenTypePreferred` session fails before executing document input when a
+loaded format contains classic-only font records; it never attaches a web font
+to an already laid-out classic artifact. Clients may run such formats under
+the explicit `ClassicTfmExact` compatibility policy, without modern HTML.
+
 The initial file MVP may still restart compilation after a file miss while the
 general session is introduced. The completed architecture resumes from the
 appropriate retained session boundary and never repeats completed work merely
@@ -332,8 +338,10 @@ markup or executable URLs derived from document input.
    acquisition-only resolver contract.
 8. Add long-lived retain/release accounting and client-cache integration hooks
    for incremental render sessions.
-9. Remove superseded preload and post-finalization font-delivery APIs after the
-   OpenType path covers native, WASM, worker, and browser fixtures.
+9. Superseded preload and post-finalization font-delivery APIs were removed
+   after the OpenType path covered native, WASM, worker, and browser fixtures.
+   Legacy mapping, embedding permission, provenance, and WOFF2 now arrive
+   atomically in the typed font response.
 
 ## Exit criteria
 

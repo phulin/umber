@@ -103,7 +103,8 @@ positioned containers, and zero layout participation preserve TeX's line set.
 
 Character scalars are retained as `u32` values in `source_codes`. Explicit
 OpenType-only runs serialize those scalars directly as Unicode text; mapped
-TFM runs obtain text from the exact encoding map supplied with the web font.
+TFM runs obtain text from the exact legacy mapping carried by the selected
+typed font response.
 The positioned representation keeps physical DVI codes separately as optional
 bytes, so retaining Unicode does not widen TeX82 DVI. Artifact schema 12 records
 the complete source sequence for a ligature, including every character in
@@ -133,6 +134,12 @@ mapping version, TFM identity, OpenType program/instance identity, and
 fontdimen-synthesis version are committed in the artifact. `ClassicTfmExact`
 retains schema 1 behavior for parity documents, virtual fonts, and explicit
 legacy output.
+
+An `OpenTypePreferred` session rejects a format image that already
+contains classic-only font records. Those selections predate the resource
+request boundary and therefore cannot be upgraded after layout. Compatibility
+formats remain available under `ClassicTfmExact`; modern HTML formats must be
+built with versioned OpenType selections already recorded.
 
 OpenType math extends the positioned output as a detached overlay rather than
 inserting a reflowing subtree into the legacy page tree. Artifact schema 23
@@ -185,15 +192,15 @@ Artifact schema 23 records the selected layout policy, explicit mapping
 fallback result, encoding-map version and identity, fontdimen-synthesis
 version, selected OpenType program, transport-object, collection face,
 default/named/explicit resolved variation, feature policy, direction, script,
-language, and instance identities beside the classic TeX metric identity. A downstream
-`HtmlFontResolver` is only an asset-access adapter: host-neutral sessions bind
-it to the already validated and retained resource rather than performing a
-second acquisition. Legacy native TFM-only artifacts may still use an explicit
-driver binding during migration. The resulting `WebFont` contains:
+language, and instance identities beside the classic TeX metric identity. The
+HTML serializer receives an `HtmlFontAssets` read-only view of resources
+already validated and retained by the session; it cannot acquire, replace, or
+map a font after layout. The resulting `HtmlFontAsset` contains:
 
 - the TeX font name, TFM content hash/checksum, design and selected sizes;
 - WOFF2 bytes and their SHA-256 content identity;
-- one total mapping from every used 8-bit TeX code to Unicode text;
+- the total legacy mapping from the typed response when the artifact uses
+  TFM-style source codes;
 - a redistribution/provenance string and an affirmative embed license; and
 - fixed OpenType feature, variation, direction, script, and language settings.
 
@@ -210,10 +217,10 @@ from TeX input. Deterministic subsetting is allowed only when the subsetter,
 version, glyph closure, tables, and output hash are pinned. Schema 1 embeds
 whole supplied faces to keep native and WASM bytes identical.
 
-The initial WASM convenience bundle provisions a redistributable CM Unicode
-Roman face and an explicit OT1-like text map. Math fonts and other encodings
-must currently be supplied as exact resolver bindings; absent mappings fail
-serialization instead of falling back. A future bundle can add pinned
+The initial WASM convenience resource provisions a redistributable CM Unicode
+Roman face and an explicit OT1-like mapping as one typed response. Math fonts
+and other encodings use that same resolver path; absent mappings fail before
+layout instead of during serialization. A future bundle can add pinned
 OML/OMS/OMX faces and maps without changing engine state or the artifact.
 The repository does not silently convert a host TeX installation or infer an
 encoding from a font name. Native callers may load a verified bundle from a

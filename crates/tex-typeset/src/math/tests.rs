@@ -93,6 +93,7 @@ fn parse_stix_math(container: FontContainer, bytes: Vec<u8>) -> OpenTypeFont {
             declared_object_sha256: None,
             declared_program_identity: None,
             provenance: Some("STIX Two Math under the SIL OFL".to_owned()),
+            legacy_mapping: None,
         },
         FontLimits::default(),
     )

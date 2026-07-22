@@ -127,6 +127,7 @@ fn opentype_cmap_accepts_a_non_byte_horizontal_character() {
             declared_object_sha256: None,
             declared_program_identity: None,
             provenance: None,
+            legacy_mapping: None,
             bytes: include_bytes!("../../../../umber-wasm/assets/cmu-serif-500-roman.woff2")
                 .to_vec(),
         },
@@ -200,6 +201,7 @@ fn opentype_test_font(stores: &mut Universe, points: i32) -> tex_state::ids::Fon
             declared_object_sha256: None,
             declared_program_identity: None,
             provenance: None,
+            legacy_mapping: None,
             bytes: include_bytes!("../../../../umber-wasm/assets/cmu-serif-500-roman.woff2")
                 .to_vec(),
         },

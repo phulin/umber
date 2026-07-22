@@ -1316,6 +1316,11 @@ impl Universe {
     pub const FORMAT_LOOKUP_CONFIGURATION_FINGERPRINT: u64 =
         crate::format_container::LOOKUP_CONFIGURATION_FINGERPRINT;
 
+    /// Iterates immutable font records loaded in this timeline, including `nullfont`.
+    pub fn loaded_fonts(&self) -> impl Iterator<Item = &LoadedFont> {
+        self.stores.loaded_fonts()
+    }
+
     /// Creates an isolated TeX state timeline.
     #[must_use]
     pub fn new() -> Self {

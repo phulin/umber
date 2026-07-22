@@ -674,7 +674,7 @@ impl LatexProjectSession {
         )?;
         for response in self.file_responses.values() {
             session
-                .provide_resolved_file(
+                .restore_cached_file(
                     response.request.clone(),
                     &response.virtual_path,
                     response.bytes.clone(),
