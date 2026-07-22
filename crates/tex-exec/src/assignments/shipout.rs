@@ -7,7 +7,7 @@ use tex_state::{
     PureMemoLayer, PureShipoutEntry, Universe,
 };
 
-use super::scan_required_box_node;
+use super::scan_box_value_node;
 use crate::ExecError;
 use crate::dispatch::PreparedDviPage;
 
@@ -29,7 +29,9 @@ pub(super) fn execute_shipout(
     stores: &mut Universe,
     execution: &mut crate::ExecutionContext<'_>,
 ) -> Result<Option<PreparedDviPage>, ExecError> {
-    let node = scan_required_box_node(input, stores, execution, context)?;
+    let Some(node) = scan_box_value_node(input, stores, execution, context)? else {
+        return Ok(None);
+    };
     shipout_node(node, input, stores, execution)
 }
 

@@ -1691,7 +1691,7 @@ impl DirectSourceDelivery {
 enum AlignmentCellPhase {
     UTemplate(TokenListReplayMarker),
     Body,
-    VTemplate,
+    VTemplate(TokenListReplayMarker),
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -2095,22 +2095,37 @@ impl InputStack {
     }
 
     /// Completes the active cell after its frozen end-v token is delivered.
-    pub fn finish_alignment_cell(&mut self) -> Option<TracedTokenWord> {
+    pub fn finish_alignment_cell(
+        &mut self,
+        stores: &impl ExpansionState,
+    ) -> Option<TracedTokenWord> {
         let cell = self.alignment_inputs.last_mut()?.cell.take()?;
-        assert_eq!(cell.phase, AlignmentCellPhase::VTemplate);
+        let AlignmentCellPhase::VTemplate(marker) = cell.phase else {
+            panic!("alignment cell finished outside its v-template")
+        };
+        self.retire_alignment_v_template(marker, stores);
         cell.terminator
     }
 
     /// Completes a cell whose terminator was already intercepted when later
     /// recovery consumed the synthetic end-v marker.
-    pub fn finish_terminating_alignment_cell(&mut self) -> Option<TracedTokenWord> {
+    pub fn finish_terminating_alignment_cell(
+        &mut self,
+        stores: &impl ExpansionState,
+    ) -> Option<TracedTokenWord> {
         if self.alignment_inputs.last().is_some_and(|alignment| {
             alignment
                 .cell
                 .as_ref()
-                .is_some_and(|cell| cell.phase == AlignmentCellPhase::VTemplate)
+                .is_some_and(|cell| matches!(cell.phase, AlignmentCellPhase::VTemplate(_)))
         }) {
-            return self.alignment_inputs.last_mut()?.cell.take()?.terminator;
+            let cell = self.alignment_inputs.last_mut()?.cell.take()?;
+            let AlignmentCellPhase::VTemplate(marker) = cell.phase else {
+                unreachable!("guard requires a v-template phase")
+            };
+            let terminator = cell.terminator;
+            self.retire_alignment_v_template(marker, stores);
+            return terminator;
         }
         None
     }
@@ -2120,6 +2135,29 @@ impl InputStack {
         self.alignment_inputs
             .last()
             .is_some_and(|alignment| alignment.cell.is_some())
+    }
+
+    /// Retires v-template frames that no active cell can own.
+    pub fn retire_orphaned_alignment_v_templates(&mut self) {
+        if self.has_active_alignment_cell() {
+            return;
+        }
+        let orphaned = self
+            .frames
+            .iter_indexed_from(0)
+            .filter_map(|(index, frame)| {
+                matches!(
+                    frame,
+                    InputFrame::TokenList(frame)
+                        if frame.replay_kind == TokenListReplayKind::AlignmentVTemplate
+                )
+                .then_some(index)
+            })
+            .collect::<Vec<_>>();
+        for index in orphaned.into_iter().rev() {
+            let frame = self.discard_token_list_frame(index);
+            self.retire_token_list_frame(frame);
+        }
     }
 
     /// Whether any alignment scanner level can observe token delivery.
@@ -2259,7 +2297,7 @@ impl InputStack {
             .and_then(|alignment| alignment.cell.as_ref())
             .and_then(|cell| match cell.phase {
                 AlignmentCellPhase::UTemplate(marker) => Some(marker),
-                AlignmentCellPhase::Body | AlignmentCellPhase::VTemplate => None,
+                AlignmentCellPhase::Body | AlignmentCellPhase::VTemplate(_) => None,
             })
             .is_some_and(|marker| !self.contains_token_list_replay_marker(marker));
         let Some(alignment) = self.alignment_inputs.last_mut() else {
@@ -2284,14 +2322,18 @@ impl InputStack {
         }
         let terminates = alignment.align_state == 0 && terminator.is_some();
         let v_template = if terminates {
-            cell.phase = AlignmentCellPhase::VTemplate;
             cell.terminator = Some(traced);
             Some(cell.v_template)
         } else {
             None
         };
         if let Some(v_template) = v_template {
-            self.push_token_list(v_template, TokenListReplayKind::AlignmentVTemplate);
+            let marker = self.push_token_list(v_template, TokenListReplayKind::AlignmentVTemplate);
+            self.alignment_inputs
+                .last_mut()
+                .and_then(|alignment| alignment.cell.as_mut())
+                .expect("terminating alignment cell remained active")
+                .phase = AlignmentCellPhase::VTemplate(marker);
         }
         terminates
     }
@@ -2317,6 +2359,25 @@ impl InputStack {
             }
         }
         false
+    }
+
+    /// Retires the exact v-template boundary consumed by `do_endv` before an
+    /// alias copied from that marker can escape into later ordinary input.
+    fn retire_alignment_v_template(
+        &mut self,
+        marker: TokenListReplayMarker,
+        stores: &impl ExpansionState,
+    ) {
+        let Some(index) = self.replay_marker_frame_index(marker) else {
+            return;
+        };
+        let InputFrame::TokenList(frame) = &self.frames[index] else {
+            unreachable!("replay marker identifies a token-list frame")
+        };
+        debug_assert_eq!(frame.replay_kind, TokenListReplayKind::AlignmentVTemplate);
+        debug_assert!(frame.index >= frame.len(stores));
+        let frame = self.discard_token_list_frame(index);
+        self.retire_token_list_frame(frame);
     }
 
     /// Reverses the alignment brace accounting for a token that was consumed

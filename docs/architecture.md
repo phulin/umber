@@ -243,6 +243,20 @@ an extended `hmode+valign` branch. The e-TeX change file likewise leaves
 §§780, 1130--1131, and 1221 intact (its `\let` change only adds sparse-array
 reference accounting).
 
+Once `do_endv` finishes the cell, Umber retires that exhausted v-template
+frame before continuing. This is the
+explicit-stack counterpart of TeX.web §§325 and 1131: `end_token_list` removes
+the exhausted template as input resumes below it, so a `\futurelet` alias of
+the marker cannot later mistake a dead template for a live `do_endv` boundary
+and close unrelated groups. pdfTeX and e-TeX retain the same input-stack
+lifetime.
+
+The shared gate additionally requires an active cell to own the exhausted
+v-template. An explicit Umber replay frame that outlives its cell is retired
+as an orphan and cannot invoke `off_save`; this enforces TeX.web §1131's
+otherwise implicit invariant that a reachable v-template belongs to the live
+alignment entry.
+
 ## 6. Execution engine
 
 `tex-exec` owns primitive dispatch, grouping, assignments, modes, box building,
@@ -295,6 +309,16 @@ same groups and keeps their local definitions live until their matching TeX
 closers. pdfTeX.web retains these group, box, and output transitions; its
 output teardown additionally flushes page discards and uses the pdfTeX ignored
 depth sentinel, without changing assignment lifetime.
+
+Box-valued commands also preserve TeX.web §§1075 and 1077's explicit void-box
+path. `begin_box` may leave `cur_box = null` when `\box`, `\copy`, or
+`\lastbox` is void, and `box_end` then performs no list, register, leader, or
+shipout action. Umber represents that result as `None` through shifted-box,
+math-box, and shipout consumers so recursive scanners resume at the following
+command instead of turning a valid void box into a fatal missing-token error.
+This continuation is independent of the §§780, 1130--1131, and 1221 alignment
+end-v gate described above. pdfTeX retains the null guard; e-TeX changes nearby
+box-register width and TeXXeT tail handling without changing void-box behavior.
 
 ## 9. Fonts and metrics (`tex-arith`, `tex-fonts`, `tex-state`)
 
