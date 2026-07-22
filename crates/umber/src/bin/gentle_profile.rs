@@ -8,13 +8,11 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::time::{Duration, Instant};
 
-use tex_exec::{
-    Cancellation, CheckpointSink, EngineBoundary, EngineCheckpoint, PdfImageRequest,
-    PdfImageResolver,
-};
+use tex_exec::{Cancellation, CheckpointSink, EngineCheckpoint, PdfImageRequest, PdfImageResolver};
 use tex_expand::{InputResolver, ResourceLookup, ResourceResult};
 use tex_incr::{
-    AcceptedOutput, BoundaryKey, Edit, ReuseMetrics, RevisionCandidateResult, RevisionId, Session,
+    AcceptedOutput, BoundaryKey, Edit, ReuseMetrics, RevisionCandidateResult, RevisionId,
+    SameHistoryStop, Session,
 };
 #[cfg(feature = "profiling-stats")]
 use tex_lex::ExpansionStats;
@@ -1035,11 +1033,11 @@ fn run_incremental_edit(options: &Options, template: &World) -> Result<(), Strin
                 "{name} height-preserving edit did not adopt a page suffix"
             ));
         }
-        if fast_path.reuse.convergence_boundary.map(|key| key.boundary)
-            != Some(EngineBoundary::ShipoutComplete)
+        if fast_path.reuse.convergence_boundary.is_none()
+            || fast_path.reuse.same_history_stop != SameHistoryStop::Matched
         {
             return Err(format!(
-                "{name} height-preserving edit did not reconverge at shipout"
+                "{name} height-preserving edit did not report a matched named-boundary convergence"
             ));
         }
         if fast_path.reuse.pages_retyped != GENTLE_FAST_PATH_RETYPED_PAGES {
@@ -1103,11 +1101,14 @@ fn run_incremental_edit(options: &Options, template: &World) -> Result<(), Strin
                 if baseline.reuse.suffixes_adopted == 0
                     || candidate.reuse.suffixes_adopted == 0
                     || baseline_pages != candidate_pages
+                    || baseline.reuse.convergence_boundary != candidate.reuse.convergence_boundary
                 {
                     return Err(format!(
-                        "{} edit {} did not preserve equivalent suffix adoption: baseline={baseline_pages:?} candidate={candidate_pages:?}",
+                        "{} edit {} did not preserve equivalent suffix adoption: baseline={baseline_pages:?}/{:?} candidate={candidate_pages:?}/{:?}",
                         fixture.edit_paths[index].name(),
                         index + 1,
+                        baseline.reuse.convergence_boundary,
+                        candidate.reuse.convergence_boundary,
                     ));
                 }
             }
@@ -1272,12 +1273,13 @@ fn run_incremental_edit(options: &Options, template: &World) -> Result<(), Strin
     let cold_fast = duration_stats(&cold[fast]);
     let work = disabled_sample.steps[fast].reuse;
     println!(
-        "gentle-profile fast path verified: edit={} ({}) retained_prefix={} re-shipped={} adopted={} convergence=shipout leaf_hits={} subtree_hits={} baseline_vs_cold={:.3}x candidate_vs_cold={:.3}x",
+        "gentle-profile fast path verified: edit={} ({}) retained_prefix={} re-shipped={} adopted={} convergence={:?} leaf_hits={} subtree_hits={} baseline_vs_cold={:.3}x candidate_vs_cold={:.3}x",
         fixture.suffix_adoption_edit + 1,
         fixture.edit_names[fixture.suffix_adoption_edit],
         work.pages_retained_prefix,
         work.pages_retyped,
         work.pages_reused,
+        work.convergence_boundary.map(|boundary| boundary.boundary),
         work.trace_leaf_hits,
         work.trace_subtree_hits,
         disabled_fast.mean / cold_fast.mean,

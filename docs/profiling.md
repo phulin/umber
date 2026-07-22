@@ -62,8 +62,11 @@ cargo run --profile profiling -p umber --bin gentle-profile \
 The sequence separates pagination-changing slow edits, a cross-generation
 interaction edit, a height-preserving suffix-adoption edit, and a line-breaking
 dependency change. The summary reports paired latency, one-time priming,
-boundary equivalence, page reuse, replay coverage, cold fallback, retained
-history, and incremental-to-cold ratios.
+boundary equivalence, the actual matched named convergence boundary, page
+reuse, replay coverage, cold fallback, retained history, and incremental-to-cold
+ratios. Suffix adoption does not require a particular boundary kind: the gate
+requires disabled and enabled policies to match each other and remain exactly
+cold-equivalent in DVI bytes and boundary schedule.
 
 For path-isolated checks, `--incremental-path slow` exercises the
 pagination-changing edit, `fast` the contained equal-width substitution, and
