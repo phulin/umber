@@ -4,6 +4,8 @@ mod cli;
 mod e2e_conformance;
 #[path = "it/effectful_replay.rs"]
 mod effectful_replay;
+#[path = "it/font_catalog.rs"]
+mod font_catalog;
 #[path = "it/pdf_parity.rs"]
 mod pdf_parity;
 #[path = "it/replay_identity.rs"]

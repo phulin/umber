@@ -11,6 +11,7 @@ use umber_distribution::{FontRequestKey, LegacyMappingRequestKey};
 use super::{
     FormatConfig, HtmlInventoryConfig, HtmlProfileConfig, InventoryConfig, PublicationProfile,
     PublishConfig, RootConfig, publish, shard_index, tree_sha256, verify_sharded_snapshot,
+    write_html_mvp_catalog,
 };
 
 fn write(root: &Path, relative: &str, bytes: &[u8]) -> Result<()> {
@@ -22,6 +23,44 @@ fn write(root: &Path, relative: &str, bytes: &[u8]) -> Result<()> {
 
 fn digest(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))
+}
+
+#[test]
+fn committed_html_mvp_catalog_is_reproducible_from_exact_inputs() -> Result<()> {
+    let repository = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let fixture = TempDir::new()?;
+    let output = fixture.path().join("catalog.json");
+    write_html_mvp_catalog(
+        "umber-html-mvp-v1",
+        &output,
+        &repository.join("crates/tex-fonts/tests/fixtures/cm/cmr10.tfm"),
+        &repository.join("crates/umber-wasm/assets/cmu-serif-500-roman.woff2"),
+        &repository.join("crates/umber-wasm/assets/CMU-OFL.txt"),
+        &repository.join("crates/tex-fonts/tests/fixtures/stix-two-math.woff2"),
+        &repository.join("crates/tex-fonts/tests/fixtures/stix-two-math.LICENSE.txt"),
+    )?;
+    assert_eq!(
+        fs::read(&output)?,
+        fs::read(repository.join("tools/texlive-wasm-publish/catalog/html-mvp-v1.json"))?
+    );
+    let changed_cmu = fixture.path().join("changed-cmu.woff2");
+    let mut changed_bytes =
+        fs::read(repository.join("crates/umber-wasm/assets/cmu-serif-500-roman.woff2"))?;
+    changed_bytes[0] ^= 1;
+    fs::write(&changed_cmu, changed_bytes)?;
+    assert!(
+        write_html_mvp_catalog(
+            "umber-html-mvp-v1",
+            &output,
+            &repository.join("crates/tex-fonts/tests/fixtures/cm/cmr10.tfm"),
+            &changed_cmu,
+            &repository.join("crates/umber-wasm/assets/CMU-OFL.txt"),
+            &repository.join("crates/tex-fonts/tests/fixtures/stix-two-math.woff2"),
+            &repository.join("crates/tex-fonts/tests/fixtures/stix-two-math.LICENSE.txt"),
+        )
+        .is_err()
+    );
+    Ok(())
 }
 
 fn html_config(fixture: &TempDir) -> Result<PublishConfig> {

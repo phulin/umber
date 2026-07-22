@@ -256,6 +256,10 @@ identity or precedence.
 
 The version-1 hosted HTML catalog contains exactly these font selections:
 
+The canonical implemented records, exact identities, supported-family
+statement, and reproduction command are maintained in
+[HTML MVP Font Catalog Inventory](html_font_catalog.md).
+
 | Catalog entry                   | Contents and purpose                                                                                                                                                                                                                                                                                                                                    |
 | ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `classic-text/cmr10`            | The pinned `cmr10.tfm`; one version-1 256-entry OT1-like legacy mapping keyed by that exact TFM SHA-256; the mapping selects the CMU Serif Roman program below. This is the only mapped legacy family/face/size source in the MVP. TeX may instantiate the TFM at ordinary scaled sizes.                                                                |

@@ -5,7 +5,9 @@ use std::fs;
 use std::path::Path;
 
 use anyhow::{Context, Result, bail};
-use texlive_wasm_publish::{PublishConfig, publish, tree_sha256, verify_sharded_snapshot};
+use texlive_wasm_publish::{
+    PublishConfig, publish, tree_sha256, verify_sharded_snapshot, write_html_mvp_catalog,
+};
 use umber_distribution::Manifest;
 
 fn main() -> Result<()> {
@@ -60,6 +62,35 @@ fn main() -> Result<()> {
             bail!("unexpected argument after --verify-sharded STAGING");
         }
         verify_sharded_snapshot(Path::new(&staging))?;
+        return Ok(());
+    }
+    if config_path == "--write-html-mvp-catalog" {
+        let Some(distribution) = arguments.next() else {
+            bail!("missing DISTRIBUTION after --write-html-mvp-catalog");
+        };
+        let paths = arguments.collect::<Vec<_>>();
+        let [
+            output,
+            cmr10_tfm,
+            cmu_woff2,
+            cmu_license,
+            stix_woff2,
+            stix_license,
+        ] = paths.as_slice()
+        else {
+            bail!(
+                "usage: texlive-wasm-publish --write-html-mvp-catalog DISTRIBUTION OUTPUT CMR10-TFM CMU-WOFF2 CMU-LICENSE STIX-WOFF2 STIX-LICENSE"
+            );
+        };
+        write_html_mvp_catalog(
+            &distribution.to_string_lossy(),
+            Path::new(output),
+            Path::new(cmr10_tfm),
+            Path::new(cmu_woff2),
+            Path::new(cmu_license),
+            Path::new(stix_woff2),
+            Path::new(stix_license),
+        )?;
         return Ok(());
     }
     let Some(output_path) = arguments.next() else {

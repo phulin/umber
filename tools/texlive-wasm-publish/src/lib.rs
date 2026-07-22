@@ -2,6 +2,7 @@
 
 #![allow(clippy::disallowed_methods)] // Host release tooling intentionally owns filesystem I/O.
 
+mod mvp_catalog;
 mod scan;
 mod sharded;
 mod tlpdb;
@@ -24,6 +25,7 @@ pub use sharded::{
     verify_sharded_snapshot, write_html_sharded_manifest, write_sharded_manifest,
 };
 
+pub use mvp_catalog::write_html_mvp_catalog;
 pub use scan::tree_sha256;
 use scan::{Candidate, scan_roots};
 use tlpdb::PackageDatabase;

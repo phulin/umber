@@ -35,3 +35,7 @@ are independent of the full snapshot.
 - `src/tlpdb.rs`: TeX Live runfile ownership and bounded package dependency-hint derivation.
 - `src/tests.rs`: fixture publication, collision, path, and precedence tests.
 - `src/main.rs`: small JSON-config command-line entry point.
+- `src/mvp_catalog.rs`: exact-input generator for the two-font, one-mapping
+  contract-version-1 HTML MVP catalog.
+- `catalog/html-mvp-v1.json`: canonical committed catalog generated only from
+  the pinned repository TFM, WOFF2, license, provenance, and policy inputs.

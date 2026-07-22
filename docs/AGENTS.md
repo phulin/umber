@@ -85,6 +85,9 @@ authority, output-specific closures, typed identity, placement, precedence,
 ownership, failure, licensing, compatibility migration, and the exact catalog;
 all `umber2-nobk` implementation work must cite it.
 
+`html_font_catalog.md` is the implemented machine-auditable inventory and
+supported-family statement for that contract's three-entry HTML MVP catalog.
+
 `unicode_opentype_shaping.md` specifies rustybuzz text shaping, mapped
 TFM-style text in modern mode, shape/break/reshape integration, and the
 positioned-math output boundary. `html_output.md` remains the exact current

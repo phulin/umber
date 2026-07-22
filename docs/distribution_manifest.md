@@ -158,6 +158,15 @@ selected TFM object. The build rejects VF, AFM, ENC, PDF/dvips maps, PK, Type
 1, TrueType, and OpenType transport inputs even when they exist in a pinned
 source root.
 
+The contract-version-1 production catalog is committed canonically at
+`tools/texlive-wasm-publish/catalog/html-mvp-v1.json` and inventoried in
+[HTML MVP Font Catalog Inventory](html_font_catalog.md). The publisher's
+`--write-html-mvp-catalog` mode regenerates it only after exact byte and length
+checks for `cmr10.tfm`, both WOFF2 inputs, and both OFL texts. The native audit
+independently validates decoded program identities, the complete 256-entry
+legacy map, cmap coverage, MATH presence, shared CMU object reuse, and
+affirmative license capabilities.
+
 HTML staging uses independent ceilings for logical files, unique staged
 objects, total staged object bytes, font records, mapping records, and unique
 licenses. Verification rehashes every runtime, format, shard, WOFF2, and

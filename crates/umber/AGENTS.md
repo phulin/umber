@@ -60,6 +60,8 @@ Use this crate when behavior is about driving the engine, presenting CLI output,
 - `tests/it/cli.rs`: integration tests for CLI success, usage errors, corpus dump output, and committed diagnostic/DVI fixture parity.
 - `tests/it/e2e_conformance.rs`: individually selectable Story, Gentle, TRIP, and e-TRIP tests that execute Umber in process against gitignored, locally generated `tests/corpus/e2e` DVI oracles through `parity-harness`; TRIP and e-TRIP share one two-phase format helper, and each case runs conditionally when its external inputs and oracle exist.
 - `tests/it/effectful_replay.rs`: property tests for rollback and commit identity across terminal, log, stream, input, read, and shipout effects.
+- `tests/it/font_catalog.rs`: exact HTML MVP TFM/mapping, decoded WOFF2
+  program, cmap, MATH, license, and retained-object inventory audit.
 - `tests/it/pdf_parity.rs`: hermetic pinned-pdfTeX normalized structure, exact Umber byte, and Poppler raster-attestation fixture gate.
 - `tests/it/replay_identity.rs`: property and regression tests that generated primitive programs rollback to identical state.
 
