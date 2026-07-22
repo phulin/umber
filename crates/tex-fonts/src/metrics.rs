@@ -1095,33 +1095,29 @@ impl LoadedFont {
         &self.source_parameters
     }
 
-    /// Returns the parameter bank authoritative for classic Appendix G math.
+    /// Returns the immutable Appendix G parameter override for a mapped TFM.
     ///
-    /// OpenType-preferred TFM mappings synthesize ordinary text fontdimens,
-    /// but assignment to a classic math family must continue reading the
-    /// exact original TFM symbol/extension parameters.
+    /// Unmapped classic fonts return `None`: their authoritative values live
+    /// in the engine's mutable `fontdimen` bank, not this load-time record.
     #[must_use]
-    pub fn classic_math_parameter(&self, number: u16) -> Scaled {
-        let parameters = if self.encoding_map.is_some() {
-            &self.source_parameters
-        } else {
-            &self.parameters
-        };
-        number
-            .checked_sub(1)
-            .and_then(|index| parameters.get(usize::from(index)))
-            .copied()
-            .unwrap_or_else(|| Scaled::from_raw(0))
+    pub fn classic_math_parameter_override(&self, number: u16) -> Option<Scaled> {
+        self.encoding_map.as_ref()?;
+        Some(
+            number
+                .checked_sub(1)
+                .and_then(|index| self.source_parameters.get(usize::from(index)))
+                .copied()
+                .unwrap_or_else(|| Scaled::from_raw(0)),
+        )
     }
 
-    /// Number of parameters visible to classic Appendix G math validation.
+    /// Returns the immutable Appendix G parameter count override for a
+    /// mapped TFM, or `None` when the engine's mutable bank is authoritative.
     #[must_use]
-    pub fn classic_math_parameter_count(&self) -> usize {
-        if self.encoding_map.is_some() {
-            self.source_parameters.len()
-        } else {
-            self.parameters.len()
-        }
+    pub fn classic_math_parameter_count_override(&self) -> Option<usize> {
+        self.encoding_map
+            .as_ref()
+            .map(|_| self.source_parameters.len())
     }
 
     #[must_use]

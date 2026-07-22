@@ -338,6 +338,9 @@ Assignments of mapped fonts to classic math families read the original TFM
 parameters and character tables, while ordinary text and `\fontdimen` reads
 continue to use the versioned synthesized text bank. This separation prevents
 the 22/13-parameter math preflight from deleting otherwise valid formulas.
+Unmapped `ClassicTfmExact` fonts instead read the live engine fontdimen bank,
+so grouping, format restoration, and document assignments retain TeX82 math
+semantics.
 
 ## Native integration
 

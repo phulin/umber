@@ -4643,6 +4643,29 @@ impl Universe {
         self.stores.font_parameter(font, number)
     }
 
+    /// Reads the parameter authority used by classic Appendix G math.
+    ///
+    /// Mapped OpenType text fonts retain their immutable source TFM bank for
+    /// math. Ordinary classic fonts continue to observe live `fontdimen`
+    /// assignments in the environment.
+    #[must_use]
+    pub fn classic_math_parameter(&self, font: FontId, number: u16) -> Scaled {
+        self.font(font)
+            .classic_math_parameter_override(number)
+            .unwrap_or_else(|| self.font_parameter(font, u32::from(number)))
+    }
+
+    /// Returns the parameter count visible to classic Appendix G math.
+    #[must_use]
+    pub fn classic_math_parameter_count(&self, font: FontId) -> u32 {
+        self.font(font)
+            .classic_math_parameter_count_override()
+            .map_or_else(
+                || self.font_parameter_count(font),
+                |count| u32::try_from(count).expect("font parameter count exceeds u32"),
+            )
+    }
+
     #[must_use]
     pub fn current_font(&self) -> FontId {
         self.stores.current_font()

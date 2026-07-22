@@ -44,6 +44,38 @@ fn style_transitions_follow_tex_style_codes() {
 }
 
 #[test]
+fn classic_math_parameters_observe_live_fontdimen_assignments() {
+    let size = sc(10 * Scaled::UNITY);
+    let mut universe = Universe::new();
+    let font = universe.intern_font(LoadedFont::new(
+        "math",
+        "math.tfm",
+        [0; 32],
+        0,
+        size,
+        size,
+        (1..=22).map(sc).collect(),
+        FontMetrics::default(),
+    ));
+    for size in [
+        MathFontSize::Text,
+        MathFontSize::Script,
+        MathFontSize::ScriptScript,
+    ] {
+        universe.set_math_family_font(size, 2, font, false);
+        universe.set_math_family_font(size, 3, font, false);
+    }
+    universe
+        .set_font_dimen(font, 8, sc(12_345))
+        .expect("existing fontdimen is writable");
+
+    let params = MathParams::read(&universe);
+
+    assert_eq!(params.text.symbols.num1, sc(12_345));
+    assert_eq!(params.text.extension.default_rule_thickness, sc(12_345));
+}
+
+#[test]
 fn pinned_opentype_math_fixture_drives_basic_formula_layout_deterministically() {
     let woff2 = include_bytes!("../../../tex-fonts/tests/fixtures/stix-two-math.woff2");
     let web = parse_stix_math(FontContainer::Woff2, woff2.to_vec());

@@ -78,7 +78,7 @@ impl MathTypesetState for Universe {
     }
 
     fn font_parameter(&self, font: FontId, number: u16) -> Scaled {
-        Universe::font(self, font).classic_math_parameter(number)
+        Universe::classic_math_parameter(self, font, number)
     }
 
     fn font_next_larger(&self, font: FontId, code: u8) -> Option<u8> {

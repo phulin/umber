@@ -423,8 +423,19 @@ fn mapped_tfm_identity_records_policy_map_and_classic_math_authority() {
         first.parameters().len(),
         crate::metrics::MIN_TEX_FONT_PARAMETERS
     );
-    assert_eq!(first.classic_math_parameter_count(), 22);
-    assert_eq!(first.classic_math_parameter(8).raw(), 8);
+    assert_eq!(first.classic_math_parameter_count_override(), Some(22));
+    assert_eq!(
+        first
+            .classic_math_parameter_override(8)
+            .map(|value| value.raw()),
+        Some(8)
+    );
+    assert_eq!(
+        first
+            .classic_math_parameter_override(23)
+            .map(|value| value.raw()),
+        Some(0)
+    );
     assert_eq!(first.encoding_map().expect("map").version(), 1);
     assert_eq!(crate::FONT_LAYOUT_POLICY_VERSION, 1);
 }
