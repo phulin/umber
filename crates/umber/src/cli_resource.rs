@@ -1239,11 +1239,6 @@ impl DistributionResolver {
                 prefetch_hints,
             });
         }
-        if self.offline {
-            return Err(NativeRunError::DistributionUnavailable(vec![format!(
-                "format:{name}"
-            )]));
-        }
         let object = umber_distribution::ObjectEntry {
             object: entry.object,
             sha256: entry.sha256,
@@ -1260,6 +1255,11 @@ impl DistributionResolver {
                 bytes,
                 prefetch_hints,
             });
+        }
+        if self.offline {
+            return Err(NativeRunError::DistributionUnavailable(vec![format!(
+                "format:{name}"
+            )]));
         }
         let request = FetchRequest {
             request_key: format!("format:{name}"),
@@ -1294,51 +1294,57 @@ impl DistributionResolver {
         if requests.is_empty() {
             return Ok(Vec::new());
         }
-        if self.offline {
-            let mut found = Vec::new();
-            let mut missing = Vec::new();
-            for request in requests {
-                check_cancelled(cancellation)?;
-                match self
-                    .cache
-                    .load_object(&request.object.sha256, request.object.bytes)
-                {
-                    Ok(Some(bytes)) => found.push((request.request_key.clone(), bytes, true)),
-                    Ok(None) => missing.push(request.request_key.clone()),
-                    Err(error) => return Err(NativeRunError::Cache(error.to_string())),
-                }
-            }
-            if !missing.is_empty() {
-                return Err(NativeRunError::DistributionUnavailable(missing));
-            }
-            return Ok(found);
-        }
-        if let Some(local_root) = self
+        let local_root = self
             .loaded
             .as_ref()
-            .and_then(|loaded| loaded.local_root.as_ref())
-        {
-            let mut found = Vec::new();
-            for request in requests {
+            .and_then(|loaded| loaded.local_root.clone());
+        let mut found = Vec::new();
+        let mut remaining = Vec::new();
+        for request in requests {
+            check_cancelled(cancellation)?;
+            match self
+                .cache
+                .load_object(&request.object.sha256, request.object.bytes)
+            {
+                Ok(Some(bytes)) => found.push((request.request_key.clone(), bytes, true)),
+                Ok(None) => remaining.push(request.clone()),
+                Err(error) => return Err(NativeRunError::Cache(error.to_string())),
+            }
+        }
+        if remaining.is_empty() {
+            return Ok(found);
+        }
+        if let Some(local_root) = local_root {
+            for request in remaining {
                 check_cancelled(cancellation)?;
-                let bytes = read(&local_object_path(local_root, &request.object.object))?;
+                let bytes = read(&local_object_path(&local_root, &request.object.object))?;
                 check_cancelled(cancellation)?;
                 self.cache
                     .store_object(&request.object.sha256, request.object.bytes, &bytes)
                     .map_err(|error| NativeRunError::Cache(error.to_string()))?;
-                found.push((request.request_key.clone(), bytes, false));
+                found.push((request.request_key, bytes, false));
             }
             return Ok(found);
         }
+        if self.offline {
+            return Err(NativeRunError::DistributionUnavailable(
+                remaining
+                    .into_iter()
+                    .map(|request| request.request_key)
+                    .collect(),
+            ));
+        }
         let client = FetchClient::new(FetchClientConfig::default());
         client
-            .fetch_batch_cancellable(&self.cache, objects_base_url, requests, cancellation)
+            .fetch_batch_cancellable(&self.cache, objects_base_url, &remaining, cancellation)
             .map_err(map_fetch_error)
             .map(|objects| {
-                objects
-                    .into_iter()
-                    .map(|object| (object.request_key, object.bytes, object.cache_hit))
-                    .collect()
+                found.extend(
+                    objects
+                        .into_iter()
+                        .map(|object| (object.request_key, object.bytes, object.cache_hit)),
+                );
+                found
             })
     }
 

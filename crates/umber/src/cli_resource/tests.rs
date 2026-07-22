@@ -254,7 +254,7 @@ fn verified_shard_absence_returns_typed_unavailable() {
         ObjectCache::new(directory.path().join("cache")),
         Some(directory.path().to_string_lossy().into_owned()),
         None,
-        false,
+        true,
     );
     let responses = resolver
         .resolve_batch(
@@ -267,6 +267,109 @@ fn verified_shard_absence_returns_typed_unavailable() {
         responses.as_slice(),
         [ResourceResponse::FileUnavailable(key)] if key.name() == "missing.sty"
     ));
+}
+
+#[test]
+fn offline_local_distribution_reports_a_missing_object_distinctly_from_a_missing_key() {
+    let directory = TempDir::new().expect("distribution tempdir");
+    let bytes = b"object deliberately absent from mirror";
+    let digest = hex_digest(bytes);
+    let mut shard = format!(
+        "{{\"schema\":1,\"distribution\":\"missing-object\",\"index\":0,\"files\":{{\"tex:present.sty\":{{\"virtualPath\":\"/texlive/tex/present.sty\",\"object\":\"sha256-{digest}\",\"sha256\":\"{digest}\",\"bytes\":{}",
+        bytes.len()
+    );
+    shard.push_str("}}}\n");
+    write_sharded_root(
+        directory.path(),
+        "missing-object",
+        0,
+        &[(shard.as_str(), true)],
+    );
+    let mut resolver = DistributionResolver::new(
+        ObjectCache::new(directory.path().join("cache")),
+        Some(directory.path().to_string_lossy().into_owned()),
+        None,
+        true,
+    );
+
+    let error = resolver
+        .resolve_batch(
+            &local_resolver(directory.path()),
+            &needs(vec![file_request("present.sty")]),
+            &FetchCancellation::new(),
+        )
+        .expect_err("missing mirror object must fail");
+    assert!(matches!(error, NativeRunError::Io { .. }));
+}
+
+#[test]
+fn exact_snapshot_delivers_corpus_tex_tfm_type1_and_vf_requests_offline() {
+    let snapshot = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../..")
+        .join("target/texlive-snapshot");
+    if !snapshot.join("manifest.json").is_file() {
+        return;
+    }
+    let cache = TempDir::new().expect("isolated cold cache");
+    let requests = [
+        (FileKind::TexInput, "physics.sty", "tex:physics.sty"),
+        (FileKind::Tfm, "ecrm1728.tfm", "tfm:ecrm1728.tfm"),
+        (FileKind::PdfFontProgram, "cmmib7.pfb", "tex:cmmib7.pfb"),
+        (FileKind::VirtualFont, "ptmbc8t.vf", "tex:ptmbc8t.vf"),
+    ];
+    let batch = needs(
+        requests
+            .iter()
+            .map(|(kind, name, _)| {
+                ResourceRequest::File(FileRequest::new(
+                    crate::FileRequestKey::new(*kind, name).expect("snapshot request key"),
+                    *name,
+                ))
+            })
+            .collect(),
+    );
+    let project = TempDir::new().expect("isolated project");
+    let mut resolver = DistributionResolver::new(
+        ObjectCache::new(cache.path()),
+        Some(snapshot.to_string_lossy().into_owned()),
+        None,
+        true,
+    );
+
+    let responses = resolver
+        .resolve_batch(
+            &local_resolver(project.path()),
+            &batch,
+            &FetchCancellation::new(),
+        )
+        .expect("cold explicit snapshot resolution must work offline");
+    assert_eq!(responses.len(), requests.len());
+    for (kind, name, manifest_key) in requests {
+        let file = responses
+            .iter()
+            .find_map(|response| match response {
+                ResourceResponse::File(file)
+                    if file.request.kind() == kind && file.request.name() == name =>
+                {
+                    Some(file)
+                }
+                _ => None,
+            })
+            .expect("typed snapshot response");
+        let entry = resolver
+            .loaded
+            .as_ref()
+            .expect("loaded snapshot")
+            .shards
+            .values()
+            .find_map(|shard| shard.files.get(manifest_key))
+            .expect("entry from canonical loaded shard");
+        assert_eq!(hex_digest(&file.bytes), entry.sha256);
+        assert_eq!(
+            file.expected_digest,
+            Some(FileContentId::for_bytes(&file.bytes))
+        );
+    }
 }
 
 #[test]

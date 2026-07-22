@@ -279,9 +279,12 @@ mutating objects.
 - `--distribution <url-or-path>` selects a different snapshot: an HTTPS
   manifest URL or a local manifest path (air-gapped mirrors work by pointing
   at a directory).
-- `--offline` (and `UMBER_OFFLINE=1`) answers only from project files and
-  the local cache; a required miss is then a distribution-unavailable
-  diagnostic naming the exact request keys.
+- `--offline` (and `UMBER_OFFLINE=1`) disables network acquisition. Resolution
+  still uses project files, the verified persistent cache, and the authenticated
+  `objects/` store beside an explicitly selected local manifest. A remote pin
+  without warm cache entries produces a distribution-unavailable diagnostic
+  naming the exact request keys; a local mirror with a referenced object missing
+  reports that missing object rather than converting it into a missing key.
 - The snapshot pin ships with the release as a default manifest URL plus
   expected manifest digest; a project may override both. A fetched manifest
   whose digest mismatches its pin is a typed error, never silently used.
