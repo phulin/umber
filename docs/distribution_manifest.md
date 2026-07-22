@@ -147,6 +147,26 @@ requires byte-identical directory trees. `--shard-existing STAGING
 re-reading TeX Live, while `--verify-sharded STAGING` performs the complete
 offline integrity check used by the R2 publication script.
 
+The publisher also accepts an explicit `html` profile (configuration schema
+4). It verifies every configured source-tree pin, then publishes only the
+union of declared runtime file keys and the authenticated closures of selected
+schema-2 format metadata. Selected TEXMF objects must be under `tex/` or be
+TFM metrics. The accompanying file-free schema-2 catalog supplies exact WOFF2
+font and legacy-mapping records, and `objectSources` must exactly cover their
+content-addressed WOFF2 and license objects. Mapping TFM digests must name a
+selected TFM object. The build rejects VF, AFM, ENC, PDF/dvips maps, PK, Type
+1, TrueType, and OpenType transport inputs even when they exist in a pinned
+source root.
+
+HTML staging uses independent ceilings for logical files, unique staged
+objects, total staged object bytes, font records, mapping records, and unique
+licenses. Verification rehashes every runtime, format, shard, WOFF2, and
+license object and checks each mapping-to-font/license link. A successful
+rebuild removes unreferenced staging objects. `scripts/publish-texlive-r2.sh
+--profile html` requires a distinct `html/` immutable prefix and explicit root
+SHA-256, audits the complete remote object inventory, verifies public HTTPS
+digests and CORS, and writes `manifest-v4.json` only after those checks.
+
 The production `texlive-20260301` 8-bit output has 152,560 unique objects,
 3,520,195,192 object bytes, and root digest
 `43a31da364e4607957a38da10dabff227657d607d1845d502204adfd5d002e4b`.

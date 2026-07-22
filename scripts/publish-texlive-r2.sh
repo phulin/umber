@@ -19,6 +19,8 @@ expected_objects=152560
 expected_bytes=3520195192
 expected_manifest_sha256="43a31da364e4607957a38da10dabff227657d607d1845d502204adfd5d002e4b"
 dry_run=0
+profile="full"
+root_pin_explicit=0
 
 usage() {
   cat <<'EOF'
@@ -31,6 +33,7 @@ umber-assets:texlive/texlive-20260301.
 options:
   --staging PATH                 staged bundle containing objects/ and manifest.json
   --snapshot PREFIX             immutable bucket prefix
+  --profile full|html           publication profile (default: full)
   --bucket NAME                 R2 bucket (default: umber-assets)
   --public-origin HTTPS-ORIGIN  public custom-domain origin
   --env-file PATH               ignored dotenv file containing credentials
@@ -41,6 +44,7 @@ options:
   --expected-objects N          exact staged/remote object count
   --expected-bytes N            exact staged/remote object bytes
   --expected-manifest-sha256 H  exact manifest digest
+  --root-sha256 H               alias for --expected-manifest-sha256; required for HTML
   --rclone PATH                 rclone executable
   --rclone-remote NAME          existing configured rclone remote
   --curl PATH                   curl executable
@@ -95,6 +99,7 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --staging) staging="${2:-}"; shift 2 ;;
     --snapshot) snapshot="${2:-}"; shift 2 ;;
+    --profile) profile="${2:-}"; shift 2 ;;
     --bucket) bucket="${2:-}"; shift 2 ;;
     --public-origin) public_origin="${2:-}"; shift 2 ;;
     --env-file) env_file="${2:-}"; shift 2 ;;
@@ -103,7 +108,8 @@ while [[ $# -gt 0 ]]; do
     --retries) retries="${2:-}"; shift 2 ;;
     --expected-objects) expected_objects="${2:-}"; shift 2 ;;
     --expected-bytes) expected_bytes="${2:-}"; shift 2 ;;
-    --expected-manifest-sha256) expected_manifest_sha256="${2:-}"; shift 2 ;;
+    --expected-manifest-sha256) expected_manifest_sha256="${2:-}"; root_pin_explicit=1; shift 2 ;;
+    --root-sha256) expected_manifest_sha256="${2:-}"; root_pin_explicit=1; shift 2 ;;
     --dry-run) dry_run=1; shift ;;
     --rclone) rclone="${2:-}"; shift 2 ;;
     --rclone-remote) rclone_remote="${2:-}"; use_configured_remote=1; shift 2 ;;
@@ -113,6 +119,14 @@ while [[ $# -gt 0 ]]; do
     *) fail "unknown option: $1" ;;
   esac
 done
+
+[[ "$profile" == full || "$profile" == html ]] || fail "--profile must be full or html"
+manifest_name="manifest-v3.json"
+if [[ "$profile" == html ]]; then
+  (( root_pin_explicit == 1 )) || fail "HTML publication requires an explicit --root-sha256 pin"
+  [[ "$snapshot" == html/* ]] || fail "HTML publication requires a distinct html/ immutable prefix"
+  manifest_name="manifest-v4.json"
+fi
 
 [[ -d "$staging/objects" ]] || fail "missing staged objects directory: $staging/objects"
 [[ -f "$staging/manifest.json" ]] || fail "missing staged manifest: $staging/manifest.json"
@@ -181,7 +195,7 @@ if (( use_configured_remote == 0 )); then
   common_flags=(--config /dev/null "${common_flags[@]}")
 fi
 remote_objects="${rclone_remote}:${bucket}/${snapshot}/objects"
-remote_manifest="${rclone_remote}:${bucket}/${snapshot}/manifest-v3.json"
+remote_manifest="${rclone_remote}:${bucket}/${snapshot}/${manifest_name}"
 
 printf 'Validated staging: objects=%s bytes=%s manifest_sha256=%s\n' \
   "$local_objects" "$local_bytes" "$actual_manifest_sha256"
@@ -230,7 +244,7 @@ public_manifest="$tmp_root/manifest.json"
   --retry 10 --retry-all-errors --retry-delay 5 \
   --header 'Origin: https://browser.example' \
   --dump-header "$headers" \
-  "$public_prefix/manifest-v3.json" \
+  "$public_prefix/$manifest_name" \
   --output "$public_manifest"
 public_manifest_sha256="$(sha256 "$public_manifest")"
 [[ "$public_manifest_sha256" == "$expected_manifest_sha256" ]] || fail "public manifest digest $public_manifest_sha256 does not match expected $expected_manifest_sha256"
@@ -254,4 +268,4 @@ for line in "${representative_lines[@]}"; do
 done
 
 printf 'Published %s: objects=%s bytes=%s manifest=%s digest=%s\n' \
-  "$snapshot" "$remote_count" "$remote_bytes" "$public_prefix/manifest-v3.json" "$expected_manifest_sha256"
+  "$snapshot" "$remote_count" "$remote_bytes" "$public_prefix/$manifest_name" "$expected_manifest_sha256"

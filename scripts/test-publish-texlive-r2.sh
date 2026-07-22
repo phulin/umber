@@ -83,7 +83,7 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 printf 'HTTP/2 200\r\nAccess-Control-Allow-Origin: *\r\n\r\n' > "$headers"
-if [[ "$url" == */manifest-v3.json ]]; then
+if [[ "$url" == */manifest-v3.json || "$url" == */manifest-v4.json ]]; then
   cp "$MOCK_REMOTE/manifest.json" "$output"
 else
   cp "$MOCK_REMOTE/objects/${url##*/}" "$output"
@@ -152,5 +152,19 @@ grep -q -- '--immutable' "$log" || fail "immutable copy protection was not enabl
 grep -q -- '--s3-no-check-bucket' "$log" || fail "bucket creation checks were not disabled"
 ! grep -q 'secret-must-not-leak' "$log" || fail "rclone argv exposed a credential"
 ! grep -Eq '(^| )sync( |$)|delete' "$log" || fail "publication used a deleting operation"
+
+: > "$log"
+"$repo_root/scripts/publish-texlive-r2.sh" "${common[@]}" \
+  --profile html --snapshot html/test-v1 > "$tmp_root/html-output" 2>&1
+grep -q 'html/test-v1/manifest-v4.json' "$log" || fail "HTML profile did not use its distinct manifest key"
+
+if "$repo_root/scripts/publish-texlive-r2.sh" \
+  --staging "$bundle" --profile html --snapshot html/unpinned \
+  --expected-objects 2 --expected-bytes 11 \
+  --rclone "$tmp_root/bin/rclone" --curl "$tmp_root/bin/curl" \
+  --publisher "$tmp_root/bin/publisher" > "$tmp_root/unpinned-output" 2>&1; then
+  fail "HTML publication without an explicit root pin unexpectedly succeeded"
+fi
+grep -q 'explicit --root-sha256 pin' "$tmp_root/unpinned-output" || fail "missing HTML root pin was not diagnosed"
 
 printf 'publish-texlive-r2 shell contract tests passed\n'

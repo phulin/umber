@@ -19,6 +19,14 @@ Non-TFM runtime files use the manifest's `tex:` request kind because that is
 the current remote resolver vocabulary; Umber-native formats remain separate
 manifest format objects.
 
+The separate `html` publication profile emits root schema 4 and shard schema
+2. It verifies the complete configured roots but selects only explicit runtime
+keys plus every selected format's authenticated closure. Its TEXMF inputs are
+limited to `tex/` and TFM; WOFF2 and license objects come from an exact
+schema-2 catalog/object-source set. Never weaken this allow-list to admit VF,
+AFM, ENC, maps, PK, Type 1, or SFNT transport objects. HTML inventory ceilings
+are independent of the full snapshot.
+
 ## File map
 
 - `src/lib.rs`: publication orchestration and public configuration.
