@@ -56,12 +56,14 @@ snapshot and therefore replays only the rolled-back executor step. The host
 tracks response progress separately and rejects a retry that binds no newly
 awaited positive or authoritative-negative response.
 
-After a PDF-mode candidate reaches terminal engine execution, the incremental
+After a candidate that explicitly requests the `Pdf` output capability reaches terminal engine execution, the incremental
 owner may borrow that completed candidate's `Universe` only for downstream
 immutable resource finalization. VF/local-TFM/map/encoding/program discovery
 can therefore suspend the still-unaccepted candidate and resume against a new
 VFS generation without publishing its revision. Incomplete candidates never
 expose live state, and packet lowering remains after the acceptance barrier.
+The engine name and `\pdfoutput` state do not activate this discovery; HTML-
+and DVI-only pdfTeX-compatible sessions skip it.
 
 Expansion fuel also has a monotonic per-revision counter outside the step
 savepoint. A resource rollback restores semantic expansion state without

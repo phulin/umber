@@ -4,9 +4,9 @@ use umber::{
     BibliographyProjectOptions, EngineMode, FeatureSetting, FileContentId, FileKind, FileRequest,
     FileRequestKey, FontContainer, FontFeaturePolicy, FontLanguage, FontObjectIdentity,
     FontProgramIdentity, FontRequestKey, LatexProjectLimits, LatexProjectOptions,
-    LegacyFontMapping, OpenTypeTag, ResolvedFile, ResolvedFont, ResourceDomain, ResourceRequest,
-    ResourceResponse, SessionLimits, SessionOptions, SourcePatch, VariationCoordinate,
-    VariationSelection, WritingDirection,
+    LegacyFontMapping, OpenTypeTag, OutputCapability, OutputCapabilitySet, ResolvedFile,
+    ResolvedFont, ResourceDomain, ResourceRequest, ResourceResponse, SessionLimits, SessionOptions,
+    SourcePatch, VariationCoordinate, VariationSelection, WritingDirection,
 };
 use wasm_bindgen::{JsCast, JsValue};
 
@@ -56,8 +56,42 @@ pub(crate) fn parse_options(value: &JsValue) -> Result<SessionOptions, JsValue> 
             }
         };
     }
-    options.dvi = optional_bool(value, "dvi")?.unwrap_or(true);
-    options.html = !field(value, "html")?.is_undefined() && !field(value, "html")?.is_null();
+    let requested_outputs = field(value, "outputs")?;
+    if !absent(&requested_outputs) {
+        if !Array::is_array(&requested_outputs) {
+            return Err(js_error("outputs must be a nonempty array"));
+        }
+        let mut outputs = None;
+        for output in Array::from(&requested_outputs).iter() {
+            let capability = match output.as_string().as_deref() {
+                Some("dvi") => OutputCapability::Dvi,
+                Some("pdf") => OutputCapability::Pdf,
+                Some("html") => OutputCapability::Html,
+                _ => return Err(js_error("outputs entries must be 'dvi', 'pdf', or 'html'")),
+            };
+            outputs = Some(outputs.map_or_else(
+                || OutputCapabilitySet::new(capability),
+                |set: OutputCapabilitySet| set.with(capability),
+            ));
+        }
+        options.outputs = outputs.ok_or_else(|| js_error("outputs must be a nonempty array"))?;
+    } else {
+        // Version-1 compatibility adapter for the former DVI-plus-HTML shape.
+        let mut outputs = optional_bool(value, "dvi")?
+            .unwrap_or(true)
+            .then_some(OutputCapabilitySet::DVI);
+        if !field(value, "html")?.is_undefined() && !field(value, "html")?.is_null() {
+            outputs = Some(outputs.map_or(OutputCapabilitySet::HTML, |set| {
+                set.with(OutputCapability::Html)
+            }));
+        }
+        if options.engine.supports_pdf_output() {
+            outputs = Some(outputs.map_or(OutputCapabilitySet::PDF, |set| {
+                set.with(OutputCapability::Pdf)
+            }));
+        }
+        options.outputs = outputs.ok_or_else(|| js_error("at least one output is required"))?;
+    }
     options.font_layout_policy = match optional_string(value, "fontLayoutPolicy")?.as_deref() {
         None => umber::FontLayoutPolicy::OpenTypePreferred,
         Some("classic-tfm-exact") => umber::FontLayoutPolicy::ClassicTfmExact,

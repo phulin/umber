@@ -77,10 +77,13 @@ export interface SessionOptions {
   /** Authenticated format-closure requests, consumed as one-shot cache hints. */
   formatPrefetchHints?: FileRequest[];
   engine?: "tex82" | "etex" | "pdftex" | "latex" | "pdflatex";
-  /** Request classic TeX82 DVI output. Defaults to true. */
+  /** Explicit downstream products, independent from engine compatibility. */
+  outputs?: Array<"dvi" | "pdf" | "html">;
+  /** @deprecated Use outputs. Version-1 compatibility adapter only. */
   dvi?: boolean;
   clock?: { year: number; month: number; day: number; minutes: number };
   limits?: Partial<SessionLimits>;
+  /** @deprecated Use outputs. Version-1 compatibility adapter only. */
   html?: {};
   fontLayoutPolicy?: "opentype-preferred" | "classic-tfm-exact";
   fontMappingFallback?: "error" | "classic-tfm-exact";
@@ -140,6 +143,7 @@ export interface CompileOutputFile {
 }
 
 export interface CompileOutput {
+  outputs: Array<"dvi" | "pdf" | "html">;
   terminal: string;
   log: Uint8Array;
   dvi: Uint8Array;

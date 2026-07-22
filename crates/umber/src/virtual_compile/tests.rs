@@ -171,6 +171,7 @@ fn fixture_pfb() -> Vec<u8> {
 fn pdf_virtual_font_closure_uses_typed_bounded_retries() {
     let mut session = VirtualCompileSession::new(SessionOptions {
         engine: EngineMode::PdfTex,
+        outputs: OutputCapabilitySet::PDF,
         font_layout_policy: tex_fonts::FontLayoutPolicy::ClassicTfmExact,
         ..SessionOptions::default()
     })
@@ -272,10 +273,11 @@ fn pdf_virtual_font_closure_uses_typed_bounded_retries() {
         .provide_resolved_file(program.key().clone(), "/texlive/fixture.pfb", fixture_pfb())
         .expect("font program");
 
-    assert!(matches!(
-        session.compile_attempt(),
-        CompileAttemptResult::Complete(_)
-    ));
+    let CompileAttemptResult::Complete(output) = session.compile_attempt() else {
+        panic!("PDF closure should complete");
+    };
+    assert_eq!(output.outputs, OutputCapabilitySet::PDF);
+    assert!(output.dvi.is_empty());
     assert!(session.attempts() <= 7);
     let finalization = session
         .into_accepted_finalization()
@@ -302,6 +304,31 @@ fn pdf_virtual_font_closure_uses_typed_bounded_retries() {
             .pdf_type1_program(b"fixture.pfb")
             .is_some()
     );
+}
+
+#[test]
+fn dvi_only_pdftex_session_skips_the_pdf_font_closure() {
+    let mut session = VirtualCompileSession::new(SessionOptions {
+        engine: EngineMode::PdfTex,
+        outputs: OutputCapabilitySet::DVI,
+        font_layout_policy: tex_fonts::FontLayoutPolicy::ClassicTfmExact,
+        ..SessionOptions::default()
+    })
+    .expect("DVI-only pdfTeX session");
+    session
+        .add_user_file("cmr10.tfm", CMR10.to_vec())
+        .expect("TFM");
+    session
+        .add_user_file(
+            "main.tex",
+            br"\font\tenrm=cmr10\relax\tenrm\shipout\hbox{A}\end".to_vec(),
+        )
+        .expect("source");
+    let CompileAttemptResult::Complete(output) = session.compile_attempt() else {
+        panic!("DVI-only pdfTeX session must not request VF or PDF assets");
+    };
+    assert_eq!(output.outputs, OutputCapabilitySet::DVI);
+    assert!(!output.dvi.is_empty());
 }
 
 fn provide_cmu_font(session: &mut VirtualCompileSession, request: FontRequest) {
@@ -342,7 +369,7 @@ fn legacy_mapping_for(name: &str) -> Option<tex_fonts::LegacyFontMapping> {
 fn mapped_tfm_text_uses_one_opentype_authority_for_layout_and_html() {
     let source = b"\\font\\tenrm=cmr10\\relax \\tenrm \\textfont0=\\tenrm \\shipout\\hbox{\\char0 AV office}\\end";
     let mut modern = VirtualCompileSession::new(SessionOptions {
-        html: true,
+        outputs: OutputCapabilitySet::DVI.with(OutputCapability::Html),
         font_layout_policy: tex_fonts::FontLayoutPolicy::OpenTypePreferred,
         font_mapping_fallback: tex_fonts::FontMappingFallbackPolicy::Error,
         ..SessionOptions::default()
@@ -430,7 +457,7 @@ fn cmu_response(request: FontRequest) -> ResolvedFont {
 fn typed_font_response_obeys_the_per_resource_byte_limit_atomically() {
     let font_bytes = include_bytes!("../../../umber-wasm/assets/cmu-serif-500-roman.woff2");
     let mut session = VirtualCompileSession::new(SessionOptions {
-        html: true,
+        outputs: OutputCapabilitySet::DVI.with(OutputCapability::Html),
         limits: SessionLimits {
             one_file_bytes: font_bytes.len() - 1,
             ..SessionLimits::default()
@@ -1734,7 +1761,7 @@ fn valid_tfm_produces_a_nonempty_dvi() {
 #[test]
 fn opentype_only_font_needs_no_tfm_and_exposes_synthesized_fontdimens() {
     let mut session = VirtualCompileSession::new(SessionOptions {
-        html: true,
+        outputs: OutputCapabilitySet::DVI.with(OutputCapability::Html),
         ..SessionOptions::default()
     })
     .expect("HTML session");
@@ -1772,8 +1799,8 @@ fn html_only_opentype_retains_unicode_while_requested_dvi_rejects_it() {
     const SOURCE: &str =
         "\\font\\ot=opentype:cmu-serif-roman at 10pt \\ot \\shipout\\hbox{αЖ}\\end";
     let mut html_only = VirtualCompileSession::new(SessionOptions {
-        dvi: false,
-        html: true,
+        engine: EngineMode::PdfTex,
+        outputs: OutputCapabilitySet::HTML,
         ..SessionOptions::default()
     })
     .expect("HTML-only session");
@@ -1821,8 +1848,8 @@ fn html_only_opentype_retains_unicode_while_requested_dvi_rejects_it() {
     );
 
     let mut joint = VirtualCompileSession::new(SessionOptions {
-        dvi: true,
-        html: true,
+        engine: EngineMode::PdfTex,
+        outputs: OutputCapabilitySet::DVI.with(OutputCapability::Html),
         ..SessionOptions::default()
     })
     .expect("joint session");
@@ -1849,9 +1876,55 @@ fn html_only_opentype_retains_unicode_while_requested_dvi_rejects_it() {
 }
 
 #[test]
+fn html_only_is_independent_from_every_engine_compatibility_contract() {
+    for engine in [
+        EngineMode::Tex82,
+        EngineMode::ETex,
+        EngineMode::PdfTex,
+        EngineMode::Latex,
+        EngineMode::PdfLatex,
+    ] {
+        let mut session = VirtualCompileSession::new(SessionOptions {
+            engine,
+            outputs: OutputCapabilitySet::HTML,
+            ..SessionOptions::default()
+        })
+        .unwrap_or_else(|error| panic!("{} HTML session: {error}", engine.name()));
+        session
+            .add_user_file("main.tex", br"\shipout\hbox{}\end".to_vec())
+            .expect("main source");
+        let CompileAttemptResult::Complete(output) = session.compile_attempt() else {
+            panic!("{} HTML-only session did not complete", engine.name());
+        };
+        assert!(output.dvi.is_empty());
+        assert!(output.html.is_some());
+    }
+}
+
+#[test]
+fn pdf_capability_requires_a_pdftex_compatible_engine() {
+    for engine in [EngineMode::Tex82, EngineMode::ETex, EngineMode::Latex] {
+        let error = VirtualCompileSession::new(SessionOptions {
+            engine,
+            outputs: OutputCapabilitySet::PDF,
+            ..SessionOptions::default()
+        })
+        .err()
+        .expect("PDF capability must be rejected");
+        assert!(matches!(
+            error,
+            CompileError::OutputCapability {
+                capability: OutputCapability::Pdf,
+                ..
+            }
+        ));
+    }
+}
+
+#[test]
 fn opentype_only_font_rejects_classic_math_family_assignment() {
     let mut session = VirtualCompileSession::new(SessionOptions {
-        html: true,
+        outputs: OutputCapabilitySet::DVI.with(OutputCapability::Html),
         ..SessionOptions::default()
     })
     .expect("HTML session");
@@ -1882,7 +1955,7 @@ fn opentype_only_font_rejects_classic_math_family_assignment() {
 #[test]
 fn font_batches_accept_partial_unordered_responses_and_reject_conflicts() {
     let mut session = VirtualCompileSession::new(SessionOptions {
-        html: true,
+        outputs: OutputCapabilitySet::DVI.with(OutputCapability::Html),
         ..SessionOptions::default()
     })
     .expect("HTML session");
@@ -2119,7 +2192,7 @@ fn invalid_legacy_platform_filesize_probe_expands_to_nothing() {
 #[test]
 fn unavailable_font_answers_are_idempotent_and_conflict_with_bytes() {
     let mut session = VirtualCompileSession::new(SessionOptions {
-        html: true,
+        outputs: OutputCapabilitySet::DVI.with(OutputCapability::Html),
         ..SessionOptions::default()
     })
     .expect("HTML session");
@@ -2178,7 +2251,7 @@ fn unavailable_font_and_tfm_answers_use_tex_missing_font_semantics() {
     );
 
     let mut modern = VirtualCompileSession::new(SessionOptions {
-        html: true,
+        outputs: OutputCapabilitySet::DVI.with(OutputCapability::Html),
         ..SessionOptions::default()
     })
     .expect("HTML session");
@@ -2231,7 +2304,7 @@ fn malformed_tfm_bytes_remain_a_fatal_engine_error() {
 #[test]
 fn invalid_mixed_batch_publishes_nothing() {
     let mut session = VirtualCompileSession::new(SessionOptions {
-        html: true,
+        outputs: OutputCapabilitySet::DVI.with(OutputCapability::Html),
         ..SessionOptions::default()
     })
     .expect("HTML session");
@@ -2270,7 +2343,7 @@ fn invalid_mixed_batch_publishes_nothing() {
 #[test]
 fn requested_html_and_dvi_share_one_committed_compile() {
     let mut session = VirtualCompileSession::new(SessionOptions {
-        html: true,
+        outputs: OutputCapabilitySet::DVI.with(OutputCapability::Html),
         ..SessionOptions::default()
     })
     .expect("HTML session");
@@ -2383,7 +2456,7 @@ fn accepted_user_tfm_remains_available_across_incremental_patch() {
     let source =
         "\\font\\tenrm=cmr10\\relax\\tenrm %a\n\\shipout\\hbox{\\char65}\\shipout\\hbox{B}\\end";
     let mut session = VirtualCompileSession::new(SessionOptions {
-        html: true,
+        outputs: OutputCapabilitySet::DVI.with(OutputCapability::Html),
         ..SessionOptions::default()
     })
     .expect("HTML session");
@@ -2427,7 +2500,7 @@ fn accepted_user_tfm_remains_available_across_incremental_patch() {
 fn rendered_source_location_survives_paragraph_line_breaking() {
     let source = b"\\font\\tenrm=cmr10\\relax \\hsize=12pt \\parindent=0pt \\tenrm A B\\par\\end";
     let mut session = VirtualCompileSession::new(SessionOptions {
-        html: true,
+        outputs: OutputCapabilitySet::DVI.with(OutputCapability::Html),
         ..SessionOptions::default()
     })
     .expect("HTML session");
@@ -2476,7 +2549,7 @@ fn rendered_source_location_survives_paragraph_line_breaking() {
 fn modern_math_session_html_is_canonical_and_scriptless() {
     let source = b"\\font\\tenrm=cmr10 \\font\\sy=cmsy10 \\font\\ex=cmex10 \\textfont0=\\tenrm \\textfont2=\\sy \\scriptfont2=\\sy \\scriptscriptfont2=\\sy \\textfont3=\\ex \\scriptfont3=\\ex \\scriptscriptfont3=\\ex \\mathcode`A=\"0041 \\shipout\\hbox{X$A$}\\end";
     let mut session = VirtualCompileSession::new(SessionOptions {
-        html: true,
+        outputs: OutputCapabilitySet::DVI.with(OutputCapability::Html),
         font_layout_policy: tex_fonts::FontLayoutPolicy::OpenTypePreferred,
         ..SessionOptions::default()
     })

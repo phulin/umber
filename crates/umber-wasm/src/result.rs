@@ -1,7 +1,7 @@
 use js_sys::{Array, Object, Reflect, Uint8Array};
 use umber::{
     CompileAttemptResult, CompileDiagnostic, CompileError, LatexProjectAttempt, LatexProjectError,
-    LatexProjectOutput, MemoryRunOutput, ResourceRequest,
+    LatexProjectOutput, MemoryRunOutput, OutputCapability, ResourceRequest,
 };
 use wasm_bindgen::{JsCast, JsValue};
 
@@ -174,6 +174,15 @@ fn resource_requests(requests: Vec<ResourceRequest>) -> Result<Array, JsValue> {
 
 fn compile_output(output: MemoryRunOutput) -> Result<JsValue, JsValue> {
     let object = Object::new();
+    let outputs = Array::new();
+    for capability in output.outputs.iter() {
+        outputs.push(&JsValue::from_str(match capability {
+            OutputCapability::Dvi => "dvi",
+            OutputCapability::Pdf => "pdf",
+            OutputCapability::Html => "html",
+        }));
+    }
+    set(&object, "outputs", &outputs)?;
     set(
         &object,
         "terminal",

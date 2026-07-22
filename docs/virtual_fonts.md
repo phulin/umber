@@ -89,8 +89,10 @@ acceptance and do not alter committed artifacts or DVI construction.
 
 ## Typed acquisition and retry closure
 
-The PDF-mode compile session retains a completed engine candidate before
-acceptance and probes `vf:<font>.vf` for each used TFM-backed PDF font. An
+Only a compile session whose `OutputCapabilitySet` contains `Pdf` retains a
+completed engine candidate for this closure before acceptance and probes
+`vf:<font>.vf` for each used TFM-backed PDF font. Selecting a pdfTeX-compatible
+engine alone never initiates VF or map discovery. An
 authoritative negative classifies that font as real. A positive response is
 parsed once, retained with both its VFS content identity and VF program
 identity, and contributes required `tfm:<local>.tfm` requests. Each local TFM

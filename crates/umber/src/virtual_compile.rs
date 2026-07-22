@@ -164,10 +164,8 @@ pub struct SessionOptions {
     pub engine: EngineMode,
     pub clock: JobClock,
     pub limits: SessionLimits,
-    /// Request classic TeX82 DVI output.
-    pub dvi: bool,
-    /// Request embedded standalone HTML.
-    pub html: bool,
+    /// Downstream products requested independently from engine compatibility.
+    pub outputs: OutputCapabilitySet,
     /// HTML asset publication policy fixed before execution.
     pub html_asset_mode: tex_out::html::AssetMode,
     /// Font containers the host can provide. Browser sessions use WOFF2.
@@ -188,12 +186,79 @@ impl Default for SessionOptions {
             engine: EngineMode::Tex82,
             clock: JobClock::DEFAULT,
             limits: SessionLimits::default(),
-            dvi: true,
-            html: false,
+            outputs: OutputCapabilitySet::DVI,
             html_asset_mode: tex_out::html::AssetMode::Embedded,
             accepted_font_containers: AcceptedFontContainers::WASM,
             font_layout_policy: FontLayoutPolicy::OpenTypePreferred,
             font_mapping_fallback: FontMappingFallbackPolicy::ClassicTfmExact,
+        }
+    }
+}
+
+/// One downstream product selected independently from [`EngineMode`].
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub enum OutputCapability {
+    Dvi,
+    Pdf,
+    Html,
+}
+
+/// A nonempty set of downstream products fixed before execution.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct OutputCapabilitySet(u8);
+
+impl OutputCapabilitySet {
+    const DVI_BIT: u8 = 1;
+    const PDF_BIT: u8 = 2;
+    const HTML_BIT: u8 = 4;
+
+    pub const DVI: Self = Self(Self::DVI_BIT);
+    pub const PDF: Self = Self(Self::PDF_BIT);
+    pub const HTML: Self = Self(Self::HTML_BIT);
+
+    #[must_use]
+    pub const fn new(capability: OutputCapability) -> Self {
+        Self(capability.bit())
+    }
+
+    #[must_use]
+    pub const fn with(self, capability: OutputCapability) -> Self {
+        Self(self.0 | capability.bit())
+    }
+
+    #[must_use]
+    pub const fn union(self, other: Self) -> Self {
+        Self(self.0 | other.0)
+    }
+
+    #[must_use]
+    pub const fn contains(self, capability: OutputCapability) -> bool {
+        self.0 & capability.bit() != 0
+    }
+
+    pub fn iter(self) -> impl Iterator<Item = OutputCapability> {
+        [
+            OutputCapability::Dvi,
+            OutputCapability::Pdf,
+            OutputCapability::Html,
+        ]
+        .into_iter()
+        .filter(move |capability| self.contains(*capability))
+    }
+}
+
+impl Default for OutputCapabilitySet {
+    fn default() -> Self {
+        Self::DVI
+    }
+}
+
+impl OutputCapability {
+    const fn bit(self) -> u8 {
+        match self {
+            Self::Dvi => OutputCapabilitySet::DVI_BIT,
+            Self::Pdf => OutputCapabilitySet::PDF_BIT,
+            Self::Html => OutputCapabilitySet::HTML_BIT,
         }
     }
 }
@@ -392,6 +457,10 @@ pub enum CompileError {
     World(String),
     Output(String),
     Html(String),
+    OutputCapability {
+        capability: OutputCapability,
+        message: String,
+    },
     Incremental(String),
     SessionAlreadyStarted,
     PatchAlreadyPending,
@@ -447,6 +516,10 @@ impl fmt::Display for CompileError {
             }
             Self::Format(message) => write!(f, "format image rejected: {message}"),
             Self::Diagnostic(diagnostic) => f.write_str(&diagnostic.message),
+            Self::OutputCapability {
+                capability,
+                message,
+            } => write!(f, "{capability:?} output finalization failed: {message}"),
             Self::World(message)
             | Self::Output(message)
             | Self::Html(message)
@@ -497,8 +570,7 @@ pub struct VirtualCompileSession {
     accepted_font_containers: AcceptedFontContainers,
     font_layout_policy: FontLayoutPolicy,
     font_mapping_fallback: FontMappingFallbackPolicy,
-    dvi: bool,
-    html: bool,
+    outputs: OutputCapabilitySet,
     html_asset_mode: tex_out::html::AssetMode,
     incremental: Option<tex_incr::Session>,
     accepted_output: Option<MemoryRunOutput>,
@@ -610,6 +682,16 @@ impl VirtualCompileSession {
         initial_revision: tex_incr::RevisionId,
     ) -> Result<Self, CompileError> {
         let limits = options.limits.validate()?;
+        if options.outputs.contains(OutputCapability::Pdf) && !options.engine.supports_pdf_output()
+        {
+            return Err(CompileError::OutputCapability {
+                capability: OutputCapability::Pdf,
+                message: format!(
+                    "engine {} does not provide pdfTeX PDF semantics",
+                    options.engine.name()
+                ),
+            });
+        }
         let main_path = VirtualPath::user(&options.main_path).map_err(|error| {
             CompileError::InvalidVirtualPath {
                 path: options.main_path.clone(),
@@ -657,8 +739,7 @@ impl VirtualCompileSession {
             accepted_font_containers: options.accepted_font_containers,
             font_layout_policy: options.font_layout_policy,
             font_mapping_fallback: options.font_mapping_fallback,
-            dvi: options.dvi,
-            html: options.html,
+            outputs: options.outputs,
             html_asset_mode: options.html_asset_mode,
             incremental: None,
             accepted_output: None,
@@ -1067,14 +1148,16 @@ impl VirtualCompileSession {
         let shares_object = shared.is_some();
         let font = OpenTypeFont::parse_reusing(request, response, FontLimits::default(), shared)
             .map_err(|error| CompileError::Font(error.to_string()))?;
-        if self.html && fingerprint.provenance.as_deref().is_none_or(str::is_empty) {
+        if self.outputs.contains(OutputCapability::Html)
+            && fingerprint.provenance.as_deref().is_none_or(str::is_empty)
+        {
             return Err(CompileError::Font(format!(
                 "font {} has no embedding provenance",
                 key.logical_name()
             )));
         }
         if let Some(mapping) = &fingerprint.legacy_mapping {
-            if self.html && !mapping.embeddable {
+            if self.outputs.contains(OutputCapability::Html) && !mapping.embeddable {
                 return Err(CompileError::Font(format!(
                     "font {} is not licensed for embedding",
                     key.logical_name()
@@ -1292,7 +1375,7 @@ impl VirtualCompileSession {
                 )
                 .map_err(|error| CompileError::Incremental(error.to_string()))?;
                 session.set_utf8_input_as_bytes(self.engine.uses_latex_input());
-                session.set_dvi_output(self.dvi);
+                session.set_dvi_output(self.outputs.contains(OutputCapability::Dvi));
                 session
             });
             let mut candidate = session
@@ -1547,7 +1630,7 @@ impl VirtualCompileSession {
                 }));
             }
         }
-        if self.engine.supports_pdf_output() {
+        if self.outputs.contains(OutputCapability::Pdf) {
             #[cfg(not(target_arch = "wasm32"))]
             let pdf_request_extraction_started = Instant::now();
             let stores = match &mut retained.execution {
@@ -1558,7 +1641,10 @@ impl VirtualCompileSession {
             };
             let discovery =
                 pdf_resources::discover(stores, &self.files, &mut self.virtual_font_resources)
-                    .map_err(CompileError::Font)?;
+                    .map_err(|message| CompileError::OutputCapability {
+                        capability: OutputCapability::Pdf,
+                        message,
+                    })?;
             if !discovery.required.is_empty() || !discovery.probes.is_empty() {
                 stage.discard();
                 build.discard();
@@ -1654,14 +1740,19 @@ impl VirtualCompileSession {
             .to_vec();
         let files =
             publish_auxiliary_outputs(&accepted_world, &mut stage).map_err(map_memory_output)?;
-        let dvi = if !self.dvi || execution.artifacts().is_empty() {
-            Vec::new()
-        } else {
-            execution
-                .dvi_bytes()
-                .map_err(|error| CompileError::Output(error.to_string()))?
-        };
+        let dvi =
+            if !self.outputs.contains(OutputCapability::Dvi) || execution.artifacts().is_empty() {
+                Vec::new()
+            } else {
+                execution
+                    .dvi_bytes()
+                    .map_err(|error| CompileError::OutputCapability {
+                        capability: OutputCapability::Dvi,
+                        message: error.to_string(),
+                    })?
+            };
         let mut output = MemoryRunOutput {
+            outputs: self.outputs,
             terminal,
             log,
             dvi,
@@ -1682,7 +1773,7 @@ impl VirtualCompileSession {
                     .sum::<usize>(),
             );
         let remaining = self.limits.output_bytes.saturating_sub(existing);
-        let html = if self.html {
+        let html = if self.outputs.contains(OutputCapability::Html) {
             let output_id = match &execution {
                 PreparedExecution::Initial { session, .. } => session.output_id(),
                 PreparedExecution::Pending(_) => self
@@ -1706,7 +1797,10 @@ impl VirtualCompileSession {
             };
             Some(
                 crate::html_from_committed_artifacts(execution.artifacts(), &assets, &html_options)
-                    .map_err(|error| CompileError::Html(error.to_string()))?,
+                    .map_err(|error| CompileError::OutputCapability {
+                        capability: OutputCapability::Html,
+                        message: error.to_string(),
+                    })?,
             )
         } else {
             None

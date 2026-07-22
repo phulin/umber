@@ -13,6 +13,9 @@ fn pdf_virtual_font_closure_crosses_typed_bounded_retries() {
     let options = Object::new();
     set(&options, "mainPath", &JsValue::from_str("main.tex"));
     set(&options, "engine", &JsValue::from_str("pdftex"));
+    let outputs = Array::new();
+    outputs.push(&JsValue::from_str("pdf"));
+    set(&options, "outputs", &outputs);
     let mut session =
         CompilerSession::new(options.unchecked_ref::<JsSessionOptions>()).expect("PDF session");
     session

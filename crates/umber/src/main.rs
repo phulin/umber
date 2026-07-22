@@ -83,14 +83,28 @@ fn lex_dump(path: &str) -> Result<(), CliError> {
 #[allow(clippy::disallowed_methods)] // Process telemetry; TeX state never observes it.
 fn run_tex(opts: &RunCliOptions) -> Result<(), CliError> {
     let run_started = std::time::Instant::now();
+    let mut outputs = if opts.dvi.is_some() {
+        umber::OutputCapabilitySet::DVI
+    } else if opts.pdf.is_some() {
+        umber::OutputCapabilitySet::PDF
+    } else {
+        // Legacy CLI runs without a publication path retain the classic DVI
+        // driver as their compatibility output.
+        umber::OutputCapabilitySet::DVI
+    };
+    if opts.pdf.is_some() {
+        outputs = outputs.with(umber::OutputCapability::Pdf);
+    }
+    if opts.html.is_some() {
+        outputs = outputs.with(umber::OutputCapability::Html);
+    }
     let accepted =
         umber::cli_resource::run_for_finalization(&umber::cli_resource::NativeRunOptions {
             input: opts.input.clone(),
             format: opts.format.clone(),
             initial_prefetch_keys: opts.initial_prefetch_keys.clone(),
             engine: opts.engine,
-            dvi: opts.dvi.is_some(),
-            html: opts.html.is_some(),
+            outputs,
             html_font_dir: opts.html_font_dir.clone(),
             html_asset_directory: opts
                 .html_assets

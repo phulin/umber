@@ -13,6 +13,12 @@ remains synchronous and host-neutral. JavaScript or another host owns
 asynchronous I/O, concurrency, persistent caching, cancellation, authentication,
 and deployment policy.
 
+The WASM `SessionOptions.outputs` array is the representation adapter for the
+same Rust-owned nonempty `OutputCapabilitySet` used by native and project
+sessions. JavaScript forwards that selection and never derives drivers from
+the engine name. The deprecated version-1 `dvi`/`html` fields are translated
+only when `outputs` is absent.
+
 The completed design must:
 
 - report every currently knowable missing resource as one deterministic batch;

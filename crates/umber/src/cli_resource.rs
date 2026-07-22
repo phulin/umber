@@ -24,9 +24,9 @@ use umber_fetch::{
 
 use crate::{
     AcceptedFinalization, CompileAttemptResult, CompileTelemetry, EngineMode, FileContentId,
-    FileKind, FileRequest, MemoryRunOutput, NeedResources, ResolvedFile, ResourceRequest,
-    ResourceResponse, SessionLimits, SessionOptions, SourcePatch, TexFontSearchPath,
-    TexInputSearchPath, VirtualCompileSession,
+    FileKind, FileRequest, MemoryRunOutput, NeedResources, OutputCapability, OutputCapabilitySet,
+    ResolvedFile, ResourceRequest, ResourceResponse, SessionLimits, SessionOptions, SourcePatch,
+    TexFontSearchPath, TexInputSearchPath, VirtualCompileSession,
 };
 
 pub const DEFAULT_DISTRIBUTION_URL: &str =
@@ -42,8 +42,7 @@ pub struct NativeRunOptions {
     pub format: Option<PathBuf>,
     pub initial_prefetch_keys: Vec<String>,
     pub engine: EngineMode,
-    pub dvi: bool,
-    pub html: bool,
+    pub outputs: OutputCapabilitySet,
     pub html_font_dir: Option<PathBuf>,
     pub html_asset_directory: Option<String>,
     pub distribution: Option<String>,
@@ -351,20 +350,19 @@ impl NativeCompileSession {
                 engine_fuel,
                 ..SessionLimits::default()
             },
-            dvi: options.dvi,
-            html: options.html,
+            outputs: options.outputs,
             html_asset_mode: options.html_asset_directory.as_ref().map_or(
                 tex_out::html::AssetMode::Embedded,
                 |relative_directory| tex_out::html::AssetMode::Manifest {
                     relative_directory: relative_directory.clone(),
                 },
             ),
-            accepted_font_containers: if options.html {
+            accepted_font_containers: if options.outputs.contains(OutputCapability::Html) {
                 AcceptedFontContainers::WASM
             } else {
                 AcceptedFontContainers::NATIVE_WITH_COLLECTIONS
             },
-            font_layout_policy: if options.html {
+            font_layout_policy: if options.outputs.contains(OutputCapability::Html) {
                 tex_fonts::FontLayoutPolicy::OpenTypePreferred
             } else {
                 tex_fonts::FontLayoutPolicy::ClassicTfmExact

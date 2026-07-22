@@ -18,10 +18,12 @@ hosts and the WebAssembly binding. It composes the typed resource protocol in
 - detached output for the most recently accepted revision.
 
 The existing `advance()`/`compile_attempt()` operation drives every state.
-Session options also fix output capabilities before the first candidate runs.
-DVI remains enabled by default; `dvi: false` with HTML requested suppresses
-DVI plan construction while retaining committed artifacts and rendered-source
-sidecars. Output capabilities cannot change between accepted revisions.
+Session options also fix the nonempty Rust-owned `OutputCapabilitySet` before
+the first candidate runs. DVI remains the Rust API default; an explicit
+`["html"]` WASM selection suppresses DVI plan construction and every PDF
+driver lookup while retaining committed artifacts and rendered-source
+sidecars. The version-1 WASM `dvi`/`html` fields remain a deprecated input
+adapter only. Output capabilities cannot change between accepted revisions.
 Before the first accepted revision it executes the configured main user file.
 After `apply_patch` it executes the pending revision. Either execution may
 return `NeedResources`; the caller provides those resources and calls
@@ -64,7 +66,8 @@ extension that converts this synchronous operation into a retry protocol.
 re-executing TeX. Native and WASM callers observe the same result variants.
 
 Execution prepares a private `tex-incr` revision before it changes accepted
-history. The driver materializes diagnostics, artifacts, DVI/HTML, and
+history. The driver materializes diagnostics, artifacts, the selected
+DVI/PDF/HTML products, and
 auxiliary files from that candidate while a cloned `umber-vfs` build
 generation owns the candidate root bytes and generated stage writes. Only
 after every fallible output, stage, build-limit, and collision check succeeds
@@ -200,8 +203,8 @@ stores, consume checkpoints, or prevent later patches.
 
 One-shot native clients may instead consume a completed session through
 `into_accepted_finalization()`. That boundary transfers the accepted
-`Universe`, format-dump flag, and expansion counters with effects still
-uncommitted. The CLI performs PDF/HTML lowering, format serialization, input
+`Universe`, format-dump flag, selected PDF closure, and expansion counters with
+effects still uncommitted. The CLI performs selected PDF finalization, format serialization, input
 receipt construction, and driver-file collision checks against that detached
 state; only then does it retarget the retained `World` to the native output
 backend, commit effects, and atomically publish the complete driver file set.

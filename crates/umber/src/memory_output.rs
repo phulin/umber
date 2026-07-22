@@ -4,7 +4,10 @@ use tex_out::dvi::DviPagePlan;
 use tex_state::{CommittedArtifact, ContentHash, Universe, World, WorldError};
 use umber_vfs::{StageTransaction, TransactionError, VirtualPath};
 
-use crate::{DviBuildError, dvi_from_artifacts, dvi_from_committed_artifacts, dvi_from_page_plans};
+use crate::{
+    DviBuildError, OutputCapabilitySet, dvi_from_artifacts, dvi_from_committed_artifacts,
+    dvi_from_page_plans,
+};
 
 /// Fast-path variant for page bodies compiled before successful shipout.
 pub fn collect_final_memory_output_from_plans(
@@ -75,6 +78,8 @@ pub fn collect_final_memory_output_from_commits(
 /// Exact observable outputs of one successful memory-backed run.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct MemoryRunOutput {
+    /// Exact downstream products selected for this accepted run.
+    pub outputs: OutputCapabilitySet,
     pub terminal: Vec<u8>,
     pub log: Vec<u8>,
     pub dvi: Vec<u8>,
@@ -148,6 +153,7 @@ where
     account(&mut total, dvi.len(), output_byte_limit)?;
 
     Ok(MemoryRunOutput {
+        outputs: OutputCapabilitySet::DVI,
         terminal: terminal.to_vec(),
         log: log.to_vec(),
         dvi,

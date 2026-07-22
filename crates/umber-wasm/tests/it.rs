@@ -416,6 +416,59 @@ fn pdftex_engine_option_reports_the_pinned_identity() {
 }
 
 #[wasm_bindgen_test]
+fn explicit_output_capabilities_cover_every_nonempty_combination() {
+    for requested in [
+        &["dvi"][..],
+        &["pdf"][..],
+        &["html"][..],
+        &["dvi", "pdf"][..],
+        &["dvi", "html"][..],
+        &["pdf", "html"][..],
+        &["dvi", "pdf", "html"][..],
+    ] {
+        let session_options = options("main.tex");
+        set(&session_options, "engine", &JsValue::from_str("pdftex"));
+        let outputs = Array::new();
+        for output in requested.iter().copied() {
+            outputs.push(&JsValue::from_str(output));
+        }
+        set(&session_options, "outputs", &outputs);
+        let mut session = CompilerSession::new(session_options.unchecked_ref::<JsSessionOptions>())
+            .expect("capability session");
+        session
+            .add_user_file("main.tex", &bytes(br"\shipout\hbox{}\end"))
+            .expect("main source");
+        let complete = session.advance().expect("capability compile");
+        assert_eq!(string_field(complete.as_ref(), "kind"), "complete");
+        let output = field(complete.as_ref(), "output");
+        let returned = Array::from(&field(&output, "outputs"));
+        assert_eq!(returned.length() as usize, requested.len());
+        for capability in requested.iter().copied() {
+            assert!(
+                (0..returned.length()).any(|index| {
+                    returned.get(index).as_string().as_deref() == Some(capability)
+                })
+            );
+        }
+        let dvi = Uint8Array::new(&field(&output, "dvi")).to_vec();
+        assert_eq!(!dvi.is_empty(), requested.contains(&"dvi"));
+        assert_eq!(
+            !field(&output, "html").is_undefined(),
+            requested.contains(&"html")
+        );
+    }
+
+    let empty = options("main.tex");
+    set(&empty, "outputs", &Array::new());
+    assert!(CompilerSession::new(empty.unchecked_ref::<JsSessionOptions>()).is_err());
+
+    let incompatible = options("main.tex");
+    let pdf = Array::of1(&JsValue::from_str("pdf"));
+    set(&incompatible, "outputs", &pdf);
+    assert!(CompilerSession::new(incompatible.unchecked_ref::<JsSessionOptions>()).is_err());
+}
+
+#[wasm_bindgen_test]
 fn pdftex_return_value_reports_invalid_object_recovery() {
     let session_options = options("main.tex");
     set(&session_options, "engine", &JsValue::from_str("pdftex"));
