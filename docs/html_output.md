@@ -20,6 +20,12 @@ and typed unsupported legacy outcomes are specified by the normative
 continues to consume retained accepted resources only; the deliberately small
 hosted catalog does not constrain DVI or PDF providers.
 
+Applications compose project/private and hosted HTML resources through the
+typed composite resolver. A project resource is selected before the hosted R2
+profile, while a verified hosted miss remains only that provider's miss until
+the facade exhausts every eligible provider. Resolver identity remains the
+complete typed key; HTML never probes platform fonts or basename candidates.
+
 ## Coordinate model
 
 All canonical coordinates are signed TeX scaled-point (`sp`) integers. Event

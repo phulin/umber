@@ -22,6 +22,10 @@
 			"types": "./manifest-resolver.d.ts",
 			"import": "./manifest-resolver.js"
 		},
+		"./resource-resolver": {
+			"types": "./resource-resolver.d.ts",
+			"import": "./resource-resolver.js"
+		},
 		"./persistent-cache": {
 			"types": "./persistent-cache.d.ts",
 			"import": "./persistent-cache.js"

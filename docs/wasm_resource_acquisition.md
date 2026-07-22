@@ -185,6 +185,15 @@ fetches, local user files, or another transport. Reusable helper modules may
 implement these policies, but the core package does not require one catalog or
 deployment model.
 
+`CompositeResourceResolver` is the shared authored facade for applications
+that have more than one such provider. It consults session/application,
+local/client, and hosted providers in caller-declared precedence, treats typed
+unavailability as provider-scoped, and emits an authoritative unavailable
+response only after all providers miss. Transport, validation, and corruption
+errors remain actionable failures. The worker uses this facade for explicit
+session font resources ahead of the authenticated manifest provider; it no
+longer rewrites hosted results after resolution.
+
 Cancellation aborts work owned only by the cancelled session. A client may
 retain a shared in-flight fetch while another live session still references
 it. The facade checks cancellation again after acquisition and before batch

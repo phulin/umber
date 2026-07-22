@@ -1,5 +1,6 @@
 import { compile } from "./compile.js";
 import { HttpManifestResolver } from "./manifest-resolver.js";
+import { CompositeResourceResolver } from "./resource-resolver.js";
 
 export async function runCompileMessage(message, dependencies = {}) {
 	if (message?.kind !== "compile" || !Array.isArray(message.userFiles)) {
@@ -30,35 +31,32 @@ export async function runCompileMessage(message, dependencies = {}) {
 	const resolver =
 		fontResources.size === 0
 			? manifestResolver
-			: {
-					...manifestResolver,
-					resolve: async (requests, options) => {
-						const responses = await manifestResolver.resolve(requests, options);
-						return responses.map((response) => {
-							if (
-								response.type !== "font" &&
-								response.type !== "font-unavailable"
-							)
-								return response;
-							const request = response.request ?? response;
-							const resource = fontResources.get(request.logicalName);
-							return resource === undefined
-								? response
-								: { ...request, ...resource, type: "font" };
-						});
+			: new CompositeResourceResolver([
+					{
+						async resolve(requests, options) {
+							return requests.concat(options?.probes ?? []).map((request) => {
+								if (request.type !== "font")
+									return { ...request, type: `${request.type}-unavailable` };
+								const resource = fontResources.get(request.logicalName);
+								return resource === undefined
+									? { ...request, type: "font-unavailable" }
+									: { ...request, ...resource, type: "font" };
+							});
+						},
 					},
-					resolveFormat: manifestResolver.resolveFormat?.bind(manifestResolver),
-					formatPrefetchHints:
-						manifestResolver.formatPrefetchHints?.bind(manifestResolver),
-				};
+					manifestResolver,
+				]);
 	let options = message.options;
 	if (message.resolver.format !== undefined) {
-		const format = await resolver.resolveFormat(message.resolver.format, {
-			engineVersion: bindings.packageVersion(),
-			formatSchema: bindings.formatSchemaVersion(),
-		});
+		const format = await manifestResolver.resolveFormat(
+			message.resolver.format,
+			{
+				engineVersion: bindings.packageVersion(),
+				formatSchema: bindings.formatSchemaVersion(),
+			},
+		);
 		const formatPrefetchHints =
-			resolver.formatPrefetchHints?.(message.resolver.format) ?? [];
+			manifestResolver.formatPrefetchHints?.(message.resolver.format) ?? [];
 		options = { ...options, format, formatPrefetchHints };
 	}
 	return compile(

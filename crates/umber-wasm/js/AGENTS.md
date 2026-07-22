@@ -23,3 +23,7 @@ Run authored tests with `node --test crates/umber-wasm/js/*.test.js`.
 - `manifest-schema.test.js`: shared Rust/JavaScript manifest-selection fixture parity.
 - `manifest-resolver.d.ts`: public resolver declarations.
 - `manifest-resolver.test.js`: resolver integrity, concurrency, hint, and cache tests.
+- `resource-resolver.js` / `resource-resolver.d.ts`: ordered typed provider
+  composition with provider-scoped misses, final absence, and cancellation.
+- `resource-resolver.test.js`: precedence, exact-key, failure, cancellation, and
+  malformed-provider coverage for the composite facade.

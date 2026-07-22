@@ -235,6 +235,17 @@ record is not authoritative global absence. Project/private resources shadow
 hosted records before either object becomes live. After acceptance, another
 provider cannot rebind the request during that session.
 
+This rule is implemented by `umber::CompositeResourceResolver` and the authored
+JavaScript `CompositeResourceResolver`. Providers return either a positive
+typed response or a provider-scoped miss for the complete request. The facade
+validates response correspondence and duplicates, checks cancellation between
+providers, preserves the declared order, and constructs the terminal typed
+unavailable response only after every provider has missed. Speculative hints
+are not forwarded through the composite in version 1, preventing a
+lower-precedence provider from binding a request before a higher-precedence
+provider sees a correctness-relevant request; providers may still warm their
+own object caches independently.
+
 No layer probes operating-system font registries or derives a URL/path from a
 document font name. There is no basename, family-name, PostScript-name, or
 platform fallback. Manifest transport aliases such as mapping semantic VF,
