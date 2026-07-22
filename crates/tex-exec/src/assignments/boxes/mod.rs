@@ -18,7 +18,7 @@ mod packaging;
 mod vsplit;
 
 use leaders::{leader_glue_kind, scan_leader_glue, scan_leader_payload};
-pub(super) use packaging::scan_required_box_node;
+pub(super) use packaging::scan_box_value_node;
 use packaging::{
     ScannedBoxValue, first_box_node, kind_for_primitive, scan_box_node, scan_box_value,
     take_last_box,
@@ -91,7 +91,10 @@ pub(crate) fn scan_math_box(
         }
         UnexpandablePrimitive::Raise | UnexpandablePrimitive::Lower => {
             let amount = scan_scaled(input, stores, execution, context)?;
-            let mut node = packaging::scan_required_box_node(input, stores, execution, context)?;
+            let Some(mut node) = packaging::scan_box_value_node(input, stores, execution, context)?
+            else {
+                return Ok(None);
+            };
             apply_shift(&mut node, primitive, amount)?;
             Some(node)
         }
@@ -256,9 +259,10 @@ pub(super) fn execute_box_list_command(
         | UnexpandablePrimitive::MoveLeft
         | UnexpandablePrimitive::MoveRight => {
             let amount = scan_scaled(input, stores, execution, context)?;
-            let mut node = scan_required_box_node(input, stores, execution, context)?;
-            apply_shift(&mut node, primitive, amount)?;
-            append_box_node_to_current_list(nest, stores, node)?;
+            if let Some(mut node) = scan_box_value_node(input, stores, execution, context)? {
+                apply_shift(&mut node, primitive, amount)?;
+                append_box_node_to_current_list(nest, stores, node)?;
+            }
         }
         _ => unreachable!("caller restricts box list commands"),
     }

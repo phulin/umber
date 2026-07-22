@@ -39,15 +39,14 @@ impl ScannedBoxValue {
     }
 }
 
-pub(in crate::assignments) fn scan_required_box_node(
+pub(in crate::assignments) fn scan_box_value_node(
     input: &mut InputStack,
     stores: &mut Universe,
     execution: &mut crate::ExecutionContext<'_>,
     context: TracedTokenWord,
-) -> Result<Node, ExecError> {
-    scan_box_value(None, input, stores, execution, context)?
-        .map(ScannedBoxValue::into_node)
-        .ok_or(ExecError::MissingToken { context: "box" })
+) -> Result<Option<Node>, ExecError> {
+    scan_box_value(None, input, stores, execution, context)
+        .map(|value| value.map(ScannedBoxValue::into_node))
 }
 
 pub(super) fn scan_box_value(

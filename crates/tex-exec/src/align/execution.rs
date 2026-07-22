@@ -497,6 +497,10 @@ pub(crate) fn do_endv(
     {
         return Ok(DoEndV::NotApplicable);
     }
+    if !input.has_active_alignment_cell() {
+        input.retire_orphaned_alignment_v_templates();
+        return Ok(DoEndV::Recovered);
+    }
     if stores.innermost_group_kind() == Some(tex_state::GroupKind::Align) {
         return Ok(DoEndV::FinishCell);
     }
@@ -521,7 +525,7 @@ fn run_cell_body_until_terminator(
         let token = match fetched {
             Ok(Some(token)) => token,
             Ok(None) => {
-                if let Some(terminator) = input.finish_terminating_alignment_cell() {
+                if let Some(terminator) = input.finish_terminating_alignment_cell(stores) {
                     return classify_cell_terminator(stores, terminator);
                 }
                 return Err(ExecError::MissingToken {
@@ -563,11 +567,12 @@ fn run_cell_body_until_terminator(
                     });
                 }
             }
-            let terminator = input
-                .finish_alignment_cell()
-                .ok_or(ExecError::MissingToken {
-                    context: "alignment cell terminator",
-                })?;
+            let terminator =
+                input
+                    .finish_alignment_cell(stores)
+                    .ok_or(ExecError::MissingToken {
+                        context: "alignment cell terminator",
+                    })?;
             return classify_cell_terminator(stores, terminator);
         }
         stats.delivered_tokens += 1;

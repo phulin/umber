@@ -1267,6 +1267,20 @@ fn futurelet_aliased_frozen_endv_recovers_intervening_group_before_do_endv() {
 }
 
 #[test]
+fn aliased_endv_recovery_continues_through_shifted_void_box() {
+    let stores = run_boxed_alignment_source(
+        "\\def\\capture{\\futurelet\\endt\\consume}\\def\\consume{\\begingroup\\afterassignment\\execute\\let\\scratch=}\\def\\execute{\\endt}\\halign{#\\cr x\\capture\\cr}\\lower1pt\\box1\\global\\count0=7",
+    );
+    let vbox = box_zero_vlist(&stores);
+    let rows = vlist_rows(&stores, vbox);
+
+    assert_eq!(rows.len(), 1);
+    assert_eq!(cell_text(&stores, row_cells(&stores, rows[0])[0]), "x");
+    assert_eq!(stores.count(0), 7, "void box must not stop continuation");
+    assert!(support::terminal_effect_text(&stores).contains("Missing \\endgroup inserted"));
+}
+
+#[test]
 fn aliased_frozen_endv_alignment_replays_identically_after_rollback() {
     let mut stores = support::stores_with_fonts();
     let checkpoint = stores.snapshot();

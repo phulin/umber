@@ -1,9 +1,9 @@
 use super::{
-    ConditionFrameSummary, ConditionKind, ConditionLimb, ImmutableSourceKind, InputFrame,
-    InputFrameSummary, InputSource, InputStack, LayoutCursor, LayoutCursorError, LexError, Lexer,
-    LexerState, LineEvent, LineReader, LiteralSpanPolicy, MACRO_ARGUMENT_SLOTS, MacroArgumentRange,
-    MacroArguments, MemoryInput, PhysicalLine, StableSourceSpanId, TokenListReplayKind,
-    load_next_line,
+    AlignmentTerminator, AlignmentTokenDelivery, ConditionFrameSummary, ConditionKind,
+    ConditionLimb, ImmutableSourceKind, InputFrame, InputFrameSummary, InputSource, InputStack,
+    LayoutCursor, LayoutCursorError, LexError, Lexer, LexerState, LineEvent, LineReader,
+    LiteralSpanPolicy, MACRO_ARGUMENT_SLOTS, MacroArgumentRange, MacroArguments, MemoryInput,
+    PhysicalLine, StableSourceSpanId, TokenListReplayKind, load_next_line,
 };
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -2040,6 +2040,36 @@ fn do_endv_stack_walk_accepts_only_empty_frames_above_v_template() {
 
     input.push_token_list(list, TokenListReplayKind::Inserted);
     assert!(!input.has_exhausted_alignment_v_template(&stores));
+}
+
+#[test]
+fn completed_alignment_cell_retires_exhausted_v_template_boundary() {
+    let mut stores = Universe::new();
+    let template = stores.intern_token_list(&[char_token('x', Catcode::Letter)]);
+    let mut input = InputStack::new(MemoryInput::new(""));
+    input.begin_alignment();
+    input.begin_alignment_cell(None, template, 0);
+    let terminator =
+        TracedTokenWord::pack(char_token('&', Catcode::AlignmentTab), OriginId::UNKNOWN);
+    assert!(input.intercept_alignment_token(
+        terminator,
+        AlignmentTokenDelivery::Other,
+        Some(AlignmentTerminator::Tab),
+        0,
+    ));
+    assert_eq!(
+        input.next_token(&mut stores).expect("v-template token"),
+        Some(char_token('x', Catcode::Letter))
+    );
+    input.push_token_list(TokenListId::EMPTY, TokenListReplayKind::Inserted);
+    assert!(input.has_exhausted_alignment_v_template(&stores));
+
+    assert_eq!(
+        input.finish_terminating_alignment_cell(&stores),
+        Some(terminator)
+    );
+    assert!(!input.has_exhausted_alignment_v_template(&stores));
+    input.finish_alignment();
 }
 
 #[test]
