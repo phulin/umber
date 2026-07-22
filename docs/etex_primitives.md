@@ -45,7 +45,9 @@ live-name-scan enquiry `\ifincsname` are implemented with focused V2 tests. `\cu
 `\currentifbranch` read exact resumable group/conditional state.
 `\lastnodetype` is implemented from the effective current-list/page tail with
 the manual/e-TRIP node codes. `\iffontchar` reads the same immutable metrics
-as typesetting and the font dimension enquiries.
+as typesetting and the font dimension enquiries. Malformed font selectors use
+TeX's `back_error` recovery: they diagnose the missing identifier, substitute
+the null font, and leave the offending token for the following number scanner.
 
 ## Expressions and value enquiries (manual section 3.5)
 

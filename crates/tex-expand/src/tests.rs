@@ -4422,6 +4422,11 @@ fn iffontchar_recovers_a_missing_font_identifier_as_nullfont() {
     let mut stores = Universe::new();
     crate::install_expandable_primitives(&mut stores);
     crate::install_etex_expandable_primitives(&mut stores);
+    // Format-loaded engines register an inaccessible frozen \relax for
+    // conditional scanner recovery.  The missing font makes \else appear
+    // while the \iffontchar frame is still evaluating, so that frozen token
+    // becomes the scanner's malformed font operand.
+    stores.register_primitive_meaning("relax", Meaning::Relax);
     let mut input = InputStack::new(MemoryInput::new(r"\iffontchar\else\fi"));
 
     assert_eq!(

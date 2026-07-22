@@ -1632,7 +1632,16 @@ where
     };
     let semantic = crate::semantic_token(token);
     let Token::Cs(symbol) = semantic else {
-        return Err(ExpandError::UnsupportedTheTarget { context: token });
+        // TeX.web's `scan_font_ident` applies the same `back_error`
+        // recovery to every non-font command.  In particular, an \else or
+        // \fi encountered while a conditional operand is being scanned
+        // first yields the engine-owned frozen \relax recovery token.  It is
+        // not an interned control sequence, but it must still be unread for
+        // the following number scanner rather than rejected as a \the
+        // target.
+        crate::back_input(input, stores, [token]);
+        stores.report_missing_font_identifier();
+        return Ok(tex_state::font::NULL_FONT);
     };
     let meaning = stores.meaning(symbol);
     expansion.record_meaning(symbol, meaning);
