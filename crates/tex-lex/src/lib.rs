@@ -4359,6 +4359,11 @@ impl InputStack {
                 return Ok(None);
             };
             self.ensure_macro_replay_marker(frame_index);
+            if let Some((owner_index, slot)) = self.take_nested_macro_argument(frame_index, stores)
+            {
+                self.push_macro_argument_frame(owner_index, slot);
+                continue;
+            }
             match &mut self.frames[frame_index] {
                 InputFrame::TokenList(token_list) => {
                     match next_traced_token_from_token_list_frame(
@@ -4504,6 +4509,11 @@ impl InputStack {
                 return Ok(None);
             };
             self.ensure_macro_replay_marker(frame_index);
+            if let Some((owner_index, slot)) = self.take_nested_macro_argument(frame_index, stores)
+            {
+                self.push_macro_argument_frame(owner_index, slot);
+                continue;
+            }
             match &mut self.frames[frame_index] {
                 InputFrame::TokenList(token_list) => {
                     let stored_token_list =
@@ -4665,6 +4675,11 @@ impl InputStack {
             let Some(frame_index) = self.current_token_frame_index() else {
                 return Ok(None);
             };
+            if let Some((owner_index, slot)) = self.take_nested_macro_argument(frame_index, stores)
+            {
+                self.push_macro_argument_frame(owner_index, slot);
+                continue;
+            }
             match &mut self.frames[frame_index] {
                 InputFrame::TokenList(token_list) => {
                     match next_token_from_token_list_frame(token_list, stores) {
@@ -4918,6 +4933,53 @@ impl InputStack {
             }),
             _ => None,
         };
+    }
+
+    /// Resolves an `out_param` token read from a token-list nested inside the
+    /// current macro invocation.
+    ///
+    /// TeX.web's `get_next` uses the current `param_start` for `out_param`
+    /// regardless of the token-list kind being read. Macro-body frames handle
+    /// their own parameter tokens in the ordinary replay path; all other
+    /// token-list frames inherit the nearest active macro body's arguments.
+    fn take_nested_macro_argument(
+        &mut self,
+        frame_index: usize,
+        stores: &impl ExpansionState,
+    ) -> Option<(usize, u8)> {
+        let InputFrame::TokenList(frame) = &self.frames[frame_index] else {
+            return None;
+        };
+        if matches!(
+            frame.replay_kind,
+            TokenListReplayKind::MacroBody | TokenListReplayKind::Unexpanded
+        ) {
+            return None;
+        }
+        let Token::Param(slot) = frame.semantic_token_at(stores, frame.index)? else {
+            return None;
+        };
+        let owner_index = self
+            .token_frame_indices
+            .iter()
+            .rev()
+            .copied()
+            .find(|&index| {
+                matches!(
+                    &self.frames[index],
+                    InputFrame::TokenList(owner)
+                        if owner.replay_kind == TokenListReplayKind::MacroBody
+                )
+            })?;
+        let InputFrame::TokenList(owner) = &self.frames[owner_index] else {
+            unreachable!("selected macro argument owner changed")
+        };
+        owner.macro_arguments.get(slot)?;
+        let InputFrame::TokenList(frame) = &mut self.frames[frame_index] else {
+            unreachable!("validated nested token-list frame changed")
+        };
+        frame.index += 1;
+        Some((owner_index, slot))
     }
 
     fn push_macro_argument_frame(&mut self, parent_index: usize, slot: u8) {

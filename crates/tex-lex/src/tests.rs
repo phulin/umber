@@ -251,6 +251,75 @@ fn macro_argument_replay_and_snapshots_share_the_matched_buffer() {
 }
 
 #[test]
+fn nested_token_list_resolves_current_macro_parameter() {
+    let mut stores = Universe::new();
+    let body_token = char_token('b', Catcode::Letter);
+    let argument_token = char_token('a', Catcode::Letter);
+    let body = stores.intern_token_list(&[body_token]);
+    let nested = stores.intern_token_list(&[Token::param(1)]);
+    let argument_words = vec![TracedTokenWord::pack(argument_token, OriginId::UNKNOWN)];
+    let mut ranges = [None; MACRO_ARGUMENT_SLOTS];
+    ranges[0] = Some(MacroArgumentRange::new(0, 1));
+    let arguments = MacroArguments::from_parts(argument_words, ranges);
+    let mut input = InputStack::new(MemoryInput::new(""));
+    input.push_macro_body(body, arguments);
+    input.push_token_list(nested, TokenListReplayKind::Inserted);
+
+    assert_eq!(
+        input
+            .next_token(&mut stores)
+            .expect("nested parameter replay"),
+        Some(argument_token)
+    );
+    assert_eq!(
+        input.next_token(&mut stores).expect("owning macro body"),
+        Some(body_token)
+    );
+}
+
+#[test]
+fn nested_token_list_does_not_reach_past_current_macro_arguments() {
+    let mut stores = Universe::new();
+    let outer_body = stores.intern_token_list(&[char_token('o', Catcode::Letter)]);
+    let inner_body = stores.intern_token_list(&[char_token('i', Catcode::Letter)]);
+    let nested = stores.intern_token_list(&[Token::param(1)]);
+    let outer_argument = TracedTokenWord::pack(char_token('a', Catcode::Letter), OriginId::UNKNOWN);
+    let mut ranges = [None; MACRO_ARGUMENT_SLOTS];
+    ranges[0] = Some(MacroArgumentRange::new(0, 1));
+    let outer_arguments = MacroArguments::from_parts(vec![outer_argument], ranges);
+    let mut input = InputStack::new(MemoryInput::new(""));
+    input.push_macro_body(outer_body, outer_arguments);
+    input.push_macro_body(inner_body, MacroArguments::new());
+    input.push_token_list(nested, TokenListReplayKind::Inserted);
+
+    assert_eq!(
+        input.next_token(&mut stores).expect("nested token replay"),
+        Some(Token::param(1)),
+        "the innermost macro's parameter frame must shadow older invocations"
+    );
+}
+
+#[test]
+fn nested_unexpanded_list_preserves_parameter_token() {
+    let mut stores = Universe::new();
+    let body = stores.intern_token_list(&[char_token('b', Catcode::Letter)]);
+    let unexpanded = stores.intern_token_list(&[Token::param(1)]);
+    let argument = TracedTokenWord::pack(char_token('a', Catcode::Letter), OriginId::UNKNOWN);
+    let mut ranges = [None; MACRO_ARGUMENT_SLOTS];
+    ranges[0] = Some(MacroArgumentRange::new(0, 1));
+    let arguments = MacroArguments::from_parts(vec![argument], ranges);
+    let mut input = InputStack::new(MemoryInput::new(""));
+    input.push_macro_body(body, arguments);
+    input.push_token_list(unexpanded, TokenListReplayKind::Unexpanded);
+
+    assert_eq!(
+        input.next_token(&mut stores).expect("unexpanded replay"),
+        Some(Token::param(1)),
+        "e-TeX unexpanded output is copied rather than read through get_next"
+    );
+}
+
+#[test]
 fn nested_alignment_resume_preserves_outer_align_state() {
     let mut input = InputStack::new(MemoryInput::new(""));
     input.begin_alignment();

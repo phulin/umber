@@ -171,6 +171,19 @@ matched argument once and then starts replacement-text replay over the saved
 arguments. Umber stores those finished arguments once on the macro-body frame;
 each parameter replay is a range view over that storage.
 
+That ownership remains active beneath nested token-list replay. TeX.web
+§§357 and 359 resolve every stored `out_param` encountered by `get_next`
+through the current macro's `param_start`, without restricting substitution to
+the macro-body input level; pdfTeX.web §§379 and 381 retain the same rule, and
+e-TeX changes protected expansion rather than this token-list delivery path.
+Umber therefore resolves an `out_param` from an inserted, token-register, or
+macro-argument frame against the nearest live macro-body frame. This matters
+when definition-building macros place their parameter specification behind a
+nested replay: leaking the internal token into `scan_toks` would make §479
+misdiagnose a valid generated parameter number. e-TeX `\unexpanded` remains
+the deliberate exception: its `the_toks` result is copied directly instead of
+being read through `get_next`, so its stored parameter tokens stay verbatim.
+
 The same canonical `macro_call` audit also fixes the token-lifetime boundary:
 argument matching uses TeX's raw `get_token`, and only literal begin/end-group
 command codes affect brace depth. e-TeX's `etex.ch` change at this routine adds
