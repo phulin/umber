@@ -1,5 +1,10 @@
 # Deterministic PDF backend
 
+Font authority, full local/client legacy resource eligibility, and the PDF
+driver closure are governed by the normative
+[cross-output font system contract](cross_output_fonts.md). The curated hosted
+HTML catalog is not a PDF capability boundary.
+
 Status: phased implementation contract for the pdfTeX 1.40.27 backend.
 
 ## Boundary and invariants

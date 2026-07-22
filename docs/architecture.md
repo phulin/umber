@@ -342,6 +342,13 @@ Classic TeX layout uses immutable TFM metrics and exact scaled arithmetic.
 Font selection is state, while parsed metrics and validated OpenType programs
 are immutable resources.
 
+The normative cross-output authority, resource-placement, resolver, lifetime,
+and compatibility rules are fixed in
+[cross_output_fonts.md](cross_output_fonts.md). In particular, engine identity
+and requested output capabilities are independent, one accepted run has one
+font-layout authority across every requested output, and the hosted HTML MVP
+does not limit explicit local/client DVI or PDF legacy resources.
+
 Native sessions accept OTF/TTF containers and browser sessions accept WOFF2.
 The host chooses resources; `tex-fonts` validates them, derives canonical
 program identity and metrics, and records the selected program/instance in

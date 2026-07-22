@@ -79,6 +79,12 @@ identity, batched acquisition, client-owned distribution, retained HTML asset
 reuse, modern `OpenTypePreferred` versus `ClassicTfmExact` layout policy,
 positioned OpenType MATH output, and the single linear migration rollout.
 
+`cross_output_fonts.md` is the normative contract for the complete cross-output
+font system and the deliberately smaller hosted HTML MVP. It fixes layout
+authority, output-specific closures, typed identity, placement, precedence,
+ownership, failure, licensing, compatibility migration, and the exact catalog;
+all `umber2-nobk` implementation work must cite it.
+
 `unicode_opentype_shaping.md` specifies rustybuzz text shaping, mapped
 TFM-style text in modern mode, shape/break/reshape integration, and the
 positioned-math output boundary. `html_output.md` remains the exact current

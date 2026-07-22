@@ -109,6 +109,10 @@ the client. Rust validates the supplied font, computes its immutable program
 identity, fixes the session's selection, derives metrics before layout, and
 records the exact instance identity in artifacts.
 
+The next cross-output migration, including typed mapping/legacy leaf requests,
+provider-scoped absence, resolver precedence, and per-output closure planning,
+is fixed normatively by [cross_output_fonts.md](cross_output_fonts.md).
+
 ## Session states
 
 The logical states are:

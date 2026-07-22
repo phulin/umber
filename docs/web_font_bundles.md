@@ -8,6 +8,12 @@ rendering. Native sessions accept OpenType or TrueType SFNT containers;
 browser sessions accept WOFF2 and decode the same OpenType tables for engine
 use. Exact TFM behavior remains available as an explicit legacy policy.
 
+The complete cross-output authority and placement contract, including the
+exact hosted HTML MVP and full local/client legacy DVI/PDF boundary, is
+[cross_output_fonts.md](cross_output_fonts.md). That contract is normative
+where this completed HTML-focused rollout describes broader distribution or
+migration policy.
+
 ## Decision summary
 
 Font acquisition follows the same host-neutral, batched resource protocol as

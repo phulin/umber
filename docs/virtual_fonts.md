@@ -3,6 +3,12 @@
 Status: architecture contract for parsing classic VF resources and handing an
 immutable program to output backends.
 
+Cross-output placement and capability rules are specified by
+[cross_output_fonts.md](cross_output_fonts.md): explicit local/client PDF
+providers retain the complete bounded VF closure, DVI publication does not
+lower it, and the hosted HTML MVP returns a typed unsupported result rather
+than attempting general VF leaf lowering.
+
 ## Authority and compatibility target
 
 The binary grammar follows Knuth's `VFtoVP` source, version 1.4. Its sections

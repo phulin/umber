@@ -14,6 +14,12 @@ Artifact schema 23 keeps this fixed-page model, makes
 `OpenTypePreferred` the modern font authority, and adds engine-positioned
 OpenType math. It does not delegate formula layout to MathML.
 
+The exact HTML catalog, output-only resource closure, layout-authority rules,
+and typed unsupported legacy outcomes are specified by the normative
+[cross-output font system contract](cross_output_fonts.md). HTML serialization
+continues to consume retained accepted resources only; the deliberately small
+hosted catalog does not constrain DVI or PDF providers.
+
 ## Coordinate model
 
 All canonical coordinates are signed TeX scaled-point (`sp`) integers. Event

@@ -4,6 +4,11 @@ Status: LaTeX-DVI supported; pdfLaTeX mode and deterministic format supported
 Contract version: 2
 Reference distribution: TeX Live 2026 LaTeX2e kernel and base files
 
+Engine identity remains independent of requested DVI, PDF, or HTML publication
+under [cross_output_fonts.md](cross_output_fonts.md). Its small hosted HTML
+catalog does not narrow explicit local/client LaTeX-DVI or pdfLaTeX legacy
+font closures.
+
 ## Engine identity
 
 `umber run --latex` selects the **Umber LaTeX-DVI** engine contract. It is an

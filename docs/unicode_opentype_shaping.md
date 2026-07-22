@@ -19,6 +19,11 @@ metadata }` produced by `crates/tex-fonts/src/opentype/`. That work is done.
 `tex-shape` now applies the validated face through rustybuzz and the
 shape/break/reshape pipeline consumes its cluster advances.
 
+The subsequent output-neutral authority and resource-placement contract is
+[cross_output_fonts.md](cross_output_fonts.md). It preserves this shaping
+model while making its selected identities consistent across every requested
+driver and limiting only the hosted HTML catalog, not local/client PDF or DVI.
+
 OpenType math uses a separate direct path. `LoadedFont::math_metrics_source`
 returns validated, size-bound MATH data when present and the explicit
 `ClassicTfmExact` fallback otherwise. The math converter consumes native MATH

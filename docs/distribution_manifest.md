@@ -2,6 +2,12 @@
 
 Status: schema-2 browser/native resolution and schema-3 format-closure publishing and runtime prefetch consumption implemented.
 
+The separate immutable HTML font profile and its mapping/license record
+migration are specified by the normative
+[cross-output font system contract](cross_output_fonts.md). Existing schema-2
+and schema-3 TeX Live roots retain their exact meanings and broad runtime
+scope.
+
 ## Trust root
 
 The deployed release pin names `manifest-v2.json` and its SHA-256 digest. The file is a

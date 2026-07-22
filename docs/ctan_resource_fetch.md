@@ -26,6 +26,11 @@ duplicate registration, conflict rejection, no-progress detection, and atomic
 build acceptance, identical in native and WASM. What remains is host-side
 acquisition policy and CLI adoption of the session loop.
 
+The later cross-output font placement and composite-provider precedence are
+fixed by [cross_output_fonts.md](cross_output_fonts.md). In particular, the
+new HTML-only publication profile is separate from this broad runtime snapshot
+and cannot narrow explicit local/client DVI or PDF resource eligibility.
+
 ## Central decisions
 
 ### 1. Fetch from a pinned CTAN-derived snapshot, not live CTAN
