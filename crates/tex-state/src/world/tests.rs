@@ -919,6 +919,81 @@ fn supplied_memory_input_remains_available_for_retained_validation() {
 }
 
 #[test]
+fn semantic_input_dependencies_reduce_duplicates_and_restore_on_rollback() {
+    let mut world = World::memory();
+    let path = PathBuf::from("/job/main.aux");
+    let old = ContentHash::from_bytes(b"old");
+    let new = ContentHash::from_bytes(b"new");
+
+    world
+        .record_input_dependency(
+            path.clone(),
+            InputDependencyOutcome::Present(old),
+            InputDependencyAccess::AuthoritativeProbe,
+        )
+        .expect("record positive probe");
+    let snapshot = world.snapshot();
+    world
+        .record_input_dependency(
+            path.clone(),
+            InputDependencyOutcome::Present(new),
+            InputDependencyAccess::RequiredRead,
+        )
+        .expect("replace with required read");
+    world
+        .record_input_dependency(
+            path.clone(),
+            InputDependencyOutcome::Present(new),
+            InputDependencyAccess::AuthoritativeProbe,
+        )
+        .expect("duplicate probe");
+
+    assert_eq!(
+        world.input_dependencies().collect::<Vec<_>>(),
+        vec![&InputDependency {
+            path: Arc::from(path.clone().into_boxed_path()),
+            outcome: InputDependencyOutcome::Present(new),
+            access: InputDependencyAccess::RequiredRead,
+        }]
+    );
+
+    world.rollback(&snapshot);
+    assert_eq!(
+        world.input_dependencies().collect::<Vec<_>>(),
+        vec![&InputDependency {
+            path: Arc::from(path.into_boxed_path()),
+            outcome: InputDependencyOutcome::Present(old),
+            access: InputDependencyAccess::AuthoritativeProbe,
+        }]
+    );
+}
+
+#[test]
+fn semantic_input_dependencies_are_bounded_and_accounted() {
+    let mut world = World::memory();
+    let before = world.generation_retained_bytes();
+    for index in 0..MAX_INPUT_DEPENDENCIES {
+        world
+            .record_input_dependency(
+                format!("/job/{index}.aux"),
+                InputDependencyOutcome::Missing,
+                InputDependencyAccess::AuthoritativeProbe,
+            )
+            .expect("dependency below limit");
+    }
+    assert!(world.generation_retained_bytes() > before);
+    assert!(
+        world
+            .record_input_dependency(
+                "/job/overflow.aux",
+                InputDependencyOutcome::Missing,
+                InputDependencyAccess::AuthoritativeProbe,
+            )
+            .is_err()
+    );
+}
+
+#[test]
 fn real_world_has_no_memory_output_view() {
     assert!(World::real().memory_outputs().is_none());
 }

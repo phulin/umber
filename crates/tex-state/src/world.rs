@@ -26,6 +26,9 @@ pub use tex_content::{ContentDomain, ContentHash, ContentIdentity};
 /// TeX's 16 read/write stream slots.
 pub const STREAM_SLOT_COUNT: usize = 16;
 
+/// Hard ceiling for distinct semantic input paths retained by one World.
+pub const MAX_INPUT_DEPENDENCIES: usize = 8_192;
+
 /// A process-local elapsed-time sample obtained through the host-effect boundary.
 ///
 /// Profiling data is deliberately separate from the snapshot-owned pdfTeX
@@ -791,6 +794,47 @@ pub struct InputRecord {
     origin: InputOrigin,
 }
 
+/// Semantic class of one external input observation.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub enum InputDependencyAccess {
+    /// The engine required the file's bytes to continue execution.
+    RequiredRead,
+    /// The engine authoritatively tested whether the file was available.
+    AuthoritativeProbe,
+}
+
+/// Immutable outcome observed for one canonical external input path.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub enum InputDependencyOutcome {
+    Present(ContentHash),
+    Missing,
+}
+
+/// One reduced semantic external-input dependency.
+#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct InputDependency {
+    path: Arc<Path>,
+    outcome: InputDependencyOutcome,
+    access: InputDependencyAccess,
+}
+
+impl InputDependency {
+    #[must_use]
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+
+    #[must_use]
+    pub const fn outcome(&self) -> InputDependencyOutcome {
+        self.outcome
+    }
+
+    #[must_use]
+    pub const fn access(&self) -> InputDependencyAccess {
+        self.access
+    }
+}
+
 impl InputRecord {
     #[must_use]
     pub fn path(&self) -> &Path {
@@ -1397,6 +1441,7 @@ pub struct WorldSnapshot {
     shell_escape_policy: ShellEscapePolicy,
     input_len: usize,
     input_identities: IdentityMark,
+    input_dependencies: Arc<BTreeMap<Arc<Path>, InputDependency>>,
     shell_escape_len: usize,
     artifact_commit_len: usize,
     commit_mode: WorldCommitMode,
@@ -1433,6 +1478,7 @@ pub struct World {
     inputs: Vec<InputRecord>,
     input_identities: IdentityAllocator,
     input_contents: BTreeMap<ContentHash, Arc<[u8]>>,
+    input_dependencies: Arc<BTreeMap<Arc<Path>, InputDependency>>,
     terminal_inputs: Vec<String>,
     shell_escapes: Vec<ShellEscapeRecord>,
     artifact_base: usize,
@@ -1471,6 +1517,7 @@ impl Clone for World {
             inputs: self.inputs.clone(),
             input_identities: self.input_identities.fork(),
             input_contents: self.input_contents.clone(),
+            input_dependencies: self.input_dependencies.clone(),
             terminal_inputs: self.terminal_inputs.clone(),
             shell_escapes: self.shell_escapes.clone(),
             artifact_base: self.artifact_base,
@@ -1502,6 +1549,7 @@ impl PartialEq for World {
             && self.shell_escape_policy == other.shell_escape_policy
             && self.inputs == other.inputs
             && self.input_contents == other.input_contents
+            && self.input_dependencies == other.input_dependencies
             && self.terminal_inputs == other.terminal_inputs
             && self.shell_escapes == other.shell_escapes
             && self.artifact_base == other.artifact_base
@@ -1561,11 +1609,22 @@ impl World {
                     .map(|bytes| bytes.len())
                     .sum::<usize>(),
             );
+        let input_dependencies = self
+            .input_dependencies
+            .len()
+            .saturating_mul(std::mem::size_of::<(Arc<Path>, InputDependency)>())
+            .saturating_add(
+                self.input_dependencies
+                    .keys()
+                    .map(|path| path.as_os_str().len())
+                    .sum::<usize>(),
+            );
         std::mem::size_of::<Self>()
             .saturating_add(backend)
             .saturating_add(self.stream_bufs.retained_bytes())
             .saturating_add(inputs)
             .saturating_add(input_contents)
+            .saturating_add(input_dependencies)
             .saturating_add(
                 self.terminal_inputs
                     .iter()
@@ -1666,6 +1725,7 @@ impl World {
             inputs: Vec::new(),
             input_identities: IdentityAllocator::new(0),
             input_contents: BTreeMap::new(),
+            input_dependencies: Arc::new(BTreeMap::new()),
             terminal_inputs: Vec::new(),
             shell_escapes: Vec::new(),
             artifact_base: 0,
@@ -2512,6 +2572,49 @@ impl World {
         &self.inputs
     }
 
+    /// Records one authoritative semantic observation of a canonical path.
+    ///
+    /// Repeated observations are reduced by path. Required reads dominate
+    /// probes, and a later authoritative outcome replaces an earlier one.
+    pub fn record_input_dependency(
+        &mut self,
+        path: impl Into<PathBuf>,
+        outcome: InputDependencyOutcome,
+        access: InputDependencyAccess,
+    ) -> Result<(), WorldError> {
+        let path = path.into();
+        let dependencies = Arc::make_mut(&mut self.input_dependencies);
+        if let Some(existing) = dependencies.get_mut(path.as_path()) {
+            existing.outcome = outcome;
+            if access == InputDependencyAccess::RequiredRead {
+                existing.access = access;
+            }
+            return Ok(());
+        }
+        if dependencies.len() == MAX_INPUT_DEPENDENCIES {
+            return Err(WorldError::new(
+                "record input dependency",
+                Some(path),
+                format!("distinct input dependency limit {MAX_INPUT_DEPENDENCIES} exceeded"),
+            ));
+        }
+        let path: Arc<Path> = Arc::from(path.into_boxed_path());
+        dependencies.insert(
+            Arc::clone(&path),
+            InputDependency {
+                path,
+                outcome,
+                access,
+            },
+        );
+        Ok(())
+    }
+
+    /// Enumerates reduced dependencies in canonical path order.
+    pub fn input_dependencies(&self) -> impl ExactSizeIterator<Item = &InputDependency> {
+        self.input_dependencies.values()
+    }
+
     /// Enumerates only immutable external dependencies, excluding files
     /// generated and reopened transactionally by this TeX run.
     pub fn external_input_records(&self) -> impl Iterator<Item = &InputRecord> {
@@ -2891,6 +2994,7 @@ impl World {
             shell_escape_policy: self.shell_escape_policy,
             input_len: self.inputs.len(),
             input_identities: self.input_identities.watermark(),
+            input_dependencies: self.input_dependencies.clone(),
             shell_escape_len: self.shell_escapes.len(),
             artifact_commit_len: self.artifact_pos(),
             commit_mode: self.commit_mode,
@@ -2926,6 +3030,7 @@ impl World {
         self.pdf_timer_origin_micros = snapshot.pdf_timer_origin_micros;
         self.shell_escape_policy = snapshot.shell_escape_policy;
         self.inputs.truncate(snapshot.input_len);
+        self.input_dependencies = snapshot.input_dependencies.clone();
         self.shell_escapes.truncate(snapshot.shell_escape_len);
         if snapshot.commit_mode == WorldCommitMode::Retained {
             let retained = snapshot
@@ -2956,6 +3061,7 @@ impl World {
         self.pdf_timer_origin_micros = snapshot.pdf_timer_origin_micros;
         self.shell_escape_policy = snapshot.shell_escape_policy;
         self.inputs.truncate(snapshot.input_len);
+        self.input_dependencies = snapshot.input_dependencies.clone();
         self.shell_escapes.truncate(snapshot.shell_escape_len);
         if snapshot.commit_mode == WorldCommitMode::Retained {
             self.artifact_base = snapshot.artifact_commit_len;

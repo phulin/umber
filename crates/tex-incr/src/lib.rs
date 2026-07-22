@@ -719,6 +719,14 @@ impl Session {
         &self.history
     }
 
+    /// Enumerates semantic external-input observations retained by the
+    /// accepted engine generation in canonical path order.
+    pub fn accepted_input_dependencies(&self) -> impl Iterator<Item = &tex_state::InputDependency> {
+        self.substrate
+            .iter()
+            .flat_map(|substrate| substrate.world().input_dependencies())
+    }
+
     /// Returns telemetry for the session-owned pure-query cache.
     #[must_use]
     pub fn pure_memo_stats(&self) -> tex_state::PureMemoStats {

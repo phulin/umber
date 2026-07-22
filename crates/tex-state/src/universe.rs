@@ -399,6 +399,16 @@ pub trait InputReadState {
         path: &std::path::Path,
         bytes: std::sync::Arc<[u8]>,
     ) -> Result<crate::FileContent, crate::WorldError>;
+
+    /// Records a completed semantic lookup against a canonical host path.
+    fn record_input_dependency(
+        &mut self,
+        _path: &std::path::Path,
+        _outcome: crate::InputDependencyOutcome,
+        _access: crate::InputDependencyAccess,
+    ) -> Result<(), crate::WorldError> {
+        Ok(())
+    }
 }
 
 /// State operations available only to the top-level `\input` dispatch path.
@@ -7337,6 +7347,17 @@ impl InputReadState for InputOpenContext<'_> {
         bytes: std::sync::Arc<[u8]>,
     ) -> Result<crate::FileContent, crate::WorldError> {
         self.universe.world.read_supplied_file(path, bytes)
+    }
+
+    fn record_input_dependency(
+        &mut self,
+        path: &std::path::Path,
+        outcome: crate::InputDependencyOutcome,
+        access: crate::InputDependencyAccess,
+    ) -> Result<(), crate::WorldError> {
+        self.universe
+            .world
+            .record_input_dependency(path, outcome, access)
     }
 }
 

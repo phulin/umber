@@ -49,6 +49,7 @@ pub use tex_fonts::{
     ResolvedFont, VariationCoordinate, VariationInstance, VariationSelection, WritingDirection,
 };
 pub use tex_incr::{RenderedOutputId, ReuseMetrics, RevisionId, SameHistoryStop};
+pub use tex_state::{InputDependency, InputDependencyAccess, InputDependencyOutcome};
 pub use umber_vfs::FileContentId;
 pub use virtual_compile::{
     AcceptedFinalization, CachedLocalTfm, CachedVirtualFont, CompileAttemptResult,

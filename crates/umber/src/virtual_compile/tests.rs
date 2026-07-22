@@ -1,4 +1,5 @@
 use crate::FontContainer;
+use std::path::Path;
 use tex_incr::RevisionId;
 use tex_state::{Universe, World};
 
@@ -127,6 +128,109 @@ fn probes(result: CompileAttemptResult) -> Vec<FileRequest> {
         }
         other => panic!("expected missing file probes, got {other:#?}"),
     }
+}
+
+#[test]
+fn accepted_dependencies_record_required_positive_and_shadowing_negative_paths() {
+    let mut session = session("\\input generated.aux \\end");
+    let requested = requests(session.compile_attempt());
+    let [request] = requested.as_slice() else {
+        panic!("expected one generated-input request");
+    };
+    let request = request.key().clone();
+    assert!(session.accepted_input_dependencies().next().is_none());
+
+    session
+        .provide_resources(vec![ResourceResponse::File(ResolvedFile {
+            request,
+            virtual_path: "/texlive/generated.aux".to_owned(),
+            bytes: b"\\relax".to_vec(),
+            expected_digest: None,
+        })])
+        .expect("provide generated-input fallback");
+    assert!(matches!(
+        session.compile_attempt(),
+        CompileAttemptResult::Complete(_)
+    ));
+
+    let dependencies = session.accepted_input_dependencies().collect::<Vec<_>>();
+    assert_eq!(dependencies.len(), 2);
+    assert_eq!(dependencies[0].path(), Path::new("/job/generated.aux"));
+    assert_eq!(
+        dependencies[0].outcome(),
+        tex_state::InputDependencyOutcome::Missing
+    );
+    assert_eq!(
+        dependencies[0].access(),
+        tex_state::InputDependencyAccess::RequiredRead
+    );
+    assert_eq!(dependencies[1].path(), Path::new("/texlive/generated.aux"));
+    assert!(matches!(
+        dependencies[1].outcome(),
+        tex_state::InputDependencyOutcome::Present(_)
+    ));
+    assert_eq!(
+        dependencies[1].access(),
+        tex_state::InputDependencyAccess::RequiredRead
+    );
+}
+
+#[test]
+fn accepted_dependencies_record_authoritative_probe_but_not_its_resource_wait() {
+    let mut session = session("\\openin0=generated.aux \\ifeof0 \\message{missing}\\fi \\end");
+    let requested = probes(session.compile_attempt());
+    let [request] = requested.as_slice() else {
+        panic!("expected one generated-input probe");
+    };
+    let request = request.key().clone();
+    assert!(session.accepted_input_dependencies().next().is_none());
+
+    session
+        .provide_resources(vec![ResourceResponse::FileUnavailable(request)])
+        .expect("provide authoritative absence");
+    assert!(matches!(
+        session.compile_attempt(),
+        CompileAttemptResult::Complete(_)
+    ));
+
+    let dependencies = session.accepted_input_dependencies().collect::<Vec<_>>();
+    assert_eq!(dependencies.len(), 1);
+    assert_eq!(dependencies[0].path(), Path::new("/job/generated.aux"));
+    assert_eq!(
+        dependencies[0].outcome(),
+        tex_state::InputDependencyOutcome::Missing
+    );
+    assert_eq!(
+        dependencies[0].access(),
+        tex_state::InputDependencyAccess::AuthoritativeProbe
+    );
+}
+
+#[test]
+fn discarded_candidate_cannot_change_accepted_dependencies() {
+    let mut session = session("\\end");
+    assert!(matches!(
+        session.compile_attempt(),
+        CompileAttemptResult::Complete(_)
+    ));
+    let base_revision = session.revision().expect("accepted revision");
+    let expected_hash = session.content_hash().expect("accepted source hash");
+    session
+        .apply_patch(SourcePatch {
+            next_revision: RevisionId::new(base_revision.raw() + 1),
+            base_revision,
+            expected_hash,
+            range: 0..4,
+            replacement: "\\openin0=generated.aux \\ifeof0 \\fi \\end".to_owned(),
+        })
+        .expect("start candidate revision");
+    assert!(matches!(
+        session.compile_attempt(),
+        CompileAttemptResult::NeedResources(_)
+    ));
+    assert!(session.accepted_input_dependencies().next().is_none());
+    assert!(session.discard_suspended_candidate());
+    assert!(session.accepted_input_dependencies().next().is_none());
 }
 
 fn minimal_vf_with_local(name: &[u8]) -> Vec<u8> {

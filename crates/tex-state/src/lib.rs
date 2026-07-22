@@ -143,7 +143,8 @@ pub use world::ProfilingTimer;
 pub use world::{
     ArtifactOrigin, CommittedArtifact, ContentDomain, ContentHash, ContentIdentity, EffectPos,
     EffectRecord, EffectRetrySafety, ExecutionTraceEvent, FileContent, FileModificationDate,
-    InputOrigin, InputRecord, InputRecordId, JobClock, MemoryOutput, PrintSink, ReadTarget,
+    InputDependency, InputDependencyAccess, InputDependencyOutcome, InputOrigin, InputRecord,
+    InputRecordId, JobClock, MAX_INPUT_DEPENDENCIES, MemoryOutput, PrintSink, ReadTarget,
     RenderOriginIter, RenderOrigins, RenderProvenanceBuilder, RngState, ShellEscapePolicy,
     ShellEscapeRecord, StreamBufState, StreamSlot, VerifiedArtifact, World, WorldCommitMode,
     WorldError, WorldSnapshot,

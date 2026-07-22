@@ -1,8 +1,9 @@
 # Generated-input correctness and editor stabilization
 
-> **Status:** proposed design. The current implementation has the incremental
-> and multipass components described below, but it does not yet implement the
-> generated-input validation or decoupled stabilization contract defined here.
+> **Status:** implementation in progress. Accepted engine generations now
+> retain bounded positive and authoritative-negative input observations, but
+> incoming-snapshot validation and decoupled stabilization remain to be
+> implemented.
 
 This document defines how persistent editor compilation should compose
 root-buffer edits, generated TeX inputs such as `.aux` and `.toc` files, and
@@ -90,9 +91,14 @@ There are three required transition classes:
 - `Present(hash) -> Missing`: an earlier generated input is no longer present
   in the accepted generation.
 
-Successful `InputRecord`s represent only the second class's old positive
-binding. Authoritative misses must also be retained as dependencies; otherwise
-the first and third classes cannot be validated.
+Successful `InputRecord`s continue to provide content-addressed source and
+provenance identity. A separate copy-on-write `World` dependency map now
+reduces semantic observations by canonical path, retaining successful reads
+and authoritative misses with their access class across checkpoint forks and
+restoring the prior map root on rollback. The VFS resolver records a lookup
+only after it resolves to immutable bytes or authoritative absence; unresolved
+resource waits and speculative prefetch hints never enter the map. Incoming
+snapshot validation remains the next implementation step.
 
 The sharp failure sequence is:
 
@@ -122,6 +128,11 @@ Speculative prefetch misses are not semantic dependencies. A failed required
 read that suspends for resources is candidate state, not an accepted
 `Missing` outcome. An authoritative unavailable response or a completed TeX
 existence probe is semantic and must be recorded.
+
+The retained map is deterministically ordered, capped at 8,192 distinct paths
+per engine `World`, and charged to generation/session retention accounting.
+Duplicate observations do not grow it; required reads dominate probes for the
+same path, while a later authoritative outcome replaces the earlier outcome.
 
 Before selecting or restoring a checkpoint for a new pass, the host integration
 must validate these dependencies against the exact immutable VFS snapshot that

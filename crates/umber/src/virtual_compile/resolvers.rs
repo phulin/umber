@@ -10,8 +10,9 @@ use tex_fonts::{
 use tex_lex::WorldInput;
 use tex_state::scaled::Scaled;
 use tex_state::{
-    FileContent, InputOrigin, InputReadState, PdfExternalImageMetadata, PdfExternalImageSource,
-    PdfPageBox, PdfRasterColorSpace, PdfRasterFormat, PdfRasterImageMetadata,
+    FileContent, InputDependencyAccess, InputDependencyOutcome, InputOrigin, InputReadState,
+    PdfExternalImageMetadata, PdfExternalImageSource, PdfPageBox, PdfRasterColorSpace,
+    PdfRasterFormat, PdfRasterImageMetadata,
 };
 
 use super::path::RequestedFile;
@@ -394,6 +395,7 @@ impl<'a> VirtualFileResolver<'a> {
         match requested {
             RequestedFile::UserOnly(path) => {
                 let Some(file) = self.snapshot_file(&path)? else {
+                    self.record_missing(input, &path, intent)?;
                     if intent == FileOpenIntent::Probe {
                         return Ok(ResourceLookup::Unavailable);
                     }
@@ -401,18 +403,24 @@ impl<'a> VirtualFileResolver<'a> {
                     self.record_fatal(failure.clone());
                     return Err(failure.to_string());
                 };
-                self.read_snapshot(input, file)
+                self.read_snapshot(input, file, intent)
                     .map(ResourceLookup::Available)
             }
             RequestedFile::Remote { user_path, key } => {
-                if let Some(user_path) = user_path
-                    && let Some(file) = self.snapshot_file(&user_path)?
-                {
-                    return self
-                        .read_snapshot(input, file)
-                        .map(ResourceLookup::Available);
-                }
+                let missing_user_path = if let Some(user_path) = user_path {
+                    if let Some(file) = self.snapshot_file(&user_path)? {
+                        return self
+                            .read_snapshot(input, file, intent)
+                            .map(ResourceLookup::Available);
+                    }
+                    Some(user_path)
+                } else {
+                    None
+                };
                 if let Some(path) = self.resolved_paths.get(&key) {
+                    if let Some(path) = &missing_user_path {
+                        self.record_missing(input, path, intent)?;
+                    }
                     let Some(file) = self.snapshot_file(path)? else {
                         let failure = CompileError::World(format!(
                             "resolved virtual file {path} is unavailable in its VFS snapshot"
@@ -421,10 +429,13 @@ impl<'a> VirtualFileResolver<'a> {
                         return Err(failure.to_string());
                     };
                     return self
-                        .read_snapshot(input, file)
+                        .read_snapshot(input, file, intent)
                         .map(ResourceLookup::Available);
                 }
                 if self.unavailable.contains(&key) {
+                    if let Some(path) = &missing_user_path {
+                        self.record_missing(input, path, intent)?;
+                    }
                     return Ok(ResourceLookup::Unavailable);
                 }
                 let request = FileRequest::new(key.clone(), original_name);
@@ -477,14 +488,46 @@ impl<'a> VirtualFileResolver<'a> {
         &mut self,
         input: &mut dyn InputReadState,
         file: &umber_vfs::VirtualFile,
+        intent: FileOpenIntent,
     ) -> Result<FileContent, String> {
-        input
+        let content = input
             .read_supplied_input_file(file.path().as_path(), file.shared_bytes())
             .map_err(|error| {
                 let failure = CompileError::World(format!(
                     "VFS file {} could not be registered with World: {error}",
                     file.path()
                 ));
+                self.record_fatal(failure.clone());
+                failure.to_string()
+            })?;
+        input
+            .record_input_dependency(
+                file.path().as_path(),
+                InputDependencyOutcome::Present(content.hash()),
+                dependency_access(intent),
+            )
+            .map_err(|error| {
+                let failure = CompileError::World(error.to_string());
+                self.record_fatal(failure.clone());
+                failure.to_string()
+            })?;
+        Ok(content)
+    }
+
+    fn record_missing(
+        &mut self,
+        input: &mut dyn InputReadState,
+        path: &VirtualPath,
+        intent: FileOpenIntent,
+    ) -> Result<(), String> {
+        input
+            .record_input_dependency(
+                path.as_path(),
+                InputDependencyOutcome::Missing,
+                dependency_access(intent),
+            )
+            .map_err(|error| {
+                let failure = CompileError::World(error.to_string());
                 self.record_fatal(failure.clone());
                 failure.to_string()
             })
@@ -494,6 +537,13 @@ impl<'a> VirtualFileResolver<'a> {
         if self.fatal.is_none() {
             self.fatal = Some(failure);
         }
+    }
+}
+
+const fn dependency_access(intent: FileOpenIntent) -> InputDependencyAccess {
+    match intent {
+        FileOpenIntent::Required => InputDependencyAccess::RequiredRead,
+        FileOpenIntent::Probe => InputDependencyAccess::AuthoritativeProbe,
     }
 }
 

@@ -1006,6 +1006,15 @@ impl VirtualCompileSession {
         })
     }
 
+    /// Enumerates the semantic input dependencies of the accepted revision.
+    /// Suspended and discarded candidate observations are never visible here.
+    pub fn accepted_input_dependencies(&self) -> impl Iterator<Item = &tex_state::InputDependency> {
+        self.incremental
+            .iter()
+            .filter(|_| self.accepted_output.is_some())
+            .flat_map(tex_incr::Session::accepted_input_dependencies)
+    }
+
     pub(crate) fn restore_cached_file(
         &mut self,
         request: FileRequestKey,
