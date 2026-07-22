@@ -5240,13 +5240,12 @@ fn next_token_from_line(
     utf8_input_as_bytes: bool,
 ) -> Result<Option<DecodedTracedToken>, LexError> {
     let start = source_coordinate(source);
-    let ch = read_expanded_char(
+    let ClassifiedChar { ch, cat } = read_classified_char(
         source,
         stores,
         unicode_superscript_notation,
         utf8_input_as_bytes,
     );
-    let cat = stores.catcode(ch);
     match cat {
         Catcode::Ignored => Ok(None),
         Catcode::Invalid => {
@@ -5348,13 +5347,12 @@ fn next_token_from_line_readonly(
     utf8_input_as_bytes: bool,
 ) -> Result<Option<Token>, LexError> {
     let start = source_coordinate(source);
-    let ch = read_expanded_char(
+    let ClassifiedChar { ch, cat } = read_classified_char(
         source,
         stores,
         unicode_superscript_notation,
         utf8_input_as_bytes,
     );
-    let cat = stores.catcode(ch);
     match cat {
         Catcode::Ignored => Ok(None),
         Catcode::Invalid => Err(LexError::InvalidCharacter {
@@ -5442,13 +5440,12 @@ fn scan_control_sequence(
         );
     }
 
-    let ch = read_expanded_char(
+    let ClassifiedChar { ch, cat } = read_classified_char(
         source,
         stores,
         unicode_superscript_notation,
         utf8_input_as_bytes,
     );
-    let cat = stores.catcode(ch);
     if cat != Catcode::Letter {
         source.frame.state = if cat == Catcode::Space {
             LexerState::SkippingBlanks
@@ -5469,13 +5466,16 @@ fn scan_control_sequence(
     while source.frame.byte_offset < source.frame.cursor_len() {
         let mark = source.frame.byte_offset;
         let mark_col = source.frame.column;
-        let next = read_expanded_char(
+        let ClassifiedChar {
+            ch: next,
+            cat: next_cat,
+        } = read_classified_char(
             source,
             stores,
             unicode_superscript_notation,
             utf8_input_as_bytes,
         );
-        if stores.catcode(next) == Catcode::Letter {
+        if next_cat == Catcode::Letter {
             name.push(next);
         } else {
             source.frame.byte_offset = mark;
@@ -5506,13 +5506,12 @@ fn scan_control_sequence_readonly(
         return readonly_cs_token(stores, "", context);
     }
 
-    let ch = read_expanded_char(
+    let ClassifiedChar { ch, cat } = read_classified_char(
         source,
         stores,
         unicode_superscript_notation,
         utf8_input_as_bytes,
     );
-    let cat = stores.catcode(ch);
     if cat != Catcode::Letter {
         source.frame.state = if cat == Catcode::Space {
             LexerState::SkippingBlanks
@@ -5526,13 +5525,16 @@ fn scan_control_sequence_readonly(
     while source.frame.byte_offset < source.frame.cursor_len() {
         let mark = source.frame.byte_offset;
         let mark_col = source.frame.column;
-        let next = read_expanded_char(
+        let ClassifiedChar {
+            ch: next,
+            cat: next_cat,
+        } = read_classified_char(
             source,
             stores,
             unicode_superscript_notation,
             utf8_input_as_bytes,
         );
-        if stores.catcode(next) == Catcode::Letter {
+        if next_cat == Catcode::Letter {
             name.push(next);
         } else {
             source.frame.byte_offset = mark;
@@ -5559,22 +5561,33 @@ fn readonly_cs_token(
         })
 }
 
-fn read_expanded_char(
+#[derive(Clone, Copy)]
+struct ClassifiedChar {
+    ch: char,
+    cat: Catcode,
+}
+
+fn read_classified_char(
     source: &mut SourceInputFrame,
     stores: &impl ExpansionState,
     unicode_superscript_notation: bool,
     utf8_input_as_bytes: bool,
-) -> char {
+) -> ClassifiedChar {
     let ch = take_input_char(&mut source.frame, utf8_input_as_bytes)
         .expect("caller checks that the byte cursor is not at line end");
-    expand_superscript_notation(
-        source,
-        ch,
-        stores,
-        unicode_superscript_notation,
-        utf8_input_as_bytes,
-    )
-    .unwrap_or(ch)
+    let cat = stores.catcode(ch);
+    if cat == Catcode::Superscript
+        && let Some(expanded) = expand_superscript_after_first(
+            source,
+            stores,
+            unicode_superscript_notation,
+            utf8_input_as_bytes,
+        )
+    {
+        expanded
+    } else {
+        ClassifiedChar { ch, cat }
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -5654,30 +5667,12 @@ fn take_ascii_hex(frame: &mut SourceFrame, count: usize, utf8_input_as_bytes: bo
     Some(value)
 }
 
-fn expand_superscript_notation(
-    source: &mut SourceInputFrame,
-    ch: char,
-    stores: &impl ExpansionState,
-    unicode_superscript_notation: bool,
-    utf8_input_as_bytes: bool,
-) -> Option<char> {
-    if stores.catcode(ch) != Catcode::Superscript {
-        return None;
-    }
-    expand_superscript_after_first(
-        source,
-        stores,
-        unicode_superscript_notation,
-        utf8_input_as_bytes,
-    )
-}
-
 fn expand_superscript_after_first(
     source: &mut SourceInputFrame,
     stores: &impl ExpansionState,
     unicode_superscript_notation: bool,
     utf8_input_as_bytes: bool,
-) -> Option<char> {
+) -> Option<ClassifiedChar> {
     let saved = cursor_mark(&source.frame);
     let second = input_char_at(&source.frame, source.frame.byte_offset, utf8_input_as_bytes)?.0;
     if stores.catcode(second) != Catcode::Superscript {
@@ -5744,17 +5739,18 @@ fn chain_superscript_expansion(
     stores: &impl ExpansionState,
     unicode_superscript_notation: bool,
     utf8_input_as_bytes: bool,
-) -> char {
-    if stores.catcode(decoded) == Catcode::Superscript {
+) -> ClassifiedChar {
+    let cat = stores.catcode(decoded);
+    if cat == Catcode::Superscript {
         expand_superscript_after_first(
             source,
             stores,
             unicode_superscript_notation,
             utf8_input_as_bytes,
         )
-        .unwrap_or(decoded)
+        .unwrap_or(ClassifiedChar { ch: decoded, cat })
     } else {
-        decoded
+        ClassifiedChar { ch: decoded, cat }
     }
 }
 
