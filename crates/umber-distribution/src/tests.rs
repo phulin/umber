@@ -2,6 +2,18 @@ use super::*;
 
 const MANIFEST_FIXTURE: &str = include_str!("../../../tests/corpus/distribution/manifest.json");
 const SELECTION_FIXTURE: &str = include_str!("../../../tests/corpus/distribution/selection.case");
+const HTML_ROOT_FIXTURE: &str =
+    include_str!("../../../tests/corpus/distribution/html-font-root.json");
+const HTML_SHARD_TEMPLATE: &str =
+    include_str!("../../../tests/corpus/distribution/html-font-shard.template.json");
+
+fn html_shard_fixture() -> String {
+    let unicode_map = std::iter::once(r#""A""#)
+        .chain(std::iter::repeat_n("null", 255))
+        .collect::<Vec<_>>()
+        .join(",");
+    HTML_SHARD_TEMPLATE.replace(r#""__UNICODE_MAP__""#, &unicode_map)
+}
 
 #[test]
 fn shared_fixture_round_trips_and_selects_expected_jobs_and_misses() {
@@ -48,6 +60,7 @@ fn shared_fixture_round_trips_and_selects_expected_jobs_and_misses() {
             let kind = match job.request {
                 ManifestRequest::File(_) => "file",
                 ManifestRequest::Font(_) => "font",
+                ManifestRequest::LegacyMapping(_) => "legacy-mapping",
             };
             format!(
                 "{requirement}\t{kind}\t{}\t{}",
@@ -60,7 +73,10 @@ fn shared_fixture_round_trips_and_selects_expected_jobs_and_misses() {
         .iter()
         .map(|miss| match miss {
             ManifestMiss::File(key) => format!("file\t{}", key.manifest_key()),
-            ManifestMiss::Font(key) => format!("font\t{}", key.manifest_key()),
+            ManifestMiss::Font(key) => format!("font\t{}", key.logical_name()),
+            ManifestMiss::LegacyMapping(key) => {
+                format!("legacy-mapping\t{}", key.manifest_key())
+            }
         })
         .collect::<Vec<_>>();
     assert_eq!(jobs, expected_jobs);
@@ -90,6 +106,145 @@ fn request_key_encoding_is_canonical() {
     );
     assert!(FileRequestKey::new(FileKind::Tex, "../article.cls").is_err());
     assert!(FontRequestKey::new("bad\0font").is_err());
+}
+
+#[test]
+fn complete_font_and_exact_legacy_keys_round_trip_without_aliases() {
+    let base = FontRequestKey::new("cmu-serif-roman")
+        .expect("font key")
+        .with_context(FontRequestContext {
+            face_index: 0,
+            variation_instance: VariationInstance::Default,
+            variations: Vec::new(),
+            features: vec![
+                FeatureSetting {
+                    tag: *b"liga",
+                    value: 1,
+                },
+                FeatureSetting {
+                    tag: *b"kern",
+                    value: 1,
+                },
+            ],
+            direction: WritingDirection::LeftToRight,
+            script: Some(*b"latn"),
+            language: Some("EN".to_owned()),
+        })
+        .expect("complete font key");
+    let encoded = base.manifest_key();
+    assert_eq!(
+        FontRequestKey::from_manifest_key(encoded.as_str()),
+        Ok(base.clone())
+    );
+    for changed in [
+        base.clone().with_context(FontRequestContext {
+            face_index: 1,
+            variation_instance: VariationInstance::Default,
+            variations: Vec::new(),
+            features: base.features.clone(),
+            direction: base.direction,
+            script: base.script,
+            language: base.language.clone(),
+        }),
+        base.clone().with_context(FontRequestContext {
+            face_index: 0,
+            variation_instance: VariationInstance::Default,
+            variations: Vec::new(),
+            features: vec![FeatureSetting {
+                tag: *b"liga",
+                value: 0,
+            }],
+            direction: base.direction,
+            script: base.script,
+            language: base.language.clone(),
+        }),
+    ] {
+        assert_ne!(changed.expect("alternate key").manifest_key(), encoded);
+    }
+
+    let mapping =
+        LegacyMappingRequestKey::new("c".repeat(64), 1, "html-layout", Some("OT1".to_owned()))
+            .expect("mapping key");
+    assert_eq!(
+        LegacyMappingRequestKey::from_manifest_key(mapping.manifest_key().as_str()),
+        Ok(mapping)
+    );
+}
+
+#[test]
+fn html_font_shard_parses_selects_and_serializes_canonically() {
+    let root = ShardedManifestRoot::parse(HTML_ROOT_FIXTURE).expect("HTML root");
+    let fixture = html_shard_fixture();
+    let shard = ManifestShard::parse(&fixture).expect("HTML shard");
+    shard
+        .validate_identity(&root, 0)
+        .expect("paired HTML shard");
+    assert_eq!(ManifestShard::parse(&shard.to_json()), Ok(shard.clone()));
+
+    let font = shard.fonts.values().next().expect("font").request.clone();
+    let mapping = shard
+        .legacy_mappings
+        .values()
+        .next()
+        .expect("mapping")
+        .request
+        .clone();
+    let absent = FontRequestKey::new("absent").expect("absent font key");
+    assert_eq!(shard_index(&font.manifest_key(), 8), Ok(107));
+    assert_eq!(shard_index(&mapping.manifest_key(), 8), Ok(220));
+    let selection = select_shard(
+        &shard,
+        &[
+            ManifestRequest::Font(font),
+            ManifestRequest::LegacyMapping(mapping),
+            ManifestRequest::Font(absent.clone()),
+        ],
+    );
+    assert_eq!(selection.jobs.len(), 2);
+    assert_eq!(selection.misses, [ManifestMiss::Font(absent)]);
+}
+
+#[test]
+fn html_font_shard_rejects_identity_policy_mapping_and_license_failures() {
+    let fixture = html_shard_fixture();
+    let digest = "c".repeat(64);
+    let cases = [
+        fixture.replacen(
+            &format!(r#""tfmSha256": "{digest}""#),
+            &format!(r#""tfmSha256": "{}""#, "a".repeat(64)),
+            1,
+        ),
+        fixture.replacen(r#""mappingVersion": 1"#, r#""mappingVersion": 2"#, 1),
+        fixture.replacen(r#""unicodeMap": ["A",null"#, r#""unicodeMap": ["A""#, 1),
+        fixture.replacen(r#""license": {"#, r#""missingLicense": {"#, 1),
+        fixture.replacen(r#""embeddable": true"#, r#""embeddable": false"#, 1),
+        fixture.replacen(
+            "6b65726e=00000001,6c696761=00000001",
+            "6b65726e=00000001,6b65726e=00000001",
+            1,
+        ),
+        fixture.replacen(
+            "\"schema\": 1,\n      \"object\"",
+            "\"schema\": 2,\n      \"object\"",
+            1,
+        ),
+    ];
+    for invalid in cases {
+        assert!(ManifestShard::parse(&invalid).is_err());
+    }
+
+    let conflict = fixture
+        .replacen(
+            &format!("sha256-{}", "e".repeat(64)),
+            &format!("sha256-{}", "d".repeat(64)),
+            1,
+        )
+        .replacen(
+            &format!(r#""sha256": "{}""#, "e".repeat(64)),
+            &format!(r#""sha256": "{}""#, "d".repeat(64)),
+            1,
+        );
+    assert!(ManifestShard::parse(&conflict).is_err());
 }
 
 #[test]

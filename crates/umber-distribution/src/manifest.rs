@@ -2,6 +2,11 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
 use std::fmt;
 
+use crate::html::{
+    FontManifestRecord, HTML_INDEX_SHARD_SCHEMA, HTML_SHARDED_ROOT_SCHEMA,
+    LegacyMappingManifestRecord, parse_font_records, parse_legacy_mapping_records,
+    write_font_records, write_legacy_mapping_records,
+};
 use crate::json::{self, Value};
 
 pub const MANIFEST_SCHEMA: u32 = 1;
@@ -31,6 +36,8 @@ pub struct ManifestShard {
     pub distribution: String,
     pub index: u32,
     pub files: BTreeMap<String, ShardFile>,
+    pub fonts: BTreeMap<String, FontManifestRecord>,
+    pub legacy_mappings: BTreeMap<String, LegacyMappingManifestRecord>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -156,7 +163,7 @@ pub struct ManifestParseError {
 }
 
 impl ManifestParseError {
-    fn new(message: impl Into<String>) -> Self {
+    pub(crate) fn new(message: impl Into<String>) -> Self {
         Self {
             message: message.into(),
         }
@@ -244,9 +251,12 @@ impl ShardedManifestRoot {
             json::parse(text).map_err(|error| ManifestParseError::new(error.to_string()))?;
         let mut root = object(value, "root manifest")?;
         let schema = u32_value(take(&mut root, "schema", "root manifest")?, "schema")?;
-        if !matches!(schema, LEGACY_SHARDED_ROOT_SCHEMA | SHARDED_ROOT_SCHEMA) {
+        if !matches!(
+            schema,
+            LEGACY_SHARDED_ROOT_SCHEMA | SHARDED_ROOT_SCHEMA | HTML_SHARDED_ROOT_SCHEMA
+        ) {
             return Err(ManifestParseError::new(format!(
-                "unsupported root manifest schema {schema}; expected {LEGACY_SHARDED_ROOT_SCHEMA} or {SHARDED_ROOT_SCHEMA}"
+                "unsupported root manifest schema {schema}; expected {LEGACY_SHARDED_ROOT_SCHEMA}, {SHARDED_ROOT_SCHEMA}, or {HTML_SHARDED_ROOT_SCHEMA}"
             )));
         }
         let distribution = string(
@@ -318,9 +328,9 @@ impl ManifestShard {
             json::parse(text).map_err(|error| ManifestParseError::new(error.to_string()))?;
         let mut root = object(value, "index shard")?;
         let schema = u32_value(take(&mut root, "schema", "index shard")?, "schema")?;
-        if schema != INDEX_SHARD_SCHEMA {
+        if !matches!(schema, INDEX_SHARD_SCHEMA | HTML_INDEX_SHARD_SCHEMA) {
             return Err(ManifestParseError::new(format!(
-                "unsupported index shard schema {schema}; expected {INDEX_SHARD_SCHEMA}"
+                "unsupported index shard schema {schema}; expected {INDEX_SHARD_SCHEMA} or {HTML_INDEX_SHARD_SCHEMA}"
             )));
         }
         let distribution = string(
@@ -330,12 +340,28 @@ impl ManifestShard {
         validate_distribution(&distribution)?;
         let index = u32_value(take(&mut root, "index", "index shard")?, "index")?;
         let files = parse_shard_files(take(&mut root, "files", "index shard")?)?;
+        let fonts = optional_object(&mut root, "fonts")?
+            .map(parse_font_records)
+            .transpose()?
+            .unwrap_or_default();
+        let legacy_mappings = optional_object(&mut root, "legacyMappings")?
+            .map(parse_legacy_mapping_records)
+            .transpose()?
+            .unwrap_or_default();
+        if schema == INDEX_SHARD_SCHEMA && (!fonts.is_empty() || !legacy_mappings.is_empty()) {
+            return Err(ManifestParseError::new(
+                "font and legacy mapping records require index shard schema 2",
+            ));
+        }
+        validate_shard_object_conflicts(&files, &fonts, &legacy_mappings)?;
         finish(root, "index shard")?;
         Ok(Self {
             schema,
             distribution,
             index,
             files,
+            fonts,
+            legacy_mappings,
         })
     }
 
@@ -349,8 +375,116 @@ impl ManifestShard {
                 "index shard {expected_index} identity does not match root manifest"
             )));
         }
+        let expected_schema = if root.schema == HTML_SHARDED_ROOT_SCHEMA {
+            HTML_INDEX_SHARD_SCHEMA
+        } else {
+            INDEX_SHARD_SCHEMA
+        };
+        if self.schema != expected_schema {
+            return Err(ManifestParseError::new(format!(
+                "index shard {expected_index} schema does not match root manifest"
+            )));
+        }
         Ok(())
     }
+
+    /// Canonical compact JSON used for immutable shard hashing.
+    #[must_use]
+    pub fn to_json(&self) -> String {
+        let mut out = format!("{{\"schema\":{},\"distribution\":", self.schema);
+        json_string(&mut out, &self.distribution);
+        out.push_str(",\"index\":");
+        out.push_str(&self.index.to_string());
+        out.push_str(",\"files\":{");
+        for (position, (key, entry)) in self.files.iter().enumerate() {
+            if position > 0 {
+                out.push(',');
+            }
+            json_string(&mut out, key);
+            out.push_str(":{");
+            json_string(&mut out, "virtualPath");
+            out.push(':');
+            json_string(&mut out, &entry.virtual_path);
+            out.push(',');
+            json_string(&mut out, "object");
+            out.push(':');
+            json_string(&mut out, &entry.object);
+            out.push(',');
+            json_string(&mut out, "sha256");
+            out.push(':');
+            json_string(&mut out, &entry.sha256);
+            out.push(',');
+            json_string(&mut out, "bytes");
+            out.push(':');
+            out.push_str(&entry.bytes.to_string());
+            if !entry.dependencies.is_empty() {
+                out.push(',');
+                json_string(&mut out, "dependencies");
+                out.push_str(":[");
+                for (dependency_index, dependency) in entry.dependencies.iter().enumerate() {
+                    if dependency_index > 0 {
+                        out.push(',');
+                    }
+                    out.push('{');
+                    json_string(&mut out, "key");
+                    out.push(':');
+                    json_string(&mut out, &dependency.key);
+                    out.push(',');
+                    json_string(&mut out, "virtualPath");
+                    out.push(':');
+                    json_string(&mut out, &dependency.virtual_path);
+                    out.push(',');
+                    json_string(&mut out, "object");
+                    out.push(':');
+                    json_string(&mut out, &dependency.object);
+                    out.push(',');
+                    json_string(&mut out, "sha256");
+                    out.push(':');
+                    json_string(&mut out, &dependency.sha256);
+                    out.push(',');
+                    json_string(&mut out, "bytes");
+                    out.push(':');
+                    out.push_str(&dependency.bytes.to_string());
+                    out.push('}');
+                }
+                out.push(']');
+            }
+            out.push('}');
+        }
+        out.push('}');
+        write_font_records(&mut out, &self.fonts);
+        write_legacy_mapping_records(&mut out, &self.legacy_mappings);
+        out.push_str("}\n");
+        out
+    }
+}
+
+fn validate_shard_object_conflicts(
+    files: &BTreeMap<String, ShardFile>,
+    fonts: &BTreeMap<String, FontManifestRecord>,
+    mappings: &BTreeMap<String, LegacyMappingManifestRecord>,
+) -> Result<(), ManifestParseError> {
+    let mut lengths = BTreeMap::new();
+    for entry in files.values() {
+        check_digest_length(&mut lengths, &entry.sha256, entry.bytes)?;
+    }
+    for entry in fonts.values() {
+        check_digest_length(&mut lengths, &entry.object.sha256, entry.object.bytes)?;
+        check_digest_length(
+            &mut lengths,
+            &entry.license.object.sha256,
+            entry.license.object.bytes,
+        )?;
+    }
+    for entry in mappings.values() {
+        check_digest_length(&mut lengths, &entry.object.sha256, entry.object.bytes)?;
+        check_digest_length(
+            &mut lengths,
+            &entry.license.object.sha256,
+            entry.license.object.bytes,
+        )?;
+    }
+    Ok(())
 }
 
 fn parse_shard_files(value: Value) -> Result<BTreeMap<String, ShardFile>, ManifestParseError> {
@@ -561,7 +695,7 @@ fn parse_format_input_closure(
     Ok(FormatInputClosure { schema, keys })
 }
 
-fn parse_object_entry(
+pub(crate) fn parse_object_entry(
     fields: &mut BTreeMap<String, Value>,
     label: &str,
 ) -> Result<ObjectEntry, ManifestParseError> {
@@ -703,7 +837,7 @@ fn validate_format_name(name: &str) -> Result<(), ManifestParseError> {
     Ok(())
 }
 
-fn validate_digest(value: &str, label: &str) -> Result<(), ManifestParseError> {
+pub(crate) fn validate_digest(value: &str, label: &str) -> Result<(), ManifestParseError> {
     if value.len() != 64
         || !value
             .bytes()
@@ -735,7 +869,10 @@ fn validate_path(value: &str, prefix: &str, label: &str) -> Result<(), ManifestP
     Ok(())
 }
 
-fn object(value: Value, label: &str) -> Result<BTreeMap<String, Value>, ManifestParseError> {
+pub(crate) fn object(
+    value: Value,
+    label: &str,
+) -> Result<BTreeMap<String, Value>, ManifestParseError> {
     match value {
         Value::Object(fields) => Ok(fields),
         _ => Err(ManifestParseError::new(format!(
@@ -755,7 +892,7 @@ fn optional_object(
     }
 }
 
-fn take(
+pub(crate) fn take(
     fields: &mut BTreeMap<String, Value>,
     name: &str,
     label: &str,
@@ -765,7 +902,10 @@ fn take(
         .ok_or_else(|| ManifestParseError::new(format!("{label} is missing required field {name}")))
 }
 
-fn finish(fields: BTreeMap<String, Value>, label: &str) -> Result<(), ManifestParseError> {
+pub(crate) fn finish(
+    fields: BTreeMap<String, Value>,
+    label: &str,
+) -> Result<(), ManifestParseError> {
     if fields.is_empty() {
         Ok(())
     } else {
@@ -776,7 +916,7 @@ fn finish(fields: BTreeMap<String, Value>, label: &str) -> Result<(), ManifestPa
     }
 }
 
-fn string(value: Value, label: &str) -> Result<String, ManifestParseError> {
+pub(crate) fn string(value: Value, label: &str) -> Result<String, ManifestParseError> {
     match value {
         Value::String(value) => Ok(value),
         _ => Err(ManifestParseError::new(format!("{label} must be a string"))),
@@ -796,7 +936,7 @@ fn nonempty_string(
     }
 }
 
-fn number(value: Value, label: &str) -> Result<u64, ManifestParseError> {
+pub(crate) fn number(value: Value, label: &str) -> Result<u64, ManifestParseError> {
     match value {
         Value::Number(value) => Ok(value),
         _ => Err(ManifestParseError::new(format!(
@@ -805,7 +945,7 @@ fn number(value: Value, label: &str) -> Result<u64, ManifestParseError> {
     }
 }
 
-fn u32_value(value: Value, label: &str) -> Result<u32, ManifestParseError> {
+pub(crate) fn u32_value(value: Value, label: &str) -> Result<u32, ManifestParseError> {
     u32::try_from(number(value, label)?)
         .map_err(|_| ManifestParseError::new(format!("{label} exceeds u32")))
 }
@@ -972,7 +1112,7 @@ fn field_number(out: &mut String, name: &str, value: u64, indent: usize) {
     out.push_str(&value.to_string());
 }
 
-fn json_string(out: &mut String, value: &str) {
+pub(crate) fn json_string(out: &mut String, value: &str) {
     out.push('"');
     for character in value.chars() {
         match character {

@@ -1,0 +1,68 @@
+{
+  "schema": 2,
+  "distribution": "html-font-fixture",
+  "index": 0,
+  "files": {},
+  "fonts": {
+    "font:1:636d752d73657269662d726f6d616e:0:d::6b65726e=00000001,6c696761=00000001:ltr:6c61746e:656e": {
+      "schema": 1,
+      "object": "sha256-dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "bytes": 404,
+      "container": "woff2",
+      "programIdentity": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "featurePolicyVersion": 1,
+      "provenance": {
+        "identity": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "upstream": "CMU Serif",
+        "upstreamVersion": "0.7.0",
+        "sourceUrl": "https://example.test/cmu",
+        "conversionTool": "woff2_compress",
+        "conversionVersion": "1.0"
+      },
+      "license": {
+        "identity": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        "object": "sha256-eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "bytes": 100,
+        "spdx": "OFL-1.1",
+        "embeddable": true,
+        "redistributable": true
+      }
+    }
+  },
+  "legacyMappings": {
+    "legacy-mapping:1:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc:1:html-layout:4f5431": {
+      "schema": 1,
+      "tfmSha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "fontKey": "font:1:636d752d73657269662d726f6d616e:0:d::6b65726e=00000001,6c696761=00000001:ltr:6c61746e:656e",
+      "object": "sha256-dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "bytes": 404,
+      "container": "woff2",
+      "programIdentity": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "unicodeMap": ["__UNICODE_MAP__"],
+      "mappingVersion": 1,
+      "fontdimenVersion": 1,
+      "featurePolicyVersion": 1,
+      "fallback": "classic-tfm-exact",
+      "provenance": {
+        "identity": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "upstream": "CMU Serif",
+        "upstreamVersion": "0.7.0",
+        "sourceUrl": "https://example.test/cmu",
+        "conversionTool": "woff2_compress",
+        "conversionVersion": "1.0"
+      },
+      "license": {
+        "identity": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        "object": "sha256-eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "bytes": 100,
+        "spdx": "OFL-1.1",
+        "embeddable": true,
+        "redistributable": true
+      }
+    }
+  }
+}

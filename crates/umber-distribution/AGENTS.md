@@ -12,7 +12,9 @@ strict, host-neutral contract for immutable distribution manifests.
 - Keep request-key encoding and deterministic job/miss selection here so native
   hosts and the authored JavaScript can share fixtures without sharing I/O.
 - `src/json.rs` is only the private strict JSON substrate; schema policy belongs
-  in `src/manifest.rs`.
+  in `src/manifest.rs` and the focused HTML record module below.
+- `src/html.rs` owns the schema-4/schema-2 HTML font and exact legacy-mapping
+  records; `src/sha256.rs` is the dependency-free canonical shard-index hash.
 
 ## Validation
 

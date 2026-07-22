@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash, webcrypto } from "node:crypto";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 import {
 	HttpManifestResolver,
@@ -108,6 +109,54 @@ async function fixture() {
 		objectBytes,
 		files,
 		payloads,
+	};
+}
+
+async function htmlFontFixture() {
+	const template = readFileSync(
+		new URL(
+			"../../../tests/corpus/distribution/html-font-shard.template.json",
+			import.meta.url,
+		),
+		"utf8",
+	);
+	const fontBytes = encoder.encode("fixture woff2 payload");
+	const fontDigest = digest(fontBytes);
+	const shard = JSON.parse(
+		template.replace(
+			'"__UNICODE_MAP__"',
+			[JSON.stringify("A"), ...Array(255).fill("null")].join(","),
+		),
+	);
+	for (const entry of [
+		...Object.values(shard.fonts),
+		...Object.values(shard.legacyMappings),
+	]) {
+		entry.object = `sha256-${fontDigest}`;
+		entry.sha256 = fontDigest;
+		entry.bytes = fontBytes.byteLength;
+	}
+	const shardBytes = jsonBytes(shard);
+	const shardDigest = digest(shardBytes);
+	return {
+		root: {
+			schema: 4,
+			distribution: "html-font-fixture",
+			objectsBaseUrl: "https://cdn.example.test/objects/",
+			shardBits: 0,
+			shardCount: 1,
+			shards: [shardDigest],
+			formats: {},
+		},
+		objectBytes: new Map([
+			[`sha256-${shardDigest}`, shardBytes],
+			[`sha256-${fontDigest}`, fontBytes],
+		]),
+		fontRequest: Object.values(shard.fonts)[0],
+		fontKey: Object.keys(shard.fonts)[0],
+		mappingRequest: Object.values(shard.legacyMappings)[0],
+		mappingKey: Object.keys(shard.legacyMappings)[0],
+		fontBytes,
 	};
 }
 
@@ -263,6 +312,53 @@ test("typed virtual-font requests resolve through tex shards without losing iden
 			name,
 		})),
 		[{ type: "file", domain: "tex", kind: "vf", name: "plain.tex" }],
+	);
+});
+
+test("HTML profile resolves exact font and mapping records while preserving authoritative absence", async () => {
+	const data = await htmlFontFixture();
+	const { resolver } = resolverFor(data);
+	const parsedFont = data.fontKey.split(":");
+	const fontRequest = {
+		type: "font",
+		logicalName: "cmu-serif-roman",
+		faceIndex: 0,
+		variationInstance: "default",
+		variations: [],
+		features: [
+			{ tag: "kern", value: 1 },
+			{ tag: "liga", value: 1 },
+		],
+		direction: "ltr",
+		script: "latn",
+		language: "en",
+	};
+	assert.equal(parsedFont[0], "font");
+	const mappingRequest = {
+		type: "legacy-font-mapping",
+		tfmSha256: "c".repeat(64),
+		layoutPolicyVersion: 1,
+		purpose: "html-layout",
+		encodingCatalog: "OT1",
+	};
+	const resolved = await resolver.resolve([fontRequest, mappingRequest]);
+	assert.deepEqual(
+		resolved.map(({ type }) => type),
+		["font", "legacy-font-mapping"],
+	);
+	assert.deepEqual(resolved[0].bytes, data.fontBytes);
+	assert.equal(resolved[1].unicodeMap.length, 256);
+
+	const absent = { ...fontRequest, logicalName: "missing" };
+	assert.deepEqual(await resolver.resolve([absent]), [
+		{ ...absent, type: "font-unavailable" },
+	]);
+	const broken = resolverFor(data, {
+		fetch: async () => response(new Uint8Array(), { status: 503 }),
+	}).resolver;
+	await assert.rejects(
+		broken.resolve([fontRequest]),
+		(error) => error.code === "object-http",
 	);
 });
 

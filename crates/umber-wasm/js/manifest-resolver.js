@@ -3,7 +3,9 @@ import {
 	encodeRequest,
 	fontRequestIdentity,
 	isFormatName,
+	legacyMappingRequestIdentity,
 	ManifestResolverError,
+	parseManifestJson,
 	resourceDomain,
 	shardIndex,
 	validateIndexShard,
@@ -100,7 +102,7 @@ export class HttpManifestResolver {
 		} catch {}
 		let manifest;
 		try {
-			manifest = JSON.parse(new TextDecoder().decode(bytes));
+			manifest = parseManifestJson(new TextDecoder().decode(bytes));
 		} catch (error) {
 			throw new ManifestResolverError(
 				"invalid-manifest",
@@ -205,19 +207,50 @@ export class HttpManifestResolver {
 				try {
 					const bytes = await this.#object(group[0].entry, signal);
 					for (const job of group) {
-						results.set(job.key, {
-							type: "file",
-							...(() => {
-								const identity = job.request ?? decodeKey(job.key);
-								return {
-									domain: identity.domain ?? resourceDomain(identity.kind),
-									kind: identity.kind,
-									name: identity.name,
-								};
-							})(),
-							virtualPath: job.entry.virtualPath,
-							bytes,
-						});
+						results.set(
+							job.key,
+							job.type === "file"
+								? {
+										type: "file",
+										...(() => {
+											const identity = job.request ?? decodeKey(job.key);
+											return {
+												domain:
+													identity.domain ?? resourceDomain(identity.kind),
+												kind: identity.kind,
+												name: identity.name,
+											};
+										})(),
+										virtualPath: job.entry.virtualPath,
+										bytes,
+									}
+								: job.type === "font"
+									? {
+											...job.request,
+											type: "font",
+											container: job.entry.container,
+											bytes,
+											objectSha256: job.entry.sha256,
+											...(job.entry.programIdentity === undefined
+												? {}
+												: { programIdentity: job.entry.programIdentity }),
+											provenance: job.entry.provenance.identity,
+										}
+									: {
+											...job.request,
+											type: "legacy-font-mapping",
+											fontKey: job.entry.fontKey,
+											container: job.entry.container,
+											bytes,
+											objectSha256: job.entry.sha256,
+											...(job.entry.programIdentity === undefined
+												? {}
+												: { programIdentity: job.entry.programIdentity }),
+											unicodeMap: job.entry.unicodeMap,
+											fallback: job.entry.fallback,
+											provenance: job.entry.provenance.identity,
+										},
+						);
 					}
 				} catch (error) {
 					const requested = group.find((job) => job.blocking);
@@ -248,7 +281,23 @@ export class HttpManifestResolver {
 				if (!seen.has(identity)) {
 					seen.add(identity);
 					selections.push(
-						Promise.resolve({ type: "font", request, missing: true }),
+						this.#typedSelection("font", request, identity, signal, blocking),
+					);
+				}
+				continue;
+			}
+			if (request?.type === "legacy-font-mapping") {
+				const identity = legacyMappingRequestIdentity(request);
+				if (!seen.has(identity)) {
+					seen.add(identity);
+					selections.push(
+						this.#typedSelection(
+							"legacy-font-mapping",
+							request,
+							identity,
+							signal,
+							blocking,
+						),
 					);
 				}
 				continue;
@@ -292,9 +341,9 @@ export class HttpManifestResolver {
 				entry: item.entry,
 				request: item.request,
 				requested: true,
-				type: "file",
+				type: item.type,
 			});
-			for (const dependency of item.entry.dependencies) {
+			for (const dependency of item.entry.dependencies ?? []) {
 				if (seen.has(dependency.key) || hintedKeys.has(dependency.key))
 					continue;
 				hintedKeys.add(dependency.key);
@@ -310,6 +359,23 @@ export class HttpManifestResolver {
 		return { jobs, misses };
 	}
 
+	async #typedSelection(type, request, key, signal, blocking) {
+		try {
+			const index = await shardIndex(
+				key,
+				this.manifest.shardBits,
+				this.crypto,
+				true,
+			);
+			const shard = await this.#shard(index, signal);
+			const entries = type === "font" ? shard.fonts : shard.legacyMappings;
+			return { type, request, key, entry: entries[key] };
+		} catch (error) {
+			if (blocking) throw actionableError(key, error);
+			throw error;
+		}
+	}
+
 	async #shard(index, signal) {
 		let pending = this.shardCache.get(index);
 		if (pending === undefined) {
@@ -322,7 +388,7 @@ export class HttpManifestResolver {
 				);
 				let parsed;
 				try {
-					parsed = JSON.parse(new TextDecoder().decode(bytes));
+					parsed = parseManifestJson(new TextDecoder().decode(bytes));
 				} catch (error) {
 					throw new ManifestResolverError(
 						"invalid-manifest",
@@ -331,10 +397,18 @@ export class HttpManifestResolver {
 					);
 				}
 				const shard = validateIndexShard(parsed, this.manifest, index);
-				for (const key of Object.keys(shard.files)) {
+				for (const key of [
+					...Object.keys(shard.files),
+					...Object.keys(shard.fonts),
+					...Object.keys(shard.legacyMappings),
+				]) {
 					if (
-						(await shardIndex(key, this.manifest.shardBits, this.crypto)) !==
-						index
+						(await shardIndex(
+							key,
+							this.manifest.shardBits,
+							this.crypto,
+							true,
+						)) !== index
 					) {
 						throw new ManifestResolverError(
 							"invalid-manifest",

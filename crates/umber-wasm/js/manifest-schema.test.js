@@ -1,15 +1,42 @@
 import assert from "node:assert/strict";
 import { webcrypto } from "node:crypto";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import {
 	decodeKey,
 	encodeRequest,
 	fontRequestIdentity,
+	legacyMappingRequestIdentity,
+	parseFontRequestIdentity,
+	parseLegacyMappingIdentity,
+	parseManifestJson,
 	resourceDomain,
+	serializeIndexShard,
 	shardIndex,
+	validateIndexShard,
 	validateRootManifest,
 } from "./manifest-schema.js";
+
+const htmlRootFixture = readFileSync(
+	new URL(
+		"../../../tests/corpus/distribution/html-font-root.json",
+		import.meta.url,
+	),
+	"utf8",
+);
+const htmlShardTemplate = readFileSync(
+	new URL(
+		"../../../tests/corpus/distribution/html-font-shard.template.json",
+		import.meta.url,
+	),
+	"utf8",
+);
+const htmlShardFixture = () =>
+	htmlShardTemplate.replace(
+		'"__UNICODE_MAP__"',
+		[JSON.stringify("A"), ...Array(255).fill("null")].join(","),
+	);
 
 test("font request identity isolates advanced instance inputs", () => {
 	const base = {
@@ -32,6 +59,68 @@ test("font request identity isolates advanced instance inputs", () => {
 	]) {
 		assert.notEqual(fontRequestIdentity(changed), identity);
 	}
+});
+
+test("shared HTML font fixture canonicalizes, selects, and serializes identically", async () => {
+	const root = validateRootManifest(JSON.parse(htmlRootFixture));
+	const fixture = htmlShardFixture();
+	const shard = validateIndexShard(JSON.parse(fixture), root, 0);
+	assert.equal(
+		serializeIndexShard(shard),
+		`${JSON.stringify(JSON.parse(fixture))}\n`,
+	);
+	const fontKey = Object.keys(shard.fonts)[0];
+	const mappingKey = Object.keys(shard.legacyMappings)[0];
+	assert.equal(fontRequestIdentity(parseFontRequestIdentity(fontKey)), fontKey);
+	assert.equal(
+		legacyMappingRequestIdentity(parseLegacyMappingIdentity(mappingKey)),
+		mappingKey,
+	);
+	assert.equal(await shardIndex(fontKey, root.shardBits, webcrypto, true), 0);
+	assert.equal(
+		await shardIndex(mappingKey, root.shardBits, webcrypto, true),
+		0,
+	);
+});
+
+test("shared HTML fixture rejects identity, mapping, version, object, and license failures", () => {
+	const root = validateRootManifest(JSON.parse(htmlRootFixture));
+	const fixture = htmlShardFixture();
+	const digest = "c".repeat(64);
+	const invalid = [
+		fixture.replace(
+			`"tfmSha256": "${digest}"`,
+			`"tfmSha256": "${"a".repeat(64)}"`,
+		),
+		fixture.replace('"mappingVersion": 1', '"mappingVersion": 2'),
+		fixture.replace('"unicodeMap": ["A",null', '"unicodeMap": ["A"'),
+		fixture.replace('"license": {', '"missingLicense": {'),
+		fixture.replace('"embeddable": true', '"embeddable": false'),
+		fixture.replace(
+			"6b65726e=00000001,6c696761=00000001",
+			"6b65726e=00000001,6b65726e=00000001",
+		),
+		fixture.replace(
+			'"schema": 1,\n      "object"',
+			'"schema": 2,\n      "object"',
+		),
+	];
+	for (const value of invalid)
+		assert.throws(() => validateIndexShard(JSON.parse(value), root, 0));
+	const conflict = fixture
+		.replace(`sha256-${"e".repeat(64)}`, `sha256-${"d".repeat(64)}`)
+		.replace(`"sha256": "${"e".repeat(64)}"`, `"sha256": "${"d".repeat(64)}"`);
+	assert.throws(() => validateIndexShard(JSON.parse(conflict), root, 0));
+	assert.throws(
+		() =>
+			parseManifestJson(
+				fixture.replace(
+					'"mappingVersion": 1',
+					'"mappingVersion": 1, "mappingVersion": 1',
+				),
+			),
+		/duplicate object key mappingVersion/,
+	);
 });
 
 test("canonical shard selection matches publisher parity vectors", async () => {

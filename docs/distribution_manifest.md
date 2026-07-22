@@ -1,12 +1,50 @@
 # Sharded Distribution Manifest
 
-Status: schema-2 browser/native resolution and schema-3 format-closure publishing and runtime prefetch consumption implemented.
+Status: schema-2 browser/native resolution, schema-3 format-closure publishing,
+and schema-4 HTML font-profile resolution implemented.
 
 The separate immutable HTML font profile and its mapping/license record
 migration are specified by the normative
 [cross-output font system contract](cross_output_fonts.md). Existing schema-2
 and schema-3 TeX Live roots retain their exact meanings and broad runtime
 scope.
+
+## HTML font profile schemas
+
+Root schema 4 retains the authenticated root layout and shard partition
+algorithm of schemas 2/3, but pairs only with index-shard schema 2. Existing
+root schemas 2/3 continue to require index-shard schema 1. This explicit pair
+prevents an old parser from treating font-profile records as file-only shards
+and leaves every published TeX Live root and format closure unchanged.
+
+Index-shard schema 2 has the existing `files` map plus independent `fonts` and
+`legacyMappings` maps. An explicit font key is the canonical version-1
+encoding of the complete `FontRequestKey`: UTF-8 logical name, face index,
+variation instance and sorted coordinates, sorted feature policy, direction,
+script, and language. Variable text and four-byte OpenType tags are lowercase
+hex encoded, so delimiters cannot alias request fields. A legacy key contains
+mapping schema 1, the lowercase SHA-256 of the exact TFM bytes, layout-policy
+version, purpose, and optional encoding-catalog identity. Neither key uses a
+basename, family fallback, or platform font name.
+
+Font record schema 1 binds a content-addressed WOFF2 object, optional declared
+program identity, feature-policy version, bounded conversion provenance, and
+a content-addressed license record. Legacy-mapping record schema 1 additionally
+repeats and validates its TFM digest, selects a complete canonical font key,
+carries exactly 256 nullable nonempty Unicode strings, fixes mapping and
+fontdimen versions, and records either `classic-tfm-exact` or `error` fallback.
+Every hosted record requires affirmative embedding and redistribution flags;
+missing, false, oversized, or malformed license metadata rejects the shard
+before font bytes are fetched.
+
+Rust and authored JavaScript consume the shared fixtures under
+`tests/corpus/distribution/html-font-*`. Both reject unsupported record or
+policy versions, noncanonical or duplicate request components, TFM/key drift,
+malformed Unicode maps, conflicting digest lengths, missing licenses, and
+non-embeddable records. A verified canonical shard miss remains authoritative
+profile absence. Root/shard HTTP, authentication, JSON, digest, or partition
+failure remains an actionable resolver error and never becomes an unavailable
+font response.
 
 ## Trust root
 
