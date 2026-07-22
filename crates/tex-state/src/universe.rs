@@ -6108,6 +6108,12 @@ impl Universe {
         self.stores.env_journal_bytes_since(&snapshot.store)
     }
 
+    /// Current live bytes retained by the environment mutation journal.
+    #[must_use]
+    pub fn env_journal_bytes(&self) -> usize {
+        self.stores.env_journal_bytes()
+    }
+
     #[cfg(feature = "shadow")]
     pub fn verify_shadow(&self) {
         self.stores.verify_shadow();

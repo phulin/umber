@@ -21,6 +21,11 @@ pub enum ExecError {
         limit: u64,
         attempted: u64,
     },
+    ResourceBudgetExceeded {
+        resource: &'static str,
+        limit: u64,
+        attempted: u64,
+    },
     Captured {
         error: Box<ExecError>,
         site: DiagnosticSite,
@@ -193,6 +198,14 @@ impl fmt::Display for ExecError {
             Self::CumulativeFuelExceeded { limit, attempted } => write!(
                 f,
                 "execution cumulative fuel limit {limit} exceeded at {attempted}"
+            ),
+            Self::ResourceBudgetExceeded {
+                resource,
+                limit,
+                attempted,
+            } => write!(
+                f,
+                "execution {resource} budget {limit} exceeded at {attempted}"
             ),
             Self::Captured { error, .. } => write!(f, "{error}"),
             Self::Expand(err) => write!(f, "{err}"),
@@ -412,6 +425,17 @@ impl fmt::Display for ExecError {
     }
 }
 
+impl ExecError {
+    pub(crate) fn is_resource_budget_error(&self) -> bool {
+        match self {
+            Self::CumulativeFuelExceeded { .. } | Self::ResourceBudgetExceeded { .. } => true,
+            Self::Captured { error, .. } => error.is_resource_budget_error(),
+            Self::Expand(tex_expand::ExpandError::CumulativeWorkLimitExceeded { .. }) => true,
+            _ => false,
+        }
+    }
+}
+
 impl std::error::Error for ExecError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
@@ -427,6 +451,7 @@ impl std::error::Error for ExecError {
             | Self::ExecutionAlreadyTerminated
             | Self::ExecutionCancelled
             | Self::CumulativeFuelExceeded { .. }
+            | Self::ResourceBudgetExceeded { .. }
             | Self::FontOpen { .. }
             | Self::PdfGlyphToUnicode(_)
             | Self::EmptyModeNestSummary
@@ -514,7 +539,8 @@ impl ExecError {
             Self::NeedResource(_)
             | Self::ExecutionAlreadyTerminated
             | Self::ExecutionCancelled
-            | Self::CumulativeFuelExceeded { .. } => None,
+            | Self::CumulativeFuelExceeded { .. }
+            | Self::ResourceBudgetExceeded { .. } => None,
             Self::Expand(err) => err.primary_origin(),
             Self::ScanGlue(err) => err.primary_origin(),
             Self::UndefinedControlSequence { origin, .. }

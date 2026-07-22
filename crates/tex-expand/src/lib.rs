@@ -859,6 +859,10 @@ pub enum ExpandError {
     ExpansionWorkLimitExceeded {
         limit: u64,
     },
+    CumulativeWorkLimitExceeded {
+        limit: u64,
+        attempted: u64,
+    },
 }
 
 impl fmt::Display for ExpandError {
@@ -956,6 +960,10 @@ impl fmt::Display for ExpandError {
             Self::ExpansionWorkLimitExceeded { limit } => {
                 write!(f, "expansion work limit of {limit} steps exceeded")
             }
+            Self::CumulativeWorkLimitExceeded { limit, attempted } => write!(
+                f,
+                "execution cumulative fuel limit {limit} exceeded at {attempted}"
+            ),
         }
     }
 }
@@ -992,7 +1000,8 @@ impl std::error::Error for ExpandError {
             | Self::IncompleteIf { .. }
             | Self::ExtraConditionalControl { .. }
             | Self::ForbiddenOuterTokenInSkippedConditional { .. }
-            | Self::ExpansionWorkLimitExceeded { .. } => None,
+            | Self::ExpansionWorkLimitExceeded { .. }
+            | Self::CumulativeWorkLimitExceeded { .. } => None,
         }
     }
 }
@@ -1051,7 +1060,9 @@ impl ExpandError {
             Self::ScanGeneralText(err) => err.primary_origin(),
             Self::MacroCall(err) => err.primary_origin(),
             Self::Lex(err) => err.diagnostic_site().primary_origin(),
-            Self::ExpansionWorkLimitExceeded { .. } => None,
+            Self::ExpansionWorkLimitExceeded { .. } | Self::CumulativeWorkLimitExceeded { .. } => {
+                None
+            }
         }
     }
 
@@ -1162,6 +1173,7 @@ pub struct ExpansionContext<'a> {
     remaining_fuel: u64,
     fuel_scope_depth: u32,
     cumulative_fuel_burned: u64,
+    cumulative_fuel_limit: u64,
     expanded_token_list_depth: u32,
     // Meanings use generation-marked dense deduplication below. The remaining
     // read kinds stay append-only here and are sorted once at publication.
@@ -1194,6 +1206,7 @@ pub struct ExpansionSessionState {
     remaining_fuel: u64,
     fuel_scope_depth: u32,
     cumulative_fuel_burned: u64,
+    cumulative_fuel_limit: u64,
     expanded_token_list_depth: u32,
     paragraph_reads: Option<Vec<ReadDependency>>,
     paragraph_read_tracking: bool,
@@ -1234,6 +1247,7 @@ impl Default for ExpansionSessionState {
             remaining_fuel: DEFAULT_EXPANSION_FUEL,
             fuel_scope_depth: 0,
             cumulative_fuel_burned: 0,
+            cumulative_fuel_limit: u64::MAX,
             expanded_token_list_depth: 0,
             paragraph_reads: None,
             paragraph_read_tracking: false,
@@ -1282,9 +1296,27 @@ impl ExpansionSessionState {
     pub const fn cumulative_fuel_burned(&self) -> u64 {
         self.cumulative_fuel_burned
     }
+
+    /// Restores monotonic run accounting from an outer named checkpoint.
+    /// Scanner-local fuel scopes remain live-run state and are not restored.
+    #[doc(hidden)]
+    pub fn restore_cumulative_fuel_burned(&mut self, burned: u64) {
+        self.cumulative_fuel_burned = burned;
+    }
+
+    #[doc(hidden)]
+    pub fn set_cumulative_fuel_limit(&mut self, limit: u64) {
+        self.cumulative_fuel_limit = limit;
+    }
 }
 
 impl<'a> ExpansionContext<'a> {
+    #[doc(hidden)]
+    #[must_use]
+    pub const fn cumulative_fuel_burned(&self) -> u64 {
+        self.cumulative_fuel_burned
+    }
+
     #[must_use]
     pub fn new(job_name: &str) -> Self {
         Self::from_state(job_name, ExpansionSessionState::default(), None, None)
@@ -1325,6 +1357,7 @@ impl<'a> ExpansionContext<'a> {
             remaining_fuel: state.remaining_fuel,
             fuel_scope_depth: state.fuel_scope_depth,
             cumulative_fuel_burned: state.cumulative_fuel_burned,
+            cumulative_fuel_limit: state.cumulative_fuel_limit,
             expanded_token_list_depth: state.expanded_token_list_depth,
             paragraph_reads: state.paragraph_reads,
             paragraph_read_tracking: state.paragraph_read_tracking,
@@ -1367,6 +1400,7 @@ impl<'a> ExpansionContext<'a> {
             remaining_fuel: self.remaining_fuel,
             fuel_scope_depth: self.fuel_scope_depth,
             cumulative_fuel_burned: self.cumulative_fuel_burned,
+            cumulative_fuel_limit: self.cumulative_fuel_limit,
             expanded_token_list_depth: self.expanded_token_list_depth,
             paragraph_reads: self.paragraph_reads,
             paragraph_read_tracking: self.paragraph_read_tracking,
@@ -1392,8 +1426,16 @@ impl<'a> ExpansionContext<'a> {
         if self.remaining_fuel == 0 {
             return expansion_work_limit_exceeded(self.fuel_limit);
         }
+        let attempted = self.cumulative_fuel_burned.saturating_add(1);
+        if attempted > self.cumulative_fuel_limit {
+            self.cumulative_fuel_burned = attempted;
+            return Err(ExpandError::CumulativeWorkLimitExceeded {
+                limit: self.cumulative_fuel_limit,
+                attempted,
+            });
+        }
         self.remaining_fuel -= 1;
-        self.cumulative_fuel_burned = self.cumulative_fuel_burned.saturating_add(1);
+        self.cumulative_fuel_burned = attempted;
         Ok(())
     }
 
@@ -1652,6 +1694,7 @@ impl<'a> ExpansionContext<'a> {
             remaining_fuel: self.remaining_fuel,
             fuel_scope_depth: self.fuel_scope_depth,
             cumulative_fuel_burned: self.cumulative_fuel_burned,
+            cumulative_fuel_limit: self.cumulative_fuel_limit,
             expanded_token_list_depth: self.expanded_token_list_depth,
             paragraph_reads: self.paragraph_reads.take(),
             paragraph_read_tracking: self.paragraph_read_tracking,
@@ -1668,6 +1711,7 @@ impl<'a> ExpansionContext<'a> {
         self.resolution_index = nested.resolution_index;
         self.remaining_fuel = nested.remaining_fuel;
         self.cumulative_fuel_burned = nested.cumulative_fuel_burned;
+        self.cumulative_fuel_limit = nested.cumulative_fuel_limit;
         self.recoverable_diagnostics
             .append(&mut nested.recoverable_diagnostics);
         self.paragraph_reads = nested.paragraph_reads.take();

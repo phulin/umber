@@ -79,6 +79,11 @@ export interface SessionLimits {
   cachedFileBytes: number;
   userSourceBytes: number;
   outputBytes: number;
+  engineFuel: number;
+  engineSteps: number;
+  inputFrames: number;
+  journalBytes: number;
+  effects: number;
 }
 
 export interface SessionOptions {

@@ -52,6 +52,67 @@ fn owned_execution_run_advances_through_explicit_phases() {
 }
 
 #[test]
+fn effect_budget_failure_rolls_back_the_entire_candidate_step() {
+    let mut stores = Universe::new();
+    tex_expand::install_expandable_primitives(&mut stores);
+    install_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new("\\message{not published}\\end"));
+    let mut run = ExecutionRun::new("budgeted").with_budgets(ExecutionBudgets {
+        effects: 0,
+        ..ExecutionBudgets::default()
+    });
+    let cancellation = Cancellation::new();
+    assert!(matches!(
+        run.step(
+            &mut ExecutionServices::new(&mut input, &mut stores),
+            &cancellation
+        ),
+        ExecutionStepResult::Progress(_)
+    ));
+    let input_before = input.summary();
+    let state_before = stores.snapshot().state_hash();
+    assert!(matches!(
+        run.step(
+            &mut ExecutionServices::new(&mut input, &mut stores),
+            &cancellation
+        ),
+        ExecutionStepResult::Failed(ExecError::ResourceBudgetExceeded {
+            resource: "pending effects",
+            limit: 0,
+            attempted,
+        }) if attempted > 0
+    ));
+    assert_eq!(input.summary(), input_before);
+    assert_eq!(stores.snapshot().state_hash(), state_before);
+    assert!(stores.world().effect_records().is_empty());
+}
+
+#[test]
+fn named_checkpoint_preserves_future_execution_accounting() {
+    let mut stores = Universe::new();
+    let mut input = InputStack::new(MemoryInput::new(""));
+    let mut checkpoints = Vec::new();
+    let mut run = ExecutionRun::new("accounted");
+    let cancellation = Cancellation::new();
+    assert!(matches!(
+        run.step(
+            &mut ExecutionServices::new(&mut input, &mut stores).with_checkpoints(&mut checkpoints),
+            &cancellation
+        ),
+        ExecutionStepResult::Progress(_)
+    ));
+    assert_eq!(checkpoints[0].budget_counters().committed_steps, 1);
+
+    let mut executor = Executor::new();
+    executor
+        .restore_checkpoint(&mut input, &mut stores, &checkpoints[0], |_, _, _| {
+            Ok::<_, ()>(MemoryInput::new(""))
+        })
+        .expect("checkpoint restores");
+    assert_eq!(executor.budget_counters(), checkpoints[0].budget_counters());
+}
+
+#[test]
 fn owned_execution_run_amortizes_savepoints_across_bounded_command_chunks() {
     let command_count = 257;
     let mut source = "\\count0=0 ".repeat(command_count);

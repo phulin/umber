@@ -3054,6 +3054,14 @@ impl InputStack {
         self.source_frame_count
     }
 
+    /// Total number of live source, replay, conditional, and synthetic frames.
+    ///
+    /// This is an operational resource gauge, not resumable semantic state.
+    #[must_use]
+    pub fn frame_count(&self) -> usize {
+        self.frames.len()
+    }
+
     #[must_use]
     pub fn conditions(&self) -> impl DoubleEndedIterator<Item = ConditionFrameSummary> + '_ {
         self.condition_frame_indices.iter().map(|&index| {

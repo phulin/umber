@@ -44,7 +44,7 @@ Use this crate when behavior is about driving the engine, presenting CLI output,
 - `src/pdf_font_resources_tests.rs`: post-acceptance real-font fallback and virtual-root exclusion tests.
 - `src/pdf_vf.rs`: bounded recursive virtual-font packet lowering into detached PDF-positioned operations and real-font resources.
 - `src/pdf_vf/tests.rs`: synthetic packet execution, recursion, resource-selection, and lowering-limit tests.
-- `src/virtual_compile.rs`: host-neutral persistent compile session, versioned mapped-TFM layout policy, revision-checked root patches, shared-VFS file/OpenType resource retries, atomic response registration, retained immutable resources, and composed resource accounting.
+- `src/virtual_compile.rs`: host-neutral persistent compile session, versioned mapped-TFM layout policy, revision-checked root patches, shared-VFS file/OpenType resource retries, atomic response registration, retained immutable resources, and configurable execution/resource accounting.
 - `src/virtual_compile/path.rs`: logical TeX/TFM request normalization over `umber-vfs` canonical paths.
 - `src/virtual_compile/output_resources.rs`: versioned output-neutral engine/DVI/PDF/HTML resource-closure planning, placement validation, reason attribution, and bounded union deduplication.
 - `src/virtual_compile/output_resources/tests.rs`: exact capability-combination, placement, union, and budget planner coverage.
@@ -57,7 +57,7 @@ Use this crate when behavior is about driving the engine, presenting CLI output,
 - `src/virtual_compile/resolvers.rs`: VFS-snapshot-backed input/font resolvers that register selected bytes through World, with typed missing-file and logical OpenType-font side state.
 - `src/virtual_compile/tests.rs`: native retry, path, precedence, limits, format, effect-isolation, font batching, and DVI coverage.
 - `src/main.rs`: `umber` binary entry point, CLI argument parsing, `lex-dump`/`expand-dump`/`run` dispatch, token formatting, and real-run file resolvers.
-- `src/cli_resource.rs`: retained native project/cache/distribution resolution, cancellation-aware resource retries, incremental source replacement, finite engine-fuel configuration, and accepted-run telemetry handoff.
+- `src/cli_resource.rs`: retained native project/cache/distribution resolution, cancellation-aware resource retries, incremental source replacement, finite engine fuel/step/frame/journal/effect configuration, and accepted-run telemetry handoff.
 - `src/cli_resource/tests.rs`: retained-resource reuse and superseded-revision cancellation coverage.
 - `src/watch.rs`: polling incremental watch driver, supersession/Ctrl-C cancellation, DVI publication, and phase latency reporting.
 - `src/bin/gentle_profile.rs`: persistent optimized Gentle profiling runner with optional `profiling-stats` counters that preloads the external corpus into a shared in-memory World, isolates fresh cold sessions under explicit memo policies, measures balanced unchanged-root generated-input stabilization replay and long-session retention, and separately enforces slow pagination-changing, cross-generation interaction, fast suffix-adoption, and shared-mount hlist-rebreak paths under memo disabled/enabled or explicit baseline/candidate policies with cold-DVI, named-boundary-schedule, and profiling-only state-hash journal-work verification.

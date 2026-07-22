@@ -1980,6 +1980,26 @@ fn cumulative_engine_fuel_is_terminal_across_step_boundaries() {
 }
 
 #[test]
+fn configured_executor_step_budget_fails_actionably() {
+    let mut limited = VirtualCompileSession::new(SessionOptions {
+        limits: SessionLimits {
+            engine_steps: 0,
+            ..SessionLimits::default()
+        },
+        ..SessionOptions::default()
+    })
+    .expect("limited session");
+    limited
+        .add_user_file("main.tex", b"\\end".to_vec())
+        .expect("source");
+    assert!(matches!(
+        limited.compile_attempt(),
+        CompileAttemptResult::Error(CompileError::Diagnostic(diagnostic))
+            if diagnostic.message.contains("execution steps budget 0 exceeded at 1")
+    ));
+}
+
+#[test]
 fn discarded_suspension_cannot_resume_and_releases_candidate_retention() {
     let mut session = session("\\input remote \\end");
     let first = requests(session.compile_attempt());

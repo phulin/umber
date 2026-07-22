@@ -513,6 +513,21 @@ fn parse_limits(value: &JsValue) -> Result<SessionLimits, JsValue> {
     if has_value(value, "outputBytes")? {
         limits.output_bytes = integer::<usize>(value, "outputBytes")?;
     }
+    if has_value(value, "engineFuel")? {
+        limits.engine_fuel = integer::<u64>(value, "engineFuel")?;
+    }
+    if has_value(value, "engineSteps")? {
+        limits.engine_steps = integer::<u64>(value, "engineSteps")?;
+    }
+    if has_value(value, "inputFrames")? {
+        limits.input_frames = integer::<u64>(value, "inputFrames")?;
+    }
+    if has_value(value, "journalBytes")? {
+        limits.journal_bytes = integer::<u64>(value, "journalBytes")?;
+    }
+    if has_value(value, "effects")? {
+        limits.effects = integer::<u64>(value, "effects")?;
+    }
     Ok(limits)
 }
 

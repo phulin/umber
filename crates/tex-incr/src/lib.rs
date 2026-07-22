@@ -464,6 +464,10 @@ impl RevisionCandidate {
         self.run.set_cumulative_fuel_limit(limit);
     }
 
+    pub fn set_execution_budgets(&mut self, budgets: tex_exec::ExecutionBudgets) {
+        self.run.set_budgets(budgets);
+    }
+
     #[must_use]
     pub const fn execution_telemetry(&self) -> tex_exec::ExecutionTelemetry {
         self.run.telemetry()
@@ -1107,12 +1111,14 @@ impl Session {
         let mut memo = self.pure_memo.clone();
         memo.begin_paragraph_history(true);
         universe.install_pure_memo_runtime(std::mem::take(&mut memo));
+        let counters = executor.budget_counters();
         let nest = std::mem::take(executor.nest_mut());
         let sink = ResumeSink::new(&setup.old_history, restart, &setup.map, allow_convergence);
         Ok(RevisionCandidate {
             input,
             universe,
             run: ExecutionRun::from_parts(&self.job_name, nest, ExecutionState::default(), false)
+                .with_budget_counters(counters)
                 .with_dvi_output(self.dvi_output),
             sink: CandidateSink::Advance(sink),
             memo,

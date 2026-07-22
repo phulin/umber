@@ -2497,6 +2497,12 @@ impl Stores {
         )
     }
 
+    /// Current live environment-journal storage used by grouping and rollback.
+    #[must_use]
+    pub(crate) fn env_journal_bytes(&self) -> usize {
+        self.env.journal_retained_bytes()
+    }
+
     pub(crate) fn generation_retained_bytes(&self) -> usize {
         // A live accepted generation may legitimately retain survivor pins;
         // format capture forbids them because formats have a stricter job-start

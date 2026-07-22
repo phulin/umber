@@ -14,8 +14,8 @@ use crate::{ExecError, ModeNest, ModeNestSummary};
 
 /// In-memory schema version for aggregate engine checkpoints.
 ///
-/// Version 3 uses revision-independent absolute coordinates for the editor root.
-pub const ENGINE_CHECKPOINT_SCHEMA_VERSION: u32 = 3;
+/// Version 4 adds future-relevant execution-budget counters.
+pub const ENGINE_CHECKPOINT_SCHEMA_VERSION: u32 = 4;
 
 /// A safe point at which the outer executor can publish restartable state.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -41,6 +41,7 @@ pub struct EngineCheckpoint {
     root_content_hash: Option<tex_state::ContentHash>,
     effect_prefix: usize,
     artifact_prefix: usize,
+    budget_counters: crate::ExecutionBudgetCounters,
 }
 
 /// Revision roots and their precomputed content identities for checkpoint
@@ -98,6 +99,11 @@ impl EngineCheckpoint {
     #[must_use]
     pub const fn state_hash(&self) -> u64 {
         self.state_hash
+    }
+
+    #[must_use]
+    pub const fn budget_counters(&self) -> crate::ExecutionBudgetCounters {
+        self.budget_counters
     }
 
     #[must_use]
@@ -293,6 +299,7 @@ impl<'a, C: CheckpointSink> EngineSession<'a, C> {
         nest: &ModeNest,
         input: &mut InputStack,
         universe: &mut Universe,
+        budget_counters: crate::ExecutionBudgetCounters,
     ) {
         if !self.sink.wants_checkpoint(boundary) {
             return;
@@ -330,6 +337,7 @@ impl<'a, C: CheckpointSink> EngineSession<'a, C> {
             root_content_hash,
             effect_prefix,
             artifact_prefix,
+            budget_counters,
         });
     }
 
@@ -412,6 +420,7 @@ impl crate::Executor {
         universe.rollback(&checkpoint.universe);
         *input = restored_input;
         self.nest = restored_modes;
+        self.budget_counters = checkpoint.budget_counters;
         Ok(())
     }
 
@@ -487,6 +496,7 @@ impl crate::Executor {
         *universe = restored_universe;
         *input = restored_input;
         self.nest = restored_modes;
+        self.budget_counters = checkpoint.budget_counters;
         Ok(fork_latency)
     }
 }

@@ -335,6 +335,20 @@ impl NativeCompileSession {
                 })
                 .transpose()?)
             .unwrap_or(SessionLimits::default().engine_fuel);
+        let env_limit = |name: &'static str, default: u64| -> Result<u64, NativeRunError> {
+            env::var(name).map_or(Ok(default), |value| {
+                value.parse::<u64>().map_err(|_| {
+                    NativeRunError::Selection(format!(
+                        "{name} must be an unsigned integer: {value}"
+                    ))
+                })
+            })
+        };
+        let defaults = SessionLimits::default();
+        let engine_steps = env_limit("UMBER_ENGINE_STEPS", defaults.engine_steps)?;
+        let input_frames = env_limit("UMBER_INPUT_FRAMES", defaults.input_frames)?;
+        let journal_bytes = env_limit("UMBER_JOURNAL_BYTES", defaults.journal_bytes)?;
+        let effects = env_limit("UMBER_EFFECTS", defaults.effects)?;
         let restore_started = std::time::Instant::now();
         let mut session = VirtualCompileSession::new(SessionOptions {
             main_path: format!("/job/{name}"),
@@ -347,6 +361,10 @@ impl NativeCompileSession {
             limits: SessionLimits {
                 attempts: SessionLimits::HARD_MAX.attempts,
                 engine_fuel,
+                engine_steps,
+                input_frames,
+                journal_bytes,
+                effects,
                 ..SessionLimits::default()
             },
             outputs: options.outputs,

@@ -93,6 +93,14 @@ pub struct SessionLimits {
     pub output_bytes: usize,
     /// Monotonic expansion work allowed for one logical engine revision.
     pub engine_fuel: u64,
+    /// Committed owned executor steps allowed for one logical revision.
+    pub engine_steps: u64,
+    /// Maximum simultaneously live lexer/input frames.
+    pub input_frames: u64,
+    /// Maximum live environment-journal bytes.
+    pub journal_bytes: u64,
+    /// Maximum pending virtualized effects.
+    pub effects: u64,
 }
 
 impl SessionLimits {
@@ -112,6 +120,10 @@ impl SessionLimits {
         user_source_bytes: VfsLimits::HARD_MAX.user_bytes,
         output_bytes: 256 * 1024 * 1024,
         engine_fuel: 1_000_000_000,
+        engine_steps: 100_000_000,
+        input_frames: 1_000_000,
+        journal_bytes: 1024 * 1024 * 1024,
+        effects: 10_000_000,
     };
 
     fn validate(self) -> Result<Self, CompileError> {
@@ -136,12 +148,32 @@ impl SessionLimits {
                 });
             }
         }
-        if self.engine_fuel > Self::HARD_MAX.engine_fuel {
-            return Err(CompileError::HardLimitExceeded {
-                resource: "engine fuel",
-                hard: Self::HARD_MAX.engine_fuel as usize,
-                attempted: usize::try_from(self.engine_fuel).unwrap_or(usize::MAX),
-            });
+        for (resource, attempted, hard) in [
+            ("engine fuel", self.engine_fuel, Self::HARD_MAX.engine_fuel),
+            (
+                "engine steps",
+                self.engine_steps,
+                Self::HARD_MAX.engine_steps,
+            ),
+            (
+                "input frames",
+                self.input_frames,
+                Self::HARD_MAX.input_frames,
+            ),
+            (
+                "journal bytes",
+                self.journal_bytes,
+                Self::HARD_MAX.journal_bytes,
+            ),
+            ("effects", self.effects, Self::HARD_MAX.effects),
+        ] {
+            if attempted > hard {
+                return Err(CompileError::HardLimitExceeded {
+                    resource,
+                    hard: usize::try_from(hard).unwrap_or(usize::MAX),
+                    attempted: usize::try_from(attempted).unwrap_or(usize::MAX),
+                });
+            }
         }
         Ok(self)
     }
@@ -172,6 +204,10 @@ impl Default for SessionLimits {
             user_source_bytes: 16 * 1024 * 1024,
             output_bytes: 64 * 1024 * 1024,
             engine_fuel: 100_000_000,
+            engine_steps: 10_000_000,
+            input_frames: 100_000,
+            journal_bytes: 256 * 1024 * 1024,
+            effects: 1_000_000,
         }
     }
 }
@@ -764,6 +800,15 @@ impl PreparedExecution {
 }
 
 impl VirtualCompileSession {
+    fn execution_budgets(&self) -> tex_exec::ExecutionBudgets {
+        tex_exec::ExecutionBudgets {
+            steps: self.limits.engine_steps,
+            input_frames: self.limits.input_frames,
+            journal_bytes: self.limits.journal_bytes,
+            effects: self.limits.effects,
+        }
+    }
+
     pub fn new(options: SessionOptions) -> Result<Self, CompileError> {
         Self::new_at_revision(options, tex_incr::RevisionId::new(1))
     }
@@ -1739,6 +1784,7 @@ impl VirtualCompileSession {
                 .start_cold_candidate()
                 .map_err(|error| CompileError::Incremental(error.to_string()))?;
             candidate.set_cumulative_fuel_limit(self.limits.engine_fuel);
+            candidate.set_execution_budgets(self.execution_budgets());
             RetainedCandidate {
                 files: candidate_files.clone(),
                 execution: RetainedExecution::Initial { session, candidate },
@@ -1762,6 +1808,7 @@ impl VirtualCompileSession {
             }
             .map_err(|error| CompileError::Incremental(error.to_string()))?;
             candidate.set_cumulative_fuel_limit(self.limits.engine_fuel);
+            candidate.set_execution_budgets(self.execution_budgets());
             RetainedCandidate {
                 files: candidate_files,
                 execution: RetainedExecution::Pending(candidate),

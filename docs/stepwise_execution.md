@@ -371,11 +371,14 @@ the savepoint restores these exactly. The replayed lookup therefore receives
 the same resolution index; wraparound becomes a typed hard-limit failure
 rather than the current wrapping behavior.
 
-Monotonic counters are `advance_calls`, `suspension_serial`, response-progress
-generation, failure-injection sequence, and `cumulative_fuel`. They are outside
+Monotonic counters are `advance_calls`, committed executor steps,
+`suspension_serial`, response-progress generation, failure-injection sequence,
+and `cumulative_fuel`. They are outside
 the savepoint, never decrease on retry, and are telemetry or abuse-control
 state rather than TeX semantics. Request identity never depends solely on one
-of these counters.
+of these counters. Committed steps and cumulative fuel affect future budget
+decisions, so named checkpoints retain both; scanner and alignment watchdog
+state remains live-run-only and never becomes a continuation.
 
 Fuel is charged before each expansion loop action, delivered-token dispatch,
 text-span token, memo validation unit, builder unit, shipped node/event, and
@@ -405,10 +408,17 @@ session layer, cancelling a pending editor revision drops its `ExecutionRun`
 and private VFS/revision transaction while preserving the last accepted
 revision and immutable resource bindings.
 
+Production sessions default to 10,000,000 committed steps, 100,000 live input
+frames, 256 MiB of environment journal, 1,000,000 pending effects, and
+100,000,000 cumulative expansion-fuel units. `SessionLimits` configures these
+ceilings uniformly for native and WASM sessions; native CLI runs additionally
+accept `UMBER_ENGINE_STEPS`, `UMBER_INPUT_FRAMES`, `UMBER_JOURNAL_BYTES`, and
+`UMBER_EFFECTS`.
+
 Node, input-depth, recursion, output, generated-file, resource, and decoded
 font/image limits remain hard terminal errors. A limit reached during a step
 uses the same rollback protocol. Candidate bytes are counted before allocation
-or publication; cumulative fuel is the sole limit intentionally not refunded
+or publication; cumulative fuel and committed-step accounting are not refunded
 by rollback.
 
 ## Native, WASM, and build composition

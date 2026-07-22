@@ -218,6 +218,14 @@ impl ExecutionState {
         self.cold_paragraph_recording = snapshot.cold_paragraph_recording;
         self.paragraph_dependency_cache = snapshot.paragraph_dependency_cache;
     }
+
+    pub(crate) fn restore_cumulative_fuel(&mut self, burned: u64) {
+        self.expansion.restore_cumulative_fuel_burned(burned);
+    }
+
+    fn set_cumulative_fuel_limit(&mut self, limit: u64) {
+        self.expansion.set_cumulative_fuel_limit(limit);
+    }
 }
 
 struct ExecutionStateSnapshot {
@@ -346,6 +354,33 @@ pub struct ExecutionTelemetry {
     pub engine_time: Duration,
     pub savepoint_capture_time: Duration,
     pub savepoint_restore_time: Duration,
+}
+
+/// Run-level ceilings checked at the owned executor's atomic step boundary.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ExecutionBudgets {
+    pub steps: u64,
+    pub input_frames: u64,
+    pub journal_bytes: u64,
+    pub effects: u64,
+}
+
+impl Default for ExecutionBudgets {
+    fn default() -> Self {
+        Self {
+            steps: u64::MAX,
+            input_frames: u64::MAX,
+            journal_bytes: u64::MAX,
+            effects: u64::MAX,
+        }
+    }
+}
+
+/// Future-relevant monotonic accounting stored in named checkpoints.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct ExecutionBudgetCounters {
+    pub committed_steps: u64,
+    pub cumulative_fuel: u64,
 }
 
 #[derive(Debug)]
@@ -768,6 +803,7 @@ impl DerefMut for ExecutionContext<'_> {
 #[derive(Clone, Debug, PartialEq)]
 pub struct Executor {
     pub(crate) nest: ModeNest,
+    pub(crate) budget_counters: ExecutionBudgetCounters,
 }
 
 /// Owned stomach state and lifecycle for a cooperatively driven execution.
@@ -777,12 +813,15 @@ pub struct ExecutionRun {
     execution: Option<ExecutionState>,
     stats: ExecutionStats,
     artifact_start: Option<usize>,
+    effect_start: Option<usize>,
     next_step: ExecutionStep,
     lifecycle: ExecutionLifecycle,
     publish_job_start: bool,
     suspension_serial: u64,
     checkpoint_mode_projection: Option<(crate::ModeNestSummary, u64)>,
     cumulative_fuel_limit: u64,
+    budgets: ExecutionBudgets,
+    budget_counters: ExecutionBudgetCounters,
     emit_dvi: bool,
     telemetry: ExecutionTelemetry,
 }
@@ -794,6 +833,7 @@ struct StepSavepoint {
     execution: ExecutionStateSnapshot,
     stats: ExecutionStats,
     artifact_start: Option<usize>,
+    effect_start: Option<usize>,
     next_step: ExecutionStep,
     lifecycle: ExecutionLifecycle,
     publish_job_start: bool,
@@ -819,6 +859,7 @@ impl ExecutionRun {
             execution: Some(execution),
             stats: ExecutionStats::default(),
             artifact_start: None,
+            effect_start: None,
             next_step: if publish_job_start {
                 ExecutionStep::JobStart
             } else {
@@ -833,6 +874,8 @@ impl ExecutionRun {
             suspension_serial: 0,
             checkpoint_mode_projection: None,
             cumulative_fuel_limit: u64::MAX,
+            budgets: ExecutionBudgets::default(),
+            budget_counters: ExecutionBudgetCounters::default(),
             emit_dvi: true,
             telemetry: ExecutionTelemetry {
                 cold_starts: 1,
@@ -843,12 +886,36 @@ impl ExecutionRun {
 
     #[must_use]
     pub fn with_cumulative_fuel_limit(mut self, limit: u64) -> Self {
-        self.cumulative_fuel_limit = limit;
+        self.set_cumulative_fuel_limit(limit);
         self
     }
 
     pub fn set_cumulative_fuel_limit(&mut self, limit: u64) {
         self.cumulative_fuel_limit = limit;
+        self.execution_mut().set_cumulative_fuel_limit(limit);
+    }
+
+    #[must_use]
+    pub fn with_budgets(mut self, budgets: ExecutionBudgets) -> Self {
+        self.budgets = budgets;
+        self
+    }
+
+    pub fn set_budgets(&mut self, budgets: ExecutionBudgets) {
+        self.budgets = budgets;
+    }
+
+    #[must_use]
+    pub fn with_budget_counters(mut self, counters: ExecutionBudgetCounters) -> Self {
+        self.budget_counters = counters;
+        self.execution_mut()
+            .restore_cumulative_fuel(counters.cumulative_fuel);
+        self
+    }
+
+    #[must_use]
+    pub const fn budget_counters(&self) -> ExecutionBudgetCounters {
+        self.budget_counters
     }
 
     #[must_use]
@@ -927,6 +994,7 @@ impl ExecutionRun {
                 .expansion
                 .set_job_clock(services.stores.world().job_clock());
             self.artifact_start = Some(services.stores.world().artifact_commits().len());
+            self.effect_start = Some(services.stores.world().effect_records().len());
         }
 
         let blocked_step = self.next_step;
@@ -958,6 +1026,15 @@ impl ExecutionRun {
                         &self.nest,
                         services.input,
                         services.stores,
+                        ExecutionBudgetCounters {
+                            committed_steps: self.budget_counters.committed_steps.saturating_add(1),
+                            cumulative_fuel: self
+                                .execution
+                                .as_ref()
+                                .expect("execution state is installed")
+                                .expansion
+                                .cumulative_fuel_burned(),
+                        },
                     );
                     self.checkpoint_mode_projection = session.into_mode_projection();
                 }
@@ -979,16 +1056,26 @@ impl ExecutionRun {
             .expect("execution state is installed after a step")
             .expansion
             .cumulative_fuel_burned();
+        let mut projected_counters = self.budget_counters;
+        projected_counters.cumulative_fuel = self.telemetry.cumulative_fuel;
+        if result.is_ok() {
+            projected_counters.committed_steps =
+                projected_counters.committed_steps.saturating_add(1);
+        }
         let result = if self.telemetry.cumulative_fuel > self.cumulative_fuel_limit {
             Err(ExecError::CumulativeFuelExceeded {
                 limit: self.cumulative_fuel_limit,
                 attempted: self.telemetry.cumulative_fuel,
             })
+        } else if result.is_ok() {
+            self.validate_budgets(services, projected_counters)
+                .and(result)
         } else {
             result
         };
         match result {
             Ok(()) => {
+                self.budget_counters = projected_counters;
                 let (checkpoints, stop_requested, checkpoint_destination) = staged.commit();
                 services.checkpoints = checkpoint_destination;
                 if let Some(recorder) = services.recorder.as_deref_mut() {
@@ -1008,22 +1095,25 @@ impl ExecutionRun {
             }
             Err(error) => {
                 let suspends = resource_need(&error).is_some();
-                if suspends {
-                    self.telemetry.suspensions = self.telemetry.suspensions.saturating_add(1);
-                    self.telemetry.replayed_delivered_tokens =
-                        self.telemetry.replayed_delivered_tokens.saturating_add(
-                            self.stats
-                                .delivered_tokens
-                                .saturating_sub(stats_before.delivered_tokens)
-                                as u64,
-                        );
-                    self.telemetry.replayed_dispatches =
-                        self.telemetry.replayed_dispatches.saturating_add(
-                            self.stats
-                                .main_control_dispatches
-                                .saturating_sub(stats_before.main_control_dispatches)
-                                as u64,
-                        );
+                let rolls_back = suspends || error.is_resource_budget_error();
+                if rolls_back {
+                    if suspends {
+                        self.telemetry.suspensions = self.telemetry.suspensions.saturating_add(1);
+                        self.telemetry.replayed_delivered_tokens =
+                            self.telemetry.replayed_delivered_tokens.saturating_add(
+                                self.stats
+                                    .delivered_tokens
+                                    .saturating_sub(stats_before.delivered_tokens)
+                                    as u64,
+                            );
+                        self.telemetry.replayed_dispatches =
+                            self.telemetry.replayed_dispatches.saturating_add(
+                                self.stats
+                                    .main_control_dispatches
+                                    .saturating_sub(stats_before.main_control_dispatches)
+                                    as u64,
+                            );
+                    }
                     services.checkpoints = staged.discard();
                     let restore_timer = TelemetryTimer::start();
                     self.rollback_step_savepoint(services, savepoint);
@@ -1044,6 +1134,49 @@ impl ExecutionRun {
         }
     }
 
+    fn validate_budgets(
+        &self,
+        services: &ExecutionServices<'_, '_>,
+        counters: ExecutionBudgetCounters,
+    ) -> Result<(), ExecError> {
+        for (resource, limit, attempted) in [
+            (
+                "execution steps",
+                self.budgets.steps,
+                counters.committed_steps,
+            ),
+            (
+                "live input frames",
+                self.budgets.input_frames,
+                services.input.frame_count() as u64,
+            ),
+            (
+                "environment journal bytes",
+                self.budgets.journal_bytes,
+                services.stores.env_journal_bytes() as u64,
+            ),
+            (
+                "pending effects",
+                self.budgets.effects,
+                services
+                    .stores
+                    .world()
+                    .effect_records()
+                    .len()
+                    .saturating_sub(self.effect_start.unwrap_or(0)) as u64,
+            ),
+        ] {
+            if attempted > limit {
+                return Err(ExecError::ResourceBudgetExceeded {
+                    resource,
+                    limit,
+                    attempted,
+                });
+            }
+        }
+        Ok(())
+    }
+
     fn capture_step_savepoint(
         &mut self,
         services: &mut ExecutionServices<'_, '_>,
@@ -1059,6 +1192,7 @@ impl ExecutionRun {
                 .snapshot(),
             stats: self.stats.clone(),
             artifact_start: self.artifact_start,
+            effect_start: self.effect_start,
             next_step: self.next_step,
             lifecycle: self.lifecycle,
             publish_job_start: self.publish_job_start,
@@ -1080,6 +1214,7 @@ impl ExecutionRun {
             .rollback(savepoint.execution);
         self.stats = savepoint.stats;
         self.artifact_start = savepoint.artifact_start;
+        self.effect_start = savepoint.effect_start;
         self.next_step = savepoint.next_step;
         self.lifecycle = savepoint.lifecycle;
         self.publish_job_start = savepoint.publish_job_start;
@@ -1148,6 +1283,7 @@ impl ExecutionRun {
         staged_reads: &mut Vec<tex_expand::ReadRecorderBatch>,
     ) -> Result<(), ExecError> {
         let mut checkpoint_mode_projection = self.checkpoint_mode_projection.take();
+        let budget_counters = self.budget_counters;
         let exit = self.with_context(
             services,
             staged_reads,
@@ -1160,6 +1296,7 @@ impl ExecutionRun {
                     stats,
                     staged,
                     &mut checkpoint_mode_projection,
+                    budget_counters,
                 )
             },
         );
@@ -1371,11 +1508,20 @@ impl Executor {
     pub fn new() -> Self {
         Self {
             nest: ModeNest::new(),
+            budget_counters: ExecutionBudgetCounters::default(),
         }
     }
 
     pub fn from_nest(nest: ModeNest) -> Self {
-        Self { nest }
+        Self {
+            nest,
+            budget_counters: ExecutionBudgetCounters::default(),
+        }
+    }
+
+    #[must_use]
+    pub const fn budget_counters(&self) -> ExecutionBudgetCounters {
+        self.budget_counters
     }
 
     #[must_use]
@@ -1455,7 +1601,8 @@ where {
         let (state, input_resolver, font_resolver, image_resolver, recorder) =
             detached.into_owned_parts();
         let nest = std::mem::take(&mut self.nest);
-        let mut run = ExecutionRun::from_parts(&job_name, nest, state, publish_job_start);
+        let mut run = ExecutionRun::from_parts(&job_name, nest, state, publish_job_start)
+            .with_budget_counters(self.budget_counters);
         let cancellation = Cancellation::new();
         let mut services = ExecutionServices {
             input,
@@ -1483,6 +1630,7 @@ where {
                 ExecutionStepResult::Cancelled => break Err(ExecError::ExecutionCancelled),
             }
         };
+        self.budget_counters = run.budget_counters();
         let (nest, state, _) = run.into_parts();
         self.nest = nest;
         let input_resolver = services.input_resolver.take();
@@ -1508,6 +1656,7 @@ where {
 const EXECUTION_TEXT_SPAN_CHUNK: usize = 256;
 const EXECUTION_STEP_OPERATION_CHUNK: usize = 256;
 
+#[allow(clippy::too_many_arguments)]
 fn run_outer_main_control_step<C>(
     nest: &mut ModeNest,
     input: &mut InputStack,
@@ -1516,6 +1665,7 @@ fn run_outer_main_control_step<C>(
     stats: &mut ExecutionStats,
     session_sink: &mut C,
     mode_projection: &mut Option<(crate::ModeNestSummary, u64)>,
+    budget_counters: ExecutionBudgetCounters,
 ) -> Result<MainControlExit, ExecError>
 where
     C: CheckpointSink,
@@ -1533,10 +1683,28 @@ where
         |_, _| false,
         |nest, input, stores, event| {
             if event.shipout_complete {
-                session.publish(EngineBoundary::ShipoutComplete, nest, input, stores);
+                session.publish(
+                    EngineBoundary::ShipoutComplete,
+                    nest,
+                    input,
+                    stores,
+                    ExecutionBudgetCounters {
+                        committed_steps: budget_counters.committed_steps.saturating_add(1),
+                        cumulative_fuel: event.cumulative_fuel,
+                    },
+                );
             }
             if event.outer_paragraph_end {
-                session.publish(EngineBoundary::OuterParagraphEnd, nest, input, stores);
+                session.publish(
+                    EngineBoundary::OuterParagraphEnd,
+                    nest,
+                    input,
+                    stores,
+                    ExecutionBudgetCounters {
+                        committed_steps: budget_counters.committed_steps.saturating_add(1),
+                        cumulative_fuel: event.cumulative_fuel,
+                    },
+                );
             }
             operations += 1;
             event.shipout_complete
@@ -1554,6 +1722,7 @@ where
 struct BoundaryEvent {
     outer_paragraph_end: bool,
     shipout_complete: bool,
+    cumulative_fuel: u64,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1678,6 +1847,7 @@ where
                                 outer_paragraph_end,
                                 shipout_complete: stores.world().artifact_commits().len()
                                     != before_artifacts,
+                                cumulative_fuel: execution.cumulative_fuel_burned(),
                             },
                         ) {
                             return Ok(MainControlExit::Stopped);
@@ -2011,6 +2181,7 @@ where
                     && nest.current_mode() == crate::Mode::Vertical
                     && nest.depth() == 1,
                 shipout_complete: stores.world().artifact_commits().len() != before_artifacts,
+                cumulative_fuel: execution.cumulative_fuel_burned(),
             },
         ) {
             return Ok(MainControlExit::Stopped);
