@@ -190,6 +190,13 @@ interaction, cold priming, and forced line-breaking fallback are reported
 separately. Historical measurements and rejected cache experiments remain in
 Git history; `profiling.md` defines the current measurement workflow.
 
+Accepted revision telemetry identifies cold execution, ordinary fast and slow
+edits, unchanged-root external-input replay, and forced `JobStart` fallback.
+Revision-local paragraph lookup, hit, and typed-validation-miss counts sit
+beside that path attribution, while `PureMemoStats` remains the cumulative
+generic runtime view. This separation does not introduce generated-input or
+label-specific cache machinery.
+
 ## Verification obligations
 
 Every change must preserve:

@@ -474,10 +474,10 @@ fn external_input_delta_replays_paragraphs_from_job_start_without_new_revision()
     let mut universe = template();
     universe.enable_pure_memo(tex_state::PureMemoConfig::default());
     let source = concat!(
-        "\\font\\tenrm=cmr10\\relax\\tenrm \\input refs \\hsize=20pt ",
-        "\\vrule width3pt height2pt\\par ",
-        "\\vrule width\\refwidth height2pt\\par ",
-        "\\vrule width4pt height2pt\\par ",
+        "\\font\\tenrm=cmr10\\relax\\tenrm \\input refs \\hsize=45pt ",
+        "stable first paragraph text\\par ",
+        "\\hskip\\refwidth reference paragraph text\\par ",
+        "stable third paragraph text\\par ",
         "\\vfill\\eject\\end",
     );
     let mut session = Session::start(
@@ -505,6 +505,8 @@ fn external_input_delta_replays_paragraphs_from_job_start_without_new_revision()
         .map(CommittedArtifact::hash)
         .collect::<Vec<_>>();
     let before = session.pure_memo_stats();
+    let meaning_misses_before =
+        before.paragraph_validation_failure_count(tex_state::ParagraphValidationFailure::Meaning);
 
     let mut candidate = session
         .start_external_input_delta_candidate()
@@ -558,9 +560,38 @@ fn external_input_delta_replays_paragraphs_from_job_start_without_new_revision()
         accepted.content_hash,
         ContentHash::from_bytes(source.as_bytes())
     );
+    assert_eq!(
+        accepted.reuse.execution_path,
+        RevisionExecutionPath::ExternalInputDelta,
+    );
     assert!(
-        session.pure_memo_stats().paragraph_line_hits > before.paragraph_line_hits,
-        "unchanged paragraphs should mount retained finished lines",
+        accepted.reuse.paragraph_replay_lookups >= 3,
+        "{:#?}",
+        accepted.reuse
+    );
+    assert!(
+        accepted.reuse.paragraph_replay_hits >= 1,
+        "{:#?}",
+        accepted.reuse
+    );
+    let stable_start = source
+        .find("stable first")
+        .expect("stable paragraph source");
+    let stable_end = stable_start + "stable first paragraph text".len();
+    assert!(
+        accepted.reuse.paragraph_replay_validation_misses >= 1,
+        "{:#?}",
+        accepted.reuse,
+    );
+    let after = session.pure_memo_stats();
+    assert!(
+        after.paragraph_line_hits > before.paragraph_line_hits,
+        "unrelated paragraphs should mount retained finished lines",
+    );
+    assert!(
+        after.paragraph_validation_failure_count(tex_state::ParagraphValidationFailure::Meaning,)
+            > meaning_misses_before,
+        "the paragraph that reads the changed reference meaning must miss: {after:?}",
     );
 
     let mut cold_universe = template();
@@ -573,6 +604,8 @@ fn external_input_delta_replays_paragraphs_from_job_start_without_new_revision()
         usize::MAX,
     )
     .expect("cold comparison starts");
+    cold.register_input_file(Path::new("cmr10.tfm"), CMR10.to_vec())
+        .expect("cold font fixture");
     let cold = cold
         .cold_with_resolvers(&mut new_inputs, &mut fonts)
         .expect("cold comparison runs");
@@ -580,18 +613,211 @@ fn external_input_delta_replays_paragraphs_from_job_start_without_new_revision()
         accepted.dvi_bytes().expect("delta DVI"),
         cold.dvi_bytes().expect("cold DVI"),
     );
+    assert_eq!(accepted.effects, cold.effects, "detached effects differ");
+    assert_eq!(
+        accepted
+            .artifacts
+            .iter()
+            .map(CommittedArtifact::hash)
+            .collect::<Vec<_>>(),
+        cold.artifacts
+            .iter()
+            .map(CommittedArtifact::hash)
+            .collect::<Vec<_>>(),
+        "committed artifacts differ",
+    );
     assert_eq!(
         accepted
             .history
             .iter()
-            .map(BoundaryRecord::key)
+            .map(|record| {
+                (
+                    record.key(),
+                    record.effect_prefix(),
+                    record.artifact_prefix(),
+                    record.state_hash(),
+                )
+            })
             .collect::<Vec<_>>(),
         cold.history
             .iter()
-            .map(BoundaryRecord::key)
+            .map(|record| {
+                (
+                    record.key(),
+                    record.effect_prefix(),
+                    record.artifact_prefix(),
+                    record.state_hash(),
+                )
+            })
             .collect::<Vec<_>>(),
-        "JobStart replay must publish the cold named-boundary schedule",
+        "JobStart replay must publish the cold named-boundary schedule and final state",
     );
+
+    assert!(
+        (1..=accepted.artifacts.len() as u32)
+            .flat_map(|page| (0..256).map(move |event| (page, event)))
+            .any(|(page, event)| {
+                matches!(
+                    session.rendered_source_origin(page, event, None),
+                    Ok(Some(LayoutResolvedOrigin::Current {
+                        doc_offset_lo,
+                        doc_offset_hi,
+                        ..
+                    })) if doc_offset_lo < stable_end as u64
+                        && doc_offset_hi > stable_start as u64
+                )
+            }),
+        "a mounted paragraph must resolve through current-revision provenance",
+    );
+
+    let before_second_delta = session.pure_memo_stats();
+    let mut second_candidate = session
+        .start_external_input_delta_candidate()
+        .expect("second JobStart delta candidate");
+    let mut newest_inputs = StagedInputResolver::default();
+    newest_inputs
+        .files
+        .insert("refs".to_owned(), "\\def\\refwidth{3pt}".to_owned());
+    assert!(matches!(
+        second_candidate
+            .drive_with_resource_resolvers(
+                &mut newest_inputs,
+                &mut fonts,
+                &mut images,
+                &Cancellation::new(),
+            )
+            .expect("second delta execution"),
+        RevisionCandidateResult::Complete
+    ));
+    let second_pending = session
+        .finish_advance_candidate(second_candidate)
+        .expect("finish second unchanged-root delta");
+    assert_eq!(
+        second_pending.reuse().execution_path,
+        RevisionExecutionPath::ExternalInputDelta,
+    );
+    assert!(second_pending.reuse().paragraph_replay_hits >= 1);
+    assert!(second_pending.reuse().paragraph_replay_validation_misses >= 1);
+    let second = session
+        .accept_pending(second_pending)
+        .expect("accept second delta rerun");
+    assert!(
+        session.pure_memo_stats().paragraph_line_hits > before_second_delta.paragraph_line_hits,
+        "accepted records carried across generations must remain live",
+    );
+
+    let mut newest_cold_universe = template();
+    newest_cold_universe.enable_pure_memo(tex_state::PureMemoConfig::default());
+    let mut newest_cold = Session::start(
+        newest_cold_universe,
+        "external-input-paragraph-replay",
+        RevisionId::new(1),
+        source,
+        usize::MAX,
+    )
+    .expect("second cold comparison starts");
+    newest_cold
+        .register_input_file(Path::new("cmr10.tfm"), CMR10.to_vec())
+        .expect("second cold font fixture");
+    let newest_cold = newest_cold
+        .cold_with_resolvers(&mut newest_inputs, &mut fonts)
+        .expect("second cold comparison runs");
+    assert_eq!(second.dvi_bytes(), newest_cold.dvi_bytes());
+    assert_eq!(second.effects, newest_cold.effects);
+    assert_eq!(
+        second
+            .history
+            .iter()
+            .map(|record| (record.key(), record.state_hash()))
+            .collect::<Vec<_>>(),
+        newest_cold
+            .history
+            .iter()
+            .map(|record| (record.key(), record.state_hash()))
+            .collect::<Vec<_>>(),
+    );
+}
+
+#[test]
+fn forced_job_start_fallback_is_private_and_attributed() {
+    let source = "stable paragraph text\\par\\vfill\\eject\\end";
+    let mut universe = template();
+    universe.enable_pure_memo(tex_state::PureMemoConfig::default());
+    let mut session = Session::start(
+        universe,
+        "forced-job-start-fallback",
+        RevisionId::new(1),
+        source,
+        usize::MAX,
+    )
+    .expect("session starts");
+    let initial = session.cold().expect("cold revision");
+    let initial_artifacts = initial
+        .artifacts
+        .iter()
+        .map(CommittedArtifact::hash)
+        .collect::<Vec<_>>();
+    let initial_memo = session.pure_memo_stats();
+    let edit = Edit {
+        base_revision: RevisionId::new(1),
+        expected_hash: ContentHash::from_bytes(source.as_bytes()),
+        range: 0..0,
+        replacement: "% external dependency mismatch\n".to_owned(),
+    };
+
+    let mut failed = session
+        .start_advance_candidate_from_job_start(RevisionId::new(2), edit.clone())
+        .expect("private fallback candidate");
+    failed.set_cumulative_fuel_limit(0);
+    assert!(
+        failed
+            .drive_with_resource_resolvers(
+                &mut DirectInputResolver,
+                &mut DirectFontResolver,
+                &mut UnavailableImageResolver,
+                &Cancellation::new(),
+            )
+            .is_err(),
+        "forced fallback fixture must fail before acceptance",
+    );
+    assert_eq!(session.revision, RevisionId::new(1));
+    assert_eq!(session.source, source);
+    assert_eq!(session.pure_memo_stats(), initial_memo);
+    assert_eq!(
+        session
+            .artifacts
+            .iter()
+            .map(CommittedArtifact::hash)
+            .collect::<Vec<_>>(),
+        initial_artifacts,
+        "failed fallback must not mutate accepted output",
+    );
+
+    let mut completed = session
+        .start_advance_candidate_from_job_start(RevisionId::new(2), edit)
+        .expect("retry fallback candidate");
+    assert!(matches!(
+        completed
+            .drive_with_resource_resolvers(
+                &mut DirectInputResolver,
+                &mut DirectFontResolver,
+                &mut UnavailableImageResolver,
+                &Cancellation::new(),
+            )
+            .expect("fallback retry"),
+        RevisionCandidateResult::Complete,
+    ));
+    let pending = session
+        .finish_advance_candidate(completed)
+        .expect("finish fallback retry");
+    assert_eq!(
+        pending.reuse().execution_path,
+        RevisionExecutionPath::ForcedJobStartFallback,
+    );
+    assert_eq!(pending.reuse().paragraph_replay_lookups, 0);
+    drop(pending);
+    assert_eq!(session.revision, RevisionId::new(1));
+    assert_eq!(session.source, source);
 }
 
 #[test]
@@ -4662,6 +4888,10 @@ fn adopted_old_suffix_remains_restartable_on_the_next_edit() {
             },
         )
         .expect("length-changing revision converges");
+    assert_eq!(
+        adopted.reuse.execution_path,
+        RevisionExecutionPath::FastEdit
+    );
     assert!(adopted.reuse.convergence_boundary.is_some());
     let output = session
         .advance(
@@ -4709,6 +4939,7 @@ fn edited_output_is_byte_identical_to_a_fresh_cold_session() {
             },
         )
         .expect("edit succeeds");
+    assert_eq!(edited.reuse.execution_path, RevisionExecutionPath::SlowEdit);
 
     let mut cold = Session::start(
         template(),

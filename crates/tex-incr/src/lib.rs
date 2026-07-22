@@ -121,6 +121,8 @@ pub struct RetentionMetrics {
 /// Work and reuse observed while accepting a revision.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct ReuseMetrics {
+    /// Execution path that produced this accepted revision.
+    pub execution_path: RevisionExecutionPath,
     pub restart_boundary: Option<BoundaryKey>,
     pub convergence_boundary: Option<BoundaryKey>,
     /// Accepted pages before the restart checkpoint, retained without replay.
@@ -137,6 +139,12 @@ pub struct ReuseMetrics {
     /// Ordinary physical-source character tokens handled by the batched text path.
     pub reexecuted_source_text_span_tokens: usize,
     pub reexecuted_paragraphs: usize,
+    /// Paragraph-history probes performed by this revision only.
+    pub paragraph_replay_lookups: u64,
+    /// Paragraph-history records mounted by this revision only.
+    pub paragraph_replay_hits: u64,
+    /// Typed paragraph dependency validation failures in this revision only.
+    pub paragraph_replay_validation_misses: u64,
     pub same_history_attempts: usize,
     pub same_history_hash_mismatches: usize,
     pub trace_nodes_walked: usize,
@@ -168,6 +176,21 @@ pub struct ReuseMetrics {
     /// Pending-revision pruning and accepted-output view construction,
     /// excluding `substrate_transition_latency`.
     pub acceptance_latency: Duration,
+}
+
+/// High-level execution path used to produce one accepted revision.
+///
+/// Paragraph telemetry remains generic. This attribution distinguishes an
+/// unchanged-root stabilization rerun from ordinary edits and safe cold
+/// fallback without encoding generated-file or label semantics.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum RevisionExecutionPath {
+    #[default]
+    Cold,
+    FastEdit,
+    SlowEdit,
+    ExternalInputDelta,
+    ForcedJobStartFallback,
 }
 
 /// Why identical-history suffix adoption did or did not stop re-execution.
@@ -271,6 +294,7 @@ pub enum RevisionCandidateResult {
 }
 
 struct AdvanceSetup {
+    execution_path: RevisionExecutionPath,
     next_revision: RevisionId,
     old_source: String,
     old_history: Vec<BoundaryRecord>,
@@ -939,6 +963,7 @@ impl Session {
             &fragments,
         )?;
         let setup = Box::new(AdvanceSetup {
+            execution_path: RevisionExecutionPath::ExternalInputDelta,
             next_revision: self.revision,
             old_source: self.source.clone(),
             old_history: self.history.clone(),
@@ -994,6 +1019,11 @@ impl Session {
                 .validate_recorded_inputs()?;
         }
         let setup = Box::new(AdvanceSetup {
+            execution_path: if force_job_start {
+                RevisionExecutionPath::ForcedJobStartFallback
+            } else {
+                RevisionExecutionPath::SlowEdit
+            },
             next_revision,
             old_source,
             old_history,
@@ -1126,8 +1156,10 @@ impl Session {
         let CandidateSink::Cold(mut sink) = candidate.sink else {
             return Err(SessionError::CandidateKindMismatch);
         };
+        let before_memo = self.pure_memo.stats();
         let mut memo = candidate.universe.take_pure_memo_runtime();
         memo.accept_paragraph_history(candidate.universe.paragraph_origin_resolver());
+        let paragraph_replay = paragraph_replay_delta(before_memo, memo.stats());
         for record in &mut sink.records {
             record.revision = setup.next_revision;
         }
@@ -1146,6 +1178,7 @@ impl Session {
         let substrate = candidate.universe.freeze_generation();
         let history = retain_restorable_history(sink.records, &substrate)?;
         let reuse = ReuseMetrics {
+            execution_path: setup.execution_path,
             pages_retyped: artifacts.len(),
             reexecuted_bytes: setup.next.len(),
             reexecuted_tokens: delivered_tokens,
@@ -1156,6 +1189,9 @@ impl Session {
                 .iter()
                 .filter(|record| record.key.boundary == EngineBoundary::OuterParagraphEnd)
                 .count(),
+            paragraph_replay_lookups: paragraph_replay.lookups,
+            paragraph_replay_hits: paragraph_replay.hits,
+            paragraph_replay_validation_misses: paragraph_replay.validation_misses,
             revision_setup_latency: setup.revision_setup_latency,
             ..ReuseMetrics::default()
         };
@@ -1200,7 +1236,9 @@ impl Session {
         let CandidateSink::Advance(sink) = candidate.sink else {
             return Err(SessionError::CandidateKindMismatch);
         };
+        let before_memo = self.pure_memo.stats();
         let mut memo = candidate.universe.take_pure_memo_runtime();
+        let paragraph_replay = paragraph_replay_delta(before_memo, memo.stats());
         let ExecutionStats {
             dvi_pages,
             dumped_format,
@@ -1315,6 +1353,10 @@ impl Session {
                         adopted_origins,
                     },
                     ReuseMetrics {
+                        execution_path: match setup.execution_path {
+                            RevisionExecutionPath::SlowEdit => RevisionExecutionPath::FastEdit,
+                            path => path,
+                        },
                         restart_boundary: Some(anchor.key),
                         convergence_boundary,
                         pages_retained_prefix: anchor.artifact_prefix,
@@ -1326,6 +1368,9 @@ impl Session {
                         reexecuted_macro_text_span_tokens: macro_text_span_tokens,
                         reexecuted_source_text_span_tokens: source_text_span_tokens,
                         reexecuted_paragraphs,
+                        paragraph_replay_lookups: paragraph_replay.lookups,
+                        paragraph_replay_hits: paragraph_replay.hits,
+                        paragraph_replay_validation_misses: paragraph_replay.validation_misses,
                         same_history_attempts: sink.same_history_attempts,
                         same_history_hash_mismatches: sink.same_history_hash_mismatches,
                         trace_nodes_walked: sink.same_history_attempts,
@@ -1364,6 +1409,7 @@ impl Session {
                     history,
                     PendingSubstrate::Replaced(target),
                     ReuseMetrics {
+                        execution_path: setup.execution_path,
                         restart_boundary: Some(anchor.key),
                         pages_retained_prefix: anchor.artifact_prefix,
                         pages_retyped,
@@ -1373,6 +1419,9 @@ impl Session {
                         reexecuted_macro_text_span_tokens: macro_text_span_tokens,
                         reexecuted_source_text_span_tokens: source_text_span_tokens,
                         reexecuted_paragraphs,
+                        paragraph_replay_lookups: paragraph_replay.lookups,
+                        paragraph_replay_hits: paragraph_replay.hits,
+                        paragraph_replay_validation_misses: paragraph_replay.validation_misses,
                         same_history_attempts: sink.same_history_attempts,
                         same_history_hash_mismatches: sink.same_history_hash_mismatches,
                         trace_nodes_walked: sink.same_history_attempts,
@@ -1719,6 +1768,7 @@ impl Session {
     ) -> Result<PendingRevision, SessionError> {
         let revision_setup_started = Timer::start();
         self.validate_edit(next_revision, &edit)?;
+        let before_memo = self.pure_memo.stats();
         self.clear_render_maps();
         let old_source = self.source.clone();
         let old_history = self.history.clone();
@@ -1767,7 +1817,9 @@ impl Session {
                 record.revision = next_revision;
             }
             let history = retain_restorable_history(run.history, &run.substrate)?;
+            let paragraph_replay = paragraph_replay_delta(before_memo, self.pure_memo.stats());
             let reuse = ReuseMetrics {
+                execution_path: RevisionExecutionPath::SlowEdit,
                 pages_retyped: run.artifacts.len(),
                 reexecuted_bytes: run.executed_bytes,
                 reexecuted_tokens: run.executed_tokens,
@@ -1775,6 +1827,9 @@ impl Session {
                 reexecuted_macro_text_span_tokens: run.executed_macro_text_span_tokens,
                 reexecuted_source_text_span_tokens: run.executed_source_text_span_tokens,
                 reexecuted_paragraphs: run.executed_paragraphs,
+                paragraph_replay_lookups: paragraph_replay.lookups,
+                paragraph_replay_hits: paragraph_replay.hits,
+                paragraph_replay_validation_misses: paragraph_replay.validation_misses,
                 ..ReuseMetrics::default()
             };
             return Ok(PendingRevision {
@@ -1843,6 +1898,7 @@ impl Session {
                 .accept_paragraph_history(advance.scratch.paragraph_origin_resolver());
         }
         let paragraph_history_transition_latency = paragraph_history_transition_started.elapsed();
+        let paragraph_replay = paragraph_replay_delta(before_memo, self.pure_memo.stats());
         let splice_started = Timer::start();
         let (effects, artifacts, pages, mut history, pending_substrate, mut reuse) =
             if let Some(old_index) = advance.convergence_old_index {
@@ -1908,6 +1964,7 @@ impl Session {
                         adopted_origins,
                     },
                     ReuseMetrics {
+                        execution_path: RevisionExecutionPath::FastEdit,
                         restart_boundary: old_history.get(restart_index).map(BoundaryRecord::key),
                         convergence_boundary,
                         pages_retained_prefix: restart_artifact_prefix,
@@ -1919,6 +1976,9 @@ impl Session {
                         reexecuted_macro_text_span_tokens,
                         reexecuted_source_text_span_tokens,
                         reexecuted_paragraphs,
+                        paragraph_replay_lookups: paragraph_replay.lookups,
+                        paragraph_replay_hits: paragraph_replay.hits,
+                        paragraph_replay_validation_misses: paragraph_replay.validation_misses,
                         same_history_attempts,
                         same_history_hash_mismatches,
                         trace_nodes_walked: same_history_attempts,
@@ -1964,6 +2024,7 @@ impl Session {
                     history,
                     PendingSubstrate::Replaced(target),
                     ReuseMetrics {
+                        execution_path: RevisionExecutionPath::SlowEdit,
                         restart_boundary: old_history.get(restart_index).map(BoundaryRecord::key),
                         convergence_boundary: None,
                         pages_retained_prefix: old_history[restart_index].artifact_prefix,
@@ -1975,6 +2036,9 @@ impl Session {
                         reexecuted_macro_text_span_tokens,
                         reexecuted_source_text_span_tokens,
                         reexecuted_paragraphs,
+                        paragraph_replay_lookups: paragraph_replay.lookups,
+                        paragraph_replay_hits: paragraph_replay.hits,
+                        paragraph_replay_validation_misses: paragraph_replay.validation_misses,
                         same_history_attempts,
                         same_history_hash_mismatches,
                         trace_nodes_walked: same_history_attempts,
@@ -3031,6 +3095,28 @@ fn output_bytes(effects: &[EffectRecord], artifacts: &[CommittedArtifact]) -> us
                 })
                 .sum::<usize>(),
         )
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+struct ParagraphReplayDelta {
+    lookups: u64,
+    hits: u64,
+    validation_misses: u64,
+}
+
+fn paragraph_replay_delta(
+    before: tex_state::PureMemoStats,
+    after: tex_state::PureMemoStats,
+) -> ParagraphReplayDelta {
+    ParagraphReplayDelta {
+        lookups: after
+            .paragraph_lookups
+            .saturating_sub(before.paragraph_lookups),
+        hits: after.paragraph_hits.saturating_sub(before.paragraph_hits),
+        validation_misses: after
+            .paragraph_validation_misses
+            .saturating_sub(before.paragraph_validation_misses),
+    }
 }
 
 #[derive(Debug)]
