@@ -487,6 +487,9 @@ test("worker runtime uses injected bindings and returns unique output transfers"
 		constructor() {
 			this.done = false;
 		}
+		get acceptedInputObservations() {
+			return { schemaVersion: 1, revision: 1, observations: [] };
+		}
 		addUserFile() {}
 		compileAttempt() {
 			this.done = true;
@@ -526,6 +529,7 @@ test("worker runtime uses injected bindings and returns unique output transfers"
 		},
 	);
 	assert.equal(output.terminal, "ok");
+	assert.equal(output.acceptedInputObservations.schemaVersion, 1);
 	assert.equal(resolverOptions.maxFiles, 7);
 	assert.equal(resolverOptions.maxBytes, 11);
 	assert.equal(outputTransfers(output).length, 2);

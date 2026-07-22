@@ -5,6 +5,7 @@ use umber::{
 };
 use wasm_bindgen::{JsCast, JsValue};
 
+use crate::JsAcceptedInputObservationLedger;
 use crate::JsAttemptResult;
 use crate::JsRenderedSourceResult;
 
@@ -541,6 +542,104 @@ pub(crate) fn rendered_source_result(
 
 fn usize_value(value: usize) -> JsValue {
     JsValue::from_f64(value as f64)
+}
+
+pub(crate) fn accepted_input_observations(
+    ledger: Option<&umber::AcceptedInputObservationLedger>,
+) -> Result<Option<JsAcceptedInputObservationLedger>, JsValue> {
+    let Some(ledger) = ledger else {
+        return Ok(None);
+    };
+    let object = Object::new();
+    set(
+        &object,
+        "schemaVersion",
+        &JsValue::from_f64(f64::from(ledger.schema_version())),
+    )?;
+    set(
+        &object,
+        "revision",
+        &JsValue::from_f64(ledger.revision().raw() as f64),
+    )?;
+    let observations = Array::new();
+    for observation in ledger.observations() {
+        let value = Object::new();
+        set(
+            &value,
+            "path",
+            &JsValue::from_str(observation.path().as_str()),
+        )?;
+        set(
+            &value,
+            "namespace",
+            &JsValue::from_str(match observation.namespace() {
+                umber::InputObservationNamespace::Authored => "authored",
+                umber::InputObservationNamespace::Generated => "generated",
+                umber::InputObservationNamespace::Distribution => "distribution",
+            }),
+        )?;
+        let outcome = Object::new();
+        match observation.outcome() {
+            umber::InputObservationOutcome::Present(hash) => {
+                set(&outcome, "kind", &JsValue::from_str("present"))?;
+                set(&outcome, "contentHash", &JsValue::from_str(&hash.hex()))?;
+            }
+            umber::InputObservationOutcome::Missing => {
+                set(&outcome, "kind", &JsValue::from_str("missing"))?;
+            }
+        }
+        set(&value, "outcome", &outcome)?;
+        set(
+            &value,
+            "access",
+            &JsValue::from_str(match observation.access() {
+                umber::InputDependencyAccess::RequiredRead => "required-read",
+                umber::InputDependencyAccess::AuthoritativeProbe => "authoritative-probe",
+            }),
+        )?;
+        set(
+            &value,
+            "resourceKind",
+            &JsValue::from_str(observation.resource_kind().wire_name()),
+        )?;
+        set(
+            &value,
+            "phase",
+            &JsValue::from_str(match observation.phase() {
+                umber::InputObservationPhase::Tex => "tex",
+                umber::InputObservationPhase::BibliographyDetection => "bibliography-detection",
+                umber::InputObservationPhase::Bibliography => "bibliography",
+            }),
+        )?;
+        set(
+            &value,
+            "revision",
+            &JsValue::from_f64(observation.revision().raw() as f64),
+        )?;
+        if let Some(pass) = observation.project_pass() {
+            set(&value, "projectPass", &JsValue::from_f64(f64::from(pass)))?;
+        }
+        if let Some(source) = observation.requesting_source() {
+            set(
+                &value,
+                "requestingSource",
+                &JsValue::from_str(source.as_str()),
+            )?;
+        }
+        set(
+            &value,
+            "owner",
+            &JsValue::from_str(match observation.owner() {
+                umber::InputObservationOwner::TexEngine => "tex-engine",
+                umber::InputObservationOwner::BibliographyDetector => "bibliography-detector",
+                umber::InputObservationOwner::Biblatex => "biblatex",
+                umber::InputObservationOwner::ClassicBibtex => "classic-bibtex",
+            }),
+        )?;
+        observations.push(&value);
+    }
+    set(&object, "observations", &observations)?;
+    Ok(Some(object.unchecked_into()))
 }
 
 fn set(object: &Object, name: &str, value: &JsValue) -> Result<(), JsValue> {

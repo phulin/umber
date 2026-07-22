@@ -45,7 +45,13 @@ export async function compile(options, userFiles, resolver, signal, bindings) {
 				typeof session.advance === "function"
 					? session.advance()
 					: session.compileAttempt();
-			if (attempt?.kind === "complete") return attempt.output;
+			if (attempt?.kind === "complete") {
+				const ledger = session.acceptedInputObservations;
+				if (ledger !== undefined) {
+					attempt.output.acceptedInputObservations = ledger;
+				}
+				return attempt.output;
+			}
 			if (attempt?.kind === "error") {
 				throw new CompileFacadeError(
 					attempt.diagnostic?.code ?? "compile",

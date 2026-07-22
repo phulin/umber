@@ -142,6 +142,25 @@ export interface RetentionMetrics {
   protectedOverageBytes: number;
 }
 
+export interface AcceptedInputObservation {
+  path: string;
+  namespace: "authored" | "generated" | "distribution";
+  outcome: { kind: "present"; contentHash: string } | { kind: "missing" };
+  access: "required-read" | "authoritative-probe";
+  resourceKind: FileKind;
+  phase: "tex" | "bibliography-detection" | "bibliography";
+  revision: number;
+  projectPass?: number;
+  requestingSource?: string;
+  owner: "tex-engine" | "bibliography-detector" | "biblatex" | "classic-bibtex";
+}
+
+export interface AcceptedInputObservationLedger {
+  schemaVersion: number;
+  revision: number;
+  observations: AcceptedInputObservation[];
+}
+
 export interface CompileOutputFile {
   path: string;
   bytes: Uint8Array;
@@ -155,6 +174,8 @@ export interface CompileOutput {
   html?: Uint8Array;
   htmlAssets: CompileOutputFile[];
   files: CompileOutputFile[];
+  /** Present on the authored facade after an accepted compile. */
+  acceptedInputObservations?: AcceptedInputObservationLedger;
 }
 
 export interface Diagnostic {
@@ -183,6 +204,8 @@ export interface ProjectCompileOutput {
   tex: CompileOutput;
   bibliography?: BibliographyResult;
   generatedFiles: CompileOutputFile[];
+  /** Includes every accepted TeX and bibliography project-pass observation. */
+  acceptedInputObservations?: AcceptedInputObservationLedger;
 }
 
 export type RenderedSourceResult =
@@ -219,6 +242,9 @@ extern "C" {
 
     #[wasm_bindgen(typescript_type = "RenderedSourceResult")]
     pub type JsRenderedSourceResult;
+
+    #[wasm_bindgen(typescript_type = "AcceptedInputObservationLedger")]
+    pub type JsAcceptedInputObservationLedger;
 }
 
 #[wasm_bindgen]
@@ -239,6 +265,11 @@ pub fn package_version() -> String {
 #[wasm_bindgen(js_name = formatSchemaVersion)]
 pub fn format_schema_version() -> u32 {
     tex_state::Universe::FORMAT_SCHEMA_VERSION
+}
+
+#[wasm_bindgen(js_name = acceptedInputObservationSchemaVersion)]
+pub fn accepted_input_observation_schema_version() -> u32 {
+    umber::ACCEPTED_INPUT_OBSERVATION_SCHEMA_VERSION
 }
 
 /// Returns Umber's exact content identity for bytes supplied across the JS boundary.
@@ -373,6 +404,15 @@ impl CompilerSession {
         result::retention_metrics(self.session_ref()?.retention_metrics())
     }
 
+    #[wasm_bindgen(getter, js_name = acceptedInputObservations)]
+    pub fn accepted_input_observations(
+        &self,
+    ) -> Result<Option<JsAcceptedInputObservationLedger>, JsValue> {
+        result::accepted_input_observations(
+            self.session_ref()?.accepted_input_observations().as_ref(),
+        )
+    }
+
     #[wasm_bindgen(getter, js_name = resolvedFileCount)]
     pub fn resolved_file_count(&self) -> Result<usize, JsValue> {
         Ok(self.session_ref()?.resolved_file_count())
@@ -447,6 +487,13 @@ impl ProjectSession {
     #[wasm_bindgen(getter, js_name = contentHash)]
     pub fn accepted_content_hash(&self) -> Result<Option<String>, JsValue> {
         Ok(self.session_ref()?.content_hash().map(|hash| hash.hex()))
+    }
+
+    #[wasm_bindgen(getter, js_name = acceptedInputObservations)]
+    pub fn accepted_input_observations(
+        &self,
+    ) -> Result<Option<JsAcceptedInputObservationLedger>, JsValue> {
+        result::accepted_input_observations(self.session_ref()?.accepted_input_observations())
     }
 
     pub fn dispose(&mut self) {

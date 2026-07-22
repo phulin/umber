@@ -375,6 +375,38 @@ fn classic_projects_converge_transactionally_with_explicit_and_auto_modes() {
                 .iter()
                 .any(|file| file.path == std::path::Path::new("/job/main.blg"))
         );
+        let ledger = session
+            .accepted_input_observations()
+            .expect("accepted project observations");
+        assert_eq!(ledger.revision(), output.revision);
+        assert!(
+            ledger
+                .observations()
+                .iter()
+                .all(|item| item.project_pass().is_some())
+        );
+        assert!(ledger.observations().iter().any(|item| {
+            item.path().as_str() == "/texlive/bib/smoke.bib"
+                && item.resource_kind() == umber_vfs::FileKind::ClassicBibData
+                && item.phase() == crate::InputObservationPhase::Bibliography
+        }));
+        assert!(ledger.observations().iter().any(|item| {
+            item.path().as_str() == "/texlive/bib/smoke.bst"
+                && item.resource_kind() == umber_vfs::FileKind::BibStyle
+                && item.owner() == crate::InputObservationOwner::ClassicBibtex
+        }));
+        assert!(ledger.observations().iter().any(|item| {
+            item.path().as_str() == "/job/main.aux"
+                && item.namespace() == crate::InputObservationNamespace::Generated
+                && item.resource_kind() == umber_vfs::FileKind::BibAux
+        }));
+        if matches!(mode, bib_engine::BibliographyMode::Auto { .. }) {
+            assert!(ledger.observations().iter().any(|item| {
+                item.path().as_str() == "/job/main.bcf"
+                    && item.outcome() == crate::InputObservationOutcome::Missing
+                    && item.access() == tex_state::InputDependencyAccess::AuthoritativeProbe
+            }));
+        }
     }
 }
 

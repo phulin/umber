@@ -603,6 +603,14 @@ rejects a pending root patch and leaves the prior accepted output queryable.
 The final TeX session is retained with the project output so rendered-source
 queries use the accepted project revision and output identity.
 
+`BibliographySession` also retains the deterministically ordered VFS files
+selected by its most recently finished execution. Project orchestration folds
+those engine-owned selections into the versioned accepted-input ledger with
+their bibliography resource kinds and pass identity. Cache hits do not erase
+the selection, resource waits do not publish it, and classic AUX, database, and
+style files remain distinct. This coverage is exposed by `ProjectSession`;
+the final inner TeX session alone is not a bibliography dependency graph.
+
 ## WebAssembly integration
 
 `umber-wasm` compiles the complete `bib` dependency graph into the same module

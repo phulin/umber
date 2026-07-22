@@ -1,9 +1,9 @@
 # Generated-input correctness and editor stabilization
 
-> **Status:** implementation in progress. Accepted engine generations now
-> retain bounded positive and authoritative-negative input observations, but
-> incoming-snapshot validation and decoupled stabilization remain to be
-> implemented.
+> **Status:** implementation in progress. Accepted engine generations retain
+> bounded positive and authoritative-negative input observations and expose a
+> versioned native/WASM projection; incoming-snapshot validation and decoupled
+> stabilization remain to be implemented.
 
 This document defines how persistent editor compilation should compose
 root-buffer edits, generated TeX inputs such as `.aux` and `.toc` files, and
@@ -133,6 +133,31 @@ The retained map is deterministically ordered, capped at 8,192 distinct paths
 per engine `World`, and charged to generation/session retention accounting.
 Duplicate observations do not grow it; required reads dominate probes for the
 same path, while a later authoritative outcome replaces the earlier outcome.
+
+### Public accepted-observation projection
+
+`VirtualCompileSession::accepted_input_observations` and
+`LatexProjectSession::accepted_input_observations` expose schema version 1 of
+the same accepted Rust state. Each record carries the canonical VFS path,
+authored/generated/distribution namespace, present content hash or authoritative
+missing outcome, required-read/probe access class, typed resource kind, phase,
+logical revision, optional project pass, optional proven requesting source, and
+a typed subsystem owner. An absent requesting source is intentional; adapters
+must not manufacture source attribution.
+
+The single-pass ledger describes the accepted TeX revision. The project ledger
+accumulates successful TeX and bibliography selections for every pass, including
+classic database/style inputs and auto-detection probes, and is published with
+the project transaction. Candidate suspension, prefetch, cancellation, failure,
+and oscillation never replace the prior accepted ledger. The public project
+ledger is capped at 65,536 records.
+
+The WASM `acceptedInputObservations` getter uses the same contract on both
+session classes. The authored package copies the ledger onto the completed
+output before disposing its one-shot session, so direct and worker consumers
+can build dependency graphs without source scanning. Consumers must compare
+`schemaVersion` with the versions they understand; an unknown version requires
+the existing complete-snapshot/cold fallback, not a best-effort interpretation.
 
 Before selecting or restoring a checkpoint for a new pass, the host integration
 must validate these dependencies against the exact immutable VFS snapshot that

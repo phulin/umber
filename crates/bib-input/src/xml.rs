@@ -1,3 +1,4 @@
+use std::collections::BTreeSet;
 use std::fmt;
 
 use quick_xml::Reader;
@@ -243,9 +244,26 @@ pub fn parse_xml_from_snapshot(
     path: &VirtualPath,
     limits: XmlLimits,
 ) -> Result<XmlNode, XmlError> {
+    parse_xml_from_snapshot_with_paths(snapshot, path, limits).map(|(node, _)| node)
+}
+
+pub(crate) fn parse_xml_from_snapshot_with_paths(
+    snapshot: &VfsSnapshot,
+    path: &VirtualPath,
+    limits: XmlLimits,
+) -> Result<(XmlNode, BTreeSet<VirtualPath>), XmlError> {
     let mut stack = Vec::new();
     let mut includes = 0usize;
-    parse_included(snapshot, path, limits, &mut stack, &mut includes)
+    let mut paths = BTreeSet::new();
+    let node = parse_included(
+        snapshot,
+        path,
+        limits,
+        &mut stack,
+        &mut includes,
+        &mut paths,
+    )?;
+    Ok((node, paths))
 }
 
 fn parse_included(
@@ -254,6 +272,7 @@ fn parse_included(
     limits: XmlLimits,
     stack: &mut Vec<VirtualPath>,
     includes: &mut usize,
+    paths: &mut BTreeSet<VirtualPath>,
 ) -> Result<XmlNode, XmlError> {
     if stack.contains(path) {
         return Err(XmlError::IncludeCycle(path.clone()));
@@ -262,9 +281,10 @@ fn parse_included(
         .get(path)
         .map_err(|error| XmlError::Vfs(error.to_string()))?
         .ok_or_else(|| XmlError::MissingResource(path.clone()))?;
+    paths.insert(path.clone());
     stack.push(path.clone());
     let mut root = parse_xml(file.bytes(), limits)?;
-    expand_includes(snapshot, path, limits, stack, includes, &mut root)?;
+    expand_includes(snapshot, path, limits, stack, includes, paths, &mut root)?;
     stack.pop();
     Ok(root)
 }
@@ -275,6 +295,7 @@ fn expand_includes(
     limits: XmlLimits,
     stack: &mut Vec<VirtualPath>,
     includes: &mut usize,
+    paths: &mut BTreeSet<VirtualPath>,
     node: &mut XmlNode,
 ) -> Result<(), XmlError> {
     let mut expanded = Vec::with_capacity(node.children.len());
@@ -296,9 +317,18 @@ fn expand_includes(
                 limits,
                 stack,
                 includes,
+                paths,
             )?);
         } else {
-            expand_includes(snapshot, current_path, limits, stack, includes, &mut child)?;
+            expand_includes(
+                snapshot,
+                current_path,
+                limits,
+                stack,
+                includes,
+                paths,
+                &mut child,
+            )?;
             expanded.push(child);
         }
     }

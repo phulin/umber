@@ -1,9 +1,12 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
 use umber_vfs::{VfsSnapshot, VirtualPath};
 
-use crate::xml::{XmlError, XmlLimits, XmlNode, parse_xml, parse_xml_from_snapshot};
+use crate::xml::{
+    XmlError, XmlLimits, XmlNode, parse_xml, parse_xml_from_snapshot,
+    parse_xml_from_snapshot_with_paths,
+};
 
 pub const CONTROL_NAMESPACE: &str = "https://sourceforge.net/projects/biblatex";
 pub const CONTROL_VERSION: &str = "3.11";
@@ -170,6 +173,15 @@ pub fn parse_control(
 ) -> Result<ControlFile, ControlError> {
     let root = parse_xml_from_snapshot(snapshot, path, limits)?;
     control_from_tree(&root)
+}
+
+pub fn parse_control_with_paths(
+    snapshot: &VfsSnapshot,
+    path: &VirtualPath,
+    limits: XmlLimits,
+) -> Result<(ControlFile, BTreeSet<VirtualPath>), ControlError> {
+    let (root, paths) = parse_xml_from_snapshot_with_paths(snapshot, path, limits)?;
+    Ok((control_from_tree(&root)?, paths))
 }
 
 fn validate_control_tree(root: &XmlNode) -> Result<(), ControlError> {

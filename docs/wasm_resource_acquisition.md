@@ -380,12 +380,16 @@ markup or executable URLs derived from document input.
    TeX, bibliography, convergence, diagnostics, and generated-file publication
    remain inside Rust while browser, Node, and worker callers retain the same
    acquisition-only resolver contract.
-8. Add long-lived retain/release accounting and client-cache integration hooks
+8. **Complete.** Expose the schema-versioned Rust accepted-input observation
+   ledger through both low-level session classes and retain it on authored and
+   worker completion values. Dependency-graph consumers reject unknown schemas
+   and keep the full-snapshot/cold fallback.
+9. Add long-lived retain/release accounting and client-cache integration hooks
    for incremental render sessions.
-9. Superseded preload and post-finalization font-delivery APIs were removed
-   after the OpenType path covered native, WASM, worker, and browser fixtures.
-   Legacy mapping, embedding permission, provenance, and WOFF2 now arrive
-   atomically in the typed font response.
+10. Superseded preload and post-finalization font-delivery APIs were removed
+    after the OpenType path covered native, WASM, worker, and browser fixtures.
+    Legacy mapping, embedding permission, provenance, and WOFF2 now arrive
+    atomically in the typed font response.
 
 ## Exit criteria
 

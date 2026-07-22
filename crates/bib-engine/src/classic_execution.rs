@@ -46,6 +46,7 @@ impl ClassicExecutionSession {
         control: ClassicControl,
         snapshot: &VfsSnapshot,
         control_session: &mut crate::classic::ClassicControlSession,
+        accepted_inputs: &mut Vec<crate::BibliographyInput>,
     ) -> BibliographyAttempt {
         self.styles
             .set_limits(job.options().cache_entries(), job.options().cache_bytes());
@@ -83,6 +84,13 @@ impl ClassicExecutionSession {
         if !missing.is_empty() {
             return control_session.need(job, FileRequestBatch::new(missing, []));
         }
+        accepted_inputs.push(crate::BibliographyInput::new(
+            found[0].path().clone(),
+            FileKind::BibStyle,
+        ));
+        accepted_inputs.extend(found[1..].iter().map(|file| {
+            crate::BibliographyInput::new(file.path().clone(), FileKind::ClassicBibData)
+        }));
         let style_file = found[0];
         let compile = self
             .styles

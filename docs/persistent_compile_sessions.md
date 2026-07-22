@@ -184,6 +184,16 @@ by a browser-specific preflight. This permits initial and patched revisions to
 use the identical request keys, virtual paths, font selection, and retry
 policy as batch compilation.
 
+Accepted sessions expose a bounded, deterministic
+`AcceptedInputObservationLedger`. Schema version 1 projects the rollback-safe
+engine dependency map into canonical VFS paths, origin namespaces, positive
+content hashes or authoritative misses, access and resource classes, phase and
+revision identity, and typed requestor ownership. A suspended or discarded
+candidate is never observable through this getter. `CompilerSession` exposes
+the corresponding `acceptedInputObservations` value only after acceptance.
+Callers that do not support its `schemaVersion` must preserve the complete
+immutable snapshot and cold-recompile fallback.
+
 When the session is configured with a schema-10 format, initial startup first
 loads its validated frozen stores into a fresh `World` carrying the requested
 job clock, then reconstructs only the selected driver's process-local
@@ -289,6 +299,13 @@ completed value contains the converged TeX output, bibliography diagnostics
 and statistics, and complete generated generation. The authored JavaScript
 facade chooses this binding when `bibliography` is present and implements no
 bibliography parsing or pass policy.
+
+The project observation ledger uses the identical schema but adds the producing
+project pass. It accumulates accepted TeX observations plus bibliography
+detection and selected control/data/style inputs across every successful pass;
+therefore bibliography dependency coverage is a `ProjectSession` contract and
+must not be inferred from the final inner `CompilerSession`. The ledger swaps
+atomically with project output and generated files.
 
 Native cancellation discards the suspended engine candidate before returning;
 watch supersession then cancels the pending patch and starts the replacement

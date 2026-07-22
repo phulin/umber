@@ -1,7 +1,7 @@
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
-use umber_vfs::{FileRequestBatch, VfsSnapshot, VirtualPath};
+use umber_vfs::{FileKind, FileRequestBatch, VfsSnapshot, VirtualPath};
 
 use crate::{
     BibAttempt, BibDiagnostic, BibDiagnosticCode, BibFailure, BibJob, BibResult, BibSession,
@@ -14,6 +14,28 @@ use crate::{
 pub enum BibliographyBackend {
     Biblatex,
     Classic,
+}
+
+/// One VFS file actually selected by an accepted bibliography execution.
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub struct BibliographyInput {
+    path: VirtualPath,
+    kind: FileKind,
+}
+
+impl BibliographyInput {
+    #[must_use]
+    pub fn new(path: VirtualPath, kind: FileKind) -> Self {
+        Self { path, kind }
+    }
+    #[must_use]
+    pub const fn path(&self) -> &VirtualPath {
+        &self.path
+    }
+    #[must_use]
+    pub const fn kind(&self) -> FileKind {
+        self.kind
+    }
 }
 
 /// A bibliography job with an explicit semantic backend.
@@ -735,12 +757,21 @@ impl BibliographySession {
             }
         }
     }
+
+    /// Enumerates files selected by the most recently completed execution.
+    pub fn accepted_inputs(&self) -> &[BibliographyInput] {
+        match self {
+            Self::Biblatex(session) => session.accepted_inputs(),
+            Self::Classic(session) => session.accepted_inputs(),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Default)]
 pub struct ClassicBibSession {
     control: crate::classic::ClassicControlSession,
     execution: crate::classic_execution::ClassicExecutionSession,
+    accepted_inputs: Vec<BibliographyInput>,
 }
 
 /// Byte-accounted immutable classic execution caches retained by one session.
@@ -756,6 +787,7 @@ impl ClassicBibSession {
         Self {
             control: crate::classic::ClassicControlSession::new(),
             execution: crate::classic_execution::ClassicExecutionSession::new(),
+            accepted_inputs: Vec::new(),
         }
     }
 
@@ -765,9 +797,22 @@ impl ClassicBibSession {
             .control
             .resolve(job.aux_path(), job.options(), snapshot, true)
         {
-            Ok(control) => self
-                .execution
-                .process(job, control, snapshot, &mut self.control),
+            Ok(control) => {
+                let mut inputs = control
+                    .aux_files()
+                    .cloned()
+                    .map(|path| BibliographyInput::new(path, FileKind::BibAux))
+                    .collect::<Vec<_>>();
+                let attempt =
+                    self.execution
+                        .process(job, control, snapshot, &mut self.control, &mut inputs);
+                if matches!(attempt, BibliographyAttempt::Finished(_)) {
+                    inputs.sort();
+                    inputs.dedup();
+                    self.accepted_inputs = inputs;
+                }
+                attempt
+            }
             Err(crate::classic::ControlFailure::Need(batch)) => self.control.need(job, batch),
             Err(error) => BibliographyAttempt::Failed(error.into_failure()),
         }
@@ -776,5 +821,9 @@ impl ClassicBibSession {
     #[must_use]
     pub fn cache_usage(&self) -> ClassicBibCacheUsage {
         self.execution.cache_usage()
+    }
+
+    pub fn accepted_inputs(&self) -> &[BibliographyInput] {
+        &self.accepted_inputs
     }
 }

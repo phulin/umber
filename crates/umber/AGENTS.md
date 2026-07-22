@@ -25,6 +25,7 @@ Use this crate when behavior is about driving the engine, presenting CLI output,
 - `src/classic_bib.rs`: native host-file staging and artifact publication for the in-process classic `bibtex` command.
 - `src/input_search.rs`: deterministic driver-owned TeX input and TFM font path resolution through World-backed reads.
 - `src/input_search/tests.rs`: focused TeX input/font area ordering, extension, and input-record coverage.
+- `src/input_observation.rs`: versioned accepted input-dependency projection shared by native and WebAssembly sessions.
 - `src/latex_project.rs`: host-neutral transactional LaTeX/bibliography multipass orchestration, convergence, and atomic project acceptance.
 - `src/latex_project/support.rs`: project candidate VFS assembly, generated-file identity, and shared resource conversion helpers.
 - `src/latex_project/tests.rs`: project convergence, bibliography publication, and rollback coverage.

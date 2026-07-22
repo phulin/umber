@@ -173,6 +173,30 @@ fn accepted_dependencies_record_required_positive_and_shadowing_negative_paths()
         dependencies[1].access(),
         tex_state::InputDependencyAccess::RequiredRead
     );
+
+    let ledger = session
+        .accepted_input_observations()
+        .expect("accepted observation ledger");
+    assert_eq!(
+        ledger.schema_version(),
+        crate::ACCEPTED_INPUT_OBSERVATION_SCHEMA_VERSION
+    );
+    assert_eq!(ledger.revision(), RevisionId::new(1));
+    assert_eq!(ledger.observations().len(), 3);
+    assert_eq!(
+        ledger.observations()[0].namespace(),
+        crate::InputObservationNamespace::Authored
+    );
+    assert_eq!(
+        ledger.observations()[2].namespace(),
+        crate::InputObservationNamespace::Distribution
+    );
+    assert_eq!(ledger.observations()[2].resource_kind(), FileKind::TexInput);
+    assert_eq!(
+        ledger.observations()[2].phase(),
+        crate::InputObservationPhase::Tex
+    );
+    assert_eq!(ledger.observations()[2].project_pass(), None);
 }
 
 #[test]
@@ -231,6 +255,11 @@ fn discarded_candidate_cannot_change_accepted_dependencies() {
     assert!(session.accepted_input_dependencies().next().is_none());
     assert!(session.discard_suspended_candidate());
     assert!(session.accepted_input_dependencies().next().is_none());
+    let ledger = session
+        .accepted_input_observations()
+        .expect("accepted ledger");
+    assert_eq!(ledger.observations().len(), 1);
+    assert_eq!(ledger.observations()[0].path().as_str(), "/job/main.tex");
 }
 
 fn minimal_vf_with_local(name: &[u8]) -> Vec<u8> {

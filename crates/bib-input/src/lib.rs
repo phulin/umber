@@ -24,13 +24,13 @@ pub use bibtex::{
 pub use config::{
     BooleanInput, BooleanOutput, ConfigError, ConfigValue, ConfigurationFile, ConfigurationLayer,
     MappedBoolean, ResolvedConfiguration, map_boolean, parse_config, parse_config_bytes,
-    validate_config_bytes,
+    parse_config_with_paths, validate_config_bytes,
 };
 pub use control::{
     CONTROL_NAMESPACE, CONTROL_VERSION, ControlError, ControlFile, ControlOptionSet,
     ControlOptionValue, ControlSection, DataModel, DataModelField, OptionComponent,
     StructuredValue, Template, TemplateElement, parse_control, parse_control_bytes,
-    validate_control_bytes,
+    parse_control_with_paths, validate_control_bytes,
 };
 pub use extended_names::{
     ExtendedNameDiagnostic, ExtendedNameDiagnosticKind, ExtendedNameLimits, ExtendedNameOptions,

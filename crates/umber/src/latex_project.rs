@@ -206,6 +206,7 @@ pub struct LatexProjectSession {
     candidate: Option<ProjectCandidate>,
     accepted_tex: Option<Box<VirtualCompileSession>>,
     accepted_output: Option<LatexProjectOutput>,
+    accepted_observations: Option<crate::AcceptedInputObservationLedger>,
 }
 
 struct ProjectCandidate {
@@ -216,6 +217,9 @@ struct ProjectCandidate {
     pass: u32,
     tex: Option<Box<VirtualCompileSession>>,
     tex_awaiting: bool,
+    observations: Vec<crate::AcceptedInputObservation>,
+    tex_observed: bool,
+    detection_observed: bool,
 }
 
 impl LatexProjectSession {
@@ -249,6 +253,7 @@ impl LatexProjectSession {
             candidate: None,
             accepted_tex: None,
             accepted_output: None,
+            accepted_observations: None,
         })
     }
 
@@ -530,6 +535,12 @@ impl LatexProjectSession {
     pub fn accepted_output(&self) -> Option<&LatexProjectOutput> {
         self.accepted_output.as_ref()
     }
+    #[must_use]
+    pub const fn accepted_input_observations(
+        &self,
+    ) -> Option<&crate::AcceptedInputObservationLedger> {
+        self.accepted_observations.as_ref()
+    }
 
     fn run_candidate(&mut self) -> Result<LatexProjectOutput, CandidateStop> {
         let mut candidate = if let Some(candidate) = self.candidate.take() {
@@ -553,6 +564,9 @@ impl LatexProjectSession {
                 pass: 1,
                 tex: None,
                 tex_awaiting: false,
+                observations: Vec::new(),
+                tex_observed: false,
+                detection_observed: false,
             }
         };
         while candidate.pass <= self.options.limits.passes {
@@ -583,6 +597,54 @@ impl LatexProjectSession {
                 &candidate.root,
                 &candidate.generated,
             )?;
+            if !candidate.tex_observed {
+                let dependencies = tex_session.accepted_input_dependency_values();
+                let observations = crate::input_observation::tex_observations(
+                    dependencies.into_iter(),
+                    &snapshot,
+                    candidate.revision,
+                    Some(candidate.pass),
+                );
+                if candidate
+                    .observations
+                    .len()
+                    .saturating_add(observations.len())
+                    > crate::MAX_ACCEPTED_INPUT_OBSERVATIONS
+                {
+                    return Err(CandidateStop::Failed(LatexProjectError::Transaction(
+                        format!(
+                            "accepted input observation limit {} exceeded",
+                            crate::MAX_ACCEPTED_INPUT_OBSERVATIONS
+                        ),
+                    )));
+                }
+                candidate.observations.extend(observations);
+                candidate.tex_observed = true;
+            }
+            if !candidate.detection_observed {
+                let detection_observations =
+                    crate::input_observation::bibliography_detection_observations(
+                        &self.options.bibliography.mode,
+                        &snapshot,
+                        candidate.revision,
+                        candidate.pass,
+                    );
+                if candidate
+                    .observations
+                    .len()
+                    .saturating_add(detection_observations.len())
+                    > crate::MAX_ACCEPTED_INPUT_OBSERVATIONS
+                {
+                    return Err(CandidateStop::Failed(LatexProjectError::Transaction(
+                        format!(
+                            "accepted input observation limit {} exceeded",
+                            crate::MAX_ACCEPTED_INPUT_OBSERVATIONS
+                        ),
+                    )));
+                }
+                candidate.observations.extend(detection_observations);
+                candidate.detection_observed = true;
+            }
             match self
                 .detector
                 .detect(&self.options.bibliography.mode, &snapshot)
@@ -630,6 +692,41 @@ impl LatexProjectSession {
                             ));
                         }
                         BibliographyAttempt::Finished(result) => {
+                            let owner = match result.backend() {
+                                BibliographyBackend::Biblatex => {
+                                    crate::InputObservationOwner::Biblatex
+                                }
+                                BibliographyBackend::Classic => {
+                                    crate::InputObservationOwner::ClassicBibtex
+                                }
+                            };
+                            let inputs = self
+                                .bibliography
+                                .as_ref()
+                                .expect("finished bibliography retains its session")
+                                .accepted_inputs();
+                            let bibliography_observations =
+                                crate::input_observation::bibliography_observations(
+                                    inputs,
+                                    &snapshot,
+                                    candidate.revision,
+                                    candidate.pass,
+                                    owner,
+                                );
+                            if candidate
+                                .observations
+                                .len()
+                                .saturating_add(bibliography_observations.len())
+                                > crate::MAX_ACCEPTED_INPUT_OBSERVATIONS
+                            {
+                                return Err(CandidateStop::Failed(LatexProjectError::Transaction(
+                                    format!(
+                                        "accepted input observation limit {} exceeded",
+                                        crate::MAX_ACCEPTED_INPUT_OBSERVATIONS
+                                    ),
+                                )));
+                            }
+                            candidate.observations.extend(bibliography_observations);
                             self.published_bibliography_paths =
                                 result.files().map(|file| file.path().clone()).collect();
                             for path in &self.published_bibliography_paths {
@@ -658,6 +755,7 @@ impl LatexProjectSession {
                     bibliography,
                     candidate.generated,
                     tex_session,
+                    candidate.observations,
                 );
             }
             if let Some(first_pass) = candidate.seen.insert(after, candidate.pass) {
@@ -667,6 +765,8 @@ impl LatexProjectSession {
                 }));
             }
             candidate.pass += 1;
+            candidate.tex_observed = false;
+            candidate.detection_observed = false;
         }
         Err(CandidateStop::Failed(LatexProjectError::PassLimit {
             limit: self.options.limits.passes,
@@ -817,6 +917,7 @@ impl LatexProjectSession {
         bibliography: Option<BibliographyResult>,
         generated: BTreeMap<VirtualPath, Vec<u8>>,
         tex_session: Box<VirtualCompileSession>,
+        observations: Vec<crate::AcceptedInputObservation>,
     ) -> Result<LatexProjectOutput, CandidateStop> {
         let mut pending = self.files.clone();
         pending
@@ -868,6 +969,10 @@ impl LatexProjectSession {
         self.awaiting.clear();
         self.accepted_tex = Some(tex_session);
         self.accepted_output = Some(output.clone());
+        self.accepted_observations = Some(crate::AcceptedInputObservationLedger::new(
+            revision,
+            observations,
+        ));
         Ok(output)
     }
 

@@ -17,6 +17,7 @@ use tex_state::{
 
 #[cfg(not(target_arch = "wasm32"))]
 pub mod cli_resource;
+mod input_observation;
 mod input_search;
 mod latex_project;
 mod memory_output;
@@ -28,6 +29,11 @@ mod virtual_compile;
 
 pub const PACKAGE_VERSION: &str = env!("CARGO_PKG_VERSION");
 
+pub use input_observation::{
+    ACCEPTED_INPUT_OBSERVATION_SCHEMA_VERSION, AcceptedInputObservation,
+    AcceptedInputObservationLedger, InputObservationNamespace, InputObservationOutcome,
+    InputObservationOwner, InputObservationPhase, MAX_ACCEPTED_INPUT_OBSERVATIONS,
+};
 pub use input_search::{TexFontSearchPath, TexInputSearchPath};
 pub use latex_project::{
     BibliographyProjectOptions, LatexProjectAttempt, LatexProjectError, LatexProjectLimits,

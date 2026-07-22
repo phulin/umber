@@ -1015,6 +1015,57 @@ impl VirtualCompileSession {
             .flat_map(tex_incr::Session::accepted_input_dependencies)
     }
 
+    /// Returns the versioned public projection of the accepted revision's
+    /// semantic input dependencies. Candidate-only observations are excluded.
+    #[must_use]
+    pub fn accepted_input_observations(&self) -> Option<crate::AcceptedInputObservationLedger> {
+        let revision = self.revision()?;
+        let dependencies = self.accepted_input_dependency_values();
+        let observations = crate::input_observation::tex_observations(
+            dependencies.into_iter(),
+            &self.files.snapshot(),
+            revision,
+            None,
+        );
+        Some(crate::AcceptedInputObservationLedger::new(
+            revision,
+            observations,
+        ))
+    }
+
+    pub(crate) fn accepted_input_dependency_values(
+        &self,
+    ) -> Vec<(
+        VirtualPath,
+        tex_state::InputDependencyOutcome,
+        tex_state::InputDependencyAccess,
+    )> {
+        let mut dependencies = self
+            .accepted_input_dependencies()
+            .filter_map(|dependency| {
+                crate::input_observation::virtual_path(dependency.path())
+                    .map(|path| (path, (dependency.outcome(), dependency.access())))
+            })
+            .collect::<BTreeMap<_, _>>();
+        if self.accepted_output.is_some()
+            && let Ok(Some(root)) = self.files.snapshot().get(&self.main_path)
+        {
+            dependencies.insert(
+                self.main_path.clone(),
+                (
+                    tex_state::InputDependencyOutcome::Present(ContentHash::from_bytes(
+                        root.bytes(),
+                    )),
+                    tex_state::InputDependencyAccess::RequiredRead,
+                ),
+            );
+        }
+        dependencies
+            .into_iter()
+            .map(|(path, (outcome, access))| (path, outcome, access))
+            .collect()
+    }
+
     pub(crate) fn restore_cached_file(
         &mut self,
         request: FileRequestKey,

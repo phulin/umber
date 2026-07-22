@@ -37,11 +37,12 @@ pub use bib_output::{
 pub use bib_unicode::{LegacyEncoding, RecodeSet, UnicodeData};
 pub use bibliography::{
     BibliographyAttempt, BibliographyBackend, BibliographyDiagnostic, BibliographyDiagnosticCode,
-    BibliographyDocument, BibliographyFailure, BibliographyHistory, BibliographyJob,
-    BibliographyResult, BibliographyResultError, BibliographySession, BibliographySourceLocation,
-    BibliographyStats, ClassicBibCacheUsage, ClassicBibFailure, ClassicBibJob, ClassicBibLimits,
-    ClassicBibOptions, ClassicBibSession, ClassicBibliography, ClassicBibliographyStats,
-    ClassicDatabaseLimits, ClassicDatabaseOptions, ClassicDiagnosticCode, ClassicSourceLocation,
+    BibliographyDocument, BibliographyFailure, BibliographyHistory, BibliographyInput,
+    BibliographyJob, BibliographyResult, BibliographyResultError, BibliographySession,
+    BibliographySourceLocation, BibliographyStats, ClassicBibCacheUsage, ClassicBibFailure,
+    ClassicBibJob, ClassicBibLimits, ClassicBibOptions, ClassicBibSession, ClassicBibliography,
+    ClassicBibliographyStats, ClassicDatabaseLimits, ClassicDatabaseOptions, ClassicDiagnosticCode,
+    ClassicSourceLocation,
 };
 pub use classic::{
     BibliographyDetection, BibliographyDetector, BibliographyDetectorOptions, BibliographyMode,

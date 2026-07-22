@@ -33,6 +33,9 @@ export interface CompilerBindings {
 		readonly retentionMetrics:
 			| import("./umber_wasm.js").RetentionMetrics
 			| undefined;
+		readonly acceptedInputObservations:
+			| import("./umber_wasm.js").AcceptedInputObservationLedger
+			| undefined;
 		advance?(): import("./umber_wasm.js").AttemptResult;
 		compileAttempt(): import("./umber_wasm.js").AttemptResult;
 		dispose(): void;
@@ -43,6 +46,9 @@ export interface CompilerBindings {
 		addUserFile(path: string, bytes: Uint8Array): void;
 		provideResources(responses: ResourceResponse[]): void;
 		cancelPendingPatch(): boolean;
+		readonly acceptedInputObservations:
+			| import("./umber_wasm.js").AcceptedInputObservationLedger
+			| undefined;
 		advance?(): import("./umber_wasm.js").AttemptResult;
 		compileAttempt(): import("./umber_wasm.js").AttemptResult;
 		dispose(): void;

@@ -5,7 +5,8 @@ use std::sync::Arc;
 use bib_graph::{DataModel, GraphContext, GraphInput, GraphOptions, GraphProcessor, SectionSpec};
 use bib_input::{
     BibTexOptions, BibTexSource, ConfigError, ControlError, ControlFile, XmlError, XmlLimits,
-    parse_bibtex_bytes, parse_config, parse_config_bytes, parse_control, parse_control_bytes,
+    parse_bibtex_bytes, parse_config_bytes, parse_config_with_paths, parse_control_bytes,
+    parse_control_with_paths,
 };
 use bib_model::{
     BibConfigurationBuilder, BibDiagnostic, BibDiagnosticCode, BibSeverity, DataListId,
@@ -126,16 +127,23 @@ struct ParsedKey {
     content: FileContentId,
 }
 
+#[derive(Clone, Debug)]
+struct ParsedControl {
+    value: Arc<ControlFile>,
+    inputs: Arc<[VirtualPath]>,
+}
+
 /// Resumable, host-neutral bibliography processing over immutable VFS snapshots.
 #[derive(Debug)]
 pub struct BibSession {
     options: BibSessionOptions,
     unicode: UnicodeData,
-    controls: BTreeMap<ParsedKey, Arc<ControlFile>>,
+    controls: BTreeMap<ParsedKey, Arc<ParsedControl>>,
     control_order: VecDeque<ParsedKey>,
     datasources: BTreeMap<ParsedKey, Arc<BibTexSource>>,
     datasource_order: VecDeque<ParsedKey>,
     previous_need: Option<(BibJob, FileRequestBatch)>,
+    accepted_inputs: Vec<crate::BibliographyInput>,
 }
 
 impl BibSession {
@@ -158,6 +166,7 @@ impl BibSession {
             datasources: BTreeMap::new(),
             datasource_order: VecDeque::new(),
             previous_need: None,
+            accepted_inputs: Vec::new(),
         })
     }
 
@@ -174,9 +183,14 @@ impl BibSession {
     }
 
     pub fn process(&mut self, job: &BibJob, snapshot: &VfsSnapshot) -> BibAttempt {
-        match self.process_inner(job, snapshot) {
+        let mut inputs = BTreeMap::new();
+        match self.process_inner(job, snapshot, &mut inputs) {
             Ok(result) => {
                 self.previous_need = None;
+                self.accepted_inputs = inputs
+                    .into_iter()
+                    .map(|(path, kind)| crate::BibliographyInput::new(path, kind))
+                    .collect();
                 BibAttempt::Complete(result)
             }
             Err(ProcessFailure::Need(batch)) => {
@@ -208,6 +222,7 @@ impl BibSession {
         &mut self,
         job: &BibJob,
         snapshot: &VfsSnapshot,
+        inputs: &mut BTreeMap<VirtualPath, FileKind>,
     ) -> Result<crate::BibResult, ProcessFailure> {
         snapshot
             .list_root(VirtualRoot::Job, self.options.maximum_snapshot_files)
@@ -225,6 +240,7 @@ impl BibSession {
             Some(job.control_path()),
             &control_key,
             self.options.maximum_snapshot_files,
+            inputs,
         )?
         else {
             return Err(ProcessFailure::Need(batch([request(
@@ -232,7 +248,7 @@ impl BibSession {
                 job.control_path().as_str(),
             )])));
         };
-        let control = self.control(snapshot, control_file)?;
+        let control = self.control(snapshot, control_file, inputs)?;
 
         let mut required = Vec::new();
         if let Some(path) = job.options().configuration() {
@@ -242,13 +258,21 @@ impl BibSession {
                 Some(path),
                 &key,
                 self.options.maximum_snapshot_files,
+                inputs,
             )? {
                 let parsed = if file
                     .bytes()
                     .windows(b"xi:include".len())
                     .any(|window| window == b"xi:include")
                 {
-                    parse_config(snapshot, file.path(), self.options.xml_limits)
+                    parse_config_with_paths(snapshot, file.path(), self.options.xml_limits).map(
+                        |(configuration, paths)| {
+                            for path in paths {
+                                inputs.insert(path, FileKind::BibConfiguration);
+                            }
+                            configuration
+                        },
+                    )
                 } else {
                     parse_config_bytes(file.bytes(), self.options.xml_limits)
                 };
@@ -264,6 +288,7 @@ impl BibSession {
                 Some(path),
                 &key,
                 self.options.maximum_snapshot_files,
+                inputs,
             )?
             .is_none()
             {
@@ -292,6 +317,7 @@ impl BibSession {
                     local.as_ref(),
                     &key,
                     self.options.maximum_snapshot_files,
+                    inputs,
                 )? {
                     located.insert(key, file);
                 } else {
@@ -427,30 +453,52 @@ impl BibSession {
         Ok(result.freeze())
     }
 
+    pub fn accepted_inputs(&self) -> &[crate::BibliographyInput] {
+        &self.accepted_inputs
+    }
+
     fn control(
         &mut self,
         snapshot: &VfsSnapshot,
         file: &VirtualFile,
+        inputs: &mut BTreeMap<VirtualPath, FileKind>,
     ) -> Result<Arc<ControlFile>, ProcessFailure> {
         let key = parsed_key(file.content_id());
-        if let Some(control) = self.controls.get(&key) {
-            return Ok(Arc::clone(control));
+        if let Some(parsed) = self.controls.get(&key) {
+            for path in parsed.inputs.iter().cloned() {
+                inputs.insert(path, FileKind::BibControl);
+            }
+            return Ok(Arc::clone(&parsed.value));
         }
-        let parsed = if file
+        let (control, paths) = if file
             .bytes()
             .windows(b"xi:include".len())
             .any(|window| window == b"xi:include")
         {
-            parse_control(snapshot, file.path(), self.options.xml_limits)
+            let (control, paths) =
+                parse_control_with_paths(snapshot, file.path(), self.options.xml_limits)
+                    .map_err(control_failure)?;
+            (control, paths)
         } else {
-            parse_control_bytes(file.bytes(), self.options.xml_limits)
+            (
+                parse_control_bytes(file.bytes(), self.options.xml_limits)
+                    .map_err(control_failure)?,
+                BTreeSet::from([file.path().clone()]),
+            )
         };
-        let control = Arc::new(parsed.map_err(control_failure)?);
+        for path in paths.iter().cloned() {
+            inputs.insert(path, FileKind::BibControl);
+        }
+        let control = Arc::new(control);
+        let parsed = Arc::new(ParsedControl {
+            value: Arc::clone(&control),
+            inputs: paths.into_iter().collect(),
+        });
         insert_bounded(
             &mut self.controls,
             &mut self.control_order,
             key,
-            Arc::clone(&control),
+            parsed,
             self.options.cache_entries,
         );
         Ok(control)
@@ -492,10 +540,12 @@ fn locate<'a>(
     exact: Option<&VirtualPath>,
     request: &FileRequestKey,
     limit: usize,
+    inputs: &mut BTreeMap<VirtualPath, FileKind>,
 ) -> Result<Option<&'a VirtualFile>, ProcessFailure> {
     if let Some(path) = exact
         && let Some(file) = snapshot.get(path).map_err(snapshot_failure)?
     {
+        inputs.insert(file.path().clone(), request.kind());
         return Ok(Some(file));
     }
     for path in snapshot
@@ -507,6 +557,7 @@ fn locate<'a>(
             .map_err(snapshot_failure)?
             .expect("enumerated path remains visible");
         if matches!(file.origin(), FileOrigin::Resolved(key) if key == request) {
+            inputs.insert(file.path().clone(), request.kind());
             return Ok(Some(file));
         }
     }

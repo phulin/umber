@@ -9,13 +9,46 @@ use tex_state::{Universe, World};
 use umber::prepare_run_stores;
 use umber_wasm::{
     CompilerSession, JsProjectSessionOptions, JsSessionOptions, JsSourcePatch, ProjectSession,
-    format_schema_version, package_version,
+    accepted_input_observation_schema_version, format_schema_version, package_version,
 };
 use wasm_bindgen::{JsCast, JsValue};
 use wasm_bindgen_futures::JsFuture;
 use wasm_bindgen_test::*;
 
 wasm_bindgen_test_configure!(run_in_browser);
+
+#[wasm_bindgen_test]
+fn compiler_exposes_versioned_accepted_input_observations() {
+    assert_eq!(accepted_input_observation_schema_version(), 1);
+    let session_options = options("main.tex");
+    let mut session = CompilerSession::new(session_options.unchecked_ref::<JsSessionOptions>())
+        .expect("compiler session");
+    assert!(
+        session
+            .accepted_input_observations()
+            .expect("ledger getter")
+            .is_none()
+    );
+    session
+        .add_user_file("main.tex", &bytes(b"\\end"))
+        .expect("main source");
+    assert_eq!(
+        string_field(session.advance().expect("complete").as_ref(), "kind"),
+        "complete"
+    );
+    let ledger = session
+        .accepted_input_observations()
+        .expect("accepted ledger")
+        .expect("accepted value");
+    assert_eq!(field(ledger.as_ref(), "schemaVersion").as_f64(), Some(1.0));
+    assert_eq!(field(ledger.as_ref(), "revision").as_f64(), Some(1.0));
+    let observations = Array::from(&field(ledger.as_ref(), "observations"));
+    assert_eq!(observations.length(), 1);
+    let main = observations.get(0);
+    assert_eq!(string_field(&main, "path"), "/job/main.tex");
+    assert_eq!(string_field(&main, "namespace"), "authored");
+    assert_eq!(string_field(&main, "phase"), "tex");
+}
 
 #[wasm_bindgen_test]
 fn project_binding_validates_options_and_disposes() {

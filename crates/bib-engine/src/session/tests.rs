@@ -88,6 +88,25 @@ fn requests_remote_resources_resumes_and_exposes_typed_values() {
                 && matches!(values[0].end(), RangeEndpoint::Integer(24))
                 && matches!(values[1].start(), RangeEndpoint::Literal(value) if value.as_str() == "M-1")
     ));
+    assert_eq!(
+        session.accepted_inputs(),
+        &[
+            crate::BibliographyInput::new(
+                VirtualPath::user("main.bcf").expect("control path"),
+                FileKind::BibControl,
+            ),
+            crate::BibliographyInput::new(
+                VirtualPath::distribution("/texlive/bib/data.bib").expect("data path"),
+                FileKind::BibData,
+            ),
+        ]
+    );
+    complete(session.process(&job, &provisioner.snapshot()));
+    assert_eq!(
+        session.accepted_inputs().len(),
+        2,
+        "cache reuse retains inputs"
+    );
 }
 
 #[test]

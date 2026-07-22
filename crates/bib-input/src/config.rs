@@ -1,10 +1,13 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
 use umber_vfs::{VfsSnapshot, VirtualPath};
 
 use crate::control::{StructuredValue, Template, TemplateElement};
-use crate::xml::{XmlError, XmlLimits, XmlNode, parse_xml, parse_xml_from_snapshot};
+use crate::xml::{
+    XmlError, XmlLimits, XmlNode, parse_xml, parse_xml_from_snapshot,
+    parse_xml_from_snapshot_with_paths,
+};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ConfigValue {
@@ -170,6 +173,15 @@ pub fn parse_config(
     limits: XmlLimits,
 ) -> Result<ConfigurationFile, ConfigError> {
     config_from_tree(&parse_xml_from_snapshot(snapshot, path, limits)?)
+}
+
+pub fn parse_config_with_paths(
+    snapshot: &VfsSnapshot,
+    path: &VirtualPath,
+    limits: XmlLimits,
+) -> Result<(ConfigurationFile, BTreeSet<VirtualPath>), ConfigError> {
+    let (root, paths) = parse_xml_from_snapshot_with_paths(snapshot, path, limits)?;
+    Ok((config_from_tree(&root)?, paths))
 }
 
 fn validate_config_tree(root: &XmlNode) -> Result<(), ConfigError> {

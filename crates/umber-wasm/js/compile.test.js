@@ -15,6 +15,7 @@ function bindings(results, hooks = {}) {
 			this.userFiles = [];
 			this.resolved = [];
 			this.disposed = false;
+			this.acceptedInputObservations = hooks.acceptedInputObservations;
 			FakeSession.instances.push(this);
 		}
 
@@ -92,6 +93,45 @@ test("performs successful multi-round retries and always disposes", async () => 
 	assert.equal(session.resolved.length, 2);
 	assert.deepEqual([...session.resolved[0].bytes], [0, 0, 1]);
 	assert.equal(session.disposed, true);
+});
+
+test("returns the Rust-owned accepted observation ledger for dependency graphs", async () => {
+	const ledger = {
+		schemaVersion: 1,
+		revision: 1,
+		observations: [
+			{
+				path: "/texlive/plain.tex",
+				namespace: "distribution",
+				outcome: { kind: "present", contentHash: "abc" },
+				access: "required-read",
+				resourceKind: "tex",
+				phase: "tex",
+				revision: 1,
+				owner: "tex-engine",
+			},
+		],
+	};
+	const compiled = output();
+	const wasm = bindings([{ kind: "complete", output: compiled }], {
+		acceptedInputObservations: ledger,
+	});
+	const result = await compile(
+		{ mainPath: "main.tex" },
+		new Map([["main.tex", encoder.encode("main")]]),
+		{
+			async resolve() {
+				return [];
+			},
+		},
+		undefined,
+		wasm,
+	);
+	assert.equal(result.acceptedInputObservations, ledger);
+	assert.deepEqual(
+		result.acceptedInputObservations.observations.map(({ path }) => path),
+		["/texlive/plain.tex"],
+	);
 });
 
 test("drives file and font resources through one client-owned resolver API", async () => {
