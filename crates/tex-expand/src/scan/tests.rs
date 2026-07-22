@@ -1,5 +1,5 @@
 use super::{
-    MacroScanDiagnostic, append_hash_brace, scan_general_text_expanded_with_driver,
+    MacroScanDiagnostic, ScanToksError, append_hash_brace, scan_general_text_expanded_with_driver,
     scan_general_text_expanded_with_expanded_open, scan_toks, scan_toks_expanded,
     scan_toks_expanded_with_driver,
 };
@@ -812,6 +812,32 @@ fn definition_recovers_parameter_before_nested_group() {
             char_token('C', Catcode::Letter),
         ]
     );
+}
+
+#[test]
+fn definition_stops_at_tex82s_hundredth_recovery_error() {
+    let mut stores = Universe::new();
+    let mut source = String::from("{");
+    for _ in 0..100 {
+        source.push_str("#x");
+    }
+    source.push('}');
+    let mut input = InputStack::new(MemoryInput::new(source));
+    let context =
+        TracedTokenWord::pack(Token::Cs(stores.intern("def").symbol()), OriginId::UNKNOWN);
+
+    let error = scan_toks(
+        &mut input,
+        &mut tex_state::ExpansionContext::new(&mut stores),
+        MeaningFlags::EMPTY,
+        context,
+    )
+    .expect_err("TeX terminates after the hundredth recovery error");
+
+    assert!(matches!(
+        error,
+        ScanToksError::TooManyRecoverableErrors { .. }
+    ));
 }
 
 #[test]

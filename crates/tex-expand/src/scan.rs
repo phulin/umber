@@ -111,6 +111,9 @@ pub enum ScanToksError {
     InvalidParameterTokenInReplacementText {
         context: TracedTokenWord,
     },
+    TooManyRecoverableErrors {
+        context: TracedTokenWord,
+    },
     MissingGeneralTextBeginGroup {
         context: TracedTokenWord,
     },
@@ -149,6 +152,9 @@ impl fmt::Display for ScanToksError {
                     "invalid parameter token {:?} in macro replacement text",
                     traced_semantic_token(*context)
                 )
+            }
+            Self::TooManyRecoverableErrors { .. } => {
+                write!(f, "100 errors occurred while scanning a macro definition")
             }
             Self::MissingGeneralTextBeginGroup { context } => {
                 write!(
@@ -203,6 +209,7 @@ impl ScanToksError {
             | Self::TooManyParameters { context }
             | Self::InvalidParameterTokenInParameterText { context }
             | Self::InvalidParameterTokenInReplacementText { context }
+            | Self::TooManyRecoverableErrors { context }
             | Self::MissingGeneralTextBeginGroup { context } => Some(context.origin()),
         }
     }
@@ -518,8 +525,11 @@ where
                     // TeX.web §479's `back_error; cur_tok:=s` keeps the
                     // invalid follower for the next scanner iteration and
                     // stores the saved parameter character literally.
-                    diagnostics
-                        .push(MacroScanDiagnostic::IllegalParameterNumber { context: traced });
+                    record_scan_diagnostic(
+                        diagnostics,
+                        MacroScanDiagnostic::IllegalParameterNumber { context: traced },
+                        traced,
+                    )?;
                     unread_token(input, stores, traced);
                     let token = traced_semantic_token(parameter);
                     push_scanned_token(&mut builder, &mut origins, parameter, token);
@@ -557,7 +567,23 @@ fn record_undefined_diagnostic(
     diagnostics: &mut Vec<MacroScanDiagnostic>,
 ) -> Result<(), ScanToksError> {
     let (name, context) = take_undefined_control_sequence(error).map_err(ScanToksError::Expand)?;
-    diagnostics.push(MacroScanDiagnostic::UndefinedControlSequence { name, context });
+    record_scan_diagnostic(
+        diagnostics,
+        MacroScanDiagnostic::UndefinedControlSequence { name, context },
+        context,
+    )?;
+    Ok(())
+}
+
+fn record_scan_diagnostic(
+    diagnostics: &mut Vec<MacroScanDiagnostic>,
+    diagnostic: MacroScanDiagnostic,
+    context: TracedTokenWord,
+) -> Result<(), ScanToksError> {
+    if diagnostics.len() == 99 {
+        return Err(ScanToksError::TooManyRecoverableErrors { context });
+    }
+    diagnostics.push(diagnostic);
     Ok(())
 }
 
@@ -1092,8 +1118,11 @@ fn scan_parameter_text(
                     // TeX.web §476 uses `back_error` for a nonconsecutive
                     // follower: replay it, insert the expected match token,
                     // and continue scanning the parameter delimiter.
-                    diagnostics
-                        .push(MacroScanDiagnostic::IllegalParameterNumber { context: traced });
+                    record_scan_diagnostic(
+                        diagnostics,
+                        MacroScanDiagnostic::IllegalParameterNumber { context: traced },
+                        traced,
+                    )?;
                     unread_token(input, stores, traced);
                     if next_parameter <= 9 {
                         let inserted = Token::param(next_parameter);
@@ -1169,8 +1198,11 @@ fn scan_replacement_text(
                 _ => {
                     // TeX.web §479 recovers by backing up the invalid
                     // follower and storing the saved parameter character.
-                    diagnostics
-                        .push(MacroScanDiagnostic::IllegalParameterNumber { context: traced });
+                    record_scan_diagnostic(
+                        diagnostics,
+                        MacroScanDiagnostic::IllegalParameterNumber { context: traced },
+                        traced,
+                    )?;
                     unread_token(input, stores, traced);
                     let token = traced_semantic_token(parameter);
                     push_scanned_token(&mut builder, &mut origins, parameter, token);

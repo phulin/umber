@@ -66,6 +66,11 @@ pub(super) fn execute_def(
     }
     .with_definition_origin(target.origin);
     for diagnostic in scanned.diagnostics() {
+        let context = match diagnostic {
+            MacroScanDiagnostic::UndefinedControlSequence { context, .. }
+            | MacroScanDiagnostic::IllegalParameterNumber { context } => *context,
+        };
+        execution.record_macro_scan_error(context)?;
         match diagnostic {
             MacroScanDiagnostic::UndefinedControlSequence { name, .. } => {
                 stores.world_mut().write_text(

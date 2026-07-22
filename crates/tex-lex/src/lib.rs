@@ -950,22 +950,26 @@ enum ReplayPayload {
         origin_list: OriginListId,
     },
     Transient {
-        tokens: Vec<TracedTokenWord>,
+        tokens: Arc<Vec<TracedTokenWord>>,
+    },
+    MacroArgument {
+        tokens: Arc<Vec<TracedTokenWord>>,
+        range: MacroArgumentRange,
     },
 }
 
 /// Pooled packed arguments owned by one live macro-body replay frame.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct MacroArguments {
-    tokens: Vec<TracedTokenWord>,
+    tokens: Option<Arc<Vec<TracedTokenWord>>>,
     slots: [Option<MacroArgumentRange>; MACRO_ARGUMENT_SLOTS],
 }
 
 impl MacroArguments {
     #[must_use]
-    pub const fn new() -> Self {
+    pub fn new() -> Self {
         Self {
-            tokens: Vec::new(),
+            tokens: None,
             slots: [None; MACRO_ARGUMENT_SLOTS],
         }
     }
@@ -978,22 +982,41 @@ impl MacroArguments {
         for range in slots.iter().flatten().copied() {
             assert!(range.start().saturating_add(range.len()) <= tokens.len());
         }
-        Self { tokens, slots }
+        Self {
+            tokens: slots.iter().any(Option::is_some).then(|| Arc::new(tokens)),
+            slots,
+        }
     }
 
     fn from_summary(summary: &MacroArgumentsSummary) -> Self {
-        Self::from_parts(summary.tokens().to_vec(), *summary.ranges())
+        Self {
+            tokens: summary
+                .ranges()
+                .iter()
+                .any(Option::is_some)
+                .then(|| Arc::new(summary.tokens().to_vec())),
+            slots: *summary.ranges(),
+        }
     }
 
     fn summary(&self) -> MacroArgumentsSummary {
-        MacroArgumentsSummary::from_parts(Arc::from(self.tokens.as_slice()), self.slots)
+        MacroArgumentsSummary::from_parts(
+            self.tokens
+                .as_deref()
+                .map_or_else(|| Arc::from([]), |tokens| Arc::from(tokens.as_slice())),
+            self.slots,
+        )
     }
 
     #[must_use]
     pub fn get(&self, slot: u8) -> Option<&[TracedTokenWord]> {
         let index = argument_index(slot);
         let range = self.slots[index]?;
-        Some(&self.tokens[range.start()..range.start() + range.len()])
+        let tokens = self
+            .tokens
+            .as_ref()
+            .expect("argument range requires storage");
+        Some(&tokens[range.start()..range.start() + range.len()])
     }
 
     #[must_use]
@@ -1001,8 +1024,13 @@ impl MacroArguments {
         self.slots.iter().all(Option::is_none)
     }
 
-    fn take_tokens(&mut self) -> Vec<TracedTokenWord> {
-        std::mem::take(&mut self.tokens)
+    fn shared_slot(&self, slot: u8) -> Option<(Arc<Vec<TracedTokenWord>>, MacroArgumentRange)> {
+        let range = self.slots[argument_index(slot)]?;
+        let tokens = self
+            .tokens
+            .as_ref()
+            .expect("argument range requires storage");
+        Some((Arc::clone(tokens), range))
     }
 }
 
@@ -1029,7 +1057,7 @@ impl TokenListInputFrame {
                 token_list,
                 origin_list,
             } => Some((token_list, origin_list)),
-            ReplayPayload::Transient { .. } => None,
+            ReplayPayload::Transient { .. } | ReplayPayload::MacroArgument { .. } => None,
         }
     }
 
@@ -1037,6 +1065,7 @@ impl TokenListInputFrame {
         match &self.payload {
             ReplayPayload::Stored { token_list, .. } => stores.tokens(*token_list).len(),
             ReplayPayload::Transient { tokens } => tokens.len(),
+            ReplayPayload::MacroArgument { range, .. } => range.len(),
         }
     }
 
@@ -1046,6 +1075,12 @@ impl TokenListInputFrame {
                 stores.tokens(*token_list).get(index).copied()
             }
             ReplayPayload::Transient { tokens } => tokens.get(index)?.token(),
+            ReplayPayload::MacroArgument { tokens, range } => {
+                if index >= range.len() {
+                    return None;
+                }
+                tokens.get(range.start() + index)?.token()
+            }
         }
     }
 }
@@ -1933,7 +1968,7 @@ impl InputStack {
                     parent_macro_invocation,
                 } => frames.push(InputFrame::TokenList(TokenListInputFrame {
                     payload: ReplayPayload::Transient {
-                        tokens: tokens.to_vec(),
+                        tokens: Arc::new(tokens.to_vec()),
                     },
                     replay_kind: *replay_kind,
                     index: 0,
@@ -2530,7 +2565,9 @@ impl InputStack {
             .checked_add(1)
             .expect("token-list replay marker overflowed");
         self.push_frame(InputFrame::TokenList(TokenListInputFrame {
-            payload: ReplayPayload::Transient { tokens },
+            payload: ReplayPayload::Transient {
+                tokens: Arc::new(tokens),
+            },
             replay_kind,
             index: 0,
             macro_arguments: MacroArguments::new(),
@@ -3093,6 +3130,15 @@ impl InputStack {
                         ReplayPayload::Transient { tokens } => {
                             InputFrameSummary::TransientTokenList {
                                 tokens: Arc::from(&tokens[frame.index..]),
+                                replay_kind: frame.replay_kind,
+                                macro_invocation: frame.macro_invocation,
+                                parent_macro_invocation: frame.parent_macro_invocation,
+                            }
+                        }
+                        ReplayPayload::MacroArgument { tokens, range } => {
+                            let start = range.start() + frame.index;
+                            InputFrameSummary::TransientTokenList {
+                                tokens: Arc::from(&tokens[start..range.start() + range.len()]),
                                 replay_kind: frame.replay_kind,
                                 macro_invocation: frame.macro_invocation,
                                 parent_macro_invocation: frame.parent_macro_invocation,
@@ -3738,15 +3784,17 @@ impl InputStack {
                     parent_macro_invocation: _,
                 } => InputFrame::TokenList(TokenListInputFrame {
                     payload: ReplayPayload::Transient {
-                        tokens: tokens
-                            .iter()
-                            .map(|word| {
-                                TracedTokenWord::pack(
-                                    word.token().expect("summary token"),
-                                    next_origin(&mut origin_slots),
-                                )
-                            })
-                            .collect(),
+                        tokens: Arc::new(
+                            tokens
+                                .iter()
+                                .map(|word| {
+                                    TracedTokenWord::pack(
+                                        word.token().expect("summary token"),
+                                        next_origin(&mut origin_slots),
+                                    )
+                                })
+                                .collect(),
+                        ),
                     },
                     replay_kind,
                     index: 0,
@@ -4788,18 +4836,15 @@ impl InputStack {
     }
 
     fn push_macro_argument_frame(&mut self, parent_index: usize, slot: u8) {
-        let mut tokens = self.take_transient_token_buffer();
         let InputFrame::TokenList(parent) = &self.frames[parent_index] else {
             unreachable!("macro argument parent must be a token-list frame")
         };
-        tokens.extend_from_slice(
-            parent
-                .macro_arguments
-                .get(slot)
-                .expect("parameter replay requires a matched argument"),
-        );
+        let (tokens, range) = parent
+            .macro_arguments
+            .shared_slot(slot)
+            .expect("parameter replay requires a matched argument");
         self.push_frame(InputFrame::TokenList(TokenListInputFrame {
-            payload: ReplayPayload::Transient { tokens },
+            payload: ReplayPayload::MacroArgument { tokens, range },
             replay_kind: TokenListReplayKind::MacroArgument,
             index: 0,
             macro_arguments: MacroArguments::new(),
@@ -4851,15 +4896,14 @@ impl InputStack {
         } else if let Ok(position) = self.token_frame_indices.binary_search(&index) {
             self.token_frame_indices.remove(position);
         }
-        let InputFrame::TokenList(mut frame) = self.frames.remove(index) else {
+        let InputFrame::TokenList(frame) = self.frames.remove(index) else {
             unreachable!("validated token-list frame changed during removal")
         };
-        if let ReplayPayload::Transient { tokens } = &mut frame.payload {
-            let tokens = std::mem::take(tokens);
+        if let ReplayPayload::Transient { tokens } = frame.payload
+            && let Ok(tokens) = Arc::try_unwrap(tokens)
+        {
             self.recycle_transient_token_buffer(tokens);
         }
-        let argument_tokens = frame.macro_arguments.take_tokens();
-        self.recycle_transient_token_buffer(argument_tokens);
         retirement
     }
 }
@@ -4931,6 +4975,9 @@ fn next_traced_token_from_token_list_frame(
     let origin = match &frame.payload {
         ReplayPayload::Stored { .. } => replay_origin(frame, stores, token),
         ReplayPayload::Transient { tokens } => tokens[frame.index - 1].origin(),
+        ReplayPayload::MacroArgument { tokens, range } => {
+            tokens[range.start() + frame.index - 1].origin()
+        }
     };
     #[cfg(feature = "profiling-stats")]
     if let (Some(stats), Some(provenance_started)) = (stats, provenance_started) {

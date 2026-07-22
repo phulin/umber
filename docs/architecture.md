@@ -110,11 +110,14 @@ share the same Rust domain/kind wire vocabulary.
 character delivery, catcode lookup, control-sequence scanning, endline rules,
 and input-stack precedence. Tokens carry packed provenance.
 
-Replay frames have two representations:
+Replay frames have three representations:
 
 - stored token lists for durable definitions and registers; and
-- pooled transient `TracedTokenWord` buffers for arguments, pushback,
-  inserted tokens, and rendered expansion results.
+- one shared immutable `TracedTokenWord` buffer plus ranges for matched macro
+  arguments and their replay frames; and
+- shared immutable transient `TracedTokenWord` buffers for pushback, inserted
+  tokens, and rendered expansion results; uniquely owned buffers return to the
+  allocation pool when their replay frame retires.
 
 Transient execution does not intern token lists merely to re-enter the input.
 Checkpoint summaries own the remaining transient words by value.
@@ -123,7 +126,9 @@ Executor steps use a separate opaque `InputStackSnapshot`. It clones each
 live source cursor over already owned backing together with source, replay,
 condition, alignment, provenance, allocator, lexer, cache, transient-pool, and
 profiling state. Rollback is an infallible replacement and never reopens a
-resource; durable named checkpoints continue to use `InputSummary`.
+resource. Immutable argument and transient replay buffers remain shared across
+executor snapshots, so suspending and retrying a step does not copy live token
+volume. Durable named checkpoints continue to use `InputSummary`.
 
 ## 5. Expansion engine
 
@@ -146,12 +151,25 @@ Umber maps these rules in `tex-expand::scan`; its `Token::Param` represents
 TeX's stored `out_param`, not the live `mac_param` command, and therefore is
 not accepted as a parameter follower.
 
+Each `back_error` is a TeX error, not an unlimited repair opportunity.
+TeX.web §82's common `error` routine terminates the job when `error_count`
+reaches 100; pdfTeX inherits that bound. Umber applies the same hundredth-error
+termination while collecting recoverable macro-scan diagnostics, preventing a
+malformed expanded definition from growing replay and output state without
+bound.
+
 Macro delimiter matching follows TeX.web §§391--399 (pdfTeX.web §§415--423),
 including overlapping-prefix recovery and §397's narrow paragraph-token
 exception. A definition whose parameter text ends in `#{` uses the same left
 brace as both delimiter and replacement token; matching it cancels the
 delimiter delivery's alignment-state increment before replacement replay, as
 required by TeX.web §394 (pdfTeX.web §418).
+
+The shared argument-buffer representation is the ownership mapping for that
+same canonical `macro_call`: TeX.web §399 (pdfTeX.web §423) finishes each
+matched argument once and then starts replacement-text replay over the saved
+arguments. Umber stores those finished arguments once on the macro-body frame;
+each parameter replay is a range view over that storage.
 
 The same canonical `macro_call` audit also fixes the token-lifetime boundary:
 argument matching uses TeX's raw `get_token`, and only literal begin/end-group

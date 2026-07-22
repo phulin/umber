@@ -150,6 +150,87 @@ fn executor_step_snapshot_restores_complete_live_input_without_host_lookup() {
 }
 
 #[test]
+fn macro_argument_replay_and_snapshots_share_the_matched_buffer() {
+    let mut stores = Universe::new();
+    let body = stores.intern_token_list(&[Token::param(1)]);
+    let argument_tokens = [
+        char_token('a', Catcode::Letter),
+        char_token('b', Catcode::Letter),
+        char_token('c', Catcode::Letter),
+    ];
+    let argument_words = argument_tokens
+        .into_iter()
+        .map(|token| TracedTokenWord::pack(token, OriginId::UNKNOWN))
+        .collect::<Vec<_>>();
+    let mut ranges = [None; MACRO_ARGUMENT_SLOTS];
+    ranges[0] = Some(MacroArgumentRange::new(0, argument_words.len()));
+    let arguments = MacroArguments::from_parts(argument_words, ranges);
+    let shared_arguments = Arc::clone(
+        arguments
+            .tokens
+            .as_ref()
+            .expect("nonempty arguments have shared storage"),
+    );
+
+    let mut input = InputStack::new(MemoryInput::new(""));
+    input.push_macro_body(body, arguments);
+    assert_eq!(
+        input.next_token(&mut stores).expect("first argument token"),
+        Some(argument_tokens[0])
+    );
+
+    let replay_tokens = input
+        .frames
+        .iter()
+        .find_map(|frame| match frame {
+            InputFrame::TokenList(frame)
+                if matches!(frame.replay_kind, TokenListReplayKind::MacroArgument) =>
+            {
+                let super::ReplayPayload::MacroArgument { tokens, .. } = &frame.payload else {
+                    panic!("macro argument replay must use shared storage")
+                };
+                Some(tokens)
+            }
+            _ => None,
+        })
+        .expect("live argument replay frame");
+    assert!(Arc::ptr_eq(replay_tokens, &shared_arguments));
+
+    let snapshot = input.snapshot();
+    let snapshot_tokens = snapshot
+        .0
+        .frames
+        .iter()
+        .find_map(|frame| match frame {
+            InputFrame::TokenList(frame)
+                if matches!(frame.replay_kind, TokenListReplayKind::MacroArgument) =>
+            {
+                let super::ReplayPayload::MacroArgument { tokens, .. } = &frame.payload else {
+                    panic!("snapshotted argument replay must use shared storage")
+                };
+                Some(tokens)
+            }
+            _ => None,
+        })
+        .expect("snapshotted argument replay frame");
+    assert!(Arc::ptr_eq(snapshot_tokens, &shared_arguments));
+
+    assert_eq!(
+        input
+            .next_token(&mut stores)
+            .expect("second argument token"),
+        Some(argument_tokens[1])
+    );
+    input.rollback(snapshot);
+    assert_eq!(
+        input
+            .next_token(&mut stores)
+            .expect("restored second token"),
+        Some(argument_tokens[1])
+    );
+}
+
+#[test]
 fn nested_alignment_resume_preserves_outer_align_state() {
     let mut input = InputStack::new(MemoryInput::new(""));
     input.begin_alignment();

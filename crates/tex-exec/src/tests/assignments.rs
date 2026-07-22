@@ -19,6 +19,23 @@ fn register_assignments_cover_sparse_aliases_and_arithmetic() {
 }
 
 #[test]
+fn macro_recovery_stops_at_tex82s_global_hundred_error_limit() {
+    let mut stores = Universe::new();
+    install_unexpandable_primitives(&mut stores);
+    let source = "\\def\\a{#x}".repeat(100);
+    let mut input = InputStack::new(MemoryInput::new(source));
+
+    let error = Executor::new()
+        .run(&mut input, &mut stores)
+        .expect_err("the hundredth macro-scan error terminates execution");
+
+    assert_eq!(
+        error.to_string(),
+        "100 errors occurred while scanning a macro definition"
+    );
+}
+
+#[test]
 fn tex82_compatibility_rejects_sparse_register_numbers() {
     let mut stores = Universe::new();
     install_unexpandable_primitives(&mut stores);

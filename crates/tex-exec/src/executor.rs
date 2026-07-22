@@ -167,6 +167,7 @@ pub(crate) struct CachedParagraphDependency {
 /// Expansion and paragraph state that survives between bounded executor calls.
 pub struct ExecutionState {
     expansion: tex_expand::ExpansionSessionState,
+    macro_scan_error_count: u8,
     pending_paragraph_memo: Option<PendingParagraphMemo>,
     paragraph_memo_barrier: bool,
     paragraph_memo_disabled_for_run: bool,
@@ -179,6 +180,7 @@ impl Default for ExecutionState {
     fn default() -> Self {
         Self {
             expansion: tex_expand::ExpansionSessionState::default(),
+            macro_scan_error_count: 0,
             pending_paragraph_memo: None,
             paragraph_memo_barrier: false,
             paragraph_memo_disabled_for_run: false,
@@ -198,6 +200,7 @@ impl ExecutionState {
     fn snapshot(&self) -> ExecutionStateSnapshot {
         ExecutionStateSnapshot {
             expansion: self.expansion.snapshot(),
+            macro_scan_error_count: self.macro_scan_error_count,
             pending_paragraph_memo: self.pending_paragraph_memo.clone(),
             paragraph_memo_barrier: self.paragraph_memo_barrier,
             paragraph_memo_disabled_for_run: self.paragraph_memo_disabled_for_run,
@@ -208,6 +211,7 @@ impl ExecutionState {
 
     fn rollback(&mut self, snapshot: ExecutionStateSnapshot) {
         self.expansion.rollback(snapshot.expansion);
+        self.macro_scan_error_count = snapshot.macro_scan_error_count;
         self.pending_paragraph_memo = snapshot.pending_paragraph_memo;
         self.paragraph_memo_barrier = snapshot.paragraph_memo_barrier;
         self.paragraph_memo_disabled_for_run = snapshot.paragraph_memo_disabled_for_run;
@@ -218,6 +222,7 @@ impl ExecutionState {
 
 struct ExecutionStateSnapshot {
     expansion: tex_expand::ExpansionSessionSnapshot,
+    macro_scan_error_count: u8,
     pending_paragraph_memo: Option<PendingParagraphMemo>,
     paragraph_memo_barrier: bool,
     paragraph_memo_disabled_for_run: bool,
@@ -374,6 +379,7 @@ impl Cancellation {
 
 pub struct ExecutionContext<'a> {
     expansion: tex_expand::ExpansionContext<'a>,
+    macro_scan_error_count: u8,
     emit_dvi: bool,
     font_resolver: Option<&'a mut dyn FontResolver>,
     image_resolver: Option<&'a mut dyn PdfImageResolver>,
@@ -403,6 +409,7 @@ impl<'a> ExecutionContext<'a> {
     pub fn new(job_name: &str) -> Self {
         Self {
             expansion: tex_expand::ExpansionContext::new(job_name),
+            macro_scan_error_count: 0,
             emit_dvi: true,
             font_resolver: None,
             image_resolver: None,
@@ -429,6 +436,7 @@ impl<'a> ExecutionContext<'a> {
                 input_resolver,
                 recorder,
             ),
+            macro_scan_error_count: state.macro_scan_error_count,
             emit_dvi: true,
             font_resolver,
             image_resolver,
@@ -445,11 +453,25 @@ impl<'a> ExecutionContext<'a> {
         self.emit_dvi
     }
 
+    pub(crate) fn record_macro_scan_error(
+        &mut self,
+        context: tex_state::token::TracedTokenWord,
+    ) -> Result<(), crate::ExecError> {
+        if self.macro_scan_error_count == 99 {
+            return Err(
+                tex_expand::scan::ScanToksError::TooManyRecoverableErrors { context }.into(),
+            );
+        }
+        self.macro_scan_error_count += 1;
+        Ok(())
+    }
+
     fn into_owned_parts(self) -> ExecutionContextParts<'a> {
         let (expansion, input_resolver, recorder) = self.expansion.into_parts();
         (
             ExecutionState {
                 expansion,
+                macro_scan_error_count: self.macro_scan_error_count,
                 pending_paragraph_memo: self.pending_paragraph_memo,
                 paragraph_memo_barrier: self.paragraph_memo_barrier,
                 paragraph_memo_disabled_for_run: self.paragraph_memo_disabled_for_run,
@@ -471,6 +493,7 @@ impl<'a> ExecutionContext<'a> {
     ) -> Self {
         Self {
             expansion: tex_expand::ExpansionContext::with_input_resolver(job_name, input_resolver),
+            macro_scan_error_count: 0,
             emit_dvi: true,
             font_resolver: Some(font_resolver),
             image_resolver: None,
@@ -498,6 +521,7 @@ impl<'a> ExecutionContext<'a> {
     ) -> Self {
         Self {
             expansion: tex_expand::ExpansionContext::with_input_resolver(job_name, input_resolver),
+            macro_scan_error_count: 0,
             emit_dvi: true,
             font_resolver: Some(font_resolver),
             image_resolver: Some(image_resolver),
