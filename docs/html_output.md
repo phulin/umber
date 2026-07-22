@@ -100,7 +100,7 @@ splits at math boundaries. Mixed text/rules, shifted boxes, manual boxes, and
 direction changes therefore retain exact anchors without pretending that a
 whole TeX line has one semantic string.
 
-Artifact schema 22 emits the selected integer-valued
+Artifact schema 23 preserves the selected integer-valued
 `font-feature-settings`, signed 16.16 `font-variation-settings`, direction,
 script metadata, and BCP-47 language on each OpenType run. The browser policy
 also keeps `font-synthesis: none` and `font-optical-sizing: none`.
@@ -122,7 +122,7 @@ retains schema 1 behavior for parity documents, virtual fonts, and explicit
 legacy output.
 
 OpenType math extends the positioned output as a detached overlay rather than
-inserting a reflowing subtree into the legacy page tree. Artifact schema 20
+inserting a reflowing subtree into the legacy page tree. Artifact schema 23
 records each fixed math container and its ordered glyph/rule events as:
 
 ```text

@@ -26,7 +26,7 @@ fn page_artifact_round_trips() {
 fn version_19_artifacts_decode_without_page_geometry_or_math_overlay() {
     let artifact = sample_artifact();
     let mut bytes = artifact.to_bytes().expect("artifact serializes");
-    assert_eq!(bytes[4], 20);
+    assert_eq!(bytes[4], 23);
     assert_eq!(&bytes[bytes.len() - 4..], &0_u32.to_le_bytes());
     bytes.truncate(bytes.len() - 4);
     let banner_len = u32::from_le_bytes(bytes[9..13].try_into().expect("banner length")) as usize;
@@ -63,7 +63,7 @@ fn fixed_math_events_round_trip_and_enter_artifact_identity() {
     artifact.testing_mut().math_events = sample_math_events();
 
     let bytes = artifact.to_bytes().expect("math artifact serializes");
-    assert_eq!(bytes[4], 20);
+    assert_eq!(bytes[4], 23);
     assert_eq!(
         PageArtifact::from_bytes(&bytes).expect("math artifact parses"),
         artifact
@@ -164,7 +164,7 @@ fn pdf_destinations_round_trip_nullable_zoom_and_running_rectangle_dimensions() 
     let bytes = artifact
         .to_bytes()
         .expect("destination artifact serializes");
-    assert_eq!(bytes[4], 22);
+    assert_eq!(bytes[4], 23);
     assert_eq!(
         PageArtifact::from_bytes(&bytes).expect("destination artifact parses"),
         artifact
@@ -399,7 +399,7 @@ fn rejects_unknown_version() {
 #[test]
 fn rejects_pre_content_identity_v2_artifact_version() {
     let mut bytes = sample_artifact().to_bytes().expect("artifact serializes");
-    assert_eq!(bytes[4], 22);
+    assert_eq!(bytes[4], 23);
     bytes[4] = 11;
 
     assert_eq!(

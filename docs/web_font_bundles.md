@@ -313,7 +313,7 @@ Mapping discovery waits until the TFM bytes are available, because basename is
 not identity. The matching WOFF2 is then acquired through the ordinary typed
 font request. Mapping entries feed rustybuzz; cluster advances are projected
 back onto the original byte-code nodes, so DVI retains legal byte opcodes while
-using the same OpenType-derived geometry as HTML. Artifact schema 22 records
+using the same OpenType-derived geometry as HTML. Artifact schema 23 records
 the policy, explicit fallback result, map version and identity, OpenType
 program/object/instance identities, and fontdimen-synthesis version.
 
