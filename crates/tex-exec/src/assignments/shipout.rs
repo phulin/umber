@@ -134,10 +134,7 @@ pub(crate) fn shipout_node(
             },
         );
     }
-    Ok(Some(PreparedDviPage {
-        hash,
-        plan: staged.dvi_plan,
-    }))
+    Ok(staged.dvi_plan.map(|plan| PreparedDviPage { hash, plan }))
 }
 
 pub(super) fn stage_pdf_form(

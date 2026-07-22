@@ -6,7 +6,12 @@ import {
 	renderedSourceLocationFromPoint,
 } from "./source-map.js";
 
-function fixture({ codes = "0x41,0x42", offset = 0, font = "7" } = {}) {
+function fixture({
+	codes = "0x41,0x42",
+	offset = 0,
+	font = "7",
+	textKind,
+} = {}) {
 	const page = element({
 		umberPage: "2",
 		umberRevision: "9",
@@ -16,6 +21,7 @@ function fixture({ codes = "0x41,0x42", offset = 0, font = "7" } = {}) {
 		umberEvent: "4",
 		umberCodes: codes,
 		umberFont: font,
+		umberTextKind: textKind,
 	});
 	const text = element();
 	run.matches.set(".umber-page", page);
@@ -72,6 +78,22 @@ test("uses UTF-16 lengths from the selected font encoding", () => {
 			renderedSourceKeyFromPoint(document, 12, 34, options)?.unit,
 			unit,
 		);
+	}
+});
+
+test("maps direct Unicode scalars, including surrogate-pair DOM offsets", () => {
+	for (const [offset, unit] of [
+		[0, 0],
+		[1, 1],
+		[2, 1],
+		[3, 2],
+	]) {
+		const { document } = fixture({
+			codes: "0x3b1,0x1d49c,0x416",
+			offset,
+			textKind: "unicode",
+		});
+		assert.equal(renderedSourceKeyFromPoint(document, 12, 34)?.unit, unit);
 	}
 });
 

@@ -72,6 +72,8 @@ export interface SessionOptions {
   /** Authenticated format-closure requests, consumed as one-shot cache hints. */
   formatPrefetchHints?: FileRequest[];
   engine?: "tex82" | "etex" | "pdftex" | "latex" | "pdflatex";
+  /** Request classic TeX82 DVI output. Defaults to true. */
+  dvi?: boolean;
   clock?: { year: number; month: number; day: number; minutes: number };
   limits?: Partial<SessionLimits>;
   html?: { fonts: HtmlFontInput[] };

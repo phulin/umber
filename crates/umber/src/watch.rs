@@ -71,6 +71,7 @@ pub(super) fn run(mut args: impl Iterator<Item = String>) -> Result<(), WatchErr
         format,
         initial_prefetch_keys: Vec::new(),
         engine: EngineMode::Tex82,
+        dvi: true,
         html: false,
         distribution,
         distribution_sha256,

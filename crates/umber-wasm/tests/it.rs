@@ -499,13 +499,14 @@ fn pdftex_ximage_enquiries_survive_binary_resource_retry() {
 async fn generated_html_projects_exact_geometry_at_firefox_zoom_levels() {
     let session_options = options("main.tex");
     set(&session_options, "html", Object::new().as_ref());
+    set(&session_options, "dvi", &JsValue::FALSE);
     let mut session = CompilerSession::new(session_options.unchecked_ref::<JsSessionOptions>())
         .expect("HTML session");
     let tfm = include_bytes!("../../tex-fonts/tests/fixtures/cm/cmr10.tfm");
     session
         .add_user_file("cmr10.tfm", &bytes(tfm))
         .expect("add TFM");
-    let source = "\\font\\tenrm=cmr10\\relax\\font\\ot=opentype:firefox-ltr at 10pt \\shipout\\hbox{\\kern-2pt\\vrule width3pt height4pt depth1pt\\tenrm AV office\\ot µ £ ¥ é}\\end".as_bytes();
+    let source = "\\font\\tenrm=cmr10\\relax\\font\\ot=opentype:firefox-ltr at 10pt \\shipout\\hbox{\\kern-2pt\\vrule width3pt height4pt depth1pt\\tenrm AV office\\ot αЖ µ £ ¥ é}\\end".as_bytes();
     session
         .add_user_file("main.tex", &bytes(source))
         .expect("add source");
@@ -543,9 +544,11 @@ async fn generated_html_projects_exact_geometry_at_firefox_zoom_levels() {
         panic!("{}", string_field(&diagnostic, "message"));
     }
     let output = field(complete.as_ref(), "output");
+    assert_eq!(Uint8Array::new(&field(&output, "dvi")).length(), 0);
     let html = field(&output, "html");
     assert!(html.is_instance_of::<Uint8Array>());
     let html_text = String::from_utf8(Uint8Array::new(&html).to_vec()).expect("HTML UTF-8");
+    assert!(html_text.contains("αЖ µ £ ¥ é</text>"), "{html_text}");
     let event = rendered_text_event(&html_text, b'A');
     let output_id = rendered_output_id(&html_text);
     let retention_before = session.retention_metrics().expect("accepted retention");

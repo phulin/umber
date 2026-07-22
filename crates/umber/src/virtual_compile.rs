@@ -164,7 +164,9 @@ pub struct SessionOptions {
     pub engine: EngineMode,
     pub clock: JobClock,
     pub limits: SessionLimits,
-    /// Request embedded standalone HTML in addition to DVI.
+    /// Request classic TeX82 DVI output.
+    pub dvi: bool,
+    /// Request embedded standalone HTML.
     pub html: bool,
     /// Font containers the host can provide. Browser sessions use WOFF2.
     pub accepted_font_containers: AcceptedFontContainers,
@@ -184,6 +186,7 @@ impl Default for SessionOptions {
             engine: EngineMode::Tex82,
             clock: JobClock::DEFAULT,
             limits: SessionLimits::default(),
+            dvi: true,
             html: false,
             accepted_font_containers: AcceptedFontContainers::WASM,
             font_layout_policy: FontLayoutPolicy::OpenTypePreferred,
@@ -502,6 +505,7 @@ pub struct VirtualCompileSession {
     accepted_font_containers: AcceptedFontContainers,
     font_layout_policy: FontLayoutPolicy,
     font_mapping_fallback: FontMappingFallbackPolicy,
+    dvi: bool,
     html: bool,
     html_fonts: BTreeMap<(String, String), SessionWebFont>,
     html_font_bytes: usize,
@@ -662,6 +666,7 @@ impl VirtualCompileSession {
             accepted_font_containers: options.accepted_font_containers,
             font_layout_policy: options.font_layout_policy,
             font_mapping_fallback: options.font_mapping_fallback,
+            dvi: options.dvi,
             html: options.html,
             html_fonts: BTreeMap::new(),
             html_font_bytes: 0,
@@ -1302,6 +1307,7 @@ impl VirtualCompileSession {
                 )
                 .map_err(|error| CompileError::Incremental(error.to_string()))?;
                 session.set_utf8_input_as_bytes(self.engine.uses_latex_input());
+                session.set_dvi_output(self.dvi);
                 session
             });
             let mut candidate = session
@@ -1663,7 +1669,7 @@ impl VirtualCompileSession {
             .to_vec();
         let files =
             publish_auxiliary_outputs(&accepted_world, &mut stage).map_err(map_memory_output)?;
-        let dvi = if execution.artifacts().is_empty() {
+        let dvi = if !self.dvi || execution.artifacts().is_empty() {
             Vec::new()
         } else {
             execution

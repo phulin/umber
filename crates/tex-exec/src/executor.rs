@@ -374,6 +374,7 @@ impl Cancellation {
 
 pub struct ExecutionContext<'a> {
     expansion: tex_expand::ExpansionContext<'a>,
+    emit_dvi: bool,
     font_resolver: Option<&'a mut dyn FontResolver>,
     image_resolver: Option<&'a mut dyn PdfImageResolver>,
     pub(crate) pending_paragraph_memo: Option<PendingParagraphMemo>,
@@ -402,6 +403,7 @@ impl<'a> ExecutionContext<'a> {
     pub fn new(job_name: &str) -> Self {
         Self {
             expansion: tex_expand::ExpansionContext::new(job_name),
+            emit_dvi: true,
             font_resolver: None,
             image_resolver: None,
             pending_paragraph_memo: None,
@@ -427,6 +429,7 @@ impl<'a> ExecutionContext<'a> {
                 input_resolver,
                 recorder,
             ),
+            emit_dvi: true,
             font_resolver,
             image_resolver,
             pending_paragraph_memo: state.pending_paragraph_memo,
@@ -435,6 +438,11 @@ impl<'a> ExecutionContext<'a> {
             cold_paragraph_recording: state.cold_paragraph_recording,
             paragraph_dependency_cache: state.paragraph_dependency_cache,
         }
+    }
+
+    #[must_use]
+    pub(crate) const fn emits_dvi(&self) -> bool {
+        self.emit_dvi
     }
 
     fn into_owned_parts(self) -> ExecutionContextParts<'a> {
@@ -463,6 +471,7 @@ impl<'a> ExecutionContext<'a> {
     ) -> Self {
         Self {
             expansion: tex_expand::ExpansionContext::with_input_resolver(job_name, input_resolver),
+            emit_dvi: true,
             font_resolver: Some(font_resolver),
             image_resolver: None,
             pending_paragraph_memo: None,
@@ -489,6 +498,7 @@ impl<'a> ExecutionContext<'a> {
     ) -> Self {
         Self {
             expansion: tex_expand::ExpansionContext::with_input_resolver(job_name, input_resolver),
+            emit_dvi: true,
             font_resolver: Some(font_resolver),
             image_resolver: Some(image_resolver),
             pending_paragraph_memo: None,
@@ -749,6 +759,7 @@ pub struct ExecutionRun {
     suspension_serial: u64,
     checkpoint_mode_projection: Option<(crate::ModeNestSummary, u64)>,
     cumulative_fuel_limit: u64,
+    emit_dvi: bool,
     telemetry: ExecutionTelemetry,
 }
 
@@ -798,6 +809,7 @@ impl ExecutionRun {
             suspension_serial: 0,
             checkpoint_mode_projection: None,
             cumulative_fuel_limit: u64::MAX,
+            emit_dvi: true,
             telemetry: ExecutionTelemetry {
                 cold_starts: 1,
                 ..ExecutionTelemetry::default()
@@ -813,6 +825,12 @@ impl ExecutionRun {
 
     pub fn set_cumulative_fuel_limit(&mut self, limit: u64) {
         self.cumulative_fuel_limit = limit;
+    }
+
+    #[must_use]
+    pub fn with_dvi_output(mut self, enabled: bool) -> Self {
+        self.emit_dvi = enabled;
+        self
     }
 
     #[must_use]
@@ -1075,6 +1093,7 @@ impl ExecutionRun {
             image_resolver,
             recorder,
         );
+        context.emit_dvi = self.emit_dvi;
         context.begin_transactional_recording();
         let output = operation(
             &mut self.nest,
@@ -1180,6 +1199,12 @@ impl ExecutionRun {
             .unwrap_or_else(|| services.stores.world().artifact_commits().len());
         self.stats.shipped_artifacts =
             services.stores.world().artifact_commits()[artifact_start..].to_vec();
+        if !self.emit_dvi {
+            self.stats.prepared_dvi_pages.clear();
+            self.stats.dvi_pages.clear();
+            self.lifecycle = ExecutionLifecycle::Complete;
+            return Ok(());
+        }
         let mut prepared = BTreeMap::<_, VecDeque<_>>::new();
         for page in std::mem::take(&mut self.stats.prepared_dvi_pages) {
             prepared.entry(page.hash).or_default().push_back(page.plan);

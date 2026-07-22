@@ -88,17 +88,17 @@ fn text_runs_keep_exact_unit_anchors_and_baseline() {
     assert_eq!(
         runs[0].units,
         vec![
-            TextUnit::Code(b'A'),
-            TextUnit::Code(b'f'),
-            TextUnit::Code(b'f'),
-            TextUnit::Code(b'i'),
+            TextUnit::Code(u32::from(b'A')),
+            TextUnit::Code(u32::from(b'f')),
+            TextUnit::Code(u32::from(b'f')),
+            TextUnit::Code(u32::from(b'i')),
             TextUnit::Space,
-            TextUnit::Code(b'B'),
+            TextUnit::Code(u32::from(b'B')),
         ]
     );
     assert_eq!(runs[1].x, sp(89));
     assert_eq!(runs[1].baseline, sp(70));
-    assert_eq!(runs[1].units, vec![TextUnit::Code(b'C')]);
+    assert_eq!(runs[1].units, vec![TextUnit::Code(u32::from(b'C'))]);
     assert_eq!(
         runs[0].positions,
         vec![sp(0), sp(22), sp(22), sp(22), sp(52), sp(62)]
@@ -152,7 +152,10 @@ fn interword_glue_survives_a_font_change_with_its_original_font_and_anchor() {
         .collect::<Vec<_>>();
     assert_eq!(runs.len(), 2);
     assert_eq!(runs[0].font_id, 1);
-    assert_eq!(runs[0].units, vec![TextUnit::Code(b'A'), TextUnit::Space]);
+    assert_eq!(
+        runs[0].units,
+        vec![TextUnit::Code(u32::from(b'A')), TextUnit::Space]
+    );
     assert_eq!(runs[0].positions, vec![sp(0), sp(20)]);
     assert_eq!(runs[1].font_id, 2);
     assert_eq!(runs[1].positions, vec![sp(32)]);
@@ -208,7 +211,7 @@ fn current_output_font_flows_into_leading_glue_in_a_nested_box() {
         .expect("nested text run");
     assert_eq!(
         nested_run.units,
-        vec![TextUnit::Space, TextUnit::Code(b'B')]
+        vec![TextUnit::Space, TextUnit::Code(u32::from(b'B'))]
     );
     assert_eq!(nested_run.positions, vec![sp(20), sp(27)]);
     compare_page(&page, &positioned).expect("leading browser space preserves DVI glyph anchor");

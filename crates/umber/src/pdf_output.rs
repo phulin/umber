@@ -1126,10 +1126,14 @@ fn pdf_from_committed_artifacts_at_dpi_with_virtual_fonts(
                         .units
                         .iter()
                         .map(|unit| match unit {
-                            tex_out::positioned::TextUnit::Code(code) => *code,
-                            tex_out::positioned::TextUnit::Space => b' ',
+                            tex_out::positioned::TextUnit::Code(code) => u8::try_from(*code)
+                                .map_err(|_| PdfBuildError::PositionedCharacterOutOfRange {
+                                    font: font.name.clone(),
+                                    code: *code,
+                                }),
+                            tex_out::positioned::TextUnit::Space => Ok(b' '),
                         })
-                        .collect();
+                        .collect::<Result<Vec<_>, _>>()?;
                     operations.push(PdfContentOperation::Text(PdfContentTextRun {
                         x: scaled_to_bp_f32(run.x, parameters.decimal_digits),
                         baseline: scaled_to_bp_f32(
@@ -1378,10 +1382,20 @@ fn collect_font_usage(
                 .get(&font.semantic_identity)
                 .ok_or_else(|| PdfBuildError::MissingFontResource(font.name.clone()))?;
             let codes = usage.entry(resource.object_number()).or_default();
-            codes.extend(run.units.iter().map(|unit| match unit {
-                tex_out::positioned::TextUnit::Code(code) => *code,
-                tex_out::positioned::TextUnit::Space => b' ',
-            }));
+            for unit in &run.units {
+                let code = match unit {
+                    tex_out::positioned::TextUnit::Code(code) => {
+                        u8::try_from(*code).map_err(|_| {
+                            PdfBuildError::PositionedCharacterOutOfRange {
+                                font: font.name.clone(),
+                                code: *code,
+                            }
+                        })?
+                    }
+                    tex_out::positioned::TextUnit::Space => b' ',
+                };
+                codes.insert(code);
+            }
             codes.extend(included);
         }
     }
@@ -4304,6 +4318,10 @@ pub enum PdfBuildError {
     InvalidRawObjectFileName(u32),
     TextRequiresFontResources,
     MissingPositionedFont(u32),
+    PositionedCharacterOutOfRange {
+        font: String,
+        code: u32,
+    },
     MissingFontProgram(Vec<u8>),
     MissingFontResource(String),
     MissingFontUsage(String),
@@ -4436,6 +4454,10 @@ impl std::fmt::Display for PdfBuildError {
             Self::MissingPositionedFont(font) => {
                 write!(f, "positioned text references missing font resource {font}")
             }
+            Self::PositionedCharacterOutOfRange { font, code } => write!(
+                f,
+                "PDF font {font:?} character code {code} is outside 0..=255"
+            ),
             Self::MissingFontProgram(name) => write!(
                 f,
                 "PDF font program resource {:?} was not supplied",

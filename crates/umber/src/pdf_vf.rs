@@ -523,7 +523,7 @@ impl Lowerer<'_> {
             && run.font_id == artifact_font_id
             && run.baseline == baseline
         {
-            run.units.push(TextUnit::Code(code));
+            run.units.push(TextUnit::Code(u32::from(code)));
             run.positions.push(x);
             run.physical_codes.push(Some(code));
             run.sources.push(None);
@@ -533,7 +533,7 @@ impl Lowerer<'_> {
             x,
             baseline,
             font_id: artifact_font_id,
-            units: vec![TextUnit::Code(code)],
+            units: vec![TextUnit::Code(u32::from(code))],
             positions: vec![x],
             physical_codes: vec![Some(code)],
             sources: vec![None],

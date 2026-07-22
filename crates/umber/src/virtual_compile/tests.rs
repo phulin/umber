@@ -429,8 +429,8 @@ fn cmu_response(request: FontRequest) -> ResolvedFont {
     }
 }
 
-fn rendered_text_address(html: &str, code: u8) -> (u32, u32) {
-    let marker = format!("data-umber-codes=\"0x{code:02x}");
+fn rendered_text_address(html: &str, code: u32) -> (u32, u32) {
+    let marker = format!("data-umber-codes=\"0x{code:x}");
     let codes = html.find(&marker).expect("text run");
     let page_prefix = "data-umber-page=\"";
     let page_start = html[..codes]
@@ -1662,6 +1662,87 @@ fn opentype_only_font_needs_no_tfm_and_exposes_synthesized_fontdimens() {
 }
 
 #[test]
+fn html_only_opentype_retains_unicode_while_requested_dvi_rejects_it() {
+    const SOURCE: &str =
+        "\\font\\ot=opentype:cmu-serif-roman at 10pt \\ot \\shipout\\hbox{αЖ}\\end";
+    let mut html_only = VirtualCompileSession::new(SessionOptions {
+        dvi: false,
+        html: true,
+        ..SessionOptions::default()
+    })
+    .expect("HTML-only session");
+    html_only
+        .add_user_file("main.tex", SOURCE.as_bytes().to_vec())
+        .expect("Unicode source");
+    let font = resources(html_only.compile_attempt())
+        .into_iter()
+        .find_map(|request| match request {
+            ResourceRequest::Font(font) => Some(font),
+            ResourceRequest::File(_) => None,
+        })
+        .expect("OpenType request");
+    provide_cmu_font(&mut html_only, font);
+    let attempt = html_only.compile_attempt();
+    let CompileAttemptResult::Complete(output) = attempt else {
+        panic!("HTML-only Unicode compile should complete: {attempt:?}");
+    };
+    assert!(output.dvi.is_empty());
+    let html = String::from_utf8(output.html.expect("HTML output")).expect("HTML UTF-8");
+    assert!(html.contains(">αЖ</text>"), "{html}");
+    assert!(html.contains("data-umber-codes=\"0x3b1,0x416\""));
+
+    let output_id = html_only.rendered_output_id().expect("output identity");
+    let (page, event) = rendered_text_address(&html, u32::from('α'));
+    let alpha = current_render_location(
+        html_only
+            .rendered_source_location(page, event, Some(0), output_id, RevisionId::new(1))
+            .expect("alpha source query"),
+    );
+    let zhe = current_render_location(
+        html_only
+            .rendered_source_location(page, event, Some(1), output_id, RevisionId::new(1))
+            .expect("Cyrillic source query"),
+    );
+    let alpha_start = SOURCE.find('α').expect("alpha source offset");
+    let zhe_start = SOURCE.find('Ж').expect("Cyrillic source offset");
+    assert_eq!(
+        (alpha.start as usize, alpha.end as usize),
+        (alpha_start, alpha_start + 2)
+    );
+    assert_eq!(
+        (zhe.start as usize, zhe.end as usize),
+        (zhe_start, zhe_start + 2)
+    );
+
+    let mut joint = VirtualCompileSession::new(SessionOptions {
+        dvi: true,
+        html: true,
+        ..SessionOptions::default()
+    })
+    .expect("joint session");
+    joint
+        .add_user_file("main.tex", SOURCE.as_bytes().to_vec())
+        .expect("Unicode source");
+    let font = resources(joint.compile_attempt())
+        .into_iter()
+        .find_map(|request| match request {
+            ResourceRequest::Font(font) => Some(font),
+            ResourceRequest::File(_) => None,
+        })
+        .expect("OpenType request");
+    provide_cmu_font(&mut joint, font);
+    let CompileAttemptResult::Error(error) = joint.compile_attempt() else {
+        panic!("joint DVI/HTML Unicode compile must reject TeX82 DVI");
+    };
+    assert!(
+        error
+            .to_string()
+            .contains("DVI TeX82 character code 945 is outside 0..=255"),
+        "{error}"
+    );
+}
+
+#[test]
 fn opentype_only_font_rejects_classic_math_family_assignment() {
     let mut session = VirtualCompileSession::new(SessionOptions {
         html: true,
@@ -2122,7 +2203,7 @@ fn requested_html_and_dvi_share_one_committed_compile() {
     assert!(html.contains(">A</text>"));
     assert!(output.html_assets.is_empty());
 
-    let (page, event) = rendered_text_address(&html, b'A');
+    let (page, event) = rendered_text_address(&html, u32::from(b'A'));
     let retention_before = session.retention_metrics().expect("accepted retention");
     let location = current_render_location(
         session
@@ -2172,7 +2253,7 @@ fn requested_html_and_dvi_share_one_committed_compile() {
     let html = String::from_utf8(output.html.expect("patched HTML output")).expect("HTML UTF-8");
     assert!(html.contains("data-umber-page=\"1\" data-umber-revision=\"2\""));
     assert!(html.contains(&format!("data-umber-output=\"{output_id}\"")));
-    let (page, event) = rendered_text_address(&html, b'B');
+    let (page, event) = rendered_text_address(&html, u32::from(b'B'));
     assert_eq!(
         session
             .rendered_source_location(page, event, Some(0), output_id, RevisionId::new(1))
@@ -2272,7 +2353,7 @@ fn rendered_source_location_survives_paragraph_line_breaking() {
     };
     let html = String::from_utf8(output.html.expect("HTML output")).expect("HTML UTF-8");
     assert!(html.matches("class=\"umber-run\"").count() >= 2);
-    let (page, event) = rendered_text_address(&html, b'B');
+    let (page, event) = rendered_text_address(&html, u32::from(b'B'));
     let output_id = session
         .rendered_output_id()
         .expect("rendered output identity");
@@ -2339,7 +2420,7 @@ fn rendered_source_location_survives_math_layout() {
         }
     };
     let html = String::from_utf8(output.html.expect("HTML output")).expect("HTML UTF-8");
-    let (page, event) = rendered_text_address(&html, b'A');
+    let (page, event) = rendered_text_address(&html, u32::from(b'A'));
     let output_id = session
         .rendered_output_id()
         .expect("rendered output identity");

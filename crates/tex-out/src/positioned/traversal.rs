@@ -155,11 +155,7 @@ impl Lowerer<'_> {
                         *font_id,
                         CharacterUnit {
                             source_code: *ch,
-                            physical_code: Some(
-                                u8::try_from(*ch).map_err(|_| {
-                                    PositionedError::CharacterOutOfRange { ch: *ch }
-                                })?,
-                            ),
+                            physical_code: u8::try_from(*ch).ok(),
                             source: PositionedSourceRef {
                                 node_ordinal,
                                 source_index: 0,
@@ -189,11 +185,8 @@ impl Lowerer<'_> {
                             CharacterUnit {
                                 source_code: *code,
                                 physical_code: (source_index == 0)
-                                    .then(|| u8::try_from(*ch))
-                                    .transpose()
-                                    .map_err(|_| PositionedError::CharacterOutOfRange {
-                                        ch: *ch,
-                                    })?,
+                                    .then(|| u8::try_from(*ch).ok())
+                                    .flatten(),
                                 source: PositionedSourceRef {
                                     node_ordinal,
                                     source_index: u16::try_from(source_index).map_err(|_| {
@@ -759,11 +752,6 @@ impl RunBuilder {
         baseline: Scaled,
         limits: PositionedLimits,
     ) -> Result<(), PositionedError> {
-        let code = u8::try_from(character.source_code).map_err(|_| {
-            PositionedError::CharacterOutOfRange {
-                ch: character.source_code,
-            }
-        })?;
         debug_assert!(self.font_id.is_none_or(|current| current == font_id));
         if self.font_id.is_none() {
             self.font_id = Some(font_id);
@@ -772,7 +760,7 @@ impl RunBuilder {
         }
         self.resolve_pending_space(limits)?;
         self.add_unit(
-            TextUnit::Code(code),
+            TextUnit::Code(character.source_code),
             x,
             character.physical_code,
             Some(character.source),

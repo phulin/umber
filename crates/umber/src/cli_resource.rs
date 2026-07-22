@@ -42,6 +42,7 @@ pub struct NativeRunOptions {
     pub format: Option<PathBuf>,
     pub initial_prefetch_keys: Vec<String>,
     pub engine: EngineMode,
+    pub dvi: bool,
     pub html: bool,
     pub distribution: Option<String>,
     pub distribution_sha256: Option<String>,
@@ -348,6 +349,7 @@ impl NativeCompileSession {
                 engine_fuel,
                 ..SessionLimits::default()
             },
+            dvi: options.dvi,
             html: options.html,
             accepted_font_containers: if options.html {
                 AcceptedFontContainers::WASM

@@ -79,7 +79,7 @@ fn page(stores: &mut Universe, root: FontId) -> PositionedPage {
             x: Scaled::from_raw(100),
             baseline: Scaled::from_raw(1_000),
             font_id: 0,
-            units: vec![TextUnit::Code(b'A')],
+            units: vec![TextUnit::Code(u32::from(b'A'))],
             positions: vec![Scaled::from_raw(100)],
             physical_codes: vec![Some(b'A')],
             sources: vec![None],
@@ -258,8 +258,10 @@ fn repeated_virtual_characters_share_one_leaf_run() {
         PositionedEvent::TextRun(run) => run,
         other => panic!("expected text run, got {other:?}"),
     };
-    run.units
-        .extend([TextUnit::Code(b'A'), TextUnit::Code(b'A')]);
+    run.units.extend([
+        TextUnit::Code(u32::from(b'A')),
+        TextUnit::Code(u32::from(b'A')),
+    ]);
     run.positions
         .extend([Scaled::from_raw(200), Scaled::from_raw(300)]);
     run.physical_codes.extend([Some(b'A'), Some(b'A')]);
@@ -273,7 +275,7 @@ fn repeated_virtual_characters_share_one_leaf_run() {
     let PositionedEvent::TextRun(run) = &pages[0].events[0] else {
         panic!("expected coalesced text run");
     };
-    assert_eq!(run.units, [TextUnit::Code(b'A'); 3]);
+    assert_eq!(run.units, [TextUnit::Code(u32::from(b'A')); 3]);
     assert_eq!(run.positions.len(), 3);
     assert_eq!(run.physical_codes, [Some(b'A'); 3]);
 }

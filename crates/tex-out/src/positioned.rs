@@ -122,7 +122,8 @@ pub struct PositionedSourceRef {
 /// explicitly resolved web-font encoding; spaces arise from shipped glue.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum TextUnit {
-    Code(u8),
+    /// The artifact's complete Unicode/legacy source scalar.
+    Code(u32),
     Space,
 }
 

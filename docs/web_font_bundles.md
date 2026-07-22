@@ -361,6 +361,12 @@ object. HTML generation later uses those exact bytes in embedded mode or
 returns them once under a content-addressed asset name in manifest mode. No
 second fetch or post-layout font-finalization state is needed.
 
+Browser sessions that need full OpenType Unicode without classic DVI select
+`dvi: false`. Shipout still commits the identical artifact and positioned
+source provenance, but does not construct TeX82 byte-code plans. The default
+remains DVI-enabled; requesting DVI together with HTML preserves the typed
+out-of-range capability error for scalars above U+00FF.
+
 Worker wrappers transfer font bytes as `Uint8Array` values and include them in
 the existing one-object, cached-resource, and aggregate-output budgets.
 Cancellation, concurrency, in-flight joining, persistent storage, and eviction

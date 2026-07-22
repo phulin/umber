@@ -446,7 +446,7 @@ fn unavailable_text_mapping_is_actionable() {
         error,
         HtmlError::MissingTextMapping {
             font: "cmr10".to_owned(),
-            code: b'B'
+            code: u32::from(b'B')
         }
     );
 }

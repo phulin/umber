@@ -20,8 +20,11 @@ export function renderedSourceKeyFromPoint(document, x, y, options = {}) {
 	const revision = unsignedInteger(page.dataset?.umberRevision, 1);
 	const output = outputIdentity(page.dataset?.umberOutput);
 	const codes = parseCodes(run.dataset?.umberCodes);
-	const encoding = selectEncoding(run.dataset?.umberFont, options);
-	const unit = unitAtOffset(codes, encoding, caret.offset);
+	const unicode = run.dataset?.umberTextKind === "unicode";
+	const encoding = unicode
+		? null
+		: selectEncoding(run.dataset?.umberFont, options);
+	const unit = unitAtOffset(codes, encoding, caret.offset, unicode);
 	if (
 		pageOrdinal === null ||
 		event === null ||
@@ -67,8 +70,10 @@ function parseCodes(value) {
 	for (const token of value.split(",")) {
 		if (token === "space") {
 			codes.push(null);
-		} else if (/^0x[0-9a-f]{2}$/i.test(token)) {
-			codes.push(Number.parseInt(token.slice(2), 16));
+		} else if (/^0x[0-9a-f]{1,6}$/i.test(token)) {
+			const code = Number.parseInt(token.slice(2), 16);
+			if (code > 0x10ffff || (code >= 0xd800 && code <= 0xdfff)) return null;
+			codes.push(code);
 		} else {
 			return null;
 		}
@@ -76,13 +81,19 @@ function parseCodes(value) {
 	return codes;
 }
 
-function unitAtOffset(codes, encoding, offset) {
-	if (!Array.isArray(codes) || !Array.isArray(encoding)) return null;
+function unitAtOffset(codes, encoding, offset, unicode) {
+	if (!Array.isArray(codes) || (!unicode && !Array.isArray(encoding)))
+		return null;
 	if (!Number.isInteger(offset) || offset < 0) return null;
 	let end = 0;
 	let last = null;
 	for (let unit = 0; unit < codes.length; unit += 1) {
-		const mapped = codes[unit] === null ? " " : encoding[codes[unit]];
+		const mapped =
+			codes[unit] === null
+				? " "
+				: unicode
+					? String.fromCodePoint(codes[unit])
+					: encoding[codes[unit]];
 		if (typeof mapped !== "string" || mapped.length === 0) return null;
 		end += mapped.length;
 		last = unit;

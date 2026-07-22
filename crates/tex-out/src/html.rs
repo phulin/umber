@@ -185,13 +185,13 @@ pub enum HtmlError {
     FontResolution { font: String, message: String },
     FontKeyMismatch { font: String },
     InvalidEncodingLength { font: String, count: usize },
-    MissingTextMapping { font: String, code: u8 },
+    MissingTextMapping { font: String, code: u32 },
     MissingFontGlyph { font: String, code: u8, ch: char },
     MissingMathFontInstance,
     MathGlyphMismatch { glyph_id: u16 },
     MissingMathGlyphOutline { glyph_id: u16 },
     InvalidMathEventSequence,
-    UnsafeTextMapping { font: String, code: u8 },
+    UnsafeTextMapping { font: String, code: u32 },
     EmptyFontAsset { font: String },
     CorruptFontAsset { font: String },
     UnlicensedFont { font: String },
@@ -348,7 +348,16 @@ pub fn write_html<R: HtmlFontResolver>(
                 },
             )
             .map_err(HtmlError::from)?;
-            crate::dvi::coordinates::compare_page(page, &positioned).map_err(HtmlError::from)?;
+            if positioned.events.iter().all(|event| match event {
+                PositionedEvent::TextRun(run) => run.units.iter().all(|unit| match unit {
+                    TextUnit::Code(code) => u8::try_from(*code).is_ok(),
+                    TextUnit::Space => true,
+                }),
+                _ => true,
+            }) {
+                crate::dvi::coordinates::compare_page(page, &positioned)
+                    .map_err(HtmlError::from)?;
+            }
             Ok::<PositionedPage, HtmlError>(positioned)
         })
         .collect::<Result<Vec<_>, _>>()?;
@@ -763,7 +772,11 @@ fn write_page(
                     .and_then(|remaining| remaining.checked_sub(accessible.len()))
                     .unwrap_or(0)
                     / 6;
-                let text = map_text(event.units.as_slice(), font, text_budget)?;
+                let mapped_encoding = artifact_font
+                    .opentype
+                    .as_ref()
+                    .is_none_or(|opentype| opentype.encoding_map_version.is_some());
+                let text = map_text(event.units.as_slice(), font, mapped_encoding, text_budget)?;
                 accessible.push_str(&text);
                 out.push_str("<svg class=\"umber-run\" aria-hidden=\"true\" data-umber-event=\"");
                 out.push_str(&ordinal.to_string());
@@ -782,6 +795,12 @@ fn write_page(
                 }
                 out.push_str("\" data-umber-codes=\"");
                 write_codes(out, &event.units);
+                out.push_str("\" data-umber-text-kind=\"");
+                out.push_str(if mapped_encoding {
+                    "encoding"
+                } else {
+                    "unicode"
+                });
                 out.push_str("\" style=\"font-family:'");
                 out.push_str(&font.family);
                 out.push_str("';font-size:");
@@ -829,9 +848,12 @@ fn write_page(
                 let exact_character_positions = event.positions.len() == event.units.len()
                     && event.units.iter().all(|unit| match unit {
                         TextUnit::Space => true,
-                        TextUnit::Code(code) => font.web.encoding[usize::from(*code)]
-                            .as_ref()
+                        TextUnit::Code(code) if mapped_encoding => usize::try_from(*code)
+                            .ok()
+                            .and_then(|code| font.web.encoding.get(code))
+                            .and_then(Option::as_ref)
                             .is_some_and(|mapping| mapping.chars().count() == 1),
+                        TextUnit::Code(code) => char::from_u32(*code).is_some(),
                     });
                 if exact_character_positions {
                     for (index, position) in event.positions.iter().enumerate() {
@@ -1350,6 +1372,7 @@ fn safe_identifier(id: &str) -> bool {
 fn map_text(
     units: &[TextUnit],
     font: &ResolvedFont,
+    mapped_encoding: bool,
     max_bytes: usize,
 ) -> Result<String, HtmlError> {
     let mut text = String::new();
@@ -1369,12 +1392,25 @@ fn map_text(
                 text.push(' ');
             }
             TextUnit::Code(code) => {
-                let mapping = font.web.encoding[usize::from(*code)].as_ref().ok_or(
-                    HtmlError::MissingTextMapping {
-                        font: font.web.key.name.clone(),
-                        code: *code,
-                    },
-                )?;
+                let direct;
+                let mapping = if mapped_encoding {
+                    usize::try_from(*code)
+                        .ok()
+                        .and_then(|code| font.web.encoding.get(code))
+                        .and_then(Option::as_ref)
+                        .ok_or_else(|| HtmlError::MissingTextMapping {
+                            font: font.web.key.name.clone(),
+                            code: *code,
+                        })?
+                } else {
+                    direct = char::from_u32(*code)
+                        .ok_or_else(|| HtmlError::MissingTextMapping {
+                            font: font.web.key.name.clone(),
+                            code: *code,
+                        })?
+                        .to_string();
+                    &direct
+                };
                 if mapping
                     .chars()
                     .any(|ch| ch == '\0' || (ch.is_control() && ch != '\t'))
@@ -1513,7 +1549,7 @@ fn write_codes(out: &mut String, units: &[TextUnit]) {
         match unit {
             TextUnit::Code(code) => {
                 out.push_str("0x");
-                out.push_str(&format!("{code:02x}"));
+                out.push_str(&format!("{code:x}"));
             }
             TextUnit::Space => out.push_str("space"),
         }

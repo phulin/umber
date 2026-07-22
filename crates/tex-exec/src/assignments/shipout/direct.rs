@@ -26,7 +26,7 @@ const MAX_SHIPOUT_DEPTH: usize = 4096;
 
 pub(super) struct StagedShipout {
     pub(super) artifact: VerifiedArtifact,
-    pub(super) dvi_plan: DviPagePlan,
+    pub(super) dvi_plan: Option<DviPagePlan>,
     pub(super) effect_pos: tex_state::EffectPos,
     pub(super) retained_diagnostics: Vec<(PrintSink, String)>,
 }
@@ -197,8 +197,11 @@ pub(super) fn stage_shipout(
     // Phase B holds only an immutable state view. One compact-list walk feeds
     // the canonical writer and DVI state machine together.
     let mut encoder = V10ArtifactBuilder::new(job.clone(), counts, &root, vertical);
-    let mut dvi =
-        DviPagePlanBuilder::new(job, counts, &root, vertical).map_err(invalid_artifact)?;
+    let mut dvi = execution
+        .emits_dvi()
+        .then(|| DviPagePlanBuilder::new(job, counts, &root, vertical))
+        .transpose()
+        .map_err(invalid_artifact)?;
     let mut emission = EmissionState {
         fonts: Vec::new(),
         live_fonts: Vec::new(),
@@ -215,7 +218,7 @@ pub(super) fn stage_shipout(
             &overlay,
             children,
             output,
-            Some(&mut dvi),
+            dvi.as_mut(),
             &mut emission,
             false,
             1,
@@ -232,7 +235,9 @@ pub(super) fn stage_shipout(
     let artifact_bytes = encoder
         .finish(&emission.fonts, &overlay.effects)
         .map_err(invalid_artifact)?;
-    let streamed_dvi_plan = dvi.finish(&emission.fonts).map_err(invalid_artifact)?;
+    let streamed_dvi_plan = dvi
+        .map(|dvi| dvi.finish(&emission.fonts).map_err(invalid_artifact))
+        .transpose()?;
     let dvi_plan = if needs_positioned_shipout(&overlay.effects) {
         let artifact =
             tex_out::PageArtifact::from_bytes(&artifact_bytes).map_err(invalid_artifact)?;
@@ -246,8 +251,8 @@ pub(super) fn stage_shipout(
                     | PageEffect::PdfSnapYComp { .. }
             )
         });
-        let dvi_plan = if snapping {
-            DviPagePlan::compile(&artifact).map_err(invalid_artifact)?
+        let dvi_plan = if snapping && execution.emits_dvi() {
+            Some(DviPagePlan::compile(&artifact).map_err(invalid_artifact)?)
         } else {
             streamed_dvi_plan
         };

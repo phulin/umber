@@ -134,10 +134,24 @@ pub fn compare_page(
                     .units
                     .iter()
                     .filter_map(|unit| match unit {
-                        TextUnit::Code(code) => Some(*code),
+                        TextUnit::Code(code) => Some(u8::try_from(*code)),
                         TextUnit::Space => None,
                     })
-                    .collect::<Vec<_>>();
+                    .collect::<Result<Vec<_>, _>>()
+                    .map_err(|_| {
+                        CoordinateError::Dvi(DviError::CharacterOutOfRange {
+                            ch: actual
+                                .units
+                                .iter()
+                                .find_map(|unit| match unit {
+                                    TextUnit::Code(code) if u8::try_from(*code).is_err() => {
+                                        Some(*code)
+                                    }
+                                    _ => None,
+                                })
+                                .unwrap_or(u32::MAX),
+                        })
+                    })?;
                 let mut found_codes = Vec::new();
                 let mut first = true;
                 while found_codes.len() < wanted_codes.len() {

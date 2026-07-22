@@ -329,10 +329,10 @@ async function integration() {
 }
 
 async function compileExplicitOpenType(woff2) {
-	const text = "µ £ ¥ é AV office";
+	const text = "αβ ЖЯ µ £ ¥ é AV office";
 	const requests = [];
 	const output = await compile(
-		{ mainPath: "unicode.tex", html: {} },
+		{ mainPath: "unicode.tex", dvi: false, html: {} },
 		new Map([
 			[
 				"unicode.tex",
@@ -365,6 +365,10 @@ async function compileExplicitOpenType(woff2) {
 	assert(
 		output.html instanceof Uint8Array,
 		"explicit OpenType returned no HTML",
+	);
+	assert(
+		output.dvi.byteLength === 0,
+		"HTML-only compile unexpectedly returned DVI",
 	);
 	const iframe = await installGeneratedHtml(
 		output.html,

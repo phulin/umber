@@ -18,6 +18,10 @@ hosts and the WebAssembly binding. It composes the typed resource protocol in
 - detached output for the most recently accepted revision.
 
 The existing `advance()`/`compile_attempt()` operation drives every state.
+Session options also fix output capabilities before the first candidate runs.
+DVI remains enabled by default; `dvi: false` with HTML requested suppresses
+DVI plan construction while retaining committed artifacts and rendered-source
+sidecars. Output capabilities cannot change between accepted revisions.
 Before the first accepted revision it executes the configured main user file.
 After `apply_patch` it executes the pending revision. Either execution may
 return `NeedResources`; the caller provides those resources and calls
@@ -299,8 +303,9 @@ and `data-umber-event`; every page pairs its ordinal with the accepted
 so a browser can translate a pointer hit into an optional text-unit index.
 The native session and `CompilerSession.renderedSourceLocation` expose the
 producer- and revision-checked lazy query below. The authored `source-map.js` companion reads
-the page identity, revision, and event metadata from canonical HTML and translates DOM
-caret offsets into the corresponding text unit before making this call:
+the page identity, revision, event metadata, and text-kind marker from canonical HTML and
+translates DOM caret offsets into the corresponding mapped-code or direct-Unicode text
+unit before making this call. Supplementary scalars use their actual UTF-16 length:
 
 ```text
 rendered_source_location(page, event, unit?, dom_output, dom_revision)

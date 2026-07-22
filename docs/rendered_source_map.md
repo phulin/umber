@@ -150,9 +150,11 @@ constructed on demand.
 Rust owns `event/unit -> source`. The authored JS package owns
 `DOM point -> (page, event, unit)`: a small `source-map.js` companion to
 `html-preview.js` converts `caretPositionFromPoint` text offsets into unit
-indexes using `data-umber-codes` and the font encoding tables the package
-already ships (`cm-fonts.js`). Encoding entries may map one code to multiple
-scalars, so this offset arithmetic must live beside the encoding data, not
+indexes using `data-umber-codes`, `data-umber-text-kind`, and the font encoding
+tables the package already ships (`cm-fonts.js`). Encoding entries may map one
+code to multiple scalars; direct OpenType runs instead carry full Unicode
+scalar values and are counted through their actual UTF-16 length. This offset
+arithmetic must live beside the encoding data, not
 be re-derived by applications. This helper reads only attributes already in
 the HTML; it needs no exported tables. `renderedSourceKeyFromPoint` returns
 `{ page, event, unit, output, revision }`; `renderedSourceLocationFromPoint` passes that

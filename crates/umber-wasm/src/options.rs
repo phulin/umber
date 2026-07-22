@@ -56,6 +56,7 @@ pub(crate) fn parse_options(value: &JsValue) -> Result<SessionOptions, JsValue> 
             }
         };
     }
+    options.dvi = optional_bool(value, "dvi")?.unwrap_or(true);
     options.html = !field(value, "html")?.is_undefined() && !field(value, "html")?.is_null();
     options.font_layout_policy = match optional_string(value, "fontLayoutPolicy")?.as_deref() {
         None => umber::FontLayoutPolicy::OpenTypePreferred,
@@ -484,6 +485,17 @@ fn required_bytes(object: &JsValue, name: &str) -> Result<Vec<u8>, JsValue> {
 fn required_bool(object: &JsValue, name: &str) -> Result<bool, JsValue> {
     field(object, name)?
         .as_bool()
+        .ok_or_else(|| js_error(&format!("{name} must be a boolean")))
+}
+
+fn optional_bool(object: &JsValue, name: &str) -> Result<Option<bool>, JsValue> {
+    let value = field(object, name)?;
+    if absent(&value) {
+        return Ok(None);
+    }
+    value
+        .as_bool()
+        .map(Some)
         .ok_or_else(|| js_error(&format!("{name} must be a boolean")))
 }
 

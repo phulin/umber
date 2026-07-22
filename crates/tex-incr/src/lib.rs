@@ -523,6 +523,7 @@ pub struct Session {
     accepted_retention: Option<RetentionMetrics>,
     dumped_format: bool,
     utf8_input_as_bytes: bool,
+    dvi_output: bool,
     root_source_is_byte_projection: bool,
     expansion_stats: tex_lex::ExpansionStats,
     render_maps: RefCell<RenderMapCache>,
@@ -642,6 +643,7 @@ impl Session {
             accepted_retention: None,
             dumped_format: false,
             utf8_input_as_bytes: false,
+            dvi_output: true,
             root_source_is_byte_projection,
             expansion_stats: tex_lex::ExpansionStats::default(),
             render_maps: RefCell::default(),
@@ -673,6 +675,18 @@ impl Session {
             "input decoding mode cannot change after execution starts"
         );
         self.utf8_input_as_bytes = enabled;
+    }
+
+    /// Selects whether candidates prepare classic TeX82 DVI page plans.
+    ///
+    /// Artifacts are always committed for downstream outputs. This capability
+    /// must be fixed before execution so every revision has one output policy.
+    pub fn set_dvi_output(&mut self, enabled: bool) {
+        assert!(
+            self.history.is_empty(),
+            "DVI output selection cannot change after execution starts"
+        );
+        self.dvi_output = enabled;
     }
 
     #[must_use]
@@ -777,7 +791,7 @@ impl Session {
         Ok(RevisionCandidate {
             input,
             universe,
-            run: ExecutionRun::new(&self.job_name),
+            run: ExecutionRun::new(&self.job_name).with_dvi_output(self.dvi_output),
             sink: CandidateSink::Cold(HistorySink::default()),
             memo,
             completed: None,
@@ -873,7 +887,7 @@ impl Session {
                 Ok(RevisionCandidate {
                     input,
                     universe,
-                    run: ExecutionRun::new(&self.job_name),
+                    run: ExecutionRun::new(&self.job_name).with_dvi_output(self.dvi_output),
                     sink: CandidateSink::Cold(HistorySink::default()),
                     memo,
                     completed: None,
@@ -916,7 +930,8 @@ impl Session {
                         nest,
                         ExecutionState::default(),
                         false,
-                    ),
+                    )
+                    .with_dvi_output(self.dvi_output),
                     sink: CandidateSink::Advance(ResumeSink::new(
                         &setup.old_history,
                         restart,

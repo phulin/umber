@@ -101,8 +101,11 @@ overlap following material; it is clipped only by the page, never wrapped or
 used to move another event. `white-space: pre`, `text-wrap: nowrap`, fixed
 positioned containers, and zero layout participation preserve TeX's line set.
 
-Character codes are retained in `source_codes`; `text` is obtained from an
-explicit encoding map supplied with the web font. Artifact schema 12 records
+Character scalars are retained as `u32` values in `source_codes`. Explicit
+OpenType-only runs serialize those scalars directly as Unicode text; mapped
+TFM runs obtain text from the exact encoding map supplied with the web font.
+The positioned representation keeps physical DVI codes separately as optional
+bytes, so retaining Unicode does not widen TeX82 DVI. Artifact schema 12 records
 the complete source sequence for a ligature, including every character in
 `ffi` and `ffl`, instead of retaining only its endpoints. Discretionary replacement nodes are already the shipped
 choice and are traversed as such. Math uses its actual font/code mapping and
@@ -285,9 +288,12 @@ limit, and required minimum. Unsupported direction changes, ambiguous text
 mappings, malformed allowed specials, coordinate overflow, and unavailable
 fonts are actionable errors in parity mode; no partial HTML is published.
 
-Native finalization stages HTML/assets alongside DVI and commits engine effects
-before atomically publishing driver files. The host-neutral compile session can
-request DVI, HTML, or both from the same committed receipts. WASM returns HTML
+Native finalization stages requested outputs and commits engine effects before
+atomically publishing driver files. The host-neutral compile session fixes its
+output capabilities before execution: HTML-only shipout commits artifacts and
+Unicode render provenance without preparing DVI page plans, while a session
+that requests DVI (alone or with HTML) applies the unchanged TeX82 byte-code
+validation and returns its typed capability error for larger scalars. WASM returns HTML
 and assets as `Uint8Array` fields under the existing aggregate output budget;
 JavaScript owns asynchronous acquisition, caching, cancellation, and safe DOM
 installation. Rust owns lowering, exact coordinates, font validation, and
@@ -295,9 +301,10 @@ serialization.
 
 ## Conformance oracle
 
-Every artifact-to-HTML conversion runs an exact comparator between the
-driver-neutral events and an independently instrumented canonical DVI
-traversal before serialization. It rejects a one-sp change in page
+Every TeX82-DVI-compatible artifact-to-HTML conversion runs an exact comparator
+between the driver-neutral events and an independently instrumented canonical
+DVI traversal before serialization. Unicode-only pages do not manufacture a
+DVI traversal merely to publish HTML. The comparator rejects a one-sp change in page
 origin, run anchor/baseline, rule edge, leader instance, event order, or special
 anchor. It explicitly accepts changed child glyph positions, advances,
 ligature selection, ink bounds, and run width. Browser tests inspect page,

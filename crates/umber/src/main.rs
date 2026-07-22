@@ -89,6 +89,7 @@ fn run_tex(opts: &RunCliOptions) -> Result<(), CliError> {
             format: opts.format.clone(),
             initial_prefetch_keys: opts.initial_prefetch_keys.clone(),
             engine: opts.engine,
+            dvi: opts.dvi.is_some(),
             html: false,
             distribution: opts.distribution.clone(),
             distribution_sha256: opts.distribution_sha256.clone(),

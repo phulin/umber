@@ -149,10 +149,12 @@ fontdimens.
 - OpenType-selected fonts check the real `cmap` for character existence
   instead of `u8::try_from`, which alone fixes the false "missing character"
   behavior independent of shaping.
-- `tex-out`'s `PageNode::Char { ch: u32, .. }` already carries a `u32`; only
-  `validate_character()`'s `ch <= u8::MAX` clamp needs relaxing, and only for
-  fonts whose `FontResource.opentype` is present. Classic-DVI output stays
-  byte-clamped, correctly, since real DVI opcodes are bytes.
+- `tex-out`'s `PageNode::Char { ch: u32, .. }` and positioned `TextUnit::Code`
+  carry the complete scalar. The positioned run retains a separate optional
+  physical byte for legacy PDF/DVI consumers. HTML-only sessions omit DVI plan
+  construction and publish the Unicode scalar unchanged; any session requesting
+  classic DVI stays byte-clamped and returns the typed TeX82 capability error,
+  since real DVI opcodes are bytes.
 
 ## `\font` semantics for OpenType-only fonts
 

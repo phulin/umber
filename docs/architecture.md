@@ -281,8 +281,11 @@ register overflow, code-table updates, and effect recording all pass through
 the same barriered ownership boundary. Recursive scanners may use ordinary
 Rust locals, but only executor-named quiescent boundaries are restartable.
 
-Shipout decodes compact node words sequentially and drives artifact encoding
-and DVI page-plan construction without an ordinary-path owned page tree. A
+Shipout decodes compact node words sequentially and always drives artifact
+encoding without an ordinary-path owned page tree. DVI page-plan construction
+is a session-selected capability: classic/default sessions fuse it into the
+same traversal, while HTML-only sessions omit it so artifact Unicode above
+U+00FF reaches downstream positioned output. A
 localized owned payload remains permitted where DVI leader replay requires
 repetition. Artifacts, effects, and prepared plans publish only after the
 shipout transaction commits.
@@ -356,7 +359,11 @@ one execution-driven traversal. Durable replay validates the requested content
 identity and schema before producing output. `tex-out` never receives
 `Universe`, node handles, or mutable store access.
 
-DVI remains the exact compatibility output. Fixed OpenType math is an ordered,
+DVI remains the exact compatibility output and retains its byte character
+boundary. Positioned prose stores source scalars as `u32` and keeps physical
+DVI codes as a separate optional byte column; requesting DVI therefore reports
+the existing typed capability error rather than weakening or truncating it.
+Fixed OpenType math is an ordered,
 validated overlay detached from the legacy page tree, so schemas 12 through 22
 still decode with an empty overlay and DVI replay remains unchanged. Each math
 glyph carries its font-instance identity, selected glyph id, cmap or
