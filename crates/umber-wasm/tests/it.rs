@@ -153,11 +153,22 @@ fn fixed_math_artifact_schema_round_trips_in_wasm() {
             tfm_checksum: 0,
             design_size: sp(655_360),
             at_size: sp(655_360),
+            layout_policy: tex_fonts::FontLayoutPolicy::OpenTypePreferred,
+            mapping_fallback: None,
             opentype: Some(OpenTypeFontResource {
                 program_identity: tex_fonts::FontProgramIdentity::from_bytes([1; 32]),
                 object_identity: tex_fonts::FontObjectIdentity::from_bytes([2; 32]),
                 instance_identity: instance,
                 container: tex_fonts::FontContainer::Woff2,
+                face_index: 0,
+                variation: tex_fonts::VariationSelection::default(),
+                features: tex_fonts::FontFeaturePolicy::default(),
+                direction: tex_fonts::WritingDirection::LeftToRight,
+                script: None,
+                language: None,
+                encoding_map_version: None,
+                encoding_map_identity: None,
+                fontdimen_synthesis_version: None,
             }),
             semantic_identity: tex_fonts::FontSourceIdentity::from_bytes([4; 32]),
             construction: FontResourceConstruction::Loaded,
@@ -207,7 +218,7 @@ fn fixed_math_artifact_schema_round_trips_in_wasm() {
     .expect("valid math artifact");
 
     let bytes = artifact.to_bytes().expect("serialize in wasm");
-    assert_eq!(bytes[4], 20);
+    assert_eq!(bytes[4], 23);
     assert_eq!(
         tex_out::PageArtifact::from_bytes(&bytes).expect("parse in wasm"),
         artifact
