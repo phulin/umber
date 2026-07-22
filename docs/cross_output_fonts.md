@@ -52,6 +52,15 @@ to finalize one requested output. The session acquires the deduplicated union
 of the engine closure and only the requested driver closures. A resource
 required by two closures is registered and validated once.
 
+The implementation exposes this decision as
+`umber::OutputResourcePlan` (plan version 1). Each planned request records its
+engine/DVI/PDF/HTML owner, semantic purpose, and required/probe/prefetch mode;
+the union retains every reason while deduplicating by the complete typed
+request key. The same Rust planner feeds native and WASM session batches.
+Placement validation rejects an HTML-owned legacy PDF/DVI file class before a
+host resolver is invoked, and the session resource-count limit applies after
+union deduplication.
+
 ## 2. Layout authority
 
 The chosen authority is compilation-wide and is recorded per loaded font and

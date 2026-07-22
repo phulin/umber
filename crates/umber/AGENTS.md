@@ -41,6 +41,8 @@ Use this crate when behavior is about driving the engine, presenting CLI output,
 - `src/pdf_vf/tests.rs`: synthetic packet execution, recursion, resource-selection, and lowering-limit tests.
 - `src/virtual_compile.rs`: host-neutral persistent compile session, versioned mapped-TFM layout policy, revision-checked root patches, shared-VFS file/OpenType resource retries, atomic response registration, retained immutable resources, and composed resource accounting.
 - `src/virtual_compile/path.rs`: logical TeX/TFM request normalization over `umber-vfs` canonical paths.
+- `src/virtual_compile/output_resources.rs`: versioned output-neutral engine/DVI/PDF/HTML resource-closure planning, placement validation, reason attribution, and bounded union deduplication.
+- `src/virtual_compile/output_resources/tests.rs`: exact capability-combination, placement, union, and budget planner coverage.
 - `src/virtual_compile/pdf_resources.rs`: post-execution typed VF/local-TFM/map/encoding/program closure discovery and immutable parsed cache.
 - `src/virtual_compile/resolvers.rs`: VFS-snapshot-backed input/font resolvers that register selected bytes through World, with typed missing-file and logical OpenType-font side state.
 - `src/virtual_compile/tests.rs`: native retry, path, precedence, limits, format, effect-isolation, font batching, and DVI coverage.

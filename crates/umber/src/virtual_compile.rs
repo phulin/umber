@@ -19,9 +19,15 @@ use crate::{
     prepare_pdflatex_run_stores, prepare_pdftex_run_stores, prepare_run_stores,
 };
 
+mod output_resources;
 mod path;
 mod pdf_resources;
 mod resolvers;
+pub use output_resources::{
+    DriverResourceClosure, MissingOutputResource, OUTPUT_RESOURCE_PLAN_VERSION, OutputResourcePlan,
+    PlannedResource, ResourceClosureOwner, ResourcePlanError, ResourcePurpose, ResourceReason,
+    ResourceRequestMode,
+};
 pub use pdf_resources::{CachedLocalTfm, CachedVirtualFont, PdfVirtualFontResources};
 pub(crate) use resolvers::parse_image;
 
@@ -577,6 +583,7 @@ pub struct VirtualCompileSession {
     pending_patch: Option<(tex_incr::RevisionId, tex_incr::Edit)>,
     candidate: Option<RetainedCandidate>,
     response_generation: u64,
+    last_resource_plan: OutputResourcePlan,
     virtual_font_resources: PdfVirtualFontResources,
     last_reuse: Option<tex_incr::ReuseMetrics>,
     initial_revision: tex_incr::RevisionId,
@@ -746,6 +753,10 @@ impl VirtualCompileSession {
             pending_patch: None,
             candidate: None,
             response_generation: 0,
+            last_resource_plan: OutputResourcePlan::empty(
+                options.outputs,
+                options.font_layout_policy,
+            ),
             virtual_font_resources: PdfVirtualFontResources::default(),
             last_reuse: None,
             initial_revision,
@@ -1089,6 +1100,12 @@ impl VirtualCompileSession {
             self.refresh_candidate_files()?;
         }
         result
+    }
+
+    /// Most recent inspectable placement plan emitted by resource acquisition.
+    #[must_use]
+    pub const fn output_resource_plan(&self) -> &OutputResourcePlan {
+        &self.last_resource_plan
     }
 
     fn refresh_candidate_files(&mut self) -> Result<(), CompileError> {
@@ -1576,6 +1593,68 @@ impl VirtualCompileSession {
             } else {
                 Vec::new()
             };
+            let mut planner = output_resources::OutputResourcePlanner::new(
+                self.outputs,
+                self.font_layout_policy,
+                self.limits.resolved_files,
+            );
+            for request in &required {
+                planner
+                    .add(
+                        ResourceClosureOwner::Engine,
+                        output_resources::engine_purpose(request),
+                        ResourceRequestMode::Required,
+                        request.clone(),
+                    )
+                    .map_err(|error| CompileError::Output(error.to_string()))?;
+                if self.outputs.contains(OutputCapability::Dvi)
+                    && matches!(request, ResourceRequest::File(file) if file.key().kind() == FileKind::Tfm)
+                {
+                    planner
+                        .add(
+                            ResourceClosureOwner::Dvi,
+                            ResourcePurpose::DviSerialization,
+                            ResourceRequestMode::Required,
+                            request.clone(),
+                        )
+                        .map_err(|error| CompileError::Output(error.to_string()))?;
+                }
+                if self.outputs.contains(OutputCapability::Html)
+                    && matches!(request, ResourceRequest::Font(_))
+                {
+                    planner
+                        .add(
+                            ResourceClosureOwner::Html,
+                            ResourcePurpose::HtmlFontTransport,
+                            ResourceRequestMode::Required,
+                            request.clone(),
+                        )
+                        .map_err(|error| CompileError::Output(error.to_string()))?;
+                }
+            }
+            for request in &probes {
+                planner
+                    .add(
+                        ResourceClosureOwner::Engine,
+                        output_resources::engine_purpose(request),
+                        ResourceRequestMode::Probe,
+                        request.clone(),
+                    )
+                    .map_err(|error| CompileError::Output(error.to_string()))?;
+            }
+            for request in &prefetch_hints {
+                planner
+                    .add(
+                        ResourceClosureOwner::Engine,
+                        output_resources::engine_purpose(request),
+                        ResourceRequestMode::Prefetch,
+                        request.clone(),
+                    )
+                    .map_err(|error| CompileError::Output(error.to_string()))?;
+            }
+            self.last_resource_plan = planner
+                .finish()
+                .map_err(|error| CompileError::Output(error.to_string()))?;
             self.files.expect(&FileRequestBatch::with_probes(
                 required.iter().filter_map(|request| match request {
                     ResourceRequest::File(request) => Some(request.clone()),
@@ -1658,6 +1737,44 @@ impl VirtualCompileSession {
                     .into_iter()
                     .map(ResourceRequest::File)
                     .collect::<Vec<_>>();
+                let mut planner = output_resources::OutputResourcePlanner::new(
+                    self.outputs,
+                    self.font_layout_policy,
+                    self.limits.resolved_files,
+                );
+                for request in &required {
+                    planner
+                        .add(
+                            ResourceClosureOwner::Pdf,
+                            output_resources::pdf_purpose(request),
+                            ResourceRequestMode::Required,
+                            request.clone(),
+                        )
+                        .map_err(|error| CompileError::OutputCapability {
+                            capability: OutputCapability::Pdf,
+                            message: error.to_string(),
+                        })?;
+                }
+                for request in &probes {
+                    planner
+                        .add(
+                            ResourceClosureOwner::Pdf,
+                            output_resources::pdf_purpose(request),
+                            ResourceRequestMode::Probe,
+                            request.clone(),
+                        )
+                        .map_err(|error| CompileError::OutputCapability {
+                            capability: OutputCapability::Pdf,
+                            message: error.to_string(),
+                        })?;
+                }
+                self.last_resource_plan =
+                    planner
+                        .finish()
+                        .map_err(|error| CompileError::OutputCapability {
+                            capability: OutputCapability::Pdf,
+                            message: error.to_string(),
+                        })?;
                 let awaiting = required
                     .iter()
                     .chain(&probes)

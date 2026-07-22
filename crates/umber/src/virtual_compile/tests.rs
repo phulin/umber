@@ -254,6 +254,22 @@ fn pdf_virtual_font_closure_uses_typed_bounded_retries() {
 
     let resources = requests(session.compile_attempt());
     assert_eq!(resources.len(), 2);
+    let plan = session.output_resource_plan();
+    assert_eq!(plan.version, OUTPUT_RESOURCE_PLAN_VERSION);
+    assert_eq!(plan.outputs, OutputCapabilitySet::PDF);
+    assert_eq!(plan.union.len(), resources.len());
+    assert!(plan.closures.iter().all(|closure| {
+        closure.owner == ResourceClosureOwner::Pdf
+            && closure.resources.iter().all(|resource| {
+                resource.reasons.iter().all(|reason| {
+                    reason.owner == ResourceClosureOwner::Pdf
+                        && matches!(
+                            reason.purpose,
+                            ResourcePurpose::PdfEncoding | ResourcePurpose::PdfFontProgram
+                        )
+                })
+            })
+    }));
     let encoding = resources
         .iter()
         .find(|request| request.key().kind() == FileKind::PdfEncoding)

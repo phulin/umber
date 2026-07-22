@@ -54,12 +54,14 @@ pub use tex_incr::{RenderedOutputId, ReuseMetrics, RevisionId, SameHistoryStop};
 pub use umber_vfs::FileContentId;
 pub use virtual_compile::{
     AcceptedFinalization, CachedLocalTfm, CachedVirtualFont, CompileAttemptResult,
-    CompileDiagnostic, CompileError, CompileTelemetry, EngineMode, FileKind, FileRequest,
-    FileRequestKey, NeedResources, OutputCapability, OutputCapabilitySet, PdfVirtualFontResources,
-    RenderedSourceLocation, RenderedSourceResult, RequestKeyError, ResolvedFile, ResourceDomain,
-    ResourceRequest, ResourceResponse, RetentionMetrics, SessionLimits, SessionOptions,
-    SourcePatch, VfsLimitError, VfsLimitKind, VfsLimits, VirtualCompileSession, VirtualPath,
-    VirtualPathError,
+    CompileDiagnostic, CompileError, CompileTelemetry, DriverResourceClosure, EngineMode, FileKind,
+    FileRequest, FileRequestKey, MissingOutputResource, NeedResources,
+    OUTPUT_RESOURCE_PLAN_VERSION, OutputCapability, OutputCapabilitySet, OutputResourcePlan,
+    PdfVirtualFontResources, PlannedResource, RenderedSourceLocation, RenderedSourceResult,
+    RequestKeyError, ResolvedFile, ResourceClosureOwner, ResourceDomain, ResourcePlanError,
+    ResourcePurpose, ResourceReason, ResourceRequest, ResourceRequestMode, ResourceResponse,
+    RetentionMetrics, SessionLimits, SessionOptions, SourcePatch, VfsLimitError, VfsLimitKind,
+    VfsLimits, VirtualCompileSession, VirtualPath, VirtualPathError,
 };
 
 /// The only checkpoint policy supported by composed engine sessions.
