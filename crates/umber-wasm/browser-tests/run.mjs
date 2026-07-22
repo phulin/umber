@@ -34,6 +34,8 @@ const chrome =
 		: "/usr/bin/google-chrome");
 const chromeSandboxArguments =
 	process.env.CHROME_NO_SANDBOX === "1" ? ["--no-sandbox"] : [];
+const chromeStartupTimeoutMs = 30_000;
+const chromeStartupPollIntervalMs = 25;
 const encoder = new TextEncoder();
 
 const digest = (bytes) => createHash("sha256").update(bytes).digest("hex");
@@ -460,7 +462,8 @@ function contentType(file) {
 
 async function debuggingPort(profile, child) {
 	const activePort = path.join(profile, "DevToolsActivePort");
-	for (let attempt = 0; attempt < 200; attempt += 1) {
+	const deadline = Date.now() + chromeStartupTimeoutMs;
+	while (Date.now() < deadline) {
 		if (child.exitCode !== null)
 			throw new Error(`Chrome exited ${child.exitCode}`);
 		try {
@@ -468,8 +471,12 @@ async function debuggingPort(profile, child) {
 		} catch (error) {
 			if (error.code !== "ENOENT") throw error;
 		}
-		await new Promise((resolve) => setTimeout(resolve, 25));
+		await new Promise((resolve) =>
+			setTimeout(resolve, chromeStartupPollIntervalMs),
+		);
 	}
+	if (child.exitCode !== null)
+		throw new Error(`Chrome exited ${child.exitCode}`);
 	throw new Error("Chrome debugging endpoint did not start");
 }
 

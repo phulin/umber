@@ -318,11 +318,13 @@ The hermetic gate covers all 61 committed `dvi`, `page`, `math`, `align`, and
 fixture both compile and install generated HTML before checking its page,
 negative-rule, run-anchor, and baseline projection at the supported zoom
 policy; Chrome also exercises DPR 1 and 2 and verifies the embedded face and
-mapped glyph coverage. Story, Gentle, TRIP, and e-TRIP remain conditional on
-the external inputs installed by `scripts/setup-conformance-tests.sh`. When
-present, their in-process runs lower every committed artifact through the
-positioned HTML stream and compare it with the DVI coordinate oracle before
-the existing byte-level DVI comparison.
+mapped glyph coverage. The Chrome fixture allows a live browser up to 30
+seconds to publish its DevTools endpoint, while polling frequently enough to
+report an early browser exit immediately. Story, Gentle, TRIP, and e-TRIP
+remain conditional on the external inputs installed by
+`scripts/setup-conformance-tests.sh`. When present, their in-process runs lower
+every committed artifact through the positioned HTML stream and compare it
+with the DVI coordinate oracle before the existing byte-level DVI comparison.
 
 ## Packaging and operational budgets
 
