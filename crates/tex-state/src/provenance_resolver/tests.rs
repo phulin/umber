@@ -303,6 +303,39 @@ fn generated_and_empty_sources_remain_renderable_without_an_input_frame() {
 }
 
 #[test]
+fn generated_sources_resolve_only_their_descriptor_paths() {
+    let mut stores = Universe::new();
+    stores
+        .register_source(
+            crate::SourceId::new(0),
+            SourceDescriptor::named_generated("editor/root.tex", Arc::from(&b"root"[..])),
+        )
+        .expect("named root source registers");
+    stores
+        .register_source(
+            crate::SourceId::new(1),
+            SourceDescriptor::generated(Arc::from(&b"generated"[..])),
+        )
+        .expect("anonymous generated source registers");
+
+    let root = stores.source_origin(crate::SourceId::new(0), 0, 1, 0);
+    let generated = stores.source_origin(crate::SourceId::new(1), 0, 1, 0);
+    let resolver = ProvenanceResolver::new(&stores);
+
+    assert_eq!(
+        resolver.resolve_origin(root).expect("root resolves").path,
+        "editor/root.tex"
+    );
+    assert_eq!(
+        resolver
+            .resolve_origin(generated)
+            .expect("generated source resolves")
+            .path,
+        "<generated>"
+    );
+}
+
+#[test]
 fn missing_source_byte_degrades_without_a_secondary_failure() {
     let mut stores = Universe::new();
     stores

@@ -24,7 +24,7 @@ follow:
   splice old pages into the accepted output. Their `render_origins` were
   minted against an older revision's region, so a rendered-source query
   resolves to offsets in that older snapshot but reports them against the
-  live `source_path`. After any insert or delete earlier in the document,
+  editor root path. After any insert or delete earlier in the document,
   every reused page answers with a plausible, wrong location.
 - **Dead origins on adopted scratch output.** In the convergence branch the
   session keeps the _old_ accepted substrate and adopts the scratch window's
@@ -174,6 +174,10 @@ artifact identity are unchanged, and raw substores never cross the facade.
 
 Engine-registered sources (World input files, non-editor generated sources)
 keep today's substrate-owned, watermark-rolled-back regions unchanged. The
+optional logical path of a generated source is part of its immutable source
+descriptor, so a non-editor generated input can never inherit the editor
+root's path during fallback resolution. Anonymous generated inputs remain
+`<generated>`. The
 logical position allocator remains a single session-lifetime high-water mark
 so fragment ranges and engine ranges never collide, and discarded forks
 never re-hand out positions.
@@ -239,7 +243,8 @@ resolve(origin, &FragmentStore, &EditorLayout) ->
 1. Decode `OriginId` to a `SourcePos` or arena `SourceSpan` (unchanged).
 2. Binary-search the fragment store's region ranges. A miss falls through to
    the substrate source map (engine-registered sources) and resolves as
-   today.
+   today, using the World record or generated descriptor as the sole path
+   authority.
 3. On a fragment hit, binary-search the fragment-id table, then use its
    persistent start-prefix/end-suffix range-min index to select the earliest
    document-order view covering the complete fragment-relative span. No

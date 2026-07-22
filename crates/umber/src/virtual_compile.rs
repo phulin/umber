@@ -712,14 +712,13 @@ impl RetainedExecution {
     fn resolve_diagnostic_site_primary(
         &self,
         site: &tex_state::provenance::DiagnosticSite,
-        main_path: &str,
     ) -> Option<CompileSourceLocation> {
         let resolved = match self {
             RetainedExecution::Initial { session, candidate } => {
                 session.resolve_candidate_diagnostic_site_primary(candidate, site)
             }
             RetainedExecution::Pending(candidate) => {
-                candidate.resolve_diagnostic_site_primary(site, main_path)
+                candidate.resolve_diagnostic_site_primary(site)
             }
         }?;
         Some(CompileSourceLocation {
@@ -736,12 +735,11 @@ impl CompileDiagnostic {
     fn from_session_error(
         error: &tex_incr::SessionError,
         candidate: Option<&RetainedExecution>,
-        main_path: &str,
     ) -> Self {
         let location = error
             .diagnostic_site()
             .as_ref()
-            .and_then(|site| candidate?.resolve_diagnostic_site_primary(site, main_path));
+            .and_then(|site| candidate?.resolve_diagnostic_site_primary(site));
         Self {
             message: error.to_string(),
             location,
@@ -1870,11 +1868,7 @@ impl VirtualCompileSession {
                 }
                 Err(error) => {
                     return Err(CompileError::Diagnostic(
-                        CompileDiagnostic::from_session_error(
-                            error,
-                            Some(&retained.execution),
-                            self.main_path.as_str(),
-                        ),
+                        CompileDiagnostic::from_session_error(error, Some(&retained.execution)),
                     ));
                 }
             };
@@ -2072,11 +2066,8 @@ impl VirtualCompileSession {
                 return Err(CompileError::NoProgress);
             }
             Err(error) => {
-                let diagnostic = CompileDiagnostic::from_session_error(
-                    &error,
-                    Some(&retained.execution),
-                    self.main_path.as_str(),
-                );
+                let diagnostic =
+                    CompileDiagnostic::from_session_error(&error, Some(&retained.execution));
                 stage.discard();
                 build.discard();
                 return Err(CompileError::Diagnostic(diagnostic));
@@ -2279,11 +2270,7 @@ impl VirtualCompileSession {
         }
         .into_prepared()
         .map_err(|error| {
-            CompileError::Diagnostic(CompileDiagnostic::from_session_error(
-                &error,
-                None,
-                self.main_path.as_str(),
-            ))
+            CompileError::Diagnostic(CompileDiagnostic::from_session_error(&error, None))
         })?;
         let accepted_world = match &execution {
             PreparedExecution::Initial { session, .. } => session.materialize_accepted_world(),

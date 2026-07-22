@@ -472,7 +472,8 @@ impl crate::Executor {
                     MemoryInput::byte_projection_from_offset(source, checkpoint.root_anchor)
                 } else {
                     MemoryInput::from_offset(source, checkpoint.root_anchor)
-                };
+                }
+                .with_logical_path(layout.path());
                 return Ok::<Box<dyn InputSource>, EditorRestoreError>(Box::new(source));
             }
             let Some(record) = record else {

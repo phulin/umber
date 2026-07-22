@@ -83,6 +83,9 @@ followed by the layout-aware resolver
 and piece-table searches, the per-generation line-start index) is likewise
 built lazily and memoized in Rust. No page bytes are touched after the first
 query, and pages never queried cost nothing.
+Origins outside the editor fragment space fall through to their engine source
+descriptor; generated inputs use only their own optional logical path and
+never a session-wide editor-root fallback.
 
 The stored `OriginId`s name fragment content, so a cached map is immutable
 for the lifetime of the accepted output it describes and is dropped with it

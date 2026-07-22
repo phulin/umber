@@ -19,6 +19,26 @@ use tex_state::{
 mod input_lines;
 
 #[test]
+fn memory_input_descriptors_preserve_only_explicit_logical_paths() {
+    let named = MemoryInput::new("root").with_logical_path("editor/root.tex");
+    let anonymous = MemoryInput::new("generated");
+
+    let tex_state::source_map::SourceDescriptor::Generated(named) =
+        named.source_descriptor().expect("named descriptor")
+    else {
+        panic!("memory input must be generated")
+    };
+    let tex_state::source_map::SourceDescriptor::Generated(anonymous) =
+        anonymous.source_descriptor().expect("anonymous descriptor")
+    else {
+        panic!("memory input must be generated")
+    };
+
+    assert_eq!(named.logical_path(), Some("editor/root.tex"));
+    assert_eq!(anonymous.logical_path(), None);
+}
+
+#[test]
 fn executor_step_snapshot_restores_complete_live_input_without_host_lookup() {
     #[derive(Clone, Debug)]
     struct CountingInput {

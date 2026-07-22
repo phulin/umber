@@ -354,15 +354,13 @@ impl RevisionCandidate {
     pub fn resolve_diagnostic_site_primary(
         &self,
         site: &tex_state::provenance::DiagnosticSite,
-        source_path: &str,
     ) -> Option<ResolvedSourceLocation> {
-        self.resolve_diagnostic_site_primary_with_layout(site, source_path, None)
+        self.resolve_diagnostic_site_primary_with_layout(site, None)
     }
 
     fn resolve_diagnostic_site_primary_with_layout(
         &self,
         site: &tex_state::provenance::DiagnosticSite,
-        source_path: &str,
         root_layout: Option<(&FragmentStore, &EditorLayout)>,
     ) -> Option<ResolvedSourceLocation> {
         let origin = site.primary_origin()?;
@@ -390,13 +388,11 @@ impl RevisionCandidate {
                         line,
                         column,
                     }),
-                    LayoutResolvedOrigin::Foreign => {
-                        resolver.resolve_origin_with_generated_path(origin, source_path)
-                    }
+                    LayoutResolvedOrigin::Foreign => resolver.resolve_origin(origin),
                     LayoutResolvedOrigin::Deleted { .. } | LayoutResolvedOrigin::Unknown => None,
                 }
             }
-            None => resolver.resolve_origin_with_generated_path(origin, source_path),
+            None => resolver.resolve_origin(origin),
         }
     }
 
@@ -620,7 +616,6 @@ impl Session {
     ) -> Option<ResolvedSourceLocation> {
         candidate.resolve_diagnostic_site_primary_with_layout(
             site,
-            &self.source_path,
             Some((&self.fragments, &self.layout)),
         )
     }
@@ -880,7 +875,8 @@ impl Session {
             MemoryInput::byte_projection(&self.source)
         } else {
             MemoryInput::new(&self.source)
-        };
+        }
+        .with_logical_path(self.source_path.clone());
         let mut input = InputStack::new(root);
         input.set_utf8_input_as_bytes(self.utf8_input_as_bytes);
         universe.install_editor_fragments(&self.fragments, &self.layout)?;
@@ -1050,7 +1046,8 @@ impl Session {
                     MemoryInput::byte_projection(&setup.next)
                 } else {
                     MemoryInput::new(&setup.next)
-                };
+                }
+                .with_logical_path(setup.next_layout.path());
                 let mut input = InputStack::new(root);
                 input.set_utf8_input_as_bytes(self.utf8_input_as_bytes);
                 universe.install_editor_fragments(&setup.fragments, &setup.next_layout)?;
@@ -1579,7 +1576,7 @@ impl Session {
                     .as_ref()
                     .ok_or(SessionError::MissingAcceptedSubstrate)?;
                 Ok(substrate
-                    .resolve_origin_with_generated_path(origin, &self.source_path)
+                    .resolve_origin(origin)
                     .map(RenderedSourceResult::Current))
             }
             Some(LayoutResolvedOrigin::Deleted { minted_revision }) => {
@@ -2151,7 +2148,7 @@ impl Session {
                 .substrate
                 .as_mut()
                 .ok_or(SessionError::MissingAcceptedSubstrate)?
-                .retain_artifact_origins_from_fork(&scratch, &adopted_origins, &self.source_path)?,
+                .retain_artifact_origins_from_fork(&scratch, &adopted_origins)?,
             PendingSubstrate::Replaced(substrate) => self.substrate = Some(substrate),
         }
         let substrate_transition_latency = substrate_transition_started.elapsed();
@@ -2479,7 +2476,8 @@ fn execute_revision(
         MemoryInput::byte_projection(source)
     } else {
         MemoryInput::new(source)
-    };
+    }
+    .with_logical_path(layout.path());
     let mut input = InputStack::new(root);
     input.set_utf8_input_as_bytes(utf8_input_as_bytes);
     universe.install_editor_fragments(fragments, layout)?;

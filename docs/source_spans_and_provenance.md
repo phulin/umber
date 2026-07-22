@@ -125,7 +125,9 @@ rendered. Production traced-input paths may not rely on a transient
 `InputSource` as the only owner of diagnostic source text.
 
 An input adapter exposes a source descriptor containing its physical byte
-length and either a World record or shared generated backing. `InputStack`
+length and either a World record or shared generated backing. Generated
+descriptors may also carry the backing's logical path; the editor root uses
+this form, while anonymous pseudo-files remain explicitly unnamed. `InputStack`
 continues to mint `SourceId`, but before the first delivery from a source frame
 it idempotently registers `(SourceId, descriptor)` through the aggregate
 expansion-state facade. This preserves the current input-opening boundary
@@ -441,6 +443,10 @@ The resolver handles all logical forms of `OriginId`:
 
 Line text, line number, display column, caret width, source label, and
 presentation-bounded macro traces are produced only at this boundary.
+World-backed paths come from their input records, and generated paths come
+only from their source descriptors. The resolver never accepts a caller-level
+fallback path: an anonymous generated input remains `<generated>` and cannot
+be mislabeled as the editor root.
 
 Internal byte offsets and spans are zero-based. User-facing line and column
 numbers are one-based. Display columns use Unicode display-cell width; tabs

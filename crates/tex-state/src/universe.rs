@@ -812,13 +812,12 @@ impl GenerationSubstrate {
 
     /// Resolves one diagnostic origin retained by this accepted generation.
     #[must_use]
-    pub fn resolve_origin_with_generated_path(
+    pub fn resolve_origin(
         &self,
         origin: crate::token::OriginId,
-        generated_path: &str,
     ) -> Option<crate::ResolvedSourceLocation> {
         crate::ProvenanceResolver::new(&self.universe)
-            .resolve_origin_with_generated_path(origin, generated_path)
+            .resolve_origin(origin)
             .or_else(|| self.retained_origin_locations.get(&origin).cloned())
     }
 
@@ -865,7 +864,6 @@ impl GenerationSubstrate {
         &mut self,
         fork: &Universe,
         roots: &[OriginId],
-        generated_path: &str,
     ) -> Result<(), GenerationForkError> {
         let origin = fork.fork_origin.ok_or(GenerationForkError::UnrelatedFork)?;
         if origin.source_owner != self.universe.owner.snapshot_owner() {
@@ -873,9 +871,7 @@ impl GenerationSubstrate {
         }
         let resolver = crate::ProvenanceResolver::new(fork);
         for &root in roots {
-            if let Some(location) =
-                resolver.resolve_origin_with_generated_path(root, generated_path)
-            {
+            if let Some(location) = resolver.resolve_origin(root) {
                 self.retained_origin_locations
                     .entry(root)
                     .or_insert(location);
@@ -4353,6 +4349,10 @@ impl Universe {
                 .generated_source(region.backing)
                 .map(GeneratedSource::bytes),
         }
+    }
+
+    pub(crate) fn generated_source(&self, backing: SourceBacking) -> Option<&GeneratedSource> {
+        self.stores.generated_source(backing)
     }
 
     pub(crate) fn direct_source_origin(

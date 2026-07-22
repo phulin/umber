@@ -135,13 +135,25 @@ impl SourceSpan {
 pub struct GeneratedSource {
     bytes: Arc<[u8]>,
     hash: ContentHash,
+    logical_path: Option<Arc<String>>,
 }
 
 impl GeneratedSource {
     #[must_use]
     pub fn new(bytes: Arc<[u8]>) -> Self {
         let hash = ContentHash::from_bytes(&bytes);
-        Self { bytes, hash }
+        Self {
+            bytes,
+            hash,
+            logical_path: None,
+        }
+    }
+
+    #[must_use]
+    pub fn named(logical_path: impl Into<String>, bytes: Arc<[u8]>) -> Self {
+        let mut source = Self::new(bytes);
+        source.logical_path = Some(Arc::new(logical_path.into()));
+        source
     }
 
     #[must_use]
@@ -157,6 +169,11 @@ impl GeneratedSource {
     #[must_use]
     pub const fn hash(&self) -> ContentHash {
         self.hash
+    }
+
+    #[must_use]
+    pub fn logical_path(&self) -> Option<&str> {
+        self.logical_path.as_deref().map(String::as_str)
     }
 
     #[must_use]
@@ -192,6 +209,11 @@ impl SourceDescriptor {
     #[must_use]
     pub fn generated(bytes: Arc<[u8]>) -> Self {
         Self::Generated(GeneratedSource::new(bytes))
+    }
+
+    #[must_use]
+    pub fn named_generated(logical_path: impl Into<String>, bytes: Arc<[u8]>) -> Self {
+        Self::Generated(GeneratedSource::named(logical_path, bytes))
     }
 
     #[must_use]
@@ -518,6 +540,12 @@ impl SourceMap {
                     .generated
                     .iter()
                     .map(GeneratedSource::len)
+                    .sum::<usize>()
+                + self
+                    .generated
+                    .iter()
+                    .filter_map(GeneratedSource::logical_path)
+                    .map(str::len)
                     .sum::<usize>()
                 + self.line_starts.capacity() * std::mem::size_of::<Arc<[usize]>>()
                 + self

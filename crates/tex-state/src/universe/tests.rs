@@ -1801,18 +1801,18 @@ fn generation_retains_related_fork_diagnostic_graph_and_foreign_location() {
     let mut fork = substrate.fork_at(&anchor).expect("related fork");
     fork.register_source(
         SourceId::new(0),
-        SourceDescriptor::generated(Arc::from(&b"abc"[..])),
+        SourceDescriptor::named_generated("scratch.tex", Arc::from(&b"abc"[..])),
     )
     .expect("scratch source registration");
     let source = fork.source_range_origin(SourceId::new(0), 0, 3);
     let derived = fork.synthesized_origin(SynthesizedOriginKind::ValueRendering, source);
 
     substrate
-        .retain_artifact_origins_from_fork(&fork, &[derived], "scratch.tex")
+        .retain_artifact_origins_from_fork(&fork, &[derived])
         .expect("related diagnostics retained");
     assert_eq!(
         substrate
-            .resolve_origin_with_generated_path(derived, "ignored.tex")
+            .resolve_origin(derived)
             .expect("owned scratch location"),
         crate::ResolvedSourceLocation {
             path: "scratch.tex".to_owned(),
@@ -1826,7 +1826,7 @@ fn generation_retains_related_fork_diagnostic_graph_and_foreign_location() {
     let unrelated = Universe::new();
     assert_eq!(
         substrate
-            .retain_artifact_origins_from_fork(&unrelated, &[derived], "scratch.tex")
+            .retain_artifact_origins_from_fork(&unrelated, &[derived])
             .expect_err("unrelated universe rejected"),
         GenerationForkError::UnrelatedFork
     );

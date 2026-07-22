@@ -514,6 +514,7 @@ impl PhysicalLine {
 #[derive(Clone, Debug)]
 pub struct MemoryInput {
     backing: Arc<[u8]>,
+    logical_path: Option<Arc<String>>,
     next_offset: usize,
     scantokens: bool,
     byte_projection: bool,
@@ -526,10 +527,18 @@ impl MemoryInput {
         let backing: Arc<[u8]> = Arc::from(input.as_bytes());
         Self {
             backing,
+            logical_path: None,
             next_offset: 0,
             scantokens: false,
             byte_projection: false,
         }
+    }
+
+    /// Associates this generated backing with a stable logical source path.
+    #[must_use]
+    pub fn with_logical_path(mut self, logical_path: impl Into<String>) -> Self {
+        self.logical_path = Some(Arc::new(logical_path.into()));
+        self
     }
 
     /// Constructs an editor buffer whose Unicode scalars each represent one
@@ -558,6 +567,7 @@ impl MemoryInput {
         assert!(next_offset <= input.len() && input.is_char_boundary(next_offset));
         Self {
             backing: Arc::from(input.as_bytes()),
+            logical_path: None,
             next_offset,
             scantokens: false,
             byte_projection: false,
@@ -587,7 +597,10 @@ impl InputSource for MemoryInput {
     }
 
     fn source_descriptor(&self) -> Option<SourceDescriptor> {
-        Some(SourceDescriptor::generated(Arc::clone(&self.backing)))
+        Some(self.logical_path.as_ref().map_or_else(
+            || SourceDescriptor::generated(Arc::clone(&self.backing)),
+            |path| SourceDescriptor::named_generated(path.as_str(), Arc::clone(&self.backing)),
+        ))
     }
 
     fn is_scantokens(&self) -> bool {

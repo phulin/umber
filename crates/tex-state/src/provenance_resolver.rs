@@ -60,16 +60,6 @@ impl<'a> ProvenanceResolver<'a> {
     /// Resolves one live origin to an owned physical source range.
     #[must_use]
     pub fn resolve_origin(&self, origin: OriginId) -> Option<ResolvedSourceLocation> {
-        self.resolve_origin_with_generated_path(origin, "<generated>")
-    }
-
-    /// Resolves one live origin while naming anonymous generated backing.
-    #[must_use]
-    pub fn resolve_origin_with_generated_path(
-        &self,
-        origin: OriginId,
-        generated_path: &str,
-    ) -> Option<ResolvedSourceLocation> {
         let resolved = self.resolve_to_source(origin)?;
         let display = self.source_display(resolved.source);
         let region = self.universe.source_region(resolved.source.source())?;
@@ -81,7 +71,12 @@ impl<'a> ProvenanceResolver<'a> {
                 .path()
                 .to_string_lossy()
                 .into_owned(),
-            SourceBacking::Generated(_) => generated_path.to_owned(),
+            SourceBacking::Generated(_) => self
+                .universe
+                .generated_source(region.backing)
+                .and_then(|source| source.logical_path())
+                .unwrap_or("<generated>")
+                .to_owned(),
         };
         Some(ResolvedSourceLocation {
             path,
