@@ -40,10 +40,11 @@ for the first incremental engine.
 session lifecycle that composes typed resource retries with revision-checked
 root-buffer patches and retained incremental execution.
 
-`generated_input_stabilization.md` defines the proposed correctness contract
-for positive and negative generated-input dependencies, safe `JobStart`
-fallback, provisional editor output, bounded off-hot-path fixed-point
-stabilization, and later paragraph reuse across unchanged-root rerun passes.
+`generated_input_stabilization.md` defines the implemented correctness and
+lifecycle contract for positive and negative generated-input dependencies,
+safe `JobStart` fallback, provisional editor output, bounded off-hot-path
+fixed-point stabilization, and selective paragraph reuse across unchanged-root
+rerun passes. It also records the default-disabled replay activation decision.
 
 `stepwise_execution.md` defines the owned `tex-exec` run, atomic per-step
 snapshot/replay protocol, typed resource sites, lifecycle, cumulative fuel and
