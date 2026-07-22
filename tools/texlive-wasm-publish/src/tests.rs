@@ -618,6 +618,27 @@ fn publishes_runtime_trees_but_excludes_documentation_and_sources() -> Result<()
 }
 
 #[test]
+fn publishes_nested_ec_tfm_under_its_basename_request_key() -> Result<()> {
+    let fixture = TempDir::new()?;
+    let root_path = fixture.path().join("root");
+    fs::create_dir_all(&root_path)?;
+    let bytes = b"EC typewriter metric";
+    write(&root_path, "fonts/tfm/jknappen/ec/ectt0800.tfm", bytes)?;
+    let mut config = config(vec![root("runtime", &root_path)?]);
+    config.dependencies.clear();
+
+    let manifest = publish(&config, &fixture.path().join("out"))?;
+    let metric = &manifest.files["tfm:ectt0800.tfm"];
+    assert_eq!(
+        metric.virtual_path,
+        "/texlive/fonts/tfm/jknappen/ec/ectt0800.tfm"
+    );
+    assert_eq!(metric.sha256, digest(bytes));
+    assert_eq!(metric.bytes, bytes.len() as u64);
+    Ok(())
+}
+
+#[test]
 fn rejects_seed_sized_publication_when_inventory_floor_is_configured() -> Result<()> {
     let fixture = TempDir::new()?;
     let root_path = fixture.path().join("root");

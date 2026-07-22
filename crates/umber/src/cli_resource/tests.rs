@@ -323,6 +323,50 @@ fn native_virtual_font_resolution_preserves_typed_identity_and_reuses_cache() {
 }
 
 #[test]
+fn explicit_local_distribution_resolves_nested_ec_tfm_record() {
+    let directory = TempDir::new().expect("distribution tempdir");
+    let metric = b"EC typewriter metric";
+    let digest = hex_digest(metric);
+    let object = format!("sha256-{digest}");
+    let mut shard = format!(
+        "{{\"schema\":1,\"distribution\":\"ec-tfm\",\"index\":0,\"files\":{{\"tfm:ectt0800.tfm\":{{\"virtualPath\":\"/texlive/fonts/tfm/jknappen/ec/ectt0800.tfm\",\"object\":\"{object}\",\"sha256\":\"{digest}\",\"bytes\":{}",
+        metric.len()
+    );
+    shard.push_str("}}}\n");
+    write_sharded_root(directory.path(), "ec-tfm", 0, &[(shard.as_str(), true)]);
+    std::fs::write(directory.path().join("objects").join(object), metric).expect("TFM object");
+    let key = crate::FileRequestKey::new(FileKind::Tfm, "ectt0800.tfm").expect("TFM key");
+    let request = FileRequest::new(key.clone(), "ectt0800");
+    let mut resolver = DistributionResolver::new(
+        ObjectCache::new(directory.path().join("cache")),
+        Some(directory.path().to_string_lossy().into_owned()),
+        None,
+        false,
+    );
+
+    let responses = resolver
+        .resolve_batch(
+            &local_resolver(directory.path()),
+            &needs(vec![ResourceRequest::File(request)]),
+            &FetchCancellation::new(),
+        )
+        .expect("EC TFM acquisition");
+    let [ResourceResponse::File(resolved)] = responses.as_slice() else {
+        panic!("typed TFM response");
+    };
+    assert_eq!(resolved.request, key);
+    assert_eq!(
+        resolved.virtual_path,
+        "/texlive/fonts/tfm/jknappen/ec/ectt0800.tfm"
+    );
+    assert_eq!(resolved.bytes, metric);
+    assert_eq!(
+        resolved.expected_digest,
+        Some(FileContentId::for_bytes(metric))
+    );
+}
+
+#[test]
 fn verified_schema_v2_root_returns_typed_font_unavailable() {
     let directory = TempDir::new().expect("distribution tempdir");
     let shard = "{\"schema\":1,\"distribution\":\"absence\",\"index\":0,\"files\":{}}\n";
