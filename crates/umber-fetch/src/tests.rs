@@ -5,6 +5,7 @@ use std::num::NonZeroUsize;
 use std::process::Command;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread;
 use std::time::Duration;
 
@@ -20,6 +21,7 @@ struct Reply {
     body: Vec<u8>,
     content_length: Option<u64>,
     delay: Duration,
+    wait_for_cancellation: Option<FetchCancellation>,
 }
 
 impl Reply {
@@ -29,6 +31,7 @@ impl Reply {
             body: body.to_vec(),
             content_length: Some(body.len() as u64),
             delay: Duration::ZERO,
+            wait_for_cancellation: None,
         }
     }
 }
@@ -37,6 +40,7 @@ struct FixtureServer {
     base_url: String,
     requests: Arc<AtomicUsize>,
     maximum_active: Arc<AtomicUsize>,
+    shutdown: Sender<()>,
     join: Option<thread::JoinHandle<()>>,
 }
 
@@ -47,6 +51,10 @@ impl FixtureServer {
             "http://{}/objects/",
             listener.local_addr().expect("address")
         );
+        listener
+            .set_nonblocking(true)
+            .expect("make fixture listener nonblocking");
+        let (shutdown, shutdown_receiver) = mpsc::channel();
         let requests = Arc::new(AtomicUsize::new(0));
         let requests_for_thread = Arc::clone(&requests);
         let maximum_active = Arc::new(AtomicUsize::new(0));
@@ -55,7 +63,9 @@ impl FixtureServer {
         let join = thread::spawn(move || {
             let mut handlers = Vec::new();
             for reply in replies {
-                let (stream, _) = listener.accept().expect("accept fixture request");
+                let Some(stream) = accept_until_shutdown(&listener, &shutdown_receiver) else {
+                    break;
+                };
                 requests_for_thread.fetch_add(1, Ordering::SeqCst);
                 let maximum = Arc::clone(&maximum_for_thread);
                 let active = Arc::clone(&active);
@@ -69,6 +79,7 @@ impl FixtureServer {
             base_url,
             requests,
             maximum_active,
+            shutdown,
             join: Some(join),
         }
     }
@@ -79,6 +90,10 @@ impl FixtureServer {
             "http://{}/objects/",
             listener.local_addr().expect("address")
         );
+        listener
+            .set_nonblocking(true)
+            .expect("make fixture listener nonblocking");
+        let (shutdown, shutdown_receiver) = mpsc::channel();
         let requests = Arc::new(AtomicUsize::new(0));
         let requests_for_thread = Arc::clone(&requests);
         let maximum_active = Arc::new(AtomicUsize::new(0));
@@ -89,7 +104,9 @@ impl FixtureServer {
         let join = thread::spawn(move || {
             let mut handlers = Vec::new();
             for _ in 0..expected {
-                let (stream, _) = listener.accept().expect("accept fixture request");
+                let Some(stream) = accept_until_shutdown(&listener, &shutdown_receiver) else {
+                    break;
+                };
                 requests_for_thread.fetch_add(1, Ordering::SeqCst);
                 let maximum = Arc::clone(&maximum_for_thread);
                 let active = Arc::clone(&active);
@@ -106,20 +123,44 @@ impl FixtureServer {
             base_url,
             requests,
             maximum_active,
+            shutdown,
             join: Some(join),
         }
     }
 
     fn finish(mut self) -> (usize, usize) {
-        self.join
-            .take()
-            .expect("server thread")
-            .join()
-            .expect("server");
+        self.shutdown_and_join();
         (
             self.requests.load(Ordering::SeqCst),
             self.maximum_active.load(Ordering::SeqCst),
         )
+    }
+
+    fn shutdown_and_join(&mut self) {
+        let _ = self.shutdown.send(());
+        if let Some(join) = self.join.take() {
+            join.join().expect("server");
+        }
+    }
+}
+
+impl Drop for FixtureServer {
+    fn drop(&mut self) {
+        self.shutdown_and_join();
+    }
+}
+
+fn accept_until_shutdown(listener: &TcpListener, shutdown: &Receiver<()>) -> Option<TcpStream> {
+    loop {
+        match listener.accept() {
+            Ok((stream, _)) => return Some(stream),
+            Err(error) if error.kind() == io::ErrorKind::WouldBlock => {}
+            Err(error) => panic!("accept fixture request: {error}"),
+        }
+        match shutdown.recv_timeout(Duration::from_millis(10)) {
+            Ok(()) | Err(mpsc::RecvTimeoutError::Disconnected) => return None,
+            Err(mpsc::RecvTimeoutError::Timeout) => {}
+        }
     }
 }
 
@@ -133,6 +174,18 @@ fn serve(
     maximum_active.fetch_max(active, Ordering::SeqCst);
     let mut request = [0_u8; 2048];
     let _ = stream.read(&mut request);
+    if let Some(cancellation) = &reply.wait_for_cancellation {
+        for _ in 0..500 {
+            if cancellation.is_cancelled() {
+                break;
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
+        assert!(
+            cancellation.is_cancelled(),
+            "fixture cancellation was not published within five seconds"
+        );
+    }
     thread::sleep(reply.delay);
     let reason = if reply.status == 200 {
         "OK"
@@ -205,6 +258,23 @@ fn request(key: &str, bytes: &[u8], limit: u64) -> FetchRequest {
     }
 }
 
+fn cancel_after_request(
+    requests: Arc<AtomicUsize>,
+    cancellation: FetchCancellation,
+) -> thread::JoinHandle<()> {
+    thread::spawn(move || {
+        for _ in 0..500 {
+            if requests.load(Ordering::SeqCst) != 0 {
+                cancellation.cancel();
+                return;
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
+        cancellation.cancel();
+        panic!("fixture did not accept the cancellation request within five seconds");
+    })
+}
+
 fn client(concurrency: usize, timeout: Duration, retries: usize) -> FetchClient {
     FetchClient::new(FetchClientConfig {
         concurrency: NonZeroUsize::new(concurrency).expect("nonzero concurrency"),
@@ -262,16 +332,12 @@ fn fetches_a_manifest_only_when_it_matches_the_trust_pin() {
 #[test]
 fn cancelled_manifest_is_not_returned() {
     let bytes = br#"{"schema":1}"#;
+    let cancellation = FetchCancellation::new();
     let server = FixtureServer::new(vec![Reply {
-        delay: Duration::from_millis(120),
+        wait_for_cancellation: Some(cancellation.clone()),
         ..Reply::ok(bytes)
     }]);
-    let cancellation = FetchCancellation::new();
-    let cancel_from_thread = cancellation.clone();
-    let canceller = thread::spawn(move || {
-        thread::sleep(Duration::from_millis(20));
-        cancel_from_thread.cancel();
-    });
+    let canceller = cancel_after_request(Arc::clone(&server.requests), cancellation.clone());
 
     let error = fetch_manifest_cancellable(
         &format!("{}manifest.json", server.base_url),
@@ -283,7 +349,7 @@ fn cancelled_manifest_is_not_returned() {
 
     canceller.join().expect("canceller");
     assert_eq!(error, ManifestFetchError::Cancelled);
-    server.finish();
+    assert_eq!(server.finish().0, 1);
 }
 
 #[test]
@@ -294,6 +360,7 @@ fn returns_typed_404_with_key_and_digest() {
         body: Vec::new(),
         content_length: Some(0),
         delay: Duration::ZERO,
+        wait_for_cancellation: None,
     }]);
     let cache_dir = TempDir::new().expect("cache tempdir");
     let request = request("tfm:missing.tfm", bytes, 1024);
@@ -326,6 +393,7 @@ fn rejects_corruption_and_truncation_without_caching() {
             body: truncated.to_vec(),
             content_length: Some(expected.len() as u64),
             delay: Duration::ZERO,
+            wait_for_cancellation: None,
         },
     ]);
     let temp = TempDir::new().expect("cache tempdir");
@@ -390,6 +458,7 @@ fn refuses_oversized_content_length_before_reading_body() {
         body: vec![b'x'; 20],
         content_length: Some(20),
         delay: Duration::ZERO,
+        wait_for_cancellation: None,
     }]);
     let temp = TempDir::new().expect("cache tempdir");
 
@@ -438,19 +507,15 @@ fn retries_timeout_and_succeeds() {
 #[test]
 fn cancellation_after_download_does_not_publish_or_return_bytes() {
     let bytes = b"cancelled object";
+    let cancellation = FetchCancellation::new();
     let server = FixtureServer::new(vec![Reply {
-        delay: Duration::from_millis(120),
+        wait_for_cancellation: Some(cancellation.clone()),
         ..Reply::ok(bytes)
     }]);
     let temp = TempDir::new().expect("cache tempdir");
     let cache = ObjectCache::new(temp.path());
     let request = request("tex:cancelled.sty", bytes, 1024);
-    let cancellation = FetchCancellation::new();
-    let cancel_from_thread = cancellation.clone();
-    let canceller = thread::spawn(move || {
-        thread::sleep(Duration::from_millis(20));
-        cancel_from_thread.cancel();
-    });
+    let canceller = cancel_after_request(Arc::clone(&server.requests), cancellation.clone());
 
     let error = client(1, Duration::from_secs(1), 0)
         .fetch_batch_cancellable(
@@ -475,7 +540,7 @@ fn cancellation_after_download_does_not_publish_or_return_bytes() {
             .is_none(),
         "cancelled download must not be published"
     );
-    server.finish();
+    assert_eq!(server.finish().0, 1);
 }
 
 #[test]
