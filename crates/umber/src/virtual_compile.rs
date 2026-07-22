@@ -374,11 +374,18 @@ pub struct SourcePatch {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CompileSourceLocation {
+    pub file: String,
+    pub byte_start: u64,
+    pub byte_end: u64,
+    pub line: u32,
+    pub column: u32,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CompileDiagnostic {
     pub message: String,
-    pub file: Option<String>,
-    pub line: Option<usize>,
-    pub column: Option<usize>,
+    pub location: Option<CompileSourceLocation>,
 }
 
 /// Live retained-memory charges for one accepted compile session.
@@ -645,6 +652,47 @@ impl RetainedCandidate {
         match &self.execution {
             RetainedExecution::Initial { candidate, .. }
             | RetainedExecution::Pending(candidate) => candidate.retention_metrics(),
+        }
+    }
+}
+
+impl RetainedExecution {
+    fn resolve_diagnostic_site_primary(
+        &self,
+        site: &tex_state::provenance::DiagnosticSite,
+        main_path: &str,
+    ) -> Option<CompileSourceLocation> {
+        let resolved = match self {
+            RetainedExecution::Initial { session, candidate } => {
+                session.resolve_candidate_diagnostic_site_primary(candidate, site)
+            }
+            RetainedExecution::Pending(candidate) => {
+                candidate.resolve_diagnostic_site_primary(site, main_path)
+            }
+        }?;
+        Some(CompileSourceLocation {
+            file: resolved.path,
+            byte_start: resolved.start,
+            byte_end: resolved.end,
+            line: resolved.line,
+            column: resolved.column,
+        })
+    }
+}
+
+impl CompileDiagnostic {
+    fn from_session_error(
+        error: &tex_incr::SessionError,
+        candidate: Option<&RetainedExecution>,
+        main_path: &str,
+    ) -> Self {
+        let location = error
+            .diagnostic_site()
+            .as_ref()
+            .and_then(|site| candidate?.resolve_diagnostic_site_primary(site, main_path));
+        Self {
+            message: error.to_string(),
+            location,
         }
     }
 }
@@ -1706,12 +1754,13 @@ impl VirtualCompileSession {
                     return Err(CompileError::NoProgress);
                 }
                 Err(error) => {
-                    return Err(CompileError::Diagnostic(CompileDiagnostic {
-                        message: error.to_string(),
-                        file: None,
-                        line: None,
-                        column: None,
-                    }));
+                    return Err(CompileError::Diagnostic(
+                        CompileDiagnostic::from_session_error(
+                            error,
+                            Some(&retained.execution),
+                            self.main_path.as_str(),
+                        ),
+                    ));
                 }
             };
             stage.discard();
@@ -1908,14 +1957,14 @@ impl VirtualCompileSession {
                 return Err(CompileError::NoProgress);
             }
             Err(error) => {
+                let diagnostic = CompileDiagnostic::from_session_error(
+                    &error,
+                    Some(&retained.execution),
+                    self.main_path.as_str(),
+                );
                 stage.discard();
                 build.discard();
-                return Err(CompileError::Diagnostic(CompileDiagnostic {
-                    message: error.to_string(),
-                    file: None,
-                    line: None,
-                    column: None,
-                }));
+                return Err(CompileError::Diagnostic(diagnostic));
             }
         }
         if self.outputs.contains(OutputCapability::Pdf) {
@@ -2115,12 +2164,11 @@ impl VirtualCompileSession {
         }
         .into_prepared()
         .map_err(|error| {
-            CompileError::Diagnostic(CompileDiagnostic {
-                message: error.to_string(),
-                file: None,
-                line: None,
-                column: None,
-            })
+            CompileError::Diagnostic(CompileDiagnostic::from_session_error(
+                &error,
+                None,
+                self.main_path.as_str(),
+            ))
         })?;
         let accepted_world = match &execution {
             PreparedExecution::Initial { session, .. } => session.materialize_accepted_world(),

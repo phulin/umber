@@ -59,15 +59,15 @@ pub use tex_state::{InputDependency, InputDependencyAccess, InputDependencyOutco
 pub use umber_vfs::FileContentId;
 pub use virtual_compile::{
     AcceptedFinalization, CachedLocalTfm, CachedVirtualFont, CompileAttemptResult,
-    CompileDiagnostic, CompileError, CompileTelemetry, CompositeResolverError,
-    CompositeResourceResolver, DriverResourceClosure, EngineMode, FileKind, FileRequest,
-    FileRequestKey, MissingOutputResource, NeedResources, OUTPUT_RESOURCE_PLAN_VERSION,
-    OutputCapability, OutputCapabilitySet, OutputResourcePlan, PdfVirtualFontResources,
-    PlannedResource, ProviderFailure, ProviderResponse, RenderedSourceLocation,
-    RenderedSourceResult, RequestKeyError, ResolvedFile, ResolvedPkFont, ResourceClosureOwner,
-    ResourceDomain, ResourcePlanError, ResourcePurpose, ResourceReason, ResourceRequest,
-    ResourceRequestMode, ResourceResponse, RetentionMetrics, SessionLimits, SessionOptions,
-    SourcePatch, TypedResourceProvider, VfsLimitError, VfsLimitKind, VfsLimits,
+    CompileDiagnostic, CompileError, CompileSourceLocation, CompileTelemetry,
+    CompositeResolverError, CompositeResourceResolver, DriverResourceClosure, EngineMode, FileKind,
+    FileRequest, FileRequestKey, MissingOutputResource, NeedResources,
+    OUTPUT_RESOURCE_PLAN_VERSION, OutputCapability, OutputCapabilitySet, OutputResourcePlan,
+    PdfVirtualFontResources, PlannedResource, ProviderFailure, ProviderResponse,
+    RenderedSourceLocation, RenderedSourceResult, RequestKeyError, ResolvedFile, ResolvedPkFont,
+    ResourceClosureOwner, ResourceDomain, ResourcePlanError, ResourcePurpose, ResourceReason,
+    ResourceRequest, ResourceRequestMode, ResourceResponse, RetentionMetrics, SessionLimits,
+    SessionOptions, SourcePatch, TypedResourceProvider, VfsLimitError, VfsLimitKind, VfsLimits,
     VirtualCompileSession, VirtualPath, VirtualPathError,
 };
 

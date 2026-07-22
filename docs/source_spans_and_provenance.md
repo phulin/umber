@@ -440,6 +440,14 @@ span underlines at least one cell. A multi-line span renders the first and last
 affected lines with an omission marker between them. These are presentation
 rules only and never feed back into TeX state or source identity.
 
+At the persistent compile boundary, the primary location is resolved while the
+failed candidate universe is live and copied into one owned optional value.
+That value contains path, the exact half-open UTF-8 byte range, line, and
+column together; resolution failure omits the whole value. LaTeX project and
+WASM/package layers preserve it without parsing diagnostic text or recomputing
+coordinates. Related locations and expansion traces remain engine-internal
+presentation data unless a future public contract explicitly exposes them.
+
 ## 8. Rollback and replay
 
 An aggregate snapshot records:

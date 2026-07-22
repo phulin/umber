@@ -24,7 +24,7 @@ use tex_state::token::OriginId;
 use tex_state::{
     ArtifactOrigin, CommittedArtifact, ContentHash, EditorLayout, EditorLayoutError, EffectRecord,
     FragmentStore, GenerationForkError, GenerationSubstrate, InputReadState, LayoutGeneration,
-    LayoutResolvedOrigin, Piece, Universe, WorldError,
+    LayoutResolvedOrigin, Piece, ProvenanceResolver, ResolvedSourceLocation, Universe, WorldError,
 };
 
 mod delivery;
@@ -324,6 +324,58 @@ impl PendingRevision {
 }
 
 impl RevisionCandidate {
+    /// Resolves a captured engine diagnostic while this candidate's private
+    /// provenance universe and proposed editor layout are still live.
+    #[must_use]
+    pub fn resolve_diagnostic_site_primary(
+        &self,
+        site: &tex_state::provenance::DiagnosticSite,
+        source_path: &str,
+    ) -> Option<ResolvedSourceLocation> {
+        self.resolve_diagnostic_site_primary_with_layout(site, source_path, None)
+    }
+
+    fn resolve_diagnostic_site_primary_with_layout(
+        &self,
+        site: &tex_state::provenance::DiagnosticSite,
+        source_path: &str,
+        root_layout: Option<(&FragmentStore, &EditorLayout)>,
+    ) -> Option<ResolvedSourceLocation> {
+        let origin = site.primary_origin()?;
+        let resolver = ProvenanceResolver::new(&self.universe);
+        let layout = match &self.kind {
+            RevisionCandidateKind::Initial { .. } => root_layout,
+            RevisionCandidateKind::Replacement { setup }
+            | RevisionCandidateKind::Incremental { setup, .. } => {
+                Some((&setup.fragments, &setup.next_layout))
+            }
+        };
+        match layout {
+            Some((fragments, layout)) => {
+                match resolver.resolve_layout_origin(origin, fragments, layout) {
+                    LayoutResolvedOrigin::Current {
+                        path,
+                        doc_offset_lo,
+                        doc_offset_hi,
+                        line,
+                        column,
+                    } => Some(ResolvedSourceLocation {
+                        path,
+                        start: doc_offset_lo,
+                        end: doc_offset_hi,
+                        line,
+                        column,
+                    }),
+                    LayoutResolvedOrigin::Foreign => {
+                        resolver.resolve_origin_with_generated_path(origin, source_path)
+                    }
+                    LayoutResolvedOrigin::Deleted { .. } | LayoutResolvedOrigin::Unknown => None,
+                }
+            }
+            None => resolver.resolve_origin_with_generated_path(origin, source_path),
+        }
+    }
+
     /// Borrows the reached engine state after execution has completed but
     /// before the candidate is accepted. Downstream resource finalizers may
     /// use this boundary to install already validated immutable resources;
@@ -530,6 +582,21 @@ pub struct Session {
 }
 
 impl Session {
+    /// Resolves one diagnostic captured by an unaccepted initial candidate
+    /// against this session's editor layout.
+    #[must_use]
+    pub fn resolve_candidate_diagnostic_site_primary(
+        &self,
+        candidate: &RevisionCandidate,
+        site: &tex_state::provenance::DiagnosticSite,
+    ) -> Option<ResolvedSourceLocation> {
+        candidate.resolve_diagnostic_site_primary_with_layout(
+            site,
+            &self.source_path,
+            Some((&self.fragments, &self.layout)),
+        )
+    }
+
     pub fn start(
         template: Universe,
         job_name: impl Into<String>,
@@ -2949,6 +3016,18 @@ impl fmt::Display for SessionError {
 }
 
 impl std::error::Error for SessionError {}
+
+impl SessionError {
+    /// Returns engine-captured diagnostic provenance, when this failure came
+    /// from execution rather than session orchestration.
+    #[must_use]
+    pub fn diagnostic_site(&self) -> Option<tex_state::provenance::DiagnosticSite> {
+        match self {
+            Self::Execute(error) => Some(error.diagnostic_site()),
+            _ => None,
+        }
+    }
+}
 
 impl From<tex_exec::ExecError> for SessionError {
     fn from(value: tex_exec::ExecError) -> Self {

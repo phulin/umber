@@ -1,7 +1,7 @@
 use bib_engine::{BibOptionsBuilder, OutputFormat, OutputRequest};
 
 use super::*;
-use crate::EngineMode;
+use crate::{CompileSourceLocation, EngineMode};
 
 fn options() -> LatexProjectOptions {
     let mut bib = BibOptionsBuilder::new();
@@ -26,6 +26,42 @@ fn options() -> LatexProjectOptions {
         },
         limits: LatexProjectLimits::default(),
     }
+}
+
+#[test]
+fn project_compile_error_preserves_native_tex_location() {
+    let source = b"  \\input absent\n".to_vec();
+    let mut session = LatexProjectSession::new(options()).expect("session");
+    session
+        .add_user_file("/job/main.tex", source)
+        .expect("source");
+    let LatexProjectAttempt::NeedResources(needs) = session.compile_attempt() else {
+        panic!("missing input should suspend");
+    };
+    let [ResourceRequest::File(request)] = needs.required.as_slice() else {
+        panic!("expected one file request");
+    };
+    session
+        .provide_resources(vec![ResourceResponse::FileUnavailable(
+            request.key().clone(),
+        )])
+        .expect("unavailable input");
+    let LatexProjectAttempt::Error(LatexProjectError::Compile(CompileError::Diagnostic(
+        diagnostic,
+    ))) = session.compile_attempt()
+    else {
+        panic!("expected nested compile diagnostic");
+    };
+    assert_eq!(
+        diagnostic.location,
+        Some(CompileSourceLocation {
+            file: "/job/main.tex".into(),
+            byte_start: 2,
+            byte_end: 8,
+            line: 1,
+            column: 3,
+        })
+    );
 }
 
 #[test]

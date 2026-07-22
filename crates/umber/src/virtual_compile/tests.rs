@@ -28,6 +28,65 @@ fn session(main: &str) -> VirtualCompileSession {
     session
 }
 
+fn compile_diagnostic(session: &mut VirtualCompileSession) -> CompileDiagnostic {
+    match session.compile_attempt() {
+        CompileAttemptResult::Error(CompileError::Diagnostic(diagnostic)) => diagnostic,
+        other => panic!("expected engine diagnostic, got {other:#?}"),
+    }
+}
+
+#[test]
+fn engine_diagnostic_preserves_atomic_root_utf8_location() {
+    let source = "é\n  \\input absent\n";
+    let mut session = session(source);
+    let [request] = requests(session.compile_attempt())
+        .try_into()
+        .expect("one input");
+    session
+        .provide_resources(vec![ResourceResponse::FileUnavailable(
+            request.key().clone(),
+        )])
+        .expect("unavailable input");
+    let diagnostic = compile_diagnostic(&mut session);
+    assert_eq!(
+        diagnostic.location,
+        Some(CompileSourceLocation {
+            file: "/job/main.tex".into(),
+            byte_start: 5,
+            byte_end: 11,
+            line: 2,
+            column: 3,
+        })
+    );
+}
+
+#[test]
+fn engine_diagnostic_preserves_included_file_location() {
+    let mut session = session("\\input child \\end");
+    session
+        .add_user_file("child.tex", b"x\\input absent\n".to_vec())
+        .expect("included file");
+    let [request] = requests(session.compile_attempt())
+        .try_into()
+        .expect("one input");
+    session
+        .provide_resources(vec![ResourceResponse::FileUnavailable(
+            request.key().clone(),
+        )])
+        .expect("unavailable input");
+    let diagnostic = compile_diagnostic(&mut session);
+    assert_eq!(
+        diagnostic.location,
+        Some(CompileSourceLocation {
+            file: "/job/child.tex".into(),
+            byte_start: 1,
+            byte_end: 7,
+            line: 1,
+            column: 2,
+        })
+    );
+}
+
 #[test]
 fn accepted_finalization_transfers_uncommitted_engine_state() {
     let mut session = session("\\message{accepted-finalization}\\end");
