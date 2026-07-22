@@ -1,7 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { compileInWorker, WorkerCompileError } from "./worker-controller.js";
+import {
+	compileInWorker,
+	createEditorSessionInWorker,
+	WorkerCompileError,
+} from "./worker-controller.js";
 import { outputTransfers, runCompileMessage } from "./worker-entry.js";
 
 const manifestSha256 = "1".repeat(64);
@@ -33,11 +37,15 @@ function fakeWorker(behavior) {
 		}
 
 		addEventListener(name, listener) {
-			this.listeners.set(name, listener);
+			const listeners = this.listeners.get(name) ?? new Set();
+			listeners.add(listener);
+			this.listeners.set(name, listeners);
 		}
 
 		removeEventListener(name, listener) {
-			if (this.listeners.get(name) === listener) this.listeners.delete(name);
+			const listeners = this.listeners.get(name);
+			listeners?.delete(listener);
+			if (listeners?.size === 0) this.listeners.delete(name);
 		}
 
 		postMessage(message, transfer) {
@@ -51,7 +59,7 @@ function fakeWorker(behavior) {
 		}
 
 		emit(name, event) {
-			this.listeners.get(name)?.(event);
+			for (const listener of this.listeners.get(name) ?? []) listener(event);
 		}
 	};
 }
@@ -186,6 +194,152 @@ test("aborted owners do not start workers", async () => {
 		/already stopped/,
 	);
 	assert.equal(Worker.instances.length, 0);
+});
+
+test("retained worker editor preserves lifecycle and binary output", async () => {
+	const provisional = {
+		kind: "provisional",
+		revision: 1,
+		stabilizationRequired: true,
+		output: {
+			revision: 1,
+			passes: 1,
+			tex: {
+				log: new Uint8Array([0, 1]),
+				dvi: new Uint8Array([2, 0]),
+				files: [],
+			},
+			generatedFiles: [],
+		},
+	};
+	const stable = {
+		...provisional,
+		kind: "stable",
+		passes: 2,
+		stabilizationRequired: false,
+	};
+	const Worker = fakeWorker((worker, message) => {
+		const response =
+			message.kind === "editor-create"
+				? { kind: "editor-ready", id: message.id }
+				: {
+						kind: "editor-result",
+						id: message.id,
+						result:
+							message.kind === "editor-advance"
+								? provisional
+								: message.kind === "editor-stabilize"
+									? stable
+									: { kind: "disposed" },
+					};
+		queueMicrotask(() => worker.emit("message", { data: response }));
+	});
+	const editor = await createEditorSessionInWorker(
+		{ mainPath: "main.tex", outputs: ["dvi"] },
+		new Map([["main.tex", new Uint8Array([1, 0, 2])]]),
+		{ manifestUrl: "https://cdn.example.test/manifest.json", manifestSha256 },
+		{ Worker, workerUrl: "worker.js", timeoutMs: 100 },
+	);
+	const first = await editor.advance();
+	assert.equal(first.kind, "provisional");
+	assert.deepEqual([...first.output.tex.dvi], [2, 0]);
+	assert.equal(editor.status.kind, "provisional");
+	const final = await editor.stabilize();
+	assert.equal(final.kind, "stable");
+	assert.equal(editor.status.passes, 2);
+	await editor.dispose();
+	assert.equal(Worker.instances[0].terminated, 1);
+});
+
+test("worker stabilization can be cancelled without terminating the session", async () => {
+	let stabilizationId;
+	const Worker = fakeWorker((worker, message) => {
+		if (message.kind === "editor-create") {
+			queueMicrotask(() =>
+				worker.emit("message", {
+					data: { kind: "editor-ready", id: message.id },
+				}),
+			);
+		} else if (message.kind === "editor-stabilize") {
+			stabilizationId = message.id;
+			queueMicrotask(() =>
+				worker.emit("message", {
+					data: {
+						kind: "editor-progress",
+						id: message.id,
+						result: {
+							kind: "need-resources",
+							phase: "stabilization",
+							required: [],
+							probes: [],
+							prefetchHints: [],
+							status: {
+								kind: "stabilizing",
+								revision: 1,
+								completedPasses: 1,
+								stabilizationRequired: true,
+							},
+						},
+					},
+				}),
+			);
+		} else if (message.kind === "editor-cancel-stabilization") {
+			const status = {
+				kind: "provisional",
+				revision: 1,
+				stabilizationRequired: true,
+			};
+			queueMicrotask(() => {
+				worker.emit("message", {
+					data: {
+						kind: "editor-result",
+						id: message.id,
+						result: { kind: "cancelled", cancelled: true, status },
+					},
+				});
+				worker.emit("message", {
+					data: {
+						kind: "editor-result",
+						id: stabilizationId,
+						result: {
+							kind: "cancelled",
+							phase: "stabilization",
+							cancelled: true,
+							status,
+						},
+					},
+				});
+			});
+		} else if (message.kind === "editor-dispose") {
+			queueMicrotask(() =>
+				worker.emit("message", {
+					data: {
+						kind: "editor-result",
+						id: message.id,
+						result: { kind: "disposed" },
+					},
+				}),
+			);
+		}
+	});
+	const editor = await createEditorSessionInWorker(
+		{ mainPath: "main.tex", outputs: ["dvi"] },
+		new Map(),
+		{ manifestUrl: "https://cdn.example.test/manifest.json", manifestSha256 },
+		{ Worker, workerUrl: "worker.js", timeoutMs: 100 },
+	);
+	let progress;
+	const pending = editor.stabilize((value) => {
+		progress = value;
+	});
+	await Promise.resolve();
+	await Promise.resolve();
+	assert.equal(progress.status.kind, "stabilizing");
+	const cancellation = await editor.cancelStabilization();
+	assert.equal(cancellation.cancelled, true);
+	assert.equal((await pending).kind, "cancelled");
+	assert.equal(editor.disposed, false);
+	await editor.dispose();
 });
 
 test("preflights all worker input limits before copying or construction", async (t) => {

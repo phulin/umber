@@ -347,6 +347,17 @@ hot session, output, and generated generation at the same root revision;
 internal pass numbers never enter the public editor revision sequence. A newer
 patch or `cancel_stabilization()` discards only private stabilization work.
 
+`umber-wasm::EditorSession` is the corresponding binary-safe representation
+adapter. `advance()` returns a typed provisional or stable editor value after
+one hot pass, while `stabilizeAttempt()` explicitly advances the retained
+fixed-point coordinator. Resource waits name their hot or stabilization phase
+and, during stabilization, carry the current completed-pass status. The
+authored `createEditorSession()` facade resolves those batches without keeping
+shadow pass state; the worker facade holds the same complete session in one
+dedicated worker and uses request/reply messages for patches, cancellation,
+advance, stabilization, and disposal. Aborting the direct operation or worker
+owner disposes the complete session, including a suspended private pass.
+
 `umber-wasm::ProjectSession` is the binary-safe representation adapter for this
 state machine. Its project options name the BCF and requested bibliography
 outputs, its attempt values reuse the shared resource wire protocol, and its

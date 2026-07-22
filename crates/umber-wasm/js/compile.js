@@ -117,6 +117,224 @@ export async function compile(options, userFiles, resolver, signal, bindings) {
 	}
 }
 
+/** Creates a retained editor session whose hot pass and stabilization are explicit. */
+export async function createEditorSession(
+	options,
+	userFiles,
+	resolver,
+	signal,
+	bindings,
+) {
+	validateResolver(resolver);
+	const limits = validateSessionLimits(options?.limits);
+	throwIfAborted(signal);
+	const module = bindings ?? (await import("./umber_wasm.js"));
+	if (bindings === undefined) await module.default();
+	if (typeof module?.EditorSession !== "function") {
+		throw new CompileFacadeError(
+			"invalid-binding",
+			"EditorSession binding is unavailable",
+		);
+	}
+	throwIfAborted(signal);
+	const session = new module.EditorSession(options);
+	try {
+		addUserFiles(session, userFiles, limits);
+		return new EditorCompileFacade(session, resolver);
+	} catch (error) {
+		session.dispose();
+		throw error;
+	}
+}
+
+export class EditorCompileFacade {
+	#session;
+	#resolver;
+	#operation;
+
+	constructor(session, resolver) {
+		this.#session = session;
+		this.#resolver = resolver;
+	}
+
+	get disposed() {
+		return this.#session === undefined;
+	}
+
+	get status() {
+		return this.#requireSession().status;
+	}
+
+	get revision() {
+		return this.#requireSession().revision;
+	}
+
+	get contentHash() {
+		return this.#requireSession().contentHash;
+	}
+
+	applyPatch(patch) {
+		this.#requireSession().applyPatch(patch);
+	}
+
+	renderedSourceLocation(page, event, unit, outputId, revision) {
+		return this.#requireSession().renderedSourceLocation(
+			page,
+			event,
+			unit,
+			outputId,
+			revision,
+		);
+	}
+
+	cancelPendingPatch() {
+		const cancelled = this.#requireSession().cancelPendingPatch();
+		if (cancelled && this.#operation?.phase === "advance") {
+			this.#operation.controller.abort(new EditorOperationCancelled("advance"));
+		}
+		return cancelled;
+	}
+
+	cancelStabilization() {
+		const cancelled = this.#requireSession().cancelStabilization();
+		if (cancelled && this.#operation?.phase === "stabilization") {
+			this.#operation.controller.abort(
+				new EditorOperationCancelled("stabilization"),
+			);
+		}
+		return cancelled;
+	}
+
+	async advance(signal, onProgress) {
+		return this.#drive("advance", signal, onProgress);
+	}
+
+	async stabilize(signal, onProgress) {
+		return this.#drive("stabilization", signal, onProgress);
+	}
+
+	dispose() {
+		if (this.#session === undefined) return;
+		this.#session.dispose();
+		this.#session = undefined;
+	}
+
+	async #drive(phase, signal, onProgress) {
+		const session = this.#requireSession();
+		if (this.#operation !== undefined) {
+			throw new CompileFacadeError(
+				"operation-pending",
+				"an editor operation is already pending",
+			);
+		}
+		const controller = new AbortController();
+		const onOwnerAbort = () => controller.abort(abortReason(signal));
+		if (signal?.aborted) onOwnerAbort();
+		else signal?.addEventListener("abort", onOwnerAbort, { once: true });
+		this.#operation = { phase, controller };
+		try {
+			for (;;) {
+				throwIfAborted(signal);
+				const attempt =
+					phase === "advance" ? session.advance() : session.stabilizeAttempt();
+				if (attempt?.kind === "provisional" || attempt?.kind === "stable") {
+					const ledger = session.acceptedInputObservations;
+					if (ledger !== undefined) {
+						attempt.output.acceptedInputObservations = ledger;
+					}
+					return attempt;
+				}
+				if (attempt?.kind === "error") {
+					throw new CompileFacadeError(
+						attempt.diagnostic?.code ?? "compile",
+						attempt.diagnostic?.message ?? `${phase} failed`,
+						{ diagnostic: attempt.diagnostic },
+					);
+				}
+				if (
+					attempt?.kind !== "need-resources" ||
+					attempt.phase !== phase ||
+					!Array.isArray(attempt.required) ||
+					!Array.isArray(attempt.probes) ||
+					!Array.isArray(attempt.prefetchHints)
+				) {
+					throw new CompileFacadeError(
+						"invalid-binding",
+						`${phase} returned an invalid result`,
+					);
+				}
+				onProgress?.(attempt);
+				const responses = await resolveBatch(
+					this.#resolver,
+					attempt,
+					controller.signal,
+				);
+				throwIfAborted(signal);
+				session.provideResources(responses);
+			}
+		} catch (error) {
+			if (signal?.aborted) {
+				this.dispose();
+				throw abortReason(signal);
+			}
+			if (controller.signal.reason instanceof EditorOperationCancelled) {
+				return {
+					kind: "cancelled",
+					phase,
+					cancelled: true,
+					status: session.status,
+				};
+			}
+			throw error;
+		} finally {
+			signal?.removeEventListener("abort", onOwnerAbort);
+			if (this.#operation?.controller === controller)
+				this.#operation = undefined;
+		}
+	}
+
+	#requireSession() {
+		if (this.#session === undefined) {
+			throw new CompileFacadeError(
+				"disposed",
+				"editor session has been disposed",
+			);
+		}
+		return this.#session;
+	}
+}
+
+class EditorOperationCancelled extends Error {
+	constructor(phase) {
+		super(`${phase} was cancelled`);
+	}
+}
+
+async function resolveBatch(resolver, attempt, signal) {
+	let downloads;
+	try {
+		downloads = await resolver.resolve(attempt.required, {
+			signal,
+			probes: attempt.probes,
+			prefetchHints: attempt.prefetchHints,
+		});
+	} catch (error) {
+		if (signal?.aborted) throw abortReason(signal);
+		throw new CompileFacadeError(
+			"resolve",
+			`file resolution failed: ${errorMessage(error)}`,
+			{ cause: error },
+		);
+	}
+	if (!downloads || typeof downloads[Symbol.iterator] !== "function") {
+		throw new CompileFacadeError(
+			"invalid-resolver",
+			"resolver must return an iterable",
+		);
+	}
+	return [...downloads];
+}
+
 async function sessionClass(bindings, project) {
 	const module = bindings ?? (await import("./umber_wasm.js"));
 	if (bindings === undefined) await module.default();

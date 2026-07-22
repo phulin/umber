@@ -132,6 +132,244 @@ export async function compileInWorker(
 	});
 }
 
+/** Creates a retained editor session inside one dedicated module worker. */
+export async function createEditorSessionInWorker(
+	options,
+	userFiles,
+	resolver,
+	control = {},
+) {
+	if (control.signal?.aborted) throw abortReason(control.signal);
+	const timeoutMs = validateTimeout(control.timeoutMs ?? DEFAULT_TIMEOUT_MS);
+	const WorkerClass = control.Worker ?? globalThis.Worker;
+	if (typeof WorkerClass !== "function") {
+		throw new WorkerCompileError("worker-unavailable", "Worker is unavailable");
+	}
+	const workerUrl =
+		control.workerUrl ?? new URL("./worker-entry.js", import.meta.url);
+	const prepared = prepareMessage(
+		options,
+		userFiles,
+		resolver,
+		control.wasmUrl,
+	);
+	prepared.message.kind = "editor-create";
+	prepared.message.id = 0;
+	const worker = new WorkerClass(workerUrl, {
+		type: "module",
+		name: "umber-editor",
+	});
+	const facade = new EditorWorkerFacade(worker, timeoutMs, control.signal);
+	try {
+		await facade.initialize(prepared.message, prepared.transfer);
+		return facade;
+	} catch (error) {
+		facade.terminate();
+		throw error;
+	}
+}
+
+export class EditorWorkerFacade {
+	#worker;
+	#timeoutMs;
+	#signal;
+	#nextId = 1;
+	#pending = new Set();
+	#status;
+	#onOwnerAbort;
+
+	constructor(worker, timeoutMs, signal) {
+		this.#worker = worker;
+		this.#timeoutMs = timeoutMs;
+		this.#signal = signal;
+		this.#onOwnerAbort = () => this.terminate();
+		signal?.addEventListener("abort", this.#onOwnerAbort, { once: true });
+	}
+
+	get disposed() {
+		return this.#worker === undefined;
+	}
+
+	get status() {
+		return this.#status;
+	}
+
+	async initialize(message, transfer) {
+		await this.#request(message, transfer, "editor-ready");
+	}
+
+	async advance(onProgress) {
+		return this.#operation("editor-advance", {}, onProgress);
+	}
+
+	async stabilize(onProgress) {
+		return this.#operation("editor-stabilize", {}, onProgress);
+	}
+
+	async applyPatch(patch) {
+		return this.#operation("editor-apply-patch", { patch });
+	}
+
+	async renderedSourceLocation(page, event, unit, outputId, revision) {
+		const result = await this.#operation("editor-rendered-source", {
+			page,
+			event,
+			unit,
+			outputId,
+			revision,
+		});
+		return result.location;
+	}
+
+	async cancelStabilization() {
+		return this.#operation("editor-cancel-stabilization");
+	}
+
+	async cancelPendingPatch() {
+		return this.#operation("editor-cancel-pending-patch");
+	}
+
+	async dispose() {
+		if (this.#worker === undefined) return;
+		try {
+			await this.#operation("editor-dispose");
+		} finally {
+			this.terminate();
+		}
+	}
+
+	terminate() {
+		this.#signal?.removeEventListener("abort", this.#onOwnerAbort);
+		this.#worker?.terminate();
+		this.#worker = undefined;
+	}
+
+	async #operation(kind, fields = {}, onProgress) {
+		const concurrentCancellation =
+			kind === "editor-cancel-stabilization" ||
+			kind === "editor-cancel-pending-patch";
+		const result = await this.#request(
+			{
+				kind,
+				id: this.#nextId++,
+				...fields,
+			},
+			[],
+			"editor-result",
+			onProgress,
+			concurrentCancellation,
+		);
+		if (result?.status !== undefined) this.#status = result.status;
+		else if (result?.kind === "provisional" || result?.kind === "stable") {
+			const { output: _output, ...status } = result;
+			this.#status = status;
+		}
+		return result;
+	}
+
+	#request(
+		message,
+		transfer = [],
+		expectedKind = "editor-result",
+		onProgress,
+		allowConcurrent = false,
+	) {
+		if (this.#worker === undefined) {
+			return Promise.reject(
+				new WorkerCompileError("disposed", "editor worker has been disposed"),
+			);
+		}
+		if (this.#pending.size > 0 && !allowConcurrent) {
+			return Promise.reject(
+				new WorkerCompileError(
+					"worker-protocol",
+					"an editor worker operation is already pending",
+				),
+			);
+		}
+		return new Promise((resolve, reject) => {
+			const worker = this.#worker;
+			const finish = (callback, value, release = false) => {
+				if (!this.#pending.has(message.id)) return;
+				clearTimeout(timer);
+				this.#signal?.removeEventListener("abort", onAbort);
+				worker.removeEventListener("message", onMessage);
+				worker.removeEventListener("error", onError);
+				worker.removeEventListener("messageerror", onMessageError);
+				this.#pending.delete(message.id);
+				if (release) this.terminate();
+				callback(value);
+			};
+			const onMessage = (event) => {
+				if (event.data?.id !== message.id) return;
+				if (event.data.kind === "editor-progress") {
+					if (event.data.result?.status !== undefined) {
+						this.#status = event.data.result.status;
+					}
+					onProgress?.(event.data.result);
+				} else if (event.data.kind === expectedKind) {
+					finish(resolve, event.data.result);
+				} else if (event.data.kind === "editor-error") {
+					finish(
+						reject,
+						new WorkerCompileError(
+							event.data.error?.code ?? "worker",
+							event.data.error?.message ?? "editor worker failed",
+							{ diagnostic: event.data.error?.diagnostic },
+						),
+					);
+				}
+			};
+			const onError = (event) =>
+				finish(
+					reject,
+					new WorkerCompileError("worker", event.message ?? "worker failed"),
+					true,
+				);
+			const onMessageError = () =>
+				finish(
+					reject,
+					new WorkerCompileError(
+						"worker-protocol",
+						"worker response could not be cloned",
+					),
+					true,
+				);
+			const onAbort = () => finish(reject, abortReason(this.#signal), true);
+			const timer = setTimeout(
+				() =>
+					finish(
+						reject,
+						new WorkerCompileError(
+							"timeout",
+							`worker exceeded ${this.#timeoutMs} ms`,
+						),
+						true,
+					),
+				this.#timeoutMs,
+			);
+			this.#pending.add(message.id);
+			worker.addEventListener("message", onMessage);
+			worker.addEventListener("error", onError);
+			worker.addEventListener("messageerror", onMessageError);
+			this.#signal?.addEventListener("abort", onAbort, { once: true });
+			try {
+				worker.postMessage(message, transfer);
+			} catch (error) {
+				finish(
+					reject,
+					new WorkerCompileError(
+						"worker-protocol",
+						"editor request could not be cloned",
+						{ cause: error },
+					),
+					true,
+				);
+			}
+		});
+	}
+}
+
 function prepareMessage(options, userFiles, resolver, wasmUrl) {
 	if (!options || typeof options !== "object") {
 		throw new WorkerCompileError(

@@ -4,9 +4,11 @@ mod options;
 mod result;
 
 use js_sys::{Array, Uint8Array};
-use options::{parse_options, parse_project_options, parse_resource_responses};
+use options::{
+    parse_editor_options, parse_options, parse_project_options, parse_resource_responses,
+};
 use result::attempt_result;
-use umber::{LatexProjectSession, VirtualCompileSession};
+use umber::{EditorCompileSession, LatexProjectSession, VirtualCompileSession};
 use wasm_bindgen::prelude::*;
 
 #[wasm_bindgen(typescript_custom_section)]
@@ -108,6 +110,10 @@ export interface ProjectSessionOptions extends SessionOptions {
     jobPath?: string;
   };
   projectLimits?: { attempts?: number; passes?: number };
+}
+
+export interface EditorSessionOptions extends SessionOptions {
+  stabilizationLimits?: { attempts?: number; passes?: number };
 }
 
 export interface SourcePatch {
@@ -217,6 +223,26 @@ export interface ProjectCompileOutput {
   acceptedInputObservations?: AcceptedInputObservationLedger;
 }
 
+export interface EditorCompileOutput {
+  revision: number;
+  contentHash: string;
+  passes: number;
+  tex: CompileOutput;
+  generatedFiles: CompileOutputFile[];
+  acceptedInputObservations?: AcceptedInputObservationLedger;
+}
+
+export type EditorStatus =
+  | { kind: "provisional"; revision: number; stabilizationRequired: true }
+  | { kind: "stabilizing"; revision: number; completedPasses: number; stabilizationRequired: true }
+  | { kind: "stable"; revision: number; passes: number; stabilizationRequired: false };
+
+export type EditorAttemptResult =
+  | { kind: "need-resources"; phase: "advance" | "stabilization"; required: ResourceRequest[]; probes: ResourceRequest[]; prefetchHints: ResourceRequest[]; status?: EditorStatus }
+  | ({ kind: "provisional"; revision: number; stabilizationRequired: true; output: EditorCompileOutput })
+  | ({ kind: "stable"; revision: number; passes: number; stabilizationRequired: false; output: EditorCompileOutput })
+  | { kind: "error"; phase: "advance" | "stabilization"; diagnostic: Diagnostic };
+
 export type RenderedSourceResult =
   | { kind: "current"; path: string; start: number; end: number; line: number; column: number }
   | { kind: "deleted"; mintedRevision: number }
@@ -237,6 +263,9 @@ extern "C" {
     #[wasm_bindgen(typescript_type = "ProjectSessionOptions")]
     pub type JsProjectSessionOptions;
 
+    #[wasm_bindgen(typescript_type = "EditorSessionOptions")]
+    pub type JsEditorSessionOptions;
+
     #[wasm_bindgen(typescript_type = "FileRequestKey")]
     pub type JsFileRequestKey;
 
@@ -245,6 +274,9 @@ extern "C" {
 
     #[wasm_bindgen(typescript_type = "AttemptResult")]
     pub type JsAttemptResult;
+
+    #[wasm_bindgen(typescript_type = "EditorAttemptResult")]
+    pub type JsEditorAttemptResult;
 
     #[wasm_bindgen(typescript_type = "ResourceResponse")]
     pub type JsResourceResponse;
@@ -264,6 +296,11 @@ pub struct CompilerSession {
 #[wasm_bindgen]
 pub struct ProjectSession {
     session: Option<LatexProjectSession>,
+}
+
+#[wasm_bindgen]
+pub struct EditorSession {
+    session: Option<EditorCompileSession>,
 }
 
 #[wasm_bindgen(js_name = packageVersion)]
@@ -434,6 +471,158 @@ impl CompilerSession {
 }
 
 #[wasm_bindgen]
+impl EditorSession {
+    #[wasm_bindgen(constructor)]
+    pub fn new(options: &JsEditorSessionOptions) -> Result<EditorSession, JsValue> {
+        let options = parse_editor_options(options.as_ref())?;
+        let session = EditorCompileSession::new(options).map_err(compile_boundary_error)?;
+        Ok(Self {
+            session: Some(session),
+        })
+    }
+
+    #[wasm_bindgen(js_name = addUserFile)]
+    pub fn add_user_file(&mut self, path: &str, bytes: &Uint8Array) -> Result<(), JsValue> {
+        self.session_mut()?
+            .add_user_file(path, bytes.to_vec())
+            .map_err(compile_boundary_error)
+    }
+
+    #[wasm_bindgen(js_name = provideResources)]
+    pub fn provide_resources(&mut self, responses: &Array) -> Result<(), JsValue> {
+        let responses = parse_resource_responses(responses.as_ref())
+            .map_err(|error| tag_js_error(error, "invalid-resource"))?;
+        self.session_mut()?
+            .provide_resources(responses)
+            .map_err(editor_resource_boundary_error)
+    }
+
+    /// Runs exactly one latency-critical editor pass.
+    pub fn advance(&mut self) -> Result<JsEditorAttemptResult, JsValue> {
+        let session = self.session_mut()?;
+        let attempt = session.advance();
+        result::editor_advance_result(attempt, session.status(), session.display_output())
+    }
+
+    #[wasm_bindgen(js_name = compileAttempt)]
+    pub fn compile_attempt(&mut self) -> Result<JsEditorAttemptResult, JsValue> {
+        self.advance()
+    }
+
+    #[wasm_bindgen(js_name = stabilizeAttempt)]
+    pub fn stabilize_attempt(&mut self) -> Result<JsEditorAttemptResult, JsValue> {
+        let session = self.session_mut()?;
+        let attempt = session.stabilize_attempt();
+        result::editor_stabilization_result(attempt, session.status())
+    }
+
+    #[wasm_bindgen(js_name = applyPatch)]
+    pub fn apply_patch(&mut self, patch: &JsSourcePatch) -> Result<(), JsValue> {
+        let patch = options::parse_source_patch(patch.as_ref())?;
+        self.session_mut()?
+            .apply_patch(patch)
+            .map_err(compile_boundary_error)
+    }
+
+    #[wasm_bindgen(js_name = cancelPendingPatch)]
+    pub fn cancel_pending_patch(&mut self) -> Result<bool, JsValue> {
+        Ok(self.session_mut()?.cancel_pending_patch())
+    }
+
+    #[wasm_bindgen(js_name = cancelStabilization)]
+    pub fn cancel_stabilization(&mut self) -> Result<bool, JsValue> {
+        Ok(self.session_mut()?.cancel_stabilization())
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn status(&self) -> Result<JsValue, JsValue> {
+        result::editor_status(self.session_ref()?.status())
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn revision(&self) -> Result<Option<u32>, JsValue> {
+        self.session_ref()?
+            .revision()
+            .map(|revision| {
+                u32::try_from(revision.raw())
+                    .map_err(|_| js_error("accepted revision exceeds the WASM revision range"))
+            })
+            .transpose()
+    }
+
+    #[wasm_bindgen(getter, js_name = contentHash)]
+    pub fn accepted_content_hash(&self) -> Result<Option<String>, JsValue> {
+        Ok(self.session_ref()?.content_hash().map(|hash| hash.hex()))
+    }
+
+    /// Resolves a rendered HTML event against the current editor display.
+    #[wasm_bindgen(js_name = renderedSourceLocation)]
+    pub fn rendered_source_location(
+        &self,
+        page: u32,
+        event: u32,
+        unit: Option<u32>,
+        output_id: String,
+        revision: u32,
+    ) -> Result<Option<JsRenderedSourceResult>, JsValue> {
+        let output_id = umber::RenderedOutputId::parse_hex(&output_id)
+            .ok_or_else(|| js_error("rendered output identity must be 32 hexadecimal digits"))?;
+        match self
+            .session_ref()?
+            .rendered_source_location(
+                page,
+                event,
+                unit,
+                output_id,
+                umber::RevisionId::new(u64::from(revision)),
+            )
+            .map_err(compile_boundary_error)?
+        {
+            Some(result) => result::rendered_source_result(result).map(Some),
+            None => Ok(None),
+        }
+    }
+
+    #[wasm_bindgen(getter, js_name = reuseMetrics)]
+    pub fn reuse_metrics(&self) -> Result<JsValue, JsValue> {
+        result::reuse_metrics(self.session_ref()?.reuse_metrics())
+    }
+
+    #[wasm_bindgen(getter, js_name = retentionMetrics)]
+    pub fn retention_metrics(&self) -> Result<JsValue, JsValue> {
+        result::retention_metrics(self.session_ref()?.retention_metrics())
+    }
+
+    #[wasm_bindgen(getter, js_name = acceptedInputObservations)]
+    pub fn accepted_input_observations(
+        &self,
+    ) -> Result<Option<JsAcceptedInputObservationLedger>, JsValue> {
+        result::accepted_input_observations(
+            self.session_ref()?.accepted_input_observations().as_ref(),
+        )
+    }
+
+    #[wasm_bindgen(getter, js_name = resolvedFileCount)]
+    pub fn resolved_file_count(&self) -> Result<usize, JsValue> {
+        Ok(self.session_ref()?.resolved_file_count())
+    }
+
+    #[wasm_bindgen(getter, js_name = cachedFileBytes)]
+    pub fn cached_file_bytes(&self) -> Result<usize, JsValue> {
+        Ok(self.session_ref()?.cached_file_bytes())
+    }
+
+    pub fn dispose(&mut self) {
+        self.session = None;
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn disposed(&self) -> bool {
+        self.session.is_none()
+    }
+}
+
+#[wasm_bindgen]
 impl ProjectSession {
     #[wasm_bindgen(constructor)]
     pub fn new(options: &JsProjectSessionOptions) -> Result<ProjectSession, JsValue> {
@@ -515,6 +704,20 @@ impl ProjectSession {
     }
 }
 
+impl EditorSession {
+    fn session_ref(&self) -> Result<&EditorCompileSession, JsValue> {
+        self.session
+            .as_ref()
+            .ok_or_else(|| js_error("EditorSession has been disposed"))
+    }
+
+    fn session_mut(&mut self) -> Result<&mut EditorCompileSession, JsValue> {
+        self.session
+            .as_mut()
+            .ok_or_else(|| js_error("EditorSession has been disposed"))
+    }
+}
+
 impl ProjectSession {
     fn session_ref(&self) -> Result<&LatexProjectSession, JsValue> {
         self.session
@@ -555,6 +758,17 @@ fn compile_boundary_error(error: umber::CompileError) -> JsValue {
 fn project_boundary_error(error: umber::LatexProjectError) -> JsValue {
     let value = js_sys::Error::new(&error.to_string());
     tag_js_error(value.into(), result::project_error_code(&error))
+}
+
+fn editor_resource_boundary_error(error: umber::EditorResourceError) -> JsValue {
+    let code = match &error {
+        umber::EditorResourceError::Advance(error) => result::compile_error_code(error),
+        umber::EditorResourceError::Stabilization(error) => {
+            result::tex_fixed_point_error_code(error)
+        }
+    };
+    let value = js_sys::Error::new(&error.to_string());
+    tag_js_error(value.into(), code)
 }
 
 fn tag_js_error(value: JsValue, code: &str) -> JsValue {

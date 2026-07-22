@@ -4,8 +4,9 @@
 > bounded positive and authoritative-negative input observations, expose a
 > versioned native/WASM projection, and validate retained dependencies against
 > the candidate VFS snapshot before reuse. The reusable native TeX-only
-> fixed-point coordinator and native provisional editor session are implemented;
-> WebAssembly stabilization exposure remains to be implemented.
+> fixed-point coordinator, native provisional editor session, WebAssembly
+> representation adapter, and direct/worker authored JavaScript facades are
+> implemented.
 
 This document defines how persistent editor compilation should compose
 root-buffer edits, generated TeX inputs such as `.aux` and `.toc` files, and
@@ -303,8 +304,11 @@ accepted observable relative to cold execution.
    **Implemented at the native boundary:** `EditorCompileSession::advance`.
 3. Add an explicit idle/save stabilization operation and stable/provisional
    status at the native and WebAssembly boundaries. **Native implemented:**
-   `stabilize_attempt`, `status`, `display_output`, and `stable_output`;
-   WebAssembly remains pending.
+   `stabilize_attempt`, `status`, `display_output`, and `stable_output`.
+   **WebAssembly implemented:** low-level `EditorSession` plus retained direct
+   and worker facades expose provisional, stabilizing, stable, resource-wait,
+   cancellation, failure, and disposal lifecycle values without decoding
+   binary output in JavaScript.
 4. Preserve bounded attempts, oscillation detection, resource resumption, and
    atomic stable publication.
 

@@ -1,12 +1,14 @@
 use js_sys::{Array, Object, Reflect, Uint8Array};
 use umber::{
-    CompileAttemptResult, CompileDiagnostic, CompileError, LatexProjectAttempt, LatexProjectError,
-    LatexProjectOutput, MemoryRunOutput, OutputCapability, ResourceRequest,
+    CompileAttemptResult, CompileDiagnostic, CompileError, EditorSessionStatus,
+    EditorStabilizationAttempt, LatexProjectAttempt, LatexProjectError, LatexProjectOutput,
+    MemoryRunOutput, OutputCapability, ResourceRequest, TexFixedPointError, TexFixedPointOutput,
 };
 use wasm_bindgen::{JsCast, JsValue};
 
 use crate::JsAcceptedInputObservationLedger;
 use crate::JsAttemptResult;
+use crate::JsEditorAttemptResult;
 use crate::JsRenderedSourceResult;
 
 pub(crate) fn attempt_result(result: CompileAttemptResult) -> Result<JsAttemptResult, JsValue> {
@@ -57,6 +59,176 @@ pub(crate) fn project_attempt_result(
         }
     }
     Ok(object.unchecked_into())
+}
+
+pub(crate) fn editor_advance_result(
+    result: CompileAttemptResult,
+    status: Option<EditorSessionStatus>,
+    output: Option<&TexFixedPointOutput>,
+) -> Result<JsEditorAttemptResult, JsValue> {
+    let object = Object::new();
+    match result {
+        CompileAttemptResult::NeedResources(resources) => {
+            set(&object, "kind", &JsValue::from_str("need-resources"))?;
+            set(&object, "phase", &JsValue::from_str("advance"))?;
+            set_resource_batch(&object, resources)?;
+        }
+        CompileAttemptResult::Complete(_) => {
+            let output = output.expect("completed editor advance retains display output");
+            match status.expect("completed editor advance has status") {
+                EditorSessionStatus::Provisional {
+                    revision,
+                    stabilization_required,
+                } => {
+                    set(&object, "kind", &JsValue::from_str("provisional"))?;
+                    set_editor_status_fields(&object, revision, stabilization_required, None)?;
+                }
+                EditorSessionStatus::Stable {
+                    revision,
+                    passes,
+                    stabilization_required,
+                } => {
+                    set(&object, "kind", &JsValue::from_str("stable"))?;
+                    set_editor_status_fields(
+                        &object,
+                        revision,
+                        stabilization_required,
+                        Some(("passes", passes)),
+                    )?;
+                }
+                EditorSessionStatus::Stabilizing { .. } => {
+                    unreachable!("advance cannot complete while stabilization is active")
+                }
+            }
+            set(&object, "output", &tex_fixed_point_output(output.clone())?)?;
+        }
+        CompileAttemptResult::Error(error) => {
+            set(&object, "kind", &JsValue::from_str("error"))?;
+            set(&object, "phase", &JsValue::from_str("advance"))?;
+            set(&object, "diagnostic", &diagnostic(error)?)?;
+        }
+    }
+    Ok(object.unchecked_into())
+}
+
+pub(crate) fn editor_stabilization_result(
+    result: EditorStabilizationAttempt,
+    status: Option<EditorSessionStatus>,
+) -> Result<JsEditorAttemptResult, JsValue> {
+    let object = Object::new();
+    match result {
+        EditorStabilizationAttempt::NeedResources(resources) => {
+            set(&object, "kind", &JsValue::from_str("need-resources"))?;
+            set(&object, "phase", &JsValue::from_str("stabilization"))?;
+            set_resource_batch(&object, resources)?;
+            if let Some(EditorSessionStatus::Stabilizing {
+                revision,
+                completed_passes,
+                stabilization_required,
+            }) = status
+            {
+                let value = Object::new();
+                set(&value, "kind", &JsValue::from_str("stabilizing"))?;
+                set_editor_status_fields(
+                    &value,
+                    revision,
+                    stabilization_required,
+                    Some(("completedPasses", completed_passes)),
+                )?;
+                set(&object, "status", &value)?;
+            }
+        }
+        EditorStabilizationAttempt::Complete(output) => {
+            set(&object, "kind", &JsValue::from_str("stable"))?;
+            set_editor_status_fields(
+                &object,
+                output.revision,
+                false,
+                Some(("passes", output.passes)),
+            )?;
+            set(&object, "output", &tex_fixed_point_output(*output)?)?;
+        }
+        EditorStabilizationAttempt::Error(error) => {
+            set(&object, "kind", &JsValue::from_str("error"))?;
+            set(&object, "phase", &JsValue::from_str("stabilization"))?;
+            set(&object, "diagnostic", &tex_fixed_point_diagnostic(error)?)?;
+        }
+    }
+    Ok(object.unchecked_into())
+}
+
+pub(crate) fn editor_status(status: Option<EditorSessionStatus>) -> Result<JsValue, JsValue> {
+    let Some(status) = status else {
+        return Ok(JsValue::UNDEFINED);
+    };
+    let object = Object::new();
+    match status {
+        EditorSessionStatus::Provisional {
+            revision,
+            stabilization_required,
+        } => {
+            set(&object, "kind", &JsValue::from_str("provisional"))?;
+            set_editor_status_fields(&object, revision, stabilization_required, None)?;
+        }
+        EditorSessionStatus::Stabilizing {
+            revision,
+            completed_passes,
+            stabilization_required,
+        } => {
+            set(&object, "kind", &JsValue::from_str("stabilizing"))?;
+            set_editor_status_fields(
+                &object,
+                revision,
+                stabilization_required,
+                Some(("completedPasses", completed_passes)),
+            )?;
+        }
+        EditorSessionStatus::Stable {
+            revision,
+            passes,
+            stabilization_required,
+        } => {
+            set(&object, "kind", &JsValue::from_str("stable"))?;
+            set_editor_status_fields(
+                &object,
+                revision,
+                stabilization_required,
+                Some(("passes", passes)),
+            )?;
+        }
+    }
+    Ok(object.into())
+}
+
+fn set_resource_batch(object: &Object, resources: umber::NeedResources) -> Result<(), JsValue> {
+    let required = resource_requests(resources.required)?;
+    set(object, "required", &required)?;
+    let probes = resource_requests(resources.probes)?;
+    set(object, "probes", &probes)?;
+    let hints = resource_requests(resources.prefetch_hints)?;
+    set(object, "prefetchHints", &hints)
+}
+
+fn set_editor_status_fields(
+    object: &Object,
+    revision: umber::RevisionId,
+    stabilization_required: bool,
+    pass_field: Option<(&str, u32)>,
+) -> Result<(), JsValue> {
+    set(
+        object,
+        "revision",
+        &JsValue::from_f64(revision.raw() as f64),
+    )?;
+    set(
+        object,
+        "stabilizationRequired",
+        &JsValue::from_bool(stabilization_required),
+    )?;
+    if let Some((name, value)) = pass_field {
+        set(object, name, &JsValue::from_f64(f64::from(value)))?;
+    }
+    Ok(())
 }
 
 fn resource_requests(requests: Vec<ResourceRequest>) -> Result<Array, JsValue> {
@@ -288,6 +460,35 @@ fn project_output(output: LatexProjectOutput) -> Result<JsValue, JsValue> {
     Ok(object.into())
 }
 
+pub(crate) fn tex_fixed_point_output(output: TexFixedPointOutput) -> Result<JsValue, JsValue> {
+    let object = Object::new();
+    set(
+        &object,
+        "revision",
+        &JsValue::from_f64(output.revision.raw() as f64),
+    )?;
+    set(
+        &object,
+        "contentHash",
+        &JsValue::from_str(&output.content_hash.hex()),
+    )?;
+    set(
+        &object,
+        "passes",
+        &JsValue::from_f64(f64::from(output.passes)),
+    )?;
+    set(&object, "tex", &compile_output(output.tex)?)?;
+    let generated = Array::new();
+    for file in output.generated_files {
+        generated.push(&output_file_value(
+            &file.path.to_string_lossy(),
+            &file.bytes,
+        )?);
+    }
+    set(&object, "generatedFiles", &generated)?;
+    Ok(object.into())
+}
+
 fn output_file_value(path: &str, bytes: &[u8]) -> Result<JsValue, JsValue> {
     let file = Object::new();
     set(&file, "path", &JsValue::from_str(path))?;
@@ -352,6 +553,33 @@ pub(crate) const fn project_error_code(error: &LatexProjectError) -> &'static st
         LatexProjectError::ConflictingResource(_) => "conflicting-resource",
         LatexProjectError::Transaction(_) => "transaction",
         LatexProjectError::InvalidPatch(_) => "invalid-patch",
+    }
+}
+
+fn tex_fixed_point_diagnostic(error: TexFixedPointError) -> Result<JsValue, JsValue> {
+    if let TexFixedPointError::Compile(error) = error {
+        return diagnostic(error);
+    }
+    let object = Object::new();
+    set(
+        &object,
+        "code",
+        &JsValue::from_str(tex_fixed_point_error_code(&error)),
+    )?;
+    set(&object, "message", &JsValue::from_str(&error.to_string()))?;
+    Ok(object.into())
+}
+
+pub(crate) const fn tex_fixed_point_error_code(error: &TexFixedPointError) -> &'static str {
+    match error {
+        TexFixedPointError::Compile(error) => compile_error_code(error),
+        TexFixedPointError::InvalidLimit { .. } => "invalid-options",
+        TexFixedPointError::PassLimit { .. } => "pass-limit",
+        TexFixedPointError::Oscillation { .. } => "oscillation",
+        TexFixedPointError::Transaction(_) => "transaction",
+        TexFixedPointError::InvalidPatch(_) => "invalid-patch",
+        TexFixedPointError::UnexpectedResource(_) => "unexpected-resource",
+        TexFixedPointError::ConflictingResource(_) => "conflicting-resource",
     }
 }
 

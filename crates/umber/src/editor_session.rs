@@ -5,9 +5,11 @@ use tex_state::ContentHash;
 use umber_vfs::VirtualPath;
 
 use crate::{
-    CompileAttemptResult, CompileError, FixedPointLimits, MemoryOutputFile, MemoryRunOutput,
-    NeedResources, ResourceResponse, SessionOptions, SourcePatch, TexFixedPointAttempt,
-    TexFixedPointError, TexFixedPointOutput, TexFixedPointSession, VirtualCompileSession,
+    AcceptedInputObservationLedger, CompileAttemptResult, CompileError, FixedPointLimits,
+    MemoryOutputFile, MemoryRunOutput, NeedResources, RenderedOutputId, RenderedSourceResult,
+    ResourceResponse, RetentionMetrics, RevisionId, SessionOptions, SourcePatch,
+    TexFixedPointAttempt, TexFixedPointError, TexFixedPointOutput, TexFixedPointSession,
+    VirtualCompileSession,
 };
 
 #[derive(Clone, Debug)]
@@ -69,6 +71,11 @@ impl EditorCompileSession {
     pub fn apply_patch(&mut self, patch: SourcePatch) -> Result<(), CompileError> {
         self.stabilizing = None;
         self.hot.apply_patch(patch)
+    }
+
+    /// Cancels a suspended hot-path patch without changing accepted output.
+    pub fn cancel_pending_patch(&mut self) -> bool {
+        self.hot.cancel_pending_patch()
     }
 
     /// Cancels off-hot-path work without changing display or stable output.
@@ -183,6 +190,54 @@ impl EditorCompileSession {
     #[must_use]
     pub const fn stable_output(&self) -> Option<&TexFixedPointOutput> {
         self.stable.as_ref()
+    }
+
+    #[must_use]
+    pub fn revision(&self) -> Option<tex_incr::RevisionId> {
+        self.hot.revision()
+    }
+
+    #[must_use]
+    pub fn content_hash(&self) -> Option<ContentHash> {
+        self.hot.content_hash()
+    }
+
+    /// Resolves one HTML page/event/unit against the current display output.
+    pub fn rendered_source_location(
+        &self,
+        page: u32,
+        event: u32,
+        unit: Option<u32>,
+        output_id: RenderedOutputId,
+        revision: RevisionId,
+    ) -> Result<Option<RenderedSourceResult>, CompileError> {
+        self.hot
+            .rendered_source_location(page, event, unit, output_id, revision)
+    }
+
+    #[must_use]
+    pub const fn reuse_metrics(&self) -> Option<tex_incr::ReuseMetrics> {
+        self.hot.reuse_metrics()
+    }
+
+    #[must_use]
+    pub fn retention_metrics(&self) -> Option<RetentionMetrics> {
+        self.hot.retention_metrics()
+    }
+
+    #[must_use]
+    pub fn accepted_input_observations(&self) -> Option<AcceptedInputObservationLedger> {
+        self.hot.accepted_input_observations()
+    }
+
+    #[must_use]
+    pub fn resolved_file_count(&self) -> usize {
+        self.hot.resolved_file_count()
+    }
+
+    #[must_use]
+    pub fn cached_file_bytes(&self) -> usize {
+        self.hot.cached_file_bytes()
     }
 
     fn output_from_hot(&self, tex: MemoryRunOutput) -> Result<TexFixedPointOutput, CompileError> {

@@ -222,6 +222,14 @@ applying a superseding edit; this drops the suspended candidate and its charged
 private engine state while preserving the accepted revision. A later attempt
 therefore cannot resume a cancelled suspension.
 
+Retained editor clients use the same resolver loop for both the one-pass hot
+candidate and explicit stabilization. Each `need-resources` value identifies
+its phase; responses are forwarded to the single Rust `EditorCompileSession`,
+which selects the suspended hot or fixed-point pass. JavaScript does not count
+passes or reconstruct a wait. `cancelStabilization()` drops only the private
+off-hot-path coordinator, while abort or disposal of an authored direct or
+worker facade releases the complete session.
+
 ## Prefetch without correctness coupling
 
 Required requests and probes are authoritative. Hints may be absent, incomplete,

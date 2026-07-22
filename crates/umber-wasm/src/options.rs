@@ -2,12 +2,12 @@ use bib_engine::{BibOptionsBuilder, BibliographyMode, OutputFormat, OutputReques
 use js_sys::{Array, Reflect, Uint8Array};
 use umber::{
     BibliographyProjectOptions, EngineMode, FeatureSetting, FileContentId, FileKind, FileRequest,
-    FileRequestKey, FontContainer, FontFeaturePolicy, FontLanguage, FontObjectIdentity,
-    FontProgramIdentity, FontRequestKey, LatexProjectLimits, LatexProjectOptions,
-    LegacyFontMapping, OpenTypeTag, OutputCapability, OutputCapabilitySet, PdfPkFontRequest,
-    ResolvedFile, ResolvedFont, ResolvedPkFont, ResourceDomain, ResourceRequest, ResourceResponse,
-    SessionLimits, SessionOptions, SourcePatch, VariationCoordinate, VariationSelection,
-    WritingDirection,
+    FileRequestKey, FixedPointLimits, FontContainer, FontFeaturePolicy, FontLanguage,
+    FontObjectIdentity, FontProgramIdentity, FontRequestKey, LatexProjectLimits,
+    LatexProjectOptions, LegacyFontMapping, OpenTypeTag, OutputCapability, OutputCapabilitySet,
+    PdfPkFontRequest, ResolvedFile, ResolvedFont, ResolvedPkFont, ResourceDomain, ResourceRequest,
+    ResourceResponse, SessionLimits, SessionOptions, SourcePatch, VariationCoordinate,
+    VariationSelection, WritingDirection,
 };
 use wasm_bindgen::{JsCast, JsValue};
 
@@ -215,6 +215,22 @@ pub(crate) fn parse_project_options(value: &JsValue) -> Result<LatexProjectOptio
             "bibliography mode must be 'biblatex', 'classic', or 'auto'",
         )),
     }
+}
+
+pub(crate) fn parse_editor_options(
+    value: &JsValue,
+) -> Result<umber::EditorSessionOptions, JsValue> {
+    let tex = parse_options(value)?;
+    let mut stabilization = FixedPointLimits::default();
+    if let Some(limits) = optional_object(value, "stabilizationLimits")? {
+        if has_value(&limits, "attempts")? {
+            stabilization.attempts = integer::<u32>(&limits, "attempts")?;
+        }
+        if has_value(&limits, "passes")? {
+            stabilization.passes = integer::<u32>(&limits, "passes")?;
+        }
+    }
+    Ok(umber::EditorSessionOptions { tex, stabilization })
 }
 
 fn parse_virtual_path(value: &str) -> Result<bib_engine::VirtualPath, JsValue> {

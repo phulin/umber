@@ -8,14 +8,113 @@ use js_sys::{Array, Date, Object, Reflect, Uint8Array};
 use tex_state::{Universe, World};
 use umber::prepare_run_stores;
 use umber_wasm::{
-    CompilerSession, JsProjectSessionOptions, JsSessionOptions, JsSourcePatch, ProjectSession,
-    accepted_input_observation_schema_version, format_schema_version, package_version,
+    CompilerSession, EditorSession, JsEditorSessionOptions, JsProjectSessionOptions,
+    JsSessionOptions, JsSourcePatch, ProjectSession, accepted_input_observation_schema_version,
+    format_schema_version, package_version,
 };
 use wasm_bindgen::{JsCast, JsValue};
 use wasm_bindgen_futures::JsFuture;
 use wasm_bindgen_test::*;
 
 wasm_bindgen_test_configure!(run_in_browser);
+
+#[wasm_bindgen_test]
+fn editor_binding_exposes_provisional_and_stable_binary_outputs() {
+    let options = options("main.tex");
+    let mut session =
+        EditorSession::new(options.unchecked_ref::<JsEditorSessionOptions>()).expect("editor");
+    session
+        .add_user_file(
+            "main.tex",
+            &bytes(
+                br"\immediate\openout1=state.aux
+\immediate\write1{stable}
+\immediate\closeout1
+\shipout\hbox{x}\end
+",
+            ),
+        )
+        .expect("main source");
+    let provisional = session.advance().expect("provisional pass");
+    assert_eq!(string_field(provisional.as_ref(), "kind"), "provisional");
+    assert_eq!(field(provisional.as_ref(), "revision").as_f64(), Some(1.0));
+    let provisional_output = field(provisional.as_ref(), "output");
+    let provisional_tex = field(&provisional_output, "tex");
+    let provisional_dvi = Uint8Array::new(&field(&provisional_tex, "dvi"));
+    assert!(provisional_dvi.length() > 0);
+    assert_eq!(
+        string_field(&session.status().expect("status"), "kind"),
+        "provisional"
+    );
+
+    let stable = session.stabilize_attempt().expect("stabilization");
+    assert_eq!(string_field(stable.as_ref(), "kind"), "stable");
+    assert_eq!(field(stable.as_ref(), "revision").as_f64(), Some(1.0));
+    assert_eq!(field(stable.as_ref(), "passes").as_f64(), Some(2.0));
+    let stable_output = field(stable.as_ref(), "output");
+    let stable_tex = field(&stable_output, "tex");
+    assert!(Uint8Array::new(&field(&stable_tex, "dvi")).length() > 0);
+    assert_eq!(session.revision().expect("revision"), Some(1));
+    assert!(!session.cancel_stabilization().expect("nothing to cancel"));
+    session.dispose();
+    assert!(session.disposed());
+    assert!(session.stabilize_attempt().is_err());
+}
+
+#[wasm_bindgen_test]
+fn editor_stabilization_resumes_the_retained_resource_wait() {
+    let options = options("main.tex");
+    let mut session =
+        EditorSession::new(options.unchecked_ref::<JsEditorSessionOptions>()).expect("editor");
+    session
+        .add_user_file(
+            "main.tex",
+            &bytes(
+                br"\openin0=state.aux
+\ifeof0 \else \closein0 \input state.aux \fi
+\immediate\openout1=state.aux
+\immediate\write1{\noexpand\input remote}
+\immediate\closeout1
+\shipout\hbox{x}\end
+",
+            ),
+        )
+        .expect("main source");
+    let probe_wait = session.advance().expect("generated probe");
+    assert_eq!(string_field(probe_wait.as_ref(), "kind"), "need-resources");
+    let probe = Array::from(&field(probe_wait.as_ref(), "probes")).get(0);
+    let unavailable = Object::new();
+    for field_name in ["domain", "kind", "name"] {
+        set(&unavailable, field_name, &field(&probe, field_name));
+    }
+    set(&unavailable, "type", &JsValue::from_str("file-unavailable"));
+    session
+        .provide_resources(&Array::of1(&unavailable))
+        .expect("negative probe");
+    assert_eq!(
+        string_field(session.advance().expect("provisional").as_ref(), "kind"),
+        "provisional"
+    );
+
+    let stabilization_wait = session.stabilize_attempt().expect("remote wait");
+    assert_eq!(
+        string_field(stabilization_wait.as_ref(), "kind"),
+        "need-resources"
+    );
+    assert_eq!(
+        string_field(&field(stabilization_wait.as_ref(), "status"), "kind"),
+        "stabilizing"
+    );
+    let required = Array::from(&field(stabilization_wait.as_ref(), "required"));
+    let request: Object = required.get(0).unchecked_into();
+    let response = file_response(&request, "/texlive/remote.tex", b"\relax\n");
+    session
+        .provide_resources(&Array::of1(&response))
+        .expect("remote response");
+    let stable = session.stabilize_attempt().expect("resumed pass");
+    assert_eq!(string_field(stable.as_ref(), "kind"), "stable");
+    assert_eq!(field(stable.as_ref(), "revision").as_f64(), Some(1.0));
+}
 
 #[wasm_bindgen_test]
 fn compiler_exposes_versioned_accepted_input_observations() {

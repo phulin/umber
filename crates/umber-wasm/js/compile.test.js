@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { CompileFacadeError, compile } from "./compile.js";
+import { CompileFacadeError, compile, createEditorSession } from "./compile.js";
 
 const encoder = new TextEncoder();
 
@@ -654,4 +654,190 @@ test("observes abort before attempts and after an in-flight fetch", async (t) =>
 		assert.equal(wasm.CompilerSession.instances[0].disposed, true);
 		assert.equal(provisioned, false);
 	});
+});
+
+test("retained editor facade exposes provisional and stable lifecycle", async () => {
+	const ledger = { schemaVersion: 1, revision: 1, observations: [] };
+	class FakeEditorSession {
+		static instances = [];
+
+		constructor() {
+			this.advanceResults = [
+				{ ...need("tex", "plain.tex"), phase: "advance" },
+				{
+					kind: "provisional",
+					revision: 1,
+					stabilizationRequired: true,
+					output: { revision: 1, tex: output(), generatedFiles: [] },
+				},
+			];
+			this.stabilizationResults = [
+				{
+					...need("tex", "second.tex"),
+					phase: "stabilization",
+					status: {
+						kind: "stabilizing",
+						revision: 1,
+						completedPasses: 1,
+						stabilizationRequired: true,
+					},
+				},
+				{
+					kind: "stable",
+					revision: 1,
+					passes: 2,
+					stabilizationRequired: false,
+					output: { revision: 1, tex: output(), generatedFiles: [] },
+				},
+			];
+			this.acceptedInputObservations = ledger;
+			this.status = undefined;
+			this.responses = [];
+			FakeEditorSession.instances.push(this);
+		}
+
+		addUserFile() {}
+		advance() {
+			return this.advanceResults.shift();
+		}
+		stabilizeAttempt() {
+			return this.stabilizationResults.shift();
+		}
+		provideResources(responses) {
+			this.responses.push(responses);
+		}
+		applyPatch(patch) {
+			this.patch = patch;
+		}
+		cancelPendingPatch() {
+			return false;
+		}
+		cancelStabilization() {
+			return true;
+		}
+		dispose() {
+			this.wasDisposed = true;
+		}
+	}
+	const resolver = {
+		async resolve(requests) {
+			return requests.map((request) => ({
+				...request,
+				virtualPath: `/texlive/${request.name}`,
+				bytes: new Uint8Array([0, 255]),
+			}));
+		},
+	};
+	const editor = await createEditorSession(
+		{ mainPath: "main.tex" },
+		new Map([["main.tex", encoder.encode("main")]]),
+		resolver,
+		undefined,
+		{ EditorSession: FakeEditorSession },
+	);
+	const provisional = await editor.advance();
+	assert.equal(provisional.kind, "provisional");
+	assert.equal(provisional.output.acceptedInputObservations, ledger);
+	const stable = await editor.stabilize();
+	assert.equal(stable.kind, "stable");
+	assert.equal(stable.passes, 2);
+	assert.equal(FakeEditorSession.instances[0].responses.length, 2);
+	editor.dispose();
+	assert.equal(FakeEditorSession.instances[0].wasDisposed, true);
+});
+
+test("aborting retained editor acquisition disposes the complete session", async () => {
+	const controller = new AbortController();
+	class FakeEditorSession {
+		static instances = [];
+		constructor() {
+			FakeEditorSession.instances.push(this);
+		}
+		addUserFile() {}
+		advance() {
+			return { ...need("tex", "wait.tex"), phase: "advance" };
+		}
+		dispose() {
+			this.wasDisposed = true;
+		}
+	}
+	const editor = await createEditorSession(
+		{ mainPath: "main.tex" },
+		new Map(),
+		{
+			async resolve() {
+				controller.abort(new Error("superseded"));
+				return [];
+			},
+		},
+		undefined,
+		{ EditorSession: FakeEditorSession },
+	);
+	await assert.rejects(editor.advance(controller.signal), /superseded/);
+	assert.equal(editor.disposed, true);
+	assert.equal(FakeEditorSession.instances[0].wasDisposed, true);
+});
+
+test("cancelling a resource-waiting stabilization retains the editor session", async () => {
+	class FakeEditorSession {
+		constructor() {
+			this.status = {
+				kind: "provisional",
+				revision: 1,
+				stabilizationRequired: true,
+			};
+		}
+		addUserFile() {}
+		stabilizeAttempt() {
+			this.status = {
+				kind: "stabilizing",
+				revision: 1,
+				completedPasses: 1,
+				stabilizationRequired: true,
+			};
+			return {
+				...need("tex", "wait.tex"),
+				phase: "stabilization",
+				status: this.status,
+			};
+		}
+		cancelStabilization() {
+			this.status = {
+				kind: "provisional",
+				revision: 1,
+				stabilizationRequired: true,
+			};
+			return true;
+		}
+		dispose() {}
+	}
+	const editor = await createEditorSession(
+		{ mainPath: "main.tex" },
+		new Map(),
+		{
+			resolve(_requests, { signal }) {
+				return new Promise((_resolve, reject) =>
+					signal.addEventListener("abort", () => reject(signal.reason), {
+						once: true,
+					}),
+				);
+			},
+		},
+		undefined,
+		{ EditorSession: FakeEditorSession },
+	);
+	const pending = editor.stabilize();
+	await Promise.resolve();
+	assert.equal(editor.cancelStabilization(), true);
+	assert.deepEqual(await pending, {
+		kind: "cancelled",
+		phase: "stabilization",
+		cancelled: true,
+		status: {
+			kind: "provisional",
+			revision: 1,
+			stabilizationRequired: true,
+		},
+	});
+	assert.equal(editor.disposed, false);
 });
