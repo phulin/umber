@@ -42,9 +42,11 @@ and pdfLaTeX format closures, stages the repository-owned format inputs under
 a separate authenticated root, and publishes the profile twice. It requires
 the two directory trees to match byte for byte, repeats the complete sharded
 verification, and applies independent HTML file, object, byte, font, mapping,
-and license ceilings. The production placement is
-`html/umber-html-mvp-v1/manifest-v4.json`; it is not a valid application pin
-until the manifest-last R2 publication and public HTTPS/CORS audit complete.
+and license ceilings. The published application pin is
+`https://assets.umber.ink/html/umber-html-mvp-v1/manifest-v4.json` with
+SHA-256 `42fdceeaecf0e80c072bb69cf3b77f0cb20e755f69110c04124474fadb1cd5fc`.
+The immutable publication receipt and remote audit are recorded in
+[distribution_manifest.md](distribution_manifest.md).
 
 From the repository root, regenerate the canonical catalog with:
 

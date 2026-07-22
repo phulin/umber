@@ -189,6 +189,31 @@ profile. It performs the two-clean-build comparison against the pinned source
 tree and exact contract-version-1 catalog before the publication script may
 address `html/umber-html-mvp-v1/manifest-v4.json`.
 
+### 2026-07-22 HTML MVP publication receipt
+
+The contract-version-1 HTML profile was built twice from the pinned source
+tree and exact catalog; the two verified directory trees matched byte for
+byte. The schema-4 root has 16 schema-2 shards and reaches exactly 86 unique
+objects totaling 9,304,142 bytes. The immutable public application pin is
+`https://assets.umber.ink/html/umber-html-mvp-v1/manifest-v4.json`, SHA-256
+`42fdceeaecf0e80c072bb69cf3b77f0cb20e755f69110c04124474fadb1cd5fc`.
+
+Publication to `umber-assets/html/umber-html-mvp-v1` used immutable object
+writes. The final remote audit found zero differences across all 86 staged
+objects and exact remote count and byte equality. Remote metadata places the
+root manifest after every object, proving manifest-last ordering. The public
+manifest is byte-identical to staging, reports schema 4, distribution
+`umber-html-mvp-v1`, 16 shards, and the pinned content-addressed object base.
+It and deterministic first, middle, and last objects passed HTTPS digest and
+wildcard-CORS verification.
+
+This hosted profile certifies only the three selections inventoried in
+[html_font_catalog.md](html_font_catalog.md): exact `cmr10` mapping, explicit
+CMU Serif text, and explicit STIX Two Math. Its runtime and format closures do
+not claim arbitrary HTML legacy coverage. Full local/client TFM, VF, map, ENC,
+PK, Type 1, TrueType, and OpenType scope remains a separate typed DVI/PDF
+provider capability under [cross_output_fonts.md](cross_output_fonts.md).
+
 The production `texlive-20260301` 8-bit output has 152,560 unique objects,
 3,520,195,192 object bytes, and root digest
 `43a31da364e4607957a38da10dabff227657d607d1845d502204adfd5d002e4b`.
