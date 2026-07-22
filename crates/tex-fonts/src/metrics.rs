@@ -1,7 +1,7 @@
 //! Immutable loaded font records and backend-neutral metric queries.
 
 use crate::opentype::{
-    FontContainer, FontFeaturePolicy, FontInstanceIdentity, FontObjectIdentity,
+    FontContainer, FontFeaturePolicy, FontInstanceIdentity, FontLanguage, FontObjectIdentity,
     FontProgramIdentity, MathConstant, MathKern, MathValue, OpenTypeFont, VariationSelection,
     WritingDirection,
 };
@@ -320,8 +320,12 @@ pub struct OpenTypeFontSelection {
     pub object_identity: FontObjectIdentity,
     pub instance_identity: FontInstanceIdentity,
     pub container: FontContainer,
+    pub face_index: u32,
+    variation: VariationSelection,
     features: FontFeaturePolicy,
     direction: WritingDirection,
+    script: Option<crate::OpenTypeTag>,
+    language: Option<FontLanguage>,
 }
 
 /// A validated OpenType program paired with one loaded TeX font size.
@@ -707,16 +711,16 @@ impl LoadedFont {
 
     #[must_use]
     pub fn with_opentype(mut self, selection: OpenTypeProgramSelection) -> Self {
-        let OpenTypeProgramSelection {
-            font,
-            variation,
-            features,
-            direction,
-        } = selection;
+        let OpenTypeProgramSelection { font, .. } = selection;
         let program_identity = font.identity;
         let object_identity = font.object_identity;
         let face_index = font.face_index;
         let container = font.container;
+        let variation = font.variation.clone();
+        let features = font.feature_policy.clone();
+        let direction = font.direction;
+        let script = font.script;
+        let language = font.language.clone();
         let classic_metrics = match self.metrics {
             FontMetricsSource::Tfm(metrics) => metrics,
             FontMetricsSource::OpenType(font) => font.classic_metrics,
@@ -728,17 +732,25 @@ impl LoadedFont {
         self.opentype = Some(OpenTypeFontSelection {
             program_identity,
             object_identity,
-            instance_identity: FontInstanceIdentity::new(
+            instance_identity: FontInstanceIdentity::new_with_context(
                 program_identity,
                 face_index,
                 self.size.raw(),
-                &variation,
-                &features,
-                direction,
+                crate::FontInstanceContext {
+                    variation: &variation,
+                    features: &features,
+                    direction,
+                    script,
+                    language: language.as_ref(),
+                },
             ),
             container,
+            face_index,
+            variation,
             features,
             direction,
+            script,
+            language,
         });
         self
     }
@@ -845,6 +857,25 @@ impl LoadedFont {
     #[must_use]
     pub fn shaping_direction(&self) -> Option<WritingDirection> {
         self.opentype.as_ref().map(|selection| selection.direction)
+    }
+
+    #[must_use]
+    pub fn shaping_script(&self) -> Option<crate::OpenTypeTag> {
+        self.opentype
+            .as_ref()
+            .and_then(|selection| selection.script)
+    }
+
+    #[must_use]
+    pub fn shaping_language(&self) -> Option<&FontLanguage> {
+        self.opentype
+            .as_ref()
+            .and_then(|selection| selection.language.as_ref())
+    }
+
+    #[must_use]
+    pub fn shaping_variation(&self) -> Option<&VariationSelection> {
+        self.opentype.as_ref().map(|selection| &selection.variation)
     }
 
     #[must_use]

@@ -8,10 +8,12 @@ use tex_arith::{Scaled, font_units_to_scaled};
 use ttf_parser::{Face, GlyphId, OutlineBuilder, RawFace, Tag};
 
 use super::contract::{
-    FONT_PROGRAM_IDENTITY_VERSION, FontContainer, FontLimits, FontObjectIdentity,
+    FONT_PROGRAM_IDENTITY_VERSION, FontContainer, FontLanguage, FontLimits, FontObjectIdentity,
     FontProgramIdentity, FontRequest, OpenTypeTag, ResolvedFont, VariationSelection,
+    WritingDirection,
 };
 use super::math::{MathTables, parse_math};
+use super::variation::VariationModel;
 
 type RustybuzzFace<'a> = rustybuzz::Face<'a>;
 
@@ -104,6 +106,7 @@ pub struct FontMetadata {
     pub italic: bool,
     /// OS/2 `sxHeight`, in font units, when the table supplies it.
     pub x_height: Option<i16>,
+    pub variations: VariationModel,
 }
 
 self_cell!(
@@ -180,12 +183,20 @@ pub struct OpenTypeFont {
     pub identity: FontProgramIdentity,
     pub object_identity: FontObjectIdentity,
     pub face_index: u32,
+    /// Canonical selected coordinates, including coordinates resolved from a
+    /// named `fvar` instance.
+    pub variation: VariationSelection,
+    pub feature_policy: super::FontFeaturePolicy,
+    pub direction: WritingDirection,
+    pub script: Option<OpenTypeTag>,
+    pub language: Option<FontLanguage>,
     pub cmap: CharacterMap,
     pub metrics: OpenTypeMetrics,
     pub shaping: ShapingTables,
     pub math: Option<MathTables>,
     pub metadata: FontMetadata,
     shaping_face: Arc<ShapingFace>,
+    decoded_bytes: Arc<[u8]>,
     pub container: FontContainer,
     pub transport_bytes: Arc<[u8]>,
 }
@@ -196,10 +207,29 @@ impl OpenTypeFont {
         self.shaping_face.with_face(shape)
     }
 
+    /// Reports whether two instances share the immutable decoded program and
+    /// retained transport allocation.
+    #[must_use]
+    pub fn shares_program_storage_with(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.decoded_bytes, &other.decoded_bytes)
+            && Arc::ptr_eq(&self.transport_bytes, &other.transport_bytes)
+    }
+
     pub fn parse(
         request: &FontRequest,
         response: ResolvedFont,
         limits: FontLimits,
+    ) -> Result<Self, FontParseError> {
+        Self::parse_reusing(request, response, limits, None)
+    }
+
+    /// Parses a new instance while reusing immutable transport and decoded
+    /// program storage from an already validated identical object.
+    pub fn parse_reusing(
+        request: &FontRequest,
+        response: ResolvedFont,
+        limits: FontLimits,
+        shared: Option<&OpenTypeFont>,
     ) -> Result<Self, FontParseError> {
         validate_limits(limits)?;
         if response.request != request.key {
@@ -235,12 +265,21 @@ impl OpenTypeFont {
             return Err(FontParseError::ObjectIdentityMismatch);
         }
 
-        let decoded = match response.container {
-            FontContainer::Woff2 => {
-                woff2_patched::convert_woff2_to_ttf(&mut response.bytes.as_slice())
-                    .map_err(|_| FontParseError::InvalidWoff2)?
-            }
-            _ => response.bytes.clone(),
+        let shared = shared.filter(|shared| {
+            shared.object_identity == object_identity
+                && shared.container == response.container
+                && shared.transport_bytes.as_ref() == response.bytes.as_slice()
+        });
+        let decoded: Arc<[u8]> = if let Some(shared) = shared {
+            Arc::clone(&shared.decoded_bytes)
+        } else {
+            Arc::from(match response.container {
+                FontContainer::Woff2 => {
+                    woff2_patched::convert_woff2_to_ttf(&mut response.bytes.as_slice())
+                        .map_err(|_| FontParseError::InvalidWoff2)?
+                }
+                _ => response.bytes.clone(),
+            })
         };
         if decoded.len() > limits.max_decoded_bytes {
             return Err(FontParseError::LimitExceeded {
@@ -248,6 +287,16 @@ impl OpenTypeFont {
                 limit: limits.max_decoded_bytes,
                 attempted: decoded.len(),
             });
+        }
+        if let Some(faces) = ttf_parser::fonts_in_collection(&decoded) {
+            let faces = usize::try_from(faces).map_err(|_| FontParseError::ArithmeticOverflow)?;
+            if faces > limits.max_faces {
+                return Err(FontParseError::LimitExceeded {
+                    resource: "collection faces",
+                    limit: limits.max_faces,
+                    attempted: faces,
+                });
+            }
         }
 
         let raw = RawFace::parse(&decoded, request.key.face_index)
@@ -269,9 +318,11 @@ impl OpenTypeFont {
             return Err(FontParseError::ProgramIdentityMismatch);
         }
 
+        let variation_model = VariationModel::parse(raw.table(Tag::from_bytes(b"fvar")), limits)?;
+        let variation = variation_model.resolve(&request.key.variation)?;
         let mut face = Face::parse(&decoded, request.key.face_index)
             .map_err(|error| FontParseError::InvalidSfnt(error.to_string()))?;
-        apply_variations(&mut face, &request.key.variation)?;
+        apply_variations(&mut face, &variation)?;
         let glyph_count = face.number_of_glyphs();
         if usize::from(glyph_count) > limits.max_glyphs {
             return Err(FontParseError::LimitExceeded {
@@ -306,24 +357,35 @@ impl OpenTypeFont {
             is_monospaced: face.is_monospaced(),
             italic: face.is_italic(),
             x_height: face.x_height(),
+            variations: variation_model,
         };
         let shaping_face = Arc::new(ShapingFace::new(
-            Arc::from(decoded),
+            Arc::clone(&decoded),
             request.key.face_index,
-            &request.key.variation,
+            &variation,
         )?);
+        let transport_bytes = shared.map_or_else(
+            || Arc::from(response.bytes),
+            |shared| Arc::clone(&shared.transport_bytes),
+        );
         Ok(Self {
             identity,
             object_identity,
             face_index: request.key.face_index,
+            variation,
+            feature_policy: request.key.feature_policy.clone(),
+            direction: request.key.direction,
+            script: request.key.script,
+            language: request.key.language.clone(),
             cmap,
             metrics,
             shaping,
             math,
             metadata,
             shaping_face,
+            decoded_bytes: decoded,
             container: response.container,
-            transport_bytes: Arc::from(response.bytes),
+            transport_bytes,
         })
     }
 }
@@ -566,6 +628,10 @@ pub enum FontParseError {
     InvalidOutline(u16),
     DuplicateTable(OpenTypeTag),
     InvalidTableRange(OpenTypeTag),
+    UnsupportedVariationTable,
+    InvalidVariationTable,
+    UnknownNamedVariationInstance(u16),
+    DuplicateNamedVariationInstance(u16),
     UnknownVariationAxis(OpenTypeTag),
     VariationOutOfRange(OpenTypeTag),
     InvalidMath(&'static str),

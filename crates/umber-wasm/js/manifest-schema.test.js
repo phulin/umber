@@ -5,10 +5,34 @@ import test from "node:test";
 import {
 	decodeKey,
 	encodeRequest,
+	fontRequestIdentity,
 	resourceDomain,
 	shardIndex,
 	validateRootManifest,
 } from "./manifest-schema.js";
+
+test("font request identity isolates advanced instance inputs", () => {
+	const base = {
+		logicalName: "fixture",
+		faceIndex: 0,
+		variationInstance: "default",
+		variations: [],
+		features: [{ tag: "liga", value: 1 }],
+		direction: "ltr",
+		script: "latn",
+		language: "en",
+	};
+	const identity = fontRequestIdentity(base);
+	for (const changed of [
+		{ ...base, faceIndex: 1 },
+		{ ...base, variationInstance: { namedNameId: 300 } },
+		{ ...base, features: [{ tag: "liga", value: 0 }] },
+		{ ...base, script: "cyrl" },
+		{ ...base, language: "sr" },
+	]) {
+		assert.notEqual(fontRequestIdentity(changed), identity);
+	}
+});
 
 test("canonical shard selection matches publisher parity vectors", async () => {
 	const vectors = [

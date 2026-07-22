@@ -28,8 +28,12 @@ export interface FileRequest extends FileRequestKey {
 export interface FontRequestKey {
   logicalName: string;
   faceIndex: number;
+  variationInstance: "default" | "coordinates" | { namedNameId: number };
   variations: Array<{ tag: string; value: number }>;
-  features: Array<{ tag: string; enabled: boolean }>;
+  features: Array<{ tag: string; value: number }>;
+  direction: "ltr" | "rtl";
+  script?: string;
+  language?: string;
 }
 
 export interface FontRequest extends FontRequestKey {

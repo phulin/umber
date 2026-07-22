@@ -110,14 +110,53 @@ fn resource_requests(requests: Vec<ResourceRequest>) -> Result<Array, JsValue> {
                     variations.push(&value);
                 }
                 set(&object, "variations", &variations)?;
+                match request.key.variation.instance() {
+                    umber::VariationInstance::Default => {
+                        set(&object, "variationInstance", &JsValue::from_str("default"))?;
+                    }
+                    umber::VariationInstance::Coordinates => {
+                        set(
+                            &object,
+                            "variationInstance",
+                            &JsValue::from_str("coordinates"),
+                        )?;
+                    }
+                    umber::VariationInstance::Named(name_id) => {
+                        let instance = Object::new();
+                        set(
+                            &instance,
+                            "namedNameId",
+                            &JsValue::from_f64(f64::from(name_id)),
+                        )?;
+                        set(&object, "variationInstance", &instance)?;
+                    }
+                }
                 let features = Array::new();
                 for setting in request.key.feature_policy.settings() {
                     let value = Object::new();
                     set(&value, "tag", &JsValue::from_str(&setting.tag.to_string()))?;
-                    set(&value, "enabled", &JsValue::from_bool(setting.enabled))?;
+                    set(
+                        &value,
+                        "value",
+                        &JsValue::from_f64(f64::from(setting.value)),
+                    )?;
                     features.push(&value);
                 }
                 set(&object, "features", &features)?;
+                set(
+                    &object,
+                    "direction",
+                    &JsValue::from_str(match request.key.direction {
+                        umber::WritingDirection::LeftToRight => "ltr",
+                        umber::WritingDirection::RightToLeft => "rtl",
+                    }),
+                )?;
+                if let Some(script) = request.key.script {
+                    set(&object, "script", &JsValue::from_str(&script.to_string()))?;
+                }
+                if let Some(language) = &request.key.language {
+                    set(&object, "language", &JsValue::from_str(language.as_str()))?;
+                }
                 let accepted = Array::new();
                 if request
                     .accepted_containers

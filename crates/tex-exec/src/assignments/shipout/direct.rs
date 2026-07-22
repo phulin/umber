@@ -1236,6 +1236,20 @@ fn register_font_resource(stores: &Universe, font: FontId, emission: &mut Emissi
             object_identity: font.object_identity,
             instance_identity: font.instance_identity,
             container: font.container,
+            face_index: font.face_index,
+            variation: loaded
+                .shaping_variation()
+                .expect("OpenType selection variation")
+                .clone(),
+            features: loaded
+                .shaping_features()
+                .expect("OpenType selection features")
+                .clone(),
+            direction: loaded
+                .shaping_direction()
+                .expect("OpenType selection direction"),
+            script: loaded.shaping_script(),
+            language: loaded.shaping_language().cloned(),
             encoding_map_version: loaded.encoding_map().map(|map| map.version()),
             encoding_map_identity: loaded.encoding_map().map(|map| map.identity()),
             fontdimen_synthesis_version: loaded

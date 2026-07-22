@@ -2,10 +2,11 @@ use bib_engine::{BibOptionsBuilder, BibliographyMode, OutputFormat, OutputReques
 use js_sys::{Array, Reflect, Uint8Array};
 use umber::{
     BibliographyProjectOptions, EngineMode, FeatureSetting, FileContentId, FileKind, FileRequest,
-    FileRequestKey, FontContainer, FontFeaturePolicy, FontObjectIdentity, FontProgramIdentity,
-    FontRequestKey, LatexProjectLimits, LatexProjectOptions, OpenTypeTag, ResolvedFile,
-    ResolvedFont, ResourceDomain, ResourceRequest, ResourceResponse, SessionLimits, SessionOptions,
-    SessionWebFont, SourcePatch, VariationCoordinate, VariationSelection,
+    FileRequestKey, FontContainer, FontFeaturePolicy, FontLanguage, FontObjectIdentity,
+    FontProgramIdentity, FontRequestKey, LatexProjectLimits, LatexProjectOptions, OpenTypeTag,
+    ResolvedFile, ResolvedFont, ResourceDomain, ResourceRequest, ResourceResponse, SessionLimits,
+    SessionOptions, SessionWebFont, SourcePatch, VariationCoordinate, VariationSelection,
+    WritingDirection,
 };
 use wasm_bindgen::{JsCast, JsValue};
 
@@ -346,16 +347,56 @@ fn parse_font_request_key(value: &JsValue) -> Result<FontRequestKey, JsValue> {
         .map(|feature| {
             Ok(FeatureSetting {
                 tag: parse_tag(&required_string(&feature, "tag")?)?,
-                enabled: required_bool(&feature, "enabled")?,
+                value: if has_value(&feature, "value")? {
+                    integer::<u32>(&feature, "value")?
+                } else {
+                    u32::from(required_bool(&feature, "enabled")?)
+                },
             })
         })
         .collect::<Result<Vec<_>, JsValue>>()?;
+    let variation = if has_value(value, "variationInstance")? {
+        let instance = field(value, "variationInstance")?;
+        if instance.as_string().as_deref() == Some("default") {
+            if !variation.is_empty() {
+                return Err(js_error(
+                    "default variation instance cannot include coordinates",
+                ));
+            }
+            VariationSelection::default()
+        } else if instance.as_string().as_deref() == Some("coordinates") {
+            VariationSelection::new(variation).map_err(crate::boundary_error)?
+        } else {
+            require_object(&instance, "variationInstance")?;
+            if !variation.is_empty() {
+                return Err(js_error(
+                    "named variation instance cannot include coordinates",
+                ));
+            }
+            VariationSelection::named(integer::<u16>(&instance, "namedNameId")?)
+        }
+    } else {
+        VariationSelection::new(variation).map_err(crate::boundary_error)?
+    };
+    let direction = match optional_string(value, "direction")?.as_deref() {
+        None | Some("ltr") => WritingDirection::LeftToRight,
+        Some("rtl") => WritingDirection::RightToLeft,
+        Some(_) => return Err(js_error("direction must be ltr or rtl")),
+    };
+    let script = optional_string(value, "script")?
+        .map(|script| parse_tag(&script))
+        .transpose()?;
+    let language = optional_string(value, "language")?
+        .map(FontLanguage::new)
+        .transpose()
+        .map_err(crate::boundary_error)?;
     FontRequestKey::new(
         required_string(value, "logicalName")?,
         integer::<u32>(value, "faceIndex")?,
-        VariationSelection::new(variation).map_err(crate::boundary_error)?,
+        variation,
         FontFeaturePolicy::new(features).map_err(crate::boundary_error)?,
     )
+    .and_then(|key| key.with_shaping_context(direction, script, language))
     .map_err(crate::boundary_error)
 }
 

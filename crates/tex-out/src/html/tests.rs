@@ -39,6 +39,20 @@ fn manifest_reuses_one_retained_object_and_program_derived_family() {
         object_identity: tex_fonts::FontObjectIdentity::for_bytes(bytes),
         instance_identity: tex_fonts::FontInstanceIdentity::from_bytes([8; 32]),
         container: tex_fonts::FontContainer::Woff2,
+        face_index: 0,
+        variation: tex_fonts::VariationSelection::new(vec![tex_fonts::VariationCoordinate {
+            tag: tex_fonts::OpenTypeTag::new(*b"wght"),
+            value: 700 << 16,
+        }])
+        .expect("variation"),
+        features: tex_fonts::FontFeaturePolicy::new(vec![tex_fonts::FeatureSetting {
+            tag: tex_fonts::OpenTypeTag::new(*b"salt"),
+            value: 2,
+        }])
+        .expect("features"),
+        direction: tex_fonts::WritingDirection::RightToLeft,
+        script: Some(tex_fonts::OpenTypeTag::new(*b"arab")),
+        language: Some(tex_fonts::FontLanguage::new("ar").expect("language")),
         encoding_map_version: None,
         encoding_map_identity: None,
         fontdimen_synthesis_version: None,
@@ -56,6 +70,10 @@ fn manifest_reuses_one_retained_object_and_program_derived_family() {
     let html = String::from_utf8(output.html).expect("UTF-8 HTML");
     assert!(html.contains("umber-font-090909090909090909090909"));
     assert!(html.contains("fonts/sha256-"));
+    assert!(html.contains("font-variation-settings:'wght' 700"));
+    assert!(html.contains("font-feature-settings:'salt' 2"));
+    assert!(html.contains("direction=\"rtl\" lang=\"ar\""));
+    assert!(html.contains("data-umber-script=\"arab\""));
     assert_eq!(html.matches("data-umber-revision=\"1\"").count(), 2);
 }
 

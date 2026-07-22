@@ -139,12 +139,13 @@ async function integration() {
 		],
 	]);
 	const retained = new CompilerSession(htmlOptions);
+	retained.addHtmlFont(htmlFont);
 	retained.addUserFile("cmr10.tfm", cmr10);
 	retained.addUserFile("html.tex", htmlFiles.get("html.tex"));
 	const retainedMissing = retained.advance();
 	assert(
 		retainedMissing.kind === "need-resources",
-		"retained session did not request its HTML font",
+		`retained session did not request its HTML font (${htmlFont.tfmContentHash}): ${JSON.stringify(retainedMissing)}`,
 	);
 	retained.provideResources(
 		retainedMissing.required.map((request) => ({

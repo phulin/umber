@@ -9,7 +9,8 @@ use std::fmt;
 use tex_arith::Scaled;
 
 const MAGIC: &[u8; 4] = b"UMPG";
-const VERSION: u8 = 21;
+const VERSION: u8 = 22;
+const ADVANCED_FONT_INSTANCE_VERSION: u8 = 22;
 const FONT_LAYOUT_VERSION: u8 = 21;
 const PAGE_SIZE_VERSION: u8 = 20;
 const PRE_PAGE_SIZE_VERSION: u8 = 19;
@@ -1466,6 +1467,40 @@ impl Writer {
                     self.raw(&opentype.object_identity.bytes());
                     self.raw(&opentype.instance_identity.bytes());
                     self.u8(opentype.container as u8);
+                    self.u32(opentype.face_index);
+                    match opentype.variation.instance() {
+                        tex_fonts::VariationInstance::Default => self.u8(0),
+                        tex_fonts::VariationInstance::Named(name_id) => {
+                            self.u8(1);
+                            self.u16(name_id);
+                        }
+                        tex_fonts::VariationInstance::Coordinates => self.u8(2),
+                    }
+                    self.collection_len(opentype.variation.coordinates().len());
+                    for coordinate in opentype.variation.coordinates() {
+                        self.raw(&coordinate.tag.bytes());
+                        self.i32(coordinate.value);
+                    }
+                    self.collection_len(opentype.features.settings().len());
+                    for feature in opentype.features.settings() {
+                        self.raw(&feature.tag.bytes());
+                        self.u32(feature.value);
+                    }
+                    self.u8(opentype.direction as u8);
+                    match opentype.script {
+                        Some(script) => {
+                            self.u8(1);
+                            self.raw(&script.bytes());
+                        }
+                        None => self.u8(0),
+                    }
+                    match &opentype.language {
+                        Some(language) => {
+                            self.u8(1);
+                            self.str(language.as_str());
+                        }
+                        None => self.u8(0),
+                    }
                     self.optional_u8(opentype.encoding_map_version);
                     match opentype.encoding_map_identity {
                         Some(identity) => {
@@ -2240,6 +2275,107 @@ impl Reader<'_> {
                                 });
                             }
                         };
+                        let (face_index, variation, features, direction, script, language) =
+                            if version >= ADVANCED_FONT_INSTANCE_VERSION {
+                                let face_index = self.u32()?;
+                                let variation_kind = self.u8()?;
+                                let named_id = if variation_kind == 1 {
+                                    Some(self.u16()?)
+                                } else {
+                                    None
+                                };
+                                if variation_kind > 2 {
+                                    return Err(ParseError::InvalidTag {
+                                        kind: "variation instance",
+                                        tag: variation_kind,
+                                    });
+                                }
+                                let coordinate_count = self.collection_len(8)?;
+                                let mut coordinates = Vec::with_capacity(coordinate_count);
+                                for _ in 0..coordinate_count {
+                                    coordinates.push(tex_fonts::VariationCoordinate {
+                                        tag: tex_fonts::OpenTypeTag::new(self.opentype_tag()?),
+                                        value: self.i32()?,
+                                    });
+                                }
+                                let variation = match (variation_kind, named_id) {
+                                    (0, _) if coordinates.is_empty() => {
+                                        Ok(tex_fonts::VariationSelection::default())
+                                    }
+                                    (1, Some(name_id)) => {
+                                        tex_fonts::VariationSelection::resolved_named(
+                                            name_id,
+                                            coordinates,
+                                        )
+                                    }
+                                    (2, _) => tex_fonts::VariationSelection::new(coordinates),
+                                    _ => Err(tex_fonts::FontSelectionError::DuplicateVariationAxis),
+                                }
+                                .map_err(|_| {
+                                    ParseError::InvalidTag {
+                                        kind: "variation selection",
+                                        tag: variation_kind,
+                                    }
+                                })?;
+                                let feature_count = self.collection_len(8)?;
+                                let mut feature_settings = Vec::with_capacity(feature_count);
+                                for _ in 0..feature_count {
+                                    feature_settings.push(tex_fonts::FeatureSetting {
+                                        tag: tex_fonts::OpenTypeTag::new(self.opentype_tag()?),
+                                        value: self.u32()?,
+                                    });
+                                }
+                                let features = tex_fonts::FontFeaturePolicy::new(feature_settings)
+                                    .map_err(|_| ParseError::InvalidTag {
+                                        kind: "feature policy",
+                                        tag: 0,
+                                    })?;
+                                let direction = match self.u8()? {
+                                    1 => tex_fonts::WritingDirection::LeftToRight,
+                                    2 => tex_fonts::WritingDirection::RightToLeft,
+                                    tag => {
+                                        return Err(ParseError::InvalidTag {
+                                            kind: "writing direction",
+                                            tag,
+                                        });
+                                    }
+                                };
+                                let script = match self.u8()? {
+                                    0 => None,
+                                    1 => Some(tex_fonts::OpenTypeTag::new(self.opentype_tag()?)),
+                                    tag => {
+                                        return Err(ParseError::InvalidTag {
+                                            kind: "script",
+                                            tag,
+                                        });
+                                    }
+                                };
+                                let language = match self.u8()? {
+                                    0 => None,
+                                    1 => Some(tex_fonts::FontLanguage::new(self.str()?).map_err(
+                                        |_| ParseError::InvalidTag {
+                                            kind: "language",
+                                            tag: 0,
+                                        },
+                                    )?),
+                                    tag => {
+                                        return Err(ParseError::InvalidTag {
+                                            kind: "language",
+                                            tag,
+                                        });
+                                    }
+                                };
+                                (face_index, variation, features, direction, script, language)
+                            } else {
+                                (
+                                    0,
+                                    tex_fonts::VariationSelection::default(),
+                                    tex_fonts::FontFeaturePolicy::default(),
+                                    tex_fonts::WritingDirection::LeftToRight,
+                                    None,
+                                    None,
+                                )
+                            };
                         let (
                             encoding_map_version,
                             encoding_map_identity,
@@ -2266,6 +2402,12 @@ impl Reader<'_> {
                             object_identity,
                             instance_identity,
                             container,
+                            face_index,
+                            variation,
+                            features,
+                            direction,
+                            script,
+                            language,
                             encoding_map_version,
                             encoding_map_identity,
                             fontdimen_synthesis_version,
@@ -2351,6 +2493,12 @@ impl Reader<'_> {
 
     fn identity(&mut self) -> Result<[u8; 32], ParseError> {
         self.take(32)?
+            .try_into()
+            .map_err(|_| ParseError::UnexpectedEof)
+    }
+
+    fn opentype_tag(&mut self) -> Result<[u8; 4], ParseError> {
+        self.take(4)?
             .try_into()
             .map_err(|_| ParseError::UnexpectedEof)
     }

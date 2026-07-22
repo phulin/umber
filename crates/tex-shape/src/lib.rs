@@ -1,8 +1,9 @@
 //! Pure, backend-neutral Unicode/OpenType shaping.
 
 use rustybuzz::{Feature, UnicodeBuffer};
+use std::str::FromStr;
 use tex_arith::{Scaled, font_units_to_scaled};
-use tex_fonts::{FontFeaturePolicy, OpenTypeTag, ShapingFont};
+use tex_fonts::{FontFeaturePolicy, FontLanguage, OpenTypeTag, ShapingFont};
 pub use unicode_script::Script;
 use unicode_script::UnicodeScript;
 
@@ -61,7 +62,20 @@ pub fn shape_run(
     features: &FontFeaturePolicy,
     direction: Direction,
 ) -> ShapedRun {
-    shape_run_with_breaks(font, text, features, direction, &[])
+    shape_run_with_context(font, text, features, direction, None, None)
+}
+
+/// Shapes a run with explicit OpenType script and BCP-47 language-system
+/// inputs. Omitted script retains deterministic Unicode-script inference.
+pub fn shape_run_with_context(
+    font: ShapingFont<'_>,
+    text: &str,
+    features: &FontFeaturePolicy,
+    direction: Direction,
+    script: Option<OpenTypeTag>,
+    language: Option<&FontLanguage>,
+) -> ShapedRun {
+    shape_run_with_breaks_and_context(font, text, features, direction, script, language, &[])
 }
 
 /// Shapes a run while suppressing optional ligatures across candidate breaks.
@@ -76,22 +90,39 @@ pub fn shape_run_with_breaks(
     direction: Direction,
     breaks: &[usize],
 ) -> ShapedRun {
+    shape_run_with_breaks_and_context(font, text, features, direction, None, None, breaks)
+}
+
+pub fn shape_run_with_breaks_and_context(
+    font: ShapingFont<'_>,
+    text: &str,
+    features: &FontFeaturePolicy,
+    direction: Direction,
+    selected_script: Option<OpenTypeTag>,
+    language: Option<&FontLanguage>,
+    breaks: &[usize],
+) -> ShapedRun {
     let (font, size) = font.parts();
     let script = run_script(text);
     let mut buffer = UnicodeBuffer::new();
     buffer.push_str(text);
     buffer.set_direction(to_rustybuzz_direction(direction));
-    buffer.set_script(to_rustybuzz_script(script));
+    buffer.set_script(selected_script.map_or_else(
+        || to_rustybuzz_script(script),
+        |tag| {
+            rustybuzz::Script::from_iso15924_tag(to_rustybuzz_tag(tag))
+                .unwrap_or(rustybuzz::script::UNKNOWN)
+        },
+    ));
+    if let Some(language) = language
+        && let Ok(language) = rustybuzz::Language::from_str(language.as_str())
+    {
+        buffer.set_language(language);
+    }
     let mut features = features
         .settings()
         .iter()
-        .map(|setting| {
-            Feature::new(
-                to_rustybuzz_tag(setting.tag),
-                u32::from(setting.enabled),
-                ..,
-            )
-        })
+        .map(|setting| Feature::new(to_rustybuzz_tag(setting.tag), setting.value, ..))
         .collect::<Vec<_>>();
     for &boundary in breaks {
         if boundary > text.len() || !text.is_char_boundary(boundary) {

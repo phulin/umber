@@ -99,11 +99,13 @@ test("drives file and font resources through one client-owned resolver API", asy
 		type: "font",
 		logicalName: "cmr10",
 		faceIndex: 0,
+		variationInstance: "default",
 		variations: [],
 		features: [
-			{ tag: "kern", enabled: true },
-			{ tag: "liga", enabled: true },
+			{ tag: "kern", value: 1 },
+			{ tag: "liga", value: 1 },
 		],
+		direction: "ltr",
 		acceptedContainers: ["woff2"],
 	};
 	const hint = {

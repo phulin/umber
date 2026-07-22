@@ -1,6 +1,6 @@
 use super::*;
 use tex_fonts::{
-    AcceptedFontContainers, FeatureSetting, FontContainer, FontLimits, FontMetrics,
+    AcceptedFontContainers, FeatureSetting, FontContainer, FontLanguage, FontLimits, FontMetrics,
     FontObjectIdentity, FontPurposes, FontRequest, FontRequestKey, LoadedFont, OpenTypeFont,
     OpenTypeProgramSelection, ResolvedFont, VariationSelection, WritingDirection,
 };
@@ -155,10 +155,60 @@ fn complex_script_fixtures_match_glyph_and_position_snapshots() {
 }
 
 #[test]
+fn explicit_script_language_and_mark_policy_reach_rustybuzz() {
+    let enabled = FontFeaturePolicy::new(vec![
+        FeatureSetting {
+            tag: OpenTypeTag::new(*b"mark"),
+            value: 1,
+        },
+        FeatureSetting {
+            tag: OpenTypeTag::new(*b"mkmk"),
+            value: 1,
+        },
+    ])
+    .expect("enabled marks");
+    let disabled = FontFeaturePolicy::new(vec![
+        FeatureSetting {
+            tag: OpenTypeTag::new(*b"mark"),
+            value: 0,
+        },
+        FeatureSetting {
+            tag: OpenTypeTag::new(*b"mkmk"),
+            value: 0,
+        },
+    ])
+    .expect("disabled marks");
+    let font = loaded_font(
+        "noto-arabic",
+        NOTO_SANS_ARABIC,
+        FontContainer::TrueType,
+        AcceptedFontContainers::NATIVE,
+        enabled.clone(),
+    );
+    let language = FontLanguage::new("ar").expect("language");
+    let shape = |features| {
+        shape_run_with_context(
+            font.shaping_font().expect("OpenType fixture"),
+            "لَا",
+            features,
+            Direction::RightToLeft,
+            Some(OpenTypeTag::new(*b"arab")),
+            Some(&language),
+        )
+    };
+    let positioned = shape(&enabled);
+    let unpositioned = shape(&disabled);
+    assert_eq!(positioned.glyphs[1].x_offset.raw(), -74_711);
+    assert_eq!(unpositioned.glyphs[1].x_offset.raw(), 0);
+    assert_eq!(positioned.glyphs[1].y_offset.raw(), 167_772);
+    assert_eq!(unpositioned.glyphs[1].y_offset.raw(), 0);
+}
+
+#[test]
 fn feature_policy_can_disable_ligatures() {
     let features = FontFeaturePolicy::new(vec![FeatureSetting {
         tag: OpenTypeTag::new(*b"liga"),
-        enabled: false,
+        value: 0,
     }])
     .expect("feature policy");
     let font = cmu_serif(features.clone());

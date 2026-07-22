@@ -28,3 +28,6 @@ font-unit conversion, and carries no engine state or output-backend concepts.
 
 Run `cargo test -q --tests -p tex-shape` and verify the crate for
 `wasm32-unknown-unknown`. Use `scripts/check.sh` for rustfmt and clippy.
+`scripts/check-hb-shape-fixtures.sh` is an optional local comparison with C
+HarfBuzz; it skips successfully when `hb-shape` is unavailable and is not a
+build or CI dependency.

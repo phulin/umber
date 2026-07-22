@@ -606,11 +606,17 @@ fn shape_open_type_chars(
         .iter()
         .filter_map(|&position| byte_starts.get(position).copied())
         .collect::<Vec<_>>();
-    let shaped = tex_shape::shape_run_with_breaks(
+    let direction = match font.shaping_direction() {
+        Some(tex_fonts::WritingDirection::RightToLeft) => tex_shape::Direction::RightToLeft,
+        Some(tex_fonts::WritingDirection::LeftToRight) | None => tex_shape::Direction::LeftToRight,
+    };
+    let shaped = tex_shape::shape_run_with_breaks_and_context(
         shaping_font,
         &text,
         features,
-        tex_shape::Direction::LeftToRight,
+        direction,
+        font.shaping_script(),
+        font.shaping_language(),
         &break_bytes,
     );
     let mut cluster_advances = BTreeMap::<usize, i64>::new();

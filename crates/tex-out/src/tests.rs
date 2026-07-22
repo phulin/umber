@@ -36,7 +36,9 @@ fn version_19_artifacts_decode_with_unconfigured_page_geometry() {
     ) as usize;
     let layout = font_start + 8 + name_len + 32 + 4 + 4 + 4;
     let opentype_extensions = layout + 2 + 1 + 32 + 32 + 32 + 1;
-    bytes.drain(opentype_extensions..opentype_extensions + 37);
+    // Version 19 predates both the 32-byte advanced-instance extension and
+    // the 37-byte mapped-layout extension.
+    bytes.drain(opentype_extensions..opentype_extensions + 32 + 37);
     bytes.drain(layout..layout + 2);
     bytes.drain(page_geometry..page_geometry + 16);
     bytes[4] = 19;
@@ -84,7 +86,7 @@ fn pdf_destinations_round_trip_nullable_zoom_and_running_rectangle_dimensions() 
     let bytes = artifact
         .to_bytes()
         .expect("destination artifact serializes");
-    assert_eq!(bytes[4], 21);
+    assert_eq!(bytes[4], 22);
     assert_eq!(
         PageArtifact::from_bytes(&bytes).expect("destination artifact parses"),
         artifact
@@ -319,7 +321,7 @@ fn rejects_unknown_version() {
 #[test]
 fn rejects_pre_content_identity_v2_artifact_version() {
     let mut bytes = sample_artifact().to_bytes().expect("artifact serializes");
-    assert_eq!(bytes[4], 21);
+    assert_eq!(bytes[4], 22);
     bytes[4] = 11;
 
     assert_eq!(
@@ -709,6 +711,12 @@ fn sample_artifact() -> PageArtifact {
                 object_identity: tex_fonts::FontObjectIdentity::from_bytes([2; 32]),
                 instance_identity: tex_fonts::FontInstanceIdentity::from_bytes([3; 32]),
                 container: tex_fonts::FontContainer::Woff2,
+                face_index: 0,
+                variation: tex_fonts::VariationSelection::default(),
+                features: tex_fonts::FontFeaturePolicy::default(),
+                direction: tex_fonts::WritingDirection::LeftToRight,
+                script: None,
+                language: None,
                 encoding_map_version: Some(tex_fonts::LEGACY_ENCODING_MAP_VERSION),
                 encoding_map_identity: Some([12; 32]),
                 fontdimen_synthesis_version: Some(tex_fonts::OPENTYPE_FONTDIMEN_SYNTHESIS_VERSION),

@@ -435,13 +435,13 @@ fn opentype_unit_scaling_uses_shared_boundary_rounding() {
 fn request_selection_is_canonical_and_rejects_unsafe_duplicates() {
     let kern = FeatureSetting {
         tag: OpenTypeTag::new(*b"kern"),
-        enabled: true,
+        value: 1,
     };
     assert_eq!(
         FontFeaturePolicy::new(vec![
             FeatureSetting {
                 tag: OpenTypeTag::new(*b"liga"),
-                enabled: true
+                value: 1
             },
             kern,
         ])
@@ -450,7 +450,7 @@ fn request_selection_is_canonical_and_rejects_unsafe_duplicates() {
             kern,
             FeatureSetting {
                 tag: OpenTypeTag::new(*b"liga"),
-                enabled: true
+                value: 1
             },
         ])
         .expect("features"),
@@ -462,10 +462,314 @@ fn request_selection_is_canonical_and_rejects_unsafe_duplicates() {
 }
 
 #[test]
+fn variation_model_resolves_default_named_and_explicit_instances() {
+    let fvar = synthetic_fvar();
+    let model = VariationModel::parse(Some(&fvar), FontLimits::default()).expect("valid fvar");
+    assert_eq!(model.axes.len(), 2);
+    assert_eq!(model.axes[0].tag, OpenTypeTag::new(*b"wdth"));
+    assert_eq!(model.axes[1].tag, OpenTypeTag::new(*b"wght"));
+    assert_eq!(model.named_instances.len(), 1);
+    assert_eq!(model.named_instances[0].subfamily_name_id, 300);
+    assert_eq!(model.named_instances[0].postscript_name_id, Some(301));
+
+    let named = model
+        .resolve(&VariationSelection::named(300))
+        .expect("named instance");
+    assert_eq!(named.instance(), VariationInstance::Named(300));
+    assert_eq!(named.coordinates()[0].value, 75 << 16);
+    assert_eq!(named.coordinates()[1].value, 700 << 16);
+    assert_eq!(
+        model.resolve(&VariationSelection::named(999)),
+        Err(FontParseError::UnknownNamedVariationInstance(999))
+    );
+    assert_eq!(
+        model.resolve(
+            &VariationSelection::new(vec![VariationCoordinate {
+                tag: OpenTypeTag::new(*b"wght"),
+                value: 901 << 16,
+            }])
+            .expect("selection")
+        ),
+        Err(FontParseError::VariationOutOfRange(OpenTypeTag::new(
+            *b"wght"
+        )))
+    );
+}
+
+#[test]
+fn malformed_variation_programs_fail_without_partial_publication() {
+    let mut truncated = synthetic_fvar();
+    truncated.truncate(truncated.len() - 1);
+    assert_eq!(
+        VariationModel::parse(Some(&truncated), FontLimits::default()),
+        Err(FontParseError::InvalidVariationTable)
+    );
+
+    let mut oversized = synthetic_fvar();
+    oversized[8..10].copy_from_slice(&65_u16.to_be_bytes());
+    assert!(matches!(
+        VariationModel::parse(Some(&oversized), FontLimits::HARD_MAX),
+        Err(FontParseError::LimitExceeded {
+            resource: "variation axes",
+            ..
+        })
+    ));
+}
+
+#[test]
+fn instance_identity_covers_feature_values_script_language_and_named_selection() {
+    let program = FontProgramIdentity::from_bytes([9; 32]);
+    let language = FontLanguage::new("SR-Latn").expect("language");
+    let base = FontInstanceIdentity::new_with_context(
+        program,
+        0,
+        655_360,
+        FontInstanceContext {
+            variation: &VariationSelection::default(),
+            features: &FontFeaturePolicy::default(),
+            direction: WritingDirection::LeftToRight,
+            script: Some(OpenTypeTag::new(*b"latn")),
+            language: Some(&language),
+        },
+    );
+    let alternate = FontFeaturePolicy::new(vec![FeatureSetting {
+        tag: OpenTypeTag::new(*b"salt"),
+        value: 2,
+    }])
+    .expect("feature policy");
+    assert_ne!(
+        base,
+        FontInstanceIdentity::new_with_context(
+            program,
+            0,
+            655_360,
+            FontInstanceContext {
+                variation: &VariationSelection::default(),
+                features: &alternate,
+                direction: WritingDirection::LeftToRight,
+                script: Some(OpenTypeTag::new(*b"latn")),
+                language: Some(&language),
+            },
+        )
+    );
+    assert_ne!(
+        base,
+        FontInstanceIdentity::new_with_context(
+            program,
+            0,
+            655_360,
+            FontInstanceContext {
+                variation: &VariationSelection::named(300),
+                features: &FontFeaturePolicy::default(),
+                direction: WritingDirection::LeftToRight,
+                script: Some(OpenTypeTag::new(*b"latn")),
+                language: Some(&language),
+            },
+        )
+    );
+    assert_eq!(language.as_str(), "sr-latn");
+}
+
+#[test]
+fn sibling_instances_share_validated_program_storage() {
+    let bytes = include_bytes!("../../../umber-wasm/assets/cmu-serif-500-roman.woff2").to_vec();
+    let first_request = wasm_request();
+    let first = OpenTypeFont::parse(
+        &first_request,
+        ResolvedFont {
+            request: first_request.key.clone(),
+            container: FontContainer::Woff2,
+            bytes: bytes.clone(),
+            declared_object_sha256: None,
+            declared_program_identity: None,
+            provenance: None,
+        },
+        FontLimits::default(),
+    )
+    .expect("first instance");
+    let alternate_features = FontFeaturePolicy::new(vec![FeatureSetting {
+        tag: OpenTypeTag::new(*b"liga"),
+        value: 0,
+    }])
+    .expect("features");
+    let second_key = FontRequestKey::new(
+        "cmu-serif-roman",
+        0,
+        VariationSelection::default(),
+        alternate_features,
+    )
+    .expect("request");
+    let second_request = FontRequest {
+        key: second_key.clone(),
+        accepted_containers: AcceptedFontContainers::WASM,
+        purposes: FontPurposes::LAYOUT_AND_HTML,
+    };
+    let second = OpenTypeFont::parse_reusing(
+        &second_request,
+        ResolvedFont {
+            request: second_key,
+            container: FontContainer::Woff2,
+            bytes,
+            declared_object_sha256: None,
+            declared_program_identity: Some(first.identity),
+            provenance: None,
+        },
+        FontLimits::default(),
+        Some(&first),
+    )
+    .expect("second instance");
+    assert!(first.shares_program_storage_with(&second));
+    assert_eq!(first.identity, second.identity);
+    assert_ne!(first.feature_policy, second.feature_policy);
+}
+
+#[test]
+fn collection_faces_are_selected_and_bounded() {
+    let woff2 = include_bytes!("../../../umber-wasm/assets/cmu-serif-500-roman.woff2");
+    let ttf = woff2_patched::convert_woff2_to_ttf(&mut woff2.as_slice()).expect("decode fixture");
+    let collection = duplicate_ttc(&ttf);
+    let parse_face = |face_index| {
+        let key = FontRequestKey::new(
+            "cmu-collection",
+            face_index,
+            VariationSelection::default(),
+            FontFeaturePolicy::default(),
+        )
+        .expect("key");
+        let request = FontRequest {
+            key: key.clone(),
+            accepted_containers: AcceptedFontContainers::NATIVE_WITH_COLLECTIONS,
+            purposes: FontPurposes::LAYOUT,
+        };
+        OpenTypeFont::parse(
+            &request,
+            ResolvedFont {
+                request: key,
+                container: FontContainer::Collection,
+                bytes: collection.clone(),
+                declared_object_sha256: None,
+                declared_program_identity: None,
+                provenance: None,
+            },
+            FontLimits::default(),
+        )
+    };
+    let first = parse_face(0).expect("first face");
+    let second = parse_face(1).expect("second face");
+    assert_eq!(first.metrics, second.metrics);
+    assert_eq!(first.cmap, second.cmap);
+    assert_ne!(first.identity, second.identity);
+    assert!(parse_face(2).is_err());
+
+    let limits = FontLimits {
+        max_faces: 1,
+        ..FontLimits::default()
+    };
+    let key = FontRequestKey::new(
+        "cmu-collection",
+        0,
+        VariationSelection::default(),
+        FontFeaturePolicy::default(),
+    )
+    .expect("key");
+    let request = FontRequest {
+        key: key.clone(),
+        accepted_containers: AcceptedFontContainers::NATIVE_WITH_COLLECTIONS,
+        purposes: FontPurposes::LAYOUT,
+    };
+    assert!(matches!(
+        OpenTypeFont::parse(
+            &request,
+            ResolvedFont {
+                request: key,
+                container: FontContainer::Collection,
+                bytes: collection,
+                declared_object_sha256: None,
+                declared_program_identity: None,
+                provenance: None,
+            },
+            limits,
+        ),
+        Err(FontParseError::LimitExceeded {
+            resource: "collection faces",
+            ..
+        })
+    ));
+}
+
+fn synthetic_fvar() -> Vec<u8> {
+    let mut data = vec![0; 16];
+    data[0..4].copy_from_slice(&0x0001_0000_u32.to_be_bytes());
+    data[4..6].copy_from_slice(&16_u16.to_be_bytes());
+    data[8..10].copy_from_slice(&2_u16.to_be_bytes());
+    data[10..12].copy_from_slice(&20_u16.to_be_bytes());
+    data[12..14].copy_from_slice(&1_u16.to_be_bytes());
+    data[14..16].copy_from_slice(&14_u16.to_be_bytes());
+    for (tag, minimum, default, maximum, name_id) in [
+        (
+            *b"wdth",
+            50_i32 << 16,
+            100_i32 << 16,
+            200_i32 << 16,
+            256_u16,
+        ),
+        (
+            *b"wght",
+            100_i32 << 16,
+            400_i32 << 16,
+            900_i32 << 16,
+            257_u16,
+        ),
+    ] {
+        data.extend_from_slice(&tag);
+        data.extend_from_slice(&minimum.to_be_bytes());
+        data.extend_from_slice(&default.to_be_bytes());
+        data.extend_from_slice(&maximum.to_be_bytes());
+        data.extend_from_slice(&0_u16.to_be_bytes());
+        data.extend_from_slice(&name_id.to_be_bytes());
+    }
+    data.extend_from_slice(&300_u16.to_be_bytes());
+    data.extend_from_slice(&0_u16.to_be_bytes());
+    data.extend_from_slice(&(75_i32 << 16).to_be_bytes());
+    data.extend_from_slice(&(700_i32 << 16).to_be_bytes());
+    data.extend_from_slice(&301_u16.to_be_bytes());
+    data
+}
+
+fn duplicate_ttc(ttf: &[u8]) -> Vec<u8> {
+    fn relocated(ttf: &[u8], base: usize) -> Vec<u8> {
+        let mut face = ttf.to_vec();
+        let table_count = usize::from(u16::from_be_bytes([face[4], face[5]]));
+        for index in 0..table_count {
+            let offset = 12 + index * 16 + 8;
+            let old = u32::from_be_bytes(face[offset..offset + 4].try_into().expect("offset"));
+            let new = old
+                .checked_add(u32::try_from(base).expect("fixture size"))
+                .expect("offset");
+            face[offset..offset + 4].copy_from_slice(&new.to_be_bytes());
+        }
+        face
+    }
+
+    let first_offset = 20_usize;
+    let second_offset = (first_offset + ttf.len() + 3) & !3;
+    let mut ttc = Vec::with_capacity(second_offset + ttf.len());
+    ttc.extend_from_slice(b"ttcf");
+    ttc.extend_from_slice(&0x0001_0000_u32.to_be_bytes());
+    ttc.extend_from_slice(&2_u32.to_be_bytes());
+    ttc.extend_from_slice(&(first_offset as u32).to_be_bytes());
+    ttc.extend_from_slice(&(second_offset as u32).to_be_bytes());
+    ttc.extend_from_slice(&relocated(ttf, first_offset));
+    ttc.resize(second_offset, 0);
+    ttc.extend_from_slice(&relocated(ttf, second_offset));
+    ttc
+}
+
+#[test]
 fn canonical_request_and_binary_response_encodings_round_trip() {
     let request = wasm_request();
     let encoded = request.to_wire_bytes();
-    assert_eq!(&encoded[..5], b"UFRQ\x01");
+    assert_eq!(&encoded[..5], b"UFRQ\x02");
     assert_eq!(FontRequest::from_wire_bytes(&encoded), Ok(request));
 
     let response = ResolvedFont {
@@ -477,11 +781,41 @@ fn canonical_request_and_binary_response_encodings_round_trip() {
         provenance: Some("fixture".to_owned()),
     };
     let encoded = response.to_wire_bytes();
-    assert_eq!(&encoded[..5], b"UFRS\x01");
+    assert_eq!(&encoded[..5], b"UFRS\x02");
     assert_eq!(ResolvedFont::from_wire_bytes(&encoded), Ok(response));
     assert_eq!(
-        FontRequest::from_wire_bytes(b"UFRQ\x02"),
+        FontRequest::from_wire_bytes(b"UFRQ\x03"),
         Err(FontWireError::UnsupportedVersion)
+    );
+}
+
+#[test]
+fn advanced_request_encoding_round_trips_named_instance_and_shaping_context() {
+    let key = FontRequestKey::new(
+        "variable-collection",
+        3,
+        VariationSelection::named(300),
+        FontFeaturePolicy::new(vec![FeatureSetting {
+            tag: OpenTypeTag::new(*b"salt"),
+            value: 7,
+        }])
+        .expect("features"),
+    )
+    .expect("key")
+    .with_shaping_context(
+        WritingDirection::RightToLeft,
+        Some(OpenTypeTag::new(*b"arab")),
+        Some(FontLanguage::new("ar-eg").expect("language")),
+    )
+    .expect("context");
+    let request = FontRequest {
+        key,
+        accepted_containers: AcceptedFontContainers::NATIVE_WITH_COLLECTIONS,
+        purposes: FontPurposes::LAYOUT_AND_HTML,
+    };
+    assert_eq!(
+        FontRequest::from_wire_bytes(&request.to_wire_bytes()),
+        Ok(request)
     );
 }
 

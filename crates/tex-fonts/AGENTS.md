@@ -28,6 +28,7 @@ Use this crate for font-domain parsing and metric representation that does not r
 - `src/pdf_vf.rs`: bounded host-neutral TeX VF parsing, typed packet programs, local-font declarations, and recursion metadata.
 - `src/pdf_vf/tests.rs`: hermetic VF grammar, command, malformed-input, and configured-bound tests.
 - `src/opentype/`: validated OpenType resource contracts, canonical identities, bounded SFNT/WOFF2 decoding, immutable metric/cmap/table projections, and cached rustybuzz faces.
+- `src/opentype/variation.rs`: bounded `fvar` axis/named-instance parsing and canonical instance resolution.
 - `src/opentype/math.rs`: strict bounded OpenType MATH parsing and immutable constants, glyph-info, kern, variant, construction, and assembly records.
 - `src/opentype/math/tests.rs`: synthetic complete-table and malformed MATH validation tests.
 - `src/tests.rs`: crate-internal test module declarations for TFM parsing and cross-checks.

@@ -257,7 +257,13 @@ export function fontRequestIdentity(request) {
 	) {
 		throw new ManifestResolverError("invalid-request", "invalid font request");
 	}
-	return `font:${request.logicalName}:${request.faceIndex}:${JSON.stringify(request.variations)}:${JSON.stringify(request.features)}`;
+	const instance =
+		request.variationInstance ??
+		(request.variations.length === 0 ? "default" : "coordinates");
+	const direction = request.direction ?? "ltr";
+	const script = request.script ?? null;
+	const language = request.language ?? null;
+	return `font:${request.logicalName}:${request.faceIndex}:${JSON.stringify(instance)}:${JSON.stringify(request.variations)}:${JSON.stringify(request.features)}:${direction}:${script ?? ""}:${language ?? ""}`;
 }
 
 function validateFileEntry(entry, label, hashLengths, pathObjects) {

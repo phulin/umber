@@ -1131,11 +1131,21 @@ impl VirtualCompileSession {
                 key.logical_name().to_owned(),
             ));
         }
-        let font = OpenTypeFont::parse(request, response, FontLimits::default())
+        let shared = self
+            .resolved_fonts
+            .values()
+            .find(|font| font.object_identity == fingerprint.object);
+        let shares_object = shared.is_some();
+        let font = OpenTypeFont::parse_reusing(request, response, FontLimits::default(), shared)
             .map_err(|error| CompileError::Font(error.to_string()))?;
+        let additional_bytes = if shares_object {
+            0
+        } else {
+            font.transport_bytes.len()
+        };
         let attempted = self
             .cached_file_bytes()
-            .checked_add(font.transport_bytes.len())
+            .checked_add(additional_bytes)
             .ok_or(CompileError::LimitExceeded {
                 resource: "cached resource bytes",
                 limit: self.limits.cached_file_bytes,
@@ -1146,7 +1156,7 @@ impl VirtualCompileSession {
             attempted,
             self.limits.cached_file_bytes,
         )?;
-        let font_bytes = font.transport_bytes.len();
+        let font_bytes = additional_bytes;
         self.resolved_fonts.insert(key.clone(), font);
         self.font_responses.insert(key.clone(), fingerprint);
         self.font_cached_bytes = self
@@ -1874,6 +1884,18 @@ impl HtmlFontResolver for SessionFontResolver<'_> {
                     key.logical_name() == font.name
                         && supplied.identity == binding.program_identity
                         && supplied.object_identity == binding.object_identity
+                        && tex_fonts::FontInstanceIdentity::new_with_context(
+                            supplied.identity,
+                            supplied.face_index,
+                            font.at_size.raw(),
+                            tex_fonts::FontInstanceContext {
+                                variation: &supplied.variation,
+                                features: &supplied.feature_policy,
+                                direction: supplied.direction,
+                                script: supplied.script,
+                                language: supplied.language.as_ref(),
+                            },
+                        ) == binding.instance_identity
                 })
                 .ok_or_else(|| {
                     format!(
@@ -1889,13 +1911,17 @@ impl HtmlFontResolver for SessionFontResolver<'_> {
                     supplied.container, font.name
                 ));
             }
-            let expected_instance = tex_fonts::FontInstanceIdentity::new(
+            let expected_instance = tex_fonts::FontInstanceIdentity::new_with_context(
                 supplied.identity,
-                key.face_index,
+                supplied.face_index,
                 font.at_size.raw(),
-                &key.variation,
-                &key.feature_policy,
-                tex_fonts::WritingDirection::LeftToRight,
+                tex_fonts::FontInstanceContext {
+                    variation: &supplied.variation,
+                    features: &supplied.feature_policy,
+                    direction: supplied.direction,
+                    script: supplied.script,
+                    language: supplied.language.as_ref(),
+                },
             );
             if binding.instance_identity != expected_instance {
                 return Err(format!(

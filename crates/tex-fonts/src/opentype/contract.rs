@@ -5,7 +5,9 @@ use sha2::{Digest, Sha256};
 /// Version of the canonical decoded-table identity policy.
 pub const FONT_PROGRAM_IDENTITY_VERSION: u8 = 1;
 /// Version of the font-instance identity policy.
-pub const FONT_INSTANCE_IDENTITY_VERSION: u8 = 1;
+pub const FONT_INSTANCE_IDENTITY_VERSION: u8 = 2;
+/// Versioned semantics for OpenType feature overrides.
+pub const FONT_FEATURE_POLICY_VERSION: u8 = 1;
 
 /// A four-byte OpenType table, feature, script, language, or variation tag.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -20,6 +22,18 @@ impl OpenTypeTag {
     #[must_use]
     pub const fn bytes(self) -> [u8; 4] {
         self.0
+    }
+
+    #[must_use]
+    pub const fn is_valid(self) -> bool {
+        self.0[0] >= 0x20
+            && self.0[0] <= 0x7e
+            && self.0[1] >= 0x20
+            && self.0[1] <= 0x7e
+            && self.0[2] >= 0x20
+            && self.0[2] <= 0x7e
+            && self.0[3] >= 0x20
+            && self.0[3] <= 0x7e
     }
 }
 
@@ -110,11 +124,29 @@ pub struct VariationCoordinate {
     pub value: i32,
 }
 
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub enum VariationInstance {
+    #[default]
+    Default,
+    /// Selects an `fvar` instance by its subfamily name identifier.
+    Named(u16),
+    Coordinates,
+}
+
 #[derive(Clone, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub struct VariationSelection(Vec<VariationCoordinate>);
+pub struct VariationSelection {
+    instance: VariationInstance,
+    coordinates: Vec<VariationCoordinate>,
+}
 
 impl VariationSelection {
     pub fn new(mut coordinates: Vec<VariationCoordinate>) -> Result<Self, FontSelectionError> {
+        if coordinates
+            .iter()
+            .any(|coordinate| !coordinate.tag.is_valid())
+        {
+            return Err(FontSelectionError::InvalidTag);
+        }
         coordinates.sort_unstable_by_key(|coordinate| coordinate.tag);
         if coordinates
             .windows(2)
@@ -125,19 +157,58 @@ impl VariationSelection {
         if coordinates.len() > FontLimits::HARD_MAX.max_variation_axes {
             return Err(FontSelectionError::TooManyVariationAxes(coordinates.len()));
         }
-        Ok(Self(coordinates))
+        Ok(Self {
+            instance: if coordinates.is_empty() {
+                VariationInstance::Default
+            } else {
+                VariationInstance::Coordinates
+            },
+            coordinates,
+        })
+    }
+
+    #[must_use]
+    pub const fn named(subfamily_name_id: u16) -> Self {
+        Self {
+            instance: VariationInstance::Named(subfamily_name_id),
+            coordinates: Vec::new(),
+        }
+    }
+
+    pub fn resolved_named(
+        subfamily_name_id: u16,
+        coordinates: Vec<VariationCoordinate>,
+    ) -> Result<Self, FontSelectionError> {
+        let mut selection = Self::new(coordinates)?;
+        selection.instance = VariationInstance::Named(subfamily_name_id);
+        Ok(selection)
+    }
+
+    #[must_use]
+    pub const fn instance(&self) -> VariationInstance {
+        self.instance
     }
 
     #[must_use]
     pub fn coordinates(&self) -> &[VariationCoordinate] {
-        &self.0
+        &self.coordinates
+    }
+
+    pub(crate) fn with_resolved_coordinates(
+        mut self,
+        coordinates: Vec<VariationCoordinate>,
+    ) -> Self {
+        self.coordinates = coordinates;
+        self
     }
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct FeatureSetting {
     pub tag: OpenTypeTag,
-    pub enabled: bool,
+    /// OpenType feature value. Zero disables the feature; non-zero values may
+    /// select alternates for features such as `salt`, `ss01`, and `cv01`.
+    pub value: u32,
 }
 
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -145,6 +216,9 @@ pub struct FontFeaturePolicy(Vec<FeatureSetting>);
 
 impl FontFeaturePolicy {
     pub fn new(mut settings: Vec<FeatureSetting>) -> Result<Self, FontSelectionError> {
+        if settings.iter().any(|setting| !setting.tag.is_valid()) {
+            return Err(FontSelectionError::InvalidTag);
+        }
         settings.sort_unstable_by_key(|setting| setting.tag);
         if settings.windows(2).any(|pair| pair[0].tag == pair[1].tag) {
             return Err(FontSelectionError::DuplicateFeature);
@@ -166,11 +240,11 @@ impl Default for FontFeaturePolicy {
         Self(vec![
             FeatureSetting {
                 tag: OpenTypeTag::new(*b"kern"),
-                enabled: true,
+                value: 1,
             },
             FeatureSetting {
                 tag: OpenTypeTag::new(*b"liga"),
-                enabled: true,
+                value: 1,
             },
         ])
     }
@@ -183,12 +257,41 @@ pub enum WritingDirection {
     RightToLeft = 2,
 }
 
+/// Canonical BCP-47 language input for OpenType language-system selection.
+#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct FontLanguage(String);
+
+impl FontLanguage {
+    pub fn new(value: impl Into<String>) -> Result<Self, FontSelectionError> {
+        let value = value.into().to_ascii_lowercase();
+        if value.is_empty()
+            || value.len() > 63
+            || value.starts_with('-')
+            || value.ends_with('-')
+            || value
+                .bytes()
+                .any(|byte| !byte.is_ascii_alphanumeric() && byte != b'-')
+        {
+            return Err(FontSelectionError::InvalidLanguage(value));
+        }
+        Ok(Self(value))
+    }
+
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct FontRequestKey {
     logical_name: String,
     pub face_index: u32,
     pub variation: VariationSelection,
     pub feature_policy: FontFeaturePolicy,
+    pub direction: WritingDirection,
+    pub script: Option<OpenTypeTag>,
+    pub language: Option<FontLanguage>,
 }
 
 impl FontRequestKey {
@@ -216,7 +319,28 @@ impl FontRequestKey {
             face_index,
             variation,
             feature_policy,
+            direction: WritingDirection::LeftToRight,
+            script: None,
+            language: None,
         })
+    }
+
+    /// Adds the shaping context that participates in request and instance
+    /// identity. `None` script keeps deterministic Unicode-script inference;
+    /// `None` language selects HarfBuzz's language-neutral behavior.
+    pub fn with_shaping_context(
+        mut self,
+        direction: WritingDirection,
+        script: Option<OpenTypeTag>,
+        language: Option<FontLanguage>,
+    ) -> Result<Self, FontSelectionError> {
+        if script.is_some_and(|tag| !tag.is_valid()) {
+            return Err(FontSelectionError::InvalidTag);
+        }
+        self.direction = direction;
+        self.script = script;
+        self.language = language;
+        Ok(self)
     }
 
     #[must_use]
@@ -236,7 +360,7 @@ impl FontRequest {
     /// Canonical versioned request encoding shared by native and WASM fixtures.
     #[must_use]
     pub fn to_wire_bytes(&self) -> Vec<u8> {
-        let mut out = b"UFRQ\x01".to_vec();
+        let mut out = b"UFRQ\x02".to_vec();
         encode_key(&self.key, &mut out);
         out.push(self.accepted_containers.bits());
         out.push(self.purposes.bits());
@@ -244,7 +368,7 @@ impl FontRequest {
     }
 
     pub fn from_wire_bytes(bytes: &[u8]) -> Result<Self, FontWireError> {
-        let mut input = WireReader::new(bytes, b"UFRQ\x01")?;
+        let mut input = WireReader::new(bytes, b"UFRQ\x02")?;
         let key = decode_key(&mut input)?;
         let accepted_containers = AcceptedFontContainers::from_bits(input.byte()?)?;
         let purposes = FontPurposes::from_bits(input.byte()?)?;
@@ -295,6 +419,15 @@ impl FontProgramIdentity {
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct FontInstanceIdentity([u8; 32]);
 
+#[derive(Clone, Copy, Debug)]
+pub struct FontInstanceContext<'a> {
+    pub variation: &'a VariationSelection,
+    pub features: &'a FontFeaturePolicy,
+    pub direction: WritingDirection,
+    pub script: Option<OpenTypeTag>,
+    pub language: Option<&'a FontLanguage>,
+}
+
 impl FontInstanceIdentity {
     #[must_use]
     pub const fn from_bytes(bytes: [u8; 32]) -> Self {
@@ -310,23 +443,64 @@ impl FontInstanceIdentity {
         features: &FontFeaturePolicy,
         direction: WritingDirection,
     ) -> Self {
+        Self::new_with_context(
+            program,
+            face_index,
+            size_sp,
+            FontInstanceContext {
+                variation,
+                features,
+                direction,
+                script: None,
+                language: None,
+            },
+        )
+    }
+
+    #[must_use]
+    pub fn new_with_context(
+        program: FontProgramIdentity,
+        face_index: u32,
+        size_sp: i32,
+        context: FontInstanceContext<'_>,
+    ) -> Self {
+        let FontInstanceContext {
+            variation,
+            features,
+            direction,
+            script,
+            language,
+        } = context;
         let mut hash = Sha256::new();
         hash.update(b"umber.font-instance");
         hash.update([FONT_INSTANCE_IDENTITY_VERSION]);
         hash.update(program.bytes());
         hash.update(face_index.to_be_bytes());
         hash.update(size_sp.to_be_bytes());
-        hash.update([direction as u8, 0]); // synthetic styles are always prohibited
+        hash.update([direction as u8, 0, 0]); // synthetic styles and optical sizing are prohibited
+        hash.update([match variation.instance() {
+            VariationInstance::Default => 0,
+            VariationInstance::Named(_) => 1,
+            VariationInstance::Coordinates => 2,
+        }]);
+        if let VariationInstance::Named(name_id) = variation.instance() {
+            hash.update(name_id.to_be_bytes());
+        }
         hash.update((variation.coordinates().len() as u32).to_be_bytes());
         for coordinate in variation.coordinates() {
             hash.update(coordinate.tag.bytes());
             hash.update(coordinate.value.to_be_bytes());
         }
+        hash.update([FONT_FEATURE_POLICY_VERSION]);
         hash.update((features.settings().len() as u32).to_be_bytes());
         for feature in features.settings() {
             hash.update(feature.tag.bytes());
-            hash.update([u8::from(feature.enabled)]);
+            hash.update(feature.value.to_be_bytes());
         }
+        hash.update(script.map_or([0; 4], OpenTypeTag::bytes));
+        let language = language.map_or("", FontLanguage::as_str).as_bytes();
+        hash.update((language.len() as u32).to_be_bytes());
+        hash.update(language);
         Self(hash.finalize().into())
     }
 
@@ -350,7 +524,7 @@ impl ResolvedFont {
     /// Canonical versioned response encoding. The resource bytes remain binary.
     #[must_use]
     pub fn to_wire_bytes(&self) -> Vec<u8> {
-        let mut out = b"UFRS\x01".to_vec();
+        let mut out = b"UFRS\x02".to_vec();
         encode_key(&self.request, &mut out);
         out.push(self.container as u8);
         encode_optional_identity(
@@ -368,7 +542,7 @@ impl ResolvedFont {
     }
 
     pub fn from_wire_bytes(bytes: &[u8]) -> Result<Self, FontWireError> {
-        let mut input = WireReader::new(bytes, b"UFRS\x01")?;
+        let mut input = WireReader::new(bytes, b"UFRS\x02")?;
         let request = decode_key(&mut input)?;
         let container = match input.byte()? {
             1 => FontContainer::OpenType,
@@ -457,6 +631,8 @@ pub enum FontSelectionError {
     TooManyVariationAxes(usize),
     DuplicateFeature,
     TooManyFeatures(usize),
+    InvalidTag,
+    InvalidLanguage(String),
 }
 
 impl fmt::Display for FontSelectionError {
@@ -477,6 +653,8 @@ pub enum FontWireError {
     InvalidContainer(u8),
     InvalidContainerMask(u8),
     InvalidPurposeMask(u8),
+    InvalidVariationInstance(u8),
+    InvalidDirection(u8),
     InvalidSelection(FontSelectionError),
     LengthOverflow,
 }
@@ -492,6 +670,14 @@ impl std::error::Error for FontWireError {}
 fn encode_key(key: &FontRequestKey, out: &mut Vec<u8>) {
     encode_bytes(key.logical_name.as_bytes(), out);
     out.extend_from_slice(&key.face_index.to_be_bytes());
+    match key.variation.instance() {
+        VariationInstance::Default => out.push(0),
+        VariationInstance::Named(name_id) => {
+            out.push(1);
+            out.extend_from_slice(&name_id.to_be_bytes());
+        }
+        VariationInstance::Coordinates => out.push(2),
+    }
     out.extend_from_slice(&(key.variation.coordinates().len() as u16).to_be_bytes());
     for coordinate in key.variation.coordinates() {
         out.extend_from_slice(&coordinate.tag.bytes());
@@ -500,8 +686,11 @@ fn encode_key(key: &FontRequestKey, out: &mut Vec<u8>) {
     out.extend_from_slice(&(key.feature_policy.settings().len() as u16).to_be_bytes());
     for feature in key.feature_policy.settings() {
         out.extend_from_slice(&feature.tag.bytes());
-        out.push(u8::from(feature.enabled));
+        out.extend_from_slice(&feature.value.to_be_bytes());
     }
+    out.push(key.direction as u8);
+    encode_optional_tag(key.script, out);
+    encode_optional_string(key.language.as_ref().map(FontLanguage::as_str), out);
 }
 
 fn decode_key(input: &mut WireReader<'_>) -> Result<FontRequestKey, FontWireError> {
@@ -509,6 +698,12 @@ fn decode_key(input: &mut WireReader<'_>) -> Result<FontRequestKey, FontWireErro
         .map_err(|_| FontWireError::InvalidUtf8)?
         .to_owned();
     let face_index = input.u32()?;
+    let instance = match input.byte()? {
+        0 => VariationInstance::Default,
+        1 => VariationInstance::Named(input.u16()?),
+        2 => VariationInstance::Coordinates,
+        value => return Err(FontWireError::InvalidVariationInstance(value)),
+    };
     let variation_count = usize::from(input.u16()?);
     let mut variation =
         Vec::with_capacity(variation_count.min(FontLimits::HARD_MAX.max_variation_axes));
@@ -522,18 +717,45 @@ fn decode_key(input: &mut WireReader<'_>) -> Result<FontRequestKey, FontWireErro
     let mut features = Vec::with_capacity(feature_count.min(FontLimits::HARD_MAX.max_features));
     for _ in 0..feature_count {
         let tag = OpenTypeTag::new(input.array()?);
-        let enabled = match input.byte()? {
-            0 => false,
-            1 => true,
-            value => return Err(FontWireError::InvalidBoolean(value)),
-        };
-        features.push(FeatureSetting { tag, enabled });
+        let value = input.u32()?;
+        features.push(FeatureSetting { tag, value });
     }
-    let variation = VariationSelection::new(variation).map_err(FontWireError::InvalidSelection)?;
+    let mut variation =
+        VariationSelection::new(variation).map_err(FontWireError::InvalidSelection)?;
+    variation.instance = instance;
+    if !matches!(instance, VariationInstance::Coordinates) && !variation.coordinates.is_empty() {
+        return Err(FontWireError::InvalidVariationInstance(255));
+    }
     let feature_policy =
         FontFeaturePolicy::new(features).map_err(FontWireError::InvalidSelection)?;
+    let direction = match input.byte()? {
+        1 => WritingDirection::LeftToRight,
+        2 => WritingDirection::RightToLeft,
+        value => return Err(FontWireError::InvalidDirection(value)),
+    };
+    let script = decode_optional_tag(input)?;
+    let language = decode_optional_string(input)?
+        .map(FontLanguage::new)
+        .transpose()
+        .map_err(FontWireError::InvalidSelection)?;
     FontRequestKey::new(logical_name, face_index, variation, feature_policy)
+        .and_then(|key| key.with_shaping_context(direction, script, language))
         .map_err(FontWireError::InvalidSelection)
+}
+
+fn encode_optional_tag(tag: Option<OpenTypeTag>, out: &mut Vec<u8>) {
+    out.push(u8::from(tag.is_some()));
+    if let Some(tag) = tag {
+        out.extend_from_slice(&tag.bytes());
+    }
+}
+
+fn decode_optional_tag(input: &mut WireReader<'_>) -> Result<Option<OpenTypeTag>, FontWireError> {
+    match input.byte()? {
+        0 => Ok(None),
+        1 => Ok(Some(OpenTypeTag::new(input.array()?))),
+        value => Err(FontWireError::InvalidBoolean(value)),
+    }
 }
 
 fn encode_optional_identity(identity: Option<[u8; 32]>, out: &mut Vec<u8>) {

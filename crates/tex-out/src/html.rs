@@ -711,12 +711,26 @@ fn write_page(
                 attr_sp(out, "baseline", event.baseline);
                 out.push_str(" data-umber-font=\"");
                 out.push_str(&event.font_id.to_string());
+                if let Some(opentype) = &artifact_font.opentype {
+                    out.push_str("\" data-umber-face-index=\"");
+                    out.push_str(&opentype.face_index.to_string());
+                    if let Some(script) = opentype.script {
+                        out.push_str("\" data-umber-script=\"");
+                        escape_attr(&script.to_string(), out);
+                    }
+                }
                 out.push_str("\" data-umber-codes=\"");
                 write_codes(out, &event.units);
                 out.push_str("\" style=\"font-family:'");
                 out.push_str(&font.family);
                 out.push_str("';font-size:");
                 css_px(out, Scaled::from_raw(font.web.key.at_size_raw), page.mag);
+                if let Some(opentype) = &artifact_font.opentype {
+                    out.push_str(";font-feature-settings:");
+                    write_feature_settings(out, &opentype.features);
+                    out.push_str(";font-variation-settings:");
+                    write_variation_settings(out, &opentype.variation);
+                }
                 if let Some(color) = special_state.color() {
                     out.push_str(";color:");
                     out.push_str(color);
@@ -732,7 +746,25 @@ fn write_page(
                     escape_attr(link, out);
                     out.push_str("\" rel=\"noreferrer noopener\">");
                 }
-                out.push_str("<text class=\"umber-run-text\" direction=\"ltr\" x=\"");
+                out.push_str("<text class=\"umber-run-text\" direction=\"");
+                let direction =
+                    artifact_font
+                        .opentype
+                        .as_ref()
+                        .map_or("ltr", |font| match font.direction {
+                            tex_fonts::WritingDirection::LeftToRight => "ltr",
+                            tex_fonts::WritingDirection::RightToLeft => "rtl",
+                        });
+                out.push_str(direction);
+                if let Some(language) = artifact_font
+                    .opentype
+                    .as_ref()
+                    .and_then(|font| font.language.as_ref())
+                {
+                    out.push_str("\" lang=\"");
+                    escape_attr(language.as_str(), out);
+                }
+                out.push_str("\" x=\"");
                 let exact_character_positions = event.positions.len() == event.units.len()
                     && event.units.iter().all(|unit| match unit {
                         TextUnit::Space => true,
@@ -818,6 +850,49 @@ fn write_page(
     escape_text(&accessible, out);
     out.push_str("</div></section>\n");
     Ok(())
+}
+
+fn write_feature_settings(out: &mut String, policy: &tex_fonts::FontFeaturePolicy) {
+    if policy.settings().is_empty() {
+        out.push_str("normal");
+        return;
+    }
+    for (index, setting) in policy.settings().iter().enumerate() {
+        if index > 0 {
+            out.push(',');
+        }
+        out.push('\'');
+        write_css_tag(out, setting.tag);
+        out.push_str("' ");
+        out.push_str(&setting.value.to_string());
+    }
+}
+
+fn write_variation_settings(out: &mut String, selection: &tex_fonts::VariationSelection) {
+    if selection.coordinates().is_empty() {
+        out.push_str("normal");
+        return;
+    }
+    for (index, coordinate) in selection.coordinates().iter().enumerate() {
+        if index > 0 {
+            out.push(',');
+        }
+        out.push('\'');
+        write_css_tag(out, coordinate.tag);
+        out.push_str("' ");
+        let value = f64::from(coordinate.value) / 65_536.0;
+        out.push_str(&value.to_string());
+    }
+}
+
+fn write_css_tag(out: &mut String, tag: tex_fonts::OpenTypeTag) {
+    for byte in tag.bytes() {
+        match byte {
+            b'\'' => out.push_str("\\27 "),
+            b'\\' => out.push_str("\\5c "),
+            _ => out.push(char::from(byte)),
+        }
+    }
 }
 
 fn check_html_size(out: &str, options: &HtmlOptions) -> Result<(), HtmlError> {

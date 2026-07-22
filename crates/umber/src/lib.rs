@@ -45,9 +45,10 @@ pub use pdf_output::{
 };
 pub use pdftex::PDFTEX_PRIMITIVE_NAMES;
 pub use tex_fonts::{
-    AcceptedFontContainers, FeatureSetting, FontContainer, FontFeaturePolicy, FontLayoutPolicy,
-    FontMappingFallbackPolicy, FontObjectIdentity, FontProgramIdentity, FontPurposes, FontRequest,
-    FontRequestKey, OpenTypeTag, ResolvedFont, VariationCoordinate, VariationSelection,
+    AcceptedFontContainers, FeatureSetting, FontContainer, FontFeaturePolicy, FontLanguage,
+    FontLayoutPolicy, FontMappingFallbackPolicy, FontObjectIdentity, FontProgramIdentity,
+    FontPurposes, FontRequest, FontRequestKey, OpenTypeTag, ResolvedFont, VariationCoordinate,
+    VariationInstance, VariationSelection, WritingDirection,
 };
 pub use tex_incr::{RenderedOutputId, ReuseMetrics, RevisionId, SameHistoryStop};
 pub use umber_vfs::FileContentId;
