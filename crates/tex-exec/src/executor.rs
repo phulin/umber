@@ -33,6 +33,12 @@ fn report_recoverable_expansion_diagnostics(
 ) {
     for diagnostic in execution.take_recoverable_diagnostics() {
         match diagnostic {
+            tex_expand::RecoverableExpansionDiagnostic::UndefinedControlSequence {
+                name, ..
+            } => stores.world_mut().write_text(
+                tex_state::PrintSink::TerminalAndLog,
+                &format!("\n! Undefined control sequence \\{name}.\n"),
+            ),
             tex_expand::RecoverableExpansionDiagnostic::MacroDoesNotMatchDefinition {
                 macro_name,
                 ..
@@ -470,7 +476,8 @@ impl<'a> ExecutionContext<'a> {
                 state.expansion,
                 input_resolver,
                 recorder,
-            ),
+            )
+            .with_undefined_control_recovery(),
             macro_scan_error_count: state.macro_scan_error_count,
             emit_dvi: true,
             font_resolver,

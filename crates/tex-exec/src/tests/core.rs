@@ -1648,6 +1648,44 @@ fn main_control_recovers_from_undefined_control_sequence() {
 }
 
 #[test]
+fn register_index_scanner_recovers_from_undefined_control_sequence() {
+    let mut stores = Universe::new();
+    tex_expand::install_expandable_primitives(&mut stores);
+    install_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(
+        "\\setbox\\missing\\hbox{x}\\global\\count2=7\\end",
+    ));
+
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("undefined register index is diagnosed like frozen relax");
+
+    assert_eq!(stores.count(2), 7);
+    let output = support::terminal_effect_text(&stores);
+    assert!(output.contains("Undefined control sequence \\missing"));
+    assert!(output.contains("Missing number, treated as zero"));
+}
+
+#[test]
+fn recursively_expanded_dimension_scanner_recovers_from_undefined_control_sequence() {
+    let mut stores = Universe::new();
+    tex_expand::install_expandable_primitives(&mut stores);
+    install_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(
+        "\\ifdim\\dimen\\missing=0pt \\global\\count2=7\\fi\\end",
+    ));
+
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("nested dimension scanner uses driver recovery");
+
+    assert_eq!(stores.count(2), 7);
+    assert!(
+        support::terminal_effect_text(&stores).contains("Undefined control sequence \\missing")
+    );
+}
+
+#[test]
 fn main_control_keeps_replaying_macro_after_undefined_control_sequence() {
     let mut stores = Universe::new();
     tex_expand::install_expandable_primitives(&mut stores);

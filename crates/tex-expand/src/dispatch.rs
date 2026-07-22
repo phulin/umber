@@ -1238,6 +1238,12 @@ macro_rules! dispatch_match {
                         format!("{token:?}")
                     }
                 };
+                if mode.recover_undefined_control_sequence(&name, stores, expansion, call_context) {
+                    let relax = stores
+                        .primitive_token("relax")
+                        .unwrap_or_else(|| Token::Cs(stores.intern_relaxed_control_sequence("relax")));
+                    return Ok(Dispatch::Deliver(TracedTokenWord::pack(relax, call_origin)));
+                }
                 Err(ExpandError::UndefinedControlSequence {
                     name,
                     context: call_context,

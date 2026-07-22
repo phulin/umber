@@ -714,6 +714,10 @@ pub enum Dispatch {
 /// enclosing scanner. The driver owns presentation of these diagnostics.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum RecoverableExpansionDiagnostic {
+    UndefinedControlSequence {
+        name: String,
+        context: TracedTokenWord,
+    },
     MacroDoesNotMatchDefinition {
         macro_name: String,
         context: TracedTokenWord,
@@ -1169,6 +1173,8 @@ pub struct ExpansionContext<'a> {
     last_macro_replay_site: Option<MacroReplaySite>,
     csname_depth: u32,
     recoverable_diagnostics: Vec<RecoverableExpansionDiagnostic>,
+    recover_undefined_control_sequences: bool,
+    undefined_control_recovery_depth: u32,
     fuel_limit: u64,
     remaining_fuel: u64,
     fuel_scope_depth: u32,
@@ -1353,6 +1359,8 @@ impl<'a> ExpansionContext<'a> {
             last_macro_replay_site: state.last_macro_replay_site,
             csname_depth: state.csname_depth,
             recoverable_diagnostics: state.recoverable_diagnostics,
+            recover_undefined_control_sequences: false,
+            undefined_control_recovery_depth: 0,
             fuel_limit: state.fuel_limit,
             remaining_fuel: state.remaining_fuel,
             fuel_scope_depth: state.fuel_scope_depth,
@@ -1690,6 +1698,8 @@ impl<'a> ExpansionContext<'a> {
             last_macro_replay_site: None,
             csname_depth: self.csname_depth,
             recoverable_diagnostics: Vec::new(),
+            recover_undefined_control_sequences: self.recover_undefined_control_sequences,
+            undefined_control_recovery_depth: self.undefined_control_recovery_depth,
             fuel_limit: self.fuel_limit,
             remaining_fuel: self.remaining_fuel,
             fuel_scope_depth: self.fuel_scope_depth,
@@ -1729,6 +1739,41 @@ impl<'a> ExpansionContext<'a> {
         &mut self,
     ) -> impl Iterator<Item = RecoverableExpansionDiagnostic> + '_ {
         self.recoverable_diagnostics.drain(..)
+    }
+
+    /// Enables TeX.web's driver-level undefined-command recovery. Library
+    /// expansion remains fallible by default so callers can inspect the typed
+    /// error; the stomach enables this policy for ordinary execution.
+    #[must_use]
+    pub fn with_undefined_control_recovery(mut self) -> Self {
+        self.recover_undefined_control_sequences = true;
+        self
+    }
+
+    fn with_undefined_control_recovery_scope<O>(
+        &mut self,
+        operation: impl FnOnce(&mut Self) -> O,
+    ) -> O {
+        self.undefined_control_recovery_depth += 1;
+        let output = operation(self);
+        self.undefined_control_recovery_depth -= 1;
+        output
+    }
+
+    fn recover_undefined_control_sequence(&mut self, name: &str, context: TracedTokenWord) -> bool {
+        if !self.recover_undefined_control_sequences
+            || self.undefined_control_recovery_depth == 0
+            || self.expanded_token_list_depth > 0
+        {
+            return false;
+        }
+        self.recoverable_diagnostics.push(
+            RecoverableExpansionDiagnostic::UndefinedControlSequence {
+                name: name.to_owned(),
+                context,
+            },
+        );
+        true
     }
 
     fn recover_macro_mismatch(&mut self, error: ExpandError) -> Result<(), ExpandError> {
@@ -1865,6 +1910,19 @@ pub trait ExpansionMode {
         stores: &mut tex_state::ExpansionContext<'_>,
         expansion: &mut ExpansionContext<'_>,
     ) -> Result<Option<TracedTokenWord>, ExpandError>;
+
+    /// Gives a production driver the TeX.web `get_x_token` recovery path for
+    /// an undefined command encountered recursively inside a value scanner.
+    /// Restricted expansion keeps surfacing the typed error to its caller.
+    fn recover_undefined_control_sequence(
+        &mut self,
+        _name: &str,
+        _stores: &mut tex_state::ExpansionContext<'_>,
+        _expansion: &mut ExpansionContext<'_>,
+        _context: TracedTokenWord,
+    ) -> bool {
+        false
+    }
 
     /// Pulls a token at a nested command boundary.
     ///
@@ -2027,7 +2085,19 @@ impl ExpansionMode for DriverExpansionMode {
         stores: &mut tex_state::ExpansionContext<'_>,
         expansion: &mut ExpansionContext<'_>,
     ) -> Result<Option<TracedTokenWord>, ExpandError> {
-        get_x_token_with_context(input, stores, expansion)
+        expansion.with_undefined_control_recovery_scope(|expansion| {
+            get_x_token_with_context(input, stores, expansion)
+        })
+    }
+
+    fn recover_undefined_control_sequence(
+        &mut self,
+        name: &str,
+        _stores: &mut tex_state::ExpansionContext<'_>,
+        expansion: &mut ExpansionContext<'_>,
+        context: TracedTokenWord,
+    ) -> bool {
+        expansion.recover_undefined_control_sequence(name, context)
     }
 
     fn next_command_token(
@@ -2036,7 +2106,9 @@ impl ExpansionMode for DriverExpansionMode {
         stores: &mut tex_state::ExpansionContext<'_>,
         expansion: &mut ExpansionContext<'_>,
     ) -> Result<Option<TracedTokenWord>, ExpandError> {
-        get_x_token_with_context(input, stores, expansion)
+        expansion.with_undefined_control_recovery_scope(|expansion| {
+            get_x_token_with_context(input, stores, expansion)
+        })
     }
 
     fn next_ordinary_token(
@@ -2045,7 +2117,9 @@ impl ExpansionMode for DriverExpansionMode {
         stores: &mut tex_state::ExpansionContext<'_>,
         expansion: &mut ExpansionContext<'_>,
     ) -> Result<Option<TracedTokenWord>, ExpandError> {
-        get_x_token_with_context(input, stores, expansion)
+        expansion.with_undefined_control_recovery_scope(|expansion| {
+            get_x_token_with_context(input, stores, expansion)
+        })
     }
 
     fn dispatch_raw_token(

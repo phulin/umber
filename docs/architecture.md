@@ -158,6 +158,15 @@ termination while collecting recoverable macro-scan diagnostics, preventing a
 malformed expanded definition from growing replay and output state without
 bound.
 
+Ordinary stomach-driven expansion also preserves TeX.web's `get_x_token`
+recovery for an undefined command encountered recursively inside a value
+scanner: the diagnostic is queued on the expansion session and the scanner
+receives the inaccessible frozen `\relax` command. This keeps a register or
+dimension scan from unwinding the enclosing execution transition. Standalone
+and restricted expansion retain the typed error boundary, and expanded-token
+list construction continues to discard the offending token through its own
+diagnostic path.
+
 Macro delimiter matching follows TeX.web §§391--399 (pdfTeX.web §§415--423),
 including overlapping-prefix recovery and §397's narrow paragraph-token
 exception. A definition whose parameter text ends in `#{` uses the same left
