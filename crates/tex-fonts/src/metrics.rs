@@ -782,7 +782,6 @@ impl LoadedFont {
         encoding_map: LegacyEncodingMap,
     ) -> Self {
         self.parameters = synthesized_opentype_parameters(&selection, self.size);
-        self.source_parameters = self.parameters.clone();
         self = self.with_opentype(selection);
         self.layout_policy = FontLayoutPolicy::OpenTypePreferred;
         self.fallback = None;
@@ -1094,6 +1093,35 @@ impl LoadedFont {
     #[must_use]
     pub fn source_parameters(&self) -> &[Scaled] {
         &self.source_parameters
+    }
+
+    /// Returns the parameter bank authoritative for classic Appendix G math.
+    ///
+    /// OpenType-preferred TFM mappings synthesize ordinary text fontdimens,
+    /// but assignment to a classic math family must continue reading the
+    /// exact original TFM symbol/extension parameters.
+    #[must_use]
+    pub fn classic_math_parameter(&self, number: u16) -> Scaled {
+        let parameters = if self.encoding_map.is_some() {
+            &self.source_parameters
+        } else {
+            &self.parameters
+        };
+        number
+            .checked_sub(1)
+            .and_then(|index| parameters.get(usize::from(index)))
+            .copied()
+            .unwrap_or_else(|| Scaled::from_raw(0))
+    }
+
+    /// Number of parameters visible to classic Appendix G math validation.
+    #[must_use]
+    pub fn classic_math_parameter_count(&self) -> usize {
+        if self.encoding_map.is_some() {
+            self.source_parameters.len()
+        } else {
+            self.parameters.len()
+        }
     }
 
     #[must_use]

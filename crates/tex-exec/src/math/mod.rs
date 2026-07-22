@@ -498,7 +498,7 @@ fn math_font_failure(stores: &Universe) -> Option<MathFontFailure> {
     ];
     if SIZES.into_iter().any(|size| {
         let font = stores.math_family_font(size, 2);
-        stores.font_parameter_count(font) < 22
+        stores.font(font).classic_math_parameter_count() < 22
             && !matches!(
                 stores.font(font).math_metrics_source(),
                 tex_fonts::MathMetricsSource::OpenType(_)
@@ -508,7 +508,7 @@ fn math_font_failure(stores: &Universe) -> Option<MathFontFailure> {
     }
     if SIZES.into_iter().any(|size| {
         let font = stores.math_family_font(size, 3);
-        stores.font_parameter_count(font) < 13
+        stores.font(font).classic_math_parameter_count() < 13
             && !matches!(
                 stores.font(font).math_metrics_source(),
                 tex_fonts::MathMetricsSource::OpenType(_)

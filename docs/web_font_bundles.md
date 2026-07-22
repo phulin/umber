@@ -332,6 +332,13 @@ font that is later found to own a virtual-font program produces the typed
 `UnsupportedMappedVirtualFont` capability error during PDF VF lowering; it is
 never executed with a mixture of OpenType advances and VF packet semantics.
 
+In particular, OpenType-preferred text fontdimen synthesis does not replace
+the original TFM symbol and extension parameter banks used by Appendix G.
+Assignments of mapped fonts to classic math families read the original TFM
+parameters and character tables, while ordinary text and `\fontdimen` reads
+continue to use the versioned synthesized text bank. This separation prevents
+the 22/13-parameter math preflight from deleting otherwise valid formulas.
+
 ## Native integration
 
 Native applications resolve `FontRequest` values from explicit files,
