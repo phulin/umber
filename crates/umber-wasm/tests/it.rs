@@ -743,7 +743,10 @@ fn explicit_clock_remains_a_deterministic_override() {
     session
         .add_user_file(
             "main.tex",
-            &bytes(b"\\message{clock=\\the\\time/\\the\\day/\\the\\month/\\the\\year}\\end"),
+            &bytes(
+                br"\def\space{ }\def\today{\ifcase\month\or January\or February\or March\or April\or May\or June\or July\or August\or September\or October\or November\or December\fi\space\number\day, \number\year}
+\message{today=\today; clock=\the\time/\the\day/\the\month/\the\year}\end",
+            ),
         )
         .expect("add clock source");
     let complete = session.compile_attempt().expect("complete clock attempt");
@@ -752,6 +755,7 @@ fn explicit_clock_remains_a_deterministic_override() {
         .expect("terminal text");
 
     assert!(terminal.contains("clock=5/4/3/2002"), "{terminal}");
+    assert!(terminal.contains("today=March 4, 2002"), "{terminal}");
 }
 
 #[wasm_bindgen_test]
