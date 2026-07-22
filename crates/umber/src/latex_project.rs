@@ -220,6 +220,7 @@ pub struct LatexProjectSession {
     accepted_tex: Option<Box<VirtualCompileSession>>,
     accepted_output: Option<LatexProjectOutput>,
     accepted_observations: Option<crate::AcceptedInputObservationLedger>,
+    initial_revision: tex_incr::RevisionId,
 }
 
 struct ProjectCandidate {
@@ -284,7 +285,23 @@ impl LatexProjectSession {
             accepted_tex: None,
             accepted_output: None,
             accepted_observations: None,
+            initial_revision: tex_incr::RevisionId::new(1),
         })
+    }
+
+    pub(crate) fn new_tex_only_from_provisional(
+        provisional: &VirtualCompileSession,
+        limits: crate::FixedPointLimits,
+    ) -> Result<Self, LatexProjectError> {
+        let revision = provisional.revision().ok_or_else(|| {
+            LatexProjectError::InvalidPatch(
+                "cannot stabilize a session without accepted output".into(),
+            )
+        })?;
+        let mut session = Self::new_tex_only(provisional.session_options(), limits)?;
+        session.files = provisional.provisioner().clone();
+        session.initial_revision = revision;
+        Ok(session)
     }
 
     /// Switches the bibliography policy for the next project generation.
@@ -559,6 +576,16 @@ impl LatexProjectSession {
         &self,
     ) -> Option<&crate::AcceptedInputObservationLedger> {
         self.accepted_observations.as_ref()
+    }
+
+    pub(crate) fn completed_passes(&self) -> u32 {
+        self.candidate.as_ref().map_or(0, |candidate| {
+            candidate.fixed_point.pass().saturating_sub(1)
+        })
+    }
+
+    pub(crate) fn take_accepted_tex(&mut self) -> Option<Box<VirtualCompileSession>> {
+        self.accepted_tex.take()
     }
 
     fn run_candidate(&mut self) -> Result<LatexProjectOutput, CandidateStop> {
@@ -881,6 +908,13 @@ impl LatexProjectSession {
                             ResourceRequest::File(file) => {
                                 if let Some(response) = self.file_responses.get(file.key()) {
                                     supplied.push(ResourceResponse::File(response.clone()));
+                                } else if let Some(response) = self.files.get(file.key()) {
+                                    supplied.push(ResourceResponse::File(ResolvedFile {
+                                        request: file.key().clone(),
+                                        virtual_path: response.path().to_string(),
+                                        bytes: response.bytes().to_vec(),
+                                        expected_digest: None,
+                                    }));
                                 } else if self.files.unavailable_keys().any(|key| key == file.key())
                                 {
                                     supplied.push(ResourceResponse::FileUnavailable(
@@ -918,6 +952,13 @@ impl LatexProjectSession {
                         };
                         if let Some(response) = self.file_responses.get(file.key()) {
                             supplied.push(ResourceResponse::File(response.clone()));
+                        } else if let Some(response) = self.files.get(file.key()) {
+                            supplied.push(ResourceResponse::File(ResolvedFile {
+                                request: file.key().clone(),
+                                virtual_path: response.path().to_string(),
+                                bytes: response.bytes().to_vec(),
+                                expected_digest: None,
+                            }));
                         } else if self.files.unavailable_keys().any(|key| key == file.key()) {
                             supplied.push(ResourceResponse::FileUnavailable(file.key().clone()));
                         } else {
@@ -1023,7 +1064,7 @@ impl LatexProjectSession {
             .ok_or_else(|| {
                 LatexProjectError::Compile(CompileError::MissingMainFile(main.to_string()))
             })?;
-        Ok((tex_incr::RevisionId::new(1), file.bytes().to_vec()))
+        Ok((self.initial_revision, file.bytes().to_vec()))
     }
 
     fn remember_needs(&mut self, needs: &NeedResources) {

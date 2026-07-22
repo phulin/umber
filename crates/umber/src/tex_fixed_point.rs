@@ -95,6 +95,17 @@ impl TexFixedPointSession {
         })
     }
 
+    pub(crate) fn from_provisional(
+        provisional: &crate::VirtualCompileSession,
+        limits: FixedPointLimits,
+    ) -> Result<Self, TexFixedPointError> {
+        Ok(Self {
+            inner: LatexProjectSession::new_tex_only_from_provisional(provisional, limits)
+                .map_err(tex_fixed_point_error)?,
+            accepted_output: None,
+        })
+    }
+
     pub fn add_user_file(&mut self, path: &str, bytes: Vec<u8>) -> Result<(), TexFixedPointError> {
         self.inner
             .add_user_file(path, bytes)
@@ -158,6 +169,15 @@ impl TexFixedPointSession {
     #[must_use]
     pub const fn accepted_input_observations(&self) -> Option<&AcceptedInputObservationLedger> {
         self.inner.accepted_input_observations()
+    }
+
+    #[must_use]
+    pub(crate) fn completed_passes(&self) -> u32 {
+        self.inner.completed_passes()
+    }
+
+    pub(crate) fn take_accepted_tex(&mut self) -> Option<Box<crate::VirtualCompileSession>> {
+        self.inner.take_accepted_tex()
     }
 }
 

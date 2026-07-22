@@ -334,6 +334,19 @@ attempt bounds, deterministic signature history, non-adjacent oscillation
 detection, suspended TeX-pass resumption, and candidate rollback. A stable
 generated signature accepts the just-completed pass without scheduling an
 extra run.
+
+`umber::EditorCompileSession` composes the ordinary retained one-pass session
+with that TeX-only coordinator. `advance()` remains one latency-critical pass.
+If its accepted generated signature changed, the result becomes provisional
+and `stabilize_attempt()` explicitly drives unchanged-root passes on idle,
+save, export, or another host policy boundary. Status distinguishes
+provisional, stabilizing (including completed pass count), and stable output.
+The display output and the last stable output are retained independently while
+stabilization waits or fails. A successful fixed point atomically replaces the
+hot session, output, and generated generation at the same root revision;
+internal pass numbers never enter the public editor revision sequence. A newer
+patch or `cancel_stabilization()` discards only private stabilization work.
+
 `umber-wasm::ProjectSession` is the binary-safe representation adapter for this
 state machine. Its project options name the BCF and requested bibliography
 outputs, its attempt values reuse the shared resource wire protocol, and its

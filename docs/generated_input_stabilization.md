@@ -4,8 +4,8 @@
 > bounded positive and authoritative-negative input observations, expose a
 > versioned native/WASM projection, and validate retained dependencies against
 > the candidate VFS snapshot before reuse. The reusable native TeX-only
-> fixed-point coordinator is implemented; provisional editor and WebAssembly
-> stabilization surfaces remain to be implemented.
+> fixed-point coordinator and native provisional editor session are implemented;
+> WebAssembly stabilization exposure remains to be implemented.
 
 This document defines how persistent editor compilation should compose
 root-buffer edits, generated TeX inputs such as `.aux` and `.toc` files, and
@@ -240,8 +240,11 @@ reuses the existing project-session rules for:
 The coordinator uses fresh cold TeX sessions for stabilization passes and
 retains a suspended session across resource responses. A failure leaves the
 last accepted stable state intact and returns a typed error; it does not
-partially publish a later generated generation. The provisional editor output
-will remain separately available once editor integration is added.
+partially publish a later generated generation. `EditorCompileSession` retains
+the provisional display and prior stable output separately, reports
+`Provisional`, `Stabilizing`, or `Stable`, and installs the converged TeX
+session and generated generation together. Cancellation or a newer root patch
+drops only the private stabilizer.
 
 Generated-byte equality after the provisional pass is already sufficient to
 avoid an unnecessary rerun. A label-table parser is neither required nor a
@@ -297,8 +300,11 @@ accepted observable relative to cold execution.
    can run TeX-only jobs without bibliography configuration. **Implemented:**
    `umber::TexFixedPointSession` and the shared `FixedPointLimits` policy.
 2. Keep the one-pass incremental result available as provisional display.
+   **Implemented at the native boundary:** `EditorCompileSession::advance`.
 3. Add an explicit idle/save stabilization operation and stable/provisional
-   status at the native and WebAssembly boundaries.
+   status at the native and WebAssembly boundaries. **Native implemented:**
+   `stabilize_attempt`, `status`, `display_output`, and `stable_output`;
+   WebAssembly remains pending.
 4. Preserve bounded attempts, oscillation detection, resource resumption, and
    atomic stable publication.
 

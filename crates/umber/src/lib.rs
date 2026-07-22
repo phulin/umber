@@ -17,6 +17,7 @@ use tex_state::{
 
 #[cfg(not(target_arch = "wasm32"))]
 pub mod cli_resource;
+mod editor_session;
 mod fixed_point;
 mod input_observation;
 mod input_search;
@@ -31,6 +32,10 @@ mod virtual_compile;
 
 pub const PACKAGE_VERSION: &str = env!("CARGO_PKG_VERSION");
 
+pub use editor_session::{
+    EditorCompileSession, EditorResourceError, EditorSessionOptions, EditorSessionStatus,
+    EditorStabilizationAttempt,
+};
 pub use fixed_point::FixedPointLimits;
 pub use input_observation::{
     ACCEPTED_INPUT_OBSERVATION_SCHEMA_VERSION, AcceptedInputObservation,

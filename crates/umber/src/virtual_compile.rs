@@ -40,8 +40,8 @@ pub use resource_resolver::{
 use path::user_path_for_key;
 use resolvers::{FontResolutionPolicy, VirtualRunResolvers};
 use umber_vfs::{
-    BuildId, BuildPlan, FileProvisioner, FileRequestBatch, ProducerId, ProvisionError,
-    ProvisionOutcome, TransactionError, UserRegistrationError,
+    BuildId, BuildPlan, FileOrigin, FileProvisioner, FileRequestBatch, ProducerId, ProvisionError,
+    ProvisionOutcome, TransactionError, UserRegistrationError, VirtualRoot,
 };
 pub use umber_vfs::{
     FileKind, FileRequest, FileRequestKey, RequestKeyError, ResolvedFile, ResourceDomain,
@@ -613,6 +613,7 @@ pub struct VirtualCompileSession {
     last_resource_plan: OutputResourcePlan,
     virtual_font_resources: PdfVirtualFontResources,
     last_reuse: Option<tex_incr::ReuseMetrics>,
+    last_stabilization_required: bool,
     initial_revision: tex_incr::RevisionId,
     execution_telemetry: tex_exec::ExecutionTelemetry,
     resource_wait_time: Duration,
@@ -829,6 +830,7 @@ impl VirtualCompileSession {
             ),
             virtual_font_resources: PdfVirtualFontResources::default(),
             last_reuse: None,
+            last_stabilization_required: false,
             initial_revision,
             execution_telemetry: tex_exec::ExecutionTelemetry::default(),
             resource_wait_time: Duration::ZERO,
@@ -839,6 +841,27 @@ impl VirtualCompileSession {
             #[cfg(not(target_arch = "wasm32"))]
             resource_wait_started: None,
         })
+    }
+
+    pub(crate) fn session_options(&self) -> SessionOptions {
+        SessionOptions {
+            main_path: self.main_path.to_string(),
+            job_name: Some(self.job_name.clone()),
+            format: self.format.clone(),
+            initial_prefetch_hints: self.initial_prefetch_hints.clone(),
+            engine: self.engine,
+            clock: self.clock,
+            limits: self.limits,
+            outputs: self.outputs,
+            html_asset_mode: self.html_asset_mode.clone(),
+            accepted_font_containers: self.accepted_font_containers,
+            font_layout_policy: self.font_layout_policy,
+            font_mapping_fallback: self.font_mapping_fallback,
+        }
+    }
+
+    pub(crate) fn provisioner(&self) -> &FileProvisioner {
+        &self.files
     }
 
     /// Consumes a completed session and transfers its accepted engine state
@@ -1006,6 +1029,21 @@ impl VirtualCompileSession {
     #[must_use]
     pub const fn reuse_metrics(&self) -> Option<tex_incr::ReuseMetrics> {
         self.last_reuse
+    }
+
+    #[must_use]
+    pub const fn stabilization_required(&self) -> bool {
+        self.last_stabilization_required
+    }
+
+    pub(crate) fn mark_stable(&mut self) {
+        self.last_stabilization_required = false;
+    }
+
+    pub(crate) fn accepted_generated_fingerprint(
+        &self,
+    ) -> Result<Vec<(VirtualPath, ContentHash)>, CompileError> {
+        generated_fingerprint(&self.files)
     }
 
     #[must_use]
@@ -2290,6 +2328,8 @@ impl VirtualCompileSession {
         check_limit("returned output bytes", existing, self.limits.output_bytes)?;
         stage.finish().map_err(map_transaction)?;
         build.accept().map_err(map_transaction)?;
+        let previous_generated = generated_fingerprint(&self.files)?;
+        let next_generated = generated_fingerprint(&pending_files)?;
         let reuse = execution.reuse();
         match execution {
             PreparedExecution::Initial { session, .. } => self.incremental = Some(*session),
@@ -2304,6 +2344,7 @@ impl VirtualCompileSession {
         self.files = pending_files;
         self.pending_patch = None;
         self.last_reuse = Some(reuse);
+        self.last_stabilization_required = previous_generated != next_generated;
         self.accepted_output = Some(output.clone());
         Ok(CompileAttemptResult::Complete(output))
     }
@@ -2699,6 +2740,29 @@ fn accepted_dependencies_match_snapshot<'a>(
         }
     }
     Ok(true)
+}
+
+fn generated_fingerprint(
+    files: &FileProvisioner,
+) -> Result<Vec<(VirtualPath, ContentHash)>, CompileError> {
+    let snapshot = files.snapshot();
+    let path_limit = VfsLimits::HARD_MAX
+        .user_files
+        .saturating_add(VfsLimits::HARD_MAX.generated_files);
+    let paths = snapshot
+        .list_root(VirtualRoot::Job, path_limit)
+        .map_err(|error| CompileError::Output(error.to_string()))?;
+    let mut generated = Vec::new();
+    for path in paths {
+        let file = snapshot
+            .get(&path)
+            .map_err(|error| CompileError::Output(error.to_string()))?
+            .expect("a listed VFS path resolves");
+        if matches!(file.origin(), FileOrigin::Generated { .. }) {
+            generated.push((path, ContentHash::from_bytes(file.bytes())));
+        }
+    }
+    Ok(generated)
 }
 
 fn memory_run_output_bytes(output: &MemoryRunOutput) -> usize {
