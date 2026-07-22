@@ -371,6 +371,15 @@ surfaces whose complete workload wins. Record historical measurements in Beads
 or Git history rather than turning one workload's numbers into a permanent
 architecture promise.
 
+The completed measurement gate keeps paragraph recording default-disabled on
+the native single-pass editor, native stabilizer, low-level WebAssembly editor,
+and authored direct/worker facades. Unchanged-root stabilization replay wins
+its isolated rerun workload, but initial construction and retention are not
+free, and the complete balanced edit gate is not currently green. An explicit
+future rerun-only policy remains possible; it requires a separately exposed
+configuration boundary and a new complete gate rather than silently changing
+universal session construction.
+
 ## Required verification
 
 The implementation gate must include:

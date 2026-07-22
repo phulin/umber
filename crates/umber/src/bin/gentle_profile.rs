@@ -8,11 +8,17 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::time::{Duration, Instant};
 
-use tex_exec::{CheckpointSink, EngineBoundary, EngineCheckpoint};
-use tex_incr::{AcceptedOutput, BoundaryKey, Edit, ReuseMetrics, RevisionId, Session};
+use tex_exec::{
+    Cancellation, CheckpointSink, EngineBoundary, EngineCheckpoint, PdfImageRequest,
+    PdfImageResolver,
+};
+use tex_expand::{InputResolver, ResourceLookup, ResourceResult};
+use tex_incr::{
+    AcceptedOutput, BoundaryKey, Edit, ReuseMetrics, RevisionCandidateResult, RevisionId, Session,
+};
 #[cfg(feature = "profiling-stats")]
 use tex_lex::ExpansionStats;
-use tex_lex::{InputStack, WorldInput};
+use tex_lex::{InputSource, InputStack, MemoryInput, WorldInput};
 #[cfg(feature = "profiling-stats")]
 use tex_state::measurement::{
     ExactIdentityMeasurement, StateHashMeasurement, exact_identity_measurement,
@@ -38,6 +44,8 @@ const GENTLE_EQUAL_WIDTH_OLD: &str = "words";
 const GENTLE_EQUAL_WIDTH_NEW: &str = "sword";
 const GENTLE_REBREAK_ASSIGNMENT: &str = "\\tolerance=201 ";
 const GENTLE_FAST_PATH_RETYPED_PAGES: usize = 3;
+const STABILIZATION_PASSES: usize = 16;
+const STABILIZATION_INPUT: &str = "stabilization-ref.tex";
 
 #[derive(Debug)]
 struct Options {
@@ -46,6 +54,7 @@ struct Options {
     warmups: usize,
     checkpoints: bool,
     incremental_edit: bool,
+    stabilization_replay: bool,
     incremental_path: Option<IncrementalPath>,
     cold_memo_policy: Option<ColdMemoPolicy>,
     baseline_memo_recording: Option<PureMemoRecordingPolicy>,
@@ -59,6 +68,7 @@ impl Options {
         let mut warmups = DEFAULT_WARMUPS;
         let mut checkpoints = false;
         let mut incremental_edit = false;
+        let mut stabilization_replay = false;
         let mut incremental_path = None;
         let mut cold_memo_policy = None;
         let mut baseline_memo_recording = None;
@@ -81,6 +91,7 @@ impl Options {
                 }
                 "--checkpoints" => checkpoints = true,
                 "--incremental-edit" => incremental_edit = true,
+                "--stabilization-replay" => stabilization_replay = true,
                 "--incremental-path" => {
                     incremental_path = Some(parse_incremental_path(&next_value(
                         &mut args,
@@ -122,6 +133,7 @@ impl Options {
             warmups,
             checkpoints,
             incremental_edit,
+            stabilization_replay,
             incremental_path,
             cold_memo_policy,
             baseline_memo_recording,
@@ -177,6 +189,9 @@ fn run() -> Result<(), String> {
     }
     if options.incremental_edit {
         return run_incremental_edit(&options, &template);
+    }
+    if options.stabilization_replay {
+        return run_stabilization_replay(&options, &template);
     }
 
     let reference = execute_once(&template, options.checkpoints)?;
@@ -337,11 +352,12 @@ fn run_cold_memo_policy(
     template: &World,
     policy: ColdMemoPolicy,
 ) -> Result<(), String> {
-    if options.checkpoints || options.incremental_edit || options.incremental_path.is_some() {
-        return Err(
-            "--cold-memo-layers cannot be combined with --checkpoints, --incremental-edit, or --incremental-path"
-                .to_owned(),
-        );
+    if options.checkpoints
+        || options.incremental_edit
+        || options.stabilization_replay
+        || options.incremental_path.is_some()
+    {
+        return Err("--cold-memo-layers cannot be combined with another workload".to_owned());
     }
     let fixture = incremental_fixture(&options.repo_root)?;
     let source_path = Path::new(JOB_DIR).join(JOB_FILE);
@@ -447,17 +463,254 @@ fn run_cold_memo_policy(
     Ok(())
 }
 
+struct OverlayInputResolver<'a> {
+    fallback: &'a mut dyn InputResolver,
+    generated: &'a str,
+}
+
+impl InputResolver for OverlayInputResolver<'_> {
+    fn open_input(
+        &mut self,
+        input: &mut dyn tex_state::InputReadState,
+        name: &str,
+        request_index: u64,
+    ) -> ResourceResult<Box<dyn InputSource>> {
+        if name == STABILIZATION_INPUT {
+            return Ok(ResourceLookup::Available(Box::new(MemoryInput::new(
+                self.generated,
+            ))));
+        }
+        self.fallback.open_input(input, name, request_index)
+    }
+}
+
+struct UnavailableImageResolver;
+
+impl PdfImageResolver for UnavailableImageResolver {
+    fn open_image(
+        &mut self,
+        _input: &mut dyn tex_state::InputReadState,
+        _request: &PdfImageRequest,
+        _request_index: u64,
+    ) -> ResourceResult<tex_state::PdfExternalImageSource> {
+        Ok(ResourceLookup::Unavailable)
+    }
+}
+
+struct StabilizationSample {
+    initial: Duration,
+    passes: Vec<Duration>,
+    dvis: Vec<Vec<u8>>,
+    lookups: u64,
+    hits: u64,
+    misses: u64,
+    reexecuted_bytes: usize,
+    retained_bytes: usize,
+}
+
+fn stabilization_source(fixture: &IncrementalFixture) -> String {
+    let prefix = format!("\\input plain.tex\n\\input {STABILIZATION_INPUT}\n");
+    let mut body = fixture.original["\\input plain.tex\n".len()..].to_owned();
+    let offset = fixture.body_offset;
+    body.insert_str(offset, "\\hskip\\stabilizationrefwidth ");
+    prefix + &body
+}
+
+#[allow(clippy::disallowed_methods)] // Host-side stabilization profiling timer.
+fn execute_stabilization_sample(
+    template: &World,
+    source: &str,
+    memo: bool,
+    recording: PureMemoRecordingPolicy,
+) -> Result<StabilizationSample, String> {
+    let path = Path::new(JOB_DIR).join(JOB_FILE);
+    let mut session = incremental_session(template, source, RevisionId::new(1), memo, recording)?;
+    let mut resolvers = FileSessionResolvers::new(&path, Vec::new(), Vec::new());
+    let (fallback, font) = resolvers.resolvers();
+    let mut input = OverlayInputResolver {
+        fallback,
+        generated: "\\def\\stabilizationrefwidth{0pt}",
+    };
+    let started = Instant::now();
+    session
+        .cold_with_resolvers(&mut input, font)
+        .map_err(|error| format!("construct stabilization history: {error}"))?;
+    let initial = started.elapsed();
+
+    let mut passes = Vec::with_capacity(STABILIZATION_PASSES);
+    let mut dvis = Vec::with_capacity(STABILIZATION_PASSES);
+    let mut lookups = 0_u64;
+    let mut hits = 0_u64;
+    let mut misses = 0_u64;
+    let mut reexecuted_bytes = 0_usize;
+    for pass in 0..STABILIZATION_PASSES {
+        let generated = if pass.is_multiple_of(2) {
+            "\\def\\stabilizationrefwidth{10pt}"
+        } else {
+            "\\def\\stabilizationrefwidth{0pt}"
+        };
+        let mut candidate = session
+            .start_external_input_delta_candidate()
+            .map_err(|error| format!("start stabilization pass {}: {error}", pass + 1))?;
+        let mut resolvers = FileSessionResolvers::new(&path, Vec::new(), Vec::new());
+        let (fallback, font) = resolvers.resolvers();
+        let mut input = OverlayInputResolver {
+            fallback,
+            generated,
+        };
+        let mut image = UnavailableImageResolver;
+        let started = Instant::now();
+        let outcome = candidate
+            .drive_with_resource_resolvers(&mut input, font, &mut image, &Cancellation::new())
+            .map_err(|error| format!("drive stabilization pass {}: {error}", pass + 1))?;
+        if !matches!(outcome, RevisionCandidateResult::Complete) {
+            return Err(format!(
+                "stabilization pass {} unexpectedly requested a resource",
+                pass + 1
+            ));
+        }
+        let pending = session
+            .finish_advance_candidate(candidate)
+            .map_err(|error| format!("finish stabilization pass {}: {error}", pass + 1))?;
+        let reuse = pending.reuse();
+        lookups = lookups.saturating_add(reuse.paragraph_replay_lookups);
+        hits = hits.saturating_add(reuse.paragraph_replay_hits);
+        misses = misses.saturating_add(reuse.paragraph_replay_validation_misses);
+        reexecuted_bytes = reexecuted_bytes.saturating_add(reuse.reexecuted_bytes);
+        let accepted = session
+            .accept_pending(pending)
+            .map_err(|error| format!("accept stabilization pass {}: {error}", pass + 1))?;
+        passes.push(started.elapsed());
+        dvis.push(accepted.dvi_bytes().map_err(|error| error.to_string())?);
+    }
+    Ok(StabilizationSample {
+        initial,
+        passes,
+        dvis,
+        lookups,
+        hits,
+        misses,
+        reexecuted_bytes,
+        retained_bytes: session.pure_memo_stats().paragraph_history_metadata_bytes,
+    })
+}
+
+fn run_stabilization_replay(options: &Options, template: &World) -> Result<(), String> {
+    if options.checkpoints
+        || options.incremental_edit
+        || options.incremental_path.is_some()
+        || options.cold_memo_policy.is_some()
+        || options.baseline_memo_recording.is_some()
+    {
+        return Err("--stabilization-replay cannot be combined with another workload".to_owned());
+    }
+    if !options.iterations.is_multiple_of(2) {
+        return Err(
+            "--stabilization-replay requires an even --iterations count for AB/BA pairing"
+                .to_owned(),
+        );
+    }
+    let fixture = incremental_fixture(&options.repo_root)?;
+    let source = stabilization_source(&fixture);
+    for _ in 0..options.warmups {
+        let _ = execute_stabilization_sample(
+            template,
+            &source,
+            false,
+            PureMemoRecordingPolicy::default(),
+        )?;
+        let _ = execute_stabilization_sample(template, &source, true, options.memo_recording)?;
+    }
+    let mut cold_initial = Vec::with_capacity(options.iterations);
+    let mut replay_initial = Vec::with_capacity(options.iterations);
+    let mut cold_passes = Vec::with_capacity(options.iterations * STABILIZATION_PASSES);
+    let mut replay_passes = Vec::with_capacity(options.iterations * STABILIZATION_PASSES);
+    let mut paired_total = Vec::with_capacity(options.iterations);
+    let mut last_cold = None;
+    let mut last_replay = None;
+    for iteration in 0..options.iterations {
+        let order = if iteration.is_multiple_of(2) {
+            [false, true]
+        } else {
+            [true, false]
+        };
+        let mut pair: [Option<StabilizationSample>; 2] = [None, None];
+        for memo in order {
+            pair[usize::from(memo)] = Some(execute_stabilization_sample(
+                template,
+                &source,
+                memo,
+                options.memo_recording,
+            )?);
+        }
+        let cold = pair[0].take().expect("cold sample");
+        let replay = pair[1].take().expect("replay sample");
+        if cold.dvis != replay.dvis {
+            return Err(format!(
+                "AB/BA stabilization outputs differ in iteration {}",
+                iteration + 1
+            ));
+        }
+        cold_initial.push(cold.initial);
+        replay_initial.push(replay.initial);
+        cold_passes.extend(cold.passes.iter().copied());
+        replay_passes.extend(replay.passes.iter().copied());
+        let cold_total = cold.initial + cold.passes.iter().copied().sum::<Duration>();
+        let replay_total = replay.initial + replay.passes.iter().copied().sum::<Duration>();
+        paired_total.push((replay_total.as_secs_f64() - cold_total.as_secs_f64()) * 1_000.0);
+        last_cold = Some(cold);
+        last_replay = Some(replay);
+    }
+    let cold = last_cold.expect("measured cold sample");
+    let replay = last_replay.expect("measured replay sample");
+    println!(
+        "gentle-profile stabilization replay: passes_per_session={STABILIZATION_PASSES} measured_sessions={} warmup_sessions={} order=AB/BA",
+        options.iterations, options.warmups,
+    );
+    print_duration_stats("stabilization cold initial", duration_stats(&cold_initial));
+    print_duration_stats(
+        "stabilization replay initial",
+        duration_stats(&replay_initial),
+    );
+    print_duration_stats("stabilization cold passes", duration_stats(&cold_passes));
+    print_duration_stats(
+        "stabilization replay passes",
+        duration_stats(&replay_passes),
+    );
+    let delta = scalar_stats(&paired_total);
+    println!(
+        "gentle-profile stabilization paired total delta: replay-cold mean={:+.3}ms median={:+.3}ms min={:+.3}ms max={:+.3}ms",
+        delta.mean, delta.median, delta.min, delta.max,
+    );
+    println!(
+        "gentle-profile stabilization work: policy=cold passes={} lookups={} hits={} misses={} reexecuted_bytes={} retained_bytes={}",
+        STABILIZATION_PASSES,
+        cold.lookups,
+        cold.hits,
+        cold.misses,
+        cold.reexecuted_bytes,
+        cold.retained_bytes,
+    );
+    println!(
+        "gentle-profile stabilization work: policy=replay passes={} lookups={} hits={} misses={} reexecuted_bytes={} retained_bytes={}",
+        STABILIZATION_PASSES,
+        replay.lookups,
+        replay.hits,
+        replay.misses,
+        replay.reexecuted_bytes,
+        replay.retained_bytes,
+    );
+    Ok(())
+}
+
 #[allow(clippy::disallowed_methods)] // Host-side path-isolated profiling timer.
 fn run_incremental_path(
     options: &Options,
     template: &World,
     path_kind: IncrementalPath,
 ) -> Result<(), String> {
-    if options.checkpoints || options.incremental_edit {
-        return Err(
-            "--incremental-path cannot be combined with --checkpoints or --incremental-edit"
-                .to_owned(),
-        );
+    if options.checkpoints || options.incremental_edit || options.stabilization_replay {
+        return Err("--incremental-path cannot be combined with another workload".to_owned());
     }
     let fixture = incremental_fixture(&options.repo_root)?;
     let (left, right) = match path_kind {
@@ -1978,7 +2231,7 @@ fn parse_memo_layers(value: &str) -> Result<PureMemoRecordingPolicy, String> {
 
 fn print_help() {
     println!(
-        "Usage: gentle-profile [--iterations N] [--warmups N] [--repo-root PATH] [--checkpoints] [--cold-memo-layers disabled|LIST] [--incremental-edit] [--incremental-path fast|slow] [--baseline-memo-layers LIST] [--memo-layers LIST]\n\n\
+        "Usage: gentle-profile [--iterations N] [--warmups N] [--repo-root PATH] [--checkpoints] [--cold-memo-layers disabled|LIST] [--incremental-edit] [--incremental-path fast|slow] [--stabilization-replay] [--baseline-memo-layers LIST] [--memo-layers LIST]\n\n\
          Loads Gentle and its support files once, then executes fresh deterministic\n\
          in-memory Umber sessions for profiling. Defaults: {DEFAULT_ITERATIONS} measured\n\
          iterations and {DEFAULT_WARMUPS} warm-up. --checkpoints captures and hashes every\n\
@@ -1988,6 +2241,8 @@ fn print_help() {
          the fifth changes a line-breaking dependency to verify one-shot cold fallback.\n\
          --incremental-path repeatedly ping-pongs one fast or slow edit after cold setup,\n\
          verifies each direction against cold output, and isolates its sampled stacks.\n\
+         --stabilization-replay compares sixteen unchanged-root generated-input passes\n\
+         with paragraph recording disabled/enabled in balanced AB/BA session order.\n\
          --cold-memo-layers repeats fresh incremental-session cold compiles with memoization\n\
          disabled or enabled for the selected layers, isolating recording overhead.\n\
          --memo-layers configures enabled recording layers; the default is paragraph.\n\

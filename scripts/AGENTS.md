@@ -6,6 +6,9 @@ Read the repository-root `AGENTS.md` first. This file adds the directory map for
 
 - `fetch-conformance-inputs.sh`: shared acquisition for hyphenation, Computer Modern fonts, and hash-pinned TRIP/e-TRIP inputs.
 - `profile-pdftex-arxiv.sh`: disposable pinned pdfTeX primitive/file-access tracer build and deterministic 100-paper arXiv source profile.
+- `measure-wasm-editor-memory.mjs`: deterministic self-contained retained-editor
+  workload reporting WebAssembly linear-memory pages before construction, after
+  compilation, and after disposal.
 - `select-recent-arxiv.py`: first-submission date filtering and reproducibly random, hash-shuffled candidate selection from the arXiv OAI metadata snapshot ZIP.
 - `materialize-recent-arxiv-sample.sh`: parallel source acquisition followed by random-order live-LaTeX filtering and optional durable exclusions for a recent candidate TSV.
 - `measure-sharded-manifest.py`: read-only replay of normalized pdfTeX file traces over candidate schema-v2 shard counts.

@@ -98,6 +98,37 @@ cargo run --profile profiling -p umber --bin gentle-profile \
   --memo-layers pretolerance,paragraph
 ```
 
+## Stabilization replay gate
+
+Use `--stabilization-replay` for the generated-input slow path. The runner
+alternates sixteen generations of one externally supplied reference width over
+an unchanged Gentle root. Disabled and paragraph-recording sessions run in
+balanced AB/BA order; every accepted DVI is compared between policies. The
+receipt includes initial-history and per-pass mean/median latency, pass count,
+paragraph lookups/hits/validation misses, reexecuted bytes, retained paragraph
+bytes, and the full-session paired delta:
+
+```bash
+cargo run --release -p umber --bin gentle-profile \
+  --features profiling-runner -- \
+  --stabilization-replay --iterations 4 --warmups 1 \
+  --memo-layers paragraph
+```
+
+Measure the current default WebAssembly editor's linear-memory growth after
+building the package. Node must expose garbage collection so the post-disposal
+observation is explicit:
+
+```bash
+scripts/build-wasm-package.sh
+node --expose-gc scripts/measure-wasm-editor-memory.mjs
+```
+
+The WASM surface intentionally has no paragraph-recording switch while the
+activation gate remains closed. Pair its current-default memory observation
+with the native candidate's exact retained paragraph-byte charge; do not infer
+that disposal shrinks WebAssembly linear memory, whose pages only grow.
+
 ## Interpreting incremental counters
 
 Each layer reports lookups, hits, inserts, evictions, retained bytes, and
