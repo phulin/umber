@@ -10,7 +10,6 @@ use tex_state::page::{
     AWFUL_BAD, INF_PENALTY, PageDimension, PageFireUp, PageInsertionStatus, PageInteger, PageMark,
 };
 use tex_state::scaled::{GlueSetRatio, Scaled};
-use tex_state::token::Token;
 use tex_state::{GroupKind, Universe};
 use tex_typeset::{INF_BAD, PackSpec, VpackParams};
 
@@ -432,8 +431,7 @@ fn run_output_routine_inner(
     nest.push(Mode::InternalVertical);
     nest.current_list_mut()
         .set_prev_depth(ignored_depth(stores));
-    let output_frame = delimited_output_tokens(stores, output);
-    let output_replay = input.push_token_list(output_frame, TokenListReplayKind::OutputRoutine);
+    let output_replay = input.push_token_list(output, TokenListReplayKind::OutputRoutine);
     *replay = Some(output_replay);
 
     match run_main_control_until(nest, input, stores, execution, stats, |input, stores| {
@@ -441,10 +439,7 @@ fn run_output_routine_inner(
     })? {
         MainControlExit::Stopped => {}
         MainControlExit::EndOfInput => {
-            if !input.contains_token_list_frame(output_frame, TokenListReplayKind::OutputRoutine) {
-                // Expansion can discard the exhausted output frame while
-                // looking for the next token; that is still a normal stop.
-            } else {
+            if !input.finish_exhausted_token_list_replay(output_replay, stores) {
                 return Err(ExecError::MissingToken {
                     context: "output routine",
                 });
@@ -487,16 +482,6 @@ fn pop_finished_output_frame(
     output_replay: tex_lex::TokenListReplayMarker,
 ) -> bool {
     input.finish_exhausted_token_list_replay(output_replay, stores)
-}
-
-fn delimited_output_tokens(
-    stores: &mut Universe,
-    output: tex_state::ids::TokenListId,
-) -> tex_state::ids::TokenListId {
-    let mut tokens = stores.tokens(output).to_vec();
-    let relax = stores.intern("relax");
-    tokens.push(Token::Cs(relax.symbol()));
-    stores.intern_token_list(&tokens)
 }
 
 fn take_box255_node(stores: &mut Universe) -> Result<Node, ExecError> {

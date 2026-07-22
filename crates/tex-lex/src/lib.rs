@@ -1105,6 +1105,10 @@ struct TokenListInputFrame {
 }
 
 impl TokenListInputFrame {
+    fn stops_at_exhaustion(&self) -> bool {
+        self.replay_kind == TokenListReplayKind::OutputRoutine
+    }
+
     fn stored_ids(&self) -> Option<(TokenListId, OriginListId)> {
         match self.payload {
             ReplayPayload::Stored {
@@ -4428,6 +4432,9 @@ impl InputStack {
                             return Ok(Some(token));
                         }
                         None => {
+                            if token_list.stops_at_exhaustion() {
+                                return Ok(None);
+                            }
                             let frame = self.discard_token_list_frame(frame_index);
                             let closes_scantokens =
                                 frame.replay_kind == TokenListReplayKind::ScantokensEveryEof;
@@ -4625,6 +4632,9 @@ impl InputStack {
                             return Ok(Some(token));
                         }
                         None => {
+                            if token_list.stops_at_exhaustion() {
+                                return Ok(None);
+                            }
                             let frame = self.discard_token_list_frame(frame_index);
                             let closes_scantokens =
                                 frame.replay_kind == TokenListReplayKind::ScantokensEveryEof;
@@ -4737,6 +4747,9 @@ impl InputStack {
                             return Ok(Some(ExpansionToken::new(token, true)));
                         }
                         None => {
+                            if token_list.stops_at_exhaustion() {
+                                return Ok(None);
+                            }
                             self.discard_token_list_frame(frame_index);
                         }
                     };

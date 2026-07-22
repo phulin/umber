@@ -4661,6 +4661,34 @@ fn output_routine_replays_in_implicit_group_and_consumes_box255() {
 }
 
 #[test]
+fn expandable_output_tail_cannot_consume_following_float_group() {
+    let mut stores = Universe::new();
+    tex_expand::install_expandable_primitives(&mut stores);
+    install_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(
+        "\\catcode64=11 \
+         \\def\\outputtail{} \
+         \\output={\\let\\relax\\outputtail\\shipout\\box255} \
+         \\topskip=0pt \\vsize=1pt \\setbox0=\\hbox{}\\ht0=2pt \
+         \\copy0\\penalty-10000 \
+         \\begingroup\\def\\@currbox{alive}\\def\\expected{alive}\
+         \\ifx\\@currbox\\expected\\global\\count2=1\\else\\global\\count2=2\\fi\
+         \\endgroup\\end",
+    ));
+
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("output teardown must precede the following float-like group");
+
+    assert_eq!(stores.count(2), 1);
+    let currbox = stores.symbol("@currbox").expect("float-like symbol");
+    assert_eq!(
+        stores.meaning(currbox),
+        tex_state::meaning::Meaning::Undefined
+    );
+}
+
+#[test]
 fn output_routine_emits_one_checkpoint_only_after_teardown() {
     let source = "\\output={\\advance\\count0 by 1 \\
                   \\global\\advance\\count1 by 1 \\shipout\\hbox{}\\shipout\\box255}

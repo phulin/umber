@@ -2286,6 +2286,30 @@ fn exhausted_nested_replays_finish_before_reading_below_marked_boundary() {
 }
 
 #[test]
+fn output_replay_exhaustion_does_not_read_underlying_continuation() {
+    let mut stores = Universe::new();
+    let output = stores.intern_token_list(&[char_token('x', Catcode::Letter)]);
+    let continuation = stores.intern_token_list(&[char_token('a', Catcode::Letter)]);
+    let mut input = InputStack::new(MemoryInput::new(""));
+    input.push_token_list(continuation, TokenListReplayKind::Inserted);
+    let marker = input.push_token_list(output, TokenListReplayKind::OutputRoutine);
+
+    assert_eq!(
+        input.next_token(&mut stores).expect("output token"),
+        Some(char_token('x', Catcode::Letter))
+    );
+    assert_eq!(
+        input.next_token(&mut stores).expect("output boundary"),
+        None
+    );
+    assert!(input.finish_exhausted_token_list_replay(marker, &stores));
+    assert_eq!(
+        input.next_token(&mut stores).expect("display continuation"),
+        Some(char_token('a', Catcode::Letter))
+    );
+}
+
+#[test]
 fn do_endv_stack_walk_accepts_only_empty_frames_above_v_template() {
     let mut stores = Universe::new();
     let list = stores.intern_token_list(&[char_token('x', Catcode::Letter)]);

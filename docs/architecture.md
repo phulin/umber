@@ -383,6 +383,16 @@ closers. pdfTeX.web retains these group, box, and output transitions; its
 output teardown additionally flushes page discards and uses the pdfTeX ignored
 depth sentinel, without changing assignment lifetime.
 
+Display entry follows TeX.web §§1137--1145. In particular, §1145 pushes the
+`\everydisplay` token list before `build_page`, so an output routine may run
+with the display group already open while that replay remains immediately
+beneath the output replay. `TokenListReplayKind::OutputRoutine` is therefore a
+synchronous exhaustion boundary: token acquisition returns to the output
+driver before it can consume the underlying `\everydisplay` continuation, even
+when the last output token is expandable. The driver retires the exhausted
+frame and tears down the output group; it does not append a mutable `\relax`
+sentinel. pdfTeX preserves this ordering and boundary.
+
 Box-valued commands also preserve TeX.web §§1075 and 1077's explicit void-box
 path. `begin_box` may leave `cur_box = null` when `\box`, `\copy`, or
 `\lastbox` is void, and `box_end` then performs no list, register, leader, or
