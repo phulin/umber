@@ -256,6 +256,7 @@ enum IncrementalPath {
     Slow,
     Interaction,
     Fast,
+    Neutral,
     Rebreak,
 }
 
@@ -267,6 +268,7 @@ impl IncrementalPath {
             Self::Slow => "slow",
             Self::Interaction => "interaction",
             Self::Fast => "fast",
+            Self::Neutral => "neutral",
             Self::Rebreak => "rebreak",
         }
     }
@@ -713,11 +715,16 @@ fn run_incremental_path(
         return Err("--incremental-path cannot be combined with another workload".to_owned());
     }
     let fixture = incremental_fixture(&options.repo_root)?;
+    let mut neutral = fixture.original.clone();
+    neutral.insert_str("\\input plain.tex\n".len(), "% neutral editor comment\n");
     let (left, right) = match path_kind {
-        IncrementalPath::Slow => (&fixture.original, &fixture.revisions[0]),
-        IncrementalPath::Fast => (&fixture.revisions[2], &fixture.revisions[3]),
+        IncrementalPath::Slow => (fixture.original.as_str(), fixture.revisions[0].as_str()),
+        IncrementalPath::Fast => (fixture.revisions[2].as_str(), fixture.revisions[3].as_str()),
+        IncrementalPath::Neutral => (fixture.original.as_str(), neutral.as_str()),
         IncrementalPath::Interaction | IncrementalPath::Rebreak => {
-            return Err("--incremental-path currently accepts only fast or slow".to_owned());
+            return Err(
+                "--incremental-path currently accepts only fast, slow, or neutral".to_owned(),
+            );
         }
     };
     let source_path = Path::new(JOB_DIR).join(JOB_FILE);
@@ -747,9 +754,9 @@ fn run_incremental_path(
     let mut last_reuse = ReuseMetrics::default();
     for step_index in 0..total_steps {
         let (from, to, expected_dvi) = if on_left {
-            (left.as_str(), right.as_str(), right_dvi.as_slice())
+            (left, right, right_dvi.as_slice())
         } else {
-            (right.as_str(), left.as_str(), left_dvi.as_slice())
+            (right, left, left_dvi.as_slice())
         };
         debug_assert_eq!(session.source(), from);
         revision += 1;
@@ -1082,7 +1089,7 @@ fn run_incremental_edit(options: &Options, template: &World) -> Result<(), Strin
                     ));
                 }
             }
-            IncrementalPath::Interaction | IncrementalPath::Fast => {
+            IncrementalPath::Interaction | IncrementalPath::Fast | IncrementalPath::Neutral => {
                 let baseline_pages = (
                     baseline.reuse.pages_retained_prefix,
                     baseline.reuse.pages_retyped,
@@ -2183,8 +2190,9 @@ fn parse_incremental_path(value: &str) -> Result<IncrementalPath, String> {
     match value {
         "fast" => Ok(IncrementalPath::Fast),
         "slow" => Ok(IncrementalPath::Slow),
+        "neutral" => Ok(IncrementalPath::Neutral),
         _ => Err(format!(
-            "--incremental-path expects fast or slow, got {value:?}"
+            "--incremental-path expects fast, slow, or neutral, got {value:?}"
         )),
     }
 }
@@ -2231,7 +2239,7 @@ fn parse_memo_layers(value: &str) -> Result<PureMemoRecordingPolicy, String> {
 
 fn print_help() {
     println!(
-        "Usage: gentle-profile [--iterations N] [--warmups N] [--repo-root PATH] [--checkpoints] [--cold-memo-layers disabled|LIST] [--incremental-edit] [--incremental-path fast|slow] [--stabilization-replay] [--baseline-memo-layers LIST] [--memo-layers LIST]\n\n\
+        "Usage: gentle-profile [--iterations N] [--warmups N] [--repo-root PATH] [--checkpoints] [--cold-memo-layers disabled|LIST] [--incremental-edit] [--incremental-path fast|slow|neutral] [--stabilization-replay] [--baseline-memo-layers LIST] [--memo-layers LIST]\n\n\
          Loads Gentle and its support files once, then executes fresh deterministic\n\
          in-memory Umber sessions for profiling. Defaults: {DEFAULT_ITERATIONS} measured\n\
          iterations and {DEFAULT_WARMUPS} warm-up. --checkpoints captures and hashes every\n\
@@ -2239,7 +2247,7 @@ fn print_help() {
          --incremental-edit compares a memo baseline, memo candidate, and cold compilation\n\
          five accepted edits/session using balanced AB/BA pairs and DVI parity verification;\n\
          the fifth changes a line-breaking dependency to verify one-shot cold fallback.\n\
-         --incremental-path repeatedly ping-pongs one fast or slow edit after cold setup,\n\
+         --incremental-path repeatedly ping-pongs one fast, slow, or output-neutral edit after cold setup,\n\
          verifies each direction against cold output, and isolates its sampled stacks.\n\
          --stabilization-replay compares sixteen unchanged-root generated-input passes\n\
          with paragraph recording disabled/enabled in balanced AB/BA session order.\n\

@@ -65,6 +65,12 @@ dependency change. The summary reports paired latency, one-time priming,
 boundary equivalence, page reuse, replay coverage, cold fallback, retained
 history, and incremental-to-cold ratios.
 
+For path-isolated checks, `--incremental-path slow` exercises the
+pagination-changing edit, `fast` the contained equal-width substitution, and
+`neutral` a comment-only edit whose DVI must remain identical. Repeat a path
+under `--memo-layers none` and `paragraph` in alternating command order when a
+focused gate must remain usable independently of the composite sequence.
+
 Use the build without `profiling-stats` for release latency. Its summary prints
 `profiling_stats=false` so an attributed run cannot be mistaken for a release
 comparison. Rebuild with `--features profiling-runner,profiling-stats` only
