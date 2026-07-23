@@ -519,6 +519,14 @@ Retained-byte accounting includes archived packed keys, unused tail capacity,
 chunk pointers, and affine key-run capacity; origin-list and source-map storage
 remain separately visible in total provenance bytes.
 
+These arenas own diagnostic history, not semantic engine material. Repeated
+macro invocations may thus make provenance the dominant RSS owner while the
+node arena stays flat. Such growth must be diagnosed against source/scanner
+progress: saturation to unknown bounds diagnostic retention, but it does not
+make a replay loop correct. Integer-`\dimexpr` stress coverage enforces at most
+512 retained provenance bytes per completed scan over 4,096 scans, alongside a
+finite expansion-work bound.
+
 No raw `OriginId` encoding is a stable artifact format. If provenance is ever
 serialized, it must use an explicit versioned logical representation rather
 than dumping packed ids.

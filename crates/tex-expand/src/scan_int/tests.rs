@@ -203,6 +203,76 @@ fn scans_backtick_character_and_control_sequence_constants() {
     assert_eq!(next, Some(char_token('x', Catcode::Letter)));
 }
 
+fn install_integer_dimexpr_primitives(stores: &mut Universe) {
+    crate::install_expandable_primitives(stores);
+    for (name, meaning) in [
+        (
+            "dimexpr",
+            Meaning::UnexpandablePrimitive(UnexpandablePrimitive::DimExpr),
+        ),
+        ("relax", Meaning::Relax),
+    ] {
+        let symbol = stores.intern(name);
+        stores.set_meaning(symbol, meaning);
+    }
+}
+
+#[test]
+fn integer_context_consumes_dimexpr_and_its_relax() {
+    let mut stores = Universe::new();
+    install_integer_dimexpr_primitives(&mut stores);
+
+    let (value, next) = scan_with_stores(
+        "\\dimexpr.25\\dimexpr`Asp\\expandafter\\relax\\expandafter|x",
+        &mut tex_state::ExpansionContext::new(&mut stores),
+    );
+
+    assert_eq!(value, 16);
+    assert_eq!(next, Some(char_token('|', Catcode::Other)));
+}
+
+#[test]
+fn repeated_integer_dimexpr_scans_have_bounded_provenance_retention() {
+    const SCANS: usize = 4_096;
+
+    let mut stores = Universe::new();
+    install_integer_dimexpr_primitives(&mut stores);
+    let input_text = "\\dimexpr.25\\dimexpr`Asp\\expandafter\\relax\\expandafter|".repeat(SCANS);
+    let mut input = InputStack::new(MemoryInput::new(input_text));
+    let mut expansion = ExpansionContext::new("dimexpr-stress");
+    let baseline = stores.provenance_stats();
+
+    for _ in 0..SCANS {
+        let scanned = scan_int_with_context(
+            &mut input,
+            &mut tex_state::ExpansionContext::new(&mut stores),
+            &mut expansion,
+            context(),
+        )
+        .expect("nested dimension expression should scan as an integer");
+        assert_eq!(scanned.value(), 16);
+        assert_eq!(
+            input
+                .next_token(&mut tex_state::ExpansionContext::new(&mut stores))
+                .expect("expression delimiter should remain readable"),
+            Some(char_token('|', Catcode::Other))
+        );
+    }
+
+    let growth = stores.provenance_stats().saturating_sub(baseline);
+    assert!(
+        growth.retained_bytes() <= 512 * SCANS,
+        "integer dimexpr stress retained {} provenance bytes ({} per scan)",
+        growth.retained_bytes(),
+        growth.retained_bytes() / SCANS
+    );
+    assert!(
+        expansion.cumulative_fuel_burned() <= 100_000,
+        "integer dimexpr stress burned {} expansion steps",
+        expansion.cumulative_fuel_burned()
+    );
+}
+
 #[test]
 fn backtick_brace_constant_restores_alignment_brace_depth() {
     let mut stores = Universe::new();

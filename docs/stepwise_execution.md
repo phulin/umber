@@ -390,6 +390,18 @@ limit for the logical candidate revision. Crossing either hard limit detaches
 a typed error, rolls back the current step, and terminally fails that candidate.
 It is not `AwaitingResources` and cannot be retried by increasing a limit.
 
+Diagnostic provenance is append-only work owned by the candidate `Universe`,
+not a semantic progress measure. A scanner that fails to consume its canonical
+input can therefore exhaust the provenance arena and raise process RSS even
+when the live node graph and physical source cursor are nearly stationary.
+The integer scanner follows TeX.web §429 here: an internal `\dimexpr` requested
+by `\number` is fully scanned through its terminating `\relax`, then lowered to
+raw scaled points. Leaving that expression on input caused hyperref's UTF-8
+PDF-string macros to replay the same byte indefinitely; the focused regression
+repeats the nested-expression shape 4,096 times and bounds both cumulative fuel
+and provenance retention. Fuel and RSS guards remain terminal backstops rather
+than substitutes for progress-preserving scanner semantics.
+
 `step` itself is the cooperative scheduling boundary. It never returns halfway
 through a scanner or pure algorithm. Native callers may loop; WASM callers
 return to JavaScript after each `Progress` and may schedule the next call in a

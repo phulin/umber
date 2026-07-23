@@ -655,6 +655,23 @@ where
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::NumExpr) => {
             scan_num_expr(input, stores, expansion, mode, token)
         }
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::DimExpr) => {
+            // TeX.web §429 lowers an internal dimension requested at integer
+            // level to its raw scaled-point value. This is the path used by
+            // `\number\dimexpr`; the expression and its terminating `\relax`
+            // must be consumed before integer scanning resumes.
+            let scanned = crate::scan_dimen::scan_dim_expr(input, stores, expansion, mode, token)
+                .map_err(|error| ScanIntError::Expand(error.into()))?;
+            Ok(if scanned.diagnostic().is_some() {
+                ScannedInt::with_diagnostic(
+                    scanned.value().raw(),
+                    IntegerDiagnostic::NumberTooBig,
+                    token,
+                )
+            } else {
+                ScannedInt::new(scanned.value().raw(), token)
+            })
+        }
         Meaning::UnexpandablePrimitive(
             primitive @ (UnexpandablePrimitive::GlueStretch | UnexpandablePrimitive::GlueShrink),
         ) => {
