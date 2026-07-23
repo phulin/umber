@@ -31,3 +31,6 @@ Read the repository-root `AGENTS.md` first. This file adds the directory map for
 - `write-latex-wasm-publish-config.sh`: deterministic schema-3 publisher configuration for the focused LaTeX WASM bundle, pinned to the measured production 8-bit shard policy.
 - `build-wasm-package.sh`: builds the authored npm runtime with format fixtures
   only; font catalogs and font payload fixtures stay outside the package.
+- `build-tex82-oracle.sh`: hash-pinned TeX Live source acquisition and
+  reproducible clean/instrumentation-ready TeX82 Web2C oracle builds; ordinary
+  output transparency is smoke-checked and all identities are recorded.

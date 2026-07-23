@@ -3,6 +3,13 @@
 `tests/corpus` holds committed inputs and expected reference outputs for
 fast differential tests.
 
+`tests/tex82-oracle-manifest.txt` pins the canonical TeX82 WEB source, ordered
+Web2C portability changes, translator inputs, and repository-owned oracle
+inputs. `tests/tex82-oracle/` contains the font-independent smoke program and
+the empty final-change seam used before semantic instrumentation lands.
+Acquisition and builds run only through `scripts/regen-fixtures.sh --area
+tex82-oracle`; Cargo correctness tests never invoke the live oracle.
+
 `tests/corpus/distribution` holds the authored-JavaScript/Rust manifest and
 selection fixtures. They are hand-authored contract data, not live-reference
 outputs, and both `umber-distribution` and `manifest-schema.test.js` consume
