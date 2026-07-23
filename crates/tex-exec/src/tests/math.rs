@@ -1513,6 +1513,20 @@ fn vcenter_restores_local_assignments_and_preserves_globals() {
 }
 
 #[test]
+fn vcenter_replays_everyvbox_before_its_body() {
+    let (stores, _) = run_math_source(
+        r"\everyvbox{\global\count6=42}\count6=0 \count7=0 $\vcenter{\global\count7=\count6 \hrule}$",
+    );
+
+    assert_eq!(stores.count(6), 42, "vcenter executes the everyvbox hook");
+    assert_eq!(
+        stores.count(7),
+        42,
+        "the everyvbox hook precedes the vcenter body"
+    );
+}
+
+#[test]
 fn every_math_and_every_display_tokens_are_inserted_on_entry() {
     let mut stores = Universe::new();
     tex_expand::install_expandable_primitives(&mut stores);

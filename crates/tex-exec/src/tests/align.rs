@@ -3,7 +3,7 @@ use tex_state::ExpansionState;
 use tex_state::env::banks::GlueParam;
 use tex_state::glue::Order;
 use tex_state::ids::GlueId;
-use tex_state::meaning::UnexpandablePrimitive;
+use tex_state::meaning::{Meaning, UnexpandablePrimitive};
 use tex_state::node::{BoxNode, GlueKind, Node, Sign, UnsetKind, UnsetNode, UnsetNodeFields};
 use tex_state::scaled::Scaled;
 
@@ -706,6 +706,27 @@ fn futurelet_undefined_recovery_stays_inside_alignment_cell_driver() {
 
     assert!(
         support::terminal_effect_text(&stores).contains("Undefined control sequence \\missing")
+    );
+}
+
+#[test]
+fn expanded_definition_keeps_alignment_tabs_inside_its_braces() {
+    let stores = run_boxed_alignment_source(
+        r"\def\expandedtab{&}\halign{#\cr \xdef\saved{a\expandedtab b}\cr}",
+    );
+    let saved = stores.symbol("saved").expect("xdef installs saved");
+    let Meaning::Macro { definition, .. } = stores.meaning(saved) else {
+        panic!("saved should be a macro");
+    };
+    let replacement = stores.macro_definition(definition).replacement_text();
+
+    assert_eq!(
+        stores.tokens(replacement),
+        &[
+            char_token('a', Catcode::Letter),
+            char_token('&', Catcode::AlignmentTab),
+            char_token('b', Catcode::Letter),
+        ]
     );
 }
 

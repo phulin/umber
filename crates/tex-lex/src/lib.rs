@@ -2144,6 +2144,14 @@ impl InputStack {
         }
     }
 
+    /// Returns TeX82's current alignment brace-depth sentinel.
+    #[must_use]
+    pub fn alignment_state(&self) -> Option<i32> {
+        self.alignment_inputs
+            .last()
+            .map(|alignment| alignment.align_state)
+    }
+
     /// Accounts for TeX.web §403's recovery-inserted compulsory left brace.
     ///
     /// The brace is not read from an input frame, so ordinary token delivery
@@ -4826,6 +4834,43 @@ impl InputStack {
         }
     }
 
+    /// Reports whether the just-delivered compact parameter followed a
+    /// literal parameter marker while a nested macro owner could otherwise
+    /// have claimed its slot.
+    #[must_use]
+    pub fn compact_parameter_was_escaped(&self, stores: &impl ExpansionState, slot: u8) -> bool {
+        let Some(frame_index) = self.current_token_frame_index() else {
+            return false;
+        };
+        let InputFrame::TokenList(frame) = &self.frames[frame_index] else {
+            return false;
+        };
+        let Some(param_index) = frame.index.checked_sub(1) else {
+            return false;
+        };
+        if frame.semantic_token_at(stores, param_index) != Some(Token::Param(slot))
+            || !param_index.checked_sub(1).is_some_and(|index| {
+                matches!(
+                    frame.semantic_token_at(stores, index),
+                    Some(Token::Char {
+                        cat: Catcode::Parameter,
+                        ..
+                    })
+                )
+            })
+        {
+            return false;
+        }
+        self.token_frame_indices.iter().rev().any(|&index| {
+            matches!(
+                &self.frames[index],
+                InputFrame::TokenList(owner)
+                    if owner.replay_kind == TokenListReplayKind::MacroBody
+                        && owner.macro_arguments.get(slot).is_some()
+            )
+        })
+    }
+
     pub fn pop_current_token_list_frame(
         &mut self,
         token_list: TokenListId,
@@ -5019,6 +5064,21 @@ impl InputStack {
         let Token::Param(slot) = frame.semantic_token_at(stores, frame.index)? else {
             return None;
         };
+        if frame.index.checked_sub(1).is_some_and(|index| {
+            matches!(
+                frame.semantic_token_at(stores, index),
+                Some(Token::Char {
+                    cat: Catcode::Parameter,
+                    ..
+                })
+            )
+        }) {
+            // Umber compacts TeX's stored `#n` pair into `Param(n)`. A
+            // preceding literal parameter character is therefore the second
+            // hash of TeX.web §479's escaped pair, not a request to resolve
+            // the compact token through the current macro's arguments.
+            return None;
+        }
         let owner_index = self
             .token_frame_indices
             .iter()

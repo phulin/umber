@@ -96,8 +96,6 @@ macro_rules! dispatch_match {
                 Ok(Dispatch::Continue)
             }
             Meaning::ExpandablePrimitive(ExpandablePrimitive::NoExpand) => {
-                // Delivery is classified exactly once by the expansion loop's
-                // `DeliverNoExpand` arm below this dispatch boundary.
                 let Some(token) = crate::next_unintercepted_raw_token(input, stores)? else {
                     return Err(ExpandError::MissingTokenAfterPrimitive {
                         opcode: ExpandableOpcode::NoExpand,
@@ -105,10 +103,29 @@ macro_rules! dispatch_match {
                     });
                 };
                 let semantic = crate::semantic_token(token);
-                Ok(Dispatch::DeliverNoExpand(TracedTokenWord::pack(
+                // TeX.web §370 inserts `dont_expand` only before a control
+                // sequence token. Character tokens are merely backed up and
+                // retain their ordinary command code; this is observable to
+                // scan_toks when `\noexpand` is followed by a catcode-6 `#`.
+                if matches!(
                     semantic,
-                    stores.inserted_origin(InsertedOriginKind::NoExpand, semantic, token.origin()),
-                )))
+                    Token::Cs(_)
+                        | Token::Char {
+                            cat: tex_state::token::Catcode::Active,
+                            ..
+                        }
+                ) {
+                    Ok(Dispatch::DeliverNoExpand(TracedTokenWord::pack(
+                        semantic,
+                        stores.inserted_origin(
+                            InsertedOriginKind::NoExpand,
+                            semantic,
+                            token.origin(),
+                        ),
+                    )))
+                } else {
+                    Ok(Dispatch::Deliver(token))
+                }
             }
             Meaning::ExpandablePrimitive(ExpandablePrimitive::CsName) => {
                 let name = scan_csname(input, stores, expansion, call_context)?;

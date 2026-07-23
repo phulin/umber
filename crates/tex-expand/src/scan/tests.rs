@@ -3,14 +3,17 @@ use super::{
     scan_general_text_expanded_with_expanded_open, scan_toks, scan_toks_expanded,
     scan_toks_expanded_with_driver,
 };
-use tex_lex::{InputStack, MemoryInput, TokenListReplayKind};
+use tex_lex::{
+    InputStack, MACRO_ARGUMENT_SLOTS, MacroArgumentRange, MacroArguments, MemoryInput,
+    TokenListReplayKind,
+};
 use tex_state::TracedTokenList;
 use tex_state::Universe;
 use tex_state::ids::OriginListId;
 use tex_state::macro_store::MacroDefinitionProvenance;
 use tex_state::macro_store::MacroMeaning;
 use tex_state::meaning::{ExpandablePrimitive, Meaning, MeaningFlags, UnexpandablePrimitive};
-use tex_state::provenance::OriginRecord;
+use tex_state::provenance::{InsertedOriginKind, OriginRecord};
 use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 
 use crate::ExpansionContext;
@@ -638,6 +641,101 @@ fn expanded_definition_interprets_doubled_parameter_from_macro_argument_replay()
         stores.tokens(scanned.replacement_text()),
         &[char_token('#', Catcode::Parameter)]
     );
+}
+
+#[test]
+fn definition_hash_escapes_compact_parameter_before_nested_substitution() {
+    let mut stores = Universe::new();
+    let owner_body = stores.intern_token_list(&[char_token('z', Catcode::Letter)]);
+    let argument = TracedTokenWord::pack(char_token('x', Catcode::Letter), OriginId::UNKNOWN);
+    let mut ranges = [None; MACRO_ARGUMENT_SLOTS];
+    ranges[1] = Some(MacroArgumentRange::new(0, 1));
+    let arguments = MacroArguments::from_parts(vec![argument], ranges);
+    let definition = stores.intern_token_list(&[
+        char_token('{', Catcode::BeginGroup),
+        char_token('#', Catcode::Parameter),
+        Token::param(2),
+        char_token('}', Catcode::EndGroup),
+    ]);
+    let mut input = InputStack::new(MemoryInput::new(""));
+    input.push_macro_body(owner_body, arguments);
+    input.push_token_list(definition, TokenListReplayKind::Inserted);
+    let context =
+        TracedTokenWord::pack(Token::Cs(stores.intern("def").symbol()), OriginId::UNKNOWN);
+
+    let scanned = scan_toks(
+        &mut input,
+        &mut tex_state::ExpansionContext::new(&mut stores),
+        MeaningFlags::EMPTY,
+        context,
+    )
+    .expect("escaped compact parameter should scan without recovery");
+
+    assert_eq!(
+        stores.tokens(scanned.replacement_text()),
+        &[Token::param(2)]
+    );
+    assert!(scanned.diagnostics().is_empty());
+}
+
+#[test]
+fn expanded_definition_noexpand_character_preserves_parameter_scanning() {
+    let mut stores = Universe::new();
+    crate::install_expandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new("{\\noexpand##}"));
+    let context =
+        TracedTokenWord::pack(Token::Cs(stores.intern("xdef").symbol()), OriginId::UNKNOWN);
+
+    // LaTeX's hook double-hash transport relies on TeX.web §370: noexpand
+    // marks control sequences, but leaves a character token's command code
+    // intact. The two catcode-6 tokens must therefore meet scan_toks §479
+    // as one doubled parameter pair, without entering error recovery.
+    let scanned = scan_toks_expanded_with_driver(
+        &mut input,
+        &mut tex_state::ExpansionContext::new(&mut stores),
+        MeaningFlags::EMPTY,
+        context,
+        &mut ExpansionContext::new("texput").with_fuel(16),
+    )
+    .expect("noexpand character should complete within bounded expansion fuel");
+
+    assert_eq!(
+        stores.tokens(scanned.replacement_text()),
+        &[char_token('#', Catcode::Parameter)]
+    );
+    assert!(scanned.diagnostics().is_empty());
+}
+
+#[test]
+fn expanded_definition_reinterprets_historical_unexpanded_parameter_origins() {
+    let mut stores = Universe::new();
+    let macro_cs = stores.intern("historical");
+    let parameter = char_token('#', Catcode::Parameter);
+    let body = stores.intern_token_list(&[parameter, parameter]);
+    let params = stores.intern_token_list(&[]);
+    let parent = stores.source_origin(tex_state::SourceId::new(7), 0, 1, 1);
+    let unexpanded = stores.inserted_origin(InsertedOriginKind::Unexpanded, parameter, parent);
+    let body_origins = stores.allocate_origin_list(&[unexpanded, unexpanded]);
+    stores.set_macro_meaning_with_provenance(
+        macro_cs,
+        MacroMeaning::new(MeaningFlags::EMPTY, params, body),
+        MacroDefinitionProvenance::new(parent, OriginListId::EMPTY, body_origins),
+    );
+    let mut input = InputStack::new(MemoryInput::new("{\\historical}"));
+    let context =
+        TracedTokenWord::pack(Token::Cs(stores.intern("xdef").symbol()), OriginId::UNKNOWN);
+
+    let scanned = scan_toks_expanded_with_driver(
+        &mut input,
+        &mut tex_state::ExpansionContext::new(&mut stores),
+        MeaningFlags::EMPTY,
+        context,
+        &mut ExpansionContext::new("texput").with_fuel(16),
+    )
+    .expect("historical provenance must not retain structural suppression");
+
+    assert_eq!(stores.tokens(scanned.replacement_text()), &[parameter]);
+    assert!(scanned.diagnostics().is_empty());
 }
 
 #[test]

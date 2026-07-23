@@ -1,5 +1,6 @@
 use tex_expand::{DriverExpansionMode, ExpandError, get_x_token_with_context, scan_dimen};
-use tex_lex::InputStack;
+use tex_lex::{InputStack, TokenListReplayKind};
+use tex_state::env::banks::TokParam;
 use tex_state::math::{
     FractionThickness, LimitType, MathChoice, MathField, MathFraction, MathNoad, NoadClass,
     NoadKind,
@@ -543,6 +544,10 @@ pub(super) fn scan_vcenter_field(
     stores.enter_group_with_kind(GroupKind::VCenter);
     let box_group_depth = stores.execution_group_depth();
     inner.push(Mode::InternalVertical);
+    let everyvbox = stores.tok_param(TokParam::EVERY_VBOX);
+    if !stores.tokens(everyvbox).is_empty() {
+        input.push_token_list(everyvbox, TokenListReplayKind::EveryVBox);
+    }
     assignments::scan_box_group(inner, input, stores, execution, box_group_depth)?;
     let level = inner.pop()?;
     let children = stores.freeze_node_list(level.list().nodes());

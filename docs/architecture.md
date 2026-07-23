@@ -198,6 +198,15 @@ progress. e-TeX `\unexpanded` is also literal: its `the_toks` result is copied
 directly instead of being read through `get_next`, so its stored parameter
 tokens stay verbatim.
 
+Umber represents TeX's stored `out_param` token as `Param(n)`, compacting the
+parameter character and digit that `scan_toks` originally consumed. When a
+generated definition adds a literal parameter character before such a compact
+token, TeX.web §479's doubled-parameter rule removes one definition level.
+The replacement scanner therefore reads that one follower without nested
+parameter substitution and stores the compact token directly. This keeps an
+enclosing helper macro's `param_start` from claiming a parameter that belongs
+to the definition being generated.
+
 The same canonical `macro_call` audit also fixes the token-lifetime boundary:
 argument matching uses TeX's raw `get_token`, and only literal begin/end-group
 command codes affect brace depth. e-TeX's `etex.ch` change at this routine adds
@@ -340,6 +349,10 @@ Expanded replacement collection uses its own inaccessible boundary rather
 than borrowing `frozen_end_template`. TeX.web §§473--478 delimit `scan_toks`
 expansion independently of §780's alignment-only conversion, and conflating
 those sentinels lets nested LaTeX lookahead manufacture a false end-v command.
+While that scan is active, its compulsory opening brace also keeps
+`align_state` above the alignment-tab threshold. Umber preserves that depth
+across detached replacement replay, so macro-expanded `&`, `\span`, and `\cr`
+tokens are stored in the definition instead of ending the surrounding cell.
 When nested `\futurelet` carries the real frozen marker back after Umber's
 synchronous template driver has retired its replay frame, the driver records
 that exact traced command across §1131 `off_save` recovery. Literal frozen
@@ -352,6 +365,12 @@ v-template walk or the exact driver-issued replay proof.
 `tex-exec` owns primitive dispatch, grouping, assignments, modes, box building,
 alignments, math-list construction, page building, output routines, and
 shipout transactions. Its mode nest is explicit and snapshot-capable.
+
+Math `\vcenter` uses TeX.web §1061's ordinary vertical-box entry semantics:
+after opening its internal vertical group, it replays `\everyvbox` before the
+explicit body. Packages may initialize per-box alignment state in that hook;
+skipping it can turn a finite column traversal into an unbounded expansion
+loop even though the math-list parser itself continues to make progress.
 
 Assignments use the aggregate state API. Group restoration, global writes,
 register overflow, code-table updates, and effect recording all pass through

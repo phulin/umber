@@ -278,10 +278,22 @@ pub fn scan_toks_expanded_with_driver(
 where
 {
     let mut diagnostics = Vec::new();
+    let alignment_state = input.alignment_state();
     let parameter_text = scan_parameter_text(input, stores, context, &mut diagnostics)?;
+    if let Some(state) = alignment_state {
+        // TeX's defining scanner retains the compulsory opening brace in
+        // `align_state` until the replacement's closing brace is consumed.
+        // Macro expansion can retire the alignment u-template while scanning
+        // that opening brace, so reassert the canonical protected depth before
+        // expanding the replacement.
+        input.set_alignment_state(state.saturating_add(1));
+    }
     let replacement_result = expansion.with_expanded_token_list(|expansion| {
         scan_expanded_replacement_with_driver(input, stores, context, expansion, &mut diagnostics)
     });
+    if let Some(state) = alignment_state {
+        input.set_alignment_state(state);
+    }
     let replacement_text = replacement_result?;
     let replacement_text = append_hash_brace(stores, replacement_text, parameter_text.hash_brace);
     Ok(ScannedMacro {
@@ -481,8 +493,7 @@ where
         }
         let token = traced_semantic_token(traced);
         let traced = normalize_stored_noexpand_origin(stores, traced, token);
-        let stored_unexpanded = prepared.suppress_expansion()
-            || stores.origin_is_inserted_kind(traced.origin(), InsertedOriginKind::Unexpanded);
+        let stored_unexpanded = prepared.suppress_expansion();
 
         // e-TeX's `\unexpanded` contributes its token list through TeX's
         // `the_toks` path. Parameter characters from that list are copied
@@ -510,6 +521,9 @@ where
                     traced,
                     Token::param(token_digit(token).expect("digit token was matched")),
                 ),
+                Token::Param(slot) if input.compact_parameter_was_escaped(stores, slot) => {
+                    push_scanned_token(&mut builder, &mut origins, traced, token)
+                }
                 _ => {
                     // TeX.web §479's `back_error; cur_tok:=s` keeps the
                     // invalid follower for the next scanner iteration and
@@ -664,6 +678,15 @@ fn expand_replacement_text(
     expansion: &mut ExpansionContext<'_>,
     mode: &mut dyn ExpansionMode,
 ) -> Result<TracedTokenList, ScanToksError> {
+    // TeX scans an expanded definition while its compulsory opening brace is
+    // still reflected in `align_state`. The detached replay below no longer
+    // contains that brace, so preserve its one-level protection explicitly:
+    // an `&`, `\span`, or `\cr` in the replacement must be stored rather than
+    // mistaken for the surrounding alignment's cell terminator.
+    let alignment_state = input.alignment_state();
+    if let Some(state) = alignment_state {
+        input.set_alignment_state(state.saturating_add(1));
+    }
     // Keep an inaccessible token below the raw replacement. Expandable
     // primitives commonly read one token ahead while scanning their operands
     // (`\the\count15` is the canonical case). A replay marker alone cannot
@@ -685,6 +708,9 @@ fn expand_replacement_text(
         mode,
         ExpandedTextBoundary::Replay(replay),
     );
+    if let Some(state) = alignment_state {
+        input.set_alignment_state(state);
+    }
     if result.is_err() {
         input.abort_token_list_replay(replay);
     }
@@ -766,14 +792,15 @@ fn collect_expanded_text_inner(
         }
 
         let Some(symbol) = crate::expandable_symbol(stores, traced) else {
-            if append_collected_token(
+            let finished = append_collected_token(
                 &mut boundary,
                 &mut builder,
                 &mut origins,
                 traced,
                 token,
                 true,
-            ) {
+            );
+            if finished {
                 break;
             }
             continue;
@@ -863,24 +890,27 @@ fn collect_expanded_text_inner(
         match mode.dispatch_raw_token(traced, input, stores, expansion)? {
             Dispatch::Continue => {}
             Dispatch::Deliver(delivered) => {
-                if append_collected_token(
+                let delivered_token = crate::semantic_token(delivered);
+                let finished = append_collected_token(
                     &mut boundary,
                     &mut builder,
                     &mut origins,
                     delivered,
-                    crate::semantic_token(delivered),
+                    delivered_token,
                     true,
-                ) {
+                );
+                if finished {
                     break;
                 }
             }
             Dispatch::DeliverNoExpand(delivered) => {
+                let delivered_token = crate::semantic_token(delivered);
                 append_collected_token(
                     &mut boundary,
                     &mut builder,
                     &mut origins,
                     delivered,
-                    crate::semantic_token(delivered),
+                    delivered_token,
                     false,
                 );
             }
@@ -1172,6 +1202,13 @@ fn scan_replacement_text(
                     traced,
                     Token::param(token_digit(token).expect("digit token was matched")),
                 ),
+                Token::Param(slot) if input.compact_parameter_was_escaped(stores, slot) => {
+                    // Umber compacts TeX's stored `out_param` pair into one
+                    // token. A preceding literal parameter character escapes
+                    // that pair by one definition level, just as TeX.web
+                    // §479's `##` stores one literal `#`.
+                    push_scanned_token(&mut builder, &mut origins, traced, token)
+                }
                 _ => {
                     // TeX.web §479 recovers by backing up the invalid
                     // follower and storing the saved parameter character.
