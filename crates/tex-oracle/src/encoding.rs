@@ -63,6 +63,12 @@ impl Manifest {
         let bytes = self.to_canonical_json()?;
         Ok(ManifestIdentity(domain_hash(MANIFEST_DOMAIN, &bytes)))
     }
+
+    pub fn from_json(bytes: &[u8]) -> Result<Self, EncodingError> {
+        let manifest: Self = serde_json::from_slice(bytes)?;
+        validate_manifest(&manifest)?;
+        Ok(manifest)
+    }
 }
 
 pub(crate) fn encode_line<T: Serialize>(value: &T) -> Result<Vec<u8>, EncodingError> {
@@ -71,8 +77,23 @@ pub(crate) fn encode_line<T: Serialize>(value: &T) -> Result<Vec<u8>, EncodingEr
     Ok(bytes)
 }
 
-pub(crate) fn stream_hash(bytes: &[u8]) -> StreamIdentity {
-    StreamIdentity(domain_hash(STREAM_DOMAIN, bytes))
+pub(crate) struct StreamHasher(Sha256);
+
+impl StreamHasher {
+    pub(crate) fn new() -> Self {
+        let mut digest = Sha256::new();
+        digest.update(STREAM_DOMAIN);
+        digest.update(SCHEMA_VERSION.to_le_bytes());
+        Self(digest)
+    }
+
+    pub(crate) fn update(&mut self, bytes: &[u8]) {
+        self.0.update(bytes);
+    }
+
+    pub(crate) fn finish(self) -> StreamIdentity {
+        StreamIdentity(self.0.finalize().into())
+    }
 }
 
 fn domain_hash(domain: &[u8], bytes: &[u8]) -> [u8; 32] {

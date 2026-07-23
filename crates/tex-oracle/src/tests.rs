@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 use crate::{
     CanonicalCommand, CanonicalValue, CommandDelivery, CommandEvent, DisabledObserver,
     EngineDialect, EngineIdentity, Event, EventObserver, JsonLinesObserver, Manifest,
-    ManifestInput, Normalizer, SCHEMA_VERSION,
+    ManifestInput, Normalizer, ObservationStream, SCHEMA_VERSION,
 };
 
 const HASH_A: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
@@ -59,6 +59,10 @@ fn manifest_encoding_and_identity_are_deterministic() {
         first.identity().expect("valid manifest"),
         second.identity().expect("valid manifest")
     );
+    assert_eq!(
+        Manifest::from_json(&first.to_canonical_json().expect("encode")).expect("decode"),
+        first
+    );
     assert_eq!(first.schema, SCHEMA_VERSION);
 }
 
@@ -102,6 +106,22 @@ fn json_lines_transport_is_stable_and_separate_from_ordinary_output() {
     assert_eq!(bytes, repeated_bytes);
     assert_eq!(first_identity, repeated_identity);
     assert_eq!(bytes.iter().filter(|byte| **byte == b'\n').count(), 2);
+    let decoded = ObservationStream::from_canonical_json_lines(&bytes).expect("decode");
+    assert_eq!(decoded.events.len(), 1);
+    assert_eq!(ObservationStream::identity(&bytes), first_identity);
+}
+
+#[test]
+fn stream_decoder_rejects_noncanonical_or_discontinuous_records() {
+    let identity = manifest().identity().expect("valid manifest");
+    let mut observer = JsonLinesObserver::new(Vec::new(), identity).expect("header");
+    observer.committed(command("assign")).expect("event");
+    let (bytes, _) = observer.finish().expect("finish");
+
+    let noncanonical = String::from_utf8(bytes)
+        .expect("utf8")
+        .replace("\"sequence\":0", "\"sequence\": 0");
+    assert!(ObservationStream::from_canonical_json_lines(noncanonical.as_bytes()).is_err());
 }
 
 #[test]

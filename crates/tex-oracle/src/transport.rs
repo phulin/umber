@@ -4,8 +4,8 @@ use std::io::{self, Write};
 
 use serde::{Deserialize, Serialize};
 
-use crate::encoding::{encode_line, stream_hash};
-use crate::{Event, ManifestIdentity, Normalizer, SCHEMA_VERSION, StreamIdentity};
+use crate::encoding::{StreamHasher, encode_line};
+use crate::{Event, ManifestIdentity, NormalizedEvent, Normalizer, SCHEMA_VERSION, StreamIdentity};
 
 /// The first JSON line of every semantic event stream.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -25,9 +25,61 @@ impl ObservationHeader {
     }
 }
 
+/// Decoded canonical stream used by fixture comparison harnesses.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ObservationStream {
+    pub header: ObservationHeader,
+    pub events: Vec<NormalizedEvent>,
+}
+
+impl ObservationStream {
+    /// Parses canonical JSON Lines and rejects alternate whitespace, missing
+    /// final newlines, unsupported schemas, or discontinuous sequence numbers.
+    pub fn from_canonical_json_lines(bytes: &[u8]) -> Result<Self, ObservationError> {
+        if !bytes.ends_with(b"\n") {
+            return Err(ObservationError::InvalidStream(
+                "canonical event stream must end with LF".into(),
+            ));
+        }
+        let mut lines = bytes.split_inclusive(|byte| *byte == b'\n');
+        let header_line = lines.next().ok_or_else(|| {
+            ObservationError::InvalidStream("event stream is missing its header".into())
+        })?;
+        let header: ObservationHeader = decode_canonical_line(header_line)?;
+        if header.schema != SCHEMA_VERSION {
+            return Err(ObservationError::InvalidStream(format!(
+                "unsupported oracle schema {}; expected {SCHEMA_VERSION}",
+                header.schema
+            )));
+        }
+        validate_identity("manifest", &header.manifest)?;
+
+        let mut events = Vec::new();
+        for (expected, line) in lines.enumerate() {
+            let event: NormalizedEvent = decode_canonical_line(line)?;
+            if event.sequence != expected as u64 {
+                return Err(ObservationError::InvalidStream(format!(
+                    "oracle event sequence {} is not expected sequence {expected}",
+                    event.sequence
+                )));
+            }
+            events.push(event);
+        }
+        Ok(Self { header, events })
+    }
+
+    #[must_use]
+    pub fn identity(bytes: &[u8]) -> StreamIdentity {
+        let mut hasher = StreamHasher::new();
+        hasher.update(bytes);
+        hasher.finish()
+    }
+}
+
 #[derive(Debug)]
 pub enum ObservationError {
     Encoding(crate::EncodingError),
+    InvalidStream(String),
     Io(io::Error),
 }
 
@@ -35,6 +87,7 @@ impl fmt::Display for ObservationError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Encoding(error) => error.fmt(formatter),
+            Self::InvalidStream(error) => formatter.write_str(error),
             Self::Io(error) => error.fmt(formatter),
         }
     }
@@ -78,23 +131,25 @@ impl EventObserver for DisabledObserver {
 pub struct JsonLinesObserver<W> {
     writer: W,
     normalizer: Normalizer,
-    encoded: Vec<u8>,
+    identity: StreamHasher,
 }
 
 impl<W: Write> JsonLinesObserver<W> {
     pub fn new(mut writer: W, manifest: ManifestIdentity) -> Result<Self, ObservationError> {
         let header = encode_line(&ObservationHeader::new(manifest))?;
         writer.write_all(&header)?;
+        let mut identity = StreamHasher::new();
+        identity.update(&header);
         Ok(Self {
             writer,
             normalizer: Normalizer::new(),
-            encoded: header,
+            identity,
         })
     }
 
     pub fn finish(mut self) -> Result<(W, StreamIdentity), ObservationError> {
         self.writer.flush()?;
-        let identity = stream_hash(&self.encoded);
+        let identity = self.identity.finish();
         Ok((self.writer, identity))
     }
 }
@@ -104,7 +159,34 @@ impl<W: Write> EventObserver for JsonLinesObserver<W> {
         let normalized = self.normalizer.normalize(event);
         let line = encode_line(&normalized)?;
         self.writer.write_all(&line)?;
-        self.encoded.extend_from_slice(&line);
+        self.identity.update(&line);
         Ok(())
+    }
+}
+
+fn decode_canonical_line<T>(line: &[u8]) -> Result<T, ObservationError>
+where
+    T: for<'de> Deserialize<'de> + Serialize,
+{
+    let value = serde_json::from_slice(line).map_err(crate::EncodingError::from)?;
+    if encode_line(&value)? != line {
+        return Err(ObservationError::InvalidStream(
+            "event stream line is not in canonical encoding".into(),
+        ));
+    }
+    Ok(value)
+}
+
+fn validate_identity(kind: &str, identity: &str) -> Result<(), ObservationError> {
+    if identity.len() == 64
+        && identity
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    {
+        Ok(())
+    } else {
+        Err(ObservationError::InvalidStream(format!(
+            "{kind} identity must be 64 lowercase hexadecimal characters"
+        )))
     }
 }

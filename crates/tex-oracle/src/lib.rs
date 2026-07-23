@@ -21,6 +21,7 @@ pub use schema::{
 };
 pub use transport::{
     DisabledObserver, EventObserver, JsonLinesObserver, ObservationError, ObservationHeader,
+    ObservationStream,
 };
 
 #[cfg(test)]
