@@ -1294,14 +1294,17 @@ execute this live oracle.
 For pdfTeX 1.40.27, `scripts/regen-fixtures.sh --area pdftex14027-oracle`
 owns acquisition and delegates to the reproducible workflow documented in
 [`pdftex14027_oracle.md`](pdftex14027_oracle.md). It emits separately named
-clean and instrumentation-ready exact-eight-bit executables from the pinned
+clean and instrumented exact-eight-bit executables from the pinned
 canonical WEB program, ordered Web2C/SyncTeX stack, and archive-owned library
-inputs. A repository-owned semantic-neutral final change proves the detached
-instrumentation seam without editing upstream files. The build record captures
-source, change, profile, translator, toolchain, library, platform, executable,
-and smoke-output identities. Font-independent DVI and deterministic PDF smoke
-programs must be byte-transparent between variants. Cargo correctness tests
-never acquire or execute this live oracle.
+inputs. A repository-owned final change ports the complete shared
+TeX82/e-TeX schema-v1 command matrix through stable pdfTeX seams without
+editing upstream files. The build record captures source, change, profile,
+translator, toolchain, library, platform, executable, smoke-output,
+transition-output, and trace identities. Font-independent DVI and deterministic
+PDF smoke programs plus the focused transition program must be byte-transparent
+between variants; the instrumented trace is schema-validated, matrix-gated,
+and repeatable. Cargo correctness tests never acquire or execute this live
+oracle.
 
 Instrumentation writes a versioned semantic event stream. It must not use
 TeX's semantic `mem`, string pool, selector, transcript state, or command

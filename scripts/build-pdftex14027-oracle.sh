@@ -17,9 +17,13 @@ target_dir="${CARGO_TARGET_DIR:-target}"
 [[ "$target_dir" == /* ]] || target_dir="${repo_root}/${target_dir}"
 out_dir="${target_dir}/pdftex14027-oracle"
 bin_dir="${out_dir}/bin"
-instrumentation_change="${UMBER_PDFTEX14027_INSTRUMENTATION_CHANGE:-${repo_root}/tests/pdftex14027-oracle/instrumentation-ready.ch}"
+instrumentation_change="${UMBER_PDFTEX14027_INSTRUMENTATION_CHANGE:-${repo_root}/tests/pdftex14027-oracle/instrumentation.ch}"
 dvi_input="${repo_root}/tests/pdftex14027-oracle/smoke-dvi.tex"
 pdf_input="${repo_root}/tests/pdftex14027-oracle/smoke-pdf.tex"
+transition_input="${repo_root}/tests/pdftex14027-oracle/transitions.tex"
+transition_child="${repo_root}/tests/pdftex14027-oracle/transitions-child.tex"
+semantic_event_matrix="${repo_root}/tests/pdftex14027-oracle/semantic-event-matrix.txt"
+wide_tangle="${out_dir}/tangle-pdftex14027"
 cflags="-O2"
 cxxflags="-O2"
 source_date_epoch="${SOURCE_DATE_EPOCH:-1783604160}"
@@ -30,8 +34,9 @@ usage() {
 usage: scripts/build-pdftex14027-oracle.sh [--offline]
 
 Acquire and verify the pinned TeX Live 2025 source snapshot, then build
-canonical pdfTeX 1.40.27 clean and instrumentation-ready eight-bit Web2C
-executables. The repository-owned final change is applied only to the latter.
+canonical pdfTeX 1.40.27 clean and instrumented eight-bit Web2C executables.
+The repository-owned final change is applied only to the latter and emits the
+shared schema-v1 command trace.
 
 Outputs and a complete identity record are written under
 target/pdftex14027-oracle. After the first acquisition, --offline performs no
@@ -139,6 +144,38 @@ configure_tools() {
   make -C "$web_build_dir" tie tangle web2c/web2c
 }
 
+build_wide_tangle() {
+  local generated="${out_dir}/tangle-pdftex14027.c"
+  local source="${web_build_dir}/tangle.c"
+  local replacements stack_replacements byte_replacements
+  mkdir -p "$out_dir"
+  replacements="$(grep -c '^#define maxtoks ( 65535L )' "$source")"
+  [[ "$replacements" -eq 1 ]] ||
+    fail "canonical generated tangle.c has an unexpected token-capacity declaration"
+  stack_replacements="$(grep -c '^#define stacksize ( 100 )' "$source")"
+  [[ "$stack_replacements" -eq 1 ]] ||
+    fail "canonical generated tangle.c has an unexpected stack-capacity declaration"
+  byte_replacements="$(grep -c '^#define maxbytes ( 65535L )' "$source")"
+  [[ "$byte_replacements" -eq 1 ]] ||
+    fail "canonical generated tangle.c has an unexpected name-byte capacity declaration"
+  sed \
+    -e 's/^#define maxbytes ( 65535L )/#define maxbytes ( 131071L )/' \
+    -e 's/^#define maxtoks ( 65535L )/#define maxtoks ( 131071L )/' \
+    -e 's/^#define maxnames ( 10239 )/#define maxnames ( 20479 )/' \
+    -e 's/^#define maxtexts ( 10239 )/#define maxtexts ( 20479 )/' \
+    -e 's/^#define stacksize ( 100 )/#define stacksize ( 5000 )/' \
+    -e 's/sixteenbits endfield/integer endfield/' \
+    -e 's/sixteenbits bytefield/integer bytefield/' \
+    -e 's/^sixteenbits bytestart/integer bytestart/' \
+    -e 's/^sixteenbits tokstart/integer tokstart/' \
+    "$source" >"$generated"
+  cc -DHAVE_CONFIG_H \
+    -I"$web_build_dir" -I"$web_source_dir" -I"${web_build_dir}/w2c" \
+    -I"${build_dir}/texk" -I"${source_dir}/texk" "$cflags" \
+    "$generated" "${web_build_dir}/lib/lib.a" \
+    "${build_dir}/texk/kpathsea/.libs/libkpathsea.a" -o "$wide_tangle"
+}
+
 web_source="${web_source_dir}/pdftexdir/pdftex.web"
 upstream_changes=(
   "${web_source_dir}/pdftexdir/tex.ch0"
@@ -196,7 +233,7 @@ build_variant() {
       ./tie -c pdftex-final.ch "$web_source" "${change_stack[@]}"
     touch pdftex.ch pdftex-tangle
     TEXMFCNF="${source_dir}/texk/kpathsea" WEBINPUTS=".:${web_source_dir}:${web_source_dir}/pdftexdir" \
-      ./tangle pdftex pdftex-final
+      "$wide_tangle" pdftex pdftex-final
     AM_V_P=false ./web2c-sh pdftex-web2c pdftex
   )
   make -C "$web_build_dir" pdftex
@@ -249,16 +286,56 @@ run_smoke() {
     >"${run_dir}/ordinary.log"
 }
 
-compare_channels() {
+compare_smoke_channels() {
   local mode="$1" output="smoke-dvi.dvi"
   [[ "$mode" == dvi ]] || output="smoke-pdf.pdf"
   local left="${out_dir}/smoke/clean-${mode}"
-  local right="${out_dir}/smoke/instrumentation-ready-${mode}"
+  local right="${out_dir}/smoke/instrumented-${mode}"
   local channel
   for channel in terminal.txt ordinary.log status.txt "$output"; do
     cmp "${left}/${channel}" "${right}/${channel}" >/dev/null ||
-      fail "instrumentation-ready $mode oracle changed $channel"
+      fail "instrumented $mode oracle changed $channel"
   done
+}
+
+compare_channels() {
+  local label="$1" left="$2" right="$3"
+  shift 3
+  local channel
+  for channel in "$@"; do
+    cmp "${left}/${channel}" "${right}/${channel}" >/dev/null ||
+      fail "$label changed $channel"
+  done
+}
+
+run_transitions() {
+  local executable="$1" profile="$2"
+  local run_dir="${out_dir}/transitions/${profile}" status=0
+  rm -rf "$run_dir"
+  mkdir -p "$run_dir"
+  cp "$transition_input" "${run_dir}/transitions.tex"
+  cp "$transition_child" "${run_dir}/transitions-child.tex"
+  (
+    cd "$run_dir"
+    env -i PATH=/usr/bin:/bin LC_ALL=C LANGUAGE=C \
+      SOURCE_DATE_EPOCH="$source_date_epoch" FORCE_SOURCE_DATE=1 \
+      TEXMFCNF="${source_dir}/texk/kpathsea" \
+      "$executable" -ini -etex -interaction=nonstopmode transitions.tex \
+      >terminal.txt 2>&1
+  ) || status="$?"
+  [[ "$status" -le 1 ]] ||
+    fail "$profile transition run exited with unexpected status $status"
+  printf '%s\n' "$status" >"${run_dir}/status.txt"
+  [[ -f "${run_dir}/transitions.log" ]] ||
+    fail "$profile transition run did not write transitions.log"
+  [[ -f "${run_dir}/transitions.dvi" ]] ||
+    fail "$profile transition run did not write transitions.dvi"
+  [[ -f "${run_dir}/transitions-effects.out" ]] ||
+    fail "$profile transition run did not write transition effects"
+  grep -q 'UMBER-TEX82-TRANSITIONS' "${run_dir}/transitions.log" ||
+    fail "$profile transition marker is absent"
+  sed '1s/)  .*$/) <HOST-CLOCK>/' "${run_dir}/transitions.log" \
+    >"${run_dir}/ordinary.log"
 }
 
 record_linked_libraries() {
@@ -296,6 +373,10 @@ write_build_record() {
       "$(sha_digest 256 "$instrumentation_change")"
     printf 'tool-sha256 tie %s\n' "$(sha_digest 256 "${web_build_dir}/tie")"
     printf 'tool-sha256 tangle %s\n' "$(sha_digest 256 "${web_build_dir}/tangle")"
+    printf 'tool-sha256 tangle-pdftex14027 %s\n' \
+      "$(sha_digest 256 "$wide_tangle")"
+    printf 'generated-tangle-pdftex14027-source-sha256 %s\n' \
+      "$(sha_digest 256 "${out_dir}/tangle-pdftex14027.c")"
     printf 'tool-sha256 web2c %s\n' \
       "$(sha_digest 256 "${web_build_dir}/web2c/web2c")"
     for tool in make cc c++; do
@@ -325,9 +406,9 @@ write_build_record() {
     done
     printf 'generated-clean-final-change-sha256 %s\n' \
       "$(sha_digest 256 "${out_dir}/clean-final.ch")"
-    printf 'generated-instrumentation-ready-final-change-sha256 %s\n' \
-      "$(sha_digest 256 "${out_dir}/instrumentation-ready-final.ch")"
-    for profile in clean instrumentation-ready; do
+    printf 'generated-instrumented-final-change-sha256 %s\n' \
+      "$(sha_digest 256 "${out_dir}/instrumented-final.ch")"
+    for profile in clean instrumented; do
       executable="$(profile_executable "$profile")"
       printf 'executable %s %s %s\n' "$profile" \
         "${executable#"${repo_root}/"}" "$(sha_digest 256 "$executable")"
@@ -342,6 +423,18 @@ write_build_record() {
         printf 'smoke-output-sha256 %s %s %s\n' "$profile" "$mode" \
           "$(sha_digest 256 "${out_dir}/smoke/${profile}-${mode}/${output}")"
       done
+      printf 'transition-terminal-sha256 %s %s\n' "$profile" \
+        "$(sha_digest 256 "${out_dir}/transitions/${profile}/terminal.txt")"
+      printf 'transition-ordinary-log-sha256 %s %s\n' "$profile" \
+        "$(sha_digest 256 "${out_dir}/transitions/${profile}/ordinary.log")"
+      printf 'transition-dvi-sha256 %s %s\n' "$profile" \
+        "$(sha_digest 256 "${out_dir}/transitions/${profile}/transitions.dvi")"
+      printf 'transition-effect-output-sha256 %s %s\n' "$profile" \
+        "$(sha_digest 256 "${out_dir}/transitions/${profile}/transitions-effects.out")"
+      if [[ "$profile" == instrumented ]]; then
+        printf 'transition-trace-sha256 %s %s\n' "$profile" \
+          "$(sha_digest 256 "${out_dir}/transitions/${profile}/pdftex14027-events.jsonl")"
+      fi
     done
   } > "$record"
 }
@@ -350,17 +443,38 @@ mkdir -p "$bin_dir"
 fetch_source
 extract_source
 configure_tools
+build_wide_tangle
 build_variant "$(profile_executable clean)"
 cp "${web_build_dir}/pdftex-final.ch" "${out_dir}/clean-final.ch"
-build_variant "$(profile_executable instrumentation-ready)" "$instrumentation_change"
-cp "${web_build_dir}/pdftex-final.ch" "${out_dir}/instrumentation-ready-final.ch"
+build_variant "$(profile_executable instrumented)" "$instrumentation_change"
+cp "${web_build_dir}/pdftex-final.ch" "${out_dir}/instrumented-final.ch"
 
-for profile in clean instrumentation-ready; do
+for profile in clean instrumented; do
   for mode in dvi pdf; do
     run_smoke "$(profile_executable "$profile")" "$profile" "$mode"
   done
+  run_transitions "$(profile_executable "$profile")" "$profile"
 done
-compare_channels dvi
-compare_channels pdf
+compare_smoke_channels dvi
+compare_smoke_channels pdf
+compare_channels "transition oracle" \
+  "${out_dir}/transitions/clean" "${out_dir}/transitions/instrumented" \
+  terminal.txt ordinary.log status.txt transitions.dvi transitions-effects.out
+trace="${out_dir}/transitions/instrumented/pdftex14027-events.jsonl"
+cargo run -q -p tex-oracle --bin tex-oracle-validate -- "$trace"
+while IFS='|' read -r family boundary fixture seam pattern extra; do
+  [[ -z "$family" || "$family" == \#* ]] && continue
+  [[ -n "$boundary" && -n "$fixture" && -n "$seam" && -n "$pattern" &&
+    -z "${extra:-}" ]] ||
+    fail "malformed semantic event matrix row for ${family:-unknown}"
+  grep -Fq "$pattern" "$trace" ||
+    fail "trace is missing $family/$boundary from $fixture at $seam"
+done <"$semantic_event_matrix"
+run_transitions "$(profile_executable instrumented)" instrumented-repeat
+compare_channels "repeated instrumented transition oracle" \
+  "${out_dir}/transitions/instrumented" \
+  "${out_dir}/transitions/instrumented-repeat" \
+  terminal.txt ordinary.log status.txt transitions.dvi transitions-effects.out \
+  pdftex14027-events.jsonl
 write_build_record
 printf '%s\n' "$bin_dir"

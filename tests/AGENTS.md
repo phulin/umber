@@ -35,10 +35,13 @@ etex26-oracle`; Cargo correctness tests never invoke the live oracle.
 the ordered Web2C and configured SyncTeX changes, translator inputs, and the
 repository-owned final-change seam and smoke programs.
 `tests/pdftex14027-oracle/` contains font-independent DVI and deterministic PDF
-smoke inputs plus the no-op final change used to prove the separately named
-instrumentation-ready build without editing upstream files. Acquisition and
-builds run only through `scripts/regen-fixtures.sh --area
-pdftex14027-oracle`; Cargo correctness tests never invoke the live oracle.
+smoke inputs, focused shared-command transition inputs and an executable
+semantic-event matrix, and the repository-owned final instrumentation change.
+The live workflow schema-validates and repeatability-checks the trace while
+gating clean/instrumented terminal, normalized log, status, DVI/PDF, and
+generated-effect transparency. Acquisition and builds run only through
+`scripts/regen-fixtures.sh --area pdftex14027-oracle`; Cargo correctness tests
+never invoke the live oracle.
 
 `tests/corpus/distribution` holds the authored-JavaScript/Rust manifest and
 selection fixtures. They are hand-authored contract data, not live-reference
