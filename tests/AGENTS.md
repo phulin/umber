@@ -10,8 +10,9 @@ focused transition inputs, and the repository-owned final TeX82
 instrumentation change file. `semantic-event-matrix.txt` maps every required
 TeX82 command-core observation to its focused input and stable final-change
 seam; the live oracle build consumes it as the coverage gate.
-Acquisition and builds run only through `scripts/regen-fixtures.sh --area
-tex82-oracle`; Cargo correctness tests never invoke the live oracle.
+Acquisition and builds run only through `scripts/regen-fixtures.sh --oracle
+tex82 --profile initex-eight-bit`; Cargo correctness tests never invoke the
+live oracle.
 
 `tests/etex26-oracle-manifest.txt` pins the canonical e-TeX 2.6 WEB merge,
 ordered Web2C changes, translator inputs, and repository-owned inputs.
@@ -28,8 +29,9 @@ applicable schema-v1 contract. The extension matrix runs against the extended
 trace and rejects extension-only fragments in compatibility mode.
 Clean/instrumented and repeated extension runs also compare generated effect
 bytes.
-Acquisition and builds run only through `scripts/regen-fixtures.sh --area
-etex26-oracle`; Cargo correctness tests never invoke the live oracle.
+Acquisition and builds run only through `scripts/regen-fixtures.sh --oracle
+etex26 --profile compatibility+extended-eight-bit`; Cargo correctness tests
+never invoke the live oracle.
 
 `tests/pdftex14027-oracle-manifest.txt` pins canonical pdfTeX 1.40.27,
 the ordered Web2C and configured SyncTeX changes, translator inputs, the
@@ -46,9 +48,17 @@ gates clean/instrumented terminal, normalized log, status, DVI/PDF, and
 generated-effect transparency. Expansion-matrix rows name their exact owning
 primitive. Smoke and state PDFs additionally pass an allocation-insensitive
 Hayro structure projection independent of both pdfTeX variants and the command
-trace. Acquisition and builds run only
-through `scripts/regen-fixtures.sh --area pdftex14027-oracle`; Cargo correctness
-tests never invoke the live oracle.
+trace. Acquisition and builds run only through `scripts/regen-fixtures.sh
+--oracle pdftex14027 --profile initex-etex-eight-bit`; Cargo correctness tests
+never invoke the live oracle.
+
+`tests/oracle-regeneration-manifest.txt` pins the schema versions, exact
+engine/profile selectors, source-manifest hashes, fixture areas, and expected
+build identities for the three-engine regeneration interface. The
+`scripts/regen-fixtures.sh --oracle all --profile canonical` gate validates
+this contract before acquisition, runs every engine's clean/instrumented
+transparency workflow, and emits an aggregate uncommitted build record under
+`target/oracle-regeneration/`.
 
 `tests/corpus/distribution` holds the authored-JavaScript/Rust manifest and
 selection fixtures. They are hand-authored contract data, not live-reference

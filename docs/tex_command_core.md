@@ -68,6 +68,21 @@ The retired Umber implementation is never a behavioral oracle. Existing tests
 may be retained only when their expectations can be traced to a canonical
 source, a pinned reference fixture, or an explicit Umber extension contract.
 
+Live command-oracle regeneration has one supported interface:
+
+```bash
+scripts/regen-fixtures.sh --oracle all --profile canonical [--offline]
+```
+
+`tests/oracle-regeneration-manifest.txt` pins the regeneration-contract and
+event-schema versions plus exact source-manifest, profile, fixture-area, and
+build identities for TeX82, e-TeX, and pdfTeX. Engine-specific selectors use
+the profiles documented in the three oracle references. The aggregate command
+validates identity before acquisition, delegates to the pinned builders, and
+records success only after every clean/instrumented artifact comparison and
+semantic-trace validation passes. Correctness tests consume committed fixtures
+and never invoke this live workflow.
+
 The primary TeX procedures mapped by this design are:
 
 - input stacks and scanner status in TeX.web part 22;
@@ -1247,7 +1262,8 @@ Dedicated reference executables are built from pinned canonical WEB and
 upstream change files plus a final Umber-owned tracing change file. Canonical
 sources are not edited.
 
-For TeX82, `scripts/regen-fixtures.sh --area tex82-oracle` owns acquisition
+For TeX82, `scripts/regen-fixtures.sh --oracle tex82 --profile
+initex-eight-bit` owns acquisition
 and delegates to the reproducible workflow documented in
 [`tex82_oracle.md`](tex82_oracle.md). It emits separately identified clean and
 instrumented Web2C executables plus a build record. The pinned final change
@@ -1268,7 +1284,8 @@ message, expanded-write, stream-open/close, and successful-shipout effects.
 Transparency includes exact generated write-file bytes.
 Cargo correctness tests never acquire or execute this live oracle.
 
-For e-TeX 2.6, `scripts/regen-fixtures.sh --area etex26-oracle` owns
+For e-TeX 2.6, `scripts/regen-fixtures.sh --oracle etex26 --profile
+compatibility+extended-eight-bit` owns
 acquisition and delegates to the reproducible workflow documented in
 [`etex26_oracle.md`](etex26_oracle.md). It emits separately named clean and
 instrumented executables for the canonical compatibility and
@@ -1291,7 +1308,8 @@ the extended profile exercises the same base boundaries under e-TeX's
 canonical primitive installation. Cargo correctness tests never acquire or
 execute this live oracle.
 
-For pdfTeX 1.40.27, `scripts/regen-fixtures.sh --area pdftex14027-oracle`
+For pdfTeX 1.40.27, `scripts/regen-fixtures.sh --oracle pdftex14027 --profile
+initex-etex-eight-bit`
 owns acquisition and delegates to the reproducible workflow documented in
 [`pdftex14027_oracle.md`](pdftex14027_oracle.md). It emits separately named
 clean and instrumented exact-eight-bit executables from the pinned

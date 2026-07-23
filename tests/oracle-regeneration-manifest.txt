@@ -1,0 +1,10 @@
+# Cross-engine oracle regeneration contract.
+# Formats:
+#   contract-schema VERSION
+#   event-schema VERSION
+#   engine NAME PROFILE AREA SOURCE-MANIFEST SOURCE-MANIFEST-SHA256 BUILD-IDENTITY
+contract-schema 1
+event-schema 1
+engine tex82 initex-eight-bit tex82-oracle tests/tex82-oracle-manifest.txt eaf4ffed5a0d29f0c80c14a0052b94cdbb46ca726752d27a22b28883e92ed9a0 tex82-oracle-web2c-texlive-2025
+engine etex26 compatibility+extended-eight-bit etex26-oracle tests/etex26-oracle-manifest.txt 9ff06f2345ca2f94e28b2a3d01bdba81a1fbac60f7487dbcfb2ba33580ccf2c5 etex26-oracle-web2c-texlive-2025
+engine pdftex14027 initex-etex-eight-bit pdftex14027-oracle tests/pdftex14027-oracle-manifest.txt baf82557a558ff7ab5c078eda070d4582a51715ee3e7e2d25d3607e2bfeae762 pdftex14027-oracle-web2c-texlive-2025

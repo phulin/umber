@@ -32,15 +32,14 @@ resolve to the Umber CLI, and neither is invoked by Cargo correctness tests.
 Run the supported fixture-tooling entry point:
 
 ```bash
-scripts/regen-fixtures.sh --area tex82-oracle
+scripts/regen-fixtures.sh --oracle tex82 --profile initex-eight-bit
 ```
 
 The first run may acquire the pinned archive into the gitignored
-`third_party/texlive-source` cache. Verify reuse without network access with:
-
-```bash
-scripts/build-tex82-oracle.sh --offline
-```
+`third_party/texlive-source` cache. After acquisition, pass `--offline` to
+that same command to forbid network access. `--validate-only` checks the
+cross-engine contract, source-manifest shape, repository-owned input hashes,
+event schema, and engine/profile identity without building.
 
 Set `UMBER_REF_TEXLIVE_SOURCE` only to select an equivalent cache containing
 the pinned archive, extracted `src`, and configured `build` directories. Set
@@ -113,6 +112,16 @@ The live change file writes the all-zero manifest identity as an explicit
 unbound sentinel. It is not a committed fixture identity. Cross-engine
 fixture integration owns binding traces to complete canonical manifests; no
 trace with the sentinel may be committed as an oracle.
+
+The aggregate transparency gate is:
+
+```bash
+scripts/regen-fixtures.sh --oracle all --profile canonical --offline
+```
+
+It writes `target/oracle-regeneration/build-record.txt` only after all three
+engines pass their clean/instrumented artifact comparisons and schema-v1 trace
+gates.
 
 Executable hashes are platform-specific because the host compiler and system
 linker are inputs. Reproducibility means identical pinned sources, ordered

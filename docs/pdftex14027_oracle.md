@@ -40,15 +40,15 @@ execute them.
 Run the supported fixture-tooling entry point:
 
 ```bash
-scripts/regen-fixtures.sh --area pdftex14027-oracle
+scripts/regen-fixtures.sh --oracle pdftex14027 \
+  --profile initex-etex-eight-bit
 ```
 
 The first run may acquire the pinned archive into the gitignored
-`third_party/texlive-source` cache. Verify cached reuse without network access:
-
-```bash
-scripts/build-pdftex14027-oracle.sh --offline
-```
+`third_party/texlive-source` cache. After acquisition, pass `--offline` to
+that same command to forbid network access. `--validate-only` checks the
+cross-engine contract, source-manifest shape, repository-owned hashes, event
+schema, and exact INITEX/e-TeX/eight-bit profile without building.
 
 `UMBER_REF_TEXLIVE_SOURCE` may select an equivalent cache containing the
 pinned archive and extracted `src` tree. The workflow uses a dedicated
@@ -134,6 +134,16 @@ instrumented projections to agree; the repeated state run must reproduce the
 same projection. The build record captures the normalizer executable and
 projection hashes separately from raw PDF hashes. PDF object structure remains
 absent from command events.
+
+The aggregate transparency gate is:
+
+```bash
+scripts/regen-fixtures.sh --oracle all --profile canonical --offline
+```
+
+It binds the regeneration contract and each engine build record in
+`target/oracle-regeneration/build-record.txt` only after all clean/instrumented
+transparency and schema-v1 trace gates pass.
 
 Executable hashes are platform-specific because the compiler, linker, system
 libraries, and platform are inputs. Reproducibility means the complete pinned

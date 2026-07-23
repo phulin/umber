@@ -13,6 +13,7 @@ bibtex_area=bibtex
 tex82_oracle_area=tex82-oracle
 etex26_oracle_area=etex26-oracle
 pdftex14027_oracle_area=pdftex14027-oracle
+oracle_regeneration_manifest=tests/oracle-regeneration-manifest.txt
 readonly bib_upstream_commit=74252e608e5f8115375c532eb25416430a9f52eb
 
 target_dir="${CARGO_TARGET_DIR:-target}"
@@ -38,6 +39,9 @@ usage:
   scripts/regen-fixtures.sh --area AREA
   scripts/regen-fixtures.sh --case AREA/CASE
   scripts/regen-fixtures.sh --case AREA CASE
+  scripts/regen-fixtures.sh --oracle ENGINE --profile PROFILE [--offline]
+  scripts/regen-fixtures.sh --oracle all --profile canonical [--offline]
+  scripts/regen-fixtures.sh --oracle ENGINE --profile PROFILE --validate-only
 
 Fixture areas:
   text/native: hello lexer expand lexer_dynamic exec etex_exec typeset tex_exec tex_exec_io
@@ -45,9 +49,6 @@ Fixture areas:
   PDF:         pdf  (pinned pdfTeX structure plus exact Poppler grayscale pixels)
   bibliography: bib  (verbatim pinned upstream test data and SHA-256 manifest)
   classic BibTeX: bibtex  (pinned merged WEB2C program, inventory, BBL, and BLG)
-  TeX82 oracle: tex82-oracle  (pinned clean and instrumentation-ready executables)
-  e-TeX oracle: etex26-oracle  (pinned compatibility/extended profile executables)
-  pdfTeX oracle: pdftex14027-oracle  (pinned clean/instrumentation-ready executables)
   end-to-end:  e2e  (story, gentle, trip, and e-trip local DVI oracles)
   live check:  fonts  (runs the tftopl cross-check; it does not rewrite fixtures)
 
@@ -92,6 +93,17 @@ Reference tools:
   target/. The e-TeX workflow verifies compatibility and extended INITEX
   profiles independently against the base semantic-event matrix. The pdfTeX
   workflow verifies exact DVI and deterministic PDF smoke outputs.
+
+  The supported explicit oracle selectors and profiles are:
+    tex82       initex-eight-bit
+    etex26      compatibility+extended-eight-bit
+    pdftex14027 initex-etex-eight-bit
+    all         canonical
+  The all/canonical invocation is the cross-engine transparency gate. It
+  validates the pinned contract and source manifests, runs every engine's
+  clean/instrumented transparency checks, and writes one aggregate record.
+  --offline forbids acquisition in every selected builder. --validate-only
+  checks identities and schemas without building or using the network.
 EOF
 }
 
@@ -550,6 +562,245 @@ sha512_file() {
   openssl dgst -sha512 -r "$1" | awk '{print $1}'
 }
 
+oracle_contract_field() {
+  local key="$1"
+  awk -v key="$key" '$1 == key { print $2 }' "$oracle_regeneration_manifest"
+}
+
+oracle_contract_row() {
+  local engine="$1"
+  awk -v engine="$engine" '$1 == "engine" && $2 == engine { print }' \
+    "$oracle_regeneration_manifest"
+}
+
+validate_oracle_source_manifest() {
+  local manifest_path="$1"
+  local archive_count=0
+  local kind path digest extra
+  local line_number=0
+  local seen_paths_file
+
+  [[ -f "$manifest_path" ]] || die "missing oracle source manifest: ${manifest_path}"
+  seen_paths_file="$(mktemp)"
+  while read -r kind path digest extra; do
+    line_number=$((line_number + 1))
+    [[ -n "$kind" && "$kind" != \#* ]] || continue
+    [[ -z "${extra:-}" ]] ||
+      die "${manifest_path}:${line_number}: unexpected manifest field"
+    case "$kind" in
+      archive)
+        archive_count=$((archive_count + 1))
+        [[ "$path" == https://* ]] ||
+          die "${manifest_path}:${line_number}: archive URL must use HTTPS"
+        [[ "$digest" =~ ^[0-9a-f]{128}$ ]] ||
+          die "${manifest_path}:${line_number}: invalid archive SHA-512"
+        ;;
+      source-sha256|repository-sha256)
+        [[ "$path" != /* && "$path" != *..* ]] ||
+          die "${manifest_path}:${line_number}: unsafe pinned path"
+        [[ "$digest" =~ ^[0-9a-f]{64}$ ]] ||
+          die "${manifest_path}:${line_number}: invalid SHA-256"
+        if grep -Fqx "$path" "$seen_paths_file"; then
+          die "${manifest_path}:${line_number}: duplicate pinned path: ${path}"
+        fi
+        printf '%s\n' "$path" >>"$seen_paths_file"
+        if [[ "$kind" == repository-sha256 ]]; then
+          [[ -f "$path" ]] ||
+            die "${manifest_path}:${line_number}: missing repository input: ${path}"
+          [[ "$(sha256_file "$path")" == "$digest" ]] ||
+            die "${manifest_path}:${line_number}: repository identity drift: ${path}"
+        fi
+        ;;
+      *)
+        die "${manifest_path}:${line_number}: unknown record kind: ${kind}"
+        ;;
+    esac
+  done < "$manifest_path"
+  rm -f "$seen_paths_file"
+  [[ "$archive_count" -eq 1 ]] ||
+    die "${manifest_path}: expected exactly one archive record"
+}
+
+validate_oracle_contract() {
+  local selected_engine="$1"
+  local contract_schema event_schema
+  local row_count=0
+  local engine profile area manifest_path manifest_digest build_identity extra
+  local common_archive=""
+  local archive
+
+  [[ -f "$oracle_regeneration_manifest" ]] ||
+    die "missing oracle regeneration contract: ${oracle_regeneration_manifest}"
+  contract_schema="$(oracle_contract_field contract-schema)"
+  event_schema="$(oracle_contract_field event-schema)"
+  [[ "$contract_schema" == 1 ]] ||
+    die "unsupported oracle regeneration contract schema: ${contract_schema:-missing}"
+  [[ "$event_schema" == 1 ]] ||
+    die "unsupported oracle event schema: ${event_schema:-missing}"
+  [[ "$(awk '$1 == "contract-schema" { count++ } END { print count + 0 }' \
+      "$oracle_regeneration_manifest")" -eq 1 ]] ||
+    die 'oracle regeneration contract must declare contract-schema exactly once'
+  [[ "$(awk '$1 == "event-schema" { count++ } END { print count + 0 }' \
+      "$oracle_regeneration_manifest")" -eq 1 ]] ||
+    die 'oracle regeneration contract must declare event-schema exactly once'
+  awk '
+    /^[[:space:]]*($|#)/ { next }
+    $1 == "contract-schema" || $1 == "event-schema" || $1 == "engine" { next }
+    { print FILENAME ":" FNR ": unknown contract record: " $1 > "/dev/stderr"; exit 1 }
+  ' "$oracle_regeneration_manifest" ||
+    die 'oracle regeneration contract contains an unknown record'
+  for engine in tex82 etex26 pdftex14027; do
+    [[ "$(awk -v engine="$engine" \
+      '$1 == "engine" && $2 == engine { count++ } END { print count + 0 }' \
+      "$oracle_regeneration_manifest")" -eq 1 ]] ||
+      die "oracle regeneration contract must declare ${engine} exactly once"
+  done
+
+  while read -r _ engine profile area manifest_path manifest_digest \
+    build_identity extra; do
+    [[ -n "$engine" ]] || continue
+    [[ -z "${extra:-}" ]] || die "unexpected field in ${engine} contract row"
+    row_count=$((row_count + 1))
+    case "${engine}:${profile}:${area}:${build_identity}" in
+      tex82:initex-eight-bit:tex82-oracle:tex82-oracle-web2c-texlive-2025 | \
+      etex26:compatibility+extended-eight-bit:etex26-oracle:etex26-oracle-web2c-texlive-2025 | \
+      pdftex14027:initex-etex-eight-bit:pdftex14027-oracle:pdftex14027-oracle-web2c-texlive-2025)
+        ;;
+      *)
+        die "unsupported oracle identity/profile contract: ${engine}:${profile}"
+        ;;
+    esac
+    [[ -f "$manifest_path" ]] || die "missing ${engine} manifest: ${manifest_path}"
+    [[ "$(sha256_file "$manifest_path")" == "$manifest_digest" ]] ||
+      die "${engine} source manifest identity drift"
+    if [[ "$selected_engine" == all || "$selected_engine" == "$engine" ]]; then
+      validate_oracle_source_manifest "$manifest_path"
+    fi
+    archive="$(awk '$1 == "archive" { print $2 " " $3 }' "$manifest_path")"
+    if [[ -z "$common_archive" ]]; then
+      common_archive="$archive"
+    else
+      [[ "$archive" == "$common_archive" ]] ||
+        die "oracle source manifests do not pin the same immutable archive"
+    fi
+  done < <(awk '$1 == "engine" { print }' "$oracle_regeneration_manifest")
+  [[ "$row_count" -eq 3 ]] ||
+    die "oracle regeneration contract must contain exactly three engines"
+  [[ -n "$(oracle_contract_row "$selected_engine")" || "$selected_engine" == all ]] ||
+    die "unknown oracle engine: ${selected_engine}"
+}
+
+validate_oracle_build_record() {
+  local engine="$1"
+  local row profile area manifest_path manifest_digest build_identity
+  local record trace_count=0 trace
+  row="$(oracle_contract_row "$engine")"
+  read -r _ _ profile area manifest_path manifest_digest build_identity <<<"$row"
+  record="${target_dir}/${area}/build-record.txt"
+  [[ -f "$record" ]] || die "${engine} build did not write ${record}"
+  grep -Fqx "identity ${build_identity}" "$record" ||
+    die "${engine} build identity drift"
+  grep -Fqx "manifest-sha256 ${manifest_digest}" "$record" ||
+    die "${engine} build record does not bind the pinned source manifest"
+  case "$engine" in
+    tex82)
+      grep -Fqx 'engine TeX' "$record" &&
+        grep -Fqx 'engine-version 3.141592653' "$record" &&
+        grep -Fqx 'character-profile eight-bit-exact' "$record" &&
+        grep -Fqx 'invocation-profile INITEX' "$record" ||
+        die 'TeX82 build profile identity drift'
+      ;;
+    etex26)
+      grep -Fqx 'engine e-TeX' "$record" &&
+        grep -Fqx 'engine-version 2.6' "$record" &&
+        grep -Fqx 'character-profile eight-bit-exact' "$record" &&
+        grep -Fqx 'profile compatibility invocation-input smoke.tex' "$record" &&
+        grep -Fqx 'profile extended invocation-input *smoke.tex' "$record" ||
+        die 'e-TeX build profile identity drift'
+      ;;
+    pdftex14027)
+      grep -Fqx 'engine pdfTeX' "$record" &&
+        grep -Fqx 'engine-version 1.40.27' "$record" &&
+        grep -Fqx 'etex-version 2.6' "$record" &&
+        grep -Fqx 'character-profile eight-bit-exact' "$record" &&
+        grep -Fqx 'invocation-profile INITEX-with-etex-extensions' "$record" ||
+        die 'pdfTeX build profile identity drift'
+      ;;
+  esac
+  while IFS= read -r trace; do
+    trace_count=$((trace_count + 1))
+    [[ "$(sed -n '1p' "$trace")" == '{"schema":1,'* ]] ||
+      die "${engine} emitted a trace without a schema-v1 header"
+    cargo run -q -p tex-oracle --bin tex-oracle-validate -- "$trace" ||
+      die "${engine} emitted an invalid semantic trace"
+  done < <(find "${target_dir}/${area}" -type f -name '*events.jsonl' | sort)
+  [[ "$trace_count" -gt 0 ]] || die "${engine} build emitted no semantic traces"
+}
+
+write_cross_engine_oracle_record() {
+  local output_dir="${target_dir}/oracle-regeneration"
+  local engine row profile area manifest_path manifest_digest build_identity
+  mkdir -p "$output_dir"
+  {
+    printf 'contract-schema 1\n'
+    printf 'event-schema 1\n'
+    printf 'contract-sha256 %s\n' "$(sha256_file "$oracle_regeneration_manifest")"
+    for engine in tex82 etex26 pdftex14027; do
+      row="$(oracle_contract_row "$engine")"
+      read -r _ _ profile area manifest_path manifest_digest build_identity <<<"$row"
+      printf 'engine %s %s %s %s\n' \
+        "$engine" "$profile" "$manifest_digest" \
+        "$(sha256_file "${target_dir}/${area}/build-record.txt")"
+    done
+    printf 'transparency clean-instrumented-pass\n'
+  } >"${output_dir}/build-record.txt"
+}
+
+regen_oracle() {
+  local engine="$1"
+  local profile="$2"
+  local offline="$3"
+  local validate_only="$4"
+  local expected_profile
+  local area
+  local selected_engines
+  local builder_args=()
+
+  case "$engine" in
+    tex82) expected_profile=initex-eight-bit ;;
+    etex26) expected_profile=compatibility+extended-eight-bit ;;
+    pdftex14027) expected_profile=initex-etex-eight-bit ;;
+    all) expected_profile=canonical ;;
+    *) die "unknown oracle engine: ${engine}" ;;
+  esac
+  [[ "$profile" == "$expected_profile" ]] ||
+    die "oracle ${engine} requires --profile ${expected_profile}"
+  validate_oracle_contract "$engine"
+  if [[ "$validate_only" -eq 1 ]]; then
+    return 0
+  fi
+  [[ "$offline" -eq 0 ]] || builder_args+=(--offline)
+
+  if [[ "$engine" == all ]]; then
+    selected_engines=(tex82 etex26 pdftex14027)
+  else
+    selected_engines=("$engine")
+  fi
+  for engine in "${selected_engines[@]}"; do
+    case "$engine" in
+      tex82) area="$tex82_oracle_area" ;;
+      etex26) area="$etex26_oracle_area" ;;
+      pdftex14027) area="$pdftex14027_oracle_area" ;;
+    esac
+    run_command "Running ${engine} canonical transparency workflow" \
+      "${repo_root}/scripts/build-${area}.sh" "${builder_args[@]}"
+    validate_oracle_build_record "$engine"
+  done
+  if [[ "$profile" == canonical ]]; then
+    write_cross_engine_oracle_record
+  fi
+}
+
 regen_bib_area() {
   local upstream="${UMBER_REF_BIBER_SOURCE:-}"
   local fixture_dir="${repo_root}/tests/corpus/bib/upstream-2.22"
@@ -893,15 +1144,10 @@ regen_area() {
     regen_bib_area
   elif [[ "$area" == "$bibtex_area" ]]; then
     regen_bibtex_area
-  elif [[ "$area" == "$tex82_oracle_area" ]]; then
-    run_command 'Building pinned canonical TeX82 oracle variants' \
-      "${repo_root}/scripts/build-tex82-oracle.sh"
-  elif [[ "$area" == "$etex26_oracle_area" ]]; then
-    run_command 'Building pinned canonical e-TeX 2.6 oracle variants' \
-      "${repo_root}/scripts/build-etex26-oracle.sh"
-  elif [[ "$area" == "$pdftex14027_oracle_area" ]]; then
-    run_command 'Building pinned canonical pdfTeX 1.40.27 oracle variants' \
-      "${repo_root}/scripts/build-pdftex14027-oracle.sh"
+  elif [[ "$area" == "$tex82_oracle_area" || \
+          "$area" == "$etex26_oracle_area" || \
+          "$area" == "$pdftex14027_oracle_area" ]]; then
+    die "use --oracle ENGINE --profile PROFILE for oracle regeneration"
   else
     run_fonts_live_check
   fi
@@ -1041,6 +1287,10 @@ mode=""
 area_arg=""
 case_area=""
 case_name=""
+oracle_engine=""
+oracle_profile=""
+oracle_offline=0
+oracle_validate_only=0
 
 if [[ "$#" -eq 0 ]]; then
   usage
@@ -1085,6 +1335,29 @@ while [[ "$#" -gt 0 ]]; do
         shift 3
       fi
       ;;
+    --oracle)
+      [[ -z "$mode" || "$mode" == oracle ]] || die "choose exactly one mode"
+      [[ "$#" -ge 2 ]] || die "missing engine after --oracle"
+      mode="oracle"
+      oracle_engine="$2"
+      shift 2
+      ;;
+    --profile)
+      [[ "$mode" == oracle ]] || die "--profile requires --oracle"
+      [[ "$#" -ge 2 ]] || die "missing profile after --profile"
+      oracle_profile="$2"
+      shift 2
+      ;;
+    --offline)
+      [[ "$mode" == oracle ]] || die "--offline requires --oracle"
+      oracle_offline=1
+      shift
+      ;;
+    --validate-only)
+      [[ "$mode" == oracle ]] || die "--validate-only requires --oracle"
+      oracle_validate_only=1
+      shift
+      ;;
     *)
       die "unknown argument: $1"
       ;;
@@ -1106,9 +1379,7 @@ case "$mode" in
     regen_area "$e2e_area"
     regen_area "$bib_area"
     regen_area "$bibtex_area"
-    regen_area "$tex82_oracle_area"
-    regen_area "$etex26_oracle_area"
-    regen_area "$pdftex14027_oracle_area"
+    regen_oracle all canonical 0 0
     ;;
   area)
     regen_area "$area_arg"
@@ -1116,6 +1387,12 @@ case "$mode" in
   case)
     [[ -n "$case_area" && -n "$case_name" ]] || die "missing case"
     regen_case "$case_area" "$case_name"
+    ;;
+  oracle)
+    [[ -n "$oracle_engine" ]] || die "missing oracle engine"
+    [[ -n "$oracle_profile" ]] || die "--oracle requires --profile"
+    regen_oracle "$oracle_engine" "$oracle_profile" \
+      "$oracle_offline" "$oracle_validate_only"
     ;;
   *)
     usage

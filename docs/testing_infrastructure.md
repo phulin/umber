@@ -190,8 +190,9 @@ for DVI fixture updates. Its `--area pdf` mode requires pdfTeX 1.40.27 and
 Poppler `pdftoppm` 25.08.0; its `--area fonts` mode owns the explicit live
 `tftopl` cross-check and does not rewrite fixtures.
 
-Its `--area tex82-oracle` and `--area etex26-oracle` modes own pinned live
-reference builds outside the correctness tier. Both reuse the hash-verified
+Its `--oracle tex82 --profile initex-eight-bit` and `--oracle etex26
+--profile compatibility+extended-eight-bit` modes own pinned live reference
+builds outside the correctness tier. Both reuse the hash-verified
 TeX Live 2025 source cache offline, record the source/change/tool/platform and
 executable identities under `target/`, and compare clean with instrumented
 ordinary outputs. The e-TeX mode additionally verifies the distinct
@@ -201,14 +202,22 @@ command-core extension matrix with compatibility exclusion, checks its
 primitive-owner audit against canonical `etex.ch`, and repeats each base and
 extension trace plus generated effect bytes deterministically.
 
-The `--area pdftex14027-oracle` mode performs the corresponding pinned
-pdfTeX 1.40.27 build. It gates DVI/PDF smoke artifacts, the shared command
+The `--oracle pdftex14027 --profile initex-etex-eight-bit` mode performs the
+corresponding pinned pdfTeX 1.40.27 build. It gates DVI/PDF smoke artifacts,
+the shared command
 matrix, and a focused exact-eight-bit expansion/scanner matrix; proves the
 549-primitive inventory as 391 shared TeX/e-TeX declarations plus 158 audited
 pdfTeX additions with bidirectional primitive-to-matrix ownership; compares
 clean and instrumented logs, status, DVI, PDF, and generated writes; parses
 the smoke and state PDFs through the independent Hayro normalizer; and repeats
 all three semantic traces plus state PDF projections byte-for-byte.
+
+`--oracle all --profile canonical [--offline]` is the aggregate
+cross-engine transparency gate. Before building, it validates the pinned
+regeneration contract, exact source-manifest hashes, repository-owned inputs,
+event schema, and canonical profiles. It emits an uncommitted aggregate build
+record only after all three workflows pass. `--validate-only` performs the
+identity and schema preflight without acquiring or building tools.
 
 See `tests/AGENTS.md` for the supported areas and cases, required tools,
 copied support files, and validation performed after a rewrite.

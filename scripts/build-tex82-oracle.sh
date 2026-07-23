@@ -245,6 +245,8 @@ write_build_record() {
   local record="${out_dir}/build-record.txt" linker_path path tool tool_path
   {
     printf 'identity tex82-oracle-web2c-texlive-2025\n'
+    printf 'engine TeX\nengine-version 3.141592653\n'
+    printf 'character-profile eight-bit-exact\ninvocation-profile INITEX\n'
     printf 'archive-url %s\narchive-sha512 %s\n' "$archive_url" "$archive_sha512"
     printf 'manifest-sha256 %s\n' "$(sha_digest 256 "$manifest")"
     printf 'source-date-epoch %s\n' "$source_date_epoch"

@@ -13,6 +13,7 @@ scripts/profile-pdftex-arxiv.sh check-sample
 scripts/profile-pdftex-arxiv.sh check-entrypoint
 scripts/test-arxiv-corpus.sh
 scripts/test-stepwise-arxiv-census.sh
+scripts/test-oracle-regeneration.sh
 
 cargo test -q -p profile-analyzer --tests
 cargo test -q -p refexec --tests

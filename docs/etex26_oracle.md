@@ -36,15 +36,16 @@ acquire nor execute them.
 Run the supported fixture-tooling entry point:
 
 ```bash
-scripts/regen-fixtures.sh --area etex26-oracle
+scripts/regen-fixtures.sh --oracle etex26 \
+  --profile compatibility+extended-eight-bit
 ```
 
 The first run may acquire the pinned archive into the gitignored
-`third_party/texlive-source` cache. Verify cached reuse without network access:
-
-```bash
-scripts/build-etex26-oracle.sh --offline
-```
+`third_party/texlive-source` cache. The combined profile name is intentional:
+canonical e-TeX conformance proves compatibility and extended INITEX behavior
+together. After acquisition, pass `--offline` to that same command to forbid
+network access. `--validate-only` checks identities and schemas without
+building.
 
 `UMBER_REF_TEXLIVE_SOURCE` may select an equivalent cache containing the
 pinned archive, extracted `src`, and configured `build` directories.
@@ -107,6 +108,16 @@ The all-zero manifest identity in the live stream is an explicit unbound
 sentinel, not a fixture identity. The final change records semantic names and
 values only; allocation addresses, input-stack indexes, pool indexes, physical
 paths, and helper-call identity remain outside the event stream.
+
+The aggregate transparency gate is:
+
+```bash
+scripts/regen-fixtures.sh --oracle all --profile canonical --offline
+```
+
+It writes `target/oracle-regeneration/build-record.txt` only after both e-TeX
+profiles and the TeX82/pdfTeX workflows pass their clean/instrumented artifact
+comparisons and schema-v1 trace gates.
 
 Executable hashes are platform-specific because the compiler and system
 linker are inputs. Reproducibility means the complete pinned source, ordered

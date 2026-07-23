@@ -47,3 +47,5 @@ Read the repository-root `AGENTS.md` first. This file adds the directory map for
   schema-v1 traces, audits the exact canonical primitive inventory, proves
   byte and independently normalized PDF transparency plus determinism, supports
   offline reuse, and records complete build identities.
+- `test-oracle-regeneration.sh`: hermetic validation of the pinned three-engine
+  regeneration contract, exact canonical profile selectors, and schema pins.
