@@ -1240,10 +1240,10 @@ pub struct ExpansionSessionSnapshot(ExpansionSessionState);
 /// Default number of expansion-loop steps available to one expansion request.
 ///
 /// This is deliberately about 20% above the measured 3,323,945 productive
-/// steps used by the largest terminating LaTeX/PGF scan in the 100-paper
-/// arXiv corpus. The limit is a runaway guard, not a TeX semantic capacity:
-/// TeX.web §§372--373 keeps expanding until it delivers an unexpandable token
-/// and has no analogous cumulative work counter.
+/// steps used by the largest terminating LaTeX/PGF scan in the measured
+/// external-document corpus. The limit is a runaway guard, not a TeX semantic
+/// capacity: TeX.web §§372--373 keeps expanding until it delivers an
+/// unexpandable token and has no analogous cumulative work counter.
 pub const DEFAULT_EXPANSION_FUEL: u64 = 4_000_000;
 
 impl Default for ExpansionSessionState {

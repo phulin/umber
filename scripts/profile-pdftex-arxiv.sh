@@ -6,9 +6,8 @@ readonly SOURCE="$ROOT/source"
 readonly BUILD="$ROOT/build"
 readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 readonly PATCH="$SCRIPT_DIR/pdftex-primitive-trace.patch"
-# Uniform reservoir sample from 3,100,507 metadata records, seed 0x554D424552.
-# The first 100 source bundles containing a LaTeX entrypoint were retained.
-readonly SAMPLE="${PDFTEX_PROFILE_SAMPLE:-$SCRIPT_DIR/pdftex-arxiv-sample-100.tsv}"
+# Reproducibly shuffled recent sample with archive identities pinned separately.
+readonly SAMPLE="${PDFTEX_PROFILE_SAMPLE:-$SCRIPT_DIR/pdftex-arxiv-recent-sample-100.tsv}"
 readonly UPSTREAM=https://github.com/TeX-Live/texlive-source.git
 readonly REVISION=1664cf0ab3f6ce3b80db649bc6723f54ab12016c
 readonly PDFTEX="$BUILD/texk/web2c/pdftex"
@@ -25,7 +24,7 @@ usage() {
   cat <<EOF
 usage: $0 [setup|smoke|all|check-sample|check-entrypoint|select-entrypoint DIRECTORY]
 
-Build a pinned instrumented pdfTeX and profile the committed 100-paper sample.
+Build a pinned instrumented pdfTeX and profile the committed recent sample.
 Each result preserves primitive usage, the raw recorder inputs.fls, and a
 host-independent files.txt containing normalized /texlive paths.
 

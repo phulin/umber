@@ -24,13 +24,8 @@ from schema 9.
 `format_cache.md` defines generated-format cache identity, validated atomic
 native entries, corruption recovery, and the browser portability boundary.
 
-`arxiv_corpus.md` is the durable accounting record for source-side limitations
-and reproducible entrypoint decisions in the pinned 100-document arXiv sample.
-Keep engine failures in Beads rather than classifying them there prematurely.
-
-`arxiv_census/` contains immutable machine-readable 100-row census captures.
-Its README records the exact interpretation and provisional-status rules; keep
-engine ownership and follow-up work in the linked Beads epic and children.
+`arxiv_census/` contains machine-readable captures for the recent arXiv sample.
+Its README records the exact interpretation and partial-capture status.
 
 `incremental_v1.md` fixes the named-boundary schedule, editor-session
 retention, edit mapping, pruning, and schedule-relative convergence contract

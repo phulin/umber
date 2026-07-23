@@ -53,16 +53,16 @@ fn deeply_nested_resource_values_are_rejected() {
 
 #[test]
 #[allow(clippy::disallowed_methods)] // Conditional external-fixture boundary.
-fn pinned_arxiv_dct_resources_import_as_encoded_streams_when_available() {
+fn recent_arxiv_dct_resources_import_as_encoded_streams_when_available() {
     let corpus = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../..")
-        .join("third_party/arxiv-sample-100/sources");
+        .join("third_party/arxiv-recent-sample-100/sources");
     let cases = [
-        "1910.12506/CLAS.pdf",
-        "1910.12506/MMPX.pdf",
-        "1910.12506/ReacPlane.pdf",
-        "1901.02462/Figure1.pdf",
-        "1901.02462/Figure2.pdf",
+        "2606.24390/images/labels.pdf",
+        "2606.24390/images/landmark_training.pdf",
+        "2606.24390/images/pipeline_new.pdf",
+        "2606.24390/images/segmentation.pdf",
+        "2606.24390/images/uterus_anatomy.pdf",
     ];
     let mut tested = 0;
     for relative in cases {
@@ -93,6 +93,6 @@ fn pinned_arxiv_dct_resources_import_as_encoded_streams_when_available() {
         );
     }
     if corpus.exists() {
-        assert_eq!(tested, cases.len(), "pinned arXiv corpus is incomplete");
+        assert_eq!(tested, cases.len(), "recent arXiv corpus is incomplete");
     }
 }

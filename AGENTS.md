@@ -56,7 +56,7 @@ The project also uses bd (beads) for issue tracking; see below for full instruct
 - `tools/`: Rust tooling crates.
 - `benchmarks/`: opt-in standalone benchmark crates kept outside the root workspace.
 - `benchmarks/png-import`: host-only comparison of custom, Reader, and bounded
-  StreamingDecoder PNG alpha import paths on the exact arXiv raster workload.
+  StreamingDecoder PNG alpha import paths on a recent-arXiv raster workload.
 - `tests/`: committed fixtures and parity test definitions.
 - `tests/corpus/pdf/`: pinned minimal pdfTeX references, deterministic Umber PDFs, normalized structure, and rendered-page parity fixtures.
 - `docs/`: architecture, phase, and design documents.

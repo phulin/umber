@@ -63,7 +63,7 @@ engine expansion-fuel setting on the exercised `ExecutionContext`. Native
 resource sessions accept the bounded `UMBER_ENGINE_FUEL` override; invalid or
 hard-maximum-exceeding values fail before execution.
 
-The explicit stepwise arXiv validation tier is:
+The explicit stepwise recent-arXiv validation tier is:
 
 ```bash
 cargo build -q --profile test -p umber --bin umber
@@ -75,6 +75,8 @@ UMBER_ARXIV_DISTRIBUTION=/path/to/verified/texlive-snapshot \
 The runner is serial and gives every paper one process through
 `scripts/run-umber-guarded.py`, with cumulative engine fuel, wall-time,
 aggregate-RSS, process-group TERM-to-KILL, reap, and survivor enforcement.
+It defaults to `scripts/pdftex-arxiv-recent-sample-100.tsv` and the matching
+gitignored source archives under `third_party/arxiv-recent-sample-100`.
 Before running, it derives each entrypoint and source identity directly from
 the pinned archive bytes. Identity records the archive hash, normalized
 member-manifest hash, member count, and entrypoint instead of hashing a mutable
@@ -111,7 +113,8 @@ verifier rehashes immutable inputs and all durable row artifacts, then writes
 `offline-verification.json`. This uses the native acquisition contract that an
 acquired distribution object is digest verified and persisted in the
 content-addressed cache before engine use, so attestation does not require a
-second full compilation. `UMBER_ARXIV_LIMIT=1` selects `1609.01918` first.
+second full compilation. `UMBER_ARXIV_LIMIT=1` selects the first row of the
+recent sample.
 
 Snapshot scaling has a separate explicit performance tier:
 

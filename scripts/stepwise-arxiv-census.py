@@ -249,8 +249,12 @@ def run_paper(
 
 
 def main() -> None:
-    sample = env_path("UMBER_ARXIV_SAMPLE", ROOT / "scripts/pdftex-arxiv-sample-100.tsv")
-    corpus = env_path("UMBER_ARXIV_CORPUS", ROOT / "third_party/arxiv-sample-100/sources")
+    sample = env_path(
+        "UMBER_ARXIV_SAMPLE", ROOT / "scripts/pdftex-arxiv-recent-sample-100.tsv"
+    )
+    corpus = env_path(
+        "UMBER_ARXIV_CORPUS", ROOT / "third_party/arxiv-recent-sample-100/sources"
+    )
     archives = env_path("UMBER_ARXIV_ARCHIVES", corpus.parent / "archives")
     format_path = env_path("UMBER_ARXIV_FORMAT")
     distribution = env_path("UMBER_ARXIV_DISTRIBUTION")

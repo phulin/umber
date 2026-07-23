@@ -5,7 +5,8 @@ Read the repository-root `AGENTS.md` first. This file adds the directory map for
 ## Directory Map
 
 - `fetch-conformance-inputs.sh`: shared acquisition for hyphenation, Computer Modern fonts, and hash-pinned TRIP/e-TRIP inputs.
-- `profile-pdftex-arxiv.sh`: disposable pinned pdfTeX primitive/file-access tracer build and deterministic 100-paper arXiv source profile.
+- `profile-pdftex-arxiv.sh`: disposable pinned pdfTeX primitive/file-access
+  tracer build for the deterministic recent arXiv sample.
 - `measure-wasm-editor-memory.mjs`: deterministic self-contained retained-editor
   workload reporting WebAssembly linear-memory pages before construction, after
   compilation, and after disposal.
@@ -25,7 +26,6 @@ Read the repository-root `AGENTS.md` first. This file adds the directory map for
 - `run-stepwise-arxiv-census.sh`: stable entry point for the serial guarded arXiv census.
 - `stepwise-arxiv-census.py`: single-pass, row-atomic, resumable arXiv census runner and offline evidence verifier.
 - `test-stepwise-arxiv-census.sh`: hermetic single-pass, failure-attribution, resume, and verify-only census contract test.
-- `archive-stepwise-arxiv-census.py`: validate and archive an exact 100-row guarded census with immutable identities, reference-clean accounting, blocker links, and cluster totals.
 - `build-texlive-snapshot.sh`: deterministic full TeX Live runtime snapshot staging with package dependency hints and production inventory floors.
 - `build-html-r2.sh`: deterministic two-build staging for the immutable contract-v1 HTML-only R2 profile and curated font catalog.
 - `write-latex-wasm-publish-config.sh`: deterministic schema-3 publisher configuration for the focused LaTeX WASM bundle, pinned to the measured production 8-bit shard policy.
