@@ -11,6 +11,7 @@ e2e_area=e2e
 bib_area=bib
 bibtex_area=bibtex
 tex82_oracle_area=tex82-oracle
+etex26_oracle_area=etex26-oracle
 readonly bib_upstream_commit=74252e608e5f8115375c532eb25416430a9f52eb
 
 target_dir="${CARGO_TARGET_DIR:-target}"
@@ -44,6 +45,7 @@ Fixture areas:
   bibliography: bib  (verbatim pinned upstream test data and SHA-256 manifest)
   classic BibTeX: bibtex  (pinned merged WEB2C program, inventory, BBL, and BLG)
   TeX82 oracle: tex82-oracle  (pinned clean and instrumentation-ready executables)
+  e-TeX oracle: etex26-oracle  (pinned compatibility/extended profile executables)
   end-to-end:  e2e  (story, gentle, trip, and e-trip local DVI oracles)
   live check:  fonts  (runs the tftopl cross-check; it does not rewrite fixtures)
 
@@ -82,9 +84,11 @@ Reference tools:
   UMBER_REF_TEXLIVE_SOURCE to select an equivalent cache root containing the
   pinned archive, src, and build directories.
 
-  TeX82 oracle regeneration builds separate clean and instrumentation-ready
-  executables, verifies their ordinary smoke output is identical, and records
-  all source, change, tool, and executable identities under target/.
+  TeX82 and e-TeX oracle regeneration build separate clean and
+  instrumentation-ready executables, verify ordinary-output transparency, and
+  record all source, change, profile, tool, and executable identities under
+  target/. The e-TeX workflow verifies compatibility and extended INITEX
+  profiles independently.
 EOF
 }
 
@@ -117,7 +121,8 @@ is_known_area() {
   is_text_area "$1" || is_dvi_area "$1" || \
     [[ "$1" == "$pdf_area" || "$1" == "$e2e_area" || \
        "$1" == "$bib_area" || "$1" == "$bibtex_area" || \
-       "$1" == "$tex82_oracle_area" || "$1" == "fonts" ]]
+       "$1" == "$tex82_oracle_area" || "$1" == "$etex26_oracle_area" || \
+       "$1" == "fonts" ]]
 }
 
 test_command_for_area() {
@@ -887,6 +892,9 @@ regen_area() {
   elif [[ "$area" == "$tex82_oracle_area" ]]; then
     run_command 'Building pinned canonical TeX82 oracle variants' \
       "${repo_root}/scripts/build-tex82-oracle.sh"
+  elif [[ "$area" == "$etex26_oracle_area" ]]; then
+    run_command 'Building pinned canonical e-TeX 2.6 oracle variants' \
+      "${repo_root}/scripts/build-etex26-oracle.sh"
   else
     run_fonts_live_check
   fi
@@ -936,6 +944,8 @@ regen_case() {
     regen_bibtex_area
   elif [[ "$area" == "$tex82_oracle_area" ]]; then
     die '--case is not meaningful for the TeX82 oracle build'
+  elif [[ "$area" == "$etex26_oracle_area" ]]; then
+    die '--case is not meaningful for the e-TeX 2.6 oracle build'
   elif is_text_area "$area"; then
     printf 'Regenerating text area %s for requested case %s\n' "$area" "$case" >&2
     build_fixturegen_once
@@ -1088,6 +1098,7 @@ case "$mode" in
     regen_area "$bib_area"
     regen_area "$bibtex_area"
     regen_area "$tex82_oracle_area"
+    regen_area "$etex26_oracle_area"
     ;;
   area)
     regen_area "$area_arg"

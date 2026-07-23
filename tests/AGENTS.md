@@ -13,6 +13,13 @@ seam; the live oracle build consumes it as the coverage gate.
 Acquisition and builds run only through `scripts/regen-fixtures.sh --area
 tex82-oracle`; Cargo correctness tests never invoke the live oracle.
 
+`tests/etex26-oracle-manifest.txt` pins the canonical e-TeX 2.6 WEB merge,
+ordered Web2C changes, translator inputs, and repository-owned inputs.
+`tests/etex26-oracle/` contains the font-independent profile smoke program and
+the transparent final instrumentation-ready change boundary. Acquisition and
+builds run only through `scripts/regen-fixtures.sh --area etex26-oracle`;
+Cargo correctness tests never invoke the live oracle.
+
 `tests/corpus/distribution` holds the authored-JavaScript/Rust manifest and
 selection fixtures. They are hand-authored contract data, not live-reference
 outputs, and both `umber-distribution` and `manifest-schema.test.js` consume

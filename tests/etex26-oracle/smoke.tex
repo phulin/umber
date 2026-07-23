@@ -1,0 +1,13 @@
+\catcode `{ = 1
+\catcode `} = 2
+\message{UMBER-ETEX26-ORACLE-SMOKE}
+\count0=40
+\advance\count0 by 2
+\message{COUNT=\the\count0}
+\ifx\eTeXversion\undefined
+  \message{PROFILE=COMPATIBILITY}
+\else
+  \message{PROFILE=EXTENDED VERSION=\the\eTeXversion REVISION=\eTeXrevision}
+\fi
+\shipout\hbox{\vrule width 1pt height 1pt depth 0pt}
+\end
