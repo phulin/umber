@@ -18,6 +18,8 @@ use std::sync::atomic::{AtomicU32, Ordering};
 
 static NEXT_PACKED_ARENA_ORIGIN: AtomicU32 = AtomicU32::new(0);
 const ORIGIN_RECORD_ARCHIVE_CHUNK: usize = 1024;
+const ORIGIN_KEY_LEASE_LEN: u32 = 256;
+const PACKED_ARENA_ORIGIN_END: u32 = 0x8000_0000;
 
 type ArchivedOriginRecord = (u32, OriginRecord);
 
@@ -843,33 +845,38 @@ struct OriginKeyRuns {
 
 impl OriginKeyRuns {
     fn append(&mut self, key: u32, slot: u32) {
-        let Some(last) = self.runs.last_mut() else {
-            assert_eq!(slot, 0, "first provenance record slot must be zero");
-            self.runs.push(OriginKeyRun {
-                first_key: key,
-                first_slot: slot,
-                len: 1,
-            });
-            return;
-        };
-        assert_eq!(
-            slot,
-            last.end_slot(),
-            "provenance records must occupy consecutive slots"
-        );
-        assert!(
-            key >= last.end_key(),
-            "process-global provenance keys must increase"
-        );
-        if key == last.end_key() {
-            last.len = last.len.checked_add(1).expect("origin key run overflow");
-        } else {
-            self.runs.push(OriginKeyRun {
-                first_key: key,
-                first_slot: slot,
-                len: 1,
-            });
+        let insertion = self.runs.partition_point(|run| run.first_key < key);
+        if insertion > 0 {
+            let previous = &mut self.runs[insertion - 1];
+            assert!(
+                key >= previous.end_key(),
+                "process-global provenance key must be unique"
+            );
+            if key == previous.end_key() && slot == previous.end_slot() {
+                previous.len = previous
+                    .len
+                    .checked_add(1)
+                    .expect("origin key run overflow");
+                return;
+            }
         }
+        if let Some(next) = self.runs.get(insertion) {
+            assert!(
+                key < next.first_key,
+                "process-global provenance key must be unique"
+            );
+        }
+        if self.runs.is_empty() {
+            assert_eq!(slot, 0, "first provenance record slot must be zero");
+        }
+        self.runs.insert(
+            insertion,
+            OriginKeyRun {
+                first_key: key,
+                first_slot: slot,
+                len: 1,
+            },
+        );
     }
 
     fn slot(&self, key: u32) -> Option<u32> {
@@ -884,15 +891,15 @@ impl OriginKeyRuns {
     }
 
     fn truncate(&mut self, records: u32) {
-        let keep = self.runs.partition_point(|run| run.first_slot < records);
-        self.runs.truncate(keep);
-        if let Some(last) = self.runs.last_mut() {
-            last.len = records
-                .checked_sub(last.first_slot)
-                .expect("retained origin run starts beyond record mark");
-            debug_assert!(last.len > 0);
-        } else {
-            debug_assert_eq!(records, 0);
+        self.runs.retain_mut(|run| {
+            let Some(remaining) = records.checked_sub(run.first_slot) else {
+                return false;
+            };
+            run.len = run.len.min(remaining);
+            run.len > 0
+        });
+        if records == 0 {
+            debug_assert!(self.runs.is_empty());
         }
     }
 }
@@ -915,6 +922,8 @@ pub(crate) struct ProvenanceStore {
     origins: Vec<OriginId>,
     list_identities: IdentityAllocator,
     record_keys: OriginKeyRuns,
+    next_record_key: u32,
+    record_key_lease_end: u32,
     record_limit: usize,
     list_span_limit: usize,
     list_entry_limit: usize,
@@ -928,6 +937,8 @@ impl Clone for ProvenanceStore {
             origins: self.origins.clone(),
             list_identities: self.list_identities.fork(),
             record_keys: self.record_keys.clone(),
+            next_record_key: 0,
+            record_key_lease_end: 0,
             record_limit: self.record_limit,
             list_span_limit: self.list_span_limit,
             list_entry_limit: self.list_entry_limit,
@@ -945,6 +956,8 @@ impl ProvenanceStore {
             origins: Vec::new(),
             list_identities: IdentityAllocator::new(1),
             record_keys: OriginKeyRuns::default(),
+            next_record_key: 0,
+            record_key_lease_end: 0,
             record_limit: DEFAULT_ORIGIN_RECORD_LIMIT,
             list_span_limit: DEFAULT_ORIGIN_LIST_SPAN_LIMIT,
             list_entry_limit: DEFAULT_ORIGIN_LIST_ENTRY_LIMIT,
@@ -975,7 +988,7 @@ impl ProvenanceStore {
                 _ => OriginId::UNKNOWN,
             };
         }
-        let Some(key) = next_packed_arena_origin() else {
+        let Some(key) = self.next_packed_arena_origin() else {
             return OriginId::UNKNOWN;
         };
         let slot = u32::try_from(self.records.len())
@@ -983,6 +996,17 @@ impl ProvenanceStore {
         self.records.append(key, record);
         self.record_keys.append(key, slot);
         OriginId::arena(key).expect("global packed provenance key is representable")
+    }
+
+    fn next_packed_arena_origin(&mut self) -> Option<u32> {
+        if self.next_record_key == self.record_key_lease_end {
+            let lease = reserve_packed_arena_origins()?;
+            self.next_record_key = lease.start;
+            self.record_key_lease_end = lease.end;
+        }
+        let key = self.next_record_key;
+        self.next_record_key += 1;
+        Some(key)
     }
 
     /// Retains the arena-record graph reachable from diagnostic roots in a
@@ -1275,16 +1299,22 @@ fn u32_len(value: usize) -> Option<u32> {
     u32::try_from(value).ok()
 }
 
-fn next_packed_arena_origin() -> Option<u32> {
-    NEXT_PACKED_ARENA_ORIGIN
-        .fetch_update(
-            Ordering::Relaxed,
-            Ordering::Relaxed,
-            packed_origin_successor,
-        )
-        .ok()
+fn reserve_packed_arena_origins() -> Option<std::ops::Range<u32>> {
+    let start = NEXT_PACKED_ARENA_ORIGIN
+        .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |next| {
+            (next < PACKED_ARENA_ORIGIN_END).then(|| {
+                next.saturating_add(ORIGIN_KEY_LEASE_LEN)
+                    .min(PACKED_ARENA_ORIGIN_END)
+            })
+        })
+        .ok()?;
+    let end = start
+        .saturating_add(ORIGIN_KEY_LEASE_LEN)
+        .min(PACKED_ARENA_ORIGIN_END);
+    Some(start..end)
 }
 
+#[cfg(test)]
 fn packed_origin_successor(next: u32) -> Option<u32> {
     (next <= 0x7fff_ffff).then_some(next + 1)
 }

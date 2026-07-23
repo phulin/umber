@@ -338,14 +338,18 @@ and parent invocation. Delivering body or argument tokens never allocates
 per-token wrapper records.
 
 Invocation records use fixed-width archived `(packed key, record)` slots in
-1,024-record immutable chunks. A sparse affine run index replaces a
-per-record hash-table entry: an unbranched timeline needs one run, while forks
-add runs only where their process-global key ranges diverge. This storage is
-charged conservatively at 64 retained bytes per invocation, including chunk
-and run-index metadata. The production arena admits at most 1,048,576 such
-charges (64 MiB); after that diagnostic-only allocations degrade to unknown
-without aborting TeX execution. The on-demand macro memory report scans the
-fixed-width records so measurement adds no expansion-path counter writes.
+1,024-record immutable chunks. Each timeline leases process-global packed keys
+in 256-key ranges, so concurrent timelines do not fragment one another's
+index one record at a time. Unused keys are never reassigned. A sparse affine
+run index replaces a per-record hash-table entry: a straight timeline needs at
+most one run per lease, while rollback and forks add runs where key ranges
+diverge. The index accepts imported fork ranges independently of their global
+key order while record slots remain append-only. This storage is charged
+conservatively at 64 retained bytes per invocation, including chunk and
+run-index metadata. The production arena admits at most 1,048,576 such charges
+(64 MiB); after that diagnostic-only allocations degrade to unknown without
+aborting TeX execution. The on-demand macro memory report scans the fixed-width
+records so measurement adds no expansion-path counter writes.
 
 The input stack maintains the active invocation head in O(1). When nested
 frames retire before one delivery attempt completes, it retains only the

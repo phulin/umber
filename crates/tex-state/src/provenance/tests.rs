@@ -1,7 +1,7 @@
 use super::{
-    InsertedOrigin, InsertedOriginKind, MacroInvocationOrigin, OriginKeyRuns, OriginRecord,
-    ProvenanceStore, SourceOrigin, SynthesizedOrigin, SynthesizedOriginKind, SyntheticOrigin,
-    SyntheticOriginKind, packed_origin_successor,
+    InsertedOrigin, InsertedOriginKind, MacroInvocationOrigin, ORIGIN_KEY_LEASE_LEN, OriginKeyRuns,
+    OriginRecord, ProvenanceStore, SourceOrigin, SynthesizedOrigin, SynthesizedOriginKind,
+    SyntheticOrigin, SyntheticOriginKind, packed_origin_successor,
 };
 use crate::Universe;
 use crate::ids::OriginListId;
@@ -11,6 +11,7 @@ use crate::meaning::MeaningFlags;
 use crate::source_map::SourceDescriptor;
 use crate::token::{Catcode, OriginId, Token};
 use std::sync::Arc;
+use std::sync::Barrier;
 
 #[test]
 fn unknown_origin_and_empty_list_are_preallocated() {
@@ -55,6 +56,60 @@ fn origin_key_runs_map_gaps_and_truncate_partial_runs() {
     assert_eq!(keys.slot(11), None);
     assert_eq!(keys.slot(15), None);
     assert_eq!(keys.slot(20), None);
+}
+
+#[test]
+fn origin_key_runs_accept_out_of_key_order_fork_imports() {
+    let mut keys = OriginKeyRuns::default();
+    keys.append(20, 0);
+    keys.append(21, 1);
+    keys.append(10, 2);
+    keys.append(11, 3);
+
+    assert_eq!(keys.slot(10), Some(2));
+    assert_eq!(keys.slot(11), Some(3));
+    assert_eq!(keys.slot(20), Some(0));
+    assert_eq!(keys.slot(21), Some(1));
+
+    keys.truncate(3);
+    assert_eq!(keys.slot(10), Some(2));
+    assert_eq!(keys.slot(11), None);
+    assert_eq!(keys.slot(20), Some(0));
+    assert_eq!(keys.slot(21), Some(1));
+}
+
+#[test]
+fn concurrent_stores_keep_process_global_keys_in_local_affine_runs() {
+    const STORES: usize = 4;
+    let barrier = Arc::new(Barrier::new(STORES));
+    let stores = std::thread::scope(|scope| {
+        let mut handles = Vec::new();
+        for _ in 0..STORES {
+            let barrier = Arc::clone(&barrier);
+            handles.push(scope.spawn(move || {
+                let mut store = ProvenanceStore::new();
+                for _ in 0..ORIGIN_KEY_LEASE_LEN {
+                    barrier.wait();
+                    store.allocate(OriginRecord::Synthetic(SyntheticOrigin::new(
+                        SyntheticOriginKind::Test,
+                    )));
+                }
+                store
+            }));
+        }
+        handles
+            .into_iter()
+            .map(|handle| handle.join().expect("provenance allocator thread"))
+            .collect::<Vec<_>>()
+    });
+
+    for store in &stores {
+        assert_eq!(store.record_keys.runs.len(), 1);
+        assert_eq!(
+            store.stats().origin_records(),
+            ORIGIN_KEY_LEASE_LEN as usize
+        );
+    }
 }
 
 #[test]
