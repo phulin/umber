@@ -35,6 +35,12 @@ for the first incremental engine.
 `align_state`, token-delivery corrections, nested alignment ownership,
 template retirement, and recovery.
 
+`tex_command_core.md` defines the authoritative target architecture for the
+canonical TeX82/e-TeX/pdfTeX command-machine replacement tracked by Beads epic
+`umber2-johp`, including state ownership, exact and Unicode profiles, input
+levels, command delivery, expansion, scanners, extensions, provenance,
+incrementality, reference oracles, and optimization promotion.
+
 `persistent_compile_sessions.md` defines the unified native/WASM compile
 session lifecycle that composes typed resource retries with revision-checked
 root-buffer patches and retained incremental execution.
