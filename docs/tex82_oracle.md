@@ -67,7 +67,14 @@ require typed integer, scaled-dimension, glue, internal-value, and token-list
 results; condition push, limit-change, branch, and pop transitions; skipped
 delimiter and `\ifcase` progress; and evaluating-limit plus incomplete-skip
 recovery events. The focused input covers nested conditions, `\ifx`, skipped
-balanced braces, and EOF while skipping. The sole ordinary-log normalization
+balanced braces, and EOF while skipping. Alignment checks require preamble
+start/finish, one-based nested ownership and suspend/resume, `align_state`
+changes, exact backup correction, tab/`\span`/`\cr` interception,
+u/v/omit-template push and retirement, and preamble recovery. The focused
+input covers ordinary and nested alignments, braces, `\omit`, `\span`,
+`\noalign`, missing `#`, and extra `#`. Alignment nesting is a semantic
+counter maintained by the detached observer; no alignment record, input level,
+or `mem` address enters the stream. The sole ordinary-log normalization
 replaces TeX's startup-banner host clock; no semantic message or diagnostic is
 changed.
 

@@ -1,9 +1,9 @@
 use std::collections::BTreeMap;
 
 use crate::{
-    CanonicalCommand, CanonicalValue, CommandDelivery, CommandEvent, DisabledObserver,
-    EngineDialect, EngineIdentity, Event, EventObserver, JsonLinesObserver, Manifest,
-    ManifestInput, Normalizer, ObservationStream, SCHEMA_VERSION,
+    AlignmentEvent, AlignmentTransition, CanonicalCommand, CanonicalValue, CommandDelivery,
+    CommandEvent, DisabledObserver, EngineDialect, EngineIdentity, Event, EventObserver,
+    JsonLinesObserver, Manifest, ManifestInput, Normalizer, ObservationStream, SCHEMA_VERSION,
 };
 
 const HASH_A: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
@@ -130,4 +130,27 @@ fn disabled_observer_accepts_events_without_transport_state() {
     DisabledObserver
         .committed(command("ignored"))
         .expect("no-op");
+}
+
+#[test]
+fn alignment_events_encode_semantic_nesting_without_storage_identity() {
+    let identity = manifest().identity().expect("valid manifest");
+    let mut observer = JsonLinesObserver::new(Vec::new(), identity).expect("header");
+    observer
+        .committed(Event::Alignment(AlignmentEvent {
+            transition: AlignmentTransition::TemplatePush,
+            align_state: 1_000_000,
+            template: Some("v".into()),
+            nesting: Some(2),
+            previous_align_state: Some(0),
+            delimiter: Some("span".into()),
+            recovery: None,
+        }))
+        .expect("event");
+    let (bytes, _) = observer.finish().expect("finish");
+    let json = String::from_utf8(bytes).expect("utf8");
+    assert!(json.contains("\"transition\":\"template_push\""));
+    assert!(json.contains("\"nesting\":2"));
+    assert!(!json.contains("pointer"));
+    assert!(!json.contains("address"));
 }

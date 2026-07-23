@@ -11,6 +11,7 @@
 @!umber_trace_opened:boolean;
 @!umber_trace_sequence:integer;
 @!umber_recovery_insert:boolean;
+@!umber_alignment_depth:integer;
 @z
 
 @x [22] Detached schema-v1 JSON Lines transport.
@@ -535,6 +536,72 @@ othercases write(umber_trace_file,'"absorbing"') endcases;
 write_ln(umber_trace_file,'}}}');
 end;
 
+procedure umber_trace_alignment(@!transition,@!old_state,
+  @!template_kind:integer);
+begin
+if (not umber_trace_opened)or(umber_alignment_depth=0) then return;
+umber_trace_begin;
+write(umber_trace_file,'{"event":"alignment","data":{"transition":"');
+case transition of
+0:write(umber_trace_file,'begin');
+1:write(umber_trace_file,'finish');
+2:write(umber_trace_file,'suspend');
+3:write(umber_trace_file,'resume');
+4:write(umber_trace_file,'preamble_start');
+5:write(umber_trace_file,'preamble_finish');
+6:write(umber_trace_file,'state_change');
+7:write(umber_trace_file,'template_push');
+8:write(umber_trace_file,'template_retire');
+othercases write(umber_trace_file,'backup_correction')
+endcases;
+write(umber_trace_file,'","align_state":',align_state:1);
+if template_kind<>0 then
+  begin write(umber_trace_file,',"template":"');
+  if template_kind=1 then write(umber_trace_file,'u')
+  else if template_kind=2 then write(umber_trace_file,'v')
+  else write(umber_trace_file,'omit');
+  write(umber_trace_file,'"');
+  end;
+write(umber_trace_file,',"nesting":',umber_alignment_depth:1);
+if old_state<>align_state then
+  write(umber_trace_file,',"previous_align_state":',old_state:1);
+write_ln(umber_trace_file,'}}}');
+end;
+
+procedure umber_trace_alignment_delimiter(@!command_code,
+  @!character_code:integer);
+begin
+if (not umber_trace_opened)or(umber_alignment_depth=0) then return;
+umber_trace_begin;
+write(umber_trace_file,
+  '{"event":"alignment","data":{"transition":"delimiter","align_state":',
+  align_state:1,',"nesting":',umber_alignment_depth:1,',"delimiter":"');
+if command_code=4 then
+  if character_code=256 then write(umber_trace_file,'span')
+  else write(umber_trace_file,'tab')
+else if character_code=258 then write(umber_trace_file,'crcr')
+else write(umber_trace_file,'cr');
+write_ln(umber_trace_file,'"}}}');
+end;
+
+procedure umber_trace_alignment_recovery(@!recovery_kind:integer);
+begin
+if (not umber_trace_opened)or(umber_alignment_depth=0) then return;
+umber_trace_begin;
+write(umber_trace_file,
+  '{"event":"alignment","data":{"transition":"recovery","align_state":',
+  align_state:1,',"nesting":',umber_alignment_depth:1,',"recovery":"');
+case recovery_kind of
+0:write(umber_trace_file,'missing_parameter');
+1:write(umber_trace_file,'extra_parameter');
+2:write(umber_trace_file,'missing_left_brace');
+3:write(umber_trace_file,'missing_right_brace');
+4:write(umber_trace_file,'extra_tab');
+othercases write(umber_trace_file,'outer_validity')
+endcases;
+write_ln(umber_trace_file,'"}}}');
+end;
+
 procedure umber_set_scanner_status(@!new_status:integer);
 var old_status:integer;
 begin old_status:=scanner_status; scanner_status:=new_status;
@@ -554,6 +621,7 @@ end;
 
 procedure umber_trace_open;
 begin umber_trace_sequence:=0; umber_recovery_insert:=false;
+umber_alignment_depth:=0;
 rewrite(umber_trace_file,'tex82-events.jsonl');
 umber_trace_opened:=true;
 if umber_trace_opened then write_ln(umber_trace_file,
@@ -588,7 +656,12 @@ else if t=inserted then
     else umber_trace_recovery(1,info(p));
   end
 else if t=macro then umber_trace_input(0,2,t)
-else if (t=u_template)or(t=v_template) then umber_trace_input(0,3,t)
+else if (t=u_template)or(t=v_template) then
+  begin umber_trace_input(0,3,t);
+  if t=u_template then umber_trace_alignment(7,align_state,1)
+  else if p=omit_template then umber_trace_alignment(7,align_state,3)
+  else umber_trace_alignment(7,align_state,2);
+  end
 else umber_trace_input(0,1,t);
 end;
 @z
@@ -603,9 +676,24 @@ if token_type=backed_up then umber_trace_input(1,4,token_type)
 else if token_type=inserted then umber_trace_input(1,5,token_type)
 else if token_type=macro then umber_trace_input(1,2,token_type)
 else if (token_type=u_template)or(token_type=v_template) then
-  umber_trace_input(1,3,token_type)
+  begin umber_trace_input(1,3,token_type);
+  if token_type=u_template then umber_trace_alignment(8,align_state,1)
+  else if start=omit_template then umber_trace_alignment(8,align_state,3)
+  else umber_trace_alignment(8,align_state,2);
+  end
 else umber_trace_input(1,1,token_type);
 if token_type>=backed_up then {token list to be deleted}
+@z
+
+@x [23] Observe u-template completion at the canonical retirement seam.
+else if token_type=u_template then
+  if align_state>500000 then align_state:=0
+  else fatal_error("(interwoven alignment preambles are not allowed)");
+@y
+else if token_type=u_template then
+  if align_state>500000 then
+    begin align_state:=0; umber_trace_alignment(6,1000000,0); end
+  else fatal_error("(interwoven alignment preambles are not allowed)");
 @z
 
 @x [23] Observe exact backup/recovery after commit.
@@ -622,6 +710,10 @@ if umber_recovery_insert then
   umber_trace_recovery(1,cur_tok); end
 else begin umber_trace_input(0,4,token_type);
   umber_trace_recovery(0,cur_tok); end;
+if cur_tok<right_brace_limit then
+  if cur_tok<left_brace_limit then
+    umber_trace_alignment(9,align_state+1,0)
+  else umber_trace_alignment(9,align_state-1,0);
 end;
 @z
 
@@ -668,6 +760,7 @@ begin if scanner_status<>normal then
 @y
 begin if scanner_status<>normal then
   begin umber_trace_outer(cur_cs=0);
+  if scanner_status=aligning then umber_trace_alignment_recovery(5);
   if scanner_status=skipping then umber_trace_conditional_diagnostic(0);
   deletions_allowed:=false;
 @z
@@ -688,6 +781,55 @@ exit:end;
 @<If an alignment entry has just ended, take appropriate action@>;
 exit:umber_trace_command(false);
 end;
+@z
+
+@x [24] Observe source-token brace accounting.
+mid_line+left_brace: incr(align_state);
+@y
+mid_line+left_brace: begin incr(align_state);
+  umber_trace_alignment(6,align_state-1,0); end;
+@z
+
+@x [24] Observe source-token brace accounting after line-state changes.
+skip_blanks+left_brace,new_line+left_brace: begin
+  state:=mid_line; incr(align_state);
+  end;
+@y
+skip_blanks+left_brace,new_line+left_brace: begin
+  state:=mid_line; incr(align_state);
+  umber_trace_alignment(6,align_state-1,0);
+  end;
+@z
+
+@x [24] Observe source-token right-brace accounting.
+mid_line+right_brace: decr(align_state);
+@y
+mid_line+right_brace: begin decr(align_state);
+  umber_trace_alignment(6,align_state+1,0);
+  end;
+@z
+
+@x [24] Observe source-token right-brace accounting after state changes.
+skip_blanks+right_brace,new_line+right_brace: begin
+  state:=mid_line; decr(align_state);
+  end;
+@y
+skip_blanks+right_brace,new_line+right_brace: begin
+  state:=mid_line; decr(align_state);
+  umber_trace_alignment(6,align_state+1,0);
+  end;
+@z
+
+@x [24] Observe token-list brace accounting.
+    case cur_cmd of
+    left_brace: incr(align_state);
+    right_brace: decr(align_state);
+@y
+    case cur_cmd of
+    left_brace: begin incr(align_state);
+      umber_trace_alignment(6,align_state-1,0); end;
+    right_brace: begin decr(align_state);
+      umber_trace_alignment(6,align_state+1,0); end;
 @z
 
 @x [24] Terminal read stop is a raw zero command.
@@ -1035,6 +1177,38 @@ umber_trace_condition(2,this_if,or_code,6);
 return; {wait for \.{\\or}, \.{\\else}, or \.{\\fi}}
 @z
 
+@x [45] Observe nested alignment suspension and ownership.
+align_ptr:=p;
+cur_head:=get_avail;
+end;
+@y
+align_ptr:=p;
+cur_head:=get_avail;
+if umber_alignment_depth>0 then
+  umber_trace_alignment(2,align_state,0);
+incr(umber_alignment_depth);
+end;
+@z
+
+@x [45] Observe alignment retirement and exact outer-state restoration.
+cur_tail:=link(p+4); cur_head:=info(p+4);
+align_state:=mem[p+3].int; cur_loop:=mem[p+2].int;
+@y
+umber_trace_alignment(1,align_state,0);
+cur_tail:=link(p+4); cur_head:=info(p+4);
+align_state:=mem[p+3].int; cur_loop:=mem[p+2].int;
+decr(umber_alignment_depth);
+if umber_alignment_depth>0 then
+  umber_trace_alignment(3,align_state,0);
+@z
+
+@x [45] Observe alignment entry state.
+push_alignment; align_state:=-1000000; {enter a new alignment level}
+@y
+push_alignment; align_state:=-1000000; {enter a new alignment level}
+umber_trace_alignment(0,-1000000,0);
+@z
+
 @x [45] Alignment status entry.
 preamble:=null; cur_align:=align_head; cur_loop:=null; scanner_status:=aligning;
 @y
@@ -1042,10 +1216,110 @@ preamble:=null; cur_align:=align_head; cur_loop:=null;
 umber_set_scanner_status(aligning);
 @z
 
+@x [45] Observe preamble lifecycle entry.
+warning_index:=save_cs_ptr; align_state:=-1000000;
+@y
+warning_index:=save_cs_ptr; align_state:=-1000000;
+umber_trace_alignment(4,-1000000,0);
+@z
+
 @x [45] Alignment status restoration.
 done: scanner_status:=normal
 @y
-done: umber_set_scanner_status(normal)
+done: umber_trace_alignment(5,align_state,0);
+umber_set_scanner_status(normal)
+@z
+
+@x [45] Observe missing-parameter preamble recovery.
+    back_error; goto done1;
+@y
+    umber_trace_alignment_recovery(0);
+    back_error; goto done1;
+@z
+
+@x [45] Observe extra-parameter preamble recovery.
+    error; goto continue;
+@y
+    umber_trace_alignment_recovery(1);
+    error; goto continue;
+@z
+
+@x [45] Observe lookahead state installation.
+begin restart: align_state:=1000000; @<Get the next non-blank non-call token@>;
+@y
+begin restart: align_state:=1000000;
+umber_trace_alignment(6,align_state,0);
+@<Get the next non-blank non-call token@>;
+@z
+
+@x [45] Observe u-template or omit cell-state installation.
+if cur_cmd=omit then align_state:=0
+else  begin back_input; begin_token_list(u_part(cur_align),u_template);
+@y
+if cur_cmd=omit then
+  begin align_state:=0; umber_trace_alignment(6,1000000,0); end
+else  begin back_input; begin_token_list(u_part(cur_align),u_template);
+@z
+
+@x [45] Observe delimiter interception and v-template state installation.
+begin if (scanner_status=aligning) or (cur_align=null) then
+  fatal_error("(interwoven alignment preambles are not allowed)");
+@.interwoven alignment preambles...@>
+cur_cmd:=extra_info(cur_align); extra_info(cur_align):=cur_chr;
+if cur_cmd=omit then begin_token_list(omit_template,v_template)
+else begin_token_list(v_part(cur_align),v_template);
+align_state:=1000000; goto restart;
+end
+@y
+begin if (scanner_status=aligning) or (cur_align=null) then
+  fatal_error("(interwoven alignment preambles are not allowed)");
+@.interwoven alignment preambles...@>
+umber_trace_alignment_delimiter(cur_cmd,cur_chr);
+cur_cmd:=extra_info(cur_align); extra_info(cur_align):=cur_chr;
+if cur_cmd=omit then begin_token_list(omit_template,v_template)
+else begin_token_list(v_part(cur_align),v_template);
+align_state:=1000000; umber_trace_alignment(6,0,0); goto restart;
+end
+@z
+
+@x [45] Observe fin_col lookahead state installation.
+align_state:=1000000; @<Get the next non-blank non-call token@>;
+@y
+align_state:=1000000; umber_trace_alignment(6,align_state,0);
+@<Get the next non-blank non-call token@>;
+@z
+
+@x [45] Observe extra-tab alignment recovery.
+  extra_info(cur_align):=cr_code; error;
+@y
+  extra_info(cur_align):=cr_code;
+  umber_trace_alignment_recovery(4); error;
+@z
+
+@x [49] Observe missing-brace alignment recovery.
+  if align_state<0 then
+    begin print_err("Missing { inserted");
+@.Missing \{ inserted@>
+    incr(align_state); cur_tok:=left_brace_token+"{";
+    end
+  else  begin print_err("Missing } inserted");
+@.Missing \} inserted@>
+    decr(align_state); cur_tok:=right_brace_token+"}";
+    end;
+@y
+  if align_state<0 then
+    begin print_err("Missing { inserted");
+@.Missing \{ inserted@>
+    umber_trace_alignment_recovery(2);
+    incr(align_state); umber_trace_alignment(6,align_state-1,0);
+    cur_tok:=left_brace_token+"{";
+    end
+  else  begin print_err("Missing } inserted");
+@.Missing \} inserted@>
+    umber_trace_alignment_recovery(3);
+    decr(align_state); umber_trace_alignment(6,align_state+1,0);
+    cur_tok:=right_brace_token+"}";
+    end;
 @z
 
 @x [55] Open detached tracing after initialization.

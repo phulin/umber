@@ -353,6 +353,27 @@ for pattern in \
   '"diagnostic":"conditional_limit_recovery"' \
   '"diagnostic":"conditional_incomplete"' \
   '"diagnostic":"outer_validity_control_sequence"' \
+  '"event":"alignment","data":{"transition":"begin"' \
+  '"event":"alignment","data":{"transition":"finish"' \
+  '"event":"alignment","data":{"transition":"suspend"' \
+  '"event":"alignment","data":{"transition":"resume"' \
+  '"event":"alignment","data":{"transition":"preamble_start"' \
+  '"event":"alignment","data":{"transition":"preamble_finish"' \
+  '"event":"alignment","data":{"transition":"state_change"' \
+  '"event":"alignment","data":{"transition":"template_push"' \
+  '"event":"alignment","data":{"transition":"template_retire"' \
+  '"event":"alignment","data":{"transition":"delimiter"' \
+  '"event":"alignment","data":{"transition":"backup_correction"' \
+  '"event":"alignment","data":{"transition":"recovery"' \
+  '"template":"u"' \
+  '"template":"v"' \
+  '"template":"omit"' \
+  '"delimiter":"tab"' \
+  '"delimiter":"span"' \
+  '"delimiter":"cr"' \
+  '"nesting":2' \
+  '"recovery":"missing_parameter"' \
+  '"recovery":"extra_parameter"' \
   '"transition":"stop"' \
   '"kind":"terminate"'; do
   grep -q "$pattern" "$transition_trace" ||

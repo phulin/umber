@@ -1,6 +1,7 @@
 \catcode `{ = 1
 \catcode `} = 2
 \catcode `# = 6
+\catcode `& = 4
 \def\identity#1{#1}
 \identity{\relax}
 \def\pair#1#2{#2#1}
@@ -26,6 +27,16 @@
 \ifcase2 case zero\or case one\or case two\else case fallback\fi
 \iffalse {skipped {braces}}\else kept\fi
 \ifnum1<\else recovered\fi
+\setbox0=\vbox{\halign{#&#\cr
+{A}&B\cr
+\omit C&D\cr
+E\span F\cr
+\noalign{\relax}
+\vbox{\halign{#\cr N\cr}}&H\cr}}
+\setbox1=\vbox{\halign{left&right#\cr
+I&J\cr}}
+\setbox2=\vbox{\halign{##\cr
+K\cr}}
 \message{UMBER-TEX82-TRANSITIONS}
 \input transitions-child
 \outer\def\outercommand{}

@@ -74,6 +74,10 @@ Focused regressions live at the owning boundary:
 - macro arguments and expanded definitions:
   `crates/tex-expand/src/args_tests.rs` and `src/scan/tests.rs`;
 - integer-scanner corrections: `crates/tex-expand/src/scan_int/tests.rs`.
+- canonical delivery/lifecycle observation:
+  `tests/tex82-oracle/instrumentation.ch` and
+  `tests/tex82-oracle/transitions.tex`; the detached schema records semantic
+  nesting and transition classes without pointer or input-stack identities.
 
 The fixture-only native correctness gate remains `cargo test --tests`; format
 and clippy remain `scripts/check.sh`.

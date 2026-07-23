@@ -1254,7 +1254,9 @@ delimiter matching and overlap recovery, parameter conversion, macro
 replacement completion, `scan_toks` completion and direct `\the` splices,
 committed integer, dimension, glue, and internal scanner results, condition
 push/limit/branch/pop transitions, skipped-delimiter and `\ifcase` progress,
-conditional recovery, terminal-stop, and termination events. Its focused live
+conditional recovery, alignment preamble and nesting lifecycle, `align_state`
+and backup correction, delimiter interception, template push/retirement,
+alignment recovery, terminal-stop, and termination events. Its focused live
 run is schema-validated, deterministic, and ordinary-output transparent.
 Cargo correctness tests never acquire or execute this live oracle.
 

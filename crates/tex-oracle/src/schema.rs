@@ -253,10 +253,18 @@ pub struct TokenListEvent {
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AlignmentTransition {
+    Begin,
+    Finish,
+    Suspend,
+    Resume,
+    PreambleStart,
+    PreambleFinish,
     StateChange,
     TemplatePush,
     TemplateRetire,
     Delimiter,
+    BackupCorrection,
+    Recovery,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -266,6 +274,15 @@ pub struct AlignmentEvent {
     pub align_state: i64,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub template: Option<String>,
+    /// One-based semantic alignment nesting, never a reference-engine pointer.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub nesting: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub previous_align_state: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub delimiter: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub recovery: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
