@@ -5,8 +5,9 @@ fast differential tests.
 
 `tests/tex82-oracle-manifest.txt` pins the canonical TeX82 WEB source, ordered
 Web2C portability changes, translator inputs, and repository-owned oracle
-inputs. `tests/tex82-oracle/` contains the font-independent smoke program and
-the empty final-change seam used before semantic instrumentation lands.
+inputs. `tests/tex82-oracle/` contains the font-independent smoke program,
+focused transition inputs, and the repository-owned final TeX82
+instrumentation change file.
 Acquisition and builds run only through `scripts/regen-fixtures.sh --area
 tex82-oracle`; Cargo correctness tests never invoke the live oracle.
 

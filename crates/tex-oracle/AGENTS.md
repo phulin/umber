@@ -19,3 +19,5 @@ Umber observers.
 - `src/normalize.rs`: deterministic stream normalization.
 - `src/transport.rs`: enabled and compile-away disabled observer boundaries.
 - `src/tests.rs`: focused synthetic contract tests.
+- `src/bin/tex-oracle-validate.rs`: canonical JSON Lines validator used by
+  live reference regeneration tooling.

@@ -18,10 +18,11 @@ target/tex82-oracle/bin/umber-tex82-oracle
 target/tex82-oracle/bin/umber-tex82-oracle-instrumentable
 ```
 
-The first uses only the ordered upstream change stack. The second appends the
-repository-owned final change file. That final file is currently an empty
-instrumentation seam; command event instrumentation is owned by the follow-up
-task. Canonical or generated upstream files are never edited in place.
+The first uses only the ordered upstream change stack. The second appends
+`tests/tex82-oracle/instrumentation.ch`, the repository-owned final change
+file. It emits schema-v1 JSON Lines to a dedicated `tex82-events.jsonl`
+transport without using TeX's selector or transcript. Canonical or generated
+upstream files are never edited in place.
 
 The executables are external reference tools. Neither is Umber, neither may
 resolve to the Umber CLI, and neither is invoked by Cargo correctness tests.
@@ -43,19 +44,28 @@ scripts/build-tex82-oracle.sh --offline
 
 Set `UMBER_REF_TEXLIVE_SOURCE` only to select an equivalent cache containing
 the pinned archive, extracted `src`, and configured `build` directories. Set
-`CARGO_TARGET_DIR` to relocate outputs. The later instrumentation task may set
-`UMBER_TEX82_INSTRUMENTATION_CHANGE` to a final change file; the build record
-captures its path and hash.
+`CARGO_TARGET_DIR` to relocate outputs.
+`UMBER_TEX82_INSTRUMENTATION_CHANGE` may select another final change file; the
+build record captures its path and hash.
 
 Each build rewrites `target/tex82-oracle/build-record.txt` with the archive,
 manifest, ordered source/change files, final instrumentation change, generated
 final changes, translator and host tool identities, platform identity, and
-executable hashes. It then runs a font-independent INITEX smoke program through
-both variants and requires byte-identical terminal and ordinary log output,
-including the expected arithmetic result. The sole log normalization replaces
-TeX's startup-banner host clock; no semantic message or diagnostic is changed.
-Thus an instrumentation-ready build cannot silently alter ordinary TeX
-behavior.
+executable hashes. It then runs a font-independent INITEX smoke program and a
+focused command/input/recovery program through both variants. Terminal,
+normalized log, and exit status remain byte-identical. The instrumented
+transition program runs twice and must emit byte-identical traces; the
+`tex-oracle` validator checks canonical JSON encoding, schema,
+manifest-field shape, and contiguous sequence numbers. Focused checks require
+raw and expanded delivery, source and token input lifecycle, backup, scanner
+status, outer-validity recovery insertion, terminal stop, and termination
+ordering. The sole ordinary-log normalization replaces TeX's startup-banner
+host clock; no semantic message or diagnostic is changed.
+
+The live change file writes the all-zero manifest identity as an explicit
+unbound sentinel. It is not a committed fixture identity. Cross-engine
+fixture integration owns binding traces to complete canonical manifests; no
+trace with the sentinel may be committed as an oracle.
 
 Executable hashes are platform-specific because the host compiler and system
 linker are inputs. Reproducibility means identical pinned sources, ordered

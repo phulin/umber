@@ -19,8 +19,10 @@ out_dir="${target_dir}/tex82-oracle"
 bin_dir="${out_dir}/bin"
 clean_executable="${bin_dir}/umber-tex82-oracle"
 instrumentable_executable="${bin_dir}/umber-tex82-oracle-instrumentable"
-instrumentation_change="${UMBER_TEX82_INSTRUMENTATION_CHANGE:-${repo_root}/tests/tex82-oracle/instrumentation-empty.ch}"
+instrumentation_change="${UMBER_TEX82_INSTRUMENTATION_CHANGE:-${repo_root}/tests/tex82-oracle/instrumentation.ch}"
 smoke_input="${repo_root}/tests/tex82-oracle/smoke.tex"
+transition_input="${repo_root}/tests/tex82-oracle/transitions.tex"
+transition_child="${repo_root}/tests/tex82-oracle/transitions-child.tex"
 cflags="-O2"
 cxxflags="-O2"
 source_date_epoch="${SOURCE_DATE_EPOCH:-1783604160}"
@@ -33,8 +35,8 @@ usage: scripts/build-tex82-oracle.sh [--offline]
 Acquire and verify the pinned TeX Live 2025 source snapshot, then build the
 canonical TeX82 Web2C oracle twice: once from the ordered upstream change
 stack and once with a final repository-owned instrumentation change file.
-The default final change is deliberately empty. Set
-UMBER_TEX82_INSTRUMENTATION_CHANGE to select a later tracing change file.
+The default final change emits schema-v1 command-core transitions. Set
+UMBER_TEX82_INSTRUMENTATION_CHANGE to select another final change file.
 
 Outputs and a complete identity record are written under target/tex82-oracle.
 After the first acquisition, --offline performs no network I/O.
@@ -206,6 +208,32 @@ run_smoke() {
     > "${run_dir}/ordinary.log"
 }
 
+run_transitions() {
+  local executable="$1" variant="$2" run_dir status=0
+  run_dir="${out_dir}/transitions/${variant}"
+  rm -rf "$run_dir"
+  mkdir -p "$run_dir"
+  cp "$transition_input" "${run_dir}/transitions.tex"
+  cp "$transition_child" "${run_dir}/transitions-child.tex"
+  (
+    cd "$run_dir"
+    env -i PATH=/usr/bin:/bin LC_ALL=C LANGUAGE=C \
+      SOURCE_DATE_EPOCH="$source_date_epoch" FORCE_SOURCE_DATE=1 \
+      TEXMFCNF="${source_dir}/texk/web2c/triptrap" \
+      "$executable" -ini -interaction=nonstopmode transitions.tex \
+      >terminal.txt 2>&1
+  ) || status="$?"
+  [[ "$status" -le 1 ]] ||
+    fail "$variant transition run exited with unexpected status $status"
+  printf '%s\n' "$status" >"${run_dir}/status.txt"
+  [[ -f "${run_dir}/transitions.log" ]] ||
+    fail "$variant transition run did not write transitions.log"
+  grep -q 'UMBER-TEX82-TRANSITIONS' "${run_dir}/transitions.log" ||
+    fail "$variant transition marker is absent"
+  sed '1s/)  .*$/) <HOST-CLOCK>/' "${run_dir}/transitions.log" \
+    >"${run_dir}/ordinary.log"
+}
+
 write_build_record() {
   local record="${out_dir}/build-record.txt" linker_path path tool tool_path
   {
@@ -254,6 +282,14 @@ write_build_record() {
       "$(sha_digest 256 "${out_dir}/smoke/clean/ordinary.log")"
     printf 'smoke-ordinary-log-sha256 instrumentable %s\n' \
       "$(sha_digest 256 "${out_dir}/smoke/instrumentable/ordinary.log")"
+    printf 'transition-trace-sha256 instrumentable %s\n' \
+      "$(sha_digest 256 "${out_dir}/transitions/instrumentable/tex82-events.jsonl")"
+    for variant in clean instrumentable; do
+      printf 'transition-terminal-sha256 %s %s\n' "$variant" \
+        "$(sha_digest 256 "${out_dir}/transitions/${variant}/terminal.txt")"
+      printf 'transition-ordinary-log-sha256 %s %s\n' "$variant" \
+        "$(sha_digest 256 "${out_dir}/transitions/${variant}/ordinary.log")"
+    done
   } > "$record"
 }
 
@@ -267,11 +303,40 @@ build_variant "$instrumentable_executable" "$instrumentation_change"
 cp "${web_build_dir}/tex-final.ch" "${out_dir}/instrumentable-final.ch"
 run_smoke "$clean_executable" clean
 run_smoke "$instrumentable_executable" instrumentable
+run_transitions "$clean_executable" clean
+run_transitions "$instrumentable_executable" instrumentable
+run_transitions "$instrumentable_executable" instrumentable-repeat
 cmp "${out_dir}/smoke/clean/terminal.txt" \
   "${out_dir}/smoke/instrumentable/terminal.txt" >/dev/null ||
   fail "instrumentable oracle changed ordinary terminal output"
 cmp "${out_dir}/smoke/clean/ordinary.log" \
   "${out_dir}/smoke/instrumentable/ordinary.log" >/dev/null ||
   fail "instrumentable oracle changed ordinary log output"
+for channel in terminal.txt ordinary.log status.txt; do
+  cmp "${out_dir}/transitions/clean/${channel}" \
+    "${out_dir}/transitions/instrumentable/${channel}" >/dev/null ||
+    fail "instrumentable oracle changed transition ${channel}"
+done
+cmp "${out_dir}/transitions/instrumentable/tex82-events.jsonl" \
+  "${out_dir}/transitions/instrumentable-repeat/tex82-events.jsonl" >/dev/null ||
+  fail "instrumentable oracle emitted a nondeterministic transition trace"
+cargo run -q -p tex-oracle --bin tex-oracle-validate -- \
+  "${out_dir}/transitions/instrumentable/tex82-events.jsonl"
+transition_trace="${out_dir}/transitions/instrumentable/tex82-events.jsonl"
+for pattern in \
+  '"delivery":"raw"' \
+  '"delivery":"expanded"' \
+  '"transition":"push","reason":"source"' \
+  '"transition":"retire","reason":"source"' \
+  '"reason":"macro"' \
+  '"kind":"backup"' \
+  '"kind":"inserted_control_sequence"' \
+  '"event":"scanner_status"' \
+  '"diagnostic":"outer_validity_control_sequence"' \
+  '"transition":"stop"' \
+  '"kind":"terminate"'; do
+  grep -q "$pattern" "$transition_trace" ||
+    fail "transition trace is missing schema boundary $pattern"
+done
 write_build_record
 printf '%s\n' "$bin_dir"
