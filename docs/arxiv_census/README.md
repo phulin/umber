@@ -169,3 +169,22 @@ engine work was 0.133 seconds and resource wait was 0.052 seconds. Invalid image
 truncated Umber format, while omitting `--format` completed in 0.01 seconds
 with undefined `\documentclass` and `\begin`. Census rows therefore deserialize
 the pinned format rather than rebuilding LaTeX or running initex.
+
+## 2026-07-23 non-pdfLaTeX classification
+
+`recent-20260723-non-pdflatex/` accounts for the six rows in the locked recent
+sample whose validated reference compiler is not pdfLaTeX. The two
+classic-LaTeX rows were rerun through the guarded Umber DVI path against their
+exact archive identities, the explicit 2026-03-01 distribution, and a freshly
+generated deterministic `latex.fmt`. Format validation emitted four
+`Illegal parameter number in definition` diagnostics in the representative
+loaded-format job, so the builder refused publication. The row diagnostics are
+therefore recorded as blocked evidence under `umber2-sdpz.13`, not as parity
+results.
+
+The other four rows declare XeLaTeX. Umber has no XeTeX or XeLaTeX engine
+contract: `--latex` deliberately identifies as neither, and loading a format
+cannot grant a different engine identity. Those rows are explicit unsupported-
+engine exclusions. All six rows have `in_pdflatex_denominator: false`; the
+recent pdfLaTeX denominator remains exactly the 94 rows whose validated
+reference compiler is `pdflatex`.

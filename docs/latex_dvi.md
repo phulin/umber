@@ -248,6 +248,8 @@ The package example under `examples/latex.html` is the same browser workflow.
 
 - whole-upstream-corpus pdfLaTeX structural and rendering parity in this
   initial engine-mode milestone;
+- XeTeX and XeLaTeX engine compatibility; a source validated with either
+  engine must not be counted as a LaTeX-DVI or pdfLaTeX parity failure;
 - unrestricted compatibility with the full CTAN package ecosystem;
 - shell escape; and
 - automatic execution of index tools.
