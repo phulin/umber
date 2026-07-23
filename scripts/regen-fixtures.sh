@@ -84,11 +84,11 @@ Reference tools:
   UMBER_REF_TEXLIVE_SOURCE to select an equivalent cache root containing the
   pinned archive, src, and build directories.
 
-  TeX82 and e-TeX oracle regeneration build separate clean and
-  instrumentation-ready executables, verify ordinary-output transparency, and
+  TeX82 and e-TeX oracle regeneration build separate clean and instrumented
+  executables, verify ordinary-output transparency, and
   record all source, change, profile, tool, and executable identities under
   target/. The e-TeX workflow verifies compatibility and extended INITEX
-  profiles independently.
+  profiles independently against the base semantic-event matrix.
 EOF
 }
 

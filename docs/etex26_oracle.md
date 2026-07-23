@@ -20,12 +20,12 @@ under a distinct name so callers cannot leave that semantic choice implicit:
 ```text
 target/etex26-oracle/bin/umber-etex26-compatibility-oracle-clean
 target/etex26-oracle/bin/umber-etex26-extended-oracle-clean
-target/etex26-oracle/bin/umber-etex26-compatibility-oracle-instrumentation-ready
-target/etex26-oracle/bin/umber-etex26-extended-oracle-instrumentation-ready
+target/etex26-oracle/bin/umber-etex26-compatibility-oracle-instrumented
+target/etex26-oracle/bin/umber-etex26-extended-oracle-instrumented
 ```
 
 The profile executables are byte-identical aliases of the applicable clean or
-instrumentation-ready program because the profile is selected by canonical
+instrumented program because the profile is selected by canonical
 INITEX input, not a compile-time flag. Their profile identity additionally
 covers the invocation. These are external Web2C reference tools: none is
 Umber, none may resolve to the Umber CLI, and Cargo correctness tests neither
@@ -54,20 +54,32 @@ the build record captures its path and hash.
 
 The build first merges `tex.web` with the upstream e-TeX change into the
 canonical e-TeX WEB program. It then applies the pinned Web2C portability
-changes in their declared order. The instrumentation-ready build appends
-`tests/etex26-oracle/instrumentation-ready.ch` as the final change. That file
-is intentionally transparent: the following instrumentation task owns adding
-schema-v1 events at this already-pinned seam. Canonical and generated upstream
-files are never edited in place.
+changes in their declared order. The instrumented build appends
+`tests/etex26-oracle/instrumentation.ch` as the final change. That detached
+observer ports the complete TeX82-applicable schema-v1 command contract to
+e-TeX's canonical seams, including changed assignment, pseudo-file,
+protected-alignment-lookahead, and conditional-unwind paths. Canonical and
+generated upstream files are never edited in place.
 
 Every run rewrites `target/etex26-oracle/build-record.txt` with engine,
 character, and INITEX profile identities; archive and manifest hashes; ordered
 WEB and change hashes; generated final-change hashes; translator, host
 toolchain, linker, and platform identities; and executable and smoke-output
 hashes. A font-independent program proves the compatibility profile leaves
-e-TeX primitives undefined and the extended profile exposes e-TeX 2.6. For
-each profile, clean and instrumentation-ready terminal, normalized log, exit
-status, and DVI output must be byte-identical.
+e-TeX primitives undefined and the extended profile exposes e-TeX 2.6.
+The focused transition program and child input run in both profiles. Each
+instrumented trace is schema-validated, checked against
+`semantic-event-matrix.txt`, and reproduced byte-for-byte by a second run.
+The matrix covers delivery, input lifecycle, recovery, scanner status, macro
+matching and activation, token-list collection, scanners, conditions,
+alignments, assignment mutations, ordinary effects, and termination. For each
+profile, clean and instrumented terminal, normalized log, exit status, DVI,
+and generated write bytes must be byte-identical.
+
+The all-zero manifest identity in the live stream is an explicit unbound
+sentinel, not a fixture identity. The final change records semantic names and
+values only; allocation addresses, input-stack indexes, pool indexes, physical
+paths, and helper-call identity remain outside the event stream.
 
 Executable hashes are platform-specific because the compiler and system
 linker are inputs. Reproducibility means the complete pinned source, ordered

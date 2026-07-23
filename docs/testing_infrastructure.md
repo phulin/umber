@@ -193,9 +193,10 @@ Poppler `pdftoppm` 25.08.0; its `--area fonts` mode owns the explicit live
 Its `--area tex82-oracle` and `--area etex26-oracle` modes own pinned live
 reference builds outside the correctness tier. Both reuse the hash-verified
 TeX Live 2025 source cache offline, record the source/change/tool/platform and
-executable identities under `target/`, and compare clean with
-instrumentation-ready ordinary outputs. The e-TeX mode additionally verifies
-the distinct compatibility and leading-`*` extended INITEX profiles.
+executable identities under `target/`, and compare clean with instrumented
+ordinary outputs. The e-TeX mode additionally verifies the distinct
+compatibility and leading-`*` extended INITEX profiles, validates the complete
+base schema-v1 event matrix in both, and repeats each trace deterministically.
 
 See `tests/AGENTS.md` for the supported areas and cases, required tools,
 copied support files, and validation performed after a rewrite.

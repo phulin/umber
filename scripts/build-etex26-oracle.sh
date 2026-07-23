@@ -17,8 +17,11 @@ target_dir="${CARGO_TARGET_DIR:-target}"
 [[ "$target_dir" == /* ]] || target_dir="${repo_root}/${target_dir}"
 out_dir="${target_dir}/etex26-oracle"
 bin_dir="${out_dir}/bin"
-instrumentation_change="${UMBER_ETEX26_INSTRUMENTATION_CHANGE:-${repo_root}/tests/etex26-oracle/instrumentation-ready.ch}"
+instrumentation_change="${UMBER_ETEX26_INSTRUMENTATION_CHANGE:-${repo_root}/tests/etex26-oracle/instrumentation.ch}"
 smoke_input="${repo_root}/tests/etex26-oracle/smoke.tex"
+transition_input="${repo_root}/tests/etex26-oracle/transitions.tex"
+transition_child="${repo_root}/tests/etex26-oracle/transitions-child.tex"
+semantic_event_matrix="${repo_root}/tests/etex26-oracle/semantic-event-matrix.txt"
 cflags="-O2"
 cxxflags="-O2"
 source_date_epoch="${SOURCE_DATE_EPOCH:-1783604160}"
@@ -29,10 +32,11 @@ usage() {
 usage: scripts/build-etex26-oracle.sh [--offline]
 
 Acquire and verify the pinned TeX Live 2025 source snapshot, then build
-canonical e-TeX 2.6 clean and instrumentation-ready executables. Each build is
+canonical e-TeX 2.6 clean and instrumented executables. Each build is
 published under separately named compatibility and extended-mode profiles.
 The profiles differ by the canonical INITEX invocation: extended mode consumes
 a leading "*" before the input name.
+The final repository change emits the shared schema-v1 base command trace.
 
 Outputs and a complete identity record are written under target/etex26-oracle.
 After the first acquisition, --offline performs no network I/O.
@@ -274,6 +278,38 @@ run_smoke() {
     >"${run_dir}/ordinary.log"
 }
 
+run_transitions() {
+  local executable="$1" build_profile="$2" engine_profile="$3"
+  local run_dir="${out_dir}/transitions/${build_profile}-${engine_profile}"
+  local input_name="transitions.tex" status=0
+  [[ "$engine_profile" == compatibility ]] || input_name="*transitions.tex"
+  rm -rf "$run_dir"
+  mkdir -p "$run_dir"
+  cp "$transition_input" "${run_dir}/transitions.tex"
+  cp "$transition_child" "${run_dir}/transitions-child.tex"
+  (
+    cd "$run_dir"
+    env -i PATH=/usr/bin:/bin LC_ALL=C LANGUAGE=C \
+      SOURCE_DATE_EPOCH="$source_date_epoch" FORCE_SOURCE_DATE=1 \
+      TEXMFCNF="${source_dir}/texk/web2c/triptrap" \
+      "$executable" -ini -interaction=nonstopmode "$input_name" \
+      >terminal.txt 2>&1
+  ) || status="$?"
+  [[ "$status" -le 1 ]] ||
+    fail "$build_profile/$engine_profile transition run exited with unexpected status $status"
+  printf '%s\n' "$status" >"${run_dir}/status.txt"
+  [[ -f "${run_dir}/transitions.log" ]] ||
+    fail "$build_profile/$engine_profile transition run did not write transitions.log"
+  [[ -f "${run_dir}/transitions.dvi" ]] ||
+    fail "$build_profile/$engine_profile transition run did not write transitions.dvi"
+  [[ -f "${run_dir}/transitions-effects.out" ]] ||
+    fail "$build_profile/$engine_profile transition run did not write transition effects"
+  grep -q 'UMBER-TEX82-TRANSITIONS' "${run_dir}/transitions.log" ||
+    fail "$build_profile/$engine_profile transition marker is absent"
+  sed '1s/)  .*$/) <HOST-CLOCK>/' "${run_dir}/transitions.log" \
+    >"${run_dir}/ordinary.log"
+}
+
 write_build_record() {
   local record="${out_dir}/build-record.txt"
   local linker_path path tool tool_path build_profile engine_profile executable
@@ -325,9 +361,9 @@ write_build_record() {
     printf 'host-uname %s\n' "$(uname -a)"
     printf 'generated-clean-final-change-sha256 %s\n' \
       "$(sha_digest 256 "${out_dir}/clean-final.ch")"
-    printf 'generated-instrumentation-ready-final-change-sha256 %s\n' \
-      "$(sha_digest 256 "${out_dir}/instrumentation-ready-final.ch")"
-    for build_profile in clean instrumentation-ready; do
+    printf 'generated-instrumented-final-change-sha256 %s\n' \
+      "$(sha_digest 256 "${out_dir}/instrumented-final.ch")"
+    for build_profile in clean instrumented; do
       for engine_profile in compatibility extended; do
         executable="$(profile_executable "$build_profile" "$engine_profile")"
         printf 'executable %s %s %s %s\n' \
@@ -339,6 +375,23 @@ write_build_record() {
         printf 'smoke-dvi-sha256 %s %s %s\n' \
           "$build_profile" "$engine_profile" \
           "$(sha_digest 256 "${out_dir}/smoke/${build_profile}-${engine_profile}/smoke.dvi")"
+        printf 'transition-terminal-sha256 %s %s %s\n' \
+          "$build_profile" "$engine_profile" \
+          "$(sha_digest 256 "${out_dir}/transitions/${build_profile}-${engine_profile}/terminal.txt")"
+        printf 'transition-ordinary-log-sha256 %s %s %s\n' \
+          "$build_profile" "$engine_profile" \
+          "$(sha_digest 256 "${out_dir}/transitions/${build_profile}-${engine_profile}/ordinary.log")"
+        printf 'transition-dvi-sha256 %s %s %s\n' \
+          "$build_profile" "$engine_profile" \
+          "$(sha_digest 256 "${out_dir}/transitions/${build_profile}-${engine_profile}/transitions.dvi")"
+        printf 'transition-effect-output-sha256 %s %s %s\n' \
+          "$build_profile" "$engine_profile" \
+          "$(sha_digest 256 "${out_dir}/transitions/${build_profile}-${engine_profile}/transitions-effects.out")"
+        if [[ "$build_profile" == instrumented ]]; then
+          printf 'transition-trace-sha256 %s %s %s\n' \
+            "$build_profile" "$engine_profile" \
+            "$(sha_digest 256 "${out_dir}/transitions/${build_profile}-${engine_profile}/etex26-events.jsonl")"
+        fi
       done
     done
   } > "$record"
@@ -352,21 +405,55 @@ generate_canonical_web
 build_variant "${out_dir}/etex-clean"
 cp "${web_build_dir}/etex-final.ch" "${out_dir}/clean-final.ch"
 publish_variant "${out_dir}/etex-clean" clean
-build_variant "${out_dir}/etex-instrumentation-ready" "$instrumentation_change"
-cp "${web_build_dir}/etex-final.ch" "${out_dir}/instrumentation-ready-final.ch"
-publish_variant "${out_dir}/etex-instrumentation-ready" instrumentation-ready
-for build_profile in clean instrumentation-ready; do
+build_variant "${out_dir}/etex-instrumented" "$instrumentation_change"
+cp "${web_build_dir}/etex-final.ch" "${out_dir}/instrumented-final.ch"
+publish_variant "${out_dir}/etex-instrumented" instrumented
+for build_profile in clean instrumented; do
   for engine_profile in compatibility extended; do
     run_smoke "$(profile_executable "$build_profile" "$engine_profile")" \
+      "$build_profile" "$engine_profile"
+    run_transitions "$(profile_executable "$build_profile" "$engine_profile")" \
       "$build_profile" "$engine_profile"
   done
 done
 for engine_profile in compatibility extended; do
   for channel in terminal.txt ordinary.log status.txt smoke.dvi; do
     cmp "${out_dir}/smoke/clean-${engine_profile}/${channel}" \
-      "${out_dir}/smoke/instrumentation-ready-${engine_profile}/${channel}" \
+      "${out_dir}/smoke/instrumented-${engine_profile}/${channel}" \
       >/dev/null ||
-      fail "instrumentation-ready $engine_profile oracle changed $channel"
+      fail "instrumented $engine_profile oracle changed smoke $channel"
+  done
+  for channel in terminal.txt ordinary.log status.txt transitions.dvi \
+    transitions-effects.out; do
+    cmp "${out_dir}/transitions/clean-${engine_profile}/${channel}" \
+      "${out_dir}/transitions/instrumented-${engine_profile}/${channel}" \
+      >/dev/null ||
+      fail "instrumented $engine_profile oracle changed transition $channel"
+  done
+done
+for engine_profile in compatibility extended; do
+  trace="${out_dir}/transitions/instrumented-${engine_profile}/etex26-events.jsonl"
+  cargo run -q -p tex-oracle --bin tex-oracle-validate -- "$trace"
+  while IFS='|' read -r family boundary fixture seam pattern extra; do
+    [[ -z "$family" || "$family" == \#* ]] && continue
+    [[ -n "$boundary" && -n "$fixture" && -n "$seam" && -n "$pattern" &&
+      -z "${extra:-}" ]] ||
+      fail "malformed semantic event matrix row for ${family:-unknown}"
+    grep -Fq "$pattern" "$trace" ||
+      fail "$engine_profile trace is missing $family/$boundary from $fixture at $seam"
+  done < "$semantic_event_matrix"
+done
+run_transitions "$(profile_executable instrumented compatibility)" \
+  instrumented-repeat compatibility
+run_transitions "$(profile_executable instrumented extended)" \
+  instrumented-repeat extended
+for engine_profile in compatibility extended; do
+  for channel in terminal.txt ordinary.log status.txt transitions.dvi \
+    transitions-effects.out etex26-events.jsonl; do
+    cmp "${out_dir}/transitions/instrumented-${engine_profile}/${channel}" \
+      "${out_dir}/transitions/instrumented-repeat-${engine_profile}/${channel}" \
+      >/dev/null ||
+      fail "repeated instrumented $engine_profile oracle changed $channel"
   done
 done
 write_build_record

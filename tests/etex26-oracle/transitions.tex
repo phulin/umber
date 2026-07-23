@@ -1,0 +1,52 @@
+\catcode `{ = 1
+\catcode `} = 2
+\catcode `# = 6
+\catcode `& = 4
+\def\identity#1{#1}
+\identity{\relax}
+\def\pair#1#2{#2#1}
+\pair AB
+\def\delimited#1END{#1}
+\delimited payloadEND
+\def\overlap#1aab{#1}
+\overlap aaab
+\long\def\longtake#1{#1}
+\longtake{before\par after}
+\toks0={TOKEN LIST}
+\output={OUTPUT ROUTINE}
+\edef\thecopy{\the\toks0}
+\edef\frozen{\noexpand\relax}
+\lccode`Z=`y
+\tolerance=1234
+\count0="2A
+\count1=\count0
+\global\count2=7
+\dimen0=1.5pt
+\skip0=2pt plus 3fil minus 4pt
+\iftrue\iffalse nested false\else nested true\fi\fi
+\def\samea{same}
+\def\sameb{same}
+\ifx\samea\sameb ifx true\else ifx false\fi
+\ifcase2 case zero\or case one\or case two\else case fallback\fi
+\iffalse {skipped {braces}}\else kept\fi
+\ifnum1<\else recovered\fi
+\setbox0=\vbox{\halign{#&#\cr
+{A}&B\cr
+\omit C&D\cr
+E\span F\cr
+\noalign{\relax}
+\vbox{\halign{#\cr N\cr}}&H\cr}}
+\setbox1=\vbox{\halign{left&right#\cr
+I&J\cr}}
+\setbox2=\vbox{\halign{##\cr
+K\cr}}
+\immediate\openout0=transitions-effects.out
+\immediate\write0{UMBER-TEX82-WRITE}
+\immediate\closeout0
+\shipout\hbox{}
+\message{UMBER-TEX82-TRANSITIONS}
+\input transitions-child
+\outer\def\outercommand{}
+\def\takeone#1{}
+\takeone\outercommand
+\end

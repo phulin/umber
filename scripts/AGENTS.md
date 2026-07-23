@@ -36,5 +36,6 @@ Read the repository-root `AGENTS.md` first. This file adds the directory map for
   terminal/log/DVI transparency and the machine-readable semantic event matrix
   are gated together, and all identities are recorded.
 - `build-etex26-oracle.sh`: hash-pinned canonical e-TeX 2.6 source acquisition
-  and reproducible clean/instrumentation-ready Web2C builds; compatibility and
-  extended INITEX profiles are separately named, smoke-gated, and recorded.
+  and reproducible clean/instrumented Web2C builds; compatibility and extended
+  INITEX profiles are separately named, smoke- and schema-v1 base-command
+  matrix-gated, transparency-checked, and recorded.
