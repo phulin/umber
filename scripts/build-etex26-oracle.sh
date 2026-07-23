@@ -22,6 +22,8 @@ smoke_input="${repo_root}/tests/etex26-oracle/smoke.tex"
 transition_input="${repo_root}/tests/etex26-oracle/transitions.tex"
 transition_child="${repo_root}/tests/etex26-oracle/transitions-child.tex"
 semantic_event_matrix="${repo_root}/tests/etex26-oracle/semantic-event-matrix.txt"
+extension_input="${repo_root}/tests/etex26-oracle/extensions.tex"
+extension_event_matrix="${repo_root}/tests/etex26-oracle/extension-event-matrix.txt"
 cflags="-O2"
 cxxflags="-O2"
 source_date_epoch="${SOURCE_DATE_EPOCH:-1783604160}"
@@ -36,7 +38,8 @@ canonical e-TeX 2.6 clean and instrumented executables. Each build is
 published under separately named compatibility and extended-mode profiles.
 The profiles differ by the canonical INITEX invocation: extended mode consumes
 a leading "*" before the input name.
-The final repository change emits the shared schema-v1 base command trace.
+The final repository change emits the shared schema-v1 base command trace and
+focused extended-mode expansion/token-construction observations.
 
 Outputs and a complete identity record are written under target/etex26-oracle.
 After the first acquisition, --offline performs no network I/O.
@@ -310,6 +313,52 @@ run_transitions() {
     >"${run_dir}/ordinary.log"
 }
 
+run_extensions() {
+  local executable="$1" build_profile="$2" engine_profile="$3"
+  local run_dir="${out_dir}/extensions/${build_profile}-${engine_profile}"
+  local input_name="extensions.tex" status=0
+  [[ "$engine_profile" == compatibility ]] || input_name="*extensions.tex"
+  rm -rf "$run_dir"
+  mkdir -p "$run_dir"
+  cp "$extension_input" "${run_dir}/extensions.tex"
+  (
+    cd "$run_dir"
+    env -i PATH=/usr/bin:/bin LC_ALL=C LANGUAGE=C \
+      SOURCE_DATE_EPOCH="$source_date_epoch" FORCE_SOURCE_DATE=1 \
+      TEXMFCNF="${source_dir}/texk/web2c/triptrap" \
+      "$executable" -ini -interaction=batchmode "$input_name" \
+      >terminal.txt 2>&1
+  ) || status="$?"
+  [[ "$status" -eq 0 ]] ||
+    fail "$build_profile/$engine_profile extension run exited with status $status"
+  printf '%s\n' "$status" >"${run_dir}/status.txt"
+  [[ -f "${run_dir}/extensions.log" ]] ||
+    fail "$build_profile/$engine_profile extension run did not write extensions.log"
+  [[ -f "${run_dir}/extensions.dvi" ]] ||
+    fail "$build_profile/$engine_profile extension run did not write extensions.dvi"
+  if [[ "$engine_profile" == compatibility ]]; then
+    grep -q 'UMBER-ETEX26-EXTENSIONS-COMPATIBILITY' \
+      "${run_dir}/extensions.log" ||
+      fail "$build_profile compatibility extension exclusion marker is absent"
+    ! grep -q 'UMBER-ETEX26-EXTENSIONS-EXTENDED' \
+      "${run_dir}/extensions.log" ||
+      fail "$build_profile compatibility profile executed e-TeX extensions"
+  else
+    grep -q 'UMBER-ETEX26-EXTENSIONS-EXTENDED' "${run_dir}/extensions.log" ||
+      fail "$build_profile extended extension marker is absent"
+    grep -Fq 'PROTECTED-COPY=A\protectedmacro B' \
+      "${run_dir}/extensions.log" ||
+      fail "$build_profile extended protected result is absent"
+    grep -q 'UNEXPANDED-COPY=CORD' "${run_dir}/extensions.log" ||
+      fail "$build_profile extended unexpanded result is absent"
+    grep -q 'SCANTOKENS-BODY' "${run_dir}/extensions.log" &&
+      grep -q 'EVERYEOF-REP' "${run_dir}/extensions.log" ||
+      fail "$build_profile extended pseudo-file markers are absent"
+  fi
+  sed '1s/)  .*$/) <HOST-CLOCK>/' "${run_dir}/extensions.log" \
+    >"${run_dir}/ordinary.log"
+}
+
 write_build_record() {
   local record="${out_dir}/build-record.txt"
   local linker_path path tool tool_path build_profile engine_profile executable
@@ -387,10 +436,22 @@ write_build_record() {
         printf 'transition-effect-output-sha256 %s %s %s\n' \
           "$build_profile" "$engine_profile" \
           "$(sha_digest 256 "${out_dir}/transitions/${build_profile}-${engine_profile}/transitions-effects.out")"
+        printf 'extension-terminal-sha256 %s %s %s\n' \
+          "$build_profile" "$engine_profile" \
+          "$(sha_digest 256 "${out_dir}/extensions/${build_profile}-${engine_profile}/terminal.txt")"
+        printf 'extension-ordinary-log-sha256 %s %s %s\n' \
+          "$build_profile" "$engine_profile" \
+          "$(sha_digest 256 "${out_dir}/extensions/${build_profile}-${engine_profile}/ordinary.log")"
+        printf 'extension-dvi-sha256 %s %s %s\n' \
+          "$build_profile" "$engine_profile" \
+          "$(sha_digest 256 "${out_dir}/extensions/${build_profile}-${engine_profile}/extensions.dvi")"
         if [[ "$build_profile" == instrumented ]]; then
           printf 'transition-trace-sha256 %s %s %s\n' \
             "$build_profile" "$engine_profile" \
             "$(sha_digest 256 "${out_dir}/transitions/${build_profile}-${engine_profile}/etex26-events.jsonl")"
+          printf 'extension-trace-sha256 %s %s %s\n' \
+            "$build_profile" "$engine_profile" \
+            "$(sha_digest 256 "${out_dir}/extensions/${build_profile}-${engine_profile}/etex26-events.jsonl")"
         fi
       done
     done
@@ -414,6 +475,8 @@ for build_profile in clean instrumented; do
       "$build_profile" "$engine_profile"
     run_transitions "$(profile_executable "$build_profile" "$engine_profile")" \
       "$build_profile" "$engine_profile"
+    run_extensions "$(profile_executable "$build_profile" "$engine_profile")" \
+      "$build_profile" "$engine_profile"
   done
 done
 for engine_profile in compatibility extended; do
@@ -430,6 +493,12 @@ for engine_profile in compatibility extended; do
       >/dev/null ||
       fail "instrumented $engine_profile oracle changed transition $channel"
   done
+  for channel in terminal.txt ordinary.log status.txt extensions.dvi; do
+    cmp "${out_dir}/extensions/clean-${engine_profile}/${channel}" \
+      "${out_dir}/extensions/instrumented-${engine_profile}/${channel}" \
+      >/dev/null ||
+      fail "instrumented $engine_profile oracle changed extension $channel"
+  done
 done
 for engine_profile in compatibility extended; do
   trace="${out_dir}/transitions/instrumented-${engine_profile}/etex26-events.jsonl"
@@ -443,9 +512,30 @@ for engine_profile in compatibility extended; do
       fail "$engine_profile trace is missing $family/$boundary from $fixture at $seam"
   done < "$semantic_event_matrix"
 done
+extended_trace="${out_dir}/extensions/instrumented-extended/etex26-events.jsonl"
+compatibility_trace="${out_dir}/extensions/instrumented-compatibility/etex26-events.jsonl"
+cargo run -q -p tex-oracle --bin tex-oracle-validate -- "$extended_trace"
+cargo run -q -p tex-oracle --bin tex-oracle-validate -- "$compatibility_trace"
+while IFS='|' read -r family boundary fixture seam pattern compatibility extra; do
+  [[ -z "$family" || "$family" == \#* ]] && continue
+  [[ -n "$boundary" && -n "$fixture" && -n "$seam" && -n "$pattern" &&
+    ( "$compatibility" == absent || "$compatibility" == shared ) &&
+    -z "${extra:-}" ]] ||
+    fail "malformed extension event matrix row for ${family:-unknown}"
+  grep -Fq "$pattern" "$extended_trace" ||
+    fail "extended trace is missing $family/$boundary from $fixture at $seam"
+  if [[ "$compatibility" == absent ]]; then
+    ! grep -Fq "$pattern" "$compatibility_trace" ||
+      fail "compatibility trace unexpectedly contains $family/$boundary"
+  fi
+done < "$extension_event_matrix"
 run_transitions "$(profile_executable instrumented compatibility)" \
   instrumented-repeat compatibility
 run_transitions "$(profile_executable instrumented extended)" \
+  instrumented-repeat extended
+run_extensions "$(profile_executable instrumented compatibility)" \
+  instrumented-repeat compatibility
+run_extensions "$(profile_executable instrumented extended)" \
   instrumented-repeat extended
 for engine_profile in compatibility extended; do
   for channel in terminal.txt ordinary.log status.txt transitions.dvi \
@@ -454,6 +544,15 @@ for engine_profile in compatibility extended; do
       "${out_dir}/transitions/instrumented-repeat-${engine_profile}/${channel}" \
       >/dev/null ||
       fail "repeated instrumented $engine_profile oracle changed $channel"
+  done
+done
+for engine_profile in compatibility extended; do
+  for channel in terminal.txt ordinary.log status.txt extensions.dvi \
+    etex26-events.jsonl; do
+    cmp "${out_dir}/extensions/instrumented-${engine_profile}/${channel}" \
+      "${out_dir}/extensions/instrumented-repeat-${engine_profile}/${channel}" \
+      >/dev/null ||
+      fail "repeated instrumented $engine_profile oracle changed extension $channel"
   done
 done
 write_build_record

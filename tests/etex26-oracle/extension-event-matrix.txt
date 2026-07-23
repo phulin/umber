@@ -1,0 +1,12 @@
+# Required schema-v1 e-TeX 2.6 expansion and token-construction observations.
+# These rows apply only to the canonical extended INITEX profile.
+# Columns: family|boundary|fixture|final-change seam|fixed JSON fragment|compatibility
+token_list|protected macro construction|extensions.tex|prefixed_command protected flag commit|"purpose":"protected_macro"|absent
+token_list|protected expansion suppression|extensions.tex|expanded scan_toks protected branch|"purpose":"protected_expansion_suppression"|absent
+token_list|unexpanded construction|extensions.tex|the_toks unexpanded return|"purpose":"unexpanded"|absent
+token_list|unexpanded direct splice|extensions.tex|expanded scan_toks the_toks branch|"purpose":"the_toks","tokens":[{"character":0,"catcode":"escape","control_sequence":"ordinarymacro"}|absent
+token_list|detokenize construction|extensions.tex|the_toks detokenize return|"purpose":"detokenize"|absent
+token_list|expanded construction|extensions.tex|expanded scan_toks completion|"purpose":"expanded_scan_toks"|shared
+token_list|scantokens construction|extensions.tex|pseudo_start balanced-text commit|"purpose":"scantokens"|absent
+input|everyeof push|extensions.tex|natural pseudo-file EOF insertion|"transition":"push","reason":"token_list","name":"every_eof"|absent
+input|everyeof retirement|extensions.tex|everyeof token-list retirement|"transition":"retire","reason":"token_list","name":"every_eof"|absent

@@ -1,0 +1,19 @@
+\catcode `{ = 1
+\catcode `} = 2
+\expandafter\ifx\csname eTeXversion\endcsname\relax
+  \message{UMBER-ETEX26-EXTENSIONS-COMPATIBILITY}
+\else
+  \def\ordinarymacro{ORDINARY}
+  \protected\def\protectedmacro{PROTECTED}
+  \edef\protectedcopy{A\protectedmacro B}
+  \edef\unexpandedcopy{C\unexpanded{\ordinarymacro D}E}
+  \edef\detokenizedcopy{\detokenize{\ordinarymacro F G}}
+  \message{PROTECTED-COPY=\protectedcopy}
+  \message{UNEXPANDED-COPY=\unexpandedcopy}
+  \message{DETOKENIZED-COPY=\detokenizedcopy}
+  \everyeof={\message{EVERYEOF-REPLAY}}
+  \scantokens{\message{SCANTOKENS-BODY}}
+  \message{UMBER-ETEX26-EXTENSIONS-EXTENDED}
+\fi
+\shipout\hbox{}
+\end

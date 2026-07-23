@@ -76,6 +76,18 @@ alignments, assignment mutations, ordinary effects, and termination. For each
 profile, clean and instrumented terminal, normalized log, exit status, DVI,
 and generated write bytes must be byte-identical.
 
+A second focused program, `tests/etex26-oracle/extensions.tex`, takes an
+explicit compatibility-exclusion branch and exercises the extended profile's
+protected macro construction, protected expanded-token-list suppression,
+`\unexpanded`, `\detokenize`, expanded `scan_toks` construction,
+`\scantokens`, and `\everyeof`. Its extended trace is gated by
+`extension-event-matrix.txt`; extension-only fragments must be absent from the
+compatibility trace. Both profile traces are schema-validated and reproduced
+byte-for-byte, and clean versus instrumented terminal, normalized log, status,
+and DVI bytes must agree. Canonical e-TeX 2.6 does not define the later
+`\expanded` primitive: this oracle records its expanded token-list construction
+seam, while the pdfTeX oracle owns the primitive itself.
+
 The all-zero manifest identity in the live stream is an explicit unbound
 sentinel, not a fixture identity. The final change records semantic names and
 values only; allocation addresses, input-stack indexes, pool indexes, physical

@@ -268,7 +268,8 @@ begin case t of
 12:write(umber_trace_file,'"every_job"');
 13:write(umber_trace_file,'"every_cr"');
 14:write(umber_trace_file,'"mark"');
-15:write(umber_trace_file,'"write"');
+15:write(umber_trace_file,'"every_eof"');
+16:write(umber_trace_file,'"write"');
 othercases write(umber_trace_file,'"token_list"')
 endcases;
 end;
@@ -345,7 +346,13 @@ case purpose of
 3:write(umber_trace_file,'macro_replacement');
 4:write(umber_trace_file,'scan_toks');
 5:write(umber_trace_file,'expanded_scan_toks');
-othercases write(umber_trace_file,'the_toks')
+6:write(umber_trace_file,'the_toks');
+7:write(umber_trace_file,'unexpanded');
+8:write(umber_trace_file,'detokenize');
+9:write(umber_trace_file,'scantokens');
+10:write(umber_trace_file,'protected_macro');
+11:write(umber_trace_file,'protected_expansion_suppression');
+othercases write(umber_trace_file,'protected_delivery_suppression')
 endcases;
 write(umber_trace_file,'","tokens":[');
 umber_trace_token_range(p,stop_pointer);
@@ -358,9 +365,13 @@ if not umber_trace_opened then return;
 umber_trace_begin;
 write(umber_trace_file,
   '{"event":"token_list","data":{"transition":"splice","purpose":"');
-if purpose=1 then write(umber_trace_file,'macro_delimiter_recovery')
-else if purpose=2 then write(umber_trace_file,'parameter_conversion')
-else write(umber_trace_file,'the_toks');
+case purpose of
+1:write(umber_trace_file,'macro_delimiter_recovery');
+2:write(umber_trace_file,'parameter_conversion');
+11:write(umber_trace_file,'protected_expansion_suppression');
+12:write(umber_trace_file,'protected_delivery_suppression');
+othercases write(umber_trace_file,'the_toks')
+endcases;
 write(umber_trace_file,'","tokens":['); umber_trace_token(t);
 write_ln(umber_trace_file,']}}}');
 end;
@@ -1282,6 +1293,19 @@ else umber_trace_token_list(1,4,link(umber_trace_start),null);
 scan_toks:=p;
 @z
 
+@x [27] Observe protected-macro suppression in expanded token construction.
+  if cur_cmd>=call then
+    if info(link(cur_chr))=protected_token then
+      begin cur_cmd:=relax; cur_chr:=no_expand_flag;
+      end;
+@y
+  if cur_cmd>=call then
+    if info(link(cur_chr))=protected_token then
+      begin umber_trace_token_splice(11,cs_token_flag+cur_cs);
+      cur_cmd:=relax; cur_chr:=no_expand_flag;
+      end;
+@z
+
 @x [27] Observe direct token-list splices made by \the.
   if cur_cmd<=max_command then goto done2;
   if cur_cmd<>the then expand
@@ -1611,6 +1635,21 @@ done: umber_mutation_command:=false;
 @<Insert a token saved by \.{\\afterassignment}, if any@>;
 @z
 
+@x [49] Observe the semantic protected-macro definition after flag insertion.
+  if j<>0 then
+    begin q:=get_avail; info(q):=j; link(q):=link(def_ref);
+    link(def_ref):=q;
+    end;
+  define(p,call+(a mod 4),def_ref);
+@y
+  if j<>0 then
+    begin q:=get_avail; info(q):=j; link(q):=link(def_ref);
+    link(def_ref):=q;
+    umber_trace_token_list(1,10,link(q),null);
+    end;
+  define(p,call+(a mod 4),def_ref);
+@z
+
 @x [50] Observe an ordinary message after it is printed.
 if c=0 then @<Print string |s| on the terminal@>
 else @<Print string |s| as an error message@>;
@@ -1667,4 +1706,54 @@ umber_trace_effect(1,j,1,def_ref);
       write_open[j]:=true;
       umber_trace_effect(2,j,3,0);
       {If on first line of input, log file is not ready yet, so don't log.}
+@z
+
+@x [53a] Observe e-TeX unexpanded and detokenized token construction.
+if odd(cur_chr) then
+  begin c:=cur_chr; scan_general_text;
+  if c=1 then the_toks:=cur_val
+  else begin old_setting:=selector; selector:=new_string; b:=pool_ptr;
+    p:=get_avail; link(p):=link(temp_head);
+    token_show(p); flush_list(p);
+    selector:=old_setting; the_toks:=str_toks(b);
+    end;
+  return;
+  end
+@y
+if odd(cur_chr) then
+  begin c:=cur_chr; scan_general_text;
+  if c=1 then
+    begin the_toks:=cur_val;
+    umber_trace_token_list(1,7,link(temp_head),null);
+    end
+  else begin old_setting:=selector; selector:=new_string; b:=pool_ptr;
+    p:=get_avail; link(p):=link(temp_head);
+    token_show(p); flush_list(p);
+    selector:=old_setting; the_toks:=str_toks(b);
+    umber_trace_token_list(1,8,link(temp_head),null);
+    end;
+  return;
+  end
+@z
+
+@x [53a] Observe the balanced token list committed to scantokens.
+begin scan_general_text;
+old_setting:=selector; selector:=new_string;
+token_show(temp_head); selector:=old_setting;
+@y
+begin scan_general_text;
+umber_trace_token_list(1,9,link(temp_head),null);
+old_setting:=selector; selector:=new_string;
+token_show(temp_head); selector:=old_setting;
+@z
+
+@x [53a] Observe protected delivery suppression at the canonical seam.
+  if (cur_cmd>=call)and(cur_cmd<end_template) then
+    if info(link(cur_chr))=protected_token then return;
+  expand;
+@y
+  if (cur_cmd>=call)and(cur_cmd<end_template) then
+    if info(link(cur_chr))=protected_token then
+      begin umber_trace_token_splice(12,cur_tok); return; end;
+  expand;
 @z
