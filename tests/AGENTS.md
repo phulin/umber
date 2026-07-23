@@ -31,6 +31,15 @@ bytes.
 Acquisition and builds run only through `scripts/regen-fixtures.sh --area
 etex26-oracle`; Cargo correctness tests never invoke the live oracle.
 
+`tests/pdftex14027-oracle-manifest.txt` pins canonical pdfTeX 1.40.27,
+the ordered Web2C and configured SyncTeX changes, translator inputs, and the
+repository-owned final-change seam and smoke programs.
+`tests/pdftex14027-oracle/` contains font-independent DVI and deterministic PDF
+smoke inputs plus the no-op final change used to prove the separately named
+instrumentation-ready build without editing upstream files. Acquisition and
+builds run only through `scripts/regen-fixtures.sh --area
+pdftex14027-oracle`; Cargo correctness tests never invoke the live oracle.
+
 `tests/corpus/distribution` holds the authored-JavaScript/Rust manifest and
 selection fixtures. They are hand-authored contract data, not live-reference
 outputs, and both `umber-distribution` and `manifest-schema.test.js` consume

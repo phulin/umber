@@ -1,0 +1,86 @@
+# Canonical pdfTeX 1.40.27 Oracle
+
+Status: pinned build boundary for command-core conformance.
+
+## Authority and identity
+
+The canonical pdfTeX oracle is built from `pdftexdir/pdftex.web` as
+distributed in the immutable TeX Live 2025 source archive. The archive is
+pinned by SHA-512. The WEB source, ordered Web2C and configured SyncTeX change
+stack, translator inputs, build description, runtime configuration, and
+repository-owned inputs are pinned individually by SHA-256 in
+`tests/pdftex14027-oracle-manifest.txt`.
+
+The canonical invocation is INITEX with e-TeX extensions explicitly enabled.
+Its command character profile is exact eight-bit input. The repository tooling
+publishes two names:
+
+```text
+target/pdftex14027-oracle/bin/umber-pdftex14027-oracle-clean
+target/pdftex14027-oracle/bin/umber-pdftex14027-oracle-instrumentation-ready
+```
+
+The clean executable uses only the declared upstream change stack. The
+instrumentation-ready executable appends
+`tests/pdftex14027-oracle/instrumentation-ready.ch` as the final change. That
+change is intentionally semantic-neutral for this build issue: it proves the
+stable repository-owned final-change seam that the subsequent semantic-trace
+work will populate. Canonical and generated upstream files are never edited
+in place.
+
+Both executables are external Web2C reference tools. Neither is Umber, neither
+may resolve to the Umber CLI, and Cargo correctness tests neither acquire nor
+execute them.
+
+## Reproducible build
+
+Run the supported fixture-tooling entry point:
+
+```bash
+scripts/regen-fixtures.sh --area pdftex14027-oracle
+```
+
+The first run may acquire the pinned archive into the gitignored
+`third_party/texlive-source` cache. Verify cached reuse without network access:
+
+```bash
+scripts/build-pdftex14027-oracle.sh --offline
+```
+
+`UMBER_REF_TEXLIVE_SOURCE` may select an equivalent cache containing the
+pinned archive and extracted `src` tree. The workflow uses a dedicated
+`build-pdftex14027` directory inside that cache so its configure state and
+archive-owned libpng, zlib, xpdf, and kpathsea artifacts do not alias the
+TeX82/e-TeX oracle builds. `CARGO_TARGET_DIR` relocates outputs.
+`UMBER_PDFTEX14027_INSTRUMENTATION_CHANGE` may select another final change;
+the build record captures its path and hash.
+
+Every run verifies the archive and every manifest entry before translation.
+It applies the exact configured TeX Live change order, including SyncTeX
+changes selected by the canonical pdfTeX build profile, and builds static
+archive-owned library inputs. No network access occurs after the archive is
+present, and acquisition remains outside correctness tests.
+
+`target/pdftex14027-oracle/build-record.txt` records:
+
+- engine, e-TeX extension, character, and invocation profiles;
+- archive, manifest, WEB source, ordered change, generated final-change, and
+  repository final-change hashes;
+- configure flags and the fixed source epoch;
+- translator, compiler, linker-driver, shell, make, platform, archive-owned
+  static-library, linked system-library, and executable identities; and
+- normalized smoke log plus exact DVI and PDF hashes for both variants.
+
+The smoke programs validate the canonical 1.40.27 banner and numeric
+`\pdftexversion`, e-TeX 2.6 extended mode, expansion/arithmetic, and shipout.
+The DVI program emits a font-independent one-page DVI. The PDF program fixes
+the creation-information policy, trailer ID, and compression controls before
+a font-independent one-page PDF. Terminal bytes, startup-clock-normalized log
+bytes, exit status, and DVI/PDF bytes must match between clean and
+instrumentation-ready executables.
+
+Executable hashes are platform-specific because the compiler, linker, system
+libraries, and platform are inputs. Reproducibility means the complete pinned
+source, ordered changes, flags, profile invocation, library artifacts, and
+recorded host toolchain determine the result; it does not assert one
+cross-platform binary digest.
