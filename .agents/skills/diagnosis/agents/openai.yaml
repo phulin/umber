@@ -1,0 +1,4 @@
+interface:
+  display_name: "Diagnosis"
+  short_description: "Diagnose Umber engine and corpus failures"
+  default_prompt: "Use $diagnosis to reduce this Umber failure to a canonical engine cause."
