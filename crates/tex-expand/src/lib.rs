@@ -2611,6 +2611,18 @@ pub fn next_semantic_raw_token(
     }
 }
 
+/// Raw delivery while TeX is skipping a conditional limb.
+///
+/// Skipped tokens are inspected only for nested conditional controls. They do
+/// not pass through ordinary `get_next` alignment accounting: in particular,
+/// skipped braces must not change `align_state`.
+pub(crate) fn next_skipped_conditional_raw_token(
+    input: &mut InputStack,
+    stores: &mut tex_state::ExpansionContext<'_>,
+) -> Result<Option<TracedTokenWord>, tex_lex::LexError> {
+    input.next_traced_token(stores)
+}
+
 /// Raw replay lookahead used by `\noexpand`, which must restore the next
 /// meaning before applying the alignment-sensitive part of `get_next`.
 pub(crate) fn next_unintercepted_raw_token(

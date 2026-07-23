@@ -4616,6 +4616,55 @@ fn iftrue_and_iffalse_select_expected_two_limb_branches() {
 }
 
 #[test]
+fn skipped_conditional_braces_do_not_accumulate_alignment_depth_or_provenance() {
+    const SKIPS: usize = 4_096;
+
+    let mut stores = Universe::new();
+    let (_, iffalse, _, fi) = conditional_primitives(&mut stores);
+    let mut tokens = Vec::with_capacity(SKIPS * 4);
+    for _ in 0..SKIPS {
+        tokens.extend([
+            Token::Cs(iffalse.symbol()),
+            char_token('{'),
+            Token::Cs(fi.symbol()),
+            char_token('x'),
+        ]);
+    }
+    let list = stores.intern_token_list(&tokens);
+    let mut input = InputStack::new(MemoryInput::new(""));
+    input.push_token_list(list, TokenListReplayKind::Inserted);
+    input.begin_alignment();
+    input.set_alignment_state(0);
+    input.begin_alignment_cell(None, TokenListId::EMPTY, 0);
+    let mut expansion = ExpansionContext::new("conditional-alignment-stress").with_fuel(50_000);
+    let baseline = stores.provenance_stats();
+
+    for _ in 0..SKIPS {
+        let token = crate::get_x_token_with_context(
+            &mut input,
+            &mut tex_state::ExpansionContext::new(&mut stores),
+            &mut expansion,
+        )
+        .expect("false conditional should make bounded progress")
+        .expect("the live-limb token should remain");
+        assert_eq!(semantic_token(token), char_token('x'));
+        assert!(input.alignment_cell_at_base_depth());
+    }
+
+    let growth = stores.provenance_stats().saturating_sub(baseline);
+    assert!(
+        growth.retained_bytes() <= 256 * SKIPS,
+        "conditional skipping retained {} provenance bytes",
+        growth.retained_bytes()
+    );
+    assert!(
+        expansion.cumulative_fuel_burned() <= 20_000,
+        "conditional skipping burned {} expansion steps",
+        expansion.cumulative_fuel_burned()
+    );
+}
+
+#[test]
 fn unless_inverts_boolean_conditionals_without_leaking_frames() {
     let mut stores = Universe::new();
     crate::install_expandable_primitives(&mut stores);

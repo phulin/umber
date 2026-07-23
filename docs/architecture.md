@@ -232,6 +232,17 @@ left newer conditional frames above it. Umber therefore reads and replaces
 evaluation metadata by `ConditionFrameToken`, never from the merely innermost
 frame.
 
+Conditional skipping also owns the delivery semantics of every discarded
+token. TeX's `pass_text` scanner inspects those tokens only for nested
+conditional controls; skipped braces and alignment delimiters do not pass
+through ordinary `get_next` alignment accounting. Umber therefore reads that
+stream through a dedicated unintercepted raw boundary, while live-limb raw
+scanners continue to use alignment-aware delivery. This distinction is what
+makes expl3's `group_align_safe_begin:`/`group_align_safe_end:` protocol work:
+its skipped brace remains inert and its deliberate catcode-1/2 sentinel moves
+`align_state` away from the delimiter threshold while generated definitions
+are scanned.
+
 TeX.web §§379 and 510 recover an `\else`, `\or`, or `\fi` encountered while
 its condition is still evaluating by backing up that token behind the
 inaccessible `frozen_relax`; pdfTeX.web §§403 and 534 retain the same rule,

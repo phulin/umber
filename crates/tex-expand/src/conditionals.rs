@@ -299,7 +299,7 @@ fn skip_until(
 ) -> Result<(), ExpandError> {
     let mut nesting = 0_u32;
     loop {
-        let Some(token) = crate::next_semantic_raw_token(input, stores)? else {
+        let Some(token) = crate::next_skipped_conditional_raw_token(input, stores)? else {
             let context = input
                 .current_condition()
                 .expect("conditional skipping requires an open condition frame")
