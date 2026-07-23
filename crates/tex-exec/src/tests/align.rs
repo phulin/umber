@@ -1926,7 +1926,7 @@ fn nested_alignment_executes_inside_cell() {
 }
 
 #[test]
-fn expanded_definition_brace_delta_balances_around_nested_vcenter() {
+fn expanded_definition_brace_delta_preserves_outer_box_closer() {
     // LaTeX3's alignment-safe groups use braces skipped by false
     // conditionals around expansion work. The first skipped brace occurs
     // inside an expanded definition; its matching skipped brace follows a
@@ -1939,13 +1939,19 @@ fn expanded_definition_brace_delta_balances_around_nested_vcenter() {
          \\halign{#&#\\cr\
          \\edef\\saved{\\iffalse{\\fi}\
          \\hbox{$\\vcenter{\\halign{##\\cr x\\cr}}$}\
-         \\iffalse}\\fi&y\\cr}}",
+         \\iffalse}\\fi&y\\cr}}\
+         \\global\\count7=123",
     );
     let vbox = box_zero_vlist(&stores);
     let rows = vlist_rows(&stores, vbox);
 
     assert_eq!(rows.len(), 1);
     assert_eq!(row_cells(&stores, rows[0]).len(), 2);
+    assert_eq!(
+        stores.count(7),
+        123,
+        "the real vbox closer must return control to outer main control"
+    );
     assert_no_unset(&stores, stores.nodes(vbox.children).testing_decoded());
 }
 
