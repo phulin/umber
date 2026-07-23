@@ -1257,7 +1257,9 @@ push/limit/branch/pop transitions, skipped-delimiter and `\ifcase` progress,
 conditional recovery, alignment preamble and nesting lifecycle, `align_state`
 and backup correction, delimiter interception, template push/retirement,
 alignment recovery, terminal-stop, and termination events. Its focused live
-run is schema-validated, deterministic, and ordinary-output transparent.
+run is schema-validated against the executable semantic-event matrix,
+deterministic, and byte-transparent for terminal, normalized log, status, and
+DVI output.
 Cargo correctness tests never acquire or execute this live oracle.
 
 Instrumentation writes a versioned semantic event stream. It must not use

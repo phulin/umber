@@ -7,7 +7,9 @@ fast differential tests.
 Web2C portability changes, translator inputs, and repository-owned oracle
 inputs. `tests/tex82-oracle/` contains the font-independent smoke program,
 focused transition inputs, and the repository-owned final TeX82
-instrumentation change file.
+instrumentation change file. `semantic-event-matrix.txt` maps every required
+TeX82 command-core observation to its focused input and stable final-change
+seam; the live oracle build consumes it as the coverage gate.
 Acquisition and builds run only through `scripts/regen-fixtures.sh --area
 tex82-oracle`; Cargo correctness tests never invoke the live oracle.
 

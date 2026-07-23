@@ -20,3 +20,4 @@ repository-sha256 tests/tex82-oracle/instrumentation.ch db0db1edd86b8ed4e7de2234
 repository-sha256 tests/tex82-oracle/smoke.tex 757a4b88a1efec8b7c06636215ae33bf96e70c7393e7232fcec93bd0f4849d9b
 repository-sha256 tests/tex82-oracle/transitions.tex b4a5d52a79328f7f186a77c0dd58a7894eff0dccc65a3d22a855840891833120
 repository-sha256 tests/tex82-oracle/transitions-child.tex 5355a8aa81886e08a9dfb90c257420b3a7afdc1e454a790477ed24b7b71238e0
+repository-sha256 tests/tex82-oracle/semantic-event-matrix.txt 2801cf7b606b008198215f0d55014c34ec63498b4bc027de78d6944490a81301

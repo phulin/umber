@@ -23,6 +23,7 @@ instrumentation_change="${UMBER_TEX82_INSTRUMENTATION_CHANGE:-${repo_root}/tests
 smoke_input="${repo_root}/tests/tex82-oracle/smoke.tex"
 transition_input="${repo_root}/tests/tex82-oracle/transitions.tex"
 transition_child="${repo_root}/tests/tex82-oracle/transitions-child.tex"
+semantic_event_matrix="${repo_root}/tests/tex82-oracle/semantic-event-matrix.txt"
 cflags="-O2"
 cxxflags="-O2"
 source_date_epoch="${SOURCE_DATE_EPOCH:-1783604160}"
@@ -113,6 +114,8 @@ verify_inputs() {
   done < "$manifest"
   [[ -f "$instrumentation_change" ]] ||
     fail "missing instrumentation change file: $instrumentation_change"
+  [[ -f "$semantic_event_matrix" ]] ||
+    fail "missing semantic event matrix: $semantic_event_matrix"
 }
 
 extract_source() {
@@ -228,6 +231,8 @@ run_transitions() {
   printf '%s\n' "$status" >"${run_dir}/status.txt"
   [[ -f "${run_dir}/transitions.log" ]] ||
     fail "$variant transition run did not write transitions.log"
+  [[ -f "${run_dir}/transitions.dvi" ]] ||
+    fail "$variant transition run did not write transitions.dvi"
   grep -q 'UMBER-TEX82-TRANSITIONS' "${run_dir}/transitions.log" ||
     fail "$variant transition marker is absent"
   sed '1s/)  .*$/) <HOST-CLOCK>/' "${run_dir}/transitions.log" \
@@ -284,11 +289,13 @@ write_build_record() {
       "$(sha_digest 256 "${out_dir}/smoke/instrumentable/ordinary.log")"
     printf 'transition-trace-sha256 instrumentable %s\n' \
       "$(sha_digest 256 "${out_dir}/transitions/instrumentable/tex82-events.jsonl")"
-    for variant in clean instrumentable; do
+    for variant in clean instrumentable instrumentable-repeat; do
       printf 'transition-terminal-sha256 %s %s\n' "$variant" \
         "$(sha_digest 256 "${out_dir}/transitions/${variant}/terminal.txt")"
       printf 'transition-ordinary-log-sha256 %s %s\n' "$variant" \
         "$(sha_digest 256 "${out_dir}/transitions/${variant}/ordinary.log")"
+      printf 'transition-dvi-sha256 %s %s\n' "$variant" \
+        "$(sha_digest 256 "${out_dir}/transitions/${variant}/transitions.dvi")"
     done
   } > "$record"
 }
@@ -312,10 +319,13 @@ cmp "${out_dir}/smoke/clean/terminal.txt" \
 cmp "${out_dir}/smoke/clean/ordinary.log" \
   "${out_dir}/smoke/instrumentable/ordinary.log" >/dev/null ||
   fail "instrumentable oracle changed ordinary log output"
-for channel in terminal.txt ordinary.log status.txt; do
+for channel in terminal.txt ordinary.log status.txt transitions.dvi; do
   cmp "${out_dir}/transitions/clean/${channel}" \
     "${out_dir}/transitions/instrumentable/${channel}" >/dev/null ||
     fail "instrumentable oracle changed transition ${channel}"
+  cmp "${out_dir}/transitions/instrumentable/${channel}" \
+    "${out_dir}/transitions/instrumentable-repeat/${channel}" >/dev/null ||
+    fail "repeated instrumentable oracle changed transition ${channel}"
 done
 cmp "${out_dir}/transitions/instrumentable/tex82-events.jsonl" \
   "${out_dir}/transitions/instrumentable-repeat/tex82-events.jsonl" >/dev/null ||
@@ -323,61 +333,13 @@ cmp "${out_dir}/transitions/instrumentable/tex82-events.jsonl" \
 cargo run -q -p tex-oracle --bin tex-oracle-validate -- \
   "${out_dir}/transitions/instrumentable/tex82-events.jsonl"
 transition_trace="${out_dir}/transitions/instrumentable/tex82-events.jsonl"
-for pattern in \
-  '"delivery":"raw"' \
-  '"delivery":"expanded"' \
-  '"transition":"push","reason":"source"' \
-  '"transition":"retire","reason":"source"' \
-  '"reason":"macro"' \
-  '"kind":"backup"' \
-  '"kind":"inserted_control_sequence"' \
-  '"event":"scanner_status"' \
-  '"event":"macro","data":{"transition":"argument"' \
-  '"event":"macro","data":{"transition":"activation"' \
-  '"purpose":"macro_delimiter_match"' \
-  '"purpose":"macro_delimiter_recovery"' \
-  '"purpose":"parameter_conversion"' \
-  '"purpose":"macro_replacement"' \
-  '"purpose":"scan_toks"' \
-  '"purpose":"expanded_scan_toks"' \
-  '"purpose":"the_toks"' \
-  '"event":"scanner","data":{"scanner":"integer"' \
-  '"event":"scanner","data":{"scanner":"dimension"' \
-  '"event":"scanner","data":{"scanner":"glue"' \
-  '"event":"scanner","data":{"scanner":"internal"' \
-  '"event":"condition","data":{"transition":"push"' \
-  '"event":"condition","data":{"transition":"limit_change"' \
-  '"event":"condition","data":{"transition":"branch"' \
-  '"event":"condition","data":{"transition":"pop"' \
-  '"branch":"case"' \
-  '"diagnostic":"conditional_limit_recovery"' \
-  '"diagnostic":"conditional_incomplete"' \
-  '"diagnostic":"outer_validity_control_sequence"' \
-  '"event":"alignment","data":{"transition":"begin"' \
-  '"event":"alignment","data":{"transition":"finish"' \
-  '"event":"alignment","data":{"transition":"suspend"' \
-  '"event":"alignment","data":{"transition":"resume"' \
-  '"event":"alignment","data":{"transition":"preamble_start"' \
-  '"event":"alignment","data":{"transition":"preamble_finish"' \
-  '"event":"alignment","data":{"transition":"state_change"' \
-  '"event":"alignment","data":{"transition":"template_push"' \
-  '"event":"alignment","data":{"transition":"template_retire"' \
-  '"event":"alignment","data":{"transition":"delimiter"' \
-  '"event":"alignment","data":{"transition":"backup_correction"' \
-  '"event":"alignment","data":{"transition":"recovery"' \
-  '"template":"u"' \
-  '"template":"v"' \
-  '"template":"omit"' \
-  '"delimiter":"tab"' \
-  '"delimiter":"span"' \
-  '"delimiter":"cr"' \
-  '"nesting":2' \
-  '"recovery":"missing_parameter"' \
-  '"recovery":"extra_parameter"' \
-  '"transition":"stop"' \
-  '"kind":"terminate"'; do
-  grep -q "$pattern" "$transition_trace" ||
-    fail "transition trace is missing schema boundary $pattern"
-done
+while IFS='|' read -r family boundary fixture seam pattern extra; do
+  [[ -z "$family" || "$family" == \#* ]] && continue
+  [[ -n "$boundary" && -n "$fixture" && -n "$seam" && -n "$pattern" &&
+    -z "${extra:-}" ]] ||
+    fail "malformed semantic event matrix row for ${family:-unknown}"
+  grep -Fq "$pattern" "$transition_trace" ||
+    fail "transition trace is missing $family/$boundary from $fixture at $seam"
+done < "$semantic_event_matrix"
 write_build_record
 printf '%s\n' "$bin_dir"

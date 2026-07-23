@@ -51,10 +51,10 @@ build record captures its path and hash.
 Each build rewrites `target/tex82-oracle/build-record.txt` with the archive,
 manifest, ordered source/change files, final instrumentation change, generated
 final changes, translator and host tool identities, platform identity, and
-executable hashes. It then runs a font-independent INITEX smoke program and a
-focused command/input/recovery program through both variants. Terminal,
-normalized log, and exit status remain byte-identical. The instrumented
-transition program runs twice and must emit byte-identical traces; the
+executable hashes. It then runs a font-independent INITEX smoke program and the
+focused command-event matrix through both variants. Terminal, normalized log,
+exit status, and DVI remain byte-identical. The instrumented transition
+program runs twice and must emit byte-identical traces and ordinary outputs; the
 `tex-oracle` validator checks canonical JSON encoding, schema,
 manifest-field shape, and contiguous sequence numbers. Focused checks require
 raw and expanded delivery, source and token input lifecycle, backup, scanner
@@ -77,6 +77,31 @@ counter maintained by the detached observer; no alignment record, input level,
 or `mem` address enters the stream. The sole ordinary-log normalization
 replaces TeX's startup-banner host clock; no semantic message or diagnostic is
 changed.
+
+## TeX82 command-event matrix
+
+`tests/tex82-oracle/semantic-event-matrix.txt` is the executable audit
+inventory. Every row names a required schema-v1 boundary, its canonical
+focused input, the stable final-change seam that observes the committed
+transition, and a fixed canonical-JSON fragment. The build fails on a malformed
+row or an absent observation, so adding a schema boundary without mapping it
+cannot silently weaken coverage.
+
+| Family                      | Focused program                            | Stable canonical seams                                                                                                      |
+| --------------------------- | ------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------- |
+| command and input           | `transitions.tex`, `transitions-child.tex` | `get_next`, `get_x_token`, `x_token`, input push/retirement, terminal stop                                                  |
+| recovery and scanner status | both transition inputs                     | `back_input`, `check_outer_validity`, and scoped status entry/restoration                                                   |
+| macros                      | `transitions.tex`                          | committed delimiter match/recovery, stripped argument, and activation seams in `macro_call`                                 |
+| token lists                 | `transitions.tex`                          | parameter conversion, direct `\the` splice, and completed `scan_toks` collection                                            |
+| scanners                    | `transitions.tex`                          | successful integer, dimension, glue, and internal-value returns                                                             |
+| conditions                  | both transition inputs                     | frame link/unlink, exact-frame limit updates, branch selection, and EOF recovery                                            |
+| alignments                  | `transitions.tex`                          | alignment ownership, preamble lifecycle, literal-brace accounting, delimiter interception, template lifecycle, and recovery |
+| final ordering              | `transitions.tex`                          | terminal input stop followed by termination before observer close                                                           |
+
+Schema-v1 `mutation` events and non-termination `effect` variants are outside
+this command-delivery matrix and are not emitted by the current TeX82 final
+change. Their implementation is tracked separately in Beads rather than
+represented as covered here.
 
 The live change file writes the all-zero manifest identity as an explicit
 unbound sentinel. It is not a committed fixture identity. Cross-engine

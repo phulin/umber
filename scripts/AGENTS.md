@@ -33,4 +33,5 @@ Read the repository-root `AGENTS.md` first. This file adds the directory map for
   only; font catalogs and font payload fixtures stay outside the package.
 - `build-tex82-oracle.sh`: hash-pinned TeX Live source acquisition and
   reproducible clean/instrumentation-ready TeX82 Web2C oracle builds; ordinary
-  output transparency is smoke-checked and all identities are recorded.
+  terminal/log/DVI transparency and the machine-readable semantic event matrix
+  are gated together, and all identities are recorded.
