@@ -266,10 +266,12 @@ process_sample_staged() (
     | tee "$result/summary.tsv"
 )
 
-process_sample() {
-  python3 "$SCRIPT_DIR/arxiv_corpus.py" stage -- \
-    "$0" process-sample-staged "$1" "$2"
-}
+process_sample() (
+  local run_root
+  run_root="$(mktemp -d "${TMPDIR:-/tmp}/umber-arxiv-profile.XXXXXX")"
+  trap 'rm -rf -- "$run_root"' EXIT HUP INT TERM
+  UMBER_ARXIV_STAGE="$run_root" "$0" process-sample-staged "$1" "$2"
+)
 
 smoke() {
   [[ -x "$PDFTEX" && -f "$FORMAT" ]] || {
@@ -322,7 +324,7 @@ readonly ACTION=${1:-all}
 case "$ACTION" in
   -h|--help|help) usage; exit 0 ;;
   setup|smoke|all)
-    for command in git curl make rg tar gzip kpsewhich python3; do
+    for command in git curl make rg tar gzip kpsewhich python3 mktemp; do
       require "$command"
     done
     ;;

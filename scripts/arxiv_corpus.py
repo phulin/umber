@@ -4,18 +4,14 @@
 from __future__ import annotations
 
 import argparse
-import contextlib
 import gzip
 import hashlib
 import json
 import os
 import shutil
-import subprocess
-import sys
 import tarfile
 import tempfile
 from pathlib import Path, PurePosixPath
-from typing import Iterator
 
 
 def fail(message: str) -> None:
@@ -116,66 +112,6 @@ def archive_file_bytes(archive: Path) -> dict[str, bytes]:
         except (gzip.BadGzipFile, OSError) as error:
             fail(f"unsupported arXiv source bundle {archive}: {error}")
     return files
-
-
-def _is_case_sensitive(directory: Path) -> bool:
-    probe = directory / f".umber-case-probe-{os.getpid()}-A"
-    folded = probe.with_name(probe.name.lower())
-    probe.write_bytes(b"")
-    try:
-        return not folded.exists()
-    finally:
-        probe.unlink()
-
-
-@contextlib.contextmanager
-def case_sensitive_stage(prefix: str = "umber-arxiv-stage-") -> Iterator[Path]:
-    """Yield a disposable directory that preserves case-distinct member names."""
-    host = Path(tempfile.mkdtemp(prefix=prefix))
-    mount = host / "mount"
-    attached = False
-    try:
-        if _is_case_sensitive(host):
-            yield host
-            return
-        if sys.platform != "darwin":
-            fail(
-                "case-insensitive temporary filesystem has no supported "
-                "case-sensitive staging backend"
-            )
-        image = host / "case-sensitive"
-        try:
-            subprocess.run(
-                ["hdiutil", "create", "-quiet", "-size", "8g", "-type", "SPARSE",
-                 "-fs", "Case-sensitive APFS", "-volname", "umber-arxiv-stage",
-                 str(image)],
-                check=True,
-            )
-            mount.mkdir()
-            subprocess.run(
-                ["hdiutil", "attach", "-quiet", "-nobrowse", "-noautoopen",
-                 "-mountpoint", str(mount), str(image.with_suffix(".sparseimage"))],
-                check=True,
-            )
-        except subprocess.CalledProcessError as error:
-            fail(f"cannot create case-sensitive disposable stage: {error}")
-        attached = True
-        if not _is_case_sensitive(mount):
-            fail("case-sensitive staging image mounted with case folding enabled")
-        yield mount
-    finally:
-        if attached:
-            detached = subprocess.run(
-                ["hdiutil", "detach", "-quiet", str(mount)], check=False
-            )
-            if detached.returncode != 0:
-                detached = subprocess.run(
-                    ["hdiutil", "detach", "-quiet", "-force", str(mount)],
-                    check=False,
-                )
-            if detached.returncode != 0:
-                fail(f"cannot detach case-sensitive disposable stage: {mount}")
-        shutil.rmtree(host, ignore_errors=True)
 
 
 def verify_view(archive: Path, view: Path) -> list[dict[str, str | int]]:
@@ -320,8 +256,6 @@ def main() -> None:
     replace.add_argument("view", type=Path)
     replace.add_argument("backup", type=Path)
     replace.add_argument("manifest", type=Path)
-    stage = subparsers.add_parser("stage")
-    stage.add_argument("command", nargs=argparse.REMAINDER)
     arguments = parser.parse_args()
     try:
         if arguments.action == "verify":
@@ -332,16 +266,6 @@ def main() -> None:
             print(member_manifest_bytes(members).decode(), end="")
         elif arguments.action == "replace":
             replace_view(arguments.archive, arguments.view, arguments.backup, arguments.manifest)
-        elif arguments.action == "stage":
-            command = arguments.command
-            if command[:1] == ["--"]:
-                command = command[1:]
-            if not command:
-                fail("stage requires a command")
-            with case_sensitive_stage() as directory:
-                environment = os.environ.copy()
-                environment["UMBER_ARXIV_STAGE"] = str(directory)
-                raise SystemExit(subprocess.run(command, env=environment).returncode)
         else:
             print(json.dumps(source_identity(arguments.archive, arguments.entrypoint), sort_keys=True))
     except ValueError as error:

@@ -78,11 +78,9 @@ aggregate-RSS, process-group TERM-to-KILL, reap, and survivor enforcement.
 Before running, it derives each entrypoint and source identity directly from
 the pinned archive bytes. Identity records the archive hash, normalized
 member-manifest hash, member count, and entrypoint instead of hashing a mutable
-directory. Each child receives a new exact archive extraction inside one
-disposable case-sensitive stage. On case-insensitive macOS hosts that stage is
-a sparse case-sensitive APFS image; case-sensitive hosts use their ordinary
-temporary filesystem. Mutation, missing members, generated extras, and
-case-distinct-member collapse fail the hermetic tooling tests.
+directory. Each child receives a new exact archive extraction in an ordinary
+temporary directory. Mutation, missing members, and generated extras fail the
+hermetic tooling tests.
 `RESOURCE_ENGINE_ACCEPTED` marks the transfer of accepted state to detached PDF
 finalization in that process. A later map, encoding, PFB, PK, or PDF-lowering
 failure therefore remains a finalizer outcome without recompiling the paper.

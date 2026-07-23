@@ -18,7 +18,7 @@ Read the repository-root `AGENTS.md` first. This file adds the directory map for
 - `trip.sh`: guarded TRIP/e-TRIP entry point with documented wall-time, RSS,
   output-progress, fuel, and termination defaults.
 - `arxiv_corpus.py`: safe exact arXiv archive inventory, identity, verification,
-  and case-sensitive disposable materialization boundary.
+  and materialization.
 - `test-arxiv-corpus.sh`: hermetic archive/view identity contract, including mutation and extra-file rejection.
 - `test-run-umber-guarded.sh`: forced-timeout, progress-stall, and RSS-limit self-test proving the shared Umber watchdog kills and reaps descendants.
 - `check-pdf-external.sh`: opt-in pinned qpdf structural validation plus pinned Poppler raster/text attestation over the representative PDF matrix; `--ci` makes missing tools fatal.

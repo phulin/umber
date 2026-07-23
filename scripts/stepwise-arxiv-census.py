@@ -12,10 +12,11 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
 
-from arxiv_corpus import archive_file_bytes, case_sensitive_stage, materialize, source_identity
+from arxiv_corpus import archive_file_bytes, materialize, source_identity
 
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -356,7 +357,8 @@ def main() -> None:
         run_flags.append("--offline")
     texinputs = f"{texmf}/tex/latex//:{texmf}/tex/generic//:{texmf}/tex/plain//:"
     texfonts = f"{texmf}/fonts/tfm//:"
-    with case_sensitive_stage(prefix="umber-arxiv-census-") as stage:
+    with tempfile.TemporaryDirectory(prefix="umber-arxiv-census-") as stage_name:
+        stage = Path(stage_name)
         for paper in papers:
             paper_id = paper["id"]
             if paper_id in records:
