@@ -232,16 +232,16 @@ left newer conditional frames above it. Umber therefore reads and replaces
 evaluation metadata by `ConditionFrameToken`, never from the merely innermost
 frame.
 
-Conditional skipping also owns the delivery semantics of every discarded
-token. TeX's `pass_text` scanner inspects those tokens only for nested
-conditional controls; skipped braces and alignment delimiters do not pass
-through ordinary `get_next` alignment accounting. Umber therefore reads that
-stream through a dedicated unintercepted raw boundary, while live-limb raw
-scanners continue to use alignment-aware delivery. This distinction is what
-makes expl3's `group_align_safe_begin:`/`group_align_safe_end:` protocol work:
-its skipped brace remains inert and its deliberate catcode-1/2 sentinel moves
-`align_state` away from the delimiter threshold while generated definitions
-are scanned.
+Conditional skipping retains TeX's ordinary raw delivery semantics. TeX.web
+§510's `pass_text` calls `get_next`, so discarded braces still change
+`align_state` and top-level alignment delimiters can still trigger the active
+v-template; only conditional-control inspection is suppressed. This is also
+the mechanism used deliberately by expl3's
+`group_align_safe_begin:`/`group_align_safe_end:` protocol: braces hidden in
+false limbs move alignment depth around a generated definition.
+TeX.web §506 likewise reads both `\ifx` operands with `get_next`: although
+their meanings are not expanded, character braces still participate in the
+same alignment accounting before the selected or skipped limb is read.
 
 TeX.web §§379 and 510 recover an `\else`, `\or`, or `\fi` encountered while
 its condition is still evaluating by backing up that token behind the

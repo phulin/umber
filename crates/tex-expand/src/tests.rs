@@ -4616,16 +4616,17 @@ fn iftrue_and_iffalse_select_expected_two_limb_branches() {
 }
 
 #[test]
-fn skipped_conditional_braces_do_not_accumulate_alignment_depth_or_provenance() {
+fn skipped_conditional_brace_pairs_preserve_alignment_with_bounded_provenance() {
     const SKIPS: usize = 4_096;
 
     let mut stores = Universe::new();
     let (_, iffalse, _, fi) = conditional_primitives(&mut stores);
-    let mut tokens = Vec::with_capacity(SKIPS * 4);
+    let mut tokens = Vec::with_capacity(SKIPS * 5);
     for _ in 0..SKIPS {
         tokens.extend([
             Token::Cs(iffalse.symbol()),
             char_token('{'),
+            char_token('}'),
             Token::Cs(fi.symbol()),
             char_token('x'),
         ]);
@@ -4653,7 +4654,7 @@ fn skipped_conditional_braces_do_not_accumulate_alignment_depth_or_provenance() 
 
     let growth = stores.provenance_stats().saturating_sub(baseline);
     assert!(
-        growth.retained_bytes() <= 256 * SKIPS,
+        growth.retained_bytes() <= 320 * SKIPS,
         "conditional skipping retained {} provenance bytes",
         growth.retained_bytes()
     );
@@ -4896,6 +4897,23 @@ fn ifx_compares_macro_definitions_semantically_ignoring_origin_lists() {
         ),
         "yy"
     );
+}
+
+#[test]
+fn ifx_operand_brace_and_skipped_match_restore_alignment_depth() {
+    let mut stores = Universe::new();
+    install_expandable_primitives(&mut stores);
+    let empty = stores.intern_token_list(&[]);
+    let mut input = InputStack::new(MemoryInput::new("\\ifx\\relax{}false\\else x\\fi"));
+    input.begin_alignment();
+    input.begin_alignment_cell(None, empty, stores.execution_group_depth());
+
+    let mut context = tex_state::ExpansionContext::new(&mut stores);
+    assert_eq!(
+        get_x_token(&mut input, &mut context).expect("false limb is skipped"),
+        Some(char_token('x')),
+    );
+    assert!(input.alignment_cell_at_base_depth());
 }
 
 #[test]

@@ -299,7 +299,7 @@ fn skip_until(
 ) -> Result<(), ExpandError> {
     let mut nesting = 0_u32;
     loop {
-        let Some(token) = crate::next_skipped_conditional_raw_token(input, stores)? else {
+        let Some(token) = crate::next_semantic_raw_token(input, stores)? else {
             let context = input
                 .current_condition()
                 .expect("conditional skipping requires an open condition frame")
@@ -580,15 +580,14 @@ pub(crate) fn scan_ifx_operand(
     context: TracedTokenWord,
 ) -> Result<IfxOperand, ExpandError> {
     loop {
-        let Some(read) = input.next_traced_expansion_token(stores)? else {
+        let Some(prepared) = crate::next_prepared_expansion_token(input, stores, expansion)? else {
             return Err(ExpandError::MissingTokenAfterPrimitive {
                 opcode: ExpandableOpcode::If,
                 context,
             });
         };
-        expansion.observe_read(read);
-        let token = read.token();
-        let traced = read.traced_token();
+        let token = prepared.expansion_token().token();
+        let traced = prepared.traced_token();
         let Some(symbol) = crate::expandable_symbol(stores, traced) else {
             return Ok(IfxOperand {
                 token,
@@ -597,14 +596,14 @@ pub(crate) fn scan_ifx_operand(
         };
         let meaning = expansion.resolve_meaning(input, stores, symbol);
         expansion.record_meaning(symbol, meaning);
-        if !read.suppress_expansion()
+        if !prepared.suppress_expansion()
             && meaning == Meaning::ExpandablePrimitive(ExpandablePrimitive::NoExpand)
         {
             let dispatch = mode.dispatch_raw_token(traced, input, stores, expansion)?;
             crate::push_dispatch_result(input, stores, dispatch);
             continue;
         }
-        let meaning = if read.suppress_expansion()
+        let meaning = if prepared.suppress_expansion()
             && matches!(
                 meaning,
                 Meaning::Undefined | Meaning::Macro { .. } | Meaning::ExpandablePrimitive(_)
