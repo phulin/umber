@@ -1273,6 +1273,58 @@ Values use control-sequence spelling, character code and catcode, canonical
 command/operand names, input reason, source-relative location where stable,
 and condition/alignment state. They exclude reference allocation identities.
 
+Schema version 1 is implemented by the dependency-light `tex-oracle` crate.
+It is shared by all three reference harnesses and the future test-only
+`tex-command` observer; it does not depend on either command engine. The
+canonical event union is:
+
+| Event            | Committed semantic boundary                                        |
+| ---------------- | ------------------------------------------------------------------ |
+| `command`        | raw `get_next` or expanded caller delivery                         |
+| `input`          | logical-level push, retirement, or terminal stop                   |
+| `recovery`       | backup or error-recovery insertion                                 |
+| `scanner_status` | scanner-status transition                                          |
+| `macro`          | completed argument or macro activation                             |
+| `condition`      | condition push, limit change, selected branch, or pop              |
+| `scanner`        | completed typed scanner result                                     |
+| `token_list`     | `scan_toks` splice or completion                                   |
+| `alignment`      | `align_state`, template, or delimiter transition                   |
+| `mutation`       | typed command-relevant meaning, code, parameter, or register write |
+| `diagnostic`     | ordered typed diagnostic                                           |
+| `effect`         | ordered final externally visible effect                            |
+
+Tokens contain character code, canonical catcode name, optional
+control-sequence spelling, and an optional manifest-source-relative line and
+byte. Commands contain canonical command and operand names rather than numeric
+WEB command codes. Typed values cover integers, character codes, scaled
+values, glue including orders, tokens, names, and exact bytes. No event field
+can name a Pascal address, `mem` node, string-pool index, selector, transcript
+position, input-stack index, or physical path.
+
+The deterministic encoding is compact UTF-8 JSON Lines. The header contains
+the schema number and fixture-manifest identity. Each later line contains a
+zero-based sequence number and one normalized semantic event. Schema field
+order is fixed, maps are key ordered, and line endings inside semantic strings
+are normalized from CRLF or CR to LF. Normalization does not reorder events,
+renumber engine identities, rewrite source names, or hide semantic values.
+The stream identity is SHA-256 over a domain tag, schema version, and the exact
+encoded bytes.
+
+The fixture manifest identity uses a separate SHA-256 domain and covers the
+schema; engine dialect and banner; canonical WEB source, ordered upstream
+change files, and final instrumentation change file; stable logical input
+names and exact hashes; environment, epoch, clock, and random seed;
+distribution hash; and hashes of each ordinary-output channel. Manifest input
+names must be logical names rather than absolute or traversal-bearing host
+paths.
+
+Reference instrumentation calls `EventObserver::committed` only after the
+described semantic transition commits and passes a fully owned `Event`.
+`JsonLinesObserver` owns a dedicated writer that is never a TeX selector,
+transcript, or ordinary output. Ordinary builds use the zero-sized
+`DisabledObserver`; build integration may compile calls out entirely. Neither
+transport is allowed to query engine storage.
+
 The new command core has a test-only observer producing the same schema.
 Production builds compile the observer path out or leave one predictably
 inactive boundary. Optimized span paths decompose into the same scalar events
@@ -1292,9 +1344,9 @@ The conformance hierarchy is:
 7. canonical PDF structure, text extraction, and rendering parity; and
 8. real-document corpus parity.
 
-Committed fixtures record engine, source, change-file, schema, environment,
-clock, random seed, distribution, and output hashes. Live regeneration goes
-only through supported `scripts/regen-fixtures.sh` modes.
+Committed fixtures record the version-1 manifest and event stream described
+above. Live regeneration goes only through supported
+`scripts/regen-fixtures.sh` modes.
 
 ### 31.4 Incremental and provenance proof
 

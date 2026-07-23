@@ -27,6 +27,8 @@ The project also uses bd (beads) for issue tracking; see below for full instruct
 - `crates/`: Rust workspace crates.
 - `crates/tex-arith`: shared TeX scaled-point and TFM arithmetic.
 - `crates/tex-content`: shared versioned, domain-separated content identity.
+- `crates/tex-oracle`: versioned canonical semantic-event schema, fixture
+  identity, normalization, and detached instrumentation transport.
 - `crates/tex-state`: engine state layer substrate.
 - `crates/tex-fonts`: immutable font metric parsing and TFM data.
 - `crates/tex-lex`: line normalization, tokenization, input stack, and token-list replay.

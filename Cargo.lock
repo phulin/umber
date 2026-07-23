@@ -1225,6 +1225,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "tex-oracle"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "sha2",
+]
+
+[[package]]
 name = "tex-out"
 version = "0.1.0"
 dependencies = [
