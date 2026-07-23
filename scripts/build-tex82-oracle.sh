@@ -332,6 +332,15 @@ for pattern in \
   '"kind":"backup"' \
   '"kind":"inserted_control_sequence"' \
   '"event":"scanner_status"' \
+  '"event":"macro","data":{"transition":"argument"' \
+  '"event":"macro","data":{"transition":"activation"' \
+  '"purpose":"macro_delimiter_match"' \
+  '"purpose":"macro_delimiter_recovery"' \
+  '"purpose":"parameter_conversion"' \
+  '"purpose":"macro_replacement"' \
+  '"purpose":"scan_toks"' \
+  '"purpose":"expanded_scan_toks"' \
+  '"purpose":"the_toks"' \
   '"diagnostic":"outer_validity_control_sequence"' \
   '"transition":"stop"' \
   '"kind":"terminate"'; do

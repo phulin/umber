@@ -299,13 +299,90 @@ end;
 procedure umber_trace_token(@!t:halfword);
 var c:integer;
 begin
-if t>=cs_token_flag then
+if (t>@'2400)and(t<=@'2400+9) then
+  write(umber_trace_file,'{"character":',t-@'2400:1,
+    ',"catcode":"out_parameter"}')
+else if (t>=@'6400)and(t<@'7000) then
+  write(umber_trace_file,'{"character":',t-@'6400:1,
+    ',"catcode":"match"}')
+else if t=@'7000 then
+  write(umber_trace_file,'{"character":0,"catcode":"end_match"}')
+else if t>=cs_token_flag then
   begin write(umber_trace_file,
     '{"character":0,"catcode":"escape","control_sequence":');
   umber_trace_cs(t-cs_token_flag); write(umber_trace_file,'}'); end
 else begin c:=t div @'400;
   write(umber_trace_file,'{"character":',t mod @'400:1,',"catcode":');
   umber_trace_catcode(c); write(umber_trace_file,'}'); end;
+end;
+
+procedure umber_trace_token_range(@!p,@!stop_pointer:pointer);
+var first_token:boolean;
+begin first_token:=true;
+while p<>stop_pointer do
+  begin
+  if first_token then first_token:=false
+  else write(umber_trace_file,',');
+  umber_trace_token(info(p)); p:=link(p);
+  end;
+end;
+
+procedure umber_trace_token_list(@!transition,@!purpose:integer;
+  @!p,@!stop_pointer:pointer);
+begin
+if not umber_trace_opened then return;
+umber_trace_begin;
+write(umber_trace_file,'{"event":"token_list","data":{"transition":"');
+if transition=0 then write(umber_trace_file,'splice')
+else write(umber_trace_file,'complete');
+write(umber_trace_file,'","purpose":"');
+case purpose of
+0:write(umber_trace_file,'macro_delimiter_match');
+1:write(umber_trace_file,'macro_delimiter_recovery');
+2:write(umber_trace_file,'parameter_conversion');
+3:write(umber_trace_file,'macro_replacement');
+4:write(umber_trace_file,'scan_toks');
+5:write(umber_trace_file,'expanded_scan_toks');
+othercases write(umber_trace_file,'the_toks')
+endcases;
+write(umber_trace_file,'","tokens":[');
+umber_trace_token_range(p,stop_pointer);
+write_ln(umber_trace_file,']}}}');
+end;
+
+procedure umber_trace_token_splice(@!purpose:integer;@!t:halfword);
+begin
+if not umber_trace_opened then return;
+umber_trace_begin;
+write(umber_trace_file,
+  '{"event":"token_list","data":{"transition":"splice","purpose":"');
+if purpose=1 then write(umber_trace_file,'macro_delimiter_recovery')
+else if purpose=2 then write(umber_trace_file,'parameter_conversion')
+else write(umber_trace_file,'the_toks');
+write(umber_trace_file,'","tokens":['); umber_trace_token(t);
+write_ln(umber_trace_file,']}}}');
+end;
+
+procedure umber_trace_macro_argument(@!parameter_number:integer;@!p:pointer);
+begin
+if not umber_trace_opened then return;
+umber_trace_begin;
+write(umber_trace_file,
+  '{"event":"macro","data":{"transition":"argument","parameter":',
+  parameter_number:1,',"tokens":[');
+umber_trace_token_range(p,null);
+write_ln(umber_trace_file,']}}}');
+end;
+
+procedure umber_trace_macro_activation(@!cs:pointer;@!arguments:integer);
+begin
+if not umber_trace_opened then return;
+umber_trace_begin;
+write(umber_trace_file,
+  '{"event":"macro","data":{"transition":"activation",',
+  '"control_sequence":');
+umber_trace_cs(cs);
+write_ln(umber_trace_file,',"argument_count":',arguments:1,'}}}');
 end;
 
 procedure umber_trace_recovery(@!kind:integer;@!t:halfword);
@@ -539,10 +616,46 @@ exit:umber_set_scanner_status(save_scanner_status);
 warning_index:=save_warning_index;
 @z
 
+@x [25] Observe committed macro activation.
+  for m:=0 to n-1 do param_stack[param_ptr+m]:=pstack[m];
+  param_ptr:=param_ptr+n;
+  end
+@y
+  for m:=0 to n-1 do param_stack[param_ptr+m]:=pstack[m];
+  param_ptr:=param_ptr+n;
+  end;
+umber_trace_macro_activation(warning_index,n)
+@z
+
 @x [25] Macro matching status.
 begin scanner_status:=matching; unbalance:=0;
 @y
 begin umber_set_scanner_status(matching); unbalance:=0;
+@z
+
+@x [25] Observe a completely matched macro delimiter.
+found: if s<>null then @<Tidy up the parameter just scanned, and tuck it away@>
+@y
+found: if s<>null then
+  begin umber_trace_token_list(0,0,s,r);
+  @<Tidy up the parameter just scanned, and tuck it away@>;
+  end
+@z
+
+@x [25] Observe committed overlapping-delimiter recovery.
+    repeat store_new_token(info(t)); incr(m); u:=link(t); v:=s;
+@y
+    repeat store_new_token(info(t)); incr(m);
+    umber_trace_token_splice(1,info(t)); u:=link(t); v:=s;
+@z
+
+@x [25] Observe each completed macro argument after brace stripping.
+else pstack[n]:=link(temp_head);
+incr(n);
+@y
+else pstack[n]:=link(temp_head);
+umber_trace_macro_argument(n+1,pstack[n]);
+incr(n);
 @z
 
 @x [27] string/meaning scanner status.
@@ -554,6 +667,15 @@ string_code, meaning_code: begin save_scanner_status:=scanner_status;
   umber_set_scanner_status(save_scanner_status);
 @z
 
+@x [27] Retain the canonical replacement-list boundary for observation.
+@!q:pointer; {new node being added to the token list via |store_new_token|}
+@!unbalance:halfword; {number of unmatched left braces}
+@y
+@!q:pointer; {new node being added to the token list via |store_new_token|}
+@!umber_trace_start:pointer; {predecessor of the collected replacement}
+@!unbalance:halfword; {number of unmatched left braces}
+@z
+
 @x [27] Balanced-text status entry.
 begin if macro_def then scanner_status:=defining
 @+else scanner_status:=absorbing;
@@ -562,10 +684,57 @@ begin if macro_def then umber_set_scanner_status(defining)
 @+else umber_set_scanner_status(absorbing);
 @z
 
-@x [27] Balanced-text status restoration.
+@x [27] Mark the beginning of collected replacement text.
+if macro_def then @<Scan and build the parameter part of the macro definition@>
+else scan_left_brace; {remove the compulsory left brace}
+@<Scan and build the body of the token list; |goto found| when finished@>;
+@y
+if macro_def then @<Scan and build the parameter part of the macro definition@>
+else scan_left_brace; {remove the compulsory left brace}
+umber_trace_start:=p;
+@<Scan and build the body of the token list; |goto found| when finished@>;
+@z
+
+@x [27] Observe completed scan_toks collection.
 found: scanner_status:=normal;
+if hash_brace<>0 then store_new_token(hash_brace);
+scan_toks:=p;
 @y
 found: umber_set_scanner_status(normal);
+if hash_brace<>0 then store_new_token(hash_brace);
+if macro_def then
+  umber_trace_token_list(1,3,link(umber_trace_start),null)
+else if xpand then
+  umber_trace_token_list(1,5,link(umber_trace_start),null)
+else umber_trace_token_list(1,4,link(umber_trace_start),null);
+scan_toks:=p;
+@z
+
+@x [27] Observe direct token-list splices made by \the.
+  if cur_cmd<=max_command then goto done2;
+  if cur_cmd<>the then expand
+  else  begin q:=the_toks;
+    if link(temp_head)<>null then
+      begin link(p):=link(temp_head); p:=q;
+      end;
+    end;
+@y
+  if cur_cmd<=max_command then goto done2;
+  if cur_cmd<>the then expand
+  else  begin q:=the_toks;
+    if link(temp_head)<>null then
+      begin umber_trace_token_list(0,6,link(temp_head),null);
+      link(p):=link(temp_head); p:=q;
+      end;
+    end;
+@z
+
+@x [27] Observe conversion from parameter spelling to replay token.
+  else cur_tok:=out_param_token-"0"+cur_chr;
+@y
+  else begin cur_tok:=out_param_token-"0"+cur_chr;
+    umber_trace_token_splice(2,cur_tok);
+    end;
 @z
 
 @x [27] read_toks status entry.

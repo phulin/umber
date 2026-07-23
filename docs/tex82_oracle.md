@@ -59,8 +59,11 @@ transition program runs twice and must emit byte-identical traces; the
 manifest-field shape, and contiguous sequence numbers. Focused checks require
 raw and expanded delivery, source and token input lifecycle, backup, scanner
 status, outer-validity recovery insertion, terminal stop, and termination
-ordering. The sole ordinary-log normalization replaces TeX's startup-banner
-host clock; no semantic message or diagnostic is changed.
+ordering. Macro-focused checks additionally require completed arguments and
+activations, delimiter matches and overlap recovery, parameter conversion,
+replacement completion, ordinary and expanded `scan_toks` completion, and
+direct `\the` token-list splices. The sole ordinary-log normalization replaces
+TeX's startup-banner host clock; no semantic message or diagnostic is changed.
 
 The live change file writes the all-zero manifest identity as an explicit
 unbound sentinel. It is not a committed fixture identity. Cross-engine

@@ -1249,10 +1249,12 @@ and delegates to the reproducible workflow documented in
 [`tex82_oracle.md`](tex82_oracle.md). It emits separately identified clean and
 instrumented Web2C executables plus a build record. The pinned final change
 file emits TeX82 raw/expanded delivery, input lifecycle, backup, scanner
-status, outer-validity recovery, terminal-stop, and termination events. Its
-focused live run is schema-validated, deterministic, and ordinary-output
-transparent. Cargo correctness tests never acquire or execute this live
-oracle.
+status, outer-validity recovery, completed macro arguments and activations,
+delimiter matching and overlap recovery, parameter conversion, macro
+replacement completion, `scan_toks` completion and direct `\the` splices,
+terminal-stop, and termination events. Its focused live run is
+schema-validated, deterministic, and ordinary-output transparent. Cargo
+correctness tests never acquire or execute this live oracle.
 
 Instrumentation writes a versioned semantic event stream. It must not use
 TeX's semantic `mem`, string pool, selector, transcript state, or command

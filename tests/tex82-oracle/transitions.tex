@@ -3,6 +3,17 @@
 \catcode `# = 6
 \def\identity#1{#1}
 \identity{\relax}
+\def\pair#1#2{#2#1}
+\pair AB
+\def\delimited#1END{#1}
+\delimited payloadEND
+\def\overlap#1aab{#1}
+\overlap aaab
+\long\def\longtake#1{#1}
+\longtake{before\par after}
+\toks0={TOKEN LIST}
+\output={OUTPUT ROUTINE}
+\edef\thecopy{\the\toks0}
 \edef\frozen{\noexpand\relax}
 \iffalse ignored\fi
 \message{UMBER-TEX82-TRANSITIONS}
