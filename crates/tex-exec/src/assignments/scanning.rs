@@ -54,11 +54,11 @@ pub(super) fn scan_variable_target(
         })?;
     let token = tex_expand::semantic_token(traced);
     let Token::Cs(symbol) = token else {
-        return Err(ExecError::ExpectedControlSequence {
-            context: "arithmetic target",
-            token,
-            origin: traced.origin(),
-        });
+        // TeX.web §1237/pdfTeX.web §1219 consumes one expanded target
+        // candidate and recovers from every non-register meaning alike. In
+        // particular, a character token is the bad target itself rather than
+        // a fatal control-sequence scan error.
+        return Err(ExecError::UnsupportedAssignmentTarget);
     };
     let meaning = stores.meaning(symbol);
     match meaning {

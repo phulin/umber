@@ -19,6 +19,26 @@ fn register_assignments_cover_sparse_aliases_and_arithmetic() {
 }
 
 #[test]
+fn arithmetic_character_target_is_consumed_before_recovery() {
+    let mut stores = Universe::new();
+    install_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new("\\count0=7 \\advance= \\count1=9"));
+
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("invalid arithmetic target must recover with forward progress");
+
+    assert_eq!(stores.count(0), 7);
+    assert_eq!(stores.count(1), 9);
+    assert_eq!(
+        terminal_effect_text(&stores)
+            .matches("Improper assignment target")
+            .count(),
+        1
+    );
+}
+
+#[test]
 fn macro_recovery_stops_at_tex82s_global_hundred_error_limit() {
     let mut stores = Universe::new();
     install_unexpandable_primitives(&mut stores);

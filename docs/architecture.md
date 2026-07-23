@@ -377,6 +377,13 @@ v-template walk or the exact driver-issued replay proof.
 alignments, math-list construction, page building, output routines, and
 shipout transactions. Its mode nest is explicit and snapshot-capable.
 
+Arithmetic assignment targets follow TeX.web §1237 and pdfTeX.web §1219:
+`\advance`, `\multiply`, and `\divide` expand and consume exactly one target
+candidate after spaces. Any candidate that is neither an assignable numeric
+variable nor a register-family primitive is a recoverable assignment error,
+including a character token; execution resumes after that consumed token
+without scanning an operand or changing state.
+
 Math `\vcenter` uses TeX.web §1061's ordinary vertical-box entry semantics:
 after opening its internal vertical group, it replays `\everyvbox` before the
 explicit body. Packages may initialize per-box alignment state in that hook;
