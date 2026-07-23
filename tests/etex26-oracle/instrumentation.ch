@@ -679,6 +679,7 @@ if family=9 then
   last_line_fit_code:write(umber_trace_file,'lastlinefit');
   saving_vdiscards_code:write(umber_trace_file,'savingvdiscards');
   saving_hyph_codes_code:write(umber_trace_file,'savinghyphcodes');
+  eTeX_state_code+TeXXeT_code:write(umber_trace_file,'TeXXeTstate');
   othercases write(umber_trace_file,'integer_parameter:',slot:1)
   endcases
 else

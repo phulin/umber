@@ -1011,24 +1011,27 @@ catalog and a closed command enum.
 
 The intended seams are:
 
-| Extension             | Canonical seam                                    |
-| --------------------- | ------------------------------------------------- |
-| `\protected`          | macro flags and protected expansion policy        |
-| `\unexpanded`         | `the_toks` family and expanded `scan_toks` splice |
-| `\detokenize`         | token-list conversion                             |
-| `\expanded`           | balanced expanded token-list construction         |
-| `\unless`             | conditional inversion                             |
-| `\scantokens`         | generated registered source input                 |
-| `\everyeof`           | source retirement                                 |
-| expression scanners   | typed value scanner family                        |
-| extended conditionals | condition predicate dispatch                      |
-| extended registers    | `tex-state` value enquiries                       |
-| pdfTeX conversions    | conversion dispatch                               |
-| pdfTeX file queries   | typed World enquiries                             |
-| pdfTeX regex and MD5  | pure bounded services                             |
-| pdfTeX random values  | deterministic World randomness                    |
-| PDF object enquiries  | typed PDF ledger reads                            |
-| PDF font enquiries    | typed font/PDF state reads                        |
+| Extension             | Canonical seam                                      |
+| --------------------- | --------------------------------------------------- |
+| `\protected`          | macro flags and protected expansion policy          |
+| `\unexpanded`         | `the_toks` family and expanded `scan_toks` splice   |
+| `\detokenize`         | token-list conversion                               |
+| `\expanded`           | balanced expanded token-list construction           |
+| `\unless`             | conditional inversion                               |
+| `\scantokens`         | generated registered source input                   |
+| `\readline`           | virtualized raw-line token construction             |
+| `\everyeof`           | source retirement                                   |
+| expression scanners   | typed value scanner family                          |
+| extended conditionals | condition predicate dispatch                        |
+| extended registers    | `tex-state` value enquiries                         |
+| environment enquiries | typed group, condition, node, font, and shape reads |
+| e-TeX integer state   | named parameter and optional-feature writes         |
+| pdfTeX conversions    | conversion dispatch                                 |
+| pdfTeX file queries   | typed World enquiries                               |
+| pdfTeX regex and MD5  | pure bounded services                               |
+| pdfTeX random values  | deterministic World randomness                      |
+| PDF object enquiries  | typed PDF ledger reads                              |
+| PDF font enquiries    | typed font/PDF state reads                          |
 
 Extension implementation may add opcodes and helpers but does not replace
 `get_next`, `get_token`, `get_x_token`, `macro_call`, `pass_text`, or
@@ -1276,7 +1279,11 @@ semantic matrix through stable e-TeX seams. Its extension matrix additionally
 observes committed token construction and suppression, expression results,
 extended predicates and inversion, group/condition/value enquiries, canonical
 sparse-register writes, and named tracing/state parameters. Sparse storage
-nodes and allocation identities are excluded. Both profiles are smoke- and
+nodes and allocation identities are excluded. A machine-readable audit
+classifies every primitive declared by the pinned canonical `etex.ch` as
+command-core-owned or executor-owned; every command-core entry names an exact
+extension-matrix boundary, while executor entries name their existing focused
+parity gate. Both profiles are smoke- and
 matrix-gated; their traces are schema-valid and deterministic, and clean versus
 instrumented terminal, normalized log, status, DVI, and generated-effect bytes
 must match. Compatibility mode retains the TeX82 shared-domain contract while

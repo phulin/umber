@@ -38,4 +38,5 @@ Read the repository-root `AGENTS.md` first. This file adds the directory map for
 - `build-etex26-oracle.sh`: hash-pinned canonical e-TeX 2.6 source acquisition
   and reproducible clean/instrumented Web2C builds; compatibility and extended
   INITEX profiles are separately named, smoke- and schema-v1 base-command
-  matrix-gated, transparency-checked, and recorded.
+  matrix-gated, audited against the complete canonical extension primitive
+  inventory, transparency/effect/repeatability-checked, and recorded.

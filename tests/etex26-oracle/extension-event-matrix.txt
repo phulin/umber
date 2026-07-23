@@ -1,6 +1,8 @@
-# Required schema-v1 e-TeX 2.6 expansion and token-construction observations.
+# Required schema-v1 e-TeX 2.6 command-core extension observations.
 # These rows apply only to the canonical extended INITEX profile.
 # Columns: family|boundary|fixture|final-change seam|fixed JSON fragment|compatibility
+command|profile version identity|extensions.tex|get_next primitive delivery|"command":{"command":"last_item","operand":{"type":"integer","value":6},"control_sequence":"eTeXversion"|absent
+command|profile revision identity|extensions.tex|get_next primitive delivery|"command":{"command":"convert","operand":{"type":"integer","value":5},"control_sequence":"eTeXrevision"|absent
 token_list|protected macro construction|extensions.tex|prefixed_command protected flag commit|"purpose":"protected_macro"|absent
 token_list|protected expansion suppression|extensions.tex|expanded scan_toks protected branch|"purpose":"protected_expansion_suppression"|absent
 token_list|unexpanded construction|extensions.tex|the_toks unexpanded return|"purpose":"unexpanded"|absent
@@ -10,6 +12,7 @@ token_list|expanded construction|extensions.tex|expanded scan_toks completion|"p
 token_list|scantokens construction|extensions.tex|pseudo_start balanced-text commit|"purpose":"scantokens"|absent
 input|everyeof push|extensions.tex|natural pseudo-file EOF insertion|"transition":"push","reason":"token_list","name":"every_eof"|absent
 input|everyeof retirement|extensions.tex|everyeof token-list retirement|"transition":"retire","reason":"token_list","name":"every_eof"|absent
+mutation|readline token construction|extensions.tex|read_toks definition commit|"value":"readlinecopy"|absent
 scanner|numexpr result|extensions.tex|scan_expr committed integer result|"scanner":"expression_integer","result":{"type":"integer","value":14}|absent
 scanner|dimexpr result|extensions.tex|scan_expr committed dimension result|"scanner":"expression_dimension","result":{"type":"scaled","value":196608}|absent
 scanner|glueexpr result|extensions.tex|scan_expr committed glue result|"scanner":"expression_glue","result":{"type":"glue"|absent
@@ -30,6 +33,14 @@ scanner|current condition level enquiry|extensions.tex|current condition semanti
 scanner|current condition type enquiry|extensions.tex|current condition semantic return|"scanner":"current_condition_type"|absent
 scanner|current condition branch enquiry|extensions.tex|current condition semantic return|"scanner":"current_condition_branch"|absent
 scanner|interaction mode enquiry|extensions.tex|interaction state semantic return|"scanner":"interaction_mode"|absent
+command|last node type enquiry|extensions.tex|get_next primitive delivery|"command":{"command":"last_item","operand":{"type":"integer","value":3},"control_sequence":"lastnodetype"|absent
+command|font character width enquiry|extensions.tex|get_next primitive delivery|"command":{"command":"last_item","operand":{"type":"integer","value":14},"control_sequence":"fontcharwd"|absent
+command|font character height enquiry|extensions.tex|get_next primitive delivery|"command":{"command":"last_item","operand":{"type":"integer","value":15},"control_sequence":"fontcharht"|absent
+command|font character depth enquiry|extensions.tex|get_next primitive delivery|"command":{"command":"last_item","operand":{"type":"integer","value":16},"control_sequence":"fontchardp"|absent
+command|font character italic enquiry|extensions.tex|get_next primitive delivery|"command":{"command":"last_item","operand":{"type":"integer","value":17},"control_sequence":"fontcharic"|absent
+command|paragraph shape indent enquiry|extensions.tex|get_next primitive delivery|"command":{"command":"last_item","operand":{"type":"integer","value":19},"control_sequence":"parshapeindent"|absent
+command|paragraph shape length enquiry|extensions.tex|get_next primitive delivery|"command":{"command":"last_item","operand":{"type":"integer","value":18},"control_sequence":"parshapelength"|absent
+command|paragraph shape dimension enquiry|extensions.tex|get_next primitive delivery|"command":{"command":"last_item","operand":{"type":"integer","value":20},"control_sequence":"parshapedimen"|absent
 mutation|sparse count write|extensions.tex|sa_w_def committed semantic register write|"value":"count:300"|absent
 mutation|sparse dimen write|extensions.tex|sa_w_def committed semantic register write|"value":"dimen:300"|absent
 mutation|sparse skip write|extensions.tex|sa_def committed semantic register write|"value":"skip:300"|absent
@@ -42,6 +53,8 @@ mutation|tracinggroups control|extensions.tex|eq_word_define named e-TeX paramet
 mutation|tracingifs control|extensions.tex|eq_word_define named e-TeX parameter write|"value":"tracingifs"|absent
 mutation|tracingscantokens control|extensions.tex|eq_word_define named e-TeX parameter write|"value":"tracingscantokens"|absent
 mutation|tracingnesting control|extensions.tex|eq_word_define named e-TeX parameter write|"value":"tracingnesting"|absent
+mutation|predisplaydirection state|extensions.tex|eq_word_define named e-TeX parameter write|"value":"predisplaydirection"|absent
+mutation|TeXXeTstate control|extensions.tex|eq_word_define named e-TeX state write|"value":"TeXXeTstate"|absent
 mutation|lastlinefit state|extensions.tex|eq_word_define named e-TeX parameter write|"value":"lastlinefit"|absent
 mutation|savingvdiscards state|extensions.tex|eq_word_define named e-TeX parameter write|"value":"savingvdiscards"|absent
 mutation|savinghyphcodes state|extensions.tex|eq_word_define named e-TeX parameter write|"value":"savinghyphcodes"|absent

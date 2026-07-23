@@ -19,10 +19,15 @@ ordered Web2C changes, translator inputs, and repository-owned inputs.
 the focused base-command transition inputs, the executable semantic-event
 matrix, a focused extension program and matrix covering token construction,
 scanners, conditions, enquiries, sparse registers, and e-TeX state, and the
-repository-owned final instrumentation change. The base matrix runs in
+repository-owned final instrumentation change. Its primitive audit exactly
+classifies every primitive declared by pinned canonical `etex.ch`;
+command-core entries name extension-matrix boundaries and executor entries
+name their focused parity owners. The base matrix runs in
 compatibility and extended INITEX profiles and gates the complete TeX82-
 applicable schema-v1 contract. The extension matrix runs against the extended
 trace and rejects extension-only fragments in compatibility mode.
+Clean/instrumented and repeated extension runs also compare generated effect
+bytes.
 Acquisition and builds run only through `scripts/regen-fixtures.sh --area
 etex26-oracle`; Cargo correctness tests never invoke the live oracle.
 

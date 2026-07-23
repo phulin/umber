@@ -197,8 +197,9 @@ executable identities under `target/`, and compare clean with instrumented
 ordinary outputs. The e-TeX mode additionally verifies the distinct
 compatibility and leading-`*` extended INITEX profiles, validates the complete
 base schema-v1 event matrix in both, validates the focused expansion and
-token-construction extension matrix with compatibility exclusion, and repeats
-each base and extension trace deterministically.
+command-core extension matrix with compatibility exclusion, checks its
+primitive-owner audit against canonical `etex.ch`, and repeats each base and
+extension trace plus generated effect bytes deterministically.
 
 See `tests/AGENTS.md` for the supported areas and cases, required tools,
 copied support files, and validation performed after a rewrite.

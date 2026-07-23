@@ -2,6 +2,8 @@
 \catcode `} = 2
 \def\etexextensions{
   \immediate\write16{UMBER-ETEX26-EXTENSIONS-EXTENDED}
+  \def\extensioneffect{EXTENDED}
+  \message{VERSION=\the\eTeXversion\eTeXrevision}
   \def\ordinarymacro{ORDINARY}
   \protected\def\protectedmacro{PROTECTED}
   \edef\protectedcopy{A\protectedmacro B}
@@ -12,6 +14,10 @@
   \message{DETOKENIZED-COPY=\detokenizedcopy}
   \everyeof={\message{EVERYEOF-REPLAY}}
   \scantokens{\message{SCANTOKENS-BODY}}
+  \openin1=extensions-readline.txt
+  \readline1 to\readlinecopy
+  \closein1
+  \message{READLINE=\meaning\readlinecopy}
   \message{NUMEXPR=\the\numexpr 2+3*4\relax}
   \message{DIMEXPR=\the\dimexpr 1pt+2pt\relax}
   \message{GLUEEXPR=\the\glueexpr 1pt plus 2pt+3pt\relax}
@@ -54,6 +60,17 @@
     \fi
   \endgroup
   \message{INTERACTION=\number\interactionmode}
+  \setbox0=\hbox{}
+  \message{LASTNODE=\number\lastnodetype}
+  \message{FONTCHAR=
+    \the\fontcharwd\nullfont 0,
+    \the\fontcharht\nullfont 0,
+    \the\fontchardp\nullfont 0,
+    \the\fontcharic\nullfont 0}
+  \parshape=2 1pt 2pt 3pt 4pt
+  \message{PARSHAPE=
+    \the\parshapeindent 1,\the\parshapelength 1,
+    \the\parshapedimen 3}
   \count300=11
   \dimen300=12pt
   \skip300=13pt plus 2fil
@@ -66,14 +83,20 @@
   \tracingifs=1
   \tracingscantokens=1
   \tracingnesting=1
+  \predisplaydirection=-1
+  \TeXXeTstate=1
   \lastlinefit=500
   \savingvdiscards=1
   \savinghyphcodes=1
 }
 \expandafter\ifx\csname eTeXversion\endcsname\relax
   \message{UMBER-ETEX26-EXTENSIONS-COMPATIBILITY}
+  \def\extensioneffect{COMPATIBILITY}
 \else
   \etexextensions
 \fi
+\immediate\openout1=extensions-effects.out
+\immediate\write1{EXTENSION-EFFECT=\extensioneffect}
+\immediate\closeout1
 \shipout\hbox{}
 \end

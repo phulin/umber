@@ -23,7 +23,9 @@ transition_input="${repo_root}/tests/etex26-oracle/transitions.tex"
 transition_child="${repo_root}/tests/etex26-oracle/transitions-child.tex"
 semantic_event_matrix="${repo_root}/tests/etex26-oracle/semantic-event-matrix.txt"
 extension_input="${repo_root}/tests/etex26-oracle/extensions.tex"
+extension_readline_input="${repo_root}/tests/etex26-oracle/extensions-readline.txt"
 extension_event_matrix="${repo_root}/tests/etex26-oracle/extension-event-matrix.txt"
+extension_primitive_audit="${repo_root}/tests/etex26-oracle/extension-primitive-audit.txt"
 cflags="-O2"
 cxxflags="-O2"
 source_date_epoch="${SOURCE_DATE_EPOCH:-1783604160}"
@@ -321,6 +323,7 @@ run_extensions() {
   rm -rf "$run_dir"
   mkdir -p "$run_dir"
   cp "$extension_input" "${run_dir}/extensions.tex"
+  cp "$extension_readline_input" "${run_dir}/extensions-readline.txt"
   (
     cd "$run_dir"
     env -i PATH=/usr/bin:/bin LC_ALL=C LANGUAGE=C \
@@ -336,6 +339,8 @@ run_extensions() {
     fail "$build_profile/$engine_profile extension run did not write extensions.log"
   [[ -f "${run_dir}/extensions.dvi" ]] ||
     fail "$build_profile/$engine_profile extension run did not write extensions.dvi"
+  [[ -f "${run_dir}/extensions-effects.out" ]] ||
+    fail "$build_profile/$engine_profile extension run did not write extension effects"
   if [[ "$engine_profile" == compatibility ]]; then
     grep -q 'UMBER-ETEX26-EXTENSIONS-COMPATIBILITY' \
       "${run_dir}/extensions.log" ||
@@ -445,6 +450,9 @@ write_build_record() {
         printf 'extension-dvi-sha256 %s %s %s\n' \
           "$build_profile" "$engine_profile" \
           "$(sha_digest 256 "${out_dir}/extensions/${build_profile}-${engine_profile}/extensions.dvi")"
+        printf 'extension-effect-output-sha256 %s %s %s\n' \
+          "$build_profile" "$engine_profile" \
+          "$(sha_digest 256 "${out_dir}/extensions/${build_profile}-${engine_profile}/extensions-effects.out")"
         if [[ "$build_profile" == instrumented ]]; then
           printf 'transition-trace-sha256 %s %s %s\n' \
             "$build_profile" "$engine_profile" \
@@ -479,26 +487,61 @@ for build_profile in clean instrumented; do
       "$build_profile" "$engine_profile"
   done
 done
+
+audit_extension_primitives() {
+  local source_inventory audit_inventory primitive owner gate seam extra
+  source_inventory="$(mktemp)"
+  audit_inventory="$(mktemp)"
+  awk 'match($0,/primitive\("[^"]+"/) {
+    print substr($0,RSTART+11,RLENGTH-12)
+  }' "${web_source_dir}/etexdir/etex.ch" | LC_ALL=C sort -u >"$source_inventory"
+  while IFS='|' read -r primitive owner gate seam extra; do
+    [[ -z "$primitive" || "$primitive" == \#* ]] && continue
+    [[ -n "$owner" && -n "$gate" && -n "$seam" && -z "${extra:-}" ]] ||
+      fail "malformed extension primitive audit row for ${primitive:-unknown}"
+    [[ "$owner" == command-core || "$owner" == executor ]] ||
+      fail "unknown extension primitive owner for $primitive: $owner"
+    if [[ "$owner" == command-core ]]; then
+      awk -F'|' -v gate="$gate" '$2 == gate { found=1 } END { exit !found }' \
+        "$extension_event_matrix" ||
+        fail "command-core primitive $primitive has no extension matrix boundary: $gate"
+    fi
+    printf '%s\n' "$primitive"
+  done <"$extension_primitive_audit" | LC_ALL=C sort -u >"$audit_inventory"
+  cmp "$source_inventory" "$audit_inventory" >/dev/null ||
+    fail "extension primitive audit does not exactly cover canonical etex.ch primitives"
+  rm -f "$source_inventory" "$audit_inventory"
+}
+
+compare_channels() {
+  local label="$1" left="$2" right="$3"
+  shift 3
+  local channel
+  for channel in "$@"; do
+    cmp "${left}/${channel}" "${right}/${channel}" >/dev/null ||
+      fail "$label changed $channel"
+  done
+}
+
+audit_extension_primitives
+for build_profile in clean instrumented; do
+  cmp "$(profile_executable "$build_profile" compatibility)" \
+    "$(profile_executable "$build_profile" extended)" >/dev/null ||
+    fail "$build_profile profile aliases do not identify one canonical executable"
+done
 for engine_profile in compatibility extended; do
-  for channel in terminal.txt ordinary.log status.txt smoke.dvi; do
-    cmp "${out_dir}/smoke/clean-${engine_profile}/${channel}" \
-      "${out_dir}/smoke/instrumented-${engine_profile}/${channel}" \
-      >/dev/null ||
-      fail "instrumented $engine_profile oracle changed smoke $channel"
-  done
-  for channel in terminal.txt ordinary.log status.txt transitions.dvi \
-    transitions-effects.out; do
-    cmp "${out_dir}/transitions/clean-${engine_profile}/${channel}" \
-      "${out_dir}/transitions/instrumented-${engine_profile}/${channel}" \
-      >/dev/null ||
-      fail "instrumented $engine_profile oracle changed transition $channel"
-  done
-  for channel in terminal.txt ordinary.log status.txt extensions.dvi; do
-    cmp "${out_dir}/extensions/clean-${engine_profile}/${channel}" \
-      "${out_dir}/extensions/instrumented-${engine_profile}/${channel}" \
-      >/dev/null ||
-      fail "instrumented $engine_profile oracle changed extension $channel"
-  done
+  compare_channels "instrumented $engine_profile smoke oracle" \
+    "${out_dir}/smoke/clean-${engine_profile}" \
+    "${out_dir}/smoke/instrumented-${engine_profile}" \
+    terminal.txt ordinary.log status.txt smoke.dvi
+  compare_channels "instrumented $engine_profile transition oracle" \
+    "${out_dir}/transitions/clean-${engine_profile}" \
+    "${out_dir}/transitions/instrumented-${engine_profile}" \
+    terminal.txt ordinary.log status.txt transitions.dvi transitions-effects.out
+  compare_channels "instrumented $engine_profile extension oracle" \
+    "${out_dir}/extensions/clean-${engine_profile}" \
+    "${out_dir}/extensions/instrumented-${engine_profile}" \
+    terminal.txt ordinary.log status.txt extensions.dvi extensions-effects.out
 done
 for engine_profile in compatibility extended; do
   trace="${out_dir}/transitions/instrumented-${engine_profile}/etex26-events.jsonl"
@@ -538,22 +581,16 @@ run_extensions "$(profile_executable instrumented compatibility)" \
 run_extensions "$(profile_executable instrumented extended)" \
   instrumented-repeat extended
 for engine_profile in compatibility extended; do
-  for channel in terminal.txt ordinary.log status.txt transitions.dvi \
-    transitions-effects.out etex26-events.jsonl; do
-    cmp "${out_dir}/transitions/instrumented-${engine_profile}/${channel}" \
-      "${out_dir}/transitions/instrumented-repeat-${engine_profile}/${channel}" \
-      >/dev/null ||
-      fail "repeated instrumented $engine_profile oracle changed $channel"
-  done
-done
-for engine_profile in compatibility extended; do
-  for channel in terminal.txt ordinary.log status.txt extensions.dvi \
-    etex26-events.jsonl; do
-    cmp "${out_dir}/extensions/instrumented-${engine_profile}/${channel}" \
-      "${out_dir}/extensions/instrumented-repeat-${engine_profile}/${channel}" \
-      >/dev/null ||
-      fail "repeated instrumented $engine_profile oracle changed extension $channel"
-  done
+  compare_channels "repeated instrumented $engine_profile transition oracle" \
+    "${out_dir}/transitions/instrumented-${engine_profile}" \
+    "${out_dir}/transitions/instrumented-repeat-${engine_profile}" \
+    terminal.txt ordinary.log status.txt transitions.dvi transitions-effects.out \
+    etex26-events.jsonl
+  compare_channels "repeated instrumented $engine_profile extension oracle" \
+    "${out_dir}/extensions/instrumented-${engine_profile}" \
+    "${out_dir}/extensions/instrumented-repeat-${engine_profile}" \
+    terminal.txt ordinary.log status.txt extensions.dvi extensions-effects.out \
+    etex26-events.jsonl
 done
 write_build_record
 printf '%s\n' "$bin_dir"
