@@ -23,6 +23,12 @@ pub(crate) struct FetchedChar {
 
 const INF_PENALTY: i32 = 10_000;
 
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub(crate) enum SourceListRole {
+    HorizontalField,
+    BoxPayload,
+}
+
 #[must_use]
 pub fn mlist_to_hlist(
     state: &impl MathTypesetState,
@@ -767,32 +773,51 @@ pub(crate) fn source_list(
     ctx: &mut Context<'_, impl MathTypesetState>,
     list: NodeListId,
 ) -> FrozenHList {
-    if let Some(converted) = ctx.source_lists.get(&list) {
+    convert_source_list(ctx, list, SourceListRole::HorizontalField)
+}
+
+pub(crate) fn source_box_payload(
+    ctx: &mut Context<'_, impl MathTypesetState>,
+    list: NodeListId,
+) -> FrozenHList {
+    convert_source_list(ctx, list, SourceListRole::BoxPayload)
+}
+
+fn convert_source_list(
+    ctx: &mut Context<'_, impl MathTypesetState>,
+    list: NodeListId,
+    role: SourceListRole,
+) -> FrozenHList {
+    if let Some(converted) = ctx.source_lists.get(&(list, role)) {
         return *converted;
     }
 
-    let mut stack = vec![(list, false)];
+    let mut stack = vec![(list, role, false)];
     let mut visiting = AHashSet::new();
-    while let Some((current, expanded)) = stack.pop() {
-        if ctx.source_lists.contains_key(&current) {
+    while let Some((current, current_role, expanded)) = stack.pop() {
+        let key = (current, current_role);
+        if ctx.source_lists.contains_key(&key) {
             continue;
         }
         if expanded {
-            visiting.remove(&current);
+            visiting.remove(&key);
             let source = ctx.state.nodes(current).to_vec();
             let nodes = source
                 .iter()
                 .map(|node| source_node(ctx, node))
                 .collect::<Vec<_>>();
-            let converted = ctx.layout.hlist(nodes);
-            ctx.source_lists.insert(current, converted);
+            let converted = match current_role {
+                SourceListRole::HorizontalField => ctx.layout.hlist(nodes),
+                SourceListRole::BoxPayload => ctx.layout.box_payload(nodes),
+            };
+            ctx.source_lists.insert(key, converted);
             continue;
         }
         assert!(
-            visiting.insert(current),
+            visiting.insert(key),
             "source box lists must not contain structural cycles"
         );
-        stack.push((current, true));
+        stack.push((current, current_role, true));
         let mut children = ctx
             .state
             .nodes(current)
@@ -804,10 +829,14 @@ pub(crate) fn source_list(
             })
             .collect::<Vec<_>>();
         children.reverse();
-        stack.extend(children.into_iter().map(|child| (child, false)));
+        stack.extend(
+            children
+                .into_iter()
+                .map(|child| (child, SourceListRole::BoxPayload, false)),
+        );
     }
     *ctx.source_lists
-        .get(&list)
+        .get(&(list, role))
         .expect("source-list postorder conversion must produce its root")
 }
 
@@ -849,7 +878,7 @@ pub(crate) fn source_node(ctx: &mut Context<'_, impl MathTypesetState>, node: &N
             depth: *depth,
         },
         Node::HList(box_node) | Node::VList(box_node) => {
-            let list = source_list(ctx, box_node.children);
+            let list = source_box_payload(ctx, box_node.children);
             let boxed = MathBox {
                 width: box_node.width,
                 height: box_node.height,
@@ -921,7 +950,7 @@ pub(crate) struct Context<'a, S> {
     pub(crate) mu: Scaled,
     pub(crate) layout: MathLayoutBuilder,
     pub(crate) converted: AHashMap<(NodeListId, Style), FrozenHList>,
-    pub(crate) source_lists: AHashMap<NodeListId, FrozenHList>,
+    pub(crate) source_lists: AHashMap<(NodeListId, SourceListRole), FrozenHList>,
 }
 
 impl<S> Context<'_, S> {

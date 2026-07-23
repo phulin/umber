@@ -200,6 +200,33 @@ impl MathLayoutBuilder {
         let start = self.nodes.len();
         self.nodes.extend(nodes);
         let end = self.nodes.len();
+        self.validate_new_span(start, end);
+        let mut meas = Measurement::ZERO;
+        self.measure_hnodes(start, end, &mut meas);
+        self.span(start, end, meas)
+    }
+
+    /// Stores the already-boxed child payload of a source box.
+    ///
+    /// The owning source box carries authoritative width, height, and depth,
+    /// so Appendix G must not repack or remeasure this payload.
+    pub(crate) fn box_payload(&mut self, nodes: impl IntoIterator<Item = MathNode>) -> FrozenHList {
+        let start = self.nodes.len();
+        self.nodes.extend(nodes);
+        let end = self.nodes.len();
+        self.validate_new_span(start, end);
+        let node_count = u32::try_from(end - start).expect("math list exceeds u32 nodes");
+        self.span(
+            start,
+            end,
+            Measurement {
+                node_count,
+                ..Measurement::ZERO
+            },
+        )
+    }
+
+    fn validate_new_span(&self, start: usize, end: usize) {
         for node in &self.nodes[start..end] {
             let child = match node {
                 MathNode::Sequence(child) => Some(*child),
@@ -211,9 +238,6 @@ impl MathLayoutBuilder {
                 "math arena references must point to an earlier span"
             );
         }
-        let mut meas = Measurement::ZERO;
-        self.measure_hnodes(start, end, &mut meas);
-        self.span(start, end, meas)
     }
 
     pub(crate) fn hpack(&self, list: FrozenHList) -> MathBox {

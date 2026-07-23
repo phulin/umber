@@ -6,8 +6,8 @@ use tex_state::scaled::Scaled;
 use super::delimiters::make_delimiter;
 use super::{
     BoxAxis, Context, FetchedChar, FrozenHList, MathBox, MathNode, MathTypesetState, add,
-    boxed_node, char_box, clean_box, fetch, make_character_nucleus, neg, scripts, source_list, sub,
-    variant_box,
+    boxed_node, char_box, clean_box, fetch, make_character_nucleus, neg, scripts,
+    source_box_payload, sub, variant_box,
 };
 
 pub(super) struct AccentResult {
@@ -84,7 +84,7 @@ fn clean_vcenter_box(ctx: &mut Context<'_, impl MathTypesetState>, nucleus: &Mat
         && nodes.len() == 1
         && let Some(tex_state::node_arena::NodeRef::VList(boxed)) = nodes.first()
     {
-        let list = source_list(ctx, boxed.children);
+        let list = source_box_payload(ctx, boxed.children);
         return MathBox {
             width: boxed.width,
             height: boxed.height,

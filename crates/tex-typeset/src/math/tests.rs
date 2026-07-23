@@ -1021,6 +1021,51 @@ fn ordinary_sub_box_nucleus_is_not_repacked() {
 }
 
 #[test]
+fn vcenter_preserves_prepacked_vertical_payload_without_horizontal_remeasurement() {
+    let mut universe = setup_universe();
+    let empty = universe.freeze_node_list(&[]);
+    let wide_box = Node::HList(BoxNode::new(BoxNodeFields {
+        width: Scaled::MAX_DIMEN,
+        height: sc(1),
+        depth: sc(0),
+        shift: sc(0),
+        display: false,
+        glue_set: GlueSetRatio::from_raw(0),
+        glue_sign: Sign::Normal,
+        glue_order: Order::Normal,
+        children: empty,
+    }));
+    let vertical_payload =
+        universe.freeze_node_list(&[wide_box.clone(), wide_box.clone(), wide_box]);
+    let source_vbox = Node::VList(BoxNode::new(BoxNodeFields {
+        width: sc(25),
+        height: sc(40),
+        depth: sc(10),
+        shift: sc(0),
+        display: false,
+        glue_set: GlueSetRatio::from_raw(0),
+        glue_sign: Sign::Normal,
+        glue_order: Order::Normal,
+        children: vertical_payload,
+    }));
+    let source_vbox = universe.freeze_node_list(&[source_vbox]);
+    let input = universe.freeze_node_list(&[Node::MathNoad(MathNoad::new(
+        NoadKind::VCenter,
+        MathField::SubBox(source_vbox),
+    ))]);
+    let params = MathParams::read(&universe);
+
+    let layout = mlist_to_hlist(&universe, input, Style::TEXT, false, &params);
+
+    let [MathNode::VList(centered)] = root_nodes(&layout).as_slice() else {
+        panic!("expected centered source vbox");
+    };
+    assert_eq!(centered.width, sc(25));
+    assert_eq!(add(centered.height, centered.depth), sc(50));
+    assert_eq!(list_nodes(&layout, centered.list).len(), 3);
+}
+
+#[test]
 fn display_operator_uses_larger_variant_and_places_limits() {
     let mut universe = setup_universe();
     let mut op = MathNoad::new(

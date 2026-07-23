@@ -415,6 +415,15 @@ math conversion builds one span-backed `MathLayout`; `FrozenHList` values are
 handles into that arena, not recursive owned vectors. Execution lowers the
 completed layout through `MathLayoutSink` into state-owned node lists.
 
+Source boxes crossing into Appendix G retain their authoritative box geometry.
+TeX.web's `clean_box` reuses a sole unshifted hlist or vlist node, and
+`make_vcenter` changes only that vlist node's height and depth; neither routine
+repacks its child payload. The math arena therefore stores source-box children
+as traversal-only spans with node counts but without deriving horizontal
+extents. Only a source list used directly as a horizontal math field is
+measured as an hlist. This keeps lowering iterative while avoiding fictitious
+horizontal sums across the rows of an already-packed vbox.
+
 ## 8. Page builder and output routine
 
 The page builder lives in `tex-exec` with its mutable roots owned by
