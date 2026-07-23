@@ -90,8 +90,8 @@ fn executor_step_snapshot_restores_complete_live_input_without_host_lookup() {
     );
     let condition = input.push_condition(ConditionFrameSummary::new_if(condition_context(), true));
     input.begin_alignment();
-    input.set_alignment_state(0);
-    input.begin_alignment_cell(Some(transient_marker), macro_body, 7);
+    input.restore_alignment_state(0);
+    input.begin_alignment_cell(Some(transient_marker), macro_body);
     input.literal_span_cache.insert(
         (macro_body, LiteralSpanPolicy::ExpandedReplacement),
         Arc::from([(0, 1)]),
@@ -356,15 +356,13 @@ fn nested_unexpanded_list_preserves_parameter_token() {
 fn nested_alignment_resume_preserves_outer_align_state() {
     let mut input = InputStack::new(MemoryInput::new(""));
     input.begin_alignment();
-    input.set_alignment_state(0);
-    input.begin_alignment_cell(None, TokenListId::EMPTY, 7);
+    input.begin_alignment_cell(None, TokenListId::EMPTY);
     let left = TracedTokenWord::pack(char_token('{', Catcode::BeginGroup), OriginId::UNKNOWN);
     for _ in 0..2 {
         assert!(!input.intercept_alignment_token(
             left,
             super::AlignmentTokenDelivery::LeftBrace,
             None,
-            7,
         ));
     }
 
@@ -376,7 +374,6 @@ fn nested_alignment_resume_preserves_outer_align_state() {
         cr,
         super::AlignmentTokenDelivery::Other,
         Some(super::AlignmentTerminator::Cr),
-        7,
     ));
 }
 
@@ -397,7 +394,7 @@ fn active_alignment_predicate_tracks_scanner_levels_not_only_cells() {
 fn recovery_inserted_left_brace_updates_active_alignment_state() {
     let mut input = InputStack::new(MemoryInput::new(""));
     input.begin_alignment();
-    input.set_alignment_state(0);
+    input.begin_alignment_cell(None, TokenListId::EMPTY);
 
     input.account_inserted_alignment_left_brace();
 
@@ -408,8 +405,7 @@ fn recovery_inserted_left_brace_updates_active_alignment_state() {
 fn alignment_undo_bookkeeping_ignores_ordinary_deliveries() {
     let mut input = InputStack::new(MemoryInput::new(""));
     input.begin_alignment();
-    input.set_alignment_state(0);
-    input.begin_alignment_cell(None, TokenListId::EMPTY, 7);
+    input.begin_alignment_cell(None, TokenListId::EMPTY);
     let ordinary = TracedTokenWord::pack(char_token('x', Catcode::Other), OriginId::UNKNOWN);
 
     for _ in 0..10_000 {
@@ -417,7 +413,6 @@ fn alignment_undo_bookkeeping_ignores_ordinary_deliveries() {
             ordinary,
             super::AlignmentTokenDelivery::Other,
             None,
-            7,
         ));
     }
 
@@ -431,12 +426,9 @@ fn alignment_undo_bookkeeping_ignores_ordinary_deliveries() {
     );
 
     let left = TracedTokenWord::pack(char_token('{', Catcode::BeginGroup), OriginId::UNKNOWN);
-    assert!(!input.intercept_alignment_token(
-        left,
-        super::AlignmentTokenDelivery::LeftBrace,
-        None,
-        7,
-    ));
+    assert!(
+        !input.intercept_alignment_token(left, super::AlignmentTokenDelivery::LeftBrace, None,)
+    );
     assert_eq!(
         input
             .alignment_inputs
@@ -460,7 +452,6 @@ fn alignment_undo_bookkeeping_ignores_ordinary_deliveries() {
         right,
         super::AlignmentTokenDelivery::RightBrace,
         None,
-        7,
     ));
     assert_eq!(
         input
@@ -2333,15 +2324,19 @@ fn completed_alignment_cell_retires_exhausted_v_template_boundary() {
     let template = stores.intern_token_list(&[char_token('x', Catcode::Letter)]);
     let mut input = InputStack::new(MemoryInput::new(""));
     input.begin_alignment();
-    input.begin_alignment_cell(None, template, 0);
+    input.begin_alignment_cell(None, template);
     let terminator =
         TracedTokenWord::pack(char_token('&', Catcode::AlignmentTab), OriginId::UNKNOWN);
     assert!(input.intercept_alignment_token(
         terminator,
         AlignmentTokenDelivery::Other,
         Some(AlignmentTerminator::Tab),
-        0,
     ));
+    assert_eq!(
+        input.alignment_state(),
+        Some(super::AlignmentScannerPhase::BetweenEntries.align_state()),
+        "starting v-template replay installs TeX's protected sentinel"
+    );
     assert_eq!(
         input.next_token(&mut stores).expect("v-template token"),
         Some(char_token('x', Catcode::Letter))

@@ -1139,7 +1139,6 @@ fn mid_alignment_snapshot_rollback_restores_summary_and_unset_rows() {
         let state = list.align_state_mut().expect("alignment state");
         state.start_row();
         state.start_cell(1, 2);
-        state.increment_brace_depth();
         state.set_suppress_redundant_cr(true);
     }
     stores.set_input_summary(input_summary.clone());
@@ -1153,7 +1152,6 @@ fn mid_alignment_snapshot_rollback_restores_summary_and_unset_rows() {
         list.push(Node::Penalty(123));
         let state = list.align_state_mut().expect("alignment state");
         state.start_cell(0, 1);
-        state.set_brace_depth(0);
     }
 
     stores.rollback(&snapshot);
@@ -1167,7 +1165,6 @@ fn mid_alignment_snapshot_rollback_restores_summary_and_unset_rows() {
         .expect("restored alignment state");
     assert_eq!(restored_state.current_col(), 1);
     assert_eq!(restored_state.current_span(), 2);
-    assert_eq!(restored_state.brace_depth(), 1);
     assert!(restored_state.suppress_redundant_cr());
     let [Node::Unset(row)] = restored.current_list().nodes() else {
         panic!(

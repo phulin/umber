@@ -7,7 +7,7 @@ use tex_state::{ExpansionContext, ExpansionState, InteractionMode, PrintSink, Un
 
 use super::support::{
     align_kind, align_state, align_state_mut, alignment_mode, cell_mode, is_alignment_tab, is_cr,
-    is_crcr, is_end_group, is_noalign, is_omit, is_span, row_mode, set_align_brace_depth,
+    is_crcr, is_end_group, is_noalign, is_omit, is_span, row_mode,
 };
 use crate::assignments::flush_pending_hchars;
 use crate::dispatch::{dispatch_delivered_token_with_context, insert_traced_tokens};
@@ -155,8 +155,7 @@ fn align_peek(
     execution: &mut crate::ExecutionContext<'_>,
 ) -> Result<Option<TracedTokenWord>, ExecError> {
     loop {
-        set_align_brace_depth(nest, align_level, 1_000_000);
-        input.set_alignment_state(1_000_000);
+        input.set_alignment_scanner_phase(tex_lex::AlignmentScannerPhase::BetweenEntries);
         let Some(token) = next_non_space_protected(input, stores, execution)? else {
             stores.world_mut().write_text(
                 PrintSink::TerminalAndLog,
@@ -240,7 +239,7 @@ fn execute_row(
         }
         // TeX82 fin_col restores the sentinel before fetching the first token
         // of every following column, not only after a spanning column.
-        input.set_alignment_state(1_000_000);
+        input.set_alignment_scanner_phase(tex_lex::AlignmentScannerPhase::BetweenEntries);
         start_token = Some(next_non_space_protected(input, stores, execution)?.ok_or(
             ExecError::MissingToken {
                 context: "alignment cell",
@@ -343,7 +342,7 @@ fn execute_cell(
                 )?
             }
         } else {
-            input.begin_alignment_cell(None, v_template, stores.execution_group_depth());
+            input.begin_alignment_cell(None, v_template);
             None
         };
         align_state_mut(nest, align_level)?.start_cell(column, span_count);
@@ -399,7 +398,7 @@ fn execute_cell(
                     .ok_or(ExecError::ArithmeticOverflow)?;
                 // TeX82 fin_col restores the sentinel before looking for the
                 // first token of the next spanned column.
-                input.set_alignment_state(1_000_000);
+                input.set_alignment_scanner_phase(tex_lex::AlignmentScannerPhase::BetweenEntries);
                 first_token = next_non_space_protected(input, stores, execution)?;
             }
             CellTerminator::AlignmentTab | CellTerminator::Cr => {

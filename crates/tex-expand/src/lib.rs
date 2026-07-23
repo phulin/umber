@@ -2519,7 +2519,7 @@ pub(crate) fn intercept_alignment_token(
         return false;
     }
     let (delivery, terminator) = classify_alignment_token(stores, traced);
-    input.intercept_alignment_token(traced, delivery, terminator, stores.execution_group_depth())
+    input.intercept_alignment_token(traced, delivery, terminator)
 }
 
 fn classify_alignment_token(
@@ -2654,12 +2654,7 @@ fn intercept_suppressed_alignment_token(
         )
     });
     if expandable {
-        input.intercept_alignment_token(
-            traced,
-            tex_lex::AlignmentTokenDelivery::Other,
-            None,
-            stores.execution_group_depth(),
-        )
+        input.intercept_alignment_token(traced, tex_lex::AlignmentTokenDelivery::Other, None)
     } else {
         intercept_alignment_token(input, stores, traced)
     }

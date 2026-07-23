@@ -52,7 +52,7 @@ pub(crate) fn scan_preamble(
     stores.enter_group_with_kind(GroupKind::Align);
     // TeX82 resets the global scanner sentinel after scan_spec has consumed
     // the alignment opener and before copying the preamble.
-    input.set_alignment_state(-1_000_000);
+    input.set_alignment_scanner_phase(tex_lex::AlignmentScannerPhase::Preamble);
 
     let end_template = stores.frozen_end_template_token();
     let mut scanner = PreambleScanner::new(input, stores, execution);

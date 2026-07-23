@@ -1815,6 +1815,24 @@ struct AlignmentInput {
     cell: Option<AlignmentCellInput>,
 }
 
+/// The two non-depth sentinels assigned by TeX's alignment driver.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum AlignmentScannerPhase {
+    /// Preamble scanning: top-level `&` and `\cr` delimit templates.
+    Preamble,
+    /// Row lookahead and u-template replay: delimiter interception is disabled.
+    BetweenEntries,
+}
+
+impl AlignmentScannerPhase {
+    const fn align_state(self) -> i32 {
+        match self {
+            Self::Preamble => -1_000_000,
+            Self::BetweenEntries => 1_000_000,
+        }
+    }
+}
+
 /// Saved alignment-cell interception state while a nested preamble and body run.
 ///
 /// Like TeX82's alignment-stack node, this value owns the exact outer state;
@@ -2123,7 +2141,7 @@ impl InputStack {
     /// Starts one TeX82 alignment-scanner level before `scan_spec`.
     pub fn begin_alignment(&mut self) {
         self.alignment_inputs.push(AlignmentInput {
-            align_state: -1_000_000,
+            align_state: AlignmentScannerPhase::Preamble.align_state(),
             cell: None,
         });
     }
@@ -2137,19 +2155,29 @@ impl InputStack {
         assert!(alignment.cell.is_none(), "alignment cell remained active");
     }
 
-    /// Matches the sentinel assignments in TeX82's `align_peek` and preamble.
-    pub fn set_alignment_state(&mut self, state: i32) {
+    /// Applies one of TeX82's explicit alignment-driver sentinel assignments.
+    pub fn set_alignment_scanner_phase(&mut self, phase: AlignmentScannerPhase) {
         if let Some(alignment) = self.alignment_inputs.last_mut() {
-            alignment.align_state = state;
+            alignment.align_state = phase.align_state();
         }
     }
 
-    /// Returns TeX82's current alignment brace-depth sentinel.
+    /// Returns TeX82's current alignment brace-depth value.
+    ///
+    /// This snapshot exists for scanners that temporarily account for a
+    /// compulsory brace and must restore the exact caller value on failure.
     #[must_use]
     pub fn alignment_state(&self) -> Option<i32> {
         self.alignment_inputs
             .last()
             .map(|alignment| alignment.align_state)
+    }
+
+    /// Restores an exact value previously returned by [`Self::alignment_state`].
+    pub fn restore_alignment_state(&mut self, state: i32) {
+        if let Some(alignment) = self.alignment_inputs.last_mut() {
+            alignment.align_state = state;
+        }
     }
 
     /// Accounts for TeX.web §403's recovery-inserted compulsory left brace.
@@ -2179,7 +2207,6 @@ impl InputStack {
         &mut self,
         u_template: Option<TokenListReplayMarker>,
         v_template: TokenListId,
-        _group_depth: u32,
     ) {
         let alignment = self
             .alignment_inputs
@@ -2433,7 +2460,6 @@ impl InputStack {
         traced: TracedTokenWord,
         delivery: AlignmentTokenDelivery,
         terminator: Option<AlignmentTerminator>,
-        _group_depth: u32,
     ) -> bool {
         let retired_u_template = self
             .alignment_inputs
@@ -2467,6 +2493,7 @@ impl InputStack {
         let terminates = alignment.align_state == 0 && terminator.is_some();
         let v_template = if terminates {
             cell.terminator = Some(traced);
+            alignment.align_state = AlignmentScannerPhase::BetweenEntries.align_state();
             Some(cell.v_template)
         } else {
             None

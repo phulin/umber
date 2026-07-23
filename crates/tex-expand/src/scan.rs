@@ -286,7 +286,7 @@ where
         // Macro expansion can retire the alignment u-template while scanning
         // that opening brace, so reassert the canonical protected depth before
         // expanding the replacement.
-        input.set_alignment_state(state.saturating_add(1));
+        input.restore_alignment_state(state.saturating_add(1));
     }
     let replacement_result = expansion.with_expanded_token_list(|expansion| {
         scan_expanded_replacement_with_driver(input, stores, context, expansion, &mut diagnostics)
@@ -296,7 +296,7 @@ where
     {
         // A failed scan may stop before consuming the compulsory closing
         // brace. Restore the caller's state for deterministic recovery.
-        input.set_alignment_state(state);
+        input.restore_alignment_state(state);
     }
     let replacement_text = replacement_result?;
     let replacement_text = append_hash_brace(stores, replacement_text, parameter_text.hash_brace);
@@ -689,7 +689,7 @@ fn expand_replacement_text(
     // mistaken for the surrounding alignment's cell terminator.
     let alignment_state = input.alignment_state();
     if let Some(state) = alignment_state {
-        input.set_alignment_state(state.saturating_add(1));
+        input.restore_alignment_state(state.saturating_add(1));
     }
     // Keep an inaccessible token below the raw replacement. Expandable
     // primitives commonly read one token ahead while scanning their operands
@@ -718,7 +718,7 @@ fn expand_replacement_text(
         // Remove only the synthetic compulsory-brace level. Expansion itself
         // may have changed `align_state` (for example, a brace skipped by a
         // false conditional); tex.web §§473--479 retain that live delta.
-        input.set_alignment_state(state.saturating_sub(1));
+        input.restore_alignment_state(state.saturating_sub(1));
     }
     if result.is_err() {
         input.abort_token_list_replay(replay);

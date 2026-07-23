@@ -361,7 +361,6 @@ pub struct AlignState {
     current_row: usize,
     current_col: usize,
     current_span: u16,
-    brace_depth: i32,
     suppress_redundant_cr: bool,
 }
 
@@ -385,7 +384,6 @@ impl AlignState {
             current_row: 0,
             current_col: 0,
             current_span: 1,
-            brace_depth: 0,
             suppress_redundant_cr: false,
         }
     }
@@ -433,11 +431,6 @@ impl AlignState {
     #[must_use]
     pub const fn current_span(&self) -> u16 {
         self.current_span
-    }
-
-    #[must_use]
-    pub const fn brace_depth(&self) -> i32 {
-        self.brace_depth
     }
 
     #[must_use]
@@ -490,38 +483,22 @@ impl AlignState {
     pub fn start_row(&mut self) {
         self.current_col = 0;
         self.current_span = 1;
-        self.brace_depth = 0;
     }
 
     pub fn start_cell(&mut self, column: usize, span_count: u16) {
         self.current_col = column;
         self.current_span = span_count;
-        self.brace_depth = 0;
     }
 
     pub fn finish_cell(&mut self, next_column: usize) {
         self.current_col = next_column;
         self.current_span = 1;
-        self.brace_depth = 0;
     }
 
     pub fn finish_row(&mut self) {
         self.current_row += 1;
         self.current_col = 0;
         self.current_span = 1;
-        self.brace_depth = 0;
-    }
-
-    pub fn increment_brace_depth(&mut self) {
-        self.brace_depth += 1;
-    }
-
-    pub fn decrement_brace_depth(&mut self) {
-        self.brace_depth -= 1;
-    }
-
-    pub fn set_brace_depth(&mut self, value: i32) {
-        self.brace_depth = value;
     }
 }
 
@@ -715,7 +692,6 @@ fn hash_mode_list(list: &ModeList, projection: &mut EngineBoundaryHasher<'_>) {
             projection.usize(align.current_row);
             projection.usize(align.current_col);
             projection.u16(align.current_span);
-            projection.i32(align.brace_depth);
             projection.bool(align.suppress_redundant_cr);
         }
         None => projection.bool(false),

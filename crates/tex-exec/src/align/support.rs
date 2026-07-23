@@ -24,15 +24,6 @@ pub(super) fn align_state_mut(
         })
 }
 
-pub(super) fn set_align_brace_depth(nest: &mut ModeNest, align_level: usize, value: i32) {
-    if let Some(state) = nest
-        .list_mut(align_level)
-        .and_then(crate::mode::ModeList::align_state_mut)
-    {
-        state.set_brace_depth(value);
-    }
-}
-
 pub(super) fn align_kind(nest: &ModeNest, align_level: usize) -> Result<AlignmentKind, ExecError> {
     Ok(align_state(nest, align_level)?.kind())
 }

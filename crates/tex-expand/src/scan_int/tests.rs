@@ -1,4 +1,5 @@
 use tex_lex::{InputStack, MemoryInput};
+use tex_state::Universe;
 use tex_state::env::banks::{GlueParam, IntParam};
 use tex_state::glue::{GlueSpec, Order};
 use tex_state::macro_store::MacroMeaning;
@@ -6,7 +7,6 @@ use tex_state::meaning::{Meaning, MeaningFlags, UnexpandablePrimitive};
 use tex_state::provenance::OriginRecord;
 use tex_state::scaled::Scaled;
 use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
-use tex_state::{ExpansionState, Universe};
 
 use crate::scan_int::{IntegerDiagnostic, scan_int, scan_int_with_context};
 use crate::{ExpansionContext, ReadBank, ReadDependency, ReadRecorder, ReadSetRecorder};
@@ -279,7 +279,7 @@ fn backtick_brace_constant_restores_alignment_brace_depth() {
     let empty = stores.intern_token_list(&[]);
     let mut input = InputStack::new(MemoryInput::new("`}"));
     input.begin_alignment();
-    input.begin_alignment_cell(None, empty, stores.execution_group_depth());
+    input.begin_alignment_cell(None, empty);
 
     let scanned = scan_int(
         &mut input,

@@ -261,8 +261,7 @@ fn expanded_definition_preserves_alignment_delta_from_skipped_brace() {
     crate::install_expandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new("{\\iffalse{\\fi}"));
     input.begin_alignment();
-    input.set_alignment_state(0);
-    input.begin_alignment_cell(None, TokenListId::EMPTY, 0);
+    input.begin_alignment_cell(None, TokenListId::EMPTY);
     let context =
         TracedTokenWord::pack(Token::Cs(stores.intern("edef").symbol()), OriginId::UNKNOWN);
 

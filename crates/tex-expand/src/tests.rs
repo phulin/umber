@@ -1362,8 +1362,7 @@ fn control_sequence_brace_aliases_do_not_change_alignment_depth() {
     );
     let mut input = InputStack::new(MemoryInput::new("\\egroup"));
     input.begin_alignment();
-    input.set_alignment_state(0);
-    input.begin_alignment_cell(None, TokenListId::EMPTY, 0);
+    input.begin_alignment_cell(None, TokenListId::EMPTY);
 
     let token = crate::get_x_token(
         &mut input,
@@ -2564,7 +2563,7 @@ fn expandafter_saved_brace_updates_alignment_depth_only_when_replayed() {
     let empty = stores.intern_token_list(&[]);
     let mut input = InputStack::new(MemoryInput::new("\\expandafter{\\romannumeral0}"));
     input.begin_alignment();
-    input.begin_alignment_cell(None, empty, stores.execution_group_depth());
+    input.begin_alignment_cell(None, empty);
 
     let mut context = tex_state::ExpansionContext::new(&mut stores);
     assert_eq!(
@@ -4635,8 +4634,7 @@ fn skipped_conditional_brace_pairs_preserve_alignment_with_bounded_provenance() 
     let mut input = InputStack::new(MemoryInput::new(""));
     input.push_token_list(list, TokenListReplayKind::Inserted);
     input.begin_alignment();
-    input.set_alignment_state(0);
-    input.begin_alignment_cell(None, TokenListId::EMPTY, 0);
+    input.begin_alignment_cell(None, TokenListId::EMPTY);
     let mut expansion = ExpansionContext::new("conditional-alignment-stress").with_fuel(50_000);
     let baseline = stores.provenance_stats();
 
@@ -4906,7 +4904,7 @@ fn ifx_operand_brace_and_skipped_match_restore_alignment_depth() {
     let empty = stores.intern_token_list(&[]);
     let mut input = InputStack::new(MemoryInput::new("\\ifx\\relax{}false\\else x\\fi"));
     input.begin_alignment();
-    input.begin_alignment_cell(None, empty, stores.execution_group_depth());
+    input.begin_alignment_cell(None, empty);
 
     let mut context = tex_state::ExpansionContext::new(&mut stores);
     assert_eq!(
