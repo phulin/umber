@@ -1096,22 +1096,22 @@ fn dump_marks_format_stop_and_stops_before_following_input() {
 }
 
 #[test]
-fn incomplete_delimited_macro_at_root_eof_is_not_accepted_as_end_of_input() {
+fn incomplete_delimited_macro_at_root_eof_recovers_once_with_par() {
     let mut stores = Universe::new();
     tex_expand::install_expandable_primitives(&mut stores);
     crate::install_unexpandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new(r"\def\runaway#1\stop{}\runaway missing"));
 
-    let error = Executor::new()
+    Executor::new()
         .run(&mut input, &mut stores)
-        .expect_err("an incomplete macro call must not become accepted end of input");
+        .expect("TeX inserts par and aborts a macro call at physical EOF");
 
+    let transcript = terminal_effect_text(&stores);
     assert!(
-        error
-            .to_string()
-            .contains("File ended while scanning use of \\runaway"),
-        "{error}"
+        transcript.contains("File ended while scanning use of \\runaway"),
+        "{transcript}"
     );
+    assert!(stores.input_summary().is_empty());
 }
 
 #[test]

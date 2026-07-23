@@ -3,6 +3,7 @@ use tex_lex::{InputStack, MemoryInput, TokenListReplayKind};
 use tex_state::ids::OriginListId;
 use tex_state::macro_store::MacroMeaning;
 use tex_state::meaning::MeaningFlags;
+use tex_state::provenance::{InsertedOriginKind, OriginRecord};
 use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 use tex_state::{ExpansionState, Universe};
 
@@ -408,6 +409,49 @@ fn long_macro_accepts_paragraph_token_in_argument() {
     .expect("long macro should accept par");
 
     assert_eq!(args, vec![vec![Token::Cs(par.symbol())]]);
+}
+
+#[test]
+fn physical_eof_inserts_one_par_and_aborts_even_long_macro() {
+    let mut stores = Universe::new();
+    let mut expansion_stores = tex_state::ExpansionContext::new(&mut stores);
+    let meaning = macro_meaning(
+        &mut expansion_stores,
+        MeaningFlags::LONG,
+        &[Token::param(1), char_token('!', Catcode::Other)],
+    );
+    let call = cs_token(&mut expansion_stores, "m");
+    let mut input = InputStack::new(MemoryInput::new("missing"));
+
+    let error = match_macro_call(
+        &mut input,
+        &mut expansion_stores,
+        TracedTokenWord::pack(call, OriginId::UNKNOWN),
+        meaning,
+    )
+    .expect_err("physical EOF must abort a long macro instead of accepting inserted par");
+    assert!(matches!(error, MacroCallError::EndOfInput { .. }));
+
+    let recovery = input
+        .next_traced_token(&mut expansion_stores)
+        .expect("recovery token read")
+        .expect("one recovery token");
+    assert_eq!(
+        recovery.token(),
+        Some(cs_token(&mut expansion_stores, "par"))
+    );
+    assert!(matches!(
+        expansion_stores.origin(recovery.origin()),
+        OriginRecord::Inserted(inserted)
+            if inserted.kind() == InsertedOriginKind::ErrorRecovery
+    ));
+    assert!(
+        input
+            .next_traced_token(&mut expansion_stores)
+            .expect("post-recovery EOF")
+            .is_none(),
+        "recovery must advance to EOF rather than replay the call"
+    );
 }
 
 #[test]

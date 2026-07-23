@@ -426,7 +426,7 @@ where
                 );
                 match dispatched {
                     Ok(dispatch) => crate::push_dispatch_result(input, stores, dispatch),
-                    Err(error) => match expansion.recover_macro_mismatch(error) {
+                    Err(error) => match expansion.recover_macro_call_error(error) {
                         Ok(()) => continue,
                         Err(ExpandError::MacroCall(crate::args::MacroCallError::EndOfInput {
                             ..

@@ -12,6 +12,7 @@ use tex_state::ExpansionState;
 use tex_state::MacroArgumentRange;
 use tex_state::macro_store::{MacroMeaning, MacroParameterPattern};
 use tex_state::meaning::{Meaning, MeaningFlags};
+use tex_state::provenance::InsertedOriginKind;
 use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 
 use crate::ExpansionContext;
@@ -409,12 +410,28 @@ fn next_token_without_par_check(
     expansion: &mut ExpansionContext<'_>,
     context: MacroCallContext,
 ) -> Result<TracedTokenWord, MacroCallError> {
-    let token = crate::next_semantic_raw_token(input, stores)?.ok_or_else(|| {
-        MacroCallError::EndOfInput {
-            macro_name: context.macro_name(stores),
-            context: context.call_token,
+    let token = match crate::next_semantic_raw_token(input, stores)? {
+        Some(token) => token,
+        None => {
+            // TeX.web §§336--340's `check_outer_validity` inserts one `\par`
+            // when physical input ends with `scanner_status=matching`.
+            // `macro_call` then aborts because `long_state=outer_call`, even
+            // for a `\long` macro. Inserting before returning the typed error
+            // lets every expansion boundary share that finite recovery.
+            let par = Token::Cs(stores.intern("par").symbol());
+            let origin = stores.inserted_origin(
+                InsertedOriginKind::ErrorRecovery,
+                par,
+                context.call_token.origin(),
+            );
+            let recovery = TracedTokenWord::pack(par, origin);
+            crate::insert_input(input, stores, [recovery]);
+            return Err(MacroCallError::EndOfInput {
+                macro_name: context.macro_name(stores),
+                context: recovery,
+            });
         }
-    })?;
+    };
 
     if let Token::Cs(symbol) = traced_semantic_token(token) {
         let meaning = stores.meaning(symbol);

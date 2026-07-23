@@ -260,12 +260,15 @@ copy that output directly only inside expanding `scan_toks`. All execution-side
 general-text consumers, including `\message` and `\showhyphens`, route through
 the shared `tex-expand` collector so they preserve the same splice contract.
 
-End of source input is accepted only when the expansion loop is quiescent. If
-a source-origin macro argument scanner reaches root EOF while matching a call,
-its incomplete-call error crosses both ordinary and restricted expansion
-boundaries. The legacy clean-EOF recovery is limited to calls originating in
-an inserted token-list replay, which preserves format-loaded TRIP behavior
-without hiding a prematurely exhausted source job.
+End of source input is accepted only when the expansion loop is quiescent.
+While a macro call is matching arguments, TeX.web §§336--340 and pdfTeX.web
+§§360--364 route whole-input exhaustion through `check_outer_validity`: one
+recoverable "File ended while scanning use" diagnostic is emitted, one
+inserted `\par` aborts the partial call (including a `\long` call), and normal
+input processing resumes. Umber performs that transition at the shared raw
+macro-argument boundary for source and replay-origin calls alike. The inserted
+token is consumed before another EOF can be observed, distinguishing this
+finite recovery from unchanged-input replay or an infinite retry loop.
 
 Outer-control-sequence validity follows TeX.web §§336--340's scanner status,
 not the presence of an executing alignment cell. Alignment preamble scanning

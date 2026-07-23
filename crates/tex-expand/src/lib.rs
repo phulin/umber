@@ -20,7 +20,7 @@ use tex_state::glue::GlueSpec;
 use tex_state::ids::{OriginListId, TokenListId};
 use tex_state::interner::Symbol;
 use tex_state::meaning::{Meaning, MeaningFlags, UnexpandablePrimitive};
-use tex_state::provenance::{DiagnosticSite, InsertedOriginKind, OriginRecord};
+use tex_state::provenance::{DiagnosticSite, InsertedOriginKind};
 use tex_state::scaled::Scaled;
 use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 pub use tex_state::{
@@ -719,6 +719,10 @@ pub enum RecoverableExpansionDiagnostic {
         context: TracedTokenWord,
     },
     MacroDoesNotMatchDefinition {
+        macro_name: String,
+        context: TracedTokenWord,
+    },
+    FileEndedWhileScanningMacro {
         macro_name: String,
         context: TracedTokenWord,
     },
@@ -1779,7 +1783,7 @@ impl<'a> ExpansionContext<'a> {
         true
     }
 
-    fn recover_macro_mismatch(&mut self, error: ExpandError) -> Result<(), ExpandError> {
+    fn recover_macro_call_error(&mut self, error: ExpandError) -> Result<(), ExpandError> {
         match error {
             ExpandError::MacroCall(args::MacroCallError::DoesNotMatchDefinition {
                 macro_name,
@@ -1793,7 +1797,19 @@ impl<'a> ExpansionContext<'a> {
                 );
                 Ok(())
             }
-            ExpandError::Captured { error, .. } => self.recover_macro_mismatch(*error),
+            ExpandError::MacroCall(args::MacroCallError::EndOfInput {
+                macro_name,
+                context,
+            }) => {
+                self.recoverable_diagnostics.push(
+                    RecoverableExpansionDiagnostic::FileEndedWhileScanningMacro {
+                        macro_name,
+                        context,
+                    },
+                );
+                Ok(())
+            }
+            ExpandError::Captured { error, .. } => self.recover_macro_call_error(*error),
             error => Err(error),
         }
     }
@@ -2438,9 +2454,8 @@ fn get_x_token_with_context_inner(
             dispatch_with_context(token, read.origin(), input, stores, expansion, meaning);
         let dispatched = match dispatched {
             Ok(dispatched) => dispatched,
-            Err(error) => match expansion.recover_macro_mismatch(error) {
+            Err(error) => match expansion.recover_macro_call_error(error) {
                 Ok(()) => continue,
-                Err(error) if replay_macro_eof_is_clean(stores, &error) => return Ok(None),
                 Err(error) => return Err(error),
             },
         };
@@ -2827,9 +2842,8 @@ pub(crate) fn get_x_token_without_input_open(
         );
         let dispatched = match dispatched {
             Ok(dispatched) => dispatched,
-            Err(error) => match expansion.recover_macro_mismatch(error) {
+            Err(error) => match expansion.recover_macro_call_error(error) {
                 Ok(()) => continue,
-                Err(error) if replay_macro_eof_is_clean(stores, &error) => return Ok(None),
                 Err(error) => return Err(error),
             },
         };
@@ -2852,23 +2866,6 @@ pub(crate) fn get_x_token_without_input_open(
             }
         }
     }
-}
-
-fn replay_macro_eof_is_clean(
-    stores: &tex_state::ExpansionContext<'_>,
-    error: &ExpandError,
-) -> bool {
-    let ExpandError::MacroCall(args::MacroCallError::EndOfInput { context, .. }) = error else {
-        return false;
-    };
-    matches!(
-        stores.origin(context.origin()),
-        OriginRecord::Inserted(inserted)
-            if matches!(
-                inserted.kind(),
-                InsertedOriginKind::TokenListReplay(TokenListReplayKind::Inserted)
-            )
-    )
 }
 
 pub(crate) fn dispatch_one_raw_token_with_context(
