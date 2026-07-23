@@ -863,7 +863,7 @@ fn expanded_definition_copies_literal_hash_from_token_register() {
 }
 
 #[test]
-fn definition_recovers_internal_parameter_after_parameter_marker() {
+fn definition_escapes_internal_parameter_after_parameter_marker() {
     let mut stores = Universe::new();
     let replay = stores.intern_token_list(&[
         char_token('{', Catcode::BeginGroup),
@@ -882,16 +882,13 @@ fn definition_recovers_internal_parameter_after_parameter_marker() {
         MeaningFlags::EMPTY,
         context,
     )
-    .expect("an internal out_param token is backed up after a parameter marker");
+    .expect("an internal out_param token is escaped after a parameter marker");
 
     assert_eq!(
         stores.tokens(scanned.replacement_text()),
-        &[char_token('#', Catcode::Parameter), Token::param(1)]
+        &[Token::param(1)]
     );
-    assert!(matches!(
-        scanned.diagnostics(),
-        [MacroScanDiagnostic::IllegalParameterNumber { .. }]
-    ));
+    assert!(scanned.diagnostics().is_empty());
 }
 
 #[test]

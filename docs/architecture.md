@@ -203,9 +203,11 @@ parameter character and digit that `scan_toks` originally consumed. When a
 generated definition adds a literal parameter character before such a compact
 token, TeX.web §479's doubled-parameter rule removes one definition level.
 The replacement scanner therefore reads that one follower without nested
-parameter substitution and stores the compact token directly. This keeps an
-enclosing helper macro's `param_start` from claiming a parameter that belongs
-to the definition being generated.
+parameter substitution and stores the compact token directly. Adjacency in
+one replay is sufficient to prove that compact escape; it does not depend on
+whether a macro-argument owner remains live below the generated token list.
+This covers both an enclosing helper macro's `param_start` and detached
+`\expanded` output that re-enters the outer definition scanner.
 
 The same canonical `macro_call` audit also fixes the token-lifetime boundary:
 argument matching uses TeX's raw `get_token`, and only literal begin/end-group

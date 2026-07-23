@@ -4835,8 +4835,7 @@ impl InputStack {
     }
 
     /// Reports whether the just-delivered compact parameter followed a
-    /// literal parameter marker while a nested macro owner could otherwise
-    /// have claimed its slot.
+    /// literal parameter marker in the same replay.
     #[must_use]
     pub fn compact_parameter_was_escaped(&self, stores: &impl ExpansionState, slot: u8) -> bool {
         let Some(frame_index) = self.current_token_frame_index() else {
@@ -4861,14 +4860,7 @@ impl InputStack {
         {
             return false;
         }
-        self.token_frame_indices.iter().rev().any(|&index| {
-            matches!(
-                &self.frames[index],
-                InputFrame::TokenList(owner)
-                    if owner.replay_kind == TokenListReplayKind::MacroBody
-                        && owner.macro_arguments.get(slot).is_some()
-            )
-        })
+        true
     }
 
     pub fn pop_current_token_list_frame(
