@@ -36,6 +36,10 @@ engine ownership and follow-up work in the linked Beads epic and children.
 retention, edit mapping, pruning, and schedule-relative convergence contract
 for the first incremental engine.
 
+`alignment_brace_semantics.md` is the canonical TeX82/pdfTeX mapping for
+`align_state`, token-delivery corrections, nested alignment ownership,
+template retirement, and recovery.
+
 `persistent_compile_sessions.md` defines the unified native/WASM compile
 session lifecycle that composes typed resource retries with revision-checked
 root-buffer patches and retained incremental execution.
