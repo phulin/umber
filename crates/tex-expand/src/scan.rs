@@ -291,7 +291,11 @@ where
     let replacement_result = expansion.with_expanded_token_list(|expansion| {
         scan_expanded_replacement_with_driver(input, stores, context, expansion, &mut diagnostics)
     });
-    if let Some(state) = alignment_state {
+    if replacement_result.is_err()
+        && let Some(state) = alignment_state
+    {
+        // A failed scan may stop before consuming the compulsory closing
+        // brace. Restore the caller's state for deterministic recovery.
         input.set_alignment_state(state);
     }
     let replacement_text = replacement_result?;
@@ -708,8 +712,13 @@ fn expand_replacement_text(
         mode,
         ExpandedTextBoundary::Replay(replay),
     );
-    if let Some(state) = alignment_state {
-        input.set_alignment_state(state);
+    if alignment_state.is_some()
+        && let Some(state) = input.alignment_state()
+    {
+        // Remove only the synthetic compulsory-brace level. Expansion itself
+        // may have changed `align_state` (for example, a brace skipped by a
+        // false conditional); tex.web §§473--479 retain that live delta.
+        input.set_alignment_state(state.saturating_sub(1));
     }
     if result.is_err() {
         input.abort_token_list_replay(replay);

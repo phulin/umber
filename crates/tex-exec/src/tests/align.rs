@@ -1929,6 +1929,30 @@ fn nested_alignment_executes_inside_cell() {
 }
 
 #[test]
+fn expanded_definition_brace_delta_balances_around_nested_vcenter() {
+    // LaTeX3's alignment-safe groups use braces skipped by false
+    // conditionals around expansion work. The first skipped brace occurs
+    // inside an expanded definition; its matching skipped brace follows a
+    // makecell-shaped nested vcenter/alignment.
+    let mut stores = support::stores_with_fonts();
+    tex_expand::install_expandable_primitives(&mut stores);
+    run_alignment_source_in(
+        &mut stores,
+        "\\setbox0=\\vbox{\
+         \\halign{#&#\\cr\
+         \\edef\\saved{\\iffalse{\\fi}\
+         \\hbox{$\\vcenter{\\halign{##\\cr x\\cr}}$}\
+         \\iffalse}\\fi&y\\cr}}",
+    );
+    let vbox = box_zero_vlist(&stores);
+    let rows = vlist_rows(&stores, vbox);
+
+    assert_eq!(rows.len(), 1);
+    assert_eq!(row_cells(&stores, rows[0]).len(), 2);
+    assert_no_unset(&stores, stores.nodes(vbox.children).testing_decoded());
+}
+
+#[test]
 fn token_parameter_assignment_before_nested_alignment_preserves_outer_brace_depth() {
     let stores = run_boxed_alignment_source(
         "\\def\\ialign{\\everycr{}\\tabskip=0pt \\halign}\\def\\inner{{\\vtop{\\ialign{##\\cr x\\cr}}}}\\halign{#\\cr \\inner\\cr y\\cr}",

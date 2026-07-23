@@ -9,7 +9,7 @@ use tex_lex::{
 };
 use tex_state::TracedTokenList;
 use tex_state::Universe;
-use tex_state::ids::OriginListId;
+use tex_state::ids::{OriginListId, TokenListId};
 use tex_state::macro_store::MacroDefinitionProvenance;
 use tex_state::macro_store::MacroMeaning;
 use tex_state::meaning::{ExpandablePrimitive, Meaning, MeaningFlags, UnexpandablePrimitive};
@@ -250,6 +250,33 @@ fn expanded_definition_ifcase_consumes_a_glue_component_selector() {
         input.next_token(&mut stores).expect("read caller token"),
         Some(char_token('Z', Catcode::Letter))
     );
+}
+
+#[test]
+fn expanded_definition_preserves_alignment_delta_from_skipped_brace() {
+    // tex.web §§473--479 scan an expanded definition inline. `pass_text`
+    // still uses `get_next`, so the skipped left brace changes `align_state`;
+    // finishing the definition must not restore an entry-state snapshot.
+    let mut stores = Universe::new();
+    crate::install_expandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new("{\\iffalse{\\fi}"));
+    input.begin_alignment();
+    input.set_alignment_state(0);
+    input.begin_alignment_cell(None, TokenListId::EMPTY, 0);
+    let context =
+        TracedTokenWord::pack(Token::Cs(stores.intern("edef").symbol()), OriginId::UNKNOWN);
+
+    let scanned = scan_toks_expanded_with_driver(
+        &mut input,
+        &mut tex_state::ExpansionContext::new(&mut stores),
+        MeaningFlags::EMPTY,
+        context,
+        &mut ExpansionContext::new("texput"),
+    )
+    .expect("the skipped brace should remain reflected in alignment state");
+
+    assert!(stores.tokens(scanned.replacement_text()).is_empty());
+    assert_eq!(input.alignment_state(), Some(1));
 }
 
 #[test]

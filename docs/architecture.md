@@ -366,6 +366,15 @@ While that scan is active, its compulsory opening brace also keeps
 `align_state` above the alignment-tab threshold. Umber preserves that depth
 across detached replacement replay, so macro-expanded `&`, `\span`, and `\cr`
 tokens are stored in the definition instead of ending the surrounding cell.
+The protection is a live depth, not an entry-state snapshot: TeX.web
+§§473--479 expand the replacement inline through `get_x_token`, and
+conditional skipping still obtains tokens through `get_next`. A brace skipped
+by a false conditional therefore changes `align_state` even though it is not
+stored in the definition. Umber removes only the synthetic compulsory-brace
+level used by detached replay and retains any such expansion-produced delta;
+the direct driver likewise leaves the state produced when the real closing
+brace is consumed. This is the mechanism used by LaTeX3's alignment-safe
+groups around expanded definitions.
 When nested `\futurelet` carries the real frozen marker back after Umber's
 synchronous template driver has retired its replay frame, the driver records
 that exact traced command across §1131 `off_save` recovery. Literal frozen
