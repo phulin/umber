@@ -233,6 +233,8 @@ run_transitions() {
     fail "$variant transition run did not write transitions.log"
   [[ -f "${run_dir}/transitions.dvi" ]] ||
     fail "$variant transition run did not write transitions.dvi"
+  [[ -f "${run_dir}/transitions-effects.out" ]] ||
+    fail "$variant transition run did not write transitions-effects.out"
   grep -q 'UMBER-TEX82-TRANSITIONS' "${run_dir}/transitions.log" ||
     fail "$variant transition marker is absent"
   sed '1s/)  .*$/) <HOST-CLOCK>/' "${run_dir}/transitions.log" \
@@ -296,6 +298,9 @@ write_build_record() {
         "$(sha_digest 256 "${out_dir}/transitions/${variant}/ordinary.log")"
       printf 'transition-dvi-sha256 %s %s\n' "$variant" \
         "$(sha_digest 256 "${out_dir}/transitions/${variant}/transitions.dvi")"
+      printf 'transition-effect-output-sha256 %s %s\n' "$variant" \
+        "$(sha_digest 256 \
+          "${out_dir}/transitions/${variant}/transitions-effects.out")"
     done
   } > "$record"
 }
@@ -319,7 +324,8 @@ cmp "${out_dir}/smoke/clean/terminal.txt" \
 cmp "${out_dir}/smoke/clean/ordinary.log" \
   "${out_dir}/smoke/instrumentable/ordinary.log" >/dev/null ||
   fail "instrumentable oracle changed ordinary log output"
-for channel in terminal.txt ordinary.log status.txt transitions.dvi; do
+for channel in terminal.txt ordinary.log status.txt transitions.dvi \
+  transitions-effects.out; do
   cmp "${out_dir}/transitions/clean/${channel}" \
     "${out_dir}/transitions/instrumentable/${channel}" >/dev/null ||
     fail "instrumentable oracle changed transition ${channel}"

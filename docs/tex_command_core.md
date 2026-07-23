@@ -1259,7 +1259,10 @@ and backup correction, delimiter interception, template push/retirement,
 alignment recovery, terminal-stop, and termination events. Its focused live
 run is schema-validated against the executable semantic-event matrix,
 deterministic, and byte-transparent for terminal, normalized log, status, and
-DVI output.
+DVI output. The final TeX82 change also observes assignment-scoped committed
+meaning, catcode, code-table, parameter, and register writes, plus committed
+message, expanded-write, stream-open/close, and successful-shipout effects.
+Transparency includes exact generated write-file bytes.
 Cargo correctness tests never acquire or execute this live oracle.
 
 Instrumentation writes a versioned semantic event stream. It must not use
@@ -1309,7 +1312,7 @@ canonical event union is:
 | `alignment`      | `align_state`, template, or delimiter transition                   |
 | `mutation`       | typed command-relevant meaning, code, parameter, or register write |
 | `diagnostic`     | ordered typed diagnostic                                           |
-| `effect`         | ordered final externally visible effect                            |
+| `effect`         | ordered externally visible message, I/O, shipout, or final effect  |
 
 Tokens contain character code, canonical catcode name, optional
 control-sequence spelling, and an optional manifest-source-relative line and

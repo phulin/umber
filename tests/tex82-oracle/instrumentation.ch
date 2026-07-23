@@ -12,6 +12,7 @@
 @!umber_trace_sequence:integer;
 @!umber_recovery_insert:boolean;
 @!umber_alignment_depth:integer;
+@!umber_mutation_command:boolean;
 @z
 
 @x [22] Detached schema-v1 JSON Lines transport.
@@ -619,9 +620,215 @@ else write(umber_trace_file,'outer_validity_control_sequence');
 write_ln(umber_trace_file,'","arguments":[]}}}');
 end;
 
+procedure umber_trace_scope(@!global_scope:boolean);
+begin
+if global_scope then write(umber_trace_file,'"global"')
+else write(umber_trace_file,'"local"');
+end;
+
+procedure umber_trace_named_slot(@!family:integer;@!slot:integer);
+begin
+write(umber_trace_file,'"');
+case family of
+0:write(umber_trace_file,'glue_parameter');
+1:write(umber_trace_file,'skip');
+2:write(umber_trace_file,'muskip');
+3:write(umber_trace_file,'token_parameter');
+4:write(umber_trace_file,'toks');
+5:write(umber_trace_file,'lccode');
+6:write(umber_trace_file,'uccode');
+7:write(umber_trace_file,'sfcode');
+8:write(umber_trace_file,'mathcode');
+9:write(umber_trace_file,'integer_parameter');
+10:write(umber_trace_file,'count');
+11:write(umber_trace_file,'delcode');
+12:write(umber_trace_file,'dimension_parameter');
+othercases write(umber_trace_file,'dimen')
+endcases;
+write(umber_trace_file,':',slot:1,'"');
+end;
+
+procedure umber_trace_glue_value(@!p:pointer);
+begin
+write(umber_trace_file,'{"type":"glue","value":{"width":',width(p):1,
+  ',"stretch":',stretch(p):1,',"stretch_order":');
+umber_trace_glue_order(stretch_order(p));
+write(umber_trace_file,',"shrink":',shrink(p):1,',"shrink_order":');
+umber_trace_glue_order(shrink_order(p));
+write(umber_trace_file,'}}');
+end;
+
+procedure umber_trace_meaning_value(@!t:quarterword;@!e:halfword);
+begin
+if (t>=call)and(e<>null) then
+  begin write(umber_trace_file,'{"type":"tokens","value":[');
+  umber_trace_token_range(link(e),null);
+  write(umber_trace_file,']}');
+  end
+else if t=char_given then
+  write(umber_trace_file,'{"type":"character","value":',e:1,'}')
+else if t=math_given then
+  write(umber_trace_file,'{"type":"integer","value":',e:1,'}')
+else begin
+  write(umber_trace_file,'{"type":"name","value":');
+  umber_trace_command_name(t);
+  write(umber_trace_file,'}');
+  end;
+end;
+
+procedure umber_trace_eq_mutation(@!p:pointer;@!t:quarterword;
+  @!e:halfword;@!global_scope:boolean);
+var family,@!slot:integer;
+begin
+if (not umber_trace_opened)or(not umber_mutation_command) then return;
+if p<glue_base then
+  begin
+  if p>=undefined_control_sequence then return;
+  umber_trace_begin;
+  write(umber_trace_file,'{"event":"mutation","data":{"target":"meaning",');
+  write(umber_trace_file,'"key":{"type":"name","value":');
+  umber_trace_cs(p); write(umber_trace_file,'},"value":');
+  umber_trace_meaning_value(t,e);
+  write(umber_trace_file,',"scope":'); umber_trace_scope(global_scope);
+  write_ln(umber_trace_file,'}}}');
+  return;
+  end;
+family:=-1; slot:=0;
+if p<skip_base then begin family:=0; slot:=p-glue_base; end
+else if p<mu_skip_base then begin family:=1; slot:=p-skip_base; end
+else if p<local_base then begin family:=2; slot:=p-mu_skip_base; end
+else if (p>=output_routine_loc)and(p<toks_base) then
+  begin family:=3; slot:=p-output_routine_loc; end
+else if (p>=toks_base)and(p<box_base) then
+  begin family:=4; slot:=p-toks_base; end
+else if (p>=cat_code_base)and(p<lc_code_base) then
+  begin
+  umber_trace_begin;
+  write(umber_trace_file,'{"event":"mutation","data":{"target":"catcode",');
+  write(umber_trace_file,'"key":{"type":"character","value":',
+    p-cat_code_base:1,'},"value":{"type":"name","value":');
+  umber_trace_catcode(e);
+  write(umber_trace_file,'},"scope":'); umber_trace_scope(global_scope);
+  write_ln(umber_trace_file,'}}}');
+  return;
+  end
+else if (p>=lc_code_base)and(p<uc_code_base) then
+  begin family:=5; slot:=p-lc_code_base; end
+else if (p>=uc_code_base)and(p<sf_code_base) then
+  begin family:=6; slot:=p-uc_code_base; end
+else if (p>=sf_code_base)and(p<math_code_base) then
+  begin family:=7; slot:=p-sf_code_base; end
+else if (p>=math_code_base)and(p<int_base) then
+  begin family:=8; slot:=p-math_code_base; end;
+if family<0 then return;
+umber_trace_begin;
+write(umber_trace_file,'{"event":"mutation","data":{"target":"');
+if family<=4 then
+  if (family=0)or(family=3) then write(umber_trace_file,'parameter')
+  else write(umber_trace_file,'register')
+else write(umber_trace_file,'code_table');
+write(umber_trace_file,'","key":{"type":"name","value":');
+umber_trace_named_slot(family,slot);
+write(umber_trace_file,'},"value":');
+if family<=2 then umber_trace_glue_value(e)
+else if family<=4 then
+  begin write(umber_trace_file,'{"type":"tokens","value":[');
+  if e<>null then umber_trace_token_range(link(e),null);
+  write(umber_trace_file,']}');
+  end
+else write(umber_trace_file,'{"type":"integer","value":',e:1,'}');
+write(umber_trace_file,',"scope":'); umber_trace_scope(global_scope);
+write_ln(umber_trace_file,'}}}');
+end;
+
+procedure umber_trace_word_mutation(@!p:pointer;@!w:integer;
+  @!global_scope:boolean);
+var family,@!slot:integer;
+begin
+if (not umber_trace_opened)or(not umber_mutation_command) then return;
+family:=-1; slot:=0;
+if (p>=int_base)and(p<count_base) then
+  begin family:=9; slot:=p-int_base; end
+else if (p>=count_base)and(p<del_code_base) then
+  begin family:=10; slot:=p-count_base; end
+else if (p>=del_code_base)and(p<dimen_base) then
+  begin family:=11; slot:=p-del_code_base; end
+else if (p>=dimen_base)and(p<scaled_base) then
+  begin family:=12; slot:=p-dimen_base; end
+else if (p>=scaled_base)and(p<=eqtb_size) then
+  begin family:=13; slot:=p-scaled_base; end;
+if family<0 then return;
+umber_trace_begin;
+write(umber_trace_file,'{"event":"mutation","data":{"target":"');
+if (family=9)or(family=12) then write(umber_trace_file,'parameter')
+else if family=11 then write(umber_trace_file,'code_table')
+else write(umber_trace_file,'register');
+write(umber_trace_file,'","key":{"type":"name","value":');
+umber_trace_named_slot(family,slot);
+write(umber_trace_file,'},"value":{"type":"');
+if family>=12 then write(umber_trace_file,'scaled')
+else write(umber_trace_file,'integer');
+write(umber_trace_file,'","value":',w:1,'},"scope":');
+umber_trace_scope(global_scope);
+write_ln(umber_trace_file,'}}}');
+end;
+
+procedure umber_trace_pool_bytes(@!s:str_number);
+var k:pool_pointer; first_byte:boolean;
+begin
+write(umber_trace_file,'{"type":"bytes","value":[');
+first_byte:=true;
+for k:=str_start[s] to str_start[s+1]-1 do
+  begin
+  if first_byte then first_byte:=false else write(umber_trace_file,',');
+  write(umber_trace_file,so(str_pool[k]):1);
+  end;
+write(umber_trace_file,']}');
+end;
+
+procedure umber_trace_file_name_value;
+begin
+write(umber_trace_file,'{"type":"name","value":"');
+umber_trace_string_contents(cur_area);
+umber_trace_string_contents(cur_name);
+umber_trace_string_contents(cur_ext);
+write(umber_trace_file,'"}');
+end;
+
+procedure umber_trace_effect(@!effect_kind:integer;@!channel:integer;
+  @!value_kind:integer;@!value:integer);
+begin
+if not umber_trace_opened then return;
+umber_trace_begin;
+write(umber_trace_file,'{"event":"effect","data":{"kind":"');
+case effect_kind of
+0:write(umber_trace_file,'message');
+1:write(umber_trace_file,'write');
+2:write(umber_trace_file,'open');
+3:write(umber_trace_file,'close');
+othercases write(umber_trace_file,'shipout')
+endcases;
+write(umber_trace_file,'","channel":"');
+if effect_kind=0 then write(umber_trace_file,'terminal')
+else if effect_kind=4 then write(umber_trace_file,'dvi')
+else write(umber_trace_file,'stream:',channel:1);
+write(umber_trace_file,'","value":');
+if value_kind=0 then umber_trace_pool_bytes(value)
+else if value_kind=1 then
+  begin write(umber_trace_file,'{"type":"tokens","value":[');
+  if value<>null then umber_trace_token_range(link(value),null);
+  write(umber_trace_file,']}');
+  end
+else if value_kind=2 then
+  write(umber_trace_file,'{"type":"integer","value":',value:1,'}')
+else if value_kind=3 then umber_trace_file_name_value
+else write(umber_trace_file,'{"type":"none"}');
+write_ln(umber_trace_file,'}}}');
+end;
+
 procedure umber_trace_open;
 begin umber_trace_sequence:=0; umber_recovery_insert:=false;
-umber_alignment_depth:=0;
+umber_alignment_depth:=0; umber_mutation_command:=false;
 rewrite(umber_trace_file,'tex82-events.jsonl');
 umber_trace_opened:=true;
 if umber_trace_opened then write_ln(umber_trace_file,
@@ -638,6 +845,42 @@ write_ln(umber_trace_file,
  '{"event":"effect","data":{"kind":"terminate","channel":"engine",',
  '"value":{"type":"none"}}}}');
 a_close(umber_trace_file); umber_trace_opened:=false;
+end;
+@z
+
+@x [18] Observe committed local equivalent writes.
+eq_level(p):=cur_level; eq_type(p):=t; equiv(p):=e;
+end;
+@y
+eq_level(p):=cur_level; eq_type(p):=t; equiv(p):=e;
+umber_trace_eq_mutation(p,t,e,false);
+end;
+@z
+
+@x [18] Observe committed local fullword writes.
+eqtb[p].int:=w;
+end;
+@y
+eqtb[p].int:=w;
+umber_trace_word_mutation(p,w,false);
+end;
+@z
+
+@x [18] Observe committed global equivalent writes.
+eq_level(p):=level_one; eq_type(p):=t; equiv(p):=e;
+end;
+@y
+eq_level(p):=level_one; eq_type(p):=t; equiv(p):=e;
+umber_trace_eq_mutation(p,t,e,true);
+end;
+@z
+
+@x [18] Observe committed global fullword writes.
+begin eqtb[p].int:=w; xeq_level[p]:=level_one;
+end;
+@y
+begin eqtb[p].int:=w; xeq_level[p]:=level_one;
+umber_trace_word_mutation(p,w,true);
 end;
 @z
 
@@ -1177,6 +1420,14 @@ umber_trace_condition(2,this_if,or_code,6);
 return; {wait for \.{\\or}, \.{\\else}, or \.{\\fi}}
 @z
 
+@x [32] Observe successful shipout after the page commits.
+dvi_out(eop); incr(total_pages); cur_s:=-1;
+@y
+dvi_out(eop); incr(total_pages);
+umber_trace_effect(4,0,2,total_pages);
+cur_s:=-1;
+@z
+
 @x [45] Observe nested alignment suspension and ownership.
 align_ptr:=p;
 cur_head:=get_avail;
@@ -1319,10 +1570,43 @@ align_state:=1000000; umber_trace_alignment(6,align_state,0);
     umber_trace_alignment_recovery(3);
     decr(align_state); umber_trace_alignment(6,align_state+1,0);
     cur_tok:=right_brace_token+"}";
-    end;
+end;
 @z
 
-@x [55] Open detached tracing after initialization.
+@x [49] Scope committed eqtb mutations to assignment commands.
+@<Adjust \(f)for the setting of \.{\\globaldefs}@>;
+case cur_cmd of
+@t\4@>@<Assignments@>@;
+othercases confusion("prefix")
+@:this can't happen prefix}{\quad prefix@>
+endcases;
+done: @<Insert a token saved by \.{\\afterassignment}, if any@>;
+@y
+@<Adjust \(f)for the setting of \.{\\globaldefs}@>;
+umber_mutation_command:=true;
+case cur_cmd of
+@t\4@>@<Assignments@>@;
+othercases confusion("prefix")
+@:this can't happen prefix}{\quad prefix@>
+endcases;
+done: umber_mutation_command:=false;
+@<Insert a token saved by \.{\\afterassignment}, if any@>;
+@z
+
+@x [50] Observe an ordinary message after it is printed.
+if c=0 then @<Print string |s| on the terminal@>
+else @<Print string |s| as an error message@>;
+flush_string;
+@y
+if c=0 then
+  begin @<Print string |s| on the terminal@>;
+  umber_trace_effect(0,0,0,s);
+  end
+else @<Print string |s| as an error message@>;
+flush_string;
+@z
+
+@x [51] Open detached tracing after initialization.
 start_of_TEX: @<Initialize the output routines@>;
 @<Get the first line of input and prepare to start@>;
 @y
@@ -1331,10 +1615,38 @@ umber_trace_open;
 @<Get the first line of input and prepare to start@>;
 @z
 
-@x [55] Close after final ordered events.
+@x [51] Close after final ordered events.
 final_end: do_final_end;
 end {|main_body|};
 @y
 final_end: umber_trace_finish; do_final_end;
 end {|main_body|};
+@z
+
+@x [53] Observe a committed expanded write.
+mubyte_out := mubyte_sout; mubyte_log := mubyte_slog;
+@y
+mubyte_out := mubyte_sout; mubyte_log := mubyte_slog;
+umber_trace_effect(1,j,1,def_ref);
+@z
+
+@x [53] Observe committed output stream open and close effects.
+  else  begin if write_open[j] then begin a_close(write_file[j]);
+                                          write_open[j]:=false; end;
+    if subtype(p)=close_node then do_nothing {already closed}
+    else if j<16 then
+@y
+  else  begin if write_open[j] then begin a_close(write_file[j]);
+      write_open[j]:=false; umber_trace_effect(3,j,3,0); end;
+    if subtype(p)=close_node then do_nothing {already closed}
+    else if j<16 then
+@z
+
+@x [53] Observe a committed output stream open.
+      write_open[j]:=true;
+      {If on first line of input, log file is not ready yet, so don't log.}
+@y
+      write_open[j]:=true;
+      umber_trace_effect(2,j,3,0);
+      {If on first line of input, log file is not ready yet, so don't log.}
 @z

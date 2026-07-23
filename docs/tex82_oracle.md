@@ -76,7 +76,13 @@ input covers ordinary and nested alignments, braces, `\omit`, `\span`,
 counter maintained by the detached observer; no alignment record, input level,
 or `mem` address enters the stream. The sole ordinary-log normalization
 replaces TeX's startup-banner host clock; no semantic message or diagnostic is
-changed.
+changed. Assignment-command-scoped observation at the committed `eq_define`,
+`geq_define`, `eq_word_define`, and `geq_word_define` seams emits typed
+meaning, catcode, code-table, parameter, and register mutations without
+including internal eqtb maintenance. Committed message, expanded write,
+output-stream open/close, and successful DVI shipout seams emit ordinary
+effects. The transparency comparison also covers the exact generated write
+file.
 
 ## TeX82 command-event matrix
 
@@ -96,12 +102,12 @@ cannot silently weaken coverage.
 | scanners                    | `transitions.tex`                          | successful integer, dimension, glue, and internal-value returns                                                             |
 | conditions                  | both transition inputs                     | frame link/unlink, exact-frame limit updates, branch selection, and EOF recovery                                            |
 | alignments                  | `transitions.tex`                          | alignment ownership, preamble lifecycle, literal-brace accounting, delimiter interception, template lifecycle, and recovery |
+| mutations                   | `transitions.tex`                          | assignment-scoped committed meaning, catcode, code-table, parameter, and register writes                                    |
+| ordinary effects            | `transitions.tex`                          | committed message, expanded write, output-stream open/close, and successful DVI shipout                                     |
 | final ordering              | `transitions.tex`                          | terminal input stop followed by termination before observer close                                                           |
 
-Schema-v1 `mutation` events and non-termination `effect` variants are outside
-this command-delivery matrix and are not emitted by the current TeX82 final
-change. Their implementation is tracked separately in Beads rather than
-represented as covered here.
+The matrix covers every TeX82-applicable schema-v1 `StateTarget` and every
+non-termination `EffectKind`, in addition to ordered termination.
 
 The live change file writes the all-zero manifest identity as an explicit
 unbound sentinel. It is not a committed fixture identity. Cross-engine
