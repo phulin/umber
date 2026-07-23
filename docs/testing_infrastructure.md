@@ -190,6 +190,13 @@ for DVI fixture updates. Its `--area pdf` mode requires pdfTeX 1.40.27 and
 Poppler `pdftoppm` 25.08.0; its `--area fonts` mode owns the explicit live
 `tftopl` cross-check and does not rewrite fixtures.
 
+Its `--area tex82-oracle` and `--area etex26-oracle` modes own pinned live
+reference builds outside the correctness tier. Both reuse the hash-verified
+TeX Live 2025 source cache offline, record the source/change/tool/platform and
+executable identities under `target/`, and compare clean with
+instrumentation-ready ordinary outputs. The e-TeX mode additionally verifies
+the distinct compatibility and leading-`*` extended INITEX profiles.
+
 See `tests/AGENTS.md` for the supported areas and cases, required tools,
 copied support files, and validation performed after a rewrite.
 

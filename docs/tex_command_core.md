@@ -1265,6 +1265,18 @@ message, expanded-write, stream-open/close, and successful-shipout effects.
 Transparency includes exact generated write-file bytes.
 Cargo correctness tests never acquire or execute this live oracle.
 
+For e-TeX 2.6, `scripts/regen-fixtures.sh --area etex26-oracle` owns
+acquisition and delegates to the reproducible workflow documented in
+[`etex26_oracle.md`](etex26_oracle.md). It emits separately named clean and
+instrumentation-ready executables for the canonical compatibility and
+extended INITEX profiles, plus a complete build record. The profile distinction
+is the canonical leading-`*` INITEX input contract, not a compile-time fork.
+The current final repository change is transparent and pins the seam where
+e-TeX semantic instrumentation will be layered. Both profiles are smoke-gated,
+and clean versus instrumentation-ready terminal, normalized log, status, and
+DVI bytes must match. Cargo correctness tests never acquire or execute this
+live oracle.
+
 Instrumentation writes a versioned semantic event stream. It must not use
 TeX's semantic `mem`, string pool, selector, transcript state, or command
 input.

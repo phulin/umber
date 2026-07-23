@@ -41,6 +41,10 @@ canonical TeX82/e-TeX/pdfTeX command-machine replacement tracked by Beads epic
 levels, command delivery, expansion, scanners, extensions, provenance,
 incrementality, reference oracles, and optimization promotion.
 
+`etex26_oracle.md` defines the pinned canonical e-TeX 2.6 Web2C source and
+toolchain boundary, explicit compatibility/extended INITEX profiles,
+transparent final-change seam, offline reuse, and build-record contract.
+
 `persistent_compile_sessions.md` defines the unified native/WASM compile
 session lifecycle that composes typed resource retries with revision-checked
 root-buffer patches and retained incremental execution.
