@@ -62,8 +62,14 @@ status, outer-validity recovery insertion, terminal stop, and termination
 ordering. Macro-focused checks additionally require completed arguments and
 activations, delimiter matches and overlap recovery, parameter conversion,
 replacement completion, ordinary and expanded `scan_toks` completion, and
-direct `\the` token-list splices. The sole ordinary-log normalization replaces
-TeX's startup-banner host clock; no semantic message or diagnostic is changed.
+direct `\the` token-list splices. Scanner/conditional checks additionally
+require typed integer, scaled-dimension, glue, internal-value, and token-list
+results; condition push, limit-change, branch, and pop transitions; skipped
+delimiter and `\ifcase` progress; and evaluating-limit plus incomplete-skip
+recovery events. The focused input covers nested conditions, `\ifx`, skipped
+balanced braces, and EOF while skipping. The sole ordinary-log normalization
+replaces TeX's startup-banner host clock; no semantic message or diagnostic is
+changed.
 
 The live change file writes the all-zero manifest identity as an explicit
 unbound sentinel. It is not a committed fixture identity. Cross-engine

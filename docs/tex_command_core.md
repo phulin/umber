@@ -1252,9 +1252,11 @@ file emits TeX82 raw/expanded delivery, input lifecycle, backup, scanner
 status, outer-validity recovery, completed macro arguments and activations,
 delimiter matching and overlap recovery, parameter conversion, macro
 replacement completion, `scan_toks` completion and direct `\the` splices,
-terminal-stop, and termination events. Its focused live run is
-schema-validated, deterministic, and ordinary-output transparent. Cargo
-correctness tests never acquire or execute this live oracle.
+committed integer, dimension, glue, and internal scanner results, condition
+push/limit/branch/pop transitions, skipped-delimiter and `\ifcase` progress,
+conditional recovery, terminal-stop, and termination events. Its focused live
+run is schema-validated, deterministic, and ordinary-output transparent.
+Cargo correctness tests never acquire or execute this live oracle.
 
 Instrumentation writes a versioned semantic event stream. It must not use
 TeX's semantic `mem`, string pool, selector, transcript state, or command

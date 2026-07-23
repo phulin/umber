@@ -385,6 +385,124 @@ umber_trace_cs(cs);
 write_ln(umber_trace_file,',"argument_count":',arguments:1,'}}}');
 end;
 
+procedure umber_trace_glue_order(@!order:integer);
+begin case order of
+0:write(umber_trace_file,'"normal"');
+1:write(umber_trace_file,'"fil"');
+2:write(umber_trace_file,'"fill"');
+othercases write(umber_trace_file,'"filll"')
+endcases;
+end;
+
+procedure umber_trace_scanner(@!scanner_kind,@!value_level:integer);
+var p:pointer;
+begin
+if not umber_trace_opened then return;
+umber_trace_begin;
+write(umber_trace_file,'{"event":"scanner","data":{"scanner":"');
+case scanner_kind of
+0:write(umber_trace_file,'integer');
+1:write(umber_trace_file,'dimension');
+2:write(umber_trace_file,'glue');
+othercases write(umber_trace_file,'internal')
+endcases;
+write(umber_trace_file,'","result":');
+case value_level of
+0:write(umber_trace_file,'{"type":"integer","value":',cur_val:1,'}');
+1:write(umber_trace_file,'{"type":"scaled","value":',cur_val:1,'}');
+2,3:begin p:=cur_val;
+  write(umber_trace_file,'{"type":"glue","value":{"width":',width(p):1,
+    ',"stretch":',stretch(p):1,',"stretch_order":');
+  umber_trace_glue_order(stretch_order(p));
+  write(umber_trace_file,',"shrink":',shrink(p):1,',"shrink_order":');
+  umber_trace_glue_order(shrink_order(p));
+  write(umber_trace_file,'}}');
+  end;
+4:begin write(umber_trace_file,'{"type":"name","value":');
+  umber_trace_cs(cur_val); write(umber_trace_file,'}'); end;
+othercases begin write(umber_trace_file,'{"type":"tokens","value":[');
+  if cur_val<>null then umber_trace_token_range(link(cur_val),null);
+  write(umber_trace_file,']}'); end
+endcases;
+write_ln(umber_trace_file,'}}}');
+end;
+
+procedure umber_trace_condition_name(@!condition_kind:integer);
+begin case condition_kind of
+0:write(umber_trace_file,'"if"');
+1:write(umber_trace_file,'"ifcat"');
+2:write(umber_trace_file,'"ifnum"');
+3:write(umber_trace_file,'"ifdim"');
+4:write(umber_trace_file,'"ifodd"');
+5:write(umber_trace_file,'"ifvmode"');
+6:write(umber_trace_file,'"ifhmode"');
+7:write(umber_trace_file,'"ifmmode"');
+8:write(umber_trace_file,'"ifinner"');
+9:write(umber_trace_file,'"ifvoid"');
+10:write(umber_trace_file,'"ifhbox"');
+11:write(umber_trace_file,'"ifvbox"');
+12:write(umber_trace_file,'"ifx"');
+13:write(umber_trace_file,'"ifeof"');
+14:write(umber_trace_file,'"iftrue"');
+15:write(umber_trace_file,'"iffalse"');
+othercases write(umber_trace_file,'"ifcase"')
+endcases;
+end;
+
+procedure umber_trace_if_limit(@!limit_kind:integer);
+begin case limit_kind of
+1:write(umber_trace_file,'"evaluating"');
+2:write(umber_trace_file,'"fi"');
+3:write(umber_trace_file,'"else"');
+4:write(umber_trace_file,'"or"');
+othercases write(umber_trace_file,'"normal"')
+endcases;
+end;
+
+procedure umber_trace_condition(@!transition,@!condition_kind,
+  @!limit_kind,@!branch_kind:integer);
+begin
+if not umber_trace_opened then return;
+umber_trace_begin;
+write(umber_trace_file,'{"event":"condition","data":{"transition":"');
+case transition of
+0:write(umber_trace_file,'push');
+1:write(umber_trace_file,'limit_change');
+2:write(umber_trace_file,'branch');
+othercases write(umber_trace_file,'pop')
+endcases;
+write(umber_trace_file,'","condition":');
+umber_trace_condition_name(condition_kind);
+write(umber_trace_file,',"limit":');
+umber_trace_if_limit(limit_kind);
+if branch_kind<>0 then
+  begin write(umber_trace_file,',"branch":"');
+  case branch_kind of
+  1:write(umber_trace_file,'true');
+  2:write(umber_trace_file,'false');
+  3:write(umber_trace_file,'or');
+  4:write(umber_trace_file,'else');
+  5:write(umber_trace_file,'fi');
+  othercases write(umber_trace_file,'case')
+  endcases;
+  write(umber_trace_file,'"');
+  end;
+write_ln(umber_trace_file,'}}}');
+end;
+
+procedure umber_trace_conditional_diagnostic(@!diagnostic_kind:integer);
+begin
+if not umber_trace_opened then return;
+umber_trace_begin;
+write(umber_trace_file,
+  '{"event":"diagnostic","data":{"severity":"error","diagnostic":"');
+if diagnostic_kind=0 then write(umber_trace_file,'conditional_incomplete')
+else if diagnostic_kind=1 then
+  write(umber_trace_file,'conditional_limit_recovery')
+else write(umber_trace_file,'conditional_extra_delimiter');
+write_ln(umber_trace_file,'","arguments":[]}}}');
+end;
+
 procedure umber_trace_recovery(@!kind:integer;@!t:halfword);
 begin
 if not umber_trace_opened then return;
@@ -549,7 +667,9 @@ begin if scanner_status<>normal then
   begin deletions_allowed:=false;
 @y
 begin if scanner_status<>normal then
-  begin umber_trace_outer(cur_cs=0); deletions_allowed:=false;
+  begin umber_trace_outer(cur_cs=0);
+  if scanner_status=skipping then umber_trace_conditional_diagnostic(0);
+  deletions_allowed:=false;
 @z
 
 @x [24] Observe outer control-sequence backup.
@@ -585,6 +705,20 @@ get_token; scanner_status:=save_scanner_status; t:=cur_tok;
 @y
 begin save_scanner_status:=scanner_status; umber_set_scanner_status(normal);
 get_token; umber_set_scanner_status(save_scanner_status); t:=cur_tok;
+@z
+
+@x [25] Observe canonical inserted-relax recovery.
+procedure insert_relax;
+begin cur_tok:=cs_token_flag+cur_cs; back_input;
+cur_tok:=cs_token_flag+frozen_relax; back_input; token_type:=inserted;
+end;
+@y
+procedure insert_relax;
+begin cur_tok:=cs_token_flag+cur_cs; back_input;
+cur_tok:=cs_token_flag+frozen_relax; umber_recovery_insert:=true;
+back_input; umber_recovery_insert:=false;
+if cur_cmd=fi_or_else then umber_trace_conditional_diagnostic(1);
+end;
 @z
 
 @x [25] Expanded delivery from get_x_token.
@@ -656,6 +790,51 @@ incr(n);
 else pstack[n]:=link(temp_head);
 umber_trace_macro_argument(n+1,pstack[n]);
 incr(n);
+@z
+
+@x [26] Observe committed internal scanner results.
+@<Fix the reference count, if any, and negate |cur_val| if |negative|@>;
+end;
+@y
+@<Fix the reference count, if any, and negate |cur_val| if |negative|@>;
+umber_trace_scanner(3,cur_val_level);
+end;
+@z
+
+@x [26] Observe committed integer scanner results.
+if negative then negate(cur_val);
+end;
+@y
+if negative then negate(cur_val);
+umber_trace_scanner(0,0);
+end;
+@z
+
+@x [26] Observe committed dimension scanner results.
+if negative then negate(cur_val);
+end;
+@y
+if negative then negate(cur_val);
+umber_trace_scanner(1,1);
+end;
+@z
+
+@x [26] Observe an internal glue result before the early return.
+    begin if cur_val_level<>level then mu_error;
+    return;
+    end;
+@y
+    begin if cur_val_level<>level then mu_error;
+    umber_trace_scanner(2,cur_val_level);
+    return;
+    end;
+@z
+
+@x [26] Observe newly constructed glue after all components commit.
+exit:end;
+@y
+exit:umber_trace_scanner(2,level);
+end;
 @z
 
 @x [27] string/meaning scanner status.
@@ -760,6 +939,79 @@ umber_set_scanner_status(skipping); l:=0;
 done: scanner_status:=save_scanner_status;
 @y
 done: umber_set_scanner_status(save_scanner_status);
+if cur_chr=or_code then umber_trace_condition(2,cur_if,if_limit,3)
+else if cur_chr=else_code then umber_trace_condition(2,cur_if,if_limit,4)
+else umber_trace_condition(2,cur_if,if_limit,5);
+@z
+
+@x [28] Observe condition-frame push after it commits.
+cond_ptr:=p; cur_if:=cur_chr; if_limit:=if_code; if_line:=line;
+end
+@y
+cond_ptr:=p; cur_if:=cur_chr; if_limit:=if_code; if_line:=line;
+umber_trace_condition(0,cur_if,if_limit,0);
+end
+@z
+
+@x [28] Observe condition-frame pop before its storage is retired.
+begin p:=cond_ptr; if_line:=if_line_field(p);
+cur_if:=subtype(p); if_limit:=type(p); cond_ptr:=link(p);
+free_node(p,if_node_size);
+end
+@y
+begin p:=cond_ptr;
+umber_trace_condition(3,cur_if,if_limit,0);
+if_line:=if_line_field(p);
+cur_if:=subtype(p); if_limit:=type(p); cond_ptr:=link(p);
+free_node(p,if_node_size);
+end
+@z
+
+@x [28] Observe exact-frame conditional limit changes.
+begin if p=cond_ptr then if_limit:=l {that's the easy case}
+else  begin q:=cond_ptr;
+  loop@+  begin if q=null then confusion("if");
+@:this can't happen if}{\quad if@>
+    if link(q)=p then
+      begin type(q):=l; return;
+      end;
+    q:=link(q);
+    end;
+  end;
+exit:end;
+@y
+begin if p=cond_ptr then
+  begin if_limit:=l; umber_trace_condition(1,cur_if,l,0); end
+else  begin q:=cond_ptr;
+  loop@+  begin if q=null then confusion("if");
+@:this can't happen if}{\quad if@>
+    if link(q)=p then
+      begin type(q):=l; umber_trace_condition(1,subtype(q),l,0); return;
+      end;
+    q:=link(q);
+    end;
+  end;
+exit:end;
+@z
+
+@x [28] Observe the selected boolean branch.
+if tracing_commands>1 then @<Display the value of |b|@>;
+if b then
+@y
+if tracing_commands>1 then @<Display the value of |b|@>;
+if b then umber_trace_condition(2,this_if,if_limit,1)
+else umber_trace_condition(2,this_if,if_limit,2);
+if b then
+@z
+
+@x [28] Observe the direct false-branch delimiter change.
+common_ending: if cur_chr=fi_code then @<Pop the condition stack@>
+else if_limit:=fi_code; {wait for \.{\\fi}}
+@y
+common_ending: if cur_chr=fi_code then @<Pop the condition stack@>
+else begin if_limit:=fi_code;
+  umber_trace_condition(1,cur_if,if_limit,0);
+  end; {wait for \.{\\fi}}
 @z
 
 @x [28] Conditional operand status entry.
@@ -772,6 +1024,15 @@ begin save_scanner_status:=scanner_status; umber_set_scanner_status(normal);
 scanner_status:=save_scanner_status;
 @y
 umber_set_scanner_status(save_scanner_status);
+@z
+
+@x [28] Observe selected ifcase branch after skip progress.
+change_if_limit(or_code,save_cond_ptr);
+return; {wait for \.{\\or}, \.{\\else}, or \.{\\fi}}
+@y
+change_if_limit(or_code,save_cond_ptr);
+umber_trace_condition(2,this_if,or_code,6);
+return; {wait for \.{\\or}, \.{\\else}, or \.{\\fi}}
 @z
 
 @x [45] Alignment status entry.

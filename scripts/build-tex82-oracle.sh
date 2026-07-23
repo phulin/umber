@@ -341,6 +341,17 @@ for pattern in \
   '"purpose":"scan_toks"' \
   '"purpose":"expanded_scan_toks"' \
   '"purpose":"the_toks"' \
+  '"event":"scanner","data":{"scanner":"integer"' \
+  '"event":"scanner","data":{"scanner":"dimension"' \
+  '"event":"scanner","data":{"scanner":"glue"' \
+  '"event":"scanner","data":{"scanner":"internal"' \
+  '"event":"condition","data":{"transition":"push"' \
+  '"event":"condition","data":{"transition":"limit_change"' \
+  '"event":"condition","data":{"transition":"branch"' \
+  '"event":"condition","data":{"transition":"pop"' \
+  '"branch":"case"' \
+  '"diagnostic":"conditional_limit_recovery"' \
+  '"diagnostic":"conditional_incomplete"' \
   '"diagnostic":"outer_validity_control_sequence"' \
   '"transition":"stop"' \
   '"kind":"terminate"'; do

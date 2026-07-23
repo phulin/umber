@@ -15,7 +15,17 @@
 \output={OUTPUT ROUTINE}
 \edef\thecopy{\the\toks0}
 \edef\frozen{\noexpand\relax}
-\iffalse ignored\fi
+\count0="2A
+\count1=\count0
+\dimen0=1.5pt
+\skip0=2pt plus 3fil minus 4pt
+\iftrue\iffalse nested false\else nested true\fi\fi
+\def\samea{same}
+\def\sameb{same}
+\ifx\samea\sameb ifx true\else ifx false\fi
+\ifcase2 case zero\or case one\or case two\else case fallback\fi
+\iffalse {skipped {braces}}\else kept\fi
+\ifnum1<\else recovered\fi
 \message{UMBER-TEX82-TRANSITIONS}
 \input transitions-child
 \outer\def\outercommand{}
