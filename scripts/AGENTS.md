@@ -43,6 +43,7 @@ Read the repository-root `AGENTS.md` first. This file adds the directory map for
 - `build-pdftex14027-oracle.sh`: hash-pinned canonical pdfTeX 1.40.27 source,
   ordered Web2C/SyncTeX changes, translator, and archive-owned library build;
   publishes separate clean and instrumented eight-bit executables, gates exact
-  DVI/PDF smoke plus shared and expansion/scanner schema-v1 command traces,
-  audits the exact canonical primitive inventory, proves transparency and
-  determinism, supports offline reuse, and records complete build identities.
+  DVI/PDF smoke plus shared, expansion/scanner, and state/enquiry/effect
+  schema-v1 traces, audits the exact canonical primitive inventory, proves
+  transparency and determinism, supports offline reuse, and records complete
+  build identities.

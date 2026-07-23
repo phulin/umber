@@ -1,0 +1,110 @@
+\catcode `{ = 1
+\catcode `} = 2
+\immediate\write16{UMBER-PDFTEX14027-COMMAND-STATE}
+
+% Canonical pdfTeX integer parameters and aliases.
+\pdfoutput=2
+\pdfoutput=0
+\pdfcompresslevel=0
+\pdfobjcompresslevel=1
+\pdfobjcompresslevel=0
+\pdfdecimaldigits=4
+\pdfmovechars=1
+\pdfimageresolution=73
+\pdfimageresolution=72
+\pdfpkresolution=600
+\pdfuniqueresname=1
+\pdfoptionalwaysusepdfpagebox=1
+\pdfoptionpdfinclusionerrorlevel=1
+\pdfoptionpdfminorversion=6
+\pdfmajorversion=0
+\pdfmajorversion=1
+\pdfminorversion=7
+\pdfforcepagebox=2
+\pdfpagebox=3
+\pdfinclusionerrorlevel=1
+\pdfgamma=999
+\pdfgamma=1000
+\pdfimagegamma=1000
+\pdfimagehicolor=0
+\pdfimagehicolor=1
+\pdfimageapplygamma=1
+\pdfadjustspacing=2
+\pdfprotrudechars=2
+\pdftracingfonts=1
+\pdftracingfonts=0
+\pdfadjustinterwordglue=1
+\pdfprependkern=1
+\pdfappendkern=1
+\pdfgentounicode=1
+\pdfdraftmode=1
+\pdfdraftmode=0
+\pdfinclusioncopyfonts=1
+\pdfsuppresswarningdupdest=1
+\pdfsuppresswarningdupmap=1
+\pdfsuppresswarningpagegroup=1
+\pdfinfoomitdate=1
+\pdfsuppressptexinfo=15
+\pdfomitcharset=1
+\pdfomitinfodict=1
+\pdfomitprocset=1
+\pdfptexuseunderscore=1
+\ignoreprimitiveerror=1
+
+% Canonical pdfTeX dimensions and token-list parameters.
+\pdfhorigin=1in
+\pdfvorigin=1in
+\pdfpagewidth=5in
+\pdfpageheight=4in
+\pdflinkmargin=1pt
+\pdfdestmargin=2pt
+\pdfthreadmargin=3pt
+\pdffirstlineheight=4pt
+\pdflastlinedepth=5pt
+\pdfeachlineheight=6pt
+\pdfeachlinedepth=7pt
+\pdfignoreddimen=8pt
+\pdfpxdimen=1bp
+\pdfpagesattr{/StatePages true}
+\pdfpageattr{/StatePage true}
+\pdfpageresources{/StateResource true}
+\pdfpkmode{state-mode}
+
+% Font code tables are font-global in canonical pdfTeX.
+\font\statefont=cmr10 at 12pt
+\lpcode\statefont 65=101
+\rpcode\statefont 65=-102
+\efcode\statefont 65=1000
+\tagcode\statefont 65=1
+\knbscode\statefont 65=103
+\stbscode\statefont 65=-104
+\shbscode\statefont 65=105
+\knbccode\statefont 65=-106
+\knaccode\statefont 65=107
+\pdfnoligatures\statefont
+
+% Object-independent enquiries and explicitly mutable World state.
+\setbox0=\hbox{}
+\edef\stateenquiries{%
+  \leftmarginkern0/\rightmarginkern0/%
+  \pdffontname\statefont/\pdffontsize\statefont/%
+  \pdfinsertht0/%
+  \the\pdflastxpos/\the\pdflastypos/%
+  \the\pdfretval/\the\pdfshellescape}
+\pdfsetrandomseed -2468
+\edef\randomstate{\the\pdfrandomseed}
+\pdfresettimer
+\ifnum\pdfelapsedtime>-1
+  \immediate\write16{PDFTEX-TIMER-AVAILABLE}
+\fi
+\immediate\write16{ENQUIRIES=\stateenquiries}
+\immediate\write16{RANDOM-STATE=\randomstate}
+
+% Switch output mode before its first committed artifact.
+\pdfoutput=1
+\pdftrailerid{UMBER-PDFTEX14027-STATE}
+\immediate\openout1=state-effects.out
+\immediate\write1{PDFTEX-COMMAND-STATE}
+\immediate\closeout1
+\shipout\hbox{}
+\end

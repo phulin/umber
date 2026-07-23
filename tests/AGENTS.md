@@ -33,15 +33,17 @@ etex26-oracle`; Cargo correctness tests never invoke the live oracle.
 
 `tests/pdftex14027-oracle-manifest.txt` pins canonical pdfTeX 1.40.27,
 the ordered Web2C and configured SyncTeX changes, translator inputs, the
-repository-owned shared and extension final-change seams, smoke programs,
-focused extension program, and exact primitive audit.
+repository-owned shared, extension, and state final-change seams, smoke
+programs, focused extension/state programs, and exact primitive audit.
 `tests/pdftex14027-oracle/` contains font-independent DVI and deterministic PDF
 smoke inputs, focused shared-command transition inputs and an executable
 semantic-event matrix, an exact-eight-bit expansion/scanner extension matrix,
-and ordered repository instrumentation changes. The live workflow proves the
-549-entry ownership inventory, schema-validates and repeatability-checks both
-traces, and gates clean/instrumented terminal, normalized log, status,
-DVI/PDF, and generated-effect transparency. Acquisition and builds run only
+and a state matrix covering named parameters, font code tables,
+object-independent enquiries, random/timer transitions, and committed
+PDF-facing effects. The live workflow proves the 549-entry ownership
+inventory, schema-validates and repeatability-checks all three traces, and
+gates clean/instrumented terminal, normalized log, status, DVI/PDF, and
+generated-effect transparency. Acquisition and builds run only
 through `scripts/regen-fixtures.sh --area pdftex14027-oracle`; Cargo correctness
 tests never invoke the live oracle.
 

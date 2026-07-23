@@ -1,0 +1,33 @@
+# Required schema-v1 pdfTeX 1.40.27 command-state, enquiry, and effect observations.
+# Columns: family|primitive|boundary|fixture|final-change seam|fixed JSON fragment
+mutation|pdfoutput|PDF mode disabled|state.tex|committed eqtb write|"value":"pdfoutput"},"value":{"type":"integer","value":0}
+mutation|pdfoutput|PDF mode enabled|state.tex|committed eqtb write|"value":"pdfoutput"},"value":{"type":"integer","value":1}
+mutation|pdfcompresslevel|named integer parameter|state.tex|committed eqtb write|"value":"pdfcompresslevel"
+mutation|pdfpagewidth|named dimension parameter|state.tex|committed eqtb write|"value":"pdfpagewidth"
+mutation|pdfpageattr|named token-list parameter|state.tex|committed eqtb write|"value":"pdfpageattr"
+mutation|ignoreprimitiveerror|named e-TeX/pdfTeX parameter|state.tex|committed eqtb write|"value":"ignoreprimitiveerror"
+mutation|lpcode|left-protrusion code|state.tex|font code-table commit|"value":"lpcode:cmr10:65"
+mutation|rpcode|right-protrusion code|state.tex|font code-table commit|"value":"rpcode:cmr10:65"
+mutation|efcode|expansion code|state.tex|font code-table commit|"value":"efcode:cmr10:65"
+mutation|tagcode|character tag code|state.tex|font code-table commit|"value":"tagcode:cmr10:65"
+mutation|knbscode|base-stretch kern code|state.tex|font code-table commit|"value":"knbscode:cmr10:65"
+mutation|stbscode|step-stretch kern code|state.tex|font code-table commit|"value":"stbscode:cmr10:65"
+mutation|shbscode|shrink kern code|state.tex|font code-table commit|"value":"shbscode:cmr10:65"
+mutation|knbccode|before-character kern code|state.tex|font code-table commit|"value":"knbccode:cmr10:65"
+mutation|knaccode|after-character kern code|state.tex|font code-table commit|"value":"knaccode:cmr10:65"
+mutation|pdfnoligatures|ligature suppression code|state.tex|font code-table commit|"value":"pdfnoligatures:cmr10"
+mutation|pdfsetrandomseed|random-state replacement|state.tex|extension command commit|"value":"pdfsetrandomseed"
+mutation|pdfresettimer|timer-state reset|state.tex|extension command commit|"value":"pdfresettimer"
+scanner|leftmarginkern|left box margin enquiry|state.tex|conversion semantic result|"scanner":"pdf_left_margin_kern","result":{"type":"scaled","value":0}
+scanner|rightmarginkern|right box margin enquiry|state.tex|conversion semantic result|"scanner":"pdf_right_margin_kern","result":{"type":"scaled","value":0}
+scanner|pdffontname|font semantic-name enquiry|state.tex|font operand resolution|"scanner":"pdf_font_name","result":{"type":"name","value":"cmr10"}
+scanner|pdffontsize|font size enquiry|state.tex|font operand resolution|"scanner":"pdf_font_size","result":{"type":"scaled","value":786432}
+scanner|pdfinsertht|page insertion-height enquiry|state.tex|conversion semantic result|"scanner":"pdf_insertion_height","result":{"type":"scaled","value":0}
+scanner|pdflastxpos|saved x-position enquiry|state.tex|internal value commit|"scanner":"pdf_last_x_position","result":{"type":"integer","value":0}
+scanner|pdflastypos|saved y-position enquiry|state.tex|internal value commit|"scanner":"pdf_last_y_position","result":{"type":"integer","value":0}
+scanner|pdfretval|extension-result enquiry|state.tex|internal value commit|"scanner":"pdf_extension_result","result":{"type":"integer","value":0}
+scanner|pdfshellescape|host-policy enquiry|state.tex|internal value commit|"scanner":"pdf_shell_escape","result":{"type":"integer","value":2}
+scanner|pdfrandomseed|random-state enquiry|state.tex|internal value commit|"scanner":"pdf_random_seed","result":{"type":"integer","value":2468}
+scanner|pdfelapsedtime|timer enquiry|state.tex|volatile World boundary|"scanner":"pdf_elapsed_time","result":{"type":"name","value":"host_timer_sample"}
+effect|pdfoutput|committed PDF shipout|state.tex|ship_out after artifact commit|"kind":"shipout","channel":"pdf"
+effect|pdfoutput|generated write|state.tex|write_out after expanded output commit|"kind":"write","channel":"stream:1"
