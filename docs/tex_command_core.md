@@ -1311,7 +1311,13 @@ smoke-output, transition-output, extension-output, state-output, and trace
 identities. Font-independent DVI and deterministic PDF smoke programs plus
 focused shared, extension, and state programs must be byte-transparent between
 variants; all instrumented traces are schema-validated, matrix-gated, and
-repeatable. Cargo correctness tests never acquire or execute this live oracle.
+repeatable. Expansion-matrix rows name their owning primitive and are checked
+bidirectionally against the complete primitive audit. Deterministic smoke and
+state PDFs are also parsed through the independent bounded Hayro probe; their
+allocation-insensitive semantic projections must agree between clean and
+instrumented runs, and the repeated state run must reproduce its projection,
+while PDF structure remains absent from command events. Cargo correctness
+tests never acquire or execute this live oracle.
 
 Instrumentation writes a versioned semantic event stream. It must not use
 TeX's semantic `mem`, string pool, selector, transcript state, or command

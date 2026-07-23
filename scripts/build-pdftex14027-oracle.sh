@@ -33,6 +33,7 @@ state_event_matrix="${repo_root}/tests/pdftex14027-oracle/state-event-matrix.txt
 state_font_input="${web_source_dir}/tests/cmr10.tfm"
 state_map_input="${repo_root}/tests/pdftex14027-oracle/pdftex.map"
 extension_primitive_audit="${repo_root}/tests/pdftex14027-oracle/extension-primitive-audit.txt"
+pdf_normalizer="${target_dir}/debug/pdf-normalize"
 wide_tangle="${out_dir}/tangle-pdftex14027"
 cflags="-O2"
 cxxflags="-O2"
@@ -261,6 +262,11 @@ profile_executable() {
   printf '%s/umber-pdftex14027-oracle-%s' "$bin_dir" "$profile"
 }
 
+normalize_pdf() {
+  local input="$1" output="$2"
+  cargo run -q -p test-support --bin pdf-normalize -- "$input" >"$output"
+}
+
 run_smoke() {
   local executable="$1" profile="$2" mode="$3" input output marker status=0
   local run_dir="${out_dir}/smoke/${profile}-${mode}"
@@ -298,6 +304,9 @@ run_smoke() {
     fail "$profile/$mode arithmetic marker is absent"
   sed '1s/)  .*$/) <HOST-CLOCK>/' "${run_dir}/smoke-${mode}.log" \
     >"${run_dir}/ordinary.log"
+  if [[ "$mode" == pdf ]]; then
+    normalize_pdf "${run_dir}/${output}" "${run_dir}/normalized-pdf.txt"
+  fi
 }
 
 compare_smoke_channels() {
@@ -389,6 +398,10 @@ run_extensions() {
   grep -q 'ABSNUM-TRUE' "${run_dir}/extensions.log" &&
     grep -q 'ABSDIM-TRUE' "${run_dir}/extensions.log" ||
     fail "$profile absolute-comparison results are absent"
+  grep -q 'IDENTITY=140,27' "${run_dir}/extensions.log" ||
+    fail "$profile exact pdfTeX profile identity is absent"
+  grep -q 'Version 3.141592653-2.6-1.40.27' "${run_dir}/extensions.log" ||
+    fail "$profile canonical pdfTeX banner identity is absent"
   sed '1s/)  .*$/) <HOST-CLOCK>/' "${run_dir}/extensions.log" \
     >"${run_dir}/ordinary.log"
 }
@@ -424,6 +437,7 @@ run_state() {
     fail "$profile timer enquiry marker is absent"
   sed '1s/)  .*$/) <HOST-CLOCK>/' "${run_dir}/state.log" \
     >"${run_dir}/ordinary.log"
+  normalize_pdf "${run_dir}/state.pdf" "${run_dir}/normalized-pdf.txt"
 }
 
 record_linked_libraries() {
@@ -473,6 +487,8 @@ write_build_record() {
       "$(sha_digest 256 "$state_event_matrix")"
     printf 'extension-primitive-audit-sha256 %s\n' \
       "$(sha_digest 256 "$extension_primitive_audit")"
+    printf 'tool-sha256 pdf-normalize %s\n' \
+      "$(sha_digest 256 "$pdf_normalizer")"
     printf 'tool-sha256 tie %s\n' "$(sha_digest 256 "${web_build_dir}/tie")"
     printf 'tool-sha256 tangle %s\n' "$(sha_digest 256 "${web_build_dir}/tangle")"
     printf 'tool-sha256 tangle-pdftex14027 %s\n' \
@@ -524,6 +540,10 @@ write_build_record() {
           "$(sha_digest 256 "${out_dir}/smoke/${profile}-${mode}/ordinary.log")"
         printf 'smoke-output-sha256 %s %s %s\n' "$profile" "$mode" \
           "$(sha_digest 256 "${out_dir}/smoke/${profile}-${mode}/${output}")"
+        if [[ "$mode" == pdf ]]; then
+          printf 'smoke-normalized-pdf-sha256 %s %s\n' "$profile" \
+            "$(sha_digest 256 "${out_dir}/smoke/${profile}-${mode}/normalized-pdf.txt")"
+        fi
       done
       printf 'transition-terminal-sha256 %s %s\n' "$profile" \
         "$(sha_digest 256 "${out_dir}/transitions/${profile}/terminal.txt")"
@@ -547,6 +567,8 @@ write_build_record() {
         "$(sha_digest 256 "${out_dir}/state/${profile}/ordinary.log")"
       printf 'state-pdf-sha256 %s %s\n' "$profile" \
         "$(sha_digest 256 "${out_dir}/state/${profile}/state.pdf")"
+      printf 'state-normalized-pdf-sha256 %s %s\n' "$profile" \
+        "$(sha_digest 256 "${out_dir}/state/${profile}/normalized-pdf.txt")"
       printf 'state-effect-output-sha256 %s %s\n' "$profile" \
         "$(sha_digest 256 "${out_dir}/state/${profile}/state-effects.out")"
       if [[ "$profile" == instrumented ]]; then
@@ -600,7 +622,8 @@ audit_extension_primitives() {
     [[ "$owner" == command-core || "$owner" == executor-backend ]] ||
       fail "unknown extension primitive owner for $primitive: $owner"
     if [[ "$owner" == command-core && "$phase" == expansion ]]; then
-      awk -F'|' -v gate="$gate" '$2 == gate { found=1 } END { exit !found }' \
+      awk -F'|' -v primitive="$primitive" -v gate="$gate" \
+        '$2 == primitive && $3 == gate { found=1 } END { exit !found }' \
         "$extension_event_matrix" ||
         fail "command-core expansion primitive $primitive has no matrix boundary: $gate"
     elif [[ "$owner" == command-core && "$phase" == state ]]; then
@@ -617,6 +640,17 @@ audit_extension_primitives() {
   done <"$extension_primitive_audit" | LC_ALL=C sort -u >"$audit_inventory"
   cmp "$extension_inventory" "$audit_inventory" >/dev/null ||
     fail "extension primitive audit does not exactly cover canonical pdfTeX additions"
+  while IFS='|' read -r family primitive boundary fixture seam pattern extra; do
+    [[ -z "$family" || "$family" == \#* ]] && continue
+    [[ -n "$primitive" && -n "$boundary" && -n "$fixture" && -n "$seam" &&
+      -n "$pattern" && -z "${extra:-}" ]] ||
+      fail "malformed extension event matrix row for ${family:-unknown}"
+    awk -F'|' -v primitive="$primitive" \
+      '$1 == primitive && $2 == "command-core" && $3 == "expansion" {
+       found=1 } END { exit !found }' \
+      "$extension_primitive_audit" ||
+      fail "extension matrix boundary is not owned by command-core expansion primitive $primitive: $boundary"
+  done <"$extension_event_matrix"
   [[ "$(wc -l <"$pdf_inventory" | tr -d ' ')" -eq 549 ]] ||
     fail "canonical pdfTeX primitive inventory no longer contains 549 entries"
   [[ "$(wc -l <"$shared_inventory" | tr -d ' ')" -eq 391 ]] ||
@@ -636,6 +670,9 @@ for profile in clean instrumented; do
 done
 compare_smoke_channels dvi
 compare_smoke_channels pdf
+compare_channels "independently normalized PDF smoke oracle" \
+  "${out_dir}/smoke/clean-pdf" "${out_dir}/smoke/instrumented-pdf" \
+  normalized-pdf.txt
 compare_channels "transition oracle" \
   "${out_dir}/transitions/clean" "${out_dir}/transitions/instrumented" \
   terminal.txt ordinary.log status.txt transitions.dvi transitions-effects.out
@@ -645,6 +682,9 @@ compare_channels "extension oracle" \
 compare_channels "state oracle" \
   "${out_dir}/state/clean" "${out_dir}/state/instrumented" \
   terminal.txt ordinary.log status.txt state.pdf state-effects.out
+compare_channels "independently normalized PDF state oracle" \
+  "${out_dir}/state/clean" "${out_dir}/state/instrumented" \
+  normalized-pdf.txt
 trace="${out_dir}/transitions/instrumented/pdftex14027-events.jsonl"
 cargo run -q -p tex-oracle --bin tex-oracle-validate -- "$trace"
 while IFS='|' read -r family boundary fixture seam pattern extra; do
@@ -657,13 +697,13 @@ while IFS='|' read -r family boundary fixture seam pattern extra; do
 done <"$semantic_event_matrix"
 extension_trace="${out_dir}/extensions/instrumented/pdftex14027-events.jsonl"
 cargo run -q -p tex-oracle --bin tex-oracle-validate -- "$extension_trace"
-while IFS='|' read -r family boundary fixture seam pattern extra; do
+while IFS='|' read -r family primitive boundary fixture seam pattern extra; do
   [[ -z "$family" || "$family" == \#* ]] && continue
-  [[ -n "$boundary" && -n "$fixture" && -n "$seam" && -n "$pattern" &&
-    -z "${extra:-}" ]] ||
+  [[ -n "$primitive" && -n "$boundary" && -n "$fixture" && -n "$seam" &&
+    -n "$pattern" && -z "${extra:-}" ]] ||
     fail "malformed extension event matrix row for ${family:-unknown}"
   grep -Fq "$pattern" "$extension_trace" ||
-    fail "extension trace is missing $family/$boundary from $fixture at $seam"
+    fail "extension trace is missing $family/$primitive/$boundary from $fixture at $seam"
 done <"$extension_event_matrix"
 state_trace="${out_dir}/state/instrumented/pdftex14027-events.jsonl"
 cargo run -q -p tex-oracle --bin tex-oracle-validate -- "$state_trace"
@@ -703,7 +743,7 @@ compare_channels "repeated instrumented extension oracle" \
 compare_channels "repeated instrumented state oracle" \
   "${out_dir}/state/instrumented" \
   "${out_dir}/state/instrumented-repeat" \
-  terminal.txt ordinary.log status.txt state.pdf state-effects.out \
+  terminal.txt ordinary.log status.txt state.pdf normalized-pdf.txt state-effects.out \
   pdftex14027-events.jsonl
 write_build_record
 printf '%s\n' "$bin_dir"

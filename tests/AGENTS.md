@@ -43,7 +43,10 @@ object-independent enquiries, random/timer transitions, and committed
 PDF-facing effects. The live workflow proves the 549-entry ownership
 inventory, schema-validates and repeatability-checks all three traces, and
 gates clean/instrumented terminal, normalized log, status, DVI/PDF, and
-generated-effect transparency. Acquisition and builds run only
+generated-effect transparency. Expansion-matrix rows name their exact owning
+primitive. Smoke and state PDFs additionally pass an allocation-insensitive
+Hayro structure projection independent of both pdfTeX variants and the command
+trace. Acquisition and builds run only
 through `scripts/regen-fixtures.sh --area pdftex14027-oracle`; Cargo correctness
 tests never invoke the live oracle.
 

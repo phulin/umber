@@ -45,5 +45,5 @@ Read the repository-root `AGENTS.md` first. This file adds the directory map for
   publishes separate clean and instrumented eight-bit executables, gates exact
   DVI/PDF smoke plus shared, expansion/scanner, and state/enquiry/effect
   schema-v1 traces, audits the exact canonical primitive inventory, proves
-  transparency and determinism, supports offline reuse, and records complete
-  build identities.
+  byte and independently normalized PDF transparency plus determinism, supports
+  offline reuse, and records complete build identities.
