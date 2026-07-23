@@ -15,24 +15,12 @@ fixture, not as the specification.
 
 - Record the binary, format, distribution, source/archive, working directory,
   engine mode, offline setting, and every guard.
-- For snapshot-sensitive work, use the explicit pinned distribution required by
-  `AGENTS.md`; never rely on the hosted default.
 - Prefer the optimized test-profile binary and serial execution.
 - Preserve failed builder workspaces and per-row outcome artifacts.
 - Do not raise time, fuel, RSS, or error guards unless evidence proves the work
   is finite, semantically correct, and legitimately exceeds the contract.
 
-### 2. Classify before tracing
-
-- Rerun the bounded cohort on current `main`.
-- Partition rows by stable terminal signature and first causal transition.
-- Probe one representative per repeated signature.
-- Name clusters by engine invariant or recovery mechanism, not by paper or
-  package name. Keep paper IDs only as fixtures.
-- Use commit-specific binaries or a git bisection when a good/bad boundary is
-  available.
-
-### 3. Find the earliest divergence
+### 2. Find the earliest divergence
 
 - Trace backward from the terminal symptom until the first state, token,
   ownership, or command-demand transition differs from the intended behavior.
@@ -43,7 +31,7 @@ fixture, not as the specification.
 - Remove diagnostic instrumentation before committing.
 - Do not patch the final error site when an earlier transition corrupted it.
 
-### 4. Audit canonical sources
+### 3. Audit canonical sources
 
 - Read the relevant `tex.web` sections directly. Check `pdftex.web` for
   divergence and the owning LaTeX/package source when behavior is above the
@@ -54,7 +42,7 @@ fixture, not as the specification.
   when the canonical model has one owner.
 - Record exact source sections in tests or durable architecture documentation.
 
-### 5. Reduce and challenge the hypothesis
+### 4. Reduce and challenge the hypothesis
 
 - Create the smallest subsystem-level reproducer for the first divergence.
 - Add negative controls that preserve the suspected surface syntax while
@@ -65,7 +53,7 @@ fixture, not as the specification.
 - Reject a hypothesis when the reduced transition passes; do not add metadata,
   thresholds, or special cases to preserve it.
 
-### 6. Implement the owning invariant
+### 5. Implement the owning invariant
 
 - Implement the TeX/pdfTeX semantic rule, not a paper, package, or corpus-row
   workaround.
@@ -74,7 +62,7 @@ fixture, not as the specification.
 - Keep the issue scoped to its owned transition. File a linked Beads issue for
   a distinct later failure rather than absorbing it.
 
-### 7. Validate from narrow to broad
+### 6. Validate from narrow to broad
 
 Run, in order:
 
@@ -88,7 +76,7 @@ Run, in order:
 Repeat order-sensitive gates. Treat parallel-only failures as possible shared
 global-state interference; diagnose the owner rather than weakening bounds.
 
-### 8. Preserve durable evidence
+### 7. Preserve durable evidence
 
 - Put status, reductions, negative controls, rejected hypotheses, and exact
   last-known-good/first-known-bad transitions in Beads.
@@ -111,7 +99,7 @@ global-state interference; diagnose the owner rather than weakening bounds.
 
 - Treating all timeouts, RSS exits, undefined controls, or EOF errors as one bug.
 - Debugging mainly from wall time or the terminal diagnostic.
-- Deeply tracing every paper before clustering.
+- Deeply tracing every paper in a corpus before clustering.
 - Persistent broad logging instead of a bounded semantic flight recorder.
 - Package-specific macro injection or corpus-specific recovery.
 - Raising limits, subtracting accounting, or weakening a test contract.
