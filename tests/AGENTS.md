@@ -17,11 +17,12 @@ tex82-oracle`; Cargo correctness tests never invoke the live oracle.
 ordered Web2C changes, translator inputs, and repository-owned inputs.
 `tests/etex26-oracle/` contains the font-independent profile smoke program,
 the focused base-command transition inputs, the executable semantic-event
-matrix, a focused expansion/token-construction extension program and matrix,
-and the repository-owned final instrumentation change. The base matrix runs
-in compatibility and extended INITEX profiles and gates the complete
-TeX82-applicable schema-v1 contract. The extension matrix runs against the
-extended trace and rejects extension-only fragments in compatibility mode.
+matrix, a focused extension program and matrix covering token construction,
+scanners, conditions, enquiries, sparse registers, and e-TeX state, and the
+repository-owned final instrumentation change. The base matrix runs in
+compatibility and extended INITEX profiles and gates the complete TeX82-
+applicable schema-v1 contract. The extension matrix runs against the extended
+trace and rejects extension-only fragments in compatibility mode.
 Acquisition and builds run only through `scripts/regen-fixtures.sh --area
 etex26-oracle`; Cargo correctness tests never invoke the live oracle.
 

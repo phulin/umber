@@ -1,8 +1,7 @@
 \catcode `{ = 1
 \catcode `} = 2
-\expandafter\ifx\csname eTeXversion\endcsname\relax
-  \message{UMBER-ETEX26-EXTENSIONS-COMPATIBILITY}
-\else
+\def\etexextensions{
+  \immediate\write16{UMBER-ETEX26-EXTENSIONS-EXTENDED}
   \def\ordinarymacro{ORDINARY}
   \protected\def\protectedmacro{PROTECTED}
   \edef\protectedcopy{A\protectedmacro B}
@@ -13,7 +12,68 @@
   \message{DETOKENIZED-COPY=\detokenizedcopy}
   \everyeof={\message{EVERYEOF-REPLAY}}
   \scantokens{\message{SCANTOKENS-BODY}}
-  \message{UMBER-ETEX26-EXTENSIONS-EXTENDED}
+  \message{NUMEXPR=\the\numexpr 2+3*4\relax}
+  \message{DIMEXPR=\the\dimexpr 1pt+2pt\relax}
+  \message{GLUEEXPR=\the\glueexpr 1pt plus 2pt+3pt\relax}
+  \message{MUEXPR=\the\muexpr 1mu plus 2mu+3mu\relax}
+  \message{GLUE-ENQUIRIES=
+    \the\gluestretch 1pt plus 2fil minus 3fill,
+    \the\glueshrink 1pt plus 2fil minus 3fill,
+    \number\gluestretchorder 1pt plus 2fil minus 3fill,
+    \number\glueshrinkorder 1pt plus 2fil minus 3fill}
+  \message{GLUE-CONVERSIONS=
+    \the\mutoglue 1mu plus 2mu,
+    \the\gluetomu 1pt plus 2pt}
+  \ifdefined\undefinedprobe
+    \message{IFDEFINED-WRONG}
+  \else
+    \message{IFDEFINED-FALSE}
+  \fi
+  \ifcsname undefinedprobe\endcsname
+    \message{IFCSNAME-WRONG}
+  \else
+    \message{IFCSNAME-FALSE}
+  \fi
+  \iffontchar\nullfont 0
+    \message{IFFONTCHAR-WRONG}
+  \else
+    \message{IFFONTCHAR-FALSE}
+  \fi
+  \unless\ifdefined\undefinedprobe
+    \message{UNLESS-TRUE}
+  \else
+    \message{UNLESS-WRONG}
+  \fi
+  \begingroup
+    \message{GROUP=
+      \number\currentgrouplevel,\number\currentgrouptype}
+    \iftrue
+      \message{CONDITION=
+        \number\currentiflevel,\number\currentiftype,
+        \number\currentifbranch}
+    \fi
+  \endgroup
+  \message{INTERACTION=\number\interactionmode}
+  \count300=11
+  \dimen300=12pt
+  \skip300=13pt plus 2fil
+  \muskip300=14mu plus 3mu
+  \toks300={SPARSE-TOKENS}
+  \setbox300=\hbox{}
+  \global\count301=15
+  \tracingassigns=1
+  \tracinggroups=1
+  \tracingifs=1
+  \tracingscantokens=1
+  \tracingnesting=1
+  \lastlinefit=500
+  \savingvdiscards=1
+  \savinghyphcodes=1
+}
+\expandafter\ifx\csname eTeXversion\endcsname\relax
+  \message{UMBER-ETEX26-EXTENSIONS-COMPATIBILITY}
+\else
+  \etexextensions
 \fi
 \shipout\hbox{}
 \end

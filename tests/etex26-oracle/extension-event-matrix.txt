@@ -10,3 +10,38 @@ token_list|expanded construction|extensions.tex|expanded scan_toks completion|"p
 token_list|scantokens construction|extensions.tex|pseudo_start balanced-text commit|"purpose":"scantokens"|absent
 input|everyeof push|extensions.tex|natural pseudo-file EOF insertion|"transition":"push","reason":"token_list","name":"every_eof"|absent
 input|everyeof retirement|extensions.tex|everyeof token-list retirement|"transition":"retire","reason":"token_list","name":"every_eof"|absent
+scanner|numexpr result|extensions.tex|scan_expr committed integer result|"scanner":"expression_integer","result":{"type":"integer","value":14}|absent
+scanner|dimexpr result|extensions.tex|scan_expr committed dimension result|"scanner":"expression_dimension","result":{"type":"scaled","value":196608}|absent
+scanner|glueexpr result|extensions.tex|scan_expr committed glue result|"scanner":"expression_glue","result":{"type":"glue"|absent
+scanner|muexpr result|extensions.tex|scan_expr committed muglue result|"scanner":"expression_muglue","result":{"type":"glue"|absent
+scanner|gluestretch enquiry|extensions.tex|glue component extraction|"scanner":"glue_stretch","result":{"type":"scaled","value":131072}|absent
+scanner|glueshrink enquiry|extensions.tex|glue component extraction|"scanner":"glue_shrink","result":{"type":"scaled","value":196608}|absent
+scanner|gluestretchorder enquiry|extensions.tex|glue order extraction|"scanner":"glue_stretch_order","result":{"type":"integer","value":1}|absent
+scanner|glueshrinkorder enquiry|extensions.tex|glue order extraction|"scanner":"glue_shrink_order","result":{"type":"integer","value":2}|absent
+scanner|mutoglue conversion|extensions.tex|converted glue return|"scanner":"mu_to_glue","result":{"type":"glue"|absent
+scanner|gluetomu conversion|extensions.tex|converted muglue return|"scanner":"glue_to_mu","result":{"type":"glue"|absent
+condition|ifdefined predicate|extensions.tex|shared conditional branch commit|"condition":"ifdefined"|absent
+condition|ifcsname predicate|extensions.tex|shared conditional branch commit|"condition":"ifcsname"|absent
+condition|iffontchar predicate|extensions.tex|shared conditional branch commit|"condition":"iffontchar"|absent
+condition|unless inversion|extensions.tex|shared conditional branch commit|"condition":"unless_ifdefined"|absent
+scanner|current group level enquiry|extensions.tex|current group semantic return|"scanner":"current_group_level"|absent
+scanner|current group type enquiry|extensions.tex|current group semantic return|"scanner":"current_group_type"|absent
+scanner|current condition level enquiry|extensions.tex|current condition semantic return|"scanner":"current_condition_level"|absent
+scanner|current condition type enquiry|extensions.tex|current condition semantic return|"scanner":"current_condition_type"|absent
+scanner|current condition branch enquiry|extensions.tex|current condition semantic return|"scanner":"current_condition_branch"|absent
+scanner|interaction mode enquiry|extensions.tex|interaction state semantic return|"scanner":"interaction_mode"|absent
+mutation|sparse count write|extensions.tex|sa_w_def committed semantic register write|"value":"count:300"|absent
+mutation|sparse dimen write|extensions.tex|sa_w_def committed semantic register write|"value":"dimen:300"|absent
+mutation|sparse skip write|extensions.tex|sa_def committed semantic register write|"value":"skip:300"|absent
+mutation|sparse muskip write|extensions.tex|sa_def committed semantic register write|"value":"muskip:300"|absent
+mutation|sparse toks write|extensions.tex|sa_def committed semantic register write|"value":"toks:300"|absent
+mutation|sparse box write|extensions.tex|sa_def committed semantic register write|"value":"box:300"|absent
+mutation|global sparse write|extensions.tex|gsa_w_def committed semantic register write|"value":"count:301"},"value":{"type":"integer","value":15},"scope":"global"|absent
+mutation|tracingassigns control|extensions.tex|eq_word_define named e-TeX parameter write|"value":"tracingassigns"|absent
+mutation|tracinggroups control|extensions.tex|eq_word_define named e-TeX parameter write|"value":"tracinggroups"|absent
+mutation|tracingifs control|extensions.tex|eq_word_define named e-TeX parameter write|"value":"tracingifs"|absent
+mutation|tracingscantokens control|extensions.tex|eq_word_define named e-TeX parameter write|"value":"tracingscantokens"|absent
+mutation|tracingnesting control|extensions.tex|eq_word_define named e-TeX parameter write|"value":"tracingnesting"|absent
+mutation|lastlinefit state|extensions.tex|eq_word_define named e-TeX parameter write|"value":"lastlinefit"|absent
+mutation|savingvdiscards state|extensions.tex|eq_word_define named e-TeX parameter write|"value":"savingvdiscards"|absent
+mutation|savinghyphcodes state|extensions.tex|eq_word_define named e-TeX parameter write|"value":"savinghyphcodes"|absent

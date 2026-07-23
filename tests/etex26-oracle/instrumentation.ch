@@ -417,7 +417,23 @@ case scanner_kind of
 0:write(umber_trace_file,'integer');
 1:write(umber_trace_file,'dimension');
 2:write(umber_trace_file,'glue');
-othercases write(umber_trace_file,'internal')
+3:write(umber_trace_file,'internal');
+4:write(umber_trace_file,'expression_integer');
+5:write(umber_trace_file,'expression_dimension');
+6:write(umber_trace_file,'expression_glue');
+7:write(umber_trace_file,'expression_muglue');
+8:write(umber_trace_file,'current_group_level');
+9:write(umber_trace_file,'current_group_type');
+10:write(umber_trace_file,'current_condition_level');
+11:write(umber_trace_file,'current_condition_type');
+12:write(umber_trace_file,'current_condition_branch');
+13:write(umber_trace_file,'glue_stretch_order');
+14:write(umber_trace_file,'glue_shrink_order');
+15:write(umber_trace_file,'glue_stretch');
+16:write(umber_trace_file,'glue_shrink');
+17:write(umber_trace_file,'mu_to_glue');
+18:write(umber_trace_file,'glue_to_mu');
+othercases write(umber_trace_file,'interaction_mode')
 endcases;
 write(umber_trace_file,'","result":');
 case value_level of
@@ -441,25 +457,37 @@ write_ln(umber_trace_file,'}}}');
 end;
 
 procedure umber_trace_condition_name(@!condition_kind:integer);
-begin case condition_kind of
-0:write(umber_trace_file,'"if"');
-1:write(umber_trace_file,'"ifcat"');
-2:write(umber_trace_file,'"ifnum"');
-3:write(umber_trace_file,'"ifdim"');
-4:write(umber_trace_file,'"ifodd"');
-5:write(umber_trace_file,'"ifvmode"');
-6:write(umber_trace_file,'"ifhmode"');
-7:write(umber_trace_file,'"ifmmode"');
-8:write(umber_trace_file,'"ifinner"');
-9:write(umber_trace_file,'"ifvoid"');
-10:write(umber_trace_file,'"ifhbox"');
-11:write(umber_trace_file,'"ifvbox"');
-12:write(umber_trace_file,'"ifx"');
-13:write(umber_trace_file,'"ifeof"');
-14:write(umber_trace_file,'"iftrue"');
-15:write(umber_trace_file,'"iffalse"');
-othercases write(umber_trace_file,'"ifcase"')
+var inverted:boolean;
+begin
+inverted:=condition_kind>=32;
+if inverted then
+  begin write(umber_trace_file,'"unless_');
+  condition_kind:=condition_kind mod 32;
+  end
+else write(umber_trace_file,'"');
+case condition_kind of
+0:write(umber_trace_file,'if');
+1:write(umber_trace_file,'ifcat');
+2:write(umber_trace_file,'ifnum');
+3:write(umber_trace_file,'ifdim');
+4:write(umber_trace_file,'ifodd');
+5:write(umber_trace_file,'ifvmode');
+6:write(umber_trace_file,'ifhmode');
+7:write(umber_trace_file,'ifmmode');
+8:write(umber_trace_file,'ifinner');
+9:write(umber_trace_file,'ifvoid');
+10:write(umber_trace_file,'ifhbox');
+11:write(umber_trace_file,'ifvbox');
+12:write(umber_trace_file,'ifx');
+13:write(umber_trace_file,'ifeof');
+14:write(umber_trace_file,'iftrue');
+15:write(umber_trace_file,'iffalse');
+16:write(umber_trace_file,'ifcase');
+17:write(umber_trace_file,'ifdefined');
+18:write(umber_trace_file,'ifcsname');
+othercases write(umber_trace_file,'iffontchar')
 endcases;
+write(umber_trace_file,'"');
 end;
 
 procedure umber_trace_if_limit(@!limit_kind:integer);
@@ -640,6 +668,20 @@ end;
 procedure umber_trace_named_slot(@!family:integer;@!slot:integer);
 begin
 write(umber_trace_file,'"');
+if family=9 then
+  case slot of
+  tracing_assigns_code:write(umber_trace_file,'tracingassigns');
+  tracing_groups_code:write(umber_trace_file,'tracinggroups');
+  tracing_ifs_code:write(umber_trace_file,'tracingifs');
+  tracing_scan_tokens_code:write(umber_trace_file,'tracingscantokens');
+  tracing_nesting_code:write(umber_trace_file,'tracingnesting');
+  pre_display_direction_code:write(umber_trace_file,'predisplaydirection');
+  last_line_fit_code:write(umber_trace_file,'lastlinefit');
+  saving_vdiscards_code:write(umber_trace_file,'savingvdiscards');
+  saving_hyph_codes_code:write(umber_trace_file,'savinghyphcodes');
+  othercases write(umber_trace_file,'integer_parameter:',slot:1)
+  endcases
+else
 case family of
 0:write(umber_trace_file,'glue_parameter');
 1:write(umber_trace_file,'skip');
@@ -656,7 +698,8 @@ case family of
 12:write(umber_trace_file,'dimension_parameter');
 othercases write(umber_trace_file,'dimen')
 endcases;
-write(umber_trace_file,':',slot:1,'"');
+if family<>9 then write(umber_trace_file,':',slot:1);
+write(umber_trace_file,'"');
 end;
 
 procedure umber_trace_glue_value(@!p:pointer);
@@ -1708,6 +1751,56 @@ umber_trace_effect(1,j,1,def_ref);
       {If on first line of input, log file is not ready yet, so don't log.}
 @z
 
+@x [53a] Observe current group enquiries after their semantic value commits.
+current_group_level_code: cur_val:=cur_level-level_one;
+current_group_type_code: cur_val:=cur_group;
+@y
+current_group_level_code: begin cur_val:=cur_level-level_one;
+  umber_trace_scanner(8,int_val);
+  end;
+current_group_type_code: begin cur_val:=cur_group;
+  umber_trace_scanner(9,int_val);
+  end;
+@z
+
+@x [53a] Observe the current conditional depth enquiry.
+current_if_level_code: begin q:=cond_ptr; cur_val:=0;
+  while q<>null do
+    begin incr(cur_val); q:=link(q);
+    end;
+  end;
+@y
+current_if_level_code: begin q:=cond_ptr; cur_val:=0;
+  while q<>null do
+    begin incr(cur_val); q:=link(q);
+    end;
+  umber_trace_scanner(10,int_val);
+  end;
+@z
+
+@x [53a] Observe current conditional type and branch enquiries.
+current_if_type_code: if cond_ptr=null then cur_val:=0
+  else if cur_if<unless_code then cur_val:=cur_if+1
+  else cur_val:=-(cur_if-unless_code+1);
+current_if_branch_code:
+  if (if_limit=or_code)or(if_limit=else_code) then cur_val:=1
+  else if if_limit=fi_code then cur_val:=-1
+  else cur_val:=0;
+@y
+current_if_type_code: begin
+  if cond_ptr=null then cur_val:=0
+  else if cur_if<unless_code then cur_val:=cur_if+1
+  else cur_val:=-(cur_if-unless_code+1);
+  umber_trace_scanner(11,int_val);
+  end;
+current_if_branch_code: begin
+  if (if_limit=or_code)or(if_limit=else_code) then cur_val:=1
+  else if if_limit=fi_code then cur_val:=-1
+  else cur_val:=0;
+  umber_trace_scanner(12,int_val);
+  end;
+@z
+
 @x [53a] Observe e-TeX unexpanded and detokenized token construction.
 if odd(cur_chr) then
   begin c:=cur_chr; scan_general_text;
@@ -1736,6 +1829,13 @@ if odd(cur_chr) then
   end
 @z
 
+@x [53a] Observe the interaction-mode enquiry.
+else if m=2 then cur_val:=interaction
+@y
+else if m=2 then
+  begin cur_val:=interaction; umber_trace_scanner(19,int_val); end
+@z
+
 @x [53a] Observe the balanced token list committed to scantokens.
 begin scan_general_text;
 old_setting:=selector; selector:=new_string;
@@ -1756,4 +1856,203 @@ token_show(temp_head); selector:=old_setting;
     if info(link(cur_chr))=protected_token then
       begin umber_trace_token_splice(12,cur_tok); return; end;
   expand;
+@z
+
+@x [53a] Observe the committed e-TeX expression result.
+arith_error:=a; cur_val:=e; cur_val_level:=l;
+end;
+@y
+arith_error:=a; cur_val:=e; cur_val_level:=l;
+umber_trace_scanner(4+l-int_val,l);
+end;
+@z
+
+@x [53a] Observe glue-order enquiries after extracting their result.
+  if m=glue_stretch_order_code then cur_val:=stretch_order(q)
+  else cur_val:=shrink_order(q);
+  delete_glue_ref(q);
+  end;
+@y
+  if m=glue_stretch_order_code then cur_val:=stretch_order(q)
+  else cur_val:=shrink_order(q);
+  delete_glue_ref(q);
+  if m=glue_stretch_order_code then umber_trace_scanner(13,int_val)
+  else umber_trace_scanner(14,int_val);
+  end;
+@z
+
+@x [53a] Observe glue-component enquiries after extracting their result.
+  if m=glue_stretch_code then cur_val:=stretch(q)
+  else cur_val:=shrink(q);
+  delete_glue_ref(q);
+  end;
+@y
+  if m=glue_stretch_code then cur_val:=stretch(q)
+  else cur_val:=shrink(q);
+  delete_glue_ref(q);
+  if m=glue_stretch_code then umber_trace_scanner(15,dimen_val)
+  else umber_trace_scanner(16,dimen_val);
+  end;
+@z
+
+@x [53a] Observe glue/muglue conversion enquiries.
+mu_to_glue_code: scan_mu_glue;
+@y
+mu_to_glue_code: begin scan_mu_glue;
+  umber_trace_scanner(17,glue_val);
+  end;
+@z
+
+@x [53a] Observe muglue/glue conversion enquiries.
+glue_to_mu_code: scan_normal_glue;
+@y
+glue_to_mu_code: begin scan_normal_glue;
+  umber_trace_scanner(18,mu_val);
+  end;
+@z
+
+@x [53a] Observe committed local sparse pointer-register writes.
+procedure sa_def(@!p:pointer;@!e:halfword);
+  {new data for sparse array elements}
+begin add_sa_ref(p);
+if sa_ptr(p)=e then
+  begin @!stat if tracing_assigns>0 then show_sa(p,"reassigning");@+tats@;@/
+  sa_destroy(p);
+  end
+else  begin @!stat if tracing_assigns>0 then show_sa(p,"changing");@+tats@;@/
+  if sa_lev(p)=cur_level then sa_destroy(p)@+else sa_save(p);
+  sa_lev(p):=cur_level; sa_ptr(p):=e;
+  @!stat if tracing_assigns>0 then show_sa(p,"into");@+tats@;@/
+  end;
+delete_sa_ref(p);
+end;
+@#
+@y
+function umber_sparse_number(@!p:pointer):integer;
+var n:integer;
+@!q:pointer;
+begin
+q:=p;
+if sa_index(q)<dimen_val_limit then n:=sa_num(q)
+else  begin n:=hex_dig4(sa_index(q)); q:=link(q);
+  n:=n+16*sa_index(q); q:=link(q);
+  n:=n+256*(sa_index(q)+16*sa_index(link(q)));
+  end;
+umber_sparse_number:=n;
+end;
+
+procedure umber_trace_sparse_mutation(@!p:pointer;@!global_scope:boolean);
+var t:small_number;
+@!v:pointer;
+begin
+if not umber_trace_opened then return;
+t:=sa_type(p);
+umber_trace_begin;
+write(umber_trace_file,
+  '{"event":"mutation","data":{"target":"register","key":',
+  '{"type":"name","value":"');
+case t of
+int_val:write(umber_trace_file,'count');
+dimen_val:write(umber_trace_file,'dimen');
+glue_val:write(umber_trace_file,'skip');
+mu_val:write(umber_trace_file,'muskip');
+box_val:write(umber_trace_file,'box');
+othercases write(umber_trace_file,'toks')
+endcases;
+write(umber_trace_file,':',umber_sparse_number(p):1,'"},"value":');
+if t=int_val then
+  write(umber_trace_file,'{"type":"integer","value":',sa_int(p):1,'}')
+else if t=dimen_val then
+  write(umber_trace_file,'{"type":"scaled","value":',sa_dim(p):1,'}')
+else if (t=glue_val)or(t=mu_val) then umber_trace_glue_value(sa_ptr(p))
+else if t=box_val then
+  begin write(umber_trace_file,'{"type":"name","value":"');
+  if sa_ptr(p)=null then write(umber_trace_file,'void')
+  else write(umber_trace_file,'occupied');
+  write(umber_trace_file,'"}');
+  end
+else begin v:=sa_ptr(p);
+  write(umber_trace_file,'{"type":"tokens","value":[');
+  if v<>null then umber_trace_token_range(link(v),null);
+  write(umber_trace_file,']}');
+  end;
+write(umber_trace_file,',"scope":'); umber_trace_scope(global_scope);
+write_ln(umber_trace_file,'}}}');
+end;
+
+procedure sa_def(@!p:pointer;@!e:halfword);
+  {new data for sparse array elements}
+begin add_sa_ref(p);
+if sa_ptr(p)=e then
+  begin @!stat if tracing_assigns>0 then show_sa(p,"reassigning");@+tats@;@/
+  sa_destroy(p);
+  end
+else  begin @!stat if tracing_assigns>0 then show_sa(p,"changing");@+tats@;@/
+  if sa_lev(p)=cur_level then sa_destroy(p)@+else sa_save(p);
+  sa_lev(p):=cur_level; sa_ptr(p):=e;
+  @!stat if tracing_assigns>0 then show_sa(p,"into");@+tats@;@/
+  end;
+umber_trace_sparse_mutation(p,false);
+delete_sa_ref(p);
+end;
+@#
+@z
+
+@x [53a] Observe committed local sparse word-register writes.
+procedure sa_w_def(@!p:pointer;@!w:integer);
+begin add_sa_ref(p);
+if sa_int(p)=w then
+  begin @!stat if tracing_assigns>0 then show_sa(p,"reassigning");@+tats@;@/
+  end
+else  begin @!stat if tracing_assigns>0 then show_sa(p,"changing");@+tats@;@/
+  if sa_lev(p)<>cur_level then sa_save(p);
+  sa_lev(p):=cur_level; sa_int(p):=w;
+  @!stat if tracing_assigns>0 then show_sa(p,"into");@+tats@;@/
+  end;
+delete_sa_ref(p);
+end;
+
+@ The |sa_def| and |sa_w_def| routines take care of local definitions.
+@y
+procedure sa_w_def(@!p:pointer;@!w:integer);
+begin add_sa_ref(p);
+if sa_int(p)=w then
+  begin @!stat if tracing_assigns>0 then show_sa(p,"reassigning");@+tats@;@/
+  end
+else  begin @!stat if tracing_assigns>0 then show_sa(p,"changing");@+tats@;@/
+  if sa_lev(p)<>cur_level then sa_save(p);
+  sa_lev(p):=cur_level; sa_int(p):=w;
+  @!stat if tracing_assigns>0 then show_sa(p,"into");@+tats@;@/
+  end;
+umber_trace_sparse_mutation(p,false);
+delete_sa_ref(p);
+end;
+
+@ The |sa_def| and |sa_w_def| routines take care of local definitions.
+@z
+
+@x [53a] Observe committed global sparse pointer-register writes.
+sa_destroy(p); sa_lev(p):=level_one; sa_ptr(p):=e;
+@!stat if tracing_assigns>0 then show_sa(p,"into");@+tats@;@/
+delete_sa_ref(p);
+end;
+@y
+sa_destroy(p); sa_lev(p):=level_one; sa_ptr(p):=e;
+@!stat if tracing_assigns>0 then show_sa(p,"into");@+tats@;@/
+umber_trace_sparse_mutation(p,true);
+delete_sa_ref(p);
+end;
+@z
+
+@x [53a] Observe committed global sparse word-register writes.
+sa_lev(p):=level_one; sa_int(p):=w;
+@!stat if tracing_assigns>0 then show_sa(p,"into");@+tats@;@/
+delete_sa_ref(p);
+end;
+@y
+sa_lev(p):=level_one; sa_int(p):=w;
+@!stat if tracing_assigns>0 then show_sa(p,"into");@+tats@;@/
+umber_trace_sparse_mutation(p,true);
+delete_sa_ref(p);
+end;
 @z

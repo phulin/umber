@@ -80,13 +80,20 @@ A second focused program, `tests/etex26-oracle/extensions.tex`, takes an
 explicit compatibility-exclusion branch and exercises the extended profile's
 protected macro construction, protected expanded-token-list suppression,
 `\unexpanded`, `\detokenize`, expanded `scan_toks` construction,
-`\scantokens`, and `\everyeof`. Its extended trace is gated by
-`extension-event-matrix.txt`; extension-only fragments must be absent from the
-compatibility trace. Both profile traces are schema-validated and reproduced
-byte-for-byte, and clean versus instrumented terminal, normalized log, status,
-and DVI bytes must agree. Canonical e-TeX 2.6 does not define the later
-`\expanded` primitive: this oracle records its expanded token-list construction
-seam, while the pdfTeX oracle owns the primitive itself.
+`\scantokens`, `\everyeof`, all four expression scanners, glue component and
+conversion enquiries, extended conditionals and `\unless`, current
+group/condition and interaction enquiries, all six sparse-register families,
+the tracing parameters, and remaining command-core integer state. Sparse
+register events name the semantic family and register number; they never expose
+tree nodes, sparse-array indexes, or allocation identity. Its extended trace is
+gated by `extension-event-matrix.txt`; extension-only fragments must be absent
+from the compatibility trace. The extended body is stored unexpanded behind
+the profile branch so undefined extension conditionals cannot disturb
+compatibility-mode skip nesting. Both profile traces are schema-validated and
+reproduced byte-for-byte, and clean versus instrumented terminal, normalized
+log, status, and DVI bytes must agree. Canonical e-TeX 2.6 does not define the
+later `\expanded` primitive: this oracle records its expanded token-list
+construction seam, while the pdfTeX oracle owns the primitive itself.
 
 The all-zero manifest identity in the live stream is an explicit unbound
 sentinel, not a fixture identity. The final change records semantic names and

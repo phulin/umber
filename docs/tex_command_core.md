@@ -1272,7 +1272,11 @@ instrumented executables for the canonical compatibility and
 extended INITEX profiles, plus a complete build record. The profile distinction
 is the canonical leading-`*` INITEX input contract, not a compile-time fork.
 The final repository change ports the complete TeX82-applicable schema-v1
-semantic matrix through stable e-TeX seams. Both profiles are smoke- and
+semantic matrix through stable e-TeX seams. Its extension matrix additionally
+observes committed token construction and suppression, expression results,
+extended predicates and inversion, group/condition/value enquiries, canonical
+sparse-register writes, and named tracing/state parameters. Sparse storage
+nodes and allocation identities are excluded. Both profiles are smoke- and
 matrix-gated; their traces are schema-valid and deterministic, and clean versus
 instrumented terminal, normalized log, status, DVI, and generated-effect bytes
 must match. Compatibility mode retains the TeX82 shared-domain contract while
