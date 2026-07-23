@@ -35,6 +35,11 @@ for the first incremental engine.
 `align_state`, token-delivery corrections, nested alignment ownership,
 template retirement, and recovery.
 
+`lexing_expansion_refactor.md` proposes a manual-aligned simplification of
+source tokenization, input levels, raw and expanded token delivery, macro
+calls, conditionals, replay semantics, and scanner APIs around a formal
+`ExpansionProcessor` boundary.
+
 `persistent_compile_sessions.md` defines the unified native/WASM compile
 session lifecycle that composes typed resource retries with revision-checked
 root-buffer patches and retained incremental execution.
