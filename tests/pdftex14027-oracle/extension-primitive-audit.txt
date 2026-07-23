@@ -1,0 +1,162 @@
+# Canonical pdfTeX 1.40.27 extension primitive audit.
+# The build derives the 391 shared TeX/e-TeX rows from canonical-etex.web and
+# requires these 158 rows to be the exact set difference from pdftex.web.
+# Columns: primitive|owner|phase|executable gate|canonical seam
+efcode|command-core|state|phase-2 command-state matrix|font code-table write
+expanded|command-core|expansion|expanded construction|conv_toks expanded return
+ifincsname|command-core|expansion|csname construction predicate|conditional branch commit
+ifpdfabsdim|command-core|expansion|absolute dimension predicate|conditional branch commit
+ifpdfabsnum|command-core|expansion|absolute integer predicate|conditional branch commit
+ifpdfprimitive|command-core|expansion|primitive meaning predicate|conditional branch commit
+ignoreprimitiveerror|command-core|state|phase-2 command-state matrix|named parameter write
+knaccode|command-core|state|phase-2 command-state matrix|font code-table write
+knbccode|command-core|state|phase-2 command-state matrix|font code-table write
+knbscode|command-core|state|phase-2 command-state matrix|font code-table write
+leftmarginkern|command-core|state|phase-2 enquiry matrix|box margin enquiry
+letterspacefont|executor-backend|backend|tex-exec PDF font tests|font allocation
+lpcode|command-core|state|phase-2 command-state matrix|font code-table write
+pdfadjustinterwordglue|command-core|state|phase-2 command-state matrix|named parameter write
+pdfadjustspacing|command-core|state|phase-2 command-state matrix|named parameter write
+pdfannot|executor-backend|backend|tex-exec PDF annotation tests|annotation node execution
+pdfappendkern|command-core|state|phase-2 command-state matrix|named parameter write
+pdfcatalog|executor-backend|backend|tex-exec PDF metadata tests|catalog effect
+pdfcolorstackinit|executor-backend|backend|tex-exec PDF color-stack tests|color-stack allocation
+pdfcolorstack|executor-backend|backend|tex-exec PDF color-stack tests|color-stack node execution
+pdfcompresslevel|command-core|state|phase-2 command-state matrix|named parameter write
+pdfcopyfont|executor-backend|backend|tex-exec PDF font tests|font allocation
+pdfcreationdate|command-core|expansion|creation-date conversion|fixed-clock conversion return
+pdfdecimaldigits|command-core|state|phase-2 command-state matrix|named parameter write
+pdfdestmargin|command-core|state|phase-2 command-state matrix|named dimension write
+pdfdest|executor-backend|backend|tex-exec PDF navigation tests|destination node execution
+pdfdraftmode|command-core|state|phase-2 command-state matrix|named parameter write
+pdfeachlinedepth|command-core|state|phase-2 command-state matrix|named dimension write
+pdfeachlineheight|command-core|state|phase-2 command-state matrix|named dimension write
+pdfelapsedtime|command-core|state|phase-2 enquiry matrix|timer enquiry
+pdfendlink|executor-backend|backend|tex-exec PDF link tests|link node execution
+pdfendthread|executor-backend|backend|tex-exec PDF thread tests|thread node execution
+pdfescapehex|command-core|expansion|hex encoding conversion|conv_toks conversion return
+pdfescapename|command-core|expansion|escaped name conversion|conv_toks conversion return
+pdfescapestring|command-core|expansion|escaped string conversion|conv_toks conversion return
+pdffakespace|executor-backend|backend|tex-exec PDF text tests|text-node execution
+pdffiledump|command-core|expansion|file dump result|typed file enquiry return
+pdffilemoddate|command-core|expansion|file modification date result|typed file enquiry return
+pdffilesize|command-core|expansion|file size result|typed file enquiry return
+pdffirstlineheight|command-core|state|phase-2 command-state matrix|named dimension write
+pdffontattr|executor-backend|backend|tex-exec PDF font tests|font attribute effect
+pdffontexpand|executor-backend|backend|tex-exec PDF font tests|expanded-font allocation
+pdffontname|command-core|state|phase-2 enquiry matrix|font semantic-name enquiry
+pdffontobjnum|executor-backend|backend|tex-exec PDF font tests|PDF object identity enquiry
+pdffontsize|command-core|state|phase-2 enquiry matrix|font size enquiry
+pdfforcepagebox|command-core|state|phase-2 command-state matrix|named parameter write
+pdfgamma|command-core|state|phase-2 command-state matrix|named parameter write
+pdfgentounicode|command-core|state|phase-2 command-state matrix|named parameter write
+pdfglyphtounicode|executor-backend|backend|tex-exec PDF font tests|glyph mapping effect
+pdfhorigin|command-core|state|phase-2 command-state matrix|named dimension write
+pdfignoreddimen|command-core|state|phase-2 command-state matrix|named dimension write
+pdfimageapplygamma|command-core|state|phase-2 command-state matrix|named parameter write
+pdfimagegamma|command-core|state|phase-2 command-state matrix|named parameter write
+pdfimagehicolor|command-core|state|phase-2 command-state matrix|named parameter write
+pdfimageresolution|command-core|state|phase-2 command-state matrix|named parameter write
+pdfincludechars|executor-backend|backend|tex-exec PDF font tests|font inclusion effect
+pdfinclusioncopyfonts|command-core|state|phase-2 command-state matrix|named parameter write
+pdfinclusionerrorlevel|command-core|state|phase-2 command-state matrix|named parameter write
+pdfinfoomitdate|command-core|state|phase-2 command-state matrix|named parameter write
+pdfinfo|executor-backend|backend|tex-exec PDF metadata tests|info dictionary effect
+pdfinsertht|command-core|state|phase-2 enquiry matrix|page insertion-height enquiry
+pdfinterwordspaceoff|executor-backend|backend|tex-exec PDF text tests|text-state execution
+pdfinterwordspaceon|executor-backend|backend|tex-exec PDF text tests|text-state execution
+pdflastannot|executor-backend|backend|tex-exec PDF annotation tests|PDF object identity enquiry
+pdflastlinedepth|command-core|state|phase-2 command-state matrix|named dimension write
+pdflastlink|executor-backend|backend|tex-exec PDF link tests|PDF object identity enquiry
+pdflastmatch|command-core|expansion|regular-expression capture|regex capture return
+pdflastobj|executor-backend|backend|tex-exec PDF object tests|PDF object identity enquiry
+pdflastxform|executor-backend|backend|tex-exec PDF form tests|PDF object identity enquiry
+pdflastximage|executor-backend|backend|tex-exec PDF image tests|PDF object identity enquiry
+pdflastximagecolordepth|executor-backend|backend|tex-exec PDF image tests|object-backed enquiry
+pdflastximagepages|executor-backend|backend|tex-exec PDF image tests|object-backed enquiry
+pdflastxpos|command-core|state|phase-2 enquiry matrix|saved-position enquiry
+pdflastypos|command-core|state|phase-2 enquiry matrix|saved-position enquiry
+pdflinkmargin|command-core|state|phase-2 command-state matrix|named dimension write
+pdfliteral|executor-backend|backend|tex-exec PDF literal tests|literal node execution
+pdfmajorversion|command-core|state|phase-2 command-state matrix|named parameter write
+pdfmapfile|executor-backend|backend|tex-exec PDF map tests|font-map effect
+pdfmapline|executor-backend|backend|tex-exec PDF map tests|font-map effect
+pdfmatch|command-core|expansion|regular-expression result|regex conversion return
+pdfmdfivesum|command-core|expansion|text MD5 result|bounded MD5 conversion return
+pdfminorversion|command-core|state|phase-2 command-state matrix|named parameter write
+pdfmovechars|command-core|state|phase-2 command-state matrix|named parameter write
+pdfnames|executor-backend|backend|tex-exec PDF metadata tests|names dictionary effect
+pdfnobuiltintounicode|executor-backend|backend|tex-exec PDF font tests|font mapping effect
+pdfnoligatures|command-core|state|phase-2 command-state matrix|font code-table write
+pdfnormaldeviate|command-core|expansion|normal random conversion|deterministic random return
+pdfobjcompresslevel|command-core|state|phase-2 command-state matrix|named parameter write
+pdfobj|executor-backend|backend|tex-exec PDF object tests|PDF object allocation
+pdfomitcharset|command-core|state|phase-2 command-state matrix|named parameter write
+pdfomitinfodict|command-core|state|phase-2 command-state matrix|named parameter write
+pdfomitprocset|command-core|state|phase-2 command-state matrix|named parameter write
+pdfoptionalwaysusepdfpagebox|command-core|state|phase-2 command-state matrix|named parameter write
+pdfoptionpdfinclusionerrorlevel|command-core|state|phase-2 command-state matrix|named parameter write
+pdfoptionpdfminorversion|command-core|state|phase-2 command-state matrix|named parameter write
+pdfoutline|executor-backend|backend|tex-exec PDF outline tests|outline node execution
+pdfoutput|command-core|state|phase-2 command-state matrix|PDF mode write
+pdfpageattr|command-core|state|phase-2 command-state matrix|named token-list write
+pdfpagebox|command-core|state|phase-2 command-state matrix|named parameter write
+pdfpageheight|command-core|state|phase-2 command-state matrix|named dimension write
+pdfpageref|executor-backend|backend|tex-exec PDF page tests|PDF object identity enquiry
+pdfpageresources|command-core|state|phase-2 command-state matrix|named token-list write
+pdfpagesattr|command-core|state|phase-2 command-state matrix|named token-list write
+pdfpagewidth|command-core|state|phase-2 command-state matrix|named dimension write
+pdfpkmode|command-core|state|phase-2 command-state matrix|named token-list write
+pdfpkresolution|command-core|state|phase-2 command-state matrix|named parameter write
+pdfprependkern|command-core|state|phase-2 command-state matrix|named parameter write
+pdfprimitive|command-core|expansion|primitive operand enquiry|primitive-table delivery
+pdfprotrudechars|command-core|state|phase-2 command-state matrix|named parameter write
+pdfptexuseunderscore|command-core|state|phase-2 command-state matrix|named parameter write
+pdfpxdimen|command-core|state|phase-2 command-state matrix|named dimension write
+pdfrandomseed|command-core|state|phase-2 enquiry matrix|random-state enquiry
+pdfrefobj|executor-backend|backend|tex-exec PDF object tests|object reference execution
+pdfrefxform|executor-backend|backend|tex-exec PDF form tests|form reference execution
+pdfrefximage|executor-backend|backend|tex-exec PDF image tests|image reference execution
+pdfresettimer|command-core|state|phase-2 command-state matrix|timer-state write
+pdfrestore|executor-backend|backend|tex-exec PDF graphics tests|graphics-state execution
+pdfretval|command-core|state|phase-2 enquiry matrix|extension-result enquiry
+pdfrunninglinkoff|executor-backend|backend|tex-exec PDF link tests|link-state execution
+pdfrunninglinkon|executor-backend|backend|tex-exec PDF link tests|link-state execution
+pdfsave|executor-backend|backend|tex-exec PDF graphics tests|graphics-state execution
+pdfsavepos|executor-backend|backend|tex-exec PDF position tests|position-node execution
+pdfsetmatrix|executor-backend|backend|tex-exec PDF graphics tests|matrix node execution
+pdfsetrandomseed|command-core|state|phase-2 command-state matrix|random-state write
+pdfshellescape|command-core|state|phase-2 enquiry matrix|host-policy enquiry
+pdfsnaprefpoint|executor-backend|backend|tex-exec PDF snapping tests|snap-state execution
+pdfsnapy|executor-backend|backend|tex-exec PDF snapping tests|snap-state execution
+pdfsnapycomp|executor-backend|backend|tex-exec PDF snapping tests|snap-state execution
+pdfspacefont|executor-backend|backend|tex-exec PDF font tests|font-state execution
+pdfstartlink|executor-backend|backend|tex-exec PDF link tests|link node execution
+pdfstartthread|executor-backend|backend|tex-exec PDF thread tests|thread node execution
+pdfstrcmp|command-core|expansion|string comparison negative|bytewise comparison return
+pdfsuppressptexinfo|command-core|state|phase-2 command-state matrix|named parameter write
+pdfsuppresswarningdupdest|command-core|state|phase-2 command-state matrix|named parameter write
+pdfsuppresswarningdupmap|command-core|state|phase-2 command-state matrix|named parameter write
+pdfsuppresswarningpagegroup|command-core|state|phase-2 command-state matrix|named parameter write
+pdftexbanner|command-core|expansion|banner conversion|profile identity return
+pdftexrevision|command-core|expansion|revision conversion|profile identity return
+pdftexversion|command-core|expansion|version primitive delivery|profile identity delivery
+pdfthreadmargin|command-core|state|phase-2 command-state matrix|named dimension write
+pdfthread|executor-backend|backend|tex-exec PDF thread tests|thread node execution
+pdftracingfonts|command-core|state|phase-2 command-state matrix|named parameter write
+pdftrailerid|executor-backend|backend|tex-exec PDF trailer tests|trailer identity effect
+pdftrailer|executor-backend|backend|tex-exec PDF trailer tests|trailer effect
+pdfunescapehex|command-core|expansion|hex decoding conversion|conv_toks conversion return
+pdfuniformdeviate|command-core|expansion|uniform random conversion|deterministic random return
+pdfuniqueresname|command-core|state|phase-2 command-state matrix|named parameter write
+pdfvorigin|command-core|state|phase-2 command-state matrix|named dimension write
+pdfxformname|executor-backend|backend|tex-exec PDF form tests|PDF object identity enquiry
+pdfxform|executor-backend|backend|tex-exec PDF form tests|form object allocation
+pdfximagebbox|executor-backend|backend|tex-exec PDF image tests|object-backed enquiry
+pdfximage|executor-backend|backend|tex-exec PDF image tests|image object allocation
+quitvmode|executor-backend|executor|tex-exec mode-transition tests|main-control mode transition
+rightmarginkern|command-core|state|phase-2 enquiry matrix|box margin enquiry
+rpcode|command-core|state|phase-2 command-state matrix|font code-table write
+shbscode|command-core|state|phase-2 command-state matrix|font code-table write
+stbscode|command-core|state|phase-2 command-state matrix|font code-table write
+tagcode|command-core|state|phase-2 command-state matrix|font code-table write

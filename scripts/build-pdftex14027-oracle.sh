@@ -18,11 +18,16 @@ target_dir="${CARGO_TARGET_DIR:-target}"
 out_dir="${target_dir}/pdftex14027-oracle"
 bin_dir="${out_dir}/bin"
 instrumentation_change="${UMBER_PDFTEX14027_INSTRUMENTATION_CHANGE:-${repo_root}/tests/pdftex14027-oracle/instrumentation.ch}"
+extension_instrumentation_change="${UMBER_PDFTEX14027_EXTENSION_INSTRUMENTATION_CHANGE:-${repo_root}/tests/pdftex14027-oracle/extension-instrumentation.ch}"
 dvi_input="${repo_root}/tests/pdftex14027-oracle/smoke-dvi.tex"
 pdf_input="${repo_root}/tests/pdftex14027-oracle/smoke-pdf.tex"
 transition_input="${repo_root}/tests/pdftex14027-oracle/transitions.tex"
 transition_child="${repo_root}/tests/pdftex14027-oracle/transitions-child.tex"
 semantic_event_matrix="${repo_root}/tests/pdftex14027-oracle/semantic-event-matrix.txt"
+extension_input="${repo_root}/tests/pdftex14027-oracle/extensions.tex"
+extension_bytes_input="${repo_root}/tests/pdftex14027-oracle/extensions-bytes.txt"
+extension_event_matrix="${repo_root}/tests/pdftex14027-oracle/extension-event-matrix.txt"
+extension_primitive_audit="${repo_root}/tests/pdftex14027-oracle/extension-primitive-audit.txt"
 wide_tangle="${out_dir}/tangle-pdftex14027"
 cflags="-O2"
 cxxflags="-O2"
@@ -117,6 +122,8 @@ verify_inputs() {
   done < "$manifest"
   [[ -f "$instrumentation_change" ]] ||
     fail "missing instrumentation change file: $instrumentation_change"
+  [[ -f "$extension_instrumentation_change" ]] ||
+    fail "missing extension instrumentation change file: $extension_instrumentation_change"
 }
 
 extract_source() {
@@ -177,6 +184,8 @@ build_wide_tangle() {
 }
 
 web_source="${web_source_dir}/pdftexdir/pdftex.web"
+tex_web_source="${web_source_dir}/tex.web"
+etex_change_source="${web_source_dir}/etexdir/etex.ch"
 upstream_changes=(
   "${web_source_dir}/pdftexdir/tex.ch0"
   "${web_source_dir}/tex.ch"
@@ -338,6 +347,47 @@ run_transitions() {
     >"${run_dir}/ordinary.log"
 }
 
+run_extensions() {
+  local executable="$1" profile="$2"
+  local run_dir="${out_dir}/extensions/${profile}" status=0
+  rm -rf "$run_dir"
+  mkdir -p "$run_dir"
+  cp "$extension_input" "${run_dir}/extensions.tex"
+  cp "$extension_bytes_input" "${run_dir}/extensions-bytes.txt"
+  TZ=UTC touch -t 202001020304.05 "${run_dir}/extensions-bytes.txt"
+  (
+    cd "$run_dir"
+    env -i PATH=/usr/bin:/bin LC_ALL=C LANGUAGE=C TZ=UTC \
+      SOURCE_DATE_EPOCH="$source_date_epoch" FORCE_SOURCE_DATE=1 \
+      TEXMFCNF="${source_dir}/texk/kpathsea" \
+      "$executable" -ini -etex -interaction=batchmode extensions.tex \
+      >terminal.txt 2>&1
+  ) || status="$?"
+  [[ "$status" -eq 0 ]] ||
+    fail "$profile extension run exited with status $status"
+  printf '%s\n' "$status" >"${run_dir}/status.txt"
+  [[ -f "${run_dir}/extensions.log" ]] ||
+    fail "$profile extension run did not write extensions.log"
+  [[ -f "${run_dir}/extensions.dvi" ]] ||
+    fail "$profile extension run did not write extensions.dvi"
+  [[ -f "${run_dir}/extensions-effects.out" ]] ||
+    fail "$profile extension run did not write extension effects"
+  grep -q 'UMBER-PDFTEX14027-COMMAND-EXTENSIONS' \
+    "${run_dir}/extensions.log" ||
+    fail "$profile extension marker is absent"
+  grep -q 'EXPANDED=AEXPANDEDB' "${run_dir}/extensions.log" ||
+    fail "$profile expanded result is absent"
+  grep -q 'STRCMP=-1,0,1' "${run_dir}/extensions.log" ||
+    fail "$profile bytewise comparison result is absent"
+  grep -q 'PRIMITIVE-REDEFINED-FALSE' "${run_dir}/extensions.log" ||
+    fail "$profile primitive-enquiry result is absent"
+  grep -q 'ABSNUM-TRUE' "${run_dir}/extensions.log" &&
+    grep -q 'ABSDIM-TRUE' "${run_dir}/extensions.log" ||
+    fail "$profile absolute-comparison results are absent"
+  sed '1s/)  .*$/) <HOST-CLOCK>/' "${run_dir}/extensions.log" \
+    >"${run_dir}/ordinary.log"
+}
+
 record_linked_libraries() {
   local executable="$1"
   if command -v otool >/dev/null 2>&1; then
@@ -371,6 +421,14 @@ write_build_record() {
       "${instrumentation_change#"${repo_root}/"}"
     printf 'instrumentation-change-sha256 %s\n' \
       "$(sha_digest 256 "$instrumentation_change")"
+    printf 'extension-instrumentation-change %s\n' \
+      "${extension_instrumentation_change#"${repo_root}/"}"
+    printf 'extension-instrumentation-change-sha256 %s\n' \
+      "$(sha_digest 256 "$extension_instrumentation_change")"
+    printf 'extension-event-matrix-sha256 %s\n' \
+      "$(sha_digest 256 "$extension_event_matrix")"
+    printf 'extension-primitive-audit-sha256 %s\n' \
+      "$(sha_digest 256 "$extension_primitive_audit")"
     printf 'tool-sha256 tie %s\n' "$(sha_digest 256 "${web_build_dir}/tie")"
     printf 'tool-sha256 tangle %s\n' "$(sha_digest 256 "${web_build_dir}/tangle")"
     printf 'tool-sha256 tangle-pdftex14027 %s\n' \
@@ -431,9 +489,19 @@ write_build_record() {
         "$(sha_digest 256 "${out_dir}/transitions/${profile}/transitions.dvi")"
       printf 'transition-effect-output-sha256 %s %s\n' "$profile" \
         "$(sha_digest 256 "${out_dir}/transitions/${profile}/transitions-effects.out")"
+      printf 'extension-terminal-sha256 %s %s\n' "$profile" \
+        "$(sha_digest 256 "${out_dir}/extensions/${profile}/terminal.txt")"
+      printf 'extension-ordinary-log-sha256 %s %s\n' "$profile" \
+        "$(sha_digest 256 "${out_dir}/extensions/${profile}/ordinary.log")"
+      printf 'extension-dvi-sha256 %s %s\n' "$profile" \
+        "$(sha_digest 256 "${out_dir}/extensions/${profile}/extensions.dvi")"
+      printf 'extension-effect-output-sha256 %s %s\n' "$profile" \
+        "$(sha_digest 256 "${out_dir}/extensions/${profile}/extensions-effects.out")"
       if [[ "$profile" == instrumented ]]; then
         printf 'transition-trace-sha256 %s %s\n' "$profile" \
           "$(sha_digest 256 "${out_dir}/transitions/${profile}/pdftex14027-events.jsonl")"
+        printf 'extension-trace-sha256 %s %s\n' "$profile" \
+          "$(sha_digest 256 "${out_dir}/extensions/${profile}/pdftex14027-events.jsonl")"
       fi
     done
   } > "$record"
@@ -446,20 +514,69 @@ configure_tools
 build_wide_tangle
 build_variant "$(profile_executable clean)"
 cp "${web_build_dir}/pdftex-final.ch" "${out_dir}/clean-final.ch"
-build_variant "$(profile_executable instrumented)" "$instrumentation_change"
+build_variant "$(profile_executable instrumented)" \
+  "$instrumentation_change" "$extension_instrumentation_change"
 cp "${web_build_dir}/pdftex-final.ch" "${out_dir}/instrumented-final.ch"
 
+audit_extension_primitives() {
+  local pdf_inventory shared_inventory extension_inventory audit_inventory
+  local primitive owner phase gate seam extra
+  pdf_inventory="$(mktemp)"
+  shared_inventory="$(mktemp)"
+  extension_inventory="$(mktemp)"
+  audit_inventory="$(mktemp)"
+  awk 'match($0,/primitive\("[^"]+"/) {
+    print substr($0,RSTART+11,RLENGTH-12)
+  }' "$web_source" | LC_ALL=C sort -u >"$pdf_inventory"
+  {
+    awk 'match($0,/primitive\("[^"]+"/) {
+      print substr($0,RSTART+11,RLENGTH-12)
+    }' "$tex_web_source"
+    awk 'match($0,/primitive\("[^"]+"/) {
+      print substr($0,RSTART+11,RLENGTH-12)
+    }' "$etex_change_source"
+  } | LC_ALL=C sort -u >"$shared_inventory"
+  comm -23 "$pdf_inventory" "$shared_inventory" >"$extension_inventory"
+  while IFS='|' read -r primitive owner phase gate seam extra; do
+    [[ -z "$primitive" || "$primitive" == \#* ]] && continue
+    [[ -n "$owner" && -n "$phase" && -n "$gate" && -n "$seam" &&
+      -z "${extra:-}" ]] ||
+      fail "malformed extension primitive audit row for ${primitive:-unknown}"
+    [[ "$owner" == command-core || "$owner" == executor-backend ]] ||
+      fail "unknown extension primitive owner for $primitive: $owner"
+    if [[ "$owner" == command-core && "$phase" == expansion ]]; then
+      awk -F'|' -v gate="$gate" '$2 == gate { found=1 } END { exit !found }' \
+        "$extension_event_matrix" ||
+        fail "command-core expansion primitive $primitive has no matrix boundary: $gate"
+    fi
+    printf '%s\n' "$primitive"
+  done <"$extension_primitive_audit" | LC_ALL=C sort -u >"$audit_inventory"
+  cmp "$extension_inventory" "$audit_inventory" >/dev/null ||
+    fail "extension primitive audit does not exactly cover canonical pdfTeX additions"
+  [[ "$(wc -l <"$pdf_inventory" | tr -d ' ')" -eq 549 ]] ||
+    fail "canonical pdfTeX primitive inventory no longer contains 549 entries"
+  [[ "$(wc -l <"$shared_inventory" | tr -d ' ')" -eq 391 ]] ||
+    fail "canonical shared TeX/e-TeX primitive inventory no longer contains 391 entries"
+  rm -f "$pdf_inventory" "$shared_inventory" "$extension_inventory" \
+    "$audit_inventory"
+}
+
+audit_extension_primitives
 for profile in clean instrumented; do
   for mode in dvi pdf; do
     run_smoke "$(profile_executable "$profile")" "$profile" "$mode"
   done
   run_transitions "$(profile_executable "$profile")" "$profile"
+  run_extensions "$(profile_executable "$profile")" "$profile"
 done
 compare_smoke_channels dvi
 compare_smoke_channels pdf
 compare_channels "transition oracle" \
   "${out_dir}/transitions/clean" "${out_dir}/transitions/instrumented" \
   terminal.txt ordinary.log status.txt transitions.dvi transitions-effects.out
+compare_channels "extension oracle" \
+  "${out_dir}/extensions/clean" "${out_dir}/extensions/instrumented" \
+  terminal.txt ordinary.log status.txt extensions.dvi extensions-effects.out
 trace="${out_dir}/transitions/instrumented/pdftex14027-events.jsonl"
 cargo run -q -p tex-oracle --bin tex-oracle-validate -- "$trace"
 while IFS='|' read -r family boundary fixture seam pattern extra; do
@@ -470,11 +587,27 @@ while IFS='|' read -r family boundary fixture seam pattern extra; do
   grep -Fq "$pattern" "$trace" ||
     fail "trace is missing $family/$boundary from $fixture at $seam"
 done <"$semantic_event_matrix"
+extension_trace="${out_dir}/extensions/instrumented/pdftex14027-events.jsonl"
+cargo run -q -p tex-oracle --bin tex-oracle-validate -- "$extension_trace"
+while IFS='|' read -r family boundary fixture seam pattern extra; do
+  [[ -z "$family" || "$family" == \#* ]] && continue
+  [[ -n "$boundary" && -n "$fixture" && -n "$seam" && -n "$pattern" &&
+    -z "${extra:-}" ]] ||
+    fail "malformed extension event matrix row for ${family:-unknown}"
+  grep -Fq "$pattern" "$extension_trace" ||
+    fail "extension trace is missing $family/$boundary from $fixture at $seam"
+done <"$extension_event_matrix"
 run_transitions "$(profile_executable instrumented)" instrumented-repeat
+run_extensions "$(profile_executable instrumented)" instrumented-repeat
 compare_channels "repeated instrumented transition oracle" \
   "${out_dir}/transitions/instrumented" \
   "${out_dir}/transitions/instrumented-repeat" \
   terminal.txt ordinary.log status.txt transitions.dvi transitions-effects.out \
+  pdftex14027-events.jsonl
+compare_channels "repeated instrumented extension oracle" \
+  "${out_dir}/extensions/instrumented" \
+  "${out_dir}/extensions/instrumented-repeat" \
+  terminal.txt ordinary.log status.txt extensions.dvi extensions-effects.out \
   pdftex14027-events.jsonl
 write_build_record
 printf '%s\n' "$bin_dir"

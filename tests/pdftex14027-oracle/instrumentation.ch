@@ -356,7 +356,25 @@ case purpose of
 9:write(umber_trace_file,'scantokens');
 10:write(umber_trace_file,'protected_macro');
 11:write(umber_trace_file,'protected_expansion_suppression');
-othercases write(umber_trace_file,'protected_delivery_suppression')
+12:write(umber_trace_file,'protected_delivery_suppression');
+13:write(umber_trace_file,'primitive_enquiry');
+14:write(umber_trace_file,'pdf_expanded');
+15:write(umber_trace_file,'pdf_escape_string');
+16:write(umber_trace_file,'pdf_escape_name');
+17:write(umber_trace_file,'pdf_escape_hex');
+18:write(umber_trace_file,'pdf_unescape_hex');
+19:write(umber_trace_file,'pdf_creation_date');
+20:write(umber_trace_file,'pdf_file_mod_date');
+21:write(umber_trace_file,'pdf_file_size');
+22:write(umber_trace_file,'pdf_mdfive_sum');
+23:write(umber_trace_file,'pdf_file_dump');
+24:write(umber_trace_file,'pdf_match');
+25:write(umber_trace_file,'pdf_last_match');
+26:write(umber_trace_file,'pdftex_revision');
+27:write(umber_trace_file,'pdftex_banner');
+28:write(umber_trace_file,'pdf_uniform_deviate');
+29:write(umber_trace_file,'pdf_normal_deviate');
+othercases write(umber_trace_file,'pdf_conversion')
 endcases;
 write(umber_trace_file,'","tokens":[');
 umber_trace_token_range(p,stop_pointer);
@@ -374,6 +392,7 @@ case purpose of
 2:write(umber_trace_file,'parameter_conversion');
 11:write(umber_trace_file,'protected_expansion_suppression');
 12:write(umber_trace_file,'protected_delivery_suppression');
+13:write(umber_trace_file,'primitive_enquiry');
 othercases write(umber_trace_file,'the_toks')
 endcases;
 write(umber_trace_file,'","tokens":['); umber_trace_token(t);
@@ -437,7 +456,8 @@ case scanner_kind of
 16:write(umber_trace_file,'glue_shrink');
 17:write(umber_trace_file,'mu_to_glue');
 18:write(umber_trace_file,'glue_to_mu');
-othercases write(umber_trace_file,'interaction_mode')
+19:write(umber_trace_file,'interaction_mode');
+othercases write(umber_trace_file,'pdf_string_compare')
 endcases;
 write(umber_trace_file,'","result":');
 case value_level of
@@ -489,7 +509,11 @@ case condition_kind of
 16:write(umber_trace_file,'ifcase');
 17:write(umber_trace_file,'ifdefined');
 18:write(umber_trace_file,'ifcsname');
-othercases write(umber_trace_file,'iffontchar')
+19:write(umber_trace_file,'iffontchar');
+20:write(umber_trace_file,'ifincsname');
+21:write(umber_trace_file,'ifpdfprimitive');
+22:write(umber_trace_file,'ifpdfabsnum');
+othercases write(umber_trace_file,'ifpdfabsdim')
 endcases;
 write(umber_trace_file,'"');
 end;

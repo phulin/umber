@@ -201,6 +201,13 @@ command-core extension matrix with compatibility exclusion, checks its
 primitive-owner audit against canonical `etex.ch`, and repeats each base and
 extension trace plus generated effect bytes deterministically.
 
+The `--area pdftex14027-oracle` mode performs the corresponding pinned
+pdfTeX 1.40.27 build. It gates DVI/PDF smoke artifacts, the shared command
+matrix, and a focused exact-eight-bit expansion/scanner matrix; proves the
+549-primitive inventory as 391 shared TeX/e-TeX declarations plus 158 audited
+pdfTeX additions; compares clean and instrumented logs, status, DVI, PDF, and
+generated writes; and repeats both semantic traces byte-for-byte.
+
 See `tests/AGENTS.md` for the supported areas and cases, required tools,
 copied support files, and validation performed after a rewrite.
 

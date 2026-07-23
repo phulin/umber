@@ -1296,15 +1296,20 @@ owns acquisition and delegates to the reproducible workflow documented in
 [`pdftex14027_oracle.md`](pdftex14027_oracle.md). It emits separately named
 clean and instrumented exact-eight-bit executables from the pinned
 canonical WEB program, ordered Web2C/SyncTeX stack, and archive-owned library
-inputs. A repository-owned final change ports the complete shared
-TeX82/e-TeX schema-v1 command matrix through stable pdfTeX seams without
-editing upstream files. The build record captures source, change, profile,
+inputs. Ordered repository-owned final changes port the complete shared
+TeX82/e-TeX schema-v1 command matrix and observe pdfTeX command-core
+expansion/scanner extensions through stable seams without editing upstream
+files. A machine audit accounts for all 549 canonical primitive declarations:
+391 are shared TeX/e-TeX entries and 158 pdfTeX additions are classified as
+command-core or executor/backend. Every command-core expansion addition names
+an exact extension-matrix boundary; state/enquiry/effect additions identify
+the dependent phase-2 matrix. The build record captures source, change, profile,
 translator, toolchain, library, platform, executable, smoke-output,
-transition-output, and trace identities. Font-independent DVI and deterministic
-PDF smoke programs plus the focused transition program must be byte-transparent
-between variants; the instrumented trace is schema-validated, matrix-gated,
-and repeatable. Cargo correctness tests never acquire or execute this live
-oracle.
+transition-output, extension-output, and trace identities. Font-independent
+DVI and deterministic PDF smoke programs plus focused shared and extension
+programs must be byte-transparent between variants; both instrumented traces
+are schema-validated, matrix-gated, and repeatable. Cargo correctness tests
+never acquire or execute this live oracle.
 
 Instrumentation writes a versioned semantic event stream. It must not use
 TeX's semantic `mem`, string pool, selector, transcript state, or command

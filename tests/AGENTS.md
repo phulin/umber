@@ -32,16 +32,18 @@ Acquisition and builds run only through `scripts/regen-fixtures.sh --area
 etex26-oracle`; Cargo correctness tests never invoke the live oracle.
 
 `tests/pdftex14027-oracle-manifest.txt` pins canonical pdfTeX 1.40.27,
-the ordered Web2C and configured SyncTeX changes, translator inputs, and the
-repository-owned final-change seam and smoke programs.
+the ordered Web2C and configured SyncTeX changes, translator inputs, the
+repository-owned shared and extension final-change seams, smoke programs,
+focused extension program, and exact primitive audit.
 `tests/pdftex14027-oracle/` contains font-independent DVI and deterministic PDF
 smoke inputs, focused shared-command transition inputs and an executable
-semantic-event matrix, and the repository-owned final instrumentation change.
-The live workflow schema-validates and repeatability-checks the trace while
-gating clean/instrumented terminal, normalized log, status, DVI/PDF, and
-generated-effect transparency. Acquisition and builds run only through
-`scripts/regen-fixtures.sh --area pdftex14027-oracle`; Cargo correctness tests
-never invoke the live oracle.
+semantic-event matrix, an exact-eight-bit expansion/scanner extension matrix,
+and ordered repository instrumentation changes. The live workflow proves the
+549-entry ownership inventory, schema-validates and repeatability-checks both
+traces, and gates clean/instrumented terminal, normalized log, status,
+DVI/PDF, and generated-effect transparency. Acquisition and builds run only
+through `scripts/regen-fixtures.sh --area pdftex14027-oracle`; Cargo correctness
+tests never invoke the live oracle.
 
 `tests/corpus/distribution` holds the authored-JavaScript/Rust manifest and
 selection fixtures. They are hand-authored contract data, not live-reference

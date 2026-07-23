@@ -1,0 +1,73 @@
+\catcode `{ = 1
+\catcode `} = 2
+\catcode 128 = 12
+\catcode 255 = 12
+\immediate\write16{UMBER-PDFTEX14027-COMMAND-EXTENSIONS}
+\def\ordinarymacro{EXPANDED}
+\edef\expandedcopy{\expanded{A\ordinarymacro B}}
+\message{EXPANDED=\expandedcopy}
+\edef\escapestringcopy{\pdfescapestring{A(B)^^80}}
+\edef\escapenamecopy{\pdfescapename{A B#^^80}}
+\edef\escapehexcopy{\pdfescapehex{A^^80}}
+\edef\unescapehexcopy{\pdfunescapehex{4180f}}
+\message{ESCAPE-STRING=\escapestringcopy}
+\message{ESCAPE-NAME=\escapenamecopy}
+\message{ESCAPE-HEX=\escapehexcopy}
+\message{UNESCAPE-HEX=\unescapehexcopy}
+\edef\strcmpnegative{\pdfstrcmp{A^^80}{A^^ff}}
+\edef\strcmpequal{\pdfstrcmp{A^^80}{A^^80}}
+\edef\strcmppositive{\pdfstrcmp{A^^ff}{A^^80}}
+\message{STRCMP=\strcmpnegative,\strcmpequal,\strcmppositive}
+\edef\mdfivetext{\pdfmdfivesum{abc}}
+\edef\mdfivefile{\pdfmdfivesum file {extensions-bytes.txt}}
+\edef\filesize{\pdffilesize{extensions-bytes.txt}}
+\edef\filedump{\pdffiledump offset 1 length 2 {extensions-bytes.txt}}
+\edef\filemoddate{\pdffilemoddate{extensions-bytes.txt}}
+\message{MD5=\mdfivetext,\mdfivefile}
+\message{FILE=\filesize,\filedump,\filemoddate}
+\edef\matchresult{\pdfmatch icase subcount 2 {(a)(b+)}{ABBC}}
+\edef\matchzero{\pdflastmatch0}
+\edef\matchone{\pdflastmatch1}
+\edef\matchtwo{\pdflastmatch2}
+\message{MATCH=\matchresult,\matchzero,\matchone,\matchtwo}
+\ifpdfprimitive\relax
+  \message{PRIMITIVE-ORIGINAL-TRUE}
+\else
+  \message{PRIMITIVE-ORIGINAL-WRONG}
+\fi
+\let\savedrelax=\relax
+\def\relax{REDEFINED}
+\ifpdfprimitive\relax
+  \message{PRIMITIVE-REDEFINED-WRONG}
+\else
+  \message{PRIMITIVE-REDEFINED-FALSE}
+\fi
+\edef\primitivecopy{A\pdfprimitive\relax B}
+\let\relax=\savedrelax
+\message{PRIMITIVE-COPY=\primitivecopy}
+\expandafter\def\csname
+  \ifincsname inside\else outside\fi
+\endcsname{IN-CSNAME}
+\message{INCSNAME=\inside}
+\ifpdfabsnum -7 = 7
+  \message{ABSNUM-TRUE}
+\else
+  \message{ABSNUM-WRONG}
+\fi
+\ifpdfabsdim -2pt < 3pt
+  \message{ABSDIM-TRUE}
+\else
+  \message{ABSDIM-WRONG}
+\fi
+\pdfsetrandomseed 12345
+\edef\uniformresult{\pdfuniformdeviate 1000}
+\edef\normalresult{\pdfnormaldeviate}
+\message{RANDOM=\uniformresult,\normalresult}
+\message{IDENTITY=\the\pdftexversion,\pdftexrevision}
+\message{BANNER=\pdftexbanner}
+\message{CREATION-DATE=\pdfcreationdate}
+\immediate\openout1=extensions-effects.out
+\immediate\write1{PDFTEX-COMMAND-EXTENSIONS}
+\immediate\closeout1
+\shipout\hbox{}
+\end
