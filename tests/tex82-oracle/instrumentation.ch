@@ -1426,6 +1426,13 @@ umber_trace_condition(2,this_if,or_code,6);
 return; {wait for \.{\\or}, \.{\\else}, or \.{\\fi}}
 @z
 
+@x [28] Observe recovery from an extra conditional delimiter.
+  else  begin print_err("Extra "); print_cmd_chr(fi_or_else,cur_chr);
+@y
+  else  begin umber_trace_conditional_diagnostic(2);
+    print_err("Extra "); print_cmd_chr(fi_or_else,cur_chr);
+@z
+
 @x [32] Observe successful shipout after the page commits.
 dvi_out(eop); incr(total_pages); cur_s:=-1;
 @y

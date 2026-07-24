@@ -25,6 +25,8 @@ transition_input="${repo_root}/tests/tex82-oracle/transitions.tex"
 transition_child="${repo_root}/tests/tex82-oracle/transitions-child.tex"
 transition_support=(
   "${repo_root}/tests/tex82-oracle/expansion-macros.tex"
+  "${repo_root}/tests/tex82-oracle/scanner-conditionals.tex"
+  "${repo_root}/tests/tex82-oracle/scanner-conditionals-eof.tex"
   "${repo_root}/tests/tex82-oracle/input-recovery.tex"
   "${repo_root}/tests/tex82-oracle/input-eof-normal.tex"
   "${repo_root}/tests/tex82-oracle/input-eof-defining.tex"
@@ -249,6 +251,21 @@ run_transitions() {
     fail "$variant transition run did not write transitions-effects.out"
   grep -q 'UMBER-TEX82-TRANSITIONS' "${run_dir}/transitions.log" ||
     fail "$variant transition marker is absent"
+  for marker in \
+    'UMBER-TEX82-SCANNERS: I=-83' \
+    'UMBER-TEX82-IF=TRUE' \
+    'UMBER-TEX82-IFCAT=TRUE' \
+    'UMBER-TEX82-IFX=TRUE' \
+    'UMBER-TEX82-SKIP=KEPT' \
+    'UMBER-TEX82-CASE=TWO' \
+    'UMBER-TEX82-NESTED-EVALUATION=TRUE' \
+    'UMBER-TEX82-LIMIT-RECOVERY' \
+    'UMBER-TEX82-SKIP-RECOVERY' \
+    '! Extra \or.' \
+    '! Incomplete \iffalse; all text was ignored after line 1.'; do
+    grep -Fq "$marker" "${run_dir}/transitions.log" ||
+      fail "$variant scanner/conditional observation is absent: $marker"
+  done
   sed '1s/)  .*$/) <HOST-CLOCK>/' "${run_dir}/transitions.log" \
     >"${run_dir}/ordinary.log"
 }

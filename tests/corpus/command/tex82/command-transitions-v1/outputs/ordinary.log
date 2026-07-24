@@ -79,7 +79,38 @@ l.58 ...globalexpandeddefinition
 l.59 \show\qualifieddefinition
                               
 
-) (./input-recovery.tex
+) (./scanner-conditionals.tex
+UMBER-TEX82-SCANNERS: I=-83, D=90.3375pt, G=2.5pt plus 3.0fill minus 4.0
+fil, T=SCANNER TOKENS UMBER-TEX82-IF=TRUE UMBER-TEX82-IFCAT=TRUE
+UMBER-TEX82-IFX=TRUE UMBER-TEX82-SKIP=KEPT UMBER-TEX82-CASE=TWO
+UMBER-TEX82-NESTED-EVALUATION=TRUE
+! Missing number, treated as zero.
+<to be read again> 
+                   \relax 
+...
+l.42 \ifnum1<\else
+                  \message{UMBER-TEX82-LIMIT-RECOVERY}\fi
+A number should have been here; I inserted `0'.
+(If you can't figure out why I needed to see a number,
+look up `weird error' in the index to The TeXbook.)
+
+UMBER-TEX82-LIMIT-RECOVERY
+! Extra \or.
+l.43 \or
+        
+I'm ignoring this; it doesn't match any \if.
+
+(./scanner-conditionals-eof.tex)
+! Incomplete \iffalse; all text was ignored after line 1.
+<inserted text> 
+                \fi 
+l.44 ...scanner-conditionals-eof
+                                
+The file ended while I was skipping conditional text.
+This kind of error happens when you say `\if...' and forget
+the matching `\fi'. I've inserted a `\fi'; this might work.
+
+UMBER-TEX82-SKIP-RECOVERY) (./input-recovery.tex
 ! Text line contains an invalid character.
 l.23 \def\invalidcharacter{A?
                              B}
@@ -150,7 +181,7 @@ none, so I've put one in; maybe that will work.
 ! Incomplete \iffalse; all text was ignored after line 30.
 <inserted text> 
                 \fi 
-l.51 \input input-recovery
+l.52 \input input-recovery
                           
 The file ended while I was skipping conditional text.
 This kind of error happens when you say `\if...' and forget
@@ -160,7 +191,7 @@ the matching `\fi'. I've inserted a `\fi'; this might work.
 ! Incomplete \iffalse; all text was ignored after line 1.
 <inserted text> 
                 \fi 
-l.52 \input transitions-child
+l.53 \input transitions-child
                              
 The file ended while I was skipping conditional text.
 This kind of error happens when you say `\if...' and forget
@@ -171,7 +202,7 @@ Runaway argument?
 <inserted text> 
                 \par 
 ...
-l.54 \takeone\outercommand
+l.55 \takeone\outercommand
                           
 I suspect you have forgotten a `}', causing me
 to read past where you wanted me to stop.
@@ -181,7 +212,7 @@ you'd better type `E' or `X' now and fix your file.
 ! Output routine didn't use all of \box255.
 <to be read again> 
                    \end 
-l.55 \end
+l.56 \end
          
 Your \output commands should empty \box255,
 e.g., by saying `\shipout\box255'.
@@ -193,7 +224,7 @@ The following box has been deleted:
 ! Output routine didn't use all of \box255.
 <to be read again> 
                    \end 
-l.55 \end
+l.56 \end
          
 Your \output commands should empty \box255,
 e.g., by saying `\shipout\box255'.
@@ -205,7 +236,7 @@ The following box has been deleted:
 ! Output routine didn't use all of \box255.
 <to be read again> 
                    \end 
-l.55 \end
+l.56 \end
          
 Your \output commands should empty \box255,
 e.g., by saying `\shipout\box255'.
@@ -217,7 +248,7 @@ The following box has been deleted:
 ! Output routine didn't use all of \box255.
 <to be read again> 
                    \end 
-l.55 \end
+l.56 \end
          
 Your \output commands should empty \box255,
 e.g., by saying `\shipout\box255'.
@@ -229,7 +260,7 @@ The following box has been deleted:
 ! Output routine didn't use all of \box255.
 <to be read again> 
                    \end 
-l.55 \end
+l.56 \end
          
 Your \output commands should empty \box255,
 e.g., by saying `\shipout\box255'.
@@ -241,7 +272,7 @@ The following box has been deleted:
 ! Output routine didn't use all of \box255.
 <to be read again> 
                    \end 
-l.55 \end
+l.56 \end
          
 Your \output commands should empty \box255,
 e.g., by saying `\shipout\box255'.
@@ -253,7 +284,7 @@ The following box has been deleted:
 ! Output routine didn't use all of \box255.
 <to be read again> 
                    \end 
-l.55 \end
+l.56 \end
          
 Your \output commands should empty \box255,
 e.g., by saying `\shipout\box255'.
@@ -265,7 +296,7 @@ The following box has been deleted:
 ! Output routine didn't use all of \box255.
 <to be read again> 
                    \end 
-l.55 \end
+l.56 \end
          
 Your \output commands should empty \box255,
 e.g., by saying `\shipout\box255'.
@@ -277,7 +308,7 @@ The following box has been deleted:
 ! Output routine didn't use all of \box255.
 <to be read again> 
                    \end 
-l.55 \end
+l.56 \end
          
 Your \output commands should empty \box255,
 e.g., by saying `\shipout\box255'.
@@ -289,7 +320,7 @@ The following box has been deleted:
 ! Output routine didn't use all of \box255.
 <to be read again> 
                    \end 
-l.55 \end
+l.56 \end
          
 Your \output commands should empty \box255,
 e.g., by saying `\shipout\box255'.
@@ -301,7 +332,7 @@ The following box has been deleted:
 ! Output routine didn't use all of \box255.
 <to be read again> 
                    \end 
-l.55 \end
+l.56 \end
          
 Your \output commands should empty \box255,
 e.g., by saying `\shipout\box255'.
@@ -313,7 +344,7 @@ The following box has been deleted:
 ! Output routine didn't use all of \box255.
 <to be read again> 
                    \end 
-l.55 \end
+l.56 \end
          
 Your \output commands should empty \box255,
 e.g., by saying `\shipout\box255'.
@@ -325,7 +356,7 @@ The following box has been deleted:
 ! Output routine didn't use all of \box255.
 <to be read again> 
                    \end 
-l.55 \end
+l.56 \end
          
 Your \output commands should empty \box255,
 e.g., by saying `\shipout\box255'.
@@ -337,7 +368,7 @@ The following box has been deleted:
 ! Output routine didn't use all of \box255.
 <to be read again> 
                    \end 
-l.55 \end
+l.56 \end
          
 Your \output commands should empty \box255,
 e.g., by saying `\shipout\box255'.
@@ -349,7 +380,7 @@ The following box has been deleted:
 ! Output routine didn't use all of \box255.
 <to be read again> 
                    \end 
-l.55 \end
+l.56 \end
          
 Your \output commands should empty \box255,
 e.g., by saying `\shipout\box255'.
@@ -361,7 +392,7 @@ The following box has been deleted:
 ! Output routine didn't use all of \box255.
 <to be read again> 
                    \end 
-l.55 \end
+l.56 \end
          
 Your \output commands should empty \box255,
 e.g., by saying `\shipout\box255'.
@@ -373,7 +404,7 @@ The following box has been deleted:
 ! Output routine didn't use all of \box255.
 <to be read again> 
                    \end 
-l.55 \end
+l.56 \end
          
 Your \output commands should empty \box255,
 e.g., by saying `\shipout\box255'.
@@ -385,7 +416,7 @@ The following box has been deleted:
 ! Output routine didn't use all of \box255.
 <to be read again> 
                    \end 
-l.55 \end
+l.56 \end
          
 Your \output commands should empty \box255,
 e.g., by saying `\shipout\box255'.
@@ -397,7 +428,7 @@ The following box has been deleted:
 ! Output routine didn't use all of \box255.
 <to be read again> 
                    \end 
-l.55 \end
+l.56 \end
          
 Your \output commands should empty \box255,
 e.g., by saying `\shipout\box255'.
@@ -409,7 +440,7 @@ The following box has been deleted:
 ! Output routine didn't use all of \box255.
 <to be read again> 
                    \end 
-l.55 \end
+l.56 \end
          
 Your \output commands should empty \box255,
 e.g., by saying `\shipout\box255'.
@@ -421,7 +452,7 @@ The following box has been deleted:
 ! Output routine didn't use all of \box255.
 <to be read again> 
                    \end 
-l.55 \end
+l.56 \end
          
 Your \output commands should empty \box255,
 e.g., by saying `\shipout\box255'.
@@ -433,7 +464,7 @@ The following box has been deleted:
 ! Output routine didn't use all of \box255.
 <to be read again> 
                    \end 
-l.55 \end
+l.56 \end
          
 Your \output commands should empty \box255,
 e.g., by saying `\shipout\box255'.
@@ -445,7 +476,7 @@ The following box has been deleted:
 ! Output routine didn't use all of \box255.
 <to be read again> 
                    \end 
-l.55 \end
+l.56 \end
          
 Your \output commands should empty \box255,
 e.g., by saying `\shipout\box255'.
@@ -457,7 +488,7 @@ The following box has been deleted:
 ! Output routine didn't use all of \box255.
 <to be read again> 
                    \end 
-l.55 \end
+l.56 \end
          
 Your \output commands should empty \box255,
 e.g., by saying `\shipout\box255'.
@@ -469,7 +500,7 @@ The following box has been deleted:
 ! Output routine didn't use all of \box255.
 <to be read again> 
                    \end 
-l.55 \end
+l.56 \end
          
 Your \output commands should empty \box255,
 e.g., by saying `\shipout\box255'.
@@ -481,7 +512,7 @@ The following box has been deleted:
 ! Output loop---25 consecutive dead cycles.
 <to be read again> 
                    \end 
-l.55 \end
+l.56 \end
          
 I've concluded that your \output is awry; it never does a
 \shipout, so I'm shipping \box255 out myself. Next time

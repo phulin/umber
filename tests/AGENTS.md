@@ -17,6 +17,10 @@ The `expansion-macros.tex` child isolates expanded delivery, TeX82 expandable
 primitives, macro matching and replay, definition forms, `scan_toks`, and
 direct token-list splices, with transcript-visible `\meaning`/`\show`
 observations.
+The `scanner-conditionals.tex` child isolates typed integer, dimension, glue,
+internal, and token-list scanner results plus condition-frame lifecycle,
+skipping, delimiter changes, nested evaluation, and recovery. Its EOF child
+keeps incomplete skipped-text recovery focused and reference-visible.
 Acquisition and builds run only through `scripts/regen-fixtures.sh --oracle
 tex82 --profile initex-eight-bit`; Cargo correctness tests never invoke the
 live oracle.

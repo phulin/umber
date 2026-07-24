@@ -94,8 +94,13 @@ observations. Scanner/conditional checks additionally
 require typed integer, scaled-dimension, glue, internal-value, and token-list
 results; condition push, limit-change, branch, and pop transitions; skipped
 delimiter and `\ifcase` progress; and evaluating-limit plus incomplete-skip
-recovery events. The focused input covers nested conditions, `\ifx`, skipped
-balanced braces, and EOF while skipping. Alignment checks require preamble
+recovery events. The dedicated `scanner-conditionals.tex` input pins
+signed-radix, fractional physical-unit, infinite glue-order, and internal
+token-list values and independently exposes their TeX spellings through
+`\message`. It also covers `\if`, `\ifcat`, raw `\ifx`, selected `\ifcase`,
+recursive evaluation of a condition operand, skipped nested conditions and
+braces, evaluating-limit recovery, extra-delimiter recovery, and a focused
+EOF child. Alignment checks require preamble
 start/finish, one-based nested ownership and suspend/resume, `align_state`
 changes, exact backup correction, tab/`\span`/`\cr` interception,
 u/v/omit-template push and retirement, and preamble recovery. The focused

@@ -156,3 +156,11 @@ macro matching through nine parameters, paragraph and overlap recovery,
 nested parameter replay, definition forms and prefixes, ordinary and expanded
 `scan_toks`, and direct `\the` splices. Committed `\meaning` and `\show`
 transcript bytes independently expose the representative resulting meanings.
+Its `scanner-conditionals.tex` child separately exercises signed radix
+integers, fractional physical dimensions, infinite-order glue, typed internal
+integer/dimension/glue/token-list values, and reference-visible `\the`
+spellings. The same source covers condition push/change/branch/pop lifecycle,
+`\if`, `\ifcat`, raw-operand `\ifx`, `\ifcase` progress, nested conditions
+inside both evaluation and `pass_text`, and skipped balanced braces. Inserted
+relax, extra-delimiter, and EOF-during-skip recovery remain visible in the
+normalized transcript; `scanner-conditionals-eof.tex` isolates the last case.

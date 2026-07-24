@@ -68,13 +68,32 @@ scanner|integer result|transitions.tex|scan_int successful exit|"event":"scanner
 scanner|dimension result|transitions.tex|scan_dimen successful exit|"event":"scanner","data":{"scanner":"dimension"
 scanner|glue result|transitions.tex|scan_glue committed return|"event":"scanner","data":{"scanner":"glue"
 scanner|internal result|transitions.tex|scan_something_internal committed return|"event":"scanner","data":{"scanner":"internal"
+scanner|focused signed-radix integer|scanner-conditionals.tex|scan_int sign and radix completion|"scanner":"integer","result":{"type":"integer","value":-83}
+scanner|focused fractional physical dimension|scanner-conditionals.tex|scan_dimen fraction and unit completion|"scanner":"dimension","result":{"type":"scaled","value":5920358}
+scanner|focused infinite-order glue|scanner-conditionals.tex|scan_glue components committed|"scanner":"glue","result":{"type":"glue","value":{"width":163840,"stretch":196608,"stretch_order":"fill","shrink":262144,"shrink_order":"fil"}
+scanner|focused internal integer|scanner-conditionals.tex|scan_something_internal integer return|"scanner":"internal","result":{"type":"integer","value":-83}
+scanner|focused internal dimension|scanner-conditionals.tex|scan_something_internal dimension return|"scanner":"internal","result":{"type":"scaled","value":5920358}
+scanner|focused internal glue|scanner-conditionals.tex|scan_something_internal glue return|"scanner":"internal","result":{"type":"glue","value":{"width":163840,"stretch":196608,"stretch_order":"fill","shrink":262144,"shrink_order":"fil"}
+scanner|focused internal token list|scanner-conditionals.tex|scan_something_internal token-list return|"scanner":"internal","result":{"type":"tokens","value":[{"character":83,"catcode":"letter"},{"character":67,"catcode":"letter"},{"character":65,"catcode":"letter"},{"character":78,"catcode":"letter"},{"character":78,"catcode":"letter"},{"character":69,"catcode":"letter"},{"character":82,"catcode":"letter"},{"character":32,"catcode":"spacer"},{"character":84,"catcode":"letter"},{"character":79,"catcode":"letter"},{"character":75,"catcode":"letter"},{"character":69,"catcode":"letter"},{"character":78,"catcode":"letter"},{"character":83,"catcode":"letter"}]}
 condition|frame push|transitions.tex and transitions-child.tex|conditional frame link commit|"event":"condition","data":{"transition":"push"
 condition|limit change|transitions.tex|conditional exact-frame limit commit|"event":"condition","data":{"transition":"limit_change"
 condition|branch selection|transitions.tex|conditional selected branch commit|"event":"condition","data":{"transition":"branch"
 condition|frame pop|transitions.tex|conditional frame unlink seam|"event":"condition","data":{"transition":"pop"
 condition|ifcase progress|transitions.tex|ifcase skip-progress branch|"condition":"ifcase"
+condition|if character predicate|scanner-conditionals.tex|conditional if_char_code branch commit|"transition":"branch","condition":"if","limit":"evaluating","branch":"true"
+condition|ifcat predicate|scanner-conditionals.tex|conditional if_cat_code branch commit|"transition":"branch","condition":"ifcat","limit":"evaluating","branch":"true"
+condition|ifx raw operands|scanner-conditionals.tex|conditional ifx_code raw-token comparison|"transition":"branch","condition":"ifx","limit":"evaluating","branch":"true"
+condition|pass_text skipping scope|scanner-conditionals.tex|pass_text scanner-status scope|"event":"scanner_status","data":{"from":"normal","to":"skipping"}
+condition|pass_text nested conditional|scanner-conditionals.tex|pass_text nested if_test counter|"control_sequence":"ifnum","location":{"source":"scanner-conditionals.tex","line":23,"byte":25}
+condition|pass_text skipped braces|scanner-conditionals.tex|get_next literal-brace delivery while skipping|"command":"left_brace","operand":{"type":"integer","value":123},"location":{"source":"scanner-conditionals.tex","line":23,"byte":11}
+condition|false-branch delimiter change|scanner-conditionals.tex|conditional common_ending limit commit|"transition":"limit_change","condition":"iffalse","limit":"fi"
+condition|true-branch delimiter change|scanner-conditionals.tex|conditional exact-frame limit commit|"transition":"limit_change","condition":"if","limit":"else"
+condition|focused ifcase progress|scanner-conditionals.tex|ifcase skip-progress branch|"transition":"branch","condition":"ifcase","limit":"or","branch":"case"
+condition|nested operand evaluation|scanner-conditionals.tex|recursive conditional during outer scan_int|"control_sequence":"nestedconditionoperand","argument_count":0
 diagnostic|evaluating-limit recovery|transitions.tex|inserted-relax conditional recovery|"diagnostic":"conditional_limit_recovery"
 diagnostic|incomplete skipped text|transitions-child.tex|outer-validity EOF recovery|"diagnostic":"conditional_incomplete"
+diagnostic|extra delimiter recovery|scanner-conditionals.tex|expand fi_or_else legality recovery|"diagnostic":"conditional_extra_delimiter"
+diagnostic|focused incomplete pass_text recovery|scanner-conditionals-eof.tex|outer-validity EOF recovery under skipping|"diagnostic":"conditional_incomplete"
 diagnostic|outer control sequence|transitions.tex|check_outer_validity control-sequence recovery|"diagnostic":"outer_validity_control_sequence"
 diagnostic|outer EOF|transitions-child.tex|check_outer_validity EOF recovery|"diagnostic":"outer_validity_eof"
 diagnostic|defining EOF|input-eof-defining.tex|check_outer_validity defining EOF recovery|"diagnostic":"outer_validity_eof","arguments":[{"type":"name","value":"defining"}]

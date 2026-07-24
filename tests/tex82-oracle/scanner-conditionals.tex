@@ -1,0 +1,45 @@
+\count20=-'123
+\dimen20=1.25in
+\skip20=2.5pt plus 3fill minus 4fil
+\toks20={SCANNER TOKENS}
+\count21=\count20
+\dimen21=\dimen20
+\skip21=\skip20
+\toks21=\toks20
+\edef\scannertokens{\the\toks20}
+\message{UMBER-TEX82-SCANNERS:
+ I=\the\count21,
+ D=\the\dimen21,
+ G=\the\skip21,
+ T=\the\toks21}
+\if aa\message{UMBER-TEX82-IF=TRUE}\else\message{UMBER-TEX82-IF=FALSE}\fi
+\ifcat aZ\message{UMBER-TEX82-IFCAT=TRUE}\else
+  \message{UMBER-TEX82-IFCAT=FALSE}\fi
+\def\ifxleft#1{[#1]}
+\def\ifxright#1{[#1]}
+\ifx\ifxleft\ifxright\message{UMBER-TEX82-IFX=TRUE}\else
+  \message{UMBER-TEX82-IFX=FALSE}\fi
+\iffalse
+  {SKIPPED {BRACES} \ifnum9<3 NESTED-TRUE\else NESTED-FALSE\fi}
+\else
+  \message{UMBER-TEX82-SKIP=KEPT}
+\fi
+\ifcase2
+  \message{UMBER-TEX82-CASE=ZERO}
+\or
+  \message{UMBER-TEX82-CASE=ONE}
+\or
+  \message{UMBER-TEX82-CASE=TWO}
+\else
+  \message{UMBER-TEX82-CASE=ELSE}
+\fi
+\def\nestedconditionoperand{\iftrue\else\fi 314}
+\ifnum\nestedconditionoperand=314
+  \message{UMBER-TEX82-NESTED-EVALUATION=TRUE}
+\else
+  \message{UMBER-TEX82-NESTED-EVALUATION=FALSE}
+\fi
+\ifnum1<\else\message{UMBER-TEX82-LIMIT-RECOVERY}\fi
+\or
+\input scanner-conditionals-eof
+\message{UMBER-TEX82-SKIP-RECOVERY}
