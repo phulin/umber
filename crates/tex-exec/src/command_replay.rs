@@ -122,7 +122,7 @@ impl CommandReplayControl {
             {
                 None => ScannedStep::EndOfInput,
                 Some(AlignmentDelivery::Command(command)) => {
-                    scan_command(&mut processor, command, false, MeaningFlags::EMPTY)?
+                    scan_command(&mut processor, command, false, MeaningFlags::EMPTY, false)?
                 }
                 Some(AlignmentDelivery::Event(event)) => {
                     processor
@@ -144,6 +144,10 @@ impl CommandReplayControl {
 
     /// Delivers and executes one replay command through the command processor.
     pub fn step(&mut self, stores: &mut Universe) -> Result<ReplayStep, ExecError> {
+        let starts_paragraph = matches!(
+            self.modes.current_mode(),
+            Mode::Vertical | Mode::InternalVertical
+        );
         let scanned = {
             let mut processor = CommandProcessor::new(
                 &mut self.command,
@@ -151,7 +155,7 @@ impl CommandReplayControl {
                 stores.command_context(),
                 CommandHostContext::new(&mut self.capabilities),
             );
-            scan_step(&mut processor)?
+            scan_step(&mut processor, starts_paragraph)?
         };
         apply_scanned_step(
             scanned,
@@ -171,6 +175,10 @@ impl CommandReplayControl {
         stores: &mut Universe,
         observer: &mut dyn CommandObserver,
     ) -> Result<ReplayStep, ExecError> {
+        let starts_paragraph = matches!(
+            self.modes.current_mode(),
+            Mode::Vertical | Mode::InternalVertical
+        );
         let scanned = {
             let mut processor = CommandProcessor::new(
                 &mut self.command,
@@ -179,7 +187,7 @@ impl CommandReplayControl {
                 CommandHostContext::new(&mut self.capabilities),
             )
             .with_observer(observer);
-            scan_step(&mut processor)?
+            scan_step(&mut processor, starts_paragraph)?
         };
         let mutation = applied_mutation_observation(&scanned, stores);
         let result = apply_scanned_step(
@@ -290,10 +298,14 @@ enum ScannedStep {
     },
     Paragraph,
     MathShift,
+    ParagraphStart,
     Character,
 }
 
-fn scan_step(processor: &mut CommandProcessor<'_>) -> Result<ScannedStep, ExecError> {
+fn scan_step(
+    processor: &mut CommandProcessor<'_>,
+    starts_paragraph: bool,
+) -> Result<ScannedStep, ExecError> {
     let Some(mut command) = processor.get_x_token().map_err(command_error)? else {
         return Ok(ScannedStep::EndOfInput);
     };
@@ -315,7 +327,7 @@ fn scan_step(processor: &mut CommandProcessor<'_>) -> Result<ScannedStep, ExecEr
         }
         command = next_non_space(processor)?.ok_or(ExecError::MissingPrefixedCommand)?;
     }
-    scan_command(processor, command, global, flags)
+    scan_command(processor, command, global, flags, starts_paragraph)
 }
 
 fn scan_command(
@@ -323,6 +335,7 @@ fn scan_command(
     command: tex_command::CurrentCommand,
     global: bool,
     flags: MeaningFlags,
+    starts_paragraph: bool,
 ) -> Result<ScannedStep, ExecError> {
     match command.meaning() {
         Meaning::UnexpandablePrimitive(
@@ -434,6 +447,17 @@ fn scan_command(
             cat: Catcode::MathShift,
             ..
         } => Ok(ScannedStep::MathShift),
+        Meaning::CharToken {
+            cat: Catcode::Letter | Catcode::Other,
+            ..
+        } if starts_paragraph => {
+            // TeX82 main_control backs up the first ordinary character before
+            // new_graf. The command processor retains exact-delivery proof
+            // for that operation; executor replay only applies its typed mode
+            // transition after this borrow ends.
+            processor.back_input(command).map_err(command_error)?;
+            Ok(ScannedStep::ParagraphStart)
+        }
         Meaning::CharToken {
             cat: Catcode::Letter | Catcode::Other,
             ..
@@ -727,6 +751,15 @@ fn apply_scanned_step(
                 }
                 Mode::Vertical => modes.push(Mode::DisplayMath),
                 _ => modes.push(Mode::Math),
+            }
+            Ok(ReplayStep::Continue)
+        }
+        ScannedStep::ParagraphStart => {
+            if matches!(
+                modes.current_mode(),
+                Mode::Vertical | Mode::InternalVertical
+            ) {
+                modes.push(Mode::Horizontal);
             }
             Ok(ReplayStep::Continue)
         }

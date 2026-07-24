@@ -22,6 +22,13 @@ structural mutation after the processor borrow ends. Macro calls and
 registered `\\input` nesting therefore remain command-core operations; the
 executor never rereads their source text.
 
+When main control starts a paragraph from vertical mode, replay makes the
+mode decision at the executor seam but asks the still-live command processor
+to perform TeX82's `back_input` on the triggering ordinary character. The
+typed paragraph-start result then changes the executor mode after that borrow
+ends; the first character is reconsidered only through the command core's
+backed-up input level.
+
 The replay seam also retains the executor-side mode projection and obtains
 observable general-text effects (currently `\\message`) through the typed
 structured scanner. Alignment lifecycle state crosses it only as

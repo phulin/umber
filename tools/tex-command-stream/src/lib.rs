@@ -1205,7 +1205,7 @@ mod tests {
             !replay
                 .events
                 .iter()
-                .any(|event| event.context.contains("input_level=3")),
+                .any(|event| event.context.starts_with("source=child;")),
             "missing input must not be opened from the host"
         );
         assert!(

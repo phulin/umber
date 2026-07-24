@@ -177,22 +177,7 @@ impl CommandProcessor<'_> {
         }
         self.last_delivery = None;
         self.undo_alignment_delivery(&command);
-
-        // Ordinary `back_input` may restore a live token cursor in place.
-        // `\\noexpand`, however, associates a one-delivery treatment with the
-        // replayed level, so it must retain an explicit backed-up level even
-        // when the original cursor could otherwise be rewound.
-        if matches!(treatment, BackupTreatment::Ordinary) && self.rewind_current_token_cursor(stamp)
-        {
-            #[cfg(any(test, feature = "instrumentation"))]
-            self.observe(CommandObservation::Input(InputRecord {
-                transition: InputTransition::Backup,
-                reason: InputReason::Backup,
-                level: stamp.input_level(),
-                position: stamp.position(),
-            }));
-            return Ok(());
-        }
+        self.retire_exhausted_parameter_before_backup(stamp)?;
 
         let level = self.command.push_token_level(
             TokenPayload::BackedUp(SharedBackedUpBuffer::new(vec![BackedUpToken {
@@ -481,9 +466,11 @@ impl CommandProcessor<'_> {
             TokenPayload::BackedUp(buffer) => buffer
                 .get(cursor.index)
                 .map(|token| (token.spelling, token.source_range)),
-            TokenPayload::ArgumentRange { buffer, range } => buffer
-                .get(range.start() + cursor.index)
-                .map(|spelling| (spelling, None)),
+            TokenPayload::ArgumentRange { buffer, range } => (cursor.index
+                < range.end().saturating_sub(range.start()))
+            .then(|| buffer.get(range.start() + cursor.index))
+            .flatten()
+            .map(|spelling| (spelling, None)),
             TokenPayload::Stored { tokens, origins } => {
                 let token = *self.state.tokens(*tokens).get(cursor.index)?;
                 let origin = self
@@ -496,6 +483,32 @@ impl CommandProcessor<'_> {
             }
         }?;
         Some((spelling.0, position, cursor.behavior.clone(), spelling.1))
+    }
+
+    /// TeX's `back_input` first lets an exhausted one-token macro parameter
+    /// level retire, then installs the backed-up command above its caller.
+    /// Other deliveries retain their live cursor until their next raw fetch.
+    fn retire_exhausted_parameter_before_backup(
+        &mut self,
+        stamp: DeliveryStamp,
+    ) -> Result<(), CommandError> {
+        let exhausted_parameter = matches!(
+            self.command.input.levels.last(),
+            Some(InputLevel::Tokens(cursor))
+                if cursor.identity.0 == stamp.input_level()
+                    && matches!(cursor.behavior, TokenBehavior::Parameter)
+                    && self.next_stored_token(cursor).is_none()
+        );
+        if exhausted_parameter {
+            match self.retire_and_restart(InputLevelId(stamp.input_level()))? {
+                RetirementRestart::Continue => Ok(()),
+                RetirementRestart::Stop | RetirementRestart::EndV(_) => {
+                    Err(CommandError::InputInvariant)
+                }
+            }
+        } else {
+            Ok(())
+        }
     }
 
     fn check_outer_validity_entry(
@@ -619,19 +632,6 @@ impl CommandProcessor<'_> {
     /// not leave a group entry for replacement replay to balance later.
     pub(crate) fn undo_delimiter_begin_group_delivery(&mut self) {
         self.command.alignment.undo_delimiter_begin_group_delivery();
-    }
-
-    fn rewind_current_token_cursor(&mut self, stamp: DeliveryStamp) -> bool {
-        let Some(InputLevel::Tokens(cursor)) = self.command.input.levels.last_mut() else {
-            return false;
-        };
-        if cursor.identity.0 != stamp.input_level()
-            || u64::try_from(cursor.index).ok() != Some(stamp.position().saturating_add(1))
-        {
-            return false;
-        }
-        cursor.index -= 1;
-        true
     }
 }
 
@@ -1056,7 +1056,7 @@ mod tests {
     }
 
     #[test]
-    fn token_level_backup_rewinds_without_an_extra_input_level() {
+    fn token_level_backup_creates_an_explicit_replay_level() {
         let mut command = CommandState::default();
         command.push_token_level(
             TokenPayload::Transient(SharedTokenBuffer::new(vec![TracedTokenWord::pack(
@@ -1079,11 +1079,11 @@ mod tests {
             .get_next()
             .expect("token delivers")
             .expect("token level is live");
-        processor.back_input(first).expect("token cursor rewinds");
-        assert_eq!(processor.command.input.levels.len(), 1);
+        processor.back_input(first).expect("token backs up");
+        assert_eq!(processor.command.input.levels.len(), 2);
         let replayed = processor
             .get_next()
-            .expect("rewound token delivers")
+            .expect("backed-up token delivers")
             .expect("token level is live");
         assert_eq!(
             replayed.spelling().semantic_token(),

@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
 use tex_command::{
-    AlignmentCellTemplates, AlignmentRequest, CommandObservation, CommandObserver,
-    RegisteredSourceKind, SourceRegistration, TracedTokenList,
+    AlignmentCellTemplates, AlignmentRequest, CommandObservation, CommandObserver, InputReason,
+    InputTransition, ObservedToken, RegisteredSourceKind, SourceRegistration, TracedTokenList,
 };
 use tex_state::Universe;
 use tex_state::env::banks::IntParam;
@@ -201,6 +201,11 @@ fn replay_dispatches_modes_effects_and_typed_alignment_lifecycle() {
     );
     assert_eq!(control.current_mode(), crate::Mode::Horizontal);
     assert_eq!(
+        control.step(&mut universe).expect("backed-up character"),
+        ReplayStep::Continue
+    );
+    assert_eq!(control.current_mode(), crate::Mode::Horizontal);
+    assert_eq!(
         control.step(&mut universe).expect("math start"),
         ReplayStep::Continue
     );
@@ -270,4 +275,73 @@ fn replay_dispatches_modes_effects_and_typed_alignment_lifecycle() {
         ReplayStep::Continue
     );
     assert_eq!(control.step(&mut universe).expect("end"), ReplayStep::End);
+}
+
+#[test]
+fn paragraph_start_backs_up_the_triggering_macro_parameter_before_replay() {
+    let mut universe = Universe::new();
+    crate::install_unexpandable_primitives(&mut universe);
+    let mut control = CommandReplayControl::default();
+    register_source(&mut control, br"\def\pair#1#2{#2#1}\pair AB\end");
+
+    assert_eq!(
+        control.step(&mut universe).expect("definition"),
+        ReplayStep::Continue
+    );
+
+    let mut observations = ObservationRecorder::default();
+    assert_eq!(
+        control
+            .step_with_observer(&mut universe, &mut observations)
+            .expect("paragraph start"),
+        ReplayStep::Continue
+    );
+    assert_eq!(control.current_mode(), crate::Mode::Horizontal);
+    assert!(observations.0.windows(2).any(|pair| {
+        matches!(
+            &pair[0],
+            CommandObservation::Input(input)
+                if input.transition == InputTransition::Backup && input.reason == InputReason::Backup
+        ) && matches!(
+            &pair[1],
+            CommandObservation::Recovery(recovery)
+                if recovery.backup
+                    && matches!(
+                        recovery.tokens.as_slice(),
+                        [ObservedToken::Character { character: 'B', .. }]
+                    )
+        )
+    }));
+
+    observations.0.clear();
+    assert_eq!(
+        control
+            .step_with_observer(&mut universe, &mut observations)
+            .expect("backed-up character replay"),
+        ReplayStep::Continue
+    );
+    observations.0.clear();
+    assert_eq!(
+        control
+            .step_with_observer(&mut universe, &mut observations)
+            .expect("following macro parameter"),
+        ReplayStep::Continue
+    );
+    assert!(observations.0.iter().any(|observation| {
+        matches!(
+            observation,
+            CommandObservation::Input(input)
+                if input.transition == InputTransition::Retire && input.reason == InputReason::Backup
+        )
+    }));
+    assert!(observations.0.iter().any(|observation| {
+        matches!(
+            observation,
+            CommandObservation::Command(delivery)
+                if matches!(
+                    delivery.spelling,
+                    ObservedToken::Character { character: 'A', .. }
+                )
+        )
+    }));
 }
