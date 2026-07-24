@@ -5,10 +5,18 @@
 //! condition is still evaluating its operands.
 
 use tex_state::meaning::{ExpandablePrimitive, Meaning};
+use tex_state::token::{OriginId, TracedTokenWord};
 
 use crate::CommandError;
+use crate::input::{
+    ReplayTrace, RetirementBehavior, SharedTokenBuffer, TokenBehavior, TokenPayload,
+};
 use crate::processor::CommandProcessor;
 use crate::processor::status::{ConditionId, ScannerStatus, ScannerWarning, SkippingContext};
+
+/// Stable pending-diagnostic identities for TeX.web part 28 recovery.
+const INCOMPLETE_IF_DIAGNOSTIC: u64 = 0x636f_6e64_0000_0001;
+const EXTRA_DELIMITER_DIAGNOSTIC: u64 = 0x636f_6e64_0000_0002;
 
 /// TeX conditional opcode, kept distinct from delimiter and limit values.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -97,11 +105,16 @@ pub(crate) enum IfLimit {
 }
 
 impl IfLimit {
-    const fn accepts_skipped_delimiter(self, delimiter: ConditionalDelimiter) -> bool {
-        match delimiter {
-            ConditionalDelimiter::Or => matches!(self, Self::Or),
-            ConditionalDelimiter::Else | ConditionalDelimiter::Fi => true,
-        }
+    /// Whether TeX's `fi_or_else` dispatcher accepts this delimiter for the
+    /// live frame.  The ordering mirrors `fi_code`, `else_code`, and
+    /// `or_code` without sharing their integer command-code representation.
+    const fn accepts_delimiter(self, delimiter: ConditionalDelimiter) -> bool {
+        matches!(
+            (self, delimiter),
+            (_, ConditionalDelimiter::Fi)
+                | (Self::Else | Self::Or, ConditionalDelimiter::Else)
+                | (Self::Or, ConditionalDelimiter::Or)
+        )
     }
 }
 
@@ -341,17 +354,31 @@ impl CommandProcessor<'_> {
     fn evaluate_if(&mut self) -> Result<bool, CommandError> {
         let first = self.get_x_token()?.ok_or(CommandError::InputInvariant)?;
         let second = self.get_x_token()?.ok_or(CommandError::InputInvariant)?;
-        Ok(matches!((first.meaning(), second.meaning()),
-            (Meaning::CharToken { ch: left, .. }, Meaning::CharToken { ch: right, .. }) if left == right
-        ))
+        Ok(Self::if_character_code(first.meaning()) == Self::if_character_code(second.meaning()))
     }
 
     fn evaluate_ifcat(&mut self) -> Result<bool, CommandError> {
         let first = self.get_x_token()?.ok_or(CommandError::InputInvariant)?;
         let second = self.get_x_token()?.ok_or(CommandError::InputInvariant)?;
-        Ok(matches!((first.meaning(), second.meaning()),
-            (Meaning::CharToken { cat: left, .. }, Meaning::CharToken { cat: right, .. }) if left == right
-        ))
+        Ok(Self::if_category_code(first.meaning()) == Self::if_category_code(second.meaning()))
+    }
+
+    /// TeX.web part 28 maps every non-character `\\if` operand to the
+    /// shared sentinel 256 before comparing character codes.
+    fn if_character_code(meaning: Meaning) -> u32 {
+        match meaning {
+            Meaning::CharToken { ch, .. } if (ch as u32) <= u32::from(u8::MAX) => ch as u32,
+            _ => 256,
+        }
+    }
+
+    /// TeX.web part 28 maps every non-character `\\ifcat` operand to the
+    /// shared `relax` command sentinel before comparing category commands.
+    fn if_category_code(meaning: Meaning) -> Option<tex_state::token::Catcode> {
+        match meaning {
+            Meaning::CharToken { cat, .. } => Some(cat),
+            _ => None,
+        }
     }
 
     fn evaluate_ifx(&mut self) -> Result<bool, CommandError> {
@@ -433,18 +460,20 @@ impl CommandProcessor<'_> {
     }
 
     fn resume_after_skip(&mut self, condition: ConditionId) -> Result<(), CommandError> {
-        match self.pass_text(condition, ScannerWarning(0))?.delimiter {
-            ConditionalDelimiter::Else => {
-                self.command
-                    .conditions
-                    .change_if_limit(condition, IfLimit::Fi);
-                Ok(())
+        loop {
+            match self.pass_text(condition, ScannerWarning(0))?.delimiter {
+                ConditionalDelimiter::Else => {
+                    self.command
+                        .conditions
+                        .change_if_limit(condition, IfLimit::Fi);
+                    return Ok(());
+                }
+                ConditionalDelimiter::Fi => {
+                    self.command.conditions.pop();
+                    return Ok(());
+                }
+                ConditionalDelimiter::Or => self.record_extra_delimiter(),
             }
-            ConditionalDelimiter::Fi => {
-                self.command.conditions.pop();
-                Ok(())
-            }
-            ConditionalDelimiter::Or => Err(CommandError::InputInvariant),
         }
     }
 
@@ -460,6 +489,7 @@ impl CommandProcessor<'_> {
             _ => return Err(CommandError::InputInvariant),
         };
         let Some(frame) = self.command.conditions.current().cloned() else {
+            self.record_extra_delimiter();
             return Ok(());
         };
         if self
@@ -468,7 +498,12 @@ impl CommandProcessor<'_> {
             .evaluating_delimiter_recovery(frame.identity, delimiter)
             .is_some()
         {
-            return Err(CommandError::InputInvariant);
+            self.recover_incomplete_if()?;
+            return Ok(());
+        }
+        if !frame.limit.accepts_delimiter(delimiter) {
+            self.record_extra_delimiter();
+            return Ok(());
         }
         match delimiter {
             ConditionalDelimiter::Fi => {
@@ -479,7 +514,7 @@ impl CommandProcessor<'_> {
                 self.command
                     .conditions
                     .change_if_limit(frame.identity, IfLimit::Fi);
-                self.resume_after_skip(frame.identity)
+                self.skip_to_fi_after_delimiter(frame.identity)
             }
             ConditionalDelimiter::Else
                 if frame.kind == ConditionalKind::IfCase && frame.limit == IfLimit::Or =>
@@ -487,7 +522,7 @@ impl CommandProcessor<'_> {
                 self.command
                     .conditions
                     .change_if_limit(frame.identity, IfLimit::Fi);
-                self.resume_after_skip(frame.identity)
+                self.skip_to_fi_after_delimiter(frame.identity)
             }
             ConditionalDelimiter::Or
                 if frame.kind == ConditionalKind::IfCase && frame.limit == IfLimit::Or =>
@@ -495,10 +530,54 @@ impl CommandProcessor<'_> {
                 self.command
                     .conditions
                     .change_if_limit(frame.identity, IfLimit::Fi);
-                self.resume_after_skip(frame.identity)
+                self.skip_to_fi_after_delimiter(frame.identity)
             }
             _ => Ok(()),
         }
+    }
+
+    fn skip_to_fi_after_delimiter(&mut self, condition: ConditionId) -> Result<(), CommandError> {
+        loop {
+            match self.pass_text(condition, ScannerWarning(0))?.delimiter {
+                ConditionalDelimiter::Fi => {
+                    self.command.conditions.pop();
+                    return Ok(());
+                }
+                ConditionalDelimiter::Else | ConditionalDelimiter::Or => {
+                    self.record_extra_delimiter()
+                }
+            }
+        }
+    }
+
+    fn record_extra_delimiter(&mut self) {
+        self.command
+            .expansion
+            .pending_diagnostics
+            .push(EXTRA_DELIMITER_DIAGNOSTIC);
+    }
+
+    /// TeX inserts its inaccessible frozen `\\relax` when a delimiter is
+    /// encountered before the current conditional has consumed its operands.
+    fn recover_incomplete_if(&mut self) -> Result<(), CommandError> {
+        let relax = self
+            .state
+            .primitive_token("relax")
+            .ok_or(CommandError::InputInvariant)?;
+        self.command
+            .expansion
+            .pending_diagnostics
+            .push(INCOMPLETE_IF_DIAGNOSTIC);
+        self.command.push_token_level(
+            TokenPayload::Transient(SharedTokenBuffer::new(vec![TracedTokenWord::pack(
+                relax,
+                OriginId::UNKNOWN,
+            )])),
+            TokenBehavior::Ordinary,
+            RetirementBehavior::Pop,
+            ReplayTrace::Transient(crate::input::TransientReplayReason::Inserted),
+        );
+        Ok(())
     }
     /// TeX.web's `pass_text`: skip through the sole canonical raw delivery
     /// path, never by peeking at input levels or retokenizing source.
@@ -550,12 +629,10 @@ impl CommandProcessor<'_> {
                 }
                 continue;
             }
-            if limit.accepts_skipped_delimiter(delimiter) {
-                return Ok(PassTextStop {
-                    delimiter,
-                    nested_conditions,
-                });
-            }
+            return Ok(PassTextStop {
+                delimiter,
+                nested_conditions,
+            });
         }
     }
 }

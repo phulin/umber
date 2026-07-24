@@ -1145,17 +1145,22 @@ context at their own command transitions.
 1. installs `ScannerStatus::Skipping`;
 2. repeatedly calls canonical `get_next`;
 3. counts nested conditional commands;
-4. stops at the legal `\or`, `\else`, or `\fi` for the target frame;
+4. stops at the next outer `\or`, `\else`, or `\fi`, leaving frame-limit
+   validation and extra-delimiter recovery to the caller;
 5. preserves literal-brace alignment accounting and template interception;
 6. applies outer-validity recovery through the shared mechanism; and
 7. restores the prior scanner status.
 
 The TeX82 predicate dispatcher selects `get_x_token` for character/category
 tests and `get_token` specifically for `\ifx`; the latter preserves raw
-meanings and must not expand either operand. Boolean false limbs and selected
-`\ifcase` limbs re-enter the single `pass_text` machine, while `\else`,
-`\or`, and `\fi` change or pop only the live frame selected by its stable
-identity. Numeric and dimension comparison operands are delegated at the
+meanings and must not expand either operand. Character/category tests normalize
+non-character operands to TeX's common relax sentinel before comparing them.
+Boolean false limbs and selected `\ifcase` limbs re-enter the single
+`pass_text` machine, while `\else`, `\or`, and `\fi` change or pop only the
+live frame selected by its stable identity. Premature delimiters enqueue an
+incomplete-if diagnostic and insert inaccessible frozen relax; delimiters that
+exceed the frame limit enqueue a deterministic extra-delimiter diagnostic and
+are ignored. Numeric and dimension comparison operands are delegated at the
 typed scanner boundary; execution-mode and box predicates consult the
 executor-owned mode nest and aggregate box state when those boundaries are
 active.

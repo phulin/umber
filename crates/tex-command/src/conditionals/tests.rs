@@ -238,6 +238,99 @@ fn ifx_reads_unexpanded_operands_through_get_token() {
 }
 
 #[test]
+fn character_and_category_tests_normalize_non_character_operands() {
+    let mut command = CommandState::default();
+    let mut runtime = CommandRuntime::default();
+    let mut universe = Universe::new();
+    let if_char = install(&mut universe, "if", ExpandablePrimitive::If);
+    let if_cat = install(&mut universe, "ifcat", ExpandablePrimitive::IfCat);
+    let relax = universe.intern("relax").symbol();
+    universe.set_meaning(relax, Meaning::Relax);
+    let otherwise = install(&mut universe, "else", ExpandablePrimitive::Else);
+    let fi = install(&mut universe, "fi", ExpandablePrimitive::Fi);
+    push(
+        &mut command,
+        vec![
+            if_char,
+            Token::Cs(relax),
+            Token::Cs(relax),
+            other('c'),
+            otherwise,
+            other('x'),
+            fi,
+            if_cat,
+            Token::Cs(relax),
+            Token::Cs(relax),
+            other('k'),
+            otherwise,
+            other('x'),
+            fi,
+        ],
+    );
+    let mut capabilities = CommandHostCapabilities::default();
+    let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+
+    assert_eq!(next_character(&mut processor), 'c');
+    assert_eq!(next_character(&mut processor), 'k');
+}
+
+#[test]
+fn skipped_text_recovers_extra_delimiters_deterministically() {
+    let mut command = CommandState::default();
+    let mut runtime = CommandRuntime::default();
+    let mut universe = Universe::new();
+    let if_false = install(&mut universe, "iffalse", ExpandablePrimitive::IfFalse);
+    let otherwise = install(&mut universe, "else", ExpandablePrimitive::Else);
+    let or = install(&mut universe, "or", ExpandablePrimitive::Or);
+    let fi = install(&mut universe, "fi", ExpandablePrimitive::Fi);
+    push(
+        &mut command,
+        vec![
+            if_false,
+            other('f'),
+            or,
+            other('o'),
+            otherwise,
+            other('t'),
+            fi,
+        ],
+    );
+    let mut capabilities = CommandHostCapabilities::default();
+    let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+
+    assert_eq!(next_character(&mut processor), 't');
+    assert_eq!(processor.command.expansion.pending_diagnostics.len(), 1);
+    assert_eq!(
+        processor.get_x_token().expect("final fi expands"),
+        None,
+        "the recovery remains confined to the skipped limb"
+    );
+}
+
+#[test]
+fn delimiter_during_operand_scan_inserts_frozen_relax() {
+    let mut command = CommandState::default();
+    let mut runtime = CommandRuntime::default();
+    let mut universe = Universe::new();
+    let if_char = install(&mut universe, "if", ExpandablePrimitive::If);
+    let otherwise = install(&mut universe, "else", ExpandablePrimitive::Else);
+    let fi = install(&mut universe, "fi", ExpandablePrimitive::Fi);
+    universe.install_primitive_meaning("relax", Meaning::Relax);
+    push(&mut command, vec![if_char, otherwise, other('a'), fi]);
+    let mut capabilities = CommandHostCapabilities::default();
+    let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+
+    assert_eq!(
+        processor
+            .get_x_token()
+            .expect("incomplete conditional recovers"),
+        None
+    );
+    assert_eq!(processor.command.expansion.pending_diagnostics.len(), 1);
+    assert!(processor.command.conditions.current().is_none());
+}
+
+#[test]
 fn unless_reuses_boolean_conditional_evaluation_with_inversion() {
     let mut command = CommandState::default();
     let mut runtime = CommandRuntime::default();
