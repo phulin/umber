@@ -681,9 +681,10 @@ resolved value is retained in `CurrentCommand`, so later assignments cannot
 alter an already delivered command. Test and instrumentation observation
 translates TeX82 conditional primitives from their Rust meaning variants to
 the shared `if_test` command identity and canonical `cur_chr` operand (for
-example, `\iftrue` is operand 14); this metadata does not participate in
-conditional evaluation or condition-stack state. Its `spelling` retains the
-traced token,
+example, `\iftrue` is operand 14), and maps the raw delimiters `\fi`,
+`\else`, and `\or` to `fi_or_else` with operands 2, 3, and 4 respectively.
+This metadata does not participate in conditional evaluation or condition-stack
+state. Its `spelling` retains the traced token,
 and `origin` is exposed directly from that spelling; provenance never affects
 the meaning lookup. Engine-owned frozen tokens resolve through their immutable
 frozen meaning rather than a mutable control-sequence cell.

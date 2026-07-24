@@ -147,6 +147,12 @@ pub(crate) fn canonical_command_identity(meaning: Meaning) -> (String, Option<i6
             ExpandablePrimitive::IfTrue => ("if_test".into(), Some(14)),
             ExpandablePrimitive::IfFalse => ("if_test".into(), Some(15)),
             ExpandablePrimitive::IfCase => ("if_test".into(), Some(16)),
+            // TeX82 likewise stores conditional delimiters under one command
+            // code. Their `cur_chr` operands are `fi_code`, `else_code`, and
+            // `or_code`, rather than the Rust primitive enum discriminants.
+            ExpandablePrimitive::Fi => ("fi_or_else".into(), Some(2)),
+            ExpandablePrimitive::Else => ("fi_or_else".into(), Some(3)),
+            ExpandablePrimitive::Or => ("fi_or_else".into(), Some(4)),
             _ => ("expandable".into(), None),
         },
         Meaning::IntParam(index) => ("assign_int".into(), Some(27_167 + i64::from(index))),
@@ -421,6 +427,22 @@ mod tests {
             assert_eq!(
                 canonical_command_identity(Meaning::ExpandablePrimitive(primitive)),
                 ("if_test".into(), Some(operand))
+            );
+        }
+    }
+
+    #[test]
+    fn tex82_conditional_delimiters_use_shared_fi_or_else_identity() {
+        let expected = [
+            (ExpandablePrimitive::Fi, 2),
+            (ExpandablePrimitive::Else, 3),
+            (ExpandablePrimitive::Or, 4),
+        ];
+
+        for (primitive, operand) in expected {
+            assert_eq!(
+                canonical_command_identity(Meaning::ExpandablePrimitive(primitive)),
+                ("fi_or_else".into(), Some(operand))
             );
         }
     }
