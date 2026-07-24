@@ -1,7 +1,7 @@
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 
-use crate::conditionals::ConditionFrame;
+use crate::conditionals::{ConditionFrame, ConditionalKind, IfLimit};
 use crate::input::SharedTokenBuffer;
 use crate::macro_call::{MacroActivation, MacroActivationId, MacroArgumentRange, MacroArguments};
 use crate::processor::{
@@ -61,9 +61,9 @@ fn populated_quiescent_state() -> CommandState {
         invocation: tex_state::token::OriginId::UNKNOWN,
     });
     state.conditions.frames.push(ConditionFrame {
-        identity: 23,
-        kind: 29,
-        limit: 31,
+        identity: ConditionId(23),
+        kind: ConditionalKind::IfNum,
+        limit: IfLimit::Else,
         source_line: 37,
     });
     state.conditions.next_identity = 41;

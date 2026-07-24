@@ -1131,6 +1131,15 @@ Beginning a condition pushes a frame with the evaluating limit before scanning
 operands. Completing evaluation updates that exact frame identity even if
 recursive operand expansion pushed a nested condition.
 
+The implemented stack uses distinct `ConditionalKind`, `IfLimit`, and
+`ConditionalDelimiter` values rather than sharing TeX's integer command-code
+space. `ConditionId` is monotonic within the command state and
+`change_if_limit` searches by that identity from the stack top, so an operand
+that expands a nested condition cannot retarget its outer frame. A delimiter
+observed while its frame remains `Evaluating` produces typed incomplete-if
+recovery context; recovery insertion and conditional evaluation consume that
+context at their own command transitions.
+
 `pass_text`:
 
 1. installs `ScannerStatus::Skipping`;
