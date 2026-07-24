@@ -86,6 +86,15 @@ impl CommandContext<'_> {
     pub fn frozen_primitive_meaning(&self, token: Token) -> Option<Meaning> {
         self.universe.frozen_primitive_meaning(token)
     }
+
+    /// Returns the immutable replay token for a registered primitive.
+    ///
+    /// Command recovery uses this rather than a mutable control-sequence
+    /// spelling for TeX's `frozen_cr`, `frozen_fi`, and `frozen_par` tokens.
+    #[must_use]
+    pub fn primitive_token(&self, name: &str) -> Option<Token> {
+        self.universe.primitive_token(name)
+    }
 }
 
 impl Universe {

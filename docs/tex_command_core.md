@@ -808,9 +808,16 @@ The implemented scalar loop owns source and token-cursor selection, exact
 retirement/restart, stored token/origin reconstruction, `OutParameter` replay,
 one-delivery backed-up suppression, current-meaning resolution, and literal
 brace `align_state` accounting. `get_token` is routed through that same loop.
-Scanner-status outer recovery and alignment-template interception already have
-their sole entry points in this loop; their status-specific recovery and
-template lifecycle are completed by their later command-core milestones.
+Scanner-status outer recovery and alignment-template interception have their
+sole entry points in this loop. `check_outer_validity` captures the live typed
+status and warning identity, backs up an offending outer macro through exact
+delivery identity, substitutes the current recovery space, clears the live
+scanner episode, and pushes bounded ordinary recovery input. Terminal runaway
+recovery follows the same path: definitions and absorbed text receive `}`;
+macro matching receives frozen `\par`; alignment preambles receive frozen
+`\cr` then `}`; and skipped conditional text receives frozen `\fi`. The
+insertions restart canonical `get_next`; no scanner caller chooses semantic
+recovery.
 
 The input-delivery audit drives the focused committed TeX82
 `input-recovery.tex` source through both public raw entry points for every

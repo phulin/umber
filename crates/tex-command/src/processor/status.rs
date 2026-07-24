@@ -39,6 +39,14 @@ impl ScannerState {
     pub(crate) const fn is_quiescent(&self) -> bool {
         matches!(self.status, ScannerStatus::Normal) && self.warning.is_none()
     }
+
+    /// Leaves the current scanner episode before its inserted recovery input
+    /// is delivered. The scoped caller still restores its complete outer
+    /// state when it returns.
+    pub(crate) fn clear_for_recovery(&mut self) {
+        self.status = ScannerStatus::Normal;
+        self.warning = None;
+    }
 }
 
 #[allow(dead_code)] // invoked by the ordered scanner, macro-call, and conditional milestones
@@ -178,6 +186,23 @@ pub(crate) enum RunawayKind {
     MacroArgument,
     AlignmentPreamble,
     AbsorbedTokens,
+}
+
+/// The context captured before canonical outer-validity recovery clears the
+/// active scanner episode.
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub(crate) struct RecoveryContext {
+    pub(crate) status: ScannerStatus,
+    pub(crate) warning: Option<ScannerWarning>,
+}
+
+impl ScannerState {
+    pub(crate) fn recovery_context(&self) -> RecoveryContext {
+        RecoveryContext {
+            status: self.status.clone(),
+            warning: self.warning,
+        }
+    }
 }
 
 #[cfg(test)]

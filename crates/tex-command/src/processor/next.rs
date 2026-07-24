@@ -16,6 +16,7 @@ use crate::profile::{CharacterCode, CharacterMode};
 use crate::{SourceControlSequenceKind, SourceToken, SourceTokenizationStep};
 
 use super::CommandProcessor;
+use super::status::{RecoveryContext, ScannerStatus};
 
 const DEFAULT_END_LINE_CHAR: i32 = 13;
 
@@ -95,9 +96,9 @@ impl CommandProcessor<'_> {
     ) -> Result<Option<CurrentCommand>, CommandError> {
         loop {
             let Some(delivery) = self.take_input_token()? else {
-                // EOF classification belongs to ScannerState. Recovery-token
-                // insertion is deliberately deferred to outer-validity.
-                let _eof_legality = self.command.scanner.eof_legality();
+                if self.recover_runaway_eof()? {
+                    continue;
+                }
                 return Ok(None);
             };
             let DeliveredToken {
@@ -127,9 +128,11 @@ impl CommandProcessor<'_> {
             ) {
                 command.suppress_expandable();
             }
+            // Outer-validity recovery canonically backs up this exact raw
+            // delivery before substituting its recovery space.
+            self.last_delivery = Some(delivery_stamp);
             self.check_outer_validity_entry(&mut command)?;
             self.alignment_delivery_entry(&command)?;
-            self.last_delivery = Some(delivery_stamp);
             return Ok(Some(command));
         }
     }
@@ -274,13 +277,61 @@ impl CommandProcessor<'_> {
 
     fn check_outer_validity_entry(
         &mut self,
-        _command: &mut CurrentCommand,
+        command: &mut CurrentCommand,
     ) -> Result<(), CommandError> {
-        // The status-specific recovery sequence is installed by the scanner
-        // milestone. Keeping this call at raw delivery prevents a second path
-        // when that state machine is added.
-        let _status = self.command.scanner.status();
+        if !command.is_outer() || matches!(self.command.scanner.status(), ScannerStatus::Normal) {
+            return Ok(());
+        }
+
+        let recovery = self.command.scanner.recovery_context();
+        self.back_input(command.copy_for_backup())?;
+        self.install_outer_recovery(recovery)?;
+        command.recover_as_space();
         Ok(())
+    }
+
+    /// Recovers terminal input only while a scanner episode is live. The
+    /// inserted tokens are then delivered through this same raw loop.
+    fn recover_runaway_eof(&mut self) -> Result<bool, CommandError> {
+        let recovery = self.command.scanner.recovery_context();
+        if matches!(recovery.status, ScannerStatus::Normal) {
+            return Ok(false);
+        }
+        self.install_outer_recovery(recovery)?;
+        Ok(true)
+    }
+
+    /// TeX.web's `check_outer_validity` recovery table. Primitive insertions
+    /// are frozen tokens, retaining their original meanings if user code has
+    /// reassigned their visible spellings.
+    fn install_outer_recovery(&mut self, recovery: RecoveryContext) -> Result<(), CommandError> {
+        let RecoveryContext { status, warning } = recovery;
+        let tokens = match status {
+            ScannerStatus::Normal => return Ok(()),
+            ScannerStatus::Skipping(_) => vec![self.frozen_primitive("fi")?],
+            ScannerStatus::Defining(_) | ScannerStatus::Absorbing(_) => vec![right_brace()],
+            ScannerStatus::Matching(_) => vec![self.frozen_primitive("par")?],
+            ScannerStatus::Aligning(_) => vec![self.frozen_primitive("cr")?, right_brace()],
+        };
+        self.command.scanner.clear_for_recovery();
+        if let Some(warning) = warning {
+            self.command.expansion.pending_diagnostics.push(warning.0);
+        }
+        self.command.push_token_level(
+            TokenPayload::Transient(SharedTokenBuffer::new(tokens)),
+            TokenBehavior::Ordinary,
+            RetirementBehavior::Pop,
+            ReplayTrace::Transient(crate::input::TransientReplayReason::Inserted),
+        );
+        Ok(())
+    }
+
+    fn frozen_primitive(&self, name: &str) -> Result<TracedTokenWord, CommandError> {
+        let token = self
+            .state
+            .primitive_token(name)
+            .ok_or(CommandError::InputInvariant)?;
+        Ok(TracedTokenWord::pack(token, OriginId::UNKNOWN))
     }
 
     fn alignment_delivery_entry(&mut self, command: &CurrentCommand) -> Result<(), CommandError> {
@@ -354,16 +405,31 @@ fn character_from_code(code: CharacterCode) -> char {
     }
 }
 
+fn right_brace() -> TracedTokenWord {
+    TracedTokenWord::pack(
+        Token::Char {
+            ch: '}',
+            cat: Catcode::EndGroup,
+        },
+        OriginId::UNKNOWN,
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
 
     use tex_state::Universe;
-    use tex_state::meaning::{ExpandablePrimitive, Meaning};
+    use tex_state::macro_store::MacroMeaning;
+    use tex_state::meaning::{ExpandablePrimitive, Meaning, MeaningFlags, UnexpandablePrimitive};
     use tex_state::token::{OriginId, Token, TracedTokenWord};
 
     use super::*;
     use crate::input::{ReplayTrace, RetirementBehavior};
+    use crate::processor::{
+        AbsorbingContext, AlignmentId, AlignmentScanContext, ArgumentBuilderId, ConditionId,
+        DefinitionContext, MatchingContext, ScannerWarning, SkippingContext, TokenBuilderId,
+    };
     use crate::{
         CommandHostCapabilities, CommandHostContext, CommandRuntime, CommandState,
         RegisteredSourceKind, SourceRegistration,
@@ -683,6 +749,189 @@ mod tests {
                 ch: 'x',
                 cat: Catcode::Letter,
             }
+        );
+    }
+
+    fn recovery_primitives(universe: &mut Universe) {
+        universe.register_primitive_meaning(
+            "fi",
+            Meaning::ExpandablePrimitive(ExpandablePrimitive::Fi),
+        );
+        universe.register_primitive_meaning(
+            "par",
+            Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Par),
+        );
+        universe.register_primitive_meaning(
+            "cr",
+            Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Cr),
+        );
+    }
+
+    #[test]
+    fn runaway_recovery_inserts_the_status_specific_canonical_tokens() {
+        let mut command = CommandState::default();
+        let mut runtime = CommandRuntime::default();
+        let mut universe = Universe::new();
+        recovery_primitives(&mut universe);
+        let mut capabilities = CommandHostCapabilities::default();
+        let warning = ScannerWarning(17);
+
+        let cases = [
+            (
+                ScannerStatus::Skipping(SkippingContext {
+                    condition: ConditionId(1),
+                    warning,
+                }),
+                vec![universe.primitive_token("fi").expect("fi is registered")],
+            ),
+            (
+                ScannerStatus::Defining(DefinitionContext {
+                    target: None,
+                    builder: TokenBuilderId(2),
+                    warning,
+                }),
+                vec![Token::Char {
+                    ch: '}',
+                    cat: Catcode::EndGroup,
+                }],
+            ),
+            (
+                ScannerStatus::Matching(MatchingContext {
+                    macro_name: universe.intern("argument").symbol(),
+                    builder: ArgumentBuilderId(3),
+                    warning,
+                }),
+                vec![universe.primitive_token("par").expect("par is registered")],
+            ),
+            (
+                ScannerStatus::Aligning(AlignmentScanContext {
+                    alignment: AlignmentId(4),
+                    builder: TokenBuilderId(5),
+                    warning,
+                }),
+                vec![
+                    universe.primitive_token("cr").expect("cr is registered"),
+                    Token::Char {
+                        ch: '}',
+                        cat: Catcode::EndGroup,
+                    },
+                ],
+            ),
+            (
+                ScannerStatus::Absorbing(AbsorbingContext {
+                    owner: None,
+                    builder: TokenBuilderId(6),
+                    warning,
+                }),
+                vec![Token::Char {
+                    ch: '}',
+                    cat: Catcode::EndGroup,
+                }],
+            ),
+        ];
+
+        for (status, expected) in cases {
+            let actual = command.with_scanner_status(status, |command| {
+                let mut processor =
+                    processor(command, &mut runtime, &mut universe, &mut capabilities);
+                let mut delivered = Vec::new();
+                for _ in 0..expected.len() {
+                    delivered.push(
+                        processor
+                            .get_next()
+                            .expect("recovery delivers")
+                            .expect("inserted input is live")
+                            .spelling()
+                            .semantic_token(),
+                    );
+                }
+                assert!(
+                    processor
+                        .get_next()
+                        .expect("terminal input is legal")
+                        .is_none()
+                );
+                delivered
+            });
+            assert_eq!(actual, expected);
+        }
+        assert_eq!(command.expansion.pending_diagnostics, vec![17; 5]);
+    }
+
+    #[test]
+    fn outer_macro_is_backed_up_and_current_delivery_becomes_a_space() {
+        let mut command = CommandState::default();
+        let source = command
+            .register_source(SourceRegistration::new(
+                RegisteredSourceKind::Generated,
+                Arc::<[u8]>::from(b"\\outer".as_slice()),
+            ))
+            .expect("source registers");
+        command
+            .open_registered_source(source)
+            .expect("source opens");
+        let mut runtime = CommandRuntime::default();
+        let mut universe = Universe::new();
+        recovery_primitives(&mut universe);
+        let outer = universe.intern("outer").symbol();
+        let frozen_par = universe.primitive_token("par").expect("par is registered");
+        let parameters = universe.intern_token_list(&[]);
+        let replacement = universe.intern_token_list(&[]);
+        let definition = universe.intern_macro(MacroMeaning::new(
+            MeaningFlags::OUTER,
+            parameters,
+            replacement,
+        ));
+        universe.set_meaning(
+            outer,
+            Meaning::Macro {
+                flags: MeaningFlags::OUTER,
+                definition,
+            },
+        );
+        let mut capabilities = CommandHostCapabilities::default();
+
+        command.with_scanner_status(
+            ScannerStatus::Matching(MatchingContext {
+                macro_name: outer,
+                builder: ArgumentBuilderId(1),
+                warning: ScannerWarning(23),
+            }),
+            |command| {
+                let mut processor =
+                    processor(command, &mut runtime, &mut universe, &mut capabilities);
+                let recovered = processor
+                    .get_next()
+                    .expect("outer delivery succeeds")
+                    .expect("outer is delivered");
+                assert_eq!(
+                    recovered.meaning(),
+                    Meaning::CharToken {
+                        ch: ' ',
+                        cat: Catcode::Space
+                    }
+                );
+                assert_eq!(
+                    processor
+                        .get_next()
+                        .expect("recovery par delivers")
+                        .expect("recovery is live")
+                        .spelling()
+                        .semantic_token(),
+                    frozen_par,
+                );
+                assert_eq!(
+                    processor
+                        .get_next()
+                        .expect("outer replay delivers")
+                        .expect("backup is live")
+                        .meaning(),
+                    Meaning::Macro {
+                        flags: MeaningFlags::OUTER,
+                        definition
+                    },
+                );
+            },
         );
     }
 }

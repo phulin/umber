@@ -77,6 +77,25 @@ impl CurrentCommand {
         }
     }
 
+    /// Converts the effective current command to TeX82's recovery space
+    /// while preserving the original spelling for diagnostics and exact input
+    /// replay. This is the final step of `check_outer_validity`.
+    pub(crate) fn recover_as_space(&mut self) {
+        self.meaning = Meaning::CharToken {
+            ch: ' ',
+            cat: Catcode::Space,
+        };
+        self.control_sequence = None;
+    }
+
+    /// Whether this delivery is an outer macro command.
+    pub(crate) const fn is_outer(&self) -> bool {
+        matches!(
+            self.meaning,
+            Meaning::Macro { flags, .. } if flags.contains(tex_state::meaning::MeaningFlags::OUTER)
+        )
+    }
+
     /// Returns the original token spelling, including its delivery origin.
     #[must_use]
     pub const fn spelling(&self) -> TracedTokenWord {
@@ -106,6 +125,17 @@ impl CurrentCommand {
     #[must_use]
     pub const fn delivery_stamp(&self) -> DeliveryStamp {
         self.delivery
+    }
+
+    /// Makes a fresh copy for the input backup path. `CurrentCommand` itself
+    /// remains deliberately non-`Clone` at the public boundary.
+    pub(crate) const fn copy_for_backup(&self) -> Self {
+        Self {
+            spelling: self.spelling,
+            meaning: self.meaning,
+            control_sequence: self.control_sequence,
+            delivery: self.delivery,
+        }
     }
 }
 
