@@ -193,6 +193,9 @@ pub(crate) fn canonical_command_identity(meaning: Meaning) -> (String, Option<i6
             UnexpandablePrimitive::Par => ("par_end".into(), Some(256)),
             UnexpandablePrimitive::HAlign => ("halign".into(), Some(0)),
             UnexpandablePrimitive::SetBox => ("set_box".into(), Some(0)),
+            UnexpandablePrimitive::HBox => ("make_box".into(), Some(4)),
+            UnexpandablePrimitive::VBox => ("make_box".into(), Some(5)),
+            UnexpandablePrimitive::VTop => ("make_box".into(), Some(6)),
             // Explicit group primitives share TeX82's `begin_group` and
             // `end_group` command codes with a zero selector. Their Rust
             // enum discriminants must not leak into the trace.

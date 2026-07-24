@@ -17,11 +17,13 @@ use tex_state::glue::GlueSpec;
 use tex_state::interner::Symbol;
 use tex_state::macro_store::{MacroDefinitionProvenance, MacroMeaning};
 use tex_state::meaning::{Meaning, MeaningFlags, UnexpandablePrimitive};
+use tex_state::node::Node;
 use tex_state::scaled::Scaled;
 use tex_state::token::Catcode;
 #[cfg(any(test, feature = "instrumentation"))]
 use tex_state::token::Token;
-use tex_state::{PrintSink, TracedTokenList, Universe};
+use tex_state::{GroupKind, PrintSink, TracedTokenList, Universe};
+use tex_typeset::PackSpec;
 
 use crate::{ExecError, Mode, ModeNest};
 
@@ -34,6 +36,27 @@ pub struct CommandReplayControl {
     modes: ModeNest,
     next_alignment_identity: u64,
     active_alignment: Option<AlignmentIdentity>,
+    boxes: ReplayBoxes,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct SetBoxTarget {
+    index: u16,
+    global: bool,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct ActiveReplayBox {
+    target: SetBoxTarget,
+    opening_brace_replay: bool,
+    body_opener_pending: bool,
+    depth: u32,
+}
+
+#[derive(Debug, Default)]
+struct ReplayBoxes {
+    pending_setbox: Option<SetBoxTarget>,
+    active_box: Option<ActiveReplayBox>,
 }
 
 impl CommandReplayControl {
@@ -125,9 +148,14 @@ impl CommandReplayControl {
                 .map_err(command_error)?
             {
                 None => ScannedStep::EndOfInput,
-                Some(AlignmentDelivery::Command(command)) => {
-                    scan_command(&mut processor, command, false, MeaningFlags::EMPTY, false)?
-                }
+                Some(AlignmentDelivery::Command(command)) => scan_command(
+                    &mut processor,
+                    command,
+                    false,
+                    MeaningFlags::EMPTY,
+                    false,
+                    &ReplayBoxes::default(),
+                )?,
                 Some(AlignmentDelivery::Event(event)) => {
                     processor
                         .begin_alignment_v_template(alignment, event)
@@ -143,6 +171,7 @@ impl CommandReplayControl {
             &mut self.next_alignment_identity,
             &mut self.active_alignment,
             &mut self.command,
+            &mut self.boxes,
         )
     }
 
@@ -159,7 +188,7 @@ impl CommandReplayControl {
                 stores.command_context(),
                 CommandHostContext::new(&mut self.capabilities),
             );
-            scan_step(&mut processor, starts_paragraph)?
+            scan_step(&mut processor, starts_paragraph, &self.boxes)?
         };
         apply_scanned_step(
             scanned,
@@ -168,6 +197,7 @@ impl CommandReplayControl {
             &mut self.next_alignment_identity,
             &mut self.active_alignment,
             &mut self.command,
+            &mut self.boxes,
         )
     }
 
@@ -191,7 +221,7 @@ impl CommandReplayControl {
                 CommandHostContext::new(&mut self.capabilities),
             )
             .with_observer(observer);
-            scan_step(&mut processor, starts_paragraph)?
+            scan_step(&mut processor, starts_paragraph, &self.boxes)?
         };
         let mutation = applied_mutation_observation(&scanned, stores);
         let effect = applied_effect_observation(&scanned, stores);
@@ -202,6 +232,7 @@ impl CommandReplayControl {
             &mut self.next_alignment_identity,
             &mut self.active_alignment,
             &mut self.command,
+            &mut self.boxes,
         );
         if result.is_ok()
             && let Some(mutation) = mutation
@@ -332,6 +363,11 @@ enum ScannedStep {
     BeginAlignment {
         vertical: bool,
     },
+    SetBox(SetBoxTarget),
+    BeginVBox,
+    ReplayBoxOpeningBrace,
+    BoxBeginGroup,
+    BoxEndGroup,
     Paragraph,
     MathShift,
     ParagraphStart,
@@ -341,6 +377,7 @@ enum ScannedStep {
 fn scan_step(
     processor: &mut CommandProcessor<'_>,
     starts_paragraph: bool,
+    boxes: &ReplayBoxes,
 ) -> Result<ScannedStep, ExecError> {
     let Some(mut command) = processor.get_x_token().map_err(command_error)? else {
         return Ok(ScannedStep::EndOfInput);
@@ -363,7 +400,7 @@ fn scan_step(
         }
         command = next_non_space(processor)?.ok_or(ExecError::MissingPrefixedCommand)?;
     }
-    scan_command(processor, command, global, flags, starts_paragraph)
+    scan_command(processor, command, global, flags, starts_paragraph, boxes)
 }
 
 fn scan_command(
@@ -372,7 +409,40 @@ fn scan_command(
     global: bool,
     flags: MeaningFlags,
     starts_paragraph: bool,
+    boxes: &ReplayBoxes,
 ) -> Result<ScannedStep, ExecError> {
+    if boxes
+        .active_box
+        .is_some_and(|box_state| box_state.opening_brace_replay)
+        && matches!(
+            command.meaning(),
+            Meaning::CharToken {
+                cat: Catcode::BeginGroup,
+                ..
+            }
+        )
+    {
+        processor
+            .back_input_after_backup_replay(command)
+            .map_err(command_error)?;
+        return Ok(ScannedStep::ReplayBoxOpeningBrace);
+    }
+    if boxes
+        .active_box
+        .is_some_and(|box_state| !box_state.opening_brace_replay)
+    {
+        match command.meaning() {
+            Meaning::CharToken {
+                cat: Catcode::BeginGroup,
+                ..
+            } => return Ok(ScannedStep::BoxBeginGroup),
+            Meaning::CharToken {
+                cat: Catcode::EndGroup,
+                ..
+            } => return Ok(ScannedStep::BoxEndGroup),
+            _ => {}
+        }
+    }
     match command.meaning() {
         Meaning::UnexpandablePrimitive(
             UnexpandablePrimitive::End | UnexpandablePrimitive::Dump,
@@ -520,6 +590,18 @@ fn scan_command(
             Ok(ScannedStep::Message {
                 tokens: tokens.tokens,
             })
+        }
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::SetBox) => {
+            let assignment = processor.scan_setbox_assignment().map_err(command_error)?;
+            let index = u16::try_from(assignment.index)
+                .map_err(|_| ExecError::RegisterNumberOutOfRange(assignment.index))?;
+            Ok(ScannedStep::SetBox(SetBoxTarget { index, global }))
+        }
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::VBox)
+            if boxes.pending_setbox.is_some() =>
+        {
+            processor.scan_box_group_opening().map_err(command_error)?;
+            Ok(ScannedStep::BeginVBox)
         }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::HAlign) => {
             Ok(ScannedStep::BeginAlignment { vertical: false })
@@ -840,6 +922,7 @@ fn apply_scanned_step(
     next_alignment_identity: &mut u64,
     active_alignment: &mut Option<AlignmentIdentity>,
     command: &mut CommandState,
+    boxes: &mut ReplayBoxes,
 ) -> Result<ReplayStep, ExecError> {
     match scanned {
         ScannedStep::Continue => Ok(ReplayStep::Continue),
@@ -1017,6 +1100,74 @@ fn apply_scanned_step(
             stores
                 .world_mut()
                 .write_text(PrintSink::TerminalAndLog, &text);
+            Ok(ReplayStep::Continue)
+        }
+        ScannedStep::SetBox(target) => {
+            boxes.pending_setbox = Some(target);
+            Ok(ReplayStep::Continue)
+        }
+        ScannedStep::BeginVBox => {
+            let target = boxes.pending_setbox.take().ok_or(ExecError::MissingToken {
+                context: "setbox target",
+            })?;
+            stores.enter_group_with_kind(GroupKind::VBox);
+            modes.push(Mode::InternalVertical);
+            boxes.active_box = Some(ActiveReplayBox {
+                target,
+                opening_brace_replay: true,
+                body_opener_pending: true,
+                depth: 1,
+            });
+            Ok(ReplayStep::Continue)
+        }
+        ScannedStep::ReplayBoxOpeningBrace => {
+            let box_state = boxes.active_box.as_mut().ok_or(ExecError::MissingToken {
+                context: "box opening brace",
+            })?;
+            box_state.opening_brace_replay = false;
+            Ok(ReplayStep::Continue)
+        }
+        ScannedStep::BoxBeginGroup => {
+            let box_state = boxes.active_box.as_mut().ok_or(ExecError::MissingToken {
+                context: "box group",
+            })?;
+            if box_state.body_opener_pending {
+                // The first replayed brace is the box body's required opener;
+                // its scope is represented by the VBox group entered above.
+                box_state.body_opener_pending = false;
+            } else {
+                box_state.depth = box_state.depth.saturating_add(1);
+            }
+            Ok(ReplayStep::Continue)
+        }
+        ScannedStep::BoxEndGroup => {
+            let box_state = boxes.active_box.as_mut().ok_or(ExecError::MissingToken {
+                context: "box group",
+            })?;
+            if box_state.depth > 1 {
+                box_state.depth -= 1;
+                return Ok(ReplayStep::Continue);
+            }
+            let box_state = boxes.active_box.take().expect("active box was checked");
+            let _ = modes.pop()?;
+            let children = stores.freeze_node_list(&[]);
+            let packed = crate::packing_params::vpack(
+                stores,
+                children,
+                PackSpec::Natural,
+                crate::packing_params::vpack_params(stores),
+            );
+            let boxed = stores.freeze_node_list(&[Node::VList(packed.node)]);
+            stores
+                .leave_group_with_kind(GroupKind::VBox)
+                .map_err(|_| ExecError::MissingToken {
+                    context: "vbox group",
+                })?;
+            if box_state.target.global {
+                stores.set_box_reg_global(box_state.target.index, boxed);
+            } else {
+                stores.set_box_reg(box_state.target.index, boxed);
+            }
             Ok(ReplayStep::Continue)
         }
         ScannedStep::BeginAlignment { vertical } => {

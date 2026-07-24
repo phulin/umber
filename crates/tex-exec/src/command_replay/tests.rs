@@ -141,6 +141,61 @@ fn canonical_initex_replay_scans_token_register_assignments_through_command_core
 }
 
 #[test]
+fn canonical_initex_replay_scans_setbox_then_hands_vbox_to_executor() {
+    let mut universe = Universe::new();
+    let mut control = CommandReplayControl::tex82_initex(&mut universe);
+    register_source(&mut control, br"\setbox10=\vbox{}\end");
+    let mut observations = ObservationRecorder::default();
+
+    assert_eq!(
+        control
+            .step_with_observer(&mut universe, &mut observations)
+            .expect("setbox prefix"),
+        ReplayStep::Continue
+    );
+    assert_eq!(
+        control
+            .step_with_observer(&mut universe, &mut observations)
+            .expect("vbox handoff"),
+        ReplayStep::Continue
+    );
+    assert!(matches!(
+        universe.group_kinds().next_back(),
+        Some(tex_state::GroupKind::VBox)
+    ));
+    assert_eq!(
+        control.step(&mut universe).expect("replay opener"),
+        ReplayStep::Continue
+    );
+    assert_eq!(
+        control.step(&mut universe).expect("enter body"),
+        ReplayStep::Continue
+    );
+    assert_eq!(
+        control.step(&mut universe).expect("package vbox"),
+        ReplayStep::Continue
+    );
+    assert!(
+        universe.box_reg(10).is_some(),
+        "vbox is assigned at group exit"
+    );
+
+    assert!(observations.0.windows(2).any(|pair| {
+        matches!(
+            &pair,
+            [CommandObservation::Input(input), CommandObservation::Recovery(recovery)]
+                if input.transition == InputTransition::Backup
+                    && input.reason == InputReason::Backup
+                    && recovery.backup
+        )
+    }));
+    assert!(observations.0.iter().any(|event| {
+        matches!(event, CommandObservation::Command(command)
+            if command.command == "make_box" && command.command_operand == Some(5))
+    }));
+}
+
+#[test]
 fn canonical_initex_replay_observes_committed_message_effects() {
     let mut universe = Universe::new();
     let mut control = CommandReplayControl::tex82_initex(&mut universe);

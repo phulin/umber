@@ -46,6 +46,16 @@ pub struct ScannedLetAssignment {
     pub meaning: Meaning,
 }
 
+/// The command-owned operand prefix of TeX82's `\setbox` assignment.
+///
+/// The following box command deliberately remains a normal main-control
+/// delivery.  This preserves TeX82's `scan_int`/optional-equals recovery
+/// before executor-owned box construction takes over.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ScannedSetBoxAssignment {
+    pub index: i32,
+}
+
 /// The canonical boundary that stopped an unbraced filename scan.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum FileNameTermination {
@@ -71,6 +81,24 @@ pub struct RegisteredInput {
 }
 
 impl CommandProcessor<'_> {
+    /// Scans the register number and optional equals sign of `\setbox`.
+    ///
+    /// TeX.web's `prefixed_command` dispatches `set_box` to `scan_int` then
+    /// `scan_optional_equals`; the latter must retain its ordinary backup
+    /// transition when the equals sign is present.
+    pub fn scan_setbox_assignment(&mut self) -> Result<ScannedSetBoxAssignment, CommandError> {
+        let index = self.scan_integer()?.value;
+        let _ = self.scan_optional_equals()?;
+        Ok(ScannedSetBoxAssignment { index })
+    }
+
+    /// Validates a box body's required opening brace, then restores it for
+    /// executor-owned group entry.
+    pub fn scan_box_group_opening(&mut self) -> Result<(), CommandError> {
+        let opening = self.scan_left_brace(true)?;
+        self.back_input(opening)
+    }
+
     /// Scans TeX's balanced general text through the canonical `scan_toks`
     /// collector. `expanded` controls its TeX82 expanded-collection mode.
     pub fn scan_balanced_text(

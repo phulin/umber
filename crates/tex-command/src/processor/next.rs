@@ -147,6 +147,17 @@ impl CommandProcessor<'_> {
         self.back_input_with_treatment(command, BackupTreatment::Ordinary)
     }
 
+    /// Replaces an exhausted one-token backup with a fresh backup of its
+    /// replayed delivery.  TeX82 uses this when a scanner hands an opening
+    /// brace from one structural phase to the next.
+    pub fn back_input_after_backup_replay(
+        &mut self,
+        command: CurrentCommand,
+    ) -> Result<(), CommandError> {
+        self.retire_exhausted_backup_before_scalar_replay(command.delivery_stamp())?;
+        self.back_input(command)
+    }
+
     /// Restores a command and records the diagnostic selected by `back_error`.
     ///
     /// Scanner-status recovery supplies the canonical diagnostic identity in a

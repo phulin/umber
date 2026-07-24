@@ -307,6 +307,15 @@ deliveries, optional-equals handling, and `\futurelet`'s two-token lookahead
 replay; `CommandReplayControl` applies the captured meaning only after that
 processor borrow ends and then publishes the committed meaning mutation.
 
+TeX82 `\setbox` follows the same split in two phases. `CommandProcessor`
+scans the register integer and optional equals sign as a typed
+`ScannedSetBoxAssignment`, including the canonical backup of the equals
+delivery. The following `\vbox` remains an ordinary command delivery; replay
+validates and backs up its required opening brace through the processor, then
+opens, packages, and assigns the executor-owned box group.
+This keeps box construction from acquiring a raw-input API while retaining the
+observable scanner and backup ordering.
+
 ### 5.4 Proposed module layout
 
 ```text
