@@ -4,11 +4,20 @@ mod backup;
 mod levels;
 mod lines;
 mod source;
+mod stack;
 mod summary;
 mod tokenizer;
 
-pub(crate) use levels::{InputLevel, InputLevelId, SharedTokenBuffer, SourceLevel};
+pub(crate) use levels::{
+    InputLevel, InputLevelId, ReplayTrace, RetirementBehavior, SharedTokenBuffer, SourceLevel,
+    TokenBehavior, TokenCursor, TokenPayload,
+};
 pub(crate) use source::{RegisteredSource, SourceCursor};
+#[allow(unused_imports)] // consumed by the ordered raw-delivery implementation issues
+pub(crate) use stack::{
+    InputRetirement, InputRetirementAction, InputRetirementError, OutParameterReplay,
+    ParameterReplayError,
+};
 
 pub use lines::{LineTerminator, PhysicalLine, SourceCharacter, SourceRange, SourceScalarRange};
 pub use source::{

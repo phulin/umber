@@ -41,6 +41,9 @@ Private state-machine modules must not be widened for compatibility with
 - `src/input/levels.rs`, `src/input/levels/tests.rs`: dense source/token-list
   levels, stored/transient/argument payload ownership, orthogonal delivery and
   retirement behavior, replay explanations, and focused ownership tests.
+- `src/input/stack.rs`, `src/input/stack/tests.rs`: exact input retirement,
+  retained v-template lifecycle, macro-activation cleanup, `param_start`
+  parameter replay ownership, and trace-independence tests.
 - `src/input/`: remaining private backup and summary state machines.
 - `src/processor/`: public borrow-only processor facade with private raw
   delivery, expansion, scanner-status, and alignment orchestration.

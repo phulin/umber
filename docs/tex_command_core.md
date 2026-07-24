@@ -657,6 +657,7 @@ enum RetirementBehavior {
     Pop,
     StopAtEnd,
     RetainExhaustedVTemplate,
+    AwaitingVTemplateRetirement,
     CloseScantokens,
 }
 ```
@@ -673,6 +674,16 @@ levels. Exact-byte and Unicode source cursors use this identical enum.
 `OutputRoutine`, and similar explanations belong in `ReplayTrace` unless they
 demonstrably change retirement behavior. Trace reasons never select expansion
 semantics.
+
+Exhaustion commits against the exact `InputLevelId`. Ordinary, terminal-stop,
+and `\scantokens` levels pop once; popping releases only the cursor's ownership
+of transient or stored backing. An exhausted v-template instead transitions
+once to `AwaitingVTemplateRetirement`, remains the exact top level through
+end-template delivery, and is popped only after successful `do_endv`.
+Macro-body retirement atomically removes the activation matching that level's
+typed `param_start`; a mismatched activation chain is rejected before either
+owner is mutated. The committed lifecycle record may copy `ReplayTrace` for
+observation, but neither its action nor activation cleanup consults that trace.
 
 ### 12.3 Macro parameters
 

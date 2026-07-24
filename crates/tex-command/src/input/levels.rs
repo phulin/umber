@@ -109,6 +109,8 @@ pub(crate) enum RetirementBehavior {
     Pop,
     StopAtEnd,
     RetainExhaustedVTemplate,
+    /// The exhausted v-template has reported its end and awaits `do_endv`.
+    AwaitingVTemplateRetirement,
     CloseScantokens,
 }
 
