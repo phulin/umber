@@ -38,6 +38,13 @@ returned to that same processor episode for v-template installation. Thus
 replay does not turn alignment, mode changes, or effects into a second source
 consumer.
 
+During the command-owned preamble scan, TeX82 §760 removes catcode-10 spacer
+commands only while collecting the beginning of each u-template; a v-template
+and spaces after the first u-template token remain frozen verbatim. This
+normalization happens before `AlignmentPreamble` crosses to `tex-exec`, which
+therefore still receives immutable templates and never interprets their raw
+tokens.
+
 Umber will preserve that command-machine boundary while deliberately replacing
 TeX's global variables, linked `mem` nodes, synchronous host I/O, and
 allocation identities with:

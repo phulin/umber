@@ -275,6 +275,94 @@ fn rule_spec_scans_expanded_keywords_and_dimensions() {
 }
 
 #[test]
+fn alignment_preamble_discards_leading_spaces_from_each_u_template_only() {
+    let mut command = CommandState::default();
+    let alignment = crate::AlignmentIdentity::new(1);
+    command.begin_alignment(alignment);
+    let mut runtime = CommandRuntime::default();
+    let mut universe = Universe::new();
+    let hfil = universe.intern("hfil").symbol();
+    let cr = universe.intern("cr").symbol();
+    universe.set_meaning(
+        hfil,
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::HFil),
+    );
+    universe.set_meaning(
+        cr,
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Cr),
+    );
+    push(
+        &mut command,
+        [
+            Token::Char {
+                ch: '{',
+                cat: Catcode::BeginGroup,
+            },
+            Token::Char {
+                ch: ' ',
+                cat: Catcode::Space,
+            },
+            Token::Cs(hfil),
+            Token::Char {
+                ch: '#',
+                cat: Catcode::Parameter,
+            },
+            Token::Char {
+                ch: ' ',
+                cat: Catcode::Space,
+            },
+            Token::Cs(hfil),
+            Token::Char {
+                ch: '&',
+                cat: Catcode::AlignmentTab,
+            },
+            Token::Char {
+                ch: ' ',
+                cat: Catcode::Space,
+            },
+            Token::Cs(hfil),
+            Token::Char {
+                ch: '#',
+                cat: Catcode::Parameter,
+            },
+            Token::Cs(cr),
+        ],
+    );
+    let mut capabilities = CommandHostCapabilities::default();
+    {
+        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+        processor
+            .scan_alignment_preamble_opening()
+            .expect("opening brace validates and backs up");
+        processor
+            .replay_alignment_preamble_opening()
+            .expect("opening brace replays before preamble collection");
+        processor
+            .begin_alignment_preamble_scan()
+            .expect("preamble scans");
+    }
+
+    let preamble = command
+        .take_completed_alignment_preamble(alignment)
+        .expect("frozen preamble is available");
+    assert_eq!(preamble.columns.len(), 2);
+    for column in &preamble.columns {
+        let template = column.u_template.expect("u-template remains nonempty");
+        assert_eq!(universe.tokens(template.token_list()), &[Token::Cs(hfil)]);
+    }
+    assert_eq!(
+        universe.tokens(preamble.columns[0].v_template.token_list()),
+        &[
+            Token::Char {
+                ch: ' ',
+                cat: Catcode::Space,
+            },
+            Token::Cs(hfil),
+        ]
+    );
+}
+
+#[test]
 fn filename_registered_input_recovery_and_rollback_stay_command_owned() {
     let mut command = CommandState::default();
     push(

@@ -320,7 +320,17 @@ impl CommandProcessor<'_> {
             }
             if in_v_template {
                 v_template.push(command.spelling());
-            } else {
+            } else if !matches!(
+                command.meaning(),
+                Meaning::CharToken {
+                    cat: Catcode::Space,
+                    ..
+                }
+            ) || !u_template.is_empty()
+            {
+                // TeX82 §760 copies a u-template token only when it is not
+                // a spacer, or when an earlier token has already made the
+                // template nonempty. V-template spaces are retained above.
                 u_template.push(command.spelling());
             }
         }
