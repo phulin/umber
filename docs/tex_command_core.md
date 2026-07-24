@@ -176,8 +176,12 @@ selected u-template. The delimiter never reappears as ordinary raw delivery.
 
 Command observation preserves TeX82's raw command identity before that
 interception: `\cr` and `\crcr` are both `car_ret`, with `cur_chr` 257 and
-258 respectively. This identity is emitted at both raw and ordinary expanded
-delivery boundaries; it does not alter alignment delivery semantics.
+258 respectively. `\omit` is likewise observed as its own `omit` command with
+`cur_chr` 0, even though the executor receives only the typed omit semantics
+that select the no-u-template cell path. These identities are emitted at both
+raw and ordinary expanded delivery boundaries; they do not alter alignment
+delivery semantics. This follows TeX82 §15 (command codes), §18 (primitive
+initialization), and §37 (`init_col`/`fin_col` alignment handling).
 
 After `init_align` validates and replays its opening brace, the command
 processor owns the complete `get_preamble_token` episode. It retains raw

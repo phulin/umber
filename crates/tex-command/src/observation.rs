@@ -206,6 +206,12 @@ pub(crate) fn canonical_command_identity(meaning: Meaning) -> (String, Option<i6
             // See TeX.web's `cr_code` and `cr_cr_code` definitions.
             UnexpandablePrimitive::Cr => ("car_ret".into(), Some(257)),
             UnexpandablePrimitive::CrCr => ("car_ret".into(), Some(258)),
+            // TeX82 assigns `\\omit` its own command code and installs it
+            // with `cur_chr = 0`; the executor's alignment-cell handling
+            // consumes the typed primitive without reconstructing this
+            // observational identity. See TeX.web §§15, 18, and 37
+            // (`init_col`).
+            UnexpandablePrimitive::Omit => ("omit".into(), Some(0)),
             UnexpandablePrimitive::HAlign => ("halign".into(), Some(0)),
             // TeX82 registers the horizontal glue shorthands with the same
             // `hskip` command code and a zero `cur_chr`; their distinct
@@ -460,6 +466,14 @@ mod tests {
                 ("car_ret".into(), Some(operand))
             );
         }
+    }
+
+    #[test]
+    fn omit_uses_tex82_omit_identity() {
+        assert_eq!(
+            canonical_command_identity(Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Omit)),
+            ("omit".into(), Some(0))
+        );
     }
 
     #[test]
