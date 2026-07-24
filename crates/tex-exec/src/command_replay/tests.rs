@@ -1205,6 +1205,52 @@ fn command_owned_endv_finishes_cell_and_publishes_retirement_in_canonical_order(
 }
 
 #[test]
+fn nested_alignment_begin_suspends_the_outer_replay_context() {
+    let mut universe = Universe::new();
+    let mut control = CommandReplayControl::tex82_initex(&mut universe);
+    let outer = AlignmentIdentity::new(1);
+    control
+        .command
+        .apply_alignment_request(AlignmentRequest::Begin(outer))
+        .expect("outer alignment begins");
+    control.active_alignment = Some(ActiveReplayAlignment {
+        identity: outer,
+        columns: Vec::new(),
+        column: 0,
+        preamble_opening_pending: false,
+        preamble_opening_replay_pending: false,
+        preamble_start_pending: false,
+        cell_opening_pending: false,
+        next_cell_opening_pending: false,
+        align_peek_pending: false,
+        align_peek_after_noalign: false,
+        noalign_depth: None,
+    });
+    control.next_alignment_identity = 2;
+
+    apply_scanned_step(
+        ScannedStep::BeginAlignment { vertical: false },
+        &mut universe,
+        &mut control.modes,
+        &mut control.next_alignment_identity,
+        &mut control.active_alignment,
+        &mut control.command,
+        &mut control.boxes,
+    )
+    .expect("nested alignment begins through typed suspension");
+
+    assert_eq!(control.boxes.suspended_alignments.len(), 1);
+    let inner = control
+        .active_alignment()
+        .expect("inner alignment is active");
+    assert_ne!(inner, outer);
+    control
+        .apply_alignment_request(AlignmentRequest::Finish(inner))
+        .expect("inner alignment finishes and resumes the outer context");
+    assert_eq!(control.active_alignment(), Some(outer));
+}
+
+#[test]
 fn scanner_backed_endv_retires_before_an_omit_template() {
     let mut universe = Universe::new();
     crate::install_unexpandable_primitives(&mut universe);

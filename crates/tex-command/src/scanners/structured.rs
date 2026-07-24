@@ -398,8 +398,11 @@ impl CommandProcessor<'_> {
             );
             if ends_column || ends_preamble {
                 columns.push(AlignmentCellTemplates {
-                    u_template: (!u_template.is_empty())
-                        .then(|| self.state.finish_traced_token_list(&u_template)),
+                    // `init_col` installs a u-template even when its token
+                    // list is empty. `None` is reserved for the typed
+                    // `\\omit` path; collapsing the two would skip the
+                    // command-owned 1000000 sentinel and replay ordering.
+                    u_template: Some(self.state.finish_traced_token_list(&u_template)),
                     v_template: self.state.finish_traced_token_list(&v_template),
                 });
                 u_template.clear();

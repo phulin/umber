@@ -61,6 +61,16 @@ deliberately has no brace-depth shadow. Nested alignments suspend and restore
 the complete outer `InputStack` alignment level, matching `push_alignment` and
 `pop_alignment`.
 
+When a box begins in an active cell, its required body opener follows the
+ordinary box scanner path: command delivery validates the brace, backs it up,
+and replays it before the box group is entered. If that body starts a nested
+alignment, replay requests `Suspend` for the outer alignment before `Begin`
+for the inner one; when the inner `fin_align` completes, it requests `Finish`
+then `Resume`. Thus `tex-exec` may maintain a structural stack of boxes and
+alignment packaging contexts, but it never consumes, classifies, or restores
+the raw brace/token state saved by `push_alignment`/`pop_alignment` (TeX82
+§§37, 765--772).
+
 Instrumentation carries a brace delivery's pre-change and committed
 `align_state` directly from `tex-command`. The host-only command-stream
 translator maps those begin/end-group records to canonical `state_change`

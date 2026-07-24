@@ -61,6 +61,40 @@ impl CommandState {
             })
     }
 
+    /// Returns the committed observation for a command-owned outer alignment
+    /// suspension. The executor chooses the structural boundary, while this
+    /// state remains the sole owner of the saved delivery snapshot.
+    #[cfg(any(test, feature = "instrumentation"))]
+    #[must_use]
+    pub fn alignment_suspend_observation(&self) -> Option<AlignmentRecord> {
+        self.alignment
+            .suspended
+            .last()
+            .map(|suspended| AlignmentRecord {
+                transition: "suspend",
+                alignment: Some(suspended.alignment.raw()),
+                align_state: suspended.align_state,
+                delimiter: None,
+                previous_align_state: None,
+            })
+    }
+
+    /// Returns the committed observation after a saved outer alignment has
+    /// resumed its command-owned delivery state.
+    #[cfg(any(test, feature = "instrumentation"))]
+    #[must_use]
+    pub fn alignment_resume_observation(&self) -> Option<AlignmentRecord> {
+        self.alignment
+            .active_alignment
+            .map(|alignment| AlignmentRecord {
+                transition: "resume",
+                alignment: Some(alignment.raw()),
+                align_state: self.alignment.align_state,
+                delimiter: None,
+                previous_align_state: None,
+            })
+    }
+
     /// Applies an executor-owned structural alignment request.
     ///
     /// This is the only lifecycle entry point required by `tex-exec`.  It has

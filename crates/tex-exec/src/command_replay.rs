@@ -49,7 +49,7 @@ struct SetBoxTarget {
 
 #[derive(Clone, Copy, Debug)]
 struct ActiveReplayBox {
-    target: SetBoxTarget,
+    target: Option<SetBoxTarget>,
     opening_brace_replay: bool,
     body_opener_pending: bool,
     depth: u32,
@@ -73,7 +73,8 @@ struct ActiveReplayAlignment {
 #[derive(Debug, Default)]
 struct ReplayBoxes {
     pending_setbox: Option<SetBoxTarget>,
-    active_box: Option<ActiveReplayBox>,
+    active_boxes: Vec<ActiveReplayBox>,
+    suspended_alignments: Vec<ActiveReplayAlignment>,
 }
 
 impl CommandReplayControl {
@@ -148,6 +149,14 @@ impl CommandReplayControl {
             && self.active_alignment.as_ref().map(|active| active.identity) == Some(identity)
         {
             self.active_alignment = None;
+            if let Some(outer) = self.boxes.suspended_alignments.pop() {
+                self.command
+                    .apply_alignment_request(AlignmentRequest::Resume(outer.identity))
+                    .map_err(|_| ExecError::MissingToken {
+                        context: "nested alignment resumption",
+                    })?;
+                self.active_alignment = Some(outer);
+            }
         }
         if preamble
             && let Some(active) = self.active_alignment.as_mut()
@@ -252,6 +261,7 @@ impl CommandReplayControl {
         let mutation = applied_mutation_observation(&scanned, stores);
         let effect = applied_effect_observation(&scanned, stores);
         let begins_alignment = matches!(&scanned, ScannedStep::BeginAlignment { .. });
+        let suspends_alignment = begins_alignment && self.active_alignment.is_some();
         let begins_alignment_cell = matches!(&scanned, ScannedStep::AlignmentPreambleStart { .. });
         let installs_u_template = match &scanned {
             ScannedStep::AlignmentCellOpening {
@@ -293,6 +303,11 @@ impl CommandReplayControl {
             &mut self.boxes,
         );
         if result.is_ok() {
+            if suspends_alignment
+                && let Some(alignment) = self.command.alignment_suspend_observation()
+            {
+                observer.committed(CommandObservation::Alignment(alignment));
+            }
             if begins_alignment && let Some(alignment) = self.command.alignment_begin_observation()
             {
                 observer.committed(CommandObservation::Alignment(alignment));
@@ -737,7 +752,8 @@ fn scan_command(
     boxes: &ReplayBoxes,
 ) -> Result<ScannedStep, ExecError> {
     if boxes
-        .active_box
+        .active_boxes
+        .last()
         .is_some_and(|box_state| box_state.opening_brace_replay)
         && matches!(
             command.meaning(),
@@ -753,7 +769,8 @@ fn scan_command(
         return Ok(ScannedStep::ReplayBoxOpeningBrace);
     }
     if boxes
-        .active_box
+        .active_boxes
+        .last()
         .is_some_and(|box_state| !box_state.opening_brace_replay)
     {
         match command.meaning() {
@@ -953,9 +970,7 @@ fn scan_command(
                 .map_err(|_| ExecError::RegisterNumberOutOfRange(assignment.index))?;
             Ok(ScannedStep::SetBox(SetBoxTarget { index, global }))
         }
-        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::VBox)
-            if boxes.pending_setbox.is_some() =>
-        {
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::VBox) => {
             processor.scan_box_group_opening().map_err(command_error)?;
             Ok(ScannedStep::BeginVBox)
         }
@@ -1574,12 +1589,10 @@ fn apply_scanned_step(
             Ok(ReplayStep::Continue)
         }
         ScannedStep::BeginVBox => {
-            let target = boxes.pending_setbox.take().ok_or(ExecError::MissingToken {
-                context: "setbox target",
-            })?;
+            let target = boxes.pending_setbox.take();
             stores.enter_group_with_kind(GroupKind::VBox);
             modes.push(Mode::InternalVertical);
-            boxes.active_box = Some(ActiveReplayBox {
+            boxes.active_boxes.push(ActiveReplayBox {
                 target,
                 opening_brace_replay: true,
                 body_opener_pending: true,
@@ -1588,16 +1601,22 @@ fn apply_scanned_step(
             Ok(ReplayStep::Continue)
         }
         ScannedStep::ReplayBoxOpeningBrace => {
-            let box_state = boxes.active_box.as_mut().ok_or(ExecError::MissingToken {
-                context: "box opening brace",
-            })?;
+            let box_state = boxes
+                .active_boxes
+                .last_mut()
+                .ok_or(ExecError::MissingToken {
+                    context: "box opening brace",
+                })?;
             box_state.opening_brace_replay = false;
             Ok(ReplayStep::Continue)
         }
         ScannedStep::BoxBeginGroup => {
-            let box_state = boxes.active_box.as_mut().ok_or(ExecError::MissingToken {
-                context: "box group",
-            })?;
+            let box_state = boxes
+                .active_boxes
+                .last_mut()
+                .ok_or(ExecError::MissingToken {
+                    context: "box group",
+                })?;
             if box_state.body_opener_pending {
                 // The first replayed brace is the box body's required opener;
                 // its scope is represented by the VBox group entered above.
@@ -1608,14 +1627,17 @@ fn apply_scanned_step(
             Ok(ReplayStep::Continue)
         }
         ScannedStep::BoxEndGroup => {
-            let box_state = boxes.active_box.as_mut().ok_or(ExecError::MissingToken {
-                context: "box group",
-            })?;
+            let box_state = boxes
+                .active_boxes
+                .last_mut()
+                .ok_or(ExecError::MissingToken {
+                    context: "box group",
+                })?;
             if box_state.depth > 1 {
                 box_state.depth -= 1;
                 return Ok(ReplayStep::Continue);
             }
-            let box_state = boxes.active_box.take().expect("active box was checked");
+            let box_state = boxes.active_boxes.pop().expect("active box was checked");
             let _ = modes.pop()?;
             let children = stores.freeze_node_list(&[]);
             let packed = crate::packing_params::vpack(
@@ -1630,14 +1652,26 @@ fn apply_scanned_step(
                 .map_err(|_| ExecError::MissingToken {
                     context: "vbox group",
                 })?;
-            if box_state.target.global {
-                stores.set_box_reg_global(box_state.target.index, boxed);
+            if let Some(target) = box_state.target {
+                if target.global {
+                    stores.set_box_reg_global(target.index, boxed);
+                } else {
+                    stores.set_box_reg(target.index, boxed);
+                }
             } else {
-                stores.set_box_reg(box_state.target.index, boxed);
+                modes.current_list_mut().push(Node::VList(packed.node));
             }
             Ok(ReplayStep::Continue)
         }
         ScannedStep::BeginAlignment { vertical } => {
+            if let Some(outer) = active_alignment.take() {
+                command
+                    .apply_alignment_request(AlignmentRequest::Suspend(outer.identity))
+                    .map_err(|_| ExecError::MissingToken {
+                        context: "nested alignment suspension",
+                    })?;
+                boxes.suspended_alignments.push(outer);
+            }
             let identity = AlignmentIdentity::new(*next_alignment_identity);
             *next_alignment_identity = next_alignment_identity.wrapping_add(1);
             command
