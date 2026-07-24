@@ -212,6 +212,11 @@ pub(crate) fn canonical_command_identity(meaning: Meaning) -> (String, Option<i6
             // observational identity. See TeX.web §§15, 18, and 37
             // (`init_col`).
             UnexpandablePrimitive::Omit => ("omit".into(), Some(0)),
+            // `\\noalign` is a distinct TeX82 command with a zero selector,
+            // not a generic unexpandable primitive.  `align_peek` consumes
+            // this raw identity after a completed row.  See TeX.web §§15,
+            // 18, and 37 (`align_peek`).
+            UnexpandablePrimitive::NoAlign => ("no_align".into(), Some(0)),
             UnexpandablePrimitive::HAlign => ("halign".into(), Some(0)),
             // TeX82 registers the horizontal glue shorthands with the same
             // `hskip` command code and a zero `cur_chr`; their distinct
@@ -473,6 +478,16 @@ mod tests {
         assert_eq!(
             canonical_command_identity(Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Omit)),
             ("omit".into(), Some(0))
+        );
+    }
+
+    #[test]
+    fn noalign_uses_tex82_no_align_identity() {
+        assert_eq!(
+            canonical_command_identity(Meaning::UnexpandablePrimitive(
+                UnexpandablePrimitive::NoAlign
+            )),
+            ("no_align".into(), Some(0))
         );
     }
 

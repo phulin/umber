@@ -182,9 +182,12 @@ selected u-template. The delimiter never reappears as ordinary raw delivery.
 Command observation preserves TeX82's raw command identity before that
 interception: `\cr` and `\crcr` are both `car_ret`, with `cur_chr` 257 and
 258 respectively. `\omit` is likewise observed as its own `omit` command with
-`cur_chr` 0. TeX82 §37's `init_col` consumes that expanded lookahead, assigns
-the cell-body sentinel from `1000000` to `0`, and bypasses both backup and
-u-template replay; the executor receives only this typed omit-cell transition.
+`cur_chr` 0. After a completed row, `\noalign` is likewise observed as
+`no_align` with `cur_chr` 0 before TeX82 §37's `align_peek` consumes it; it
+must not be projected as a generic unexpandable primitive. TeX82 §37's
+`init_col` consumes that expanded lookahead, assigns the cell-body sentinel
+from `1000000` to `0`, and bypasses both backup and u-template replay; the
+executor receives only this typed omit-cell transition.
 These identities are emitted at both
 raw and ordinary expanded delivery boundaries; they do not alter alignment
 delivery semantics. This follows TeX82 §15 (command codes), §18 (primitive
