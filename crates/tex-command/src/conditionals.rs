@@ -463,7 +463,37 @@ impl CommandProcessor<'_> {
     fn evaluate_ifx(&mut self) -> Result<bool, CommandError> {
         let first = self.get_token()?.ok_or(CommandError::InputInvariant)?;
         let second = self.get_token()?.ok_or(CommandError::InputInvariant)?;
-        Ok(first.meaning() == second.meaning())
+        Ok(self.ifx_meaning_eq(first.meaning(), second.meaning()))
+    }
+
+    /// TeX compares macro meanings by their defining token lists, not by the
+    /// engine's allocation identity for the macro definition. All other
+    /// meanings retain their direct raw-meaning equality.
+    fn ifx_meaning_eq(&self, first: Meaning, second: Meaning) -> bool {
+        let (
+            Meaning::Macro {
+                flags: first_flags,
+                definition: first_definition,
+            },
+            Meaning::Macro {
+                flags: second_flags,
+                definition: second_definition,
+            },
+        ) = (first, second)
+        else {
+            return first == second;
+        };
+
+        if first_flags != second_flags {
+            return false;
+        }
+        let first = self.state.macro_definition(first_definition);
+        let second = self.state.macro_definition(second_definition);
+        first.flags() == second.flags()
+            && self.state.tokens(first.parameter_text())
+                == self.state.tokens(second.parameter_text())
+            && self.state.tokens(first.replacement_text())
+                == self.state.tokens(second.replacement_text())
     }
 
     fn evaluate_numeric_comparison(&mut self) -> Result<bool, CommandError> {

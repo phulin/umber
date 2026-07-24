@@ -1,5 +1,6 @@
 use tex_state::Universe;
-use tex_state::meaning::{ExpandablePrimitive, Meaning};
+use tex_state::macro_store::MacroMeaning;
+use tex_state::meaning::{ExpandablePrimitive, Meaning, MeaningFlags};
 use tex_state::token::{OriginId, Token, TracedTokenWord};
 
 use super::*;
@@ -43,6 +44,23 @@ fn push(command: &mut CommandState, tokens: Vec<Token>) {
         RetirementBehavior::Pop,
         ReplayTrace::BackedUp,
     );
+}
+
+fn macro_token(
+    universe: &mut Universe,
+    name: &str,
+    flags: MeaningFlags,
+    parameter_text: &[Token],
+    replacement_text: &[Token],
+) -> Token {
+    let symbol = universe.intern(name).symbol();
+    let parameter_text = universe.intern_token_list(parameter_text);
+    let replacement_text = universe.intern_token_list(replacement_text);
+    universe.set_macro_meaning(
+        symbol,
+        MacroMeaning::new(flags, parameter_text, replacement_text),
+    );
+    Token::Cs(symbol)
 }
 
 #[test]
@@ -240,6 +258,61 @@ fn ifx_reads_unexpanded_operands_through_get_token() {
     // If the operands were delivered with get_x_token, either `iftrue` would
     // open a nested condition or the following text would be consumed.
     assert_eq!(next_character(&mut processor), 'y');
+}
+
+#[test]
+fn ifx_compares_macro_flags_and_raw_definition_tokens_not_storage_identity() {
+    let mut command = CommandState::default();
+    let mut runtime = CommandRuntime::default();
+    let mut universe = Universe::new();
+    let if_x = install(&mut universe, "ifx", ExpandablePrimitive::IfX);
+    let otherwise = install(&mut universe, "else", ExpandablePrimitive::Else);
+    let fi = install(&mut universe, "fi", ExpandablePrimitive::Fi);
+    let samea = macro_token(
+        &mut universe,
+        "samea",
+        MeaningFlags::EMPTY,
+        &[],
+        &[other('s'), other('a'), other('m'), other('e')],
+    );
+    let sameb = macro_token(
+        &mut universe,
+        "sameb",
+        MeaningFlags::EMPTY,
+        &[],
+        &[other('s'), other('a'), other('m'), other('e')],
+    );
+    let long_same = macro_token(
+        &mut universe,
+        "longsame",
+        MeaningFlags::LONG,
+        &[],
+        &[other('s'), other('a'), other('m'), other('e')],
+    );
+    push(
+        &mut command,
+        vec![
+            if_x,
+            samea,
+            sameb,
+            other('y'),
+            otherwise,
+            other('n'),
+            fi,
+            if_x,
+            samea,
+            long_same,
+            other('y'),
+            otherwise,
+            other('n'),
+            fi,
+        ],
+    );
+    let mut capabilities = CommandHostCapabilities::default();
+    let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+
+    assert_eq!(next_character(&mut processor), 'y');
+    assert_eq!(next_character(&mut processor), 'n');
 }
 
 #[test]

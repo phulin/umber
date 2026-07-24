@@ -1306,8 +1306,11 @@ context at their own command transitions.
 
 The TeX82 predicate dispatcher selects `get_x_token` for character/category
 tests and `get_token` specifically for `\ifx`; the latter preserves raw
-meanings and must not expand either operand. Character/category tests normalize
-non-character operands to TeX's common relax sentinel before comparing them.
+meanings and must not expand either operand. `\ifx` compares non-macro
+meanings directly, while macros compare their flags plus raw parameter and
+replacement token sequences rather than their immutable-store allocation
+identities. Character/category tests normalize non-character operands to
+TeX's common relax sentinel before comparing them.
 Boolean false limbs and selected `\ifcase` limbs re-enter the single
 `pass_text` machine, while `\else`, `\or`, and `\fi` change or pop only the
 live frame selected by its stable identity. Premature delimiters enqueue an
