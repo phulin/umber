@@ -80,6 +80,10 @@ pub fn assert_compile_fail(
         .env("CARGO_TERM_COLOR", "never")
         .arg("check")
         .arg("--quiet")
+        // Compile-fail fixtures are part of the hermetic correctness tier.
+        // Their dependencies have already been resolved while building the
+        // owning test, so Cargo must not refresh registry metadata here.
+        .arg("--offline")
         .arg("--manifest-path")
         .arg(crate_dir.join("Cargo.toml"))
         .arg("--target-dir")
