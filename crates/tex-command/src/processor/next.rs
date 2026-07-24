@@ -438,6 +438,19 @@ impl CommandProcessor<'_> {
             level: identity.0,
             position: 0,
         }));
+        #[cfg(any(test, feature = "instrumentation"))]
+        if retirement.reason == InputRetirementReason::AlignmentUTemplate {
+            self.observe(CommandObservation::Alignment(AlignmentRecord {
+                transition: "u_template_retire",
+                alignment: self
+                    .command
+                    .alignment
+                    .active_alignment
+                    .map(|alignment| alignment.raw()),
+                align_state: self.command.alignment.align_state,
+                previous_align_state: None,
+            }));
+        }
         match action {
             InputRetirementAction::TerminalStop => Ok(RetirementRestart::Stop),
             InputRetirementAction::VTemplateRetained => {
@@ -449,7 +462,20 @@ impl CommandProcessor<'_> {
             | InputRetirementAction::TokenListPopped
             | InputRetirementAction::ScantokensClosed
             | InputRetirementAction::VTemplatePopped => {
-                self.command.alignment.finish_u_template(identity);
+                let previous_align_state = self.command.alignment.align_state;
+                if self.command.alignment.finish_u_template(identity) {
+                    #[cfg(any(test, feature = "instrumentation"))]
+                    self.observe(CommandObservation::Alignment(AlignmentRecord {
+                        transition: "state_change",
+                        alignment: self
+                            .command
+                            .alignment
+                            .active_alignment
+                            .map(|alignment| alignment.raw()),
+                        align_state: self.command.alignment.align_state,
+                        previous_align_state: Some(previous_align_state),
+                    }));
+                }
                 Ok(RetirementRestart::Continue)
             }
         }
@@ -749,7 +775,8 @@ fn observed_retirement_reason(
         (_, InputRetirementReason::Backup) => InputReason::Backup,
         (_, InputRetirementReason::Macro) => InputReason::Macro,
         (_, InputRetirementReason::Parameter) => InputReason::Parameter,
-        (_, InputRetirementReason::AlignmentTemplate) => InputReason::AlignmentTemplate,
+        (_, InputRetirementReason::AlignmentUTemplate) => InputReason::AlignmentUTemplate,
+        (_, InputRetirementReason::AlignmentVTemplate) => InputReason::AlignmentVTemplate,
         (_, InputRetirementReason::Recovery) => InputReason::Recovery,
         (_, InputRetirementReason::TokenList) => InputReason::TokenList,
         (_, InputRetirementReason::Source) => InputReason::Source,

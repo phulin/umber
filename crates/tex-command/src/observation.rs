@@ -222,6 +222,11 @@ pub(crate) fn canonical_command_identity(meaning: Meaning) -> (String, Option<i6
             UnexpandablePrimitive::HBox => ("make_box".into(), Some(4)),
             UnexpandablePrimitive::VBox => ("make_box".into(), Some(5)),
             UnexpandablePrimitive::VTop => ("make_box".into(), Some(6)),
+            // Rule primitives have fixed TeX82 command codes and a zero
+            // selector; the executor's Rust primitive identity is not a
+            // canonical command-trace operand.
+            UnexpandablePrimitive::VRule => ("vrule".into(), Some(0)),
+            UnexpandablePrimitive::HRule => ("hrule".into(), Some(0)),
             // Explicit group primitives share TeX82's `begin_group` and
             // `end_group` command codes with a zero selector. Their Rust
             // enum discriminants must not leak into the trace.
@@ -257,7 +262,8 @@ pub enum InputReason {
     Backup,
     Macro,
     Parameter,
-    AlignmentTemplate,
+    AlignmentUTemplate,
+    AlignmentVTemplate,
     Recovery,
     TokenList,
 }

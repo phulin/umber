@@ -33,7 +33,8 @@ pub(crate) enum InputRetirementReason {
     Backup,
     Macro,
     Parameter,
-    AlignmentTemplate,
+    AlignmentUTemplate,
+    AlignmentVTemplate,
     Recovery,
     TokenList,
 }
@@ -277,7 +278,7 @@ impl CommandState {
             return Ok(InputRetirement {
                 identity: expected,
                 action: InputRetirementAction::VTemplateRetained,
-                reason: input_retirement_reason(&trace),
+                reason: input_retirement_reason(&cursor.behavior, &trace),
                 trace: Some(trace),
             });
         }
@@ -304,7 +305,7 @@ impl CommandState {
         Ok(InputRetirement {
             identity: expected,
             action,
-            reason: input_retirement_reason(&cursor.trace),
+            reason: input_retirement_reason(&cursor.behavior, &cursor.trace),
             trace: Some(cursor.trace),
         })
     }
@@ -342,7 +343,7 @@ impl CommandState {
         Ok(InputRetirement {
             identity: expected,
             action: InputRetirementAction::VTemplatePopped,
-            reason: input_retirement_reason(&cursor.trace),
+            reason: input_retirement_reason(&cursor.behavior, &cursor.trace),
             trace: Some(cursor.trace),
         })
     }
@@ -382,12 +383,23 @@ impl CommandState {
     }
 }
 
-fn input_retirement_reason(trace: &ReplayTrace) -> InputRetirementReason {
+fn input_retirement_reason(behavior: &TokenBehavior, trace: &ReplayTrace) -> InputRetirementReason {
+    match behavior {
+        TokenBehavior::UTemplate => return InputRetirementReason::AlignmentUTemplate,
+        TokenBehavior::VTemplate => return InputRetirementReason::AlignmentVTemplate,
+        TokenBehavior::Ordinary
+        | TokenBehavior::Recovery
+        | TokenBehavior::MacroBody(_)
+        | TokenBehavior::Parameter
+        | TokenBehavior::BackedUp(_) => {}
+    }
     match trace {
         ReplayTrace::BackedUp => InputRetirementReason::Backup,
         ReplayTrace::MacroReplacement => InputRetirementReason::Macro,
         ReplayTrace::MacroParameter { .. } => InputRetirementReason::Parameter,
-        ReplayTrace::UTemplate | ReplayTrace::VTemplate => InputRetirementReason::AlignmentTemplate,
+        ReplayTrace::UTemplate | ReplayTrace::VTemplate => {
+            unreachable!("alignment template behavior must accompany its replay trace")
+        }
         ReplayTrace::Transient(_) => InputRetirementReason::Recovery,
         ReplayTrace::Stored(_) => InputRetirementReason::TokenList,
     }

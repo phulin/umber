@@ -862,7 +862,9 @@ fn translate_input(record: InputRecord) -> Event {
         CommandInputReason::Backup => InputReason::Backup,
         CommandInputReason::Macro => InputReason::Macro,
         CommandInputReason::Parameter | CommandInputReason::TokenList => InputReason::TokenList,
-        CommandInputReason::AlignmentTemplate => InputReason::AlignmentTemplate,
+        CommandInputReason::AlignmentUTemplate | CommandInputReason::AlignmentVTemplate => {
+            InputReason::AlignmentTemplate
+        }
         CommandInputReason::Recovery => InputReason::Recovery,
     };
     Event::Input(InputEvent {
@@ -872,7 +874,8 @@ fn translate_input(record: InputRecord) -> Event {
             CommandInputReason::Backup => "backup".into(),
             CommandInputReason::Macro => "macro".into(),
             CommandInputReason::Parameter => "parameter".into(),
-            CommandInputReason::AlignmentTemplate => "template".into(),
+            CommandInputReason::AlignmentUTemplate => "u_template".into(),
+            CommandInputReason::AlignmentVTemplate => "v_template".into(),
             CommandInputReason::Recovery => "recovery".into(),
             CommandInputReason::TokenList => "output".into(),
             CommandInputReason::Source => "source".into(),
@@ -971,14 +974,22 @@ fn translate_alignment(record: AlignmentRecord) -> Event {
             "preamble_finish" => AlignmentTransition::PreambleFinish,
             "begin_group" | "end_group" => AlignmentTransition::StateChange,
             "state_change" => AlignmentTransition::StateChange,
-            "template_push" => AlignmentTransition::TemplatePush,
-            "template_retire" => AlignmentTransition::TemplateRetire,
+            "template_push" | "u_template_push" | "v_template_push" => {
+                AlignmentTransition::TemplatePush
+            }
+            "template_retire" | "u_template_retire" | "v_template_retire" => {
+                AlignmentTransition::TemplateRetire
+            }
             "delimiter" => AlignmentTransition::Delimiter,
             "backup_correction" => AlignmentTransition::BackupCorrection,
             _ => AlignmentTransition::Recovery,
         },
         align_state: i64::from(record.align_state),
-        template: None,
+        template: match record.transition {
+            "u_template_push" | "u_template_retire" => Some("u".into()),
+            "v_template_push" | "v_template_retire" => Some("v".into()),
+            _ => None,
+        },
         nesting: record.alignment.and_then(|value| u32::try_from(value).ok()),
         previous_align_state: record.previous_align_state.map(i64::from),
         delimiter: None,

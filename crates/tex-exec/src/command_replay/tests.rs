@@ -321,6 +321,8 @@ fn alignment_preamble_opener_uses_command_owned_backup_before_source_resumes() {
                 CommandObservation::Input(backup),
                 CommandObservation::Recovery(recovery),
                 CommandObservation::Alignment(correction),
+                CommandObservation::Input(template),
+                CommandObservation::Alignment(template_alignment),
             ]
                 if state_change.transition == "begin_group"
                     && state_change.align_state == 1_000_001
@@ -333,7 +335,51 @@ fn alignment_preamble_opener_uses_command_owned_backup_before_source_resumes() {
                     && correction.transition == "backup_correction"
                     && correction.align_state == 1_000_000
                     && correction.previous_align_state == Some(1_000_001)
+                    && template.transition == InputTransition::Push
+                    && template.reason == InputReason::AlignmentUTemplate
+                    && template_alignment.transition == "u_template_push"
+                    && template_alignment.align_state == 1_000_000
         ),
+        "unexpected observations: {:?}",
+        observations.0
+    );
+
+    observations.0.clear();
+    assert_eq!(
+        control
+            .step_with_observer(&mut universe, &mut observations)
+            .expect("u-template delivers its final token"),
+        ReplayStep::Continue
+    );
+    assert_eq!(
+        control
+            .step_with_observer(&mut universe, &mut observations)
+            .expect("backed-up u-template token replays"),
+        ReplayStep::Continue
+    );
+    assert_eq!(
+        control
+            .step_with_observer(&mut universe, &mut observations)
+            .expect("u-template retires before the cell body resumes"),
+        ReplayStep::Continue
+    );
+    assert!(
+        observations.0.windows(3).any(|events| {
+            matches!(
+                events,
+                [
+                    CommandObservation::Input(input),
+                    CommandObservation::Alignment(retirement),
+                    CommandObservation::Alignment(body),
+                ] if input.transition == InputTransition::Retire
+                    && input.reason == InputReason::AlignmentUTemplate
+                    && retirement.transition == "u_template_retire"
+                    && retirement.align_state == 1_000_000
+                    && body.transition == "state_change"
+                    && body.align_state == 0
+                    && body.previous_align_state == Some(1_000_000)
+            )
+        }),
         "unexpected observations: {:?}",
         observations.0
     );

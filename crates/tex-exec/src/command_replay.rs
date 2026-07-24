@@ -258,6 +258,10 @@ impl CommandReplayControl {
         let effect = applied_effect_observation(&scanned, stores);
         let begins_alignment = matches!(&scanned, ScannedStep::BeginAlignment { .. });
         let begins_alignment_cell = matches!(&scanned, ScannedStep::AlignmentPreambleStart { .. });
+        let installs_u_template = match &scanned {
+            ScannedStep::AlignmentCellOpening { alignment } => Some(*alignment),
+            _ => None,
+        };
         let result = apply_scanned_step(
             scanned,
             stores,
@@ -276,6 +280,19 @@ impl CommandReplayControl {
                 && let Some(alignment) = self.command.alignment_cell_begin_observation()
             {
                 observer.committed(CommandObservation::Alignment(alignment));
+            }
+            if let Some(alignment) = installs_u_template
+                && let Some(input) = self
+                    .command
+                    .alignment_u_template_push_observation(alignment)
+            {
+                observer.committed(CommandObservation::Input(input));
+                if let Some(template) = self
+                    .command
+                    .alignment_u_template_push_alignment_observation(alignment)
+                {
+                    observer.committed(CommandObservation::Alignment(template));
+                }
             }
             if let Some(mutation) = mutation {
                 observer.committed(CommandObservation::Mutation(mutation));

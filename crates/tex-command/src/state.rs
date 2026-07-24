@@ -157,6 +157,44 @@ impl CommandState {
         Ok(())
     }
 
+    /// Returns the committed input push for a just-installed u-template.
+    ///
+    /// The level identity is allocated by the state transition itself, so
+    /// instrumentation can report the canonical input lifecycle without
+    /// reconstructing a template push from executor state or token contents.
+    #[cfg(any(test, feature = "instrumentation"))]
+    #[must_use]
+    pub fn alignment_u_template_push_observation(
+        &self,
+        alignment: AlignmentIdentity,
+    ) -> Option<crate::InputRecord> {
+        let cell = self.alignment.active_cell.as_ref()?;
+        (cell.alignment == alignment).then_some(())?;
+        cell.u_level.map(|level| crate::InputRecord {
+            transition: crate::InputTransition::Push,
+            reason: crate::InputReason::AlignmentUTemplate,
+            level: level.0,
+            position: 0,
+        })
+    }
+
+    /// Returns the command-owned alignment transition paired with the
+    /// u-template input push.
+    #[cfg(any(test, feature = "instrumentation"))]
+    #[must_use]
+    pub fn alignment_u_template_push_alignment_observation(
+        &self,
+        alignment: AlignmentIdentity,
+    ) -> Option<crate::AlignmentRecord> {
+        self.alignment_u_template_push_observation(alignment)
+            .map(|_| crate::AlignmentRecord {
+                transition: "u_template_push",
+                alignment: Some(alignment.raw()),
+                align_state: self.alignment.align_state,
+                previous_align_state: None,
+            })
+    }
+
     /// Transfers one completed raw preamble to the executor for structural
     /// column selection. The returned templates remain frozen command-owned
     /// values; no raw preamble token is exposed.
