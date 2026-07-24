@@ -775,6 +775,10 @@ Macro-body retirement atomically removes the activation matching that level's
 typed `param_start`; a mismatched activation chain is rejected before either
 owner is mutated. The committed lifecycle record may copy `ReplayTrace` for
 observation, but neither its action nor activation cleanup consults that trace.
+Its detached observation also retains the exhausted level's immutable class
+(source, backup, macro, parameter, alignment template, recovery, or token
+list), so host-side canonical translation preserves lifecycle ordering without
+letting diagnostic explanation select retirement behavior.
 
 ### 12.3 Macro parameters
 

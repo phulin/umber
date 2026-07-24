@@ -19,7 +19,23 @@ use super::{
 pub(crate) struct InputRetirement {
     pub(crate) identity: InputLevelId,
     pub(crate) action: InputRetirementAction,
+    pub(crate) reason: InputRetirementReason,
     pub(crate) trace: Option<ReplayTrace>,
+}
+
+/// Observer-visible class of an exhausted input level.
+///
+/// It is derived only after retirement has selected its canonical action, so
+/// replay explanation cannot influence input semantics.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub(crate) enum InputRetirementReason {
+    Source,
+    Backup,
+    Macro,
+    Parameter,
+    AlignmentTemplate,
+    Recovery,
+    TokenList,
 }
 
 /// Canonical effect of exhausting or explicitly retiring one input level.
@@ -237,6 +253,7 @@ impl CommandState {
             return Ok(InputRetirement {
                 identity: expected,
                 action: InputRetirementAction::SourcePopped,
+                reason: InputRetirementReason::Source,
                 trace: None,
             });
         };
@@ -260,6 +277,7 @@ impl CommandState {
             return Ok(InputRetirement {
                 identity: expected,
                 action: InputRetirementAction::VTemplateRetained,
+                reason: input_retirement_reason(&trace),
                 trace: Some(trace),
             });
         }
@@ -286,6 +304,7 @@ impl CommandState {
         Ok(InputRetirement {
             identity: expected,
             action,
+            reason: input_retirement_reason(&cursor.trace),
             trace: Some(cursor.trace),
         })
     }
@@ -323,6 +342,7 @@ impl CommandState {
         Ok(InputRetirement {
             identity: expected,
             action: InputRetirementAction::VTemplatePopped,
+            reason: input_retirement_reason(&cursor.trace),
             trace: Some(cursor.trace),
         })
     }
@@ -359,6 +379,17 @@ impl CommandState {
         if matches!(behavior, TokenBehavior::MacroBody(_)) {
             self.parameters.activations.pop();
         }
+    }
+}
+
+fn input_retirement_reason(trace: &ReplayTrace) -> InputRetirementReason {
+    match trace {
+        ReplayTrace::BackedUp => InputRetirementReason::Backup,
+        ReplayTrace::MacroReplacement => InputRetirementReason::Macro,
+        ReplayTrace::MacroParameter { .. } => InputRetirementReason::Parameter,
+        ReplayTrace::UTemplate | ReplayTrace::VTemplate => InputRetirementReason::AlignmentTemplate,
+        ReplayTrace::Transient(_) => InputRetirementReason::Recovery,
+        ReplayTrace::Stored(_) => InputRetirementReason::TokenList,
     }
 }
 

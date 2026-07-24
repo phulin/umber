@@ -23,9 +23,11 @@ use super::CommandProcessor;
 use super::status::{EofLegality, RecoveryContext, ScannerStatus};
 
 #[cfg(any(test, feature = "instrumentation"))]
+use crate::input::InputRetirementReason;
+#[cfg(any(test, feature = "instrumentation"))]
 use crate::observation::{
     AlignmentRecord, CommandDeliveryBoundary, CommandDeliveryRecord, CommandObservation,
-    CommandProvenance, InputRecord, InputTransition, RecoveryRecord, observed_token,
+    CommandProvenance, InputReason, InputRecord, InputTransition, RecoveryRecord, observed_token,
 };
 
 const DEFAULT_END_LINE_CHAR: i32 = 13;
@@ -169,6 +171,7 @@ impl CommandProcessor<'_> {
             #[cfg(any(test, feature = "instrumentation"))]
             self.observe(CommandObservation::Input(InputRecord {
                 transition: InputTransition::Backup,
+                reason: InputReason::Backup,
                 level: stamp.input_level(),
                 position: stamp.position(),
             }));
@@ -187,6 +190,7 @@ impl CommandProcessor<'_> {
         {
             self.observe(CommandObservation::Input(InputRecord {
                 transition: InputTransition::Backup,
+                reason: InputReason::Backup,
                 level: level.0,
                 position: 0,
             }));
@@ -274,6 +278,7 @@ impl CommandProcessor<'_> {
                 #[cfg(any(test, feature = "instrumentation"))]
                 self.observe(CommandObservation::Input(InputRecord {
                     transition: InputTransition::Stop,
+                    reason: InputReason::Source,
                     level: 0,
                     position: 0,
                 }));
@@ -346,11 +351,11 @@ impl CommandProcessor<'_> {
         &mut self,
         identity: InputLevelId,
     ) -> Result<RetirementRestart, CommandError> {
-        let action = self
+        let retirement = self
             .command
             .retire_exhausted_input(identity)
-            .map_err(|_| CommandError::InputInvariant)?
-            .action;
+            .map_err(|_| CommandError::InputInvariant)?;
+        let action = retirement.action;
         #[cfg(any(test, feature = "instrumentation"))]
         self.observe(CommandObservation::Input(InputRecord {
             transition: if matches!(action, InputRetirementAction::TerminalStop) {
@@ -358,6 +363,7 @@ impl CommandProcessor<'_> {
             } else {
                 InputTransition::Retire
             },
+            reason: observed_retirement_reason(action, retirement.reason),
             level: identity.0,
             position: 0,
         }));
@@ -562,6 +568,25 @@ impl CommandProcessor<'_> {
         }
         cursor.index -= 1;
         true
+    }
+}
+
+#[cfg(any(test, feature = "instrumentation"))]
+fn observed_retirement_reason(
+    action: InputRetirementAction,
+    reason: InputRetirementReason,
+) -> InputReason {
+    match (action, reason) {
+        (InputRetirementAction::SourcePopped | InputRetirementAction::TerminalStop, _) => {
+            InputReason::Source
+        }
+        (_, InputRetirementReason::Backup) => InputReason::Backup,
+        (_, InputRetirementReason::Macro) => InputReason::Macro,
+        (_, InputRetirementReason::Parameter) => InputReason::Parameter,
+        (_, InputRetirementReason::AlignmentTemplate) => InputReason::AlignmentTemplate,
+        (_, InputRetirementReason::Recovery) => InputReason::Recovery,
+        (_, InputRetirementReason::TokenList) => InputReason::TokenList,
+        (_, InputRetirementReason::Source) => InputReason::Source,
     }
 }
 

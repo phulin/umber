@@ -14,9 +14,9 @@ use std::sync::Arc;
 use tex_command::{
     AlignmentRecord, CommandDeliveryBoundary, CommandHostCapabilities, CommandHostContext,
     CommandObservation, CommandObserver, CommandProcessor, CommandProfile, CommandRuntime,
-    CommandState, ConditionRecord, EffectRecord, InputRecord, InputTransition, MacroRecord,
-    MutationRecord, ObservedToken, RecoveryRecord, RegisteredSourceKind, ScannerStatusRecord,
-    SourceRegistration, TokenListRecord,
+    CommandState, ConditionRecord, EffectRecord, InputReason as CommandInputReason, InputRecord,
+    InputTransition, MacroRecord, MutationRecord, ObservedToken, RecoveryRecord,
+    RegisteredSourceKind, ScannerStatusRecord, SourceRegistration, TokenListRecord,
 };
 use tex_oracle::{
     AlignmentEvent, AlignmentTransition, CanonicalCommand, CanonicalValue, CommandDelivery,
@@ -634,18 +634,25 @@ fn translate_input(record: InputRecord) -> Event {
         InputTransition::Stop => tex_oracle::InputTransition::Stop,
         InputTransition::Backup | InputTransition::Recovery => tex_oracle::InputTransition::Push,
     };
-    let reason = match record.transition {
-        InputTransition::Backup => InputReason::Backup,
-        InputTransition::Recovery => InputReason::Recovery,
-        _ => InputReason::Source,
+    let reason = match record.reason {
+        CommandInputReason::Source => InputReason::Source,
+        CommandInputReason::Backup => InputReason::Backup,
+        CommandInputReason::Macro => InputReason::Macro,
+        CommandInputReason::Parameter | CommandInputReason::TokenList => InputReason::TokenList,
+        CommandInputReason::AlignmentTemplate => InputReason::AlignmentTemplate,
+        CommandInputReason::Recovery => InputReason::Recovery,
     };
     Event::Input(InputEvent {
         transition,
         reason,
-        name: match record.transition {
-            InputTransition::Backup => "backup".into(),
-            InputTransition::Recovery => "recovery".into(),
-            _ => "source".into(),
+        name: match record.reason {
+            CommandInputReason::Backup => "backup".into(),
+            CommandInputReason::Macro => "macro".into(),
+            CommandInputReason::Parameter => "parameter".into(),
+            CommandInputReason::AlignmentTemplate => "template".into(),
+            CommandInputReason::Recovery => "recovery".into(),
+            CommandInputReason::TokenList => "output".into(),
+            CommandInputReason::Source => "source".into(),
         },
     })
 }

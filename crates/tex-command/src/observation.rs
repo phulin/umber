@@ -82,10 +82,27 @@ pub enum InputTransition {
     Recovery,
 }
 
+/// The semantic class of one input level.
+///
+/// This accompanies retirement because TeX's observable input lifecycle
+/// distinguishes a backed-up token from a physical source even though both
+/// use the same retire transition.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum InputReason {
+    Source,
+    Backup,
+    Macro,
+    Parameter,
+    AlignmentTemplate,
+    Recovery,
+    TokenList,
+}
+
 /// One input transition with its deterministic aggregate provenance.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct InputRecord {
     pub transition: InputTransition,
+    pub reason: InputReason,
     pub level: u64,
     pub position: u64,
 }

@@ -16,8 +16,8 @@ pub(crate) use levels::{
 pub(crate) use source::{RegisteredSource, SourceCursor};
 #[allow(unused_imports)] // consumed by the ordered raw-delivery implementation issues
 pub(crate) use stack::{
-    InputRetirement, InputRetirementAction, InputRetirementError, OutParameterReplay,
-    ParameterReplayError,
+    InputRetirement, InputRetirementAction, InputRetirementError, InputRetirementReason,
+    OutParameterReplay, ParameterReplayError,
 };
 
 pub use lines::{LineTerminator, PhysicalLine, SourceCharacter, SourceRange, SourceScalarRange};
