@@ -703,8 +703,8 @@ impl CommandProcessor<'_> {
             }));
         self.observe_scanner_status(true);
         let result = self.pass_text_scalar(condition);
-        self.command.restore_scanner_status(prior);
         self.observe_scanner_status(false);
+        self.command.restore_scanner_status(prior);
         result
     }
 

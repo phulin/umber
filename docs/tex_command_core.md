@@ -1301,7 +1301,8 @@ context at their own command transitions.
    validation and extra-delimiter recovery to the caller;
 5. preserves literal-brace alignment accounting and template interception;
 6. applies outer-validity recovery through the shared mechanism; and
-7. restores the prior scanner status.
+7. observes the live `skipping` to prior-status restoration, then restores
+   the prior scanner status.
 
 The TeX82 predicate dispatcher selects `get_x_token` for character/category
 tests and `get_token` specifically for `\ifx`; the latter preserves raw
