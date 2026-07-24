@@ -57,6 +57,7 @@ struct ActiveReplayBox {
 struct ActiveReplayAlignment {
     identity: AlignmentIdentity,
     preamble_opening_pending: bool,
+    preamble_opening_replay_pending: bool,
 }
 
 #[derive(Debug, Default)]
@@ -136,6 +137,7 @@ impl CommandReplayControl {
             && active.identity == identity
         {
             active.preamble_opening_pending = false;
+            active.preamble_opening_replay_pending = false;
         }
         Ok(())
     }
@@ -195,9 +197,16 @@ impl CommandReplayControl {
             self.modes.current_mode(),
             Mode::Vertical | Mode::InternalVertical
         );
-        let alignment_preamble = self
-            .active_alignment
-            .and_then(|active| active.preamble_opening_pending.then_some(active.identity));
+        let alignment_preamble = self.active_alignment.and_then(|active| {
+            active
+                .preamble_opening_pending
+                .then_some((active.identity, false))
+                .or_else(|| {
+                    active
+                        .preamble_opening_replay_pending
+                        .then_some((active.identity, true))
+                })
+        });
         let scanned = {
             let mut processor = CommandProcessor::new(
                 &mut self.command,
@@ -235,9 +244,16 @@ impl CommandReplayControl {
             self.modes.current_mode(),
             Mode::Vertical | Mode::InternalVertical
         );
-        let alignment_preamble = self
-            .active_alignment
-            .and_then(|active| active.preamble_opening_pending.then_some(active.identity));
+        let alignment_preamble = self.active_alignment.and_then(|active| {
+            active
+                .preamble_opening_pending
+                .then_some((active.identity, false))
+                .or_else(|| {
+                    active
+                        .preamble_opening_replay_pending
+                        .then_some((active.identity, true))
+                })
+        });
         let scanned = {
             let mut processor = CommandProcessor::new(
                 &mut self.command,
@@ -404,6 +420,9 @@ enum ScannedStep {
     AlignmentPreambleOpening {
         alignment: AlignmentIdentity,
     },
+    AlignmentPreambleOpeningReplay {
+        alignment: AlignmentIdentity,
+    },
     SetBox(SetBoxTarget),
     BeginVBox,
     ReplayBoxOpeningBrace,
@@ -417,15 +436,21 @@ enum ScannedStep {
 
 /// Selects the one command-owned scanner that may consume input before
 /// ordinary main control.  Alignment preamble setup validates and backs up
-/// its opening brace exactly once; the restored brace then returns through
-/// `scan_step` on the following replay step.
+/// its opening brace twice through successive command-owned backup levels;
+/// only the second replay reaches ordinary preamble scanning.
 fn scan_replay_step(
     processor: &mut CommandProcessor<'_>,
     starts_paragraph: bool,
     boxes: &ReplayBoxes,
-    alignment_preamble: Option<AlignmentIdentity>,
+    alignment_preamble: Option<(AlignmentIdentity, bool)>,
 ) -> Result<ScannedStep, ExecError> {
-    if let Some(alignment) = alignment_preamble {
+    if let Some((alignment, replay)) = alignment_preamble {
+        if replay {
+            processor
+                .replay_alignment_preamble_opening()
+                .map_err(command_error)?;
+            return Ok(ScannedStep::AlignmentPreambleOpeningReplay { alignment });
+        }
         processor
             .scan_alignment_preamble_opening()
             .map_err(command_error)?;
@@ -1296,6 +1321,7 @@ fn apply_scanned_step(
             *active_alignment = Some(ActiveReplayAlignment {
                 identity,
                 preamble_opening_pending: true,
+                preamble_opening_replay_pending: false,
             });
             if vertical && modes.current_mode() == Mode::Vertical {
                 modes.push(Mode::InternalVertical);
@@ -1312,6 +1338,15 @@ fn apply_scanned_step(
                 && active.identity == alignment
             {
                 active.preamble_opening_pending = false;
+                active.preamble_opening_replay_pending = true;
+            }
+            Ok(ReplayStep::Continue)
+        }
+        ScannedStep::AlignmentPreambleOpeningReplay { alignment } => {
+            if let Some(active) = active_alignment.as_mut()
+                && active.identity == alignment
+            {
+                active.preamble_opening_replay_pending = false;
             }
             Ok(ReplayStep::Continue)
         }
