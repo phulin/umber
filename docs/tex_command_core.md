@@ -1745,11 +1745,30 @@ immutable macro definition identity and activation ownership instead of
 reintroducing a reference-engine allocation address; snapshots consequently
 remain allocation-independent.
 
+The test-only stream adapter translates executor-committed meaning mutations
+using the assigned control-sequence key captured at that seam. It never
+reconstructs the key from a generic mutation category, so `\let` aliases of
+explicit grouping primitives remain comparable while command state stays the
+sole owner of delivery and operand scanning.
+
+Expanded balanced general-text collection enters the command-owned absorbing
+scanner episode before it delivers its required opening brace. The brace is
+therefore observed once under the live scanner status; ordinary token-list
+assignment scanning retains its canonical initial validation and replay.
+
+Executor-owned `\message` application captures its completed text before the
+processor borrow ends and emits the terminal-byte effect only after the write
+commits. The stream adapter keeps that effect as terminal bytes, not a
+fixture-derived textual reconstruction.
+
 Command-observer identities preserve TeX's command/`cur_chr` pairs rather
 than Rust storage discriminants. In particular, the installed `\par` primitive
-observes as `par_end` with `cur_chr = 256`; its internal primitive-enum operand
-is not part of the canonical trace. This keeps paragraph delivery comparable
-without exposing command-state representation in snapshots or fixtures.
+observes as `par_end` with `cur_chr = 256`, while explicit `\begingroup` and
+`\endgroup` observe as `begin_group` and `end_group`, each with `cur_chr = 0`.
+Likewise `\setbox` observes as `set_box` with selector `0`.
+Their internal primitive-enum operands are not part of the canonical trace.
+This keeps paragraph and group delivery comparable without exposing
+command-state representation in snapshots or fixtures.
 
 Incomplete conditional recovery follows TeX82's `back_error` ordering: it
 backs up the encountered delimiter, pushes an inaccessible frozen `\relax`,

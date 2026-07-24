@@ -10,9 +10,18 @@ use crate::input::{
     ReplayTrace, RetirementBehavior, SharedTokenBuffer, TokenBehavior, TokenPayload,
 };
 use crate::{
-    CommandHostCapabilities, CommandHostContext, CommandRuntime, CommandState,
-    RegisteredSourceKind, SourceRegistration,
+    CommandHostCapabilities, CommandHostContext, CommandObservation, CommandObserver,
+    CommandRuntime, CommandState, RegisteredSourceKind, SourceRegistration,
 };
+
+#[derive(Default)]
+struct Recorder(Vec<CommandObservation>);
+
+impl CommandObserver for Recorder {
+    fn committed(&mut self, observation: CommandObservation) {
+        self.0.push(observation);
+    }
+}
 
 fn traced(token: Token) -> TracedTokenWord {
     TracedTokenWord::pack(token, OriginId::UNKNOWN)
@@ -133,6 +142,42 @@ fn balanced_text_and_macro_definition_freeze_typed_lists_with_provenance() {
         universe.tokens(definition.replacement_text.token_list()),
         &[Token::Param(1)]
     );
+}
+
+#[test]
+fn balanced_text_enters_absorbing_before_its_opening_brace() {
+    let mut command = CommandState::default();
+    let source = command
+        .register_source(SourceRegistration::new(
+            RegisteredSourceKind::Generated,
+            Arc::<[u8]>::from(b"{x}".as_slice()),
+        ))
+        .expect("source registers");
+    command
+        .open_registered_source(source)
+        .expect("source opens");
+    let mut runtime = CommandRuntime::default();
+    let mut universe = Universe::new();
+    let mut capabilities = CommandHostCapabilities::default();
+    let mut recorder = Recorder::default();
+
+    processor(&mut command, &mut runtime, &mut universe, &mut capabilities)
+        .with_observer(&mut recorder)
+        .scan_balanced_text(true)
+        .expect("balanced text scans");
+
+    assert!(matches!(
+        recorder.0.as_slice(),
+        [
+            CommandObservation::ScannerStatus(status),
+            CommandObservation::Command(opening),
+            ..
+        ] if status.entering
+            && status.status.starts_with("Absorbing")
+            && matches!(opening.spelling, crate::ObservedToken::Character {
+                character: '{', catcode: Catcode::BeginGroup
+            })
+    ));
 }
 
 #[test]

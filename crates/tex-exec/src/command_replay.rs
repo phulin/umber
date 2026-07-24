@@ -9,7 +9,9 @@ use tex_command::{
     CommandHostContext, CommandProcessor, CommandProfile, CommandRuntime, CommandState,
 };
 #[cfg(any(test, feature = "instrumentation"))]
-use tex_command::{CommandObservation, CommandObserver, MutationRecord, ObservedToken};
+use tex_command::{
+    CommandObservation, CommandObserver, EffectRecord, MutationRecord, ObservedToken,
+};
 use tex_state::env::banks::{IntParam, TokParam};
 use tex_state::glue::GlueSpec;
 use tex_state::interner::Symbol;
@@ -192,6 +194,7 @@ impl CommandReplayControl {
             scan_step(&mut processor, starts_paragraph)?
         };
         let mutation = applied_mutation_observation(&scanned, stores);
+        let effect = applied_effect_observation(&scanned, stores);
         let result = apply_scanned_step(
             scanned,
             stores,
@@ -204,6 +207,11 @@ impl CommandReplayControl {
             && let Some(mutation) = mutation
         {
             observer.committed(CommandObservation::Mutation(mutation));
+        }
+        if result.is_ok()
+            && let Some(effect) = effect
+        {
+            observer.committed(CommandObservation::Effect(effect));
         }
         result
     }
@@ -780,6 +788,19 @@ fn applied_mutation_observation(
         key: Some(stores.resolve(*target).to_owned()),
         tokens: Some(tokens),
         global: *global,
+    })
+}
+
+/// Captures an executor-owned observable effect before application, then
+/// emits it only after that application commits through the replay seam.
+#[cfg(any(test, feature = "instrumentation"))]
+fn applied_effect_observation(scanned: &ScannedStep, stores: &Universe) -> Option<EffectRecord> {
+    let ScannedStep::Message { tokens } = scanned else {
+        return None;
+    };
+    Some(EffectRecord {
+        kind: "message",
+        detail: replay_text(stores.tokens(tokens.token_list())),
     })
 }
 

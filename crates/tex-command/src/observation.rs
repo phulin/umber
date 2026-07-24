@@ -192,6 +192,12 @@ pub(crate) fn canonical_command_identity(meaning: Meaning) -> (String, Option<i6
             // storage operand.
             UnexpandablePrimitive::Par => ("par_end".into(), Some(256)),
             UnexpandablePrimitive::HAlign => ("halign".into(), Some(0)),
+            UnexpandablePrimitive::SetBox => ("set_box".into(), Some(0)),
+            // Explicit group primitives share TeX82's `begin_group` and
+            // `end_group` command codes with a zero selector. Their Rust
+            // enum discriminants must not leak into the trace.
+            UnexpandablePrimitive::BeginGroup => ("begin_group".into(), Some(0)),
+            UnexpandablePrimitive::EndGroup => ("end_group".into(), Some(0)),
             UnexpandablePrimitive::Message => ("message".into(), Some(0)),
             UnexpandablePrimitive::End => ("stop".into(), Some(0)),
             _ => ("unexpandable".into(), None),
@@ -400,6 +406,32 @@ mod tests {
         assert_eq!(
             canonical_command_identity(Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Toks)),
             ("toks_register".into(), Some(0))
+        );
+    }
+
+    #[test]
+    fn explicit_groups_use_tex82_command_identities() {
+        assert_eq!(
+            canonical_command_identity(Meaning::UnexpandablePrimitive(
+                UnexpandablePrimitive::BeginGroup
+            )),
+            ("begin_group".into(), Some(0))
+        );
+        assert_eq!(
+            canonical_command_identity(Meaning::UnexpandablePrimitive(
+                UnexpandablePrimitive::EndGroup
+            )),
+            ("end_group".into(), Some(0))
+        );
+    }
+
+    #[test]
+    fn setbox_uses_tex82_command_identity() {
+        assert_eq!(
+            canonical_command_identity(Meaning::UnexpandablePrimitive(
+                UnexpandablePrimitive::SetBox
+            )),
+            ("set_box".into(), Some(0))
         );
     }
 

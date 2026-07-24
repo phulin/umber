@@ -141,6 +141,27 @@ fn canonical_initex_replay_scans_token_register_assignments_through_command_core
 }
 
 #[test]
+fn canonical_initex_replay_observes_committed_message_effects() {
+    let mut universe = Universe::new();
+    let mut control = CommandReplayControl::tex82_initex(&mut universe);
+    register_source(&mut control, br"\message{READY}\end");
+    let mut observations = ObservationRecorder::default();
+
+    assert_eq!(
+        control
+            .step_with_observer(&mut universe, &mut observations)
+            .expect("message"),
+        ReplayStep::Continue
+    );
+    assert!(matches!(
+        observations.0.last(),
+        Some(CommandObservation::Effect(effect))
+            if effect.kind == "message" && effect.detail == "READY"
+    ));
+    assert_eq!(control.step(&mut universe).expect("end"), ReplayStep::End);
+}
+
+#[test]
 fn canonical_initex_replay_scans_and_applies_code_table_assignments() {
     let mut universe = Universe::new();
     let mut control = CommandReplayControl::tex82_initex(&mut universe);

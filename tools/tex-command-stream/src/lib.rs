@@ -1054,6 +1054,16 @@ fn translate_mutation(record: MutationRecord) -> Event {
             }
         }
     }
+    if record.target == "meaning"
+        && let Some(key) = record.key
+    {
+        return Event::Mutation(MutationEvent {
+            target: StateTarget::Meaning,
+            key: CanonicalValue::Name(key),
+            value: CanonicalValue::Name(record.value),
+            scope: if record.global { "global" } else { "local" }.into(),
+        });
+    }
     let parsed = record.value.split_once('=').and_then(|(key, value)| {
         value
             .parse::<i64>()
@@ -1105,6 +1115,13 @@ fn canonical_catcode_assignment(value: &str) -> Option<&'static str> {
     }
 }
 fn translate_effect(record: EffectRecord) -> Event {
+    if record.kind == "message" {
+        return Event::Effect(EffectEvent {
+            kind: EffectKind::Message,
+            channel: "terminal".into(),
+            value: CanonicalValue::Bytes(record.detail.into_bytes()),
+        });
+    }
     Event::Effect(EffectEvent {
         kind: match record.kind {
             "message" => EffectKind::Message,
@@ -1167,6 +1184,21 @@ mod tests {
         assert_eq!(catcode_name(Catcode::AlignmentTab), "tab_mark");
         assert_eq!(catcode_name(Catcode::Space), "spacer");
         assert_eq!(catcode_name(Catcode::Other), "other_char");
+    }
+
+    #[test]
+    fn message_effects_use_terminal_bytes() {
+        assert_eq!(
+            translate_effect(EffectRecord {
+                kind: "message",
+                detail: "READY".into(),
+            }),
+            Event::Effect(EffectEvent {
+                kind: EffectKind::Message,
+                channel: "terminal".into(),
+                value: CanonicalValue::Bytes(b"READY".to_vec()),
+            })
+        );
     }
 
     #[test]
@@ -1247,6 +1279,26 @@ mod tests {
                     control_sequence: None,
                     location: None,
                 }]),
+                scope: "local".into(),
+            })
+        );
+    }
+
+    #[test]
+    fn meaning_mutations_keep_the_assigned_control_sequence() {
+        let event = translate_mutation(MutationRecord {
+            target: "meaning",
+            value: "begin_group".into(),
+            key: Some("alignmentbegingroup".into()),
+            tokens: None,
+            global: false,
+        });
+        assert_eq!(
+            event,
+            Event::Mutation(MutationEvent {
+                target: StateTarget::Meaning,
+                key: CanonicalValue::Name("alignmentbegingroup".into()),
+                value: CanonicalValue::Name("begin_group".into()),
                 scope: "local".into(),
             })
         );
