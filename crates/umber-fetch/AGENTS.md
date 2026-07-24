@@ -23,6 +23,7 @@ native host policy for persistent distribution caching and HTTPS acquisition.
 - `src/manifest.rs`: cancellable bounded HTTPS manifest download and trust-pin verification.
 - `src/lib.rs`: public native cache/fetch contract.
 - `src/tests.rs`: cache and local fixture-server contract tests.
+- `src/tests/fixture.rs`: socket-free in-memory HTTP fixture transport.
 
 ## Validation
 

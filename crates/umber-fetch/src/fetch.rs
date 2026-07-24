@@ -155,6 +155,11 @@ impl FetchClient {
         Self { agent, config }
     }
 
+    #[cfg(test)]
+    pub(crate) fn with_agent(config: FetchClientConfig, agent: ureq::Agent) -> Self {
+        Self { agent, config }
+    }
+
     /// Acquires a complete batch in input order. On any failure no bytes are
     /// returned to the caller, though verified objects remain safely cached.
     pub fn fetch_batch(
@@ -344,12 +349,15 @@ impl FetchClient {
 }
 
 pub(crate) fn agent(timeout: Duration) -> ureq::Agent {
-    let config = ureq::Agent::config_builder()
+    ureq::Agent::new_with_config(agent_config(timeout))
+}
+
+pub(crate) fn agent_config(timeout: Duration) -> ureq::config::Config {
+    ureq::Agent::config_builder()
         .timeout_connect(Some(timeout))
         .timeout_global(Some(timeout))
         .http_status_as_error(false)
-        .build();
-    ureq::Agent::new_with_config(config)
+        .build()
 }
 
 pub(crate) fn parse_transport_url(value: &str, subject: &str) -> Result<Uri, String> {

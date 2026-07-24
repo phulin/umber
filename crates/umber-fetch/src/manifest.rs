@@ -54,11 +54,20 @@ pub fn fetch_manifest_cancellable(
     timeout: Duration,
     cancellation: &FetchCancellation,
 ) -> Result<Vec<u8>, ManifestFetchError> {
+    fetch_manifest_with_agent(url, expected_sha256, cancellation, &agent(timeout))
+}
+
+fn fetch_manifest_with_agent(
+    url: &str,
+    expected_sha256: &str,
+    cancellation: &FetchCancellation,
+    agent: &ureq::Agent,
+) -> Result<Vec<u8>, ManifestFetchError> {
     if cancellation.is_cancelled() {
         return Err(ManifestFetchError::Cancelled);
     }
     let url = parse_transport_url(url, "manifests").map_err(ManifestFetchError::InvalidUrl)?;
-    let mut response = agent(timeout)
+    let mut response = agent
         .get(url)
         .call()
         .map_err(|error| ManifestFetchError::Transport(error.to_string()))?;
@@ -116,4 +125,14 @@ fn hex_digest(bytes: &[u8]) -> String {
         write!(output, "{byte:02x}").expect("writing to a string cannot fail");
     }
     output
+}
+
+#[cfg(test)]
+pub(crate) fn fetch_manifest_with_test_agent(
+    url: &str,
+    expected_sha256: &str,
+    cancellation: &FetchCancellation,
+    agent: &ureq::Agent,
+) -> Result<Vec<u8>, ManifestFetchError> {
+    fetch_manifest_with_agent(url, expected_sha256, cancellation, agent)
 }
