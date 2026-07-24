@@ -1010,15 +1010,16 @@ added only through the optimization policy in section 32, with the canonical
 scalar matcher retained as the specification fallback and test oracle inside
 the new subsystem.
 
-The first implementation slice installs `Matching` around compulsory-prefix
-and undelimited-argument delivery. It uses raw `get_token`, strips precisely
-one outer argument group, retains nested literal braces, and lets the existing
-outer-validity operation perform all inserted-token recovery. The next slice
-extends that same scalar path with direct delimited matching: it retries a
+The implementation installs `Matching` around compulsory-prefix and argument
+delivery. It uses raw `get_token`, strips precisely one outer argument group,
+retains nested literal braces, and lets the existing outer-validity operation
+perform all inserted-token recovery. Direct delimited matching retries a
 partial-prefix mismatch as a possible overlapping prefix, commits failed
 prefixes literally, ignores delimiters below literal brace depth, and cancels
-the raw brace accounting for a matched `#{` delimiter. Replacement activation
-remains a separate ordered slice.
+the raw brace accounting for a matched `#{` delimiter. A successful call
+freezes every range once, creates one invocation origin, and installs exactly
+one activation/body pair over the canonical replacement list; replay resolves
+its compact `OutParameter` tokens through that activation.
 
 ## 20. Canonical `scan_toks`
 

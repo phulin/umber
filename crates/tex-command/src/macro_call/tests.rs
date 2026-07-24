@@ -211,7 +211,7 @@ fn scalar_matcher_consumes_compulsory_prefix_before_undelimited_argument() {
         false,
     )
     .expect("prefix and argument match");
-    assert!(command.parameters.activations.is_empty());
+    assert_eq!(command.parameters.activations.len(), 1);
     assert_eq!(
         arguments
             .buffer
@@ -253,7 +253,7 @@ fn undelimited_group_strips_only_its_outer_braces() {
         false,
     )
     .expect("balanced group matches");
-    assert!(command.parameters.activations.is_empty());
+    assert_eq!(command.parameters.activations.len(), 1);
     let buffer = &arguments.buffer;
     assert_eq!(buffer.len(), 4);
     assert!(matches!(
@@ -295,6 +295,192 @@ fn outer_argument_token_uses_raw_delivery_recovery_then_aborts_match() {
     assert_eq!(
         run_macro(b"\\m\\outer", MeaningFlags::EMPTY, &[Token::param(1)], true),
         Err(CommandError::OuterInMacroArgument)
+    );
+}
+
+#[test]
+fn successful_call_activates_canonical_replacement_and_replays_parameter_range() {
+    let mut command = CommandState::default();
+    let source = command
+        .register_source(SourceRegistration::new(
+            RegisteredSourceKind::Generated,
+            Arc::<[u8]>::from(&b"\\m{x}"[..]),
+        ))
+        .expect("source registers");
+    command
+        .open_registered_source(source)
+        .expect("source opens");
+    let mut runtime = CommandRuntime::default();
+    let mut universe = Universe::new();
+    let name = universe.intern("m").symbol();
+    let parameters = universe.intern_token_list(&[Token::param(1)]);
+    let replacement = universe.intern_token_list(&[Token::param(1), other('!')]);
+    let definition = universe.intern_macro(MacroMeaning::new(
+        MeaningFlags::EMPTY,
+        parameters,
+        replacement,
+    ));
+    universe.set_meaning(
+        name,
+        Meaning::Macro {
+            flags: MeaningFlags::EMPTY,
+            definition,
+        },
+    );
+    let mut capabilities = CommandHostCapabilities::default();
+    {
+        let mut processor = CommandProcessor::new(
+            &mut command,
+            &mut runtime,
+            universe.command_context(),
+            CommandHostContext::new(&mut capabilities),
+        );
+
+        let call = processor
+            .get_next()
+            .expect("macro call delivery")
+            .expect("macro token");
+        let arguments = processor.macro_call(call).expect("macro matches");
+        assert_eq!(arguments.buffer.len(), 1);
+        assert_eq!(processor.command.parameters.activations.len(), 1);
+        assert!(matches!(
+            processor.command.input.levels.last(),
+            Some(crate::input::InputLevel::Tokens(cursor))
+                if matches!(cursor.behavior, crate::input::TokenBehavior::MacroBody(_))
+        ));
+
+        assert_eq!(
+            processor
+                .get_token()
+                .expect("parameter replay")
+                .expect("argument token")
+                .spelling()
+                .semantic_token(),
+            Token::Char {
+                ch: 'x',
+                cat: Catcode::Letter
+            }
+        );
+        assert_eq!(
+            processor
+                .get_token()
+                .expect("literal replay")
+                .expect("literal token")
+                .spelling()
+                .semantic_token(),
+            other('!')
+        );
+        assert!(
+            processor
+                .get_token()
+                .expect("replacement retires")
+                .is_some()
+        );
+        assert!(processor.command.parameters.activations.is_empty());
+        assert!(processor.get_token().expect("source retires").is_none());
+    }
+}
+
+#[test]
+fn nested_calls_keep_out_parameter_ownership_and_invocation_provenance() {
+    let mut command = CommandState::default();
+    let source = command
+        .register_source(SourceRegistration::new(
+            RegisteredSourceKind::Generated,
+            Arc::<[u8]>::from(&b"\\outer{x}"[..]),
+        ))
+        .expect("source registers");
+    command
+        .open_registered_source(source)
+        .expect("source opens");
+    let mut runtime = CommandRuntime::default();
+    let mut universe = Universe::new();
+    let outer = universe.intern("outer").symbol();
+    let inner = universe.intern("inner").symbol();
+    let one_parameter = universe.intern_token_list(&[Token::param(1)]);
+    let outer_replacement = universe.intern_token_list(&[Token::Cs(inner), Token::param(1)]);
+    let escaped_hash = Token::Char {
+        ch: '#',
+        cat: Catcode::Parameter,
+    };
+    let inner_replacement = universe.intern_token_list(&[escaped_hash, Token::param(1)]);
+    let outer_definition = universe.intern_macro(MacroMeaning::new(
+        MeaningFlags::EMPTY,
+        one_parameter,
+        outer_replacement,
+    ));
+    let inner_definition = universe.intern_macro(MacroMeaning::new(
+        MeaningFlags::EMPTY,
+        one_parameter,
+        inner_replacement,
+    ));
+    universe.set_meaning(
+        outer,
+        Meaning::Macro {
+            flags: MeaningFlags::EMPTY,
+            definition: outer_definition,
+        },
+    );
+    universe.set_meaning(
+        inner,
+        Meaning::Macro {
+            flags: MeaningFlags::EMPTY,
+            definition: inner_definition,
+        },
+    );
+    let mut capabilities = CommandHostCapabilities::default();
+    {
+        let mut processor = CommandProcessor::new(
+            &mut command,
+            &mut runtime,
+            universe.command_context(),
+            CommandHostContext::new(&mut capabilities),
+        );
+
+        let outer_call = processor
+            .get_next()
+            .expect("outer delivery")
+            .expect("outer token");
+        processor.macro_call(outer_call).expect("outer matches");
+        let inner_call = processor
+            .get_next()
+            .expect("inner delivery")
+            .expect("inner token");
+        processor.macro_call(inner_call).expect("inner matches");
+        assert_eq!(processor.command.parameters.activations.len(), 2);
+        assert_eq!(
+            processor
+                .get_token()
+                .expect("escaped hash")
+                .expect("hash token")
+                .spelling()
+                .semantic_token(),
+            escaped_hash
+        );
+        assert_eq!(
+            processor
+                .get_token()
+                .expect("nested parameter replay")
+                .expect("argument token")
+                .spelling()
+                .semantic_token(),
+            Token::Char {
+                ch: 'x',
+                cat: Catcode::Letter
+            }
+        );
+        assert!(
+            processor
+                .get_token()
+                .expect("nested replay retires")
+                .is_some()
+        );
+        assert!(processor.command.parameters.activations.is_empty());
+        assert!(processor.get_token().expect("source retires").is_none());
+    }
+    assert_eq!(
+        universe.macro_invocation_provenance_stats().invocations(),
+        2
     );
 }
 

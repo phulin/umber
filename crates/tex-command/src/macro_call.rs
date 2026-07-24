@@ -1,6 +1,5 @@
 //! Private canonical scalar macro-call state machine.
-#![allow(dead_code)] // consumed by the ordered macro-replay implementation issue
-
+#![allow(dead_code)] // expansion dispatch is the next ordered integration slice
 use std::sync::Arc;
 
 use tex_state::ids::MacroDefinitionId;
@@ -175,8 +174,8 @@ impl ParameterState {
 }
 
 impl CommandProcessor<'_> {
-    /// TeX.web's scalar `macro_call` path for compulsory parameter text and
-    /// literal argument matching.
+    /// TeX.web's scalar `macro_call` path for compulsory parameter text,
+    /// literal argument matching, and replacement activation.
     pub(crate) fn macro_call(
         &mut self,
         call: crate::CurrentCommand,
@@ -204,7 +203,21 @@ impl CommandProcessor<'_> {
         self.outer_recovered_while_matching = false;
         let result = self.macro_call_scalar(meaning.flags(), &pattern);
         self.command.restore_scanner_status(prior);
-        result
+        let arguments = result?;
+
+        // TeX.web §§391--400 freezes the completed ranges before replacing
+        // the input. The activation owns that one shared buffer; its body
+        // replays the canonical immutable replacement list and resolves
+        // compact `OutParameter` tokens through that owner.
+        let provenance = self.state.macro_definition_provenance(definition);
+        self.push_macro_activation(
+            definition,
+            call.spelling().origin(),
+            arguments.clone(),
+            meaning.replacement_text(),
+            provenance.replacement_origins(),
+        );
+        Ok(arguments)
     }
 
     fn macro_call_scalar(
@@ -237,8 +250,6 @@ impl CommandProcessor<'_> {
                 .complete((parameter + 1) as u8, argument)
                 .map_err(|_| CommandError::InputInvariant)?;
         }
-        // Replacement activation is deliberately a later ordered milestone:
-        // this scalar slice returns only the fully frozen matched arguments.
         Ok(arguments.finish())
     }
 
