@@ -782,20 +782,18 @@ impl CommandProcessor<'_> {
         let action = retirement.action;
         #[cfg(any(test, feature = "instrumentation"))]
         if !matches!(action, InputRetirementAction::VTemplateRetained) {
+            let reason = if self.take_immediate_write_retirement(identity) {
+                InputReason::Write
+            } else {
+                observed_retirement_reason(action, retirement.reason)
+            };
             self.observe(CommandObservation::Input(InputRecord {
                 transition: if matches!(action, InputRetirementAction::TerminalStop) {
                     InputTransition::Stop
                 } else {
                     InputTransition::Retire
                 },
-                reason: if matches!(
-                    retirement.trace,
-                    Some(ReplayTrace::Stored(crate::input::StoredReplayReason::Write))
-                ) {
-                    InputReason::Write
-                } else {
-                    observed_retirement_reason(action, retirement.reason)
-                },
+                reason,
                 level: identity.0,
                 position: 0,
             }));

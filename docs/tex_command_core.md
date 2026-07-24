@@ -818,7 +818,10 @@ unexpanded general text, then command control replays that list between
 synthetic braces and the inaccessible outer `\endwrite` stopper before an
 expanded `scan_toks` collection. The stopper retires without reading the
 following source token; this preserves TeX82's raw/expanded deliveries,
-input lifecycle, and detached write observation. It returns only the final
+input lifecycle, and detached write observation. The §53 scanner registers
+the replay level's observer identity when it pushes that list; raw delivery
+consumes only that identity at retirement and never derives observation from
+replay trace/provenance. It returns only the final
 typed immediate-effect request; the executor applies that request without
 access to live command input. This metadata does not participate
 in execution dispatch.

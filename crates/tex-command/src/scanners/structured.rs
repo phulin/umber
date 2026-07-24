@@ -231,12 +231,18 @@ impl CommandProcessor<'_> {
             ReplayTrace::Stored(StoredReplayReason::Write),
         );
         #[cfg(any(test, feature = "instrumentation"))]
-        self.observe(crate::CommandObservation::Input(crate::InputRecord {
-            transition: crate::InputTransition::Push,
-            reason: crate::InputReason::Write,
-            level: write_level.0,
-            position: 0,
-        }));
+        {
+            // §53 names this artificial replay as a write input lifetime.
+            // Keep that observer classification at the scanner/control seam;
+            // the raw delivery loop must not inspect the level's trace.
+            self.observe_immediate_write_retirement(write_level);
+            self.observe(crate::CommandObservation::Input(crate::InputRecord {
+                transition: crate::InputTransition::Push,
+                reason: crate::InputReason::Write,
+                level: write_level.0,
+                position: 0,
+            }));
+        }
         self.push_write_recovery(vec![left_brace], left_brace);
 
         let expanded = self.scan_balanced_text(true)?.tokens;

@@ -10,6 +10,9 @@ use tex_state::CommandContext;
 use crate::{CommandHostContext, CommandRuntime, CommandState, DeliveryStamp};
 
 #[cfg(any(test, feature = "instrumentation"))]
+use crate::input::InputLevelId;
+
+#[cfg(any(test, feature = "instrumentation"))]
 use crate::observation::CommandObserver;
 
 #[cfg(any(test, feature = "instrumentation"))]
@@ -47,6 +50,12 @@ pub struct CommandProcessor<'a> {
     observer: Option<&'a mut dyn CommandObserver>,
     #[cfg(any(test, feature = "instrumentation"))]
     observe_next_raw_as_character_code: bool,
+    /// The §53 write scanner registers its replay level here solely to name
+    /// that level in detached observation. This is processor-local observer
+    /// metadata: raw delivery neither reads replay provenance nor lets this
+    /// value affect input semantics.
+    #[cfg(any(test, feature = "instrumentation"))]
+    immediate_write_retirement: Option<InputLevelId>,
     /// Only the immediately preceding raw delivery may be backed up. This is
     /// processor-local so stamps cannot survive a snapshot or a new episode.
     last_delivery: Option<DeliveryStamp>,
@@ -78,6 +87,8 @@ impl<'a> CommandProcessor<'a> {
             observer: None,
             #[cfg(any(test, feature = "instrumentation"))]
             observe_next_raw_as_character_code: false,
+            #[cfg(any(test, feature = "instrumentation"))]
+            immediate_write_retirement: None,
             last_delivery: None,
             last_integer_terminator: None,
             next_delivery_sequence: 0,
@@ -116,6 +127,29 @@ impl<'a> CommandProcessor<'a> {
     pub(crate) fn observe(&mut self, observation: crate::observation::CommandObservation) {
         if let Some(observer) = self.observer.as_deref_mut() {
             observer.committed(observation);
+        }
+    }
+
+    /// Registers the write-list lifetime established by TeX82 §53's
+    /// `write_out`. The scanner owns this classification; raw delivery only
+    /// consumes the already-registered observer identity when the level ends.
+    #[cfg(any(test, feature = "instrumentation"))]
+    pub(crate) fn observe_immediate_write_retirement(&mut self, level: InputLevelId) {
+        debug_assert!(self.immediate_write_retirement.is_none());
+        self.immediate_write_retirement = Some(level);
+    }
+
+    /// Returns whether the just-retired raw level is the §53 write-list level.
+    /// This deliberately consumes identity rather than consulting `ReplayTrace`:
+    /// trace/provenance explains an input frame but cannot select delivery
+    /// observation semantics.
+    #[cfg(any(test, feature = "instrumentation"))]
+    pub(crate) fn take_immediate_write_retirement(&mut self, level: InputLevelId) -> bool {
+        if self.immediate_write_retirement == Some(level) {
+            self.immediate_write_retirement = None;
+            true
+        } else {
+            false
         }
     }
 }
