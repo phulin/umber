@@ -712,7 +712,12 @@ fn translate_observation(
                     _ => DiagnosticSeverity::Error,
                 },
                 diagnostic: record.diagnostic.into(),
-                arguments: Vec::new(),
+                arguments: record
+                    .arguments
+                    .iter()
+                    .cloned()
+                    .map(|token| CanonicalValue::Token(oracle_token(token)))
+                    .collect(),
             }),
             format!("source={source}"),
         ),

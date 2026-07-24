@@ -123,7 +123,7 @@ impl CommandProcessor<'_> {
     pub fn recover_alignment_unbalanced_delimiter(
         &mut self,
         event: AlignmentDeliveryEvent,
-    ) -> Result<(), CommandError> {
+    ) -> Result<Token, CommandError> {
         let AlignmentDeliveryEvent::UnbalancedDelimiter(command) = event else {
             return Err(CommandError::InputInvariant);
         };
@@ -195,7 +195,7 @@ impl CommandProcessor<'_> {
             delimiter: None,
             previous_align_state: Some(before_backup),
         }));
-        Ok(())
+        Ok(recovery)
     }
 
     fn saved_alignment_delimiter(
@@ -285,6 +285,55 @@ impl CommandProcessor<'_> {
     /// brace accounting is undone at most once.
     pub fn back_input(&mut self, command: CurrentCommand) -> Result<(), CommandError> {
         self.back_input_with_treatment(command, BackupTreatment::Ordinary)
+    }
+
+    /// Performs TeX82 §1064 `off_save` input recovery for an end-v command.
+    ///
+    /// The executor selects the closer from its actual group, but raw backup,
+    /// inserted-token ownership, and observer order remain in the command
+    /// core.  This is the path used by §1131 `do_endv` when an intervening
+    /// group prevents the active alignment cell from finishing immediately.
+    pub fn recover_endv_off_save(
+        &mut self,
+        command: CurrentCommand,
+        closing: Token,
+    ) -> Result<(), CommandError> {
+        #[cfg(any(test, feature = "instrumentation"))]
+        self.observe(CommandObservation::Diagnostic(
+            crate::observation::DiagnosticRecord {
+                severity: "error",
+                diagnostic: "off_save_replay",
+                arguments: vec![self.observed_command_spelling(&command)],
+            },
+        ));
+        self.back_input(command)?;
+        let level = self.command.push_token_level(
+            TokenPayload::Transient(SharedTokenBuffer::new(vec![TracedTokenWord::pack(
+                closing,
+                OriginId::UNKNOWN,
+            )])),
+            TokenBehavior::Recovery,
+            RetirementBehavior::Pop,
+            ReplayTrace::Transient(crate::input::TransientReplayReason::Inserted),
+        );
+        #[cfg(not(any(test, feature = "instrumentation")))]
+        let _ = level;
+        #[cfg(any(test, feature = "instrumentation"))]
+        {
+            self.observe(CommandObservation::Input(InputRecord {
+                transition: InputTransition::Recovery,
+                reason: InputReason::Recovery,
+                level: level.0,
+                position: 0,
+            }));
+            self.observe(CommandObservation::Recovery(RecoveryRecord {
+                backup: false,
+                tokens: vec![
+                    self.observed_token(TracedTokenWord::pack(closing, OriginId::UNKNOWN)),
+                ],
+            }));
+        }
+        Ok(())
     }
 
     /// Replaces an exhausted one-token backup with a fresh backup of its

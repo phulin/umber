@@ -771,6 +771,7 @@ impl CommandProcessor<'_> {
             self.observe(CommandObservation::Diagnostic(DiagnosticRecord {
                 severity: "error",
                 diagnostic: "conditional_limit_recovery",
+                arguments: Vec::new(),
             }));
         }
         Ok(())

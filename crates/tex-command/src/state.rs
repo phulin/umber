@@ -507,7 +507,10 @@ impl CommandState {
             state_change: crate::AlignmentRecord {
                 transition: "state_change",
                 alignment: Some(alignment.raw()),
-                align_state: self.alignment.align_state,
+                // `finish_cell` assigns the v-template sentinel after
+                // `do_endv` has proven the retained input shape. This
+                // observation is captured before that typed request commits.
+                align_state: 1_000_000,
                 delimiter: None,
                 previous_align_state: None,
             },
@@ -533,7 +536,7 @@ impl CommandState {
                     "v_template_retire"
                 },
                 alignment: Some(alignment.raw()),
-                align_state: self.alignment.align_state,
+                align_state: 1_000_000,
                 delimiter: None,
                 previous_align_state: None,
             },

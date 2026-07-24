@@ -122,6 +122,11 @@ impl CurrentCommand {
         self.spelling = TracedTokenWord::pack(frozen_endv, self.spelling.origin());
         self.meaning = Meaning::EndV;
         self.control_sequence = None;
+        // The preceding tab/span/cr adjustment belongs to the intercepted
+        // delimiter. TeX82 §343 replaces `cur_tok` with frozen end-v before
+        // a possible §1131 `back_input`, so replaying end-v must not undo the
+        // delimiter's already-committed alignment transition.
+        self.alignment_adjustment = crate::processor::AlignmentDeliveryAdjustment::None;
     }
 
     pub(crate) fn set_alignment_adjustment(

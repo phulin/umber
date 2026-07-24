@@ -76,6 +76,8 @@ struct ReplayBoxes {
     pending_setbox: Option<SetBoxTarget>,
     active_boxes: Vec<ActiveReplayBox>,
     suspended_alignments: Vec<ActiveReplayAlignment>,
+    recovery_simple_group_pending: bool,
+    recovery_simple_group_open: bool,
 }
 
 impl CommandReplayControl {
@@ -179,6 +181,7 @@ impl CommandReplayControl {
         alignment: AlignmentIdentity,
         stores: &mut Universe,
     ) -> Result<ReplayStep, ExecError> {
+        let innermost_group = stores.innermost_group_kind();
         let scanned = {
             let mut processor = CommandProcessor::new(
                 &mut self.command,
@@ -186,7 +189,12 @@ impl CommandReplayControl {
                 stores.command_context(),
                 CommandHostContext::new(&mut self.capabilities),
             );
-            scan_alignment_delivery_step(&mut processor, alignment, &ReplayBoxes::default())?
+            scan_alignment_delivery_step(
+                &mut processor,
+                alignment,
+                &ReplayBoxes::default(),
+                innermost_group,
+            )?
         };
         apply_scanned_step(
             scanned,
@@ -206,6 +214,7 @@ impl CommandReplayControl {
             Mode::Vertical | Mode::InternalVertical
         );
         let alignment_preamble = alignment_preamble(self.active_alignment.as_mut());
+        let innermost_group = stores.innermost_group_kind();
         let scanned = {
             let mut processor = CommandProcessor::new(
                 &mut self.command,
@@ -218,6 +227,7 @@ impl CommandReplayControl {
                 starts_paragraph,
                 &self.boxes,
                 alignment_preamble,
+                innermost_group,
             )?
         };
         apply_scanned_step(
@@ -244,6 +254,7 @@ impl CommandReplayControl {
             Mode::Vertical | Mode::InternalVertical
         );
         let alignment_preamble = alignment_preamble(self.active_alignment.as_mut());
+        let innermost_group = stores.innermost_group_kind();
         let scanned = {
             let mut processor = CommandProcessor::new(
                 &mut self.command,
@@ -257,6 +268,7 @@ impl CommandReplayControl {
                 starts_paragraph,
                 &self.boxes,
                 alignment_preamble,
+                innermost_group,
             )?
         };
         let mutation = applied_mutation_observation(&scanned, stores);
@@ -526,6 +538,11 @@ enum ScannedStep {
     BeginNoAlign {
         alignment: AlignmentIdentity,
     },
+    AlignmentRecovery {
+        opens_simple_group: bool,
+    },
+    BeginSimpleGroup,
+    EndSimpleGroup,
     AlignmentPeekCell {
         alignment: AlignmentIdentity,
         omit: bool,
@@ -556,6 +573,7 @@ fn scan_replay_step(
     starts_paragraph: bool,
     boxes: &ReplayBoxes,
     alignment_preamble: Option<(AlignmentIdentity, AlignmentPreamblePhase)>,
+    innermost_group: Option<GroupKind>,
 ) -> Result<ScannedStep, ExecError> {
     if let Some((alignment, phase)) = alignment_preamble {
         return match phase {
@@ -594,7 +612,7 @@ fn scan_replay_step(
             }
             AlignmentPreamblePhase::NoAlignBody => scan_noalign_body(processor, alignment, boxes),
             AlignmentPreamblePhase::CellDelivery => {
-                scan_alignment_delivery_step(processor, alignment, boxes)
+                scan_alignment_delivery_step(processor, alignment, boxes, innermost_group)
             }
         };
     }
@@ -712,6 +730,7 @@ fn scan_alignment_delivery_step(
     processor: &mut CommandProcessor<'_>,
     alignment: AlignmentIdentity,
     boxes: &ReplayBoxes,
+    innermost_group: Option<GroupKind>,
 ) -> Result<ScannedStep, ExecError> {
     match processor
         .get_x_alignment_delivery()
@@ -720,6 +739,32 @@ fn scan_alignment_delivery_step(
         None => Ok(ScannedStep::EndOfInput),
         Some(AlignmentDelivery::Command(command)) => {
             if matches!(command.meaning(), Meaning::EndV) {
+                // Replay's structural alignment group is deliberately not a
+                // Universe group: the surrounding box owns that stack slot.
+                // A recovery-opened simple group is the bounded exception
+                // that TeX82 §1131 must close through `off_save` first.
+                if boxes.recovery_simple_group_open {
+                    let closer = match innermost_group {
+                        Some(GroupKind::MathShift) => tex_state::token::Token::Char {
+                            ch: '$',
+                            cat: Catcode::MathShift,
+                        },
+                        Some(GroupKind::SemiSimple) => {
+                            return Err(ExecError::MissingToken {
+                                context: "endgroup off_save replay",
+                            });
+                        }
+                        Some(_) => tex_state::token::Token::Char {
+                            ch: '}',
+                            cat: Catcode::EndGroup,
+                        },
+                        None => return Ok(ScannedStep::Continue),
+                    };
+                    processor
+                        .recover_endv_off_save(command, closer)
+                        .map_err(command_error)?;
+                    return Ok(ScannedStep::Continue);
+                }
                 return Ok(ScannedStep::AlignmentCellFinish { alignment });
             }
             scan_command(processor, command, false, MeaningFlags::EMPTY, false, boxes)
@@ -729,9 +774,20 @@ fn scan_alignment_delivery_step(
                 tex_command::AlignmentDeliveryEvent::EndTemplate(_) => processor
                     .begin_alignment_v_template(alignment, event)
                     .map_err(command_error)?,
-                tex_command::AlignmentDeliveryEvent::UnbalancedDelimiter(_) => processor
-                    .recover_alignment_unbalanced_delimiter(event)
-                    .map_err(command_error)?,
+                tex_command::AlignmentDeliveryEvent::UnbalancedDelimiter(_) => {
+                    let recovery = processor
+                        .recover_alignment_unbalanced_delimiter(event)
+                        .map_err(command_error)?;
+                    return Ok(ScannedStep::AlignmentRecovery {
+                        opens_simple_group: matches!(
+                            recovery,
+                            tex_state::token::Token::Char {
+                                cat: Catcode::BeginGroup,
+                                ..
+                            }
+                        ),
+                    });
+                }
             }
             Ok(ScannedStep::Continue)
         }
@@ -775,6 +831,31 @@ fn scan_command(
     starts_paragraph: bool,
     boxes: &ReplayBoxes,
 ) -> Result<ScannedStep, ExecError> {
+    // `align_error`'s inserted brace is an actual execution group, even when
+    // it appears inside a replayed box body.  It must therefore win over the
+    // box body's brace-depth bookkeeping so §1131 can observe it at end-v.
+    if boxes.recovery_simple_group_pending
+        && matches!(
+            command.meaning(),
+            Meaning::CharToken {
+                cat: Catcode::BeginGroup,
+                ..
+            }
+        )
+    {
+        return Ok(ScannedStep::BeginSimpleGroup);
+    }
+    if boxes.recovery_simple_group_open
+        && matches!(
+            command.meaning(),
+            Meaning::CharToken {
+                cat: Catcode::EndGroup,
+                ..
+            }
+        )
+    {
+        return Ok(ScannedStep::EndSimpleGroup);
+    }
     if boxes
         .active_boxes
         .last()
@@ -1658,6 +1739,25 @@ fn apply_scanned_step(
                 body_opener_pending: true,
                 depth: 1,
             });
+            Ok(ReplayStep::Continue)
+        }
+        ScannedStep::BeginSimpleGroup => {
+            stores.enter_group_with_kind(GroupKind::Simple);
+            boxes.recovery_simple_group_pending = false;
+            boxes.recovery_simple_group_open = true;
+            Ok(ReplayStep::Continue)
+        }
+        ScannedStep::EndSimpleGroup => {
+            stores
+                .leave_group_with_kind(GroupKind::Simple)
+                .map_err(|_| ExecError::MissingToken {
+                    context: "simple recovery group",
+                })?;
+            boxes.recovery_simple_group_open = false;
+            Ok(ReplayStep::Continue)
+        }
+        ScannedStep::AlignmentRecovery { opens_simple_group } => {
+            boxes.recovery_simple_group_pending = opens_simple_group;
             Ok(ReplayStep::Continue)
         }
         ScannedStep::ReplayBoxOpeningBrace => {

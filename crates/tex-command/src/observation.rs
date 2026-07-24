@@ -402,6 +402,8 @@ pub struct EffectRecord {
 pub struct DiagnosticRecord {
     pub severity: &'static str,
     pub diagnostic: &'static str,
+    /// Canonical token arguments selected by the recovery site.
+    pub arguments: Vec<ObservedToken>,
 }
 
 /// One committed command-core observation.
