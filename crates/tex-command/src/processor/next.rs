@@ -22,6 +22,12 @@ use crate::{
 use super::CommandProcessor;
 use super::status::{EofLegality, RecoveryContext, ScannerStatus};
 
+#[cfg(any(test, feature = "instrumentation"))]
+use crate::observation::{
+    CommandDeliveryBoundary, CommandDeliveryRecord, CommandObservation, CommandProvenance,
+    InputRecord, InputTransition, RecoveryRecord, observed_token,
+};
+
 const DEFAULT_END_LINE_CHAR: i32 = 13;
 
 impl CommandProcessor<'_> {
@@ -153,9 +159,20 @@ impl CommandProcessor<'_> {
         // when the original cursor could otherwise be rewound.
         if matches!(treatment, BackupTreatment::Ordinary) && self.rewind_current_token_cursor(stamp)
         {
+            #[cfg(any(test, feature = "instrumentation"))]
+            self.observe(CommandObservation::Input(InputRecord {
+                transition: InputTransition::Backup,
+                level: stamp.input_level(),
+                position: stamp.position(),
+            }));
             return Ok(());
         }
 
+        #[cfg(any(test, feature = "instrumentation"))]
+        self.observe(CommandObservation::Recovery(RecoveryRecord {
+            backup: true,
+            tokens: vec![self.observed_token(command.spelling())],
+        }));
         self.command.push_token_level(
             TokenPayload::Transient(SharedTokenBuffer::new(vec![command.spelling()])),
             TokenBehavior::BackedUp(treatment),
@@ -209,6 +226,8 @@ impl CommandProcessor<'_> {
             self.check_outer_validity_entry(&mut command)?;
             let adjustment = self.command.alignment.classify_delivery(&mut command);
             command.set_alignment_adjustment(adjustment);
+            #[cfg(any(test, feature = "instrumentation"))]
+            self.observe_raw_delivery(&command);
             return Ok(Some(command));
         }
     }
@@ -216,6 +235,12 @@ impl CommandProcessor<'_> {
     fn take_input_token(&mut self) -> Result<Option<DeliveredToken>, CommandError> {
         loop {
             let Some(level) = self.command.input.levels.last().cloned() else {
+                #[cfg(any(test, feature = "instrumentation"))]
+                self.observe(CommandObservation::Input(InputRecord {
+                    transition: InputTransition::Stop,
+                    level: 0,
+                    position: 0,
+                }));
                 return Ok(None);
             };
             match level {
@@ -285,12 +310,22 @@ impl CommandProcessor<'_> {
         &mut self,
         identity: InputLevelId,
     ) -> Result<RetirementRestart, CommandError> {
-        match self
+        let action = self
             .command
             .retire_exhausted_input(identity)
             .map_err(|_| CommandError::InputInvariant)?
-            .action
-        {
+            .action;
+        #[cfg(any(test, feature = "instrumentation"))]
+        self.observe(CommandObservation::Input(InputRecord {
+            transition: if matches!(action, InputRetirementAction::TerminalStop) {
+                InputTransition::Stop
+            } else {
+                InputTransition::Retire
+            },
+            level: identity.0,
+            position: 0,
+        }));
+        match action {
             InputRetirementAction::TerminalStop => Ok(RetirementRestart::Stop),
             InputRetirementAction::VTemplateRetained => {
                 // End-v is synthesized only after the exact v-template frame
@@ -415,6 +450,15 @@ impl CommandProcessor<'_> {
         if let Some(warning) = warning {
             self.command.expansion.pending_diagnostics.push(warning.0);
         }
+        #[cfg(any(test, feature = "instrumentation"))]
+        self.observe(CommandObservation::Recovery(RecoveryRecord {
+            backup: false,
+            tokens: tokens
+                .iter()
+                .copied()
+                .map(|token| self.observed_token(token))
+                .collect(),
+        }));
         self.command.push_token_level(
             TokenPayload::Transient(SharedTokenBuffer::new(tokens)),
             TokenBehavior::Ordinary,
@@ -430,6 +474,32 @@ impl CommandProcessor<'_> {
             .primitive_token(name)
             .ok_or(CommandError::InputInvariant)?;
         Ok(TracedTokenWord::pack(token, OriginId::UNKNOWN))
+    }
+
+    #[cfg(any(test, feature = "instrumentation"))]
+    pub(crate) fn observed_token(
+        &self,
+        token: TracedTokenWord,
+    ) -> crate::observation::ObservedToken {
+        observed_token(token, |symbol| self.state.resolve(symbol).to_owned())
+    }
+
+    #[cfg(any(test, feature = "instrumentation"))]
+    fn observe_raw_delivery(&mut self, command: &CurrentCommand) {
+        let command_name = match command.meaning() {
+            Meaning::CharToken { .. } => "character".to_owned(),
+            Meaning::Macro { .. } => "macro".to_owned(),
+            Meaning::ExpandablePrimitive(_) => "expandable".to_owned(),
+            Meaning::UnexpandablePrimitive(_) => "unexpandable".to_owned(),
+            _ => "internal".to_owned(),
+        };
+        let spelling = self.observed_token(command.spelling());
+        self.observe(CommandObservation::Command(CommandDeliveryRecord {
+            boundary: CommandDeliveryBoundary::Raw,
+            spelling,
+            command: command_name,
+            provenance: CommandProvenance::from_command(command),
+        }));
     }
 
     pub(crate) fn undo_alignment_delivery(&mut self, command: &CurrentCommand) {
@@ -502,6 +572,9 @@ mod tests {
 
     use super::*;
     use crate::input::{ReplayTrace, RetirementBehavior};
+    use crate::observation::{
+        CommandDeliveryBoundary, CommandObservation, CommandObserver, InputTransition,
+    };
     use crate::processor::{
         AbsorbingContext, AlignmentId, AlignmentScanContext, ArgumentBuilderId, ConditionId,
         DefinitionContext, MatchingContext, ScannerWarning, SkippingContext, TokenBuilderId,
@@ -510,6 +583,15 @@ mod tests {
         CommandHostCapabilities, CommandHostContext, CommandRuntime, CommandState,
         RegisteredSourceKind, SourceRegistration,
     };
+
+    #[derive(Default)]
+    struct Recorder(Vec<CommandObservation>);
+
+    impl CommandObserver for Recorder {
+        fn committed(&mut self, observation: CommandObservation) {
+            self.0.push(observation);
+        }
+    }
 
     fn processor<'a>(
         command: &'a mut CommandState,
@@ -607,6 +689,114 @@ mod tests {
                 .expect("source retirement succeeds")
                 .is_none()
         );
+    }
+
+    #[test]
+    fn observer_records_raw_expanded_input_and_deterministic_rollback_provenance() {
+        let mut command = CommandState::default();
+        let source = command
+            .register_source(SourceRegistration::new(
+                RegisteredSourceKind::Generated,
+                Arc::<[u8]>::from(b"x".as_slice()),
+            ))
+            .expect("source registers");
+        command
+            .open_registered_source(source)
+            .expect("source opens");
+        let snapshot = command.snapshot();
+        let mut runtime = CommandRuntime::default();
+        let mut universe = Universe::new();
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut first = Recorder::default();
+        {
+            let mut processor =
+                processor(&mut command, &mut runtime, &mut universe, &mut capabilities)
+                    .with_observer(&mut first);
+            processor
+                .get_x_token()
+                .expect("expanded delivery")
+                .expect("token");
+            while processor.get_next().expect("terminal retirement").is_some() {}
+        }
+
+        assert!(first.0.iter().any(|record| matches!(
+            record,
+            CommandObservation::Command(command)
+                if command.boundary == CommandDeliveryBoundary::Raw
+        )));
+        assert!(first.0.iter().any(|record| matches!(
+            record,
+            CommandObservation::Command(command)
+                if command.boundary == CommandDeliveryBoundary::Expanded
+        )));
+        assert!(first.0.iter().any(|record| matches!(
+            record,
+            CommandObservation::Input(input) if input.transition == InputTransition::Stop
+        )));
+
+        command.rollback(snapshot).expect("rollback succeeds");
+        let mut second = Recorder::default();
+        {
+            let mut processor =
+                processor(&mut command, &mut runtime, &mut universe, &mut capabilities)
+                    .with_observer(&mut second);
+            processor
+                .get_x_token()
+                .expect("replayed delivery")
+                .expect("token");
+            while processor
+                .get_next()
+                .expect("replayed terminal retirement")
+                .is_some()
+            {}
+        }
+        assert_eq!(
+            first.0, second.0,
+            "rollback must replay observer provenance exactly"
+        );
+    }
+
+    #[test]
+    fn absent_observer_has_no_delivery_or_snapshot_effect() {
+        let mut observed = CommandState::default();
+        let mut unobserved = CommandState::default();
+        for state in [&mut observed, &mut unobserved] {
+            let source = state
+                .register_source(SourceRegistration::new(
+                    RegisteredSourceKind::Generated,
+                    Arc::<[u8]>::from(b"xy".as_slice()),
+                ))
+                .expect("source registers");
+            state.open_registered_source(source).expect("source opens");
+        }
+        let mut observed_runtime = CommandRuntime::default();
+        let mut unobserved_runtime = CommandRuntime::default();
+        let mut observed_universe = Universe::new();
+        let mut unobserved_universe = Universe::new();
+        let mut observed_capabilities = CommandHostCapabilities::default();
+        let mut unobserved_capabilities = CommandHostCapabilities::default();
+        let mut recorder = Recorder::default();
+        {
+            let mut processor = processor(
+                &mut observed,
+                &mut observed_runtime,
+                &mut observed_universe,
+                &mut observed_capabilities,
+            )
+            .with_observer(&mut recorder);
+            while processor.get_next().expect("delivery succeeds").is_some() {}
+        }
+        {
+            let mut processor = processor(
+                &mut unobserved,
+                &mut unobserved_runtime,
+                &mut unobserved_universe,
+                &mut unobserved_capabilities,
+            );
+            while processor.get_next().expect("delivery succeeds").is_some() {}
+        }
+        assert!(!recorder.0.is_empty());
+        assert_eq!(observed, unobserved);
     }
 
     #[test]

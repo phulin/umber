@@ -17,6 +17,11 @@ use crate::{CommandError, CurrentCommand};
 
 use super::CommandProcessor;
 
+#[cfg(any(test, feature = "instrumentation"))]
+use crate::observation::{
+    CommandDeliveryBoundary, CommandDeliveryRecord, CommandObservation, CommandProvenance,
+};
+
 /// Stable pending-diagnostic identity for TeX.web's `Missing \\endcsname
 /// inserted` recovery. Rendering belongs to the diagnostic milestone.
 const MISSING_ENDCSNAME_DIAGNOSTIC: u64 = 0x6373_6e61_6d65_0001;
@@ -40,10 +45,30 @@ impl CommandProcessor<'_> {
                 return Ok(None);
             };
             if !is_expandable(command.meaning()) {
+                #[cfg(any(test, feature = "instrumentation"))]
+                self.observe_expanded_delivery(&command);
                 return Ok(Some(command));
             }
             self.expand(command)?;
         }
+    }
+
+    #[cfg(any(test, feature = "instrumentation"))]
+    fn observe_expanded_delivery(&mut self, command: &CurrentCommand) {
+        let command_name = match command.meaning() {
+            Meaning::CharToken { .. } => "character".to_owned(),
+            Meaning::Macro { .. } => "macro".to_owned(),
+            Meaning::ExpandablePrimitive(_) => "expandable".to_owned(),
+            Meaning::UnexpandablePrimitive(_) => "unexpandable".to_owned(),
+            _ => "internal".to_owned(),
+        };
+        let spelling = self.observed_token(command.spelling());
+        self.observe(CommandObservation::Command(CommandDeliveryRecord {
+            boundary: CommandDeliveryBoundary::Expanded,
+            spelling,
+            command: command_name,
+            provenance: CommandProvenance::from_command(command),
+        }));
     }
 
     /// TeX.web's scalar `expand`: each case changes the active input/state

@@ -3,6 +3,12 @@ name = "tex-command"
 version.workspace = true
 edition.workspace = true
 
+[features]
+# Enables the command-owned semantic observer boundary for dedicated
+# instrumentation builds. This deliberately pulls in no transport or oracle
+# schema dependency.
+instrumentation = []
+
 [dependencies]
 tex-state = { path = "../tex-state" }
 

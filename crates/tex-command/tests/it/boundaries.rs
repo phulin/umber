@@ -17,7 +17,7 @@ fn crate_dependency_direction_is_command_toward_state_only() {
         command_dependencies.contains("tex-state"),
         "tex-command must depend on the aggregate state boundary"
     );
-    for forbidden in ["tex-exec", "tex-expand", "tex-lex"] {
+    for forbidden in ["tex-exec", "tex-expand", "tex-lex", "tex-oracle"] {
         assert!(
             !command_dependencies.contains(forbidden),
             "tex-command must not depend on {forbidden}"

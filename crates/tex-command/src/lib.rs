@@ -28,6 +28,11 @@ pub use input::{
     SourceRegistration, SourceRegistrationError, SourceScalarRange, SourceToken,
     SourceTokenizationStep,
 };
+#[cfg(any(test, feature = "instrumentation"))]
+pub use observation::{
+    CommandDeliveryBoundary, CommandDeliveryRecord, CommandObservation, CommandObserver,
+    CommandProvenance, InputRecord, InputTransition, ObservedToken, RecoveryRecord,
+};
 pub use processor::{
     AlignmentCellTemplates, AlignmentDelivery, AlignmentDeliveryEvent, AlignmentIdentity,
     AlignmentLifecycleError, AlignmentRequest, AlignmentRequestResult, CommandProcessor,
