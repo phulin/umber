@@ -1403,6 +1403,15 @@ then publish the nested integer, internal-value, and outer integer results in
 canonical order. Overflow, rounding, radix, unit, and recovery behavior cite
 canonical sections and compare against reference fixtures.
 
+`scan_dimen` delegates its integral prefix to that same integer scanner. Its
+backed-up decimal point is then consumed raw, while a backed-up unit remains
+available to the canonical keyword retry sequence. `scan_glue` first probes a
+complete internal glue value; an ordinary numeric width is backed up and only
+then passed to `scan_dimen`. These retry frames retire before their replacement
+backup, preserving the TeX82 input lifecycle for whole-number dimensions,
+physical units, and `fil` orders. The replay adapter receives only the final
+`Scaled` or `GlueSpec` and never reconstructs these transitions.
+
 ## 24. Static e-TeX and pdfTeX extension seams
 
 Extensions are not runtime plugins. A profile installs a static primitive

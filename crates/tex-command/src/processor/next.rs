@@ -520,6 +520,32 @@ impl CommandProcessor<'_> {
         }
     }
 
+    /// Scalar keyword retries replay an exhausted backed-up candidate before
+    /// asking for another token.  Retire that one-token frame first so the
+    /// retry has the same input lifecycle as TeX82's `back_list` hand-off.
+    pub(crate) fn retire_exhausted_backup_before_scalar_replay(
+        &mut self,
+        stamp: DeliveryStamp,
+    ) -> Result<(), CommandError> {
+        let exhausted_backup = matches!(
+            self.command.input.levels.last(),
+            Some(InputLevel::Tokens(cursor))
+                if cursor.identity.0 == stamp.input_level()
+                    && matches!(cursor.behavior, TokenBehavior::BackedUp(_))
+                    && self.next_stored_token(cursor).is_none()
+        );
+        if exhausted_backup {
+            match self.retire_and_restart(InputLevelId(stamp.input_level()))? {
+                RetirementRestart::Continue => Ok(()),
+                RetirementRestart::Stop | RetirementRestart::EndV(_) => {
+                    Err(CommandError::InputInvariant)
+                }
+            }
+        } else {
+            Ok(())
+        }
+    }
+
     fn check_outer_validity_entry(
         &mut self,
         command: &mut CurrentCommand,

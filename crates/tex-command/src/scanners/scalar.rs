@@ -62,6 +62,7 @@ impl CommandProcessor<'_> {
                 Meaning::CharToken { ch: ' ', .. } | Meaning::CharToken { ch: '+', .. } => {}
                 Meaning::CharToken { ch: '-', .. } => negative = !negative,
                 _ => {
+                    self.retire_exhausted_backup_before_scalar_replay(command.delivery_stamp())?;
                     self.back_input(command)?;
                     break;
                 }
@@ -147,7 +148,7 @@ impl CommandProcessor<'_> {
                 command
             } else {
                 let Some(command) = self.get_x_token()? else {
-                    self.replay_scalar_commands(consumed);
+                    self.replay_scalar_commands(consumed)?;
                     return Ok(ScannedScalar {
                         value: false,
                         recovery: ScalarRecovery::None,
@@ -161,7 +162,7 @@ impl CommandProcessor<'_> {
             if !matches!(command.meaning(), Meaning::CharToken { ch, .. } if ch.eq_ignore_ascii_case(&expected))
             {
                 consumed.push(command);
-                self.replay_scalar_commands(consumed);
+                self.replay_scalar_commands(consumed)?;
                 return Ok(ScannedScalar {
                     value: false,
                     recovery: ScalarRecovery::None,
@@ -204,6 +205,15 @@ impl CommandProcessor<'_> {
                 _ => break command,
             }
         };
+        self.complete_integer(first, negative, provenance)
+    }
+
+    fn complete_integer(
+        &mut self,
+        first: CurrentCommand,
+        negative: bool,
+        provenance: OriginId,
+    ) -> Result<ScannedScalar<i32>, CommandError> {
         let value = match self.internal_value_from_command(&first)? {
             Some(InternalValue::Integer(value)) => value,
             Some(_) => {
@@ -299,7 +309,30 @@ impl CommandProcessor<'_> {
             }
             None => match first.meaning() {
                 Meaning::CharToken { ch, .. } if ch.is_ascii_digit() || ch == '.' => {
-                    self.scan_decimal_dimension(ch, allow_infinite)?
+                    // TeX82 `scan_dimen` delegates the integral prefix to
+                    // `scan_int`.  Besides sharing radix and recovery rules,
+                    // that ownership is observable: `scan_int` backs up the
+                    // decimal point before completing, then `scan_dimen`
+                    // consumes it raw before scanning fractional digits.
+                    // Keep that hand-off inside the command scanner rather
+                    // than collapsing it into a private decimal parser.
+                    self.last_integer_terminator = None;
+                    let integer = self
+                        .complete_integer(first, false, provenance.primary)?
+                        .value;
+                    let decimal = self
+                        .last_integer_terminator
+                        .as_ref()
+                        .is_some_and(|command| {
+                            matches!(command.meaning(), Meaning::CharToken { ch: '.', .. })
+                        });
+                    if decimal {
+                        // The decimal point is replayed raw after `scan_int`
+                        // backed it up.  A unit stays in the backed-up input
+                        // for the keyword scanner instead.
+                        let _ = self.get_next()?;
+                    }
+                    self.scan_decimal_dimension(integer, decimal, allow_infinite)?
                 }
                 _ => {
                     self.back_input(first)?;
@@ -314,6 +347,7 @@ impl CommandProcessor<'_> {
                 }
             },
         };
+        self.scan_optional_space()?;
         let scanned = ScannedScalar {
             value: if sign.value {
                 Scaled::from_raw(-value.raw())
@@ -334,12 +368,45 @@ impl CommandProcessor<'_> {
 
     /// Scans a normal or mu glue specification.
     pub fn scan_glue(&mut self, mu: bool) -> Result<ScannedScalar<GlueSpec>, CommandError> {
-        let width = self.scan_dimension()?;
-        let mut value = GlueSpec {
-            width: width.value,
-            ..GlueSpec::ZERO
+        // TeX82 probes an internal glue quantity before treating the input as
+        // a width dimension.  An ordinary number therefore travels through
+        // one canonical backup/replay cycle before `scan_dimen` owns its
+        // integer prefix; collapsing the probe loses that input lifecycle and
+        // also prevents a direct `\skip` RHS from being accepted as glue.
+        let (mut value, mut recovery, provenance) = match self.get_x_token()? {
+            Some(command) => match self.internal_value_from_command(&command)? {
+                Some(InternalValue::Glue(value)) => (
+                    value,
+                    ScalarRecovery::None,
+                    ScalarProvenance {
+                        primary: command.origin(),
+                    },
+                ),
+                Some(_) | None => {
+                    self.back_input(command)?;
+                    let width = self.scan_dimension()?;
+                    (
+                        GlueSpec {
+                            width: width.value,
+                            ..GlueSpec::ZERO
+                        },
+                        width.recovery,
+                        width.provenance,
+                    )
+                }
+            },
+            None => {
+                let width = self.scan_dimension()?;
+                (
+                    GlueSpec {
+                        width: width.value,
+                        ..GlueSpec::ZERO
+                    },
+                    width.recovery,
+                    width.provenance,
+                )
+            }
         };
-        let mut recovery = width.recovery;
         if self.scan_keyword("plus")?.value {
             let (stretch, order) = self.scan_dimension_with_order(true)?;
             value.stretch = stretch.value;
@@ -356,7 +423,7 @@ impl CommandProcessor<'_> {
         let scanned = ScannedScalar {
             value,
             recovery,
-            provenance: width.provenance,
+            provenance,
         };
         #[cfg(any(test, feature = "instrumentation"))]
         self.observe(CommandObservation::Scanner(ScannerRecord {
@@ -416,6 +483,7 @@ impl CommandProcessor<'_> {
                 // transition before publishing the completed integer.
                 Meaning::CharToken { ch: ' ', .. } => break,
                 _ => {
+                    self.last_integer_terminator = Some(command.copy_for_backup());
                     self.back_input(command)?;
                     break;
                 }
@@ -455,36 +523,46 @@ impl CommandProcessor<'_> {
 
     fn scan_decimal_dimension(
         &mut self,
-        first: char,
+        integer: i32,
+        decimal: bool,
         allow_infinite: bool,
     ) -> Result<(Scaled, Order), CommandError> {
-        let mut integer = String::new();
         let mut fraction = String::new();
-        let mut decimal = first == '.';
-        if !decimal {
-            integer.push(first);
-        }
-        loop {
-            let Some(command) = self.get_x_token()? else {
-                break;
-            };
-            match command.meaning() {
-                Meaning::CharToken { ch, .. } if ch.is_ascii_digit() => {
-                    if decimal {
-                        fraction.push(ch)
-                    } else {
-                        integer.push(ch)
-                    }
-                }
-                Meaning::CharToken { ch: '.', .. } if !decimal => decimal = true,
-                _ => {
-                    self.back_input(command)?;
+        if decimal {
+            loop {
+                let Some(command) = self.get_x_token()? else {
                     break;
+                };
+                match command.meaning() {
+                    Meaning::CharToken { ch, .. } if ch.is_ascii_digit() => fraction.push(ch),
+                    _ => {
+                        self.back_input(command)?;
+                        break;
+                    }
                 }
             }
         }
-        let unit = self.scan_dimension_unit(allow_infinite)?;
-        let integer = integer.parse::<i32>().unwrap_or(0);
+        let unit = if allow_infinite
+            && !decimal
+            && self
+                .last_integer_terminator
+                .as_ref()
+                .is_some_and(|command| {
+                    matches!(command.meaning(), Meaning::CharToken { ch: 'f', .. })
+                }) {
+            // `scan_int` has already observed and backed up the leading `f`.
+            // Replay it once, then finish the `fil` suffix without routing the
+            // same candidate through unrelated physical-unit keywords.
+            let Some(first) = self.get_x_token()? else {
+                return Err(CommandError::InputInvariant);
+            };
+            if !matches!(first.meaning(), Meaning::CharToken { ch: 'f', .. }) {
+                return Err(CommandError::InputInvariant);
+            }
+            self.scan_infinite_unit_from_fil()?
+        } else {
+            self.scan_dimension_unit(allow_infinite)?
+        };
         let digits = fraction.bytes().map(|byte| byte - b'0').collect::<Vec<_>>();
         let (unit, order) = match unit {
             DimensionUnit::Physical(unit) => (unit, Order::Normal),
@@ -498,34 +576,48 @@ impl CommandProcessor<'_> {
     }
 
     fn scan_dimension_unit(&mut self, allow_infinite: bool) -> Result<DimensionUnit, CommandError> {
-        let mut name = String::with_capacity(2);
-        while name.len() < 2 {
-            let command = self.get_x_token()?.ok_or(CommandError::InputInvariant)?;
-            match command.meaning() {
-                Meaning::CharToken { ch, .. } if ch.is_ascii_alphabetic() => {
-                    name.push(ch.to_ascii_lowercase())
-                }
-                Meaning::CharToken { ch: ' ', .. } if name.is_empty() => {}
-                _ => return Err(CommandError::InputInvariant),
+        // TeX82 recognizes units through `scan_keyword`, not by collecting
+        // two letters.  A failed keyword is observable because it replays
+        // the candidate through `back_input`; this matters even for ordinary
+        // whole-number glue components.  Keep those retries in the scanner
+        // instead of hiding them in a private string parser.
+        let _true_dimension = self.scan_keyword("true")?.value;
+        if allow_infinite && self.scan_keyword("fil")?.value {
+            return self.scan_infinite_unit(Order::Fil);
+        }
+        for (keyword, unit) in [
+            ("em", PhysicalUnit::Pt),
+            ("ex", PhysicalUnit::Pt),
+            ("mu", PhysicalUnit::Pt),
+            ("pt", PhysicalUnit::Pt),
+            ("pc", PhysicalUnit::Pc),
+            ("in", PhysicalUnit::In),
+            ("bp", PhysicalUnit::Bp),
+            ("cm", PhysicalUnit::Cm),
+            ("mm", PhysicalUnit::Mm),
+            ("dd", PhysicalUnit::Dd),
+            ("cc", PhysicalUnit::Cc),
+            ("sp", PhysicalUnit::Sp),
+        ] {
+            if self.scan_keyword(keyword)?.value {
+                return Ok(DimensionUnit::Physical(unit));
             }
         }
-        match name.as_str() {
-            "sp" => Ok(DimensionUnit::Physical(PhysicalUnit::Sp)),
-            "pt" => Ok(DimensionUnit::Physical(PhysicalUnit::Pt)),
-            "in" => Ok(DimensionUnit::Physical(PhysicalUnit::In)),
-            "pc" => Ok(DimensionUnit::Physical(PhysicalUnit::Pc)),
-            "cm" => Ok(DimensionUnit::Physical(PhysicalUnit::Cm)),
-            "mm" => Ok(DimensionUnit::Physical(PhysicalUnit::Mm)),
-            "bp" => Ok(DimensionUnit::Physical(PhysicalUnit::Bp)),
-            "dd" => Ok(DimensionUnit::Physical(PhysicalUnit::Dd)),
-            "cc" => Ok(DimensionUnit::Physical(PhysicalUnit::Cc)),
-            "fi" if allow_infinite => self.scan_infinite_unit(),
-            _ => Err(CommandError::InputInvariant),
-        }
+        Err(CommandError::InputInvariant)
     }
 
-    fn scan_infinite_unit(&mut self) -> Result<DimensionUnit, CommandError> {
-        let mut order = Order::Normal;
+    fn scan_optional_space(&mut self) -> Result<(), CommandError> {
+        let Some(command) = self.get_x_token()? else {
+            return Ok(());
+        };
+        if !matches!(command.meaning(), Meaning::CharToken { ch: ' ', .. }) {
+            self.retire_exhausted_backup_before_scalar_replay(command.delivery_stamp())?;
+            self.back_input(command)?;
+        }
+        Ok(())
+    }
+
+    fn scan_infinite_unit(&mut self, mut order: Order) -> Result<DimensionUnit, CommandError> {
         loop {
             let Some(command) = self.get_x_token()? else {
                 break;
@@ -545,8 +637,40 @@ impl CommandProcessor<'_> {
                 }
             }
         }
-        if order == Order::Normal {
-            return Err(CommandError::InputInvariant);
+        Ok(DimensionUnit::Infinite(order))
+    }
+
+    fn scan_infinite_unit_from_fil(&mut self) -> Result<DimensionUnit, CommandError> {
+        for expected in ['i', 'l'] {
+            let command = self.get_x_token()?.ok_or(CommandError::InputInvariant)?;
+            if !matches!(command.meaning(), Meaning::CharToken { ch, .. } if ch == expected) {
+                return Err(CommandError::InputInvariant);
+            }
+        }
+        let mut order = Order::Fil;
+        loop {
+            let Some(command) = self.get_x_token()? else {
+                break;
+            };
+            match command.meaning() {
+                Meaning::CharToken { ch: 'l', .. } if order != Order::Filll => {
+                    order = match order {
+                        Order::Fil => Order::Fill,
+                        Order::Fill => Order::Filll,
+                        _ => unreachable!("infinite glue order is bounded"),
+                    };
+                }
+                Meaning::CharToken { ch: ' ', .. } => {
+                    if let Some(next) = self.get_x_token()? {
+                        self.back_input(next)?;
+                    }
+                    break;
+                }
+                _ => {
+                    self.back_input(command)?;
+                    break;
+                }
+            }
         }
         Ok(DimensionUnit::Infinite(order))
     }
@@ -607,9 +731,17 @@ impl CommandProcessor<'_> {
         Ok(Some(value))
     }
 
-    fn replay_scalar_commands(&mut self, commands: Vec<CurrentCommand>) {
+    fn replay_scalar_commands(
+        &mut self,
+        commands: Vec<CurrentCommand>,
+    ) -> Result<(), CommandError> {
         if commands.is_empty() {
-            return;
+            return Ok(());
+        }
+        if commands.len() == 1 {
+            let command = commands.into_iter().next().expect("checked singleton");
+            self.retire_exhausted_backup_before_scalar_replay(command.delivery_stamp())?;
+            return self.back_input(command);
         }
         for command in &commands {
             self.undo_alignment_delivery(command);
@@ -628,6 +760,7 @@ impl CommandProcessor<'_> {
             crate::input::RetirementBehavior::Pop,
             crate::input::ReplayTrace::BackedUp,
         );
+        Ok(())
     }
 }
 

@@ -642,6 +642,9 @@ fn translate_observation(
                     |_| CanonicalValue::Name(record.value),
                     CanonicalValue::Scaled,
                 )
+            } else if record.kind == "glue" {
+                parse_glue_scanner_value(&record.value)
+                    .unwrap_or_else(|| CanonicalValue::Name(record.value))
             } else {
                 CanonicalValue::Name(record.value)
             };
@@ -667,6 +670,25 @@ fn translate_observation(
             ObservedEvent::new(translate_effect(record), format!("source={source}"))
         }
     }
+}
+
+fn parse_glue_scanner_value(value: &str) -> Option<CanonicalValue> {
+    let mut fields = value.split(';').map(|field| field.split_once('='));
+    let width = fields.next()??.1.parse().ok()?;
+    let stretch = fields.next()??.1.parse().ok()?;
+    let stretch_order = fields.next()??.1.to_ascii_lowercase();
+    let shrink = fields.next()??.1.parse().ok()?;
+    let shrink_order = fields.next()??.1.to_ascii_lowercase();
+    if fields.next().is_some() {
+        return None;
+    }
+    Some(CanonicalValue::Glue {
+        width,
+        stretch,
+        stretch_order,
+        shrink,
+        shrink_order,
+    })
 }
 
 fn command_location(
@@ -957,6 +979,18 @@ fn translate_mutation(record: MutationRecord) -> Event {
             scope: if record.global { "global" } else { "local" }.into(),
         });
     }
+    if record.target == "register"
+        && let Some(key) = record.key.as_ref()
+        && let Some(value) = record.value.strip_prefix("glue:")
+        && let Some(value) = parse_glue_scanner_value(value)
+    {
+        return Event::Mutation(MutationEvent {
+            target: StateTarget::Register,
+            key: CanonicalValue::Name(key.clone()),
+            value,
+            scope: if record.global { "global" } else { "local" }.into(),
+        });
+    }
     if record.target == "parameter"
         && let (Some(key), Some(tokens)) = (record.key.as_ref(), record.tokens.as_ref())
     {
@@ -1141,6 +1175,35 @@ mod tests {
                     control_sequence: None,
                     location: None,
                 }]),
+                scope: "local".into(),
+            })
+        );
+    }
+
+    #[test]
+    fn glue_scanners_and_mutations_keep_structured_orders() {
+        let value =
+            "width=131072;stretch=196608;stretch_order=Fil;shrink=262144;shrink_order=Normal";
+        let expected = CanonicalValue::Glue {
+            width: 131_072,
+            stretch: 196_608,
+            stretch_order: "fil".into(),
+            shrink: 262_144,
+            shrink_order: "normal".into(),
+        };
+        assert_eq!(parse_glue_scanner_value(value), Some(expected.clone()));
+        assert_eq!(
+            translate_mutation(MutationRecord {
+                target: "register",
+                value: format!("glue:{value}"),
+                key: Some("skip:0".into()),
+                tokens: None,
+                global: false,
+            }),
+            Event::Mutation(MutationEvent {
+                target: StateTarget::Register,
+                key: CanonicalValue::Name("skip:0".into()),
+                value: expected,
                 scope: "local".into(),
             })
         );

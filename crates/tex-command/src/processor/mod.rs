@@ -46,6 +46,10 @@ pub struct CommandProcessor<'a> {
     /// Only the immediately preceding raw delivery may be backed up. This is
     /// processor-local so stamps cannot survive a snapshot or a new episode.
     last_delivery: Option<DeliveryStamp>,
+    /// The non-numeric command that completed the most recent integer scan.
+    /// It remains backed up in input; dimension scanning uses the semantic
+    /// fact to decide whether that replay is a decimal point or a unit.
+    pub(crate) last_integer_terminator: Option<crate::CurrentCommand>,
     next_delivery_sequence: u64,
     /// Set only by canonical outer-validity recovery while a scalar macro
     /// matcher owns `ScannerStatus::Matching`.
@@ -71,6 +75,7 @@ impl<'a> CommandProcessor<'a> {
             #[cfg(any(test, feature = "instrumentation"))]
             observe_next_raw_as_character_code: false,
             last_delivery: None,
+            last_integer_terminator: None,
             next_delivery_sequence: 0,
             outer_recovered_while_matching: false,
         }
