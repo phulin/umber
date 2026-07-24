@@ -170,23 +170,33 @@ impl CommandProcessor<'_> {
     /// TeX.web's `\noexpand`: read normally, then replay exactly one target
     /// from a backed-up level carrying the non-sticky suppression treatment.
     fn expand_noexpand(&mut self) -> Result<(), CommandError> {
-        let target = if matches!(self.command.scanner.status(), ScannerStatus::Normal) {
-            self.get_token()?
-        } else {
-            // TeX82 temporarily restores normal scanner status around the
-            // target read. In particular an expanded definition must not
-            // absorb the target before `\noexpand` reinstates it.
-            #[cfg(any(test, feature = "instrumentation"))]
-            self.observe_scanner_status(false);
-            let prior = self.command.begin_scanner_status(ScannerStatus::Normal);
-            let target = self.get_token();
-            self.command.restore_scanner_status(prior);
-            #[cfg(any(test, feature = "instrumentation"))]
-            self.observe_scanner_status(true);
-            target?
-        }
-        .ok_or(CommandError::InputInvariant)?;
+        let target = self
+            .get_token_with_normal_scanner_status()?
+            .ok_or(CommandError::InputInvariant)?;
         self.back_input_with_treatment(target, BackupTreatment::SuppressExpandableControlSequence)
+    }
+
+    /// Reads one token with TeX82's temporary `scanner_status := normal`
+    /// scope, restoring the complete prior scanner state before returning.
+    ///
+    /// Both `\noexpand` (§25) and `conv_toks`'s `\string`/`\meaning` cases
+    /// (§27) need this scope: their operand is delivered normally even while
+    /// an enclosing `\edef` is collecting replacement text.
+    fn get_token_with_normal_scanner_status(
+        &mut self,
+    ) -> Result<Option<CurrentCommand>, CommandError> {
+        if matches!(self.command.scanner.status(), ScannerStatus::Normal) {
+            return self.get_token();
+        }
+
+        #[cfg(any(test, feature = "instrumentation"))]
+        self.observe_scanner_status(false);
+        let prior = self.command.begin_scanner_status(ScannerStatus::Normal);
+        let target = self.get_token();
+        self.command.restore_scanner_status(prior);
+        #[cfg(any(test, feature = "instrumentation"))]
+        self.observe_scanner_status(true);
+        target
     }
 
     /// TeX.web's `\expandafter`: preserve the first token, expand (or back
@@ -233,7 +243,9 @@ impl CommandProcessor<'_> {
 
     /// `\\string` observes spelling, never an effective control-sequence meaning.
     fn expand_string(&mut self, opener: CurrentCommand) -> Result<(), CommandError> {
-        let target = self.get_token()?.ok_or(CommandError::InputInvariant)?;
+        let target = self
+            .get_token_with_normal_scanner_status()?
+            .ok_or(CommandError::InputInvariant)?;
         self.push_rendered_text(
             &string_text(&self.state, target.spelling().semantic_token()),
             opener.origin(),
@@ -242,7 +254,9 @@ impl CommandProcessor<'_> {
     }
 
     fn expand_meaning(&mut self, opener: CurrentCommand) -> Result<(), CommandError> {
-        let target = self.get_token()?.ok_or(CommandError::InputInvariant)?;
+        let target = self
+            .get_token_with_normal_scanner_status()?
+            .ok_or(CommandError::InputInvariant)?;
         self.push_rendered_text(&meaning_text(&self.state, &target), opener.origin());
         Ok(())
     }
@@ -598,6 +612,7 @@ mod tests {
     use crate::observation::{
         CommandDeliveryBoundary, CommandObservation, CommandObserver, InputTransition,
     };
+    use crate::processor::{DefinitionContext, ScannerStatus, ScannerWarning, TokenBuilderId};
     use crate::{
         CommandHostCapabilities, CommandHostContext, CommandRuntime, CommandState,
         RegisteredSourceKind, SourceRegistration,
@@ -870,6 +885,80 @@ mod tests {
             .map(|offset| recovery + 1 + offset)
             .expect("rendered minus returns through raw delivery");
         assert!(scanner < recovery && recovery < inserted && inserted < raw);
+    }
+
+    #[test]
+    fn string_reads_its_target_with_normal_scanner_status_then_restores_definition() {
+        let mut command = CommandState::default();
+        let mut runtime = CommandRuntime::default();
+        let mut universe = Universe::new();
+        let string = install_expandable(&mut universe, "string", ExpandablePrimitive::String);
+        let target = install_macro(
+            &mut universe,
+            "constructedname",
+            Token::Char {
+                ch: 'X',
+                cat: Catcode::Letter,
+            },
+        );
+        command.push_token_level(
+            TokenPayload::Transient(SharedTokenBuffer::new(vec![
+                traced(Token::Cs(string)),
+                traced(Token::Cs(target)),
+            ])),
+            TokenBehavior::Ordinary,
+            RetirementBehavior::Pop,
+            ReplayTrace::BackedUp,
+        );
+        let _prior = command.begin_scanner_status(ScannerStatus::Defining(DefinitionContext {
+            target: None,
+            builder: TokenBuilderId(1),
+            warning: ScannerWarning(1),
+        }));
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut recorder = Recorder::default();
+        {
+            let mut processor =
+                processor(&mut command, &mut runtime, &mut universe, &mut capabilities)
+                    .with_observer(&mut recorder);
+            for expected in "\\constructedname".chars() {
+                let command = processor
+                    .get_x_token()
+                    .expect("string conversion expands")
+                    .expect("string conversion produces a character");
+                assert!(
+                    matches!(command.spelling().semantic_token(), Token::Char { ch, .. } if ch == expected)
+                );
+            }
+        }
+
+        let status_exit = recorder
+            .0
+            .iter()
+            .position(|record| matches!(record, CommandObservation::ScannerStatus(status) if !status.entering && status.status.starts_with("Defining")))
+            .expect("string leaves defining status before its target");
+        let target_delivery = recorder
+            .0
+            .iter()
+            .position(|record| matches!(record, CommandObservation::Command(command) if command.boundary == CommandDeliveryBoundary::Raw && matches!(command.spelling, crate::ObservedToken::ControlSequence(ref name) if name == "constructedname")))
+            .expect("string target is delivered raw");
+        let status_restore = recorder
+            .0
+            .iter()
+            .rposition(|record| matches!(record, CommandObservation::ScannerStatus(status) if status.entering && status.status.starts_with("Defining")))
+            .expect("string restores defining status after its target");
+        let recovery = recorder
+            .0
+            .iter()
+            .position(|record| matches!(record, CommandObservation::Input(input) if input.transition == InputTransition::Recovery))
+            .expect("string conversion installs its inserted output");
+        assert!(status_exit < target_delivery);
+        assert!(target_delivery < status_restore);
+        assert!(status_restore < recovery);
+        assert!(matches!(
+            command.scanner.status(),
+            ScannerStatus::Defining(_)
+        ));
     }
 
     #[test]
