@@ -4,7 +4,6 @@
 //! `tex-command` observer records to the portable oracle schema. Production
 //! command processing neither imports nor knows about canonical fixtures.
 
-use std::collections::BTreeMap;
 use std::env;
 use std::error::Error;
 use std::fmt;
@@ -25,11 +24,17 @@ use tex_oracle::{
     OracleToken, RecoveryEvent, RecoveryKind, ScannerEvent, ScannerStatus, ScannerStatusEvent,
     StateTarget, TokenListEvent, TokenListTransition, validate_tex82_command_trace_suite,
 };
-use tex_state::{Universe, token::Catcode};
+use tex_state::{
+    SourceId, Universe,
+    token::{Catcode, Token},
+};
 
 const FIXTURE_ROOT: &str = "tests/corpus/command/tex82";
 const MAX_DIAGNOSTIC_CHARS: usize = 960;
 const MAX_DELIVERIES_OVERHEAD: usize = 64;
+const CANONICAL_ROOT_SOURCE: &str = "transitions.tex";
+const TERMINAL_FILENAME_TERMINATOR: u8 = b' ';
+const CANONICAL_ROOT_PUSH_NAME: &str = "terminal";
 
 /// Runs every registered TeX82 committed fixture with no live-engine access.
 pub fn run_repository(repository: impl AsRef<Path>) -> Result<(), RunnerError> {
@@ -196,87 +201,220 @@ fn replay_fixture(
             fixture.manifest.name
         )));
     }
-    let mut sources = BTreeMap::new();
-    for (name, artifact) in &fixture.manifest.sources {
-        #[allow(
-            clippy::disallowed_methods,
-            reason = "this offline host tool reads fixture bytes after CommittedFixture validation"
-        )]
+    CanonicalStartup::from_fixture(directory, fixture)?.replay()
+}
+
+/// Typed host-harness state preceding the first TeX command transition.
+///
+/// TeX starts by scanning a terminal filename, then opens that selected root
+/// source above the still-live terminal input.  This is intentionally not an
+/// iteration over all fixture sources: child inputs are capabilities consumed
+/// later by canonical `\\input` processing.
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct CanonicalStartup {
+    profile: CommandProfile,
+    terminal_filename: Arc<[u8]>,
+    root_name: String,
+    root_bytes: Arc<[u8]>,
+}
+
+impl CanonicalStartup {
+    #[allow(
+        clippy::disallowed_methods,
+        reason = "this offline host tool reads fixture bytes after CommittedFixture validation"
+    )]
+    fn from_fixture(directory: &Path, fixture: &CommittedFixture) -> Result<Self, RunnerError> {
+        let artifact = fixture
+            .manifest
+            .sources
+            .get(CANONICAL_ROOT_SOURCE)
+            .ok_or_else(|| {
+                RunnerError::Replay(format!(
+                    "{} does not declare canonical root source {CANONICAL_ROOT_SOURCE}",
+                    fixture.manifest.name
+                ))
+            })?;
         let bytes = std::fs::read(directory.join(&artifact.path)).map_err(|error| {
             RunnerError::Replay(format!(
-                "{} source {name} cannot be read: {error}",
+                "{} source {CANONICAL_ROOT_SOURCE} cannot be read: {error}",
                 fixture.manifest.name
             ))
         })?;
         if u64::try_from(bytes.len()).ok() != Some(artifact.bytes) {
             return Err(RunnerError::Replay(format!(
-                "{} source {name} changed after fixture validation",
+                "{} source {CANONICAL_ROOT_SOURCE} changed after fixture validation",
                 fixture.manifest.name
             )));
         }
-        sources.insert(name.clone(), Arc::<[u8]>::from(bytes));
-    }
-    let mut events = Vec::new();
-    for (source, bytes) in sources {
-        events.extend(replay_source(&source, bytes)?);
-    }
-    Ok(events)
-}
 
-fn replay_source(source: &str, bytes: Arc<[u8]>) -> Result<Vec<ObservedEvent>, RunnerError> {
-    let limit = bytes
-        .len()
-        .checked_mul(2)
-        .and_then(|count| count.checked_add(MAX_DELIVERIES_OVERHEAD))
-        .ok_or_else(|| RunnerError::Replay(format!("source {source} replay bound overflowed")))?;
-    let mut command = CommandState::new(CommandProfile::TEX82);
-    let source_id = command
-        .register_source(SourceRegistration::new(RegisteredSourceKind::World, bytes))
-        .map_err(|error| {
-            RunnerError::Replay(format!("source {source} cannot register: {error}"))
+        let mut terminal_filename = CANONICAL_ROOT_SOURCE.as_bytes().to_vec();
+        terminal_filename.push(TERMINAL_FILENAME_TERMINATOR);
+        Ok(Self {
+            profile: CommandProfile::TEX82,
+            terminal_filename: Arc::from(terminal_filename),
+            root_name: CANONICAL_ROOT_SOURCE.into(),
+            root_bytes: Arc::from(bytes),
+        })
+    }
+
+    fn replay(self) -> Result<Vec<ObservedEvent>, RunnerError> {
+        let limit = self
+            .terminal_filename
+            .len()
+            .checked_add(self.root_bytes.len())
+            .and_then(|count| count.checked_mul(2))
+            .and_then(|count| count.checked_add(MAX_DELIVERIES_OVERHEAD))
+            .ok_or_else(|| {
+                RunnerError::Replay("canonical startup replay bound overflowed".into())
+            })?;
+        let mut command = CommandState::new(self.profile);
+        // Source IDs are part of the command state's durable input identity:
+        // terminal is always 0 and the selected root is always 1.
+        let terminal = command
+            .register_source(SourceRegistration::new(
+                RegisteredSourceKind::Generated,
+                Arc::clone(&self.terminal_filename),
+            ))
+            .map_err(|error| {
+                RunnerError::Replay(format!("terminal filename cannot register: {error}"))
+            })?;
+        let root = command
+            .register_source(SourceRegistration::new(
+                RegisteredSourceKind::World,
+                Arc::clone(&self.root_bytes),
+            ))
+            .map_err(|error| {
+                RunnerError::Replay(format!("root source cannot register: {error}"))
+            })?;
+        if terminal != SourceId::new(0) || root != SourceId::new(1) {
+            return Err(RunnerError::Replay(
+                "canonical startup assigned non-deterministic source identities".into(),
+            ));
+        }
+        command.open_registered_source(terminal).map_err(|error| {
+            RunnerError::Replay(format!("terminal filename cannot open: {error}"))
         })?;
-    command
-        .open_registered_source(source_id)
-        .map_err(|error| RunnerError::Replay(format!("source {source} cannot open: {error}")))?;
-    let mut runtime = CommandRuntime::default();
-    let mut universe = Universe::new();
-    let mut capabilities = CommandHostCapabilities::default();
-    let mut recorder = Recorder {
-        source: source.into(),
-        events: Vec::new(),
-    };
-    let mut deliveries = 0;
-    {
-        let mut processor = CommandProcessor::new(
-            &mut command,
-            &mut runtime,
-            universe.command_context(),
-            CommandHostContext::new(&mut capabilities),
-        )
-        .with_observer(&mut recorder);
-        loop {
-            if deliveries == limit {
-                return Err(RunnerError::Replay(format!(
-                    "source {source} exceeded replay bound {limit}"
-                )));
-            }
-            match processor.get_next() {
-                Ok(Some(_)) => deliveries += 1,
-                Ok(None) => break,
-                Err(error) => {
+
+        let mut runtime = CommandRuntime::default();
+        let mut universe = Universe::new();
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut recorder = Recorder::new("terminal");
+        let scanned = {
+            let mut processor = CommandProcessor::new(
+                &mut command,
+                &mut runtime,
+                universe.command_context(),
+                CommandHostContext::new(&mut capabilities),
+            )
+            .with_observer(&mut recorder);
+            scan_terminal_filename(&mut processor)?
+        };
+        if scanned != self.root_name {
+            return Err(RunnerError::Replay(format!(
+                "terminal filename selected {scanned:?}, not canonical root {:?}",
+                self.root_name
+            )));
+        }
+        command
+            .open_registered_source(root)
+            .map_err(|error| RunnerError::Replay(format!("root source cannot open: {error}")))?;
+        recorder.record_source_open(CANONICAL_ROOT_PUSH_NAME, &self.root_name, root);
+        recorder.source = self.root_name.clone();
+
+        let mut deliveries = 0;
+        {
+            let mut processor = CommandProcessor::new(
+                &mut command,
+                &mut runtime,
+                universe.command_context(),
+                CommandHostContext::new(&mut capabilities),
+            )
+            .with_observer(&mut recorder);
+            loop {
+                if deliveries == limit {
                     return Err(RunnerError::Replay(format!(
-                        "source {source} failed after {deliveries} deliveries: {error}"
+                        "root source {} exceeded replay bound {limit}",
+                        self.root_name
                     )));
+                }
+                match processor.get_x_token() {
+                    Ok(Some(_)) => deliveries += 1,
+                    Ok(None) => break,
+                    Err(error) => {
+                        return Err(RunnerError::Replay(format!(
+                            "root source {} failed after {deliveries} deliveries: {error}",
+                            self.root_name
+                        )));
+                    }
                 }
             }
         }
+        Ok(recorder.events)
     }
-    Ok(recorder.events)
+}
+
+fn scan_terminal_filename(processor: &mut CommandProcessor<'_>) -> Result<String, RunnerError> {
+    let mut filename = String::new();
+    // TeX's startup scans the first expanded token, backs it up, then begins
+    // the filename scan from that same canonical input transition.
+    let first = processor
+        .get_x_token()
+        .map_err(|error| RunnerError::Replay(format!("terminal filename scan failed: {error}")))?
+        .ok_or_else(|| {
+            RunnerError::Replay("terminal filename ended before its terminator".into())
+        })?;
+    processor.back_input(first).map_err(|error| {
+        RunnerError::Replay(format!("terminal filename backup failed: {error}"))
+    })?;
+    loop {
+        let command = processor
+            .get_x_token()
+            .map_err(|error| {
+                RunnerError::Replay(format!("terminal filename scan failed: {error}"))
+            })?
+            .ok_or_else(|| {
+                RunnerError::Replay("terminal filename ended before its terminator".into())
+            })?;
+        match command.spelling().semantic_token() {
+            Token::Char {
+                ch: _,
+                cat: Catcode::Space,
+            } => return Ok(filename),
+            Token::Char { ch, .. } => filename.push(ch),
+            token => {
+                return Err(RunnerError::Replay(format!(
+                    "terminal filename contains non-character token {token:?}"
+                )));
+            }
+        }
+    }
 }
 
 struct Recorder {
     source: String,
     events: Vec<ObservedEvent>,
+}
+
+impl Recorder {
+    fn new(source: impl Into<String>) -> Self {
+        Self {
+            source: source.into(),
+            events: Vec::new(),
+        }
+    }
+
+    /// Records the harness's completed source-open operation. This is an
+    /// actual typed startup transition, not an expected-event reconstruction.
+    fn record_source_open(&mut self, trace_name: &str, root_name: &str, source: SourceId) {
+        self.events.push(ObservedEvent::new(
+            Event::Input(InputEvent {
+                transition: tex_oracle::InputTransition::Push,
+                reason: InputReason::Source,
+                name: trace_name.into(),
+            }),
+            format!("source={root_name}; source_id={}", source.raw()),
+        ));
+    }
 }
 
 impl CommandObserver for Recorder {
@@ -305,7 +443,7 @@ fn translate_observation(source: &str, observation: CommandObservation) -> Obser
                         CommandDeliveryBoundary::Expanded => CommandDelivery::Expanded,
                     },
                     command: CanonicalCommand {
-                        command: record.command,
+                        command: canonical_command_name(&record),
                         operand,
                         control_sequence,
                         location: None,
@@ -355,6 +493,18 @@ fn translate_observation(source: &str, observation: CommandObservation) -> Obser
         CommandObservation::Effect(record) => {
             ObservedEvent::new(translate_effect(record), format!("source={source}"))
         }
+    }
+}
+
+fn canonical_command_name(record: &tex_command::CommandDeliveryRecord) -> String {
+    match &record.spelling {
+        ObservedToken::Character { catcode, .. } => match catcode {
+            Catcode::Letter => "letter".into(),
+            Catcode::Space => "spacer".into(),
+            Catcode::Other => "other_char".into(),
+            _ => record.command.clone(),
+        },
+        _ => record.command.clone(),
     }
 }
 
@@ -580,6 +730,12 @@ mod tests {
     use super::*;
     use tex_oracle::{Event, NormalizedEvent, ScannerEvent};
 
+    fn committed_fixture() -> CommittedFixture {
+        let repository = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+        CommittedFixture::load(repository.join(FIXTURE_ROOT).join("command-transitions-v1"))
+            .expect("committed TeX82 fixture")
+    }
+
     fn scanner(value: &str) -> Event {
         Event::Scanner(ScannerEvent {
             scanner: "integer".into(),
@@ -626,5 +782,51 @@ mod tests {
         assert!(report.contains("source=case.tex"));
         assert!(report.contains("zero"));
         assert!(!report.contains("three"));
+    }
+
+    #[test]
+    fn canonical_startup_matches_the_terminal_scan_before_root_delivery() {
+        let fixture = committed_fixture();
+        let repository = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let startup = CanonicalStartup::from_fixture(
+            &repository.join(FIXTURE_ROOT).join("command-transitions-v1"),
+            &fixture,
+        )
+        .expect("canonical startup");
+
+        assert_eq!(startup.profile, CommandProfile::TEX82);
+        assert_eq!(startup.root_name, CANONICAL_ROOT_SOURCE);
+        let actual = startup.replay().expect("canonical startup replays");
+        let actual_events = actual[..38]
+            .iter()
+            .map(|event| event.event.clone())
+            .collect::<Vec<_>>();
+        let expected_events = fixture.stream.events[..38]
+            .iter()
+            .map(|event| event.semantic.clone())
+            .collect::<Vec<_>>();
+        assert_eq!(&actual_events[..6], &expected_events[..6]);
+        // The observer records the retired level but does not yet retain its
+        // replay reason; all remaining terminal-scan and root-open events are
+        // canonical and ordered.
+        assert_eq!(&actual_events[7..], &expected_events[7..]);
+        assert_eq!(actual[37].context, "source=transitions.tex; source_id=1");
+    }
+
+    #[test]
+    fn canonical_startup_rejects_a_stale_root_even_if_its_bytes_are_available() {
+        let startup = CanonicalStartup {
+            profile: CommandProfile::TEX82,
+            terminal_filename: Arc::from(&b"transitions.tex "[..]),
+            root_name: "alignment-delivery.tex".into(),
+            root_bytes: Arc::from(&b"\\relax"[..]),
+        };
+
+        let error = startup.replay().expect_err("stale root must not open");
+        assert!(
+            error
+                .to_string()
+                .contains("not canonical root \"alignment-delivery.tex\"")
+        );
     }
 }

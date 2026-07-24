@@ -156,10 +156,14 @@ The offline comparison runner is deliberately a host tool rather than a
 cargo run -q -p tex-command-stream -- --repository .
 ```
 
-It validates the complete registered suite, replays each manifest-bound source
-in logical-name order, translates command-owned observer records at the host
-boundary, and compares every produced event against the complete committed
-stream without filtering expected events. A mismatch reports its fixture
+It validates the complete registered suite, constructs the explicit canonical
+INITEX startup state, scans the terminal filename `transitions.tex`, and opens
+that root above terminal input before later `\\input` capability work can
+register children. Terminal and root receive deterministic source identities
+in that order; fixture-directory or logical-name iteration never selects the
+root. It translates command-owned observer records at the host boundary and
+compares every produced event against the complete committed stream without
+filtering expected events. A mismatch reports its fixture
 identity, ordered index, typed expected and actual values, and available
 source/provenance context; output is bounded. The current command-core scope
 may therefore report an early divergence while implementation slices are

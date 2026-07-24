@@ -175,17 +175,26 @@ impl CommandProcessor<'_> {
             return Ok(());
         }
 
-        #[cfg(any(test, feature = "instrumentation"))]
-        self.observe(CommandObservation::Recovery(RecoveryRecord {
-            backup: true,
-            tokens: vec![self.observed_token(command.spelling())],
-        }));
-        self.command.push_token_level(
+        let level = self.command.push_token_level(
             TokenPayload::Transient(SharedTokenBuffer::new(vec![command.spelling()])),
             TokenBehavior::BackedUp(treatment),
             RetirementBehavior::Pop,
             ReplayTrace::BackedUp,
         );
+        #[cfg(not(any(test, feature = "instrumentation")))]
+        let _ = level;
+        #[cfg(any(test, feature = "instrumentation"))]
+        {
+            self.observe(CommandObservation::Input(InputRecord {
+                transition: InputTransition::Backup,
+                level: level.0,
+                position: 0,
+            }));
+            self.observe(CommandObservation::Recovery(RecoveryRecord {
+                backup: true,
+                tokens: vec![self.observed_token(command.spelling())],
+            }));
+        }
         Ok(())
     }
 
