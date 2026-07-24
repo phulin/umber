@@ -195,6 +195,13 @@ pub(crate) fn canonical_command_identity(meaning: Meaning) -> (String, Option<i6
             // `cur_chr` value 256; this is not the Rust primitive enum's
             // storage operand.
             UnexpandablePrimitive::Par => ("par_end".into(), Some(256)),
+            // TeX82 gives both row-return primitives the shared `car_ret`
+            // command identity. Their selectors distinguish `\cr` from
+            // `\crcr` and are consumed by alignment handling after raw
+            // delivery; the Rust primitive enum must not leak into traces.
+            // See TeX.web's `cr_code` and `cr_cr_code` definitions.
+            UnexpandablePrimitive::Cr => ("car_ret".into(), Some(257)),
+            UnexpandablePrimitive::CrCr => ("car_ret".into(), Some(258)),
             UnexpandablePrimitive::HAlign => ("halign".into(), Some(0)),
             // TeX82 registers the horizontal glue shorthands with the same
             // `hskip` command code and a zero `cur_chr`; their distinct
@@ -428,6 +435,19 @@ mod tests {
             canonical_command_identity(Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Par)),
             ("par_end".into(), Some(256))
         );
+    }
+
+    #[test]
+    fn row_returns_use_tex82_car_ret_identities() {
+        for (primitive, operand) in [
+            (UnexpandablePrimitive::Cr, 257),
+            (UnexpandablePrimitive::CrCr, 258),
+        ] {
+            assert_eq!(
+                canonical_command_identity(Meaning::UnexpandablePrimitive(primitive)),
+                ("car_ret".into(), Some(operand))
+            );
+        }
     }
 
     #[test]

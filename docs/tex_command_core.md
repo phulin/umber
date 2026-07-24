@@ -141,6 +141,11 @@ opaque `AlignmentDeliveryEvent::EndTemplate`, which is handed back to
 `\span`, or `\cr`, while `off_save` recovery and group policy remain
 executor-owned after the typed event has been delivered.
 
+Command observation preserves TeX82's raw command identity before that
+interception: `\cr` and `\crcr` are both `car_ret`, with `cur_chr` 257 and
+258 respectively. This identity is emitted at both raw and ordinary expanded
+delivery boundaries; it does not alter alignment delivery semantics.
+
 After `init_align` validates and replays its opening brace, the command
 processor owns the complete `get_preamble_token` episode. It retains raw
 delivery while `scanner_status=aligning`, freezes u/v template pairs at `#`
