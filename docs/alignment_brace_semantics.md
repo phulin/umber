@@ -29,8 +29,10 @@ v-template insertion, `fin_col`, and `do_endv` in `tex.web` §§343 and
 765--772. Consequently, when a command-owned scanner backs up a non-keyword
 lookahead (for example after completing a `\vrule` specification), replay
 must resume via `get_x_alignment_delivery`, not generic expanded delivery.
-That typed path reports the original delimiter at state 0, backs up the exact
-delivery, pushes the selected v-template, and then enters the `1000000`
+That typed path reports the original TeX82 delimiter identity (`tab`, `span`,
+`cr`, or `crcr`) at state 0, before replacing its effective command with
+inaccessible `end_template`; it then backs up the exact delivery, pushes the
+selected v-template, and enters the `1000000`
 sentinel. The intercepted delimiter is not separately observed as an ordinary
 raw command; it resumes only after `do_endv` retires the exact v-template
 frame. At that retained boundary, `get_next` first delivers frozen

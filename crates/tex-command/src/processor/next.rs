@@ -355,7 +355,7 @@ impl CommandProcessor<'_> {
                     transition: match adjustment {
                         crate::processor::AlignmentDeliveryAdjustment::BeginGroup => "begin_group",
                         crate::processor::AlignmentDeliveryAdjustment::EndGroup => "end_group",
-                        crate::processor::AlignmentDeliveryAdjustment::Delimiter => "delimiter",
+                        crate::processor::AlignmentDeliveryAdjustment::Delimiter(_) => "delimiter",
                         crate::processor::AlignmentDeliveryAdjustment::None => unreachable!(),
                     },
                     alignment: self
@@ -365,20 +365,18 @@ impl CommandProcessor<'_> {
                         .map(|identity| identity.raw()),
                     align_state: if matches!(
                         adjustment,
-                        crate::processor::AlignmentDeliveryAdjustment::Delimiter
+                        crate::processor::AlignmentDeliveryAdjustment::Delimiter(_)
                     ) {
                         previous_align_state
                     } else {
                         self.command.alignment.align_state
                     },
-                    delimiter: matches!(
-                        command.spelling().semantic_token(),
-                        Token::Char {
-                            cat: Catcode::AlignmentTab,
-                            ..
+                    delimiter: match adjustment {
+                        crate::processor::AlignmentDeliveryAdjustment::Delimiter(delimiter) => {
+                            Some(delimiter.observation_name())
                         }
-                    )
-                    .then_some("tab"),
+                        _ => None,
+                    },
                     previous_align_state: matches!(
                         adjustment,
                         crate::processor::AlignmentDeliveryAdjustment::BeginGroup
@@ -390,7 +388,7 @@ impl CommandProcessor<'_> {
             #[cfg(any(test, feature = "instrumentation"))]
             if !matches!(
                 adjustment,
-                crate::processor::AlignmentDeliveryAdjustment::Delimiter
+                crate::processor::AlignmentDeliveryAdjustment::Delimiter(_)
             ) {
                 self.observe_raw_delivery(&command);
             }
@@ -1460,6 +1458,57 @@ mod tests {
                 .meaning(),
             Meaning::ExpandablePrimitive(ExpandablePrimitive::EndTemplate)
         ));
+    }
+
+    #[test]
+    fn intercepted_cr_retains_tex82_delimiter_identity_for_observation() {
+        let mut command = CommandState::default();
+        let alignment = crate::AlignmentIdentity::new(18);
+        command.begin_alignment(alignment);
+        command
+            .begin_alignment_cell(alignment, templates())
+            .expect("cell begins");
+        command
+            .install_alignment_cell_template(alignment)
+            .expect("cell without a u-template installs");
+        let mut runtime = CommandRuntime::default();
+        let mut universe = Universe::new();
+        let cr = universe.intern("cr").symbol();
+        universe.set_meaning(
+            cr,
+            Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Cr),
+        );
+        command.push_token_level(
+            TokenPayload::Transient(SharedTokenBuffer::new(vec![TracedTokenWord::pack(
+                Token::Cs(cr),
+                OriginId::UNKNOWN,
+            )])),
+            TokenBehavior::Ordinary,
+            RetirementBehavior::Pop,
+            ReplayTrace::BackedUp,
+        );
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut recorder = Recorder::default();
+        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities)
+            .with_observer(&mut recorder);
+
+        let delimiter = processor
+            .get_next()
+            .expect("cr delivers")
+            .expect("input is live");
+        assert!(matches!(
+            delimiter.meaning(),
+            Meaning::ExpandablePrimitive(ExpandablePrimitive::EndTemplate)
+        ));
+        assert!(recorder.0.iter().any(|observation| {
+            matches!(
+                observation,
+                CommandObservation::Alignment(record)
+                    if record.transition == "delimiter"
+                        && record.align_state == CELL_ALIGN_STATE
+                        && record.delimiter == Some("cr")
+            )
+        }));
     }
 
     #[test]

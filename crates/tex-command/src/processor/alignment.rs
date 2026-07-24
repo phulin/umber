@@ -214,7 +214,32 @@ pub(crate) enum AlignmentDeliveryAdjustment {
     None,
     BeginGroup,
     EndGroup,
-    Delimiter,
+    Delimiter(AlignmentDelimiter),
+}
+
+/// TeX82 identity of a delimiter intercepted by `get_next`.
+///
+/// This is captured before `get_next` changes the delivered command to the
+/// inaccessible `end_template` meaning.  The executor deliberately receives
+/// no copy of it: it is command-owned observation data, while `fin_col`
+/// receives its separately stored structural outcome after `do_endv`.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub(crate) enum AlignmentDelimiter {
+    Tab,
+    Span,
+    Cr,
+    CrCr,
+}
+
+impl AlignmentDelimiter {
+    pub(crate) const fn observation_name(self) -> &'static str {
+        match self {
+            Self::Tab => "tab",
+            Self::Span => "span",
+            Self::Cr => "cr",
+            Self::CrCr => "crcr",
+        }
+    }
 }
 
 impl AlignmentDeliveryState {
@@ -463,7 +488,7 @@ impl AlignmentDeliveryState {
                 cat: Catcode::AlignmentTab,
                 ..
             } if self.active_cell.is_some() && self.align_state == CELL_ALIGN_STATE => {
-                self.intercept_delimiter(command)
+                self.intercept_delimiter(command, AlignmentDelimiter::Tab)
             }
             _ if self.active_cell.is_some()
                 && self.align_state == CELL_ALIGN_STATE
@@ -476,7 +501,19 @@ impl AlignmentDeliveryState {
                     )
                 ) =>
             {
-                self.intercept_delimiter(command)
+                let delimiter = match command.meaning() {
+                    Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Span) => {
+                        AlignmentDelimiter::Span
+                    }
+                    Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Cr) => {
+                        AlignmentDelimiter::Cr
+                    }
+                    Meaning::UnexpandablePrimitive(UnexpandablePrimitive::CrCr) => {
+                        AlignmentDelimiter::CrCr
+                    }
+                    _ => unreachable!("alignment delimiter was classified above"),
+                };
+                self.intercept_delimiter(command, delimiter)
             }
             _ => AlignmentDeliveryAdjustment::None,
         }
@@ -487,7 +524,7 @@ impl AlignmentDeliveryState {
             AlignmentDeliveryAdjustment::None => {}
             AlignmentDeliveryAdjustment::BeginGroup => self.align_state -= 1,
             AlignmentDeliveryAdjustment::EndGroup => self.align_state += 1,
-            AlignmentDeliveryAdjustment::Delimiter => self.align_state = CELL_ALIGN_STATE,
+            AlignmentDeliveryAdjustment::Delimiter(_) => self.align_state = CELL_ALIGN_STATE,
         }
     }
 
@@ -495,10 +532,14 @@ impl AlignmentDeliveryState {
         self.align_state -= 1;
     }
 
-    fn intercept_delimiter(&mut self, command: &mut CurrentCommand) -> AlignmentDeliveryAdjustment {
+    fn intercept_delimiter(
+        &mut self,
+        command: &mut CurrentCommand,
+        delimiter: AlignmentDelimiter,
+    ) -> AlignmentDeliveryAdjustment {
         self.align_state = TEMPLATE_ALIGN_STATE;
         command.convert_to_end_template();
-        AlignmentDeliveryAdjustment::Delimiter
+        AlignmentDeliveryAdjustment::Delimiter(delimiter)
     }
 
     fn require_alignment(

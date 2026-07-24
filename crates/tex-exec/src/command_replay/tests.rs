@@ -453,6 +453,7 @@ fn completed_rule_spec_restarts_active_cell_through_typed_delimiter_delivery() {
                     CommandObservation::Alignment(state_change),
                 ] if delimiter.transition == "delimiter"
                     && delimiter.align_state == 0
+                    && delimiter.delimiter == Some("tab")
                     && template_input.transition == InputTransition::Push
                     && template_input.reason == InputReason::AlignmentVTemplate
                     && template.transition == "v_template_push"
