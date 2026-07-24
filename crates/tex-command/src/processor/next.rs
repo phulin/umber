@@ -358,13 +358,13 @@ impl CommandProcessor<'_> {
         self.back_input_with_treatment(command, BackupTreatment::Ordinary)
     }
 
-    /// Performs TeX82 §1064 `off_save` input recovery for an end-v command.
+    /// Performs TeX82 §1064 `off_save` input recovery for a command.
     ///
     /// The executor selects the closer from its actual group, but raw backup,
     /// inserted-token ownership, and observer order remain in the command
-    /// core.  This is the path used by §1131 `do_endv` when an intervening
-    /// group prevents the active alignment cell from finishing immediately.
-    pub fn recover_endv_off_save(
+    /// core. This is used by §1131 `do_endv` and by ordinary main control
+    /// when an inaccessible closer must first end an intervening group.
+    pub fn recover_off_save(
         &mut self,
         command: CurrentCommand,
         closing: Token,
@@ -405,6 +405,43 @@ impl CommandProcessor<'_> {
             }));
         }
         Ok(())
+    }
+
+    /// Publishes TeX82 §§1064 and 1066's bottom-level `off_save` drop.
+    ///
+    /// The command remains on its existing backup level, which raw input
+    /// retires on the following delivery attempt. Keeping the diagnostic here
+    /// makes that observer order command-owned just like replay recovery.
+    pub fn report_off_save_bottom_drop(&mut self, command: &CurrentCommand) {
+        #[cfg(any(test, feature = "instrumentation"))]
+        self.observe(CommandObservation::Diagnostic(
+            crate::observation::DiagnosticRecord {
+                severity: "error",
+                diagnostic: "off_save_bottom_drop",
+                arguments: vec![self.observed_command_spelling(command)],
+            },
+        ));
+    }
+
+    /// Whether this delivery has the exact control-sequence spelling `name`.
+    ///
+    /// Meaning identity is deliberately insufficient here: frozen alignment
+    /// aliases can share `end_group` semantics without being ordinary
+    /// `\\endgroup` main-control recovery commands.
+    #[must_use]
+    pub fn has_control_sequence_spelling(&self, command: &CurrentCommand, name: &str) -> bool {
+        command
+            .control_sequence()
+            .is_some_and(|symbol| self.state.resolve(symbol) == name)
+    }
+
+    /// Performs TeX82 §1131's end-v instance of [`Self::recover_off_save`].
+    pub fn recover_endv_off_save(
+        &mut self,
+        command: CurrentCommand,
+        closing: Token,
+    ) -> Result<(), CommandError> {
+        self.recover_off_save(command, closing)
     }
 
     /// Replaces an exhausted one-token backup with a fresh backup of its

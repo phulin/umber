@@ -178,6 +178,13 @@ opaque `AlignmentDeliveryEvent::EndTemplate`, which is handed back to
 `\span`, or `\cr`, while `off_save` recovery and group policy remain
 executor-owned after the typed event has been delivered.
 
+For TeX82 §§1064, 1066, and 1131 `off_save`, the executor chooses only the
+typed structural closer. `tex-command` reports `off_save_replay` before it
+backs up the offending command and inserts that closer, so raw delivery cannot
+overtake the diagnostic; at bottom level it reports the drop before the backup
+retires. This applies equally to ordinary `\endgroup` recovery and alignment
+`endv` replay.
+
 When that same delivery entry point expands the retained frame's
 `frozen_end_template` to `EndV`, replay routes the command through the typed
 `FinishCell` request rather than treating `EndV` as ordinary main-control

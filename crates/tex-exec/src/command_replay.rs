@@ -21,9 +21,7 @@ use tex_state::macro_store::{MacroDefinitionProvenance, MacroMeaning};
 use tex_state::meaning::{Meaning, MeaningFlags, UnexpandablePrimitive};
 use tex_state::node::{GlueKind, Node};
 use tex_state::scaled::Scaled;
-use tex_state::token::Catcode;
-#[cfg(any(test, feature = "instrumentation"))]
-use tex_state::token::Token;
+use tex_state::token::{Catcode, Token};
 use tex_state::{GroupKind, PrintSink, TracedTokenList, Universe};
 use tex_typeset::PackSpec;
 
@@ -78,6 +76,7 @@ struct ReplayBoxes {
     suspended_alignments: Vec<ActiveReplayAlignment>,
     recovery_simple_group_pending: bool,
     recovery_simple_group_open: bool,
+    ordinary_simple_group_depth: u32,
 }
 
 impl CommandReplayControl {
@@ -553,6 +552,8 @@ enum ScannedStep {
     },
     BeginSimpleGroup,
     EndSimpleGroup,
+    BeginOrdinaryGroup,
+    EndOrdinaryGroup,
     AlignmentPeekCell {
         alignment: AlignmentIdentity,
         omit: bool,
@@ -874,6 +875,17 @@ fn scan_command(
     {
         return Ok(ScannedStep::EndSimpleGroup);
     }
+    if boxes.ordinary_simple_group_depth > 0
+        && matches!(
+            command.meaning(),
+            Meaning::CharToken {
+                cat: Catcode::EndGroup,
+                ..
+            }
+        )
+    {
+        return Ok(ScannedStep::EndOrdinaryGroup);
+    }
     if boxes
         .active_boxes
         .last()
@@ -909,6 +921,29 @@ fn scan_command(
         }
     }
     match command.meaning() {
+        Meaning::CharToken {
+            cat: Catcode::BeginGroup,
+            ..
+        } => Ok(ScannedStep::BeginOrdinaryGroup),
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::EndGroup) => {
+            if !processor.has_control_sequence_spelling(&command, "endgroup") {
+                return Ok(ScannedStep::Continue);
+            }
+            if boxes.ordinary_simple_group_depth == 0 {
+                processor.report_off_save_bottom_drop(&command);
+                return Ok(ScannedStep::Continue);
+            }
+            processor
+                .recover_off_save(
+                    command,
+                    Token::Char {
+                        ch: '}',
+                        cat: Catcode::EndGroup,
+                    },
+                )
+                .map_err(command_error)?;
+            Ok(ScannedStep::Continue)
+        }
         Meaning::UnexpandablePrimitive(
             UnexpandablePrimitive::End | UnexpandablePrimitive::Dump,
         ) => Ok(ScannedStep::End),
@@ -1792,6 +1827,23 @@ fn apply_scanned_step(
                     context: "simple recovery group",
                 })?;
             boxes.recovery_simple_group_open = false;
+            Ok(ReplayStep::Continue)
+        }
+        ScannedStep::BeginOrdinaryGroup => {
+            stores.enter_group_with_kind(GroupKind::Simple);
+            boxes.ordinary_simple_group_depth += 1;
+            Ok(ReplayStep::Continue)
+        }
+        ScannedStep::EndOrdinaryGroup => {
+            stores
+                .leave_group_with_kind(GroupKind::Simple)
+                .map_err(|_| ExecError::MissingToken {
+                    context: "ordinary simple group",
+                })?;
+            boxes.ordinary_simple_group_depth = boxes
+                .ordinary_simple_group_depth
+                .checked_sub(1)
+                .expect("ordinary simple group depth is nonzero");
             Ok(ReplayStep::Continue)
         }
         ScannedStep::AlignmentRecovery { opens_simple_group } => {

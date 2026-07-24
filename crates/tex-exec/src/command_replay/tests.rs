@@ -875,6 +875,81 @@ fn canonical_initex_replay_observes_committed_message_effects() {
 }
 
 #[test]
+fn off_save_reports_before_replaying_its_inserted_closer() {
+    let mut universe = Universe::new();
+    let mut control = CommandReplayControl::tex82_initex(&mut universe);
+    register_source(&mut control, br"{\endgroup}");
+    let mut observations = ObservationRecorder::default();
+
+    assert_eq!(
+        control
+            .step_with_observer(&mut universe, &mut observations)
+            .expect("opening group"),
+        ReplayStep::Continue
+    );
+    observations.0.clear();
+    assert_eq!(
+        control
+            .step_with_observer(&mut universe, &mut observations)
+            .expect("off_save recovery"),
+        ReplayStep::Continue
+    );
+    assert!(matches!(
+        observations.0.as_slice(),
+        [
+            CommandObservation::Command(_),
+            CommandObservation::Command(_),
+            CommandObservation::Diagnostic(diagnostic),
+            CommandObservation::Input(backup),
+            CommandObservation::Recovery(recovery),
+            CommandObservation::Input(inserted),
+            CommandObservation::Recovery(inserted_recovery),
+        ] if diagnostic.diagnostic == "off_save_replay"
+            && backup.transition == InputTransition::Backup
+            && recovery.backup
+            && inserted.transition == InputTransition::Recovery
+            && !inserted_recovery.backup
+    ));
+
+    observations.0.clear();
+    assert_eq!(
+        control
+            .step_with_observer(&mut universe, &mut observations)
+            .expect("inserted closer"),
+        ReplayStep::Continue
+    );
+    assert!(
+        matches!(
+            observations.0.as_slice(),
+            [CommandObservation::Command(raw), CommandObservation::Command(expanded)]
+                if matches!(raw.spelling, ObservedToken::Character { character: '}', catcode: Catcode::EndGroup })
+                    && matches!(expanded.spelling, ObservedToken::Character { character: '}', catcode: Catcode::EndGroup })
+        ),
+        "unexpected inserted-closer observations: {:?}",
+        observations.0
+    );
+
+    observations.0.clear();
+    assert_eq!(
+        control
+            .step_with_observer(&mut universe, &mut observations)
+            .expect("bottom-level replay drop"),
+        ReplayStep::Continue
+    );
+    assert!(matches!(
+        observations.0.as_slice(),
+        [
+            CommandObservation::Input(retirement),
+            CommandObservation::Command(_),
+            CommandObservation::Command(_),
+            CommandObservation::Diagnostic(diagnostic),
+        ] if retirement.transition == InputTransition::Retire
+            && retirement.reason == InputReason::Recovery
+            && diagnostic.diagnostic == "off_save_bottom_drop"
+    ));
+}
+
+#[test]
 fn canonical_initex_replay_scans_and_applies_code_table_assignments() {
     let mut universe = Universe::new();
     let mut control = CommandReplayControl::tex82_initex(&mut universe);
