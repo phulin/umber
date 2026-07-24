@@ -235,6 +235,12 @@ pub(crate) fn canonical_command_identity(meaning: Meaning) -> (String, Option<i6
             UnexpandablePrimitive::VSs => ("vskip".into(), Some(2)),
             UnexpandablePrimitive::VFilNeg => ("vskip".into(), Some(3)),
             UnexpandablePrimitive::VSkip => ("vskip".into(), Some(4)),
+            // TeX82 §15 gives `\\shipout` the shared `leader_ship` command
+            // code. Section 35 installs it with `a_leaders - 1`, where
+            // `a_leaders = 100`; its canonical selector is therefore 99.
+            // This identity is emitted before the typed replay seam consumes
+            // the required box and commits its output semantics.
+            UnexpandablePrimitive::Shipout => ("leader_ship".into(), Some(99)),
             UnexpandablePrimitive::SetBox => ("set_box".into(), Some(0)),
             UnexpandablePrimitive::HBox => ("make_box".into(), Some(4)),
             UnexpandablePrimitive::VBox => ("make_box".into(), Some(5)),
@@ -578,6 +584,16 @@ mod tests {
                 ("vskip".into(), Some(operand))
             );
         }
+    }
+
+    #[test]
+    fn shipout_uses_tex82_leader_ship_identity() {
+        assert_eq!(
+            canonical_command_identity(Meaning::UnexpandablePrimitive(
+                UnexpandablePrimitive::Shipout
+            )),
+            ("leader_ship".into(), Some(99))
+        );
     }
 
     #[test]

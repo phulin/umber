@@ -212,6 +212,11 @@ raw and ordinary expanded delivery boundaries; they do not alter alignment
 delivery semantics. This follows TeX82 §15 (command codes), §18 (primitive
 initialization), and §37 (`init_col`/`fin_col` alignment handling).
 
+Likewise, `\shipout` is observed as `leader_ship` with `cur_chr` 99 before
+replay scans its box. TeX82 §15 assigns the shared `leader_ship` command code,
+and §35 initializes `\shipout` with `a_leaders - 1` (`99`); the executor
+receives only the completed typed box/output semantics.
+
 After `init_align` validates and replays its opening brace, the command
 processor owns the complete `get_preamble_token` episode. It retains raw
 delivery while `scanner_status=aligning`, freezes u/v template pairs at `#`
