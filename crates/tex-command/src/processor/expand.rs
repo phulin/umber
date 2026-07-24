@@ -843,6 +843,55 @@ mod tests {
     }
 
     #[test]
+    fn completed_expansion_rolls_back_to_the_exact_scalar_input_state() {
+        let mut command = CommandState::default();
+        let mut runtime = CommandRuntime::default();
+        let mut universe = Universe::new();
+        let macro_name = install_macro(
+            &mut universe,
+            "m",
+            Token::Char {
+                ch: 'x',
+                cat: Catcode::Letter,
+            },
+        );
+        command.push_token_level(
+            TokenPayload::Transient(SharedTokenBuffer::new(vec![traced(Token::Cs(macro_name))])),
+            TokenBehavior::Ordinary,
+            RetirementBehavior::Pop,
+            ReplayTrace::BackedUp,
+        );
+        let expected = command.clone();
+        let snapshot = command.snapshot();
+        let mut capabilities = CommandHostCapabilities::default();
+
+        let first = {
+            let mut processor =
+                processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+            processor
+                .get_x_token()
+                .expect("macro expands")
+                .expect("body token")
+                .spelling()
+                .semantic_token()
+        };
+        command.rollback(snapshot).expect("rollback succeeds");
+        assert_eq!(command, expected);
+
+        let replayed = {
+            let mut processor =
+                processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+            processor
+                .get_x_token()
+                .expect("rolled-back macro expands")
+                .expect("replayed body token")
+                .spelling()
+                .semantic_token()
+        };
+        assert_eq!(replayed, first);
+    }
+
+    #[test]
     fn noexpand_suppresses_one_macro_delivery_without_changing_its_spelling() {
         let mut command = CommandState::default();
         let mut runtime = CommandRuntime::default();

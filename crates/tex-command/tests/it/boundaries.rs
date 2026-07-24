@@ -188,6 +188,39 @@ fn ordinary_expansion_has_one_loop_and_direct_input_mutation() {
     }
 }
 
+#[test]
+#[allow(clippy::disallowed_methods)] // host-side architecture test
+fn scan_toks_keeps_its_one_step_collector_and_direct_splice_boundary() {
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let scanner = fs::read_to_string(manifest_dir.join("src/scan_toks.rs"))
+        .expect("read token-list scanner implementation");
+    let collector = scanner
+        .split("fn collect_replacement(")
+        .nth(1)
+        .and_then(|tail| tail.split("/// Splices a token-list result").next())
+        .expect("locate expanded token-list collector");
+    let splice = scanner
+        .split("fn append_direct_the_toks(")
+        .nth(1)
+        .and_then(|tail| tail.split("/// e-TeX").next())
+        .expect("locate direct token-list splice");
+
+    assert_eq!(scanner.matches("fn scan_toks_inner(").count(), 1);
+    assert!(collector.contains("self.get_next()?"));
+    assert!(collector.contains("self.expand(command)?;"));
+    assert!(collector.contains("self.append_direct_the_toks(&mut output)?"));
+    assert!(
+        !collector.contains("self.get_x_token()?"),
+        "the replacement collector must not enter a second ordinary expansion loop"
+    );
+    assert!(splice.contains("let target = self.get_token()?"));
+    assert!(splice.contains("output.extend("));
+    assert!(
+        !splice.contains("self.expand("),
+        "direct token-list splicing must not recursively expand its contents"
+    );
+}
+
 fn dependency_names(manifest: &str) -> BTreeSet<&str> {
     let mut in_dependencies = false;
     let mut names = BTreeSet::new();

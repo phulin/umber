@@ -1102,6 +1102,16 @@ The collector freezes its traced result through the narrow aggregate command
 context capability. It receives no host or input-opening capability, so a
 direct splice remains a local immutable-store operation.
 
+The scalar-expansion audit binds these rules to the committed TeX82
+`expansion-macros.tex` observations for macro expansion, `\noexpand`,
+`\expandafter`, `\csname`, conversions, ordinary and expanded collection, and
+direct `\the` splices. The shared e-TeX and pdfTeX matrices retain the common
+collection/status observations. Focused command tests prove completed ordinary
+expansion and completed direct-splice collection replay identically after an
+executor-step rollback. A crate-boundary test mechanically preserves the one
+step-at-a-time collector, direct immutable splice, and absence of a second
+ordinary expansion loop.
+
 ## 21. Conditionals
 
 Condition processing maps TeX's independent condition stack directly:

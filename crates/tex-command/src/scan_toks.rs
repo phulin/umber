@@ -463,6 +463,72 @@ mod tests {
     }
 
     #[test]
+    fn completed_direct_splice_scan_rolls_back_to_the_exact_input_state() {
+        let mut command = CommandState::default();
+        let mut runtime = CommandRuntime::default();
+        let mut universe = Universe::new();
+        let the = install_expandable(&mut universe, "the", ExpandablePrimitive::The);
+        let register = universe.intern("stored").symbol();
+        universe.set_meaning(register, Meaning::ToksRegister(3));
+        let stored = universe.intern_token_list(&[
+            Token::Char {
+                ch: '{',
+                cat: Catcode::BeginGroup,
+            },
+            Token::Char {
+                ch: 'x',
+                cat: Catcode::Letter,
+            },
+        ]);
+        universe.set_toks(3, stored);
+        push(
+            &mut command,
+            vec![
+                Token::Char {
+                    ch: '{',
+                    cat: Catcode::BeginGroup,
+                },
+                Token::Cs(the),
+                Token::Cs(register),
+                Token::Char {
+                    ch: '}',
+                    cat: Catcode::EndGroup,
+                },
+            ],
+        );
+        let expected = command.clone();
+        let snapshot = command.snapshot();
+        let mut capabilities = CommandHostCapabilities::default();
+
+        let first = {
+            let mut processor =
+                processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+            let scanned = processor
+                .scan_toks(ScanToksMode::General { expanded: true })
+                .expect("direct splice scan succeeds");
+            processor
+                .state
+                .tokens(scanned.replacement_text.token_list())
+                .to_vec()
+        };
+        command.rollback(snapshot).expect("rollback succeeds");
+        assert_eq!(command, expected);
+
+        let replayed = {
+            let mut processor =
+                processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+            let scanned = processor
+                .scan_toks(ScanToksMode::General { expanded: true })
+                .expect("rolled-back direct splice scan succeeds");
+            processor
+                .state
+                .tokens(scanned.replacement_text.token_list())
+                .to_vec()
+        };
+        assert_eq!(replayed, first);
+    }
+
+    #[test]
     fn macro_definition_converts_parameters_and_preserves_doubled_hashes() {
         let mut command = CommandState::default();
         let mut runtime = CommandRuntime::default();

@@ -243,6 +243,33 @@ fn assert_shared_input_matrix_coverage() {
     assert!(CANONICAL_MATRIX.contains(
         "command|noexpand one-delivery suppression|expansion-macros.tex|expand no_expand and backed-up get_next"
     ));
+    for behavior in [
+        "token_list|ordinary scan_toks completion|transitions.tex|scan_toks absorbing completion",
+        "token_list|expanded scan_toks completion|transitions.tex|scan_toks expanded completion",
+        "token_list|direct the splice|transitions.tex|scan_toks the_toks splice",
+    ] {
+        for matrix in [
+            CANONICAL_MATRIX,
+            ETEX_CANONICAL_MATRIX,
+            PDFTEX_CANONICAL_MATRIX,
+        ] {
+            assert!(
+                matrix.contains(behavior),
+                "canonical matrix must retain scalar token-list behavior: {behavior}"
+            );
+        }
+    }
+    for behavior in [
+        "command|get_x_token expands macro|expansion-macros.tex|get_x_token expandable loop",
+        "command|expandafter primitive|expansion-macros.tex|expand expand_after branch",
+        "command|csname construction|expansion-macros.tex|expand cs_name and end_cs_name branches",
+        "token_list|direct splice remains unexpanded|expansion-macros.tex|expanded scan_toks direct-splice completion",
+    ] {
+        assert!(
+            CANONICAL_MATRIX.contains(behavior),
+            "focused TeX82 fixture must retain scalar expansion behavior: {behavior}"
+        );
+    }
     for matrix in [
         CANONICAL_MATRIX,
         ETEX_CANONICAL_MATRIX,
