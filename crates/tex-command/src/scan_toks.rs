@@ -89,7 +89,10 @@ impl CommandProcessor<'_> {
     fn scan_toks_inner(&mut self, mode: ScanToksMode) -> Result<ScannedToks, CommandError> {
         let (expanded, parameter_text, highest_parameter, hash_brace, primary) = match mode {
             ScanToksMode::General { expanded } => {
-                let primary = self.scan_left_brace(expanded)?;
+                // TeX scans the required opening brace through the ordinary
+                // expanded path even when the replacement text itself is
+                // collected unexpanded.
+                let primary = self.scan_left_brace(true)?.origin();
                 (expanded, Vec::new(), 0, None, primary)
             }
             ScanToksMode::MacroDefinition { expanded } => {
@@ -112,7 +115,10 @@ impl CommandProcessor<'_> {
         })
     }
 
-    fn scan_left_brace(&mut self, expanded: bool) -> Result<OriginId, CommandError> {
+    pub(crate) fn scan_left_brace(
+        &mut self,
+        expanded: bool,
+    ) -> Result<crate::CurrentCommand, CommandError> {
         loop {
             let command = if expanded {
                 self.get_x_token()?
@@ -128,7 +134,7 @@ impl CommandProcessor<'_> {
                 Meaning::CharToken {
                     cat: Catcode::BeginGroup,
                     ..
-                } => return Ok(command.origin()),
+                } => return Ok(command),
                 _ => {
                     self.back_input(command)?;
                     return Err(CommandError::InputInvariant);
@@ -237,6 +243,15 @@ impl CommandProcessor<'_> {
                 }
             }
 
+            // The expanded collector has completed a get_x-style delivery
+            // for each retained unexpandable token. Emit that boundary before
+            // storing the spelling, while expandable commands above remain
+            // represented by their own expansion transitions.
+            #[cfg(any(test, feature = "instrumentation"))]
+            if expanded {
+                self.observe_expanded_delivery(&command);
+            }
+
             let spelling = command.spelling();
             let token = spelling.semantic_token();
             if let Some(hash) = pending_parameter.take() {
@@ -286,8 +301,28 @@ impl CommandProcessor<'_> {
         &mut self,
         output: &mut Vec<TracedTokenWord>,
     ) -> Result<bool, CommandError> {
-        let target = self.get_token()?.ok_or(CommandError::InputInvariant)?;
+        let target = self.get_x_token()?.ok_or(CommandError::InputInvariant)?;
         let tokens = match target.meaning() {
+            Meaning::UnexpandablePrimitive(tex_state::meaning::UnexpandablePrimitive::Toks) => {
+                let index = u16::try_from(self.scan_integer()?.value).unwrap_or(0);
+                let tokens = self.state.toks(index);
+                #[cfg(any(test, feature = "instrumentation"))]
+                self.observe(CommandObservation::Scanner(crate::ScannerRecord {
+                    kind: "internal",
+                    value: "tokens".into(),
+                    tokens: Some(
+                        self.state
+                            .tokens(tokens)
+                            .iter()
+                            .copied()
+                            .map(|token| {
+                                self.observed_token(TracedTokenWord::pack(token, OriginId::UNKNOWN))
+                            })
+                            .collect(),
+                    ),
+                }));
+                Some(tokens)
+            }
             Meaning::ToksRegister(index) => Some(self.state.toks(index)),
             Meaning::TokParam(index) => Some(
                 self.state

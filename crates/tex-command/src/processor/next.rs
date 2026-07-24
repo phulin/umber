@@ -223,6 +223,7 @@ impl CommandProcessor<'_> {
                 position,
                 behavior,
                 source_range,
+                direct_source,
             } = delivery;
 
             if let Token::Param(slot) = spelling.semantic_token() {
@@ -244,8 +245,13 @@ impl CommandProcessor<'_> {
 
             let delivery_stamp = DeliveryStamp::new(level.0, position, self.next_delivery_sequence);
             self.next_delivery_sequence = self.next_delivery_sequence.wrapping_add(1);
-            let mut command =
-                CurrentCommand::resolve(spelling, delivery_stamp, source_range, &mut self.state);
+            let mut command = CurrentCommand::resolve(
+                spelling,
+                delivery_stamp,
+                source_range,
+                direct_source,
+                &mut self.state,
+            );
             if matches!(
                 behavior,
                 TokenBehavior::BackedUp(BackupTreatment::SuppressExpandableControlSequence)
@@ -312,6 +318,7 @@ impl CommandProcessor<'_> {
                                 position,
                                 behavior: TokenBehavior::Ordinary,
                                 source_range: Some(token.range()),
+                                direct_source: true,
                             }));
                         }
                         SourceTokenizationStep::InvalidCharacter(_) => continue,
@@ -343,6 +350,7 @@ impl CommandProcessor<'_> {
                             position,
                             behavior,
                             source_range,
+                            direct_source: false,
                         }));
                     }
                     match self.retire_and_restart(identity)? {
@@ -359,6 +367,7 @@ impl CommandProcessor<'_> {
                                     .map_err(|_| CommandError::InputInvariant)?,
                                 behavior: TokenBehavior::VTemplate,
                                 source_range: None,
+                                direct_source: false,
                             }));
                         }
                     }
@@ -597,6 +606,13 @@ impl CommandProcessor<'_> {
         let spelling = if self.observe_next_raw_as_character_code {
             self.observe_next_raw_as_character_code = false;
             match self.observed_token(command.spelling()) {
+                crate::observation::ObservedToken::Character {
+                    character,
+                    catcode: tex_state::token::Catcode::Letter,
+                } => crate::observation::ObservedToken::Character {
+                    character,
+                    catcode: tex_state::token::Catcode::Letter,
+                },
                 crate::observation::ObservedToken::Character { character, .. } => {
                     crate::observation::ObservedToken::Character {
                         character,
@@ -616,7 +632,7 @@ impl CommandProcessor<'_> {
             provenance: CommandProvenance::from_stamp(
                 command.delivery_stamp(),
                 command.origin(),
-                command.source_range(),
+                command.direct_source_range(),
             ),
         }));
     }
@@ -660,6 +676,9 @@ struct DeliveredToken {
     position: u64,
     behavior: TokenBehavior,
     source_range: Option<SourceRange>,
+    /// True only for a token read directly from a physical source cursor.
+    /// Backups preserve their diagnostic range while remaining replay input.
+    direct_source: bool,
 }
 
 enum RetirementRestart {

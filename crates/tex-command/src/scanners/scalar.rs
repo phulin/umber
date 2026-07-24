@@ -247,6 +247,7 @@ impl CommandProcessor<'_> {
         self.observe(CommandObservation::Scanner(ScannerRecord {
             kind: "integer",
             value: scanned.value.to_string(),
+            tokens: None,
         }));
         Ok(scanned)
     }

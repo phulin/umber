@@ -119,13 +119,29 @@ pub(crate) fn canonical_command_identity(meaning: Meaning) -> (String, Option<i6
             .into(),
             None,
         ),
+        Meaning::ExpandablePrimitive(tex_state::meaning::ExpandablePrimitive::The) => {
+            ("the".into(), Some(0))
+        }
+        Meaning::ExpandablePrimitive(tex_state::meaning::ExpandablePrimitive::NoExpand) => {
+            ("no_expand".into(), Some(0))
+        }
         Meaning::ExpandablePrimitive(_) => ("expandable".into(), None),
         Meaning::IntParam(index) => ("assign_int".into(), Some(27_167 + i64::from(index))),
+        Meaning::TokParam(index) => ("assign_toks".into(), Some(25_058 + i64::from(index))),
         Meaning::UnexpandablePrimitive(primitive) => match primitive {
             UnexpandablePrimitive::Def
             | UnexpandablePrimitive::Edef
             | UnexpandablePrimitive::Gdef
-            | UnexpandablePrimitive::Xdef => ("def".into(), Some(primitive.operand() as i64)),
+            | UnexpandablePrimitive::Xdef => (
+                "def".into(),
+                Some(match primitive {
+                    UnexpandablePrimitive::Def => 0,
+                    UnexpandablePrimitive::Gdef => 1,
+                    UnexpandablePrimitive::Edef => 2,
+                    UnexpandablePrimitive::Xdef => 3,
+                    _ => unreachable!("definition primitive is matched above"),
+                }),
+            ),
             UnexpandablePrimitive::Long => ("prefix".into(), Some(1)),
             UnexpandablePrimitive::Outer => ("prefix".into(), Some(2)),
             UnexpandablePrimitive::Global => ("prefix".into(), Some(4)),
@@ -225,6 +241,8 @@ pub struct ConditionRecord {
 pub struct ScannerRecord {
     pub kind: &'static str,
     pub value: String,
+    /// A frozen token-list scanner result, when the result domain is tokens.
+    pub tokens: Option<Vec<ObservedToken>>,
 }
 
 /// One `scan_toks` direct splice or completed immutable collection.
@@ -330,6 +348,20 @@ mod tests {
         assert_eq!(
             canonical_command_identity(Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Toks)),
             ("toks_register".into(), Some(0))
+        );
+    }
+
+    #[test]
+    fn definition_and_the_identities_follow_tex82_command_codes() {
+        assert_eq!(
+            canonical_command_identity(Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Edef)),
+            ("def".into(), Some(2))
+        );
+        assert_eq!(
+            canonical_command_identity(Meaning::ExpandablePrimitive(
+                tex_state::meaning::ExpandablePrimitive::The
+            )),
+            ("the".into(), Some(0))
         );
     }
 }

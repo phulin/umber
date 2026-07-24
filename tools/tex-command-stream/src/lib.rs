@@ -630,7 +630,9 @@ fn translate_observation(
             ObservedEvent::new(translate_condition(record), context)
         }
         CommandObservation::Scanner(record) => {
-            let result = if record.kind == "integer" {
+            let result = if let Some(tokens) = record.tokens {
+                CanonicalValue::Tokens(tokens.into_iter().map(oracle_token).collect())
+            } else if record.kind == "integer" {
                 record.value.parse::<i64>().map_or_else(
                     |_| CanonicalValue::Name(record.value),
                     CanonicalValue::Integer,
@@ -762,18 +764,21 @@ fn oracle_token(token: ObservedToken) -> OracleToken {
 fn catcode_name(catcode: Catcode) -> &'static str {
     match catcode {
         Catcode::Escape => "escape",
-        Catcode::BeginGroup => "begin_group",
-        Catcode::EndGroup => "end_group",
+        // The schema deliberately retains TeX's command names rather than
+        // Rust/engine catcode variant names. Token-bearing events therefore
+        // use the same spellings as raw command delivery.
+        Catcode::BeginGroup => "left_brace",
+        Catcode::EndGroup => "right_brace",
         Catcode::MathShift => "math_shift",
-        Catcode::AlignmentTab => "alignment_tab",
+        Catcode::AlignmentTab => "tab_mark",
         Catcode::EndLine => "end_line",
         Catcode::Parameter => "parameter",
         Catcode::Superscript => "superscript",
         Catcode::Subscript => "subscript",
         Catcode::Ignored => "ignored",
-        Catcode::Space => "space",
+        Catcode::Space => "spacer",
         Catcode::Letter => "letter",
-        Catcode::Other => "other",
+        Catcode::Other => "other_char",
         Catcode::Active => "active",
         Catcode::Comment => "comment",
         Catcode::Invalid => "invalid",
@@ -916,12 +921,32 @@ fn translate_alignment(record: AlignmentRecord) -> Event {
 }
 fn translate_mutation(record: MutationRecord) -> Event {
     if record.target == "meaning"
-        && let (Some(key), Some(tokens)) = (record.key, record.tokens)
+        && let (Some(key), Some(tokens)) = (record.key.as_ref(), record.tokens.as_ref())
     {
         return Event::Mutation(MutationEvent {
             target: StateTarget::Meaning,
-            key: CanonicalValue::Name(key),
-            value: CanonicalValue::Tokens(tokens.into_iter().map(oracle_token).collect()),
+            key: CanonicalValue::Name(key.clone()),
+            value: CanonicalValue::Tokens(tokens.iter().cloned().map(oracle_token).collect()),
+            scope: if record.global { "global" } else { "local" }.into(),
+        });
+    }
+    if record.target == "register"
+        && let (Some(key), Some(tokens)) = (record.key.as_ref(), record.tokens.as_ref())
+    {
+        return Event::Mutation(MutationEvent {
+            target: StateTarget::Register,
+            key: CanonicalValue::Name(key.clone()),
+            value: CanonicalValue::Tokens(tokens.iter().cloned().map(oracle_token).collect()),
+            scope: if record.global { "global" } else { "local" }.into(),
+        });
+    }
+    if record.target == "parameter"
+        && let (Some(key), Some(tokens)) = (record.key.as_ref(), record.tokens.as_ref())
+    {
+        return Event::Mutation(MutationEvent {
+            target: StateTarget::Parameter,
+            key: CanonicalValue::Name(key.clone()),
+            value: CanonicalValue::Tokens(tokens.iter().cloned().map(oracle_token).collect()),
             scope: if record.global { "global" } else { "local" }.into(),
         });
     }
@@ -1017,6 +1042,43 @@ mod tests {
     }
     fn observed(value: &str) -> ObservedEvent {
         ObservedEvent::new(scanner(value), "source=case.tex; input_level=1".into())
+    }
+
+    #[test]
+    fn token_catcodes_use_canonical_tex_command_names() {
+        assert_eq!(catcode_name(Catcode::BeginGroup), "left_brace");
+        assert_eq!(catcode_name(Catcode::EndGroup), "right_brace");
+        assert_eq!(catcode_name(Catcode::AlignmentTab), "tab_mark");
+        assert_eq!(catcode_name(Catcode::Space), "spacer");
+        assert_eq!(catcode_name(Catcode::Other), "other_char");
+    }
+
+    #[test]
+    fn token_register_mutations_keep_the_frozen_list() {
+        let event = translate_mutation(MutationRecord {
+            target: "register",
+            value: "tokens".into(),
+            key: Some("toks:0".into()),
+            tokens: Some(vec![ObservedToken::Character {
+                character: 'X',
+                catcode: Catcode::Letter,
+            }]),
+            global: false,
+        });
+        assert_eq!(
+            event,
+            Event::Mutation(MutationEvent {
+                target: StateTarget::Register,
+                key: CanonicalValue::Name("toks:0".into()),
+                value: CanonicalValue::Tokens(vec![OracleToken {
+                    character: u32::from('X'),
+                    catcode: "letter".into(),
+                    control_sequence: None,
+                    location: None,
+                }]),
+                scope: "local".into(),
+            })
+        );
     }
 
     fn nested_startup() -> CanonicalStartup {

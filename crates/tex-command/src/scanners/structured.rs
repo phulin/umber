@@ -64,6 +64,12 @@ impl CommandProcessor<'_> {
         &mut self,
         expanded: bool,
     ) -> Result<ScannedBalancedText, CommandError> {
+        // The general-text wrapper validates the mandatory opening brace
+        // while scanner status is still normal, then restores that exact
+        // delivery for `scan_toks` to absorb. This preserves both TeX82's
+        // recovery boundary and the canonical input/observer ordering.
+        let opening = self.scan_left_brace(true)?;
+        self.back_input(opening)?;
         let scanned = self.scan_toks(ScanToksMode::General { expanded })?;
         Ok(ScannedBalancedText {
             tokens: scanned.replacement_text,

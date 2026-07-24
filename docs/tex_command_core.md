@@ -1199,6 +1199,19 @@ It owns:
 
 For an unexpanded scan it repeatedly calls `get_token`.
 
+Before a general-text collector installs `ScannerStatus::Absorbing`, its
+structured-scanner wrapper finds the mandatory opening brace through
+`get_x_token` and backs up that exact delivery. The collector then installs
+the status and redelivers the brace through the same expanded path before
+collecting its unexpanded body. This preserves TeX82's normal-status recovery
+boundary and keeps the backed-up brace's diagnostic origin without reporting
+it as a second physical-source location.
+
+The same command-owned scanner distinguishes the two TeX82 assignment
+representations: `\toks` registers receive the collected body, while token
+parameters such as `\output` receive one frozen list retaining the enclosing
+braces. Replay applies either completed list without inspecting input tokens.
+
 For an expanded scan it follows the canonical structure:
 
 1. call `get_next`;

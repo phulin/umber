@@ -21,6 +21,7 @@ pub struct CurrentCommand {
     control_sequence: Option<Symbol>,
     delivery: DeliveryStamp,
     source_range: Option<SourceRange>,
+    direct_source: bool,
     alignment_adjustment: crate::processor::AlignmentDeliveryAdjustment,
 }
 
@@ -37,6 +38,7 @@ impl CurrentCommand {
         spelling: TracedTokenWord,
         delivery: DeliveryStamp,
         source_range: Option<SourceRange>,
+        direct_source: bool,
         state: &mut CommandContext<'_>,
     ) -> Self {
         let token = spelling.semantic_token();
@@ -68,6 +70,7 @@ impl CurrentCommand {
             control_sequence,
             delivery,
             source_range,
+            direct_source,
             alignment_adjustment: crate::processor::AlignmentDeliveryAdjustment::None,
         }
     }
@@ -163,6 +166,18 @@ impl CurrentCommand {
         self.source_range
     }
 
+    /// Returns the physical range only when this delivery came directly from
+    /// a source level. Replayed tokens retain their range for diagnostics but
+    /// must not masquerade as a second physical-source transition.
+    #[cfg(any(test, feature = "instrumentation"))]
+    pub(crate) const fn direct_source_range(&self) -> Option<SourceRange> {
+        if self.direct_source {
+            self.source_range
+        } else {
+            None
+        }
+    }
+
     /// Makes a fresh copy for the input backup path. `CurrentCommand` itself
     /// remains deliberately non-`Clone` at the public boundary.
     pub(crate) const fn copy_for_backup(&self) -> Self {
@@ -172,6 +187,7 @@ impl CurrentCommand {
             control_sequence: self.control_sequence,
             delivery: self.delivery,
             source_range: self.source_range,
+            direct_source: self.direct_source,
             alignment_adjustment: self.alignment_adjustment,
         }
     }

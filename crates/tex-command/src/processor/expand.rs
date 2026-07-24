@@ -12,6 +12,7 @@ use crate::input::{
     SharedBackedUpBuffer, SharedTokenBuffer, TokenBehavior, TokenPayload,
 };
 use crate::macro_call::MacroArguments;
+use crate::processor::status::ScannerStatus;
 use crate::profile::CommandProfile;
 use crate::{CommandError, CurrentCommand};
 
@@ -20,7 +21,7 @@ use super::CommandProcessor;
 #[cfg(any(test, feature = "instrumentation"))]
 use crate::observation::{
     CommandDeliveryBoundary, CommandDeliveryRecord, CommandObservation, CommandProvenance,
-    EffectRecord, MutationRecord,
+    EffectRecord, MutationRecord, ScannerRecord,
 };
 
 /// Stable pending-diagnostic identity for TeX.web's `Missing \\endcsname
@@ -55,7 +56,7 @@ impl CommandProcessor<'_> {
     }
 
     #[cfg(any(test, feature = "instrumentation"))]
-    fn observe_expanded_delivery(&mut self, command: &CurrentCommand) {
+    pub(crate) fn observe_expanded_delivery(&mut self, command: &CurrentCommand) {
         let (command_name, command_operand) =
             crate::observation::canonical_command_identity(command.meaning());
         let spelling = self.observed_token(command.spelling());
@@ -67,7 +68,7 @@ impl CommandProcessor<'_> {
             provenance: CommandProvenance::from_stamp(
                 command.delivery_stamp(),
                 command.origin(),
-                command.source_range(),
+                command.direct_source_range(),
             ),
         }));
     }
@@ -149,7 +150,22 @@ impl CommandProcessor<'_> {
     /// TeX.web's `\noexpand`: read normally, then replay exactly one target
     /// from a backed-up level carrying the non-sticky suppression treatment.
     fn expand_noexpand(&mut self) -> Result<(), CommandError> {
-        let target = self.get_token()?.ok_or(CommandError::InputInvariant)?;
+        let target = if matches!(self.command.scanner.status(), ScannerStatus::Normal) {
+            self.get_token()?
+        } else {
+            // TeX82 temporarily restores normal scanner status around the
+            // target read. In particular an expanded definition must not
+            // absorb the target before `\noexpand` reinstates it.
+            #[cfg(any(test, feature = "instrumentation"))]
+            self.observe_scanner_status(false);
+            let prior = self.command.begin_scanner_status(ScannerStatus::Normal);
+            let target = self.get_token();
+            self.command.restore_scanner_status(prior);
+            #[cfg(any(test, feature = "instrumentation"))]
+            self.observe_scanner_status(true);
+            target?
+        }
+        .ok_or(CommandError::InputInvariant)?;
         self.back_input_with_treatment(target, BackupTreatment::SuppressExpandableControlSequence)
     }
 
@@ -242,8 +258,28 @@ impl CommandProcessor<'_> {
     /// Direct token-list `\\the` splicing has no recursive expansion and only
     /// consumes its target command; scanner collection owns any later expansion.
     fn expand_the(&mut self, opener: CurrentCommand) -> Result<(), CommandError> {
-        let target = self.get_token()?.ok_or(CommandError::InputInvariant)?;
+        let target = self.get_x_token()?.ok_or(CommandError::InputInvariant)?;
         match target.meaning() {
+            Meaning::UnexpandablePrimitive(tex_state::meaning::UnexpandablePrimitive::Toks) => {
+                let index = u16::try_from(self.scan_integer()?.value).unwrap_or(0);
+                let tokens = self.state.toks(index);
+                #[cfg(any(test, feature = "instrumentation"))]
+                self.observe(CommandObservation::Scanner(ScannerRecord {
+                    kind: "internal",
+                    value: "tokens".into(),
+                    tokens: Some(
+                        self.state
+                            .tokens(tokens)
+                            .iter()
+                            .copied()
+                            .map(|token| {
+                                self.observed_token(TracedTokenWord::pack(token, OriginId::UNKNOWN))
+                            })
+                            .collect(),
+                    ),
+                }));
+                self.push_the_tokens(tokens, index, false)
+            }
             Meaning::ToksRegister(index) => {
                 self.push_the_tokens(self.state.toks(index), index, false)
             }

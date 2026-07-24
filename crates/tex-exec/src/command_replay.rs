@@ -10,7 +10,7 @@ use tex_command::{
 };
 #[cfg(any(test, feature = "instrumentation"))]
 use tex_command::{CommandObservation, CommandObserver, MutationRecord, ObservedToken};
-use tex_state::env::banks::IntParam;
+use tex_state::env::banks::{IntParam, TokParam};
 use tex_state::interner::Symbol;
 use tex_state::macro_store::{MacroDefinitionProvenance, MacroMeaning};
 use tex_state::meaning::{Meaning, MeaningFlags, UnexpandablePrimitive};
@@ -281,6 +281,11 @@ enum ScannedStep {
         value: i32,
         global: bool,
     },
+    TokParam {
+        index: u16,
+        tokens: TracedTokenList,
+        global: bool,
+    },
     CodeTable {
         primitive: UnexpandablePrimitive,
         character: char,
@@ -379,6 +384,16 @@ fn scan_command(
             Ok(ScannedStep::IntParam {
                 index,
                 value,
+                global,
+            })
+        }
+        Meaning::TokParam(index) => {
+            let tokens = processor
+                .scan_token_parameter_assignment()
+                .map_err(command_error)?;
+            Ok(ScannedStep::TokParam {
+                index,
+                tokens,
                 global,
             })
         }
@@ -584,6 +599,27 @@ fn applied_mutation_observation(
             global: *global,
         });
     }
+    if let ScannedStep::TokParam {
+        index,
+        tokens,
+        global,
+    } = scanned
+    {
+        return Some(MutationRecord {
+            target: "parameter",
+            value: "tokens".into(),
+            key: Some(format!("token_parameter:{index}")),
+            tokens: Some(
+                stores
+                    .tokens(tokens.token_list())
+                    .iter()
+                    .copied()
+                    .map(|token| observed_macro_token(token, stores))
+                    .collect(),
+            ),
+            global: *global,
+        });
+    }
     let ScannedStep::MacroDefinition {
         target,
         parameter_text,
@@ -683,6 +719,19 @@ fn apply_scanned_step(
                 stores.set_int_param_global(parameter, value);
             } else {
                 stores.set_int_param(parameter, value);
+            }
+            Ok(ReplayStep::Continue)
+        }
+        ScannedStep::TokParam {
+            index,
+            tokens,
+            global,
+        } => {
+            let parameter = TokParam::new(index);
+            if global {
+                stores.set_tok_param_global(parameter, tokens.token_list());
+            } else {
+                stores.set_tok_param(parameter, tokens.token_list());
             }
             Ok(ReplayStep::Continue)
         }

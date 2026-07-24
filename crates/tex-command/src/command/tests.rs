@@ -10,6 +10,7 @@ fn resolve(universe: &mut Universe, token: Token, origin: OriginId) -> CurrentCo
         TracedTokenWord::pack(token, origin),
         DeliveryStamp::new(17, 23, 29),
         None,
+        false,
         &mut state,
     )
 }
