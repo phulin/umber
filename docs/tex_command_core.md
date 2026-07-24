@@ -1021,6 +1021,17 @@ freezes every range once, creates one invocation origin, and installs exactly
 one activation/body pair over the canonical replacement list; replay resolves
 its compact `OutParameter` tokens through that activation.
 
+The committed TeX82 `expansion-macros.tex` fixture is the focused canonical
+audit for compulsory, undelimited, delimited, overlapping-prefix,
+nested-brace, paragraph, `#{`, nine-parameter, and nested-replay behavior.
+The shared e-TeX and pdfTeX transition fixtures independently bind matching
+entry/restoration, completed arguments, activation, delimiter completion, and
+overlap recovery to their canonical observers. Crate tests additionally prove
+that rollback before a successful call replays the same activation and
+argument ranges while allocating exactly one new invocation origin per replay;
+an architecture gate preserves one raw scalar fallback and rejects alternate
+matcher types.
+
 ## 20. Canonical `scan_toks`
 
 `scan_toks` is not implemented by blindly calling generic `get_x_token`.

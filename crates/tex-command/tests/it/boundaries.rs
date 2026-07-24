@@ -131,6 +131,40 @@ fn outer_validity_and_runaway_recovery_have_one_raw_delivery_owner() {
     assert!(next.contains("self.command.scanner.clear_for_recovery();"));
 }
 
+#[test]
+#[allow(clippy::disallowed_methods)] // host-side architecture test
+fn scalar_macro_call_keeps_one_raw_fallback_matcher() {
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let matcher = fs::read_to_string(manifest_dir.join("src/macro_call.rs"))
+        .expect("read scalar macro matcher implementation");
+
+    assert_eq!(
+        matcher.matches("fn macro_call_scalar(").count(),
+        1,
+        "macro calls must retain one scalar semantic fallback"
+    );
+    assert_eq!(
+        matcher.matches("fn scan_undelimited_argument(").count(),
+        1,
+        "undelimited matching must have one canonical scanner"
+    );
+    assert_eq!(
+        matcher.matches("fn scan_delimited_argument(").count(),
+        1,
+        "delimited matching must have one canonical scanner"
+    );
+    assert!(
+        matcher.contains("self.get_token()?"),
+        "the scalar matcher must consume raw tokens through get_token"
+    );
+    for forbidden in ["CompiledMacroMatcher", "MacroBytecode", "FastMacroMatcher"] {
+        assert!(
+            !matcher.contains(forbidden),
+            "alternate macro matcher {forbidden} would bypass the scalar fallback"
+        );
+    }
+}
+
 fn dependency_names(manifest: &str) -> BTreeSet<&str> {
     let mut in_dependencies = false;
     let mut names = BTreeSet::new();

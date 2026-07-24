@@ -328,6 +328,8 @@ fn successful_call_activates_canonical_replacement_and_replays_parameter_range()
         },
     );
     let mut capabilities = CommandHostCapabilities::default();
+    let snapshot = command.snapshot();
+    let activated;
     {
         let mut processor = CommandProcessor::new(
             &mut command,
@@ -348,6 +350,7 @@ fn successful_call_activates_canonical_replacement_and_replays_parameter_range()
             Some(crate::input::InputLevel::Tokens(cursor))
                 if matches!(cursor.behavior, crate::input::TokenBehavior::MacroBody(_))
         ));
+        activated = processor.command.clone();
 
         assert_eq!(
             processor
@@ -379,6 +382,47 @@ fn successful_call_activates_canonical_replacement_and_replays_parameter_range()
         assert!(processor.command.parameters.activations.is_empty());
         assert!(processor.get_token().expect("source retires").is_none());
     }
+
+    command
+        .rollback(snapshot)
+        .expect("macro-call snapshot restores the untouched input cursor");
+    {
+        let mut processor = CommandProcessor::new(
+            &mut command,
+            &mut runtime,
+            universe.command_context(),
+            CommandHostContext::new(&mut capabilities),
+        );
+        let call = processor
+            .get_next()
+            .expect("rolled-back macro call delivery")
+            .expect("rolled-back macro token");
+        processor
+            .macro_call(call)
+            .expect("rolled-back macro call matches again");
+        assert_eq!(processor.command.input, activated.input);
+        assert_eq!(processor.command.scanner, activated.scanner);
+        assert_eq!(processor.command.transient, activated.transient);
+        let replayed = processor
+            .command
+            .parameters
+            .activations
+            .last()
+            .expect("rolled-back call installs one activation");
+        let expected = activated
+            .parameters
+            .activations
+            .last()
+            .expect("original call installs one activation");
+        assert_eq!(replayed.identity, expected.identity);
+        assert_eq!(replayed.definition, expected.definition);
+        assert_eq!(replayed.arguments, expected.arguments);
+    }
+    assert_eq!(
+        universe.macro_invocation_provenance_stats().invocations(),
+        2,
+        "each replayed successful call creates exactly one fresh invocation origin"
+    );
 }
 
 #[test]
