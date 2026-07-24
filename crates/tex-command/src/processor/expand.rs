@@ -2,7 +2,8 @@
 
 use tex_state::ids::{MacroDefinitionId, OriginListId, TokenListId};
 use tex_state::meaning::{ExpandablePrimitive, Meaning};
-use tex_state::token::OriginId;
+use tex_state::provenance::SynthesizedOriginKind;
+use tex_state::token::{OriginId, Token, TracedTokenWord};
 
 use crate::input::{
     BackupTreatment, InputLevelId, ReplayTrace, RetirementBehavior, SharedTokenBuffer,
@@ -13,6 +14,10 @@ use crate::profile::CommandProfile;
 use crate::{CommandError, CurrentCommand};
 
 use super::CommandProcessor;
+
+/// Stable pending-diagnostic identity for TeX.web's `Missing \\endcsname
+/// inserted` recovery. Rendering belongs to the diagnostic milestone.
+const MISSING_ENDCSNAME_DIAGNOSTIC: u64 = 0x6373_6e61_6d65_0001;
 
 impl CommandProcessor<'_> {
     /// Delivers one ordinary expanded command through TeX.web's `get_x_token`.
@@ -53,6 +58,9 @@ impl CommandProcessor<'_> {
             Meaning::ExpandablePrimitive(ExpandablePrimitive::ExpandAfter) => {
                 self.expand_expandafter()
             }
+            Meaning::ExpandablePrimitive(ExpandablePrimitive::CsName) => {
+                self.expand_csname(command)
+            }
             Meaning::ExpandablePrimitive(primitive) => {
                 Err(CommandError::UnsupportedExpandablePrimitive(primitive))
             }
@@ -80,6 +88,41 @@ impl CommandProcessor<'_> {
             self.back_input(second)?;
         }
         self.replay_expandafter_first(first);
+        Ok(())
+    }
+
+    /// TeX.web's `\\csname`: collect ordinary expanded character commands
+    /// until the inaccessible `\\endcsname` boundary, then inject the one
+    /// named control-sequence token through normal input delivery.
+    fn expand_csname(&mut self, opener: CurrentCommand) -> Result<(), CommandError> {
+        let mut name = String::new();
+        loop {
+            let Some(command) = self.get_x_token()? else {
+                return Err(CommandError::InputInvariant);
+            };
+            match command.meaning() {
+                Meaning::ExpandablePrimitive(ExpandablePrimitive::EndCsName) => break,
+                Meaning::CharToken { ch, .. } => name.push(ch),
+                _ => {
+                    self.back_error(command, MISSING_ENDCSNAME_DIAGNOSTIC)?;
+                    break;
+                }
+            }
+        }
+
+        let symbol = self.state.intern_relaxed_control_sequence(&name);
+        let origin = self
+            .state
+            .synthesized_origin(SynthesizedOriginKind::Expansion, opener.origin());
+        self.command.push_token_level(
+            TokenPayload::Transient(SharedTokenBuffer::new(vec![TracedTokenWord::pack(
+                Token::Cs(symbol),
+                origin,
+            )])),
+            TokenBehavior::Ordinary,
+            RetirementBehavior::Pop,
+            ReplayTrace::Transient(crate::input::TransientReplayReason::Inserted),
+        );
         Ok(())
     }
 
@@ -127,10 +170,12 @@ impl CommandProcessor<'_> {
 }
 
 fn is_expandable(meaning: Meaning) -> bool {
-    matches!(
-        meaning,
-        Meaning::Macro { .. } | Meaning::ExpandablePrimitive(_)
-    )
+    matches!(meaning, Meaning::Macro { .. })
+        || matches!(
+            meaning,
+            Meaning::ExpandablePrimitive(primitive)
+                if primitive != ExpandablePrimitive::EndCsName
+        )
 }
 
 #[cfg(test)]
@@ -180,6 +225,16 @@ mod tests {
             },
         );
         name
+    }
+
+    fn install_expandable(
+        universe: &mut Universe,
+        name: &str,
+        primitive: ExpandablePrimitive,
+    ) -> tex_state::interner::Symbol {
+        let symbol = universe.intern(name).symbol();
+        universe.set_meaning(symbol, Meaning::ExpandablePrimitive(primitive));
+        symbol
     }
 
     #[test]
@@ -315,6 +370,131 @@ mod tests {
             }
         );
         assert_eq!(processor.command.expansion.cumulative_expansions, 2);
+    }
+
+    #[test]
+    fn csname_expands_characters_then_injects_a_relaxed_named_control_sequence() {
+        let mut command = CommandState::default();
+        let mut runtime = CommandRuntime::default();
+        let mut universe = Universe::new();
+        let csname = install_expandable(&mut universe, "csname", ExpandablePrimitive::CsName);
+        let endcsname =
+            install_expandable(&mut universe, "endcsname", ExpandablePrimitive::EndCsName);
+        let macro_name = install_macro(
+            &mut universe,
+            "letter",
+            Token::Char {
+                ch: 'a',
+                cat: Catcode::Other,
+            },
+        );
+        command.push_token_level(
+            TokenPayload::Transient(SharedTokenBuffer::new(vec![
+                traced(Token::Cs(csname)),
+                traced(Token::Cs(macro_name)),
+                traced(Token::Char {
+                    ch: 'b',
+                    cat: Catcode::Letter,
+                }),
+                traced(Token::Cs(endcsname)),
+            ])),
+            TokenBehavior::Ordinary,
+            RetirementBehavior::Pop,
+            ReplayTrace::BackedUp,
+        );
+        let mut capabilities = CommandHostCapabilities::default();
+        let delivered = {
+            let mut processor =
+                processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+            processor
+                .get_x_token()
+                .expect("csname expands")
+                .expect("constructed control sequence")
+        };
+
+        let Token::Cs(symbol) = delivered.spelling().semantic_token() else {
+            panic!("csname must inject a control sequence");
+        };
+        assert_eq!(universe.meaning(symbol), Meaning::Relax);
+        assert_eq!(
+            universe.control_sequence_kind(symbol),
+            tex_state::interner::ControlSequenceKind::Named
+        );
+        assert!(matches!(
+            universe.origin(delivered.origin()),
+            tex_state::provenance::OriginRecord::Synthesized(origin)
+                if origin.kind() == SynthesizedOriginKind::Expansion
+        ));
+        assert_eq!(command.expansion.cumulative_expansions, 2);
+    }
+
+    #[test]
+    fn csname_recovers_by_backing_up_a_non_character_before_constructing_the_name() {
+        let mut command = CommandState::default();
+        let mut runtime = CommandRuntime::default();
+        let mut universe = Universe::new();
+        let csname = install_expandable(&mut universe, "csname", ExpandablePrimitive::CsName);
+        let endcsname =
+            install_expandable(&mut universe, "endcsname", ExpandablePrimitive::EndCsName);
+        let relax = universe.intern("r").symbol();
+        universe.set_meaning(relax, Meaning::Relax);
+        command.push_token_level(
+            TokenPayload::Transient(SharedTokenBuffer::new(vec![
+                traced(Token::Cs(csname)),
+                traced(Token::Char {
+                    ch: 'a',
+                    cat: Catcode::Letter,
+                }),
+                traced(Token::Cs(relax)),
+                traced(Token::Cs(endcsname)),
+            ])),
+            TokenBehavior::Ordinary,
+            RetirementBehavior::Pop,
+            ReplayTrace::BackedUp,
+        );
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+
+        let constructed = processor
+            .get_x_token()
+            .expect("csname recovery")
+            .expect("constructed name");
+        let replayed = processor
+            .get_x_token()
+            .expect("backed up token")
+            .expect("relax");
+        assert_eq!(constructed.meaning(), Meaning::Relax);
+        assert_eq!(replayed.spelling().semantic_token(), Token::Cs(relax));
+        assert_eq!(
+            processor.command.expansion.pending_diagnostics,
+            vec![MISSING_ENDCSNAME_DIAGNOSTIC]
+        );
+    }
+
+    #[test]
+    fn endcsname_is_an_ordinary_loop_boundary_not_an_expandable_dispatch_error() {
+        let mut command = CommandState::default();
+        let mut runtime = CommandRuntime::default();
+        let mut universe = Universe::new();
+        let endcsname =
+            install_expandable(&mut universe, "endcsname", ExpandablePrimitive::EndCsName);
+        command.push_token_level(
+            TokenPayload::Transient(SharedTokenBuffer::new(vec![traced(Token::Cs(endcsname))])),
+            TokenBehavior::Ordinary,
+            RetirementBehavior::Pop,
+            ReplayTrace::BackedUp,
+        );
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+
+        let boundary = processor
+            .get_x_token()
+            .expect("boundary delivery")
+            .expect("endcsname");
+        assert_eq!(
+            boundary.meaning(),
+            Meaning::ExpandablePrimitive(ExpandablePrimitive::EndCsName)
+        );
     }
 
     #[test]

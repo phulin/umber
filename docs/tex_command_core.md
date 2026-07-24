@@ -747,6 +747,23 @@ ends with that delivery.
 There is no general `NoExpand` token-list replay kind and no sticky suppression
 property on returned tokens.
 
+### 12.5 `\\csname` construction
+
+`\\csname` collects through the same ordinary `get_x_token` loop used by all
+scalar expansion. Expanded character commands contribute their character code
+until `\\endcsname` is delivered as the collector boundary. The completed
+spelling is interned in the named control-sequence namespace; an undefined
+name receives `\\relax`, while an existing meaning is preserved. The resulting
+control-sequence token is injected as ordinary transient input with an
+expansion-synthesized origin, so its next delivery follows the canonical raw
+path.
+
+If a non-character command appears before `\\endcsname`, the command is backed
+up through the normal recovery path, the missing-endcsname diagnostic is
+queued, and the partial name is still constructed. `\\endcsname` is excluded
+from ordinary expandable dispatch solely as this collector boundary; no
+second expansion interpreter is introduced.
+
 ## 13. Source tokenization
 
 Source tokenization implements:

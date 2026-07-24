@@ -10,6 +10,7 @@ use crate::{
     interner::Symbol,
     macro_store::{MacroDefinitionProvenance, MacroMeaning, MacroParameterPattern},
     meaning::Meaning,
+    provenance::SynthesizedOriginKind,
     token::{Catcode, OriginId, Token},
 };
 
@@ -34,6 +35,13 @@ impl CommandContext<'_> {
     #[must_use]
     pub fn intern_control_sequence(&mut self, name: &str) -> Symbol {
         self.universe.intern(name).symbol()
+    }
+
+    /// Interns a name built by `\\csname` and installs TeX's `\\relax`
+    /// meaning only when that name was previously undefined.
+    #[must_use]
+    pub fn intern_relaxed_control_sequence(&mut self, name: &str) -> Symbol {
+        self.universe.intern_relaxed_control_sequence(name).symbol()
     }
 
     /// Returns the immutable semantic words of one stored token list.
@@ -142,6 +150,15 @@ impl CommandContext<'_> {
             definition_origin,
             parent_invocation,
         )
+    }
+
+    /// Allocates provenance for a token manufactured by canonical expansion.
+    pub fn synthesized_origin(
+        &mut self,
+        kind: SynthesizedOriginKind,
+        parent: OriginId,
+    ) -> OriginId {
+        self.universe.synthesized_origin(kind, parent)
     }
 }
 
