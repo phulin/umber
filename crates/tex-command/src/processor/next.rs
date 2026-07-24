@@ -757,7 +757,16 @@ impl CommandProcessor<'_> {
         &self,
         command: &CurrentCommand,
     ) -> crate::observation::ObservedToken {
-        if matches!(command.meaning(), Meaning::Relax) {
+        if command.spelling().semantic_token().is_frozen_end_template()
+            || command.spelling().semantic_token().is_frozen_endv()
+        {
+            // TeX82 stores both inaccessible template sentinels in distinct
+            // frozen control-sequence slots whose texts are `endtemplate`
+            // (TeX.web §765). `get_next` therefore exposes that control
+            // sequence identity at the raw boundary, while `get_x_token`
+            // changes only its effective command to `endv` (§343).
+            crate::observation::ObservedToken::ControlSequence("endtemplate".into())
+        } else if matches!(command.meaning(), Meaning::Relax) {
             // TeX82's observer presents the inaccessible frozen `\relax`
             // inserted by incomplete-conditional recovery as `\relax`.
             crate::observation::ObservedToken::ControlSequence("relax".into())
@@ -1633,6 +1642,20 @@ mod tests {
             })
             .expect("end-v is observed as expanded delivery");
         assert!(end_template < endv);
+        let CommandObservation::Command(end_template) = &recorder.0[end_template] else {
+            unreachable!("filtered to raw command delivery")
+        };
+        let CommandObservation::Command(endv) = &recorder.0[endv] else {
+            unreachable!("filtered to expanded command delivery")
+        };
+        assert!(matches!(
+            end_template.spelling,
+            crate::observation::ObservedToken::ControlSequence(ref name) if name == "endtemplate"
+        ));
+        assert!(matches!(
+            endv.spelling,
+            crate::observation::ObservedToken::ControlSequence(ref name) if name == "endtemplate"
+        ));
         assert!(!recorder.0.iter().any(|observation| matches!(
             observation,
             CommandObservation::Input(input)

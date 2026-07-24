@@ -36,7 +36,9 @@ raw command; it resumes only after `do_endv` retires the exact v-template
 frame. At that retained boundary, `get_next` first delivers frozen
 `end_template`; TeX82 §343 expands it to frozen `endv`, and only then does
 §772's `do_endv` retire the frame. Retention itself is not a retirement
-observation.
+observation. Both inaccessible frozen control sequences retain the canonical
+`endtemplate` control-sequence identity; expansion changes only the effective
+command from `end_template` to `endv` (TeX82 §§343, 765).
 
 The sentinel values have their source meanings:
 
