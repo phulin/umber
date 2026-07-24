@@ -1319,7 +1319,8 @@ optimization is considered.
 Macro definitions retain canonical parameter and replacement token lists.
 `macro_call`:
 
-1. installs `ScannerStatus::Matching`;
+1. installs `ScannerStatus::Matching` only when its parameter text is not
+   empty;
 2. matches compulsory leading tokens with raw `get_token`;
 3. scans up to nine arguments in definition order;
 4. uses canonical undelimited or delimited matching;
@@ -1329,10 +1330,9 @@ Macro definitions retain canonical parameter and replacement token lists.
 8. applies the `#{` delimiter/brace rule;
 9. strips one complete outer group when required;
 10. stores every completed argument once in one shared packed buffer;
-11. restores scanner status;
-12. creates one macro invocation provenance node; and
-13. pushes the replacement as a macro-body input level owning the argument
-    ranges.
+11. creates one macro invocation provenance node and pushes the replacement
+    as a macro-body input level owning the argument ranges; and
+12. restores the matching scanner status, when one was installed.
 
 The initial promoted implementation does not use a compiled delimiter
 automaton, macro bytecode, or alternate fast matcher. Such acceleration may be
@@ -1340,8 +1340,10 @@ added only through the optimization policy in section 32, with the canonical
 scalar matcher retained as the specification fallback and test oracle inside
 the new subsystem.
 
-The implementation installs `Matching` around compulsory-prefix and argument
-delivery. It uses raw `get_token`, strips precisely one outer argument group,
+TeX82 §392 skips the parameter matcher entirely for a definition beginning
+with `end_match`: a parameterless macro pushes its replacement body directly,
+without a `Matching` observation. Otherwise the implementation installs
+`Matching` around compulsory-prefix and argument delivery. It uses raw `get_token`, strips precisely one outer argument group,
 retains nested literal braces, and lets the existing outer-validity operation
 perform all inserted-token recovery. Direct delimited matching retains the
 maximal overlapping delimiter prefix after a partial mismatch, commits each

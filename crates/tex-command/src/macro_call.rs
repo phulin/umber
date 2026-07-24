@@ -193,25 +193,38 @@ impl CommandProcessor<'_> {
             .ok_or(CommandError::InputInvariant)?;
         let meaning = self.state.macro_definition(definition);
         let pattern = self.state.macro_definition_parameter_pattern(definition);
-        let builder = ArgumentBuilderId(self.command.transient.next_builder_identity);
-        self.command.transient.next_builder_identity =
-            self.command.transient.next_builder_identity.wrapping_add(1);
-        let status = ScannerStatus::Matching(MatchingContext {
-            macro_name,
-            builder,
-            // The diagnostic/provenance bridge assigns stable warning ids in
-            // its own ordered slice; matching nevertheless owns a typed live
-            // warning slot now so outer recovery has one canonical path.
-            warning: ScannerWarning(0),
-        });
-        let prior = self.command.begin_scanner_status(status);
-        self.observe_scanner_status(true);
+        // TeX82 §392 calls the parameter matcher only when the macro's
+        // parameter text does not begin with `end_match`. A parameterless
+        // macro therefore feeds its replacement directly, without a transient
+        // `matching` scanner episode. Literal leading tokens still need the
+        // matcher even when there are no numbered parameters.
+        let needs_matching = !pattern.leading().is_empty() || pattern.parameter_count() != 0;
+        let prior = if needs_matching {
+            let builder = ArgumentBuilderId(self.command.transient.next_builder_identity);
+            self.command.transient.next_builder_identity =
+                self.command.transient.next_builder_identity.wrapping_add(1);
+            let status = ScannerStatus::Matching(MatchingContext {
+                macro_name,
+                builder,
+                // The diagnostic/provenance bridge assigns stable warning ids in
+                // its own ordered slice; matching nevertheless owns a typed live
+                // warning slot now so outer recovery has one canonical path.
+                warning: ScannerWarning(0),
+            });
+            let prior = self.command.begin_scanner_status(status);
+            self.observe_scanner_status(true);
+            Some(prior)
+        } else {
+            None
+        };
         self.outer_recovered_while_matching = false;
         let arguments = match self.macro_call_scalar(definition, meaning.flags(), &pattern) {
             Ok(arguments) => arguments,
             Err(error) => {
-                self.observe_scanner_status(false);
-                self.command.restore_scanner_status(prior);
+                if let Some(prior) = prior {
+                    self.observe_scanner_status(false);
+                    self.command.restore_scanner_status(prior);
+                }
                 return Err(error);
             }
         };
@@ -244,8 +257,10 @@ impl CommandProcessor<'_> {
             token_count: arguments.buffer.len() as u64,
             tokens: Vec::new(),
         }));
-        self.observe_scanner_status(false);
-        self.command.restore_scanner_status(prior);
+        if let Some(prior) = prior {
+            self.observe_scanner_status(false);
+            self.command.restore_scanner_status(prior);
+        }
         Ok(arguments)
     }
 

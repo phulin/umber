@@ -10,10 +10,20 @@ use super::{
 };
 use crate::CommandState;
 use crate::{
-    CommandError, CommandHostCapabilities, CommandHostContext, CommandProcessor, CommandRuntime,
-    RegisteredSourceKind, SourceRegistration,
+    CommandError, CommandHostCapabilities, CommandHostContext, CommandObservation, CommandObserver,
+    CommandProcessor, CommandRuntime, InputReason, InputTransition, RegisteredSourceKind,
+    SourceRegistration,
 };
 use std::sync::Arc;
+
+#[derive(Default)]
+struct Recorder(Vec<CommandObservation>);
+
+impl CommandObserver for Recorder {
+    fn committed(&mut self, observation: CommandObservation) {
+        self.0.push(observation);
+    }
+}
 
 fn traced(ch: char) -> TracedTokenWord {
     TracedTokenWord::pack(
@@ -223,6 +233,61 @@ fn scalar_matcher_consumes_compulsory_prefix_before_undelimited_argument() {
             cat: Catcode::Letter
         }
     );
+}
+
+#[test]
+fn parameterless_macro_pushes_replacement_without_matching_status() {
+    let mut command = CommandState::default();
+    let source = command
+        .register_source(SourceRegistration::new(
+            RegisteredSourceKind::Generated,
+            Arc::<[u8]>::from(&b"\\m"[..]),
+        ))
+        .expect("source registers");
+    command
+        .open_registered_source(source)
+        .expect("source opens");
+    let mut runtime = CommandRuntime::default();
+    let mut universe = Universe::new();
+    let name = universe.intern("m").symbol();
+    let empty = universe.intern_token_list(&[]);
+    let definition = universe.intern_macro(MacroMeaning::new(MeaningFlags::EMPTY, empty, empty));
+    universe.set_meaning(
+        name,
+        Meaning::Macro {
+            flags: MeaningFlags::EMPTY,
+            definition,
+        },
+    );
+    let mut capabilities = CommandHostCapabilities::default();
+    let mut recorder = Recorder::default();
+    let mut processor = CommandProcessor::new(
+        &mut command,
+        &mut runtime,
+        universe.command_context(),
+        CommandHostContext::new(&mut capabilities),
+    )
+    .with_observer(&mut recorder);
+
+    let call = processor
+        .get_next()
+        .expect("macro call delivery")
+        .expect("macro token");
+    processor
+        .macro_call(call)
+        .expect("parameterless macro activates");
+
+    assert!(recorder.0.iter().any(|observation| {
+        matches!(
+            observation,
+            CommandObservation::Input(record)
+                if record.transition == InputTransition::Push && record.reason == InputReason::Macro
+        )
+    }));
+    assert!(recorder.0.iter().all(|observation| !matches!(
+        observation,
+        CommandObservation::ScannerStatus(status) if status.status.starts_with("Matching")
+    )));
 }
 
 #[test]
