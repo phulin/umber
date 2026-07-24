@@ -223,6 +223,15 @@ processor owns that lifecycle: it expands (or backs up) the second token and
 replays the first above the resulting input, so the identity is never inferred
 from the replayed token or a fixture-specific observer rule.
 
+Likewise, `\csname` is observed at raw delivery as `cs_name` with `cur_chr`
+0 before TeX82 §25's name-construction loop. TeX82 `tex.web` defines
+`cs_name=max_command+7` and installs `\csname` with selector zero; the loop
+then expands name characters through `\endcsname`, interns the completed
+control sequence, and injects it through ordinary input. The matching boundary
+is likewise `end_cs_name` with selector zero. `CurrentCommand` carries both
+identities from raw delivery through that lifecycle, rather than having
+observation infer either from a generic expandable meaning.
+
 For TeX82 §§1071 and 1076, `\shipout` begins a typed box-completion episode:
 command control delivers the next `make_box` command and owns every scalar
 box-register scan, including its one-token terminator backup. On the closing

@@ -91,3 +91,31 @@ fn expandafter_resolves_to_its_tex82_current_command_identity() {
 
     assert_eq!(command.identity(), CommandIdentity::ExpandAfter);
 }
+
+#[test]
+fn csname_resolves_to_its_tex82_current_command_identity() {
+    let mut universe = Universe::new();
+    let csname = universe.intern("csname").symbol();
+    universe.set_meaning(
+        csname,
+        Meaning::ExpandablePrimitive(ExpandablePrimitive::CsName),
+    );
+
+    let command = resolve(&mut universe, Token::Cs(csname), OriginId::UNKNOWN);
+
+    assert_eq!(command.identity(), CommandIdentity::CsName);
+}
+
+#[test]
+fn endcsname_resolves_to_its_tex82_current_command_identity() {
+    let mut universe = Universe::new();
+    let endcsname = universe.intern("endcsname").symbol();
+    universe.set_meaning(
+        endcsname,
+        Meaning::ExpandablePrimitive(ExpandablePrimitive::EndCsName),
+    );
+
+    let command = resolve(&mut universe, Token::Cs(endcsname), OriginId::UNKNOWN);
+
+    assert_eq!(command.identity(), CommandIdentity::EndCsName);
+}

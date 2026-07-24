@@ -285,9 +285,9 @@ pub(crate) fn canonical_command_identity(meaning: Meaning) -> (String, Option<i6
 
 /// Canonical TeX82 observer identity for one delivered current command.
 ///
-/// Most identities derive from the effective meaning. `\\expandafter` and
-/// `\\noexpand` are the deliberate exceptions: the former has TeX82's
-/// dedicated `expand_after` command code, while the latter keeps the relaxed
+/// Most identities derive from the effective meaning. `\\expandafter`,
+/// `\\csname`, `\\endcsname`, and `\\noexpand` are the deliberate exceptions:
+/// the first three have TeX82's dedicated command codes, while the latter keeps the relaxed
 /// meaning but changes its current-character identity to `no_expand_flag`
 /// (257). Both distinctions are carried by `CurrentCommand`, so observation
 /// merely projects command state.
@@ -300,6 +300,13 @@ pub(crate) fn canonical_current_command_identity(
         // `expand_after` command with selector zero. The current command owns
         // that identity before its two-token expansion lifecycle begins.
         CommandIdentity::ExpandAfter => ("expand_after".into(), Some(0)),
+        // TeX82 §25 dispatches `\csname` through `cs_name` with selector
+        // zero before collecting expanded character commands through its
+        // matching `\endcsname` boundary.
+        CommandIdentity::CsName => ("cs_name".into(), Some(0)),
+        // The `\csname` collector observes its inaccessible boundary through
+        // the same raw path, where TeX82 retains `end_cs_name` and selector zero.
+        CommandIdentity::EndCsName => ("end_cs_name".into(), Some(0)),
         CommandIdentity::NoExpandFrozenRelax => {
             debug_assert_eq!(command.meaning(), Meaning::Relax);
             ("relax".into(), Some(257))
@@ -514,6 +521,52 @@ mod tests {
         assert_eq!(
             canonical_command_identity(Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Par)),
             ("par_end".into(), Some(256))
+        );
+    }
+
+    #[test]
+    fn csname_uses_tex82_cs_name_identity() {
+        let mut universe = tex_state::Universe::new();
+        let csname = universe.intern("csname").symbol();
+        universe.set_meaning(
+            csname,
+            Meaning::ExpandablePrimitive(ExpandablePrimitive::CsName),
+        );
+        let mut state = universe.command_context();
+        let command = CurrentCommand::resolve(
+            TracedTokenWord::pack(Token::Cs(csname), OriginId::UNKNOWN),
+            DeliveryStamp::new(0, 0, 0),
+            None,
+            false,
+            &mut state,
+        );
+
+        assert_eq!(
+            canonical_current_command_identity(&command),
+            ("cs_name".into(), Some(0))
+        );
+    }
+
+    #[test]
+    fn endcsname_uses_tex82_end_cs_name_identity() {
+        let mut universe = tex_state::Universe::new();
+        let endcsname = universe.intern("endcsname").symbol();
+        universe.set_meaning(
+            endcsname,
+            Meaning::ExpandablePrimitive(ExpandablePrimitive::EndCsName),
+        );
+        let mut state = universe.command_context();
+        let command = CurrentCommand::resolve(
+            TracedTokenWord::pack(Token::Cs(endcsname), OriginId::UNKNOWN),
+            DeliveryStamp::new(0, 0, 0),
+            None,
+            false,
+            &mut state,
+        );
+
+        assert_eq!(
+            canonical_current_command_identity(&command),
+            ("end_cs_name".into(), Some(0))
         );
     }
 

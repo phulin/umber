@@ -375,6 +375,42 @@ impl CommandProcessor<'_> {
         self.back_input_with_treatment(command, BackupTreatment::Ordinary)
     }
 
+    /// Backs up a token manufactured by command processing rather than by a
+    /// preceding raw delivery. TeX82 §25 uses this for the control sequence
+    /// constructed by `\\csname`: after name lookup it assigns `cur_tok` and
+    /// calls `back_input`, so the token must have the same ordinary backup
+    /// lifecycle as a delivered command without requiring a delivery stamp.
+    pub(crate) fn back_input_synthesized(
+        &mut self,
+        spelling: TracedTokenWord,
+    ) -> Result<(), CommandError> {
+        let level = self.command.push_token_level(
+            TokenPayload::BackedUp(SharedBackedUpBuffer::new(vec![BackedUpToken {
+                spelling,
+                source_range: None,
+            }])),
+            TokenBehavior::BackedUp(BackupTreatment::Ordinary),
+            RetirementBehavior::Pop,
+            ReplayTrace::BackedUp,
+        );
+        #[cfg(not(any(test, feature = "instrumentation")))]
+        let _ = level;
+        #[cfg(any(test, feature = "instrumentation"))]
+        {
+            self.observe(CommandObservation::Input(InputRecord {
+                transition: InputTransition::Backup,
+                reason: InputReason::Backup,
+                level: level.0,
+                position: 0,
+            }));
+            self.observe(CommandObservation::Recovery(RecoveryRecord {
+                backup: true,
+                tokens: vec![self.observed_token(spelling)],
+            }));
+        }
+        Ok(())
+    }
+
     /// Performs TeX82 §1064 `off_save` input recovery for a command.
     ///
     /// The executor selects the closer from its actual group, but raw backup,

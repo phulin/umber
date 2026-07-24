@@ -21,8 +21,7 @@ use super::CommandProcessor;
 #[cfg(any(test, feature = "instrumentation"))]
 use crate::observation::{
     CommandDeliveryBoundary, CommandDeliveryRecord, CommandObservation, CommandProvenance,
-    EffectRecord, InputReason, InputRecord, InputTransition, MutationRecord, RecoveryRecord,
-    ScannerRecord,
+    EffectRecord, InputReason, InputRecord, InputTransition, RecoveryRecord, ScannerRecord,
 };
 
 /// Stable pending-diagnostic identity for TeX.web's `Missing \\endcsname
@@ -226,27 +225,10 @@ impl CommandProcessor<'_> {
         }
 
         let symbol = self.state.intern_relaxed_control_sequence(&name);
-        #[cfg(any(test, feature = "instrumentation"))]
-        self.observe(CommandObservation::Mutation(MutationRecord {
-            target: "control_sequence",
-            value: name.clone(),
-            key: None,
-            tokens: None,
-            global: false,
-        }));
         let origin = self
             .state
             .synthesized_origin(SynthesizedOriginKind::Expansion, opener.origin());
-        self.command.push_token_level(
-            TokenPayload::Transient(SharedTokenBuffer::new(vec![TracedTokenWord::pack(
-                Token::Cs(symbol),
-                origin,
-            )])),
-            TokenBehavior::Ordinary,
-            RetirementBehavior::Pop,
-            ReplayTrace::Transient(crate::input::TransientReplayReason::Inserted),
-        );
-        Ok(())
+        self.back_input_synthesized(TracedTokenWord::pack(Token::Cs(symbol), origin))
     }
 
     /// `\\string` observes spelling, never an effective control-sequence meaning.

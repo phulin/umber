@@ -32,25 +32,32 @@ pub struct CurrentCommand {
 /// `\\noexpand` the inaccessible frozen-`\\relax` command identity: its
 /// effective meaning is `relax`, but its `cur_chr` is `no_expand_flag` (257),
 /// rather than the ordinary `relax` value (256). Separately, TeX82 §25's
-/// `\expandafter` has the dedicated `expand_after` command identity rather
-/// than the generic expandable fallback. These remain ephemeral with the
-/// current delivery and are never stored in snapshots or input payloads.
+/// `\expandafter`, `\csname`, and its `\endcsname` boundary have dedicated
+/// command identities rather than the generic expandable fallback. These
+/// remain ephemeral with the current delivery and are never stored in
+/// snapshots or input payloads.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum CommandIdentity {
     Ordinary,
     ExpandAfter,
+    CsName,
+    EndCsName,
     NoExpandFrozenRelax,
 }
 
 impl CommandIdentity {
     const fn from_meaning(meaning: Meaning) -> Self {
-        if matches!(
-            meaning,
-            Meaning::ExpandablePrimitive(tex_state::meaning::ExpandablePrimitive::ExpandAfter)
-        ) {
-            Self::ExpandAfter
-        } else {
-            Self::Ordinary
+        match meaning {
+            Meaning::ExpandablePrimitive(tex_state::meaning::ExpandablePrimitive::ExpandAfter) => {
+                Self::ExpandAfter
+            }
+            Meaning::ExpandablePrimitive(tex_state::meaning::ExpandablePrimitive::CsName) => {
+                Self::CsName
+            }
+            Meaning::ExpandablePrimitive(tex_state::meaning::ExpandablePrimitive::EndCsName) => {
+                Self::EndCsName
+            }
+            _ => Self::Ordinary,
         }
     }
 }
