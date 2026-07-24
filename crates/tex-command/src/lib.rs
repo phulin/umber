@@ -19,4 +19,7 @@ mod scanners;
 mod snapshot;
 mod state;
 
+pub use command::CurrentCommand;
 pub use host::{CommandHostCapabilities, CommandHostContext};
+pub use processor::CommandProcessor;
+pub use state::{CommandRuntime, CommandState};

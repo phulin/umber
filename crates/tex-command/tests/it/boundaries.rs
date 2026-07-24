@@ -52,3 +52,24 @@ fn host_context_cannot_be_serialized() {
         ],
     );
 }
+
+#[test]
+fn ephemeral_command_types_cannot_be_serialized() {
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let dependencies = [
+        CompileFailDependency::path("tex-command", manifest_dir),
+        CompileFailDependency::registry("serde", "1"),
+    ];
+
+    assert_compile_fail(
+        "command-ephemeral-serialization",
+        &manifest_dir.join("tests/ui/ephemeral_serialization.rs"),
+        &dependencies,
+        &[
+            "CurrentCommand",
+            "CommandProcessor",
+            "Serialize",
+            "DeserializeOwned",
+        ],
+    );
+}

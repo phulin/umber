@@ -22,13 +22,13 @@ Private state-machine modules must not be widened for compatibility with
 - `src/lib.rs`: intentionally small public facade and private module tree.
 - `src/host.rs`: borrow-scoped, nonserializable host-capability boundary.
 - `src/profile.rs`: private engine/character profile ownership.
-- `src/state.rs`: private persistent command-state ownership.
-- `src/command.rs`: private current-command representation.
+- `src/state.rs`: persistent command state and discardable runtime ownership.
+- `src/command.rs`: public opaque, ephemeral current-command representation.
 - `src/error.rs`: private command error and resource-need representation.
 - `src/input/`: private source, line, tokenizer, input-level, backup, and
   summary state machines.
-- `src/processor/`: private raw delivery, expansion, scanner-status, and
-  alignment orchestration.
+- `src/processor/`: public borrow-only processor facade with private raw
+  delivery, expansion, scanner-status, and alignment orchestration.
 - `src/scanners/`: private typed scanner family.
 - `src/primitives/`: private static TeX82, e-TeX, and pdfTeX dispatch families.
 - `src/macro_call.rs`: private canonical scalar macro matcher.
