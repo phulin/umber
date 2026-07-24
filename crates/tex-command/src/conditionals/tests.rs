@@ -8,9 +8,18 @@ use crate::input::{
     ReplayTrace, RetirementBehavior, SharedTokenBuffer, TokenBehavior, TokenPayload,
 };
 use crate::{
-    CommandHostCapabilities, CommandHostContext, CommandRuntime, CommandState, ConditionalMode,
-    ConditionalState,
+    CommandHostCapabilities, CommandHostContext, CommandObservation, CommandObserver,
+    CommandRuntime, CommandState, ConditionalMode, ConditionalState,
 };
+
+#[derive(Default)]
+struct Recorder(Vec<CommandObservation>);
+
+impl CommandObserver for Recorder {
+    fn committed(&mut self, observation: CommandObservation) {
+        self.0.push(observation);
+    }
+}
 
 fn processor<'a>(
     command: &'a mut CommandState,
@@ -258,6 +267,64 @@ fn ifx_reads_unexpanded_operands_through_get_token() {
     // If the operands were delivered with get_x_token, either `iftrue` would
     // open a nested condition or the following text would be consumed.
     assert_eq!(next_character(&mut processor), 'y');
+}
+
+#[test]
+fn true_ifx_fi_observes_branch_before_popping_its_frame() {
+    let mut command = CommandState::default();
+    let mut runtime = CommandRuntime::default();
+    let mut universe = Universe::new();
+    let if_x = install(&mut universe, "ifx", ExpandablePrimitive::IfX);
+    let otherwise = install(&mut universe, "else", ExpandablePrimitive::Else);
+    let fi = install(&mut universe, "fi", ExpandablePrimitive::Fi);
+    let samea = macro_token(
+        &mut universe,
+        "samea",
+        MeaningFlags::EMPTY,
+        &[],
+        &[other('s')],
+    );
+    let sameb = macro_token(
+        &mut universe,
+        "sameb",
+        MeaningFlags::EMPTY,
+        &[],
+        &[other('s')],
+    );
+    push(
+        &mut command,
+        vec![if_x, samea, sameb, other('y'), otherwise, other('n'), fi],
+    );
+    let mut capabilities = CommandHostCapabilities::default();
+    let mut recorder = Recorder::default();
+    {
+        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities)
+            .with_observer(&mut recorder);
+
+        assert_eq!(next_character(&mut processor), 'y');
+        assert!(
+            processor
+                .get_x_token()
+                .expect("else skips through its matching fi")
+                .is_none()
+        );
+    }
+
+    assert!(recorder.0.windows(2).any(|pair| {
+        matches!(
+            &pair,
+            [
+                CommandObservation::Condition(branch),
+                CommandObservation::Condition(pop),
+            ] if branch.transition == "branch"
+                && branch.condition == "ifx"
+                && branch.limit == "else"
+                && branch.branch.as_deref() == Some("fi")
+                && pop.transition == "pop"
+                && pop.condition == "ifx"
+                && pop.limit == "else"
+        )
+    }));
 }
 
 #[test]

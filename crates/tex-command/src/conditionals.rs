@@ -660,7 +660,7 @@ impl CommandProcessor<'_> {
                 self.command
                     .conditions
                     .change_if_limit(frame.identity, IfLimit::Fi);
-                self.skip_to_fi_after_delimiter(frame.identity)
+                self.skip_to_fi_after_delimiter(frame)
             }
             ConditionalDelimiter::Else
                 if frame.kind == ConditionalKind::IfCase && frame.limit == IfLimit::Or =>
@@ -668,7 +668,7 @@ impl CommandProcessor<'_> {
                 self.command
                     .conditions
                     .change_if_limit(frame.identity, IfLimit::Fi);
-                self.skip_to_fi_after_delimiter(frame.identity)
+                self.skip_to_fi_after_delimiter(frame)
             }
             ConditionalDelimiter::Or
                 if frame.kind == ConditionalKind::IfCase && frame.limit == IfLimit::Or =>
@@ -676,17 +676,22 @@ impl CommandProcessor<'_> {
                 self.command
                     .conditions
                     .change_if_limit(frame.identity, IfLimit::Fi);
-                self.skip_to_fi_after_delimiter(frame.identity)
+                self.skip_to_fi_after_delimiter(frame)
             }
             _ => Ok(()),
         }
     }
 
-    fn skip_to_fi_after_delimiter(&mut self, condition: ConditionId) -> Result<(), CommandError> {
+    /// Skips the remainder of a selected limb after its `\else` or `\or`.
+    /// The pre-change frame remains the canonical branch-observation seam;
+    /// the independent stack is then unlinked only after `pass_text` reaches
+    /// its matching `\fi` (TeX.web part 28).
+    fn skip_to_fi_after_delimiter(&mut self, frame: ConditionFrame) -> Result<(), CommandError> {
         loop {
-            match self.pass_text(condition, ScannerWarning(0))?.delimiter {
+            match self.pass_text(frame.identity, ScannerWarning(0))?.delimiter {
                 ConditionalDelimiter::Fi => {
-                    let frame = self
+                    self.observe_condition("branch", &frame, Some("fi".into()));
+                    let _popped = self
                         .command
                         .conditions
                         .pop()
