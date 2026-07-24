@@ -42,6 +42,7 @@ pub const CHECKPOINT_STATE_HASH_SCHEMA_VERSION: u32 = 25;
 
 pub mod cell;
 pub mod code_tables;
+mod command_context;
 pub mod dependency;
 pub mod env;
 pub mod epoch;
@@ -96,6 +97,7 @@ pub use pdf::{
 };
 pub mod world;
 
+pub use command_context::CommandContext;
 pub use dependency::{
     ChangedAt, DependencyBank, DependencyCodeTable, DependencyEngineField, DependencyFontField,
     DependencyKey, DependencyPageField, DependencyRegion, DependencyRuntime, DependencyTracker,

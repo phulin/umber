@@ -1,0 +1,1 @@
+//! Ordinary expanded-command delivery.

@@ -17,6 +17,8 @@ All production mutation of live TeX state should pass through `Universe` or simi
 - `src/code_tables.rs`: Sparse persistent-radix TeX catcode, lc/uc/sf/math/delcode tables with virtual canonical defaults, generation stamps, groups, and snapshots.
 - `src/code_tables/global.rs`: Persistent global-assignment delta history used to rebase saved group roots without depth-sensitive writes.
 - `src/code_tables/tests.rs`: Unit tests for code-table defaults, writes, sparse pages, generations, and snapshots.
+- `src/command_context.rs`: Interpretation-neutral aggregate access boundary
+  reserved for the canonical command processor.
 - `src/dependency.rs`: Region-scoped dependency keys, detached observations, changed-at validation, semantic backdating, and opaque cross-Universe memo validation stamps.
 - `src/dependency/tests.rs`: Dependency mutation matrix, deterministic nested propagation, and handle-independent observation tests.
 - `src/env.rs`: Barriered mutable environment storage for meanings, registers, parameters, font values, grouping, and journals.

@@ -9,6 +9,7 @@ default-members = [
   "crates/corpus-manifest",
   "crates/test-support",
   "crates/tex-arith",
+  "crates/tex-command",
   "crates/tex-content",
   "crates/tex-exec",
   "crates/tex-expand",

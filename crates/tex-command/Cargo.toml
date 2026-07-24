@@ -1,0 +1,14 @@
+[package]
+name = "tex-command"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+tex-state = { path = "../tex-state" }
+
+[dev-dependencies]
+serde.workspace = true
+test-support = { path = "../test-support" }
+
+[lints]
+workspace = true

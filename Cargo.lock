@@ -1155,6 +1155,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "tex-command"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "test-support",
+ "tex-state",
+]
+
+[[package]]
 name = "tex-content"
 version = "0.1.0"
 

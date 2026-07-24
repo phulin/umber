@@ -1,0 +1,1 @@
+//! Physical-line normalization state.

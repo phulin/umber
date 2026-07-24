@@ -1,0 +1,1 @@
+//! Canonical raw command delivery.

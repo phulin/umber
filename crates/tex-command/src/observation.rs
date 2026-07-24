@@ -1,0 +1,1 @@
+//! Private aggregate read observation.
