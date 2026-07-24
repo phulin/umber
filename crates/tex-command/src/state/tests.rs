@@ -1,15 +1,13 @@
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 
+use super::{
+    CommandRuntime, CommandState, MeaningCacheEntry, NormalizedLineCacheEntry, TransientState,
+};
 use crate::conditionals::ConditionStack;
 use crate::input::InputState;
 use crate::macro_call::ParameterState;
 use crate::processor::{AlignmentDeliveryState, ExpansionState, ScannerState};
-use crate::profile::CommandProfile;
-
-use super::{
-    CommandRuntime, CommandState, MeaningCacheEntry, NormalizedLineCacheEntry, TransientState,
-};
 
 fn semantic_hash(state: &CommandState) -> u64 {
     let mut hasher = DefaultHasher::new();
@@ -102,10 +100,8 @@ fn semantic_ownership_domains_are_exhaustively_classified() {
         semantic_barriers,
         profile,
     } = expansion;
-    let CommandProfile {
-        dialect,
-        characters,
-    } = profile;
+    let dialect = profile.dialect();
+    let characters = profile.character_mode();
     let TransientState {
         builders,
         rollback_roots,

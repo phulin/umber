@@ -5,7 +5,7 @@ use crate::conditionals::ConditionFrame;
 use crate::input::InputLevel;
 use crate::macro_call::MacroActivation;
 use crate::processor::{ActiveCellDelivery, ScannerStatus, SuspendedAlignment};
-use crate::profile::{CharacterMode, CommandDialect};
+use crate::profile::{CommandProfile, CommandProfileBoundary, CommandProfileFingerprint};
 use crate::state::LiveTokenBuilder;
 use crate::{CommandRuntime, CommandState};
 
@@ -18,7 +18,9 @@ fn semantic_hash<T: Hash>(value: &T) -> u64 {
 }
 
 fn populated_quiescent_state() -> CommandState {
-    let mut state = CommandState::default();
+    let mut state = CommandState::new(CommandProfile::unicode_extended(
+        crate::CommandDialect::Pdftex14027,
+    ));
     state.input.levels.push(InputLevel { identity: 7 });
     state.input.next_level_identity = 11;
     state.input.next_source_identity = 13;
@@ -39,8 +41,6 @@ fn populated_quiescent_state() -> CommandState {
     state.expansion.pending_diagnostics.push(59);
     state.expansion.observed_dependencies.push(61);
     state.expansion.semantic_barriers.push(67);
-    state.expansion.profile.dialect = CommandDialect::Pdftex14027;
-    state.expansion.profile.characters = CharacterMode::UnicodeExtended;
     state.transient.next_builder_identity = 71;
     state
 }
@@ -67,9 +67,9 @@ fn snapshot_roundtrip_preserves_nonquiescent_semantic_state() {
     let expected = state.clone();
     let snapshot = state.snapshot();
 
-    state = CommandState::default();
+    state = CommandState::new(expected.profile());
     let runtime = CommandRuntime::default();
-    state.rollback(snapshot);
+    state.rollback(snapshot).expect("matching snapshot profile");
 
     assert_eq!(state, expected);
     drop(runtime);
@@ -84,8 +84,10 @@ fn quiescent_summary_roundtrip_is_exact_and_deterministic() {
     let summary_clone = summary.clone();
     let original_hash = semantic_hash(&summary);
 
-    let mut restored = CommandState::default();
-    restored.restore_summary(summary);
+    let mut restored = CommandState::new(expected.profile());
+    restored
+        .restore_summary(summary)
+        .expect("matching summary profile");
     let republished = restored
         .publish_summary()
         .expect("a restored summary must remain quiescent");
@@ -199,4 +201,55 @@ fn snapshot_and_summary_are_owned_static_values() {
 
     assert_owned::<super::CommandStateSnapshot>();
     assert_owned::<CommandSummary>();
+}
+
+#[test]
+fn snapshot_and_summary_reject_profile_mismatch_without_mutation() {
+    let foreign = populated_quiescent_state();
+    let snapshot = foreign.snapshot();
+    let summary = foreign
+        .publish_summary()
+        .expect("foreign state is quiescent");
+    let mut state = CommandState::new(CommandProfile::TEX82);
+    let expected = state.clone();
+
+    let snapshot_error = state
+        .rollback(snapshot)
+        .expect_err("snapshot from another profile must be rejected");
+    assert_eq!(snapshot_error.boundary(), CommandProfileBoundary::Snapshot);
+    assert_eq!(state, expected);
+
+    let summary_error = state
+        .restore_summary(summary)
+        .expect_err("summary from another profile must be rejected");
+    assert_eq!(summary_error.boundary(), CommandProfileBoundary::Summary);
+    assert_eq!(state, expected);
+}
+
+#[test]
+fn format_and_checkpoint_profile_components_reject_mismatch() {
+    let state = CommandState::new(CommandProfile::PDFTEX14027);
+    let matching = CommandProfile::PDFTEX14027.fingerprint();
+    let foreign = CommandProfile::TEX82.fingerprint();
+
+    assert_eq!(state.validate_format_profile(matching), Ok(()));
+    let format_error = state
+        .validate_format_profile(foreign)
+        .expect_err("foreign format profile must be rejected");
+    assert_eq!(format_error.boundary(), CommandProfileBoundary::Format);
+
+    assert_eq!(state.validate_checkpoint_profile(matching), Ok(()));
+    let checkpoint_error = state
+        .validate_checkpoint_profile(foreign)
+        .expect_err("foreign checkpoint profile must be rejected");
+    assert_eq!(
+        checkpoint_error.boundary(),
+        CommandProfileBoundary::Checkpoint
+    );
+
+    assert_eq!(
+        state.format_profile_fingerprint(),
+        CommandProfileFingerprint::from_u64(matching.get())
+    );
+    assert_eq!(state.checkpoint_profile_fingerprint(), matching);
 }

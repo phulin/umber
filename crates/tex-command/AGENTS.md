@@ -21,7 +21,9 @@ Private state-machine modules must not be widened for compatibility with
 - `Cargo.toml`: dependency-light crate manifest and boundary-test support.
 - `src/lib.rs`: intentionally small public facade and private module tree.
 - `src/host.rs`: borrow-scoped, nonserializable host-capability boundary.
-- `src/profile.rs`: private engine/character profile ownership.
+- `src/profile.rs` and `src/profile/tests.rs`: public semantic character values,
+  immutable engine/character profiles, capabilities, stable fingerprints, and
+  focused value/identity tests.
 - `src/state.rs`: persistent command state and discardable runtime ownership.
 - `src/command.rs`: public opaque, ephemeral current-command representation.
 - `src/error.rs`: private command error and resource-need representation.

@@ -6,6 +6,9 @@ use crate::conditionals::ConditionStack;
 use crate::input::InputState;
 use crate::macro_call::ParameterState;
 use crate::processor::{AlignmentDeliveryState, ExpansionState, ScannerState};
+use crate::profile::{
+    CommandProfile, CommandProfileBoundary, CommandProfileFingerprint, CommandProfileMismatch,
+};
 
 /// Complete future-relevant state owned by the command machine.
 ///
@@ -22,6 +25,60 @@ pub struct CommandState {
     pub(crate) alignment: AlignmentDeliveryState,
     pub(crate) expansion: ExpansionState,
     pub(crate) transient: TransientState,
+}
+
+impl CommandState {
+    /// Creates a fresh command job with an immutable semantic profile.
+    ///
+    /// No API changes the profile after construction. Snapshot, summary,
+    /// format, and checkpoint restoration validate their recorded profile
+    /// identity against this value.
+    #[must_use]
+    pub fn new(profile: CommandProfile) -> Self {
+        Self {
+            expansion: ExpansionState {
+                profile,
+                ..ExpansionState::default()
+            },
+            ..Self::default()
+        }
+    }
+
+    /// Returns the immutable profile selected when this job was created.
+    #[must_use]
+    pub const fn profile(&self) -> CommandProfile {
+        self.expansion.profile
+    }
+
+    /// Returns the profile component required in portable format identity.
+    #[must_use]
+    pub fn format_profile_fingerprint(&self) -> CommandProfileFingerprint {
+        self.profile().fingerprint()
+    }
+
+    /// Rejects a format image produced for a different command profile.
+    pub fn validate_format_profile(
+        &self,
+        found: CommandProfileFingerprint,
+    ) -> Result<(), CommandProfileMismatch> {
+        self.profile()
+            .validate_fingerprint(CommandProfileBoundary::Format, found)
+    }
+
+    /// Returns the profile component required in incremental checkpoint identity.
+    #[must_use]
+    pub fn checkpoint_profile_fingerprint(&self) -> CommandProfileFingerprint {
+        self.profile().fingerprint()
+    }
+
+    /// Rejects a checkpoint produced for a different command profile.
+    pub fn validate_checkpoint_profile(
+        &self,
+        found: CommandProfileFingerprint,
+    ) -> Result<(), CommandProfileMismatch> {
+        self.profile()
+            .validate_fingerprint(CommandProfileBoundary::Checkpoint, found)
+    }
 }
 
 /// Live temporary data referenced by persistent command state.

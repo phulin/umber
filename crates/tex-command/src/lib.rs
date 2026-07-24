@@ -22,5 +22,10 @@ mod state;
 pub use command::CurrentCommand;
 pub use host::{CommandHostCapabilities, CommandHostContext};
 pub use processor::CommandProcessor;
+pub use profile::{
+    CharacterCode, CharacterCodeError, CharacterMode, CommandCapabilities, CommandDialect,
+    CommandProfile, CommandProfileBoundary, CommandProfileEncodingError, CommandProfileFingerprint,
+    CommandProfileMismatch,
+};
 pub use snapshot::{CommandStateSnapshot, CommandSummary, CommandSummaryError};
 pub use state::{CommandRuntime, CommandState};

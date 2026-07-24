@@ -286,6 +286,12 @@ The semantic character type is not Rust `char`:
 pub struct CharacterCode(u32);
 ```
 
+`CharacterCode` uses a private tagged `u32` representation. Exact bytes and
+Unicode scalars are different semantic domains even where their numeric values
+overlap: byte `0x41` is not scalar `U+0041`. Stable four-byte encoding preserves
+that distinction, rejects noncanonical byte encodings and invalid Unicode
+scalars, and is independent of host text encoding.
+
 In `EightBitExact`, valid input character codes are `0..=255`, physical input
 is consumed byte-for-byte, and `^^` notation follows the selected canonical
 engine. In `UnicodeExtended`, valid values are Unicode scalar values and the
@@ -299,6 +305,13 @@ canonical character codes.
 
 Code-table queries use `CharacterCode` and the active profile. A profile
 conversion cannot occur during a job.
+
+The implemented immutable `CommandProfile` has exact TeX82, e-TeX 2.6, and
+pdfTeX 1.40.27 eight-bit constants plus explicit Unicode-extension
+construction. Dialect facilities (e-TeX and pdfTeX families) and Unicode
+semantics are derived capabilities, not host capabilities. Its versioned
+stable bytes feed a fixed domain-separated FNV-1a-64 profile fingerprint;
+format and checkpoint identities compose that fingerprint.
 
 ## 7. State taxonomy
 
@@ -1178,6 +1191,9 @@ The snapshot is an owned clone of `CommandState`; its trait bounds and private
 fields admit no `CommandRuntime`, `CommandProcessor` borrow,
 `CommandHostContext`, or `CurrentCommand`.
 
+Rollback first compares the captured profile fingerprint with the fixed job
+profile. A mismatch rejects the snapshot without mutating live state.
+
 It is paired atomically with:
 
 - `Universe` snapshot;
@@ -1203,6 +1219,11 @@ It is paired atomically with:
 
 Host capabilities, `CurrentCommand`, delivery stamps, cache contents, spare
 buffer capacity, timers, and profiling counters are absent.
+
+Summary restoration likewise validates the summary's profile fingerprint
+before mutation. The same typed mismatch reports format and checkpoint
+identity failures, so no persistent boundary can silently change a job's
+dialect or character mode.
 
 Durable named checkpoints are emitted only at executor-owned boundaries. They
 do not capture a Rust stack continuation. Conditions and completed macro
@@ -1248,6 +1269,11 @@ The format compatibility fingerprint includes:
 - code-table representation;
 - frozen-command inventory; and
 - dependent store schema versions.
+
+`tex-command` exports its deterministic profile-fingerprint component and a
+format-boundary validator. The aggregate format container combines this
+component with the remaining schema and store identities above; a profile
+mismatch is rejected before command state is installed.
 
 Format loading installs immutable canonical macro, token, meaning, code-table,
 font, and hyphenation bases, then creates fresh job-local `CommandState`.

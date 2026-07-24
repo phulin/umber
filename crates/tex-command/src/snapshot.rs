@@ -7,6 +7,7 @@ use crate::conditionals::ConditionStack;
 use crate::input::InputState;
 use crate::macro_call::ParameterState;
 use crate::processor::{AlignmentDeliveryState, ExpansionState, ScannerState, ScannerStatus};
+use crate::profile::{CommandProfileBoundary, CommandProfileFingerprint, CommandProfileMismatch};
 use crate::state::TransientState;
 
 /// Exact owned command-machine state for one executor-step rollback.
@@ -33,6 +34,22 @@ pub struct CommandSummary {
     align_state: i32,
     expansion: ExpansionState,
     next_builder_identity: u64,
+}
+
+impl CommandStateSnapshot {
+    /// Returns the immutable profile identity captured by this snapshot.
+    #[must_use]
+    pub fn profile_fingerprint(&self) -> CommandProfileFingerprint {
+        self.state.profile().fingerprint()
+    }
+}
+
+impl CommandSummary {
+    /// Returns the immutable profile identity captured by this durable summary.
+    #[must_use]
+    pub fn profile_fingerprint(&self) -> CommandProfileFingerprint {
+        self.expansion.profile.fingerprint()
+    }
 }
 
 /// The first nonquiescent command-state class preventing summary publication.
@@ -96,8 +113,16 @@ impl CommandState {
     }
 
     /// Restores an exact executor-step snapshot without host access.
-    pub fn rollback(&mut self, snapshot: CommandStateSnapshot) {
+    pub fn rollback(
+        &mut self,
+        snapshot: CommandStateSnapshot,
+    ) -> Result<(), CommandProfileMismatch> {
+        self.profile().validate_fingerprint(
+            CommandProfileBoundary::Snapshot,
+            snapshot.profile_fingerprint(),
+        )?;
         *self = snapshot.state;
+        Ok(())
     }
 
     /// Validates and publishes restartable state for a named boundary.
@@ -154,7 +179,14 @@ impl CommandState {
     /// Omitted transient domains are reconstructed in their unique quiescent
     /// forms. All source/token backing is already owned by the summary, so
     /// restoration cannot perform host acquisition.
-    pub fn restore_summary(&mut self, summary: CommandSummary) {
+    pub fn restore_summary(
+        &mut self,
+        summary: CommandSummary,
+    ) -> Result<(), CommandProfileMismatch> {
+        self.profile().validate_fingerprint(
+            CommandProfileBoundary::Summary,
+            summary.profile_fingerprint(),
+        )?;
         *self = Self {
             input: summary.input,
             parameters: summary.parameters,
@@ -171,6 +203,7 @@ impl CommandState {
                 ..TransientState::default()
             },
         };
+        Ok(())
     }
 }
 
