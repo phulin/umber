@@ -637,6 +637,11 @@ fn translate_observation(
                     |_| CanonicalValue::Name(record.value),
                     CanonicalValue::Integer,
                 )
+            } else if record.kind == "dimension" {
+                record.value.parse::<i64>().map_or_else(
+                    |_| CanonicalValue::Name(record.value),
+                    CanonicalValue::Scaled,
+                )
             } else {
                 CanonicalValue::Name(record.value)
             };
@@ -940,6 +945,18 @@ fn translate_mutation(record: MutationRecord) -> Event {
             scope: if record.global { "global" } else { "local" }.into(),
         });
     }
+    if record.target == "register"
+        && let Some(key) = record.key.as_ref()
+        && let Some(value) = record.value.strip_prefix("scaled:")
+        && let Ok(value) = value.parse::<i64>()
+    {
+        return Event::Mutation(MutationEvent {
+            target: StateTarget::Register,
+            key: CanonicalValue::Name(key.clone()),
+            value: CanonicalValue::Scaled(value),
+            scope: if record.global { "global" } else { "local" }.into(),
+        });
+    }
     if record.target == "parameter"
         && let (Some(key), Some(tokens)) = (record.key.as_ref(), record.tokens.as_ref())
     {
@@ -952,12 +969,15 @@ fn translate_mutation(record: MutationRecord) -> Event {
     }
     if record.target == "catcode" {
         if let Some((character, value)) = record.value.split_once('=') {
-            if let Ok(character) = character.parse::<u32>() {
+            if let (Ok(character), Some(value)) = (
+                character.parse::<u32>(),
+                canonical_catcode_assignment(value),
+            ) {
                 return Event::Mutation(MutationEvent {
                     target: StateTarget::Catcode,
                     key: CanonicalValue::Character(character),
                     value: CanonicalValue::Name(value.into()),
-                    scope: "local".into(),
+                    scope: if record.global { "global" } else { "local" }.into(),
                 });
             }
         }
@@ -987,6 +1007,30 @@ fn translate_mutation(record: MutationRecord) -> Event {
         value,
         scope: if record.global { "global" } else { "local" }.into(),
     })
+}
+
+/// Converts TeX's numeric `cat_code` table value into the canonical command
+/// name emitted by the instrumented TeX82 oracle.
+fn canonical_catcode_assignment(value: &str) -> Option<&'static str> {
+    match value.parse::<u8>().ok()? {
+        0 => Some("escape"),
+        1 => Some("left_brace"),
+        2 => Some("right_brace"),
+        3 => Some("math_shift"),
+        4 => Some("tab_mark"),
+        5 => Some("car_ret"),
+        6 => Some("mac_param"),
+        7 => Some("sup_mark"),
+        8 => Some("sub_mark"),
+        9 => Some("ignore"),
+        10 => Some("spacer"),
+        11 => Some("letter"),
+        12 => Some("other_char"),
+        13 => Some("active_char"),
+        14 => Some("comment"),
+        15 => Some("invalid_char"),
+        _ => None,
+    }
 }
 fn translate_effect(record: EffectRecord) -> Event {
     Event::Effect(EffectEvent {
@@ -1051,6 +1095,27 @@ mod tests {
         assert_eq!(catcode_name(Catcode::AlignmentTab), "tab_mark");
         assert_eq!(catcode_name(Catcode::Space), "spacer");
         assert_eq!(catcode_name(Catcode::Other), "other_char");
+    }
+
+    #[test]
+    fn catcode_mutations_use_canonical_assignment_names_and_scope() {
+        let event = translate_mutation(MutationRecord {
+            target: "catcode",
+            value: "123=1".into(),
+            key: None,
+            tokens: None,
+            global: true,
+        });
+        assert_eq!(
+            event,
+            Event::Mutation(MutationEvent {
+                target: StateTarget::Catcode,
+                key: CanonicalValue::Character(123),
+                value: CanonicalValue::Name("left_brace".into()),
+                scope: "global".into(),
+            })
+        );
+        assert_eq!(canonical_catcode_assignment("16"), None);
     }
 
     #[test]
