@@ -243,6 +243,12 @@ impl CommandReplayControl {
             ScannedStep::AlignmentCellOpening { alignment } => Some(*alignment),
             _ => None,
         };
+        let finishes_alignment_cell = match &scanned {
+            ScannedStep::AlignmentCellFinish { alignment } => {
+                self.command.alignment_cell_finish_observations(*alignment)
+            }
+            _ => None,
+        };
         let result = apply_scanned_step(
             scanned,
             stores,
@@ -274,6 +280,11 @@ impl CommandReplayControl {
                 {
                     observer.committed(CommandObservation::Alignment(template));
                 }
+            }
+            if let Some((state_change, retirement, template_retire)) = finishes_alignment_cell {
+                observer.committed(CommandObservation::Alignment(state_change));
+                observer.committed(CommandObservation::Input(retirement));
+                observer.committed(CommandObservation::Alignment(template_retire));
             }
             if let Some(mutation) = mutation {
                 observer.committed(CommandObservation::Mutation(mutation));
@@ -424,6 +435,12 @@ enum ScannedStep {
     AlignmentCellOpening {
         alignment: AlignmentIdentity,
     },
+    /// TeX82's `do_endv` completed a command-owned v-template.  Applying
+    /// this result retires that exact frame before the backed-up delimiter
+    /// resumes through `get_next`.
+    AlignmentCellFinish {
+        alignment: AlignmentIdentity,
+    },
     SetBox(SetBoxTarget),
     BeginVBox,
     ReplayBoxOpeningBrace,
@@ -520,6 +537,9 @@ fn scan_alignment_delivery_step(
     {
         None => Ok(ScannedStep::EndOfInput),
         Some(AlignmentDelivery::Command(command)) => {
+            if matches!(command.meaning(), Meaning::EndV) {
+                return Ok(ScannedStep::AlignmentCellFinish { alignment });
+            }
             scan_command(processor, command, false, MeaningFlags::EMPTY, false, boxes)
         }
         Some(AlignmentDelivery::Event(event)) => {
@@ -1497,6 +1517,14 @@ fn apply_scanned_step(
             {
                 active.cell_opening_pending = false;
             }
+            Ok(ReplayStep::Continue)
+        }
+        ScannedStep::AlignmentCellFinish { alignment } => {
+            command
+                .apply_alignment_request(AlignmentRequest::FinishCell(alignment))
+                .map_err(|_| ExecError::MissingToken {
+                    context: "alignment end-v lifecycle",
+                })?;
             Ok(ReplayStep::Continue)
         }
         ScannedStep::Paragraph => {

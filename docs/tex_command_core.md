@@ -149,6 +149,16 @@ opaque `AlignmentDeliveryEvent::EndTemplate`, which is handed back to
 `\span`, or `\cr`, while `off_save` recovery and group policy remain
 executor-owned after the typed event has been delivered.
 
+When that same delivery entry point expands the retained frame's
+`frozen_end_template` to `EndV`, replay routes the command through the typed
+`FinishCell` request rather than treating `EndV` as ordinary main-control
+continuation. This is TeX82 §§343 and 772: the command processor still owns
+expansion and the retained frame, while the executor applies the cell
+lifecycle only after receiving the completed command. On success, replay
+publishes the canonical state-change, v-template input retirement, and
+v-template retirement observations in that order; the backed-up delimiter
+then remains command-owned input for the following alignment lifecycle.
+
 Command observation preserves TeX82's raw command identity before that
 interception: `\cr` and `\crcr` are both `car_ret`, with `cur_chr` 257 and
 258 respectively. This identity is emitted at both raw and ordinary expanded

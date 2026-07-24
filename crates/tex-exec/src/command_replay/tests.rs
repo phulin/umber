@@ -940,13 +940,10 @@ fn replay_dispatches_modes_effects_and_typed_alignment_lifecycle() {
     );
     assert_eq!(
         control
-            .alignment_step(alignment, &mut universe)
-            .expect("command processor retires the v-template"),
+            .step(&mut universe)
+            .expect("expanded end-v finishes the cell through typed command control"),
         ReplayStep::Continue
     );
-    control
-        .apply_alignment_request(AlignmentRequest::FinishCell(alignment))
-        .expect("cell lifecycle finishes through command core");
     control
         .apply_alignment_request(AlignmentRequest::Finish(alignment))
         .expect("alignment lifecycle finishes through command core");
@@ -956,6 +953,78 @@ fn replay_dispatches_modes_effects_and_typed_alignment_lifecycle() {
         ReplayStep::Continue
     );
     assert_eq!(control.step(&mut universe).expect("end"), ReplayStep::End);
+}
+
+#[test]
+fn command_owned_endv_finishes_cell_and_publishes_retirement_in_canonical_order() {
+    let mut universe = Universe::new();
+    crate::install_unexpandable_primitives(&mut universe);
+    let mut control = CommandReplayControl::default();
+    register_source(&mut control, br"\halign&\end");
+
+    assert_eq!(
+        control.step(&mut universe).expect("alignment"),
+        ReplayStep::Continue
+    );
+    let alignment = control.active_alignment().expect("active alignment");
+    for request in [
+        AlignmentRequest::Preamble(alignment),
+        AlignmentRequest::BeginCell {
+            alignment,
+            templates: AlignmentCellTemplates {
+                u_template: None,
+                v_template: TracedTokenList::synthetic(universe.intern_token_list(&[])),
+            },
+        },
+        AlignmentRequest::InstallCellTemplate(alignment),
+    ] {
+        control
+            .apply_alignment_request(request)
+            .expect("cell lifecycle setup");
+    }
+    assert_eq!(
+        control.step(&mut universe).expect("intercepted delimiter"),
+        ReplayStep::Continue
+    );
+
+    let mut observations = ObservationRecorder::default();
+    assert_eq!(
+        control
+            .step_with_observer(&mut universe, &mut observations)
+            .expect("command-owned end-v"),
+        ReplayStep::Continue
+    );
+    assert!(
+        observations.0.windows(5).any(|events| {
+            matches!(
+                events,
+                [
+                    CommandObservation::Command(raw),
+                    CommandObservation::Command(expanded),
+                    CommandObservation::Alignment(state_change),
+                    CommandObservation::Input(retirement),
+                    CommandObservation::Alignment(template_retire),
+                ] if raw.command == "end_template"
+                    && expanded.command == "endv"
+                    && state_change.transition == "state_change"
+                    && state_change.align_state == 1_000_000
+                    && retirement.transition == InputTransition::Retire
+                    && retirement.reason == InputReason::AlignmentVTemplate
+                    && template_retire.transition == "v_template_retire"
+                    && template_retire.align_state == 1_000_000
+            )
+        }),
+        "unexpected observations: {:?}",
+        observations.0
+    );
+
+    control
+        .apply_alignment_request(AlignmentRequest::Finish(alignment))
+        .expect("alignment lifecycle finishes through command core");
+    assert_eq!(
+        control.step(&mut universe).expect("backed-up delimiter"),
+        ReplayStep::Continue
+    );
 }
 
 #[test]

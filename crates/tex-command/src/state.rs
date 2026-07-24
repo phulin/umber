@@ -301,6 +301,48 @@ impl CommandState {
         self.alignment.finish_cell(alignment, level)
     }
 
+    /// Returns the canonical observations emitted after typed `do_endv`
+    /// completion has committed.  The executor obtains this proof before the
+    /// request so the eventual v-template retirement remains command-state
+    /// owned, but publishes it only after `FinishCell` succeeds.
+    #[cfg(any(test, feature = "instrumentation"))]
+    #[must_use]
+    pub fn alignment_cell_finish_observations(
+        &self,
+        alignment: AlignmentIdentity,
+    ) -> Option<(
+        crate::AlignmentRecord,
+        crate::InputRecord,
+        crate::AlignmentRecord,
+    )> {
+        let cell = self.alignment.active_cell.as_ref()?;
+        if cell.alignment != alignment || cell.v_level.is_none() {
+            return None;
+        }
+        Some((
+            crate::AlignmentRecord {
+                transition: "state_change",
+                alignment: Some(alignment.raw()),
+                align_state: self.alignment.align_state,
+                delimiter: None,
+                previous_align_state: None,
+            },
+            crate::InputRecord {
+                transition: crate::InputTransition::Retire,
+                reason: crate::InputReason::AlignmentVTemplate,
+                level: cell.v_level?.0,
+                position: 0,
+            },
+            crate::AlignmentRecord {
+                transition: "v_template_retire",
+                alignment: Some(alignment.raw()),
+                align_state: self.alignment.align_state,
+                delimiter: None,
+                previous_align_state: None,
+            },
+        ))
+    }
+
     /// Suspends the complete outer raw-delivery context for a nested alignment.
     pub fn suspend_alignment(
         &mut self,
