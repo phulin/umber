@@ -107,6 +107,27 @@ pub struct ScannedFileName {
     pub provenance: StructuredProvenance,
 }
 
+/// A completed TeX82 §53 `\immediate` extension request.
+///
+/// Command control owns the recursive expanded lookahead and all operand
+/// scanning.  In particular, a non-I/O lookahead has already been backed up
+/// when `Continue` is returned, so replay never needs raw input access.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ImmediateExtension {
+    Continue,
+    OpenOut {
+        stream: i32,
+        file_name: ScannedFileName,
+    },
+    Write {
+        stream: i32,
+        tokens: TracedTokenList,
+    },
+    CloseOut {
+        stream: i32,
+    },
+}
+
 /// One successfully opened capability-registered input source.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RegisteredInput {
@@ -128,6 +149,51 @@ pub enum AlignmentCellOpening {
 }
 
 impl CommandProcessor<'_> {
+    /// Scans TeX82 §53's one-token `\immediate` extension execution.
+    ///
+    /// `do_extension` calls `get_x_token`, executes only `openout`, `write`,
+    /// and `closeout`, and backs every other expanded command up for ordinary
+    /// main control.  The integer, optional-equals, filename, and write-text
+    /// scans remain in this command-owned episode.
+    pub fn scan_immediate_extension(&mut self) -> Result<ImmediateExtension, CommandError> {
+        let command = loop {
+            let command = self.get_x_token()?.ok_or(CommandError::InputInvariant)?;
+            if !matches!(
+                command.meaning(),
+                Meaning::CharToken {
+                    cat: Catcode::Space,
+                    ..
+                }
+            ) {
+                break command;
+            }
+        };
+        match command.meaning() {
+            Meaning::UnexpandablePrimitive(UnexpandablePrimitive::OpenOut) => {
+                let stream = self.scan_integer()?.value;
+                let _ = self.scan_optional_equals()?;
+                let file_name = self.scan_file_name()?;
+                Ok(ImmediateExtension::OpenOut { stream, file_name })
+            }
+            Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Write) => {
+                let stream = self.scan_integer()?.value;
+                // §1356 executes an immediate write through `write_out`;
+                // collect its text in the expanded scanner episode now, while
+                // command control still owns the recursive input path.
+                let tokens = self.scan_balanced_text(true)?.tokens;
+                Ok(ImmediateExtension::Write { stream, tokens })
+            }
+            Meaning::UnexpandablePrimitive(UnexpandablePrimitive::CloseOut) => {
+                let stream = self.scan_integer()?.value;
+                Ok(ImmediateExtension::CloseOut { stream })
+            }
+            _ => {
+                self.back_input(command)?;
+                Ok(ImmediateExtension::Continue)
+            }
+        }
+    }
+
     /// Scans the register number and optional equals sign of `\setbox`.
     ///
     /// TeX.web's `prefixed_command` dispatches `set_box` to `scan_int` then

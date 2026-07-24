@@ -5,10 +5,10 @@ use tex_command::{
     CommandObserver, InputReason, InputTransition, ObservedToken, RegisteredSourceKind,
     SourceRegistration, TracedTokenList,
 };
-use tex_state::Universe;
 use tex_state::env::banks::{GlueParam, IntParam};
 use tex_state::meaning::{ExpandablePrimitive, Meaning};
 use tex_state::scaled::Scaled;
+use tex_state::{EffectRecord, StreamSlot, Universe};
 
 use super::*;
 
@@ -98,6 +98,37 @@ fn canonical_initex_replay_scans_and_applies_integer_parameters() {
                 && scanner.value == "2026"
                 && mutation.target == "parameter"
                 && mutation.value == "integer_parameter:23=2026"
+    ));
+}
+
+#[test]
+fn replay_executes_immediate_stream_extensions_and_replays_other_lookahead() {
+    let mut universe = Universe::new();
+    let mut control = CommandReplayControl::tex82_initex(&mut universe);
+    register_source(
+        &mut control,
+        br"\immediate\openout2=trace \immediate\write2{ready}\immediate\closeout2\immediate\catcode`A=12\end",
+    );
+
+    for _ in 0..5 {
+        assert_eq!(
+            control.step(&mut universe).expect("immediate replay"),
+            ReplayStep::Continue
+        );
+    }
+    assert_eq!(universe.catcode('A'), tex_state::token::Catcode::Other);
+    assert_eq!(control.step(&mut universe).expect("end"), ReplayStep::End);
+    assert!(matches!(
+        universe.world().effect_records(),
+        [
+            EffectRecord::StreamOpen { slot, target },
+            EffectRecord::StreamWrite { sink: tex_state::PrintSink::Stream(write_slot), text },
+            EffectRecord::StreamClose { slot: close_slot },
+        ] if *slot == StreamSlot::new(2)
+            && target.path() == std::path::Path::new("trace.tex")
+            && *write_slot == StreamSlot::new(2)
+            && text == "ready"
+            && *close_slot == StreamSlot::new(2)
     ));
 }
 

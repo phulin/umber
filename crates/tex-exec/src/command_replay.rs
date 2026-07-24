@@ -4,11 +4,12 @@
 //! expansion, macro calls, input nesting, and operand collection remain in
 //! `tex-command`; no `InputStack` is accepted here.
 
+use std::path::PathBuf;
 use tex_command::{
     AlignmentCellDelimiter, AlignmentCellOpening, AlignmentCellTemplates, AlignmentDelivery,
     AlignmentIdentity, AlignmentRequest, AlignmentRequestResult, CommandError,
     CommandHostCapabilities, CommandHostContext, CommandProcessor, CommandProfile, CommandRuntime,
-    CommandState,
+    CommandState, ImmediateExtension,
 };
 #[cfg(any(test, feature = "instrumentation"))]
 use tex_command::{
@@ -22,7 +23,7 @@ use tex_state::meaning::{Meaning, MeaningFlags, UnexpandablePrimitive};
 use tex_state::node::{GlueKind, Node};
 use tex_state::scaled::Scaled;
 use tex_state::token::{Catcode, Token};
-use tex_state::{GroupKind, PrintSink, TracedTokenList, Universe};
+use tex_state::{GroupKind, PrintSink, StreamSlot, TracedTokenList, Universe};
 use tex_typeset::PackSpec;
 
 use crate::{ExecError, Mode, ModeNest};
@@ -272,7 +273,6 @@ impl CommandReplayControl {
             )?
         };
         let mutation = applied_mutation_observation(&scanned, stores);
-        let effect = applied_effect_observation(&scanned, stores);
         let begins_alignment = matches!(&scanned, ScannedStep::BeginAlignment { .. });
         let suspends_alignment = begins_alignment && self.active_alignment.is_some();
         let begins_alignment_cell = matches!(&scanned, ScannedStep::AlignmentPreambleStart { .. });
@@ -314,7 +314,7 @@ impl CommandReplayControl {
             _ => None,
         };
         let result = apply_scanned_step(
-            scanned,
+            scanned.clone(),
             stores,
             &mut self.modes,
             &mut self.next_alignment_identity,
@@ -328,6 +328,7 @@ impl CommandReplayControl {
             .filter(|_| completes_alignment_cell)
             .and_then(|_| self.command.take_alignment_extra_tab_recovery_observation());
         if result.is_ok() {
+            let effect = applied_effect_observation(&scanned, stores);
             if suspends_alignment
                 && let Some(alignment) = self.command.alignment_suspend_observation()
             {
@@ -443,6 +444,7 @@ pub enum ReplayStep {
     End,
 }
 
+#[derive(Clone)]
 enum ScannedStep {
     Continue,
     EndOfInput,
@@ -514,6 +516,7 @@ enum ScannedStep {
     Message {
         tokens: TracedTokenList,
     },
+    ImmediateExtension(ImmediateExtension),
     BeginAlignment {
         vertical: bool,
     },
@@ -1119,6 +1122,13 @@ fn scan_command(
                 tokens: tokens.tokens,
             })
         }
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Immediate) => {
+            Ok(ScannedStep::ImmediateExtension(
+                processor
+                    .scan_immediate_extension()
+                    .map_err(command_error)?,
+            ))
+        }
         Meaning::UnexpandablePrimitive(
             primitive @ (UnexpandablePrimitive::HRule | UnexpandablePrimitive::VRule),
         ) => {
@@ -1180,6 +1190,35 @@ fn replay_text(tokens: &[tex_state::token::Token]) -> String {
             _ => None,
         })
         .collect()
+}
+
+fn replay_stream_slot(value: i32, stores: &mut Universe) -> StreamSlot {
+    if (0..tex_state::world::STREAM_SLOT_COUNT as i32).contains(&value) {
+        return StreamSlot::new(value as u8);
+    }
+    stores.world_mut().write_text(
+        PrintSink::TerminalAndLog,
+        &format!(
+            "\n! Bad number ({value}).\nSince I expected to read a number between 0 and 15,\nI changed this one to zero.\n"
+        ),
+    );
+    StreamSlot::new(0)
+}
+
+fn replay_write_sink(value: i32) -> PrintSink {
+    match value {
+        0..=15 => PrintSink::Stream(StreamSlot::new(value as u8)),
+        value if value < 0 => PrintSink::Log,
+        _ => PrintSink::TerminalAndLog,
+    }
+}
+
+fn replay_openout_target(name: String) -> String {
+    let mut path = PathBuf::from(name);
+    if path.extension().is_none() {
+        path.set_extension("tex");
+    }
+    path.to_string_lossy().into_owned()
 }
 
 fn next_non_space(
@@ -1435,13 +1474,31 @@ fn applied_mutation_observation(
 /// emits it only after that application commits through the replay seam.
 #[cfg(any(test, feature = "instrumentation"))]
 fn applied_effect_observation(scanned: &ScannedStep, stores: &Universe) -> Option<EffectRecord> {
-    let ScannedStep::Message { tokens } = scanned else {
-        return None;
-    };
-    Some(EffectRecord {
-        kind: "message",
-        detail: replay_text(stores.tokens(tokens.token_list())),
-    })
+    match scanned {
+        ScannedStep::Message { tokens } => Some(EffectRecord {
+            kind: "message",
+            detail: replay_text(stores.tokens(tokens.token_list())),
+        }),
+        ScannedStep::ImmediateExtension(ImmediateExtension::OpenOut { .. }) => {
+            match stores.world().effect_records().last()? {
+                tex_state::EffectRecord::StreamOpen { slot, target } => Some(EffectRecord {
+                    kind: "open",
+                    detail: format!("stream:{}\0{}", slot.raw(), target.path().to_string_lossy()),
+                }),
+                _ => None,
+            }
+        }
+        ScannedStep::ImmediateExtension(ImmediateExtension::CloseOut { .. }) => {
+            match stores.world().effect_records().last()? {
+                tex_state::EffectRecord::StreamClose { slot } => Some(EffectRecord {
+                    kind: "close",
+                    detail: format!("stream:{}", slot.raw()),
+                }),
+                _ => None,
+            }
+        }
+        _ => None,
+    }
 }
 
 #[cfg(any(test, feature = "instrumentation"))]
@@ -1796,6 +1853,27 @@ fn apply_scanned_step(
             stores
                 .world_mut()
                 .write_text(PrintSink::TerminalAndLog, &text);
+            Ok(ReplayStep::Continue)
+        }
+        ScannedStep::ImmediateExtension(extension) => {
+            match extension {
+                ImmediateExtension::Continue => {}
+                ImmediateExtension::OpenOut { stream, file_name } => {
+                    let stream = replay_stream_slot(stream, stores);
+                    stores
+                        .world_mut()
+                        .open_out(stream, replay_openout_target(file_name.name));
+                }
+                ImmediateExtension::Write { stream, tokens } => {
+                    let sink = replay_write_sink(stream);
+                    let text = replay_text(stores.tokens(tokens.token_list()));
+                    stores.world_mut().write_text(sink, &text);
+                }
+                ImmediateExtension::CloseOut { stream } => {
+                    let stream = replay_stream_slot(stream, stores);
+                    stores.world_mut().close_out(stream);
+                }
+            }
             Ok(ReplayStep::Continue)
         }
         ScannedStep::SetBox(target) => {

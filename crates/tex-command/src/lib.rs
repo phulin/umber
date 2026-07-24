@@ -51,10 +51,10 @@ pub use profile::{
     CommandProfileMismatch,
 };
 pub use scanners::{
-    AlignmentCellOpening, FileNameTermination, InternalValue, RegisteredInput, ScalarProvenance,
-    ScalarRecovery, ScannedBalancedText, ScannedFileName, ScannedGlueParameterAssignment,
-    ScannedLetAssignment, ScannedMacroDefinition, ScannedRuleSpec, ScannedScalar,
-    ScannedSetBoxAssignment, ScannedTokenRegisterAssignment, StructuredProvenance,
+    AlignmentCellOpening, FileNameTermination, ImmediateExtension, InternalValue, RegisteredInput,
+    ScalarProvenance, ScalarRecovery, ScannedBalancedText, ScannedFileName,
+    ScannedGlueParameterAssignment, ScannedLetAssignment, ScannedMacroDefinition, ScannedRuleSpec,
+    ScannedScalar, ScannedSetBoxAssignment, ScannedTokenRegisterAssignment, StructuredProvenance,
 };
 pub use snapshot::{CommandStateSnapshot, CommandSummary, CommandSummaryError};
 pub use state::{CommandRuntime, CommandState, UnknownRegisteredSource};

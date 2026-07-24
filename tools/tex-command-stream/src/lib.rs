@@ -1217,6 +1217,10 @@ fn translate_effect(record: EffectRecord) -> Event {
             value: CanonicalValue::Bytes(record.detail.into_bytes()),
         });
     }
+    let (channel, detail) = match record.detail.split_once('\0') {
+        Some((channel, detail)) => (channel.to_owned(), detail.to_owned()),
+        None => (record.kind.to_owned(), record.detail),
+    };
     Event::Effect(EffectEvent {
         kind: match record.kind {
             "message" => EffectKind::Message,
@@ -1226,8 +1230,8 @@ fn translate_effect(record: EffectRecord) -> Event {
             "shipout" => EffectKind::Shipout,
             _ => EffectKind::Terminate,
         },
-        channel: record.kind.into(),
-        value: CanonicalValue::Name(record.detail),
+        channel,
+        value: CanonicalValue::Name(detail),
     })
 }
 
