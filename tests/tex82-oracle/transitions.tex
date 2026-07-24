@@ -31,20 +31,11 @@
 \ifcase2 case zero\or case one\or case two\else case fallback\fi
 \iffalse {skipped {braces}}\else kept\fi
 \ifnum1<\else recovered\fi
-\setbox0=\vbox{\halign{#&#\cr
-{A}&B\cr
-\omit C&D\cr
-E\span F\cr
-\noalign{\relax}
-\vbox{\halign{#\cr N\cr}}&H\cr}}
-\setbox1=\vbox{\halign{left&right#\cr
-I&J\cr}}
-\setbox2=\vbox{\halign{##\cr
-K\cr}}
+\input alignment-delivery
 \immediate\openout0=transitions-effects.out
 \immediate\write0{UMBER-TEX82-WRITE}
 \immediate\closeout0
-\shipout\hbox{}
+\shipout\vbox{\box10\box11}
 \message{UMBER-TEX82-TRANSITIONS}
 \outer\def\outercommand{}
 \input expansion-macros

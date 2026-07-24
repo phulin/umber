@@ -6,15 +6,55 @@ This is TeX, Version 3.141592653 (TeX Live 2025) (INITEX)
 ...
 l.33 \ifnum1<\else
                    recovered\fi
+(./alignment-delivery.tex UMBER-TEX82-ALIGNMENT-BEGIN
+UMBER-TEX82-U-TEMPLATE UMBER-TEX82-V-TEMPLATE UMBER-TEX82-U-TEMPLATE
+UMBER-TEX82-V-TEMPLATE UMBER-TEX82-NOALIGN UMBER-TEX82-U-TEMPLATE
+UMBER-TEX82-V-TEMPLATE
 ! Missing # inserted in alignment preamble.
 <to be read again> 
                    &
-l.40 ...box1=\vbox{\halign{left&
+l.24 ...ox12=\vbox{\halign{left&
                                 right#\cr
 ! Only one # is allowed per tab.
-l.42 \setbox2=\vbox{\halign{##
-                              \cr
-[42.42.7] UMBER-TEX82-TRANSITIONS (./expansion-macros.tex
+l.26 \setbox13=\vbox{\halign{##
+                               \cr
+! Missing } inserted.
+<inserted text> 
+                }
+...
+l.29   {\relax&
+               \relax\cr}}
+! Missing { inserted.
+<inserted text> 
+                {
+...
+l.31   \relax\iffalse}\fi&
+                          }\relax\cr}}
+! Missing } inserted.
+<inserted text> 
+                }
+...
+l.31   \relax\iffalse}\fi&
+                          }\relax\cr}}
+! Missing \cr inserted.
+<inserted text> 
+                \cr 
+...
+l.31   \relax\iffalse}\fi&}
+                           \relax\cr}}
+! Misplaced \cr.
+l.31 ...x\iffalse}\fi&}\relax\cr
+                                }}
+! Too many }'s.
+l.31 ...iffalse}\fi&}\relax\cr}}
+                                
+! Extra alignment tab has been changed to \cr.
+<template> \endtemplate 
+                        
+l.33   \relax&
+              \relax\cr}}
+UMBER-TEX82-ALIGNMENT-END) [42.42.7] UMBER-TEX82-TRANSITIONS
+(./expansion-macros.tex
 Runaway argument?
 {BEFORE
 ! Paragraph ended before \shortparagraph was complete.
@@ -119,152 +159,152 @@ l.29 \input input-eof-aligning
 ! Incomplete \iffalse; all text was ignored after line 30.
 <inserted text> 
                 \fi 
-l.52 \input input-recovery
+l.43 \input input-recovery
                           
 (./transitions-child.tex)
 ! Incomplete \iffalse; all text was ignored after line 1.
 <inserted text> 
                 \fi 
-l.53 \input transitions-child
+l.44 \input transitions-child
                              
 Runaway argument?
 ! Forbidden control sequence found while scanning use of \takeone.
 <inserted text> 
                 \par 
 ...
-l.55 \takeone\outercommand
+l.46 \takeone\outercommand
                           
 ! Output routine didn't use all of \box255.
 <to be read again> 
                    \end 
-l.56 \end
+l.47 \end
          
 ! Output routine didn't use all of \box255.
 <to be read again> 
                    \end 
-l.56 \end
+l.47 \end
          
 ! Output routine didn't use all of \box255.
 <to be read again> 
                    \end 
-l.56 \end
+l.47 \end
          
 ! Output routine didn't use all of \box255.
 <to be read again> 
                    \end 
-l.56 \end
+l.47 \end
          
 ! Output routine didn't use all of \box255.
 <to be read again> 
                    \end 
-l.56 \end
+l.47 \end
          
 ! Output routine didn't use all of \box255.
 <to be read again> 
                    \end 
-l.56 \end
+l.47 \end
          
 ! Output routine didn't use all of \box255.
 <to be read again> 
                    \end 
-l.56 \end
+l.47 \end
          
 ! Output routine didn't use all of \box255.
 <to be read again> 
                    \end 
-l.56 \end
+l.47 \end
          
 ! Output routine didn't use all of \box255.
 <to be read again> 
                    \end 
-l.56 \end
+l.47 \end
          
 ! Output routine didn't use all of \box255.
 <to be read again> 
                    \end 
-l.56 \end
+l.47 \end
          
 ! Output routine didn't use all of \box255.
 <to be read again> 
                    \end 
-l.56 \end
+l.47 \end
          
 ! Output routine didn't use all of \box255.
 <to be read again> 
                    \end 
-l.56 \end
+l.47 \end
          
 ! Output routine didn't use all of \box255.
 <to be read again> 
                    \end 
-l.56 \end
+l.47 \end
          
 ! Output routine didn't use all of \box255.
 <to be read again> 
                    \end 
-l.56 \end
+l.47 \end
          
 ! Output routine didn't use all of \box255.
 <to be read again> 
                    \end 
-l.56 \end
+l.47 \end
          
 ! Output routine didn't use all of \box255.
 <to be read again> 
                    \end 
-l.56 \end
+l.47 \end
          
 ! Output routine didn't use all of \box255.
 <to be read again> 
                    \end 
-l.56 \end
+l.47 \end
          
 ! Output routine didn't use all of \box255.
 <to be read again> 
                    \end 
-l.56 \end
+l.47 \end
          
 ! Output routine didn't use all of \box255.
 <to be read again> 
                    \end 
-l.56 \end
+l.47 \end
          
 ! Output routine didn't use all of \box255.
 <to be read again> 
                    \end 
-l.56 \end
+l.47 \end
          
 ! Output routine didn't use all of \box255.
 <to be read again> 
                    \end 
-l.56 \end
+l.47 \end
          
 ! Output routine didn't use all of \box255.
 <to be read again> 
                    \end 
-l.56 \end
+l.47 \end
          
 ! Output routine didn't use all of \box255.
 <to be read again> 
                    \end 
-l.56 \end
+l.47 \end
          
 ! Output routine didn't use all of \box255.
 <to be read again> 
                    \end 
-l.56 \end
+l.47 \end
          
 ! Output routine didn't use all of \box255.
 <to be read again> 
                    \end 
-l.56 \end
+l.47 \end
          
 ! Output loop---25 consecutive dead cycles.
 <to be read again> 
                    \end 
-l.56 \end
+l.47 \end
          
 [42.42.7] )
 (see the transcript file for additional information)
-Output written on transitions.dvi (2 pages, 176 bytes).
+Output written on transitions.dvi (2 pages, 360 bytes).
 Transcript written on transitions.log.

@@ -6,7 +6,7 @@
 #   fixture SELECTOR ENGINE PROFILE MANIFEST MANIFEST-SHA256
 contract-schema 1
 event-schema 1
-engine tex82 initex-eight-bit tex82-oracle tests/tex82-oracle-manifest.txt 592f4e3f1f6c087eb3fde534e4031250aab888558d128d52ea61e2a8b0dafe9d tex82-oracle-web2c-texlive-2025
+engine tex82 initex-eight-bit tex82-oracle tests/tex82-oracle-manifest.txt 5f1b890599235ee5ff4f6be87aa085022a30d3f5dd5b6392520d8b0230b42f45 tex82-oracle-web2c-texlive-2025
 engine etex26 compatibility+extended-eight-bit etex26-oracle tests/etex26-oracle-manifest.txt 9ff06f2345ca2f94e28b2a3d01bdba81a1fbac60f7487dbcfb2ba33580ccf2c5 etex26-oracle-web2c-texlive-2025
 engine pdftex14027 initex-etex-eight-bit pdftex14027-oracle tests/pdftex14027-oracle-manifest.txt baf82557a558ff7ab5c078eda070d4582a51715ee3e7e2d25d3607e2bfeae762 pdftex14027-oracle-web2c-texlive-2025
-fixture tex82/command-transitions-v1 tex82 initex-eight-bit tests/corpus/command/tex82/command-transitions-v1/manifest.json c8553d7daa2f32a59c172c9af402b5b8590f053fb95c1db9011bbdc816063e23
+fixture tex82/command-transitions-v1 tex82 initex-eight-bit tests/corpus/command/tex82/command-transitions-v1/manifest.json e947ee43e6859155f5c19a1a04a24f73639063c903e9b9af698cd5cd4b134830

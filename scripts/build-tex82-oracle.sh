@@ -25,6 +25,7 @@ transition_input="${repo_root}/tests/tex82-oracle/transitions.tex"
 transition_child="${repo_root}/tests/tex82-oracle/transitions-child.tex"
 transition_support=(
   "${repo_root}/tests/tex82-oracle/expansion-macros.tex"
+  "${repo_root}/tests/tex82-oracle/alignment-delivery.tex"
   "${repo_root}/tests/tex82-oracle/scanner-conditionals.tex"
   "${repo_root}/tests/tex82-oracle/scanner-conditionals-eof.tex"
   "${repo_root}/tests/tex82-oracle/input-recovery.tex"
@@ -252,6 +253,15 @@ run_transitions() {
   grep -q 'UMBER-TEX82-TRANSITIONS' "${run_dir}/transitions.log" ||
     fail "$variant transition marker is absent"
   for marker in \
+    'UMBER-TEX82-ALIGNMENT-BEGIN' \
+    'UMBER-TEX82-U-TEMPLATE' \
+    'UMBER-TEX82-V-TEMPLATE' \
+    'UMBER-TEX82-NOALIGN' \
+    'UMBER-TEX82-ALIGNMENT-END' \
+    '! Missing # inserted in alignment preamble.' \
+    'You have given more \span or & marks than there were' \
+    '! Missing { inserted.' \
+    '! Missing } inserted.' \
     'UMBER-TEX82-SCANNERS: I=-83' \
     'UMBER-TEX82-IF=TRUE' \
     'UMBER-TEX82-IFCAT=TRUE' \

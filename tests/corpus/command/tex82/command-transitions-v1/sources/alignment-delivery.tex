@@ -1,0 +1,34 @@
+\let\alignmentbegingroup=\begingroup
+\let\alignmentendgroup=\endgroup
+\message{UMBER-TEX82-ALIGNMENT-BEGIN}
+\setbox10=\vbox{\tabskip=1pt
+  \halign{
+    \message{UMBER-TEX82-U-TEMPLATE}%
+      \alignmentbegingroup#\alignmentendgroup
+      \message{UMBER-TEX82-V-TEMPLATE}&
+    \hfil#\hfil\cr
+    {\vrule width1pt height2pt depth0pt}&
+      \vrule width2pt height3pt depth0pt\cr
+    \omit\vrule width3pt height4pt depth0pt&
+      \vrule width4pt height5pt depth0pt\cr
+    \vrule width5pt height6pt depth0pt\span
+      \vrule width6pt height7pt depth0pt\cr
+    \noalign{\message{UMBER-TEX82-NOALIGN}\hrule height1pt}
+    \vbox{\halign{#\cr
+      \vrule width7pt height8pt depth0pt\cr}}&
+      \vrule width8pt height9pt depth0pt\crcr}}
+\setbox11=\vbox{\halign{
+  \vrule width1pt height1pt depth0pt#&&
+  \hskip1pt#\cr
+  \relax&\relax&\relax\cr}}
+\setbox12=\vbox{\halign{left&right#\cr
+  \relax&\relax\cr}}
+\setbox13=\vbox{\halign{##\cr
+  \relax\cr}}
+\setbox14=\vbox{\halign{#&#\cr
+  {\relax&\relax\cr}}
+\setbox15=\vbox{\halign{#&#\cr
+  \relax\iffalse}\fi&}\relax\cr}}
+\setbox16=\vbox{\halign{#\cr
+  \relax&\relax\cr}}
+\message{UMBER-TEX82-ALIGNMENT-END}

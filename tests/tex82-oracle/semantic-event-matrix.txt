@@ -105,27 +105,34 @@ recovery|defining EOF right brace|input-eof-defining.tex|check_outer_validity de
 recovery|matching EOF par|input-eof-matching.tex|check_outer_validity matching insertion|"kind":"inserted_control_sequence","tokens":[{"character":0,"catcode":"escape","control_sequence":"par"}]
 recovery|aligning EOF frozen cr|input-eof-aligning.tex|check_outer_validity aligning insertion|"kind":"inserted_control_sequence","tokens":[{"character":0,"catcode":"escape","control_sequence":"cr"}]
 recovery|skipping EOF frozen fi|input-recovery.tex and transitions-child.tex|check_outer_validity skipping insertion|"kind":"inserted_token","tokens":[{"character":0,"catcode":"escape","control_sequence":"fi"}]
-alignment|begin|transitions.tex|push_alignment ownership commit|"event":"alignment","data":{"transition":"begin"
-alignment|finish|transitions.tex|pop_alignment pre-retirement seam|"event":"alignment","data":{"transition":"finish"
-alignment|nested suspension|transitions.tex|push_alignment outer suspension|"event":"alignment","data":{"transition":"suspend"
-alignment|nested resumption|transitions.tex|pop_alignment outer restoration|"event":"alignment","data":{"transition":"resume"
-alignment|preamble start|transitions.tex|init_align preamble entry|"event":"alignment","data":{"transition":"preamble_start"
-alignment|preamble finish|transitions.tex|init_align preamble completion|"event":"alignment","data":{"transition":"preamble_finish"
-alignment|align_state change|transitions.tex|get_next literal brace and alignment state commits|"event":"alignment","data":{"transition":"state_change"
-alignment|template push|transitions.tex|begin_token_list template branch|"event":"alignment","data":{"transition":"template_push"
-alignment|template retirement|transitions.tex|end_token_list template branch|"event":"alignment","data":{"transition":"template_retire"
-alignment|delimiter interception|transitions.tex|get_next alignment delimiter intercept|"event":"alignment","data":{"transition":"delimiter"
-alignment|backup correction|transitions.tex|back_input literal-brace correction|"event":"alignment","data":{"transition":"backup_correction"
-alignment|recovery|transitions.tex|preamble and brace recovery commits|"event":"alignment","data":{"transition":"recovery"
-alignment|u template|transitions.tex|begin_token_list u_template branch|,"template":"u"
-alignment|v template|transitions.tex|begin_token_list v_template branch|,"template":"v"
-alignment|omit template|transitions.tex|begin_token_list omit_template branch|,"template":"omit"
-alignment|tab delimiter|transitions.tex|get_next tab_mark intercept|,"delimiter":"tab"
-alignment|span delimiter|transitions.tex|get_next span_code intercept|,"delimiter":"span"
-alignment|cr delimiter|transitions.tex|get_next cr_code intercept|,"delimiter":"cr"
-alignment|nested ownership identity|transitions.tex|detached alignment-depth counter|,"nesting":2
-alignment|missing parameter recovery|transitions.tex|init_align missing parameter branch|,"recovery":"missing_parameter"
-alignment|extra parameter recovery|transitions.tex|init_align extra parameter branch|,"recovery":"extra_parameter"
+alignment|begin|alignment-delivery.tex|push_alignment ownership commit|"event":"alignment","data":{"transition":"begin","align_state":-1000000,"nesting":1
+alignment|finish|alignment-delivery.tex|pop_alignment pre-retirement seam|"event":"alignment","data":{"transition":"finish","align_state":999999,"nesting":1
+alignment|nested suspension|alignment-delivery.tex|push_alignment outer suspension|"transition":"suspend","align_state":1,"nesting":1
+alignment|nested resumption|alignment-delivery.tex|pop_alignment exact outer-state restoration|"transition":"resume","align_state":1,"nesting":1
+alignment|nested ownership identity|alignment-delivery.tex|detached alignment-depth counter|"transition":"begin","align_state":-1000000,"nesting":2
+alignment|preamble start|alignment-delivery.tex|init_align preamble entry|"transition":"preamble_start","align_state":-1000000,"nesting":1
+alignment|preamble finish|alignment-delivery.tex|init_align preamble completion|"transition":"preamble_finish","align_state":-1000000,"nesting":1
+alignment|repeated preamble marker|alignment-delivery.tex|get_preamble_token loop marker|"command":"tab_mark","operand":{"type":"integer","value":38},"location":{"source":"alignment-delivery.tex","line":21,"byte":37}
+alignment|literal brace increment|alignment-delivery.tex|get_next left-brace accounting|"transition":"state_change","align_state":1,"nesting":1,"previous_align_state":0
+alignment|literal brace decrement|alignment-delivery.tex|get_next right-brace accounting|"transition":"state_change","align_state":0,"nesting":1,"previous_align_state":1
+alignment|control-sequence group alias|alignment-delivery.tex|get_next meaning delivery without literal-brace accounting|"command":"begin_group","operand":{"type":"integer","value":0},"control_sequence":"alignmentbegingroup","location":{"source":"alignment-delivery.tex","line":7,"byte":25}
+alignment|backup correction|alignment-delivery.tex|back_input literal-brace correction|"transition":"backup_correction","align_state":0,"nesting":1,"previous_align_state":1
+alignment|u template push|alignment-delivery.tex|begin_token_list u_template branch|"transition":"template_push","align_state":1000000,"template":"u","nesting":1
+alignment|u template retirement|alignment-delivery.tex|end_token_list u_template branch|"transition":"template_retire","align_state":1000000,"template":"u","nesting":1
+alignment|v template push|alignment-delivery.tex|begin_token_list v_template branch|"transition":"template_push","align_state":0,"template":"v","nesting":1
+alignment|v template retirement|alignment-delivery.tex|end_token_list v_template branch|"transition":"template_retire","align_state":1000000,"template":"v","nesting":1
+alignment|omit template push|alignment-delivery.tex|begin_token_list omit_template branch|"transition":"template_push","align_state":0,"template":"omit","nesting":1
+alignment|omit template retirement|alignment-delivery.tex|end_token_list omit_template branch|"transition":"template_retire","align_state":1000000,"template":"omit","nesting":1
+alignment|tab delimiter|alignment-delivery.tex|get_next tab_mark intercept|"transition":"delimiter","align_state":0,"nesting":1,"delimiter":"tab"
+alignment|span delimiter|alignment-delivery.tex|get_next span_code intercept|"transition":"delimiter","align_state":0,"nesting":1,"delimiter":"span"
+alignment|cr delimiter|alignment-delivery.tex|get_next cr_code intercept|"transition":"delimiter","align_state":0,"nesting":1,"delimiter":"cr"
+alignment|crcr delimiter|alignment-delivery.tex|get_next cr_cr_code intercept|"transition":"delimiter","align_state":0,"nesting":1,"delimiter":"crcr"
+alignment|noalign delivery|alignment-delivery.tex|align_peek no_align command|"command":"no_align","operand":{"type":"integer","value":0},"control_sequence":"noalign","location":{"source":"alignment-delivery.tex","line":16,"byte":11}
+alignment|missing parameter recovery|alignment-delivery.tex|init_align missing parameter branch|,"recovery":"missing_parameter"
+alignment|extra parameter recovery|alignment-delivery.tex|init_align extra parameter branch|,"recovery":"extra_parameter"
+alignment|missing right brace recovery|alignment-delivery.tex|align_error positive-depth correction|,"recovery":"missing_right_brace"
+alignment|missing left brace recovery|alignment-delivery.tex|align_error negative-depth correction|,"recovery":"missing_left_brace"
+alignment|extra tab recovery|alignment-delivery.tex|fin_col extra-tab correction|,"recovery":"extra_tab"
 mutation|meaning write|transitions.tex|eq_define committed meaning write|"event":"mutation","data":{"target":"meaning"
 mutation|ordinary definition|expansion-macros.tex|prefixed_command def eq_define commit|"key":{"type":"name","value":"ordinarydefinition"},"value":{"type":"tokens"
 mutation|global definition|expansion-macros.tex|prefixed_command gdef geq_define commit|"key":{"type":"name","value":"globaldefinition"},"value":{"type":"tokens"

@@ -164,3 +164,10 @@ spellings. The same source covers condition push/change/branch/pop lifecycle,
 inside both evaluation and `pass_text`, and skipped balanced braces. Inserted
 relax, extra-delimiter, and EOF-during-skip recovery remain visible in the
 normalized transcript; `scanner-conditionals-eof.tex` isolates the last case.
+Its `alignment-delivery.tex` child separately exercises preamble lifecycle and
+repetition, literal-brace `align_state`, control-sequence group aliases, tab,
+`\span`, `\cr`, and `\crcr` interception, u/v/omit-template delivery and
+retirement, `\noalign`, nested suspend/resume ownership, backup correction,
+and preamble, brace, and extra-tab recovery. Transcript messages independently
+expose template and no-align execution; shipped font-independent rules bind
+successful alignment packaging into the committed DVI observation.

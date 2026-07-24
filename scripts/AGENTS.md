@@ -35,8 +35,8 @@ Read the repository-root `AGENTS.md` first. This file adds the directory map for
   reproducible clean/instrumentation-ready TeX82 Web2C oracle builds; ordinary
   terminal/log/DVI transparency and the machine-readable semantic event matrix
   are gated together, including the focused expansion/macro/token-list,
-  scanner/conditional, and source/input/EOF-recovery program set, and all
-  identities are recorded.
+  scanner/conditional, alignment-delivery, and source/input/EOF-recovery
+  program set, and all identities are recorded.
 - `build-etex26-oracle.sh`: hash-pinned canonical e-TeX 2.6 source acquisition
   and reproducible clean/instrumented Web2C builds; compatibility and extended
   INITEX profiles are separately named, smoke- and schema-v1 base-command
