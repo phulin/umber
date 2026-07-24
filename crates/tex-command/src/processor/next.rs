@@ -75,6 +75,15 @@ impl CommandProcessor<'_> {
             }
             #[cfg(any(test, feature = "instrumentation"))]
             self.observe_expanded_delivery(&command);
+            if self
+                .command
+                .alignment
+                .needs_unbalanced_delimiter_recovery(&command)
+            {
+                return Ok(Some(AlignmentDelivery::Event(
+                    AlignmentDeliveryEvent::UnbalancedDelimiter(command),
+                )));
+            }
             return Ok(Some(AlignmentDelivery::Command(command)));
         }
     }
@@ -101,8 +110,92 @@ impl CommandProcessor<'_> {
                 self.last_delivery = None;
                 Self::saved_alignment_delimiter(&delimiter)?
             }
+            AlignmentDeliveryEvent::UnbalancedDelimiter(_) => {
+                return Err(CommandError::InputInvariant);
+            }
         };
         self.start_alignment_v_template(alignment, saved_delimiter)
+    }
+
+    /// Performs TeX82 §1102 `align_error` after main control has observed an
+    /// unbalanced cell delimiter.  Both backup levels and every `align_state`
+    /// adjustment remain command-owned; the caller receives no token.
+    pub fn recover_alignment_unbalanced_delimiter(
+        &mut self,
+        event: AlignmentDeliveryEvent,
+    ) -> Result<(), CommandError> {
+        let AlignmentDeliveryEvent::UnbalancedDelimiter(command) = event else {
+            return Err(CommandError::InputInvariant);
+        };
+        let previous = self.command.alignment.align_state;
+        self.back_input(command)?;
+        let recovery = self
+            .command
+            .alignment
+            .correct_unbalanced_delimiter()
+            .ok_or(CommandError::InputInvariant)?;
+        let recovery_name = match recovery {
+            Token::Char {
+                cat: Catcode::BeginGroup,
+                ..
+            } => "missing_left_brace",
+            Token::Char {
+                cat: Catcode::EndGroup,
+                ..
+            } => "missing_right_brace",
+            _ => return Err(CommandError::InputInvariant),
+        };
+        #[cfg(any(test, feature = "instrumentation"))]
+        {
+            self.observe(CommandObservation::Alignment(AlignmentRecord {
+                transition: recovery_name,
+                alignment: self.command.alignment.active_alignment.map(|id| id.raw()),
+                align_state: previous,
+                delimiter: None,
+                previous_align_state: None,
+            }));
+            self.observe(CommandObservation::Alignment(AlignmentRecord {
+                transition: "state_change",
+                alignment: self.command.alignment.active_alignment.map(|id| id.raw()),
+                align_state: self.command.alignment.align_state,
+                delimiter: None,
+                previous_align_state: Some(previous),
+            }));
+        }
+        let level = self.command.push_token_level(
+            TokenPayload::Transient(SharedTokenBuffer::new(vec![TracedTokenWord::pack(
+                recovery,
+                OriginId::UNKNOWN,
+            )])),
+            TokenBehavior::Recovery,
+            RetirementBehavior::Pop,
+            ReplayTrace::Transient(crate::input::TransientReplayReason::Inserted),
+        );
+        #[cfg(any(test, feature = "instrumentation"))]
+        self.observe(CommandObservation::Input(InputRecord {
+            transition: InputTransition::Recovery,
+            reason: InputReason::Recovery,
+            level: level.0,
+            position: 0,
+        }));
+        #[cfg(any(test, feature = "instrumentation"))]
+        self.observe(CommandObservation::Recovery(RecoveryRecord {
+            backup: false,
+            tokens: vec![self.observed_token(TracedTokenWord::pack(recovery, OriginId::UNKNOWN))],
+        }));
+        let before_backup = self.command.alignment.align_state;
+        self.command
+            .alignment
+            .correct_inserted_brace_backup(recovery);
+        #[cfg(any(test, feature = "instrumentation"))]
+        self.observe(CommandObservation::Alignment(AlignmentRecord {
+            transition: "backup_correction",
+            alignment: self.command.alignment.active_alignment.map(|id| id.raw()),
+            align_state: self.command.alignment.align_state,
+            delimiter: None,
+            previous_align_state: Some(before_backup),
+        }));
+        Ok(())
     }
 
     fn saved_alignment_delimiter(
@@ -976,6 +1069,71 @@ mod tests {
     }
 
     #[test]
+    fn unbalanced_alignment_delimiter_recovery_keeps_backup_before_inserted_brace() {
+        let mut command = CommandState::default();
+        let source = command
+            .register_source(SourceRegistration::new(
+                RegisteredSourceKind::Generated,
+                Arc::<[u8]>::from(b"{&".as_slice()),
+            ))
+            .expect("source registers");
+        command
+            .open_registered_source(source)
+            .expect("source opens");
+        let alignment = crate::AlignmentIdentity::new(17);
+        command.begin_alignment(alignment);
+        command
+            .apply_alignment_request(crate::AlignmentRequest::BeginCell {
+                alignment,
+                templates: templates(),
+            })
+            .expect("cell begins");
+        command
+            .apply_alignment_request(crate::AlignmentRequest::InstallCellTemplate(alignment))
+            .expect("empty template installs");
+        let mut runtime = CommandRuntime::default();
+        let mut universe = Universe::new();
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut recorder = Recorder::default();
+        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities)
+            .with_observer(&mut recorder);
+
+        assert!(
+            matches!(processor.get_x_alignment_delivery().expect("brace delivers"), Some(crate::AlignmentDelivery::Command(command)) if matches!(command.meaning(), Meaning::CharToken { cat: Catcode::BeginGroup, .. }))
+        );
+        let event = match processor
+            .get_x_alignment_delivery()
+            .expect("unbalanced delimiter delivers")
+        {
+            Some(crate::AlignmentDelivery::Event(
+                event @ crate::AlignmentDeliveryEvent::UnbalancedDelimiter(_),
+            )) => event,
+            other => panic!("expected command-owned unbalanced-delimiter event, got {other:?}"),
+        };
+        processor
+            .recover_alignment_unbalanced_delimiter(event)
+            .expect("TeX82 align_error recovery is command-owned");
+        assert!(
+            matches!(processor.get_x_alignment_delivery().expect("inserted brace delivers"), Some(crate::AlignmentDelivery::Command(command)) if matches!(command.meaning(), Meaning::CharToken { cat: Catcode::EndGroup, .. }))
+        );
+        assert!(matches!(
+            processor
+                .get_x_alignment_delivery()
+                .expect("replayed tab intercepts"),
+            Some(crate::AlignmentDelivery::Event(
+                crate::AlignmentDeliveryEvent::EndTemplate(_)
+            ))
+        ));
+
+        let backup = recorder.0.iter().position(|record| matches!(record, CommandObservation::Input(input) if input.transition == InputTransition::Backup)).expect("delimiter backup is observed");
+        let recovery = recorder.0.iter().position(|record| matches!(record, CommandObservation::Input(input) if input.transition == InputTransition::Recovery)).expect("inserted brace recovery is observed");
+        assert!(
+            backup < recovery,
+            "§1102 backs up the delimiter before ins_error inserts its brace"
+        );
+    }
+
+    #[test]
     fn source_delivery_restarts_after_retirement_and_accounts_literal_braces() {
         let mut command = CommandState::default();
         let source = command
@@ -1726,6 +1884,9 @@ mod tests {
                 crate::AlignmentDelivery::Command(_) => {
                     panic!("delimiter is delivered as an alignment event")
                 }
+                crate::AlignmentDelivery::Event(
+                    crate::AlignmentDeliveryEvent::UnbalancedDelimiter(_),
+                ) => panic!("base-depth delimiter does not need recovery"),
             };
             processor
                 .begin_alignment_v_template(alignment, end_template)

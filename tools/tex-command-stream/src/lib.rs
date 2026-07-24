@@ -1051,6 +1051,8 @@ fn translate_alignment(record: AlignmentRecord, nesting: Option<u32>) -> Event {
         recovery: match record.transition {
             "missing_parameter" => Some("missing_parameter".into()),
             "extra_parameter" => Some("extra_parameter".into()),
+            "missing_left_brace" => Some("missing_left_brace".into()),
+            "missing_right_brace" => Some("missing_right_brace".into()),
             _ => None,
         },
     })

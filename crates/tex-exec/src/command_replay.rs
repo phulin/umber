@@ -725,9 +725,14 @@ fn scan_alignment_delivery_step(
             scan_command(processor, command, false, MeaningFlags::EMPTY, false, boxes)
         }
         Some(AlignmentDelivery::Event(event)) => {
-            processor
-                .begin_alignment_v_template(alignment, event)
-                .map_err(command_error)?;
+            match event {
+                tex_command::AlignmentDeliveryEvent::EndTemplate(_) => processor
+                    .begin_alignment_v_template(alignment, event)
+                    .map_err(command_error)?,
+                tex_command::AlignmentDeliveryEvent::UnbalancedDelimiter(_) => processor
+                    .recover_alignment_unbalanced_delimiter(event)
+                    .map_err(command_error)?,
+            }
             Ok(ScannedStep::Continue)
         }
     }

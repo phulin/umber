@@ -158,6 +158,11 @@ pub enum AlignmentDeliveryEvent {
     /// `get_next` intercepted an active-cell delimiter and delivered frozen
     /// `end_template` instead.
     EndTemplate(crate::CurrentCommand),
+    /// A tab, span, or row terminator reached main control while literal
+    /// braces left the active cell above or below its base depth.  TeX82's
+    /// `align_error` recovery is performed by command delivery after the
+    /// expanded observation, not by the executor.
+    UnbalancedDelimiter(crate::CurrentCommand),
 }
 
 /// One expanded delivery while the executor is running an alignment cell.
@@ -289,6 +294,63 @@ impl AlignmentDelimiter {
 }
 
 impl AlignmentDeliveryState {
+    /// Applies TeX82 §1102's pre-insertion correction for `align_error`.
+    /// The later inserted-brace backup correction is deliberately separate:
+    /// it is observable input ownership, and raw delivery will then consume
+    /// that correction normally.
+    pub(crate) fn correct_unbalanced_delimiter(&mut self) -> Option<Token> {
+        if self.active_cell.is_none() || self.align_state.unsigned_abs() > 2 {
+            return None;
+        }
+        if self.align_state < 0 {
+            self.align_state += 1;
+            Some(Token::Char {
+                ch: '{',
+                cat: Catcode::BeginGroup,
+            })
+        } else if self.align_state > 0 {
+            self.align_state -= 1;
+            Some(Token::Char {
+                ch: '}',
+                cat: Catcode::EndGroup,
+            })
+        } else {
+            None
+        }
+    }
+
+    /// Mirrors `back_input` for the recovery brace that §1102 installs with
+    /// `ins_error`, before that brace is replayed through `get_next`.
+    pub(crate) fn correct_inserted_brace_backup(&mut self, token: Token) {
+        match token {
+            Token::Char {
+                cat: Catcode::BeginGroup,
+                ..
+            } => self.align_state -= 1,
+            Token::Char {
+                cat: Catcode::EndGroup,
+                ..
+            } => self.align_state += 1,
+            _ => {}
+        }
+    }
+
+    pub(crate) fn needs_unbalanced_delimiter_recovery(&self, command: &CurrentCommand) -> bool {
+        self.active_cell.is_some()
+            && self.align_state != CELL_ALIGN_STATE
+            && self.align_state.unsigned_abs() <= 2
+            && matches!(
+                command.meaning(),
+                Meaning::CharToken {
+                    cat: Catcode::AlignmentTab,
+                    ..
+                } | Meaning::UnexpandablePrimitive(
+                    UnexpandablePrimitive::Cr
+                        | UnexpandablePrimitive::CrCr
+                        | UnexpandablePrimitive::Span
+                )
+            )
+    }
     pub(crate) fn begin_alignment(&mut self, alignment: AlignmentIdentity) {
         self.active_alignment = Some(alignment);
         self.active_cell = None;

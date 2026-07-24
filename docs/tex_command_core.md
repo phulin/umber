@@ -1887,6 +1887,16 @@ up again. Filename scanning likewise replays its first non-space token through
 the sole input path before consuming the name. These transitions are
 snapshot-owned input state, never fixture-adapter reconstruction.
 
+The same ownership applies when a conditional consumes a literal brace in an
+alignment cell and a later tab, `\span`, or row terminator reaches main
+control with nonzero `align_state`. TeX82 §1102 (`align_error`) first backs up
+that exact delimiter, then uses `ins_error` to place the balancing brace above
+it. `tex-command` publishes raw and expanded delimiter delivery before this
+typed recovery, owns both backup corrections and the inserted recovery level,
+and replays the brace before it re-intercepts the original delimiter.
+`tex-exec` receives only the typed recovery event and cannot inspect or alter
+the underlying token/input ordering.
+
 ### 31.1 Instrumented engines
 
 Dedicated reference executables are built from pinned canonical WEB and
