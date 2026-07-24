@@ -203,7 +203,12 @@ fn boolean_condition_skips_false_limb_and_else_skips_true_remainder() {
     let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
 
     assert_eq!(next_character(&mut processor), 't');
-    assert!(processor.command.conditions.current().is_some());
+    let frame = processor
+        .command
+        .conditions
+        .current()
+        .expect("else limb retains its condition frame");
+    assert_eq!(frame.limit, IfLimit::Fi);
     assert!(processor.get_x_token().expect("fi expands").is_none());
     assert!(processor.command.conditions.current().is_none());
 }

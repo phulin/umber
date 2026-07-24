@@ -342,11 +342,6 @@ impl CommandProcessor<'_> {
                 .frame(condition)
                 .cloned()
                 .ok_or(CommandError::InputInvariant)?;
-            self.command
-                .conditions
-                .change_if_limit(condition, IfLimit::Fi)
-                .then_some(())
-                .ok_or(CommandError::InputInvariant)?;
             self.observe_condition("branch", &evaluating, Some("false".into()));
             self.resume_after_skip(condition)
         }
@@ -557,9 +552,25 @@ impl CommandProcessor<'_> {
         loop {
             match self.pass_text(condition, ScannerWarning(0))?.delimiter {
                 ConditionalDelimiter::Else => {
+                    let evaluating = self
+                        .command
+                        .conditions
+                        .frame(condition)
+                        .cloned()
+                        .ok_or(CommandError::InputInvariant)?;
+                    self.observe_condition("branch", &evaluating, Some("else".into()));
                     self.command
                         .conditions
-                        .change_if_limit(condition, IfLimit::Fi);
+                        .change_if_limit(condition, IfLimit::Fi)
+                        .then_some(())
+                        .ok_or(CommandError::InputInvariant)?;
+                    let frame = self
+                        .command
+                        .conditions
+                        .frame(condition)
+                        .cloned()
+                        .ok_or(CommandError::InputInvariant)?;
+                    self.observe_condition("limit", &frame, None);
                     return Ok(());
                 }
                 ConditionalDelimiter::Fi => {
@@ -568,6 +579,7 @@ impl CommandProcessor<'_> {
                         .conditions
                         .pop()
                         .ok_or(CommandError::InputInvariant)?;
+                    self.observe_condition("branch", &frame, Some("fi".into()));
                     self.observe_condition("pop", &frame, None);
                     return Ok(());
                 }
@@ -726,16 +738,10 @@ impl CommandProcessor<'_> {
     }
 
     fn pass_text_scalar(&mut self, condition: ConditionId) -> Result<PassTextStop, CommandError> {
-        let limit = self
-            .command
+        self.command
             .conditions
             .limit(condition)
             .ok_or(CommandError::InputInvariant)?;
-        debug_assert_ne!(
-            limit,
-            IfLimit::Evaluating,
-            "pass_text follows conditional evaluation"
-        );
 
         let mut nested_conditions = 0_u32;
         loop {
