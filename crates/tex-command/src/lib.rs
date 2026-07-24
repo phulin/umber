@@ -47,6 +47,7 @@ pub use profile::{
     CommandProfile, CommandProfileBoundary, CommandProfileEncodingError, CommandProfileFingerprint,
     CommandProfileMismatch,
 };
+pub use scanners::{InternalValue, ScalarProvenance, ScalarRecovery, ScannedScalar};
 pub use snapshot::{CommandStateSnapshot, CommandSummary, CommandSummaryError};
 pub use state::{CommandRuntime, CommandState, UnknownRegisteredSource};
 pub use tex_state::SourceId;

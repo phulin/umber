@@ -7,12 +7,12 @@
 use crate::{
     ChangedAt, DependencyKey, DependencyValue, ExpansionState, TracedTokenList, Universe,
     env::banks::{IntParam, TokParam},
-    ids::FontId,
+    ids::{FontId, GlueId},
     ids::{MacroDefinitionId, OriginListId, TokenListId},
     interner::Symbol,
     macro_store::{MacroDefinitionProvenance, MacroMeaning, MacroParameterPattern},
     meaning::Meaning,
-    page::PageMark,
+    page::{PageInteger, PageMark},
     provenance::SynthesizedOriginKind,
     token::{Catcode, OriginId, Token, TracedTokenWord},
 };
@@ -110,6 +110,37 @@ impl CommandContext<'_> {
     #[must_use]
     pub fn page_dimension(&self, dimension: crate::page::PageDimension) -> crate::scaled::Scaled {
         self.universe.page_dimension(dimension)
+    }
+
+    /// Reads one page-builder integer through the aggregate boundary.
+    #[must_use]
+    pub fn page_integer(&self, integer: PageInteger) -> i32 {
+        self.universe.page_integer(integer)
+    }
+
+    /// Reads one immutable glue specification through the aggregate boundary.
+    #[must_use]
+    pub fn glue(&self, id: GlueId) -> crate::glue::GlueSpec {
+        self.universe.glue(id)
+    }
+
+    /// Reads one skip register through the aggregate boundary.
+    #[must_use]
+    pub fn skip(&self, index: u16) -> GlueId {
+        self.universe.skip(index)
+    }
+
+    /// Reads one mu-skip register through the aggregate boundary.
+    #[must_use]
+    pub fn muskip(&self, index: u16) -> GlueId {
+        self.universe.muskip(index)
+    }
+
+    /// Reads one glue parameter through the aggregate boundary.
+    #[must_use]
+    pub fn glue_param(&self, index: u16) -> GlueId {
+        self.universe
+            .glue_param(crate::env::banks::GlueParam::new(index))
     }
 
     /// Classifies a box register without exposing node-store ownership.

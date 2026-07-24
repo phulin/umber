@@ -203,11 +203,24 @@ The intentionally small public surface is expected to include:
 - narrow alignment lifecycle operations required by `tex-exec`; and
 - primitive installation for each supported profile.
 
+### 5.2 Executor scalar-scanner contract
+
+`CommandProcessor` owns every scalar operand read required by executor main
+control. Its public `scan_integer`, `scan_dimension`, `scan_glue`,
+`scan_keyword`, `scan_optional_sign`, `scan_optional_equals`, and
+`scan_internal_value` operations consume only the command-owned expanded input
+stream. Each returns a typed `ScannedScalar` value carrying the first-token
+provenance and any canonical recovery; callers never receive an input cursor,
+token frame, or raw-delivery capability. Failed optional keyword scans replay
+through the same `get_next` path, so executor code cannot create a second
+lexer, expansion loop, or backup mechanism. `CommandState::snapshot` remains
+the transaction boundary for the resulting future input state.
+
 Input levels, scanner frames, condition frames, replay payloads, macro
 activations, expansion budgets, provenance construction, and command dispatch
 remain crate-private.
 
-### 5.2 Proposed module layout
+### 5.3 Proposed module layout
 
 ```text
 crates/tex-command/src/

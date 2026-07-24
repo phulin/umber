@@ -20,7 +20,7 @@ use super::CommandProcessor;
 #[cfg(any(test, feature = "instrumentation"))]
 use crate::observation::{
     CommandDeliveryBoundary, CommandDeliveryRecord, CommandObservation, CommandProvenance,
-    EffectRecord, MutationRecord, ScannerRecord,
+    EffectRecord, MutationRecord,
 };
 
 /// Stable pending-diagnostic identity for TeX.web's `Missing \\endcsname
@@ -226,7 +226,7 @@ impl CommandProcessor<'_> {
     }
 
     fn expand_number(&mut self, opener: CurrentCommand, roman: bool) -> Result<(), CommandError> {
-        let value = self.scan_decimal_integer()?;
+        let value = self.scan_integer()?.value;
         let text = if roman {
             roman_numeral(value)
         } else {
@@ -305,7 +305,7 @@ impl CommandProcessor<'_> {
     }
 
     fn expand_mark_class(&mut self, primitive: ExpandablePrimitive) -> Result<(), CommandError> {
-        let class = self.scan_decimal_integer()?;
+        let class = self.scan_integer()?.value;
         let class = u16::try_from(class).unwrap_or(0);
         self.push_the_tokens(
             self.state.page_mark_class(page_mark(primitive), class),
@@ -389,40 +389,6 @@ impl CommandProcessor<'_> {
             }),
         );
         Ok(())
-    }
-
-    pub(crate) fn scan_decimal_integer(&mut self) -> Result<i32, CommandError> {
-        let mut sign = 1_i32;
-        let mut value = 0_i32;
-        let mut saw_digit = false;
-        loop {
-            let command = self.get_x_token()?.ok_or(CommandError::InputInvariant)?;
-            match command.meaning() {
-                Meaning::CharToken {
-                    ch: ' ',
-                    cat: tex_state::token::Catcode::Space,
-                } if !saw_digit => {}
-                Meaning::CharToken { ch: '+', .. } if !saw_digit => {}
-                Meaning::CharToken { ch: '-', .. } if !saw_digit => sign = -sign,
-                Meaning::CharToken { ch, .. } if ch.is_ascii_digit() => {
-                    saw_digit = true;
-                    value = value
-                        .saturating_mul(10)
-                        .saturating_add(i32::from(ch as u8 - b'0'));
-                }
-                _ => {
-                    self.back_input(command)?;
-                    break;
-                }
-            }
-        }
-        let result = sign.saturating_mul(value);
-        #[cfg(any(test, feature = "instrumentation"))]
-        self.observe(CommandObservation::Scanner(ScannerRecord {
-            kind: "integer",
-            value: result.to_string(),
-        }));
-        Ok(result)
     }
 
     fn push_rendered_text(&mut self, text: &str, parent: OriginId) {

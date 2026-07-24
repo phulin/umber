@@ -226,7 +226,7 @@ impl CommandProcessor<'_> {
         self.observe_condition("push", condition, format!("{:?}", kind));
         match kind {
             ConditionalKind::IfCase => {
-                let selected = self.scan_decimal_integer()?;
+                let selected = self.scan_integer()?.value;
                 self.complete_ifcase(condition, selected)
             }
             _ => {
@@ -315,7 +315,7 @@ impl CommandProcessor<'_> {
             ConditionalKind::IfX => self.evaluate_ifx(),
             ConditionalKind::IfNum => self.evaluate_numeric_comparison(),
             ConditionalKind::IfDim => self.evaluate_dimension_comparison(),
-            ConditionalKind::IfOdd => Ok(self.scan_decimal_integer()? & 1 != 0),
+            ConditionalKind::IfOdd => Ok(self.scan_integer()?.value & 1 != 0),
             ConditionalKind::IfVMode => Ok(matches!(
                 self.host.conditional_state().mode(),
                 crate::ConditionalMode::Vertical
@@ -330,7 +330,7 @@ impl CommandProcessor<'_> {
             )),
             ConditionalKind::IfInner => Ok(self.host.conditional_state().is_inner()),
             ConditionalKind::IfVoid | ConditionalKind::IfHBox | ConditionalKind::IfVBox => {
-                let index = self.scan_decimal_integer()?;
+                let index = self.scan_integer()?.value;
                 let index = u16::try_from(index).map_err(|_| CommandError::InputInvariant)?;
                 let box_kind = self.state.box_kind(index);
                 Ok(match kind {
@@ -399,9 +399,9 @@ impl CommandProcessor<'_> {
     }
 
     fn evaluate_numeric_comparison(&mut self) -> Result<bool, CommandError> {
-        let left = self.scan_decimal_integer()?;
+        let left = self.scan_integer()?.value;
         let relation = self.get_x_token()?.ok_or(CommandError::InputInvariant)?;
-        let right = self.scan_decimal_integer()?;
+        let right = self.scan_integer()?.value;
         match relation.meaning() {
             Meaning::CharToken { ch: '<', .. } => Ok(left < right),
             Meaning::CharToken { ch: '=', .. } => Ok(left == right),
@@ -411,9 +411,9 @@ impl CommandProcessor<'_> {
     }
 
     fn evaluate_dimension_comparison(&mut self) -> Result<bool, CommandError> {
-        let left = self.scan_dimension()?;
+        let left = self.scan_dimension()?.value;
         let relation = self.get_x_token()?.ok_or(CommandError::InputInvariant)?;
-        let right = self.scan_dimension()?;
+        let right = self.scan_dimension()?.value;
         match relation.meaning() {
             Meaning::CharToken { ch: '<', .. } => Ok(left < right),
             Meaning::CharToken { ch: '=', .. } => Ok(left == right),
