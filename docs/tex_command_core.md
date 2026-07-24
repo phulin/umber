@@ -284,6 +284,14 @@ such as `\year` scan their operands through `CommandProcessor`, publish the
 completed scanner and typed-mutation observations in that order, and only then
 apply the executor-side `Universe` mutation.
 
+Token-register assignments use the same ownership rule through
+`CommandProcessor::scan_token_register_assignment`: it scans the register
+integer, optional equals sign, and unexpanded balanced token list as one
+completed request. Any optional-equals backup, absorbing scanner-status
+transition, and token-list completion therefore occur before replay applies
+the frozen list to `Universe`; replay emits the committed register mutation
+only after that application succeeds.
+
 ### 5.4 Proposed module layout
 
 ```text

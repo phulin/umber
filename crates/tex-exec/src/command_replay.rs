@@ -271,6 +271,11 @@ enum ScannedStep {
         value: i32,
         global: bool,
     },
+    Toks {
+        index: u16,
+        tokens: TracedTokenList,
+        global: bool,
+    },
     IntParam {
         index: u16,
         value: i32,
@@ -350,6 +355,18 @@ fn scan_command(
             Ok(ScannedStep::Count {
                 index,
                 value,
+                global,
+            })
+        }
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Toks) => {
+            let assignment = processor
+                .scan_token_register_assignment()
+                .map_err(command_error)?;
+            let index = u16::try_from(assignment.index)
+                .map_err(|_| ExecError::RegisterNumberOutOfRange(assignment.index))?;
+            Ok(ScannedStep::Toks {
+                index,
+                tokens: assignment.tokens,
                 global,
             })
         }
@@ -546,6 +563,27 @@ fn applied_mutation_observation(
     scanned: &ScannedStep,
     stores: &Universe,
 ) -> Option<MutationRecord> {
+    if let ScannedStep::Toks {
+        index,
+        tokens,
+        global,
+    } = scanned
+    {
+        return Some(MutationRecord {
+            target: "register",
+            value: "tokens".into(),
+            key: Some(format!("toks:{index}")),
+            tokens: Some(
+                stores
+                    .tokens(tokens.token_list())
+                    .iter()
+                    .copied()
+                    .map(|token| observed_macro_token(token, stores))
+                    .collect(),
+            ),
+            global: *global,
+        });
+    }
     let ScannedStep::MacroDefinition {
         target,
         parameter_text,
@@ -620,6 +658,18 @@ fn apply_scanned_step(
                 stores.set_count_global(index, value);
             } else {
                 stores.set_count(index, value);
+            }
+            Ok(ReplayStep::Continue)
+        }
+        ScannedStep::Toks {
+            index,
+            tokens,
+            global,
+        } => {
+            if global {
+                stores.set_toks_global(index, tokens.token_list());
+            } else {
+                stores.set_toks(index, tokens.token_list());
             }
             Ok(ReplayStep::Continue)
         }

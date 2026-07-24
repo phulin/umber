@@ -10,3 +10,4 @@ pub use structured::{
     FileNameTermination, RegisteredInput, ScannedBalancedText, ScannedFileName,
     ScannedMacroDefinition, StructuredProvenance,
 };
+pub use token_list::ScannedTokenRegisterAssignment;

@@ -100,6 +100,47 @@ fn canonical_initex_replay_scans_and_applies_integer_parameters() {
 }
 
 #[test]
+fn canonical_initex_replay_scans_token_register_assignments_through_command_core() {
+    let mut universe = Universe::new();
+    let mut control = CommandReplayControl::tex82_initex(&mut universe);
+    register_source(&mut control, br"\toks0={TOKEN LIST}\end");
+    let mut observations = ObservationRecorder::default();
+
+    assert_eq!(
+        control
+            .step_with_observer(&mut universe, &mut observations)
+            .expect("token-register assignment"),
+        ReplayStep::Continue
+    );
+    assert_eq!(replay_text(universe.tokens(universe.toks(0))), "TOKEN LIST");
+    assert!(observations.0.windows(2).any(|pair| {
+        matches!(
+            &pair[0],
+            CommandObservation::Input(input)
+                if input.transition == InputTransition::Backup && input.reason == InputReason::Backup
+        ) && matches!(
+            &pair[1],
+            CommandObservation::Recovery(recovery) if recovery.backup
+        )
+    }));
+    assert!(matches!(
+        observations.0.as_slice(),
+        [..,
+            CommandObservation::ScannerStatus(status),
+            CommandObservation::TokenList(tokens),
+            CommandObservation::Mutation(mutation)]
+            if !status.entering
+                && tokens.transition == "complete"
+                && tokens.purpose == "scan_toks"
+                && mutation.target == "register"
+                && mutation.key.as_deref() == Some("toks:0")
+                && mutation.value == "tokens"
+                && !mutation.global
+    ));
+    assert_eq!(control.step(&mut universe).expect("end"), ReplayStep::End);
+}
+
+#[test]
 fn canonical_initex_replay_scans_and_applies_code_table_assignments() {
     let mut universe = Universe::new();
     let mut control = CommandReplayControl::tex82_initex(&mut universe);
