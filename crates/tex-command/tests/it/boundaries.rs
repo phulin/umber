@@ -165,6 +165,29 @@ fn scalar_macro_call_keeps_one_raw_fallback_matcher() {
     }
 }
 
+#[test]
+#[allow(clippy::disallowed_methods)] // host-side architecture test
+fn ordinary_expansion_has_one_loop_and_direct_input_mutation() {
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let expansion = fs::read_to_string(manifest_dir.join("src/processor/expand.rs"))
+        .expect("read ordinary expansion implementation");
+
+    assert_eq!(
+        expansion.matches("fn get_x_token_scalar(").count(),
+        1,
+        "production must retain exactly one ordinary expanded-command loop"
+    );
+    assert!(expansion.contains("self.macro_call(command)?;"));
+    assert!(expansion.contains("fn expand_noexpand("));
+    assert!(expansion.contains("fn expand_expandafter("));
+    for forbidden in ["Dispatch::Push", "Dispatch::PushTransient", "ExpansionMode"] {
+        assert!(
+            !expansion.contains(forbidden),
+            "ordinary expansion must not introduce {forbidden}"
+        );
+    }
+}
+
 fn dependency_names(manifest: &str) -> BTreeSet<&str> {
     let mut in_dependencies = false;
     let mut names = BTreeSet::new();

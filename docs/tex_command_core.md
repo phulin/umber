@@ -926,6 +926,14 @@ fn get_x_token(&mut self) -> Result<Option<CurrentCommand>, CommandError> {
 }
 ```
 
+The promoted scalar implementation routes macro calls through the canonical
+`macro_call` activation path and implements `\noexpand` and `\expandafter`
+by mutating backed-up input levels directly. `\noexpand` stores its treatment
+only on the one replay level, while `\expandafter` explicitly replays its
+first token after expanding or backing up its second token. Remaining
+expandable primitive families extend this same dispatch; they do not add a
+second expanded-delivery interpreter.
+
 The real loop also:
 
 - shares one expansion budget with nested expansion;

@@ -363,7 +363,7 @@ impl CommandProcessor<'_> {
         Ok(())
     }
 
-    fn undo_alignment_delivery(&mut self, command: &CurrentCommand) {
+    pub(crate) fn undo_alignment_delivery(&mut self, command: &CurrentCommand) {
         match command.spelling().semantic_token() {
             Token::Char {
                 cat: Catcode::BeginGroup,

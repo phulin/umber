@@ -1,7 +1,7 @@
 //! Private command diagnostics and typed resource needs.
 
 /// A command-core operation could not preserve its input-state invariant.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum CommandError {
     /// A stale or malformed input-level transition was observed.
     InputInvariant,
@@ -13,6 +13,9 @@ pub enum CommandError {
     ParagraphInMacroArgument,
     /// An outer token was recovered while a macro argument was being matched.
     OuterInMacroArgument,
+    /// This expansion slice has not installed the primitive's canonical
+    /// scalar handler yet.
+    UnsupportedExpandablePrimitive(tex_state::meaning::ExpandablePrimitive),
 }
 
 impl std::fmt::Display for CommandError {
@@ -28,6 +31,12 @@ impl std::fmt::Display for CommandError {
             }
             Self::OuterInMacroArgument => {
                 formatter.write_str("outer token found while scanning macro argument")
+            }
+            Self::UnsupportedExpandablePrimitive(primitive) => {
+                write!(
+                    formatter,
+                    "expandable primitive {primitive:?} is not installed"
+                )
             }
         }
     }
