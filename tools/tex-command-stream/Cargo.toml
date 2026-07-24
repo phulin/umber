@@ -1,0 +1,12 @@
+[package]
+name = "tex-command-stream"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+tex-command = { path = "../../crates/tex-command", features = ["instrumentation"] }
+tex-oracle = { path = "../../crates/tex-oracle" }
+tex-state = { path = "../../crates/tex-state" }
+
+[lints]
+workspace = true

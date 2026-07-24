@@ -1165,6 +1165,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "tex-command-stream"
+version = "0.1.0"
+dependencies = [
+ "tex-command",
+ "tex-oracle",
+ "tex-state",
+]
+
+[[package]]
 name = "tex-content"
 version = "0.1.0"
 

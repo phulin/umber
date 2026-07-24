@@ -35,6 +35,13 @@ It reconstructs columnar sample stacks, consumes Samply presymbolication
 sidecars including inline frames, and reports self/inclusive, subtree, and
 runtime-caller attribution for persistent engine profiles.
 
+`tools/tex-command-stream` is the offline, test-only canonical command-stream
+comparison runner. It replays committed TeX82 command fixture inputs through
+the instrumented command boundary, translates the owned observer records into
+the portable `tex-oracle` schema, and reports the earliest ordered divergence.
+It never invokes a reference engine or joins the production engine dependency
+graph.
+
 `scripts/fetch-conformance-inputs.sh` acquires the external hyphenation and
 Computer Modern font inputs and fetches and verifies the pinned official Knuth
 TeX82 TRIP and e-TeX V2 e-TRIP materials. Cargo integration tests execute the

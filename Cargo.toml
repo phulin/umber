@@ -4,6 +4,7 @@ members = [
   "tools/parity-harness",
   "tools/profile-analyzer",
   "tools/refexec",
+  "tools/tex-command-stream",
 ]
 default-members = [
   "crates/corpus-manifest",
