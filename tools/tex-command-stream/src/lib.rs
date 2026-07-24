@@ -969,6 +969,7 @@ fn translate_alignment(record: AlignmentRecord) -> Event {
             "resume" => AlignmentTransition::Resume,
             "preamble_start" => AlignmentTransition::PreambleStart,
             "preamble_finish" => AlignmentTransition::PreambleFinish,
+            "begin_group" | "end_group" => AlignmentTransition::StateChange,
             "state_change" => AlignmentTransition::StateChange,
             "template_push" => AlignmentTransition::TemplatePush,
             "template_retire" => AlignmentTransition::TemplateRetire,
@@ -979,7 +980,7 @@ fn translate_alignment(record: AlignmentRecord) -> Event {
         align_state: i64::from(record.align_state),
         template: None,
         nesting: record.alignment.and_then(|value| u32::try_from(value).ok()),
-        previous_align_state: None,
+        previous_align_state: record.previous_align_state.map(i64::from),
         delimiter: None,
         recovery: None,
     })
@@ -1245,6 +1246,32 @@ mod tests {
                 branch: Some("true".into()),
             })
         );
+    }
+
+    #[test]
+    fn brace_delivery_transitions_preserve_command_owned_align_state_changes() {
+        for (transition, previous_align_state, align_state) in [
+            ("begin_group", -1_000_000, -999_999),
+            ("end_group", -999_999, -1_000_000),
+        ] {
+            assert_eq!(
+                translate_alignment(AlignmentRecord {
+                    transition,
+                    alignment: Some(1),
+                    align_state,
+                    previous_align_state: Some(previous_align_state),
+                }),
+                Event::Alignment(AlignmentEvent {
+                    transition: AlignmentTransition::StateChange,
+                    align_state: i64::from(align_state),
+                    template: None,
+                    nesting: Some(1),
+                    previous_align_state: Some(i64::from(previous_align_state)),
+                    delimiter: None,
+                    recovery: None,
+                })
+            );
+        }
     }
 
     #[test]

@@ -106,6 +106,7 @@ impl CommandProcessor<'_> {
             transition: "begin_v_template",
             alignment: Some(alignment.raw()),
             align_state: self.command.alignment.align_state,
+            previous_align_state: None,
         }));
         Ok(())
     }
@@ -273,6 +274,8 @@ impl CommandProcessor<'_> {
             // delivery before substituting its recovery space.
             self.last_delivery = Some(delivery_stamp);
             self.check_outer_validity_entry(&mut command)?;
+            #[cfg(any(test, feature = "instrumentation"))]
+            let previous_align_state = self.command.alignment.align_state;
             let adjustment = self.command.alignment.classify_delivery(&mut command);
             command.set_alignment_adjustment(adjustment);
             #[cfg(any(test, feature = "instrumentation"))]
@@ -295,6 +298,12 @@ impl CommandProcessor<'_> {
                         .active_alignment
                         .map(|identity| identity.raw()),
                     align_state: self.command.alignment.align_state,
+                    previous_align_state: matches!(
+                        adjustment,
+                        crate::processor::AlignmentDeliveryAdjustment::BeginGroup
+                            | crate::processor::AlignmentDeliveryAdjustment::EndGroup
+                    )
+                    .then_some(previous_align_state),
                 }));
             }
             #[cfg(any(test, feature = "instrumentation"))]

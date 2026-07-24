@@ -319,6 +319,13 @@ pub struct AlignmentRecord {
     pub transition: &'static str,
     pub alignment: Option<u64>,
     pub align_state: i32,
+    /// The raw-delivery value immediately before a state-changing transition.
+    ///
+    /// Lifecycle observations without a direct `align_state` mutation leave
+    /// this absent. This keeps the command-owned record sufficient for a
+    /// host-only canonical schema translation without giving the host an
+    /// alignment-state shadow.
+    pub previous_align_state: Option<i32>,
 }
 
 /// A typed command-relevant assignment seam. Assignment dispatch owns the

@@ -55,6 +55,7 @@ impl CommandState {
                 transition: "begin",
                 alignment: Some(alignment.raw()),
                 align_state: self.alignment.align_state,
+                previous_align_state: None,
             })
     }
 

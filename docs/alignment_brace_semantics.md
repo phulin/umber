@@ -32,6 +32,11 @@ deliberately has no brace-depth shadow. Nested alignments suspend and restore
 the complete outer `InputStack` alignment level, matching `push_alignment` and
 `pop_alignment`.
 
+Instrumentation carries a brace delivery's pre-change and committed
+`align_state` directly from `tex-command`. The host-only command-stream
+translator maps those begin/end-group records to canonical `state_change`
+events; it neither reconstructs nor owns alignment depth.
+
 ## Canonical transition map
 
 | Canonical operation                          | State transition                                                                                                       | Umber owner                                                                                                |
