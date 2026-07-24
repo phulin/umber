@@ -197,6 +197,7 @@ impl CommandState {
                 active_alignment: None,
                 suspended: Vec::new(),
                 active_cell: None,
+                completed_preamble: None,
             },
             expansion: summary.expansion,
             transient: TransientState {

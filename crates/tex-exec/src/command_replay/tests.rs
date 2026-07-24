@@ -176,7 +176,7 @@ fn canonical_initex_replay_scans_tabskip_before_alignment_preamble() {
 fn alignment_preamble_opener_uses_command_owned_backup_before_source_resumes() {
     let mut universe = Universe::new();
     let mut control = CommandReplayControl::tex82_initex(&mut universe);
-    register_source(&mut control, br"\halign{ \end");
+    register_source(&mut control, br"\halign{ #\cr\end");
 
     assert_eq!(
         control.step(&mut universe).expect("alignment begins"),
@@ -192,7 +192,7 @@ fn alignment_preamble_opener_uses_command_owned_backup_before_source_resumes() {
     assert!(
         matches!(
             observations.0.as_slice(),
-            [
+            [..,
                 CommandObservation::Alignment(state_change),
                 CommandObservation::Command(raw),
                 CommandObservation::Command(expanded),
@@ -271,6 +271,10 @@ fn alignment_preamble_opener_uses_command_owned_backup_before_source_resumes() {
                 CommandObservation::Alignment(preamble_start),
                 CommandObservation::Input(retirement),
                 CommandObservation::Command(space),
+                CommandObservation::Command(parameter),
+                CommandObservation::Command(terminator),
+                CommandObservation::ScannerStatus(finished),
+                CommandObservation::Alignment(preamble_finish),
             ]
                 if state_change.transition == "begin_group"
                     && state_change.align_state == -999_999
@@ -284,6 +288,10 @@ fn alignment_preamble_opener_uses_command_owned_backup_before_source_resumes() {
                     && retirement.transition == InputTransition::Retire
                     && retirement.reason == InputReason::Backup
                     && matches!(space.spelling, ObservedToken::Character { character: ' ', .. })
+                    && matches!(parameter.spelling, ObservedToken::Character { character: '#', .. })
+                    && matches!(terminator.spelling, ObservedToken::ControlSequence(ref name) if name == "cr")
+                    && !finished.entering
+                    && preamble_finish.transition == "preamble_finish"
         ),
         "unexpected observations: {:?}",
         observations.0

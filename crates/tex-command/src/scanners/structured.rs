@@ -6,15 +6,15 @@
 
 use tex_state::glue::GlueSpec;
 use tex_state::interner::Symbol;
-use tex_state::meaning::Meaning;
-use tex_state::token::{Catcode, OriginId};
+use tex_state::meaning::{Meaning, UnexpandablePrimitive};
+use tex_state::token::{Catcode, OriginId, Token};
 use tex_state::{SourceId, TracedTokenList};
 
 use crate::processor::status::{
     AlignmentId, AlignmentScanContext, ScannerStatus, ScannerWarning, TokenBuilderId,
 };
 use crate::scan_toks::{ScanToksMode, ScannedToks};
-use crate::{CommandError, CommandProcessor};
+use crate::{AlignmentCellTemplates, AlignmentPreamble, CommandError, CommandProcessor};
 
 /// Provenance for a completed structured scan.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -197,6 +197,72 @@ impl CommandProcessor<'_> {
             },
         ));
         let _ = self.get_token()?;
+        let mut columns = Vec::new();
+        let mut u_template = Vec::new();
+        let mut v_template = Vec::new();
+        let mut in_v_template = false;
+        loop {
+            let command = self.get_next()?.ok_or(CommandError::InputInvariant)?;
+            let token = command.spelling().semantic_token();
+            if matches!(
+                token,
+                Token::Char {
+                    cat: Catcode::Parameter,
+                    ..
+                }
+            ) && !in_v_template
+            {
+                in_v_template = true;
+                continue;
+            }
+            let ends_column = matches!(
+                token,
+                Token::Char {
+                    cat: Catcode::AlignmentTab,
+                    ..
+                }
+            );
+            let ends_preamble = matches!(
+                command.meaning(),
+                Meaning::UnexpandablePrimitive(
+                    UnexpandablePrimitive::Cr | UnexpandablePrimitive::CrCr
+                )
+            );
+            if ends_column || ends_preamble {
+                columns.push(AlignmentCellTemplates {
+                    u_template: (!u_template.is_empty())
+                        .then(|| self.state.finish_traced_token_list(&u_template)),
+                    v_template: self.state.finish_traced_token_list(&v_template),
+                });
+                u_template.clear();
+                v_template.clear();
+                in_v_template = false;
+                if ends_preamble {
+                    break;
+                }
+                continue;
+            }
+            if in_v_template {
+                v_template.push(command.spelling());
+            } else {
+                u_template.push(command.spelling());
+            }
+        }
+        self.command
+            .alignment
+            .complete_preamble(alignment, AlignmentPreamble { columns })
+            .map_err(|_| CommandError::InputInvariant)?;
+        let _ = self.command.begin_scanner_status(ScannerStatus::Normal);
+        self.observe_scanner_status(false);
+        #[cfg(any(test, feature = "instrumentation"))]
+        self.observe(crate::CommandObservation::Alignment(
+            crate::AlignmentRecord {
+                transition: "preamble_finish",
+                alignment: Some(alignment.raw()),
+                align_state: self.command.alignment.align_state,
+                previous_align_state: None,
+            },
+        ));
         Ok(())
     }
 

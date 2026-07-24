@@ -42,6 +42,12 @@ pub struct AlignmentCellTemplates {
     pub v_template: TracedTokenList,
 }
 
+/// Frozen template pairs collected during one raw alignment preamble scan.
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub struct AlignmentPreamble {
+    pub columns: Vec<AlignmentCellTemplates>,
+}
+
 /// A structural transition requested by the executor.
 ///
 /// These requests deliberately contain no token spelling, command meaning,
@@ -120,6 +126,8 @@ pub enum AlignmentLifecycleError {
     UTemplateStillActive,
     /// The cell has no retained, exhausted v-template to retire.
     VTemplateNotExhausted,
+    /// The raw preamble scanner has not finished its `\\cr`-terminated input.
+    PreambleNotComplete,
 }
 
 impl std::fmt::Display for AlignmentLifecycleError {
@@ -132,6 +140,7 @@ impl std::fmt::Display for AlignmentLifecycleError {
             Self::NoSuspendedAlignment => "no outer alignment delivery context is suspended",
             Self::UTemplateStillActive => "the alignment u-template is still active",
             Self::VTemplateNotExhausted => "the alignment v-template is not exhausted",
+            Self::PreambleNotComplete => "the alignment preamble is not complete",
         })
     }
 }
@@ -145,6 +154,7 @@ pub(crate) struct AlignmentDeliveryState {
     pub(crate) active_alignment: Option<AlignmentIdentity>,
     pub(crate) suspended: Vec<SuspendedAlignment>,
     pub(crate) active_cell: Option<ActiveCellDelivery>,
+    pub(crate) completed_preamble: Option<AlignmentPreamble>,
 }
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
@@ -179,6 +189,7 @@ impl AlignmentDeliveryState {
     pub(crate) fn begin_alignment(&mut self, alignment: AlignmentIdentity) {
         self.active_alignment = Some(alignment);
         self.active_cell = None;
+        self.completed_preamble = None;
         self.align_state = PREAMBLE_ALIGN_STATE;
     }
 
@@ -188,7 +199,18 @@ impl AlignmentDeliveryState {
     ) -> Result<(), AlignmentLifecycleError> {
         self.require_alignment(alignment)?;
         self.active_cell = None;
+        self.completed_preamble = None;
         self.align_state = PREAMBLE_ALIGN_STATE;
+        Ok(())
+    }
+
+    pub(crate) fn complete_preamble(
+        &mut self,
+        alignment: AlignmentIdentity,
+        preamble: AlignmentPreamble,
+    ) -> Result<(), AlignmentLifecycleError> {
+        self.require_alignment(alignment)?;
+        self.completed_preamble = Some(preamble);
         Ok(())
     }
 
@@ -329,6 +351,7 @@ impl AlignmentDeliveryState {
         self.require_alignment(alignment)?;
         self.active_alignment = None;
         self.active_cell = None;
+        self.completed_preamble = None;
         self.align_state = CELL_ALIGN_STATE;
         Ok(())
     }

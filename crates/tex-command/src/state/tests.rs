@@ -103,7 +103,9 @@ fn semantic_ownership_domains_are_exhaustively_classified() {
         active_alignment,
         suspended,
         active_cell,
+        completed_preamble,
     } = alignment;
+    assert!(completed_preamble.is_none());
     let ExpansionState {
         cumulative_expansions,
         next_resource_resolution,

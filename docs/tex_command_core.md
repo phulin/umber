@@ -141,6 +141,13 @@ opaque `AlignmentDeliveryEvent::EndTemplate`, which is handed back to
 `\span`, or `\cr`, while `off_save` recovery and group policy remain
 executor-owned after the typed event has been delivered.
 
+After `init_align` validates and replays its opening brace, the command
+processor owns the complete `get_preamble_token` episode. It retains raw
+delivery while `scanner_status=aligning`, freezes u/v template pairs at `#`
+and their column boundaries, and restores normal scanner status only after
+the terminating `\cr`. A preamble `\message{...}` is therefore template data,
+never an executor effect.
+
 Source citations in implementation comments should identify the narrowest
 relevant TeX.web or pdfTeX.web section.
 

@@ -40,7 +40,8 @@ pub use observation::{
 };
 pub use processor::{
     AlignmentCellTemplates, AlignmentDelivery, AlignmentDeliveryEvent, AlignmentIdentity,
-    AlignmentLifecycleError, AlignmentRequest, AlignmentRequestResult, CommandProcessor,
+    AlignmentLifecycleError, AlignmentPreamble, AlignmentRequest, AlignmentRequestResult,
+    CommandProcessor,
 };
 pub use profile::{
     CharacterCode, CharacterCodeError, CharacterMode, CommandCapabilities, CommandDialect,

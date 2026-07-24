@@ -16,7 +16,7 @@ use crate::observation::CommandObserver;
 pub(crate) use alignment::{ActiveCellDelivery, SuspendedAlignment};
 pub use alignment::{
     AlignmentCellTemplates, AlignmentDelivery, AlignmentDeliveryEvent, AlignmentIdentity,
-    AlignmentLifecycleError, AlignmentRequest, AlignmentRequestResult,
+    AlignmentLifecycleError, AlignmentPreamble, AlignmentRequest, AlignmentRequestResult,
 };
 pub(crate) use alignment::{AlignmentDeliveryAdjustment, AlignmentDeliveryState};
 pub(crate) use expand::ExpansionState;
