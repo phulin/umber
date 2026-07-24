@@ -1303,10 +1303,18 @@ fn nested_alignment_begin_suspends_the_outer_replay_context() {
         .active_alignment()
         .expect("inner alignment is active");
     assert_ne!(inner, outer);
-    control
-        .apply_alignment_request(AlignmentRequest::Finish(inner))
-        .expect("inner alignment finishes and resumes the outer context");
+    apply_scanned_step(
+        ScannedStep::AlignmentFinish { alignment: inner },
+        &mut universe,
+        &mut control.modes,
+        &mut control.next_alignment_identity,
+        &mut control.active_alignment,
+        &mut control.command,
+        &mut control.boxes,
+    )
+    .expect("right-brace align_peek finish resumes the outer context");
     assert_eq!(control.active_alignment(), Some(outer));
+    assert_eq!(control.boxes.suspended_alignments.len(), 0);
 }
 
 #[test]

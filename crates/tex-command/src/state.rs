@@ -95,6 +95,25 @@ impl CommandState {
             })
     }
 
+    /// Returns the committed observation for TeX82 `fin_align` immediately
+    /// before it removes the active delivery context.  `align_peek` has
+    /// already delivered the closing brace at this point; the executor only
+    /// requests the structural finish and never classifies that token.
+    #[cfg(any(test, feature = "instrumentation"))]
+    #[must_use]
+    pub fn alignment_finish_observation(
+        &self,
+        alignment: AlignmentIdentity,
+    ) -> Option<AlignmentRecord> {
+        (self.alignment.active_alignment == Some(alignment)).then_some(AlignmentRecord {
+            transition: "finish",
+            alignment: Some(alignment.raw()),
+            align_state: self.alignment.align_state,
+            delimiter: None,
+            previous_align_state: None,
+        })
+    }
+
     /// Applies an executor-owned structural alignment request.
     ///
     /// This is the only lifecycle entry point required by `tex-exec`.  It has

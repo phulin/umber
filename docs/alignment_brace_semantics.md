@@ -65,8 +65,10 @@ When a box begins in an active cell, its required body opener follows the
 ordinary box scanner path: command delivery validates the brace, backs it up,
 and replays it before the box group is entered. If that body starts a nested
 alignment, replay requests `Suspend` for the outer alignment before `Begin`
-for the inner one; when the inner `fin_align` completes, it requests `Finish`
-then `Resume`. Thus `tex-exec` may maintain a structural stack of boxes and
+for the inner one. TeX82 §37's `align_peek` delivers a closing right brace
+before replay requests the typed inner `Finish`; `fin_align`/`pop_alignment`
+then resumes the saved outer delivery context before its next delimiter is
+read. Thus `tex-exec` may maintain a structural stack of boxes and
 alignment packaging contexts, but it never consumes, classifies, or restores
 the raw brace/token state saved by `push_alignment`/`pop_alignment` (TeX82
 §§37, 765--772).
@@ -113,6 +115,7 @@ events; it neither reconstructs nor owns alignment depth.
 | `off_save` at bottom level                   | drop the offending command; do not replay it                                                                                                                                                                                                                                                                                                                                        | `tex_exec::assignments::off_save_alignment`                                                                                           |
 | `align_error` at depth `-1` or `1`           | back up delimiter, insert the missing brace, and return to zero through ordinary delivery                                                                                                                                                                                                                                                                                           | `tex_exec::align::execution::run_cell_body_until_terminator`                                                                          |
 | alignment closing brace before `\cr`         | back up brace and insert frozen `\cr`                                                                                                                                                                                                                                                                                                                                               | `tex_exec::align::execution`                                                                                                          |
+| `align_peek` closing right brace             | command processing delivers and accounts for the brace; typed replay then performs `Finish` and resumes the saved outer context before its next delimiter                                                                                                                                                                                                                           | `tex_exec::CommandReplayControl`, `CommandState::{finish_alignment,resume_alignment}`; TeX82 §37, `fin_align`/`pop_alignment`         |
 | `fin_align` / `pop_alignment`                | retire inner level and resume saved outer level                                                                                                                                                                                                                                                                                                                                     | `tex_exec::align`, `InputStack::{finish_alignment,resume_alignment_cell}`                                                             |
 | failed nested alignment                      | discard the incomplete inner level and restore the outer level atomically                                                                                                                                                                                                                                                                                                           | `InputStack::abort_alignment_and_resume`, execution transaction rollback                                                              |
 
@@ -123,6 +126,8 @@ Focused regressions live at the owning boundary:
 - aliases and `do_endv` recovery: `crates/tex-exec/src/tests/align.rs`;
 - raw brace accounting, nested suspension, and v-template retirement:
   `crates/tex-lex/src/tests.rs`;
+- command-owned nested close/outer-delivery resumption:
+  `crates/tex-exec/src/command_replay/tests.rs`;
 - skipped braces and `\ifx`: `crates/tex-expand/src/tests.rs`;
 - macro arguments and expanded definitions:
   `crates/tex-expand/src/args_tests.rs` and `src/scan/tests.rs`;

@@ -293,6 +293,12 @@ impl CommandReplayControl {
             }
             _ => None,
         };
+        let finishes_alignment = match &scanned {
+            ScannedStep::AlignmentFinish { alignment } => {
+                self.command.alignment_finish_observation(*alignment)
+            }
+            _ => None,
+        };
         let result = apply_scanned_step(
             scanned,
             stores,
@@ -342,6 +348,12 @@ impl CommandReplayControl {
                 }
                 observer.committed(CommandObservation::Input(finish.v_template_retirement));
                 observer.committed(CommandObservation::Alignment(finish.template_retirement));
+            }
+            if let Some(finish) = finishes_alignment {
+                observer.committed(CommandObservation::Alignment(finish));
+                if let Some(resume) = self.command.alignment_resume_observation() {
+                    observer.committed(CommandObservation::Alignment(resume));
+                }
             }
             if let Some(mutation) = mutation {
                 observer.committed(CommandObservation::Mutation(mutation));
@@ -499,6 +511,11 @@ enum ScannedStep {
     AlignmentCellFinish {
         alignment: AlignmentIdentity,
     },
+    /// TeX82 §37 delivered the alignment-closing right brace, so `fin_align`
+    /// must complete before the outer suspended delivery context resumes.
+    AlignmentFinish {
+        alignment: AlignmentIdentity,
+    },
     /// TeX82 §37 has consumed `\\noalign` and its compulsory opening brace.
     /// Command control owns both deliveries; the executor now owns the
     /// no-align group's structural entry.
@@ -645,9 +662,7 @@ fn scan_alignment_peek(
         Meaning::CharToken {
             cat: Catcode::EndGroup,
             ..
-        } => Err(ExecError::MissingToken {
-            context: "alignment finish through command replay",
-        }),
+        } => Ok(ScannedStep::AlignmentFinish { alignment }),
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Omit) => {
             Ok(ScannedStep::AlignmentPeekCell {
                 alignment,
@@ -1890,6 +1905,28 @@ fn apply_scanned_step(
                 command,
                 active_alignment,
             )?;
+            Ok(ReplayStep::Continue)
+        }
+        ScannedStep::AlignmentFinish { alignment } => {
+            if active_alignment.as_ref().map(|active| active.identity) != Some(alignment) {
+                return Err(ExecError::MissingToken {
+                    context: "active replay alignment",
+                });
+            }
+            command
+                .apply_alignment_request(AlignmentRequest::Finish(alignment))
+                .map_err(|_| ExecError::MissingToken {
+                    context: "alignment finish lifecycle",
+                })?;
+            *active_alignment = None;
+            if let Some(outer) = boxes.suspended_alignments.pop() {
+                command
+                    .apply_alignment_request(AlignmentRequest::Resume(outer.identity))
+                    .map_err(|_| ExecError::MissingToken {
+                        context: "nested alignment resumption",
+                    })?;
+                *active_alignment = Some(outer);
+            }
             Ok(ReplayStep::Continue)
         }
         ScannedStep::Paragraph => {
