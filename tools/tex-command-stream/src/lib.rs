@@ -4,6 +4,7 @@
 //! `tex-command` observer records to the portable oracle schema. Production
 //! command processing neither imports nor knows about canonical fixtures.
 
+use std::collections::BTreeMap;
 use std::env;
 use std::error::Error;
 use std::fmt;
@@ -26,6 +27,7 @@ use tex_oracle::{
 };
 use tex_state::{
     SourceId, Universe,
+    meaning::{ExpandablePrimitive, Meaning},
     token::{Catcode, Token},
 };
 
@@ -216,6 +218,7 @@ struct CanonicalStartup {
     terminal_filename: Arc<[u8]>,
     root_name: String,
     root_bytes: Arc<[u8]>,
+    input_capabilities: BTreeMap<String, Arc<[u8]>>,
 }
 
 impl CanonicalStartup {
@@ -247,6 +250,36 @@ impl CanonicalStartup {
             )));
         }
 
+        let mut input_capabilities = BTreeMap::new();
+        for (source_name, source_artifact) in &fixture.manifest.sources {
+            if source_name == CANONICAL_ROOT_SOURCE {
+                continue;
+            }
+            let input_name = canonical_input_name(source_name)?;
+            let source_bytes =
+                std::fs::read(directory.join(&source_artifact.path)).map_err(|error| {
+                    RunnerError::Replay(format!(
+                        "{} source {source_name} cannot be read: {error}",
+                        fixture.manifest.name
+                    ))
+                })?;
+            if u64::try_from(source_bytes.len()).ok() != Some(source_artifact.bytes) {
+                return Err(RunnerError::Replay(format!(
+                    "{} source {source_name} changed after fixture validation",
+                    fixture.manifest.name
+                )));
+            }
+            if input_capabilities
+                .insert(input_name.clone(), Arc::from(source_bytes))
+                .is_some()
+            {
+                return Err(RunnerError::Replay(format!(
+                    "{} maps multiple registered sources to input capability {input_name}",
+                    fixture.manifest.name
+                )));
+            }
+        }
+
         let mut terminal_filename = CANONICAL_ROOT_SOURCE.as_bytes().to_vec();
         terminal_filename.push(TERMINAL_FILENAME_TERMINATOR);
         Ok(Self {
@@ -254,6 +287,7 @@ impl CanonicalStartup {
             terminal_filename: Arc::from(terminal_filename),
             root_name: CANONICAL_ROOT_SOURCE.into(),
             root_bytes: Arc::from(bytes),
+            input_capabilities,
         })
     }
 
@@ -262,6 +296,11 @@ impl CanonicalStartup {
             .terminal_filename
             .len()
             .checked_add(self.root_bytes.len())
+            .and_then(|count| {
+                self.input_capabilities
+                    .values()
+                    .try_fold(count, |total, source| total.checked_add(source.len()))
+            })
             .and_then(|count| count.checked_mul(2))
             .and_then(|count| count.checked_add(MAX_DELIVERIES_OVERHEAD))
             .ok_or_else(|| {
@@ -298,6 +337,17 @@ impl CanonicalStartup {
         let mut runtime = CommandRuntime::default();
         let mut universe = Universe::new();
         let mut capabilities = CommandHostCapabilities::default();
+        let input = universe.intern("input").symbol();
+        universe.set_meaning(
+            input,
+            Meaning::ExpandablePrimitive(ExpandablePrimitive::Input),
+        );
+        for (name, bytes) in &self.input_capabilities {
+            capabilities.register_input(
+                name,
+                SourceRegistration::new(RegisteredSourceKind::World, Arc::clone(bytes)),
+            );
+        }
         let mut recorder = Recorder::new("terminal");
         let scanned = {
             let mut processor = CommandProcessor::new(
@@ -351,6 +401,21 @@ impl CanonicalStartup {
         }
         Ok(recorder.events)
     }
+}
+
+/// The fixture's virtual `\\input` namespace is deliberately narrower than
+/// host path resolution: each declared `.tex` source contributes exactly its
+/// extensionless logical input name.
+fn canonical_input_name(source_name: &str) -> Result<String, RunnerError> {
+    source_name
+        .strip_suffix(".tex")
+        .filter(|name| !name.is_empty())
+        .map(str::to_owned)
+        .ok_or_else(|| {
+            RunnerError::Replay(format!(
+                "registered fixture source {source_name:?} has no canonical .tex input name"
+            ))
+        })
 }
 
 fn scan_terminal_filename(processor: &mut CommandProcessor<'_>) -> Result<String, RunnerError> {
@@ -746,6 +811,16 @@ mod tests {
         ObservedEvent::new(scanner(value), "source=case.tex; input_level=1".into())
     }
 
+    fn nested_startup() -> CanonicalStartup {
+        CanonicalStartup {
+            profile: CommandProfile::TEX82,
+            terminal_filename: Arc::from(&b"transitions.tex "[..]),
+            root_name: CANONICAL_ROOT_SOURCE.into(),
+            root_bytes: Arc::from(&b"a\\input child b"[..]),
+            input_capabilities: BTreeMap::from([("child".into(), Arc::from(&b"c"[..]))]),
+        }
+    }
+
     #[test]
     fn exact_streams_pass_quietly() {
         let expected = vec![NormalizedEvent {
@@ -814,12 +889,132 @@ mod tests {
     }
 
     #[test]
+    fn registered_nested_input_retires_and_returns_to_the_caller_deterministically() {
+        let first = nested_startup().replay().expect("nested source replays");
+        let second = nested_startup()
+            .replay()
+            .expect("nested source replays again");
+        assert_eq!(first, second, "registered input replay must be repeatable");
+
+        let child_delivery = first
+            .iter()
+            .position(|event| event.context.contains("input_level=3"))
+            .expect("the child receives its own input level");
+        let child_retirement = first
+            .iter()
+            .enumerate()
+            .skip(child_delivery)
+            .find_map(|(index, event)| {
+                event
+                    .context
+                    .contains("level=3; position=0")
+                    .then_some(index)
+            })
+            .expect("the exhausted child source retires");
+        assert!(
+            first[child_retirement + 1..]
+                .iter()
+                .any(|event| event.context.contains("input_level=2")),
+            "input resumes the still-live parent source after child EOF"
+        );
+    }
+
+    #[test]
+    fn nested_input_rejects_a_missing_registered_capability() {
+        let mut startup = nested_startup();
+        startup.input_capabilities.clear();
+
+        let error = startup
+            .replay()
+            .expect_err("missing input must not fall back to the host");
+        assert!(
+            error.to_string().contains("input source is unavailable"),
+            "unexpected missing-capability recovery: {error}"
+        );
+    }
+
+    #[test]
+    fn nested_input_snapshot_rollback_replays_the_same_virtual_source_stack() {
+        fn suffix(
+            command: &mut CommandState,
+            universe: &mut Universe,
+            capabilities: &mut CommandHostCapabilities,
+        ) -> Vec<(char, u64)> {
+            let mut runtime = CommandRuntime::default();
+            let mut processor = CommandProcessor::new(
+                command,
+                &mut runtime,
+                universe.command_context(),
+                CommandHostContext::new(capabilities),
+            );
+            let mut delivered = Vec::new();
+            while let Some(current) = processor.get_x_token().expect("nested input replays") {
+                if let Token::Char { ch, .. } = current.spelling().semantic_token() {
+                    delivered.push((ch, current.delivery_stamp().input_level()));
+                }
+            }
+            delivered
+        }
+
+        let mut command = CommandState::new(CommandProfile::TEX82);
+        let root = command
+            .register_source(SourceRegistration::new(
+                RegisteredSourceKind::World,
+                &b"x\\input child y"[..],
+            ))
+            .expect("root registers");
+        command.open_registered_source(root).expect("root opens");
+        let mut universe = Universe::new();
+        let input = universe.intern("input").symbol();
+        universe.set_meaning(
+            input,
+            Meaning::ExpandablePrimitive(ExpandablePrimitive::Input),
+        );
+        let mut capabilities = CommandHostCapabilities::default();
+        capabilities.register_input(
+            "child",
+            SourceRegistration::new(RegisteredSourceKind::World, &b"c"[..]),
+        );
+
+        {
+            let mut runtime = CommandRuntime::default();
+            let mut processor = CommandProcessor::new(
+                &mut command,
+                &mut runtime,
+                universe.command_context(),
+                CommandHostContext::new(&mut capabilities),
+            );
+            assert!(matches!(
+                processor
+                    .get_x_token()
+                    .expect("root starts")
+                    .expect("root character")
+                    .spelling()
+                    .semantic_token(),
+                Token::Char { ch: 'x', .. }
+            ));
+        }
+
+        let snapshot = command.snapshot();
+        let first = suffix(&mut command, &mut universe, &mut capabilities);
+        command
+            .rollback(snapshot)
+            .expect("matching snapshot restores");
+        let second = suffix(&mut command, &mut universe, &mut capabilities);
+
+        assert_eq!(first, second, "rollback preserves nested source identity");
+        assert!(first.iter().any(|(_, level)| *level == 1));
+        assert!(first.iter().any(|(_, level)| *level == 0));
+    }
+
+    #[test]
     fn canonical_startup_rejects_a_stale_root_even_if_its_bytes_are_available() {
         let startup = CanonicalStartup {
             profile: CommandProfile::TEX82,
             terminal_filename: Arc::from(&b"transitions.tex "[..]),
             root_name: "alignment-delivery.tex".into(),
             root_bytes: Arc::from(&b"\\relax"[..]),
+            input_capabilities: BTreeMap::new(),
         };
 
         let error = startup.replay().expect_err("stale root must not open");

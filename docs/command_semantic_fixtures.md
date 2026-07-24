@@ -158,10 +158,13 @@ cargo run -q -p tex-command-stream -- --repository .
 
 It validates the complete registered suite, constructs the explicit canonical
 INITEX startup state, scans the terminal filename `transitions.tex`, and opens
-that root above terminal input before later `\\input` capability work can
-register children. Terminal and root receive deterministic source identities
-in that order; fixture-directory or logical-name iteration never selects the
-root. It translates command-owned observer records at the host boundary and
+that root above terminal input. Every other declared `.tex` source is installed
+before replay as an immutable, extensionless virtual `\\input` capability;
+canonical input expansion alone registers and opens a child. Terminal and root
+receive deterministic source identities in that order, and child identities
+are allocated only at their input transition; fixture-directory or logical-name
+iteration never selects or concatenates sources. It translates command-owned
+observer records at the host boundary and
 compares every produced event against the complete committed stream without
 filtering expected events. A mismatch reports its fixture
 identity, ordered index, typed expected and actual values, and available
