@@ -11,9 +11,11 @@ use tex_command::{
 #[cfg(any(test, feature = "instrumentation"))]
 use tex_command::{CommandObservation, CommandObserver, MutationRecord, ObservedToken};
 use tex_state::env::banks::{IntParam, TokParam};
+use tex_state::glue::GlueSpec;
 use tex_state::interner::Symbol;
 use tex_state::macro_store::{MacroDefinitionProvenance, MacroMeaning};
 use tex_state::meaning::{Meaning, MeaningFlags, UnexpandablePrimitive};
+use tex_state::scaled::Scaled;
 use tex_state::token::Catcode;
 #[cfg(any(test, feature = "instrumentation"))]
 use tex_state::token::Token;
@@ -271,6 +273,16 @@ enum ScannedStep {
         value: i32,
         global: bool,
     },
+    Dimen {
+        index: u16,
+        value: Scaled,
+        global: bool,
+    },
+    Skip {
+        index: u16,
+        value: GlueSpec,
+        global: bool,
+    },
     Toks {
         index: u16,
         tokens: TracedTokenList,
@@ -363,6 +375,30 @@ fn scan_command(
                 global,
             })
         }
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Dimen) => {
+            let index = processor.scan_integer().map_err(command_error)?.value;
+            let _ = processor.scan_optional_equals().map_err(command_error)?;
+            let value = processor.scan_dimension().map_err(command_error)?.value;
+            let index =
+                u16::try_from(index).map_err(|_| ExecError::RegisterNumberOutOfRange(index))?;
+            Ok(ScannedStep::Dimen {
+                index,
+                value,
+                global,
+            })
+        }
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Skip) => {
+            let index = processor.scan_integer().map_err(command_error)?.value;
+            let _ = processor.scan_optional_equals().map_err(command_error)?;
+            let value = processor.scan_glue(false).map_err(command_error)?.value;
+            let index =
+                u16::try_from(index).map_err(|_| ExecError::RegisterNumberOutOfRange(index))?;
+            Ok(ScannedStep::Skip {
+                index,
+                value,
+                global,
+            })
+        }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Toks) => {
             let assignment = processor
                 .scan_token_register_assignment()
@@ -378,9 +414,6 @@ fn scan_command(
         Meaning::IntParam(index) => {
             let _ = processor.scan_optional_equals().map_err(command_error)?;
             let value = processor.scan_integer().map_err(command_error)?.value;
-            #[cfg(any(test, feature = "instrumentation"))]
-            processor
-                .observe_typed_mutation("parameter", format!("integer_parameter:{index}={value}"));
             Ok(ScannedStep::IntParam {
                 index,
                 value,
@@ -410,18 +443,6 @@ fn scan_command(
                     context: "code-table character",
                     value: character,
                 })?;
-            #[cfg(any(test, feature = "instrumentation"))]
-            match primitive {
-                UnexpandablePrimitive::CatCode => processor.observe_typed_mutation(
-                    "catcode",
-                    format!("{}={}", u32::from(character), catcode_name(value)),
-                ),
-                UnexpandablePrimitive::LcCode => processor.observe_typed_mutation(
-                    "code_table",
-                    format!("lccode:{}={value}", u32::from(character)),
-                ),
-                _ => unreachable!("only code-table primitives are scanned"),
-            }
             Ok(ScannedStep::CodeTable {
                 primitive,
                 character,
@@ -498,29 +519,6 @@ fn scan_command(
     }
 }
 
-#[cfg(any(test, feature = "instrumentation"))]
-fn catcode_name(value: i32) -> &'static str {
-    match value {
-        0 => "escape",
-        1 => "left_brace",
-        2 => "right_brace",
-        3 => "math_shift",
-        4 => "tab_mark",
-        5 => "car_ret",
-        6 => "mac_param",
-        7 => "sup_mark",
-        8 => "sub_mark",
-        9 => "ignore",
-        10 => "spacer",
-        11 => "letter",
-        12 => "other_char",
-        13 => "active_char",
-        14 => "comment",
-        15 => "invalid_char",
-        _ => "invalid",
-    }
-}
-
 fn replay_text(tokens: &[tex_state::token::Token]) -> String {
     tokens
         .iter()
@@ -592,6 +590,41 @@ fn applied_mutation_observation(
             global: *global,
         });
     }
+    if let ScannedStep::Dimen {
+        index,
+        value,
+        global,
+    } = scanned
+    {
+        return Some(MutationRecord {
+            target: "register",
+            value: format!("scaled:{}", value.raw()),
+            key: Some(format!("dimen:{index}")),
+            tokens: None,
+            global: *global,
+        });
+    }
+    if let ScannedStep::Skip {
+        index,
+        value,
+        global,
+    } = scanned
+    {
+        return Some(MutationRecord {
+            target: "register",
+            value: format!(
+                "glue:width={};stretch={};stretch_order={:?};shrink={};shrink_order={:?}",
+                value.width.raw(),
+                value.stretch.raw(),
+                value.stretch_order,
+                value.shrink.raw(),
+                value.shrink_order,
+            ),
+            key: Some(format!("skip:{index}")),
+            tokens: None,
+            global: *global,
+        });
+    }
     if let ScannedStep::Toks {
         index,
         tokens,
@@ -631,6 +664,45 @@ fn applied_mutation_observation(
                     .map(|token| observed_macro_token(token, stores))
                     .collect(),
             ),
+            global: *global,
+        });
+    }
+    if let ScannedStep::IntParam {
+        index,
+        value,
+        global,
+    } = scanned
+    {
+        return Some(MutationRecord {
+            target: "parameter",
+            value: format!("integer_parameter:{index}={value}"),
+            key: None,
+            tokens: None,
+            global: *global,
+        });
+    }
+    if let ScannedStep::CodeTable {
+        primitive,
+        character,
+        value,
+        global,
+    } = scanned
+    {
+        let (target, value) = match primitive {
+            UnexpandablePrimitive::CatCode => {
+                ("catcode", format!("{}={value}", u32::from(*character)))
+            }
+            UnexpandablePrimitive::LcCode => (
+                "code_table",
+                format!("lccode:{}={value}", u32::from(*character)),
+            ),
+            _ => unreachable!("only code-table primitives are scanned"),
+        };
+        return Some(MutationRecord {
+            target,
+            value,
+            key: None,
+            tokens: None,
             global: *global,
         });
     }
@@ -708,6 +780,31 @@ fn apply_scanned_step(
                 stores.set_count_global(index, value);
             } else {
                 stores.set_count(index, value);
+            }
+            Ok(ReplayStep::Continue)
+        }
+        ScannedStep::Dimen {
+            index,
+            value,
+            global,
+        } => {
+            if global {
+                stores.set_dimen_global(index, value);
+            } else {
+                stores.set_dimen(index, value);
+            }
+            Ok(ReplayStep::Continue)
+        }
+        ScannedStep::Skip {
+            index,
+            value,
+            global,
+        } => {
+            let value = stores.intern_glue(value);
+            if global {
+                stores.set_skip_global(index, value);
+            } else {
+                stores.set_skip(index, value);
             }
             Ok(ReplayStep::Continue)
         }

@@ -41,6 +41,11 @@ pub enum InternalValue {
     Glue(GlueSpec),
 }
 
+enum DimensionUnit {
+    Physical(PhysicalUnit),
+    Infinite(Order),
+}
+
 impl CommandProcessor<'_> {
     /// Scans TeX's optional signs from expanded command-owned input.
     pub fn scan_optional_sign(&mut self) -> Result<ScannedScalar<bool>, CommandError> {
@@ -260,40 +265,56 @@ impl CommandProcessor<'_> {
 
     /// Scans a dimension or an internal dimension quantity.
     pub fn scan_dimension(&mut self) -> Result<ScannedScalar<Scaled>, CommandError> {
+        Ok(self.scan_dimension_with_order(false)?.0)
+    }
+
+    fn scan_dimension_with_order(
+        &mut self,
+        allow_infinite: bool,
+    ) -> Result<(ScannedScalar<Scaled>, Order), CommandError> {
         let sign = self.scan_optional_sign()?;
         let provenance = sign.provenance;
         let Some(first) = self.get_x_token()? else {
-            return Ok(ScannedScalar {
-                value: Scaled::from_raw(0),
-                recovery: ScalarRecovery::InsertedZero,
-                provenance,
-            });
-        };
-        let value = match self.internal_value_from_command(&first)? {
-            Some(InternalValue::Dimension(value)) => value,
-            Some(_) => {
-                self.back_input(first)?;
-                return Ok(ScannedScalar {
+            return Ok((
+                ScannedScalar {
                     value: Scaled::from_raw(0),
                     recovery: ScalarRecovery::InsertedZero,
                     provenance,
-                });
-            }
-            None => match first.meaning() {
-                Meaning::CharToken { ch, .. } if ch.is_ascii_digit() || ch == '.' => {
-                    self.scan_decimal_dimension(ch)?
-                }
-                _ => {
-                    self.back_input(first)?;
-                    return Ok(ScannedScalar {
+                },
+                Order::Normal,
+            ));
+        };
+        let (value, order) = match self.internal_value_from_command(&first)? {
+            Some(InternalValue::Dimension(value)) => (value, Order::Normal),
+            Some(_) => {
+                self.back_input(first)?;
+                return Ok((
+                    ScannedScalar {
                         value: Scaled::from_raw(0),
                         recovery: ScalarRecovery::InsertedZero,
                         provenance,
-                    });
+                    },
+                    Order::Normal,
+                ));
+            }
+            None => match first.meaning() {
+                Meaning::CharToken { ch, .. } if ch.is_ascii_digit() || ch == '.' => {
+                    self.scan_decimal_dimension(ch, allow_infinite)?
+                }
+                _ => {
+                    self.back_input(first)?;
+                    return Ok((
+                        ScannedScalar {
+                            value: Scaled::from_raw(0),
+                            recovery: ScalarRecovery::InsertedZero,
+                            provenance,
+                        },
+                        Order::Normal,
+                    ));
                 }
             },
         };
-        Ok(ScannedScalar {
+        let scanned = ScannedScalar {
             value: if sign.value {
                 Scaled::from_raw(-value.raw())
             } else {
@@ -301,7 +322,14 @@ impl CommandProcessor<'_> {
             },
             recovery: ScalarRecovery::None,
             provenance,
-        })
+        };
+        #[cfg(any(test, feature = "instrumentation"))]
+        self.observe(CommandObservation::Scanner(ScannerRecord {
+            kind: "dimension",
+            value: scanned.value.raw().to_string(),
+            tokens: None,
+        }));
+        Ok((scanned, order))
     }
 
     /// Scans a normal or mu glue specification.
@@ -313,23 +341,37 @@ impl CommandProcessor<'_> {
         };
         let mut recovery = width.recovery;
         if self.scan_keyword("plus")?.value {
-            let stretch = self.scan_dimension()?;
+            let (stretch, order) = self.scan_dimension_with_order(true)?;
             value.stretch = stretch.value;
             recovery = stretch.recovery;
-            value.stretch_order = self.scan_infinite_order()?;
+            value.stretch_order = order;
         }
         if self.scan_keyword("minus")?.value {
-            let shrink = self.scan_dimension()?;
+            let (shrink, order) = self.scan_dimension_with_order(true)?;
             value.shrink = shrink.value;
             recovery = shrink.recovery;
-            value.shrink_order = self.scan_infinite_order()?;
+            value.shrink_order = order;
         }
         let _ = mu;
-        Ok(ScannedScalar {
+        let scanned = ScannedScalar {
             value,
             recovery,
             provenance: width.provenance,
-        })
+        };
+        #[cfg(any(test, feature = "instrumentation"))]
+        self.observe(CommandObservation::Scanner(ScannerRecord {
+            kind: "glue",
+            value: format!(
+                "width={};stretch={};stretch_order={:?};shrink={};shrink_order={:?}",
+                scanned.value.width.raw(),
+                scanned.value.stretch.raw(),
+                scanned.value.stretch_order,
+                scanned.value.shrink.raw(),
+                scanned.value.shrink_order,
+            ),
+            tokens: None,
+        }));
+        Ok(scanned)
     }
 
     /// Scans one internal value without treating other syntax as an error.
@@ -411,7 +453,11 @@ impl CommandProcessor<'_> {
         Ok(value)
     }
 
-    fn scan_decimal_dimension(&mut self, first: char) -> Result<Scaled, CommandError> {
+    fn scan_decimal_dimension(
+        &mut self,
+        first: char,
+        allow_infinite: bool,
+    ) -> Result<(Scaled, Order), CommandError> {
         let mut integer = String::new();
         let mut fraction = String::new();
         let mut decimal = first == '.';
@@ -437,14 +483,21 @@ impl CommandProcessor<'_> {
                 }
             }
         }
-        let unit = self.scan_dimension_unit()?;
+        let unit = self.scan_dimension_unit(allow_infinite)?;
         let integer = integer.parse::<i32>().unwrap_or(0);
         let digits = fraction.bytes().map(|byte| byte - b'0').collect::<Vec<_>>();
+        let (unit, order) = match unit {
+            DimensionUnit::Physical(unit) => (unit, Order::Normal),
+            // TeX stores an infinite glue component's finite coefficient as a
+            // scaled value, while its order is carried separately.
+            DimensionUnit::Infinite(order) => (PhysicalUnit::Pt, order),
+        };
         scaled_from_decimal_parts(integer, round_decimal_fraction(&digits), unit)
+            .map(|value| (value, order))
             .map_err(|_| CommandError::InputInvariant)
     }
 
-    fn scan_dimension_unit(&mut self) -> Result<PhysicalUnit, CommandError> {
+    fn scan_dimension_unit(&mut self, allow_infinite: bool) -> Result<DimensionUnit, CommandError> {
         let mut name = String::with_capacity(2);
         while name.len() < 2 {
             let command = self.get_x_token()?.ok_or(CommandError::InputInvariant)?;
@@ -457,30 +510,45 @@ impl CommandProcessor<'_> {
             }
         }
         match name.as_str() {
-            "sp" => Ok(PhysicalUnit::Sp),
-            "pt" => Ok(PhysicalUnit::Pt),
-            "in" => Ok(PhysicalUnit::In),
-            "pc" => Ok(PhysicalUnit::Pc),
-            "cm" => Ok(PhysicalUnit::Cm),
-            "mm" => Ok(PhysicalUnit::Mm),
-            "bp" => Ok(PhysicalUnit::Bp),
-            "dd" => Ok(PhysicalUnit::Dd),
-            "cc" => Ok(PhysicalUnit::Cc),
+            "sp" => Ok(DimensionUnit::Physical(PhysicalUnit::Sp)),
+            "pt" => Ok(DimensionUnit::Physical(PhysicalUnit::Pt)),
+            "in" => Ok(DimensionUnit::Physical(PhysicalUnit::In)),
+            "pc" => Ok(DimensionUnit::Physical(PhysicalUnit::Pc)),
+            "cm" => Ok(DimensionUnit::Physical(PhysicalUnit::Cm)),
+            "mm" => Ok(DimensionUnit::Physical(PhysicalUnit::Mm)),
+            "bp" => Ok(DimensionUnit::Physical(PhysicalUnit::Bp)),
+            "dd" => Ok(DimensionUnit::Physical(PhysicalUnit::Dd)),
+            "cc" => Ok(DimensionUnit::Physical(PhysicalUnit::Cc)),
+            "fi" if allow_infinite => self.scan_infinite_unit(),
             _ => Err(CommandError::InputInvariant),
         }
     }
 
-    fn scan_infinite_order(&mut self) -> Result<Order, CommandError> {
-        for (name, order) in [
-            ("filll", Order::Filll),
-            ("fill", Order::Fill),
-            ("fil", Order::Fil),
-        ] {
-            if self.scan_keyword(name)?.value {
-                return Ok(order);
+    fn scan_infinite_unit(&mut self) -> Result<DimensionUnit, CommandError> {
+        let mut order = Order::Normal;
+        loop {
+            let Some(command) = self.get_x_token()? else {
+                break;
+            };
+            match command.meaning() {
+                Meaning::CharToken { ch: 'l', .. } if order != Order::Filll => {
+                    order = match order {
+                        Order::Normal => Order::Fil,
+                        Order::Fil => Order::Fill,
+                        Order::Fill => Order::Filll,
+                        _ => unreachable!("infinite glue order is bounded"),
+                    };
+                }
+                _ => {
+                    self.back_input(command)?;
+                    break;
+                }
             }
         }
-        Ok(Order::Normal)
+        if order == Order::Normal {
+            return Err(CommandError::InputInvariant);
+        }
+        Ok(DimensionUnit::Infinite(order))
     }
 
     fn internal_value_from_command(

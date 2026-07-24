@@ -279,10 +279,11 @@ executor remains an independent migration surface and may still depend on
 adapter a second input path. The `tex-exec` architecture test enforces this
 source-level boundary, while replay tests exercise typed scanner rollback and
 registered nested input. Canonical INITEX replay installs the static TeX82
-primitive registries before source registration. Integer-parameter assignments
-such as `\year` scan their operands through `CommandProcessor`, publish the
-completed scanner and typed-mutation observations in that order, and only then
-apply the executor-side `Universe` mutation.
+primitive registries before source registration. Integer, dimension, and glue
+assignments such as `\year`, `\dimen`, and `\skip` scan their operands through
+`CommandProcessor`. Replay retains only the completed typed value, applies the
+executor-side `Universe` mutation after the processor borrow ends, then
+publishes the committed mutation observation.
 
 Token-register assignments use the same ownership rule through
 `CommandProcessor::scan_token_register_assignment`: it scans the register

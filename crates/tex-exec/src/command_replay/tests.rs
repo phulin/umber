@@ -159,6 +159,60 @@ fn canonical_initex_replay_scans_and_applies_code_table_assignments() {
     assert_eq!(control.step(&mut universe).expect("end"), ReplayStep::End);
 }
 
+#[test]
+fn canonical_initex_replay_scans_and_applies_dimension_and_glue_registers() {
+    let mut universe = Universe::new();
+    let mut control = CommandReplayControl::tex82_initex(&mut universe);
+    register_source(
+        &mut control,
+        br"\dimen0=1.5pt\skip0=2pt plus 3fil minus 4pt\end",
+    );
+    let mut observations = ObservationRecorder::default();
+
+    assert_eq!(
+        control
+            .step_with_observer(&mut universe, &mut observations)
+            .expect("dimension assignment"),
+        ReplayStep::Continue
+    );
+    assert_eq!(universe.dimen(0).raw(), 98_304);
+    assert!(matches!(
+        observations.0.as_slice(),
+        [..,
+            CommandObservation::Scanner(scanner),
+            CommandObservation::Mutation(mutation)]
+            if scanner.kind == "dimension"
+                && scanner.value == "98304"
+                && mutation.target == "register"
+                && mutation.key.as_deref() == Some("dimen:0")
+                && mutation.value == "scaled:98304"
+    ));
+
+    observations.0.clear();
+    assert_eq!(
+        control
+            .step_with_observer(&mut universe, &mut observations)
+            .expect("glue assignment"),
+        ReplayStep::Continue
+    );
+    let glue = universe.glue(universe.skip(0));
+    assert_eq!(glue.width.raw(), 131_072);
+    assert_eq!(glue.stretch.raw(), 196_608);
+    assert_eq!(glue.stretch_order, tex_state::glue::Order::Fil);
+    assert_eq!(glue.shrink.raw(), 262_144);
+    assert!(matches!(
+        observations.0.as_slice(),
+        [..,
+            CommandObservation::Scanner(scanner),
+            CommandObservation::Mutation(mutation)]
+            if scanner.kind == "glue"
+                && mutation.target == "register"
+                && mutation.key.as_deref() == Some("skip:0")
+                && mutation.value.starts_with("glue:width=131072;")
+    ));
+    assert_eq!(control.step(&mut universe).expect("end"), ReplayStep::End);
+}
+
 #[derive(Default)]
 struct ObservationRecorder(Vec<CommandObservation>);
 
