@@ -254,6 +254,18 @@ the typed `CommandError::MissingInput` recovery. Neither API exposes a source
 cursor, input level, raw token, or host filesystem operation. Snapshot rollback
 therefore restores the complete future input state after every structured scan.
 
+### 5.3.1 Replay ownership gate
+
+`tex-exec::CommandReplayControl` is the only executor-facing replay adapter.
+It may classify `CurrentCommand::meaning()` and apply completed typed values,
+but it must not accept or construct `tex_lex::InputStack`, call raw-token
+delivery, or inspect a raw token carried by a delivered command. The legacy
+executor remains an independent migration surface and may still depend on
+`tex-lex`/`tex-expand`; that temporary dependency does not grant the replay
+adapter a second input path. The `tex-exec` architecture test enforces this
+source-level boundary, while replay tests exercise typed scanner rollback and
+registered nested input.
+
 ### 5.4 Proposed module layout
 
 ```text

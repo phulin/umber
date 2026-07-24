@@ -1,3 +1,4 @@
+use std::fs;
 use std::path::Path;
 
 use test_support::{CompileFailDependency, assert_compile_fail};
@@ -29,5 +30,33 @@ fn scoped_execution_transaction_cannot_escape_public_api() {
         &manifest_dir.join("tests/ui/execution_transaction_private.rs"),
         &dependencies,
         &["E0603", "module `transaction` is private"],
+    );
+}
+
+#[test]
+#[allow(clippy::disallowed_methods)] // host-side architecture test
+fn command_replay_has_no_legacy_input_or_raw_command_classifier() {
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let replay = fs::read_to_string(manifest_dir.join("src/command_replay.rs"))
+        .expect("read command replay boundary");
+
+    for forbidden in [
+        "use tex_lex",
+        ": InputStack",
+        "&mut InputStack",
+        "next_semantic_raw_token",
+    ] {
+        assert!(
+            !replay.contains(forbidden),
+            "command replay must receive command-owned delivery, not {forbidden}"
+        );
+    }
+    assert!(
+        replay.contains("match command.meaning()"),
+        "replay dispatch must classify typed CurrentCommand meanings"
+    );
+    assert!(
+        !replay.contains("command.token()"),
+        "replay must not classify a raw token from CurrentCommand"
     );
 }

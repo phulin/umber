@@ -98,6 +98,39 @@ fn replay_expands_registered_input_without_executor_source_consumption() {
 }
 
 #[test]
+fn replay_command_snapshot_restores_typed_scanner_input_deterministically() {
+    let mut universe = Universe::new();
+    crate::install_unexpandable_primitives(&mut universe);
+    let mut control = CommandReplayControl::default();
+    register_source(&mut control, br"\count12=7\end");
+    let snapshot = control.command_mut().snapshot();
+
+    assert_eq!(
+        control.step(&mut universe).expect("first assignment"),
+        ReplayStep::Continue
+    );
+    assert_eq!(universe.count(12), 7);
+
+    control
+        .command_mut()
+        .rollback(snapshot)
+        .expect("command snapshot restores scanner-owned input");
+    let mut replayed_universe = Universe::new();
+    crate::install_unexpandable_primitives(&mut replayed_universe);
+    assert_eq!(
+        control
+            .step(&mut replayed_universe)
+            .expect("replayed assignment"),
+        ReplayStep::Continue
+    );
+    assert_eq!(replayed_universe.count(12), 7);
+    assert_eq!(
+        control.step(&mut replayed_universe).expect("end"),
+        ReplayStep::End
+    );
+}
+
+#[test]
 fn replay_dispatches_modes_effects_and_typed_alignment_lifecycle() {
     let mut universe = Universe::new();
     crate::install_unexpandable_primitives(&mut universe);
