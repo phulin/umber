@@ -539,6 +539,62 @@ fn numeric_and_ifcase_selection_use_the_same_skip_machine() {
 }
 
 #[test]
+fn ifcase_observes_its_limit_only_after_skipping_to_the_selected_limb() {
+    let mut command = CommandState::default();
+    let mut runtime = CommandRuntime::default();
+    let mut universe = Universe::new();
+    let if_case = install(&mut universe, "ifcase", ExpandablePrimitive::IfCase);
+    let or = install(&mut universe, "or", ExpandablePrimitive::Or);
+    let fi = install(&mut universe, "fi", ExpandablePrimitive::Fi);
+    push(
+        &mut command,
+        vec![
+            if_case,
+            other('2'),
+            other('a'),
+            or,
+            other('b'),
+            or,
+            other('c'),
+            fi,
+        ],
+    );
+    let mut capabilities = CommandHostCapabilities::default();
+    let mut recorder = Recorder::default();
+    {
+        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities)
+            .with_observer(&mut recorder);
+        assert_eq!(next_character(&mut processor), 'c');
+    }
+
+    let conditions = recorder
+        .0
+        .iter()
+        .filter_map(|observation| match observation {
+            CommandObservation::Condition(condition) => Some(condition),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert!(matches!(
+        conditions.as_slice(),
+        [push, first_or, second_or, limit, branch]
+            if push.transition == "push"
+                && push.limit == "evaluating"
+                && first_or.transition == "branch"
+                && first_or.limit == "evaluating"
+                && first_or.branch.as_deref() == Some("or")
+                && second_or.transition == "branch"
+                && second_or.limit == "evaluating"
+                && second_or.branch.as_deref() == Some("or")
+                && limit.transition == "limit"
+                && limit.limit == "or"
+                && branch.transition == "branch"
+                && branch.limit == "or"
+                && branch.branch.as_deref() == Some("case")
+    ));
+}
+
+#[test]
 fn ifdim_uses_typed_units_and_internal_dimensions() {
     let mut command = CommandState::default();
     let mut runtime = CommandRuntime::default();

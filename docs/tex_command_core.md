@@ -1329,6 +1329,12 @@ under the pre-change limit, then changes the frame to `fi` for `\else` (or
 records and pops it for `\fi`). This keeps the observable TeX82 transition
 order separate from the stack's typed state transitions.
 
+An `\ifcase` frame likewise remains `evaluating` while `pass_text` skips each
+non-selected limb. Each traversed `\or` is recorded under that pre-change
+limit; only after the selected delimiter restores normal scanner status does
+the command core change the frame to `or` and record the selected `case`
+branch. This projection ordering does not alter condition-stack evaluation.
+
 The command host installs an ephemeral `ConditionalState` projection for each
 executor operation. It contains only the three-way mode family and the
 `\ifinner` fact, so it is neither part of `CommandState` nor captured by a

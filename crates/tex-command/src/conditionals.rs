@@ -352,24 +352,28 @@ impl CommandProcessor<'_> {
         condition: ConditionId,
         selected: i32,
     ) -> Result<(), CommandError> {
-        self.command
-            .conditions
-            .change_if_limit(condition, IfLimit::Or)
-            .then_some(())
-            .ok_or(CommandError::InputInvariant)?;
-        let frame = self
-            .command
-            .conditions
-            .frame(condition)
-            .cloned()
-            .ok_or(CommandError::InputInvariant)?;
-        self.observe_condition("limit", &frame, None);
-        self.observe_condition("branch", &frame, Some(selected.to_string()));
-        if selected < 0 {
-            self.skip_to_else_or_fi(condition)
+        let selected_limb = if selected < 0 {
+            self.skip_to_else_or_fi(condition)?;
+            false
         } else {
-            self.skip_ifcase_limbs(condition, selected)
+            self.skip_ifcase_limbs(condition, selected)?
+        };
+        if selected_limb {
+            self.command
+                .conditions
+                .change_if_limit(condition, IfLimit::Or)
+                .then_some(())
+                .ok_or(CommandError::InputInvariant)?;
+            let frame = self
+                .command
+                .conditions
+                .frame(condition)
+                .cloned()
+                .ok_or(CommandError::InputInvariant)?;
+            self.observe_condition("limit", &frame, None);
+            self.observe_condition("branch", &frame, Some("case".into()));
         }
+        Ok(())
     }
 
     fn evaluate_boolean(&mut self, kind: ConditionalKind) -> Result<bool, CommandError> {
@@ -524,23 +528,30 @@ impl CommandProcessor<'_> {
         &mut self,
         condition: ConditionId,
         mut remaining: i32,
-    ) -> Result<(), CommandError> {
+    ) -> Result<bool, CommandError> {
         if remaining == 0 {
-            return Ok(());
+            return Ok(true);
         }
         loop {
             match self.pass_text(condition, ScannerWarning(0))?.delimiter {
                 ConditionalDelimiter::Or => {
+                    let evaluating = self
+                        .command
+                        .conditions
+                        .frame(condition)
+                        .cloned()
+                        .ok_or(CommandError::InputInvariant)?;
+                    self.observe_condition("branch", &evaluating, Some("or".into()));
                     remaining -= 1;
                     if remaining == 0 {
-                        return Ok(());
+                        return Ok(true);
                     }
                 }
                 ConditionalDelimiter::Else => {
                     self.command
                         .conditions
                         .change_if_limit(condition, IfLimit::Fi);
-                    return Ok(());
+                    return Ok(false);
                 }
                 ConditionalDelimiter::Fi => {
                     let frame = self
@@ -549,7 +560,7 @@ impl CommandProcessor<'_> {
                         .pop()
                         .ok_or(CommandError::InputInvariant)?;
                     self.observe_condition("pop", &frame, None);
-                    return Ok(());
+                    return Ok(false);
                 }
             }
         }
