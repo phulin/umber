@@ -10,7 +10,7 @@ mod tokenizer;
 pub(crate) use levels::InputLevel;
 pub(crate) use source::{RegisteredSource, SourceCursor};
 
-pub use lines::{LineTerminator, PhysicalLine, SourceCharacter, SourceRange};
+pub use lines::{LineTerminator, PhysicalLine, SourceCharacter, SourceRange, SourceScalarRange};
 pub use source::{
     MalformedUnicodeRange, RegisteredSourceKind, SourceRegistration, SourceRegistrationError,
 };

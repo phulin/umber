@@ -145,6 +145,33 @@ impl CommandState {
         level.source.next_exact_byte_step(endlinechar, catcode)
     }
 
+    /// Tokenizes one Unicode-scalar source step using the caller's live code
+    /// table.
+    ///
+    /// The callback receives only Unicode-domain [`crate::CharacterCode`]
+    /// values, including synthetic `endlinechar` and superscript-reduction
+    /// results. Sparse-table defaults belong to the aggregate code table, not
+    /// this tokenizer.
+    ///
+    /// # Panics
+    ///
+    /// Panics when called for an exact-byte command profile.
+    pub fn next_unicode_source_step(
+        &mut self,
+        endlinechar: i32,
+        catcode: impl FnMut(crate::CharacterCode) -> tex_state::token::Catcode,
+    ) -> SourceTokenizationStep {
+        assert_eq!(
+            self.profile().character_mode(),
+            crate::CharacterMode::UnicodeExtended,
+            "Unicode tokenization requires a UnicodeExtended command profile"
+        );
+        let Some(level) = self.input.levels.last_mut() else {
+            return SourceTokenizationStep::End;
+        };
+        level.source.next_unicode_step(endlinechar, catcode)
+    }
+
     /// Returns the immutable profile selected when this job was created.
     #[must_use]
     pub const fn profile(&self) -> CommandProfile {

@@ -24,7 +24,8 @@ pub use host::{CommandHostCapabilities, CommandHostContext};
 pub use input::{
     InvalidSourceCharacter, LexerState, LineTerminator, MalformedUnicodeRange, PhysicalLine,
     RegisteredSourceKind, SourceCharacter, SourceControlSequenceKind, SourceRange,
-    SourceRegistration, SourceRegistrationError, SourceToken, SourceTokenizationStep,
+    SourceRegistration, SourceRegistrationError, SourceScalarRange, SourceToken,
+    SourceTokenizationStep,
 };
 pub use processor::CommandProcessor;
 pub use profile::{

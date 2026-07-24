@@ -53,6 +53,28 @@ fn incomplete_unicode_sequence_reports_through_end_of_backing() {
 }
 
 #[test]
+fn unicode_registration_rejects_overlong_surrogate_and_stray_continuations() {
+    let malformed: &[(&[u8], u64, u64)] = &[
+        (b"\xc0\xaf", 0, 1),
+        (b"\xed\xa0\x80", 0, 1),
+        (b"ok\x80", 2, 3),
+    ];
+
+    for &(bytes, start, end) in malformed {
+        let error = RegisteredSource::register(
+            SourceId::new(4),
+            CommandProfile::unicode_extended(crate::CommandDialect::Tex82),
+            SourceRegistration::new(RegisteredSourceKind::Generated, Arc::<[u8]>::from(bytes)),
+        )
+        .expect_err("malformed UTF-8 must be rejected");
+        assert_eq!(
+            error,
+            SourceRegistrationError::MalformedUnicode(MalformedUnicodeRange { start, end })
+        );
+    }
+}
+
+#[test]
 fn exact_byte_registration_preserves_every_byte() {
     let bytes: Arc<[u8]> = (u8::MIN..=u8::MAX).collect::<Vec<_>>().into();
     let registered = RegisteredSource::register(

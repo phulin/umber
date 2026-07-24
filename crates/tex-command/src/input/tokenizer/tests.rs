@@ -27,6 +27,13 @@ fn state_for_profile(bytes: &[u8], profile: CommandProfile) -> CommandState {
     state
 }
 
+fn unicode_state(text: &str) -> CommandState {
+    state_for_profile(
+        text.as_bytes(),
+        CommandProfile::unicode_extended(CommandDialect::Tex82),
+    )
+}
+
 fn classic_catcode(code: CharacterCode) -> Catcode {
     match code.to_byte().expect("exact byte") {
         b'\\' => Catcode::Escape,
@@ -54,6 +61,7 @@ fn character(step: SourceTokenizationStep) -> (u8, Catcode, u64, u64) {
             code,
             catcode,
             range,
+            ..
         } => (
             code.to_byte().expect("exact byte"),
             catcode,
@@ -66,13 +74,71 @@ fn character(step: SourceTokenizationStep) -> (u8, Catcode, u64, u64) {
 
 fn control(step: SourceTokenizationStep) -> (Vec<u8>, SourceControlSequenceKind, u64, u64) {
     match token(step) {
-        SourceToken::ControlSequence { name, kind, range } => (
+        SourceToken::ControlSequence {
+            name, kind, range, ..
+        } => (
             name.into_iter()
                 .map(|code| code.to_byte().expect("exact byte"))
                 .collect(),
             kind,
             range.start(),
             range.end(),
+        ),
+        other => panic!("expected control-sequence token, found {other:?}"),
+    }
+}
+
+fn unicode_catcode(code: CharacterCode) -> Catcode {
+    match code.to_char().expect("Unicode scalar") {
+        '\\' => Catcode::Escape,
+        '{' => Catcode::BeginGroup,
+        '}' => Catcode::EndGroup,
+        '^' => Catcode::Superscript,
+        '%' => Catcode::Comment,
+        ' ' | '\t' => Catcode::Space,
+        '\r' => Catcode::EndLine,
+        'a'..='z' | 'A'..='Z' | 'λ' | 'é' => Catcode::Letter,
+        _ => Catcode::Other,
+    }
+}
+
+fn unicode_character(step: SourceTokenizationStep) -> (char, Catcode, u64, u64, u64, u64) {
+    match token(step) {
+        SourceToken::Character {
+            code,
+            catcode,
+            range,
+            scalar_range,
+        } => (
+            code.to_char().expect("Unicode scalar"),
+            catcode,
+            range.start(),
+            range.end(),
+            scalar_range.start(),
+            scalar_range.end(),
+        ),
+        other => panic!("expected character token, found {other:?}"),
+    }
+}
+
+fn unicode_control(
+    step: SourceTokenizationStep,
+) -> (Vec<char>, SourceControlSequenceKind, u64, u64, u64, u64) {
+    match token(step) {
+        SourceToken::ControlSequence {
+            name,
+            kind,
+            range,
+            scalar_range,
+        } => (
+            name.into_iter()
+                .map(|code| code.to_char().expect("Unicode scalar"))
+                .collect(),
+            kind,
+            range.start(),
+            range.end(),
+            scalar_range.start(),
+            scalar_range.end(),
         ),
         other => panic!("expected control-sequence token, found {other:?}"),
     }
@@ -288,4 +354,151 @@ fn snapshots_restore_the_lexer_state_and_exact_source_cursor() {
 
     state.rollback(snapshot).expect("same-profile snapshot");
     assert_eq!(state.next_exact_source_step(13, classic_catcode), expected);
+}
+
+#[test]
+fn unicode_words_symbols_active_and_combining_scalars_keep_both_ranges() {
+    let mut state = unicode_state("\\λé  \\🦀🙂\u{301}");
+    let catcode = |code: CharacterCode| match code.to_char().expect("Unicode scalar") {
+        '🙂' => Catcode::Active,
+        other => unicode_catcode(CharacterCode::from(other)),
+    };
+
+    assert_eq!(
+        unicode_control(state.next_unicode_source_step(-1, catcode)),
+        (vec!['λ', 'é'], SourceControlSequenceKind::Word, 0, 5, 0, 3)
+    );
+    assert_eq!(
+        unicode_control(state.next_unicode_source_step(-1, catcode)),
+        (vec!['🦀'], SourceControlSequenceKind::Symbol, 7, 12, 5, 7)
+    );
+    assert_eq!(
+        unicode_control(state.next_unicode_source_step(-1, catcode)),
+        (vec!['🙂'], SourceControlSequenceKind::Active, 12, 16, 7, 8)
+    );
+    assert_eq!(
+        unicode_character(state.next_unicode_source_step(-1, catcode)),
+        ('\u{301}', Catcode::Other, 16, 18, 8, 9)
+    );
+}
+
+#[test]
+fn unicode_m_n_s_states_use_unicode_domain_space_par_and_endline() {
+    let mut state = unicode_state("é  \n\n λ\tπ\n");
+
+    assert_eq!(
+        unicode_character(state.next_unicode_source_step(13, unicode_catcode)),
+        ('é', Catcode::Letter, 0, 2, 0, 1)
+    );
+    assert_eq!(
+        unicode_character(state.next_unicode_source_step(13, unicode_catcode)),
+        (' ', Catcode::Space, 2, 2, 1, 2)
+    );
+    assert_eq!(
+        unicode_control(state.next_unicode_source_step(13, unicode_catcode)),
+        (
+            vec!['p', 'a', 'r'],
+            SourceControlSequenceKind::Paragraph,
+            5,
+            5,
+            0,
+            1
+        )
+    );
+    assert_eq!(
+        unicode_character(state.next_unicode_source_step(13, unicode_catcode)),
+        ('λ', Catcode::Letter, 7, 9, 1, 2)
+    );
+    assert_eq!(
+        unicode_character(state.next_unicode_source_step(13, unicode_catcode)),
+        (' ', Catcode::Space, 9, 10, 2, 3)
+    );
+    assert_eq!(
+        unicode_character(state.next_unicode_source_step(13, unicode_catcode)),
+        ('π', Catcode::Other, 10, 12, 3, 4)
+    );
+}
+
+#[test]
+fn unicode_catcode_mutation_is_observable_and_defaults_remain_external() {
+    let mut state = unicode_state("🦀🙂");
+    let active = Cell::new(false);
+    let catcode = |code: CharacterCode| {
+        assert!(code.is_unicode_scalar());
+        match code.to_char().expect("Unicode scalar") {
+            '🙂' if active.get() => Catcode::Active,
+            _ => Catcode::Other,
+        }
+    };
+
+    assert_eq!(
+        unicode_character(state.next_unicode_source_step(-1, catcode)),
+        ('🦀', Catcode::Other, 0, 4, 0, 1)
+    );
+    active.set(true);
+    assert_eq!(
+        unicode_control(state.next_unicode_source_step(-1, catcode)),
+        (vec!['🙂'], SourceControlSequenceKind::Active, 4, 8, 1, 2)
+    );
+}
+
+#[test]
+fn unicode_superscript_policy_accepts_unicode_forms_and_exact_ranges() {
+    let mut state = unicode_state("^^^^00E9 ^^4A ^^é");
+
+    assert_eq!(
+        unicode_character(state.next_unicode_source_step(-1, unicode_catcode)),
+        ('é', Catcode::Letter, 0, 8, 0, 8)
+    );
+    assert_eq!(
+        unicode_character(state.next_unicode_source_step(-1, unicode_catcode)),
+        (' ', Catcode::Space, 8, 9, 8, 9)
+    );
+    assert_eq!(
+        unicode_character(state.next_unicode_source_step(-1, unicode_catcode)),
+        ('J', Catcode::Letter, 9, 13, 9, 13)
+    );
+    assert_eq!(
+        unicode_character(state.next_unicode_source_step(-1, unicode_catcode)),
+        (' ', Catcode::Space, 13, 14, 13, 14)
+    );
+    assert_eq!(
+        unicode_character(state.next_unicode_source_step(-1, unicode_catcode)),
+        ('©', Catcode::Other, 14, 18, 14, 17)
+    );
+}
+
+#[test]
+fn unicode_invalid_reduction_reports_semantic_code_and_scalar_spelling() {
+    let mut state = unicode_state("^^^^263Aλ");
+    let catcode = |code: CharacterCode| {
+        if code.to_char() == Ok('☺') {
+            Catcode::Invalid
+        } else {
+            unicode_catcode(code)
+        }
+    };
+
+    match state.next_unicode_source_step(-1, catcode) {
+        SourceTokenizationStep::InvalidCharacter(invalid) => {
+            assert_eq!(invalid.code().to_char(), Ok('☺'));
+            assert_eq!((invalid.range().start(), invalid.range().end()), (0, 8));
+            assert_eq!(
+                (invalid.scalar_range().start(), invalid.scalar_range().end()),
+                (0, 8)
+            );
+        }
+        other => panic!("expected invalid-character step, found {other:?}"),
+    }
+    assert_eq!(
+        unicode_character(state.next_unicode_source_step(-1, catcode)),
+        ('λ', Catcode::Letter, 8, 10, 8, 9)
+    );
+}
+
+#[test]
+#[should_panic(expected = "exact-byte tokenization requires an exact-byte command profile")]
+fn unicode_profile_cannot_enter_exact_byte_tokenizer() {
+    let mut state = unicode_state("x");
+    let _ = state.next_exact_source_step(-1, unicode_catcode);
 }

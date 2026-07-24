@@ -44,6 +44,34 @@ impl SourceRange {
     }
 }
 
+/// A half-open decoded-scalar range within one normalized physical line.
+///
+/// Synthetic `endlinechar` occupies one scalar position even though its
+/// physical [`SourceRange`] is empty.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct SourceScalarRange {
+    start: u64,
+    end: u64,
+}
+
+impl SourceScalarRange {
+    pub(crate) const fn new(start: u64, end: u64) -> Self {
+        Self { start, end }
+    }
+
+    /// Inclusive decoded-scalar offset within the normalized line.
+    #[must_use]
+    pub const fn start(self) -> u64 {
+        self.start
+    }
+
+    /// Exclusive decoded-scalar offset within the normalized line.
+    #[must_use]
+    pub const fn end(self) -> u64 {
+        self.end
+    }
+}
+
 /// Exact spelling of one physical line terminator.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum LineTerminator {

@@ -295,7 +295,10 @@ scalars, and is independent of host text encoding.
 In `EightBitExact`, valid input character codes are `0..=255`, physical input
 is consumed byte-for-byte, and `^^` notation follows the selected canonical
 engine. In `UnicodeExtended`, valid values are Unicode scalar values and the
-input decoder must preserve exact byte ranges for provenance.
+input decoder must preserve exact byte ranges for provenance. Canonical source
+tokens additionally retain half-open decoded-scalar positions within their
+normalized physical line; a synthetic `endlinechar` occupies one scalar
+position while retaining a zero-width physical byte range.
 
 Control-sequence names are semantically sequences of `CharacterCode`. Their
 storage may use a compact UTF-8 representation when lossless for the active
@@ -736,6 +739,23 @@ semantic lookup.
 
 Invalid input emits the canonical recoverable diagnostic and restarts raw
 delivery after consuming the offending character.
+
+`UnicodeExtended` reuses the M/N/S transition machine but is an explicit Umber
+extension, not pdfTeX input compatibility. Registration rejects malformed
+UTF-8 before allocating a source identity. Delivery emits only Unicode-domain
+`CharacterCode` values, including synthetic spaces, `\par` spelling, and
+superscript-reduction results. The aggregate sparse code table supplies every
+catcode (and therefore its defaults); tokenization performs a fresh query for
+each classified scalar and does not embed a Unicode-category heuristic.
+
+The Unicode superscript policy accepts a repeated current-catcode superscript
+scalar followed by either two ASCII hexadecimal digits, or two further copies
+of that scalar and four ASCII hexadecimal digits. ASCII hexadecimal digits are
+case-insensitive. Otherwise the following scalar is transformed by adding 64
+below U+0040 or subtracting 64 at and above U+0040, provided the result remains
+a valid Unicode scalar. A transformed superscript scalar is reprocessed. The
+complete notation contributes to both the exact UTF-8 byte range and decoded
+scalar range of the resulting token or invalid-character recovery step.
 
 ## 14. Canonical `get_next`
 
