@@ -10,6 +10,9 @@ use tex_state::meaning::Meaning;
 use tex_state::token::{Catcode, OriginId};
 use tex_state::{SourceId, TracedTokenList};
 
+use crate::processor::status::{
+    AlignmentId, AlignmentScanContext, ScannerStatus, ScannerWarning, TokenBuilderId,
+};
 use crate::scan_toks::{ScanToksMode, ScannedToks};
 use crate::{CommandError, CommandProcessor};
 
@@ -152,6 +155,49 @@ impl CommandProcessor<'_> {
     pub fn replay_alignment_preamble_opening(&mut self) -> Result<(), CommandError> {
         let opening = self.scan_left_brace(true)?;
         self.back_input_after_backup_replay(opening)
+    }
+
+    /// Enters TeX82's live alignment-preamble scanner episode.
+    ///
+    /// `init_align` establishes `scanner_status := aligning` after its
+    /// required brace has been replayed and backed up, but before the first
+    /// `get_preamble_token` retires that backup.  The status therefore belongs
+    /// to the command-owned input transition, rather than to executor replay
+    /// or the preamble parser.
+    pub fn begin_alignment_preamble_scan(&mut self) -> Result<(), CommandError> {
+        // `get_preamble_token` first observes the brace replayed by the
+        // second backup, then `init_align` installs its live scanner status.
+        // Its next raw fetch retires that backup before reading the first
+        // preamble token.
+        let _ = self.scan_left_brace(true)?;
+        let alignment = self
+            .command
+            .alignment
+            .active_alignment
+            .ok_or(CommandError::InputInvariant)?;
+        self.command
+            .alignment
+            .set_preamble_phase(alignment)
+            .map_err(|_| CommandError::InputInvariant)?;
+        let _prior =
+            self.command
+                .begin_scanner_status(ScannerStatus::Aligning(AlignmentScanContext {
+                    alignment: AlignmentId(alignment.raw()),
+                    builder: TokenBuilderId(0),
+                    warning: ScannerWarning(0),
+                }));
+        self.observe_scanner_status(true);
+        #[cfg(any(test, feature = "instrumentation"))]
+        self.observe(crate::CommandObservation::Alignment(
+            crate::AlignmentRecord {
+                transition: "preamble_start",
+                alignment: Some(alignment.raw()),
+                align_state: self.command.alignment.align_state,
+                previous_align_state: None,
+            },
+        ));
+        let _ = self.get_token()?;
+        Ok(())
     }
 
     /// Scans TeX's balanced general text through the canonical `scan_toks`

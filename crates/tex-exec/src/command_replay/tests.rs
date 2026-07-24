@@ -252,6 +252,42 @@ fn alignment_preamble_opener_uses_command_owned_backup_before_source_resumes() {
         "unexpected observations: {:?}",
         observations.0
     );
+
+    observations.0.clear();
+    assert_eq!(
+        control
+            .step_with_observer(&mut universe, &mut observations)
+            .expect("replayed brace enters the live preamble scanner"),
+        ReplayStep::Continue
+    );
+    assert!(
+        matches!(
+            observations.0.as_slice(),
+            [
+                CommandObservation::Alignment(state_change),
+                CommandObservation::Command(raw),
+                CommandObservation::Command(expanded),
+                CommandObservation::ScannerStatus(status),
+                CommandObservation::Alignment(preamble_start),
+                CommandObservation::Input(retirement),
+                CommandObservation::Command(space),
+            ]
+                if state_change.transition == "begin_group"
+                    && state_change.align_state == -999_999
+                    && state_change.previous_align_state == Some(-1_000_000)
+                    && matches!(raw.spelling, ObservedToken::Character { character: '{', .. })
+                    && matches!(expanded.spelling, ObservedToken::Character { character: '{', .. })
+                    && status.entering
+                    && status.status.starts_with("Aligning")
+                    && preamble_start.transition == "preamble_start"
+                    && preamble_start.align_state == -1_000_000
+                    && retirement.transition == InputTransition::Retire
+                    && retirement.reason == InputReason::Backup
+                    && matches!(space.spelling, ObservedToken::Character { character: ' ', .. })
+        ),
+        "unexpected observations: {:?}",
+        observations.0
+    );
 }
 
 #[test]
