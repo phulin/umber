@@ -371,6 +371,13 @@ impl CommandProcessor<'_> {
         Ok(())
     }
 
+    /// Installs TeX82 `conv_toks` output as an inserted recovery level.
+    ///
+    /// Conversion output is not an ordinary token-list replay: TeX82 pushes
+    /// it through `back_list` with `token_type=inserted`.  Keeping that
+    /// identity on the live input frame makes both retirement and detached
+    /// observation follow the actual input transition, rather than asking a
+    /// trace adapter to recognize rendered text later.
     fn push_rendered_text(&mut self, text: &str, parent: OriginId) {
         let origin = self
             .state
@@ -391,12 +398,35 @@ impl CommandProcessor<'_> {
                 )
             })
             .collect::<Vec<_>>();
-        self.command.push_token_level(
+        // `conv_toks` enters the inserted list through `back_list`, whose
+        // trace seam reports its current token. The full rendered string is
+        // nevertheless retained by the actual input level below.
+        #[cfg(any(test, feature = "instrumentation"))]
+        let observed = tokens.first().copied();
+        let level = self.command.push_token_level(
             TokenPayload::Transient(SharedTokenBuffer::new(tokens)),
-            TokenBehavior::Ordinary,
+            TokenBehavior::Recovery,
             RetirementBehavior::Pop,
             ReplayTrace::Transient(crate::input::TransientReplayReason::Inserted),
         );
+        #[cfg(not(any(test, feature = "instrumentation")))]
+        let _ = level;
+        #[cfg(any(test, feature = "instrumentation"))]
+        {
+            self.observe(CommandObservation::Input(InputRecord {
+                transition: InputTransition::Recovery,
+                reason: InputReason::Recovery,
+                level: level.0,
+                position: 0,
+            }));
+            self.observe(CommandObservation::Recovery(RecoveryRecord {
+                backup: false,
+                tokens: observed
+                    .into_iter()
+                    .map(|token| self.observed_token(token))
+                    .collect(),
+            }));
+        }
     }
 
     fn replay_expandafter_first(&mut self, command: CurrentCommand) {
@@ -565,7 +595,9 @@ mod tests {
 
     use super::*;
     use crate::input::{ReplayTrace, RetirementBehavior};
-    use crate::observation::{CommandDeliveryBoundary, CommandObservation, CommandObserver};
+    use crate::observation::{
+        CommandDeliveryBoundary, CommandObservation, CommandObserver, InputTransition,
+    };
     use crate::{
         CommandHostCapabilities, CommandHostContext, CommandRuntime, CommandState,
         RegisteredSourceKind, SourceRegistration,
@@ -777,6 +809,67 @@ mod tests {
         let mut capabilities = CommandHostCapabilities::default();
         let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
         assert_eq!(rendered(&mut processor), "-42ix\\target");
+    }
+
+    #[test]
+    fn conversion_rendering_publishes_recovery_input_before_its_first_token() {
+        let mut command = CommandState::default();
+        let mut runtime = CommandRuntime::default();
+        let mut universe = Universe::new();
+        let number = install_expandable(&mut universe, "number", ExpandablePrimitive::Number);
+        command.push_token_level(
+            TokenPayload::Transient(SharedTokenBuffer::new(vec![
+                traced(Token::Cs(number)),
+                traced(Token::Char {
+                    ch: '-',
+                    cat: Catcode::Other,
+                }),
+                traced(Token::Char {
+                    ch: '4',
+                    cat: Catcode::Other,
+                }),
+                traced(Token::Char {
+                    ch: '2',
+                    cat: Catcode::Other,
+                }),
+            ])),
+            TokenBehavior::Ordinary,
+            RetirementBehavior::Pop,
+            ReplayTrace::BackedUp,
+        );
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut recorder = Recorder::default();
+        {
+            let mut processor =
+                processor(&mut command, &mut runtime, &mut universe, &mut capabilities)
+                    .with_observer(&mut recorder);
+            assert_eq!(rendered(&mut processor), "-42");
+        }
+
+        let scanner = recorder
+            .0
+            .iter()
+            .position(|record| matches!(record, CommandObservation::Scanner(scanner) if scanner.kind == "integer" && scanner.value == "-42"))
+            .expect("number scanner is observed before conversion output");
+        let recovery = recorder
+            .0
+            .iter()
+            .position(|record| matches!(record, CommandObservation::Input(input) if input.transition == InputTransition::Recovery))
+            .expect("conversion output creates a recovery input level");
+        let inserted = recorder
+            .0
+            .iter()
+            .position(|record| matches!(record, CommandObservation::Recovery(recovery) if !recovery.backup && matches!(recovery.tokens.as_slice(), [crate::ObservedToken::Character { character: '-', catcode: Catcode::Other }, ..])))
+            .expect("conversion output reports its inserted minus token");
+        let raw = recorder
+            .0
+            .iter()
+            .enumerate()
+            .skip(recovery + 1)
+            .position(|(_, record)| matches!(record, CommandObservation::Command(command) if command.boundary == CommandDeliveryBoundary::Raw && matches!(command.spelling, crate::ObservedToken::Character { character: '-', catcode: Catcode::Other })))
+            .map(|offset| recovery + 1 + offset)
+            .expect("rendered minus returns through raw delivery");
+        assert!(scanner < recovery && recovery < inserted && inserted < raw);
     }
 
     #[test]
