@@ -19,6 +19,9 @@ mod scanners;
 mod snapshot;
 mod state;
 
+#[cfg(test)]
+mod fixture_replay;
+
 pub use command::{CurrentCommand, DeliveryStamp};
 pub use error::CommandError;
 pub use host::{CommandHostCapabilities, CommandHostContext, ConditionalMode, ConditionalState};

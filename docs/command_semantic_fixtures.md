@@ -139,6 +139,16 @@ compare a future Umber observer stream with `CommittedFixture::stream`, but
 they may not replace fixture data, derive expectations from Umber, or fall
 back to a live engine.
 
+The test-gated `tex-command` fixture registry first runs the same complete
+offline TeX82 suite validation, then loads every registered fixture source in
+logical-name order. Each source is registered as immutable command input under
+the manifest-pinned `TeX82 + EightBitExact` INITEX profile and replayed from a
+fresh explicit command state through `CommandProcessor::get_next`. The adapter
+captures only command-owned observer records and derives a finite delivery
+bound from the registered source bytes. It does not add another lexer,
+expander, executor, fixture generator, or production dependency on
+`tex-oracle`; ordered schema comparison remains a separate test-only layer.
+
 ## Regeneration selection
 
 The representative selector is pinned by

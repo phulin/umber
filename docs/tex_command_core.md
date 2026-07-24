@@ -1736,8 +1736,12 @@ logical input, recovery, scanner-status, macro, condition, typed scanner,
 token-list, alignment, mutation, and effect records. Command deliveries carry
 an opaque-origin flag plus exact input-level, cursor-slot, and
 processor-delivery provenance; all other records retain only command-owned
-typed values and stable identities. The future trace adapter maps those owned
-records to schema values outside the production command dependency graph.
+typed values and stable identities. The test-only fixture adapter maps those
+owned records to a deterministic replay capture outside the production command
+dependency graph. It validates the locked TeX82 suite, registers each
+manifest-bound source under the exact INITEX profile, and drives the canonical
+raw-delivery loop with a source-byte-derived bound; ordered schema comparison
+remains separate.
 Observers are non-fallible, receive records only after the transition commits,
 and are neither retained in `CommandState` nor captured by snapshots.
 Production builds compile this seam out; explicit instrumentation builds enable
