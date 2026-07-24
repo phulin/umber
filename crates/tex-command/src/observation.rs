@@ -132,9 +132,15 @@ pub(crate) fn canonical_command_identity(meaning: Meaning) -> (String, Option<i6
             UnexpandablePrimitive::Count => ("register".into(), Some(0)),
             UnexpandablePrimitive::Dimen => ("register".into(), Some(1)),
             UnexpandablePrimitive::Skip => ("register".into(), Some(2)),
-            UnexpandablePrimitive::Toks => ("toks_register".into(), Some(3)),
+            // `\toks` is its own command family in TeX82 and starts at
+            // `cur_chr = 0`; the Rust selector is not a trace operand.
+            UnexpandablePrimitive::Toks => ("toks_register".into(), Some(0)),
             UnexpandablePrimitive::CatCode => ("def_code".into(), Some(25_631)),
             UnexpandablePrimitive::LcCode => ("def_code".into(), Some(25_887)),
+            // TeX.web's primitive `\par` is `par_end` with the distinguished
+            // `cur_chr` value 256; this is not the Rust primitive enum's
+            // storage operand.
+            UnexpandablePrimitive::Par => ("par_end".into(), Some(256)),
             UnexpandablePrimitive::HAlign => ("halign".into(), Some(0)),
             UnexpandablePrimitive::Message => ("message".into(), Some(0)),
             UnexpandablePrimitive::End => ("stop".into(), Some(0)),
@@ -304,5 +310,26 @@ pub(crate) fn observed_token(
         Token::Frozen(frozen) => frozen
             .primitive_index()
             .map_or(ObservedToken::FrozenOther, ObservedToken::FrozenPrimitive),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn par_uses_tex82_par_end_identity() {
+        assert_eq!(
+            canonical_command_identity(Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Par)),
+            ("par_end".into(), Some(256))
+        );
+    }
+
+    #[test]
+    fn toks_uses_tex82_register_base() {
+        assert_eq!(
+            canonical_command_identity(Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Toks)),
+            ("toks_register".into(), Some(0))
+        );
     }
 }

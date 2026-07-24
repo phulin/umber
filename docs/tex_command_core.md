@@ -1661,6 +1661,12 @@ immutable macro definition identity and activation ownership instead of
 reintroducing a reference-engine allocation address; snapshots consequently
 remain allocation-independent.
 
+Command-observer identities preserve TeX's command/`cur_chr` pairs rather
+than Rust storage discriminants. In particular, the installed `\par` primitive
+observes as `par_end` with `cur_chr = 256`; its internal primitive-enum operand
+is not part of the canonical trace. This keeps paragraph delivery comparable
+without exposing command-state representation in snapshots or fixtures.
+
 ### 31.1 Instrumented engines
 
 Dedicated reference executables are built from pinned canonical WEB and
