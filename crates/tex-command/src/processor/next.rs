@@ -289,6 +289,9 @@ impl CommandProcessor<'_> {
         }
 
         let recovery = self.command.scanner.recovery_context();
+        if matches!(recovery.status, ScannerStatus::Matching(_)) {
+            self.outer_recovered_while_matching = true;
+        }
         self.back_input(command.copy_for_backup())?;
         self.install_outer_recovery(recovery)?;
         command.recover_as_space();

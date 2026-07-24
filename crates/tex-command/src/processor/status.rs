@@ -51,6 +51,20 @@ impl ScannerState {
 
 #[allow(dead_code)] // invoked by the ordered scanner, macro-call, and conditional milestones
 impl CommandState {
+    pub(crate) fn begin_scanner_status(&mut self, status: ScannerStatus) -> ScannerState {
+        std::mem::replace(
+            &mut self.scanner,
+            ScannerState {
+                warning: status.warning(),
+                status,
+            },
+        )
+    }
+
+    pub(crate) fn restore_scanner_status(&mut self, prior: ScannerState) {
+        self.scanner = prior;
+    }
+
     /// Runs one scanner operation with typed status and warning ownership.
     ///
     /// The complete former scanner state is restored after the operation's
@@ -60,15 +74,9 @@ impl CommandState {
         status: ScannerStatus,
         operation: impl FnOnce(&mut Self) -> T,
     ) -> T {
-        let prior = std::mem::replace(
-            &mut self.scanner,
-            ScannerState {
-                warning: status.warning(),
-                status,
-            },
-        );
+        let prior = self.begin_scanner_status(status);
         let result = operation(self);
-        self.scanner = prior;
+        self.restore_scanner_status(prior);
         result
     }
 }

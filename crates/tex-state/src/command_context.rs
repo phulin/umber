@@ -8,7 +8,7 @@ use crate::{
     ChangedAt, DependencyKey, DependencyValue, Universe,
     ids::{MacroDefinitionId, OriginListId, TokenListId},
     interner::Symbol,
-    macro_store::MacroDefinitionProvenance,
+    macro_store::{MacroDefinitionProvenance, MacroMeaning, MacroParameterPattern},
     meaning::Meaning,
     token::{Catcode, OriginId, Token},
 };
@@ -106,6 +106,21 @@ impl CommandContext<'_> {
         definition: MacroDefinitionId,
     ) -> MacroDefinitionProvenance {
         self.universe.macro_definition_provenance(definition)
+    }
+
+    /// Reads one immutable macro definition through the command-state boundary.
+    #[must_use]
+    pub fn macro_definition(&self, definition: MacroDefinitionId) -> MacroMeaning {
+        self.universe.macro_definition(definition)
+    }
+
+    /// Reads the prevalidated parameter-marker layout for one macro definition.
+    #[must_use]
+    pub fn macro_definition_parameter_pattern(
+        &self,
+        definition: MacroDefinitionId,
+    ) -> MacroParameterPattern {
+        self.universe.macro_definition_parameter_pattern(definition)
     }
 
     /// Allocates one rollback-coupled macro invocation node.

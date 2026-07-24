@@ -3,7 +3,7 @@
 mod alignment;
 mod expand;
 mod next;
-mod status;
+pub(crate) mod status;
 
 use tex_state::CommandContext;
 
@@ -31,15 +31,18 @@ pub(crate) trait CommandObserver {}
 /// aggregate facade.
 #[allow(dead_code)] // later canonical command operations consume every capability
 pub struct CommandProcessor<'a> {
-    command: &'a mut CommandState,
+    pub(crate) command: &'a mut CommandState,
     runtime: &'a mut CommandRuntime,
-    state: CommandContext<'a>,
+    pub(crate) state: CommandContext<'a>,
     host: CommandHostContext<'a>,
     observer: Option<&'a mut dyn CommandObserver>,
     /// Only the immediately preceding raw delivery may be backed up. This is
     /// processor-local so stamps cannot survive a snapshot or a new episode.
     last_delivery: Option<DeliveryStamp>,
     next_delivery_sequence: u64,
+    /// Set only by canonical outer-validity recovery while a scalar macro
+    /// matcher owns `ScannerStatus::Matching`.
+    pub(crate) outer_recovered_while_matching: bool,
 }
 
 impl<'a> CommandProcessor<'a> {
@@ -59,6 +62,7 @@ impl<'a> CommandProcessor<'a> {
             observer: None,
             last_delivery: None,
             next_delivery_sequence: 0,
+            outer_recovered_while_matching: false,
         }
     }
 }

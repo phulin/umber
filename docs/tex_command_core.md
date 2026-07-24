@@ -1010,6 +1010,12 @@ added only through the optimization policy in section 32, with the canonical
 scalar matcher retained as the specification fallback and test oracle inside
 the new subsystem.
 
+The first implementation slice installs `Matching` around compulsory-prefix
+and undelimited-argument delivery. It uses raw `get_token`, strips precisely
+one outer argument group, retains nested literal braces, and lets the existing
+outer-validity operation perform all inserted-token recovery. Delimited
+matching and replacement activation are separate ordered slices.
+
 ## 20. Canonical `scan_toks`
 
 `scan_toks` is not implemented by blindly calling generic `get_x_token`.
