@@ -77,6 +77,10 @@ impl SharedTokenBuffer {
     pub(crate) fn len(&self) -> usize {
         self.0.len()
     }
+
+    pub(crate) fn get(&self, index: usize) -> Option<TracedTokenWord> {
+        self.0.get(index).copied()
+    }
 }
 
 /// Semantic treatment applied while a token level delivers its payload.

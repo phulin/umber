@@ -24,7 +24,7 @@ pub(crate) trait CommandObserver {}
 /// the borrows that construct it. All future raw delivery, expansion,
 /// scanners, conditionals, and primitives operate through this single
 /// aggregate facade.
-#[allow(dead_code)] // fields are consumed when command operations are implemented
+#[allow(dead_code)] // later canonical command operations consume every capability
 pub struct CommandProcessor<'a> {
     command: &'a mut CommandState,
     runtime: &'a mut CommandRuntime,

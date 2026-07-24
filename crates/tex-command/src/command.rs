@@ -65,6 +65,18 @@ impl CurrentCommand {
         }
     }
 
+    /// Replaces the effective meaning while retaining the exact delivered
+    /// spelling and stamp. This is solely TeX82's one-delivery `\\noexpand`
+    /// treatment in `get_next` (TeX.web §379).
+    pub(crate) fn suppress_expandable(&mut self) {
+        if matches!(
+            self.meaning,
+            Meaning::Macro { .. } | Meaning::ExpandablePrimitive(_)
+        ) {
+            self.meaning = Meaning::Relax;
+        }
+    }
+
     /// Returns the original token spelling, including its delivery origin.
     #[must_use]
     pub const fn spelling(&self) -> TracedTokenWord {

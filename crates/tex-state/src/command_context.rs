@@ -5,8 +5,11 @@
 //! they represent typed reads or mutations of [`Universe`] state.
 
 use crate::{
-    ChangedAt, DependencyKey, DependencyValue, Universe, interner::Symbol, meaning::Meaning,
-    token::Token,
+    ChangedAt, DependencyKey, DependencyValue, Universe,
+    ids::{OriginListId, TokenListId},
+    interner::Symbol,
+    meaning::Meaning,
+    token::{Catcode, OriginId, Token},
 };
 
 /// Borrow-scoped aggregate access to live TeX state.
@@ -20,6 +23,29 @@ pub struct CommandContext<'a> {
 }
 
 impl CommandContext<'_> {
+    /// Reads one catcode through the aggregate code-table boundary.
+    #[must_use]
+    pub fn catcode(&mut self, ch: char) -> Catcode {
+        self.universe.catcode(ch)
+    }
+
+    /// Interns a control-sequence spelling without assigning it a meaning.
+    #[must_use]
+    pub fn intern_control_sequence(&mut self, name: &str) -> Symbol {
+        self.universe.intern(name).symbol()
+    }
+
+    /// Returns the immutable semantic words of one stored token list.
+    #[must_use]
+    pub fn tokens(&self, id: TokenListId) -> &[Token] {
+        self.universe.tokens(id)
+    }
+
+    /// Returns the parallel provenance words of one stored token list.
+    #[must_use]
+    pub fn origin_list(&self, id: OriginListId) -> &[OriginId] {
+        self.universe.origin_list(id)
+    }
     /// Returns the mutation stamp for a typed aggregate-state dependency.
     #[must_use]
     pub fn dependency_changed_at(&self, key: DependencyKey) -> ChangedAt {

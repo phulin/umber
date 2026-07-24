@@ -808,6 +808,14 @@ Steps may restart without returning a command, exactly as TeX restarts after
 ignored characters, exhausted input, parameter insertion, and template
 insertion.
 
+The implemented scalar loop owns source and token-cursor selection, exact
+retirement/restart, stored token/origin reconstruction, `OutParameter` replay,
+one-delivery backed-up suppression, current-meaning resolution, and literal
+brace `align_state` accounting. `get_token` is routed through that same loop.
+Scanner-status outer recovery and alignment-template interception already have
+their sole entry points in this loop; their status-specific recovery and
+template lifecycle are completed by their later command-core milestones.
+
 Control-sequence aliases of brace meanings do not change `align_state`;
 literal catcode-1 and catcode-2 character tokens do.
 

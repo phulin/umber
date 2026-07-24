@@ -20,6 +20,7 @@ mod snapshot;
 mod state;
 
 pub use command::{CurrentCommand, DeliveryStamp};
+pub use error::CommandError;
 pub use host::{CommandHostCapabilities, CommandHostContext};
 pub use input::{
     InvalidSourceCharacter, LexerState, LineTerminator, MalformedUnicodeRange, PhysicalLine,
