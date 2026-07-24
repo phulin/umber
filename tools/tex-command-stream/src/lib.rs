@@ -538,7 +538,7 @@ fn command_location(
     source_bytes: Option<&[u8]>,
 ) -> Option<SourceLocation> {
     let range = record.provenance.source_range?;
-    if Some(range.source()) != source_id || range.is_empty() {
+    if Some(range.source()) != source_id {
         return None;
     }
     let bytes = source_bytes?;

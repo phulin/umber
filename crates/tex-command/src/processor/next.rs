@@ -10,8 +10,9 @@ use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 use crate::command::{CurrentCommand, DeliveryStamp};
 use crate::error::CommandError;
 use crate::input::{
-    BackupTreatment, InputLevel, InputLevelId, InputRetirementAction, OutParameterReplay,
-    ReplayTrace, RetirementBehavior, SharedTokenBuffer, TokenBehavior, TokenCursor, TokenPayload,
+    BackedUpToken, BackupTreatment, InputLevel, InputLevelId, InputRetirementAction,
+    OutParameterReplay, ReplayTrace, RetirementBehavior, SharedBackedUpBuffer, SharedTokenBuffer,
+    TokenBehavior, TokenCursor, TokenPayload,
 };
 use crate::profile::{CharacterCode, CharacterMode};
 use crate::{
@@ -89,7 +90,10 @@ impl CommandProcessor<'_> {
             .map_err(|_| CommandError::InputInvariant)?;
         self.last_delivery = None;
         self.command.push_token_level(
-            TokenPayload::Transient(SharedTokenBuffer::new(vec![delimiter.spelling()])),
+            TokenPayload::BackedUp(SharedBackedUpBuffer::new(vec![BackedUpToken {
+                spelling: delimiter.spelling(),
+                source_range: delimiter.source_range(),
+            }])),
             TokenBehavior::BackedUp(BackupTreatment::Ordinary),
             RetirementBehavior::Pop,
             ReplayTrace::BackedUp,
@@ -179,7 +183,10 @@ impl CommandProcessor<'_> {
         }
 
         let level = self.command.push_token_level(
-            TokenPayload::Transient(SharedTokenBuffer::new(vec![command.spelling()])),
+            TokenPayload::BackedUp(SharedBackedUpBuffer::new(vec![BackedUpToken {
+                spelling: command.spelling(),
+                source_range: command.source_range(),
+            }])),
             TokenBehavior::BackedUp(treatment),
             RetirementBehavior::Pop,
             ReplayTrace::BackedUp,
@@ -312,7 +319,9 @@ impl CommandProcessor<'_> {
                 }
                 InputLevel::Tokens(cursor) => {
                     let identity = cursor.identity;
-                    if let Some((spelling, position, behavior)) = self.next_stored_token(&cursor) {
+                    if let Some((spelling, position, behavior, source_range)) =
+                        self.next_stored_token(&cursor)
+                    {
                         let InputLevel::Tokens(cursor) = self
                             .command
                             .input
@@ -328,7 +337,7 @@ impl CommandProcessor<'_> {
                             level: identity,
                             position,
                             behavior,
-                            source_range: None,
+                            source_range,
                         }));
                     }
                     match self.retire_and_restart(identity)? {
@@ -443,13 +452,18 @@ impl CommandProcessor<'_> {
     fn next_stored_token(
         &self,
         cursor: &TokenCursor,
-    ) -> Option<(TracedTokenWord, u64, TokenBehavior)> {
+    ) -> Option<(TracedTokenWord, u64, TokenBehavior, Option<SourceRange>)> {
         let position = u64::try_from(cursor.index).ok()?;
         let spelling = match &cursor.payload {
-            TokenPayload::Transient(buffer) => buffer.get(cursor.index),
-            TokenPayload::ArgumentRange { buffer, range } => {
-                buffer.get(range.start() + cursor.index)
+            TokenPayload::Transient(buffer) => {
+                buffer.get(cursor.index).map(|spelling| (spelling, None))
             }
+            TokenPayload::BackedUp(buffer) => buffer
+                .get(cursor.index)
+                .map(|token| (token.spelling, token.source_range)),
+            TokenPayload::ArgumentRange { buffer, range } => buffer
+                .get(range.start() + cursor.index)
+                .map(|spelling| (spelling, None)),
             TokenPayload::Stored { tokens, origins } => {
                 let token = *self.state.tokens(*tokens).get(cursor.index)?;
                 let origin = self
@@ -458,10 +472,10 @@ impl CommandProcessor<'_> {
                     .get(cursor.index)
                     .copied()
                     .unwrap_or(OriginId::UNKNOWN);
-                Some(TracedTokenWord::pack(token, origin))
+                Some((TracedTokenWord::pack(token, origin), None))
             }
         }?;
-        Some((spelling, position, cursor.behavior.clone()))
+        Some((spelling.0, position, cursor.behavior.clone(), spelling.1))
     }
 
     fn check_outer_validity_entry(
@@ -989,6 +1003,7 @@ mod tests {
             .expect("opening brace delivers")
             .expect("source is live");
         let original_stamp = opening.delivery_stamp();
+        let original_range = opening.source_range();
         assert_eq!(processor.command.alignment.align_state, 1);
         processor
             .back_input(opening)
@@ -1001,6 +1016,11 @@ mod tests {
             .expect("backup is live");
         assert_eq!(replayed.delivery_stamp().position(), 0);
         assert_ne!(replayed.delivery_stamp(), original_stamp);
+        assert_eq!(
+            replayed.source_range(),
+            original_range,
+            "backed-up direct-source commands retain their committed range"
+        );
         assert_eq!(processor.command.alignment.align_state, 1);
         processor
             .back_input(replayed)

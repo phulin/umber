@@ -8,8 +8,8 @@ use tex_state::provenance::SynthesizedOriginKind;
 use tex_state::token::{OriginId, Token, TracedTokenWord};
 
 use crate::input::{
-    BackupTreatment, InputLevelId, ReplayTrace, RetirementBehavior, SharedTokenBuffer,
-    TokenBehavior, TokenPayload,
+    BackedUpToken, BackupTreatment, InputLevelId, ReplayTrace, RetirementBehavior,
+    SharedBackedUpBuffer, SharedTokenBuffer, TokenBehavior, TokenPayload,
 };
 use crate::macro_call::MacroArguments;
 use crate::profile::CommandProfile;
@@ -365,7 +365,10 @@ impl CommandProcessor<'_> {
     fn replay_expandafter_first(&mut self, command: CurrentCommand) {
         self.undo_alignment_delivery(&command);
         self.command.push_token_level(
-            TokenPayload::Transient(SharedTokenBuffer::new(vec![command.spelling()])),
+            TokenPayload::BackedUp(SharedBackedUpBuffer::new(vec![BackedUpToken {
+                spelling: command.spelling(),
+                source_range: command.source_range(),
+            }])),
             TokenBehavior::BackedUp(BackupTreatment::Ordinary),
             RetirementBehavior::Pop,
             ReplayTrace::BackedUp,

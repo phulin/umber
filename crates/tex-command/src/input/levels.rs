@@ -8,7 +8,7 @@ use tex_state::token::TracedTokenWord;
 
 use crate::macro_call::{MacroActivationId, MacroArgumentRange};
 
-use super::source::SourceCursor;
+use super::{lines::SourceRange, source::SourceCursor};
 
 /// Stable identity for one live input level.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -55,6 +55,9 @@ pub(crate) enum TokenPayload {
     },
     /// Tokens materialized for a bounded insertion or scanner operation.
     Transient(SharedTokenBuffer),
+    /// One command restored by TeX's `back_input`, retaining the committed
+    /// physical spelling range if it originally came from registered source.
+    BackedUp(SharedBackedUpBuffer),
     /// One already materialized macro argument, replayed literally by range.
     ArgumentRange {
         buffer: SharedTokenBuffer,
@@ -81,6 +84,30 @@ impl SharedTokenBuffer {
     pub(crate) fn get(&self, index: usize) -> Option<TracedTokenWord> {
         self.0.get(index).copied()
     }
+}
+
+/// Shared ownership of commands restored by `back_input` or scanner replay.
+///
+/// The range is delivery metadata, separate from the token's semantic and
+/// opaque-origin identity, so reusing it cannot affect fixture identities.
+#[derive(Clone, Debug, Default, Eq, Hash, PartialEq)]
+pub(crate) struct SharedBackedUpBuffer(Arc<[BackedUpToken]>);
+
+impl SharedBackedUpBuffer {
+    pub(crate) fn new(tokens: impl Into<Arc<[BackedUpToken]>>) -> Self {
+        Self(tokens.into())
+    }
+
+    pub(crate) fn get(&self, index: usize) -> Option<BackedUpToken> {
+        self.0.get(index).copied()
+    }
+}
+
+/// One restored command plus the source range committed at its first delivery.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub(crate) struct BackedUpToken {
+    pub(crate) spelling: TracedTokenWord,
+    pub(crate) source_range: Option<SourceRange>,
 }
 
 /// Semantic treatment applied while a token level delivers its payload.

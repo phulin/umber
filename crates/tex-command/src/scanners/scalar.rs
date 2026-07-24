@@ -489,10 +489,13 @@ impl CommandProcessor<'_> {
             self.undo_alignment_delivery(command);
         }
         self.command.push_token_level(
-            crate::input::TokenPayload::Transient(crate::input::SharedTokenBuffer::new(
+            crate::input::TokenPayload::BackedUp(crate::input::SharedBackedUpBuffer::new(
                 commands
                     .into_iter()
-                    .map(|command| command.spelling())
+                    .map(|command| crate::input::BackedUpToken {
+                        spelling: command.spelling(),
+                        source_range: command.source_range(),
+                    })
                     .collect::<Vec<_>>(),
             )),
             crate::input::TokenBehavior::BackedUp(crate::input::BackupTreatment::Ordinary),

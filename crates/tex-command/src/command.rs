@@ -155,8 +155,9 @@ impl CurrentCommand {
         self.delivery
     }
 
-    /// Returns the direct source spelling range when this command was
-    /// delivered from a registered physical source rather than replayed.
+    /// Returns the committed source spelling range when this command first
+    /// originated in a registered physical source. Backup delivery preserves
+    /// this range without making it part of token identity.
     #[must_use]
     pub const fn source_range(&self) -> Option<SourceRange> {
         self.source_range
