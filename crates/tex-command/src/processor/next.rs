@@ -84,6 +84,15 @@ impl CommandProcessor<'_> {
                     AlignmentDeliveryEvent::UnbalancedDelimiter(command),
                 )));
             }
+            if self
+                .command
+                .alignment
+                .needs_closing_brace_recovery(&command)
+            {
+                return Ok(Some(AlignmentDelivery::Event(
+                    AlignmentDeliveryEvent::ClosingBrace(command),
+                )));
+            }
             return Ok(Some(AlignmentDelivery::Command(command)));
         }
     }
@@ -110,7 +119,8 @@ impl CommandProcessor<'_> {
                 self.last_delivery = None;
                 Self::saved_alignment_delimiter(&delimiter)?
             }
-            AlignmentDeliveryEvent::UnbalancedDelimiter(_) => {
+            AlignmentDeliveryEvent::UnbalancedDelimiter(_)
+            | AlignmentDeliveryEvent::ClosingBrace(_) => {
                 return Err(CommandError::InputInvariant);
             }
         };
@@ -196,6 +206,67 @@ impl CommandProcessor<'_> {
             previous_align_state: Some(before_backup),
         }));
         Ok(recovery)
+    }
+
+    /// Performs TeX82 §1103's `align_group` right-brace recovery.
+    ///
+    /// The executor selects this structural branch only after it has observed
+    /// its active entry `align_group`; this command-core operation retains the
+    /// delivered brace's raw backup, its alignment correction, and insertion
+    /// of the inaccessible frozen `\\cr`. It does not close the group: the
+    /// inserted row terminator reaches alignment delivery before brace replay.
+    pub fn recover_alignment_closing_brace(
+        &mut self,
+        event: AlignmentDeliveryEvent,
+    ) -> Result<(), CommandError> {
+        let AlignmentDeliveryEvent::ClosingBrace(command) = event else {
+            return Err(CommandError::InputInvariant);
+        };
+        if !matches!(
+            command.meaning(),
+            Meaning::CharToken {
+                cat: Catcode::EndGroup,
+                ..
+            }
+        ) {
+            return Err(CommandError::InputInvariant);
+        }
+        // The brace arrived by replaying the next-cell opener backup. TeX82
+        // retires that exhausted backup before §1103 makes its own backup.
+        self.back_input_after_backup_replay(command)?;
+        let frozen_cr = self
+            .state
+            .primitive_token("cr")
+            .ok_or(CommandError::InputInvariant)?;
+        let level = self.command.push_token_level(
+            TokenPayload::Transient(SharedTokenBuffer::new(vec![TracedTokenWord::pack(
+                frozen_cr,
+                OriginId::UNKNOWN,
+            )])),
+            TokenBehavior::Recovery,
+            RetirementBehavior::Pop,
+            ReplayTrace::Transient(crate::input::TransientReplayReason::Inserted),
+        );
+        #[cfg(not(any(test, feature = "instrumentation")))]
+        let _ = level;
+        #[cfg(any(test, feature = "instrumentation"))]
+        {
+            self.observe(CommandObservation::Input(InputRecord {
+                transition: InputTransition::Recovery,
+                reason: InputReason::Recovery,
+                level: level.0,
+                position: 0,
+            }));
+            self.observe(CommandObservation::Recovery(RecoveryRecord {
+                backup: false,
+                // TeX82's inaccessible frozen control sequence retains the
+                // canonical `\\cr` spelling in observer transport.
+                tokens: vec![crate::observation::ObservedToken::ControlSequence(
+                    "cr".into(),
+                )],
+            }));
+        }
+        Ok(())
     }
 
     fn saved_alignment_delimiter(
@@ -1183,6 +1254,71 @@ mod tests {
     }
 
     #[test]
+    fn align_group_closing_brace_recovery_backs_up_before_frozen_cr() {
+        let mut command = CommandState::default();
+        let source = command
+            .register_source(SourceRegistration::new(
+                RegisteredSourceKind::Generated,
+                Arc::<[u8]>::from(b"}".as_slice()),
+            ))
+            .expect("source registers");
+        command
+            .open_registered_source(source)
+            .expect("source opens");
+        let alignment = crate::AlignmentIdentity::new(18);
+        command.begin_alignment(alignment);
+        command
+            .apply_alignment_request(crate::AlignmentRequest::BeginCell {
+                alignment,
+                templates: templates(),
+            })
+            .expect("empty-template cell begins");
+        let mut runtime = CommandRuntime::default();
+        let mut universe = Universe::new();
+        recovery_primitives(&mut universe);
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut recorder = Recorder::default();
+        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities)
+            .with_observer(&mut recorder);
+
+        let event = match processor
+            .get_x_alignment_delivery()
+            .expect("closing brace delivers")
+        {
+            Some(crate::AlignmentDelivery::Event(
+                event @ crate::AlignmentDeliveryEvent::ClosingBrace(_),
+            )) => event,
+            other => panic!("expected typed align-group closing brace, got {other:?}"),
+        };
+        processor
+            .recover_alignment_closing_brace(event)
+            .expect("TeX82 §1103 recovery is command-owned");
+        assert!(matches!(
+            processor
+                .get_x_alignment_delivery()
+                .expect("frozen cr delivers"),
+            Some(crate::AlignmentDelivery::Event(
+                crate::AlignmentDeliveryEvent::EndTemplate(_)
+            ))
+        ));
+
+        let backup = recorder
+            .0
+            .iter()
+            .position(|record| matches!(record, CommandObservation::Input(input) if input.transition == InputTransition::Backup))
+            .expect("brace backup is observed");
+        let recovery = recorder
+            .0
+            .iter()
+            .position(|record| matches!(record, CommandObservation::Recovery(recovery) if !recovery.backup && recovery.tokens == vec![crate::observation::ObservedToken::ControlSequence("cr".into())]))
+            .expect("frozen cr insertion is observed canonically");
+        assert!(
+            backup < recovery,
+            "§1103 backs up the brace before ins_error"
+        );
+    }
+
+    #[test]
     fn source_delivery_restarts_after_retirement_and_accounts_literal_braces() {
         let mut command = CommandState::default();
         let source = command
@@ -1936,6 +2072,9 @@ mod tests {
                 crate::AlignmentDelivery::Event(
                     crate::AlignmentDeliveryEvent::UnbalancedDelimiter(_),
                 ) => panic!("base-depth delimiter does not need recovery"),
+                crate::AlignmentDelivery::Event(crate::AlignmentDeliveryEvent::ClosingBrace(_)) => {
+                    panic!("base-depth delimiter is not an align-group closing brace")
+                }
             };
             processor
                 .begin_alignment_v_template(alignment, end_template)

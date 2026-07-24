@@ -163,6 +163,10 @@ pub enum AlignmentDeliveryEvent {
     /// `align_error` recovery is performed by command delivery after the
     /// expanded observation, not by the executor.
     UnbalancedDelimiter(crate::CurrentCommand),
+    /// A right brace reached the active entry `align_group` at depth `-1`.
+    /// The executor selects the structural branch; command recovery owns the
+    /// exact backup correction and frozen-row-terminator insertion.
+    ClosingBrace(crate::CurrentCommand),
 }
 
 /// One expanded delivery while the executor is running an alignment cell.
@@ -349,6 +353,18 @@ impl AlignmentDeliveryState {
                         | UnexpandablePrimitive::CrCr
                         | UnexpandablePrimitive::Span
                 )
+            )
+    }
+
+    pub(crate) fn needs_closing_brace_recovery(&self, command: &CurrentCommand) -> bool {
+        self.active_cell.is_some()
+            && self.align_state == -1
+            && matches!(
+                command.meaning(),
+                Meaning::CharToken {
+                    cat: Catcode::EndGroup,
+                    ..
+                }
             )
     }
     pub(crate) fn begin_alignment(&mut self, alignment: AlignmentIdentity) {

@@ -1858,6 +1858,12 @@ reconstructs the key from a generic mutation category, so `\let` aliases of
 explicit grouping primitives remain comparable while command state stays the
 sole owner of delivery and operand scanning.
 
+For TeX82 `handle_right_brace` §1103, replay alone selects the structural
+`align_group` branch. The command processor then owns `back_input`, its
+literal-brace backup correction, and insertion of immutable frozen `\cr`;
+the executor neither manufactures nor replays those raw tokens. This preserves
+the §1102/§1103 recovery ordering before v-template delivery.
+
 Expanded balanced general-text collection enters the command-owned absorbing
 scanner episode before it delivers its required opening brace. The brace is
 therefore observed once under the live scanner status; ordinary token-list

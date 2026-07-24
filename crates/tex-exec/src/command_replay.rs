@@ -788,6 +788,14 @@ fn scan_alignment_delivery_step(
                         ),
                     });
                 }
+                tex_command::AlignmentDeliveryEvent::ClosingBrace(_) => {
+                    // TeX82 §1103 selects this executor-owned align_group
+                    // branch. Raw brace backup/correction and frozen-\cr
+                    // insertion remain entirely command-owned.
+                    processor
+                        .recover_alignment_closing_brace(event)
+                        .map_err(command_error)?;
+                }
             }
             Ok(ScannedStep::Continue)
         }
