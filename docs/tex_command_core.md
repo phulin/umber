@@ -217,6 +217,12 @@ replay scans its box. TeX82 §15 assigns the shared `leader_ship` command code,
 and §35 initializes `\shipout` with `a_leaders - 1` (`99`); the executor
 receives only the completed typed box/output semantics.
 
+Likewise, `\expandafter` is observed at raw delivery as `expand_after` with
+`cur_chr` 0 before TeX82 §25 reads its first and second tokens. The command
+processor owns that lifecycle: it expands (or backs up) the second token and
+replays the first above the resulting input, so the identity is never inferred
+from the replayed token or a fixture-specific observer rule.
+
 For TeX82 §§1071 and 1076, `\shipout` begins a typed box-completion episode:
 command control delivers the next `make_box` command and owns every scalar
 box-register scan, including its one-token terminator backup. On the closing

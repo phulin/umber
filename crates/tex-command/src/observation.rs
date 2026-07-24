@@ -285,15 +285,21 @@ pub(crate) fn canonical_command_identity(meaning: Meaning) -> (String, Option<i6
 
 /// Canonical TeX82 observer identity for one delivered current command.
 ///
-/// Most identities derive from the effective meaning. `\\noexpand` is the
-/// deliberate exception: TeX82 keeps the relaxed meaning but changes the
-/// current-character identity to `no_expand_flag` (257). The distinction is
-/// carried by `CurrentCommand`, so observation merely projects command state.
+/// Most identities derive from the effective meaning. `\\expandafter` and
+/// `\\noexpand` are the deliberate exceptions: the former has TeX82's
+/// dedicated `expand_after` command code, while the latter keeps the relaxed
+/// meaning but changes its current-character identity to `no_expand_flag`
+/// (257). Both distinctions are carried by `CurrentCommand`, so observation
+/// merely projects command state.
 pub(crate) fn canonical_current_command_identity(
     command: &CurrentCommand,
 ) -> (String, Option<i64>) {
     match command.identity() {
         CommandIdentity::Ordinary => canonical_command_identity(command.meaning()),
+        // TeX82 §25 dispatches `\expandafter` through the dedicated
+        // `expand_after` command with selector zero. The current command owns
+        // that identity before its two-token expansion lifecycle begins.
+        CommandIdentity::ExpandAfter => ("expand_after".into(), Some(0)),
         CommandIdentity::NoExpandFrozenRelax => {
             debug_assert_eq!(command.meaning(), Meaning::Relax);
             ("relax".into(), Some(257))

@@ -233,6 +233,12 @@ impl CommandProcessor<'_> {
         // the input. The activation owns that one shared buffer; its body
         // replays the canonical immutable replacement list and resolves
         // compact `OutParameter` tokens through that owner.
+        // If the macro itself was the one saved by TeX82 §25's
+        // `\expandafter`, its one-token backup must retire before this new
+        // macro activation takes the input top. Otherwise the backup's
+        // canonical retirement would be delayed until after the replacement
+        // list, reversing TeX's input lifecycle.
+        self.retire_exhausted_backup_before_scalar_replay(call.delivery_stamp())?;
         let provenance = self.state.macro_definition_provenance(definition);
         let _level = self.push_macro_activation(
             definition,

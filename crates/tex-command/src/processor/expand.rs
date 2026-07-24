@@ -21,7 +21,8 @@ use super::CommandProcessor;
 #[cfg(any(test, feature = "instrumentation"))]
 use crate::observation::{
     CommandDeliveryBoundary, CommandDeliveryRecord, CommandObservation, CommandProvenance,
-    EffectRecord, MutationRecord, ScannerRecord,
+    EffectRecord, InputReason, InputRecord, InputTransition, MutationRecord, RecoveryRecord,
+    ScannerRecord,
 };
 
 /// Stable pending-diagnostic identity for TeX.web's `Missing \\endcsname
@@ -418,7 +419,7 @@ impl CommandProcessor<'_> {
 
     fn replay_expandafter_first(&mut self, command: CurrentCommand) {
         self.undo_alignment_delivery(&command);
-        self.command.push_token_level(
+        let level = self.command.push_token_level(
             TokenPayload::BackedUp(SharedBackedUpBuffer::new(vec![BackedUpToken {
                 spelling: command.spelling(),
                 source_range: command.source_range(),
@@ -427,6 +428,24 @@ impl CommandProcessor<'_> {
             RetirementBehavior::Pop,
             ReplayTrace::BackedUp,
         );
+        #[cfg(not(any(test, feature = "instrumentation")))]
+        let _ = level;
+        #[cfg(any(test, feature = "instrumentation"))]
+        {
+            // TeX82 §25's `back_input` is part of the expandafter lifecycle:
+            // after expanding its second token, the saved first token must be
+            // a visible ordinary backup before raw delivery resumes.
+            self.observe(CommandObservation::Input(InputRecord {
+                transition: InputTransition::Backup,
+                reason: InputReason::Backup,
+                level: level.0,
+                position: 0,
+            }));
+            self.observe(CommandObservation::Recovery(RecoveryRecord {
+                backup: true,
+                tokens: vec![self.observed_command_spelling(&command)],
+            }));
+        }
     }
 
     /// Creates one invocation provenance node and atomically exposes its
@@ -564,10 +583,20 @@ mod tests {
 
     use super::*;
     use crate::input::{ReplayTrace, RetirementBehavior};
+    use crate::observation::{CommandDeliveryBoundary, CommandObservation, CommandObserver};
     use crate::{
         CommandHostCapabilities, CommandHostContext, CommandRuntime, CommandState,
         RegisteredSourceKind, SourceRegistration,
     };
+
+    #[derive(Default)]
+    struct Recorder(Vec<CommandObservation>);
+
+    impl CommandObserver for Recorder {
+        fn committed(&mut self, observation: CommandObservation) {
+            self.0.push(observation);
+        }
+    }
 
     fn traced(token: Token) -> TracedTokenWord {
         TracedTokenWord::pack(token, OriginId::UNKNOWN)
@@ -991,16 +1020,23 @@ mod tests {
             ReplayTrace::BackedUp,
         );
         let mut capabilities = CommandHostCapabilities::default();
-        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+        let mut recorder = Recorder::default();
+        let (first, second) = {
+            let mut processor =
+                processor(&mut command, &mut runtime, &mut universe, &mut capabilities)
+                    .with_observer(&mut recorder);
 
-        let first = processor
-            .get_x_token()
-            .expect("expandafter completes")
-            .expect("first token");
-        let second = processor
-            .get_x_token()
-            .expect("macro body follows")
-            .expect("body token");
+            let first = processor
+                .get_x_token()
+                .expect("expandafter completes")
+                .expect("first token");
+            let second = processor
+                .get_x_token()
+                .expect("macro body follows")
+                .expect("body token");
+            assert_eq!(processor.command.expansion.cumulative_expansions, 2);
+            (first, second)
+        };
         assert_eq!(
             first.spelling().semantic_token(),
             Token::Char {
@@ -1015,7 +1051,15 @@ mod tests {
                 cat: Catcode::Letter
             }
         );
-        assert_eq!(processor.command.expansion.cumulative_expansions, 2);
+        assert!(recorder.0.iter().any(|observation| {
+            matches!(
+                observation,
+                CommandObservation::Command(delivery)
+                    if delivery.boundary == CommandDeliveryBoundary::Raw
+                        && delivery.command == "expand_after"
+                        && delivery.command_operand == Some(0)
+            )
+        }));
     }
 
     #[test]

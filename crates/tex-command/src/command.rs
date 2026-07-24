@@ -26,18 +26,33 @@ pub struct CurrentCommand {
     alignment_adjustment: crate::processor::AlignmentDeliveryAdjustment,
 }
 
-/// The command-code identity of a current delivery when its [`Meaning`] alone
-/// is not sufficient.
+/// The command-code identity of a current delivery.
 ///
 /// TeX82's `get_next` gives an expandable control sequence replayed by
 /// `\\noexpand` the inaccessible frozen-`\\relax` command identity: its
 /// effective meaning is `relax`, but its `cur_chr` is `no_expand_flag` (257),
-/// rather than the ordinary `relax` value (256). This remains ephemeral with
-/// the current delivery and is never stored in snapshots or input payloads.
+/// rather than the ordinary `relax` value (256). Separately, TeX82 §25's
+/// `\expandafter` has the dedicated `expand_after` command identity rather
+/// than the generic expandable fallback. These remain ephemeral with the
+/// current delivery and are never stored in snapshots or input payloads.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum CommandIdentity {
     Ordinary,
+    ExpandAfter,
     NoExpandFrozenRelax,
+}
+
+impl CommandIdentity {
+    const fn from_meaning(meaning: Meaning) -> Self {
+        if matches!(
+            meaning,
+            Meaning::ExpandablePrimitive(tex_state::meaning::ExpandablePrimitive::ExpandAfter)
+        ) {
+            Self::ExpandAfter
+        } else {
+            Self::Ordinary
+        }
+    }
 }
 
 impl CurrentCommand {
@@ -87,7 +102,7 @@ impl CurrentCommand {
         Self {
             spelling,
             meaning,
-            identity: CommandIdentity::Ordinary,
+            identity: CommandIdentity::from_meaning(meaning),
             control_sequence,
             delivery,
             source_range,

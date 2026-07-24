@@ -1,8 +1,8 @@
 use tex_state::Universe;
-use tex_state::meaning::Meaning;
+use tex_state::meaning::{ExpandablePrimitive, Meaning};
 use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 
-use super::{CurrentCommand, DeliveryStamp};
+use super::{CommandIdentity, CurrentCommand, DeliveryStamp};
 
 fn resolve(universe: &mut Universe, token: Token, origin: OriginId) -> CurrentCommand {
     let mut state = universe.command_context();
@@ -76,4 +76,18 @@ fn ordinary_character_has_its_literal_token_meaning() {
             cat: Catcode::Letter,
         }
     );
+}
+
+#[test]
+fn expandafter_resolves_to_its_tex82_current_command_identity() {
+    let mut universe = Universe::new();
+    let expandafter = universe.intern("expandafter").symbol();
+    universe.set_meaning(
+        expandafter,
+        Meaning::ExpandablePrimitive(ExpandablePrimitive::ExpandAfter),
+    );
+
+    let command = resolve(&mut universe, Token::Cs(expandafter), OriginId::UNKNOWN);
+
+    assert_eq!(command.identity(), CommandIdentity::ExpandAfter);
 }
