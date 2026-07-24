@@ -1155,9 +1155,10 @@ tests and `get_token` specifically for `\ifx`; the latter preserves raw
 meanings and must not expand either operand. Boolean false limbs and selected
 `\ifcase` limbs re-enter the single `pass_text` machine, while `\else`,
 `\or`, and `\fi` change or pop only the live frame selected by its stable
-identity. Numeric and dimension comparisons share the typed numeric-scanner
-boundary; execution-mode and box predicates consult the executor-owned mode
-nest and aggregate box state when those boundaries are active.
+identity. Numeric and dimension comparison operands are delegated at the
+typed scanner boundary; execution-mode and box predicates consult the
+executor-owned mode nest and aggregate box state when those boundaries are
+active.
 
 Frozen relax and frozen fi recovery use inaccessible primitive identities
 rather than live re-definable control sequences.
