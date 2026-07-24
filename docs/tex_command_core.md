@@ -22,6 +22,15 @@ structural mutation after the processor borrow ends. Macro calls and
 registered `\\input` nesting therefore remain command-core operations; the
 executor never rereads their source text.
 
+The replay seam also retains the executor-side mode projection and obtains
+observable general-text effects (currently `\\message`) through the typed
+structured scanner. Alignment lifecycle state crosses it only as
+`AlignmentRequest`; active-cell delivery uses
+`CommandProcessor::get_x_alignment_delivery`, and an intercepted delimiter is
+returned to that same processor episode for v-template installation. Thus
+replay does not turn alignment, mode changes, or effects into a second source
+consumer.
+
 Umber will preserve that command-machine boundary while deliberately replacing
 TeX's global variables, linked `mem` nodes, synchronous host I/O, and
 allocation identities with:

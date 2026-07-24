@@ -5,15 +5,16 @@
 //! `tex-command`; no `InputStack` is accepted here.
 
 use tex_command::{
-    CommandError, CommandHostCapabilities, CommandHostContext, CommandProcessor, CommandRuntime,
-    CommandState,
+    AlignmentDelivery, AlignmentIdentity, AlignmentRequest, CommandError, CommandHostCapabilities,
+    CommandHostContext, CommandProcessor, CommandRuntime, CommandState,
 };
 use tex_state::interner::Symbol;
 use tex_state::macro_store::{MacroDefinitionProvenance, MacroMeaning};
 use tex_state::meaning::{Meaning, MeaningFlags, UnexpandablePrimitive};
-use tex_state::{TracedTokenList, Universe};
+use tex_state::token::Catcode;
+use tex_state::{PrintSink, TracedTokenList, Universe};
 
-use crate::ExecError;
+use crate::{ExecError, Mode, ModeNest};
 
 /// Replay-only command main control with command-owned source consumption.
 #[derive(Debug, Default)]
@@ -21,6 +22,9 @@ pub struct CommandReplayControl {
     command: CommandState,
     runtime: CommandRuntime,
     capabilities: CommandHostCapabilities,
+    modes: ModeNest,
+    next_alignment_identity: u64,
+    active_alignment: Option<AlignmentIdentity>,
 }
 
 impl CommandReplayControl {
@@ -36,6 +40,89 @@ impl CommandReplayControl {
         &mut self.capabilities
     }
 
+    /// Returns the replay projection of TeX's current execution mode.
+    #[must_use]
+    pub fn current_mode(&self) -> Mode {
+        self.modes.current_mode()
+    }
+
+    /// Returns the structural alignment started by the most recent replayed
+    /// `\halign` or `\valign`, if it has not yet been finished.
+    #[must_use]
+    pub fn active_alignment(&self) -> Option<AlignmentIdentity> {
+        self.active_alignment
+    }
+
+    /// Applies an executor-selected alignment lifecycle transition.
+    ///
+    /// The request contains no token spelling, so this cannot create another
+    /// delimiter-classification or source-consumption path.
+    pub fn apply_alignment_request(&mut self, request: AlignmentRequest) -> Result<(), ExecError> {
+        let finished = matches!(request, AlignmentRequest::Finish(_));
+        let identity = match request {
+            AlignmentRequest::Begin(identity)
+            | AlignmentRequest::Preamble(identity)
+            | AlignmentRequest::FinishCell(identity)
+            | AlignmentRequest::Suspend(identity)
+            | AlignmentRequest::Resume(identity)
+            | AlignmentRequest::Finish(identity) => identity,
+            AlignmentRequest::BeginCell { alignment, .. } => alignment,
+        };
+        self.command
+            .apply_alignment_request(request)
+            .map(|_| ())
+            .map_err(|_| ExecError::MissingToken {
+                context: "alignment lifecycle",
+            })?;
+        if finished && self.active_alignment == Some(identity) {
+            self.active_alignment = None;
+        }
+        Ok(())
+    }
+
+    /// Delivers one expanded command for an active alignment cell.
+    ///
+    /// In particular, the opaque end-template event is returned to the same
+    /// command processor episode that delivered it, so the processor alone
+    /// backs up the delimiter and installs the selected v-template.
+    pub fn alignment_step(
+        &mut self,
+        alignment: AlignmentIdentity,
+        stores: &mut Universe,
+    ) -> Result<ReplayStep, ExecError> {
+        let scanned = {
+            let mut processor = CommandProcessor::new(
+                &mut self.command,
+                &mut self.runtime,
+                stores.command_context(),
+                CommandHostContext::new(&mut self.capabilities),
+            );
+            match processor
+                .get_x_alignment_delivery()
+                .map_err(command_error)?
+            {
+                None => ScannedStep::EndOfInput,
+                Some(AlignmentDelivery::Command(command)) => {
+                    scan_command(&mut processor, command, false, MeaningFlags::EMPTY)?
+                }
+                Some(AlignmentDelivery::Event(event)) => {
+                    processor
+                        .begin_alignment_v_template(alignment, event)
+                        .map_err(command_error)?;
+                    ScannedStep::Continue
+                }
+            }
+        };
+        apply_scanned_step(
+            scanned,
+            stores,
+            &mut self.modes,
+            &mut self.next_alignment_identity,
+            &mut self.active_alignment,
+            &mut self.command,
+        )
+    }
+
     /// Delivers and executes one replay command through the command processor.
     pub fn step(&mut self, stores: &mut Universe) -> Result<ReplayStep, ExecError> {
         let scanned = {
@@ -47,7 +134,14 @@ impl CommandReplayControl {
             );
             scan_step(&mut processor)?
         };
-        apply_scanned_step(scanned, stores)
+        apply_scanned_step(
+            scanned,
+            stores,
+            &mut self.modes,
+            &mut self.next_alignment_identity,
+            &mut self.active_alignment,
+            &mut self.command,
+        )
     }
 }
 
@@ -76,6 +170,15 @@ enum ScannedStep {
         replacement_text: TracedTokenList,
         definition_origin: tex_state::token::OriginId,
     },
+    Message {
+        tokens: TracedTokenList,
+    },
+    BeginAlignment {
+        vertical: bool,
+    },
+    Paragraph,
+    MathShift,
+    Character,
 }
 
 fn scan_step(processor: &mut CommandProcessor<'_>) -> Result<ScannedStep, ExecError> {
@@ -100,6 +203,15 @@ fn scan_step(processor: &mut CommandProcessor<'_>) -> Result<ScannedStep, ExecEr
         }
         command = next_non_space(processor)?.ok_or(ExecError::MissingPrefixedCommand)?;
     }
+    scan_command(processor, command, global, flags)
+}
+
+fn scan_command(
+    processor: &mut CommandProcessor<'_>,
+    command: tex_command::CurrentCommand,
+    global: bool,
+    flags: MeaningFlags,
+) -> Result<ScannedStep, ExecError> {
     match command.meaning() {
         Meaning::UnexpandablePrimitive(
             UnexpandablePrimitive::End | UnexpandablePrimitive::Dump,
@@ -147,8 +259,41 @@ fn scan_step(processor: &mut CommandProcessor<'_>) -> Result<ScannedStep, ExecEr
                 definition_origin: definition.provenance.primary,
             })
         }
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Message) => {
+            let tokens = processor.scan_balanced_text(true).map_err(command_error)?;
+            Ok(ScannedStep::Message {
+                tokens: tokens.tokens,
+            })
+        }
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::HAlign) => {
+            Ok(ScannedStep::BeginAlignment { vertical: false })
+        }
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::VAlign) => {
+            Ok(ScannedStep::BeginAlignment { vertical: true })
+        }
+        Meaning::UnexpandablePrimitive(
+            UnexpandablePrimitive::Par | UnexpandablePrimitive::EndGraf,
+        ) => Ok(ScannedStep::Paragraph),
+        Meaning::CharToken {
+            cat: Catcode::MathShift,
+            ..
+        } => Ok(ScannedStep::MathShift),
+        Meaning::CharToken {
+            cat: Catcode::Letter | Catcode::Other,
+            ..
+        } => Ok(ScannedStep::Character),
         _ => Ok(ScannedStep::Continue),
     }
+}
+
+fn replay_text(tokens: &[tex_state::token::Token]) -> String {
+    tokens
+        .iter()
+        .filter_map(|token| match token {
+            tex_state::token::Token::Char { ch, .. } => Some(*ch),
+            _ => None,
+        })
+        .collect()
 }
 
 fn next_non_space(
@@ -173,6 +318,10 @@ fn next_non_space(
 fn apply_scanned_step(
     scanned: ScannedStep,
     stores: &mut Universe,
+    modes: &mut ModeNest,
+    next_alignment_identity: &mut u64,
+    active_alignment: &mut Option<AlignmentIdentity>,
+    command: &mut CommandState,
 ) -> Result<ReplayStep, ExecError> {
     match scanned {
         ScannedStep::Continue => Ok(ReplayStep::Continue),
@@ -212,6 +361,52 @@ fn apply_scanned_step(
                 stores.set_macro_meaning_global_with_provenance(target, meaning, provenance);
             } else {
                 stores.set_macro_meaning_with_provenance(target, meaning, provenance);
+            }
+            Ok(ReplayStep::Continue)
+        }
+        ScannedStep::Message { tokens } => {
+            let text = replay_text(stores.tokens(tokens.token_list()));
+            stores
+                .world_mut()
+                .write_text(PrintSink::TerminalAndLog, &text);
+            Ok(ReplayStep::Continue)
+        }
+        ScannedStep::BeginAlignment { vertical } => {
+            let identity = AlignmentIdentity::new(*next_alignment_identity);
+            *next_alignment_identity = next_alignment_identity.wrapping_add(1);
+            command
+                .apply_alignment_request(AlignmentRequest::Begin(identity))
+                .map_err(|_| ExecError::MissingToken {
+                    context: "alignment lifecycle",
+                })?;
+            *active_alignment = Some(identity);
+            if vertical && modes.current_mode() == Mode::Vertical {
+                modes.push(Mode::InternalVertical);
+            }
+            Ok(ReplayStep::Continue)
+        }
+        ScannedStep::Paragraph => {
+            if matches!(
+                modes.current_mode(),
+                Mode::Horizontal | Mode::RestrictedHorizontal
+            ) {
+                let _ = modes.pop()?;
+            }
+            Ok(ReplayStep::Continue)
+        }
+        ScannedStep::MathShift => {
+            match modes.current_mode() {
+                Mode::Math | Mode::DisplayMath => {
+                    let _ = modes.pop()?;
+                }
+                Mode::Vertical => modes.push(Mode::DisplayMath),
+                _ => modes.push(Mode::Math),
+            }
+            Ok(ReplayStep::Continue)
+        }
+        ScannedStep::Character => {
+            if modes.current_mode() == Mode::Vertical {
+                modes.push(Mode::Horizontal);
             }
             Ok(ReplayStep::Continue)
         }

@@ -1,6 +1,9 @@
 use std::sync::Arc;
 
-use tex_command::{RegisteredSourceKind, SourceRegistration};
+use tex_command::{
+    AlignmentCellTemplates, AlignmentRequest, RegisteredSourceKind, SourceRegistration,
+    TracedTokenList,
+};
 use tex_state::Universe;
 use tex_state::meaning::{ExpandablePrimitive, Meaning};
 
@@ -86,5 +89,66 @@ fn replay_expands_registered_input_without_executor_source_consumption() {
         control.step(&mut universe).expect("child endline"),
         ReplayStep::Continue
     );
+    assert_eq!(control.step(&mut universe).expect("end"), ReplayStep::End);
+}
+
+#[test]
+fn replay_dispatches_modes_effects_and_typed_alignment_lifecycle() {
+    let mut universe = Universe::new();
+    crate::install_unexpandable_primitives(&mut universe);
+    let mut control = CommandReplayControl::default();
+    register_source(&mut control, br"a$ $\par\message{ok}\halign\end");
+
+    assert_eq!(
+        control.step(&mut universe).expect("character"),
+        ReplayStep::Continue
+    );
+    assert_eq!(control.current_mode(), crate::Mode::Horizontal);
+    assert_eq!(
+        control.step(&mut universe).expect("math start"),
+        ReplayStep::Continue
+    );
+    assert_eq!(control.current_mode(), crate::Mode::Math);
+    assert_eq!(
+        control.step(&mut universe).expect("math space"),
+        ReplayStep::Continue
+    );
+    assert_eq!(
+        control.step(&mut universe).expect("math end"),
+        ReplayStep::Continue
+    );
+    assert_eq!(control.current_mode(), crate::Mode::Horizontal);
+    assert_eq!(
+        control.step(&mut universe).expect("paragraph"),
+        ReplayStep::Continue
+    );
+    assert_eq!(control.current_mode(), crate::Mode::Vertical);
+    assert_eq!(
+        control.step(&mut universe).expect("message"),
+        ReplayStep::Continue
+    );
+    assert!(matches!(
+        universe.world().effect_records(),
+        [tex_state::EffectRecord::StreamWrite { text, .. }] if text == "ok"
+    ));
+    assert_eq!(
+        control.step(&mut universe).expect("alignment"),
+        ReplayStep::Continue
+    );
+    let alignment = control
+        .active_alignment()
+        .expect("typed alignment identity");
+    control
+        .apply_alignment_request(AlignmentRequest::Preamble(alignment))
+        .expect("preamble lifecycle");
+    control
+        .apply_alignment_request(AlignmentRequest::BeginCell {
+            alignment,
+            templates: AlignmentCellTemplates {
+                u_template: None,
+                v_template: TracedTokenList::synthetic(universe.intern_token_list(&[])),
+            },
+        })
+        .expect("cell lifecycle");
     assert_eq!(control.step(&mut universe).expect("end"), ReplayStep::End);
 }
