@@ -612,6 +612,43 @@ fn empty_ordinary_u_template_pushes_and_retires_before_the_cell_opener_replays()
 }
 
 #[test]
+fn periodic_preamble_replays_its_u_template_before_retirement() {
+    let mut universe = Universe::new();
+    let mut control = CommandReplayControl::tex82_initex(&mut universe);
+    // TeX82 §760 treats `&&` as the start of the periodic preamble suffix,
+    // not as an empty second column. The following cell must therefore see
+    // `\hskip` from that u-template before `end_token_list` retires it.
+    register_source(&mut control, br"\halign{#&&\hskip1pt#\cr\relax&\relax\end");
+    let mut observations = ObservationRecorder::default();
+
+    for _ in 0..16 {
+        control
+            .step_with_observer(&mut universe, &mut observations)
+            .expect("periodic preamble replay");
+        if observations.0.windows(3).any(|events| {
+            matches!(
+                events,
+                [
+                    CommandObservation::Input(push),
+                    CommandObservation::Alignment(template_push),
+                    CommandObservation::Command(command),
+                ] if push.transition == InputTransition::Push
+                    && push.reason == InputReason::AlignmentUTemplate
+                    && template_push.transition == "u_template_push"
+                    && command.boundary == CommandDeliveryBoundary::Raw
+                    && command.command == "hskip"
+            )
+        }) {
+            return;
+        }
+    }
+    panic!(
+        "periodic u-template must deliver hskip before retirement: {:?}",
+        observations.0
+    );
+}
+
+#[test]
 fn completed_rule_spec_restarts_active_cell_through_typed_delimiter_delivery() {
     let mut universe = Universe::new();
     let mut control = CommandReplayControl::tex82_initex(&mut universe);
@@ -1275,6 +1312,7 @@ fn nested_alignment_begin_suspends_the_outer_replay_context() {
     control.active_alignment = Some(ActiveReplayAlignment {
         identity: outer,
         columns: Vec::new(),
+        repeat_start: None,
         column: 0,
         preamble_opening_pending: false,
         preamble_opening_replay_pending: false,

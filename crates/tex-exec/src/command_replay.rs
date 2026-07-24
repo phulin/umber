@@ -59,6 +59,7 @@ struct ActiveReplayBox {
 struct ActiveReplayAlignment {
     identity: AlignmentIdentity,
     columns: Vec<AlignmentCellTemplates>,
+    repeat_start: Option<usize>,
     column: usize,
     preamble_opening_pending: bool,
     preamble_opening_replay_pending: bool,
@@ -1346,12 +1347,32 @@ fn begin_next_replay_alignment_cell(
     if active.columns.is_empty() {
         return Ok(());
     }
-    active.column = match delimiter {
+    let next_column = match delimiter {
         AlignmentCellDelimiter::Tab | AlignmentCellDelimiter::Span => active
             .column
             .checked_add(1)
             .ok_or(ExecError::ArithmeticOverflow)?,
         AlignmentCellDelimiter::Row => 0,
+    };
+    active.column = if next_column < active.columns.len() {
+        next_column
+    } else if let Some(repeat_start) = active.repeat_start {
+        let repeat_len =
+            active
+                .columns
+                .len()
+                .checked_sub(repeat_start)
+                .ok_or(ExecError::MissingToken {
+                    context: "alignment periodic-preamble boundary",
+                })?;
+        if repeat_len == 0 {
+            return Err(ExecError::MissingToken {
+                context: "alignment periodic-preamble columns",
+            });
+        }
+        repeat_start + (next_column - repeat_start) % repeat_len
+    } else {
+        next_column
     };
     let templates = active
         .columns
@@ -1697,6 +1718,7 @@ fn apply_scanned_step(
             *active_alignment = Some(ActiveReplayAlignment {
                 identity,
                 columns: Vec::new(),
+                repeat_start: None,
                 column: 0,
                 preamble_opening_pending: true,
                 preamble_opening_replay_pending: false,
@@ -1760,6 +1782,7 @@ fn apply_scanned_step(
                 && active.identity == alignment
             {
                 active.columns = preamble.columns;
+                active.repeat_start = preamble.repeat_start;
                 active.column = 0;
                 active.preamble_start_pending = false;
                 active.cell_opening_pending = true;

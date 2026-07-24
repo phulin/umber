@@ -140,7 +140,10 @@ command-owned v-template handoff immediately and restarts expansion, matching
 TeX82 §25: it never converts that intercepted boundary to `endv` or exposes it
 to the executor. This follows TeX82 `get_next`/`get_x_token` (§§24--25),
 `scan_keyword` and `scan_rule_spec` (§26), and the
-`init_col`/`fin_col`/`do_endv` template lifecycle (§§765--772). An ordinary
+`init_col`/`fin_col`/`do_endv` template lifecycle (§§765--772). During the
+raw preamble scan, TeX82 §760's `&&` records the start of a periodic suffix;
+the second tab is not an empty column, and §772 selects that frozen suffix
+when an exhausted preamble is extended. An ordinary
 empty u-template follows that same `begin_token_list`/`end_token_list`
 lifecycle: TeX82 §37 selects the non-omit branch, §760 preserves the empty
 preamble prefix, §765 installs it, and §772 resumes after the matching

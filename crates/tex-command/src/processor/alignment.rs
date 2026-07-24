@@ -82,6 +82,12 @@ pub enum AlignmentCellCompletion {
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct AlignmentPreamble {
     pub columns: Vec<AlignmentCellTemplates>,
+    /// First column of TeX82's periodic `&&` preamble suffix, if present.
+    ///
+    /// TeX82 §760 consumes the second tab while scanning an otherwise empty
+    /// u-template and records `cur_loop`; it is not an empty column. Later
+    /// §772 extensions select from this frozen suffix.
+    pub repeat_start: Option<usize>,
 }
 
 /// A structural transition requested by the executor.

@@ -363,6 +363,7 @@ impl CommandProcessor<'_> {
         let mut u_template = Vec::new();
         let mut v_template = Vec::new();
         let mut in_v_template = false;
+        let mut repeat_start = None;
         loop {
             let command = self.get_next()?.ok_or(CommandError::InputInvariant)?;
             let token = command.spelling().semantic_token();
@@ -375,6 +376,23 @@ impl CommandProcessor<'_> {
             ) && !in_v_template
             {
                 in_v_template = true;
+                continue;
+            }
+            // TeX82 §760 recognizes `&&` while scanning an otherwise empty
+            // u-template. The second tab records the periodic-preamble
+            // boundary and scanning continues into that column's u-template;
+            // it does not terminate an empty column.
+            if matches!(
+                token,
+                Token::Char {
+                    cat: Catcode::AlignmentTab,
+                    ..
+                }
+            ) && !in_v_template
+                && u_template.is_empty()
+                && repeat_start.is_none()
+            {
+                repeat_start = Some(columns.len());
                 continue;
             }
             let ends_column = matches!(
@@ -425,7 +443,13 @@ impl CommandProcessor<'_> {
         }
         self.command
             .alignment
-            .complete_preamble(alignment, AlignmentPreamble { columns })
+            .complete_preamble(
+                alignment,
+                AlignmentPreamble {
+                    columns,
+                    repeat_start,
+                },
+            )
             .map_err(|_| CommandError::InputInvariant)?;
         #[cfg(any(test, feature = "instrumentation"))]
         self.observe(crate::CommandObservation::Alignment(
