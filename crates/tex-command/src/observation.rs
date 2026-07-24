@@ -8,7 +8,7 @@
 
 #![cfg(any(test, feature = "instrumentation"))]
 
-use tex_state::meaning::{Meaning, UnexpandablePrimitive};
+use tex_state::meaning::{ExpandablePrimitive, Meaning, UnexpandablePrimitive};
 use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 
 use crate::{DeliveryStamp, SourceRange};
@@ -125,7 +125,30 @@ pub(crate) fn canonical_command_identity(meaning: Meaning) -> (String, Option<i6
         Meaning::ExpandablePrimitive(tex_state::meaning::ExpandablePrimitive::NoExpand) => {
             ("no_expand".into(), Some(0))
         }
-        Meaning::ExpandablePrimitive(_) => ("expandable".into(), None),
+        // TeX82 stores every `\if...` primitive under the shared `if_test`
+        // command code; `cur_chr` selects the particular test. The Rust
+        // primitive enum's discriminants are an implementation detail, so
+        // observation maps the canonical TeX82 identity explicitly.
+        Meaning::ExpandablePrimitive(primitive) => match primitive {
+            ExpandablePrimitive::If => ("if_test".into(), Some(0)),
+            ExpandablePrimitive::IfCat => ("if_test".into(), Some(1)),
+            ExpandablePrimitive::IfNum => ("if_test".into(), Some(2)),
+            ExpandablePrimitive::IfDim => ("if_test".into(), Some(3)),
+            ExpandablePrimitive::IfOdd => ("if_test".into(), Some(4)),
+            ExpandablePrimitive::IfVMode => ("if_test".into(), Some(5)),
+            ExpandablePrimitive::IfHMode => ("if_test".into(), Some(6)),
+            ExpandablePrimitive::IfMMode => ("if_test".into(), Some(7)),
+            ExpandablePrimitive::IfInner => ("if_test".into(), Some(8)),
+            ExpandablePrimitive::IfVoid => ("if_test".into(), Some(9)),
+            ExpandablePrimitive::IfHBox => ("if_test".into(), Some(10)),
+            ExpandablePrimitive::IfVBox => ("if_test".into(), Some(11)),
+            ExpandablePrimitive::IfX => ("if_test".into(), Some(12)),
+            ExpandablePrimitive::IfEof => ("if_test".into(), Some(13)),
+            ExpandablePrimitive::IfTrue => ("if_test".into(), Some(14)),
+            ExpandablePrimitive::IfFalse => ("if_test".into(), Some(15)),
+            ExpandablePrimitive::IfCase => ("if_test".into(), Some(16)),
+            _ => ("expandable".into(), None),
+        },
         Meaning::IntParam(index) => ("assign_int".into(), Some(27_167 + i64::from(index))),
         Meaning::TokParam(index) => ("assign_toks".into(), Some(25_058 + i64::from(index))),
         Meaning::UnexpandablePrimitive(primitive) => match primitive {
@@ -363,5 +386,35 @@ mod tests {
             )),
             ("the".into(), Some(0))
         );
+    }
+
+    #[test]
+    fn tex82_conditionals_use_shared_if_test_identity() {
+        let expected = [
+            (ExpandablePrimitive::If, 0),
+            (ExpandablePrimitive::IfCat, 1),
+            (ExpandablePrimitive::IfNum, 2),
+            (ExpandablePrimitive::IfDim, 3),
+            (ExpandablePrimitive::IfOdd, 4),
+            (ExpandablePrimitive::IfVMode, 5),
+            (ExpandablePrimitive::IfHMode, 6),
+            (ExpandablePrimitive::IfMMode, 7),
+            (ExpandablePrimitive::IfInner, 8),
+            (ExpandablePrimitive::IfVoid, 9),
+            (ExpandablePrimitive::IfHBox, 10),
+            (ExpandablePrimitive::IfVBox, 11),
+            (ExpandablePrimitive::IfX, 12),
+            (ExpandablePrimitive::IfEof, 13),
+            (ExpandablePrimitive::IfTrue, 14),
+            (ExpandablePrimitive::IfFalse, 15),
+            (ExpandablePrimitive::IfCase, 16),
+        ];
+
+        for (primitive, operand) in expected {
+            assert_eq!(
+                canonical_command_identity(Meaning::ExpandablePrimitive(primitive)),
+                ("if_test".into(), Some(operand))
+            );
+        }
     }
 }

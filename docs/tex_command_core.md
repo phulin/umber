@@ -678,7 +678,12 @@ current meaning cell. An active character first resolves to its distinct
 active-character control-sequence identity and then reads that cell; it never
 aliases an escaped control sequence with the same printed spelling. The
 resolved value is retained in `CurrentCommand`, so later assignments cannot
-alter an already delivered command. Its `spelling` retains the traced token,
+alter an already delivered command. Test and instrumentation observation
+translates TeX82 conditional primitives from their Rust meaning variants to
+the shared `if_test` command identity and canonical `cur_chr` operand (for
+example, `\iftrue` is operand 14); this metadata does not participate in
+conditional evaluation or condition-stack state. Its `spelling` retains the
+traced token,
 and `origin` is exposed directly from that spelling; provenance never affects
 the meaning lookup. Engine-owned frozen tokens resolve through their immutable
 frozen meaning rather than a mutable control-sequence cell.
