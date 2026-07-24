@@ -177,7 +177,12 @@ reconstructing a fixture event from later state. The runner
 compares every produced event against the complete committed stream without
 filtering expected events. A mismatch reports its fixture
 identity, ordered index, typed expected and actual values, and available
-source/provenance context; output is bounded. The current command-core scope
+source/provenance context; nested registered inputs retain their own
+deterministic source identity and location context until their source-level
+retirement. An executor failure is retained with the observed prefix: an
+earlier semantic mismatch remains the reported result, while an otherwise
+matching prefix reports the failure rather than treating it as EOF. Output is
+bounded. The current command-core scope
 may therefore report an early divergence while implementation slices are
 incomplete. Its comparator self-test covers exact quiet matches and a
 deterministic injected earliest mismatch.

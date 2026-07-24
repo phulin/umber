@@ -50,13 +50,18 @@ pub fn run_repository(repository: impl AsRef<Path>) -> Result<(), RunnerError> {
                 })?);
         let fixture = CommittedFixture::load(&fixture_directory)
             .map_err(|error| RunnerError::Fixture(entry.selector.clone(), error.to_string()))?;
-        let actual = replay_fixture(&fixture_directory, &fixture)?;
+        let replay = replay_fixture(&fixture_directory, &fixture)?;
         let identity = format!(
             "{} manifest={}",
             fixture.manifest.name, fixture.stream.header.manifest
         );
-        if let Err(mismatch) = compare_streams(&identity, &fixture.stream.events, &actual) {
+        if let Err(mismatch) = compare_streams(&identity, &fixture.stream.events, &replay.events) {
             failures.push(*mismatch);
+        } else if let Some(error) = replay.failure {
+            return Err(RunnerError::Replay(format!(
+                "fixture {} replay did not reach a terminal command state: {error}",
+                fixture.manifest.name
+            )));
         }
     }
     if failures.is_empty() {
@@ -190,7 +195,7 @@ impl Error for RunnerError {}
 fn replay_fixture(
     directory: &Path,
     fixture: &CommittedFixture,
-) -> Result<Vec<ObservedEvent>, RunnerError> {
+) -> Result<ReplayOutput, RunnerError> {
     if fixture.manifest.oracle.engine.dialect != EngineDialect::Tex82
         || fixture.manifest.profile.invocation != "initex"
         || fixture.manifest.profile.characters != "eight_bit_exact"
@@ -201,6 +206,18 @@ fn replay_fixture(
         )));
     }
     CanonicalStartup::from_fixture(directory, fixture)?.replay()
+}
+
+/// Observer output plus a nonterminal executor failure, if one occurred.
+///
+/// The complete fixture stream is still compared first, so a command error
+/// after an already-produced earlier semantic divergence cannot mask that
+/// deterministic earliest mismatch. If the observed prefix is exact, the
+/// failure becomes a runner error instead of being mistaken for EOF.
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct ReplayOutput {
+    events: Vec<ObservedEvent>,
+    failure: Option<String>,
 }
 
 /// Typed host-harness state preceding the first TeX command transition.
@@ -288,7 +305,7 @@ impl CanonicalStartup {
         })
     }
 
-    fn replay(self) -> Result<Vec<ObservedEvent>, RunnerError> {
+    fn replay(self) -> Result<ReplayOutput, RunnerError> {
         let limit = self
             .terminal_filename
             .len()
@@ -339,7 +356,7 @@ impl CanonicalStartup {
                 SourceRegistration::new(RegisteredSourceKind::World, Arc::clone(bytes)),
             );
         }
-        let mut recorder = Recorder::new("terminal");
+        let mut recorder = Recorder::new("terminal", self.input_capabilities);
         let scanned = control
             .scan_startup_file_name(&mut universe, &mut recorder)
             .map_err(|error| {
@@ -370,11 +387,22 @@ impl CanonicalStartup {
                 match control.step_with_observer(&mut universe, &mut recorder) {
                     Ok(ReplayStep::Continue) => deliveries += 1,
                     Ok(ReplayStep::End | ReplayStep::EndOfInput) => break,
-                    Err(_) => break,
+                    Err(error) => {
+                        return Ok(ReplayOutput {
+                            events: recorder.events,
+                            failure: Some(format!(
+                                "root source {} replay failed after {deliveries} deliveries: {error}",
+                                self.root_name
+                            )),
+                        });
+                    }
                 }
             }
         }
-        Ok(recorder.events)
+        Ok(ReplayOutput {
+            events: recorder.events,
+            failure: None,
+        })
     }
 }
 
@@ -394,18 +422,28 @@ fn canonical_input_name(source_name: &str) -> Result<String, RunnerError> {
 }
 
 struct Recorder {
-    source: String,
-    source_id: Option<SourceId>,
-    source_bytes: Option<Arc<[u8]>>,
+    sources: Vec<ActiveSource>,
+    registered_inputs: BTreeMap<String, Arc<[u8]>>,
+    next_registered_source: u32,
     events: Vec<ObservedEvent>,
 }
 
+struct ActiveSource {
+    name: String,
+    source: Option<SourceId>,
+    bytes: Arc<[u8]>,
+}
+
 impl Recorder {
-    fn new(source: impl Into<String>) -> Self {
+    fn new(source: impl Into<String>, registered_inputs: BTreeMap<String, Arc<[u8]>>) -> Self {
         Self {
-            source: source.into(),
-            source_id: None,
-            source_bytes: None,
+            sources: vec![ActiveSource {
+                name: source.into(),
+                source: None,
+                bytes: Arc::from(&b""[..]),
+            }],
+            registered_inputs,
+            next_registered_source: 2,
             events: Vec::new(),
         }
     }
@@ -424,20 +462,56 @@ impl Recorder {
     }
 
     fn activate_source(&mut self, name: impl Into<String>, source: SourceId, bytes: Arc<[u8]>) {
-        self.source = name.into();
-        self.source_id = Some(source);
-        self.source_bytes = Some(bytes);
+        self.sources.push(ActiveSource {
+            name: name.into(),
+            source: Some(source),
+            bytes,
+        });
+    }
+
+    fn activate_registered_input(&mut self, name: &str) {
+        let Some(bytes) = self.registered_inputs.get(name) else {
+            return;
+        };
+        let source = SourceId::new(self.next_registered_source);
+        self.next_registered_source += 1;
+        self.activate_source(name, source, Arc::clone(bytes));
+    }
+
+    fn current_source(&self) -> &ActiveSource {
+        self.sources
+            .last()
+            .expect("terminal source is always active during replay")
+    }
+
+    fn retire_current_source(&mut self) {
+        if self.sources.len() > 1 {
+            self.sources.pop();
+        }
     }
 }
 
 impl CommandObserver for Recorder {
     fn committed(&mut self, observation: CommandObservation) {
+        let source = self.current_source();
         self.events.push(translate_observation(
-            &self.source,
-            self.source_id,
-            self.source_bytes.as_deref(),
-            observation,
+            &source.name,
+            source.source,
+            Some(&source.bytes),
+            observation.clone(),
         ));
+        match observation {
+            CommandObservation::Effect(EffectRecord {
+                kind: "input",
+                detail,
+            }) => self.activate_registered_input(&detail),
+            CommandObservation::Input(InputRecord {
+                transition: InputTransition::Retire,
+                reason: CommandInputReason::Source,
+                ..
+            }) => self.retire_current_source(),
+            _ => {}
+        }
     }
 }
 
@@ -946,7 +1020,7 @@ mod tests {
         assert_eq!(startup.profile, CommandProfile::TEX82);
         assert_eq!(startup.root_name, CANONICAL_ROOT_SOURCE);
         let actual = startup.replay().expect("canonical startup replays");
-        let actual_events = actual[..40]
+        let actual_events = actual.events[..40]
             .iter()
             .map(|event| event.event.clone())
             .collect::<Vec<_>>();
@@ -959,9 +1033,12 @@ mod tests {
         // replay reason; all remaining terminal-scan and root-open events are
         // canonical and ordered.
         assert_eq!(&actual_events[7..], &expected_events[7..]);
-        assert_eq!(actual[37].context, "source=transitions.tex; source_id=1");
         assert_eq!(
-            actual[38].event, fixture.stream.events[38].semantic,
+            actual.events[37].context,
+            "source=transitions.tex; source_id=1"
+        );
+        assert_eq!(
+            actual.events[38].event, fixture.stream.events[38].semantic,
             "the first command carrying a committed source location matches"
         );
     }
@@ -973,12 +1050,15 @@ mod tests {
             .replay()
             .expect("nested source replays again");
         assert_eq!(first, second, "registered input replay must be repeatable");
+        assert_eq!(first.failure, None);
 
         let child_delivery = first
+            .events
             .iter()
             .position(|event| event.context.contains("input_level=3"))
             .expect("the child receives its own input level");
         let child_retirement = first
+            .events
             .iter()
             .enumerate()
             .skip(child_delivery)
@@ -990,24 +1070,46 @@ mod tests {
             })
             .expect("the exhausted child source retires");
         assert!(
-            first[child_retirement + 1..]
+            first.events[child_retirement + 1..]
                 .iter()
                 .any(|event| event.context.contains("input_level=2")),
             "input resumes the still-live parent source after child EOF"
         );
+        assert!(first.events.iter().any(|event| {
+            event.context.starts_with("source=child;")
+                && matches!(
+                    &event.event,
+                    Event::Command(CommandEvent {
+                        command: CanonicalCommand {
+                            location: Some(SourceLocation { source, .. }),
+                            ..
+                        },
+                        ..
+                    }) if source == "child"
+                )
+        }));
     }
 
     #[test]
-    fn nested_input_rejects_a_missing_registered_capability() {
+    fn nested_input_reports_a_missing_registered_capability() {
         let mut startup = nested_startup();
         startup.input_capabilities.clear();
 
-        let events = startup.replay().expect("missing input stops typed replay");
+        let replay = startup
+            .replay()
+            .expect("missing input reports typed replay failure");
         assert!(
-            !events
+            !replay
+                .events
                 .iter()
                 .any(|event| event.context.contains("input_level=3")),
             "missing input must not be opened from the host"
+        );
+        assert!(
+            replay
+                .failure
+                .as_deref()
+                .is_some_and(|failure| failure.contains("missing token while scanning \\input"))
         );
     }
 
