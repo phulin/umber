@@ -109,21 +109,28 @@ impl CurrentCommand {
     }
 }
 
-/// Proof of the exact input position that delivered a current command.
+/// Proof of one exact input transition that delivered a current command.
+///
+/// Position identifies the cursor slot, while `sequence` distinguishes a
+/// later delivery after that slot was rewound.  It is deliberately not a
+/// provenance identity and is valid only within the processor episode that
+/// minted it.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct DeliveryStamp {
     input_level: u64,
     position: u64,
+    sequence: u64,
 }
 
 impl DeliveryStamp {
     /// Constructs the stamp for the input-level position consumed by this
     /// delivery. Only the canonical raw-delivery loop may mint stamps.
     #[allow(dead_code)] // minted by the ordered canonical raw-delivery implementation
-    pub(crate) const fn new(input_level: u64, position: u64) -> Self {
+    pub(crate) const fn new(input_level: u64, position: u64, sequence: u64) -> Self {
         Self {
             input_level,
             position,
+            sequence,
         }
     }
 
@@ -137,6 +144,12 @@ impl DeliveryStamp {
     #[must_use]
     pub const fn position(&self) -> u64 {
         self.position
+    }
+
+    /// Returns the unique sequence within the live processor episode.
+    #[must_use]
+    pub const fn sequence(&self) -> u64 {
+        self.sequence
     }
 }
 

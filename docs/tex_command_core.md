@@ -850,8 +850,9 @@ and returns the same `CurrentCommand` with its packed token spelling.
 
 `back_input`:
 
-1. validates that the delivery stamp still identifies the current live input
-   position;
+1. validates that the nonce-bearing delivery stamp still identifies the most
+   recent raw transition in the live processor episode (not merely an equal
+   token at an equal cursor position);
 2. undoes exactly one literal-brace alignment adjustment made by that
    delivery;
 3. rewinds the current level without allocation when the exact level and

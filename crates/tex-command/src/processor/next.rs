@@ -10,7 +10,7 @@ use crate::command::{CurrentCommand, DeliveryStamp};
 use crate::error::CommandError;
 use crate::input::{
     BackupTreatment, InputLevel, InputLevelId, InputRetirementAction, OutParameterReplay,
-    TokenBehavior, TokenCursor, TokenPayload,
+    ReplayTrace, RetirementBehavior, SharedTokenBuffer, TokenBehavior, TokenCursor, TokenPayload,
 };
 use crate::profile::{CharacterCode, CharacterMode};
 use crate::{SourceControlSequenceKind, SourceToken, SourceTokenizationStep};
@@ -22,6 +22,7 @@ const DEFAULT_END_LINE_CHAR: i32 = 13;
 impl CommandProcessor<'_> {
     /// Delivers one unexpanded raw command through canonical `get_next`.
     pub fn get_next(&mut self) -> Result<Option<CurrentCommand>, CommandError> {
+        self.last_delivery = None;
         self.get_next_with_control_sequence_creation(false)
     }
 
@@ -30,7 +31,62 @@ impl CommandProcessor<'_> {
     /// without assigning it a meaning, so the policy boundary is explicit
     /// even before diagnostic-only interning is separated further.
     pub fn get_token(&mut self) -> Result<Option<CurrentCommand>, CommandError> {
+        self.last_delivery = None;
         self.get_next_with_control_sequence_creation(true)
+    }
+
+    /// Restores the immediately preceding raw delivery to TeX's input.
+    ///
+    /// This is TeX.web's `back_input`: token equality is insufficient because
+    /// equal spellings can be delivered by distinct input transitions. The
+    /// consumed command proves the exact live transition and ensures literal
+    /// brace accounting is undone at most once.
+    pub fn back_input(&mut self, command: CurrentCommand) -> Result<(), CommandError> {
+        self.back_input_with_treatment(command, BackupTreatment::Ordinary)
+    }
+
+    /// Restores a command and records the diagnostic selected by `back_error`.
+    ///
+    /// Scanner-status recovery supplies the canonical diagnostic identity in a
+    /// later milestone; keeping its accounting here ensures recovery input
+    /// remains ordinary input after the one backup transition.
+    #[allow(dead_code)] // invoked by scanner-status recovery in the next milestone
+    pub(crate) fn back_error(
+        &mut self,
+        command: CurrentCommand,
+        diagnostic: u64,
+    ) -> Result<(), CommandError> {
+        self.back_input(command)?;
+        self.command.expansion.pending_diagnostics.push(diagnostic);
+        Ok(())
+    }
+
+    /// Canonical backing operation used by `\\noexpand` for one replayed
+    /// command. The treatment belongs to the backed-up level, not the token
+    /// or the returned command.
+    pub(crate) fn back_input_with_treatment(
+        &mut self,
+        command: CurrentCommand,
+        treatment: BackupTreatment,
+    ) -> Result<(), CommandError> {
+        let stamp = command.delivery_stamp();
+        if self.last_delivery != Some(stamp) {
+            return Err(CommandError::StaleDelivery);
+        }
+        self.last_delivery = None;
+        self.undo_alignment_delivery(&command);
+
+        if self.rewind_current_token_cursor(stamp) {
+            return Ok(());
+        }
+
+        self.command.push_token_level(
+            TokenPayload::Transient(SharedTokenBuffer::new(vec![command.spelling()])),
+            TokenBehavior::BackedUp(treatment),
+            RetirementBehavior::Pop,
+            ReplayTrace::BackedUp,
+        );
+        Ok(())
     }
 
     fn get_next_with_control_sequence_creation(
@@ -59,11 +115,9 @@ impl CommandProcessor<'_> {
                 continue;
             }
 
-            let mut command = CurrentCommand::resolve(
-                spelling,
-                DeliveryStamp::new(level.0, position),
-                &mut self.state,
-            );
+            let delivery_stamp = DeliveryStamp::new(level.0, position, self.next_delivery_sequence);
+            self.next_delivery_sequence = self.next_delivery_sequence.wrapping_add(1);
+            let mut command = CurrentCommand::resolve(spelling, delivery_stamp, &mut self.state);
             if matches!(
                 behavior,
                 TokenBehavior::BackedUp(BackupTreatment::SuppressExpandableControlSequence)
@@ -72,6 +126,7 @@ impl CommandProcessor<'_> {
             }
             self.check_outer_validity_entry(&mut command)?;
             self.alignment_delivery_entry(&command)?;
+            self.last_delivery = Some(delivery_stamp);
             return Ok(Some(command));
         }
     }
@@ -245,6 +300,39 @@ impl CommandProcessor<'_> {
         }
         Ok(())
     }
+
+    fn undo_alignment_delivery(&mut self, command: &CurrentCommand) {
+        match command.spelling().semantic_token() {
+            Token::Char {
+                cat: Catcode::BeginGroup,
+                ..
+            } => {
+                self.command.alignment.align_state =
+                    self.command.alignment.align_state.saturating_sub(1);
+            }
+            Token::Char {
+                cat: Catcode::EndGroup,
+                ..
+            } => {
+                self.command.alignment.align_state =
+                    self.command.alignment.align_state.saturating_add(1);
+            }
+            _ => {}
+        }
+    }
+
+    fn rewind_current_token_cursor(&mut self, stamp: DeliveryStamp) -> bool {
+        let Some(InputLevel::Tokens(cursor)) = self.command.input.levels.last_mut() else {
+            return false;
+        };
+        if cursor.identity.0 != stamp.input_level()
+            || u64::try_from(cursor.index).ok() != Some(stamp.position().saturating_add(1))
+        {
+            return false;
+        }
+        cursor.index -= 1;
+        true
+    }
 }
 
 struct DeliveredToken {
@@ -268,6 +356,7 @@ mod tests {
     use std::sync::Arc;
 
     use tex_state::Universe;
+    use tex_state::meaning::{ExpandablePrimitive, Meaning};
     use tex_state::token::{OriginId, Token, TracedTokenWord};
 
     use super::*;
@@ -421,6 +510,175 @@ mod tests {
             Token::Char {
                 ch: 's',
                 cat: Catcode::Letter
+            }
+        );
+    }
+
+    #[test]
+    fn backup_replays_a_literal_brace_once_and_rejects_its_stale_stamp() {
+        let mut command = CommandState::default();
+        let source = command
+            .register_source(SourceRegistration::new(
+                RegisteredSourceKind::Generated,
+                Arc::<[u8]>::from(b"{".as_slice()),
+            ))
+            .expect("source registers");
+        command
+            .open_registered_source(source)
+            .expect("source opens");
+        let mut runtime = CommandRuntime::default();
+        let mut universe = Universe::new();
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+
+        let opening = processor
+            .get_token()
+            .expect("opening brace delivers")
+            .expect("source is live");
+        let original_stamp = opening.delivery_stamp();
+        assert_eq!(processor.command.alignment.align_state, 1);
+        processor
+            .back_input(opening)
+            .expect("exact delivery backs up");
+        assert_eq!(processor.command.alignment.align_state, 0);
+
+        let replayed = processor
+            .get_next()
+            .expect("backed-up brace delivers")
+            .expect("backup is live");
+        assert_eq!(replayed.delivery_stamp().position(), 0);
+        assert_ne!(replayed.delivery_stamp(), original_stamp);
+        assert_eq!(processor.command.alignment.align_state, 1);
+        processor
+            .back_input(replayed)
+            .expect("replayed delivery backs up");
+        assert_eq!(processor.command.alignment.align_state, 0);
+    }
+
+    #[test]
+    fn token_level_backup_rewinds_without_an_extra_input_level() {
+        let mut command = CommandState::default();
+        command.push_token_level(
+            TokenPayload::Transient(SharedTokenBuffer::new(vec![TracedTokenWord::pack(
+                Token::Char {
+                    ch: 'x',
+                    cat: Catcode::Letter,
+                },
+                OriginId::UNKNOWN,
+            )])),
+            TokenBehavior::Ordinary,
+            RetirementBehavior::Pop,
+            ReplayTrace::BackedUp,
+        );
+        let mut runtime = CommandRuntime::default();
+        let mut universe = Universe::new();
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+
+        let first = processor
+            .get_next()
+            .expect("token delivers")
+            .expect("token level is live");
+        processor.back_input(first).expect("token cursor rewinds");
+        assert_eq!(processor.command.input.levels.len(), 1);
+        let replayed = processor
+            .get_next()
+            .expect("rewound token delivers")
+            .expect("token level is live");
+        assert_eq!(
+            replayed.spelling().semantic_token(),
+            Token::Char {
+                ch: 'x',
+                cat: Catcode::Letter,
+            }
+        );
+    }
+
+    #[test]
+    fn stale_backup_cannot_repeat_literal_brace_rollback() {
+        let mut command = CommandState::default();
+        let source = command
+            .register_source(SourceRegistration::new(
+                RegisteredSourceKind::Generated,
+                Arc::<[u8]>::from(b"{x".as_slice()),
+            ))
+            .expect("source registers");
+        command
+            .open_registered_source(source)
+            .expect("source opens");
+        let mut runtime = CommandRuntime::default();
+        let mut universe = Universe::new();
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+
+        let opening = processor
+            .get_next()
+            .expect("opening brace delivers")
+            .expect("source is live");
+        processor
+            .get_token()
+            .expect("later token delivers")
+            .expect("source is live");
+        assert_eq!(
+            processor.back_input(opening),
+            Err(CommandError::StaleDelivery)
+        );
+        assert_eq!(processor.command.alignment.align_state, 1);
+    }
+
+    #[test]
+    fn noexpand_treatment_and_back_error_are_one_delivery_accounting() {
+        let mut command = CommandState::default();
+        let source = command
+            .register_source(SourceRegistration::new(
+                RegisteredSourceKind::Generated,
+                Arc::<[u8]>::from(b"\\target x".as_slice()),
+            ))
+            .expect("source registers");
+        command
+            .open_registered_source(source)
+            .expect("source opens");
+        let mut runtime = CommandRuntime::default();
+        let mut universe = Universe::new();
+        let target = universe.intern("target").symbol();
+        universe.set_meaning(
+            target,
+            Meaning::ExpandablePrimitive(ExpandablePrimitive::ExpandAfter),
+        );
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+
+        let target = processor
+            .get_next()
+            .expect("target delivers")
+            .expect("source is live");
+        processor
+            .back_input_with_treatment(target, BackupTreatment::SuppressExpandableControlSequence)
+            .expect("target backs up for noexpand");
+        let suppressed = processor
+            .get_next()
+            .expect("suppressed target delivers")
+            .expect("backup is live");
+        assert_eq!(suppressed.meaning(), Meaning::Relax);
+
+        let letter = processor
+            .get_next()
+            .expect("source resumes")
+            .expect("letter delivers");
+        processor
+            .back_error(letter, 41)
+            .expect("back error backs up");
+        assert_eq!(processor.command.expansion.pending_diagnostics, vec![41]);
+        assert_eq!(
+            processor
+                .get_next()
+                .expect("backed-up recovery input delivers")
+                .expect("backup is live")
+                .spelling()
+                .semantic_token(),
+            Token::Char {
+                ch: 'x',
+                cat: Catcode::Letter,
             }
         );
     }

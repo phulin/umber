@@ -7,7 +7,7 @@ mod status;
 
 use tex_state::CommandContext;
 
-use crate::{CommandHostContext, CommandRuntime, CommandState};
+use crate::{CommandHostContext, CommandRuntime, CommandState, DeliveryStamp};
 
 pub(crate) use alignment::AlignmentDeliveryState;
 #[cfg(test)]
@@ -31,6 +31,10 @@ pub struct CommandProcessor<'a> {
     state: CommandContext<'a>,
     host: CommandHostContext<'a>,
     observer: Option<&'a mut dyn CommandObserver>,
+    /// Only the immediately preceding raw delivery may be backed up. This is
+    /// processor-local so stamps cannot survive a snapshot or a new episode.
+    last_delivery: Option<DeliveryStamp>,
+    next_delivery_sequence: u64,
 }
 
 impl<'a> CommandProcessor<'a> {
@@ -48,6 +52,8 @@ impl<'a> CommandProcessor<'a> {
             state,
             host,
             observer: None,
+            last_delivery: None,
+            next_delivery_sequence: 0,
         }
     }
 }

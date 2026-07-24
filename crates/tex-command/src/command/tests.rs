@@ -8,7 +8,7 @@ fn resolve(universe: &mut Universe, token: Token, origin: OriginId) -> CurrentCo
     let mut state = universe.command_context();
     CurrentCommand::resolve(
         TracedTokenWord::pack(token, origin),
-        DeliveryStamp::new(17, 23),
+        DeliveryStamp::new(17, 23, 29),
         &mut state,
     )
 }
@@ -28,6 +28,7 @@ fn control_sequence_spelling_survives_a_later_meaning_change() {
     assert_eq!(command.origin(), OriginId::UNKNOWN);
     assert_eq!(command.delivery_stamp().input_level(), 17);
     assert_eq!(command.delivery_stamp().position(), 23);
+    assert_eq!(command.delivery_stamp().sequence(), 29);
 }
 
 #[test]
