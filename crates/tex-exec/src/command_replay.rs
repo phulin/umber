@@ -59,6 +59,7 @@ struct ActiveReplayAlignment {
     preamble_opening_pending: bool,
     preamble_opening_replay_pending: bool,
     preamble_start_pending: bool,
+    cell_opening_pending: bool,
 }
 
 #[derive(Debug, Default)]
@@ -118,6 +119,7 @@ impl CommandReplayControl {
         let identity = match request {
             AlignmentRequest::Begin(identity)
             | AlignmentRequest::Preamble(identity)
+            | AlignmentRequest::InstallCellTemplate(identity)
             | AlignmentRequest::FinishCell(identity)
             | AlignmentRequest::Suspend(identity)
             | AlignmentRequest::Resume(identity)
@@ -415,6 +417,9 @@ enum ScannedStep {
     AlignmentPreambleStart {
         alignment: AlignmentIdentity,
     },
+    AlignmentCellOpening {
+        alignment: AlignmentIdentity,
+    },
     SetBox(SetBoxTarget),
     BeginVBox,
     ReplayBoxOpeningBrace,
@@ -456,6 +461,12 @@ fn scan_replay_step(
                     .map_err(command_error)?;
                 Ok(ScannedStep::AlignmentPreambleStart { alignment })
             }
+            AlignmentPreamblePhase::CellOpening => {
+                processor
+                    .scan_alignment_cell_opening()
+                    .map_err(command_error)?;
+                Ok(ScannedStep::AlignmentCellOpening { alignment })
+            }
         };
     }
     scan_step(processor, starts_paragraph, boxes)
@@ -466,6 +477,7 @@ enum AlignmentPreamblePhase {
     Opening,
     ReplayOpening,
     Start,
+    CellOpening,
 }
 
 fn alignment_preamble(
@@ -476,10 +488,12 @@ fn alignment_preamble(
         Some((active.identity, AlignmentPreamblePhase::Opening))
     } else if active.preamble_opening_replay_pending {
         Some((active.identity, AlignmentPreamblePhase::ReplayOpening))
+    } else if active.preamble_start_pending {
+        Some((active.identity, AlignmentPreamblePhase::Start))
     } else {
         active
-            .preamble_start_pending
-            .then_some((active.identity, AlignmentPreamblePhase::Start))
+            .cell_opening_pending
+            .then_some((active.identity, AlignmentPreamblePhase::CellOpening))
     }
 }
 
@@ -1347,6 +1361,7 @@ fn apply_scanned_step(
                 preamble_opening_pending: true,
                 preamble_opening_replay_pending: false,
                 preamble_start_pending: false,
+                cell_opening_pending: false,
             });
             if vertical && modes.current_mode() == Mode::Vertical {
                 modes.push(Mode::InternalVertical);
@@ -1401,6 +1416,20 @@ fn apply_scanned_step(
                 && active.identity == alignment
             {
                 active.preamble_start_pending = false;
+                active.cell_opening_pending = true;
+            }
+            Ok(ReplayStep::Continue)
+        }
+        ScannedStep::AlignmentCellOpening { alignment } => {
+            command
+                .apply_alignment_request(AlignmentRequest::InstallCellTemplate(alignment))
+                .map_err(|_| ExecError::MissingToken {
+                    context: "alignment cell-template lifecycle",
+                })?;
+            if let Some(active) = active_alignment.as_mut()
+                && active.identity == alignment
+            {
+                active.cell_opening_pending = false;
             }
             Ok(ReplayStep::Continue)
         }

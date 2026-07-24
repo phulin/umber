@@ -119,8 +119,11 @@ The primary TeX procedures mapped by this design are:
 ### 2.1 Alignment template delivery
 
 `AlignmentCellTemplates` carries immutable traced u- and v-template lists.
-Starting a cell pushes its optional u-template as a stored input level; when
-that exact level retires, raw delivery returns to cell-body depth. On an
+Starting a cell establishes its delivery state, then command processing
+delivers and backs up the first source opening brace before the executor's
+typed template-install request pushes its optional u-template as a stored
+input level; when that exact level retires, raw delivery returns to cell-body
+depth. On an
 intercepted delimiter, executor `end_template` handling calls
 `CommandProcessor::begin_alignment_v_template`: it backs up the original
 delimiter below the stored v-template, so all suffix tokens (including macro
@@ -132,8 +135,8 @@ the backed-up delimiter can replay. Active frame identities live in
 are cloned by command snapshots.
 
 `tex-exec` crosses this boundary through `AlignmentRequest` only: begin and
-restart preamble scanning, begin/finish a selected cell, suspend/resume an
-outer alignment, and finish the alignment. `CommandState` applies those
+restart preamble scanning, begin/install/finish a selected cell,
+suspend/resume an outer alignment, and finish the alignment. `CommandState` applies those
 structural requests without receiving a token. Expanded delivery uses
 `CommandProcessor::get_x_alignment_delivery`; an intercepted delimiter is an
 opaque `AlignmentDeliveryEvent::EndTemplate`, which is handed back to

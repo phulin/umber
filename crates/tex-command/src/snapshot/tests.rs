@@ -104,6 +104,7 @@ fn snapshot_roundtrip_preserves_nonquiescent_semantic_state() {
         state.alignment.active_cell = Some(ActiveCellDelivery {
             alignment: AlignmentIdentity::new(97),
             templates: templates(),
+            u_template_installed: false,
             u_level: None,
             v_level: None,
         });
@@ -240,6 +241,7 @@ fn summary_rejects_expansion_alignment_and_live_transients() {
             state.alignment.active_cell = Some(ActiveCellDelivery {
                 alignment: AlignmentIdentity::new(1),
                 templates: templates(),
+                u_template_installed: false,
                 u_level: None,
                 v_level: None,
             });

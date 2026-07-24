@@ -176,7 +176,7 @@ fn canonical_initex_replay_scans_tabskip_before_alignment_preamble() {
 fn alignment_preamble_opener_uses_command_owned_backup_before_source_resumes() {
     let mut universe = Universe::new();
     let mut control = CommandReplayControl::tex82_initex(&mut universe);
-    register_source(&mut control, br"\halign{ U#\cr\end");
+    register_source(&mut control, br"\halign{ U#\cr{\end");
 
     assert_eq!(
         control.step(&mut universe).expect("alignment begins"),
@@ -299,6 +299,40 @@ fn alignment_preamble_opener_uses_command_owned_backup_before_source_resumes() {
                     && cell.transition == "state_change"
                     && cell.align_state == 1_000_000
                     && cell.previous_align_state.is_none()
+        ),
+        "unexpected observations: {:?}",
+        observations.0
+    );
+
+    observations.0.clear();
+    assert_eq!(
+        control
+            .step_with_observer(&mut universe, &mut observations)
+            .expect("first cell opener is backed up before the u-template"),
+        ReplayStep::Continue
+    );
+    assert!(
+        matches!(
+            observations.0.as_slice(),
+            [
+                CommandObservation::Alignment(state_change),
+                CommandObservation::Command(raw),
+                CommandObservation::Command(expanded),
+                CommandObservation::Input(backup),
+                CommandObservation::Recovery(recovery),
+                CommandObservation::Alignment(correction),
+            ]
+                if state_change.transition == "begin_group"
+                    && state_change.align_state == 1_000_001
+                    && state_change.previous_align_state == Some(1_000_000)
+                    && matches!(raw.spelling, ObservedToken::Character { character: '{', .. })
+                    && matches!(expanded.spelling, ObservedToken::Character { character: '{', .. })
+                    && backup.transition == InputTransition::Backup
+                    && backup.reason == InputReason::Backup
+                    && recovery.backup
+                    && correction.transition == "backup_correction"
+                    && correction.align_state == 1_000_000
+                    && correction.previous_align_state == Some(1_000_001)
         ),
         "unexpected observations: {:?}",
         observations.0
@@ -721,6 +755,9 @@ fn replay_dispatches_modes_effects_and_typed_alignment_lifecycle() {
             },
         })
         .expect("cell lifecycle");
+    control
+        .apply_alignment_request(AlignmentRequest::InstallCellTemplate(alignment))
+        .expect("cell template lifecycle");
     assert_eq!(
         control
             .alignment_step(alignment, &mut universe)

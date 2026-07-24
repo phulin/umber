@@ -157,6 +157,17 @@ impl CommandProcessor<'_> {
         self.back_input_after_backup_replay(opening)
     }
 
+    /// Delivers the first alignment cell's source opening brace, then backs
+    /// it up before the selected u-template is installed.
+    ///
+    /// This is TeX82's `init_row` ordering: the source brace changes and then
+    /// restores `align_state` through ordinary command delivery, while the
+    /// executor receives no raw token.
+    pub fn scan_alignment_cell_opening(&mut self) -> Result<(), CommandError> {
+        let opening = self.scan_left_brace(true)?;
+        self.back_input(opening)
+    }
+
     /// Enters TeX82's live alignment-preamble scanner episode.
     ///
     /// `init_align` establishes `scanner_status := aligning` after its

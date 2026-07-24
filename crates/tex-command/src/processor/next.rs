@@ -1469,6 +1469,9 @@ mod tests {
                 },
             )
             .expect("cell begins");
+        command
+            .install_alignment_cell_template(alignment)
+            .expect("u-template installs after the cell opener lifecycle");
         let snapshot = command.snapshot();
         let mut capabilities = CommandHostCapabilities::default();
         {

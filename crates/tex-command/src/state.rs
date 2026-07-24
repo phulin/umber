@@ -86,6 +86,10 @@ impl CommandState {
                 self.begin_alignment_cell(alignment, templates)?;
                 Ok(AlignmentRequestResult::Applied)
             }
+            AlignmentRequest::InstallCellTemplate(alignment) => {
+                self.install_alignment_cell_template(alignment)?;
+                Ok(AlignmentRequestResult::Applied)
+            }
             AlignmentRequest::FinishCell(alignment) => Ok(AlignmentRequestResult::FinishedCell(
                 self.finish_alignment_cell(alignment)?,
             )),
@@ -118,15 +122,28 @@ impl CommandState {
         self.alignment.set_preamble_phase(alignment)
     }
 
-    /// Marks one cell's executor-selected templates active and installs the
+    /// Marks one cell's executor-selected templates active and establishes the
     /// body brace-depth base. This operation does not inspect input tokens.
+    ///
+    /// The source opening brace must be delivered and backed up through a
+    /// command processor before [`Self::install_alignment_cell_template`]
+    /// installs the optional u-template.
     pub fn begin_alignment_cell(
         &mut self,
         alignment: AlignmentIdentity,
         templates: AlignmentCellTemplates,
     ) -> Result<(), AlignmentLifecycleError> {
-        self.alignment.begin_cell(alignment, templates)?;
-        if let Some(template) = templates.u_template {
+        self.alignment.begin_cell(alignment, templates)
+    }
+
+    /// Installs the active cell's optional u-template after the executor's
+    /// typed opener phase has completed command-owned brace replay.
+    pub fn install_alignment_cell_template(
+        &mut self,
+        alignment: AlignmentIdentity,
+    ) -> Result<(), AlignmentLifecycleError> {
+        let template = self.alignment.active_cell_template(alignment)?;
+        if let Some(template) = template {
             let level = self.push_alignment_template(
                 template,
                 TokenBehavior::UTemplate,
@@ -134,6 +151,8 @@ impl CommandState {
                 ReplayTrace::UTemplate,
             );
             self.alignment.attach_u_template(alignment, level)?;
+        } else {
+            self.alignment.mark_u_template_installed(alignment)?;
         }
         Ok(())
     }

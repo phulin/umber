@@ -65,6 +65,9 @@ pub enum AlignmentRequest {
         alignment: AlignmentIdentity,
         templates: AlignmentCellTemplates,
     },
+    /// Install the selected cell's optional u-template after its source
+    /// opening brace has been delivered and backed up by command processing.
+    InstallCellTemplate(AlignmentIdentity),
     /// Retire the exhausted v-template for one finished cell.
     FinishCell(AlignmentIdentity),
     /// Preserve the outer raw-delivery context before entering a nested alignment.
@@ -124,6 +127,10 @@ pub enum AlignmentLifecycleError {
     NoSuspendedAlignment,
     /// The cell has not reached the point where its v-template may start.
     UTemplateStillActive,
+    /// The cell's selected u-template has already been installed.
+    UTemplateAlreadyInstalled,
+    /// The cell's source opener has not reached template installation yet.
+    CellTemplateNotInstalled,
     /// The cell has no retained, exhausted v-template to retire.
     VTemplateNotExhausted,
     /// The raw preamble scanner has not finished its `\\cr`-terminated input.
@@ -139,6 +146,10 @@ impl std::fmt::Display for AlignmentLifecycleError {
             Self::NoActiveCell => "no alignment cell delivery is active",
             Self::NoSuspendedAlignment => "no outer alignment delivery context is suspended",
             Self::UTemplateStillActive => "the alignment u-template is still active",
+            Self::UTemplateAlreadyInstalled => {
+                "the alignment u-template has already been installed"
+            }
+            Self::CellTemplateNotInstalled => "the alignment cell template has not been installed",
             Self::VTemplateNotExhausted => "the alignment v-template is not exhausted",
             Self::PreambleNotComplete => "the alignment preamble is not complete",
         })
@@ -168,6 +179,7 @@ pub(crate) struct SuspendedAlignment {
 pub(crate) struct ActiveCellDelivery {
     pub(crate) alignment: AlignmentIdentity,
     pub(crate) templates: AlignmentCellTemplates,
+    pub(crate) u_template_installed: bool,
     pub(crate) u_level: Option<InputLevelId>,
     pub(crate) v_level: Option<InputLevelId>,
 }
@@ -239,6 +251,7 @@ impl AlignmentDeliveryState {
         self.active_cell = Some(ActiveCellDelivery {
             alignment,
             templates,
+            u_template_installed: false,
             u_level: None,
             v_level: None,
         });
@@ -256,7 +269,34 @@ impl AlignmentDeliveryState {
         level: InputLevelId,
     ) -> Result<(), AlignmentLifecycleError> {
         let cell = self.active_cell_mut(alignment)?;
+        if cell.u_template_installed {
+            return Err(AlignmentLifecycleError::UTemplateAlreadyInstalled);
+        }
+        cell.u_template_installed = true;
         cell.u_level = Some(level);
+        Ok(())
+    }
+
+    pub(crate) fn active_cell_template(
+        &self,
+        alignment: AlignmentIdentity,
+    ) -> Result<Option<TracedTokenList>, AlignmentLifecycleError> {
+        let cell = self.active_cell_ref(alignment)?;
+        if cell.u_template_installed {
+            return Err(AlignmentLifecycleError::UTemplateAlreadyInstalled);
+        }
+        Ok(cell.templates.u_template)
+    }
+
+    pub(crate) fn mark_u_template_installed(
+        &mut self,
+        alignment: AlignmentIdentity,
+    ) -> Result<(), AlignmentLifecycleError> {
+        let cell = self.active_cell_mut(alignment)?;
+        if cell.u_template_installed {
+            return Err(AlignmentLifecycleError::UTemplateAlreadyInstalled);
+        }
+        cell.u_template_installed = true;
         Ok(())
     }
 
@@ -278,6 +318,9 @@ impl AlignmentDeliveryState {
         level: InputLevelId,
     ) -> Result<(), AlignmentLifecycleError> {
         let cell = self.active_cell_mut(alignment)?;
+        if !cell.u_template_installed {
+            return Err(AlignmentLifecycleError::CellTemplateNotInstalled);
+        }
         if cell.u_level.is_some() {
             return Err(AlignmentLifecycleError::UTemplateStillActive);
         }
