@@ -282,6 +282,27 @@ impl CommandProcessor<'_> {
         }
     }
 
+    /// Consumes the compulsory opener following `align_peek`'s `\\noalign`.
+    ///
+    /// TeX82 §37 sets `align_state := 1000000`, recognizes the expanded
+    /// `no_align` command, then calls `scan_left_brace` before the executor
+    /// creates `no_align_group`.  Unlike an `init_col` lookahead, this brace
+    /// is not backed up: its raw delivery is the canonical `1000000 ->
+    /// 1000001` transition.
+    pub fn scan_alignment_noalign_opening(&mut self) -> Result<(), CommandError> {
+        let _ = self.scan_left_brace(true)?;
+        Ok(())
+    }
+
+    /// Installs TeX82 §37's `align_peek` sentinel before its expanded
+    /// lookahead.  The command processor owns this state because it is raw
+    /// token-delivery state, not executor group state.
+    pub fn begin_alignment_peek(&mut self) -> Result<(), CommandError> {
+        self.command
+            .prepare_alignment_cell_lookahead()
+            .map_err(|_| CommandError::InputInvariant)
+    }
+
     /// Enters TeX82's live alignment-preamble scanner episode.
     ///
     /// `init_align` establishes `scanner_status := aligning` after its

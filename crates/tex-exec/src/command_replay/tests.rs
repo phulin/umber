@@ -1,8 +1,9 @@
 use std::sync::Arc;
 
 use tex_command::{
-    AlignmentCellTemplates, AlignmentRequest, CommandObservation, CommandObserver, InputReason,
-    InputTransition, ObservedToken, RegisteredSourceKind, SourceRegistration, TracedTokenList,
+    AlignmentCellTemplates, AlignmentRequest, CommandDeliveryBoundary, CommandObservation,
+    CommandObserver, InputReason, InputTransition, ObservedToken, RegisteredSourceKind,
+    SourceRegistration, TracedTokenList,
 };
 use tex_state::Universe;
 use tex_state::env::banks::{GlueParam, IntParam};
@@ -253,6 +254,88 @@ fn omit_cell_sets_body_state_without_backing_up_or_installing_a_u_template() {
         }),
         "omit must install TeX82's omit_template, not the selected v-template: {:?}",
         observations.0
+    );
+}
+
+#[test]
+fn noalign_uses_command_owned_brace_scan_without_a_generic_backup() {
+    let mut universe = Universe::new();
+    let mut control = CommandReplayControl::tex82_initex(&mut universe);
+    register_source(
+        &mut control,
+        br"\halign{#\cr {a}\cr\noalign{\relax}{b}\cr}\end",
+    );
+    let mut observations = ObservationRecorder::default();
+
+    for _ in 0..40 {
+        if control
+            .step_with_observer(&mut universe, &mut observations)
+            .is_err()
+        {
+            break;
+        }
+        if observations.0.windows(4).any(|events| {
+            matches!(
+                events,
+                [
+                    CommandObservation::Command(raw),
+                    CommandObservation::Command(expanded),
+                    CommandObservation::Alignment(state_change),
+                    CommandObservation::Command(brace),
+                ] if raw.command == "no_align"
+                    && raw.command_operand == Some(0)
+                    && expanded.command == "no_align"
+                    && expanded.command_operand == Some(0)
+                    && state_change.transition == "begin_group"
+                    && state_change.previous_align_state == Some(1_000_000)
+                    && state_change.align_state == 1_000_001
+                    && brace.spelling == ObservedToken::Character {
+                        character: '{',
+                        catcode: Catcode::BeginGroup,
+                    }
+            )
+        }) {
+            break;
+        }
+    }
+
+    let noalign = observations
+        .0
+        .iter()
+        .position(|event| {
+            matches!(event, CommandObservation::Command(command)
+            if command.boundary == CommandDeliveryBoundary::Raw && command.command == "no_align")
+        })
+        .expect("raw TeX82 no_align delivery");
+    let brace = observations
+        .0
+        .iter()
+        .skip(noalign + 1)
+        .position(|event| {
+            matches!(event, CommandObservation::Command(command)
+            if command.boundary == CommandDeliveryBoundary::Raw
+                && command.spelling == ObservedToken::Character {
+                    character: '{', catcode: Catcode::BeginGroup
+                })
+        })
+        .map(|offset| noalign + 1 + offset)
+        .expect("command-owned noalign opening brace");
+    assert!(
+        observations.0[noalign..=brace]
+            .iter()
+            .any(|event| matches!(event,
+                CommandObservation::Alignment(state_change)
+                    if state_change.transition == "begin_group"
+                        && state_change.previous_align_state == Some(1_000_000)
+                        && state_change.align_state == 1_000_001
+            ))
+    );
+    assert!(
+        !observations.0[noalign..=brace]
+            .iter()
+            .any(|event| matches!(event,
+                CommandObservation::Input(input) if input.transition == InputTransition::Backup
+            ))
     );
 }
 

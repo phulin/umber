@@ -65,6 +65,8 @@ struct ActiveReplayAlignment {
     preamble_start_pending: bool,
     cell_opening_pending: bool,
     next_cell_opening_pending: bool,
+    align_peek_pending: bool,
+    noalign_depth: Option<u32>,
 }
 
 #[derive(Debug, Default)]
@@ -126,6 +128,7 @@ impl CommandReplayControl {
         let identity = match request {
             AlignmentRequest::Begin(identity)
             | AlignmentRequest::Preamble(identity)
+            | AlignmentRequest::PrepareCellLookahead(identity)
             | AlignmentRequest::InstallCellTemplate(identity)
             | AlignmentRequest::InstallOmitCellTemplate(identity)
             | AlignmentRequest::FinishCell(identity)
@@ -260,6 +263,10 @@ impl CommandReplayControl {
             ScannedStep::AlignmentCellOpening {
                 alignment,
                 opening: AlignmentCellOpening::Omit,
+            } => Some(*alignment),
+            ScannedStep::AlignmentPeekCell {
+                alignment,
+                omit: true,
             } => Some(*alignment),
             _ => None,
         };
@@ -470,6 +477,22 @@ enum ScannedStep {
     AlignmentCellFinish {
         alignment: AlignmentIdentity,
     },
+    /// TeX82 §37 has consumed `\\noalign` and its compulsory opening brace.
+    /// Command control owns both deliveries; the executor now owns the
+    /// no-align group's structural entry.
+    BeginNoAlign {
+        alignment: AlignmentIdentity,
+    },
+    AlignmentPeekCell {
+        alignment: AlignmentIdentity,
+        omit: bool,
+    },
+    NoAlignBeginGroup {
+        alignment: AlignmentIdentity,
+    },
+    NoAlignEndGroup {
+        alignment: AlignmentIdentity,
+    },
     SetBox(SetBoxTarget),
     BeginVBox,
     ReplayBoxOpeningBrace,
@@ -523,6 +546,8 @@ fn scan_replay_step(
                     .map_err(command_error)?;
                 Ok(ScannedStep::AlignmentCellOpening { alignment, opening })
             }
+            AlignmentPreamblePhase::AlignPeek => scan_alignment_peek(processor, alignment),
+            AlignmentPreamblePhase::NoAlignBody => scan_noalign_body(processor, alignment, boxes),
             AlignmentPreamblePhase::CellDelivery => {
                 scan_alignment_delivery_step(processor, alignment, boxes)
             }
@@ -538,6 +563,8 @@ enum AlignmentPreamblePhase {
     Start,
     CellOpening,
     NextCellOpening,
+    AlignPeek,
+    NoAlignBody,
     CellDelivery,
 }
 
@@ -555,8 +582,74 @@ fn alignment_preamble(
         Some((active.identity, AlignmentPreamblePhase::CellOpening))
     } else if active.next_cell_opening_pending {
         Some((active.identity, AlignmentPreamblePhase::NextCellOpening))
+    } else if active.align_peek_pending {
+        Some((active.identity, AlignmentPreamblePhase::AlignPeek))
+    } else if active.noalign_depth.is_some() {
+        Some((active.identity, AlignmentPreamblePhase::NoAlignBody))
     } else {
         Some((active.identity, AlignmentPreamblePhase::CellDelivery))
+    }
+}
+
+/// TeX82 §37's post-row lookahead.  This is deliberately separate from
+/// `init_col`: `\\noalign` consumes its opening brace directly, whereas an
+/// ordinary next-cell command is backed up for template installation.
+fn scan_alignment_peek(
+    processor: &mut CommandProcessor<'_>,
+    alignment: AlignmentIdentity,
+) -> Result<ScannedStep, ExecError> {
+    processor.begin_alignment_peek().map_err(command_error)?;
+    let command = next_non_space(processor)?.ok_or(ExecError::MissingToken {
+        context: "alignment lookahead",
+    })?;
+    match command.meaning() {
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::NoAlign) => {
+            processor
+                .scan_alignment_noalign_opening()
+                .map_err(command_error)?;
+            Ok(ScannedStep::BeginNoAlign { alignment })
+        }
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::CrCr) => Ok(ScannedStep::Continue),
+        Meaning::CharToken {
+            cat: Catcode::EndGroup,
+            ..
+        } => Err(ExecError::MissingToken {
+            context: "alignment finish through command replay",
+        }),
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Omit) => {
+            Ok(ScannedStep::AlignmentPeekCell {
+                alignment,
+                omit: true,
+            })
+        }
+        _ => {
+            processor.back_input(command).map_err(command_error)?;
+            Ok(ScannedStep::AlignmentPeekCell {
+                alignment,
+                omit: false,
+            })
+        }
+    }
+}
+
+fn scan_noalign_body(
+    processor: &mut CommandProcessor<'_>,
+    alignment: AlignmentIdentity,
+    boxes: &ReplayBoxes,
+) -> Result<ScannedStep, ExecError> {
+    let Some(command) = processor.get_x_token().map_err(command_error)? else {
+        return Ok(ScannedStep::EndOfInput);
+    };
+    match command.meaning() {
+        Meaning::CharToken {
+            cat: Catcode::BeginGroup,
+            ..
+        } => Ok(ScannedStep::NoAlignBeginGroup { alignment }),
+        Meaning::CharToken {
+            cat: Catcode::EndGroup,
+            ..
+        } => Ok(ScannedStep::NoAlignEndGroup { alignment }),
+        _ => scan_command(processor, command, false, MeaningFlags::EMPTY, false, boxes),
     }
 }
 
@@ -1220,15 +1313,20 @@ fn begin_next_replay_alignment_cell(
         .ok_or(ExecError::MissingToken {
             context: "next alignment preamble column",
         })?;
-    command
-        .apply_alignment_request(AlignmentRequest::BeginCell {
-            alignment,
-            templates,
-        })
-        .map_err(|_| ExecError::MissingToken {
-            context: "alignment next-cell lifecycle",
-        })?;
-    active.next_cell_opening_pending = true;
+    match delimiter {
+        AlignmentCellDelimiter::Row => active.align_peek_pending = true,
+        AlignmentCellDelimiter::Tab | AlignmentCellDelimiter::Span => {
+            command
+                .apply_alignment_request(AlignmentRequest::BeginCell {
+                    alignment,
+                    templates,
+                })
+                .map_err(|_| ExecError::MissingToken {
+                    context: "alignment next-cell lifecycle",
+                })?;
+            active.next_cell_opening_pending = true;
+        }
+    }
     Ok(())
 }
 
@@ -1539,6 +1637,8 @@ fn apply_scanned_step(
                 preamble_start_pending: false,
                 cell_opening_pending: false,
                 next_cell_opening_pending: false,
+                align_peek_pending: false,
+                noalign_depth: None,
             });
             if vertical && modes.current_mode() == Mode::Vertical {
                 modes.push(Mode::InternalVertical);
@@ -1597,6 +1697,100 @@ fn apply_scanned_step(
                 active.preamble_start_pending = false;
                 active.cell_opening_pending = true;
             }
+            Ok(ReplayStep::Continue)
+        }
+        ScannedStep::BeginNoAlign { alignment } => {
+            let active = active_alignment
+                .as_mut()
+                .filter(|active| active.identity == alignment)
+                .ok_or(ExecError::MissingToken {
+                    context: "active replay alignment",
+                })?;
+            active.align_peek_pending = false;
+            active.noalign_depth = Some(1);
+            stores.enter_group_with_kind(GroupKind::NoAlign);
+            if matches!(
+                modes.current_mode(),
+                Mode::Horizontal | Mode::RestrictedHorizontal
+            ) {
+                let _ = modes.pop()?;
+            }
+            Ok(ReplayStep::Continue)
+        }
+        ScannedStep::AlignmentPeekCell { alignment, omit } => {
+            let active = active_alignment
+                .as_mut()
+                .filter(|active| active.identity == alignment)
+                .ok_or(ExecError::MissingToken {
+                    context: "active replay alignment",
+                })?;
+            let templates =
+                active
+                    .columns
+                    .get(active.column)
+                    .copied()
+                    .ok_or(ExecError::MissingToken {
+                        context: "next alignment preamble column",
+                    })?;
+            command
+                .apply_alignment_request(AlignmentRequest::BeginCell {
+                    alignment,
+                    templates,
+                })
+                .map_err(|_| ExecError::MissingToken {
+                    context: "alignment next-row lifecycle",
+                })?;
+            active.align_peek_pending = false;
+            if omit {
+                command
+                    .apply_alignment_request(AlignmentRequest::PrepareCellLookahead(alignment))
+                    .map_err(|_| ExecError::MissingToken {
+                        context: "alignment omit lookahead lifecycle",
+                    })?;
+                command
+                    .apply_alignment_request(AlignmentRequest::InstallOmitCellTemplate(alignment))
+                    .map_err(|_| ExecError::MissingToken {
+                        context: "alignment omit-cell lifecycle",
+                    })?;
+            } else {
+                active.next_cell_opening_pending = true;
+            }
+            Ok(ReplayStep::Continue)
+        }
+        ScannedStep::NoAlignBeginGroup { alignment } => {
+            let active = active_alignment
+                .as_mut()
+                .filter(|active| active.identity == alignment)
+                .ok_or(ExecError::MissingToken {
+                    context: "active replay alignment",
+                })?;
+            let depth = active.noalign_depth.ok_or(ExecError::MissingToken {
+                context: "noalign group",
+            })?;
+            active.noalign_depth = Some(depth.saturating_add(1));
+            Ok(ReplayStep::Continue)
+        }
+        ScannedStep::NoAlignEndGroup { alignment } => {
+            let active = active_alignment
+                .as_mut()
+                .filter(|active| active.identity == alignment)
+                .ok_or(ExecError::MissingToken {
+                    context: "active replay alignment",
+                })?;
+            let depth = active.noalign_depth.ok_or(ExecError::MissingToken {
+                context: "noalign group",
+            })?;
+            if depth > 1 {
+                active.noalign_depth = Some(depth - 1);
+                return Ok(ReplayStep::Continue);
+            }
+            active.noalign_depth = None;
+            active.align_peek_pending = true;
+            stores
+                .leave_group_with_kind(GroupKind::NoAlign)
+                .map_err(|_| ExecError::MissingToken {
+                    context: "noalign group",
+                })?;
             Ok(ReplayStep::Continue)
         }
         ScannedStep::AlignmentCellOpening { alignment, opening } => {

@@ -101,6 +101,9 @@ pub enum AlignmentRequest {
         alignment: AlignmentIdentity,
         templates: AlignmentCellTemplates,
     },
+    /// Restore `align_peek`/`init_col`'s lookahead sentinel before a typed
+    /// already-delivered `\\omit` result is installed.
+    PrepareCellLookahead(AlignmentIdentity),
     /// Install the selected cell's optional u-template after its source
     /// opening brace has been delivered and backed up by command processing.
     InstallCellTemplate(AlignmentIdentity),

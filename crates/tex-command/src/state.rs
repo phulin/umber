@@ -88,6 +88,13 @@ impl CommandState {
                 self.begin_alignment_cell(alignment, templates)?;
                 Ok(AlignmentRequestResult::Applied)
             }
+            AlignmentRequest::PrepareCellLookahead(alignment) => {
+                if self.alignment.active_alignment != Some(alignment) {
+                    return Err(AlignmentLifecycleError::WrongAlignment);
+                }
+                self.prepare_alignment_cell_lookahead()?;
+                Ok(AlignmentRequestResult::Applied)
+            }
             AlignmentRequest::InstallCellTemplate(alignment) => {
                 self.install_alignment_cell_template(alignment)?;
                 Ok(AlignmentRequestResult::Applied)
