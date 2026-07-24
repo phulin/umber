@@ -241,7 +241,7 @@ fn committed_tex82_fixture_is_consumed_hermetically() {
     )
     .expect("committed canonical fixture");
     assert_eq!(fixture.manifest.name, "tex82/command-transitions-v1");
-    assert_eq!(fixture.stream.events.len(), 11_484);
+    assert_eq!(fixture.stream.events.len(), 11_665);
     fixture
         .audit_matrices(
             &fs::read(repository.join("tests/tex82-oracle/semantic-event-matrix.txt"))

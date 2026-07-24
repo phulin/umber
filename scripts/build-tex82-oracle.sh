@@ -26,6 +26,7 @@ transition_child="${repo_root}/tests/tex82-oracle/transitions-child.tex"
 transition_support=(
   "${repo_root}/tests/tex82-oracle/expansion-macros.tex"
   "${repo_root}/tests/tex82-oracle/alignment-delivery.tex"
+  "${repo_root}/tests/tex82-oracle/off-save.tex"
   "${repo_root}/tests/tex82-oracle/scanner-conditionals.tex"
   "${repo_root}/tests/tex82-oracle/scanner-conditionals-eof.tex"
   "${repo_root}/tests/tex82-oracle/input-recovery.tex"
@@ -258,6 +259,8 @@ run_transitions() {
     'UMBER-TEX82-V-TEMPLATE' \
     'UMBER-TEX82-NOALIGN' \
     'UMBER-TEX82-ALIGNMENT-END' \
+    'UMBER-TEX82-OFF-SAVE-BEGIN' \
+    'UMBER-TEX82-OFF-SAVE-PROGRESS' \
     '! Missing # inserted in alignment preamble.' \
     'You have given more \span or & marks than there were' \
     '! Missing { inserted.' \

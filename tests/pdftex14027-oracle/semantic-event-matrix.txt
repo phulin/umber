@@ -18,6 +18,11 @@ input|recovery retirement|transitions.tex|end_token_list inserted branch|"transi
 recovery|exact backup|transitions.tex|back_input committed level|"event":"recovery","data":{"kind":"backup"
 recovery|inserted token|transitions.tex|back_input recovery insertion|"event":"recovery","data":{"kind":"inserted_token"
 recovery|inserted control sequence|transitions.tex|inserted-relax and outer-validity recovery|"event":"recovery","data":{"kind":"inserted_control_sequence"
+off_save|above-bottom replay|transitions.tex|off_save above-bottom branch|"diagnostic":"off_save_replay","arguments":[{"type":"token","value":{"character":0,"catcode":"escape","control_sequence":"endgroup"}}]
+off_save|above-bottom backup|transitions.tex|off_save back_input replay seam|"kind":"backup","tokens":[{"character":0,"catcode":"escape","control_sequence":"endgroup"}]
+off_save|above-bottom inserted closer|transitions.tex|off_save ins_list right-brace insertion|"kind":"inserted_token","tokens":[{"character":125,"catcode":"right_brace"}]
+off_save|bottom-level drop|transitions.tex|off_save bottom-level branch|"diagnostic":"off_save_bottom_drop","arguments":[{"type":"token","value":{"character":0,"catcode":"escape","control_sequence":"endgroup"}}]
+off_save|bottom-level bounded progress|transitions.tex|off_save return to ordinary command loop|"kind":"message","channel":"terminal","value":{"type":"bytes","value":[85,77,66,69,82,45,80,68,70,84,69,88,45,79,70,70,45,83,65,86,69,45,80,82,79,71,82,69,83,83]}
 scanner_status|matching entry and restoration|transitions.tex|macro_call scanner-status scope|"from":"normal","to":"matching"
 scanner_status|defining entry and restoration|transitions.tex|scan_toks scanner-status scope|"from":"normal","to":"defining"
 scanner_status|absorbing entry and restoration|transitions.tex|scan_toks scanner-status scope|"from":"normal","to":"absorbing"

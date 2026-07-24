@@ -517,6 +517,19 @@ write(umber_trace_file,'","tokens":['); umber_trace_token(t);
 write_ln(umber_trace_file,']}}}');
 end;
 
+procedure umber_trace_off_save(@!at_bottom:boolean;@!t:halfword);
+begin
+if not umber_trace_opened then return;
+umber_trace_begin;
+write(umber_trace_file,
+  '{"event":"diagnostic","data":{"severity":"error","diagnostic":"');
+if at_bottom then write(umber_trace_file,'off_save_bottom_drop')
+else write(umber_trace_file,'off_save_replay');
+write(umber_trace_file,'","arguments":[{"type":"token","value":');
+umber_trace_token(t);
+write_ln(umber_trace_file,'}]}}}');
+end;
+
 procedure umber_trace_status(@!old_status,@!new_status:integer);
 begin
 if (not umber_trace_opened)or(old_status=new_status) then return;
@@ -1558,6 +1571,23 @@ align_state:=1000000; umber_trace_alignment(6,align_state,0);
 @y
   extra_info(cur_align):=cr_code;
   umber_trace_alignment_recovery(4); error;
+@z
+
+@x [40] Observe |off_save| recovery versus bounded bottom-level dropping.
+procedure off_save;
+var p:pointer; {inserted token}
+begin if cur_group=bottom_level then
+  @<Drop current token and complain that it was unmatched@>
+else  begin back_input; p:=get_avail; link(temp_head):=p;
+@y
+procedure off_save;
+var p:pointer; {inserted token}
+begin if cur_group=bottom_level then
+  begin umber_trace_off_save(true,cur_tok);
+  @<Drop current token and complain that it was unmatched@>
+  end
+else  begin umber_trace_off_save(false,cur_tok);
+  back_input; p:=get_avail; link(temp_head):=p;
 @z
 
 @x [49] Observe missing-brace alignment recovery.

@@ -5,6 +5,7 @@ command|tex.web|get_token|log,terminal
 command|tex.web|get_x_token, x_token, and expand|log,terminal
 input|tex.web|Input stacks and states; begin_file_reading and end_file_reading|status,terminal
 recovery|tex.web|back_input and check_outer_validity|log,terminal
+off_save|tex.web|off_save|log,terminal
 scanner_status|tex.web|back_input and check_outer_validity|log
 diagnostic|tex.web|back_input and check_outer_validity|log,status,terminal
 macro|tex.web|macro_call|log

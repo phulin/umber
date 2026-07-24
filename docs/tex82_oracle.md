@@ -112,7 +112,12 @@ right braces, and an extra tab. Its messages independently expose u/v-template
 execution and `\noalign`; its shipped rule boxes make alignment packaging
 visible in DVI bytes. Alignment nesting is a semantic counter maintained by
 the detached observer; no alignment record, input level, or `mem` address
-enters the stream. The sole ordinary-log normalization
+enters the stream. The focused `off-save.tex` child enters a simple group,
+issues `\endgroup`, and then emits a progress marker. This makes the canonical
+trace observe `off_save` above bottom level as a backup plus inserted right
+brace and replay, then observe the replay's bottom-level drop without an
+input-frame loop. pdfTeX's corresponding transition input uses the same
+construction and schema-v1 event fragments. The sole ordinary-log normalization
 replaces TeX's startup-banner host clock; no semantic message or diagnostic is
 changed. Assignment-command-scoped observation at the committed `eq_define`,
 `geq_define`, `eq_word_define`, and `geq_word_define` seams emits typed
@@ -140,6 +145,7 @@ cannot silently weaken coverage.
 | scanners                    | `transitions.tex`                          | successful integer, dimension, glue, and internal-value returns                                                             |
 | conditions                  | both transition inputs                     | frame link/unlink, exact-frame limit updates, branch selection, and EOF recovery                                            |
 | alignments                  | `alignment-delivery.tex`                   | alignment ownership, preamble lifecycle, literal-brace accounting, delimiter interception, template lifecycle, and recovery |
+| off-save recovery           | `off-save.tex`                             | `off_save` replay with inserted closer, then bottom-level drop and bounded progress                                         |
 | mutations                   | `transitions.tex`                          | assignment-scoped committed meaning, catcode, code-table, parameter, and register writes                                    |
 | ordinary effects            | `transitions.tex`                          | committed message, expanded write, output-stream open/close, and successful DVI shipout                                     |
 | final ordering              | `transitions.tex`                          | terminal input stop followed by termination before observer close                                                           |

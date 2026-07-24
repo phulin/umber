@@ -53,7 +53,22 @@ l.31 ...iffalse}\fi&}\relax\cr}}
                         
 l.33   \relax&
               \relax\cr}}
-UMBER-TEX82-ALIGNMENT-END) [42.42.7] UMBER-TEX82-TRANSITIONS
+UMBER-TEX82-ALIGNMENT-END) (./off-save.tex UMBER-TEX82-OFF-SAVE-BEGIN
+! Missing } inserted.
+<inserted text> 
+                }
+...
+l.2 {\endgroup
+              }
+! Extra \endgroup.
+<recently read> \endgroup 
+                          
+l.2 {\endgroup
+              }
+! Too many }'s.
+l.2 {\endgroup}
+               
+UMBER-TEX82-OFF-SAVE-PROGRESS) [42.42.7] UMBER-TEX82-TRANSITIONS
 (./expansion-macros.tex
 Runaway argument?
 {BEFORE
@@ -159,150 +174,150 @@ l.29 \input input-eof-aligning
 ! Incomplete \iffalse; all text was ignored after line 30.
 <inserted text> 
                 \fi 
-l.43 \input input-recovery
+l.44 \input input-recovery
                           
 (./transitions-child.tex)
 ! Incomplete \iffalse; all text was ignored after line 1.
 <inserted text> 
                 \fi 
-l.44 \input transitions-child
+l.45 \input transitions-child
                              
 Runaway argument?
 ! Forbidden control sequence found while scanning use of \takeone.
 <inserted text> 
                 \par 
 ...
-l.46 \takeone\outercommand
+l.47 \takeone\outercommand
                           
 ! Output routine didn't use all of \box255.
 <to be read again> 
                    \end 
-l.47 \end
+l.48 \end
          
 ! Output routine didn't use all of \box255.
 <to be read again> 
                    \end 
-l.47 \end
+l.48 \end
          
 ! Output routine didn't use all of \box255.
 <to be read again> 
                    \end 
-l.47 \end
+l.48 \end
          
 ! Output routine didn't use all of \box255.
 <to be read again> 
                    \end 
-l.47 \end
+l.48 \end
          
 ! Output routine didn't use all of \box255.
 <to be read again> 
                    \end 
-l.47 \end
+l.48 \end
          
 ! Output routine didn't use all of \box255.
 <to be read again> 
                    \end 
-l.47 \end
+l.48 \end
          
 ! Output routine didn't use all of \box255.
 <to be read again> 
                    \end 
-l.47 \end
+l.48 \end
          
 ! Output routine didn't use all of \box255.
 <to be read again> 
                    \end 
-l.47 \end
+l.48 \end
          
 ! Output routine didn't use all of \box255.
 <to be read again> 
                    \end 
-l.47 \end
+l.48 \end
          
 ! Output routine didn't use all of \box255.
 <to be read again> 
                    \end 
-l.47 \end
+l.48 \end
          
 ! Output routine didn't use all of \box255.
 <to be read again> 
                    \end 
-l.47 \end
+l.48 \end
          
 ! Output routine didn't use all of \box255.
 <to be read again> 
                    \end 
-l.47 \end
+l.48 \end
          
 ! Output routine didn't use all of \box255.
 <to be read again> 
                    \end 
-l.47 \end
+l.48 \end
          
 ! Output routine didn't use all of \box255.
 <to be read again> 
                    \end 
-l.47 \end
+l.48 \end
          
 ! Output routine didn't use all of \box255.
 <to be read again> 
                    \end 
-l.47 \end
+l.48 \end
          
 ! Output routine didn't use all of \box255.
 <to be read again> 
                    \end 
-l.47 \end
+l.48 \end
          
 ! Output routine didn't use all of \box255.
 <to be read again> 
                    \end 
-l.47 \end
+l.48 \end
          
 ! Output routine didn't use all of \box255.
 <to be read again> 
                    \end 
-l.47 \end
+l.48 \end
          
 ! Output routine didn't use all of \box255.
 <to be read again> 
                    \end 
-l.47 \end
+l.48 \end
          
 ! Output routine didn't use all of \box255.
 <to be read again> 
                    \end 
-l.47 \end
+l.48 \end
          
 ! Output routine didn't use all of \box255.
 <to be read again> 
                    \end 
-l.47 \end
+l.48 \end
          
 ! Output routine didn't use all of \box255.
 <to be read again> 
                    \end 
-l.47 \end
+l.48 \end
          
 ! Output routine didn't use all of \box255.
 <to be read again> 
                    \end 
-l.47 \end
+l.48 \end
          
 ! Output routine didn't use all of \box255.
 <to be read again> 
                    \end 
-l.47 \end
+l.48 \end
          
 ! Output routine didn't use all of \box255.
 <to be read again> 
                    \end 
-l.47 \end
+l.48 \end
          
 ! Output loop---25 consecutive dead cycles.
 <to be read again> 
                    \end 
-l.47 \end
+l.48 \end
          
 [42.42.7] )
 (see the transcript file for additional information)

@@ -183,3 +183,9 @@ retirement, `\noalign`, nested suspend/resume ownership, backup correction,
 and preamble, brace, and extra-tab recovery. Transcript messages independently
 expose template and no-align execution; shipped font-independent rules bind
 successful alignment packaging into the committed DVI observation.
+Its `off-save.tex` child isolates executor recovery without using Umber as an
+oracle: an `\endgroup` above bottom level is backed up, paired with an inserted
+right brace, and replayed; the replay then reaches bottom level and is dropped.
+The following message is a bounded-progress observation. Schema-v1 diagnostic
+events distinguish the two `off_save` branches, while the existing recovery
+events retain the exact replay and inserted-closer tokens.
