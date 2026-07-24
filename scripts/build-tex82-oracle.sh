@@ -24,6 +24,7 @@ smoke_input="${repo_root}/tests/tex82-oracle/smoke.tex"
 transition_input="${repo_root}/tests/tex82-oracle/transitions.tex"
 transition_child="${repo_root}/tests/tex82-oracle/transitions-child.tex"
 transition_support=(
+  "${repo_root}/tests/tex82-oracle/expansion-macros.tex"
   "${repo_root}/tests/tex82-oracle/input-recovery.tex"
   "${repo_root}/tests/tex82-oracle/input-eof-normal.tex"
   "${repo_root}/tests/tex82-oracle/input-eof-defining.tex"

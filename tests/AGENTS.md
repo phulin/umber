@@ -13,6 +13,10 @@ seam; the live oracle build consumes it as the coverage gate.
 The `input-recovery.tex` program and `input-eof-*.tex` children isolate
 physical-line/token delivery plus legal and scanner-status-sensitive EOF
 recovery without depending on a format or fonts.
+The `expansion-macros.tex` child isolates expanded delivery, TeX82 expandable
+primitives, macro matching and replay, definition forms, `scan_toks`, and
+direct token-list splices, with transcript-visible `\meaning`/`\show`
+observations.
 Acquisition and builds run only through `scripts/regen-fixtures.sh --oracle
 tex82 --profile initex-eight-bit`; Cargo correctness tests never invoke the
 live oracle.

@@ -150,3 +150,9 @@ source explicitly assigns `\year`,
 `\month`, `\day`, and `\time` before shipout because canonical TeX82's
 `onlyTeX` host boundary does not honor Web2C's `SOURCE_DATE_EPOCH`; this makes
 the ordinary DVI preamble exact across regeneration runs.
+Its `expansion-macros.tex` child separately exercises `get_x_token`,
+`\noexpand`, `\expandafter`, `\csname`, conversion primitives, canonical
+macro matching through nine parameters, paragraph and overlap recovery,
+nested parameter replay, definition forms and prefixes, ordinary and expanded
+`scan_toks`, and direct `\the` splices. Committed `\meaning` and `\show`
+transcript bytes independently expose the representative resulting meanings.

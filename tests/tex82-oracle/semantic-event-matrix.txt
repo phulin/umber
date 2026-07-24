@@ -2,6 +2,18 @@
 # Columns: family|boundary|fixture|final-change seam|fixed JSON fragment
 command|raw delivery|transitions.tex|get_next return|"event":"command","data":{"delivery":"raw"
 command|expanded delivery|transitions.tex|get_x_token and x_token return|"event":"command","data":{"delivery":"expanded"
+command|get_x_token expands macro|expansion-macros.tex|get_x_token expandable loop|"control_sequence":"expandleaf","location":{"source":"expansion-macros.tex","line":2,"byte":27}
+command|noexpand one-delivery suppression|expansion-macros.tex|expand no_expand and backed-up get_next|"command":"relax","operand":{"type":"integer","value":257},"control_sequence":"noexpandleaf"
+command|expandafter primitive|expansion-macros.tex|expand expand_after branch|"command":"expand_after","operand":{"type":"integer","value":0},"control_sequence":"expandafter","location":{"source":"expansion-macros.tex","line":7,"byte":35}
+token_list|expandafter ordering|expansion-macros.tex|expanded scan_toks completion|"key":{"type":"name","value":"expandafterresult"},"value":{"type":"tokens","value":[{"character":0,"catcode":"end_match"},{"character":70,"catcode":"letter"},{"character":73,"catcode":"letter"},{"character":82,"catcode":"letter"},{"character":83,"catcode":"letter"},{"character":84,"catcode":"letter"},{"character":83,"catcode":"letter"}
+command|csname construction|expansion-macros.tex|expand cs_name and end_cs_name branches|"command":"cs_name","operand":{"type":"integer","value":0},"control_sequence":"csname","location":{"source":"expansion-macros.tex","line":8,"byte":22}
+mutation|csname definition target|expansion-macros.tex|cs_name backup into prefixed definition|"key":{"type":"name","value":"constructedname"},"value":{"type":"tokens"
+command|undefined csname becomes relax|expansion-macros.tex|cs_name undefined-control definition|"command":"relax","operand":{"type":"integer","value":256},"control_sequence":"undefinedbecomesrelax"
+command|number conversion|expansion-macros.tex|expand convert number_code|"command":"convert","operand":{"type":"integer","value":0},"control_sequence":"number","location":{"source":"expansion-macros.tex","line":11,"byte":26}
+command|roman numeral conversion|expansion-macros.tex|expand convert roman_numeral_code|"command":"convert","operand":{"type":"integer","value":1},"control_sequence":"romannumeral","location":{"source":"expansion-macros.tex","line":11,"byte":43}
+command|string conversion|expansion-macros.tex|expand convert string_code|"command":"convert","operand":{"type":"integer","value":2},"control_sequence":"string","location":{"source":"expansion-macros.tex","line":11,"byte":53}
+command|meaning conversion|expansion-macros.tex|expand convert meaning_code|"command":"convert","operand":{"type":"integer","value":3},"control_sequence":"meaning","location":{"source":"expansion-macros.tex"
+command|jobname conversion|expansion-macros.tex|expand convert job_name_code|"command":"convert","operand":{"type":"integer","value":5},"control_sequence":"jobname","location":{"source":"expansion-macros.tex","line":11,"byte":78}
 source|ignored character and trailing-space collapse|input-recovery.tex|get_next M/N/S source-token loop|{"character":65,"catcode":"letter"},{"character":105,"catcode":"letter"},{"character":103,"catcode":"letter"},{"character":110,"catcode":"letter"},{"character":111,"catcode":"letter"},{"character":114,"catcode":"letter"},{"character":101,"catcode":"letter"},{"character":100,"catcode":"letter"},{"character":32,"catcode":"spacer"},{"character":66,"catcode":"letter"}
 source|comment discard and blank-line par|input-recovery.tex|get_next end_line and new_line cases|{"character":66,"catcode":"letter"},{"character":67,"catcode":"letter"},{"character":32,"catcode":"spacer"},{"character":0,"catcode":"escape","control_sequence":"par"},{"character":68,"catcode":"letter"}
 source|disabled endlinechar|input-recovery.tex|firm_up_the_line and get_next line refill|"key":{"type":"name","value":"noendline"},"value":{"type":"tokens","value":[{"character":0,"catcode":"end_match"},{"character":65,"catcode":"letter"},{"character":66,"catcode":"letter"}]}
@@ -33,13 +45,25 @@ scanner_status|skipping entry and restoration|transitions.tex and transitions-ch
 scanner_status|aligning entry and restoration|transitions.tex|init_align scanner-status scope|"from":"normal","to":"aligning"
 macro|completed argument|transitions.tex|macro_call post-strip argument commit|"event":"macro","data":{"transition":"argument"
 macro|activation|transitions.tex|macro_call replacement activation commit|"event":"macro","data":{"transition":"activation"
+macro|outer-group stripping|expansion-macros.tex|macro_call undelimited argument commit|"transition":"argument","parameter":1,"tokens":[{"character":123,"catcode":"left_brace"},{"character":71,"catcode":"letter"},{"character":82,"catcode":"letter"},{"character":79,"catcode":"letter"},{"character":85,"catcode":"letter"},{"character":80,"catcode":"letter"},{"character":69,"catcode":"letter"},{"character":68,"catcode":"letter"},{"character":125,"catcode":"right_brace"}]
+macro|compulsory leading match|expansion-macros.tex|macro_call leading-token matcher|"control_sequence":"leadingmatch","argument_count":1
+macro|nested delimited argument|expansion-macros.tex|macro_call delimiter and brace-depth matcher|"control_sequence":"nesteddelimiter","argument_count":1
+macro|nine parameters|expansion-macros.tex|macro_call parameter stack commit|"control_sequence":"nineparameters","argument_count":9
+macro|long paragraph argument|expansion-macros.tex|macro_call long_call paragraph exception|"transition":"activation","control_sequence":"longparagraph","argument_count":1
+recovery|non-long paragraph argument|expansion-macros.tex|macro_call paragraph-abort backup|"kind":"backup","tokens":[{"character":0,"catcode":"escape","control_sequence":"par"}]
+macro|nested parameter replay|expansion-macros.tex|get_next out_param substitution and macro_call activation|"control_sequence":"focusedreplayouter","argument_count":1
 token_list|delimiter match|transitions.tex|macro_call delimiter completion|"purpose":"macro_delimiter_match"
 token_list|overlap recovery|transitions.tex|macro_call delimiter overlap fallback|"purpose":"macro_delimiter_recovery"
+token_list|focused overlap recovery|expansion-macros.tex|macro_call delimiter overlap fallback|"purpose":"macro_delimiter_recovery","tokens":[{"character":97,"catcode":"letter"}]
+token_list|hash-brace parameter rule|expansion-macros.tex|scan_toks hash_brace completion|"key":{"type":"name","value":"hashbrace"},"value":{"type":"tokens","value":[{"character":35,"catcode":"match"},{"character":123,"catcode":"left_brace"},{"character":0,"catcode":"end_match"
 token_list|parameter conversion|transitions.tex|scan_toks parameter token conversion|"purpose":"parameter_conversion"
 token_list|macro replacement completion|transitions.tex|scan_toks macro-definition completion|"purpose":"macro_replacement"
 token_list|ordinary scan_toks completion|transitions.tex|scan_toks absorbing completion|"purpose":"scan_toks"
 token_list|expanded scan_toks completion|transitions.tex|scan_toks expanded completion|"purpose":"expanded_scan_toks"
 token_list|direct the splice|transitions.tex|scan_toks the_toks splice|"purpose":"the_toks"
+token_list|focused ordinary scan_toks|expansion-macros.tex|scan_toks unexpanded collection|"purpose":"scan_toks","tokens":[{"character":68,"catcode":"letter"},{"character":73,"catcode":"letter"},{"character":82,"catcode":"letter"},{"character":69,"catcode":"letter"},{"character":67,"catcode":"letter"},{"character":84,"catcode":"letter"},{"character":32,"catcode":"spacer"},{"character":0,"catcode":"escape","control_sequence":"expandleaf"}]
+token_list|focused direct the splice|expansion-macros.tex|scan_toks the_toks direct splice|"purpose":"the_toks","tokens":[{"character":68,"catcode":"letter"},{"character":73,"catcode":"letter"},{"character":82,"catcode":"letter"},{"character":69,"catcode":"letter"},{"character":67,"catcode":"letter"},{"character":84,"catcode":"letter"},{"character":32,"catcode":"spacer"},{"character":0,"catcode":"escape","control_sequence":"expandleaf"}]
+token_list|direct splice remains unexpanded|expansion-macros.tex|expanded scan_toks direct-splice completion|"key":{"type":"name","value":"directtoksresult"},"value":{"type":"tokens","value":[{"character":0,"catcode":"end_match"},{"character":68,"catcode":"letter"},{"character":73,"catcode":"letter"},{"character":82,"catcode":"letter"},{"character":69,"catcode":"letter"},{"character":67,"catcode":"letter"},{"character":84,"catcode":"letter"},{"character":32,"catcode":"spacer"},{"character":0,"catcode":"escape","control_sequence":"expandleaf"}]
 scanner|integer result|transitions.tex|scan_int successful exit|"event":"scanner","data":{"scanner":"integer"
 scanner|dimension result|transitions.tex|scan_dimen successful exit|"event":"scanner","data":{"scanner":"dimension"
 scanner|glue result|transitions.tex|scan_glue committed return|"event":"scanner","data":{"scanner":"glue"
@@ -84,6 +108,11 @@ alignment|nested ownership identity|transitions.tex|detached alignment-depth cou
 alignment|missing parameter recovery|transitions.tex|init_align missing parameter branch|,"recovery":"missing_parameter"
 alignment|extra parameter recovery|transitions.tex|init_align extra parameter branch|,"recovery":"extra_parameter"
 mutation|meaning write|transitions.tex|eq_define committed meaning write|"event":"mutation","data":{"target":"meaning"
+mutation|ordinary definition|expansion-macros.tex|prefixed_command def eq_define commit|"key":{"type":"name","value":"ordinarydefinition"},"value":{"type":"tokens"
+mutation|global definition|expansion-macros.tex|prefixed_command gdef geq_define commit|"key":{"type":"name","value":"globaldefinition"},"value":{"type":"tokens"
+mutation|expanded definition|expansion-macros.tex|prefixed_command edef expanded scan_toks commit|"key":{"type":"name","value":"expandeddefinition"},"value":{"type":"tokens"
+mutation|global expanded definition|expansion-macros.tex|prefixed_command xdef expanded scan_toks commit|"key":{"type":"name","value":"globalexpandeddefinition"},"value":{"type":"tokens"
+command|long outer macro meaning|expansion-macros.tex|get_next meaning resolution|"command":"long_outer_call","operand":{"type":"integer","value":
 mutation|catcode write|transitions.tex|eq_define committed catcode write|"event":"mutation","data":{"target":"catcode"
 mutation|code-table write|transitions.tex|eq_define/eq_word_define committed code-table write|"event":"mutation","data":{"target":"code_table"
 mutation|parameter write|transitions.tex|eq_define/eq_word_define committed parameter write|"event":"mutation","data":{"target":"parameter"

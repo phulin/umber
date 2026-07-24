@@ -1,0 +1,59 @@
+\def\expandleaf{EXPANDED}
+\edef\getxresult{\expandleaf}
+\def\noexpandleaf{NOEXPAND}
+\edef\noexpandresult{\noexpand\noexpandleaf\noexpandleaf}
+\def\expandafterfirst{FIRST}
+\def\expandaftersecond{SECOND}
+\edef\expandafterresult{\expandafter\expandafterfirst\expandaftersecond}
+\expandafter\def\csname constructedname\endcsname{CSNAME}
+\edef\csnameresult{\csname constructedname\endcsname}
+\csname undefinedbecomesrelax\endcsname
+\edef\convertresult{\number-42/\romannumeral14/\string\constructedname/\jobname}
+\def\undelimited#1{[#1]}
+\edef\undelimitedresult{\undelimited{{GROUPED}}}
+\def\leadingmatch PREFIX#1{[#1]}
+\edef\leadingmatchresult{\leadingmatch PREFIX{MATCHED}}
+\def\nesteddelimiter#1END{[#1]}
+\edef\nesteddelimiterresult{\nesteddelimiter{A{B}C}END}
+\def\overlapdelimiter#1aab{[#1]}
+\edef\overlapdelimiterresult{\overlapdelimiter aaab}
+\def\hashbrace#1#{[#1]}
+\edef\hashbraceresult{\hashbrace HASH{BRACE}}
+\def\nineparameters#1#2#3#4#5#6#7#8#9{#9#1}
+\edef\nineparameterresult{\nineparameters123456789}
+\long\def\longparagraph#1{[#1]}
+\edef\longparagraphresult{\longparagraph{BEFORE\par AFTER}}
+\def\shortparagraph#1{[#1]}
+\edef\shortparagraphresult{\shortparagraph{BEFORE\par AFTER}}
+\def\focusedreplayinner#1{[#1]}
+\def\focusedreplayouter#1{\focusedreplayinner{#1}}
+\edef\replayresult{\focusedreplayouter{REPLAY}}
+\toks1={DIRECT \expandleaf}
+\edef\directtoksresult{\the\toks1}
+\def\ordinarydefinition#1{ORDINARY #1}
+\gdef\globaldefinition#1{GLOBAL #1}
+\edef\expandeddefinition{\expandleaf}
+\xdef\globalexpandeddefinition{\expandleaf}
+\long\outer\gdef\qualifieddefinition#1{QUALIFIED #1}
+\message{EXPANSION-RESULTS:
+ getx=\meaning\getxresult;
+ noexpand=\meaning\noexpandresult;
+ expandafter=\meaning\expandafterresult;
+ csname=\meaning\csnameresult;
+ undefined-csname=\meaning\undefinedbecomesrelax;
+ convert=\meaning\convertresult;
+ undelimited=\meaning\undelimitedresult;
+ leading=\meaning\leadingmatchresult;
+ nested=\meaning\nesteddelimiterresult;
+ overlap=\meaning\overlapdelimiterresult;
+ hashbrace=\meaning\hashbraceresult;
+ nine=\meaning\nineparameterresult;
+ long-paragraph=\meaning\longparagraphresult;
+ short-paragraph-recovery=\meaning\shortparagraphresult;
+ replay=\meaning\replayresult;
+ direct-toks=\meaning\directtoksresult}
+\show\ordinarydefinition
+\show\globaldefinition
+\show\expandeddefinition
+\show\globalexpandeddefinition
+\show\qualifieddefinition

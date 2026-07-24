@@ -84,7 +84,13 @@ record scanner status and exact right-brace, `\par`, frozen `\cr`, or frozen
 `\fi` recovery. Macro-focused checks additionally require completed arguments and
 activations, delimiter matches and overlap recovery, parameter conversion,
 replacement completion, ordinary and expanded `scan_toks` completion, and
-direct `\the` token-list splices. Scanner/conditional checks additionally
+direct `\the` token-list splices. The focused `expansion-macros.tex` child
+also gates one-delivery `\noexpand`, `\expandafter` ordering, defined and
+undefined `\csname`, TeX82 conversion primitives, leading, undelimited,
+delimited, `#{`, and nine-parameter matching, long and non-long paragraph
+behavior, nested parameter replay, and `\def`/`\gdef`/`\edef`/`\xdef` plus
+prefix meanings. Its ordinary log records independent `\meaning` and `\show`
+observations. Scanner/conditional checks additionally
 require typed integer, scaled-dimension, glue, internal-value, and token-list
 results; condition push, limit-change, branch, and pop transitions; skipped
 delimiter and `\ifcase` progress; and evaluating-limit plus incomplete-skip
