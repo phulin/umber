@@ -9,6 +9,7 @@
 mod align;
 mod assignments;
 mod checkpoint;
+mod command_replay;
 mod diagnostics;
 mod dispatch;
 mod error;
@@ -37,6 +38,7 @@ pub use checkpoint::{
     CheckpointSink, ENGINE_CHECKPOINT_SCHEMA_VERSION, EditorRestoreError, EngineBoundary,
     EngineCheckpoint, EngineRestoreError, RootRehomeContext,
 };
+pub use command_replay::{CommandReplayControl, ReplayStep};
 pub use dispatch::{DispatchAction, ExecutionStats, dispatch_delivered_token};
 pub use error::ExecError;
 pub use executor::{

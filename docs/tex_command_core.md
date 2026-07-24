@@ -15,6 +15,13 @@ control-sequence meanings, enforces scanner status, updates `align_state`, and
 intercepts alignment delimiters. Its real downstream boundary is the delivery
 of an unexpandable current command to main control.
 
+`tex-exec::CommandReplayControl` is the narrow replay seam for that boundary:
+it accepts no `InputStack`, obtains each `CurrentCommand` and every assignment
+operand through `CommandProcessor`, then applies only the completed typed
+structural mutation after the processor borrow ends. Macro calls and
+registered `\\input` nesting therefore remain command-core operations; the
+executor never rereads their source text.
+
 Umber will preserve that command-machine boundary while deliberately replacing
 TeX's global variables, linked `mem` nodes, synchronous host I/O, and
 allocation identities with:
