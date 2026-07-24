@@ -1,15 +1,22 @@
 use std::sync::Arc;
 
 use tex_command::{
-    Catcode, CharacterCode, CommandDialect, CommandProfile, CommandState, RegisteredSourceKind,
+    Catcode, CharacterCode, CommandDialect, CommandHostCapabilities, CommandHostContext,
+    CommandProcessor, CommandProfile, CommandRuntime, CommandState, RegisteredSourceKind,
     SourceControlSequenceKind, SourceRegistration, SourceToken, SourceTokenizationStep,
 };
+use tex_state::Universe;
+use tex_state::token::Token;
 
 const CANONICAL_INPUT: &[u8] = include_bytes!(
     "../../../../tests/corpus/command/tex82/command-transitions-v1/sources/input-recovery.tex"
 );
 const CANONICAL_MATRIX: &str =
     include_str!("../../../../tests/tex82-oracle/semantic-event-matrix.txt");
+const ETEX_CANONICAL_MATRIX: &str =
+    include_str!("../../../../tests/etex26-oracle/semantic-event-matrix.txt");
+const PDFTEX_CANONICAL_MATRIX: &str =
+    include_str!("../../../../tests/pdftex14027-oracle/semantic-event-matrix.txt");
 
 fn fixture_body() -> &'static [u8] {
     let start_marker = b"\\long\\def\\physicaltokens{";
@@ -81,12 +88,7 @@ fn canonical_token_projection(profile: CommandProfile) -> Vec<(u16, Catcode)> {
 
 #[test]
 fn exact_profiles_match_the_pinned_tex82_source_token_fixture() {
-    assert!(CANONICAL_MATRIX.contains(
-        "source|ignored character and trailing-space collapse|input-recovery.tex|get_next M/N/S source-token loop"
-    ));
-    assert!(CANONICAL_MATRIX.contains(
-        "source|comment discard and blank-line par|input-recovery.tex|get_next end_line and new_line cases"
-    ));
+    assert_shared_input_matrix_coverage();
 
     let expected = [
         (b'A' as u16, Catcode::Letter),
@@ -118,4 +120,124 @@ fn exact_profiles_match_the_pinned_tex82_source_token_fixture() {
             "{dialect:?} exact input diverged from the pinned TeX82 shared-domain fixture"
         );
     }
+}
+
+#[derive(Debug, Eq, PartialEq)]
+enum RawProjection {
+    Character(char, Catcode),
+    ControlSequence,
+}
+
+fn processor_projection(profile: CommandProfile, use_get_token: bool) -> Vec<RawProjection> {
+    let mut command = CommandState::new(profile);
+    let source = command
+        .register_source(SourceRegistration::new(
+            RegisteredSourceKind::Generated,
+            Arc::<[u8]>::from(fixture_body()),
+        ))
+        .expect("canonical exact bytes register");
+    command
+        .open_registered_source(source)
+        .expect("registered fixture source opens");
+    let mut runtime = CommandRuntime::default();
+    let mut universe = Universe::new();
+    // The focused source makes `!` ignored before entering this body. Feed
+    // the committed body with that already-observed aggregate catcode state;
+    // the processor must query it itself for every delivered character.
+    universe.set_catcode('!', Catcode::Ignored);
+    let mut capabilities = CommandHostCapabilities::default();
+    let mut processor = CommandProcessor::new(
+        &mut command,
+        &mut runtime,
+        universe.command_context(),
+        CommandHostContext::new(&mut capabilities),
+    );
+
+    let mut projection = Vec::new();
+    loop {
+        let command = if use_get_token {
+            processor.get_token()
+        } else {
+            processor.get_next()
+        }
+        .expect("canonical input delivery succeeds");
+        let Some(command) = command else {
+            return projection;
+        };
+        projection.push(match command.spelling().semantic_token() {
+            Token::Char { ch, cat } => RawProjection::Character(ch, cat),
+            Token::Cs(_) => RawProjection::ControlSequence,
+            unexpected => panic!("focused source delivered unexpected raw token {unexpected:?}"),
+        });
+    }
+}
+
+#[test]
+fn raw_delivery_matches_the_pinned_fixture_through_the_single_processor_loop() {
+    assert_shared_input_matrix_coverage();
+    let expected = vec![
+        RawProjection::Character('A', Catcode::Letter),
+        RawProjection::Character('i', Catcode::Letter),
+        RawProjection::Character('g', Catcode::Letter),
+        RawProjection::Character('n', Catcode::Letter),
+        RawProjection::Character('o', Catcode::Letter),
+        RawProjection::Character('r', Catcode::Letter),
+        RawProjection::Character('e', Catcode::Letter),
+        RawProjection::Character('d', Catcode::Letter),
+        RawProjection::Character(' ', Catcode::Space),
+        RawProjection::Character('B', Catcode::Letter),
+        RawProjection::Character('C', Catcode::Letter),
+        RawProjection::Character(' ', Catcode::Space),
+        RawProjection::ControlSequence,
+        RawProjection::Character('D', Catcode::Letter),
+        RawProjection::Character('}', Catcode::EndGroup),
+        RawProjection::Character(' ', Catcode::Space),
+    ];
+
+    for dialect in [
+        CommandDialect::Tex82,
+        CommandDialect::Etex26,
+        CommandDialect::Pdftex14027,
+    ] {
+        let profile = CommandProfile::exact(dialect);
+        assert_eq!(
+            processor_projection(profile, false),
+            expected,
+            "{dialect:?} get_next diverged from the pinned TeX82 shared-domain fixture"
+        );
+        assert_eq!(
+            processor_projection(profile, true),
+            expected,
+            "{dialect:?} get_token diverged from the shared raw-delivery loop"
+        );
+    }
+}
+
+fn assert_shared_input_matrix_coverage() {
+    for matrix in [
+        CANONICAL_MATRIX,
+        ETEX_CANONICAL_MATRIX,
+        PDFTEX_CANONICAL_MATRIX,
+    ] {
+        assert!(matrix.contains("command|raw delivery|transitions.tex|get_next return"));
+        assert!(matrix.contains("input|source retirement|transitions-child.tex"));
+        assert!(matrix.contains("input|terminal stop|transitions-child.tex"));
+    }
+    assert!(CANONICAL_MATRIX.contains(
+        "alignment|literal brace increment|alignment-delivery.tex|get_next left-brace accounting"
+    ));
+    for matrix in [ETEX_CANONICAL_MATRIX, PDFTEX_CANONICAL_MATRIX] {
+        assert!(matrix.contains(
+            "alignment|align_state change|transitions.tex|get_next literal brace and alignment state commits"
+        ));
+    }
+    assert!(CANONICAL_MATRIX.contains(
+        "source|ignored character and trailing-space collapse|input-recovery.tex|get_next M/N/S source-token loop"
+    ));
+    assert!(CANONICAL_MATRIX.contains(
+        "source|comment discard and blank-line par|input-recovery.tex|get_next end_line and new_line cases"
+    ));
+    assert!(CANONICAL_MATRIX.contains(
+        "command|get_token string operand|input-recovery.tex|string_code scan_toks operand fetch"
+    ));
 }

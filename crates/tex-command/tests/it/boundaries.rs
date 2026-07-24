@@ -56,6 +56,49 @@ fn hot_character_delivery_has_no_host_lookup_surface() {
     }
 }
 
+#[test]
+#[allow(clippy::disallowed_methods)] // host-side architecture test
+fn raw_delivery_keeps_one_profile_shared_input_path_and_semantic_free_levels() {
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let next = fs::read_to_string(manifest_dir.join("src/processor/next.rs"))
+        .expect("read raw delivery implementation");
+    let levels = fs::read_to_string(manifest_dir.join("src/input/levels.rs"))
+        .expect("read input-level representation");
+
+    assert_eq!(
+        next.matches("fn take_input_token(").count(),
+        1,
+        "the command core must have exactly one scalar input-level delivery loop"
+    );
+    assert_eq!(
+        next.matches("fn next_source_step(").count(),
+        1,
+        "exact and Unicode profiles must select beneath the shared delivery loop"
+    );
+    assert!(next.contains("CharacterMode::EightBitExact"));
+    assert!(next.contains("CharacterMode::UnicodeExtended"));
+    assert!(next.contains("self.get_next_with_control_sequence_creation(true)"));
+    assert!(next.contains("self.get_next_with_control_sequence_creation(false)"));
+    assert!(
+        !next.contains(".trace"),
+        "diagnostic replay explanations must not select raw delivery semantics"
+    );
+
+    let level_definition = levels
+        .split("pub(crate) enum InputLevel")
+        .nth(1)
+        .and_then(|tail| tail.split("/// One registered-source level").next())
+        .expect("locate InputLevel definition");
+    for forbidden in ["Condition", "Cache", "Scanner", "Expansion", "Paragraph"] {
+        assert!(
+            !level_definition.contains(forbidden),
+            "input levels must not retain {forbidden} state"
+        );
+    }
+    assert!(levels.contains("This value is diagnostic/provenance state."));
+    assert!(levels.contains("cannot select expansion"));
+}
+
 fn dependency_names(manifest: &str) -> BTreeSet<&str> {
     let mut in_dependencies = false;
     let mut names = BTreeSet::new();

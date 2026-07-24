@@ -816,6 +816,16 @@ Scanner-status outer recovery and alignment-template interception already have
 their sole entry points in this loop; their status-specific recovery and
 template lifecycle are completed by their later command-core milestones.
 
+The input-delivery audit drives the focused committed TeX82
+`input-recovery.tex` source through both public raw entry points for every
+exact TeX82/e-TeX/pdfTeX profile. It also binds the required raw-delivery,
+retirement, and terminal-stop observations to all three canonical semantic
+matrices, and literal-brace observations to each engine's focused alignment
+case. A crate boundary test mechanically preserves one
+shared scalar loop, keeps profile selection beneath it, and rejects semantic
+condition/cache/scanner/expansion/paragraph state on input levels or replay
+trace-controlled delivery.
+
 Control-sequence aliases of brace meanings do not change `align_state`;
 literal catcode-1 and catcode-2 character tokens do.
 
