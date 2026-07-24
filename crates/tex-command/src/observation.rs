@@ -242,6 +242,12 @@ pub(crate) fn canonical_command_identity(meaning: Meaning) -> (String, Option<i6
             // the required box and commits its output semantics.
             UnexpandablePrimitive::Shipout => ("leader_ship".into(), Some(99)),
             UnexpandablePrimitive::SetBox => ("set_box".into(), Some(0)),
+            // TeX82 §15 places `\box` in the `make_box` command family,
+            // and §35 installs its `box_code` selector as zero.  The box
+            // register operand is scanned by command control after this
+            // identity has been delivered; replay consumes only the typed
+            // resulting box semantics.
+            UnexpandablePrimitive::Box => ("make_box".into(), Some(0)),
             UnexpandablePrimitive::HBox => ("make_box".into(), Some(4)),
             UnexpandablePrimitive::VBox => ("make_box".into(), Some(5)),
             UnexpandablePrimitive::VTop => ("make_box".into(), Some(6)),
@@ -607,6 +613,14 @@ mod tests {
                 tex_state::meaning::ExpandablePrimitive::The
             )),
             ("the".into(), Some(0))
+        );
+    }
+
+    #[test]
+    fn box_uses_tex82_make_box_identity() {
+        assert_eq!(
+            canonical_command_identity(Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Box)),
+            ("make_box".into(), Some(0))
         );
     }
 
