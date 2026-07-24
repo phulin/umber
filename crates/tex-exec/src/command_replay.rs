@@ -255,6 +255,7 @@ impl CommandReplayControl {
         let mutation = applied_mutation_observation(&scanned, stores);
         let effect = applied_effect_observation(&scanned, stores);
         let begins_alignment = matches!(&scanned, ScannedStep::BeginAlignment { .. });
+        let begins_alignment_cell = matches!(&scanned, ScannedStep::AlignmentPreambleStart { .. });
         let result = apply_scanned_step(
             scanned,
             stores,
@@ -266,6 +267,11 @@ impl CommandReplayControl {
         );
         if result.is_ok() {
             if begins_alignment && let Some(alignment) = self.command.alignment_begin_observation()
+            {
+                observer.committed(CommandObservation::Alignment(alignment));
+            }
+            if begins_alignment_cell
+                && let Some(alignment) = self.command.alignment_cell_begin_observation()
             {
                 observer.committed(CommandObservation::Alignment(alignment));
             }
@@ -1371,6 +1377,26 @@ fn apply_scanned_step(
             Ok(ReplayStep::Continue)
         }
         ScannedStep::AlignmentPreambleStart { alignment } => {
+            let preamble = command
+                .take_completed_alignment_preamble(alignment)
+                .map_err(|_| ExecError::MissingToken {
+                    context: "completed alignment preamble",
+                })?;
+            let templates = preamble
+                .columns
+                .first()
+                .copied()
+                .ok_or(ExecError::MissingToken {
+                    context: "first alignment preamble column",
+                })?;
+            command
+                .apply_alignment_request(AlignmentRequest::BeginCell {
+                    alignment,
+                    templates,
+                })
+                .map_err(|_| ExecError::MissingToken {
+                    context: "alignment first-cell lifecycle",
+                })?;
             if let Some(active) = active_alignment.as_mut()
                 && active.identity == alignment
             {

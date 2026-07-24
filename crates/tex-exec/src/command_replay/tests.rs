@@ -176,7 +176,7 @@ fn canonical_initex_replay_scans_tabskip_before_alignment_preamble() {
 fn alignment_preamble_opener_uses_command_owned_backup_before_source_resumes() {
     let mut universe = Universe::new();
     let mut control = CommandReplayControl::tex82_initex(&mut universe);
-    register_source(&mut control, br"\halign{ #\cr\end");
+    register_source(&mut control, br"\halign{ U#\cr\end");
 
     assert_eq!(
         control.step(&mut universe).expect("alignment begins"),
@@ -271,10 +271,12 @@ fn alignment_preamble_opener_uses_command_owned_backup_before_source_resumes() {
                 CommandObservation::Alignment(preamble_start),
                 CommandObservation::Input(retirement),
                 CommandObservation::Command(space),
+                CommandObservation::Command(template),
                 CommandObservation::Command(parameter),
                 CommandObservation::Command(terminator),
                 CommandObservation::Alignment(preamble_finish),
                 CommandObservation::ScannerStatus(finished),
+                CommandObservation::Alignment(cell),
             ]
                 if state_change.transition == "begin_group"
                     && state_change.align_state == -999_999
@@ -288,11 +290,15 @@ fn alignment_preamble_opener_uses_command_owned_backup_before_source_resumes() {
                     && retirement.transition == InputTransition::Retire
                     && retirement.reason == InputReason::Backup
                     && matches!(space.spelling, ObservedToken::Character { character: ' ', .. })
+                    && matches!(template.spelling, ObservedToken::Character { character: 'U', .. })
                     && matches!(parameter.spelling, ObservedToken::Character { character: '#', .. })
                     && matches!(terminator.spelling, ObservedToken::ControlSequence(ref name) if name == "cr")
                     && !finished.entering
                     && finished.status.starts_with("Aligning")
                     && preamble_finish.transition == "preamble_finish"
+                    && cell.transition == "state_change"
+                    && cell.align_state == 1_000_000
+                    && cell.previous_align_state.is_none()
         ),
         "unexpected observations: {:?}",
         observations.0

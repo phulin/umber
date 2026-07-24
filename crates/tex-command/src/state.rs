@@ -138,6 +138,35 @@ impl CommandState {
         Ok(())
     }
 
+    /// Transfers one completed raw preamble to the executor for structural
+    /// column selection. The returned templates remain frozen command-owned
+    /// values; no raw preamble token is exposed.
+    pub fn take_completed_alignment_preamble(
+        &mut self,
+        alignment: AlignmentIdentity,
+    ) -> Result<crate::AlignmentPreamble, AlignmentLifecycleError> {
+        self.alignment.take_completed_preamble(alignment)
+    }
+
+    /// Returns the committed observation for an executor-selected first cell.
+    ///
+    /// The executor requests the transition, while command state remains the
+    /// source of the resulting `align_state`; this avoids deriving an event
+    /// from either template contents or raw input.
+    #[cfg(any(test, feature = "instrumentation"))]
+    #[must_use]
+    pub fn alignment_cell_begin_observation(&self) -> Option<AlignmentRecord> {
+        self.alignment
+            .active_cell
+            .as_ref()
+            .map(|cell| AlignmentRecord {
+                transition: "state_change",
+                alignment: Some(cell.alignment.raw()),
+                align_state: self.alignment.align_state,
+                previous_align_state: None,
+            })
+    }
+
     /// Starts the selected cell's v-template after `end_template` main control
     /// has backed up the intercepted delimiter. The suffix is an ordinary
     /// input level, so definitions and macro expansion inside it restart via

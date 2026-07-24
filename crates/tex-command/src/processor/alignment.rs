@@ -214,6 +214,19 @@ impl AlignmentDeliveryState {
         Ok(())
     }
 
+    /// Transfers the frozen preamble to the executor after raw collection
+    /// has completed. This is a one-shot structural handoff; token delivery,
+    /// template installation, and `align_state` remain command-owned.
+    pub(crate) fn take_completed_preamble(
+        &mut self,
+        alignment: AlignmentIdentity,
+    ) -> Result<AlignmentPreamble, AlignmentLifecycleError> {
+        self.require_alignment(alignment)?;
+        self.completed_preamble
+            .take()
+            .ok_or(AlignmentLifecycleError::PreambleNotComplete)
+    }
+
     pub(crate) fn begin_cell(
         &mut self,
         alignment: AlignmentIdentity,
