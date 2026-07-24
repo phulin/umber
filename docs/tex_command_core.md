@@ -220,7 +220,25 @@ Input levels, scanner frames, condition frames, replay payloads, macro
 activations, expansion budgets, provenance construction, and command dispatch
 remain crate-private.
 
-### 5.3 Proposed module layout
+### 5.3 Executor structured-scanner contract
+
+`CommandProcessor` also owns the non-scalar main-control operands whose TeX
+semantics cross token, macro, and source boundaries. `scan_balanced_text` and
+`scan_macro_definition` reuse the one canonical `scan_toks` collector and
+return frozen `TracedTokenList` values plus deterministic first-token
+provenance. The latter returns parameter and replacement lists separately;
+expanded balanced scans continue to use the canonical macro matcher, so macro
+arguments never become executor-owned input.
+
+`scan_file_name` returns a typed filename and its canonical `Group`, `Space`,
+`NonCharacter`, or `EndOfInput` termination. `open_registered_input` composes
+that scan with the borrow-scoped registered-input capability, then registers
+and opens the immutable source through `CommandState`; unavailable backing is
+the typed `CommandError::MissingInput` recovery. Neither API exposes a source
+cursor, input level, raw token, or host filesystem operation. Snapshot rollback
+therefore restores the complete future input state after every structured scan.
+
+### 5.4 Proposed module layout
 
 ```text
 crates/tex-command/src/

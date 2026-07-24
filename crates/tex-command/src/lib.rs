@@ -47,8 +47,13 @@ pub use profile::{
     CommandProfile, CommandProfileBoundary, CommandProfileEncodingError, CommandProfileFingerprint,
     CommandProfileMismatch,
 };
-pub use scanners::{InternalValue, ScalarProvenance, ScalarRecovery, ScannedScalar};
+pub use scanners::{
+    FileNameTermination, InternalValue, RegisteredInput, ScalarProvenance, ScalarRecovery,
+    ScannedBalancedText, ScannedFileName, ScannedMacroDefinition, ScannedScalar,
+    StructuredProvenance,
+};
 pub use snapshot::{CommandStateSnapshot, CommandSummary, CommandSummaryError};
 pub use state::{CommandRuntime, CommandState, UnknownRegisteredSource};
 pub use tex_state::SourceId;
+pub use tex_state::TracedTokenList;
 pub use tex_state::token::Catcode;

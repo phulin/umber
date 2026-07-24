@@ -275,19 +275,11 @@ impl CommandProcessor<'_> {
     }
 
     fn expand_input(&mut self, opener: CurrentCommand) -> Result<(), CommandError> {
-        let name = self.scan_input_name()?;
-        let source = self.host.input(&name).ok_or(CommandError::MissingInput)?;
-        let id = self
-            .command
-            .register_source(source)
-            .map_err(|_| CommandError::InputInvariant)?;
-        self.command
-            .open_registered_source(id)
-            .map_err(|_| CommandError::InputInvariant)?;
+        let _input = self.open_registered_input()?;
         #[cfg(any(test, feature = "instrumentation"))]
         self.observe(CommandObservation::Effect(EffectRecord {
             kind: "input",
-            detail: name,
+            detail: _input.file_name.name,
         }));
         let _ = opener;
         Ok(())
@@ -312,61 +304,6 @@ impl CommandProcessor<'_> {
             class,
             false,
         )
-    }
-
-    /// TeX's `scan_file_name`, restricted to the command processor so the
-    /// helper cannot reach input-opening authority.
-    fn scan_input_name(&mut self) -> Result<String, CommandError> {
-        let first = loop {
-            let command = self.get_x_token()?.ok_or(CommandError::InputInvariant)?;
-            if !matches!(
-                command.meaning(),
-                Meaning::CharToken {
-                    ch: ' ',
-                    cat: tex_state::token::Catcode::Space
-                }
-            ) {
-                break command;
-            }
-        };
-        let grouped = matches!(
-            first.meaning(),
-            Meaning::CharToken {
-                cat: tex_state::token::Catcode::BeginGroup,
-                ..
-            }
-        );
-        let mut name = String::new();
-        let mut quoted = false;
-        let mut next = if grouped { None } else { Some(first) };
-        loop {
-            let command = match next.take() {
-                Some(command) => command,
-                None => self.get_x_token()?.ok_or(CommandError::InputInvariant)?,
-            };
-            match command.meaning() {
-                Meaning::CharToken { ch: '"', .. } => quoted = !quoted,
-                Meaning::CharToken {
-                    cat: tex_state::token::Catcode::EndGroup,
-                    ..
-                } if grouped && !quoted => break,
-                Meaning::CharToken {
-                    ch: ' ',
-                    cat: tex_state::token::Catcode::Space,
-                } if !grouped && !quoted => break,
-                Meaning::CharToken { ch, .. } => name.push(ch),
-                _ if !grouped => {
-                    self.back_input(command)?;
-                    break;
-                }
-                _ => return Err(CommandError::InputInvariant),
-            }
-        }
-        if name.is_empty() {
-            Err(CommandError::InputInvariant)
-        } else {
-            Ok(name)
-        }
     }
 
     fn push_the_tokens(

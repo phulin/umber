@@ -34,6 +34,7 @@ pub(crate) enum ScanToksMode {
 pub(crate) struct ScannedToks {
     pub(crate) parameter_text: TracedTokenList,
     pub(crate) replacement_text: TracedTokenList,
+    pub(crate) primary: OriginId,
 }
 
 impl CommandProcessor<'_> {
@@ -79,14 +80,14 @@ impl CommandProcessor<'_> {
     }
 
     fn scan_toks_inner(&mut self, mode: ScanToksMode) -> Result<ScannedToks, CommandError> {
-        let (expanded, parameter_text, highest_parameter, hash_brace) = match mode {
+        let (expanded, parameter_text, highest_parameter, hash_brace, primary) = match mode {
             ScanToksMode::General { expanded } => {
-                self.scan_left_brace(expanded)?;
-                (expanded, Vec::new(), 0, None)
+                let primary = self.scan_left_brace(expanded)?;
+                (expanded, Vec::new(), 0, None, primary)
             }
             ScanToksMode::MacroDefinition { expanded } => {
-                let (parameters, highest, hash_brace) = self.scan_parameter_text()?;
-                (expanded, parameters, highest, hash_brace)
+                let (parameters, highest, hash_brace, primary) = self.scan_parameter_text()?;
+                (expanded, parameters, highest, hash_brace, primary)
             }
         };
         let replacement = self.collect_replacement(expanded, highest_parameter)?;
@@ -100,10 +101,11 @@ impl CommandProcessor<'_> {
         Ok(ScannedToks {
             parameter_text: self.state.finish_traced_token_list(&parameter_text),
             replacement_text: self.state.finish_traced_token_list(&replacement),
+            primary,
         })
     }
 
-    fn scan_left_brace(&mut self, expanded: bool) -> Result<(), CommandError> {
+    fn scan_left_brace(&mut self, expanded: bool) -> Result<OriginId, CommandError> {
         loop {
             let command = if expanded {
                 self.get_x_token()?
@@ -119,7 +121,7 @@ impl CommandProcessor<'_> {
                 Meaning::CharToken {
                     cat: Catcode::BeginGroup,
                     ..
-                } => return Ok(()),
+                } => return Ok(command.origin()),
                 _ => {
                     self.back_input(command)?;
                     return Err(CommandError::InputInvariant);
@@ -133,14 +135,18 @@ impl CommandProcessor<'_> {
     /// representation; doubled hashes remain literal parameter characters.
     fn scan_parameter_text(
         &mut self,
-    ) -> Result<(Vec<TracedTokenWord>, u8, Option<TracedTokenWord>), CommandError> {
+    ) -> Result<(Vec<TracedTokenWord>, u8, Option<TracedTokenWord>, OriginId), CommandError> {
         let mut output = Vec::new();
         let mut next_parameter = 1_u8;
+        let mut primary = OriginId::UNKNOWN;
         loop {
             let command = self.get_token()?.ok_or(CommandError::InputInvariant)?;
+            if primary == OriginId::UNKNOWN {
+                primary = command.origin();
+            }
             let token = command.spelling().semantic_token();
             if is_begin_group(token) {
-                return Ok((output, next_parameter - 1, None));
+                return Ok((output, next_parameter - 1, None, primary));
             }
             if !is_parameter(token) {
                 output.push(command.spelling());
@@ -150,7 +156,12 @@ impl CommandProcessor<'_> {
             let follower_token = follower.spelling().semantic_token();
             if is_begin_group(follower_token) {
                 output.push(follower.spelling());
-                return Ok((output, next_parameter - 1, Some(command.spelling())));
+                return Ok((
+                    output,
+                    next_parameter - 1,
+                    Some(command.spelling()),
+                    primary,
+                ));
             }
             if let Some(number) = parameter_number(follower_token)
                 && number == next_parameter
@@ -301,7 +312,7 @@ impl CommandProcessor<'_> {
     /// text is scanned raw and attached without parameter conversion or
     /// recursive expansion.
     fn append_unexpanded(&mut self, output: &mut Vec<TracedTokenWord>) -> Result<(), CommandError> {
-        self.scan_left_brace(false)?;
+        let _ = self.scan_left_brace(false)?;
         let raw = self.collect_replacement(false, 0)?;
         output.extend(raw);
         self.command.expansion.cumulative_expansions =
