@@ -189,13 +189,17 @@ impl CommandProcessor<'_> {
             return self.get_token();
         }
 
-        #[cfg(any(test, feature = "instrumentation"))]
-        self.observe_scanner_status(false);
         let prior = self.command.begin_scanner_status(ScannerStatus::Normal);
+        self.observe_scanner_status_transition(
+            prior.status().clone(),
+            self.command.scanner.status().clone(),
+        );
         let target = self.get_token();
+        self.observe_scanner_status_transition(
+            self.command.scanner.status().clone(),
+            prior.status().clone(),
+        );
         self.command.restore_scanner_status(prior);
-        #[cfg(any(test, feature = "instrumentation"))]
-        self.observe_scanner_status(true);
         target
     }
 
@@ -935,7 +939,7 @@ mod tests {
         let status_exit = recorder
             .0
             .iter()
-            .position(|record| matches!(record, CommandObservation::ScannerStatus(status) if !status.entering && status.status.starts_with("Defining")))
+            .position(|record| matches!(record, CommandObservation::ScannerStatus(status) if status.from.starts_with("Defining") && status.to.starts_with("Normal")))
             .expect("string leaves defining status before its target");
         let target_delivery = recorder
             .0
@@ -945,7 +949,7 @@ mod tests {
         let status_restore = recorder
             .0
             .iter()
-            .rposition(|record| matches!(record, CommandObservation::ScannerStatus(status) if status.entering && status.status.starts_with("Defining")))
+            .rposition(|record| matches!(record, CommandObservation::ScannerStatus(status) if status.from.starts_with("Normal") && status.to.starts_with("Defining")))
             .expect("string restores defining status after its target");
         let recovery = recorder
             .0

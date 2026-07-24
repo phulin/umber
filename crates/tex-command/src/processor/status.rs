@@ -86,11 +86,15 @@ impl CommandState {
 
 impl CommandProcessor<'_> {
     #[allow(unused_variables)]
-    pub(crate) fn observe_scanner_status(&mut self, entering: bool) {
+    pub(crate) fn observe_scanner_status_transition(
+        &mut self,
+        from: ScannerStatus,
+        to: ScannerStatus,
+    ) {
         #[cfg(any(test, feature = "instrumentation"))]
         self.observe(CommandObservation::ScannerStatus(ScannerStatusRecord {
-            entering,
-            status: format!("{:?}", self.command.scanner.status()),
+            from: format!("{from:?}"),
+            to: format!("{to:?}"),
         }));
     }
 }

@@ -69,9 +69,15 @@ impl CommandProcessor<'_> {
             }),
         };
         let prior = self.command.begin_scanner_status(status);
-        self.observe_scanner_status(true);
+        self.observe_scanner_status_transition(
+            prior.status().clone(),
+            self.command.scanner.status().clone(),
+        );
         let result = self.scan_toks_inner(mode);
-        self.observe_scanner_status(false);
+        self.observe_scanner_status_transition(
+            self.command.scanner.status().clone(),
+            prior.status().clone(),
+        );
         self.command.restore_scanner_status(prior);
         let result = result?;
         #[cfg(any(test, feature = "instrumentation"))]

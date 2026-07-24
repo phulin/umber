@@ -362,11 +362,11 @@ pub struct RecoveryRecord {
     pub tokens: Vec<ObservedToken>,
 }
 
-/// A committed entry to or restoration from a live scanner episode.
+/// A committed change between live scanner episodes.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ScannerStatusRecord {
-    pub entering: bool,
-    pub status: String,
+    pub from: String,
+    pub to: String,
 }
 
 /// A completed scalar macro-match milestone.

@@ -789,9 +789,15 @@ impl CommandProcessor<'_> {
                 condition,
                 warning,
             }));
-        self.observe_scanner_status(true);
+        self.observe_scanner_status_transition(
+            prior.status().clone(),
+            self.command.scanner.status().clone(),
+        );
         let result = self.pass_text_scalar(condition);
-        self.observe_scanner_status(false);
+        self.observe_scanner_status_transition(
+            self.command.scanner.status().clone(),
+            prior.status().clone(),
+        );
         self.command.restore_scanner_status(prior);
         result
     }

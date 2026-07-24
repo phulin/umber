@@ -535,7 +535,10 @@ impl CommandProcessor<'_> {
                     builder: TokenBuilderId(0),
                     warning: ScannerWarning(0),
                 }));
-        self.observe_scanner_status(true);
+        self.observe_scanner_status_transition(
+            _prior.status().clone(),
+            self.command.scanner.status().clone(),
+        );
         #[cfg(any(test, feature = "instrumentation"))]
         self.observe(crate::CommandObservation::Alignment(
             crate::AlignmentRecord {
@@ -698,8 +701,11 @@ impl CommandProcessor<'_> {
         // returns to normal. Retain the live aligning episode while publishing
         // its completion, then restore normal status; otherwise an exit record
         // loses its `aligning` identity and reverses the canonical ordering.
-        self.observe_scanner_status(false);
-        let _ = self.command.begin_scanner_status(ScannerStatus::Normal);
+        let prior = self.command.begin_scanner_status(ScannerStatus::Normal);
+        self.observe_scanner_status_transition(
+            prior.status().clone(),
+            self.command.scanner.status().clone(),
+        );
         Ok(())
     }
 

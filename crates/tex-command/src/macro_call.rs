@@ -212,7 +212,10 @@ impl CommandProcessor<'_> {
                 warning: ScannerWarning(0),
             });
             let prior = self.command.begin_scanner_status(status);
-            self.observe_scanner_status(true);
+            self.observe_scanner_status_transition(
+                prior.status().clone(),
+                self.command.scanner.status().clone(),
+            );
             Some(prior)
         } else {
             None
@@ -222,7 +225,10 @@ impl CommandProcessor<'_> {
             Ok(arguments) => arguments,
             Err(error) => {
                 if let Some(prior) = prior {
-                    self.observe_scanner_status(false);
+                    self.observe_scanner_status_transition(
+                        self.command.scanner.status().clone(),
+                        prior.status().clone(),
+                    );
                     self.command.restore_scanner_status(prior);
                 }
                 return Err(error);
@@ -264,7 +270,10 @@ impl CommandProcessor<'_> {
             tokens: Vec::new(),
         }));
         if let Some(prior) = prior {
-            self.observe_scanner_status(false);
+            self.observe_scanner_status_transition(
+                self.command.scanner.status().clone(),
+                prior.status().clone(),
+            );
             self.command.restore_scanner_status(prior);
         }
         Ok(arguments)

@@ -933,18 +933,9 @@ fn translate_recovery(record: RecoveryRecord) -> Event {
     })
 }
 fn translate_status(record: ScannerStatusRecord) -> Event {
-    let status = scanner_status(&record.status);
     Event::ScannerStatus(ScannerStatusEvent {
-        from: if record.entering {
-            ScannerStatus::Normal
-        } else {
-            status
-        },
-        to: if record.entering {
-            status
-        } else {
-            ScannerStatus::Normal
-        },
+        from: scanner_status(&record.from),
+        to: scanner_status(&record.to),
     })
 }
 fn scanner_status(status: &str) -> ScannerStatus {

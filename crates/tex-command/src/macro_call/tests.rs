@@ -9,6 +9,7 @@ use super::{
     ParameterState,
 };
 use crate::CommandState;
+use crate::processor::{DefinitionContext, ScannerStatus, ScannerWarning, TokenBuilderId};
 use crate::{
     CommandError, CommandHostCapabilities, CommandHostContext, CommandObservation, CommandObserver,
     CommandProcessor, CommandRuntime, InputReason, InputTransition, RegisteredSourceKind,
@@ -286,7 +287,64 @@ fn parameterless_macro_pushes_replacement_without_matching_status() {
     }));
     assert!(recorder.0.iter().all(|observation| !matches!(
         observation,
-        CommandObservation::ScannerStatus(status) if status.status.starts_with("Matching")
+        CommandObservation::ScannerStatus(status) if status.to.starts_with("Matching")
+    )));
+}
+
+#[test]
+fn matching_transition_retains_the_enclosing_definition_status() {
+    let mut command = CommandState::default();
+    let source = command
+        .register_source(SourceRegistration::new(
+            RegisteredSourceKind::Generated,
+            Arc::<[u8]>::from(&b"\\m{X}"[..]),
+        ))
+        .expect("source registers");
+    command
+        .open_registered_source(source)
+        .expect("source opens");
+    let mut runtime = CommandRuntime::default();
+    let mut universe = Universe::new();
+    let name = universe.intern("m").symbol();
+    let parameters = universe.intern_token_list(&[Token::Param(1)]);
+    let replacement = universe.intern_token_list(&[Token::Param(1)]);
+    let definition = universe.intern_macro(MacroMeaning::new(
+        MeaningFlags::EMPTY,
+        parameters,
+        replacement,
+    ));
+    universe.set_meaning(
+        name,
+        Meaning::Macro {
+            flags: MeaningFlags::EMPTY,
+            definition,
+        },
+    );
+    let _prior = command.begin_scanner_status(ScannerStatus::Defining(DefinitionContext {
+        target: None,
+        builder: TokenBuilderId(7),
+        warning: ScannerWarning(7),
+    }));
+    let mut capabilities = CommandHostCapabilities::default();
+    let mut recorder = Recorder::default();
+    let mut processor = CommandProcessor::new(
+        &mut command,
+        &mut runtime,
+        universe.command_context(),
+        CommandHostContext::new(&mut capabilities),
+    )
+    .with_observer(&mut recorder);
+
+    let call = processor
+        .get_next()
+        .expect("macro call delivery")
+        .expect("macro token");
+    processor.macro_call(call).expect("macro argument matches");
+
+    assert!(recorder.0.iter().any(|observation| matches!(
+        observation,
+        CommandObservation::ScannerStatus(status)
+            if status.from.starts_with("Defining") && status.to.starts_with("Matching")
     )));
 }
 

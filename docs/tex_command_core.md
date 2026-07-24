@@ -647,7 +647,10 @@ must implement the same ownership semantics as TeX's `param_stack` and
 `ScannerState` owns `scanner_status`, warning identity, and the typed handle
 needed to describe incomplete input. Each non-normal context owns its warning
 identity, and a scoped installation restores the complete previous state; no
-scanner caller reconstructs warning ownership after nested work. Terminal EOF
+scanner caller reconstructs warning ownership after nested work. The detached
+observer records each actual typed `from`/`to` transition, so a macro matcher
+entered during an expanded definition reports `defining -> matching` rather
+than flattening the enclosing scanner scope to `normal`. Terminal EOF
 is classified centrally as legal or as one typed runaway family. That decision
 does not inject recovery tokens; outer-validity recovery consumes it later.
 
