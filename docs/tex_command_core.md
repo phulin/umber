@@ -1797,8 +1797,11 @@ The new command core owns a test-only observer record surface rather than
 depending on `tex-oracle`. `CommandObservation` carries command delivery,
 logical input, recovery, scanner-status, macro, condition, typed scanner,
 token-list, alignment, mutation, and effect records. Command deliveries carry
-an opaque-origin flag plus exact input-level, cursor-slot, and
-processor-delivery provenance; all other records retain only command-owned
+an opaque origin identity and optional exact registered physical source range,
+plus input-level, cursor-slot, and processor-delivery provenance. Raw source
+delivery installs its backing through the aggregate source-map boundary before
+spelling construction; expanded and replayed delivery retain that traced
+origin without fixture-derived locations. All other records retain only command-owned
 typed values and stable identities. The test-only fixture adapter maps those
 owned records to a deterministic replay capture outside the production command
 dependency graph. It validates the locked TeX82 suite, registers each

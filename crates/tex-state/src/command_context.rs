@@ -14,6 +14,7 @@ use crate::{
     meaning::{InternalInteger, Meaning},
     page::{PageInteger, PageMark},
     provenance::SynthesizedOriginKind,
+    source_map::{SourceDescriptor, SourceMapError, SourcePos},
     token::{Catcode, OriginId, Token, TracedTokenWord},
 };
 
@@ -28,6 +29,43 @@ pub struct CommandContext<'a> {
 }
 
 impl CommandContext<'_> {
+    /// Registers immutable command input before its first source delivery.
+    ///
+    /// The command processor retains the backing and supplies the descriptor;
+    /// this aggregate boundary owns timeline registration and makes repeated
+    /// registration of the same source idempotent.
+    pub fn register_source(
+        &mut self,
+        source: crate::SourceId,
+        descriptor: SourceDescriptor,
+    ) -> Result<SourcePos, SourceMapError> {
+        self.universe.register_source(source, descriptor)
+    }
+
+    /// Allocates an exact registered-source spelling range.
+    #[must_use]
+    pub fn source_range_origin(
+        &mut self,
+        source: crate::SourceId,
+        byte_offset: u64,
+        byte_end: u64,
+    ) -> OriginId {
+        self.universe
+            .source_range_origin(source, byte_offset, byte_end)
+    }
+
+    /// Allocates provenance for one ordinary backed source scalar.
+    #[must_use]
+    pub fn source_token_origin(
+        &mut self,
+        source: crate::SourceId,
+        byte_offset: u64,
+        byte_end: u64,
+    ) -> OriginId {
+        self.universe
+            .source_token_origin(source, byte_offset, byte_end)
+    }
+
     /// Reads one catcode through the aggregate code-table boundary.
     #[must_use]
     pub fn catcode(&mut self, ch: char) -> Catcode {

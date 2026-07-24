@@ -8,9 +8,9 @@
 
 #![cfg(any(test, feature = "instrumentation"))]
 
-use tex_state::token::{Catcode, Token, TracedTokenWord};
+use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 
-use crate::{CurrentCommand, DeliveryStamp};
+use crate::{DeliveryStamp, SourceRange};
 
 /// An owned, allocation-independent spelling used by command observation.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -28,31 +28,43 @@ pub enum ObservedToken {
 ///
 /// The input-level identity and cursor slot identify the aggregate input
 /// transition; the processor-local sequence distinguishes a later replay of
-/// the same slot.  The opaque origin itself is intentionally not exposed:
-/// allocation identities are not stable semantic data.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+/// the same slot. The origin stays opaque, but is retained for host-side
+/// source-map resolution while the aggregate timeline is live.
+#[derive(Clone, Copy, Debug, Eq)]
 pub struct CommandProvenance {
     pub input_level: u64,
     pub position: u64,
     pub delivery_sequence: u64,
     pub has_origin: bool,
+    pub origin: OriginId,
+    /// Exact physical range for direct source delivery. Replayed and expanded
+    /// commands retain it through their traced spelling origin instead.
+    pub source_range: Option<SourceRange>,
+}
+
+impl PartialEq for CommandProvenance {
+    fn eq(&self, other: &Self) -> bool {
+        self.input_level == other.input_level
+            && self.position == other.position
+            && self.delivery_sequence == other.delivery_sequence
+            && self.has_origin == other.has_origin
+            && self.source_range == other.source_range
+    }
 }
 
 impl CommandProvenance {
-    pub(crate) fn from_command(command: &CurrentCommand) -> Self {
-        let stamp = command.delivery_stamp();
-        Self::from_stamp(
-            stamp,
-            command.origin() != tex_state::token::OriginId::UNKNOWN,
-        )
-    }
-
-    pub(crate) const fn from_stamp(stamp: DeliveryStamp, has_origin: bool) -> Self {
+    pub(crate) fn from_stamp(
+        stamp: DeliveryStamp,
+        origin: OriginId,
+        source_range: Option<SourceRange>,
+    ) -> Self {
         Self {
             input_level: stamp.input_level(),
             position: stamp.position(),
             delivery_sequence: stamp.sequence(),
-            has_origin,
+            has_origin: origin != OriginId::UNKNOWN,
+            origin,
+            source_range,
         }
     }
 }

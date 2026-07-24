@@ -5,6 +5,8 @@ use tex_state::interner::Symbol;
 use tex_state::meaning::Meaning;
 use tex_state::token::{Catcode, Token, TracedTokenWord};
 
+use crate::SourceRange;
+
 /// One command delivery, equivalent to TeX's `cur_cmd`, `cur_chr`, `cur_cs`,
 /// and `cur_tok`.
 ///
@@ -18,6 +20,7 @@ pub struct CurrentCommand {
     meaning: Meaning,
     control_sequence: Option<Symbol>,
     delivery: DeliveryStamp,
+    source_range: Option<SourceRange>,
     alignment_adjustment: crate::processor::AlignmentDeliveryAdjustment,
 }
 
@@ -33,6 +36,7 @@ impl CurrentCommand {
     pub(crate) fn resolve(
         spelling: TracedTokenWord,
         delivery: DeliveryStamp,
+        source_range: Option<SourceRange>,
         state: &mut CommandContext<'_>,
     ) -> Self {
         let token = spelling.semantic_token();
@@ -63,6 +67,7 @@ impl CurrentCommand {
             meaning,
             control_sequence,
             delivery,
+            source_range,
             alignment_adjustment: crate::processor::AlignmentDeliveryAdjustment::None,
         }
     }
@@ -150,6 +155,13 @@ impl CurrentCommand {
         self.delivery
     }
 
+    /// Returns the direct source spelling range when this command was
+    /// delivered from a registered physical source rather than replayed.
+    #[must_use]
+    pub const fn source_range(&self) -> Option<SourceRange> {
+        self.source_range
+    }
+
     /// Makes a fresh copy for the input backup path. `CurrentCommand` itself
     /// remains deliberately non-`Clone` at the public boundary.
     pub(crate) const fn copy_for_backup(&self) -> Self {
@@ -158,6 +170,7 @@ impl CurrentCommand {
             meaning: self.meaning,
             control_sequence: self.control_sequence,
             delivery: self.delivery,
+            source_range: self.source_range,
             alignment_adjustment: self.alignment_adjustment,
         }
     }

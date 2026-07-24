@@ -70,7 +70,11 @@ impl CommandProcessor<'_> {
             spelling,
             command: command_name,
             command_operand,
-            provenance: CommandProvenance::from_command(command),
+            provenance: CommandProvenance::from_stamp(
+                command.delivery_stamp(),
+                command.origin(),
+                command.source_range(),
+            ),
         }));
     }
 

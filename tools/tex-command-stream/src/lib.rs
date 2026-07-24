@@ -23,7 +23,8 @@ use tex_oracle::{
     CommandEvent, CommittedFixture, ConditionEvent, ConditionTransition, EffectEvent, EffectKind,
     EngineDialect, Event, InputEvent, InputReason, MacroEvent, MutationEvent, NormalizedEvent,
     OracleToken, RecoveryEvent, RecoveryKind, ScannerEvent, ScannerStatus, ScannerStatusEvent,
-    StateTarget, TokenListEvent, TokenListTransition, validate_tex82_command_trace_suite,
+    SourceLocation, StateTarget, TokenListEvent, TokenListTransition,
+    validate_tex82_command_trace_suite,
 };
 use tex_state::{SourceId, Universe, token::Catcode};
 
@@ -355,7 +356,7 @@ impl CanonicalStartup {
             .open_registered_source(root)
             .map_err(|error| RunnerError::Replay(format!("root source cannot open: {error}")))?;
         recorder.record_source_open(CANONICAL_ROOT_PUSH_NAME, &self.root_name, root);
-        recorder.source = self.root_name.clone();
+        recorder.activate_source(self.root_name.clone(), root, Arc::clone(&self.root_bytes));
 
         let mut deliveries = 0;
         {
@@ -394,6 +395,8 @@ fn canonical_input_name(source_name: &str) -> Result<String, RunnerError> {
 
 struct Recorder {
     source: String,
+    source_id: Option<SourceId>,
+    source_bytes: Option<Arc<[u8]>>,
     events: Vec<ObservedEvent>,
 }
 
@@ -401,6 +404,8 @@ impl Recorder {
     fn new(source: impl Into<String>) -> Self {
         Self {
             source: source.into(),
+            source_id: None,
+            source_bytes: None,
             events: Vec::new(),
         }
     }
@@ -417,16 +422,31 @@ impl Recorder {
             format!("source={root_name}; source_id={}", source.raw()),
         ));
     }
+
+    fn activate_source(&mut self, name: impl Into<String>, source: SourceId, bytes: Arc<[u8]>) {
+        self.source = name.into();
+        self.source_id = Some(source);
+        self.source_bytes = Some(bytes);
+    }
 }
 
 impl CommandObserver for Recorder {
     fn committed(&mut self, observation: CommandObservation) {
-        self.events
-            .push(translate_observation(&self.source, observation));
+        self.events.push(translate_observation(
+            &self.source,
+            self.source_id,
+            self.source_bytes.as_deref(),
+            observation,
+        ));
     }
 }
 
-fn translate_observation(source: &str, observation: CommandObservation) -> ObservedEvent {
+fn translate_observation(
+    source: &str,
+    source_id: Option<SourceId>,
+    source_bytes: Option<&[u8]>,
+    observation: CommandObservation,
+) -> ObservedEvent {
     match observation {
         CommandObservation::Command(record) => {
             let provenance = record.provenance;
@@ -451,7 +471,7 @@ fn translate_observation(source: &str, observation: CommandObservation) -> Obser
                         command: canonical_command_name(&record),
                         operand,
                         control_sequence,
-                        location: None,
+                        location: command_location(&record, source, source_id, source_bytes),
                     },
                 }),
                 context,
@@ -499,6 +519,29 @@ fn translate_observation(source: &str, observation: CommandObservation) -> Obser
             ObservedEvent::new(translate_effect(record), format!("source={source}"))
         }
     }
+}
+
+fn command_location(
+    record: &tex_command::CommandDeliveryRecord,
+    source: &str,
+    source_id: Option<SourceId>,
+    source_bytes: Option<&[u8]>,
+) -> Option<SourceLocation> {
+    let range = record.provenance.source_range?;
+    if Some(range.source()) != source_id || range.is_empty() {
+        return None;
+    }
+    let bytes = source_bytes?;
+    let mut byte = usize::try_from(range.start()).ok()?;
+    if matches!(record.spelling, ObservedToken::ControlSequence(_)) {
+        byte = usize::try_from(range.end().checked_sub(1)?).ok()?;
+    }
+    let prefix = bytes.get(..byte)?;
+    Some(SourceLocation {
+        source: source.into(),
+        line: u32::try_from(prefix.iter().filter(|byte| **byte == b'\n').count() + 1).ok()?,
+        byte: u32::try_from(byte).ok()?,
+    })
 }
 
 fn canonical_command_name(record: &tex_command::CommandDeliveryRecord) -> String {
@@ -826,11 +869,11 @@ mod tests {
         assert_eq!(startup.profile, CommandProfile::TEX82);
         assert_eq!(startup.root_name, CANONICAL_ROOT_SOURCE);
         let actual = startup.replay().expect("canonical startup replays");
-        let actual_events = actual[..38]
+        let actual_events = actual[..40]
             .iter()
             .map(|event| event.event.clone())
             .collect::<Vec<_>>();
-        let expected_events = fixture.stream.events[..38]
+        let expected_events = fixture.stream.events[..40]
             .iter()
             .map(|event| event.semantic.clone())
             .collect::<Vec<_>>();
@@ -840,6 +883,10 @@ mod tests {
         // canonical and ordered.
         assert_eq!(&actual_events[7..], &expected_events[7..]);
         assert_eq!(actual[37].context, "source=transitions.tex; source_id=1");
+        assert_eq!(
+            actual[38].event, fixture.stream.events[38].semantic,
+            "the first command carrying a committed source location matches"
+        );
     }
 
     #[test]

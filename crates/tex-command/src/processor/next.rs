@@ -15,7 +15,7 @@ use crate::input::{
 };
 use crate::profile::{CharacterCode, CharacterMode};
 use crate::{
-    AlignmentDelivery, AlignmentDeliveryEvent, SourceControlSequenceKind, SourceToken,
+    AlignmentDelivery, AlignmentDeliveryEvent, SourceControlSequenceKind, SourceRange, SourceToken,
     SourceTokenizationStep,
 };
 
@@ -218,6 +218,7 @@ impl CommandProcessor<'_> {
                 level,
                 position,
                 behavior,
+                source_range,
             } = delivery;
 
             if let Token::Param(slot) = spelling.semantic_token()
@@ -233,7 +234,8 @@ impl CommandProcessor<'_> {
 
             let delivery_stamp = DeliveryStamp::new(level.0, position, self.next_delivery_sequence);
             self.next_delivery_sequence = self.next_delivery_sequence.wrapping_add(1);
-            let mut command = CurrentCommand::resolve(spelling, delivery_stamp, &mut self.state);
+            let mut command =
+                CurrentCommand::resolve(spelling, delivery_stamp, source_range, &mut self.state);
             if matches!(
                 behavior,
                 TokenBehavior::BackedUp(BackupTreatment::SuppressExpandableControlSequence)
@@ -288,14 +290,16 @@ impl CommandProcessor<'_> {
                 InputLevel::Source(source) => {
                     let identity = source.identity;
                     let position = source.cursor.next_physical_offset;
+                    self.ensure_source_registration(&source.cursor.backing);
                     match self.next_source_step() {
                         SourceTokenizationStep::Token(token) => {
-                            let spelling = self.source_spelling(token);
+                            let spelling = self.source_spelling(&token);
                             return Ok(Some(DeliveredToken {
                                 spelling,
                                 level: identity,
                                 position,
                                 behavior: TokenBehavior::Ordinary,
+                                source_range: Some(token.range()),
                             }));
                         }
                         SourceTokenizationStep::InvalidCharacter(_) => continue,
@@ -324,6 +328,7 @@ impl CommandProcessor<'_> {
                             level: identity,
                             position,
                             behavior,
+                            source_range: None,
                         }));
                     }
                     match self.retire_and_restart(identity)? {
@@ -339,6 +344,7 @@ impl CommandProcessor<'_> {
                                 position: u64::try_from(cursor.index)
                                     .map_err(|_| CommandError::InputInvariant)?,
                                 behavior: TokenBehavior::VTemplate,
+                                source_range: None,
                             }));
                         }
                     }
@@ -397,11 +403,17 @@ impl CommandProcessor<'_> {
         }
     }
 
-    fn source_spelling(&mut self, token: SourceToken) -> TracedTokenWord {
-        let token = match token {
+    fn ensure_source_registration(&mut self, source: &crate::input::RegisteredSource) {
+        let _ = self
+            .state
+            .register_source(source.id, source.source_descriptor());
+    }
+
+    fn source_spelling(&mut self, source_token: &SourceToken) -> TracedTokenWord {
+        let token = match source_token {
             SourceToken::Character { code, catcode, .. } => Token::Char {
-                ch: character_from_code(code),
-                cat: catcode,
+                ch: character_from_code(*code),
+                cat: *catcode,
             },
             SourceToken::ControlSequence { name, kind, .. } => match kind {
                 SourceControlSequenceKind::Active => Token::Char {
@@ -412,15 +424,20 @@ impl CommandProcessor<'_> {
                 | SourceControlSequenceKind::Symbol
                 | SourceControlSequenceKind::Paragraph
                 | SourceControlSequenceKind::Null => {
-                    let name: String = name.into_iter().map(character_from_code).collect();
+                    let name: String = name.iter().copied().map(character_from_code).collect();
                     Token::Cs(self.state.intern_control_sequence(&name))
                 }
             },
         };
-        // Source-range provenance is installed with the source-map integration
-        // milestone; production delivery still carries the mandatory unknown
-        // origin rather than admitting an untraced token representation.
-        TracedTokenWord::pack(token, OriginId::UNKNOWN)
+        let range = source_token.range();
+        let origin = if range.end().saturating_sub(range.start()) == 1 {
+            self.state
+                .source_token_origin(range.source(), range.start(), range.end())
+        } else {
+            self.state
+                .source_range_origin(range.source(), range.start(), range.end())
+        };
+        TracedTokenWord::pack(token, origin)
     }
 
     fn next_stored_token(
@@ -542,7 +559,11 @@ impl CommandProcessor<'_> {
             spelling,
             command: command_name,
             command_operand,
-            provenance: CommandProvenance::from_command(command),
+            provenance: CommandProvenance::from_stamp(
+                command.delivery_stamp(),
+                command.origin(),
+                command.source_range(),
+            ),
         }));
     }
 
@@ -597,6 +618,7 @@ struct DeliveredToken {
     level: InputLevelId,
     position: u64,
     behavior: TokenBehavior,
+    source_range: Option<SourceRange>,
 }
 
 enum RetirementRestart {
@@ -792,6 +814,30 @@ mod tests {
             CommandObservation::Command(command)
                 if command.boundary == CommandDeliveryBoundary::Expanded
         )));
+        let source_deliveries = first
+            .0
+            .iter()
+            .filter_map(|record| match record {
+                CommandObservation::Command(command) => Some(command),
+                _ => None,
+            })
+            .take(2)
+            .collect::<Vec<_>>();
+        assert_eq!(source_deliveries.len(), 2);
+        assert_ne!(source_deliveries[0].provenance.origin, OriginId::UNKNOWN);
+        assert_eq!(
+            source_deliveries[0].provenance.source_range,
+            Some(crate::SourceRange::new(source, 0, 1))
+        );
+        assert_eq!(
+            source_deliveries[0].provenance.source_range,
+            source_deliveries[1].provenance.source_range,
+            "raw and expanded delivery retain the registered source range"
+        );
+        assert_eq!(
+            source_deliveries[0].provenance.origin, source_deliveries[1].provenance.origin,
+            "raw and expanded delivery retain one traced origin identity"
+        );
         assert!(first.0.iter().any(|record| matches!(
             record,
             CommandObservation::Input(input) if input.transition == InputTransition::Stop

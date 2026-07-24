@@ -317,6 +317,10 @@ position after consuming it:
   start position when it fits the payload; otherwise it receives an
   arena-backed `SourceSpan`.
 - A multi-character control sequence receives an arena-backed source range.
+- `tex-command` registers each immutable command source through its
+  `CommandContext` source-map boundary before its first raw delivery. The raw
+  observation retains the exact registered range and opaque origin; expansion,
+  backup, and replay retain the traced origin without consulting fixture data.
 - A token produced through `^^` notation receives the complete spelling range.
 - End-line and paragraph tokens remain inserted origins whose parent is the
   zero-width normalized-line-end anchor or the relevant backed range.

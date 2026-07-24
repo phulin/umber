@@ -4,6 +4,7 @@ use std::fmt;
 use std::sync::Arc;
 
 use tex_state::SourceId;
+use tex_state::source_map::SourceDescriptor;
 
 use crate::profile::{CharacterMode, CommandProfile};
 
@@ -117,6 +118,17 @@ pub(crate) struct RegisteredSource {
 }
 
 impl RegisteredSource {
+    /// Returns the immutable backing descriptor used to register source
+    /// coordinates with the aggregate source map.
+    ///
+    /// Command input has retained bytes but no World input-record capability,
+    /// so even `RegisteredSourceKind::World` is registered as generated
+    /// immutable backing at this boundary. The kind remains command input
+    /// ownership metadata; it cannot manufacture a World record identity.
+    pub(crate) fn source_descriptor(&self) -> SourceDescriptor {
+        SourceDescriptor::generated(Arc::clone(&self.bytes))
+    }
+
     pub(crate) fn register(
         id: SourceId,
         profile: CommandProfile,
