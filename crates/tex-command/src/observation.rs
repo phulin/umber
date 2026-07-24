@@ -159,6 +159,10 @@ pub(crate) fn canonical_command_identity(meaning: Meaning) -> (String, Option<i6
             _ => ("expandable".into(), None),
         },
         Meaning::IntParam(index) => ("assign_int".into(), Some(27_167 + i64::from(index))),
+        // TeX82's named glue parameters occupy the contiguous `assign_glue`
+        // command range. Their selector is the glue-parameter base plus the
+        // stored parameter index (for example, `\\tabskip` is 24538).
+        Meaning::GlueParam(index) => ("assign_glue".into(), Some(24_527 + i64::from(index))),
         Meaning::TokParam(index) => ("assign_toks".into(), Some(25_058 + i64::from(index))),
         Meaning::UnexpandablePrimitive(primitive) => match primitive {
             UnexpandablePrimitive::Def
@@ -409,6 +413,14 @@ mod tests {
         assert_eq!(
             canonical_command_identity(Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Toks)),
             ("toks_register".into(), Some(0))
+        );
+    }
+
+    #[test]
+    fn named_glue_parameters_use_tex82_assign_glue_selectors() {
+        assert_eq!(
+            canonical_command_identity(Meaning::GlueParam(11)),
+            ("assign_glue".into(), Some(24_538))
         );
     }
 

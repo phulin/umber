@@ -4,6 +4,7 @@
 //! canonical filename termination only.  Input levels, raw tokens, and macro
 //! argument frames remain private to `tex-command`.
 
+use tex_state::glue::GlueSpec;
 use tex_state::interner::Symbol;
 use tex_state::meaning::Meaning;
 use tex_state::token::{Catcode, OriginId};
@@ -56,6 +57,19 @@ pub struct ScannedSetBoxAssignment {
     pub index: i32,
 }
 
+/// A completed named glue-parameter assignment.
+///
+/// Command processing owns the optional equals sign and scalar glue scan;
+/// replay receives only the parameter selector and its finished value.  The
+/// `mu` flag preserves the TeX distinction between ordinary and math glue
+/// parameters without exposing another input path to the executor.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ScannedGlueParameterAssignment {
+    pub index: u16,
+    pub value: GlueSpec,
+    pub mu: bool,
+}
+
 /// The canonical boundary that stopped an unbraced filename scan.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum FileNameTermination {
@@ -90,6 +104,21 @@ impl CommandProcessor<'_> {
         let index = self.scan_integer()?.value;
         let _ = self.scan_optional_equals()?;
         Ok(ScannedSetBoxAssignment { index })
+    }
+
+    /// Scans TeX82's named glue-parameter assignment operand.
+    ///
+    /// This follows `scan_optional_equals` and `scan_glue`, retaining their
+    /// canonical backup and alignment-delivery transitions before replay
+    /// applies the aggregate mutation.
+    pub fn scan_glue_parameter_assignment(
+        &mut self,
+        index: u16,
+        mu: bool,
+    ) -> Result<ScannedGlueParameterAssignment, CommandError> {
+        let _ = self.scan_optional_equals()?;
+        let value = self.scan_glue(mu)?.value;
+        Ok(ScannedGlueParameterAssignment { index, value, mu })
     }
 
     /// Validates a box body's required opening brace, then restores it for

@@ -5,8 +5,9 @@ use tex_command::{
     InputTransition, ObservedToken, RegisteredSourceKind, SourceRegistration, TracedTokenList,
 };
 use tex_state::Universe;
-use tex_state::env::banks::IntParam;
+use tex_state::env::banks::{GlueParam, IntParam};
 use tex_state::meaning::{ExpandablePrimitive, Meaning};
+use tex_state::scaled::Scaled;
 
 use super::*;
 
@@ -97,6 +98,42 @@ fn canonical_initex_replay_scans_and_applies_integer_parameters() {
                 && mutation.target == "parameter"
                 && mutation.value == "integer_parameter:23=2026"
     ));
+}
+
+#[test]
+fn canonical_initex_replay_scans_tabskip_before_alignment_preamble() {
+    let mut universe = Universe::new();
+    let mut control = CommandReplayControl::tex82_initex(&mut universe);
+    register_source(&mut control, br"\tabskip = 2pt\halign&\end");
+    let mut observations = ObservationRecorder::default();
+
+    assert_eq!(
+        control
+            .step_with_observer(&mut universe, &mut observations)
+            .expect("tabskip assignment"),
+        ReplayStep::Continue
+    );
+    let tabskip = universe.glue(universe.glue_param(GlueParam::TAB_SKIP));
+    assert_eq!(tabskip.width, Scaled::from_raw(2 * Scaled::UNITY));
+    assert!(matches!(
+        observations.0.as_slice(),
+        [.., CommandObservation::Scanner(scanner), CommandObservation::Mutation(mutation)]
+            if scanner.kind == "glue"
+                && mutation.target == "parameter"
+                && mutation.key.as_deref() == Some("glue_parameter:11")
+                && mutation.value.starts_with("glue:width=131072")
+    ));
+
+    assert_eq!(
+        control.step(&mut universe).expect("alignment"),
+        ReplayStep::Continue
+    );
+    let alignment = control
+        .active_alignment()
+        .expect("alignment begins after tabskip");
+    control
+        .apply_alignment_request(AlignmentRequest::Preamble(alignment))
+        .expect("preamble lifecycle remains available");
 }
 
 #[test]

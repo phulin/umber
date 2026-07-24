@@ -12,7 +12,7 @@ use tex_command::{
 use tex_command::{
     CommandObservation, CommandObserver, EffectRecord, MutationRecord, ObservedToken,
 };
-use tex_state::env::banks::{IntParam, TokParam};
+use tex_state::env::banks::{GlueParam, IntParam, TokParam};
 use tex_state::glue::GlueSpec;
 use tex_state::interner::Symbol;
 use tex_state::macro_store::{MacroDefinitionProvenance, MacroMeaning};
@@ -337,6 +337,11 @@ enum ScannedStep {
         tokens: TracedTokenList,
         global: bool,
     },
+    GlueParam {
+        index: u16,
+        value: GlueSpec,
+        global: bool,
+    },
     CodeTable {
         primitive: UnexpandablePrimitive,
         character: char,
@@ -511,6 +516,26 @@ fn scan_command(
             Ok(ScannedStep::TokParam {
                 index,
                 tokens,
+                global,
+            })
+        }
+        Meaning::GlueParam(index) => {
+            let assignment = processor
+                .scan_glue_parameter_assignment(index, false)
+                .map_err(command_error)?;
+            Ok(ScannedStep::GlueParam {
+                index: assignment.index,
+                value: assignment.value,
+                global,
+            })
+        }
+        Meaning::MuGlueParam(index) => {
+            let assignment = processor
+                .scan_glue_parameter_assignment(index, true)
+                .map_err(command_error)?;
+            Ok(ScannedStep::GlueParam {
+                index: assignment.index,
+                value: assignment.value,
                 global,
             })
         }
@@ -797,6 +822,27 @@ fn applied_mutation_observation(
             global: *global,
         });
     }
+    if let ScannedStep::GlueParam {
+        index,
+        value,
+        global,
+    } = scanned
+    {
+        return Some(MutationRecord {
+            target: "parameter",
+            value: format!(
+                "glue:width={};stretch={};stretch_order={:?};shrink={};shrink_order={:?}",
+                value.width.raw(),
+                value.stretch.raw(),
+                value.stretch_order,
+                value.shrink.raw(),
+                value.shrink_order,
+            ),
+            key: Some(format!("glue_parameter:{index}")),
+            tokens: None,
+            global: *global,
+        });
+    }
     if let ScannedStep::CodeTable {
         primitive,
         character,
@@ -1000,6 +1046,20 @@ fn apply_scanned_step(
                 stores.set_tok_param_global(parameter, tokens.token_list());
             } else {
                 stores.set_tok_param(parameter, tokens.token_list());
+            }
+            Ok(ReplayStep::Continue)
+        }
+        ScannedStep::GlueParam {
+            index,
+            value,
+            global,
+        } => {
+            let parameter = GlueParam::new(index);
+            let value = stores.intern_glue(value);
+            if global {
+                stores.set_glue_param_global(parameter, value);
+            } else {
+                stores.set_glue_param(parameter, value);
             }
             Ok(ReplayStep::Continue)
         }

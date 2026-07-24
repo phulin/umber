@@ -293,6 +293,13 @@ assignments such as `\year`, `\dimen`, and `\skip` scan their operands through
 executor-side `Universe` mutation after the processor borrow ends, then
 publishes the committed mutation observation.
 
+Named glue parameters such as `\tabskip` follow the same replay gate: command
+processing consumes their optional equals sign and ordinary or mu-glue operand
+as one typed assignment, preserving scanner backup and alignment delivery
+ordering. The replay adapter then interns and assigns that completed glue value
+through `Universe`; it never leaves an operand for later main control or scans
+inside an alignment preamble.
+
 Token-register assignments use the same ownership rule through
 `CommandProcessor::scan_token_register_assignment`: it scans the register
 integer, optional equals sign, and unexpanded balanced token list as one

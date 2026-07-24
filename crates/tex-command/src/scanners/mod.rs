@@ -8,6 +8,7 @@ mod token_list;
 pub use scalar::{InternalValue, ScalarProvenance, ScalarRecovery, ScannedScalar};
 pub use structured::{
     FileNameTermination, RegisteredInput, ScannedBalancedText, ScannedFileName,
-    ScannedLetAssignment, ScannedMacroDefinition, ScannedSetBoxAssignment, StructuredProvenance,
+    ScannedGlueParameterAssignment, ScannedLetAssignment, ScannedMacroDefinition,
+    ScannedSetBoxAssignment, StructuredProvenance,
 };
 pub use token_list::ScannedTokenRegisterAssignment;

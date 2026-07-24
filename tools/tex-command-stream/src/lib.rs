@@ -1039,6 +1039,18 @@ fn translate_mutation(record: MutationRecord) -> Event {
             scope: if record.global { "global" } else { "local" }.into(),
         });
     }
+    if record.target == "parameter"
+        && let Some(key) = record.key.as_ref()
+        && let Some(value) = record.value.strip_prefix("glue:")
+        && let Some(value) = parse_glue_scanner_value(value)
+    {
+        return Event::Mutation(MutationEvent {
+            target: StateTarget::Parameter,
+            key: CanonicalValue::Name(key.clone()),
+            value,
+            scope: if record.global { "global" } else { "local" }.into(),
+        });
+    }
     if record.target == "catcode" {
         if let Some((character, value)) = record.value.split_once('=') {
             if let (Ok(character), Some(value)) = (
@@ -1327,6 +1339,21 @@ mod tests {
             Event::Mutation(MutationEvent {
                 target: StateTarget::Register,
                 key: CanonicalValue::Name("skip:0".into()),
+                value: expected.clone(),
+                scope: "local".into(),
+            })
+        );
+        assert_eq!(
+            translate_mutation(MutationRecord {
+                target: "parameter",
+                value: format!("glue:{value}"),
+                key: Some("glue_parameter:11".into()),
+                tokens: None,
+                global: false,
+            }),
+            Event::Mutation(MutationEvent {
+                target: StateTarget::Parameter,
+                key: CanonicalValue::Name("glue_parameter:11".into()),
                 value: expected,
                 scope: "local".into(),
             })
