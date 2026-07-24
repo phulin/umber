@@ -128,6 +128,19 @@ impl CommandProcessor<'_> {
         self.back_input(opening)
     }
 
+    /// Validates an alignment preamble's required opening brace, then restores
+    /// it for canonical preamble delivery.
+    ///
+    /// TeX.web's `init_align` consumes this brace through expanded command
+    /// input before `get_preamble_token` starts.  The subsequent
+    /// `back_input` is therefore not an executor replay path: it is the one
+    /// command-owned backup level whose literal-brace adjustment is undone
+    /// before the preamble sees the same brace again.
+    pub fn scan_alignment_preamble_opening(&mut self) -> Result<(), CommandError> {
+        let opening = self.scan_left_brace(true)?;
+        self.back_input(opening)
+    }
+
     /// Scans TeX's balanced general text through the canonical `scan_toks`
     /// collector. `expanded` controls its TeX82 expanded-collection mode.
     pub fn scan_balanced_text(

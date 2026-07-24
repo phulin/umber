@@ -173,6 +173,51 @@ fn canonical_initex_replay_scans_tabskip_before_alignment_preamble() {
 }
 
 #[test]
+fn alignment_preamble_opener_uses_command_owned_backup_before_source_resumes() {
+    let mut universe = Universe::new();
+    let mut control = CommandReplayControl::tex82_initex(&mut universe);
+    register_source(&mut control, br"\halign{ \end");
+
+    assert_eq!(
+        control.step(&mut universe).expect("alignment begins"),
+        ReplayStep::Continue
+    );
+    let mut observations = ObservationRecorder::default();
+    assert_eq!(
+        control
+            .step_with_observer(&mut universe, &mut observations)
+            .expect("preamble opening is backed up"),
+        ReplayStep::Continue
+    );
+    assert!(
+        matches!(
+            observations.0.as_slice(),
+            [
+                CommandObservation::Alignment(state_change),
+                CommandObservation::Command(raw),
+                CommandObservation::Command(expanded),
+                CommandObservation::Input(backup),
+                CommandObservation::Recovery(recovery),
+                CommandObservation::Alignment(correction),
+            ]
+                if state_change.transition == "begin_group"
+                    && state_change.align_state == -999_999
+                    && state_change.previous_align_state == Some(-1_000_000)
+                    && matches!(raw.spelling, ObservedToken::Character { character: '{', .. })
+                    && matches!(expanded.spelling, ObservedToken::Character { character: '{', .. })
+                    && backup.transition == InputTransition::Backup
+                    && backup.reason == InputReason::Backup
+                    && recovery.backup
+                    && correction.transition == "backup_correction"
+                    && correction.align_state == -1_000_000
+                    && correction.previous_align_state == Some(-999_999)
+        ),
+        "unexpected observations: {:?}",
+        observations.0
+    );
+}
+
+#[test]
 fn canonical_initex_replay_scans_token_register_assignments_through_command_core() {
     let mut universe = Universe::new();
     let mut control = CommandReplayControl::tex82_initex(&mut universe);

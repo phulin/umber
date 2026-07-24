@@ -188,6 +188,10 @@ impl CommandProcessor<'_> {
             return Err(CommandError::StaleDelivery);
         }
         self.last_delivery = None;
+        #[cfg(any(test, feature = "instrumentation"))]
+        let previous_align_state = self.command.alignment.align_state;
+        #[cfg(any(test, feature = "instrumentation"))]
+        let adjustment = command.alignment_adjustment();
         self.undo_alignment_delivery(&command);
         self.retire_exhausted_parameter_before_backup(stamp)?;
 
@@ -214,6 +218,24 @@ impl CommandProcessor<'_> {
                 backup: true,
                 tokens: vec![self.observed_command_spelling(&command)],
             }));
+            if self.command.alignment.active_alignment.is_some()
+                && matches!(
+                    adjustment,
+                    crate::processor::AlignmentDeliveryAdjustment::BeginGroup
+                        | crate::processor::AlignmentDeliveryAdjustment::EndGroup
+                )
+            {
+                self.observe(CommandObservation::Alignment(AlignmentRecord {
+                    transition: "backup_correction",
+                    alignment: self
+                        .command
+                        .alignment
+                        .active_alignment
+                        .map(|identity| identity.raw()),
+                    align_state: self.command.alignment.align_state,
+                    previous_align_state: Some(previous_align_state),
+                }));
+            }
         }
         Ok(())
     }

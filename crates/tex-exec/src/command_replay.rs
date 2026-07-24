@@ -35,7 +35,7 @@ pub struct CommandReplayControl {
     capabilities: CommandHostCapabilities,
     modes: ModeNest,
     next_alignment_identity: u64,
-    active_alignment: Option<AlignmentIdentity>,
+    active_alignment: Option<ActiveReplayAlignment>,
     boxes: ReplayBoxes,
 }
 
@@ -51,6 +51,12 @@ struct ActiveReplayBox {
     opening_brace_replay: bool,
     body_opener_pending: bool,
     depth: u32,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct ActiveReplayAlignment {
+    identity: AlignmentIdentity,
+    preamble_opening_pending: bool,
 }
 
 #[derive(Debug, Default)]
@@ -97,7 +103,7 @@ impl CommandReplayControl {
     /// `\halign` or `\valign`, if it has not yet been finished.
     #[must_use]
     pub fn active_alignment(&self) -> Option<AlignmentIdentity> {
-        self.active_alignment
+        self.active_alignment.map(|alignment| alignment.identity)
     }
 
     /// Applies an executor-selected alignment lifecycle transition.
@@ -106,6 +112,7 @@ impl CommandReplayControl {
     /// delimiter-classification or source-consumption path.
     pub fn apply_alignment_request(&mut self, request: AlignmentRequest) -> Result<(), ExecError> {
         let finished = matches!(request, AlignmentRequest::Finish(_));
+        let preamble = matches!(request, AlignmentRequest::Preamble(_));
         let identity = match request {
             AlignmentRequest::Begin(identity)
             | AlignmentRequest::Preamble(identity)
@@ -121,8 +128,14 @@ impl CommandReplayControl {
             .map_err(|_| ExecError::MissingToken {
                 context: "alignment lifecycle",
             })?;
-        if finished && self.active_alignment == Some(identity) {
+        if finished && self.active_alignment.map(|active| active.identity) == Some(identity) {
             self.active_alignment = None;
+        }
+        if preamble
+            && let Some(active) = self.active_alignment.as_mut()
+            && active.identity == identity
+        {
+            active.preamble_opening_pending = false;
         }
         Ok(())
     }
@@ -182,6 +195,9 @@ impl CommandReplayControl {
             self.modes.current_mode(),
             Mode::Vertical | Mode::InternalVertical
         );
+        let alignment_preamble = self
+            .active_alignment
+            .and_then(|active| active.preamble_opening_pending.then_some(active.identity));
         let scanned = {
             let mut processor = CommandProcessor::new(
                 &mut self.command,
@@ -189,7 +205,12 @@ impl CommandReplayControl {
                 stores.command_context(),
                 CommandHostContext::new(&mut self.capabilities),
             );
-            scan_step(&mut processor, starts_paragraph, &self.boxes)?
+            scan_replay_step(
+                &mut processor,
+                starts_paragraph,
+                &self.boxes,
+                alignment_preamble,
+            )?
         };
         apply_scanned_step(
             scanned,
@@ -214,6 +235,9 @@ impl CommandReplayControl {
             self.modes.current_mode(),
             Mode::Vertical | Mode::InternalVertical
         );
+        let alignment_preamble = self
+            .active_alignment
+            .and_then(|active| active.preamble_opening_pending.then_some(active.identity));
         let scanned = {
             let mut processor = CommandProcessor::new(
                 &mut self.command,
@@ -222,7 +246,12 @@ impl CommandReplayControl {
                 CommandHostContext::new(&mut self.capabilities),
             )
             .with_observer(observer);
-            scan_step(&mut processor, starts_paragraph, &self.boxes)?
+            scan_replay_step(
+                &mut processor,
+                starts_paragraph,
+                &self.boxes,
+                alignment_preamble,
+            )?
         };
         let mutation = applied_mutation_observation(&scanned, stores);
         let effect = applied_effect_observation(&scanned, stores);
@@ -372,6 +401,9 @@ enum ScannedStep {
     BeginAlignment {
         vertical: bool,
     },
+    AlignmentPreambleOpening {
+        alignment: AlignmentIdentity,
+    },
     SetBox(SetBoxTarget),
     BeginVBox,
     ReplayBoxOpeningBrace,
@@ -381,6 +413,25 @@ enum ScannedStep {
     MathShift,
     ParagraphStart,
     Character,
+}
+
+/// Selects the one command-owned scanner that may consume input before
+/// ordinary main control.  Alignment preamble setup validates and backs up
+/// its opening brace exactly once; the restored brace then returns through
+/// `scan_step` on the following replay step.
+fn scan_replay_step(
+    processor: &mut CommandProcessor<'_>,
+    starts_paragraph: bool,
+    boxes: &ReplayBoxes,
+    alignment_preamble: Option<AlignmentIdentity>,
+) -> Result<ScannedStep, ExecError> {
+    if let Some(alignment) = alignment_preamble {
+        processor
+            .scan_alignment_preamble_opening()
+            .map_err(command_error)?;
+        return Ok(ScannedStep::AlignmentPreambleOpening { alignment });
+    }
+    scan_step(processor, starts_paragraph, boxes)
 }
 
 fn scan_step(
@@ -970,7 +1021,7 @@ fn apply_scanned_step(
     stores: &mut Universe,
     modes: &mut ModeNest,
     next_alignment_identity: &mut u64,
-    active_alignment: &mut Option<AlignmentIdentity>,
+    active_alignment: &mut Option<ActiveReplayAlignment>,
     command: &mut CommandState,
     boxes: &mut ReplayBoxes,
 ) -> Result<ReplayStep, ExecError> {
@@ -1242,9 +1293,25 @@ fn apply_scanned_step(
                 .map_err(|_| ExecError::MissingToken {
                     context: "alignment lifecycle",
                 })?;
-            *active_alignment = Some(identity);
+            *active_alignment = Some(ActiveReplayAlignment {
+                identity,
+                preamble_opening_pending: true,
+            });
             if vertical && modes.current_mode() == Mode::Vertical {
                 modes.push(Mode::InternalVertical);
+            }
+            Ok(ReplayStep::Continue)
+        }
+        ScannedStep::AlignmentPreambleOpening { alignment } => {
+            command
+                .apply_alignment_request(AlignmentRequest::Preamble(alignment))
+                .map_err(|_| ExecError::MissingToken {
+                    context: "alignment preamble lifecycle",
+                })?;
+            if let Some(active) = active_alignment.as_mut()
+                && active.identity == alignment
+            {
+                active.preamble_opening_pending = false;
             }
             Ok(ReplayStep::Continue)
         }
