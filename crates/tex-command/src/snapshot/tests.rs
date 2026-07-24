@@ -2,12 +2,12 @@ use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 
 use crate::conditionals::ConditionFrame;
-use crate::input::InputLevel;
 use crate::macro_call::MacroActivation;
 use crate::processor::{ActiveCellDelivery, ScannerStatus, SuspendedAlignment};
 use crate::profile::{CommandProfile, CommandProfileBoundary, CommandProfileFingerprint};
 use crate::state::LiveTokenBuilder;
 use crate::{CommandRuntime, CommandState};
+use crate::{RegisteredSourceKind, SourceRegistration};
 
 use super::{CommandSummary, CommandSummaryError};
 
@@ -21,7 +21,19 @@ fn populated_quiescent_state() -> CommandState {
     let mut state = CommandState::new(CommandProfile::unicode_extended(
         crate::CommandDialect::Pdftex14027,
     ));
-    state.input.levels.push(InputLevel { identity: 7 });
+    let source = state
+        .register_source(SourceRegistration::new(
+            RegisteredSourceKind::Generated,
+            Vec::from(&b"first  \r\nsecond"[..]),
+        ))
+        .expect("valid Unicode source");
+    state
+        .open_registered_source(source)
+        .expect("registered source opens without host access");
+    state
+        .load_next_source_line(13)
+        .expect("first physical line");
+    state.next_source_character().expect("first scalar");
     state.input.next_level_identity = 11;
     state.input.next_source_identity = 13;
     state.parameters.activations.push(MacroActivation {
@@ -224,6 +236,67 @@ fn snapshot_and_summary_reject_profile_mismatch_without_mutation() {
         .expect_err("summary from another profile must be rejected");
     assert_eq!(summary_error.boundary(), CommandProfileBoundary::Summary);
     assert_eq!(state, expected);
+}
+
+#[test]
+fn retained_source_backing_and_partial_line_cursors_restore_without_host_access() {
+    let profile = CommandProfile::unicode_extended(crate::CommandDialect::Tex82);
+    let mut state = CommandState::new(profile);
+    let source = state
+        .register_source(SourceRegistration::new(
+            RegisteredSourceKind::World,
+            Vec::from("é \r\nnext".as_bytes()),
+        ))
+        .expect("valid immutable Unicode backing");
+    state
+        .open_registered_source(source)
+        .expect("registered source opens");
+    let physical = state
+        .load_next_source_line(13)
+        .expect("first physical line");
+    assert_eq!(physical.terminator(), crate::LineTerminator::CrLf);
+    let first = state.next_source_character().expect("first scalar");
+    assert_eq!(first.code(), crate::CharacterCode::from('é'));
+    assert_eq!((first.range().start(), first.range().end()), (0, 2));
+
+    let snapshot = state.snapshot();
+    let summary = state
+        .publish_summary()
+        .expect("a partial source line has no active command episode");
+    assert!(
+        state
+            .next_source_character()
+            .expect("endline")
+            .is_synthetic()
+    );
+    state.finish_source_line();
+    state
+        .load_next_source_line(-1)
+        .expect("second physical line");
+
+    state
+        .rollback(snapshot)
+        .expect("retained backing snapshot restores");
+    let restored_endline = state.next_source_character().expect("restored endline");
+    assert!(restored_endline.is_synthetic());
+    assert_eq!(
+        (
+            restored_endline.range().start(),
+            restored_endline.range().end()
+        ),
+        (2, 2)
+    );
+
+    let mut from_summary = CommandState::new(profile);
+    from_summary
+        .restore_summary(summary)
+        .expect("retained backing summary restores");
+    assert!(
+        from_summary
+            .next_source_character()
+            .expect("summary-restored endline")
+            .is_synthetic()
+    );
 }
 
 #[test]

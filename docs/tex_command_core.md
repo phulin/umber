@@ -596,6 +596,24 @@ does not enter character delivery.
 to map normalized characters to immutable backing ranges. There is no parallel
 mutable character-index representation.
 
+The implemented registration boundary accepts only complete, already acquired
+immutable bytes and records whether they came from World, generated input, an
+editor fragment, or typed read-line acquisition. Registration allocates the
+stable `SourceId`; Unicode mode validates the complete UTF-8 backing before
+allocation and reports the exact malformed byte range, while exact mode never
+decodes or rewrites bytes. Opening a registered source only clones retained
+backing and therefore cannot invoke host policy.
+
+Physical refill distinguishes LF, CR, CRLF, and a missing final terminator.
+A final terminator does not manufacture another empty line. Normalization
+removes trailing byte `0x20` values, captures the current profile-valid
+`endlinechar`, and delivers that synthetic character at the zero-width anchor
+after the retained prefix. Unicode scalar delivery advances the same canonical
+byte cursor by the UTF-8 width and retains a scalar delivery offset; exact
+eight-bit delivery advances it by one. In both modes ordinary character ranges
+address only immutable physical bytes, and terminator and stripped-space ranges
+remain available as physical metadata without being claimed by tokens.
+
 ### 12.2 Token cursor
 
 Payload, semantic delivery behavior, retirement, and trace explanation are

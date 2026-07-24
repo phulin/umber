@@ -4,6 +4,10 @@ use tex_state::token::TracedTokenWord;
 
 use crate::conditionals::ConditionStack;
 use crate::input::InputState;
+use crate::input::{
+    InputLevel, PhysicalLine, RegisteredSource, SourceCharacter, SourceCursor, SourceRegistration,
+    SourceRegistrationError,
+};
 use crate::macro_call::ParameterState;
 use crate::processor::{AlignmentDeliveryState, ExpansionState, ScannerState};
 use crate::profile::{
@@ -44,6 +48,76 @@ impl CommandState {
         }
     }
 
+    /// Registers complete immutable backing without consulting host policy.
+    ///
+    /// Registration validates Unicode before allocating an identity. It does
+    /// not open an input level or perform any tokenization.
+    pub fn register_source(
+        &mut self,
+        registration: SourceRegistration,
+    ) -> Result<tex_state::SourceId, SourceRegistrationError> {
+        let raw = u32::try_from(self.input.next_source_identity)
+            .map_err(|_| SourceRegistrationError::SourceIdentityExhausted)?;
+        let id = tex_state::SourceId::new(raw);
+        let source = RegisteredSource::register(id, self.profile(), registration)?;
+        self.input.next_source_identity += 1;
+        self.input.registered_sources.push(source);
+        Ok(id)
+    }
+
+    /// Opens an already registered source as a future input level.
+    ///
+    /// This operation only clones retained immutable backing. It cannot search
+    /// for files, invoke a host callback, or diagnose text encoding.
+    pub fn open_registered_source(
+        &mut self,
+        source: tex_state::SourceId,
+    ) -> Result<(), UnknownRegisteredSource> {
+        let registered = self
+            .input
+            .registered_sources
+            .iter()
+            .find(|registered| registered.id == source)
+            .cloned()
+            .ok_or(UnknownRegisteredSource(source))?;
+        let identity = self.input.next_level_identity;
+        self.input.next_level_identity = self.input.next_level_identity.wrapping_add(1);
+        self.input.levels.push(InputLevel {
+            identity,
+            source: SourceCursor::new(registered),
+        });
+        Ok(())
+    }
+
+    /// Splits and normalizes the next physical line on the active source.
+    ///
+    /// LF, CR, and CRLF are retained as distinct physical metadata. TeX
+    /// trailing spaces are removed and the current `endlinechar` is captured
+    /// for this line without tokenizing any characters.
+    pub fn load_next_source_line(&mut self, endlinechar: i32) -> Option<PhysicalLine> {
+        let level = self.input.levels.last_mut()?;
+        level
+            .source
+            .load_next_line(endlinechar)
+            .map(|line| line.physical)
+    }
+
+    /// Reads one byte-domain character or decoded Unicode scalar from the
+    /// active normalized line with its exact physical range.
+    pub fn next_source_character(&mut self) -> Option<SourceCharacter> {
+        let level = self.input.levels.last_mut()?;
+        let mode = level.source.backing.mode;
+        let bytes = std::sync::Arc::clone(&level.source.backing.bytes);
+        level.source.line.as_mut()?.next_character(mode, &bytes)
+    }
+
+    /// Retires the active normalized line so the next physical line may load.
+    pub fn finish_source_line(&mut self) {
+        if let Some(level) = self.input.levels.last_mut() {
+            level.source.finish_line();
+        }
+    }
+
     /// Returns the immutable profile selected when this job was created.
     #[must_use]
     pub const fn profile(&self) -> CommandProfile {
@@ -80,6 +154,30 @@ impl CommandState {
             .validate_fingerprint(CommandProfileBoundary::Checkpoint, found)
     }
 }
+
+/// An input level referred to a source absent from retained registration.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct UnknownRegisteredSource(tex_state::SourceId);
+
+impl UnknownRegisteredSource {
+    /// Returns the missing source identity.
+    #[must_use]
+    pub const fn source(self) -> tex_state::SourceId {
+        self.0
+    }
+}
+
+impl std::fmt::Display for UnknownRegisteredSource {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            formatter,
+            "source identity {} is not registered",
+            self.0.raw()
+        )
+    }
+}
+
+impl std::error::Error for UnknownRegisteredSource {}
 
 /// Live temporary data referenced by persistent command state.
 ///

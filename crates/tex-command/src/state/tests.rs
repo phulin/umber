@@ -75,6 +75,7 @@ fn semantic_ownership_domains_are_exhaustively_classified() {
 
     let InputState {
         levels,
+        registered_sources,
         next_level_identity,
         next_source_identity,
     } = input;
@@ -111,6 +112,7 @@ fn semantic_ownership_domains_are_exhaustively_classified() {
 
     drop((
         levels,
+        registered_sources,
         next_level_identity,
         next_source_identity,
         activations,
@@ -140,6 +142,7 @@ fn default_state_is_quiescent() {
     let state = CommandState::default();
 
     assert!(state.input.levels.is_empty());
+    assert!(state.input.registered_sources.is_empty());
     assert!(state.parameters.activations.is_empty());
     assert!(state.conditions.frames.is_empty());
     assert!(state.alignment.suspended.is_empty());

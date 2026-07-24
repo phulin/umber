@@ -145,10 +145,13 @@ but its new source origins degrade to `OriginId::UNKNOWN`.
 
 ### 4.2 Physical lines and a byte-canonical lexer cursor
 
-Text inputs are valid UTF-8. A malformed byte sequence produces a lexer input
-error over its exact physical byte range before lossy conversion can destroy
-the mapping. Supporting a future 8-bit input mode requires an explicit
-lossless decoder and offset map; it must not reinterpret this UTF-8 contract.
+Unicode command-profile inputs are valid UTF-8. A malformed byte sequence is
+rejected during complete-backing registration over its exact physical byte
+range before source identity allocation or lossy conversion can destroy the
+mapping. The exact-eight-bit command profiles instead preserve and deliver
+every byte without decoding. Both modes use the same byte-canonical physical
+line and range structure; they do not reinterpret one another's character
+domain.
 
 The physical-line reader retains:
 
@@ -159,14 +162,13 @@ The physical-line reader retains:
   has run; and
 - whether the normalized suffix contains a synthetic `\endlinechar`.
 
-`SourceFrame` stores the normalized line as UTF-8 `String`/bytes and uses one
-byte cursor at a character boundary as its canonical indexing state. Reading
-a scalar decodes at most four bytes and advances the cursor by
-`ch.len_utf8()`. A separately maintained scalar/display column is retained
-only where operational TeX state requires it; there is no parallel mutable
-`Vec<char>` index. Any lexer lookahead or rewind saves and restores the byte
-cursor and column together, including control-sequence scanning and every
-success or failure path in TeX `^^` notation.
+`SourceFrame` uses one byte cursor as its canonical indexing state. Unicode
+delivery decodes at most four bytes and advances the cursor by `ch.len_utf8()`;
+exact-eight-bit delivery advances it by one. A separately maintained scalar
+delivery offset is retained only where operational state requires it; there is
+no parallel mutable `Vec<char>` index. Any lexer lookahead or rewind saves and
+restores the byte cursor and scalar state together, including control-sequence
+scanning and every success or failure path in TeX `^^` notation.
 
 For a cursor inside the retained physical prefix, the source offset is the
 physical line start plus the normalized byte cursor. The synthetic end-line

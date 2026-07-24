@@ -1,11 +1,13 @@
 //! Source and stored-token input levels.
 
-/// Placeholder for one future-relevant input level.
+use super::source::SourceCursor;
+
+/// One future-relevant registered-source input level.
 ///
-/// Cursor payload and replay behavior will replace this shell when raw
-/// command delivery is implemented. The stable identity already belongs to
-/// the semantic input stack and therefore survives snapshots.
+/// Token-list variants are introduced with raw command delivery; source
+/// registration does not pre-tokenize input.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub(crate) struct InputLevel {
     pub(crate) identity: u64,
+    pub(crate) source: SourceCursor,
 }

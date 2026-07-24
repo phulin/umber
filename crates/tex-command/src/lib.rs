@@ -21,6 +21,10 @@ mod state;
 
 pub use command::CurrentCommand;
 pub use host::{CommandHostCapabilities, CommandHostContext};
+pub use input::{
+    LineTerminator, MalformedUnicodeRange, PhysicalLine, RegisteredSourceKind, SourceCharacter,
+    SourceRange, SourceRegistration, SourceRegistrationError,
+};
 pub use processor::CommandProcessor;
 pub use profile::{
     CharacterCode, CharacterCodeError, CharacterMode, CommandCapabilities, CommandDialect,
@@ -28,4 +32,5 @@ pub use profile::{
     CommandProfileMismatch,
 };
 pub use snapshot::{CommandStateSnapshot, CommandSummary, CommandSummaryError};
-pub use state::{CommandRuntime, CommandState};
+pub use state::{CommandRuntime, CommandState, UnknownRegisteredSource};
+pub use tex_state::SourceId;

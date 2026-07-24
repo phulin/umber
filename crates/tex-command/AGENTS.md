@@ -27,8 +27,14 @@ Private state-machine modules must not be widened for compatibility with
 - `src/state.rs`: persistent command state and discardable runtime ownership.
 - `src/command.rs`: public opaque, ephemeral current-command representation.
 - `src/error.rs`: private command error and resource-need representation.
-- `src/input/`: private source, line, tokenizer, input-level, backup, and
-  summary state machines.
+- `src/input/source.rs`, `src/input/source/tests.rs`: public host-neutral
+  source-registration inputs and errors plus private immutable backing,
+  source cursors, and focused registration tests.
+- `src/input/lines.rs`, `src/input/lines/tests.rs`: exact physical-line
+  splitting, TeX line normalization, byte/scalar cursor and range accounting,
+  and focused line-contract tests.
+- `src/input/`: remaining private tokenizer, input-level, backup, and summary
+  state machines.
 - `src/processor/`: public borrow-only processor facade with private raw
   delivery, expansion, scanner-status, and alignment orchestration.
 - `src/scanners/`: private typed scanner family.
