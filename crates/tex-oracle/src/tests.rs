@@ -239,7 +239,7 @@ fn committed_tex82_fixture_is_consumed_hermetically() {
         .join("../../tests/corpus/command/tex82/command-transitions-v1");
     let fixture = CommittedFixture::load(directory).expect("committed canonical fixture");
     assert_eq!(fixture.manifest.name, "tex82/command-transitions-v1");
-    assert_eq!(fixture.stream.events.len(), 3_145);
+    assert_eq!(fixture.stream.events.len(), 4_069);
 }
 
 #[test]

@@ -2,8 +2,16 @@
 # Columns: family|boundary|fixture|final-change seam|fixed JSON fragment
 command|raw delivery|transitions.tex|get_next return|"event":"command","data":{"delivery":"raw"
 command|expanded delivery|transitions.tex|get_x_token and x_token return|"event":"command","data":{"delivery":"expanded"
+source|ignored character and trailing-space collapse|input-recovery.tex|get_next M/N/S source-token loop|{"character":65,"catcode":"letter"},{"character":105,"catcode":"letter"},{"character":103,"catcode":"letter"},{"character":110,"catcode":"letter"},{"character":111,"catcode":"letter"},{"character":114,"catcode":"letter"},{"character":101,"catcode":"letter"},{"character":100,"catcode":"letter"},{"character":32,"catcode":"spacer"},{"character":66,"catcode":"letter"}
+source|comment discard and blank-line par|input-recovery.tex|get_next end_line and new_line cases|{"character":66,"catcode":"letter"},{"character":67,"catcode":"letter"},{"character":32,"catcode":"spacer"},{"character":0,"catcode":"escape","control_sequence":"par"},{"character":68,"catcode":"letter"}
+source|disabled endlinechar|input-recovery.tex|firm_up_the_line and get_next line refill|"key":{"type":"name","value":"noendline"},"value":{"type":"tokens","value":[{"character":0,"catcode":"end_match"},{"character":65,"catcode":"letter"},{"character":66,"catcode":"letter"}]}
+source|canonical hexadecimal superscript notation|input-recovery.tex|get_next superscript reduction|"key":{"type":"name","value":"caretnotation"},"value":{"type":"tokens","value":[{"character":0,"catcode":"end_match"},{"character":65,"catcode":"letter"},{"character":122,"catcode":"letter"}]}
+source|invalid-character consume and restart|input-recovery.tex|get_next invalid_char case|"key":{"type":"name","value":"invalidcharacter"},"value":{"type":"tokens","value":[{"character":0,"catcode":"end_match"},{"character":65,"catcode":"letter"},{"character":66,"catcode":"letter"}]}
+command|get_token string operand|input-recovery.tex|string_code scan_toks operand fetch|"control_sequence":"physicaltokens","location":{"source":"input-recovery.tex","line":17,"byte":42}
+command|get_token meaning operand|input-recovery.tex|meaning_code scan_toks operand fetch|"control_sequence":"physicaltokens","location":{"source":"input-recovery.tex","line":18,"byte":44}
 input|source push|transitions.tex and transitions-child.tex|begin_file_reading|"transition":"push","reason":"source"
 input|source retirement|transitions-child.tex|end_file_reading|"transition":"retire","reason":"source"
+input|legal source EOF|input-eof-normal.tex|end_file_reading under normal scanner status|"transition":"retire","reason":"source","name":"input-eof-normal.tex"
 input|terminal stop|transitions-child.tex|get_next terminal read stop|"transition":"stop","reason":"source"
 input|token-list push|transitions.tex|begin_token_list ordinary branch|"transition":"push","reason":"token_list"
 input|token-list retirement|transitions.tex|end_token_list ordinary branch|"transition":"retire","reason":"token_list"
@@ -45,6 +53,15 @@ diagnostic|evaluating-limit recovery|transitions.tex|inserted-relax conditional 
 diagnostic|incomplete skipped text|transitions-child.tex|outer-validity EOF recovery|"diagnostic":"conditional_incomplete"
 diagnostic|outer control sequence|transitions.tex|check_outer_validity control-sequence recovery|"diagnostic":"outer_validity_control_sequence"
 diagnostic|outer EOF|transitions-child.tex|check_outer_validity EOF recovery|"diagnostic":"outer_validity_eof"
+diagnostic|defining EOF|input-eof-defining.tex|check_outer_validity defining EOF recovery|"diagnostic":"outer_validity_eof","arguments":[{"type":"name","value":"defining"}]
+diagnostic|matching EOF|input-eof-matching.tex|check_outer_validity matching EOF recovery|"diagnostic":"outer_validity_eof","arguments":[{"type":"name","value":"matching"}]
+diagnostic|absorbing EOF|input-eof-absorbing.tex|check_outer_validity absorbing EOF recovery|"diagnostic":"outer_validity_eof","arguments":[{"type":"name","value":"absorbing"}]
+diagnostic|aligning EOF|input-eof-aligning.tex|check_outer_validity aligning EOF recovery|"diagnostic":"outer_validity_eof","arguments":[{"type":"name","value":"aligning"}]
+diagnostic|skipping EOF|input-recovery.tex and transitions-child.tex|check_outer_validity skipping EOF recovery|"diagnostic":"outer_validity_eof","arguments":[{"type":"name","value":"skipping"}]
+recovery|defining EOF right brace|input-eof-defining.tex|check_outer_validity defining insertion|"kind":"inserted_token","tokens":[{"character":125,"catcode":"right_brace"}]
+recovery|matching EOF par|input-eof-matching.tex|check_outer_validity matching insertion|"kind":"inserted_control_sequence","tokens":[{"character":0,"catcode":"escape","control_sequence":"par"}]
+recovery|aligning EOF frozen cr|input-eof-aligning.tex|check_outer_validity aligning insertion|"kind":"inserted_control_sequence","tokens":[{"character":0,"catcode":"escape","control_sequence":"cr"}]
+recovery|skipping EOF frozen fi|input-recovery.tex and transitions-child.tex|check_outer_validity skipping insertion|"kind":"inserted_token","tokens":[{"character":0,"catcode":"escape","control_sequence":"fi"}]
 alignment|begin|transitions.tex|push_alignment ownership commit|"event":"alignment","data":{"transition":"begin"
 alignment|finish|transitions.tex|pop_alignment pre-retirement seam|"event":"alignment","data":{"transition":"finish"
 alignment|nested suspension|transitions.tex|push_alignment outer suspension|"event":"alignment","data":{"transition":"suspend"

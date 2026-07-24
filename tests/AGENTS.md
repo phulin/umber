@@ -10,6 +10,9 @@ focused transition inputs, and the repository-owned final TeX82
 instrumentation change file. `semantic-event-matrix.txt` maps every required
 TeX82 command-core observation to its focused input and stable final-change
 seam; the live oracle build consumes it as the coverage gate.
+The `input-recovery.tex` program and `input-eof-*.tex` children isolate
+physical-line/token delivery plus legal and scanner-status-sensitive EOF
+recovery without depending on a format or fonts.
 Acquisition and builds run only through `scripts/regen-fixtures.sh --oracle
 tex82 --profile initex-eight-bit`; Cargo correctness tests never invoke the
 live oracle.

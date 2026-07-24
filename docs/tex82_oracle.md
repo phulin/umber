@@ -76,7 +76,12 @@ program runs twice and must emit byte-identical traces and ordinary outputs; the
 manifest-field shape, and contiguous sequence numbers. Focused checks require
 raw and expanded delivery, source and token input lifecycle, backup, scanner
 status, outer-validity recovery insertion, terminal stop, and termination
-ordering. Macro-focused checks additionally require completed arguments and
+ordering. Dedicated source inputs additionally gate physical-line
+normalization and M/N/S tokenization, per-character catcode effects, canonical
+`^^` reduction, `get_token` consumers, nested parameter replay, normal EOF,
+and defining/matching/absorbing/aligning/skipping EOF. The EOF diagnostics
+record scanner status and exact right-brace, `\par`, frozen `\cr`, or frozen
+`\fi` recovery. Macro-focused checks additionally require completed arguments and
 activations, delimiter matches and overlap recovery, parameter conversion,
 replacement completion, ordinary and expanded `scan_toks` completion, and
 direct `\the` token-list splices. Scanner/conditional checks additionally

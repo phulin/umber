@@ -1,0 +1,31 @@
+% Focused TeX82 source, delivery, input-level, and recovery program.
+\catcode`\~=13
+\def~{ACTIVE}
+\catcode`\!=9
+\long\def\physicaltokens{A!ignored   
+B% comment text is discarded
+C
+
+D}
+\catcode`\!=12
+\catcode94=7
+\endlinechar=-1
+\def\noendline{A
+B}
+\endlinechar=13
+\def\caretnotation{^^41^^7a}
+\edef\gettokenstring{\string\physicaltokens}
+\edef\gettokenmeaning{\meaning\physicaltokens}
+\def\replayinner#1{[#1]}
+\def\replayouter#1{\replayinner{#1}}
+\replayouter{PARAMETER}
+\catcode63=15
+\def\invalidcharacter{A?B}
+\catcode63=12
+\input input-eof-normal
+\input input-eof-defining
+\input input-eof-matching
+\input input-eof-absorbing
+\input input-eof-aligning }
+\iffalse
+SKIPPED-TO-EOF

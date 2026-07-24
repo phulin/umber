@@ -208,6 +208,8 @@ manifest and hermetic bundle under `tests/corpus/command`, then requires the
 focused sources, manifest-bound schema-v1 stream, terminal, normalized log,
 status, DVI, and generated effect to regenerate byte-for-byte. `tex-oracle`
 unit tests consume that same committed bundle without a live TeX executable.
+The focused source set includes separate legal and non-normal EOF programs so
+the hermetic bundle distinguishes every TeX82 scanner-status recovery.
 
 The `--oracle pdftex14027 --profile initex-etex-eight-bit` mode performs the
 corresponding pinned pdfTeX 1.40.27 build. It gates DVI/PDF smoke artifacts,

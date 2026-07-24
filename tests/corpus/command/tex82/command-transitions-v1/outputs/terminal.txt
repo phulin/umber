@@ -14,148 +14,194 @@ l.40 ...box1=\vbox{\halign{left&
 ! Only one # is allowed per tab.
 l.42 \setbox2=\vbox{\halign{##
                               \cr
-[42.42.7] UMBER-TEX82-TRANSITIONS (./transitions-child.tex)
+[42.42.7] UMBER-TEX82-TRANSITIONS (./input-recovery.tex
+! Text line contains an invalid character.
+l.23 \def\invalidcharacter{A?
+                             B}
+(./input-eof-normal.tex) (./input-eof-defining.tex)
+Runaway definition?
+#1->DEFINITION 
+! File ended while scanning definition of \eofdefinition.
+<inserted text> 
+                }
+l.26 \input input-eof-defining
+                              
+(./input-eof-matching.tex)
+Runaway argument?
+! File ended while scanning use of \eofargument.
+<inserted text> 
+                \par 
+l.27 \input input-eof-matching
+                              
+(./input-eof-absorbing.tex)
+Runaway text?
+EOF-ABSORBING 
+! File ended while scanning text of \message.
+<inserted text> 
+                }
+l.28 \input input-eof-absorbing
+                               
+EOF-ABSORBING  (./input-eof-aligning.tex)
+Runaway preamble?
+! File ended while scanning preamble of \halign.
+<inserted text> 
+                \cr }
+l.29 \input input-eof-aligning 
+                               }
+! Missing # inserted in alignment preamble.
+<to be read again> 
+                   \cr 
+...
+l.29 \input input-eof-aligning 
+                               }
+)
+! Incomplete \iffalse; all text was ignored after line 30.
+<inserted text> 
+                \fi 
+l.50 \input input-recovery
+                          
+(./transitions-child.tex)
 ! Incomplete \iffalse; all text was ignored after line 1.
 <inserted text> 
                 \fi 
-l.49 \input transitions-child
+l.51 \input transitions-child
                              
 Runaway argument?
 ! Forbidden control sequence found while scanning use of \takeone.
 <inserted text> 
                 \par 
 ...
-l.52 \takeone\outercommand
+l.53 \takeone\outercommand
                           
 ! Output routine didn't use all of \box255.
 <to be read again> 
                    \end 
-l.53 \end
+l.54 \end
          
 ! Output routine didn't use all of \box255.
 <to be read again> 
                    \end 
-l.53 \end
+l.54 \end
          
 ! Output routine didn't use all of \box255.
 <to be read again> 
                    \end 
-l.53 \end
+l.54 \end
          
 ! Output routine didn't use all of \box255.
 <to be read again> 
                    \end 
-l.53 \end
+l.54 \end
          
 ! Output routine didn't use all of \box255.
 <to be read again> 
                    \end 
-l.53 \end
+l.54 \end
          
 ! Output routine didn't use all of \box255.
 <to be read again> 
                    \end 
-l.53 \end
+l.54 \end
          
 ! Output routine didn't use all of \box255.
 <to be read again> 
                    \end 
-l.53 \end
+l.54 \end
          
 ! Output routine didn't use all of \box255.
 <to be read again> 
                    \end 
-l.53 \end
+l.54 \end
          
 ! Output routine didn't use all of \box255.
 <to be read again> 
                    \end 
-l.53 \end
+l.54 \end
          
 ! Output routine didn't use all of \box255.
 <to be read again> 
                    \end 
-l.53 \end
+l.54 \end
          
 ! Output routine didn't use all of \box255.
 <to be read again> 
                    \end 
-l.53 \end
+l.54 \end
          
 ! Output routine didn't use all of \box255.
 <to be read again> 
                    \end 
-l.53 \end
+l.54 \end
          
 ! Output routine didn't use all of \box255.
 <to be read again> 
                    \end 
-l.53 \end
+l.54 \end
          
 ! Output routine didn't use all of \box255.
 <to be read again> 
                    \end 
-l.53 \end
+l.54 \end
          
 ! Output routine didn't use all of \box255.
 <to be read again> 
                    \end 
-l.53 \end
+l.54 \end
          
 ! Output routine didn't use all of \box255.
 <to be read again> 
                    \end 
-l.53 \end
+l.54 \end
          
 ! Output routine didn't use all of \box255.
 <to be read again> 
                    \end 
-l.53 \end
+l.54 \end
          
 ! Output routine didn't use all of \box255.
 <to be read again> 
                    \end 
-l.53 \end
+l.54 \end
          
 ! Output routine didn't use all of \box255.
 <to be read again> 
                    \end 
-l.53 \end
+l.54 \end
          
 ! Output routine didn't use all of \box255.
 <to be read again> 
                    \end 
-l.53 \end
+l.54 \end
          
 ! Output routine didn't use all of \box255.
 <to be read again> 
                    \end 
-l.53 \end
+l.54 \end
          
 ! Output routine didn't use all of \box255.
 <to be read again> 
                    \end 
-l.53 \end
+l.54 \end
          
 ! Output routine didn't use all of \box255.
 <to be read again> 
                    \end 
-l.53 \end
+l.54 \end
          
 ! Output routine didn't use all of \box255.
 <to be read again> 
                    \end 
-l.53 \end
+l.54 \end
          
 ! Output routine didn't use all of \box255.
 <to be read again> 
                    \end 
-l.53 \end
+l.54 \end
          
 ! Output loop---25 consecutive dead cycles.
 <to be read again> 
                    \end 
-l.53 \end
+l.54 \end
          
 [42.42.7] )
 (see the transcript file for additional information)

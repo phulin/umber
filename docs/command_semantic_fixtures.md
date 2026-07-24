@@ -140,7 +140,13 @@ The first representative fixture is
 `tests/corpus/command/tex82/command-transitions-v1`. It uses focused,
 font-independent INITEX sources and commits the complete TeX82-applicable
 schema-v1 transition matrix plus terminal, normalized-log, status, DVI, and
-generated-effect observations. Its source explicitly assigns `\year`,
+generated-effect observations. Its input-focused sources isolate M/N/S
+tokenization, ignored/invalid/comment/end-line handling, `^^` notation,
+`get_token`, nested parameter replay, legal source retirement, and each
+non-normal scanner-status EOF recovery. Outer-validity diagnostics carry the
+canonical live scanner status as a typed name, and the trace records the exact
+inserted right-brace, `\par`, frozen `\cr`, and frozen `\fi` tokens. The main
+source explicitly assigns `\year`,
 `\month`, `\day`, and `\time` before shipout because canonical TeX82's
 `onlyTeX` host boundary does not honor Web2C's `SOURCE_DATE_EPOCH`; this makes
 the ordinary DVI preamble exact across regeneration runs.

@@ -23,6 +23,14 @@ instrumentation_change="${UMBER_TEX82_INSTRUMENTATION_CHANGE:-${repo_root}/tests
 smoke_input="${repo_root}/tests/tex82-oracle/smoke.tex"
 transition_input="${repo_root}/tests/tex82-oracle/transitions.tex"
 transition_child="${repo_root}/tests/tex82-oracle/transitions-child.tex"
+transition_support=(
+  "${repo_root}/tests/tex82-oracle/input-recovery.tex"
+  "${repo_root}/tests/tex82-oracle/input-eof-normal.tex"
+  "${repo_root}/tests/tex82-oracle/input-eof-defining.tex"
+  "${repo_root}/tests/tex82-oracle/input-eof-matching.tex"
+  "${repo_root}/tests/tex82-oracle/input-eof-absorbing.tex"
+  "${repo_root}/tests/tex82-oracle/input-eof-aligning.tex"
+)
 semantic_event_matrix="${repo_root}/tests/tex82-oracle/semantic-event-matrix.txt"
 cflags="-O2"
 cxxflags="-O2"
@@ -212,12 +220,15 @@ run_smoke() {
 }
 
 run_transitions() {
-  local executable="$1" variant="$2" run_dir status=0
+  local executable="$1" variant="$2" run_dir status=0 support
   run_dir="${out_dir}/transitions/${variant}"
   rm -rf "$run_dir"
   mkdir -p "$run_dir"
   cp "$transition_input" "${run_dir}/transitions.tex"
   cp "$transition_child" "${run_dir}/transitions-child.tex"
+  for support in "${transition_support[@]}"; do
+    cp "$support" "$run_dir/"
+  done
   (
     cd "$run_dir"
     env -i PATH=/usr/bin:/bin LC_ALL=C LANGUAGE=C \

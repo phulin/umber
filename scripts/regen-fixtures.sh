@@ -773,6 +773,7 @@ validate_committed_oracle_fixture() {
   local live_dir
   local candidate_events
   local expected_header
+  local source
 
   [[ -n "$(oracle_fixture_contract_row "$fixture")" ]] ||
     die "unknown committed oracle fixture: ${fixture}"
@@ -784,12 +785,10 @@ validate_committed_oracle_fixture() {
       --fixture "$fixture_dir"
 
   [[ "$compare_live" -eq 1 ]] || return 0
-  cmp -s "${fixture_dir}/sources/transitions.tex" \
-    "${live_dir}/transitions.tex" ||
-    die "${fixture} focused source drift"
-  cmp -s "${fixture_dir}/sources/transitions-child.tex" \
-    "${live_dir}/transitions-child.tex" ||
-    die "${fixture} child source drift"
+  for source in "${fixture_dir}"/sources/*; do
+    cmp -s "$source" "${live_dir}/$(basename "$source")" ||
+      die "${fixture} focused source drift: $(basename "$source")"
+  done
   cmp -s "${fixture_dir}/outputs/terminal.txt" "${live_dir}/terminal.txt" ||
     die "${fixture} terminal observation drift"
   cmp -s "${fixture_dir}/outputs/ordinary.log" "${live_dir}/ordinary.log" ||

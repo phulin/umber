@@ -617,7 +617,13 @@ write(umber_trace_file,
  '{"event":"diagnostic","data":{"severity":"error","diagnostic":"');
 if at_eof then write(umber_trace_file,'outer_validity_eof')
 else write(umber_trace_file,'outer_validity_control_sequence');
-write_ln(umber_trace_file,'","arguments":[]}}}');
+write(umber_trace_file,'","arguments":[{"type":"name","value":');
+case scanner_status of
+0:write(umber_trace_file,'"normal"'); 1:write(umber_trace_file,'"skipping"');
+2:write(umber_trace_file,'"defining"'); 3:write(umber_trace_file,'"matching"');
+4:write(umber_trace_file,'"aligning"');
+othercases write(umber_trace_file,'"absorbing"') endcases;
+write_ln(umber_trace_file,'}]}}}');
 end;
 
 procedure umber_trace_scope(@!global_scope:boolean);
