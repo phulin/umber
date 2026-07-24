@@ -553,6 +553,63 @@ fn alignment_preamble_opener_uses_command_owned_backup_before_source_resumes() {
 }
 
 #[test]
+fn empty_ordinary_u_template_pushes_and_retires_before_the_cell_opener_replays() {
+    let mut universe = Universe::new();
+    let mut control = CommandReplayControl::tex82_initex(&mut universe);
+    // The empty list before `#` is an ordinary u-template, not `\omit`.
+    register_source(&mut control, br"\halign{#\cr{\end");
+    let mut observations = ObservationRecorder::default();
+
+    for phase in [
+        "alignment begin",
+        "preamble opener backup",
+        "preamble opener replay",
+        "preamble scan and cell setup",
+        "cell opener backup and empty template installation",
+    ] {
+        assert_eq!(
+            control
+                .step_with_observer(&mut universe, &mut observations)
+                .expect(phase),
+            ReplayStep::Continue
+        );
+    }
+
+    assert_eq!(
+        control
+            .step_with_observer(&mut universe, &mut observations)
+            .expect("empty template retires before the backed-up opener"),
+        ReplayStep::Continue
+    );
+    assert!(
+        observations.0.windows(5).any(|events| {
+            matches!(
+                events,
+                [
+                    CommandObservation::Input(push),
+                    CommandObservation::Alignment(template_push),
+                    CommandObservation::Input(retire),
+                    CommandObservation::Alignment(template_retire),
+                    CommandObservation::Alignment(body),
+                ] if push.transition == InputTransition::Push
+                    && push.reason == InputReason::AlignmentUTemplate
+                    && template_push.transition == "u_template_push"
+                    && template_push.align_state == 1_000_000
+                    && retire.transition == InputTransition::Retire
+                    && retire.reason == InputReason::AlignmentUTemplate
+                    && template_retire.transition == "u_template_retire"
+                    && template_retire.align_state == 1_000_000
+                    && body.transition == "state_change"
+                    && body.align_state == 0
+                    && body.previous_align_state == Some(1_000_000)
+            )
+        }),
+        "empty ordinary u-template must retain the TeX82 lifecycle: {:?}",
+        observations.0
+    );
+}
+
+#[test]
 fn completed_rule_spec_restarts_active_cell_through_typed_delimiter_delivery() {
     let mut universe = Universe::new();
     let mut control = CommandReplayControl::tex82_initex(&mut universe);

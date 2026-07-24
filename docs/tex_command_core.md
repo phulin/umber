@@ -128,9 +128,10 @@ The primary TeX procedures mapped by this design are:
 `AlignmentCellTemplates` carries immutable traced u- and v-template lists.
 Starting a cell establishes its delivery state, then command processing
 delivers and backs up the first source opening brace before the executor's
-typed template-install request pushes its optional u-template as a stored
-input level; when that exact level retires, raw delivery returns to cell-body
-depth. A completed cell-body scanner resumes through that same alignment
+typed template-install request pushes its ordinary u-template as a stored
+input level, even when its token list is empty; only `\\omit` selects no
+u-template level. When that exact level retires, raw delivery returns to
+cell-body depth. A completed cell-body scanner resumes through that same alignment
 delivery entry point: a tab, `\span`, or `\cr` is recognized by
 `get_next` while the body depth is zero and becomes the opaque delimiter event,
 not generic expanded delivery. A scalar `get_x_token` probe (including
@@ -139,7 +140,11 @@ command-owned v-template handoff immediately and restarts expansion, matching
 TeX82 §25: it never converts that intercepted boundary to `endv` or exposes it
 to the executor. This follows TeX82 `get_next`/`get_x_token` (§§24--25),
 `scan_keyword` and `scan_rule_spec` (§26), and the
-`init_col`/`fin_col`/`do_endv` template lifecycle (§§765--772). On an
+`init_col`/`fin_col`/`do_endv` template lifecycle (§§765--772). An ordinary
+empty u-template follows that same `begin_token_list`/`end_token_list`
+lifecycle: TeX82 §37 selects the non-omit branch, §760 preserves the empty
+preamble prefix, §765 installs it, and §772 resumes after the matching
+retirement. On an
 intercepted delimiter delivered to main control, executor `end_template` handling calls
 `CommandProcessor::begin_alignment_v_template`: it records the original
 delimiter as an opaque `fin_col` outcome while the stored v-template replays,
