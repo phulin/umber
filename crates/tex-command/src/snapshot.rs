@@ -127,7 +127,7 @@ impl CommandState {
 
     /// Validates and publishes restartable state for a named boundary.
     pub fn publish_summary(&self) -> Result<CommandSummary, CommandSummaryError> {
-        match &self.scanner.status {
+        match self.scanner.status() {
             ScannerStatus::Normal => {}
             ScannerStatus::Skipping { .. } => {
                 return Err(CommandSummaryError::ConditionalSkip);
@@ -145,7 +145,7 @@ impl CommandState {
                 return Err(CommandSummaryError::AbsorbingScan);
             }
         }
-        if self.scanner.warning_identity.is_some() {
+        if self.scanner.warning().is_some() {
             return Err(CommandSummaryError::ScannerWarningContext);
         }
         if self.transient.active_expansion_depth != 0 {

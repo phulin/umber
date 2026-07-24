@@ -95,6 +95,9 @@ impl CommandProcessor<'_> {
     ) -> Result<Option<CurrentCommand>, CommandError> {
         loop {
             let Some(delivery) = self.take_input_token()? else {
+                // EOF classification belongs to ScannerState. Recovery-token
+                // insertion is deliberately deferred to outer-validity.
+                let _eof_legality = self.command.scanner.eof_legality();
                 return Ok(None);
             };
             let DeliveredToken {
@@ -276,7 +279,7 @@ impl CommandProcessor<'_> {
         // The status-specific recovery sequence is installed by the scanner
         // milestone. Keeping this call at raw delivery prevents a second path
         // when that state machine is added.
-        let _status = &self.command.scanner.status;
+        let _status = self.command.scanner.status();
         Ok(())
     }
 

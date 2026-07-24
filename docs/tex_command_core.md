@@ -366,30 +366,26 @@ must implement the same ownership semantics as TeX's `param_stack` and
 ### 8.3 Scanner state
 
 `ScannerState` owns `scanner_status`, warning identity, and the typed handle
-needed to describe incomplete input:
+needed to describe incomplete input. Each non-normal context owns its warning
+identity, and a scoped installation restores the complete previous state; no
+scanner caller reconstructs warning ownership after nested work. Terminal EOF
+is classified centrally as legal or as one typed runaway family. That decision
+does not inject recovery tokens; outer-validity recovery consumes it later.
 
 ```rust
 pub enum ScannerStatus {
     Normal,
-    Skipping {
-        condition: ConditionId,
-    },
-    Defining {
-        target: Option<Symbol>,
-        builder: TokenBuilderId,
-    },
-    Matching {
-        macro_name: Symbol,
-        builder: ArgumentBuilderId,
-    },
-    Aligning {
-        alignment: AlignmentId,
-        builder: TokenBuilderId,
-    },
-    Absorbing {
-        owner: Option<Symbol>,
-        builder: TokenBuilderId,
-    },
+    Skipping(SkippingContext),
+    Defining(DefinitionContext),
+    Matching(MatchingContext),
+    Aligning(AlignmentScanContext),
+    Absorbing(AbsorbingContext),
+}
+
+pub struct DefinitionContext {
+    target: Option<Symbol>,
+    builder: TokenBuilderId,
+    warning: ScannerWarning,
 }
 ```
 

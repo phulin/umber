@@ -1,39 +1,255 @@
-//! Scanner-status installation and recovery.
+//! Scanner-status ownership and EOF classification.
+//!
+//! TeX.web's `scanner_status` is live command-machine state, rather than a
+//! collection of flags on individual scanners.  This module deliberately
+//! chooses the status and the canonical incomplete-input classification, but
+//! does not inject recovery input: that is the outer-validity operation.
 
-/// Persistent scanner status and incomplete-input ownership.
+use tex_state::interner::Symbol;
+
+use crate::CommandState;
+
+/// Persistent scanner status and the warning context owned by that status.
 #[derive(Clone, Debug, Default, Eq, Hash, PartialEq)]
 pub(crate) struct ScannerState {
-    pub(crate) status: ScannerStatus,
-    pub(crate) warning_identity: Option<u64>,
+    status: ScannerStatus,
+    warning: Option<ScannerWarning>,
+}
+
+#[allow(dead_code)] // consumed by the ordered scanner and macro-call milestones
+impl ScannerState {
+    /// Installs one scanner episode, retaining the complete outer episode for
+    /// canonical restoration on every return path.
+    /// Returns the live status.
+    pub(crate) const fn status(&self) -> &ScannerStatus {
+        &self.status
+    }
+
+    /// Returns the warning identity owned by the live scanner episode.
+    pub(crate) const fn warning(&self) -> Option<ScannerWarning> {
+        self.warning
+    }
+
+    /// Classifies terminal EOF without making a recovery mutation.
+    pub(crate) const fn eof_legality(&self) -> EofLegality {
+        self.status.eof_legality()
+    }
+
+    /// True only when no scanner episode or stale warning remains live.
+    pub(crate) const fn is_quiescent(&self) -> bool {
+        matches!(self.status, ScannerStatus::Normal) && self.warning.is_none()
+    }
+}
+
+#[allow(dead_code)] // invoked by the ordered scanner, macro-call, and conditional milestones
+impl CommandState {
+    /// Runs one scanner operation with typed status and warning ownership.
+    ///
+    /// The complete former scanner state is restored after the operation's
+    /// normal or recoverable return, including after nested scanner episodes.
+    pub(crate) fn with_scanner_status<T>(
+        &mut self,
+        status: ScannerStatus,
+        operation: impl FnOnce(&mut Self) -> T,
+    ) -> T {
+        let prior = std::mem::replace(
+            &mut self.scanner,
+            ScannerState {
+                warning: status.warning(),
+                status,
+            },
+        );
+        let result = operation(self);
+        self.scanner = prior;
+        result
+    }
 }
 
 /// Typed shell for TeX's live `scanner_status`.
-///
-/// Builder identities refer into [`crate::state::TransientState`]. Scoped
-/// installation and restoration are command semantics and are intentionally
-/// deferred.
+#[allow(dead_code)] // status variants are installed by later scanner callers
 #[derive(Clone, Debug, Default, Eq, Hash, PartialEq)]
-#[allow(dead_code)] // variants are ownership shells for later scanner semantics
 pub(crate) enum ScannerStatus {
     #[default]
     Normal,
-    Skipping {
-        condition: u64,
-    },
-    Defining {
-        target: Option<u64>,
-        builder: u64,
-    },
-    Matching {
-        macro_name: u64,
-        builder: u64,
-    },
-    Aligning {
-        alignment: u64,
-        builder: u64,
-    },
-    Absorbing {
-        owner: Option<u64>,
-        builder: u64,
-    },
+    Skipping(SkippingContext),
+    Defining(DefinitionContext),
+    Matching(MatchingContext),
+    Aligning(AlignmentScanContext),
+    Absorbing(AbsorbingContext),
+}
+
+#[allow(dead_code)] // invoked by ScannerState installation
+impl ScannerStatus {
+    const fn warning(&self) -> Option<ScannerWarning> {
+        match self {
+            Self::Normal => None,
+            Self::Skipping(context) => Some(context.warning),
+            Self::Defining(context) => Some(context.warning),
+            Self::Matching(context) => Some(context.warning),
+            Self::Aligning(context) => Some(context.warning),
+            Self::Absorbing(context) => Some(context.warning),
+        }
+    }
+
+    /// The canonical runaway family selected at terminal input exhaustion.
+    pub(crate) const fn eof_legality(&self) -> EofLegality {
+        match self {
+            Self::Normal => EofLegality::Legal,
+            Self::Skipping(_) => EofLegality::Runaway(RunawayKind::Conditional),
+            Self::Defining(_) => EofLegality::Runaway(RunawayKind::Definition),
+            Self::Matching(_) => EofLegality::Runaway(RunawayKind::MacroArgument),
+            Self::Aligning(_) => EofLegality::Runaway(RunawayKind::AlignmentPreamble),
+            Self::Absorbing(_) => EofLegality::Runaway(RunawayKind::AbsorbedTokens),
+        }
+    }
+}
+
+/// A warning source retained for canonical runaway diagnostics.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub(crate) struct ScannerWarning(pub(crate) u64);
+
+/// Stable identity of the condition whose text is being skipped.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub(crate) struct ConditionId(pub(crate) u64);
+
+/// Identity of a live token builder in transient command state.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub(crate) struct TokenBuilderId(pub(crate) u64);
+
+/// Identity of a live macro-argument builder in transient command state.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub(crate) struct ArgumentBuilderId(pub(crate) u64);
+
+/// Identity of an active alignment scan.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub(crate) struct AlignmentId(pub(crate) u64);
+
+/// Context for skipped conditional text.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub(crate) struct SkippingContext {
+    pub(crate) condition: ConditionId,
+    pub(crate) warning: ScannerWarning,
+}
+
+/// Context for a macro definition's parameter/replacement scan.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub(crate) struct DefinitionContext {
+    pub(crate) target: Option<Symbol>,
+    pub(crate) builder: TokenBuilderId,
+    pub(crate) warning: ScannerWarning,
+}
+
+/// Context for macro argument matching.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub(crate) struct MatchingContext {
+    pub(crate) macro_name: Symbol,
+    pub(crate) builder: ArgumentBuilderId,
+    pub(crate) warning: ScannerWarning,
+}
+
+/// Context for an alignment preamble scan.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub(crate) struct AlignmentScanContext {
+    pub(crate) alignment: AlignmentId,
+    pub(crate) builder: TokenBuilderId,
+    pub(crate) warning: ScannerWarning,
+}
+
+/// Context for a balanced token-list scan other than a definition/preamble.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub(crate) struct AbsorbingContext {
+    pub(crate) owner: Option<Symbol>,
+    pub(crate) builder: TokenBuilderId,
+    pub(crate) warning: ScannerWarning,
+}
+
+/// Whether terminal EOF is permitted by the current scanner episode.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub(crate) enum EofLegality {
+    Legal,
+    Runaway(RunawayKind),
+}
+
+/// Canonical incomplete-input family, independent from diagnostic wording.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub(crate) enum RunawayKind {
+    Conditional,
+    Definition,
+    MacroArgument,
+    AlignmentPreamble,
+    AbsorbedTokens,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn defining(warning: u64) -> ScannerStatus {
+        ScannerStatus::Defining(DefinitionContext {
+            target: None,
+            builder: TokenBuilderId(2),
+            warning: ScannerWarning(warning),
+        })
+    }
+
+    #[test]
+    fn scoped_installation_restores_warning_ownership() {
+        let mut state = CommandState::default();
+        state.with_scanner_status(defining(7), |state| {
+            assert_eq!(state.scanner.warning(), Some(ScannerWarning(7)));
+            state.with_scanner_status(
+                ScannerStatus::Absorbing(AbsorbingContext {
+                    owner: None,
+                    builder: TokenBuilderId(4),
+                    warning: ScannerWarning(9),
+                }),
+                |state| assert_eq!(state.scanner.warning(), Some(ScannerWarning(9))),
+            );
+            assert_eq!(state.scanner.warning(), Some(ScannerWarning(7)));
+        });
+        assert!(state.scanner.is_quiescent());
+    }
+
+    #[test]
+    fn eof_classification_covers_every_non_normal_status() {
+        let warning = ScannerWarning(1);
+        let cases = [
+            (
+                ScannerStatus::Skipping(SkippingContext {
+                    condition: ConditionId(2),
+                    warning,
+                }),
+                RunawayKind::Conditional,
+            ),
+            (defining(1), RunawayKind::Definition),
+            (
+                ScannerStatus::Matching(MatchingContext {
+                    macro_name: Symbol::testing_new(2),
+                    builder: ArgumentBuilderId(3),
+                    warning,
+                }),
+                RunawayKind::MacroArgument,
+            ),
+            (
+                ScannerStatus::Aligning(AlignmentScanContext {
+                    alignment: AlignmentId(2),
+                    builder: TokenBuilderId(3),
+                    warning,
+                }),
+                RunawayKind::AlignmentPreamble,
+            ),
+            (
+                ScannerStatus::Absorbing(AbsorbingContext {
+                    owner: None,
+                    builder: TokenBuilderId(3),
+                    warning,
+                }),
+                RunawayKind::AbsorbedTokens,
+            ),
+        ];
+        assert_eq!(ScannerStatus::Normal.eof_legality(), EofLegality::Legal);
+        for (status, expected) in cases {
+            assert_eq!(status.eof_legality(), EofLegality::Runaway(expected));
+        }
+    }
 }

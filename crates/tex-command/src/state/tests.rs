@@ -80,10 +80,7 @@ fn semantic_ownership_domains_are_exhaustively_classified() {
         next_source_identity,
     } = input;
     let ParameterState { activations } = parameters;
-    let ScannerState {
-        status,
-        warning_identity,
-    } = scanner;
+    let ScannerState { .. } = scanner;
     let ConditionStack {
         frames,
         next_identity,
@@ -116,8 +113,6 @@ fn semantic_ownership_domains_are_exhaustively_classified() {
         next_level_identity,
         next_source_identity,
         activations,
-        status,
-        warning_identity,
         frames,
         next_identity,
         align_state,

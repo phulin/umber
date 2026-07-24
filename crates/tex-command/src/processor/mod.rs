@@ -13,6 +13,11 @@ pub(crate) use alignment::AlignmentDeliveryState;
 #[cfg(test)]
 pub(crate) use alignment::{ActiveCellDelivery, SuspendedAlignment};
 pub(crate) use expand::ExpansionState;
+#[cfg(test)]
+pub(crate) use status::{
+    AbsorbingContext, AlignmentId, AlignmentScanContext, ArgumentBuilderId, ConditionId,
+    DefinitionContext, MatchingContext, ScannerWarning, SkippingContext, TokenBuilderId,
+};
 pub(crate) use status::{ScannerState, ScannerStatus};
 
 /// Optional observation sink for semantic command deliveries.

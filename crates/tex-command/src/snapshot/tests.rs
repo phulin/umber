@@ -4,7 +4,11 @@ use std::hash::{Hash, Hasher};
 use crate::conditionals::ConditionFrame;
 use crate::input::SharedTokenBuffer;
 use crate::macro_call::{MacroActivation, MacroActivationId, MacroArgumentRange, MacroArguments};
-use crate::processor::{ActiveCellDelivery, ScannerStatus, SuspendedAlignment};
+use crate::processor::{
+    AbsorbingContext, ActiveCellDelivery, AlignmentId, AlignmentScanContext, ArgumentBuilderId,
+    ConditionId, DefinitionContext, MatchingContext, ScannerStatus, ScannerWarning,
+    SkippingContext, SuspendedAlignment, TokenBuilderId,
+};
 use crate::profile::{CommandProfile, CommandProfileBoundary, CommandProfileFingerprint};
 use crate::state::LiveTokenBuilder;
 use crate::{CommandRuntime, CommandState};
@@ -76,24 +80,25 @@ fn populated_quiescent_state() -> CommandState {
 #[test]
 fn snapshot_roundtrip_preserves_nonquiescent_semantic_state() {
     let mut state = populated_quiescent_state();
-    state.scanner.status = ScannerStatus::Matching {
-        macro_name: 73,
-        builder: 79,
-    };
-    state.scanner.warning_identity = Some(83);
-    state.transient.builders.push(LiveTokenBuilder {
-        identity: 79,
-        tokens: Vec::new(),
+    let status = ScannerStatus::Matching(MatchingContext {
+        macro_name: tex_state::interner::Symbol::testing_new(73),
+        builder: ArgumentBuilderId(79),
+        warning: ScannerWarning(83),
     });
-    state.transient.rollback_roots.push(89);
-    state.transient.active_expansion_depth = 2;
-    state.alignment.active_cell = Some(ActiveCellDelivery {
-        alignment: 97,
-        u_template: 101,
-        v_template: 103,
+    let (expected, snapshot) = state.with_scanner_status(status, |state| {
+        state.transient.builders.push(LiveTokenBuilder {
+            identity: 79,
+            tokens: Vec::new(),
+        });
+        state.transient.rollback_roots.push(89);
+        state.transient.active_expansion_depth = 2;
+        state.alignment.active_cell = Some(ActiveCellDelivery {
+            alignment: 97,
+            u_template: 101,
+            v_template: 103,
+        });
+        (state.clone(), state.snapshot())
     });
-    let expected = state.clone();
-    let snapshot = state.snapshot();
 
     state = CommandState::new(expected.profile());
     let runtime = CommandRuntime::default();
@@ -133,54 +138,52 @@ fn assert_rejected(mutate: impl FnOnce(&mut CommandState), expected: CommandSumm
 
 #[test]
 fn summary_rejects_each_scanner_episode() {
-    assert_rejected(
-        |state| {
-            state.scanner.status = ScannerStatus::Skipping { condition: 1 };
-        },
-        CommandSummaryError::ConditionalSkip,
-    );
-    assert_rejected(
-        |state| {
-            state.scanner.status = ScannerStatus::Matching {
-                macro_name: 1,
-                builder: 2,
-            };
-        },
-        CommandSummaryError::MacroMatch,
-    );
-    assert_rejected(
-        |state| {
-            state.scanner.status = ScannerStatus::Defining {
-                target: Some(1),
-                builder: 2,
-            };
-        },
-        CommandSummaryError::DefinitionScan,
-    );
-    assert_rejected(
-        |state| {
-            state.scanner.status = ScannerStatus::Aligning {
-                alignment: 1,
-                builder: 2,
-            };
-        },
-        CommandSummaryError::AlignmentScan,
-    );
-    assert_rejected(
-        |state| {
-            state.scanner.status = ScannerStatus::Absorbing {
-                owner: Some(1),
-                builder: 2,
-            };
-        },
-        CommandSummaryError::AbsorbingScan,
-    );
-    assert_rejected(
-        |state| {
-            state.scanner.warning_identity = Some(1);
-        },
-        CommandSummaryError::ScannerWarningContext,
-    );
+    let mut state = populated_quiescent_state();
+    let cases = [
+        (
+            ScannerStatus::Skipping(SkippingContext {
+                condition: ConditionId(1),
+                warning: ScannerWarning(1),
+            }),
+            CommandSummaryError::ConditionalSkip,
+        ),
+        (
+            ScannerStatus::Matching(MatchingContext {
+                macro_name: tex_state::interner::Symbol::testing_new(1),
+                builder: ArgumentBuilderId(2),
+                warning: ScannerWarning(1),
+            }),
+            CommandSummaryError::MacroMatch,
+        ),
+        (
+            ScannerStatus::Defining(DefinitionContext {
+                target: Some(tex_state::interner::Symbol::testing_new(1)),
+                builder: TokenBuilderId(2),
+                warning: ScannerWarning(1),
+            }),
+            CommandSummaryError::DefinitionScan,
+        ),
+        (
+            ScannerStatus::Aligning(AlignmentScanContext {
+                alignment: AlignmentId(1),
+                builder: TokenBuilderId(2),
+                warning: ScannerWarning(1),
+            }),
+            CommandSummaryError::AlignmentScan,
+        ),
+        (
+            ScannerStatus::Absorbing(AbsorbingContext {
+                owner: Some(tex_state::interner::Symbol::testing_new(1)),
+                builder: TokenBuilderId(2),
+                warning: ScannerWarning(1),
+            }),
+            CommandSummaryError::AbsorbingScan,
+        ),
+    ];
+    for (status, expected) in cases {
+        let actual = state.with_scanner_status(status, |state| state.publish_summary());
+        assert_eq!(actual, Err(expected));
+    }
 }
 
 #[test]
