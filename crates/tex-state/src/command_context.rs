@@ -4,7 +4,10 @@
 //! state and decides no command behavior. Operations are added here only when
 //! they represent typed reads or mutations of [`Universe`] state.
 
-use crate::{ChangedAt, DependencyKey, DependencyValue, Universe};
+use crate::{
+    ChangedAt, DependencyKey, DependencyValue, Universe, interner::Symbol, meaning::Meaning,
+    token::Token,
+};
 
 /// Borrow-scoped aggregate access to live TeX state.
 ///
@@ -33,6 +36,29 @@ impl CommandContext<'_> {
     #[must_use]
     pub fn semantic_dependency_value(&self, key: DependencyKey) -> Option<DependencyValue> {
         self.universe.semantic_dependency_value(key)
+    }
+
+    /// Resolves a control sequence's current meaning and records that semantic
+    /// read for the active dependency region.
+    #[must_use]
+    pub fn meaning(&mut self, symbol: Symbol) -> Meaning {
+        self.universe
+            .track_dependency(DependencyKey::Meaning(symbol.raw()));
+        self.universe.meaning(symbol)
+    }
+
+    /// Interns the distinct control sequence represented by an active
+    /// character, if it has not already been interned.
+    #[must_use]
+    pub fn intern_active_character(&mut self, ch: char) -> Symbol {
+        self.universe.intern_active_character(ch).symbol()
+    }
+
+    /// Resolves an engine-owned frozen token without consulting a mutable
+    /// control-sequence meaning cell.
+    #[must_use]
+    pub fn frozen_primitive_meaning(&self, token: Token) -> Option<Meaning> {
+        self.universe.frozen_primitive_meaning(token)
     }
 }
 

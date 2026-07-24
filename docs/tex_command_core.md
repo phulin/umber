@@ -557,6 +557,17 @@ by `\noexpand`. `DeliveryStamp` proves the exact live input level and position
 that delivered the token. It is ephemeral, excluded from summaries, and never
 reconstructed from semantic token equality.
 
+Meaning resolution occurs once at raw delivery. An ordinary character resolves
+to its literal character-token meaning, while a control sequence reads its
+current meaning cell. An active character first resolves to its distinct
+active-character control-sequence identity and then reads that cell; it never
+aliases an escaped control sequence with the same printed spelling. The
+resolved value is retained in `CurrentCommand`, so later assignments cannot
+alter an already delivered command. Its `spelling` retains the traced token,
+and `origin` is exposed directly from that spelling; provenance never affects
+the meaning lookup. Engine-owned frozen tokens resolve through their immutable
+frozen meaning rather than a mutable control-sequence cell.
+
 No `CurrentCommand` is live at a durable named checkpoint.
 
 ## 12. Input levels
