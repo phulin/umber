@@ -5,6 +5,7 @@
 //! lifecycle transitions here, but only `get_next` classifies a delivered tab,
 //! `\span`, or row terminator.
 
+use tex_state::ids::TokenListId;
 use tex_state::input::TracedTokenList;
 use tex_state::meaning::{Meaning, UnexpandablePrimitive};
 use tex_state::token::{Catcode, Token};
@@ -205,6 +206,9 @@ pub(crate) struct ActiveCellDelivery {
     pub(crate) u_level: Option<InputLevelId>,
     pub(crate) v_level: Option<InputLevelId>,
     pub(crate) delimiter: Option<AlignmentCellDelimiter>,
+    /// `init_col` consumed `\omit`, so its delimiter suffix is the canonical
+    /// one-token `omit_template`, rather than this column's v-template.
+    pub(crate) omit: bool,
     pub(crate) omit_previous_align_state: Option<i32>,
 }
 
@@ -304,6 +308,7 @@ impl AlignmentDeliveryState {
             u_level: None,
             v_level: None,
             delimiter: None,
+            omit: false,
             omit_previous_align_state: None,
         });
         self.align_state = if templates.u_template.is_some() {
@@ -390,7 +395,15 @@ impl AlignmentDeliveryState {
         if cell.u_level.is_some() {
             return Err(AlignmentLifecycleError::UTemplateStillActive);
         }
-        Ok(cell.templates.v_template)
+        // TeX82 §37 installs `omit_template` at this boundary, not the
+        // selected column's v-part. Its only effective delivery is the
+        // retained end-template boundary, represented by an empty replay
+        // level in the command machine.
+        Ok(if cell.omit {
+            TracedTokenList::synthetic(TokenListId::EMPTY)
+        } else {
+            cell.templates.v_template
+        })
     }
 
     pub(crate) fn active_v_template_level(

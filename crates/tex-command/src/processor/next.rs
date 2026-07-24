@@ -61,7 +61,7 @@ impl CommandProcessor<'_> {
                 command.meaning(),
                 Meaning::ExpandablePrimitive(ExpandablePrimitive::EndTemplate)
             ) {
-                command.convert_end_template_to_endv();
+                command.convert_end_template_to_endv(self.state.frozen_endv_token());
                 #[cfg(any(test, feature = "instrumentation"))]
                 self.observe_expanded_delivery(&command);
                 return Ok(Some(AlignmentDelivery::Command(command)));
@@ -1689,6 +1689,7 @@ mod tests {
                 .expect("end-template expands to end-v")
                 .expect("end-v delivery");
             assert!(matches!(endv.meaning(), Meaning::EndV));
+            assert!(endv.spelling().semantic_token().is_frozen_endv());
             let finished = processor
                 .command
                 .finish_alignment_cell(alignment)

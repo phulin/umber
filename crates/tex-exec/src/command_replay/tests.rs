@@ -237,6 +237,23 @@ fn omit_cell_sets_body_state_without_backing_up_or_installing_a_u_template() {
         "TeX82 init_col never backs up its omit lookahead: {:?}",
         observations.0
     );
+
+    for _ in 0..20 {
+        if control
+            .step_with_observer(&mut universe, &mut observations)
+            .is_err()
+        {
+            break;
+        }
+    }
+    assert!(
+        observations.0.iter().any(|event| {
+            matches!(event, CommandObservation::Alignment(template)
+                if template.transition == "omit_template_push")
+        }),
+        "omit must install TeX82's omit_template, not the selected v-template: {:?}",
+        observations.0
+    );
 }
 
 #[test]

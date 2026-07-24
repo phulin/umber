@@ -145,7 +145,8 @@ intercepted delimiter delivered to main control, executor `end_template` handlin
 delimiter as an opaque `fin_col` outcome while the stored v-template replays,
 so all suffix tokens (including macro expansion and definitions) restart
 through `get_next`. Exhausting the exact v-template retains its frame and
-emits raw frozen `end_template`; §343 expands that delivery to frozen `endv`,
+emits raw frozen `end_template`; §343 changes `cur_cs` to frozen `endv` while
+preserving the canonical `endtemplate` observation spelling,
 after which successful `do_endv` uses `CommandState::finish_alignment_cell`
 to retire that exact frame and return the saved delimiter structurally. Active frame identities live in
 `AlignmentDeliveryState`, and therefore suspend with nested alignments and

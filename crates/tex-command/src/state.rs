@@ -191,6 +191,7 @@ impl CommandState {
             return Err(AlignmentLifecycleError::UTemplateAlreadyInstalled);
         }
         cell.u_template_installed = true;
+        cell.omit = true;
         cell.omit_previous_align_state = Some(previous_align_state);
         self.alignment.align_state = CELL_ALIGN_STATE;
         Ok(())
@@ -329,7 +330,16 @@ impl CommandState {
     ) -> Option<AlignmentRecord> {
         self.alignment_v_template_push_observation(alignment)
             .map(|_| AlignmentRecord {
-                transition: "v_template_push",
+                transition: if self
+                    .alignment
+                    .active_cell
+                    .as_ref()
+                    .is_some_and(|cell| cell.omit)
+                {
+                    "omit_template_push"
+                } else {
+                    "v_template_push"
+                },
                 alignment: Some(alignment.raw()),
                 // TeX82's v-template insertion (`init_col`) begins the
                 // token list before assigning the post-insertion sentinel.
@@ -388,7 +398,11 @@ impl CommandState {
                 position: 0,
             },
             crate::AlignmentRecord {
-                transition: "v_template_retire",
+                transition: if cell.omit {
+                    "omit_template_retire"
+                } else {
+                    "v_template_retire"
+                },
                 alignment: Some(alignment.raw()),
                 align_state: self.alignment.align_state,
                 delimiter: None,

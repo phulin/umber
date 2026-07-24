@@ -61,7 +61,7 @@ impl CommandProcessor<'_> {
                     self.begin_scalar_alignment_v_template(command)?;
                     continue;
                 }
-                command.convert_end_template_to_endv();
+                command.convert_end_template_to_endv(self.state.frozen_endv_token());
                 #[cfg(any(test, feature = "instrumentation"))]
                 self.observe_expanded_delivery(&command);
                 return Ok(Some(command));

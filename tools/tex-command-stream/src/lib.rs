@@ -974,12 +974,13 @@ fn translate_alignment(record: AlignmentRecord) -> Event {
             "preamble_finish" => AlignmentTransition::PreambleFinish,
             "begin_group" | "end_group" => AlignmentTransition::StateChange,
             "state_change" => AlignmentTransition::StateChange,
-            "template_push" | "u_template_push" | "v_template_push" => {
+            "template_push" | "u_template_push" | "v_template_push" | "omit_template_push" => {
                 AlignmentTransition::TemplatePush
             }
-            "template_retire" | "u_template_retire" | "v_template_retire" => {
-                AlignmentTransition::TemplateRetire
-            }
+            "template_retire"
+            | "u_template_retire"
+            | "v_template_retire"
+            | "omit_template_retire" => AlignmentTransition::TemplateRetire,
             "delimiter" => AlignmentTransition::Delimiter,
             "backup_correction" => AlignmentTransition::BackupCorrection,
             _ => AlignmentTransition::Recovery,
@@ -988,6 +989,7 @@ fn translate_alignment(record: AlignmentRecord) -> Event {
         template: match record.transition {
             "u_template_push" | "u_template_retire" => Some("u".into()),
             "v_template_push" | "v_template_retire" => Some("v".into()),
+            "omit_template_push" | "omit_template_retire" => Some("omit".into()),
             _ => None,
         },
         nesting: record.alignment.and_then(|value| u32::try_from(value).ok()),

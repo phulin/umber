@@ -112,9 +112,14 @@ impl CurrentCommand {
     }
 
     /// Completes TeX82's `get_x_token` conversion of inaccessible
-    /// `end_template` to `endv`. The spelling stays frozen end-template:
-    /// only the effective current command changes.
-    pub(crate) fn convert_end_template_to_endv(&mut self) {
+    /// `end_template` to `endv`.
+    ///
+    /// TeX82 also replaces `cur_cs` with `frozen_endv`, so a later
+    /// `back_input` replays the effective `endv` command. The two frozen
+    /// control sequences have the same canonical observer spelling
+    /// (`endtemplate`), while retaining distinct input semantics.
+    pub(crate) fn convert_end_template_to_endv(&mut self, frozen_endv: Token) {
+        self.spelling = TracedTokenWord::pack(frozen_endv, self.spelling.origin());
         self.meaning = Meaning::EndV;
         self.control_sequence = None;
     }

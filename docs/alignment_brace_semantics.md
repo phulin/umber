@@ -38,9 +38,10 @@ not separately observed as an ordinary raw command. At the later retained
 v-template boundary, `get_next` first delivers frozen
 `end_template`; TeX82 §343 expands it to frozen `endv`, and only then does
 §772's `do_endv` retire the frame. Retention itself is not a retirement
-observation. Both inaccessible frozen control sequences retain the canonical
-`endtemplate` control-sequence identity; expansion changes only the effective
-command from `end_template` to `endv` (TeX82 §§343, 765).
+observation. During §343 expansion, `cur_cs` becomes `frozen_endv`, so a later
+`back_input` replays effective `endv`; the two inaccessible frozen slots still
+retain the same observable `endtemplate` control-sequence identity (TeX82
+§§343, 765).
 
 The sentinel values have their source meanings:
 
@@ -48,6 +49,12 @@ The sentinel values have their source meanings:
 - `1000000` disables cell termination during row lookahead, u-template replay,
   and v-template replay;
 - `0` is the cell-body base depth.
+
+For TeX82 §37's `\omit` branch, the later delimiter does not replay the
+selected column's v-template: `init_col` selects the canonical
+`omit_template`, which consists only of the end-template boundary. Command
+state records this as an empty retained v-template level and marks its
+push/retirement as `omit`; the input reason remains `alignment_template`.
 
 `tex_exec::mode::AlignState` owns row, column, span, and packaging progress. It
 deliberately has no brace-depth shadow. Nested alignments suspend and restore
