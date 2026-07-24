@@ -996,7 +996,7 @@ fn shipout_box_completion_precedes_its_terminator_backup_retirement() {
         .iter()
         .position(|event| {
             matches!(event, CommandObservation::Effect(effect)
-                if effect.kind == "shipout" && effect.detail == "dvi:1")
+                if effect.kind == "shipout" && effect.detail == "dvi\0".to_owned() + "1")
         })
         .expect("completed vbox publishes DVI page one");
     let retirement = observations

@@ -1567,7 +1567,7 @@ fn applied_effect_observation(scanned: &ScannedStep, stores: &Universe) -> Optio
         }
         | ScannedStep::BoxEndGroup { ships_out: true } => Some(EffectRecord {
             kind: "shipout",
-            detail: format!("dvi:{}", stores.world().artifact_commits().len()),
+            detail: format!("dvi\0{}", stores.world().artifact_commits().len()),
             tokens: None,
         }),
         _ => None,

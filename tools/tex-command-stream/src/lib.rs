@@ -1239,6 +1239,16 @@ fn translate_effect(record: EffectRecord) -> Event {
         Some((channel, detail)) => (channel.to_owned(), detail.to_owned()),
         None => (record.kind.to_owned(), record.detail),
     };
+    if record.kind == "shipout" {
+        let page = detail
+            .parse::<i64>()
+            .expect("shipout effects carry their canonical DVI page number");
+        return Event::Effect(EffectEvent {
+            kind: EffectKind::Shipout,
+            channel,
+            value: CanonicalValue::Integer(page),
+        });
+    }
     Event::Effect(EffectEvent {
         kind: match record.kind {
             "message" => EffectKind::Message,
@@ -1319,6 +1329,22 @@ mod tests {
                 kind: EffectKind::Message,
                 channel: "terminal".into(),
                 value: CanonicalValue::Bytes(b"READY".to_vec()),
+            })
+        );
+    }
+
+    #[test]
+    fn shipout_effects_use_dvi_page_numbers() {
+        assert_eq!(
+            translate_effect(EffectRecord {
+                kind: "shipout",
+                detail: "dvi\01".into(),
+                tokens: None,
+            }),
+            Event::Effect(EffectEvent {
+                kind: EffectKind::Shipout,
+                channel: "dvi".into(),
+                value: CanonicalValue::Integer(1),
             })
         );
     }
