@@ -1815,10 +1815,12 @@ spelling construction; expanded and replayed delivery retain that traced
 origin without fixture-derived locations. All other records retain only command-owned
 typed values and stable identities. The test-only fixture adapter maps those
 owned records to a deterministic replay capture outside the production command
-dependency graph. It validates the locked TeX82 suite, registers each
-manifest-bound source under the exact INITEX profile, and drives the canonical
-raw-delivery loop with a source-byte-derived bound; ordered schema comparison
-remains separate.
+dependency graph. It validates the locked TeX82 suite, scans the terminal root
+filename through the command processor, opens only that selected root, and
+drives command/executor replay through `CommandReplayControl` with a
+source-byte-derived bound. Remaining manifest sources are registered only as
+immutable `\\input` capabilities, so nested input remains command-owned;
+ordered schema comparison remains separate.
 Observers are non-fallible, receive records only after the transition commits,
 and are neither retained in `CommandState` nor captured by snapshots.
 Production builds compile this seam out; explicit instrumentation builds enable
