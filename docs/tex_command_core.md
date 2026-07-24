@@ -1618,7 +1618,11 @@ The promoted scalar input/state slice keeps the same split concretely:
 immutable backing and supplies the immutable job name for the bounded
 processor call. `\input` registers that backing before opening a source level;
 `\endinput` marks only the active source to retire after its current physical
-line. Mark enquiries read the aggregate page-mark slots through
+line. TeX82 `end_file_reading` (§338) observes only that retirement; the
+test-only canonical adapter attaches the still-active logical source name
+before removing its parallel trace frame, so source retirement preserves the
+same identity as the corresponding push without putting host naming into
+command state. Mark enquiries read the aggregate page-mark slots through
 `CommandContext` and replay their immutable token lists. Scanner helpers do
 not receive either host capability, so they cannot acquire sources or widen
 the processor's authority.

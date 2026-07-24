@@ -649,7 +649,7 @@ fn translate_observation(
                 "source={source}; level={}; position={}",
                 record.level, record.position
             );
-            ObservedEvent::new(translate_input(record), context)
+            ObservedEvent::new(translate_input(record, source), context)
         }
         CommandObservation::Recovery(record) => {
             ObservedEvent::new(translate_recovery(record), format!("source={source}"))
@@ -867,7 +867,7 @@ fn catcode_name(catcode: Catcode) -> &'static str {
     }
 }
 
-fn translate_input(record: InputRecord) -> Event {
+fn translate_input(record: InputRecord, active_source: &str) -> Event {
     let transition = match record.transition {
         InputTransition::Push => tex_oracle::InputTransition::Push,
         InputTransition::Retire => tex_oracle::InputTransition::Retire,
@@ -895,7 +895,11 @@ fn translate_input(record: InputRecord) -> Event {
             CommandInputReason::AlignmentVTemplate => "v_template".into(),
             CommandInputReason::Recovery => "recovery".into(),
             CommandInputReason::TokenList => "output".into(),
-            CommandInputReason::Source => "source".into(),
+            // TeX82's `end_file_reading` observer carries only the lifecycle
+            // transition.  The harness attaches the source identity while the
+            // source frame is still active, before it removes that frame from
+            // its parallel trace stack.
+            CommandInputReason::Source => active_source.into(),
         },
     })
 }
@@ -1639,12 +1643,26 @@ mod tests {
             .enumerate()
             .skip(child_delivery)
             .find_map(|(index, event)| {
-                event
-                    .context
-                    .contains("level=3; position=0")
-                    .then_some(index)
+                matches!(
+                    &event.event,
+                    Event::Input(InputEvent {
+                        transition: tex_oracle::InputTransition::Retire,
+                        reason: InputReason::Source,
+                        ..
+                    })
+                )
+                .then_some(index)
             })
             .expect("the exhausted child source retires");
+        assert_eq!(
+            first.events[child_retirement].event,
+            Event::Input(InputEvent {
+                transition: tex_oracle::InputTransition::Retire,
+                reason: InputReason::Source,
+                name: "child".into(),
+            }),
+            "the retirement event retains the child identity before the trace stack pops it"
+        );
         assert!(
             first.events[child_retirement + 1..]
                 .iter()
