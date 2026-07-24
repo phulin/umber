@@ -1150,9 +1150,17 @@ context at their own command transitions.
 6. applies outer-validity recovery through the shared mechanism; and
 7. restores the prior scanner status.
 
-`\ifx` operands use raw `get_next`, so unexpanded literal braces affect
-`align_state`. Frozen relax and frozen fi recovery use inaccessible primitive
-identities rather than live re-definable control sequences.
+The TeX82 predicate dispatcher selects `get_x_token` for character/category
+tests and `get_token` specifically for `\ifx`; the latter preserves raw
+meanings and must not expand either operand. Boolean false limbs and selected
+`\ifcase` limbs re-enter the single `pass_text` machine, while `\else`,
+`\or`, and `\fi` change or pop only the live frame selected by its stable
+identity. Numeric and dimension comparisons share the typed numeric-scanner
+boundary; execution-mode and box predicates consult the executor-owned mode
+nest and aggregate box state when those boundaries are active.
+
+Frozen relax and frozen fi recovery use inaccessible primitive identities
+rather than live re-definable control sequences.
 
 e-TeX `\unless` is one inversion bit on supported predicates, not a duplicated
 conditional interpreter.

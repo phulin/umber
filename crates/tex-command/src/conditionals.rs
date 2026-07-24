@@ -11,7 +11,6 @@ use crate::processor::CommandProcessor;
 use crate::processor::status::{ConditionId, ScannerStatus, ScannerWarning, SkippingContext};
 
 /// TeX conditional opcode, kept distinct from delimiter and limit values.
-#[allow(dead_code)] // conditional evaluation follows in the next ordered milestone
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub(crate) enum ConditionalKind {
     IfTrue,
@@ -39,7 +38,7 @@ pub(crate) enum ConditionalKind {
 
 #[allow(dead_code)] // used by pass_text now; evaluation uses the same classifier next
 impl ConditionalKind {
-    const fn from_primitive(primitive: ExpandablePrimitive) -> Option<Self> {
+    pub(crate) const fn from_primitive(primitive: ExpandablePrimitive) -> Option<Self> {
         Some(match primitive {
             ExpandablePrimitive::IfTrue => Self::IfTrue,
             ExpandablePrimitive::IfFalse => Self::IfFalse,
@@ -68,7 +67,6 @@ impl ConditionalKind {
 }
 
 /// The only delimiter commands recognized by `pass_text`.
-#[allow(dead_code)] // delimiter execution follows in the next ordered milestone
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub(crate) enum ConditionalDelimiter {
     Or,
@@ -89,7 +87,6 @@ impl ConditionalDelimiter {
 }
 
 /// TeX's `if_limit`, without an integer encoding shared with command opcodes.
-#[allow(dead_code)] // limits are installed by conditional evaluation next
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub(crate) enum IfLimit {
     /// Operand evaluation is incomplete; a delimiter is an incomplete-if recovery.
@@ -99,7 +96,6 @@ pub(crate) enum IfLimit {
     Fi,
 }
 
-#[allow(dead_code)] // `pass_text` consumes this now; evaluators use it next
 impl IfLimit {
     const fn accepts_skipped_delimiter(self, delimiter: ConditionalDelimiter) -> bool {
         match delimiter {
@@ -125,7 +121,6 @@ pub(crate) struct ConditionStack {
     pub(crate) next_identity: u64,
 }
 
-#[allow(dead_code)] // public command operations are added by the next condition milestone
 impl ConditionStack {
     pub(crate) fn push(&mut self, kind: ConditionalKind, source_line: u32) -> ConditionId {
         let identity = ConditionId(self.next_identity);
@@ -184,7 +179,6 @@ impl ConditionStack {
 }
 
 /// A delimiter interrupted operand evaluation of this exact condition frame.
-#[allow(dead_code)] // consumed by delimiter execution in the next milestone
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub(crate) struct EvaluatingDelimiterRecovery {
     pub(crate) condition: ConditionId,
@@ -192,15 +186,290 @@ pub(crate) struct EvaluatingDelimiterRecovery {
 }
 
 /// Result of canonical skipped-text delivery.
-#[allow(dead_code)] // returned to conditional evaluation next
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub(crate) struct PassTextStop {
     pub(crate) delimiter: ConditionalDelimiter,
     pub(crate) nested_conditions: u32,
 }
 
-#[allow(dead_code)] // conditional evaluation invokes pass_text in the next milestone
 impl CommandProcessor<'_> {
+    /// TeX.web part 28's `conditional`, entered after delivery of an `if`
+    /// primitive.  The frame is installed before any operand scan because
+    /// those scans may recursively expand another conditional.
+    pub(crate) fn expand_conditional(
+        &mut self,
+        command: crate::CurrentCommand,
+        inverted: bool,
+    ) -> Result<(), CommandError> {
+        let Meaning::ExpandablePrimitive(primitive) = command.meaning() else {
+            return Err(CommandError::InputInvariant);
+        };
+        let kind =
+            ConditionalKind::from_primitive(primitive).ok_or(CommandError::InputInvariant)?;
+        let condition = self.command.conditions.push(kind, 0);
+        match kind {
+            ConditionalKind::IfCase => {
+                let selected = self.scan_decimal_integer()?;
+                self.complete_ifcase(condition, selected)
+            }
+            _ => {
+                let result = self.evaluate_boolean(kind)?;
+                self.complete_boolean(condition, result ^ inverted)
+            }
+        }
+    }
+
+    /// e-TeX's `\\unless` has no independent condition state: it consumes
+    /// precisely one following conditional and flips only boolean results.
+    /// `\\ifcase` is deliberately rejected here, matching e-TeX's separate
+    /// diagnostic path rather than silently inverting a case index.
+    pub(crate) fn expand_unless(
+        &mut self,
+        _command: crate::CurrentCommand,
+    ) -> Result<(), CommandError> {
+        // The following conditional is an operand of `\unless`, not an
+        // ordinary expansion result: preserve its primitive command for the
+        // shared evaluator to install the one inverted frame.
+        let next = self.get_token()?.ok_or(CommandError::InputInvariant)?;
+        let Meaning::ExpandablePrimitive(primitive) = next.meaning() else {
+            return Err(CommandError::InputInvariant);
+        };
+        let kind =
+            ConditionalKind::from_primitive(primitive).ok_or(CommandError::InputInvariant)?;
+        if kind == ConditionalKind::IfCase {
+            return Err(CommandError::InputInvariant);
+        }
+        self.expand_conditional(next, true)
+    }
+
+    fn complete_boolean(
+        &mut self,
+        condition: ConditionId,
+        result: bool,
+    ) -> Result<(), CommandError> {
+        if result {
+            self.command
+                .conditions
+                .change_if_limit(condition, IfLimit::Else)
+                .then_some(())
+                .ok_or(CommandError::InputInvariant)
+        } else {
+            self.command
+                .conditions
+                .change_if_limit(condition, IfLimit::Fi)
+                .then_some(())
+                .ok_or(CommandError::InputInvariant)?;
+            self.resume_after_skip(condition)
+        }
+    }
+
+    fn complete_ifcase(
+        &mut self,
+        condition: ConditionId,
+        selected: i32,
+    ) -> Result<(), CommandError> {
+        self.command
+            .conditions
+            .change_if_limit(condition, IfLimit::Or)
+            .then_some(())
+            .ok_or(CommandError::InputInvariant)?;
+        if selected < 0 {
+            self.skip_to_else_or_fi(condition)
+        } else {
+            self.skip_ifcase_limbs(condition, selected)
+        }
+    }
+
+    fn evaluate_boolean(&mut self, kind: ConditionalKind) -> Result<bool, CommandError> {
+        match kind {
+            ConditionalKind::IfTrue => Ok(true),
+            ConditionalKind::IfFalse => Ok(false),
+            ConditionalKind::If => self.evaluate_if(),
+            ConditionalKind::IfCat => self.evaluate_ifcat(),
+            // TeX.web deliberately uses get_token, not get_x_token, here:
+            // macro meanings are compared as raw operands rather than expanded.
+            ConditionalKind::IfX => self.evaluate_ifx(),
+            ConditionalKind::IfNum => self.evaluate_numeric_comparison(),
+            ConditionalKind::IfDim => self.evaluate_numeric_comparison(),
+            ConditionalKind::IfOdd => Ok(self.scan_decimal_integer()? & 1 != 0),
+            // Executor-owned mode and box state is not installed yet. A fresh
+            // command episode has TeX's outer vertical-mode default.
+            ConditionalKind::IfVMode => Ok(true),
+            ConditionalKind::IfHMode | ConditionalKind::IfMMode | ConditionalKind::IfInner => {
+                Ok(false)
+            }
+            ConditionalKind::IfVoid | ConditionalKind::IfHBox | ConditionalKind::IfVBox => {
+                let _ = self.scan_decimal_integer()?;
+                Ok(matches!(kind, ConditionalKind::IfVoid))
+            }
+            ConditionalKind::IfEof
+            | ConditionalKind::IfDefined
+            | ConditionalKind::IfCsName
+            | ConditionalKind::IfFontChar
+            | ConditionalKind::IfInCsName
+            | ConditionalKind::IfCase => {
+                Err(CommandError::UnsupportedExpandablePrimitive(match kind {
+                    ConditionalKind::IfEof => ExpandablePrimitive::IfEof,
+                    ConditionalKind::IfDefined => ExpandablePrimitive::IfDefined,
+                    ConditionalKind::IfCsName => ExpandablePrimitive::IfCsName,
+                    ConditionalKind::IfFontChar => ExpandablePrimitive::IfFontChar,
+                    ConditionalKind::IfInCsName => ExpandablePrimitive::IfInCsName,
+                    _ => unreachable!(),
+                }))
+            }
+        }
+    }
+
+    fn evaluate_if(&mut self) -> Result<bool, CommandError> {
+        let first = self.get_x_token()?.ok_or(CommandError::InputInvariant)?;
+        let second = self.get_x_token()?.ok_or(CommandError::InputInvariant)?;
+        Ok(matches!((first.meaning(), second.meaning()),
+            (Meaning::CharToken { ch: left, .. }, Meaning::CharToken { ch: right, .. }) if left == right
+        ))
+    }
+
+    fn evaluate_ifcat(&mut self) -> Result<bool, CommandError> {
+        let first = self.get_x_token()?.ok_or(CommandError::InputInvariant)?;
+        let second = self.get_x_token()?.ok_or(CommandError::InputInvariant)?;
+        Ok(matches!((first.meaning(), second.meaning()),
+            (Meaning::CharToken { cat: left, .. }, Meaning::CharToken { cat: right, .. }) if left == right
+        ))
+    }
+
+    fn evaluate_ifx(&mut self) -> Result<bool, CommandError> {
+        let first = self.get_token()?.ok_or(CommandError::InputInvariant)?;
+        let second = self.get_token()?.ok_or(CommandError::InputInvariant)?;
+        Ok(first.meaning() == second.meaning())
+    }
+
+    fn evaluate_numeric_comparison(&mut self) -> Result<bool, CommandError> {
+        let left = self.scan_decimal_integer()?;
+        let relation = self.get_x_token()?.ok_or(CommandError::InputInvariant)?;
+        let right = self.scan_decimal_integer()?;
+        match relation.meaning() {
+            Meaning::CharToken { ch: '<', .. } => Ok(left < right),
+            Meaning::CharToken { ch: '=', .. } => Ok(left == right),
+            Meaning::CharToken { ch: '>', .. } => Ok(left > right),
+            _ => Err(CommandError::InputInvariant),
+        }
+    }
+
+    fn skip_ifcase_limbs(
+        &mut self,
+        condition: ConditionId,
+        mut remaining: i32,
+    ) -> Result<(), CommandError> {
+        if remaining == 0 {
+            return Ok(());
+        }
+        loop {
+            match self.pass_text(condition, ScannerWarning(0))?.delimiter {
+                ConditionalDelimiter::Or => {
+                    remaining -= 1;
+                    if remaining == 0 {
+                        return Ok(());
+                    }
+                }
+                ConditionalDelimiter::Else => {
+                    self.command
+                        .conditions
+                        .change_if_limit(condition, IfLimit::Fi);
+                    return Ok(());
+                }
+                ConditionalDelimiter::Fi => {
+                    self.command.conditions.pop();
+                    return Ok(());
+                }
+            }
+        }
+    }
+
+    fn skip_to_else_or_fi(&mut self, condition: ConditionId) -> Result<(), CommandError> {
+        loop {
+            match self.pass_text(condition, ScannerWarning(0))?.delimiter {
+                ConditionalDelimiter::Or => {}
+                ConditionalDelimiter::Else => {
+                    self.command
+                        .conditions
+                        .change_if_limit(condition, IfLimit::Fi);
+                    return Ok(());
+                }
+                ConditionalDelimiter::Fi => {
+                    self.command.conditions.pop();
+                    return Ok(());
+                }
+            }
+        }
+    }
+
+    fn resume_after_skip(&mut self, condition: ConditionId) -> Result<(), CommandError> {
+        match self.pass_text(condition, ScannerWarning(0))?.delimiter {
+            ConditionalDelimiter::Else => {
+                self.command
+                    .conditions
+                    .change_if_limit(condition, IfLimit::Fi);
+                Ok(())
+            }
+            ConditionalDelimiter::Fi => {
+                self.command.conditions.pop();
+                Ok(())
+            }
+            ConditionalDelimiter::Or => Err(CommandError::InputInvariant),
+        }
+    }
+
+    pub(crate) fn expand_conditional_delimiter(
+        &mut self,
+        _command: crate::CurrentCommand,
+        primitive: ExpandablePrimitive,
+    ) -> Result<(), CommandError> {
+        let delimiter = match primitive {
+            ExpandablePrimitive::Else => ConditionalDelimiter::Else,
+            ExpandablePrimitive::Or => ConditionalDelimiter::Or,
+            ExpandablePrimitive::Fi => ConditionalDelimiter::Fi,
+            _ => return Err(CommandError::InputInvariant),
+        };
+        let Some(frame) = self.command.conditions.current().cloned() else {
+            return Ok(());
+        };
+        if self
+            .command
+            .conditions
+            .evaluating_delimiter_recovery(frame.identity, delimiter)
+            .is_some()
+        {
+            return Err(CommandError::InputInvariant);
+        }
+        match delimiter {
+            ConditionalDelimiter::Fi => {
+                self.command.conditions.pop();
+                Ok(())
+            }
+            ConditionalDelimiter::Else if frame.limit == IfLimit::Else => {
+                self.command
+                    .conditions
+                    .change_if_limit(frame.identity, IfLimit::Fi);
+                self.resume_after_skip(frame.identity)
+            }
+            ConditionalDelimiter::Else
+                if frame.kind == ConditionalKind::IfCase && frame.limit == IfLimit::Or =>
+            {
+                self.command
+                    .conditions
+                    .change_if_limit(frame.identity, IfLimit::Fi);
+                self.resume_after_skip(frame.identity)
+            }
+            ConditionalDelimiter::Or
+                if frame.kind == ConditionalKind::IfCase && frame.limit == IfLimit::Or =>
+            {
+                self.command
+                    .conditions
+                    .change_if_limit(frame.identity, IfLimit::Fi);
+                self.resume_after_skip(frame.identity)
+            }
+            _ => Ok(()),
+        }
+    }
     /// TeX.web's `pass_text`: skip through the sole canonical raw delivery
     /// path, never by peeking at input levels or retokenizing source.
     pub(crate) fn pass_text(

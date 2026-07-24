@@ -136,3 +136,135 @@ fn pass_text_only_accepts_or_when_the_frame_limit_allows_it() {
         })
     );
 }
+
+fn other(ch: char) -> Token {
+    Token::Char {
+        ch,
+        cat: tex_state::token::Catcode::Other,
+    }
+}
+
+fn next_character(processor: &mut CommandProcessor<'_>) -> char {
+    match processor
+        .get_x_token()
+        .expect("conditional expansion succeeds")
+        .expect("conditional selects a limb")
+        .meaning()
+    {
+        Meaning::CharToken { ch, .. } => ch,
+        meaning => panic!("expected selected character, got {meaning:?}"),
+    }
+}
+
+#[test]
+fn boolean_condition_skips_false_limb_and_else_skips_true_remainder() {
+    let mut command = CommandState::default();
+    let mut runtime = CommandRuntime::default();
+    let mut universe = Universe::new();
+    let if_false = install(&mut universe, "iffalse", ExpandablePrimitive::IfFalse);
+    let otherwise = install(&mut universe, "else", ExpandablePrimitive::Else);
+    let fi = install(&mut universe, "fi", ExpandablePrimitive::Fi);
+    push(
+        &mut command,
+        vec![if_false, other('f'), otherwise, other('t'), fi],
+    );
+    let mut capabilities = CommandHostCapabilities::default();
+    let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+
+    assert_eq!(next_character(&mut processor), 't');
+    assert!(processor.command.conditions.current().is_some());
+    assert!(processor.get_x_token().expect("fi expands").is_none());
+    assert!(processor.command.conditions.current().is_none());
+}
+
+#[test]
+fn ifx_reads_unexpanded_operands_through_get_token() {
+    let mut command = CommandState::default();
+    let mut runtime = CommandRuntime::default();
+    let mut universe = Universe::new();
+    let if_x = install(&mut universe, "ifx", ExpandablePrimitive::IfX);
+    let if_true = install(&mut universe, "iftrue", ExpandablePrimitive::IfTrue);
+    let otherwise = install(&mut universe, "else", ExpandablePrimitive::Else);
+    let fi = install(&mut universe, "fi", ExpandablePrimitive::Fi);
+    push(
+        &mut command,
+        vec![
+            if_x,
+            if_true,
+            if_true,
+            other('y'),
+            otherwise,
+            other('n'),
+            fi,
+        ],
+    );
+    let mut capabilities = CommandHostCapabilities::default();
+    let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+
+    // If the operands were delivered with get_x_token, either `iftrue` would
+    // open a nested condition or the following text would be consumed.
+    assert_eq!(next_character(&mut processor), 'y');
+}
+
+#[test]
+fn unless_reuses_boolean_conditional_evaluation_with_inversion() {
+    let mut command = CommandState::default();
+    let mut runtime = CommandRuntime::default();
+    let mut universe = Universe::new();
+    let unless = install(&mut universe, "unless", ExpandablePrimitive::Unless);
+    let if_false = install(&mut universe, "iffalse", ExpandablePrimitive::IfFalse);
+    let otherwise = install(&mut universe, "else", ExpandablePrimitive::Else);
+    let fi = install(&mut universe, "fi", ExpandablePrimitive::Fi);
+    push(
+        &mut command,
+        vec![unless, if_false, other('y'), otherwise, other('n'), fi],
+    );
+    let mut capabilities = CommandHostCapabilities::default();
+    let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+
+    assert_eq!(next_character(&mut processor), 'y');
+}
+
+#[test]
+fn numeric_and_ifcase_selection_use_the_same_skip_machine() {
+    let mut command = CommandState::default();
+    let mut runtime = CommandRuntime::default();
+    let mut universe = Universe::new();
+    let if_num = install(&mut universe, "ifnum", ExpandablePrimitive::IfNum);
+    let if_case = install(&mut universe, "ifcase", ExpandablePrimitive::IfCase);
+    let otherwise = install(&mut universe, "else", ExpandablePrimitive::Else);
+    let or = install(&mut universe, "or", ExpandablePrimitive::Or);
+    let fi = install(&mut universe, "fi", ExpandablePrimitive::Fi);
+    push(
+        &mut command,
+        vec![
+            if_num,
+            other('2'),
+            other('<'),
+            other('3'),
+            other('y'),
+            otherwise,
+            other('n'),
+            fi,
+            if_case,
+            other('1'),
+            other('z'),
+            or,
+            other('1'),
+            otherwise,
+            other('e'),
+            fi,
+        ],
+    );
+    let mut capabilities = CommandHostCapabilities::default();
+    let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+
+    assert_eq!(next_character(&mut processor), 'y');
+    assert_eq!(next_character(&mut processor), '1');
+    assert!(
+        processor
+            .get_x_token()
+            .expect("ifcase else is skipped")
+            .is_none()
+    );
+}

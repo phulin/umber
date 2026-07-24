@@ -52,6 +52,19 @@ impl CommandProcessor<'_> {
         self.command.expansion.cumulative_expansions =
             self.command.expansion.cumulative_expansions.wrapping_add(1);
         match command.meaning() {
+            Meaning::ExpandablePrimitive(primitive)
+                if crate::conditionals::ConditionalKind::from_primitive(primitive).is_some() =>
+            {
+                self.expand_conditional(command, false)
+            }
+            Meaning::ExpandablePrimitive(ExpandablePrimitive::Unless) => {
+                self.expand_unless(command)
+            }
+            Meaning::ExpandablePrimitive(
+                primitive @ (ExpandablePrimitive::Else
+                | ExpandablePrimitive::Or
+                | ExpandablePrimitive::Fi),
+            ) => self.expand_conditional_delimiter(command, primitive),
             Meaning::Macro { .. } => {
                 self.macro_call(command)?;
                 Ok(())
@@ -342,7 +355,7 @@ impl CommandProcessor<'_> {
         Ok(())
     }
 
-    fn scan_decimal_integer(&mut self) -> Result<i32, CommandError> {
+    pub(crate) fn scan_decimal_integer(&mut self) -> Result<i32, CommandError> {
         let mut sign = 1_i32;
         let mut value = 0_i32;
         let mut saw_digit = false;
