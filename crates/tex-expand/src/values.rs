@@ -1252,6 +1252,7 @@ pub fn meaning_text(stores: &impl ExpansionState, token: Token) -> String {
         Token::Cs(symbol) => match stores.meaning(symbol) {
             Meaning::Undefined => "undefined".to_owned(),
             Meaning::Relax => "\\relax".to_owned(),
+            Meaning::EndV => "\\endtemplate".to_owned(),
             Meaning::CharGiven(ch) => format!("the character {ch}"),
             Meaning::CharToken {
                 ch,

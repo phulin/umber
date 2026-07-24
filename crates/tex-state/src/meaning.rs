@@ -30,6 +30,7 @@ const OP_PAGE_INTEGER: u8 = 18;
 const OP_MU_GLUE_PARAM: u8 = 19;
 const OP_CHAR_TOKEN: u8 = 20;
 const OP_INTERNAL_INTEGER: u8 = 21;
+const OP_END_V: u8 = 22;
 
 /// Bitflags carried by meaning words.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -99,6 +100,12 @@ pub enum Meaning {
     InternalInteger(InternalInteger),
     Font(FontId),
     ExpandablePrimitive(ExpandablePrimitive),
+    /// TeX82's inaccessible end-v command after `end_template` expansion.
+    ///
+    /// This is deliberately distinct from `EndTemplate`: `get_next` delivers
+    /// the latter so outer-validity checks run, while `get_x_token` converts
+    /// it to this unexpandable command for `do_endv`.
+    EndV,
     UnexpandablePrimitive(UnexpandablePrimitive),
     Unknown(RawMeaning),
 }
@@ -1413,6 +1420,7 @@ impl Meaning {
                 MeaningFlags::EMPTY,
                 primitive.operand(),
             ),
+            Self::EndV => pack(OP_END_V, MeaningFlags::EMPTY, 0),
             Self::UnexpandablePrimitive(primitive) => pack(
                 OP_UNEXPANDABLE_PRIMITIVE,
                 MeaningFlags::EMPTY,
@@ -1482,6 +1490,7 @@ impl Meaning {
                 Some(primitive) => Self::ExpandablePrimitive(primitive),
                 None => Self::Unknown(RawMeaning { op, flags, operand }),
             },
+            OP_END_V if operand == 0 => Self::EndV,
             OP_UNEXPANDABLE_PRIMITIVE => match UnexpandablePrimitive::from_operand(operand) {
                 Some(primitive) => Self::UnexpandablePrimitive(primitive),
                 None => Self::Unknown(RawMeaning { op, flags, operand }),

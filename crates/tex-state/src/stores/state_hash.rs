@@ -816,6 +816,7 @@ impl Stores {
                 self.hash_font(id, hasher);
             }
             Meaning::ExpandablePrimitive(primitive) => hash_expandable_primitive(primitive, hasher),
+            Meaning::EndV => hasher.tag(23),
             Meaning::UnexpandablePrimitive(primitive) => {
                 hash_unexpandable_primitive(primitive, hasher);
             }

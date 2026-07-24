@@ -1267,6 +1267,7 @@ macro_rules! dispatch_match {
                 })
             }
             Meaning::Relax
+            | Meaning::EndV
             | Meaning::CharGiven(_)
             | Meaning::CharToken { .. }
             | Meaning::MathCharGiven(_)

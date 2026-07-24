@@ -43,9 +43,18 @@ impl CommandProcessor<'_> {
 
     fn get_x_token_scalar(&mut self) -> Result<Option<CurrentCommand>, CommandError> {
         loop {
-            let Some(command) = self.get_next()? else {
+            let Some(mut command) = self.get_next()? else {
                 return Ok(None);
             };
+            if matches!(
+                command.meaning(),
+                Meaning::ExpandablePrimitive(ExpandablePrimitive::EndTemplate)
+            ) {
+                command.convert_end_template_to_endv();
+                #[cfg(any(test, feature = "instrumentation"))]
+                self.observe_expanded_delivery(&command);
+                return Ok(Some(command));
+            }
             if !is_expandable(command.meaning()) {
                 #[cfg(any(test, feature = "instrumentation"))]
                 self.observe_expanded_delivery(&command);

@@ -156,7 +156,7 @@ pub(crate) fn dispatch_delivered_token_with_context(
     }
 
     match meaning {
-        Meaning::Relax => Ok(DispatchAction::Continue),
+        Meaning::Relax | Meaning::EndV => Ok(DispatchAction::Continue),
         Meaning::Undefined => {
             // Undefined tokens can reach main control without passing through
             // expansion (for example after \noexpand or scanner recovery).

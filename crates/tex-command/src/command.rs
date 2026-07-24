@@ -57,6 +57,11 @@ impl CurrentCommand {
             // is nevertheless represented deterministically while recovery
             // remains the responsibility of the raw delivery loop.
             Token::Param(_) => (None, Meaning::Undefined),
+            Token::Frozen(_) if token.is_frozen_end_template() => (
+                None,
+                Meaning::ExpandablePrimitive(tex_state::meaning::ExpandablePrimitive::EndTemplate),
+            ),
+            Token::Frozen(_) if token.is_frozen_endv() => (None, Meaning::EndV),
             Token::Frozen(_) => (
                 None,
                 state
@@ -103,6 +108,14 @@ impl CurrentCommand {
     pub(crate) fn convert_to_end_template(&mut self) {
         self.meaning =
             Meaning::ExpandablePrimitive(tex_state::meaning::ExpandablePrimitive::EndTemplate);
+        self.control_sequence = None;
+    }
+
+    /// Completes TeX82's `get_x_token` conversion of inaccessible
+    /// `end_template` to `endv`. The spelling stays frozen end-template:
+    /// only the effective current command changes.
+    pub(crate) fn convert_end_template_to_endv(&mut self) {
+        self.meaning = Meaning::EndV;
         self.control_sequence = None;
     }
 

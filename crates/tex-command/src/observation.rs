@@ -104,6 +104,7 @@ pub(crate) fn canonical_command_identity(meaning: Meaning) -> (String, Option<i6
         // is a distinguished meaning rather than a primitive-registry entry,
         // but remains observable at both raw and expanded delivery.
         Meaning::Relax => ("relax".into(), Some(256)),
+        Meaning::EndV => ("endv".into(), Some(249_988)),
         Meaning::Macro { flags, .. } => (
             if flags.contains(tex_state::meaning::MeaningFlags::LONG)
                 && flags.contains(tex_state::meaning::MeaningFlags::OUTER)
@@ -124,6 +125,9 @@ pub(crate) fn canonical_command_identity(meaning: Meaning) -> (String, Option<i6
         }
         Meaning::ExpandablePrimitive(tex_state::meaning::ExpandablePrimitive::NoExpand) => {
             ("no_expand".into(), Some(0))
+        }
+        Meaning::ExpandablePrimitive(tex_state::meaning::ExpandablePrimitive::EndTemplate) => {
+            ("end_template".into(), Some(249_988))
         }
         // TeX82 stores every `\if...` primitive under the shared `if_test`
         // command code; `cur_chr` selects the particular test. The Rust

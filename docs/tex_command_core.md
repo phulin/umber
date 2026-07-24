@@ -132,8 +132,9 @@ intercepted delimiter, executor `end_template` handling calls
 `CommandProcessor::begin_alignment_v_template`: it backs up the original
 delimiter below the stored v-template, so all suffix tokens (including macro
 expansion and definitions) restart through `get_next`. Exhausting the exact
-v-template retains its frame and emits one frozen end-v; successful `do_endv`
-uses `CommandState::finish_alignment_cell` to retire that exact frame before
+v-template retains its frame and emits raw frozen `end_template`; §343 expands
+that delivery to frozen `endv`, after which successful `do_endv` uses
+`CommandState::finish_alignment_cell` to retire that exact frame before
 the backed-up delimiter can replay. Active frame identities live in
 `AlignmentDeliveryState`, and therefore suspend with nested alignments and
 are cloned by command snapshots.

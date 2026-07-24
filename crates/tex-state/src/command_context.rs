@@ -99,6 +99,14 @@ impl CommandContext<'_> {
         self.universe.frozen_endv_token()
     }
 
+    /// Returns TeX82's inaccessible `frozen_end_template` token. Input
+    /// delivery emits it when an exhausted v-template remains retained until
+    /// typed `do_endv` retirement.
+    #[must_use]
+    pub fn frozen_end_template_token(&self) -> Token {
+        self.universe.frozen_end_template_token()
+    }
+
     /// Freezes a scanner-owned traced token sequence through the aggregate
     /// content and provenance stores.  Command scanners may allocate their
     /// immutable result, but retain no wider store or host capability.

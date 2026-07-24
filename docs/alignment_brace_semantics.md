@@ -33,7 +33,10 @@ That typed path reports the original delimiter at state 0, backs up the exact
 delivery, pushes the selected v-template, and then enters the `1000000`
 sentinel. The intercepted delimiter is not separately observed as an ordinary
 raw command; it resumes only after `do_endv` retires the exact v-template
-frame.
+frame. At that retained boundary, `get_next` first delivers frozen
+`end_template`; TeX82 §343 expands it to frozen `endv`, and only then does
+§772's `do_endv` retire the frame. Retention itself is not a retirement
+observation.
 
 The sentinel values have their source meanings:
 

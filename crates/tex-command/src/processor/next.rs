@@ -45,16 +45,26 @@ impl CommandProcessor<'_> {
     /// frozen `end_template` meaning.
     pub fn get_x_alignment_delivery(&mut self) -> Result<Option<AlignmentDelivery>, CommandError> {
         loop {
-            let Some(command) = self.get_next()? else {
+            let Some(mut command) = self.get_next()? else {
                 return Ok(None);
             };
             if matches!(
                 command.meaning(),
                 Meaning::ExpandablePrimitive(ExpandablePrimitive::EndTemplate)
-            ) {
+            ) && !command.spelling().semantic_token().is_frozen_end_template()
+            {
                 return Ok(Some(AlignmentDelivery::Event(
                     AlignmentDeliveryEvent::EndTemplate(command),
                 )));
+            }
+            if matches!(
+                command.meaning(),
+                Meaning::ExpandablePrimitive(ExpandablePrimitive::EndTemplate)
+            ) {
+                command.convert_end_template_to_endv();
+                #[cfg(any(test, feature = "instrumentation"))]
+                self.observe_expanded_delivery(&command);
+                return Ok(Some(AlignmentDelivery::Command(command)));
             }
             if matches!(
                 command.meaning(),
@@ -440,7 +450,7 @@ impl CommandProcessor<'_> {
                         RetirementRestart::EndV(level) => {
                             return Ok(Some(DeliveredToken {
                                 spelling: TracedTokenWord::pack(
-                                    self.state.frozen_endv_token(),
+                                    self.state.frozen_end_template_token(),
                                     OriginId::UNKNOWN,
                                 ),
                                 level,
@@ -467,16 +477,18 @@ impl CommandProcessor<'_> {
             .map_err(|_| CommandError::InputInvariant)?;
         let action = retirement.action;
         #[cfg(any(test, feature = "instrumentation"))]
-        self.observe(CommandObservation::Input(InputRecord {
-            transition: if matches!(action, InputRetirementAction::TerminalStop) {
-                InputTransition::Stop
-            } else {
-                InputTransition::Retire
-            },
-            reason: observed_retirement_reason(action, retirement.reason),
-            level: identity.0,
-            position: 0,
-        }));
+        if !matches!(action, InputRetirementAction::VTemplateRetained) {
+            self.observe(CommandObservation::Input(InputRecord {
+                transition: if matches!(action, InputRetirementAction::TerminalStop) {
+                    InputTransition::Stop
+                } else {
+                    InputTransition::Retire
+                },
+                reason: observed_retirement_reason(action, retirement.reason),
+                level: identity.0,
+                position: 0,
+            }));
+        }
         #[cfg(any(test, feature = "instrumentation"))]
         if retirement.reason == InputRetirementReason::AlignmentUTemplate {
             self.observe(CommandObservation::Alignment(AlignmentRecord {
@@ -494,8 +506,9 @@ impl CommandProcessor<'_> {
         match action {
             InputRetirementAction::TerminalStop => Ok(RetirementRestart::Stop),
             InputRetirementAction::VTemplateRetained => {
-                // End-v is synthesized only after the exact v-template frame
-                // becomes retained. `do_endv` later pops that same frame.
+                // The exhausted frame remains live while `get_next` delivers
+                // frozen end-template. Its expanded `endv` is then handled by
+                // typed `do_endv`, which retires this exact frame.
                 Ok(RetirementRestart::EndV(identity))
             }
             InputRetirementAction::SourcePopped
@@ -1497,7 +1510,7 @@ mod tests {
     }
 
     #[test]
-    fn alignment_templates_deliver_through_input_and_retire_before_delimiter_replay() {
+    fn retained_v_template_delivers_end_template_then_endv_before_retirement() {
         let mut command = CommandState::default();
         let alignment = crate::AlignmentIdentity::new(71);
         command.push_token_level(
@@ -1543,9 +1556,11 @@ mod tests {
             .expect("u-template installs after the cell opener lifecycle");
         let snapshot = command.snapshot();
         let mut capabilities = CommandHostCapabilities::default();
+        let mut recorder = Recorder::default();
         {
             let mut processor =
-                processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+                processor(&mut command, &mut runtime, &mut universe, &mut capabilities)
+                    .with_observer(&mut recorder);
 
             let u = processor
                 .get_next()
@@ -1573,10 +1588,10 @@ mod tests {
                 .expect("v-template token");
             assert!(matches!(v.meaning(), Meaning::CharToken { ch: 'v', .. }));
             let endv = processor
-                .get_next()
-                .expect("retained v-template emits end-v")
-                .expect("frozen end-v");
-            assert!(endv.spelling().semantic_token().is_frozen_endv());
+                .get_x_token()
+                .expect("end-template expands to end-v")
+                .expect("end-v delivery");
+            assert!(matches!(endv.meaning(), Meaning::EndV));
             processor
                 .command
                 .finish_alignment_cell(alignment)
@@ -1593,6 +1608,37 @@ mod tests {
                 }
             ));
         }
+        let end_template = recorder
+            .0
+            .iter()
+            .rposition(|observation| {
+                matches!(
+                    observation,
+                    CommandObservation::Command(delivery)
+                        if delivery.boundary == CommandDeliveryBoundary::Raw
+                            && delivery.command == "end_template"
+                )
+            })
+            .expect("frozen end-template is observed as raw delivery");
+        let endv = recorder
+            .0
+            .iter()
+            .rposition(|observation| {
+                matches!(
+                    observation,
+                    CommandObservation::Command(delivery)
+                        if delivery.boundary == CommandDeliveryBoundary::Expanded
+                            && delivery.command == "endv"
+                )
+            })
+            .expect("end-v is observed as expanded delivery");
+        assert!(end_template < endv);
+        assert!(!recorder.0.iter().any(|observation| matches!(
+            observation,
+            CommandObservation::Input(input)
+                if input.transition == InputTransition::Retire
+                    && input.reason == InputReason::AlignmentVTemplate
+        )));
         command
             .rollback(snapshot.clone())
             .expect("template input rolls back exactly");
