@@ -375,10 +375,10 @@ impl CommandProcessor<'_> {
     }
 
     /// TeX.web §394's literal, scalar delimiter matcher. A failed delimiter
-    /// prefix is committed to the argument one token at a time, then the
-    /// mismatching token is considered again as a possible new prefix. This
-    /// is intentionally not a compiled string matcher: token catcodes and
-    /// brace depth are semantic here.
+    /// prefix commits only the part that cannot be reused as an overlapping
+    /// prefix, then retains the maximal suffix that still matches the start
+    /// of the delimiter. This is intentionally not a compiled string matcher:
+    /// token catcodes, brace depth, and the recovery splice are semantic here.
     fn scan_delimited_argument(
         &mut self,
         flags: MeaningFlags,
@@ -417,11 +417,33 @@ impl CommandProcessor<'_> {
             }
 
             if !prefix.is_empty() {
-                for prefix_token in prefix.drain(..) {
+                let retained = overlapping_delimiter_prefix(&prefix, command.spelling(), delimiter);
+                let committed = if retained == 0 {
+                    prefix.len()
+                } else {
+                    prefix.len() + 1 - retained
+                };
+                for prefix_token in prefix.drain(..committed) {
+                    #[cfg(any(test, feature = "instrumentation"))]
+                    self.observe(CommandObservation::TokenList(TokenListRecord {
+                        transition: "splice",
+                        purpose: "macro_delimiter_recovery",
+                        tokens: vec![self.observed_token(prefix_token)],
+                    }));
                     push_delimited_argument_token(&mut tokens, &mut depth, prefix_token);
                 }
-                // A mismatching token can itself start an overlapping prefix.
-                current = Some(command);
+                if retained != 0 {
+                    prefix.push(command.spelling());
+                    continue;
+                }
+
+                // The mismatching token cannot continue the delimiter, so it
+                // becomes ordinary argument material after the committed
+                // prefix. TeX.web §394 permits a recovered `\par` prefix;
+                // only this newly ordinary token is subject to the non-long
+                // paragraph check.
+                self.check_argument_paragraph(&command, flags)?;
+                push_delimited_argument_token(&mut tokens, &mut depth, command.spelling());
                 continue;
             }
 
@@ -444,6 +466,32 @@ impl CommandProcessor<'_> {
         }
         Ok(())
     }
+}
+
+/// Returns the number of tokens from `prefix` plus `current` that form the
+/// longest proper delimiter prefix after a mismatch. TeX.web §394 compares
+/// these scalar token sequences directly while moving the unmatched leading
+/// tokens into the completed argument.
+fn overlapping_delimiter_prefix(
+    prefix: &[TracedTokenWord],
+    current: TracedTokenWord,
+    delimiter: &[Token],
+) -> usize {
+    let pending_len = prefix.len() + 1;
+    (1..pending_len.min(delimiter.len()))
+        .rev()
+        .find(|&candidate_len| {
+            (0..candidate_len).all(|index| {
+                let pending = pending_len - candidate_len + index;
+                let token = prefix
+                    .get(pending)
+                    .copied()
+                    .unwrap_or(current)
+                    .semantic_token();
+                token == delimiter[index]
+            })
+        })
+        .unwrap_or(0)
 }
 
 fn push_delimited_argument_token(

@@ -568,10 +568,14 @@ fn delimited_argument_stops_at_its_literal_token_sequence() {
 #[test]
 fn delimited_argument_retries_a_mismatch_as_an_overlapping_prefix() {
     let (_, arguments) = run_macro(
-        b"\\m aab",
+        b"\\m aaab",
         MeaningFlags::EMPTY,
         &[
             Token::param(1),
+            Token::Char {
+                ch: 'a',
+                cat: Catcode::Letter,
+            },
             Token::Char {
                 ch: 'a',
                 cat: Catcode::Letter,
@@ -583,7 +587,7 @@ fn delimited_argument_retries_a_mismatch_as_an_overlapping_prefix() {
         ],
         false,
     )
-    .expect("second a begins the overlapping delimiter");
+    .expect("the final two a tokens begin the overlapping delimiter");
     assert_eq!(
         argument_tokens(&arguments),
         vec![Token::Char {

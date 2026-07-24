@@ -1154,12 +1154,14 @@ the new subsystem.
 The implementation installs `Matching` around compulsory-prefix and argument
 delivery. It uses raw `get_token`, strips precisely one outer argument group,
 retains nested literal braces, and lets the existing outer-validity operation
-perform all inserted-token recovery. Direct delimited matching retries a
-partial-prefix mismatch as a possible overlapping prefix, commits failed
-prefixes literally, ignores delimiters below literal brace depth, and cancels
-the raw brace accounting for a matched `#{` delimiter. A successful call
-freezes every range once, creates one invocation origin, and installs exactly
-one activation/body pair over the canonical replacement list; replay resolves
+perform all inserted-token recovery. Direct delimited matching retains the
+maximal overlapping delimiter prefix after a partial mismatch, commits each
+unreusable leading token literally with its command-owned
+`macro_delimiter_recovery` observation, ignores delimiters below literal brace
+depth, and cancels the raw brace accounting for a matched `#{` delimiter. A
+successful call freezes every range once, creates one invocation origin, and
+installs exactly one activation/body pair over the canonical replacement list;
+replay resolves
 its compact `OutParameter` tokens through that activation.
 
 The committed TeX82 `expansion-macros.tex` fixture is the focused canonical
