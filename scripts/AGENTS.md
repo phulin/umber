@@ -48,4 +48,5 @@ Read the repository-root `AGENTS.md` first. This file adds the directory map for
   byte and independently normalized PDF transparency plus determinism, supports
   offline reuse, and records complete build identities.
 - `test-oracle-regeneration.sh`: hermetic validation of the pinned three-engine
-  regeneration contract, exact canonical profile selectors, and schema pins.
+  regeneration contract, exact canonical profile/fixture selectors, committed
+  fixture validation, and schema pins.

@@ -14,6 +14,7 @@ tex82_oracle_area=tex82-oracle
 etex26_oracle_area=etex26-oracle
 pdftex14027_oracle_area=pdftex14027-oracle
 oracle_regeneration_manifest=tests/oracle-regeneration-manifest.txt
+tex82_committed_fixture=tests/corpus/command/tex82/command-transitions-v1
 readonly bib_upstream_commit=74252e608e5f8115375c532eb25416430a9f52eb
 
 target_dir="${CARGO_TARGET_DIR:-target}"
@@ -39,7 +40,7 @@ usage:
   scripts/regen-fixtures.sh --area AREA
   scripts/regen-fixtures.sh --case AREA/CASE
   scripts/regen-fixtures.sh --case AREA CASE
-  scripts/regen-fixtures.sh --oracle ENGINE --profile PROFILE [--offline]
+  scripts/regen-fixtures.sh --oracle ENGINE --profile PROFILE [--fixture FIXTURE] [--offline]
   scripts/regen-fixtures.sh --oracle all --profile canonical [--offline]
   scripts/regen-fixtures.sh --oracle ENGINE --profile PROFILE --validate-only
 
@@ -99,6 +100,9 @@ Reference tools:
     etex26      compatibility+extended-eight-bit
     pdftex14027 initex-etex-eight-bit
     all         canonical
+  The committed fixture selector tex82/command-transitions-v1 binds the
+  focused TeX82 transition source, schema-v1 stream, and ordinary artifacts.
+  It is valid only with the explicit tex82/initex-eight-bit oracle selection.
   The all/canonical invocation is the cross-engine transparency gate. It
   validates the pinned contract and source manifests, runs every engine's
   clean/instrumented transparency checks, and writes one aggregate record.
@@ -573,6 +577,12 @@ oracle_contract_row() {
     "$oracle_regeneration_manifest"
 }
 
+oracle_fixture_contract_row() {
+  local fixture="$1"
+  awk -v fixture="$fixture" '$1 == "fixture" && $2 == fixture { print }' \
+    "$oracle_regeneration_manifest"
+}
+
 validate_oracle_source_manifest() {
   local manifest_path="$1"
   local archive_count=0
@@ -645,7 +655,8 @@ validate_oracle_contract() {
     die 'oracle regeneration contract must declare event-schema exactly once'
   awk '
     /^[[:space:]]*($|#)/ { next }
-    $1 == "contract-schema" || $1 == "event-schema" || $1 == "engine" { next }
+    $1 == "contract-schema" || $1 == "event-schema" ||
+      $1 == "engine" || $1 == "fixture" { next }
     { print FILENAME ":" FNR ": unknown contract record: " $1 > "/dev/stderr"; exit 1 }
   ' "$oracle_regeneration_manifest" ||
     die 'oracle regeneration contract contains an unknown record'
@@ -686,6 +697,24 @@ validate_oracle_contract() {
   done < <(awk '$1 == "engine" { print }' "$oracle_regeneration_manifest")
   [[ "$row_count" -eq 3 ]] ||
     die "oracle regeneration contract must contain exactly three engines"
+  [[ "$(awk '$1 == "fixture" && $2 == "tex82/command-transitions-v1" {
+      count++
+    } END { print count + 0 }' "$oracle_regeneration_manifest")" -eq 1 ]] ||
+    die 'oracle regeneration contract must declare the representative fixture exactly once'
+  local fixture_record fixture_selector fixture_engine fixture_profile
+  local fixture_manifest fixture_manifest_digest fixture_extra
+  fixture_record="$(oracle_fixture_contract_row tex82/command-transitions-v1)"
+  read -r _ fixture_selector fixture_engine fixture_profile fixture_manifest \
+    fixture_manifest_digest fixture_extra <<<"$fixture_record"
+  [[ -z "${fixture_extra:-}" &&
+      "$fixture_engine" == tex82 &&
+      "$fixture_profile" == initex-eight-bit &&
+      "$fixture_manifest" == \
+        tests/corpus/command/tex82/command-transitions-v1/manifest.json ]] ||
+    die 'representative fixture regeneration identity drift'
+  [[ -f "$fixture_manifest" &&
+      "$(sha256_file "$fixture_manifest")" == "$fixture_manifest_digest" ]] ||
+    die 'representative committed fixture manifest identity drift'
   [[ -n "$(oracle_contract_row "$selected_engine")" || "$selected_engine" == all ]] ||
     die "unknown oracle engine: ${selected_engine}"
 }
@@ -737,6 +766,57 @@ validate_oracle_build_record() {
   [[ "$trace_count" -gt 0 ]] || die "${engine} build emitted no semantic traces"
 }
 
+validate_committed_oracle_fixture() {
+  local fixture="$1"
+  local compare_live="${2:-0}"
+  local fixture_dir
+  local live_dir
+  local candidate_events
+  local expected_header
+
+  [[ -n "$(oracle_fixture_contract_row "$fixture")" ]] ||
+    die "unknown committed oracle fixture: ${fixture}"
+  fixture_dir="${repo_root}/${tex82_committed_fixture}"
+  live_dir="${target_dir}/tex82-oracle/transitions/clean"
+
+  run_command "Validating committed oracle fixture ${fixture}" \
+    cargo run -q -p tex-oracle --bin tex-oracle-validate -- \
+      --fixture "$fixture_dir"
+
+  [[ "$compare_live" -eq 1 ]] || return 0
+  cmp -s "${fixture_dir}/sources/transitions.tex" \
+    "${live_dir}/transitions.tex" ||
+    die "${fixture} focused source drift"
+  cmp -s "${fixture_dir}/sources/transitions-child.tex" \
+    "${live_dir}/transitions-child.tex" ||
+    die "${fixture} child source drift"
+  cmp -s "${fixture_dir}/outputs/terminal.txt" "${live_dir}/terminal.txt" ||
+    die "${fixture} terminal observation drift"
+  cmp -s "${fixture_dir}/outputs/ordinary.log" "${live_dir}/ordinary.log" ||
+    die "${fixture} normalized log observation drift"
+  cmp -s "${fixture_dir}/outputs/status.txt" "${live_dir}/status.txt" ||
+    die "${fixture} status observation drift"
+  cmp -s "${fixture_dir}/outputs/transitions.dvi" \
+    "${live_dir}/transitions.dvi" ||
+    die "${fixture} DVI observation drift"
+  cmp -s "${fixture_dir}/outputs/transitions-effects.out" \
+    "${live_dir}/transitions-effects.out" ||
+    die "${fixture} generated-effect observation drift"
+
+  candidate_events="$(mktemp)"
+  expected_header="$(sed -n '1p' "${fixture_dir}/events.jsonl")"
+  {
+    printf '%s\n' "$expected_header"
+    sed -n '2,$p' \
+      "${target_dir}/tex82-oracle/transitions/instrumentable/tex82-events.jsonl"
+  } >"$candidate_events"
+  cmp -s "${fixture_dir}/events.jsonl" "$candidate_events" || {
+    rm -f "$candidate_events"
+    die "${fixture} normalized semantic event stream drift"
+  }
+  rm -f "$candidate_events"
+}
+
 write_cross_engine_oracle_record() {
   local output_dir="${target_dir}/oracle-regeneration"
   local engine row profile area manifest_path manifest_digest build_identity
@@ -761,6 +841,7 @@ regen_oracle() {
   local profile="$2"
   local offline="$3"
   local validate_only="$4"
+  local fixture="${5:-}"
   local expected_profile
   local area
   local selected_engines
@@ -775,8 +856,14 @@ regen_oracle() {
   esac
   [[ "$profile" == "$expected_profile" ]] ||
     die "oracle ${engine} requires --profile ${expected_profile}"
+  if [[ -n "$fixture" &&
+        "${engine}:${profile}:${fixture}" != \
+          "tex82:initex-eight-bit:tex82/command-transitions-v1" ]]; then
+    die "fixture ${fixture} requires --oracle tex82 --profile initex-eight-bit"
+  fi
   validate_oracle_contract "$engine"
   if [[ "$validate_only" -eq 1 ]]; then
+    [[ -z "$fixture" ]] || validate_committed_oracle_fixture "$fixture" 0
     return 0
   fi
   [[ "$offline" -eq 0 ]] || builder_args+=(--offline)
@@ -796,6 +883,7 @@ regen_oracle() {
       "${repo_root}/scripts/build-${area}.sh" "${builder_args[@]}"
     validate_oracle_build_record "$engine"
   done
+  [[ -z "$fixture" ]] || validate_committed_oracle_fixture "$fixture" 1
   if [[ "$profile" == canonical ]]; then
     write_cross_engine_oracle_record
   fi
@@ -1291,6 +1379,7 @@ oracle_engine=""
 oracle_profile=""
 oracle_offline=0
 oracle_validate_only=0
+oracle_fixture=""
 
 if [[ "$#" -eq 0 ]]; then
   usage
@@ -1353,6 +1442,12 @@ while [[ "$#" -gt 0 ]]; do
       oracle_offline=1
       shift
       ;;
+    --fixture)
+      [[ "$mode" == oracle ]] || die "--fixture requires --oracle"
+      [[ "$#" -ge 2 ]] || die "missing fixture after --fixture"
+      oracle_fixture="$2"
+      shift 2
+      ;;
     --validate-only)
       [[ "$mode" == oracle ]] || die "--validate-only requires --oracle"
       oracle_validate_only=1
@@ -1392,7 +1487,7 @@ case "$mode" in
     [[ -n "$oracle_engine" ]] || die "missing oracle engine"
     [[ -n "$oracle_profile" ]] || die "--oracle requires --profile"
     regen_oracle "$oracle_engine" "$oracle_profile" \
-      "$oracle_offline" "$oracle_validate_only"
+      "$oracle_offline" "$oracle_validate_only" "$oracle_fixture"
     ;;
   *)
     usage

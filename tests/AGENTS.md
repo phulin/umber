@@ -54,7 +54,9 @@ never invoke the live oracle.
 
 `tests/oracle-regeneration-manifest.txt` pins the schema versions, exact
 engine/profile selectors, source-manifest hashes, fixture areas, and expected
-build identities for the three-engine regeneration interface. The
+build identities for the three-engine regeneration interface. It also pins
+each committed command-fixture selector to its exact engine, profile, manifest
+path, and manifest hash. The
 `scripts/regen-fixtures.sh --oracle all --profile canonical` gate validates
 this contract before acquisition, runs every engine's clean/instrumented
 transparency workflow, and emits an aggregate uncommitted build record under
@@ -64,6 +66,15 @@ transparency workflow, and emits an aggregate uncommitted build record under
 selection fixtures. They are hand-authored contract data, not live-reference
 outputs, and both `umber-distribution` and `manifest-schema.test.js` consume
 the exact same files.
+
+`tests/corpus/command` contains committed canonical command-core fixtures.
+Each engine/fixture directory carries a canonical contract-v1 `manifest.json`,
+focused INITEX sources, a manifest-bound normalized schema-v1 `events.jsonl`,
+and exact ordinary artifact observations. Cargo tests load these files
+hermetically through `tex_oracle::CommittedFixture`; live reference generation
+uses only the exact `--oracle`, `--profile`, and `--fixture` selector pinned in
+`tests/oracle-regeneration-manifest.txt`. See
+`docs/command_semantic_fixtures.md`.
 
 `tests/latex-source.lock` pins the common TeX Live 2026 files plus
 mode-specific repository-local format configuration inputs, byte lengths, and

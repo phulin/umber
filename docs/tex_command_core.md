@@ -1438,8 +1438,12 @@ The conformance hierarchy is:
 8. real-document corpus parity.
 
 Committed fixtures record the version-1 manifest and event stream described
-above. Live regeneration goes only through supported
-`scripts/regen-fixtures.sh` modes.
+above. Repository fixture contract v1 additionally binds the exact profile,
+generation tools, mandatory canonical citations, focused INITEX source files,
+and ordinary artifact observations without changing the schema-v1 manifest
+preimage. The contract and first TeX82 fixture are documented in
+[`command_semantic_fixtures.md`](command_semantic_fixtures.md). Live
+regeneration goes only through supported `scripts/regen-fixtures.sh` modes.
 
 ### 31.4 Incremental and provenance proof
 

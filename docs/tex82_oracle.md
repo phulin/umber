@@ -35,6 +35,24 @@ Run the supported fixture-tooling entry point:
 scripts/regen-fixtures.sh --oracle tex82 --profile initex-eight-bit
 ```
 
+The first committed semantic fixture adds the explicit selector:
+
+```bash
+scripts/regen-fixtures.sh --oracle tex82 --profile initex-eight-bit \
+  --fixture tex82/command-transitions-v1
+```
+
+That selection validates the contract-v1 manifest, focused INITEX sources,
+manifest-bound schema-v1 stream, canonical WEB citations, and ordinary
+terminal/log/status/DVI/generated-effect observations under
+`tests/corpus/command/tex82/command-transitions-v1`. It binds the live change
+file's all-zero sentinel only in a temporary candidate and requires exact
+agreement with the committed stream. The general repository contract is
+documented in [`command_semantic_fixtures.md`](command_semantic_fixtures.md).
+The focused source pins TeX's four job-clock parameters before shipout so the
+ordinary DVI preamble remains exact even though the canonical `onlyTeX`
+program does not consume Web2C's reproducible-clock environment variables.
+
 The first run may acquire the pinned archive into the gitignored
 `third_party/texlive-source` cache. After acquisition, pass `--offline` to
 that same command to forbid network access. `--validate-only` checks the

@@ -1,14 +1,27 @@
+#![allow(
+    clippy::disallowed_methods,
+    reason = "fixture contract tests stage disposable host files outside engine execution"
+)]
+
 use std::collections::BTreeMap;
+use std::fs;
+use std::path::PathBuf;
+use std::sync::atomic::{AtomicUsize, Ordering};
+
+use sha2::{Digest, Sha256};
 
 use crate::{
-    AlignmentEvent, AlignmentTransition, CanonicalCommand, CanonicalValue, CommandDelivery,
-    CommandEvent, DisabledObserver, EngineDialect, EngineIdentity, Event, EventObserver,
+    AlignmentEvent, AlignmentTransition, CanonicalCitation, CanonicalCommand, CanonicalValue,
+    CommandDelivery, CommandEvent, CommittedFixture, DisabledObserver, EngineDialect,
+    EngineIdentity, Event, EventObserver, FixtureArtifact, FixtureManifest, FixtureProfile,
     JsonLinesObserver, Manifest, ManifestInput, Normalizer, ObservationStream, SCHEMA_VERSION,
+    ToolIdentity,
 };
 
 const HASH_A: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 const HASH_B: &str = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
 const HASH_C: &str = "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc";
+static TEMP_FIXTURE_SEQUENCE: AtomicUsize = AtomicUsize::new(0);
 
 fn manifest() -> Manifest {
     let mut manifest = Manifest::new(EngineIdentity {
@@ -153,4 +166,140 @@ fn alignment_events_encode_semantic_nesting_without_storage_identity() {
     assert!(json.contains("\"nesting\":2"));
     assert!(!json.contains("pointer"));
     assert!(!json.contains("address"));
+}
+
+fn fixture_manifest() -> FixtureManifest {
+    let mut oracle = manifest();
+    oracle.clock = "2000-01-01T00:00:00Z".into();
+    FixtureManifest {
+        contract: 1,
+        name: "tex82/synthetic".into(),
+        profile: FixtureProfile {
+            invocation: "initex".into(),
+            characters: "eight_bit_exact".into(),
+        },
+        oracle,
+        tools: BTreeMap::from([(
+            "tangle".into(),
+            ToolIdentity {
+                version: "pinned".into(),
+                sha256: HASH_A.into(),
+            },
+        )]),
+        citations: vec![CanonicalCitation {
+            source: "tex.web".into(),
+            section: "get_next".into(),
+            description: "raw delivery".into(),
+        }],
+        sources: BTreeMap::from([(
+            "job/main.tex".into(),
+            FixtureArtifact {
+                path: "sources/main.tex".into(),
+                bytes: 3,
+                sha256: HASH_A.into(),
+            },
+        )]),
+        events: FixtureArtifact {
+            path: "events.jsonl".into(),
+            bytes: 1,
+            sha256: HASH_B.into(),
+        },
+        outputs: BTreeMap::from([(
+            "dvi".into(),
+            FixtureArtifact {
+                path: "outputs/main.dvi".into(),
+                bytes: 0,
+                sha256: HASH_C.into(),
+            },
+        )]),
+    }
+}
+
+#[test]
+fn fixture_manifest_rejects_schema_profile_output_and_citation_drift() {
+    let mut value = fixture_manifest();
+    assert!(value.validate().is_ok());
+
+    value.oracle.schema = SCHEMA_VERSION + 1;
+    assert!(value.validate().is_err());
+    value = fixture_manifest();
+    value.profile.characters = "unicode_extended".into();
+    assert!(value.validate().is_err());
+    value = fixture_manifest();
+    value.outputs.get_mut("dvi").expect("output").sha256 = HASH_A.into();
+    assert!(value.validate().is_err());
+    value = fixture_manifest();
+    value.citations.clear();
+    assert!(value.validate().is_err());
+}
+
+#[test]
+fn committed_tex82_fixture_is_consumed_hermetically() {
+    let directory = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../tests/corpus/command/tex82/command-transitions-v1");
+    let fixture = CommittedFixture::load(directory).expect("committed canonical fixture");
+    assert_eq!(fixture.manifest.name, "tex82/command-transitions-v1");
+    assert_eq!(fixture.stream.events.len(), 3_145);
+}
+
+#[test]
+fn committed_fixture_rejects_event_identity_and_output_byte_drift() {
+    let source = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../tests/corpus/command/tex82/command-transitions-v1");
+    let loaded = CommittedFixture::load(&source).expect("fixture");
+    let temporary = std::env::temp_dir().join(format!(
+        "umber-tex-oracle-fixture-{}-{}",
+        std::process::id(),
+        TEMP_FIXTURE_SEQUENCE.fetch_add(1, Ordering::Relaxed)
+    ));
+
+    for artifact in loaded
+        .manifest
+        .sources
+        .values()
+        .chain(std::iter::once(&loaded.manifest.events))
+        .chain(loaded.manifest.outputs.values())
+    {
+        let destination = temporary.join(&artifact.path);
+        fs::create_dir_all(destination.parent().expect("artifact parent")).expect("mkdir");
+        fs::copy(source.join(&artifact.path), destination).expect("copy artifact");
+    }
+
+    let mut events = fs::read(temporary.join("events.jsonl")).expect("events");
+    let newline = events
+        .iter()
+        .position(|byte| *byte == b'\n')
+        .expect("header newline");
+    events[..newline].copy_from_slice(
+        b"{\"schema\":1,\"manifest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"}",
+    );
+    fs::write(temporary.join("events.jsonl"), &events).expect("write events");
+    let mut manifest = loaded.manifest.clone();
+    manifest.events.sha256 = hex_hash(&events);
+    fs::write(
+        temporary.join("manifest.json"),
+        manifest.to_canonical_json().expect("manifest"),
+    )
+    .expect("write manifest");
+    assert!(CommittedFixture::load(&temporary).is_err());
+
+    fs::copy(source.join("events.jsonl"), temporary.join("events.jsonl")).expect("restore events");
+    fs::write(
+        temporary.join("manifest.json"),
+        loaded
+            .manifest
+            .to_canonical_json()
+            .expect("original manifest"),
+    )
+    .expect("restore manifest");
+    fs::write(temporary.join("outputs/status.txt"), b"0\n").expect("drift output");
+    assert!(CommittedFixture::load(&temporary).is_err());
+    fs::remove_dir_all(temporary).expect("remove temporary fixture");
+}
+
+fn hex_hash(bytes: &[u8]) -> String {
+    Sha256::digest(bytes)
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
 }

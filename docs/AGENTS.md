@@ -41,6 +41,11 @@ canonical TeX82/e-TeX/pdfTeX command-machine replacement tracked by Beads epic
 levels, command delivery, expansion, scanners, extensions, provenance,
 incrementality, reference oracles, and optimization promotion.
 
+`command_semantic_fixtures.md` defines repository fixture contract v1 for
+committed canonical command streams, profile/tool/source/output identity,
+mandatory WEB citations, hermetic correctness consumption, and explicit live
+regeneration selection.
+
 `etex26_oracle.md` defines the pinned canonical e-TeX 2.6 Web2C source and
 toolchain boundary, explicit compatibility/extended INITEX profiles, final
 schema-v1 base-command instrumentation seam, offline reuse, and build-record

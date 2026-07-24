@@ -5,11 +5,16 @@
 //! observation may not inspect either engine's storage representation.
 
 mod encoding;
+mod fixture;
 mod normalize;
 mod schema;
 mod transport;
 
 pub use encoding::{EncodingError, ManifestIdentity, StreamIdentity};
+pub use fixture::{
+    CanonicalCitation, CommittedFixture, FIXTURE_CONTRACT_VERSION, FIXTURE_MANIFEST_NAME,
+    FixtureArtifact, FixtureError, FixtureManifest, FixtureProfile, ToolIdentity,
+};
 pub use normalize::{NormalizedEvent, Normalizer};
 pub use schema::{
     AlignmentEvent, AlignmentTransition, CanonicalCommand, CanonicalValue, CommandDelivery,

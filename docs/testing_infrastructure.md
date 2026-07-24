@@ -202,6 +202,13 @@ command-core extension matrix with compatibility exclusion, checks its
 primitive-owner audit against canonical `etex.ch`, and repeats each base and
 extension trace plus generated effect bytes deterministically.
 
+The explicit `--fixture tex82/command-transitions-v1` selector adds the
+committed-fixture gate to the TeX82 workflow. It validates the contract-v1
+manifest and hermetic bundle under `tests/corpus/command`, then requires the
+focused sources, manifest-bound schema-v1 stream, terminal, normalized log,
+status, DVI, and generated effect to regenerate byte-for-byte. `tex-oracle`
+unit tests consume that same committed bundle without a live TeX executable.
+
 The `--oracle pdftex14027 --profile initex-etex-eight-bit` mode performs the
 corresponding pinned pdfTeX 1.40.27 build. It gates DVI/PDF smoke artifacts,
 the shared command
