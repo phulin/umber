@@ -1205,6 +1205,14 @@ rather than live re-definable control sequences.
 e-TeX `\unless` is one inversion bit on supported predicates, not a duplicated
 conditional interpreter.
 
+The command-boundary audit is executable. The canonical TeX82 fixture matrix
+pins nested evaluation, `\ifx`, `\ifcase`, skipped braces, delimiter and EOF
+recovery, `\unless`, and expanded definitions; `boundaries.rs` additionally
+requires `pass_text` to consume only `get_next`, `\ifx` to consume only
+`get_token`, and condition frames to remain outside input levels. Snapshot
+tests capture nested live alignment delivery and prove that it restores as an
+executor-step state while durable summaries reject it as nonquiescent.
+
 ## 22. Alignment delivery
 
 The command core owns raw token delivery for alignments; `tex-exec` owns row,
@@ -1244,6 +1252,14 @@ delimiter and inserting the required group closer.
 The authoritative semantic mapping in `docs/alignment_brace_semantics.md`
 remains applicable and should be updated to name the new owners when migration
 completes.
+
+The same audit binds the canonical `alignment-delivery.tex` events for
+preamble sentinels, delimiter interception, u/v template retirement, backup,
+and nested suspension. The executor's focused `off_save` tests retain its
+bounded replay/drop recovery gate; canonical trace coverage is tracked
+separately by `umber2-johp.7.8`. The architecture gate permits the executor
+only typed lifecycle requests and an opaque end-template event: raw delimiter
+classification and the integer `align_state` remain in command-core delivery.
 
 ## 23. Value scanners
 

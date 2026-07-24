@@ -221,6 +221,52 @@ fn scan_toks_keeps_its_one_step_collector_and_direct_splice_boundary() {
     );
 }
 
+#[test]
+#[allow(clippy::disallowed_methods)] // host-side architecture test
+fn condition_delivery_and_alignment_lifecycle_remain_on_the_canonical_seams() {
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let conditionals = fs::read_to_string(manifest_dir.join("src/conditionals.rs"))
+        .expect("read conditional implementation");
+    let input =
+        fs::read_to_string(manifest_dir.join("src/input/mod.rs")).expect("read input facade");
+    let state = fs::read_to_string(manifest_dir.join("src/state.rs")).expect("read command state");
+    let alignment = fs::read_to_string(manifest_dir.join("src/processor/alignment.rs"))
+        .expect("read alignment delivery implementation");
+    let next = fs::read_to_string(manifest_dir.join("src/processor/next.rs"))
+        .expect("read raw delivery implementation");
+
+    let pass_text = conditionals
+        .split("fn pass_text_scalar(")
+        .nth(1)
+        .and_then(|tail| tail.split("fn classify_pass_text_command(").next())
+        .expect("locate canonical skipped-text loop");
+    assert!(pass_text.contains("self.get_next()?"));
+    assert!(pass_text.contains("nested_conditions"));
+    assert!(conditionals.contains("fn evaluate_ifx("));
+    let ifx = conditionals
+        .split("fn evaluate_ifx(")
+        .nth(1)
+        .and_then(|tail| tail.split("fn evaluate_numeric_comparison(").next())
+        .expect("locate raw ifx operand comparison");
+    assert!(ifx.contains("self.get_token()?"));
+    assert!(!ifx.contains("self.get_x_token()?"));
+    assert!(conditionals.contains("fn expand_unless("));
+    assert!(conditionals.contains("inverted"));
+    assert!(!input.contains("ConditionStack"));
+
+    assert_eq!(alignment.matches("align_state: i32").count(), 2);
+    assert_eq!(alignment.matches("fn classify_delivery(").count(), 1);
+    assert_eq!(
+        next.matches("self.command.alignment.classify_delivery(")
+            .count(),
+        1
+    );
+    assert!(state.contains("pub fn apply_alignment_request("));
+    assert!(state.contains("Starting a v-template is intentionally absent"));
+    assert!(next.contains("pub fn begin_alignment_v_template("));
+    assert!(next.contains("AlignmentDeliveryEvent::EndTemplate"));
+}
+
 fn dependency_names(manifest: &str) -> BTreeSet<&str> {
     let mut in_dependencies = false;
     let mut names = BTreeSet::new();

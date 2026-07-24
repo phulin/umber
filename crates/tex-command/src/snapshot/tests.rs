@@ -119,6 +119,39 @@ fn snapshot_roundtrip_preserves_nonquiescent_semantic_state() {
 }
 
 #[test]
+fn snapshot_roundtrip_preserves_nested_alignment_delivery_lifecycle() {
+    let mut state = CommandState::default();
+    let outer = AlignmentIdentity::new(1);
+    let inner = AlignmentIdentity::new(2);
+
+    state.begin_alignment(outer);
+    state
+        .begin_alignment_cell(outer, templates())
+        .expect("outer cell begins");
+    state
+        .suspend_alignment(outer)
+        .expect("outer delivery suspends");
+    state.begin_alignment(inner);
+    state
+        .begin_alignment_cell(inner, templates())
+        .expect("inner cell begins");
+    let expected = state.clone();
+    let snapshot = state.snapshot();
+
+    state
+        .finish_alignment(inner)
+        .expect("inner delivery can mutate after capture");
+    state.rollback(snapshot).expect("matching snapshot profile");
+
+    assert_eq!(state, expected);
+    assert_eq!(
+        state.publish_summary(),
+        Err(CommandSummaryError::AlignmentTemplateActive),
+        "an active inner template must keep the nested lifecycle nonquiescent"
+    );
+}
+
+#[test]
 fn quiescent_summary_roundtrip_is_exact_and_deterministic() {
     let expected = populated_quiescent_state();
     let summary = expected
