@@ -557,7 +557,9 @@ fn empty_ordinary_u_template_pushes_and_retires_before_the_cell_opener_replays()
     let mut universe = Universe::new();
     let mut control = CommandReplayControl::tex82_initex(&mut universe);
     // The empty list before `#` is an ordinary u-template, not `\omit`.
-    register_source(&mut control, br"\halign{#\cr{\end");
+    // `init_col` backs up any ordinary first-cell command, not just `{`.
+    // This mirrors the nested `\halign{#\cr\vrule...}` trace case.
+    register_source(&mut control, br"\halign{#\cr\vrule\end");
     let mut observations = ObservationRecorder::default();
 
     for phase in [

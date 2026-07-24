@@ -215,13 +215,14 @@ impl CommandProcessor<'_> {
         self.back_input_after_backup_replay(opening)
     }
 
-    /// Delivers the first alignment cell's source opening brace, then backs
-    /// it up before the selected u-template is installed.
+    /// Delivers the first alignment cell's lookahead, then backs it up before
+    /// the selected u-template is installed.
     ///
-    /// This is TeX82's `init_col` lookahead ordering: an ordinary source
-    /// opener changes and then restores `align_state` through command-owned
-    /// backup, while `\omit` instead remains consumed and selects the typed
-    /// template-free path.
+    /// This is TeX82's `init_col` lookahead ordering: every non-`\omit`
+    /// command, including an ordinary unbraced cell such as `\vrule`, changes
+    /// and then restores `align_state` through command-owned backup. `\omit`
+    /// instead remains consumed and selects the typed template-free path.
+    /// TeX82 §765 does not require the backed-up lookahead to be a left brace.
     pub fn scan_alignment_cell_opening(&mut self) -> Result<AlignmentCellOpening, CommandError> {
         loop {
             let opening = self.get_x_token()?.ok_or(CommandError::InputInvariant)?;
@@ -236,16 +237,9 @@ impl CommandProcessor<'_> {
                         .map_err(|_| CommandError::InputInvariant)?;
                     return Ok(AlignmentCellOpening::Omit);
                 }
-                Meaning::CharToken {
-                    cat: Catcode::BeginGroup,
-                    ..
-                } => {
-                    self.back_input(opening)?;
-                    return Ok(AlignmentCellOpening::Template);
-                }
                 _ => {
                     self.back_input(opening)?;
-                    return Err(CommandError::InputInvariant);
+                    return Ok(AlignmentCellOpening::Template);
                 }
             }
         }
