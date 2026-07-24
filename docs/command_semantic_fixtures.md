@@ -97,7 +97,9 @@ The dependency-light `tex-oracle` crate owns parsing and validation:
 
 ```bash
 cargo run -q -p tex-oracle --bin tex-oracle-validate -- \
-  --fixture tests/corpus/command/tex82/command-transitions-v1
+  --fixture tests/corpus/command/tex82/command-transitions-v1 \
+  --semantic-matrix tests/tex82-oracle/semantic-event-matrix.txt \
+  --audit-matrix tests/tex82-oracle/fixture-audit-matrix.txt
 ```
 
 `CommittedFixture::load` verifies canonical manifest encoding, contract and
@@ -105,6 +107,15 @@ schema versions, canonical profile, required tools and citations, file
 lengths and hashes, source/output agreement with the inner manifest,
 canonical JSON Lines encoding, contiguous event sequences, stream-to-manifest
 identity binding, and declared source locations.
+`CommittedFixture::audit_matrices` additionally requires every executable
+matrix behavior to occur in the committed stream, every matrix source to be a
+declared focused source and vice versa, and every behavior family to own
+canonical citations and ordinary observations. It rejects unowned citations,
+outputs, sources, or behavior families. The regeneration contract pins both
+matrix identities, so `--validate-only`, Cargo tests, and live regeneration
+consume the same audit. Oracle regeneration contract 2 adds these paired
+matrix identities without changing fixture contract 1 or semantic-event
+schema 1.
 
 Correctness tests call that API directly on committed directories. Tests may
 compare a future Umber observer stream with `CommittedFixture::stream`, but
@@ -131,10 +142,11 @@ documented all-zero unbound header in a temporary candidate with the committed
 inner-manifest identity, and then requires the candidate stream to be
 byte-identical to `events.jsonl`. The live unbound stream is never committed.
 
-`--validate-only` validates the source/regeneration manifests and committed
-fixture without acquiring or executing the reference engine. The fixture
-selector is valid only with its exact engine and profile; cross-engine or
-unknown selections fail.
+`--validate-only` validates the source/regeneration manifests, both pinned
+coverage matrices, and committed fixture without acquiring or executing the
+reference engine. TeX82 and aggregate validation always include this audit;
+the fixture selector remains valid only with its exact engine and profile, so
+cross-engine or unknown selections fail.
 
 The first representative fixture is
 `tests/corpus/command/tex82/command-transitions-v1`. It uses focused,

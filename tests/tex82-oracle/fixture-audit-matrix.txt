@@ -1,0 +1,19 @@
+# Bidirectional ownership of TeX82 command behavior families.
+# Columns: semantic family|canonical source|canonical section|ordinary output channels
+source|tex.web|firm_up_the_line and get_next|log,terminal
+command|tex.web|get_token|log,terminal
+command|tex.web|get_x_token, x_token, and expand|log,terminal
+input|tex.web|Input stacks and states; begin_file_reading and end_file_reading|status,terminal
+recovery|tex.web|back_input and check_outer_validity|log,terminal
+scanner_status|tex.web|back_input and check_outer_validity|log
+diagnostic|tex.web|back_input and check_outer_validity|log,status,terminal
+macro|tex.web|macro_call|log
+token_list|tex.web|scan_toks and the_toks|log
+scanner|tex.web|scan_int, scan_dimen, scan_glue, and scan_something_internal|log
+condition|tex.web|conditional and pass_text|log
+alignment|tex.web|get_next and back_input|dvi,log
+alignment|tex.web|init_align, get_preamble_token, init_row, and init_col|dvi,log
+alignment|tex.web|fin_col, align_peek, and no_align|dvi,log
+alignment|tex.web|align_error and fin_align|dvi,log
+mutation|tex.web|eq_define, geq_define, eq_word_define, and geq_word_define|log
+effect|tex.web|issue_message, write_out, out_what, ship_out, and final_end|dvi,effect_file,log,status,terminal

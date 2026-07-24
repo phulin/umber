@@ -6,6 +6,7 @@
 
 mod encoding;
 mod fixture;
+mod fixture_audit;
 mod normalize;
 mod schema;
 mod transport;

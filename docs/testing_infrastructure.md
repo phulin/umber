@@ -202,12 +202,15 @@ command-core extension matrix with compatibility exclusion, checks its
 primitive-owner audit against canonical `etex.ch`, and repeats each base and
 extension trace plus generated effect bytes deterministically.
 
-The explicit `--fixture tex82/command-transitions-v1` selector adds the
-committed-fixture gate to the TeX82 workflow. It validates the contract-v1
-manifest and hermetic bundle under `tests/corpus/command`, then requires the
-focused sources, manifest-bound schema-v1 stream, terminal, normalized log,
+The TeX82 workflow includes the committed `tex82/command-transitions-v1`
+fixture gate; the explicit `--fixture` selector names the same gate. It
+validates the contract-v1 manifest and hermetic bundle under
+`tests/corpus/command`, audits every executable-matrix behavior against the
+committed stream, focused sources, canonical citations, and ordinary-output
+ownership, then requires the sources, stream, terminal, normalized log,
 status, DVI, and generated effect to regenerate byte-for-byte. `tex-oracle`
-unit tests consume that same committed bundle without a live TeX executable.
+unit tests consume that same committed bundle and the two pinned matrices
+without a live TeX executable.
 The focused source set includes separate legal and non-normal EOF programs so
 the hermetic bundle distinguishes every TeX82 scanner-status recovery.
 
@@ -223,10 +226,12 @@ all three semantic traces plus state PDF projections byte-for-byte.
 
 `--oracle all --profile canonical [--offline]` is the aggregate
 cross-engine transparency gate. Before building, it validates the pinned
-regeneration contract, exact source-manifest hashes, repository-owned inputs,
-event schema, and canonical profiles. It emits an uncommitted aggregate build
-record only after all three workflows pass. `--validate-only` performs the
-identity and schema preflight without acquiring or building tools.
+regeneration contract, exact source-manifest and fixture-audit hashes,
+repository-owned inputs, event schema, canonical profiles, and committed
+TeX82 fixture audit. It emits an uncommitted aggregate build record only after
+all three workflows and the live TeX82 fixture comparison pass.
+`--validate-only` performs the same hermetic identity, schema, and fixture
+audit preflight without acquiring or building tools.
 
 See `tests/AGENTS.md` for the supported areas and cases, required tools,
 copied support files, and validation performed after a rewrite.

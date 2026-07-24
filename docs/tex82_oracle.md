@@ -146,6 +146,15 @@ cannot silently weaken coverage.
 
 The matrix covers every TeX82-applicable schema-v1 `StateTarget` and every
 non-termination `EffectKind`, in addition to ordered termination.
+`tests/tex82-oracle/fixture-audit-matrix.txt` supplies the other half of the
+audit. It assigns each semantic family to the exact manifest citation and
+useful ordinary-output channels. Hermetic validation proves that every event
+row occurs in the committed stream, every focused source is used, the event
+and audit family sets agree, and every manifest citation, source, and output is
+owned. Both matrix hashes are pinned by
+`tests/oracle-regeneration-manifest.txt`; live builds and Cargo correctness
+tests therefore cannot accept a mutually drifting source/event/manifest
+bundle.
 
 The live change file writes the all-zero manifest identity as an explicit
 unbound sentinel. It is not a committed fixture identity. Cross-engine
@@ -160,7 +169,8 @@ scripts/regen-fixtures.sh --oracle all --profile canonical --offline
 
 It writes `target/oracle-regeneration/build-record.txt` only after all three
 engines pass their clean/instrumented artifact comparisons and schema-v1 trace
-gates.
+gates, and after the TeX82 live source, event stream, and ordinary artifacts
+match the fully audited committed fixture.
 
 Executable hashes are platform-specific because the host compiler and system
 linker are inputs. Reproducibility means identical pinned sources, ordered

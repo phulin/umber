@@ -643,7 +643,7 @@ validate_oracle_contract() {
     die "missing oracle regeneration contract: ${oracle_regeneration_manifest}"
   contract_schema="$(oracle_contract_field contract-schema)"
   event_schema="$(oracle_contract_field event-schema)"
-  [[ "$contract_schema" == 1 ]] ||
+  [[ "$contract_schema" == 2 ]] ||
     die "unsupported oracle regeneration contract schema: ${contract_schema:-missing}"
   [[ "$event_schema" == 1 ]] ||
     die "unsupported oracle event schema: ${event_schema:-missing}"
@@ -656,7 +656,7 @@ validate_oracle_contract() {
   awk '
     /^[[:space:]]*($|#)/ { next }
     $1 == "contract-schema" || $1 == "event-schema" ||
-      $1 == "engine" || $1 == "fixture" { next }
+      $1 == "engine" || $1 == "fixture" || $1 == "fixture-audit" { next }
     { print FILENAME ":" FNR ": unknown contract record: " $1 > "/dev/stderr"; exit 1 }
   ' "$oracle_regeneration_manifest" ||
     die 'oracle regeneration contract contains an unknown record'
@@ -715,6 +715,24 @@ validate_oracle_contract() {
   [[ -f "$fixture_manifest" &&
       "$(sha256_file "$fixture_manifest")" == "$fixture_manifest_digest" ]] ||
     die 'representative committed fixture manifest identity drift'
+  [[ "$(awk '$1 == "fixture-audit" &&
+      $2 == "tex82/command-transitions-v1" {
+      count++
+    } END { print count + 0 }' "$oracle_regeneration_manifest")" -eq 1 ]] ||
+    die 'oracle regeneration contract must declare the fixture audit exactly once'
+  local audit_record audit_selector semantic_matrix semantic_digest
+  local audit_matrix audit_digest audit_extra
+  audit_record="$(awk '$1 == "fixture-audit" &&
+    $2 == "tex82/command-transitions-v1" { print; exit }' \
+    "$oracle_regeneration_manifest")"
+  read -r _ audit_selector semantic_matrix semantic_digest audit_matrix \
+    audit_digest audit_extra <<<"$audit_record"
+  [[ -z "${audit_extra:-}" &&
+      -f "$semantic_matrix" &&
+      -f "$audit_matrix" &&
+      "$(sha256_file "$semantic_matrix")" == "$semantic_digest" &&
+      "$(sha256_file "$audit_matrix")" == "$audit_digest" ]] ||
+    die 'representative fixture audit identity drift'
   [[ -n "$(oracle_contract_row "$selected_engine")" || "$selected_engine" == all ]] ||
     die "unknown oracle engine: ${selected_engine}"
 }
@@ -782,7 +800,9 @@ validate_committed_oracle_fixture() {
 
   run_command "Validating committed oracle fixture ${fixture}" \
     cargo run -q -p tex-oracle --bin tex-oracle-validate -- \
-      --fixture "$fixture_dir"
+      --fixture "$fixture_dir" \
+      --semantic-matrix tests/tex82-oracle/semantic-event-matrix.txt \
+      --audit-matrix tests/tex82-oracle/fixture-audit-matrix.txt
 
   [[ "$compare_live" -eq 1 ]] || return 0
   for source in "${fixture_dir}"/sources/*; do
@@ -821,7 +841,7 @@ write_cross_engine_oracle_record() {
   local engine row profile area manifest_path manifest_digest build_identity
   mkdir -p "$output_dir"
   {
-    printf 'contract-schema 1\n'
+    printf 'contract-schema 2\n'
     printf 'event-schema 1\n'
     printf 'contract-sha256 %s\n' "$(sha256_file "$oracle_regeneration_manifest")"
     for engine in tex82 etex26 pdftex14027; do
@@ -862,7 +882,9 @@ regen_oracle() {
   fi
   validate_oracle_contract "$engine"
   if [[ "$validate_only" -eq 1 ]]; then
-    [[ -z "$fixture" ]] || validate_committed_oracle_fixture "$fixture" 0
+    if [[ -n "$fixture" || "$engine" == tex82 || "$engine" == all ]]; then
+      validate_committed_oracle_fixture tex82/command-transitions-v1 0
+    fi
     return 0
   fi
   [[ "$offline" -eq 0 ]] || builder_args+=(--offline)
@@ -882,7 +904,9 @@ regen_oracle() {
       "${repo_root}/scripts/build-${area}.sh" "${builder_args[@]}"
     validate_oracle_build_record "$engine"
   done
-  [[ -z "$fixture" ]] || validate_committed_oracle_fixture "$fixture" 1
+  if [[ -n "$fixture" || "$profile" == canonical || "$engine" == tex82 ]]; then
+    validate_committed_oracle_fixture tex82/command-transitions-v1 1
+  fi
   if [[ "$profile" == canonical ]]; then
     write_cross_engine_oracle_record
   fi

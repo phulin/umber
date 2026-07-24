@@ -235,11 +235,82 @@ fn fixture_manifest_rejects_schema_profile_output_and_citation_drift() {
 
 #[test]
 fn committed_tex82_fixture_is_consumed_hermetically() {
-    let directory = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../tests/corpus/command/tex82/command-transitions-v1");
-    let fixture = CommittedFixture::load(directory).expect("committed canonical fixture");
+    let repository = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let fixture = CommittedFixture::load(
+        repository.join("tests/corpus/command/tex82/command-transitions-v1"),
+    )
+    .expect("committed canonical fixture");
     assert_eq!(fixture.manifest.name, "tex82/command-transitions-v1");
     assert_eq!(fixture.stream.events.len(), 11_484);
+    fixture
+        .audit_matrices(
+            &fs::read(repository.join("tests/tex82-oracle/semantic-event-matrix.txt"))
+                .expect("semantic matrix"),
+            &fs::read(repository.join("tests/tex82-oracle/fixture-audit-matrix.txt"))
+                .expect("fixture audit matrix"),
+        )
+        .expect("complete bidirectional fixture audit");
+}
+
+#[test]
+fn fixture_audit_rejects_missing_behavior_and_unowned_observations() {
+    let repository = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let fixture = CommittedFixture::load(
+        repository.join("tests/corpus/command/tex82/command-transitions-v1"),
+    )
+    .expect("committed canonical fixture");
+    let semantic =
+        fs::read(repository.join("tests/tex82-oracle/semantic-event-matrix.txt")).expect("matrix");
+    let audit = String::from_utf8(
+        fs::read(repository.join("tests/tex82-oracle/fixture-audit-matrix.txt")).expect("audit"),
+    )
+    .expect("utf8");
+
+    let missing_event = String::from_utf8(semantic.clone()).expect("utf8").replace(
+        "\"event\":\"command\",\"data\":{\"delivery\":\"raw\"",
+        "\"event\":\"command\",\"data\":{\"delivery\":\"invented\"",
+    );
+    assert!(
+        fixture
+            .audit_matrices(missing_event.as_bytes(), audit.as_bytes())
+            .is_err()
+    );
+
+    let unowned_output = audit.replace(
+        "dvi,effect_file,log,status,terminal",
+        "dvi,log,status,terminal",
+    );
+    assert!(
+        fixture
+            .audit_matrices(&semantic, unowned_output.as_bytes())
+            .is_err()
+    );
+
+    let undeclared_source = String::from_utf8(semantic.clone())
+        .expect("utf8")
+        .replace("input-eof-normal.tex", "absent.tex");
+    assert!(
+        fixture
+            .audit_matrices(undeclared_source.as_bytes(), audit.as_bytes())
+            .is_err()
+    );
+
+    let absent_citation = audit.replace("firm_up_the_line and get_next", "retired Umber tokenizer");
+    assert!(
+        fixture
+            .audit_matrices(&semantic, absent_citation.as_bytes())
+            .is_err()
+    );
+
+    let missing_family = audit.replace(
+        "source|tex.web|firm_up_the_line and get_next",
+        "invented|tex.web|firm_up_the_line and get_next",
+    );
+    assert!(
+        fixture
+            .audit_matrices(&semantic, missing_family.as_bytes())
+            .is_err()
+    );
 }
 
 #[test]

@@ -10,6 +10,9 @@ focused transition inputs, and the repository-owned final TeX82
 instrumentation change file. `semantic-event-matrix.txt` maps every required
 TeX82 command-core observation to its focused input and stable final-change
 seam; the live oracle build consumes it as the coverage gate.
+`fixture-audit-matrix.txt` maps those semantic families to exact manifest
+citations and useful ordinary-output channels; hermetic validation requires
+bidirectional source, citation, output, family, and committed-event coverage.
 The `input-recovery.tex` program and `input-eof-*.tex` children isolate
 physical-line/token delivery plus legal and scanner-status-sensitive EOF
 recovery without depending on a format or fonts.
@@ -71,7 +74,7 @@ never invoke the live oracle.
 engine/profile selectors, source-manifest hashes, fixture areas, and expected
 build identities for the three-engine regeneration interface. It also pins
 each committed command-fixture selector to its exact engine, profile, manifest
-path, and manifest hash. The
+path, manifest hash, executable semantic matrix, and fixture-audit matrix. The
 `scripts/regen-fixtures.sh --oracle all --profile canonical` gate validates
 this contract before acquisition, runs every engine's clean/instrumented
 transparency workflow, and emits an aggregate uncommitted build record under

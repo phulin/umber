@@ -51,4 +51,4 @@ Read the repository-root `AGENTS.md` first. This file adds the directory map for
   offline reuse, and records complete build identities.
 - `test-oracle-regeneration.sh`: hermetic validation of the pinned three-engine
   regeneration contract, exact canonical profile/fixture selectors, committed
-  fixture validation, and schema pins.
+  fixture and bidirectional TeX82 matrix audit, and schema pins.

@@ -16,6 +16,8 @@ Umber observers.
 
 - `src/schema.rs`: versioned engine, token, event, and manifest values.
 - `src/fixture.rs`: committed fixture-contract validation and hermetic loading.
+- `src/fixture_audit.rs`: bidirectional semantic-matrix, citation, source, and
+  ordinary-output coverage audit.
 - `src/encoding.rs`: canonical JSON encoding and domain-separated identities.
 - `src/normalize.rs`: deterministic stream normalization.
 - `src/transport.rs`: enabled and compile-away disabled observer boundaries.
