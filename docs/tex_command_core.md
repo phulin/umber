@@ -108,6 +108,16 @@ the backed-up delimiter can replay. Active frame identities live in
 `AlignmentDeliveryState`, and therefore suspend with nested alignments and
 are cloned by command snapshots.
 
+`tex-exec` crosses this boundary through `AlignmentRequest` only: begin and
+restart preamble scanning, begin/finish a selected cell, suspend/resume an
+outer alignment, and finish the alignment. `CommandState` applies those
+structural requests without receiving a token. Expanded delivery uses
+`CommandProcessor::get_x_alignment_delivery`; an intercepted delimiter is an
+opaque `AlignmentDeliveryEvent::EndTemplate`, which is handed back to
+`begin_alignment_v_template`. Thus the executor never reclassifies a tab,
+`\span`, or `\cr`, while `off_save` recovery and group policy remain
+executor-owned after the typed event has been delivered.
+
 Source citations in implementation comments should identify the narrowest
 relevant TeX.web or pdfTeX.web section.
 

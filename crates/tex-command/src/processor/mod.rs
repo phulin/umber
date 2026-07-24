@@ -11,7 +11,10 @@ use crate::{CommandHostContext, CommandRuntime, CommandState, DeliveryStamp};
 
 #[cfg(test)]
 pub(crate) use alignment::{ActiveCellDelivery, SuspendedAlignment};
-pub use alignment::{AlignmentCellTemplates, AlignmentIdentity, AlignmentLifecycleError};
+pub use alignment::{
+    AlignmentCellTemplates, AlignmentDelivery, AlignmentDeliveryEvent, AlignmentIdentity,
+    AlignmentLifecycleError, AlignmentRequest, AlignmentRequestResult,
+};
 pub(crate) use alignment::{AlignmentDeliveryAdjustment, AlignmentDeliveryState};
 pub(crate) use expand::ExpansionState;
 #[cfg(test)]

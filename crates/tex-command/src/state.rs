@@ -13,7 +13,7 @@ use crate::input::{ReplayTrace, RetirementBehavior, TokenBehavior, TokenPayload}
 use crate::macro_call::ParameterState;
 use crate::processor::{
     AlignmentCellTemplates, AlignmentDeliveryState, AlignmentIdentity, AlignmentLifecycleError,
-    ExpansionState, ScannerState,
+    AlignmentRequest, AlignmentRequestResult, ExpansionState, ScannerState,
 };
 use crate::profile::{
     CommandProfile, CommandProfileBoundary, CommandProfileFingerprint, CommandProfileMismatch,
@@ -37,6 +37,51 @@ pub struct CommandState {
 }
 
 impl CommandState {
+    /// Applies an executor-owned structural alignment request.
+    ///
+    /// This is the only lifecycle entry point required by `tex-exec`.  It has
+    /// no token input, so it cannot duplicate `get_next` delimiter or brace
+    /// classification.  Starting a v-template is intentionally absent: that
+    /// transition requires an [`crate::AlignmentDeliveryEvent`] and is owned
+    /// by [`crate::CommandProcessor`].
+    pub fn apply_alignment_request(
+        &mut self,
+        request: AlignmentRequest,
+    ) -> Result<AlignmentRequestResult, AlignmentLifecycleError> {
+        match request {
+            AlignmentRequest::Begin(alignment) => {
+                self.begin_alignment(alignment);
+                Ok(AlignmentRequestResult::Applied)
+            }
+            AlignmentRequest::Preamble(alignment) => {
+                self.set_alignment_preamble_phase(alignment)?;
+                Ok(AlignmentRequestResult::Applied)
+            }
+            AlignmentRequest::BeginCell {
+                alignment,
+                templates,
+            } => {
+                self.begin_alignment_cell(alignment, templates)?;
+                Ok(AlignmentRequestResult::Applied)
+            }
+            AlignmentRequest::FinishCell(alignment) => Ok(AlignmentRequestResult::FinishedCell(
+                self.finish_alignment_cell(alignment)?,
+            )),
+            AlignmentRequest::Suspend(alignment) => {
+                self.suspend_alignment(alignment)?;
+                Ok(AlignmentRequestResult::Applied)
+            }
+            AlignmentRequest::Resume(alignment) => {
+                self.resume_alignment(alignment)?;
+                Ok(AlignmentRequestResult::Applied)
+            }
+            AlignmentRequest::Finish(alignment) => {
+                self.finish_alignment(alignment)?;
+                Ok(AlignmentRequestResult::Applied)
+            }
+        }
+    }
+
     /// Begins an executor-owned structural alignment at the canonical preamble
     /// sentinel. Delimiter classification remains exclusively in `get_next`.
     pub fn begin_alignment(&mut self, alignment: AlignmentIdentity) {

@@ -14,7 +14,10 @@ use crate::input::{
     ReplayTrace, RetirementBehavior, SharedTokenBuffer, TokenBehavior, TokenCursor, TokenPayload,
 };
 use crate::profile::{CharacterCode, CharacterMode};
-use crate::{SourceControlSequenceKind, SourceToken, SourceTokenizationStep};
+use crate::{
+    AlignmentDelivery, AlignmentDeliveryEvent, SourceControlSequenceKind, SourceToken,
+    SourceTokenizationStep,
+};
 
 use super::CommandProcessor;
 use super::status::{EofLegality, RecoveryContext, ScannerStatus};
@@ -22,6 +25,36 @@ use super::status::{EofLegality, RecoveryContext, ScannerStatus};
 const DEFAULT_END_LINE_CHAR: i32 = 13;
 
 impl CommandProcessor<'_> {
+    /// Delivers one expanded command, separating an intercepted alignment
+    /// delimiter from ordinary main-control delivery.
+    ///
+    /// No executor-side classifier is involved: `get_next` has already made
+    /// the canonical `align_state` decision before this method observes the
+    /// frozen `end_template` meaning.
+    pub fn get_x_alignment_delivery(&mut self) -> Result<Option<AlignmentDelivery>, CommandError> {
+        loop {
+            let Some(command) = self.get_next()? else {
+                return Ok(None);
+            };
+            if matches!(
+                command.meaning(),
+                Meaning::ExpandablePrimitive(ExpandablePrimitive::EndTemplate)
+            ) {
+                return Ok(Some(AlignmentDelivery::Event(
+                    AlignmentDeliveryEvent::EndTemplate(command),
+                )));
+            }
+            if matches!(
+                command.meaning(),
+                Meaning::Macro { .. } | Meaning::ExpandablePrimitive(_)
+            ) {
+                self.expand(command)?;
+                continue;
+            }
+            return Ok(Some(AlignmentDelivery::Command(command)));
+        }
+    }
+
     /// Hands an intercepted delimiter from `end_template` main control back
     /// to canonical input, then starts the active cell's v-template above it.
     /// The delimiter is never classified by an executor-side loop: after the
@@ -29,8 +62,9 @@ impl CommandProcessor<'_> {
     pub fn begin_alignment_v_template(
         &mut self,
         alignment: crate::AlignmentIdentity,
-        delimiter: CurrentCommand,
+        event: AlignmentDeliveryEvent,
     ) -> Result<(), CommandError> {
+        let AlignmentDeliveryEvent::EndTemplate(delimiter) = event;
         if self.last_delivery != Some(delimiter.delivery_stamp())
             || !matches!(
                 delimiter.meaning(),
@@ -886,14 +920,18 @@ mod tests {
                 .expect("u-template delivers")
                 .expect("u-template token");
             assert!(matches!(u.meaning(), Meaning::CharToken { ch: 'u', .. }));
-            let end_template = processor
-                .get_next()
+            let end_template = match processor
+                .get_x_alignment_delivery()
                 .expect("delimiter follows exhausted u-template")
-                .expect("intercepted delimiter");
-            assert!(matches!(
-                end_template.meaning(),
-                Meaning::ExpandablePrimitive(ExpandablePrimitive::EndTemplate)
-            ));
+                .expect("intercepted delimiter")
+            {
+                crate::AlignmentDelivery::Event(crate::AlignmentDeliveryEvent::EndTemplate(
+                    event,
+                )) => crate::AlignmentDeliveryEvent::EndTemplate(event),
+                crate::AlignmentDelivery::Command(_) => {
+                    panic!("delimiter is delivered as an alignment event")
+                }
+            };
             processor
                 .begin_alignment_v_template(alignment, end_template)
                 .expect("delimiter is backed up below v-template input");

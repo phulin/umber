@@ -29,7 +29,8 @@ pub use input::{
     SourceTokenizationStep,
 };
 pub use processor::{
-    AlignmentCellTemplates, AlignmentIdentity, AlignmentLifecycleError, CommandProcessor,
+    AlignmentCellTemplates, AlignmentDelivery, AlignmentDeliveryEvent, AlignmentIdentity,
+    AlignmentLifecycleError, AlignmentRequest, AlignmentRequestResult, CommandProcessor,
 };
 pub use profile::{
     CharacterCode, CharacterCodeError, CharacterMode, CommandCapabilities, CommandDialect,

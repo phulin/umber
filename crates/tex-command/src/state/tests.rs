@@ -8,7 +8,10 @@ use crate::conditionals::ConditionStack;
 use crate::input::InputState;
 use crate::macro_call::ParameterState;
 use crate::processor::{AlignmentDeliveryState, ExpansionState, ScannerState};
-use crate::{AlignmentCellTemplates, AlignmentIdentity, AlignmentLifecycleError};
+use crate::{
+    AlignmentCellTemplates, AlignmentIdentity, AlignmentLifecycleError, AlignmentRequest,
+    AlignmentRequestResult,
+};
 
 fn templates() -> AlignmentCellTemplates {
     AlignmentCellTemplates {
@@ -194,5 +197,49 @@ fn nested_alignment_suspension_restores_the_outer_cell_identity_and_templates() 
             .expect("outer cell restores")
             .templates,
         outer_templates
+    );
+}
+
+#[test]
+fn typed_requests_preserve_nested_alignment_delivery_without_token_classification() {
+    let mut state = CommandState::default();
+    let outer = AlignmentIdentity::new(47);
+    let inner = AlignmentIdentity::new(53);
+
+    assert_eq!(
+        state.apply_alignment_request(AlignmentRequest::Begin(outer)),
+        Ok(AlignmentRequestResult::Applied)
+    );
+    assert_eq!(
+        state.apply_alignment_request(AlignmentRequest::BeginCell {
+            alignment: outer,
+            templates: templates(),
+        }),
+        Ok(AlignmentRequestResult::Applied)
+    );
+    assert_eq!(
+        state.apply_alignment_request(AlignmentRequest::Suspend(outer)),
+        Ok(AlignmentRequestResult::Applied)
+    );
+    assert_eq!(
+        state.apply_alignment_request(AlignmentRequest::Begin(inner)),
+        Ok(AlignmentRequestResult::Applied)
+    );
+    assert_eq!(
+        state.apply_alignment_request(AlignmentRequest::Finish(inner)),
+        Ok(AlignmentRequestResult::Applied)
+    );
+    assert_eq!(
+        state.apply_alignment_request(AlignmentRequest::Resume(outer)),
+        Ok(AlignmentRequestResult::Applied)
+    );
+    assert_eq!(
+        state
+            .alignment
+            .active_cell
+            .as_ref()
+            .expect("outer cell resumes")
+            .templates,
+        templates()
     );
 }

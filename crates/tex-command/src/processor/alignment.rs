@@ -37,6 +37,67 @@ pub struct AlignmentCellTemplates {
     pub v_template: TracedTokenList,
 }
 
+/// A structural transition requested by the executor.
+///
+/// These requests deliberately contain no token spelling, command meaning,
+/// or delimiter kind.  `tex-exec` owns row/cell packaging and asks for these
+/// lifecycle changes; canonical raw delivery remains the only place that can
+/// decide that a delivered command is an alignment delimiter.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum AlignmentRequest {
+    /// Start scanning an alignment preamble.
+    Begin(AlignmentIdentity),
+    /// Restart preamble scanning for a repeated preamble column.
+    Preamble(AlignmentIdentity),
+    /// Start one executor-selected cell and its optional u-template.
+    BeginCell {
+        alignment: AlignmentIdentity,
+        templates: AlignmentCellTemplates,
+    },
+    /// Retire the exhausted v-template for one finished cell.
+    FinishCell(AlignmentIdentity),
+    /// Preserve the outer raw-delivery context before entering a nested alignment.
+    Suspend(AlignmentIdentity),
+    /// Restore the outer raw-delivery context after a nested alignment.
+    Resume(AlignmentIdentity),
+    /// Tear down a completed alignment delivery context.
+    Finish(AlignmentIdentity),
+}
+
+/// Result material returned by a structural alignment request.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum AlignmentRequestResult {
+    /// The request changed lifecycle state without returning template data.
+    Applied,
+    /// A finished cell returned the exact templates that were active for it.
+    FinishedCell(AlignmentCellTemplates),
+}
+
+/// A command-core event that the executor must handle at an alignment boundary.
+///
+/// The contained command is intentionally opaque.  It can only be handed back
+/// to [`crate::CommandProcessor::begin_alignment_v_template`], which backs up
+/// the exact delivery before installing the v-template.
+#[derive(Debug, Eq, PartialEq)]
+pub enum AlignmentDeliveryEvent {
+    /// `get_next` intercepted an active-cell delimiter and delivered frozen
+    /// `end_template` instead.
+    EndTemplate(crate::CurrentCommand),
+}
+
+/// One expanded delivery while the executor is running an alignment cell.
+///
+/// Ordinary commands continue to main control. An intercepted delimiter is
+/// represented separately so that only the command processor decides when to
+/// enter the v-template transition.
+#[derive(Debug, Eq, PartialEq)]
+pub enum AlignmentDelivery {
+    /// An ordinary expanded command for executor main control.
+    Command(crate::CurrentCommand),
+    /// A command-core alignment event.
+    Event(AlignmentDeliveryEvent),
+}
+
 /// A lifecycle request did not match the currently active alignment.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum AlignmentLifecycleError {

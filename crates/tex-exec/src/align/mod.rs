@@ -11,6 +11,7 @@ mod packaging;
 mod preamble;
 mod support;
 mod template;
+mod transitions;
 mod widths;
 
 use tex_lex::InputStack;
