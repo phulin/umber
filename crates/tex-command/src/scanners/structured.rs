@@ -17,6 +17,10 @@ use crate::processor::status::{
 use crate::scan_toks::{ScanToksMode, ScannedToks};
 use crate::{AlignmentCellTemplates, AlignmentPreamble, CommandError, CommandProcessor};
 
+/// Stable pending-diagnostic identities for TeX82 §760 template recovery.
+const MISSING_PARAMETER_DIAGNOSTIC: u64 = 0x616c_6967_0000_0001;
+const EXTRA_PARAMETER_DIAGNOSTIC: u64 = 0x616c_6967_0000_0002;
+
 /// Provenance for a completed structured scan.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct StructuredProvenance {
@@ -326,10 +330,10 @@ impl CommandProcessor<'_> {
     /// to the command-owned input transition, rather than to executor replay
     /// or the preamble parser.
     pub fn begin_alignment_preamble_scan(&mut self) -> Result<(), CommandError> {
-        // `get_preamble_token` first observes the brace replayed by the
-        // second backup, then `init_align` installs its live scanner status.
-        // Its next raw fetch retires that backup before reading the first
-        // preamble token.
+        // The second opener backup is retired by this expanded brace scan.
+        // TeX82's following `get_preamble_token` must therefore start with
+        // the first template token; an additional raw fetch would discard an
+        // immediate `#` in a nested `\\halign{#\\cr}` preamble.
         let _ = self.scan_left_brace(true)?;
         let alignment = self
             .command
@@ -358,87 +362,132 @@ impl CommandProcessor<'_> {
                 previous_align_state: None,
             },
         ));
-        let _ = self.get_token()?;
         let mut columns = Vec::new();
-        let mut u_template = Vec::new();
-        let mut v_template = Vec::new();
-        let mut in_v_template = false;
         let mut repeat_start = None;
         loop {
-            let command = self.get_next()?.ok_or(CommandError::InputInvariant)?;
-            let token = command.spelling().semantic_token();
-            if matches!(
-                token,
-                Token::Char {
-                    cat: Catcode::Parameter,
-                    ..
-                }
-            ) && !in_v_template
-            {
-                in_v_template = true;
-                continue;
-            }
-            // TeX82 §760 recognizes `&&` while scanning an otherwise empty
-            // u-template. The second tab records the periodic-preamble
-            // boundary and scanning continues into that column's u-template;
-            // it does not terminate an empty column.
-            if matches!(
-                token,
-                Token::Char {
-                    cat: Catcode::AlignmentTab,
-                    ..
-                }
-            ) && !in_v_template
-                && u_template.is_empty()
-                && repeat_start.is_none()
-            {
-                repeat_start = Some(columns.len());
-                continue;
-            }
-            let ends_column = matches!(
-                token,
-                Token::Char {
-                    cat: Catcode::AlignmentTab,
-                    ..
-                }
-            );
-            let ends_preamble = matches!(
-                command.meaning(),
-                Meaning::UnexpandablePrimitive(
-                    UnexpandablePrimitive::Cr | UnexpandablePrimitive::CrCr
-                )
-            );
-            if ends_column || ends_preamble {
-                columns.push(AlignmentCellTemplates {
-                    // `init_col` installs a u-template even when its token
-                    // list is empty. `None` is reserved for the typed
-                    // `\\omit` path; collapsing the two would skip the
-                    // command-owned 1000000 sentinel and replay ordering.
-                    u_template: Some(self.state.finish_traced_token_list(&u_template)),
-                    v_template: self.state.finish_traced_token_list(&v_template),
-                });
-                u_template.clear();
-                v_template.clear();
-                in_v_template = false;
-                if ends_preamble {
+            // These are deliberately separate loops, matching TeX82 §760's
+            // `done1`/`done2` labels. A missing `#` leaves the delivered
+            // delimiter backed up, then the v-template loop reads it again.
+            // A single combined u/v phase loses that replay boundary.
+            let mut u_template = Vec::new();
+            loop {
+                let command = self.get_next()?.ok_or(CommandError::InputInvariant)?;
+                let token = command.spelling().semantic_token();
+                if matches!(
+                    token,
+                    Token::Char {
+                        cat: Catcode::Parameter,
+                        ..
+                    }
+                ) {
                     break;
                 }
-                continue;
-            }
-            if in_v_template {
-                v_template.push(command.spelling());
-            } else if !matches!(
-                command.meaning(),
-                Meaning::CharToken {
-                    cat: Catcode::Space,
-                    ..
+                let tab = matches!(
+                    token,
+                    Token::Char {
+                        cat: Catcode::AlignmentTab,
+                        ..
+                    }
+                );
+                let terminator = tab
+                    || matches!(
+                        command.meaning(),
+                        Meaning::UnexpandablePrimitive(
+                            UnexpandablePrimitive::Cr | UnexpandablePrimitive::CrCr
+                        )
+                    );
+                if terminator && self.command.alignment.align_state == -1_000_000 {
+                    // The `&&` case is the one exception: the second tab
+                    // starts the periodic suffix and u-template scanning
+                    // continues. Every other delimiter is TeX's
+                    // `Missing # inserted` / `back_error` path.
+                    if tab && u_template.is_empty() && repeat_start.is_none() {
+                        repeat_start = Some(columns.len());
+                        continue;
+                    }
+                    #[cfg(any(test, feature = "instrumentation"))]
+                    self.observe(crate::CommandObservation::Alignment(
+                        crate::AlignmentRecord {
+                            transition: "missing_parameter",
+                            alignment: Some(alignment.raw()),
+                            align_state: self.command.alignment.align_state,
+                            delimiter: None,
+                            previous_align_state: None,
+                        },
+                    ));
+                    self.back_error(command, MISSING_PARAMETER_DIAGNOSTIC)?;
+                    break;
                 }
-            ) || !u_template.is_empty()
-            {
-                // TeX82 §760 copies a u-template token only when it is not
-                // a spacer, or when an earlier token has already made the
-                // template nonempty. V-template spaces are retained above.
-                u_template.push(command.spelling());
+                if !matches!(
+                    command.meaning(),
+                    Meaning::CharToken {
+                        cat: Catcode::Space,
+                        ..
+                    }
+                ) || !u_template.is_empty()
+                {
+                    // TeX82 §760 eliminates only leading u-template spaces.
+                    u_template.push(command.spelling());
+                }
+            }
+
+            let mut v_template = Vec::new();
+            let ends_preamble = loop {
+                let command = self.get_next()?.ok_or(CommandError::InputInvariant)?;
+                let token = command.spelling().semantic_token();
+                let ends_column = matches!(
+                    token,
+                    Token::Char {
+                        cat: Catcode::AlignmentTab,
+                        ..
+                    }
+                );
+                let ends_preamble = matches!(
+                    command.meaning(),
+                    Meaning::UnexpandablePrimitive(
+                        UnexpandablePrimitive::Cr | UnexpandablePrimitive::CrCr
+                    )
+                );
+                if (ends_column || ends_preamble)
+                    && self.command.alignment.align_state == -1_000_000
+                {
+                    break ends_preamble;
+                }
+                // §760 reports and discards extra parameter markers in a
+                // v-template; it then resumes this same loop.
+                if matches!(
+                    token,
+                    Token::Char {
+                        cat: Catcode::Parameter,
+                        ..
+                    }
+                ) {
+                    #[cfg(any(test, feature = "instrumentation"))]
+                    self.observe(crate::CommandObservation::Alignment(
+                        crate::AlignmentRecord {
+                            transition: "extra_parameter",
+                            alignment: Some(alignment.raw()),
+                            align_state: self.command.alignment.align_state,
+                            delimiter: None,
+                            previous_align_state: None,
+                        },
+                    ));
+                    self.command
+                        .expansion
+                        .pending_diagnostics
+                        .push(EXTRA_PARAMETER_DIAGNOSTIC);
+                    continue;
+                }
+                v_template.push(command.spelling());
+            };
+            columns.push(AlignmentCellTemplates {
+                // `init_col` installs a u-template even when its token list
+                // is empty. `None` is reserved for the typed `\\omit` path.
+                u_template: Some(self.state.finish_traced_token_list(&u_template)),
+                v_template: self.state.finish_traced_token_list(&v_template),
+            });
+            if ends_preamble {
+                break;
             }
         }
         self.command

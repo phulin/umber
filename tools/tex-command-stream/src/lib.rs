@@ -1048,7 +1048,11 @@ fn translate_alignment(record: AlignmentRecord, nesting: Option<u32>) -> Event {
         nesting,
         previous_align_state: record.previous_align_state.map(i64::from),
         delimiter: record.delimiter.map(str::to_owned),
-        recovery: None,
+        recovery: match record.transition {
+            "missing_parameter" => Some("missing_parameter".into()),
+            "extra_parameter" => Some("extra_parameter".into()),
+            _ => None,
+        },
     })
 }
 fn translate_mutation(record: MutationRecord) -> Event {

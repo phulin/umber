@@ -450,6 +450,116 @@ fn alignment_preamble_discards_leading_spaces_from_each_u_template_only() {
 }
 
 #[test]
+fn alignment_preamble_missing_parameter_before_tab_replays_the_delimiter_into_v_template() {
+    assert_missing_preamble_parameter(
+        [
+            Token::Char {
+                ch: '{',
+                cat: Catcode::BeginGroup,
+            },
+            Token::Char {
+                ch: 'l',
+                cat: Catcode::Letter,
+            },
+            Token::Char {
+                ch: '&',
+                cat: Catcode::AlignmentTab,
+            },
+            Token::Char {
+                ch: 'r',
+                cat: Catcode::Letter,
+            },
+            Token::Char {
+                ch: '#',
+                cat: Catcode::Parameter,
+            },
+        ],
+        2,
+    );
+}
+
+#[test]
+fn alignment_preamble_missing_parameter_before_cr_replays_the_delimiter_into_v_template() {
+    assert_missing_preamble_parameter(
+        [
+            Token::Char {
+                ch: '{',
+                cat: Catcode::BeginGroup,
+            },
+            Token::Char {
+                ch: 'l',
+                cat: Catcode::Letter,
+            },
+        ],
+        1,
+    );
+}
+
+fn assert_missing_preamble_parameter(
+    prefix: impl IntoIterator<Item = Token>,
+    expected_columns: usize,
+) {
+    let mut command = CommandState::default();
+    let alignment = crate::AlignmentIdentity::new(1);
+    command.begin_alignment(alignment);
+    let mut runtime = CommandRuntime::default();
+    let mut universe = Universe::new();
+    let cr = universe.intern("cr").symbol();
+    universe.set_meaning(
+        cr,
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Cr),
+    );
+    let mut tokens = prefix.into_iter().collect::<Vec<_>>();
+    tokens.push(Token::Cs(cr));
+    push(&mut command, tokens);
+    let mut capabilities = CommandHostCapabilities::default();
+    let mut recorder = Recorder::default();
+    {
+        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities)
+            .with_observer(&mut recorder);
+        processor
+            .scan_alignment_preamble_opening()
+            .expect("opening brace validates and backs up");
+        processor
+            .replay_alignment_preamble_opening()
+            .expect("opening brace replays before preamble collection");
+        processor
+            .begin_alignment_preamble_scan()
+            .expect("missing parameter recovers through the v-template");
+    }
+    let preamble = command
+        .take_completed_alignment_preamble(alignment)
+        .expect("frozen preamble is available");
+    assert_eq!(preamble.columns.len(), expected_columns);
+    let recovery = recorder
+        .0
+        .iter()
+        .position(|observation| {
+            matches!(
+                observation,
+                CommandObservation::Alignment(record) if record.transition == "missing_parameter"
+            )
+        })
+        .expect("TeX82 missing-parameter recovery is observed");
+    let backup = recorder
+        .0
+        .iter()
+        .enumerate()
+        .skip(recovery + 1)
+        .find_map(|(index, observation)| {
+            matches!(
+            observation,
+            CommandObservation::Input(record) if record.transition == crate::InputTransition::Backup
+        ).then_some(index)
+        })
+        .expect("back_error pushes the delimiter back into command input");
+    assert!(
+        recovery < backup,
+        "recovery is selected before back_error input backup"
+    );
+}
+
+#[test]
 fn filename_registered_input_recovery_and_rollback_stay_command_owned() {
     let mut command = CommandState::default();
     push(
