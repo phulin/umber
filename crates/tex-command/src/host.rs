@@ -80,6 +80,22 @@ impl CommandHostCapabilities {
         self.job_name = name.into();
     }
 
+    /// Installs the TeX job name selected by startup input.
+    ///
+    /// TeX's filename scanner separates the supplied terminal filename into
+    /// area, name, and extension; `\\jobname` renders the name alone.  This
+    /// keeps that environment-neutral lifecycle fact at the typed host
+    /// boundary, rather than deriving conversion text from an observer or a
+    /// fixture path.
+    pub fn set_startup_job_name(&mut self, filename: &str) {
+        let leaf = filename
+            .rsplit(['/', '\\'])
+            .next()
+            .expect("splitting a string always yields one component");
+        let name = leaf.rsplit_once('.').map_or(leaf, |(stem, _)| stem);
+        self.set_job_name(name);
+    }
+
     /// Installs the current executor-owned mode query result for this command
     /// operation. It is deliberately capability state rather than a field of
     /// `CommandState`, so snapshots never duplicate the mode nest.
@@ -116,5 +132,18 @@ impl<'a> CommandHostContext<'a> {
 
     pub(crate) const fn conditional_state(&self) -> ConditionalState {
         self._capabilities.conditional_state
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::CommandHostCapabilities;
+
+    #[test]
+    fn startup_job_name_is_the_filename_stem_without_its_area() {
+        let mut capabilities = CommandHostCapabilities::default();
+        capabilities.set_startup_job_name("inputs/annual.report.tex");
+
+        assert_eq!(capabilities.job_name, "annual.report");
     }
 }

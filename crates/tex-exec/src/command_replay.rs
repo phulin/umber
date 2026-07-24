@@ -399,43 +399,44 @@ impl CommandReplayControl {
         stores: &mut Universe,
         observer: &mut dyn CommandObserver,
     ) -> Result<String, ExecError> {
-        let mut processor = CommandProcessor::new(
-            &mut self.command,
-            &mut self.runtime,
-            stores.command_context(),
-            CommandHostContext::new(&mut self.capabilities),
-        )
-        .with_observer(observer);
-        let first =
-            processor
-                .get_x_token()
-                .map_err(command_error)?
-                .ok_or(ExecError::MissingToken {
-                    context: "terminal filename",
-                })?;
-        processor.back_input(first).map_err(command_error)?;
-        let mut filename = String::new();
-        loop {
-            let command =
-                processor
-                    .get_x_token()
-                    .map_err(command_error)?
-                    .ok_or(ExecError::MissingToken {
+        let filename =
+            {
+                let mut processor = CommandProcessor::new(
+                    &mut self.command,
+                    &mut self.runtime,
+                    stores.command_context(),
+                    CommandHostContext::new(&mut self.capabilities),
+                )
+                .with_observer(observer);
+                let first = processor.get_x_token().map_err(command_error)?.ok_or(
+                    ExecError::MissingToken {
                         context: "terminal filename",
-                    })?;
-            match command.spelling().semantic_token() {
-                Token::Char {
-                    cat: Catcode::Space,
-                    ..
-                } => return Ok(filename),
-                Token::Char { ch, .. } => filename.push(ch),
-                _ => {
-                    return Err(ExecError::MissingToken {
-                        context: "terminal filename character",
-                    });
+                    },
+                )?;
+                processor.back_input(first).map_err(command_error)?;
+                let mut filename = String::new();
+                loop {
+                    let command = processor.get_x_token().map_err(command_error)?.ok_or(
+                        ExecError::MissingToken {
+                            context: "terminal filename",
+                        },
+                    )?;
+                    match command.spelling().semantic_token() {
+                        Token::Char {
+                            cat: Catcode::Space,
+                            ..
+                        } => break filename,
+                        Token::Char { ch, .. } => filename.push(ch),
+                        _ => {
+                            return Err(ExecError::MissingToken {
+                                context: "terminal filename character",
+                            });
+                        }
+                    }
                 }
-            }
-        }
+            };
+        self.capabilities.set_startup_job_name(&filename);
+        Ok(filename)
     }
 }
 

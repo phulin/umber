@@ -238,7 +238,10 @@ Likewise, TeX82's classic text conversions are observed as the shared
 `\jobname` use selectors 0 through 5. TeX82 §27's `conv_toks` continues to
 own their respective operand scans and inserted-token lifecycle; the command
 identity is selected at raw delivery, rather than projected later from a
-generic expandable primitive.
+generic expandable primitive. Startup filename scanning installs the selected
+area-free, extension-free job name through `CommandHostCapabilities`; it is a
+borrow-scoped environment fact, so snapshots retain neither a host path nor a
+fixture-derived conversion value.
 
 For TeX82 §§1071 and 1076, `\shipout` begins a typed box-completion episode:
 command control delivers the next `make_box` command and owns every scalar
