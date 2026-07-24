@@ -213,11 +213,18 @@ fn scan_toks_keeps_its_one_step_collector_and_direct_splice_boundary() {
         !collector.contains("self.get_x_token()?"),
         "the replacement collector must not enter a second ordinary expansion loop"
     );
-    assert!(splice.contains("let target = self.get_token()?"));
+    assert!(
+        splice.contains("let target = self.get_x_token()?"),
+        "\\the must expand its internal-value target before selecting a token list"
+    );
     assert!(splice.contains("output.extend("));
     assert!(
         !splice.contains("self.expand("),
         "direct token-list splicing must not recursively expand its contents"
+    );
+    assert!(
+        !splice.contains("self.get_next()?"),
+        "direct token-list splicing must not redeliver its contents through the collector"
     );
 }
 

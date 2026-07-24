@@ -260,6 +260,14 @@ provenance. The latter returns parameter and replacement lists separately;
 expanded balanced scans continue to use the canonical macro matcher, so macro
 arguments never become executor-owned input.
 
+Within an expanded `scan_toks` collection, `\the` expands only its
+internal-value target, as TeX82's internal-value scanner requires. When that
+target yields a token-list value, the collector appends the frozen list
+directly: its tokens are neither reintroduced into input nor recursively
+expanded, and they do not affect the collector's brace depth. This remains a
+special case inside the collector's one-step `get_next`/`expand` loop rather
+than a second ordinary expanded-delivery loop.
+
 `scan_file_name` returns a typed filename and its canonical `Group`, `Space`,
 `NonCharacter`, or `EndOfInput` termination. `open_registered_input` composes
 that scan with the borrow-scoped registered-input capability, then registers
