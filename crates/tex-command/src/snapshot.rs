@@ -151,7 +151,7 @@ impl CommandState {
         if self.transient.active_expansion_depth != 0 {
             return Err(CommandSummaryError::ExpansionActive);
         }
-        if self.alignment.active_cell.is_some() {
+        if self.alignment.active_alignment.is_some() || self.alignment.active_cell.is_some() {
             return Err(CommandSummaryError::AlignmentTemplateActive);
         }
         if !self.alignment.suspended.is_empty() {
@@ -194,6 +194,7 @@ impl CommandState {
             conditions: summary.conditions,
             alignment: AlignmentDeliveryState {
                 align_state: summary.align_state,
+                active_alignment: None,
                 suspended: Vec::new(),
                 active_cell: None,
             },

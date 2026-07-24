@@ -9,7 +9,10 @@ use crate::input::{
     SourceLevel, SourceRegistration, SourceRegistrationError, SourceTokenizationStep,
 };
 use crate::macro_call::ParameterState;
-use crate::processor::{AlignmentDeliveryState, ExpansionState, ScannerState};
+use crate::processor::{
+    AlignmentCellTemplates, AlignmentDeliveryState, AlignmentIdentity, AlignmentLifecycleError,
+    ExpansionState, ScannerState,
+};
 use crate::profile::{
     CommandProfile, CommandProfileBoundary, CommandProfileFingerprint, CommandProfileMismatch,
 };
@@ -32,6 +35,62 @@ pub struct CommandState {
 }
 
 impl CommandState {
+    /// Begins an executor-owned structural alignment at the canonical preamble
+    /// sentinel. Delimiter classification remains exclusively in `get_next`.
+    pub fn begin_alignment(&mut self, alignment: AlignmentIdentity) {
+        self.alignment.begin_alignment(alignment);
+    }
+
+    /// Re-enters the preamble sentinel while scanning another alignment column.
+    pub fn set_alignment_preamble_phase(
+        &mut self,
+        alignment: AlignmentIdentity,
+    ) -> Result<(), AlignmentLifecycleError> {
+        self.alignment.set_preamble_phase(alignment)
+    }
+
+    /// Marks one cell's executor-selected templates active and installs the
+    /// body brace-depth base. This operation does not inspect input tokens.
+    pub fn begin_alignment_cell(
+        &mut self,
+        alignment: AlignmentIdentity,
+        templates: AlignmentCellTemplates,
+    ) -> Result<(), AlignmentLifecycleError> {
+        self.alignment.begin_cell(alignment, templates)
+    }
+
+    /// Retires the active cell after successful end-template handling.
+    pub fn finish_alignment_cell(
+        &mut self,
+        alignment: AlignmentIdentity,
+    ) -> Result<AlignmentCellTemplates, AlignmentLifecycleError> {
+        self.alignment.finish_cell(alignment)
+    }
+
+    /// Suspends the complete outer raw-delivery context for a nested alignment.
+    pub fn suspend_alignment(
+        &mut self,
+        alignment: AlignmentIdentity,
+    ) -> Result<(), AlignmentLifecycleError> {
+        self.alignment.suspend_alignment(alignment)
+    }
+
+    /// Restores the exact outer raw-delivery context after a nested alignment.
+    pub fn resume_alignment(
+        &mut self,
+        alignment: AlignmentIdentity,
+    ) -> Result<(), AlignmentLifecycleError> {
+        self.alignment.resume_alignment(alignment)
+    }
+
+    /// Finishes an alignment delivery context after all of its cells retire.
+    pub fn finish_alignment(
+        &mut self,
+        alignment: AlignmentIdentity,
+    ) -> Result<(), AlignmentLifecycleError> {
+        self.alignment.finish_alignment(alignment)
+    }
+
     /// Creates a fresh command job with an immutable semantic profile.
     ///
     /// No API changes the profile after construction. Snapshot, summary,

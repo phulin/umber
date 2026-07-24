@@ -137,7 +137,8 @@ impl CommandProcessor<'_> {
             // delivery before substituting its recovery space.
             self.last_delivery = Some(delivery_stamp);
             self.check_outer_validity_entry(&mut command)?;
-            self.alignment_delivery_entry(&command)?;
+            let adjustment = self.command.alignment.classify_delivery(&mut command);
+            command.set_alignment_adjustment(adjustment);
             return Ok(Some(command));
         }
     }
@@ -342,52 +343,17 @@ impl CommandProcessor<'_> {
         Ok(TracedTokenWord::pack(token, OriginId::UNKNOWN))
     }
 
-    fn alignment_delivery_entry(&mut self, command: &CurrentCommand) -> Result<(), CommandError> {
-        match command.spelling().semantic_token() {
-            Token::Char {
-                cat: Catcode::BeginGroup,
-                ..
-            } => {
-                self.command.alignment.align_state =
-                    self.command.alignment.align_state.saturating_add(1);
-            }
-            Token::Char {
-                cat: Catcode::EndGroup,
-                ..
-            } => {
-                self.command.alignment.align_state =
-                    self.command.alignment.align_state.saturating_sub(1);
-            }
-            _ => {}
-        }
-        Ok(())
-    }
-
     pub(crate) fn undo_alignment_delivery(&mut self, command: &CurrentCommand) {
-        match command.spelling().semantic_token() {
-            Token::Char {
-                cat: Catcode::BeginGroup,
-                ..
-            } => {
-                self.command.alignment.align_state =
-                    self.command.alignment.align_state.saturating_sub(1);
-            }
-            Token::Char {
-                cat: Catcode::EndGroup,
-                ..
-            } => {
-                self.command.alignment.align_state =
-                    self.command.alignment.align_state.saturating_add(1);
-            }
-            _ => {}
-        }
+        self.command
+            .alignment
+            .undo_delivery(command.alignment_adjustment());
     }
 
     /// Cancels raw brace accounting for a matched `#{` delimiter. The opening
     /// brace was delivered as parameter text, so scalar macro matching must
     /// not leave a group entry for replacement replay to balance later.
     pub(crate) fn undo_delimiter_begin_group_delivery(&mut self) {
-        self.command.alignment.align_state = self.command.alignment.align_state.saturating_sub(1);
+        self.command.alignment.undo_delimiter_begin_group_delivery();
     }
 
     fn rewind_current_token_cursor(&mut self, stamp: DeliveryStamp) -> bool {
@@ -676,6 +642,137 @@ mod tests {
                 cat: Catcode::Letter,
             }
         );
+    }
+
+    #[test]
+    fn get_next_alone_intercepts_top_level_alignment_delimiters_and_backup_replays_them() {
+        let mut command = CommandState::default();
+        let alignment = crate::AlignmentIdentity::new(17);
+        command.begin_alignment(alignment);
+        command
+            .begin_alignment_cell(
+                alignment,
+                crate::AlignmentCellTemplates {
+                    u_template: 19,
+                    v_template: 23,
+                },
+            )
+            .expect("cell begins");
+        command.push_token_level(
+            TokenPayload::Transient(SharedTokenBuffer::new(vec![TracedTokenWord::pack(
+                Token::Char {
+                    ch: '&',
+                    cat: Catcode::AlignmentTab,
+                },
+                OriginId::UNKNOWN,
+            )])),
+            TokenBehavior::Ordinary,
+            RetirementBehavior::Pop,
+            ReplayTrace::BackedUp,
+        );
+        let mut runtime = CommandRuntime::default();
+        let mut universe = Universe::new();
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+
+        let delimiter = processor
+            .get_next()
+            .expect("delimiter delivers")
+            .expect("input is live");
+        assert!(matches!(
+            delimiter.meaning(),
+            Meaning::ExpandablePrimitive(ExpandablePrimitive::EndTemplate)
+        ));
+        assert_eq!(processor.command.alignment.align_state, 1_000_000);
+        processor
+            .back_input(delimiter)
+            .expect("delimiter backs up exactly");
+        assert_eq!(processor.command.alignment.align_state, 0);
+        assert!(matches!(
+            processor
+                .get_next()
+                .expect("delimiter replays")
+                .expect("backup is live")
+                .meaning(),
+            Meaning::ExpandablePrimitive(ExpandablePrimitive::EndTemplate)
+        ));
+    }
+
+    #[test]
+    fn alignment_delimiter_waits_for_literal_brace_depth() {
+        let mut command = CommandState::default();
+        let alignment = crate::AlignmentIdentity::new(29);
+        command.begin_alignment(alignment);
+        command
+            .begin_alignment_cell(
+                alignment,
+                crate::AlignmentCellTemplates {
+                    u_template: 31,
+                    v_template: 37,
+                },
+            )
+            .expect("cell begins");
+        command.push_token_level(
+            TokenPayload::Transient(SharedTokenBuffer::new(vec![
+                TracedTokenWord::pack(
+                    Token::Char {
+                        ch: '{',
+                        cat: Catcode::BeginGroup,
+                    },
+                    OriginId::UNKNOWN,
+                ),
+                TracedTokenWord::pack(
+                    Token::Char {
+                        ch: '&',
+                        cat: Catcode::AlignmentTab,
+                    },
+                    OriginId::UNKNOWN,
+                ),
+                TracedTokenWord::pack(
+                    Token::Char {
+                        ch: '}',
+                        cat: Catcode::EndGroup,
+                    },
+                    OriginId::UNKNOWN,
+                ),
+                TracedTokenWord::pack(
+                    Token::Char {
+                        ch: '&',
+                        cat: Catcode::AlignmentTab,
+                    },
+                    OriginId::UNKNOWN,
+                ),
+            ])),
+            TokenBehavior::Ordinary,
+            RetirementBehavior::Pop,
+            ReplayTrace::BackedUp,
+        );
+        let mut runtime = CommandRuntime::default();
+        let mut universe = Universe::new();
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+
+        processor.get_next().expect("opening brace delivers");
+        let nested_tab = processor
+            .get_next()
+            .expect("nested tab delivers")
+            .expect("input is live");
+        assert!(matches!(
+            nested_tab.meaning(),
+            Meaning::CharToken {
+                cat: Catcode::AlignmentTab,
+                ..
+            }
+        ));
+        processor.get_next().expect("closing brace delivers");
+        assert!(matches!(
+            processor
+                .get_next()
+                .expect("top-level tab delivers")
+                .expect("input is live")
+                .meaning(),
+            Meaning::ExpandablePrimitive(ExpandablePrimitive::EndTemplate)
+        ));
     }
 
     #[test]

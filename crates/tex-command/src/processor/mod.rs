@@ -9,9 +9,10 @@ use tex_state::CommandContext;
 
 use crate::{CommandHostContext, CommandRuntime, CommandState, DeliveryStamp};
 
-pub(crate) use alignment::AlignmentDeliveryState;
 #[cfg(test)]
 pub(crate) use alignment::{ActiveCellDelivery, SuspendedAlignment};
+pub use alignment::{AlignmentCellTemplates, AlignmentIdentity, AlignmentLifecycleError};
+pub(crate) use alignment::{AlignmentDeliveryAdjustment, AlignmentDeliveryState};
 pub(crate) use expand::ExpansionState;
 #[cfg(test)]
 pub(crate) use status::{

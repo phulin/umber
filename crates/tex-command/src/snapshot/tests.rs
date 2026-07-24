@@ -5,9 +5,9 @@ use crate::conditionals::{ConditionFrame, ConditionalKind, IfLimit};
 use crate::input::SharedTokenBuffer;
 use crate::macro_call::{MacroActivation, MacroActivationId, MacroArgumentRange, MacroArguments};
 use crate::processor::{
-    AbsorbingContext, ActiveCellDelivery, AlignmentId, AlignmentScanContext, ArgumentBuilderId,
-    ConditionId, DefinitionContext, MatchingContext, ScannerStatus, ScannerWarning,
-    SkippingContext, SuspendedAlignment, TokenBuilderId,
+    AbsorbingContext, ActiveCellDelivery, AlignmentCellTemplates, AlignmentId, AlignmentIdentity,
+    AlignmentScanContext, ArgumentBuilderId, ConditionId, DefinitionContext, MatchingContext,
+    ScannerStatus, ScannerWarning, SkippingContext, SuspendedAlignment, TokenBuilderId,
 };
 use crate::profile::{CommandProfile, CommandProfileBoundary, CommandProfileFingerprint};
 use crate::state::LiveTokenBuilder;
@@ -93,9 +93,11 @@ fn snapshot_roundtrip_preserves_nonquiescent_semantic_state() {
         state.transient.rollback_roots.push(89);
         state.transient.active_expansion_depth = 2;
         state.alignment.active_cell = Some(ActiveCellDelivery {
-            alignment: 97,
-            u_template: 101,
-            v_template: 103,
+            alignment: AlignmentIdentity::new(97),
+            templates: AlignmentCellTemplates {
+                u_template: 101,
+                v_template: 103,
+            },
         });
         (state.clone(), state.snapshot())
     });
@@ -195,9 +197,11 @@ fn summary_rejects_expansion_alignment_and_live_transients() {
     assert_rejected(
         |state| {
             state.alignment.active_cell = Some(ActiveCellDelivery {
-                alignment: 1,
-                u_template: 2,
-                v_template: 3,
+                alignment: AlignmentIdentity::new(1),
+                templates: AlignmentCellTemplates {
+                    u_template: 2,
+                    v_template: 3,
+                },
             });
         },
         CommandSummaryError::AlignmentTemplateActive,
@@ -205,8 +209,9 @@ fn summary_rejects_expansion_alignment_and_live_transients() {
     assert_rejected(
         |state| {
             state.alignment.suspended.push(SuspendedAlignment {
-                alignment: 1,
+                alignment: AlignmentIdentity::new(1),
                 align_state: 2,
+                active_cell: None,
             });
         },
         CommandSummaryError::SuspendedAlignment,

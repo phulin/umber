@@ -10,9 +10,11 @@ pdfTeX retains TeX82's alignment scanner, macro argument, conditional,
 `scan_toks`, `off_save`, and `do_endv` rules; its extensions do not introduce
 a second alignment depth.
 
-Umber follows one invariant: the active `tex_lex::InputStack` alignment level
-owns the only `align_state`. It is the value produced by raw `get_next`
-delivery, not semantic group depth. A physical catcode-1 token adds one and a
+Umber follows one invariant: `tex_command::AlignmentDeliveryState` owns the
+only `align_state`, beside the one raw `get_next` loop. It is the value
+produced by raw delivery, not semantic group depth. The executor may request
+alignment lifecycle transitions but cannot classify an already delivered token.
+A physical catcode-1 token adds one and a
 physical catcode-2 token subtracts one. Control-sequence aliases such as
 `\bgroup` and `\egroup` can open or close execution groups but do not affect
 `align_state`. A top-level tab, `\span`, or `\cr` starts the v-template exactly
@@ -34,15 +36,15 @@ the complete outer `InputStack` alignment level, matching `push_alignment` and
 
 | Canonical operation                          | State transition                                                                                                       | Umber owner                                                                                                |
 | -------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
-| `init_align` / `push_alignment`              | save outer level; install `-1000000`                                                                                   | `tex_exec::align::execute_alignment`, `InputStack::suspend_alignment_cell`, `begin_alignment`              |
+| `init_align` / `push_alignment`              | save outer delivery state; install `-1000000`                                                                          | `tex_exec` request, `CommandState::begin_alignment` / `suspend_alignment`                                  |
 | preamble restart                             | assign `-1000000`                                                                                                      | `tex_exec::align::preamble`, `AlignmentScannerPhase::Preamble`                                             |
-| physical or replayed brace in `get_next`     | `{`: `+1`; `}`: `-1`                                                                                                   | `tex_expand::classify_alignment_token`, `InputStack::intercept_alignment_token`                            |
-| control-sequence brace alias                 | no depth change                                                                                                        | `tex_expand::classify_alignment_token`                                                                     |
+| physical or replayed brace in `get_next`     | `{`: `+1`; `}`: `-1`                                                                                                   | `tex_command::CommandProcessor::get_next`                                                                  |
+| control-sequence brace alias                 | no depth change                                                                                                        | `tex_command::CommandProcessor::get_next`                                                                  |
 | exhausted u-template                         | if state is above 500000, assign `0`; otherwise interwoven-preamble failure                                            | `InputStack::intercept_alignment_token` and its exact replay marker                                        |
-| top-level tab, `\span`, or `\cr`             | retain terminator, push v-template, assign `1000000`                                                                   | `InputStack::intercept_alignment_token`                                                                    |
+| top-level tab, `\span`, or `\cr`             | convert to frozen end-template delivery and assign `1000000`                                                           | `tex_command::CommandProcessor::get_next`                                                                  |
 | `\omit` cell                                 | begin directly at `0`                                                                                                  | `InputStack::begin_alignment_cell`                                                                         |
 | `align_peek` and `fin_col` restart           | assign `1000000` before lookahead/u-template                                                                           | `tex_exec::align::execution`, `AlignmentScannerPhase::BetweenEntries`                                      |
-| `back_input` / `back_error`                  | undo the delivered brace adjustment before replay                                                                      | `tex_expand::back_input`, `InputStack::undo_alignment_delivery`                                            |
+| `back_input` / `back_error`                  | undo the recorded delivery adjustment before replay                                                                    | `tex_command::CommandProcessor::back_input`                                                                |
 | macro delimiter ending in `#{`               | cancel the duplicate opening-brace adjustment                                                                          | `tex_expand::args`                                                                                         |
 | macro extra `}` recovery                     | undo backup accounting, then let inserted recovery input account normally                                              | `tex_expand::args`, `InputStack::back_input_alignment_token`                                               |
 | aborted macro argument with unmatched groups | remove its accumulated imbalance                                                                                       | `tex_expand::args` argument-level correction                                                               |
@@ -53,7 +55,7 @@ the complete outer `InputStack` alignment level, matching `push_alignment` and
 | box-body closer after alignment work         | package only on the delivered closer for the active box save-stack group; alignment depth remains token-delivery state | `tex_exec::assignments::boxes::packaging::scan_box_group`, `InputStack`                                    |
 | `pass_text` conditional skipping             | discarded tokens still pass through `get_next`; their braces change depth                                              | `tex_expand::conditionals::skip_until`, `next_semantic_raw_token`                                          |
 | `\ifx` operands                              | unexpanded operands still use `get_next` brace accounting                                                              | `tex_expand::conditionals::scan_ifx_operand`                                                               |
-| nested alignment / `pop_alignment`           | restore the exact outer alignment level                                                                                | `InputStack::{suspend_alignment_cell,resume_alignment_cell}`                                               |
+| nested alignment / `pop_alignment`           | restore the exact outer state, active identity, and cell templates                                                     | `CommandState::{suspend_alignment,resume_alignment}`                                                       |
 | `do_endv`                                    | accept only an exhausted active v-template (or its exact driver-carried marker)                                        | `tex_exec::align::execution`, `InputStack::has_exhausted_alignment_v_template`                             |
 | successful `do_endv`                         | retire the exact v-template frame before an alias can escape                                                           | `InputStack::{finish_alignment_cell,retire_alignment_v_template}`                                          |
 | `off_save` above bottom level                | back up end-v/delimiter with accounting undone; insert the closer for the actual execution group                       | `tex_exec::assignments::off_save_alignment`                                                                |

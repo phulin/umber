@@ -28,7 +28,9 @@ pub use input::{
     SourceRegistration, SourceRegistrationError, SourceScalarRange, SourceToken,
     SourceTokenizationStep,
 };
-pub use processor::CommandProcessor;
+pub use processor::{
+    AlignmentCellTemplates, AlignmentIdentity, AlignmentLifecycleError, CommandProcessor,
+};
 pub use profile::{
     CharacterCode, CharacterCodeError, CharacterMode, CommandCapabilities, CommandDialect,
     CommandProfile, CommandProfileBoundary, CommandProfileEncodingError, CommandProfileFingerprint,

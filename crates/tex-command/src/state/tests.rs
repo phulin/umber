@@ -8,6 +8,7 @@ use crate::conditionals::ConditionStack;
 use crate::input::InputState;
 use crate::macro_call::ParameterState;
 use crate::processor::{AlignmentDeliveryState, ExpansionState, ScannerState};
+use crate::{AlignmentCellTemplates, AlignmentIdentity, AlignmentLifecycleError};
 
 fn semantic_hash(state: &CommandState) -> u64 {
     let mut hasher = DefaultHasher::new();
@@ -87,6 +88,7 @@ fn semantic_ownership_domains_are_exhaustively_classified() {
     } = conditions;
     let AlignmentDeliveryState {
         align_state,
+        active_alignment,
         suspended,
         active_cell,
     } = alignment;
@@ -116,6 +118,7 @@ fn semantic_ownership_domains_are_exhaustively_classified() {
         frames,
         next_identity,
         align_state,
+        active_alignment,
         suspended,
         active_cell,
         cumulative_expansions,
@@ -145,4 +148,51 @@ fn default_state_is_quiescent() {
     assert!(state.expansion.pending_diagnostics.is_empty());
     assert!(state.transient.builders.is_empty());
     assert_eq!(state.transient.active_expansion_depth, 0);
+}
+
+#[test]
+fn nested_alignment_suspension_restores_the_outer_cell_identity_and_templates() {
+    let mut state = CommandState::default();
+    let outer = AlignmentIdentity::new(41);
+    let inner = AlignmentIdentity::new(43);
+    let outer_templates = AlignmentCellTemplates {
+        u_template: 47,
+        v_template: 53,
+    };
+
+    state.begin_alignment(outer);
+    state
+        .begin_alignment_cell(outer, outer_templates)
+        .expect("outer cell begins");
+    state.suspend_alignment(outer).expect("outer cell suspends");
+    assert_eq!(
+        state.resume_alignment(inner),
+        Err(AlignmentLifecycleError::WrongAlignment)
+    );
+
+    state.begin_alignment(inner);
+    state
+        .begin_alignment_cell(
+            inner,
+            AlignmentCellTemplates {
+                u_template: 59,
+                v_template: 61,
+            },
+        )
+        .expect("inner cell begins");
+    state
+        .finish_alignment_cell(inner)
+        .expect("inner cell retires");
+    state
+        .finish_alignment(inner)
+        .expect("inner alignment finishes");
+    state
+        .resume_alignment(outer)
+        .expect("outer alignment resumes");
+    assert_eq!(
+        state
+            .finish_alignment_cell(outer)
+            .expect("outer cell identity restores"),
+        outer_templates
+    );
 }

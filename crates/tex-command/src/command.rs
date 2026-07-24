@@ -18,6 +18,7 @@ pub struct CurrentCommand {
     meaning: Meaning,
     control_sequence: Option<Symbol>,
     delivery: DeliveryStamp,
+    alignment_adjustment: crate::processor::AlignmentDeliveryAdjustment,
 }
 
 impl CurrentCommand {
@@ -62,6 +63,7 @@ impl CurrentCommand {
             meaning,
             control_sequence,
             delivery,
+            alignment_adjustment: crate::processor::AlignmentDeliveryAdjustment::None,
         }
     }
 
@@ -86,6 +88,27 @@ impl CurrentCommand {
             cat: Catcode::Space,
         };
         self.control_sequence = None;
+    }
+
+    /// Replaces an intercepted alignment terminator's effective meaning while
+    /// preserving its spelling and delivery proof (TeX.web `get_next`).
+    pub(crate) fn convert_to_end_template(&mut self) {
+        self.meaning =
+            Meaning::ExpandablePrimitive(tex_state::meaning::ExpandablePrimitive::EndTemplate);
+        self.control_sequence = None;
+    }
+
+    pub(crate) fn set_alignment_adjustment(
+        &mut self,
+        adjustment: crate::processor::AlignmentDeliveryAdjustment,
+    ) {
+        self.alignment_adjustment = adjustment;
+    }
+
+    pub(crate) const fn alignment_adjustment(
+        &self,
+    ) -> crate::processor::AlignmentDeliveryAdjustment {
+        self.alignment_adjustment
     }
 
     /// Whether this delivery is an outer macro command.
@@ -135,6 +158,7 @@ impl CurrentCommand {
             meaning: self.meaning,
             control_sequence: self.control_sequence,
             delivery: self.delivery,
+            alignment_adjustment: self.alignment_adjustment,
         }
     }
 }
