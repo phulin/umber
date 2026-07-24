@@ -19,7 +19,7 @@ use tex_state::glue::GlueSpec;
 use tex_state::interner::Symbol;
 use tex_state::macro_store::{MacroDefinitionProvenance, MacroMeaning};
 use tex_state::meaning::{Meaning, MeaningFlags, UnexpandablePrimitive};
-use tex_state::node::Node;
+use tex_state::node::{GlueKind, Node};
 use tex_state::scaled::Scaled;
 use tex_state::token::Catcode;
 #[cfg(any(test, feature = "instrumentation"))]
@@ -441,6 +441,9 @@ enum ScannedStep {
         value: GlueSpec,
         global: bool,
     },
+    HorizontalSkip {
+        value: GlueSpec,
+    },
     Toks {
         index: u16,
         tokens: TracedTokenList,
@@ -840,6 +843,14 @@ fn scan_command(
                 value,
                 global,
             })
+        }
+        // TeX82 §458 leaves `scan_glue` entirely in the command machine.
+        // Main control receives only its completed typed specification, so a
+        // u-template's numeric operand retains the canonical `back_input`
+        // and replay sequence before this layer appends the glue node.
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::HSkip) => {
+            let value = processor.scan_glue(false).map_err(command_error)?.value;
+            Ok(ScannedStep::HorizontalSkip { value })
         }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Toks) => {
             let assignment = processor
@@ -1446,6 +1457,14 @@ fn apply_scanned_step(
             } else {
                 stores.set_skip(index, value);
             }
+            Ok(ReplayStep::Continue)
+        }
+        ScannedStep::HorizontalSkip { value } => {
+            modes.current_list_mut().push(Node::Glue {
+                spec: stores.intern_glue(value),
+                kind: GlueKind::Normal,
+                leader: None,
+            });
             Ok(ReplayStep::Continue)
         }
         ScannedStep::Toks {

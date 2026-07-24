@@ -625,18 +625,46 @@ fn periodic_preamble_replays_its_u_template_before_retirement() {
         control
             .step_with_observer(&mut universe, &mut observations)
             .expect("periodic preamble replay");
-        if observations.0.windows(3).any(|events| {
+        if observations.0.windows(6).any(|events| {
             matches!(
                 events,
                 [
                     CommandObservation::Input(push),
                     CommandObservation::Alignment(template_push),
-                    CommandObservation::Command(command),
+                    CommandObservation::Command(raw_hskip),
+                    CommandObservation::Command(expanded_hskip),
+                    CommandObservation::Command(raw_numeric),
+                    CommandObservation::Command(expanded_numeric),
                 ] if push.transition == InputTransition::Push
                     && push.reason == InputReason::AlignmentUTemplate
                     && template_push.transition == "u_template_push"
-                    && command.boundary == CommandDeliveryBoundary::Raw
-                    && command.command == "hskip"
+                    && raw_hskip.boundary == CommandDeliveryBoundary::Raw
+                    && raw_hskip.command == "hskip"
+                    && expanded_hskip.boundary == CommandDeliveryBoundary::Expanded
+                    && expanded_hskip.command == "hskip"
+                    && matches!(raw_numeric.spelling, ObservedToken::Character { character: '1', .. })
+                    && matches!(expanded_numeric.spelling, ObservedToken::Character { character: '1', .. })
+            )
+        }) && observations.0.windows(6).any(|events| {
+            matches!(
+                events,
+                [
+                    CommandObservation::Command(raw_hskip),
+                    CommandObservation::Command(expanded_hskip),
+                    CommandObservation::Command(raw_numeric),
+                    CommandObservation::Command(expanded_numeric),
+                    CommandObservation::Input(backup),
+                    CommandObservation::Recovery(recovery),
+                ] if raw_hskip.boundary == CommandDeliveryBoundary::Raw
+                    && raw_hskip.command == "hskip"
+                    && expanded_hskip.boundary == CommandDeliveryBoundary::Expanded
+                    && expanded_hskip.command == "hskip"
+                    && matches!(raw_numeric.spelling, ObservedToken::Character { character: '1', .. })
+                    && matches!(expanded_numeric.spelling, ObservedToken::Character { character: '1', .. })
+                    && backup.transition == InputTransition::Backup
+                    && backup.reason == InputReason::Backup
+                    && recovery.backup
+                    && matches!(recovery.tokens.as_slice(), [ObservedToken::Character { character: '1', .. }])
             )
         }) {
             return;

@@ -143,7 +143,11 @@ to the executor. This follows TeX82 `get_next`/`get_x_token` (§§24--25),
 `init_col`/`fin_col`/`do_endv` template lifecycle (§§765--772). During the
 raw preamble scan, TeX82 §760's `&&` records the start of a periodic suffix;
 the second tab is not an empty column, and §772 selects that frozen suffix
-when an exhausted preamble is extended. An ordinary
+when an exhausted preamble is extended. When that selected u-template begins
+with `\hskip`, TeX82's `scan_glue` (§458) probes and backs up its first
+numeric token before `scan_dimen` (§455) replays it. The command processor
+returns the completed `GlueSpec` only after that backup lifecycle; replay
+then appends the typed glue node and never reads the operand itself. An ordinary
 empty u-template follows that same `begin_token_list`/`end_token_list`
 lifecycle: TeX82 §37 selects the non-omit branch, §760 preserves the empty
 preamble prefix, §765 installs it, and §772 resumes after the matching
