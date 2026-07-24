@@ -1191,6 +1191,57 @@ mod tests {
     }
 
     #[test]
+    fn observer_preserves_hskip_skip_code_at_raw_and_expanded_boundaries() {
+        let mut command = CommandState::default();
+        let source = command
+            .register_source(SourceRegistration::new(
+                RegisteredSourceKind::Generated,
+                Arc::<[u8]>::from(br"\hskip".as_slice()),
+            ))
+            .expect("source registers");
+        command
+            .open_registered_source(source)
+            .expect("source opens");
+        let mut runtime = CommandRuntime::default();
+        let mut universe = Universe::new();
+        universe.install_primitive_meaning(
+            "hskip",
+            Meaning::UnexpandablePrimitive(UnexpandablePrimitive::HSkip),
+        );
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut recorder = Recorder::default();
+        {
+            let mut processor =
+                processor(&mut command, &mut runtime, &mut universe, &mut capabilities)
+                    .with_observer(&mut recorder);
+            processor
+                .get_x_token()
+                .expect("hskip delivers")
+                .expect("input remains live");
+        }
+
+        let deliveries = recorder
+            .0
+            .iter()
+            .filter_map(|record| match record {
+                CommandObservation::Command(command) => Some(command),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert!(matches!(
+            deliveries.as_slice(),
+            [raw, expanded]
+                if raw.boundary == CommandDeliveryBoundary::Raw
+                    && expanded.boundary == CommandDeliveryBoundary::Expanded
+                    && raw.spelling == crate::ObservedToken::ControlSequence("hskip".into())
+                    && raw.command == "hskip"
+                    && raw.command_operand == Some(4)
+                    && expanded.command == raw.command
+                    && expanded.command_operand == raw.command_operand
+        ));
+    }
+
+    #[test]
     fn observer_projects_row_returns_as_car_ret_at_raw_and_expanded_boundaries() {
         for (name, source_bytes, primitive, operand) in [
             ("cr", br"\cr".as_slice(), UnexpandablePrimitive::Cr, 257),

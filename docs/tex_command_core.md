@@ -783,10 +783,12 @@ translates TeX82 conditional primitives from their Rust meaning variants to
 the shared `if_test` command identity and canonical `cur_chr` operand (for
 example, `\iftrue` is operand 14), and maps the raw delimiters `\fi`,
 `\else`, and `\or` to `fi_or_else` with operands 2, 3, and 4 respectively.
-It likewise projects horizontal glue shorthands such as `\hfil`, `\hfill`,
-`\hss`, and `\hfilneg` as `hskip` with `cur_chr = 0` (and the vertical family
-as `vskip` with `cur_chr = 0`), preserving TeX82 command identity without
-leaking the executor's shorthand representation.
+It likewise projects the horizontal glue family as `hskip` and the vertical
+family as `vskip`, preserving TeX82's `cur_chr` selector rather than leaking
+the executor's shorthand representation: `\hfil`/`\vfil` are 0,
+`\hfill`/`\vfill` are 1, `\hss`/`\vss` are 2,
+`\hfilneg`/`\vfilneg` are 3, and `\hskip`/`\vskip` are 4. This follows
+TeX82 §15's command-code definitions and §18's primitive initialization.
 This metadata does not participate in conditional evaluation or condition-stack
 state. Its `spelling` retains the traced token,
 and `origin` is exposed directly from that spelling; provenance never affects
