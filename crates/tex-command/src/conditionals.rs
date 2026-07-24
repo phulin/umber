@@ -290,17 +290,35 @@ impl CommandProcessor<'_> {
             // macro meanings are compared as raw operands rather than expanded.
             ConditionalKind::IfX => self.evaluate_ifx(),
             ConditionalKind::IfNum => self.evaluate_numeric_comparison(),
-            ConditionalKind::IfDim => self.evaluate_numeric_comparison(),
+            ConditionalKind::IfDim => self.evaluate_dimension_comparison(),
             ConditionalKind::IfOdd => Ok(self.scan_decimal_integer()? & 1 != 0),
-            // Executor-owned mode and box state is not installed yet. A fresh
-            // command episode has TeX's outer vertical-mode default.
-            ConditionalKind::IfVMode => Ok(true),
-            ConditionalKind::IfHMode | ConditionalKind::IfMMode | ConditionalKind::IfInner => {
-                Ok(false)
-            }
+            ConditionalKind::IfVMode => Ok(matches!(
+                self.host.conditional_state().mode(),
+                crate::ConditionalMode::Vertical
+            )),
+            ConditionalKind::IfHMode => Ok(matches!(
+                self.host.conditional_state().mode(),
+                crate::ConditionalMode::Horizontal
+            )),
+            ConditionalKind::IfMMode => Ok(matches!(
+                self.host.conditional_state().mode(),
+                crate::ConditionalMode::Math
+            )),
+            ConditionalKind::IfInner => Ok(self.host.conditional_state().is_inner()),
             ConditionalKind::IfVoid | ConditionalKind::IfHBox | ConditionalKind::IfVBox => {
-                let _ = self.scan_decimal_integer()?;
-                Ok(matches!(kind, ConditionalKind::IfVoid))
+                let index = self.scan_decimal_integer()?;
+                let index = u16::try_from(index).map_err(|_| CommandError::InputInvariant)?;
+                let box_kind = self.state.box_kind(index);
+                Ok(match kind {
+                    ConditionalKind::IfVoid => box_kind.is_none(),
+                    ConditionalKind::IfHBox => {
+                        box_kind == Some(tex_state::CommandBoxKind::Horizontal)
+                    }
+                    ConditionalKind::IfVBox => {
+                        box_kind == Some(tex_state::CommandBoxKind::Vertical)
+                    }
+                    _ => unreachable!(),
+                })
             }
             ConditionalKind::IfEof
             | ConditionalKind::IfDefined
@@ -346,6 +364,18 @@ impl CommandProcessor<'_> {
         let left = self.scan_decimal_integer()?;
         let relation = self.get_x_token()?.ok_or(CommandError::InputInvariant)?;
         let right = self.scan_decimal_integer()?;
+        match relation.meaning() {
+            Meaning::CharToken { ch: '<', .. } => Ok(left < right),
+            Meaning::CharToken { ch: '=', .. } => Ok(left == right),
+            Meaning::CharToken { ch: '>', .. } => Ok(left > right),
+            _ => Err(CommandError::InputInvariant),
+        }
+    }
+
+    fn evaluate_dimension_comparison(&mut self) -> Result<bool, CommandError> {
+        let left = self.scan_dimension()?;
+        let relation = self.get_x_token()?.ok_or(CommandError::InputInvariant)?;
+        let right = self.scan_dimension()?;
         match relation.meaning() {
             Meaning::CharToken { ch: '<', .. } => Ok(left < right),
             Meaning::CharToken { ch: '=', .. } => Ok(left == right),

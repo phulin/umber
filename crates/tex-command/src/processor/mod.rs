@@ -34,7 +34,7 @@ pub struct CommandProcessor<'a> {
     pub(crate) command: &'a mut CommandState,
     runtime: &'a mut CommandRuntime,
     pub(crate) state: CommandContext<'a>,
-    host: CommandHostContext<'a>,
+    pub(crate) host: CommandHostContext<'a>,
     observer: Option<&'a mut dyn CommandObserver>,
     /// Only the immediately preceding raw delivery may be backed up. This is
     /// processor-local so stamps cannot survive a snapshot or a new episode.

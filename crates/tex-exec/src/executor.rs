@@ -1561,6 +1561,18 @@ impl Executor {
         &mut self.nest
     }
 
+    /// Refreshes command-core capabilities from the executor-owned mode nest.
+    ///
+    /// Callers create this borrow-scoped capability immediately before a
+    /// command processor operation; no mode fact is retained in command
+    /// snapshots or formats.
+    pub fn install_command_capabilities(
+        &self,
+        capabilities: &mut tex_command::CommandHostCapabilities,
+    ) {
+        capabilities.set_conditional_state(self.nest.conditional_state());
+    }
+
     /// Runs main control until the gullet has no more delivered tokens.
     pub fn run(
         &mut self,

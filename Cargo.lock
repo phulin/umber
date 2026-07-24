@@ -1174,6 +1174,7 @@ dependencies = [
  "ahash",
  "smallvec",
  "test-support",
+ "tex-command",
  "tex-expand",
  "tex-fonts",
  "tex-lex",

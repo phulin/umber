@@ -6,7 +6,10 @@ use super::*;
 use crate::input::{
     ReplayTrace, RetirementBehavior, SharedTokenBuffer, TokenBehavior, TokenPayload,
 };
-use crate::{CommandHostCapabilities, CommandHostContext, CommandRuntime, CommandState};
+use crate::{
+    CommandHostCapabilities, CommandHostContext, CommandRuntime, CommandState, ConditionalMode,
+    ConditionalState,
+};
 
 fn processor<'a>(
     command: &'a mut CommandState,
@@ -156,6 +159,34 @@ fn next_character(processor: &mut CommandProcessor<'_>) -> char {
     }
 }
 
+fn chars(text: &str) -> Vec<Token> {
+    text.chars().map(other).collect()
+}
+
+fn boxed(universe: &mut Universe, vertical: bool) -> tex_state::ids::NodeListId {
+    use tex_state::glue::Order;
+    use tex_state::node::{BoxNode, BoxNodeFields, Node, Sign};
+    use tex_state::scaled::{GlueSetRatio, Scaled};
+
+    let children = universe.freeze_node_list(&[]);
+    let node = BoxNode::new(BoxNodeFields {
+        width: Scaled::from_raw(0),
+        height: Scaled::from_raw(0),
+        depth: Scaled::from_raw(0),
+        shift: Scaled::from_raw(0),
+        display: false,
+        glue_set: GlueSetRatio::ZERO,
+        glue_sign: Sign::Normal,
+        glue_order: Order::Normal,
+        children,
+    });
+    universe.freeze_node_list(&[if vertical {
+        Node::VList(node)
+    } else {
+        Node::HList(node)
+    }])
+}
+
 #[test]
 fn boolean_condition_skips_false_limb_and_else_skips_true_remainder() {
     let mut command = CommandState::default();
@@ -267,4 +298,97 @@ fn numeric_and_ifcase_selection_use_the_same_skip_machine() {
             .expect("ifcase else is skipped")
             .is_none()
     );
+}
+
+#[test]
+fn ifdim_uses_typed_units_and_internal_dimensions() {
+    let mut command = CommandState::default();
+    let mut runtime = CommandRuntime::default();
+    let mut universe = Universe::new();
+    let ifdim = install(&mut universe, "ifdim", ExpandablePrimitive::IfDim);
+    let otherwise = install(&mut universe, "else", ExpandablePrimitive::Else);
+    let fi = install(&mut universe, "fi", ExpandablePrimitive::Fi);
+    let measured = universe.intern("measured").symbol();
+    universe.set_meaning(measured, Meaning::DimenRegister(7));
+    universe.set_dimen(
+        7,
+        tex_state::scaled::Scaled::from_raw(2 * tex_state::scaled::Scaled::UNITY),
+    );
+    let mut tokens = vec![ifdim];
+    tokens.extend(chars("1in>72pt"));
+    tokens.extend([
+        other('y'),
+        otherwise,
+        other('n'),
+        fi,
+        ifdim,
+        Token::Cs(measured),
+    ]);
+    tokens.extend(chars("=2pt"));
+    tokens.extend([other('i'), otherwise, other('n'), fi]);
+    push(&mut command, tokens);
+    let mut capabilities = CommandHostCapabilities::default();
+    let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+
+    assert_eq!(next_character(&mut processor), 'y');
+    assert_eq!(next_character(&mut processor), 'i');
+}
+
+#[test]
+fn mode_and_box_predicates_use_host_and_aggregate_queries() {
+    let mut command = CommandState::default();
+    let mut runtime = CommandRuntime::default();
+    let mut universe = Universe::new();
+    let if_hmode = install(&mut universe, "ifhmode", ExpandablePrimitive::IfHMode);
+    let if_inner = install(&mut universe, "ifinner", ExpandablePrimitive::IfInner);
+    let if_void = install(&mut universe, "ifvoid", ExpandablePrimitive::IfVoid);
+    let if_hbox = install(&mut universe, "ifhbox", ExpandablePrimitive::IfHBox);
+    let if_vbox = install(&mut universe, "ifvbox", ExpandablePrimitive::IfVBox);
+    let otherwise = install(&mut universe, "else", ExpandablePrimitive::Else);
+    let fi = install(&mut universe, "fi", ExpandablePrimitive::Fi);
+    let hbox = boxed(&mut universe, false);
+    let vbox = boxed(&mut universe, true);
+    universe.set_box_reg(1, hbox);
+    universe.set_box_reg(2, vbox);
+    push(
+        &mut command,
+        vec![
+            if_hmode,
+            other('h'),
+            otherwise,
+            other('x'),
+            fi,
+            if_inner,
+            other('i'),
+            otherwise,
+            other('x'),
+            fi,
+            if_void,
+            other('0'),
+            other('v'),
+            otherwise,
+            other('x'),
+            fi,
+            if_hbox,
+            other('1'),
+            other('h'),
+            otherwise,
+            other('x'),
+            fi,
+            if_vbox,
+            other('2'),
+            other('b'),
+            otherwise,
+            other('x'),
+            fi,
+        ],
+    );
+    let mut capabilities = CommandHostCapabilities::default();
+    capabilities.set_conditional_state(ConditionalState::new(ConditionalMode::Horizontal, true));
+    let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+
+    for expected in ['h', 'i', 'v', 'h', 'b'] {
+        assert_eq!(next_character(&mut processor), expected);
+    }
+    assert!(processor.get_x_token().expect("final fi expands").is_none());
 }

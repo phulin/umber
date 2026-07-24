@@ -92,6 +92,19 @@ impl Mode {
     }
 }
 
+impl ModeNest {
+    /// Projects the live executor-owned mode nest for command conditionals.
+    #[must_use]
+    pub fn conditional_state(&self) -> tex_command::ConditionalState {
+        let mode = match self.current_mode().engine_mode() {
+            EngineMode::Vertical => tex_command::ConditionalMode::Vertical,
+            EngineMode::Horizontal => tex_command::ConditionalMode::Horizontal,
+            EngineMode::Math => tex_command::ConditionalMode::Math,
+        };
+        tex_command::ConditionalState::new(mode, self.current_mode().is_inner())
+    }
+}
+
 /// The list-under-construction owned by one mode level.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct ModeList {

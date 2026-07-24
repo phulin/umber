@@ -1160,6 +1160,15 @@ typed scanner boundary; execution-mode and box predicates consult the
 executor-owned mode nest and aggregate box state when those boundaries are
 active.
 
+The command host installs an ephemeral `ConditionalState` projection for each
+executor operation. It contains only the three-way mode family and the
+`\ifinner` fact, so it is neither part of `CommandState` nor captured by a
+command snapshot. `tex-exec::ModeNest` is the sole producer of this projection.
+The typed dimension scanner reads registers, parameters, and page dimensions
+through `CommandContext`; box predicates use one aggregate box-kind query.
+Condition frames therefore remain independent of input levels, executor mode
+ownership, and node-store representation.
+
 Frozen relax and frozen fi recovery use inaccessible primitive identities
 rather than live re-definable control sequences.
 

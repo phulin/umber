@@ -6,6 +6,39 @@ use tex_state::node::Node;
 use tex_state::scaled::Scaled;
 
 #[test]
+fn mode_nest_projects_conditional_predicates_across_transitions() {
+    let mut nest = ModeNest::new();
+    assert_eq!(
+        nest.conditional_state().mode(),
+        tex_command::ConditionalMode::Vertical
+    );
+    assert!(!nest.conditional_state().is_inner());
+    nest.push(Mode::Horizontal);
+    assert_eq!(
+        nest.conditional_state().mode(),
+        tex_command::ConditionalMode::Horizontal
+    );
+    assert!(!nest.conditional_state().is_inner());
+    nest.push(Mode::Math);
+    assert_eq!(
+        nest.conditional_state().mode(),
+        tex_command::ConditionalMode::Math
+    );
+    assert!(nest.conditional_state().is_inner());
+    nest.pop().expect("leave math");
+    nest.push(Mode::InternalVertical);
+    assert_eq!(
+        nest.conditional_state().mode(),
+        tex_command::ConditionalMode::Vertical
+    );
+    assert!(nest.conditional_state().is_inner());
+
+    let executor = Executor::from_nest(nest.clone());
+    let mut capabilities = tex_command::CommandHostCapabilities::default();
+    executor.install_command_capabilities(&mut capabilities);
+}
+
+#[test]
 fn owned_execution_run_advances_through_explicit_phases() {
     let mut stores = Universe::new();
     let mut input = InputStack::new(MemoryInput::new(""));

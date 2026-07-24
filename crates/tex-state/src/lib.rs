@@ -97,7 +97,7 @@ pub use pdf::{
 };
 pub mod world;
 
-pub use command_context::CommandContext;
+pub use command_context::{CommandBoxKind, CommandContext};
 pub use dependency::{
     ChangedAt, DependencyBank, DependencyCodeTable, DependencyEngineField, DependencyFontField,
     DependencyKey, DependencyPageField, DependencyRegion, DependencyRuntime, DependencyTracker,

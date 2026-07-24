@@ -85,6 +85,36 @@ impl CommandContext<'_> {
         self.universe.count(index)
     }
 
+    /// Reads one dimension register through the aggregate state boundary.
+    #[must_use]
+    pub fn dimen(&self, index: u16) -> crate::scaled::Scaled {
+        self.universe.dimen(index)
+    }
+
+    /// Reads one dimension parameter through the aggregate state boundary.
+    #[must_use]
+    pub fn dimen_param(&self, index: u16) -> crate::scaled::Scaled {
+        self.universe
+            .dimen_param(crate::env::banks::DimenParam::new(index))
+    }
+
+    /// Reads one page dimension through the aggregate state boundary.
+    #[must_use]
+    pub fn page_dimension(&self, dimension: crate::page::PageDimension) -> crate::scaled::Scaled {
+        self.universe.page_dimension(dimension)
+    }
+
+    /// Classifies a box register without exposing node-store ownership.
+    #[must_use]
+    pub fn box_kind(&self, index: u16) -> Option<CommandBoxKind> {
+        let list = self.universe.box_reg(index)?;
+        match self.universe.nodes(list).first()? {
+            crate::node_arena::NodeRef::HList(_) => Some(CommandBoxKind::Horizontal),
+            crate::node_arena::NodeRef::VList(_) => Some(CommandBoxKind::Vertical),
+            _ => None,
+        }
+    }
+
     /// Reads one token register for direct `\\the` insertion.
     #[must_use]
     pub fn toks(&self, index: u16) -> TokenListId {
@@ -219,6 +249,13 @@ impl CommandContext<'_> {
     ) -> OriginId {
         self.universe.synthesized_origin(kind, parent)
     }
+}
+
+/// Aggregate classification used by the command conditional boundary.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum CommandBoxKind {
+    Horizontal,
+    Vertical,
 }
 
 impl Universe {
