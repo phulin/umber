@@ -99,6 +99,25 @@ fn canonical_initex_replay_scans_and_applies_integer_parameters() {
     ));
 }
 
+#[test]
+fn canonical_initex_replay_scans_and_applies_code_table_assignments() {
+    let mut universe = Universe::new();
+    let mut control = CommandReplayControl::tex82_initex(&mut universe);
+    register_source(&mut control, br"\catcode`@=11 \lccode`Z=`z \end");
+
+    assert_eq!(
+        control.step(&mut universe).expect("catcode assignment"),
+        ReplayStep::Continue
+    );
+    assert_eq!(universe.catcode('@'), tex_state::token::Catcode::Letter);
+    assert_eq!(
+        control.step(&mut universe).expect("lccode assignment"),
+        ReplayStep::Continue
+    );
+    assert_eq!(universe.lccode('Z'), u32::from('z'));
+    assert_eq!(control.step(&mut universe).expect("end"), ReplayStep::End);
+}
+
 #[derive(Default)]
 struct ObservationRecorder(Vec<CommandObservation>);
 

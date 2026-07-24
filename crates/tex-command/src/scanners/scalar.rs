@@ -215,6 +215,11 @@ impl CommandProcessor<'_> {
                 Meaning::CharToken { ch, .. } if ch.is_ascii_digit() => {
                     self.scan_decimal_tail(ch)?
                 }
+                // TeX's `\` character-code form consumes its following token
+                // through raw delivery: that token supplies a character code,
+                // rather than participating in ordinary expansion.  The
+                // optional following space remains an expanded scanner token.
+                Meaning::CharToken { ch: '`', .. } => self.scan_character_code()?,
                 _ => {
                     self.back_input(first)?;
                     return Ok(ScannedScalar {
@@ -364,6 +369,26 @@ impl CommandProcessor<'_> {
                     break;
                 }
             }
+        }
+        Ok(value)
+    }
+
+    fn scan_character_code(&mut self) -> Result<i32, CommandError> {
+        let Some(command) = self.get_next_character_code()? else {
+            return Ok(0);
+        };
+        let value = match command.meaning() {
+            Meaning::CharToken { ch, .. } => i32::try_from(u32::from(ch)).unwrap_or(0),
+            _ => {
+                self.back_input(command)?;
+                return Ok(0);
+            }
+        };
+        let Some(command) = self.get_x_token()? else {
+            return Ok(value);
+        };
+        if !matches!(command.meaning(), Meaning::CharToken { ch: ' ', .. }) {
+            self.back_input(command)?;
         }
         Ok(value)
     }

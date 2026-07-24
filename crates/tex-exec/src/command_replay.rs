@@ -261,6 +261,12 @@ enum ScannedStep {
         value: i32,
         global: bool,
     },
+    CodeTable {
+        primitive: UnexpandablePrimitive,
+        character: char,
+        value: i32,
+        global: bool,
+    },
     MacroDefinition {
         target: Symbol,
         flags: MeaningFlags,
@@ -340,12 +346,44 @@ fn scan_command(
             })
         }
         Meaning::UnexpandablePrimitive(
+            primitive @ (UnexpandablePrimitive::CatCode | UnexpandablePrimitive::LcCode),
+        ) => {
+            let character = processor.scan_integer().map_err(command_error)?.value;
+            let _ = processor.scan_optional_equals().map_err(command_error)?;
+            let value = processor.scan_integer().map_err(command_error)?.value;
+            let character = u32::try_from(character)
+                .ok()
+                .and_then(char::from_u32)
+                .ok_or(ExecError::InvalidCode {
+                    context: "code-table character",
+                    value: character,
+                })?;
+            #[cfg(any(test, feature = "instrumentation"))]
+            match primitive {
+                UnexpandablePrimitive::CatCode => processor.observe_typed_mutation(
+                    "catcode",
+                    format!("{}={}", u32::from(character), catcode_name(value)),
+                ),
+                UnexpandablePrimitive::LcCode => processor.observe_typed_mutation(
+                    "code_table",
+                    format!("lccode:{}={value}", u32::from(character)),
+                ),
+                _ => unreachable!("only code-table primitives are scanned"),
+            }
+            Ok(ScannedStep::CodeTable {
+                primitive,
+                character,
+                value,
+                global,
+            })
+        }
+        Meaning::UnexpandablePrimitive(
             primitive @ (UnexpandablePrimitive::Def
             | UnexpandablePrimitive::Edef
             | UnexpandablePrimitive::Gdef
             | UnexpandablePrimitive::Xdef),
         ) => {
-            let target = next_non_space(processor)?
+            let target = next_non_space_raw(processor)?
                 .and_then(|target| target.control_sequence())
                 .ok_or(ExecError::MissingControlSequence {
                     context: "macro definition",
@@ -397,6 +435,29 @@ fn scan_command(
     }
 }
 
+#[cfg(any(test, feature = "instrumentation"))]
+fn catcode_name(value: i32) -> &'static str {
+    match value {
+        0 => "escape",
+        1 => "left_brace",
+        2 => "right_brace",
+        3 => "math_shift",
+        4 => "tab_mark",
+        5 => "car_ret",
+        6 => "mac_param",
+        7 => "sup_mark",
+        8 => "sub_mark",
+        9 => "ignore",
+        10 => "spacer",
+        11 => "letter",
+        12 => "other_char",
+        13 => "active_char",
+        14 => "comment",
+        15 => "invalid_char",
+        _ => "invalid",
+    }
+}
+
 fn replay_text(tokens: &[tex_state::token::Token]) -> String {
     tokens
         .iter()
@@ -412,6 +473,25 @@ fn next_non_space(
 ) -> Result<Option<tex_command::CurrentCommand>, ExecError> {
     loop {
         let Some(command) = processor.get_x_token().map_err(command_error)? else {
+            return Ok(None);
+        };
+        if !matches!(
+            command.meaning(),
+            Meaning::CharToken {
+                cat: tex_state::token::Catcode::Space,
+                ..
+            }
+        ) {
+            return Ok(Some(command));
+        }
+    }
+}
+
+fn next_non_space_raw(
+    processor: &mut CommandProcessor<'_>,
+) -> Result<Option<tex_command::CurrentCommand>, ExecError> {
+    loop {
+        let Some(command) = processor.get_token().map_err(command_error)? else {
             return Ok(None);
         };
         if !matches!(
@@ -460,6 +540,59 @@ fn apply_scanned_step(
                 stores.set_int_param_global(parameter, value);
             } else {
                 stores.set_int_param(parameter, value);
+            }
+            Ok(ReplayStep::Continue)
+        }
+        ScannedStep::CodeTable {
+            primitive,
+            character,
+            value,
+            global,
+        } => {
+            match primitive {
+                UnexpandablePrimitive::CatCode => {
+                    let value = match value {
+                        0 => Catcode::Escape,
+                        1 => Catcode::BeginGroup,
+                        2 => Catcode::EndGroup,
+                        3 => Catcode::MathShift,
+                        4 => Catcode::AlignmentTab,
+                        5 => Catcode::EndLine,
+                        6 => Catcode::Parameter,
+                        7 => Catcode::Superscript,
+                        8 => Catcode::Subscript,
+                        9 => Catcode::Ignored,
+                        10 => Catcode::Space,
+                        11 => Catcode::Letter,
+                        12 => Catcode::Other,
+                        13 => Catcode::Active,
+                        14 => Catcode::Comment,
+                        15 => Catcode::Invalid,
+                        _ => {
+                            return Err(ExecError::InvalidCode {
+                                context: "\\catcode",
+                                value,
+                            });
+                        }
+                    };
+                    if global {
+                        stores.set_catcode_global(character, value);
+                    } else {
+                        stores.set_catcode(character, value);
+                    }
+                }
+                UnexpandablePrimitive::LcCode => {
+                    let value = u32::try_from(value).map_err(|_| ExecError::InvalidCode {
+                        context: "\\lccode",
+                        value,
+                    })?;
+                    if global {
+                        stores.set_lccode_global(character, value);
+                    } else {
+                        stores.set_lccode(character, value);
+                    }
+                }
+                _ => unreachable!("only code-table primitives are scanned"),
             }
             Ok(ReplayStep::Continue)
         }

@@ -8,6 +8,7 @@
 
 #![cfg(any(test, feature = "instrumentation"))]
 
+use tex_state::meaning::{Meaning, UnexpandablePrimitive};
 use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 
 use crate::{DeliveryStamp, SourceRange};
@@ -88,6 +89,54 @@ pub struct CommandDeliveryRecord {
     /// fixture-derived value. Character spellings retain their own operand.
     pub command_operand: Option<i64>,
     pub provenance: CommandProvenance,
+}
+
+/// Canonical TeX82 command identity for an already delivered meaning.
+///
+/// This is instrumentation-only metadata.  It is derived from the installed
+/// primitive registry, not from a fixture or host replay policy.
+pub(crate) fn canonical_command_identity(meaning: Meaning) -> (String, Option<i64>) {
+    match meaning {
+        Meaning::CharToken { .. } => ("character".into(), None),
+        Meaning::Macro { flags, .. } => (
+            if flags.contains(tex_state::meaning::MeaningFlags::LONG)
+                && flags.contains(tex_state::meaning::MeaningFlags::OUTER)
+            {
+                "long_outer_call"
+            } else if flags.contains(tex_state::meaning::MeaningFlags::LONG) {
+                "long_call"
+            } else if flags.contains(tex_state::meaning::MeaningFlags::OUTER) {
+                "outer_call"
+            } else {
+                "call"
+            }
+            .into(),
+            None,
+        ),
+        Meaning::ExpandablePrimitive(_) => ("expandable".into(), None),
+        Meaning::IntParam(index) => ("assign_int".into(), Some(27_167 + i64::from(index))),
+        Meaning::UnexpandablePrimitive(primitive) => match primitive {
+            UnexpandablePrimitive::Def
+            | UnexpandablePrimitive::Edef
+            | UnexpandablePrimitive::Gdef
+            | UnexpandablePrimitive::Xdef => ("def".into(), Some(primitive.operand() as i64)),
+            UnexpandablePrimitive::Long => ("prefix".into(), Some(1)),
+            UnexpandablePrimitive::Outer => ("prefix".into(), Some(2)),
+            UnexpandablePrimitive::Global => ("prefix".into(), Some(4)),
+            UnexpandablePrimitive::Count => ("register".into(), Some(0)),
+            UnexpandablePrimitive::Dimen => ("register".into(), Some(1)),
+            UnexpandablePrimitive::Skip => ("register".into(), Some(2)),
+            UnexpandablePrimitive::Toks => ("toks_register".into(), Some(3)),
+            UnexpandablePrimitive::CatCode => ("def_code".into(), Some(25_631)),
+            UnexpandablePrimitive::LcCode => ("def_code".into(), Some(25_887)),
+            UnexpandablePrimitive::HAlign => ("halign".into(), Some(0)),
+            UnexpandablePrimitive::Message => ("message".into(), Some(0)),
+            UnexpandablePrimitive::End => ("stop".into(), Some(0)),
+            _ => ("unexpandable".into(), None),
+        },
+        Meaning::Undefined => ("undefined_cs".into(), Some(-268_435_455)),
+        _ => ("internal".into(), None),
+    }
 }
 
 /// Logical input changes observable at the canonical raw-input seam.

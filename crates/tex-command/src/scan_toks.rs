@@ -64,8 +64,8 @@ impl CommandProcessor<'_> {
         let prior = self.command.begin_scanner_status(status);
         self.observe_scanner_status(true);
         let result = self.scan_toks_inner(mode);
-        self.command.restore_scanner_status(prior);
         self.observe_scanner_status(false);
+        self.command.restore_scanner_status(prior);
         let result = result?;
         #[cfg(any(test, feature = "instrumentation"))]
         self.observe(CommandObservation::TokenList(TokenListRecord {

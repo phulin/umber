@@ -547,16 +547,26 @@ fn command_location(
         byte = usize::try_from(range.end().checked_sub(1)?).ok()?;
     }
     let prefix = bytes.get(..byte)?;
+    let line_start = prefix
+        .iter()
+        .rposition(|byte| *byte == b'\n')
+        .map_or(0, |position| position + 1);
     Some(SourceLocation {
         source: source.into(),
         line: u32::try_from(prefix.iter().filter(|byte| **byte == b'\n').count() + 1).ok()?,
-        byte: u32::try_from(byte).ok()?,
+        byte: u32::try_from(byte.checked_sub(line_start)?).ok()?,
     })
 }
 
 fn canonical_command_name(record: &tex_command::CommandDeliveryRecord) -> String {
     match &record.spelling {
         ObservedToken::Character { catcode, .. } => match catcode {
+            Catcode::BeginGroup => "left_brace".into(),
+            Catcode::EndGroup => "right_brace".into(),
+            Catcode::MathShift => "math_shift".into(),
+            Catcode::AlignmentTab => "tab_mark".into(),
+            Catcode::EndLine => "car_ret".into(),
+            Catcode::Parameter => "mac_param".into(),
             Catcode::Letter => "letter".into(),
             Catcode::Space => "spacer".into(),
             Catcode::Other => "other_char".into(),
@@ -676,14 +686,18 @@ fn translate_status(record: ScannerStatusRecord) -> Event {
     })
 }
 fn scanner_status(status: &str) -> ScannerStatus {
-    match status {
-        "normal" => ScannerStatus::Normal,
-        "skipping" => ScannerStatus::Skipping,
-        "defining" => ScannerStatus::Defining,
-        "matching" => ScannerStatus::Matching,
-        "aligning" => ScannerStatus::Aligning,
-        "absorbing" => ScannerStatus::Absorbing,
-        _ => ScannerStatus::Normal,
+    if status.starts_with("Skipping") {
+        ScannerStatus::Skipping
+    } else if status.starts_with("Defining") {
+        ScannerStatus::Defining
+    } else if status.starts_with("Matching") {
+        ScannerStatus::Matching
+    } else if status.starts_with("Aligning") {
+        ScannerStatus::Aligning
+    } else if status.starts_with("Absorbing") {
+        ScannerStatus::Absorbing
+    } else {
+        ScannerStatus::Normal
     }
 }
 fn translate_macro(record: MacroRecord) -> Event {
@@ -749,6 +763,18 @@ fn translate_alignment(record: AlignmentRecord) -> Event {
     })
 }
 fn translate_mutation(record: MutationRecord) -> Event {
+    if record.target == "catcode" {
+        if let Some((character, value)) = record.value.split_once('=') {
+            if let Ok(character) = character.parse::<u32>() {
+                return Event::Mutation(MutationEvent {
+                    target: StateTarget::Catcode,
+                    key: CanonicalValue::Character(character),
+                    value: CanonicalValue::Name(value.into()),
+                    scope: "local".into(),
+                });
+            }
+        }
+    }
     let parsed = record.value.split_once('=').and_then(|(key, value)| {
         value
             .parse::<i64>()

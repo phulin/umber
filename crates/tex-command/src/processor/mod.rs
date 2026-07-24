@@ -41,6 +41,8 @@ pub struct CommandProcessor<'a> {
     pub(crate) host: CommandHostContext<'a>,
     #[cfg(any(test, feature = "instrumentation"))]
     observer: Option<&'a mut dyn CommandObserver>,
+    #[cfg(any(test, feature = "instrumentation"))]
+    observe_next_raw_as_character_code: bool,
     /// Only the immediately preceding raw delivery may be backed up. This is
     /// processor-local so stamps cannot survive a snapshot or a new episode.
     last_delivery: Option<DeliveryStamp>,
@@ -66,6 +68,8 @@ impl<'a> CommandProcessor<'a> {
             host,
             #[cfg(any(test, feature = "instrumentation"))]
             observer: None,
+            #[cfg(any(test, feature = "instrumentation"))]
+            observe_next_raw_as_character_code: false,
             last_delivery: None,
             next_delivery_sequence: 0,
             outer_recovered_while_matching: false,

@@ -116,6 +116,18 @@ impl CommandProcessor<'_> {
         self.get_next_with_control_sequence_creation(false)
     }
 
+    /// Delivers the raw token following TeX's backtick character-code
+    /// introducer. Its scanner interpretation is category-independent.
+    pub(crate) fn get_next_character_code(
+        &mut self,
+    ) -> Result<Option<CurrentCommand>, CommandError> {
+        #[cfg(any(test, feature = "instrumentation"))]
+        {
+            self.observe_next_raw_as_character_code = true;
+        }
+        self.get_next()
+    }
+
     /// Delivers one raw token for consumers which canonically permit a new
     /// control-sequence spelling. The present interner records a spelling
     /// without assigning it a meaning, so the policy boundary is explicit
@@ -256,10 +268,12 @@ impl CommandProcessor<'_> {
             let adjustment = self.command.alignment.classify_delivery(&mut command);
             command.set_alignment_adjustment(adjustment);
             #[cfg(any(test, feature = "instrumentation"))]
-            if !matches!(
-                adjustment,
-                crate::processor::AlignmentDeliveryAdjustment::None
-            ) {
+            if self.command.alignment.active_alignment.is_some()
+                && !matches!(
+                    adjustment,
+                    crate::processor::AlignmentDeliveryAdjustment::None
+                )
+            {
                 self.observe(CommandObservation::Alignment(AlignmentRecord {
                     transition: match adjustment {
                         crate::processor::AlignmentDeliveryAdjustment::BeginGroup => "begin_group",
@@ -559,15 +573,22 @@ impl CommandProcessor<'_> {
 
     #[cfg(any(test, feature = "instrumentation"))]
     fn observe_raw_delivery(&mut self, command: &CurrentCommand) {
-        let (command_name, command_operand) = match command.meaning() {
-            Meaning::CharToken { .. } => ("character".to_owned(), None),
-            Meaning::Macro { .. } => ("macro".to_owned(), None),
-            Meaning::ExpandablePrimitive(_) => ("expandable".to_owned(), None),
-            Meaning::UnexpandablePrimitive(_) => ("unexpandable".to_owned(), None),
-            Meaning::IntParam(index) => ("assign_int".to_owned(), Some(27_167 + i64::from(index))),
-            _ => ("internal".to_owned(), None),
+        let (command_name, command_operand) =
+            crate::observation::canonical_command_identity(command.meaning());
+        let spelling = if self.observe_next_raw_as_character_code {
+            self.observe_next_raw_as_character_code = false;
+            match self.observed_token(command.spelling()) {
+                crate::observation::ObservedToken::Character { character, .. } => {
+                    crate::observation::ObservedToken::Character {
+                        character,
+                        catcode: tex_state::token::Catcode::Other,
+                    }
+                }
+                spelling => spelling,
+            }
+        } else {
+            self.observed_token(command.spelling())
         };
-        let spelling = self.observed_token(command.spelling());
         self.observe(CommandObservation::Command(CommandDeliveryRecord {
             boundary: CommandDeliveryBoundary::Raw,
             spelling,

@@ -56,14 +56,8 @@ impl CommandProcessor<'_> {
 
     #[cfg(any(test, feature = "instrumentation"))]
     fn observe_expanded_delivery(&mut self, command: &CurrentCommand) {
-        let (command_name, command_operand) = match command.meaning() {
-            Meaning::CharToken { .. } => ("character".to_owned(), None),
-            Meaning::Macro { .. } => ("macro".to_owned(), None),
-            Meaning::ExpandablePrimitive(_) => ("expandable".to_owned(), None),
-            Meaning::UnexpandablePrimitive(_) => ("unexpandable".to_owned(), None),
-            Meaning::IntParam(index) => ("assign_int".to_owned(), Some(27_167 + i64::from(index))),
-            _ => ("internal".to_owned(), None),
-        };
+        let (command_name, command_operand) =
+            crate::observation::canonical_command_identity(command.meaning());
         let spelling = self.observed_token(command.spelling());
         self.observe(CommandObservation::Command(CommandDeliveryRecord {
             boundary: CommandDeliveryBoundary::Expanded,
