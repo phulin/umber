@@ -482,6 +482,7 @@ struct Recorder {
     sources: Vec<ActiveSource>,
     registered_inputs: BTreeMap<String, Arc<[u8]>>,
     next_registered_source: u32,
+    alignment_nesting: AlignmentNesting,
     events: Vec<ObservedEvent>,
 }
 
@@ -501,6 +502,7 @@ impl Recorder {
             }],
             registered_inputs,
             next_registered_source: 2,
+            alignment_nesting: AlignmentNesting::default(),
             events: Vec::new(),
         }
     }
@@ -579,12 +581,20 @@ impl CommandObserver for Recorder {
             self.activate_registered_input(detail);
             return;
         }
-        let source = self.current_source();
+        let (source_name, source_id, source_bytes) = {
+            let source = self.current_source();
+            (
+                source.name.clone(),
+                source.source,
+                Arc::clone(&source.bytes),
+            )
+        };
         self.events.push(translate_observation(
-            &source.name,
-            source.source,
-            Some(&source.bytes),
+            &source_name,
+            source_id,
+            Some(&source_bytes),
             observation.clone(),
+            &mut self.alignment_nesting,
         ));
         match observation {
             CommandObservation::Input(InputRecord {
@@ -602,6 +612,7 @@ fn translate_observation(
     source_id: Option<SourceId>,
     source_bytes: Option<&[u8]>,
     observation: CommandObservation,
+    alignment_nesting: &mut AlignmentNesting,
 ) -> ObservedEvent {
     match observation {
         CommandObservation::Command(record) => {
@@ -685,8 +696,9 @@ fn translate_observation(
             ObservedEvent::new(translate_token_list(record), format!("source={source}"))
         }
         CommandObservation::Alignment(record) => {
-            let context = format!("source={source}; nesting={:?}", record.alignment);
-            ObservedEvent::new(translate_alignment(record), context)
+            let nesting = alignment_nesting.observe(&record);
+            let context = format!("source={source}; nesting={nesting:?}");
+            ObservedEvent::new(translate_alignment(record, nesting), context)
         }
         CommandObservation::Mutation(record) => {
             ObservedEvent::new(translate_mutation(record), format!("source={source}"))
@@ -963,7 +975,48 @@ fn translate_token_list(record: TokenListRecord) -> Event {
         tokens: record.tokens.into_iter().map(oracle_token).collect(),
     })
 }
-fn translate_alignment(record: AlignmentRecord) -> Event {
+/// Projects TeX82's `align_ptr` stack onto the portable one-based nesting
+/// field. Alignment identities are process-local replay handles: §37's
+/// `fin_align` calls `pop_alignment`, so a later independent alignment can
+/// have a larger identity while returning to nesting one.
+#[derive(Debug, Default)]
+struct AlignmentNesting {
+    stack: Vec<u64>,
+}
+
+impl AlignmentNesting {
+    fn observe(&mut self, record: &AlignmentRecord) -> Option<u32> {
+        let identity = record.alignment?;
+        match record.transition {
+            "begin" => {
+                self.stack.push(identity);
+                Self::depth(self.stack.len())
+            }
+            "finish" => {
+                let nesting = Self::depth(self.stack.len());
+                if self.stack.last() == Some(&identity) {
+                    self.stack.pop();
+                }
+                nesting
+            }
+            "suspend" | "resume" => {
+                debug_assert_eq!(self.stack.last(), Some(&identity));
+                Self::depth(self.stack.len())
+            }
+            _ => self
+                .stack
+                .iter()
+                .rposition(|active| *active == identity)
+                .and_then(|index| Self::depth(index + 1)),
+        }
+    }
+
+    fn depth(depth: usize) -> Option<u32> {
+        u32::try_from(depth).ok().filter(|depth| *depth != 0)
+    }
+}
+
+fn translate_alignment(record: AlignmentRecord, nesting: Option<u32>) -> Event {
     Event::Alignment(AlignmentEvent {
         transition: match record.transition {
             "begin" => AlignmentTransition::Begin,
@@ -992,7 +1045,7 @@ fn translate_alignment(record: AlignmentRecord) -> Event {
             "omit_template_push" | "omit_template_retire" => Some("omit".into()),
             _ => None,
         },
-        nesting: record.alignment.and_then(|value| u32::try_from(value).ok()),
+        nesting,
         previous_align_state: record.previous_align_state.map(i64::from),
         delimiter: record.delimiter.map(str::to_owned),
         recovery: None,
@@ -1268,13 +1321,16 @@ mod tests {
             ("end_group", -999_999, -1_000_000),
         ] {
             assert_eq!(
-                translate_alignment(AlignmentRecord {
-                    transition,
-                    alignment: Some(1),
-                    align_state,
-                    delimiter: None,
-                    previous_align_state: Some(previous_align_state),
-                }),
+                translate_alignment(
+                    AlignmentRecord {
+                        transition,
+                        alignment: Some(1),
+                        align_state,
+                        delimiter: None,
+                        previous_align_state: Some(previous_align_state),
+                    },
+                    Some(1),
+                ),
                 Event::Alignment(AlignmentEvent {
                     transition: AlignmentTransition::StateChange,
                     align_state: i64::from(align_state),
@@ -1286,6 +1342,29 @@ mod tests {
                 })
             );
         }
+    }
+
+    #[test]
+    fn alignment_nesting_returns_to_one_after_nested_finish() {
+        let mut nesting = AlignmentNesting::default();
+        let record = |transition, alignment| AlignmentRecord {
+            transition,
+            alignment: Some(alignment),
+            align_state: 0,
+            delimiter: None,
+            previous_align_state: None,
+        };
+
+        assert_eq!(nesting.observe(&record("begin", 1)), Some(1));
+        assert_eq!(nesting.observe(&record("suspend", 1)), Some(1));
+        assert_eq!(nesting.observe(&record("begin", 2)), Some(2));
+        assert_eq!(nesting.observe(&record("finish", 2)), Some(2));
+        assert_eq!(nesting.observe(&record("resume", 1)), Some(1));
+        assert_eq!(nesting.observe(&record("finish", 1)), Some(1));
+
+        // Identity allocation is monotonic, but TeX82 §37's `pop_alignment`
+        // removes the completed structural level before this new alignment.
+        assert_eq!(nesting.observe(&record("begin", 3)), Some(1));
     }
 
     #[test]

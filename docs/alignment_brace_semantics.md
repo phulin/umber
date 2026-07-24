@@ -76,7 +76,12 @@ the raw brace/token state saved by `push_alignment`/`pop_alignment` (TeX82
 Instrumentation carries a brace delivery's pre-change and committed
 `align_state` directly from `tex-command`. The host-only command-stream
 translator maps those begin/end-group records to canonical `state_change`
-events; it neither reconstructs nor owns alignment depth.
+events. It also projects the replay lifecycle's structural `align_ptr`
+equivalent into canonical nesting: `Begin` pushes, `Finish` reports then
+pops, and `Suspend`/`Resume` retain the saved outer depth. Replay identities
+remain opaque handles, so their monotonic allocation never becomes a nesting
+value (TeX82 §37 `push_alignment`/`pop_alignment`, `align_peek`, and
+`fin_align`).
 
 ## Canonical transition map
 
@@ -138,6 +143,8 @@ Focused regressions live at the owning boundary:
   nesting and transition classes without pointer or input-stack identities.
 - replay observer ordering for the first u-template opener and retirement:
   `crates/tex-exec/src/command_replay/tests.rs`.
+- structural nesting projection across nested `fin_align`/`pop_alignment`:
+  `tools/tex-command-stream/src/lib.rs`.
 
 The fixture-only native correctness gate remains `cargo test --tests`; format
 and clippy remain `scripts/check.sh`.
