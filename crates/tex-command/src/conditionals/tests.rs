@@ -453,7 +453,7 @@ fn skipped_text_recovers_extra_delimiters_deterministically() {
 }
 
 #[test]
-fn delimiter_during_operand_scan_inserts_frozen_relax() {
+fn delimiter_during_operand_scan_replays_each_missing_if_operand() {
     let mut command = CommandState::default();
     let mut runtime = CommandRuntime::default();
     let mut universe = Universe::new();
@@ -471,7 +471,10 @@ fn delimiter_during_operand_scan_inserts_frozen_relax() {
             .expect("incomplete conditional recovers"),
         None
     );
-    assert_eq!(processor.command.expansion.pending_diagnostics.len(), 1);
+    // `\if` has two operands. Replaying the delimiter below each inserted
+    // frozen relax therefore reports the canonical incomplete-if recovery
+    // twice instead of silently losing the second operand boundary.
+    assert_eq!(processor.command.expansion.pending_diagnostics.len(), 2);
     assert!(processor.command.conditions.current().is_none());
 }
 

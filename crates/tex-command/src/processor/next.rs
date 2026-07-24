@@ -200,7 +200,7 @@ impl CommandProcessor<'_> {
             }));
             self.observe(CommandObservation::Recovery(RecoveryRecord {
                 backup: true,
-                tokens: vec![self.observed_token(command.spelling())],
+                tokens: vec![self.observed_command_spelling(&command)],
             }));
         }
         Ok(())
@@ -520,9 +520,10 @@ impl CommandProcessor<'_> {
         }
     }
 
-    /// Scalar keyword retries replay an exhausted backed-up candidate before
-    /// asking for another token.  Retire that one-token frame first so the
-    /// retry has the same input lifecycle as TeX82's `back_list` hand-off.
+    /// Scalar scanner retries replay an exhausted one-token frame before
+    /// asking for another token. Retire the frame first so the retry has the
+    /// same input lifecycle as TeX82's `back_list` hand-off. This applies both
+    /// to an ordinary prior backup and to a transient recovery insertion.
     pub(crate) fn retire_exhausted_backup_before_scalar_replay(
         &mut self,
         stamp: DeliveryStamp,
@@ -531,7 +532,10 @@ impl CommandProcessor<'_> {
             self.command.input.levels.last(),
             Some(InputLevel::Tokens(cursor))
                 if cursor.identity.0 == stamp.input_level()
-                    && matches!(cursor.behavior, TokenBehavior::BackedUp(_))
+                    && matches!(
+                        cursor.behavior,
+                        TokenBehavior::BackedUp(_) | TokenBehavior::Recovery
+                    )
                     && self.next_stored_token(cursor).is_none()
         );
         if exhausted_backup {
@@ -626,6 +630,20 @@ impl CommandProcessor<'_> {
     }
 
     #[cfg(any(test, feature = "instrumentation"))]
+    pub(crate) fn observed_command_spelling(
+        &self,
+        command: &CurrentCommand,
+    ) -> crate::observation::ObservedToken {
+        if matches!(command.meaning(), Meaning::Relax) {
+            // TeX82's observer presents the inaccessible frozen `\relax`
+            // inserted by incomplete-conditional recovery as `\relax`.
+            crate::observation::ObservedToken::ControlSequence("relax".into())
+        } else {
+            self.observed_token(command.spelling())
+        }
+    }
+
+    #[cfg(any(test, feature = "instrumentation"))]
     fn observe_raw_delivery(&mut self, command: &CurrentCommand) {
         let (command_name, command_operand) =
             crate::observation::canonical_command_identity(command.meaning());
@@ -648,7 +666,7 @@ impl CommandProcessor<'_> {
                 spelling => spelling,
             }
         } else {
-            self.observed_token(command.spelling())
+            self.observed_command_spelling(command)
         };
         self.observe(CommandObservation::Command(CommandDeliveryRecord {
             boundary: CommandDeliveryBoundary::Raw,

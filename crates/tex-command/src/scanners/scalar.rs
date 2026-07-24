@@ -217,14 +217,22 @@ impl CommandProcessor<'_> {
         let value = match self.internal_value_from_command(&first)? {
             Some(InternalValue::Integer(value)) => value,
             Some(_) => {
+                self.retire_exhausted_backup_before_scalar_replay(first.delivery_stamp())?;
                 self.back_input(first)?;
-                return Ok(ScannedScalar {
+                let scanned = ScannedScalar {
                     value: 0,
                     recovery: ScalarRecovery::InsertedZero,
                     provenance: ScalarProvenance {
                         primary: provenance,
                     },
-                });
+                };
+                #[cfg(any(test, feature = "instrumentation"))]
+                self.observe(CommandObservation::Scanner(ScannerRecord {
+                    kind: "integer",
+                    value: scanned.value.to_string(),
+                    tokens: None,
+                }));
+                return Ok(scanned);
             }
             None => match first.meaning() {
                 Meaning::CharToken { ch, .. } if ch.is_ascii_digit() => {
@@ -242,14 +250,22 @@ impl CommandProcessor<'_> {
                 // optional following space remains an expanded scanner token.
                 Meaning::CharToken { ch: '`', .. } => self.scan_character_code()?,
                 _ => {
+                    self.retire_exhausted_backup_before_scalar_replay(first.delivery_stamp())?;
                     self.back_input(first)?;
-                    return Ok(ScannedScalar {
+                    let scanned = ScannedScalar {
                         value: 0,
                         recovery: ScalarRecovery::InsertedZero,
                         provenance: ScalarProvenance {
                             primary: provenance,
                         },
-                    });
+                    };
+                    #[cfg(any(test, feature = "instrumentation"))]
+                    self.observe(CommandObservation::Scanner(ScannerRecord {
+                        kind: "integer",
+                        value: scanned.value.to_string(),
+                        tokens: None,
+                    }));
+                    return Ok(scanned);
                 }
             },
         };

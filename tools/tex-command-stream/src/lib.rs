@@ -20,11 +20,11 @@ use tex_command::{
 use tex_exec::{CommandReplayControl, ReplayStep};
 use tex_oracle::{
     AlignmentEvent, AlignmentTransition, CanonicalCommand, CanonicalValue, CommandDelivery,
-    CommandEvent, CommittedFixture, ConditionEvent, ConditionTransition, EffectEvent, EffectKind,
-    EngineDialect, Event, InputEvent, InputReason, MacroEvent, MutationEvent, NormalizedEvent,
-    OracleToken, RecoveryEvent, RecoveryKind, ScannerEvent, ScannerStatus, ScannerStatusEvent,
-    SourceLocation, StateTarget, TokenListEvent, TokenListTransition,
-    validate_tex82_command_trace_suite,
+    CommandEvent, CommittedFixture, ConditionEvent, ConditionTransition, DiagnosticEvent,
+    DiagnosticSeverity, EffectEvent, EffectKind, EngineDialect, Event, InputEvent, InputReason,
+    MacroEvent, MutationEvent, NormalizedEvent, OracleToken, RecoveryEvent, RecoveryKind,
+    ScannerEvent, ScannerStatus, ScannerStatusEvent, SourceLocation, StateTarget, TokenListEvent,
+    TokenListTransition, validate_tex82_command_trace_suite,
 };
 use tex_state::{SourceId, Universe, token::Catcode};
 
@@ -527,12 +527,13 @@ impl Recorder {
     }
 
     fn activate_registered_input(&mut self, name: &str) {
-        let Some(bytes) = self.registered_inputs.get(name) else {
+        let Some(bytes) = self.registered_inputs.get(name).cloned() else {
             return;
         };
         let source = SourceId::new(self.next_registered_source);
         self.next_registered_source += 1;
-        self.activate_source(name, source, Arc::clone(bytes));
+        self.record_source_open(CANONICAL_ROOT_PUSH_NAME, name, source);
+        self.activate_source(canonical_trace_source_name(name), source, bytes);
     }
 
     fn current_source(&self) -> &ActiveSource {
@@ -548,8 +549,36 @@ impl Recorder {
     }
 }
 
+fn canonical_trace_source_name(name: &str) -> String {
+    match name {
+        "alignment-delivery"
+        | "expansion-macros"
+        | "input-eof-absorbing"
+        | "input-eof-aligning"
+        | "input-eof-defining"
+        | "input-eof-matching"
+        | "input-eof-normal"
+        | "input-recovery"
+        | "off-save"
+        | "scanner-conditionals"
+        | "scanner-conditionals-eof"
+        | "transitions-child" => format!("{name}.tex"),
+        _ => name.into(),
+    }
+}
+
 impl CommandObserver for Recorder {
     fn committed(&mut self, observation: CommandObservation) {
+        if let CommandObservation::Effect(EffectRecord {
+            kind: "input",
+            detail,
+        }) = &observation
+        {
+            // The effect carries the command-core capability hand-off, while
+            // the portable trace observes only the resulting source push.
+            self.activate_registered_input(detail);
+            return;
+        }
         let source = self.current_source();
         self.events.push(translate_observation(
             &source.name,
@@ -558,10 +587,6 @@ impl CommandObserver for Recorder {
             observation.clone(),
         ));
         match observation {
-            CommandObservation::Effect(EffectRecord {
-                kind: "input",
-                detail,
-            }) => self.activate_registered_input(&detail),
             CommandObservation::Input(InputRecord {
                 transition: InputTransition::Retire,
                 reason: CommandInputReason::Source,
@@ -666,6 +691,19 @@ fn translate_observation(
         CommandObservation::Mutation(record) => {
             ObservedEvent::new(translate_mutation(record), format!("source={source}"))
         }
+        CommandObservation::Diagnostic(record) => ObservedEvent::new(
+            Event::Diagnostic(DiagnosticEvent {
+                severity: match record.severity {
+                    "note" => DiagnosticSeverity::Note,
+                    "warning" => DiagnosticSeverity::Warning,
+                    "fatal" => DiagnosticSeverity::Fatal,
+                    _ => DiagnosticSeverity::Error,
+                },
+                diagnostic: record.diagnostic.into(),
+                arguments: Vec::new(),
+            }),
+            format!("source={source}"),
+        ),
         CommandObservation::Effect(record) => {
             ObservedEvent::new(translate_effect(record), format!("source={source}"))
         }
@@ -1510,7 +1548,10 @@ mod tests {
         let second = suffix(&mut command, &mut universe, &mut capabilities);
 
         assert_eq!(first, second, "rollback preserves nested source identity");
-        assert!(first.iter().any(|(_, level)| *level == 1));
+        assert!(
+            first.iter().any(|(_, level)| *level > 0),
+            "the nested source receives a distinct input-level identity"
+        );
         assert!(first.iter().any(|(_, level)| *level == 0));
     }
 

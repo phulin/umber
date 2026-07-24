@@ -59,7 +59,7 @@ impl CommandProcessor<'_> {
     pub(crate) fn observe_expanded_delivery(&mut self, command: &CurrentCommand) {
         let (command_name, command_operand) =
             crate::observation::canonical_command_identity(command.meaning());
-        let spelling = self.observed_token(command.spelling());
+        let spelling = self.observed_command_spelling(command);
         self.observe(CommandObservation::Command(CommandDeliveryRecord {
             boundary: CommandDeliveryBoundary::Expanded,
             spelling,

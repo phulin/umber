@@ -1745,6 +1745,16 @@ observes as `par_end` with `cur_chr = 256`; its internal primitive-enum operand
 is not part of the canonical trace. This keeps paragraph delivery comparable
 without exposing command-state representation in snapshots or fixtures.
 
+Incomplete conditional recovery follows TeX82's `back_error` ordering: it
+backs up the encountered delimiter, pushes an inaccessible frozen `\relax`,
+records the stable `conditional_limit_recovery` diagnostic, then resumes the
+operand scanner. The frozen token remains immutable command state, while the
+detached observer projects its canonical spelling as `\relax`. Scalar scanner
+replay retires an exhausted inserted-recovery frame before backing that token
+up again. Filename scanning likewise replays its first non-space token through
+the sole input path before consuming the name. These transitions are
+snapshot-owned input state, never fixture-adapter reconstruction.
+
 ### 31.1 Instrumented engines
 
 Dedicated reference executables are built from pinned canonical WEB and

@@ -116,9 +116,13 @@ impl CommandProcessor<'_> {
                 ..
             }
         );
+        // `scan_file_name` replays its first non-space token before consuming
+        // the filename. TeX82 exposes this `back_input` hand-off, and it
+        // keeps the group-opening case on the same ordinary delivery path.
+        self.back_input(first)?;
         let mut name = String::new();
         let mut quoted = false;
-        let mut next = (!grouped).then_some(first);
+        let mut next = None;
         let termination = loop {
             let command = match next.take() {
                 Some(command) => command,
@@ -128,6 +132,10 @@ impl CommandProcessor<'_> {
                 },
             };
             match command.meaning() {
+                Meaning::CharToken {
+                    cat: Catcode::BeginGroup,
+                    ..
+                } if grouped => {}
                 Meaning::CharToken { ch: '"', .. } => quoted = !quoted,
                 Meaning::CharToken {
                     cat: Catcode::EndGroup,

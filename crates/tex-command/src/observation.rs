@@ -153,6 +153,9 @@ pub(crate) fn canonical_command_identity(meaning: Meaning) -> (String, Option<i6
             ExpandablePrimitive::Fi => ("fi_or_else".into(), Some(2)),
             ExpandablePrimitive::Else => ("fi_or_else".into(), Some(3)),
             ExpandablePrimitive::Or => ("fi_or_else".into(), Some(4)),
+            // `\input` is a TeX82 command family with its fixed filename
+            // selector, rather than a generic expandable command.
+            ExpandablePrimitive::Input => ("input".into(), Some(0)),
             _ => ("expandable".into(), None),
         },
         Meaning::IntParam(index) => ("assign_int".into(), Some(27_167 + i64::from(index))),
@@ -174,6 +177,8 @@ pub(crate) fn canonical_command_identity(meaning: Meaning) -> (String, Option<i6
             UnexpandablePrimitive::Long => ("prefix".into(), Some(1)),
             UnexpandablePrimitive::Outer => ("prefix".into(), Some(2)),
             UnexpandablePrimitive::Global => ("prefix".into(), Some(4)),
+            UnexpandablePrimitive::Let => ("let".into(), Some(0)),
+            UnexpandablePrimitive::FutureLet => ("let".into(), Some(1)),
             UnexpandablePrimitive::Count => ("register".into(), Some(0)),
             UnexpandablePrimitive::Dimen => ("register".into(), Some(1)),
             UnexpandablePrimitive::Skip => ("register".into(), Some(2)),
@@ -322,6 +327,16 @@ pub struct EffectRecord {
     pub detail: String,
 }
 
+/// A stable semantic diagnostic selected by a committed command transition.
+///
+/// Formatting remains executor/host policy; this record preserves only the
+/// TeX82 diagnostic identity needed by detached conformance observation.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DiagnosticRecord {
+    pub severity: &'static str,
+    pub diagnostic: &'static str,
+}
+
 /// One committed command-core observation.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum CommandObservation {
@@ -335,6 +350,7 @@ pub enum CommandObservation {
     TokenList(TokenListRecord),
     Alignment(AlignmentRecord),
     Mutation(MutationRecord),
+    Diagnostic(DiagnosticRecord),
     Effect(EffectRecord),
 }
 
@@ -398,6 +414,14 @@ mod tests {
                 tex_state::meaning::ExpandablePrimitive::The
             )),
             ("the".into(), Some(0))
+        );
+    }
+
+    #[test]
+    fn input_uses_tex82_filename_command_identity() {
+        assert_eq!(
+            canonical_command_identity(Meaning::ExpandablePrimitive(ExpandablePrimitive::Input)),
+            ("input".into(), Some(0))
         );
     }
 

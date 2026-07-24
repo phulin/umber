@@ -114,6 +114,9 @@ pub(crate) struct BackedUpToken {
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub(crate) enum TokenBehavior {
     Ordinary,
+    /// A TeX recovery insertion that must retire before a scanner backs its
+    /// consumed token up for ordinary replay.
+    Recovery,
     /// Replacement text associated with the sole activation owner.
     MacroBody(MacroActivationId),
     /// Literal replay of an already substituted macro argument.

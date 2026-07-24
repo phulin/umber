@@ -15,7 +15,10 @@ use crate::processor::CommandProcessor;
 use crate::processor::status::{ConditionId, ScannerStatus, ScannerWarning, SkippingContext};
 
 #[cfg(any(test, feature = "instrumentation"))]
-use crate::observation::{CommandObservation, ConditionRecord};
+use crate::observation::{
+    CommandObservation, ConditionRecord, DiagnosticRecord, InputReason, InputRecord,
+    InputTransition, ObservedToken, RecoveryRecord,
+};
 
 /// Stable pending-diagnostic identities for TeX.web part 28 recovery.
 const INCOMPLETE_IF_DIAGNOSTIC: u64 = 0x636f_6e64_0000_0001;
@@ -631,7 +634,7 @@ impl CommandProcessor<'_> {
 
     pub(crate) fn expand_conditional_delimiter(
         &mut self,
-        _command: crate::CurrentCommand,
+        command: crate::CurrentCommand,
         primitive: ExpandablePrimitive,
     ) -> Result<(), CommandError> {
         let delimiter = match primitive {
@@ -650,6 +653,11 @@ impl CommandProcessor<'_> {
             .evaluating_delimiter_recovery(frame.identity, delimiter)
             .is_some()
         {
+            // TeX.web's incomplete-conditional path uses `back_error`: the
+            // delimiter is replayed below the inserted frozen `\relax`.
+            // That ordering matters because the resumed operand scanner must
+            // see the delimiter through ordinary raw delivery after recovery.
+            self.back_input(command)?;
             self.recover_incomplete_if()?;
             return Ok(());
         }
@@ -735,15 +743,36 @@ impl CommandProcessor<'_> {
             .expansion
             .pending_diagnostics
             .push(INCOMPLETE_IF_DIAGNOSTIC);
-        self.command.push_token_level(
+        let level = self.command.push_token_level(
             TokenPayload::Transient(SharedTokenBuffer::new(vec![TracedTokenWord::pack(
                 relax,
                 OriginId::UNKNOWN,
             )])),
-            TokenBehavior::Ordinary,
+            TokenBehavior::Recovery,
             RetirementBehavior::Pop,
             ReplayTrace::Transient(crate::input::TransientReplayReason::Inserted),
         );
+        #[cfg(not(any(test, feature = "instrumentation")))]
+        let _ = level;
+        #[cfg(any(test, feature = "instrumentation"))]
+        {
+            self.observe(CommandObservation::Input(InputRecord {
+                transition: InputTransition::Recovery,
+                reason: InputReason::Recovery,
+                level: level.0,
+                position: 0,
+            }));
+            self.observe(CommandObservation::Recovery(RecoveryRecord {
+                backup: false,
+                // The frozen token is deliberately opaque to TeX input, but
+                // the canonical observer reports its primitive spelling.
+                tokens: vec![ObservedToken::ControlSequence("relax".into())],
+            }));
+            self.observe(CommandObservation::Diagnostic(DiagnosticRecord {
+                severity: "error",
+                diagnostic: "conditional_limit_recovery",
+            }));
+        }
         Ok(())
     }
     /// TeX.web's `pass_text`: skip through the sole canonical raw delivery
