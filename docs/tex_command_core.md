@@ -133,9 +133,14 @@ input level; when that exact level retires, raw delivery returns to cell-body
 depth. A completed cell-body scanner resumes through that same alignment
 delivery entry point: a tab, `\span`, or `\cr` is recognized by
 `get_next` while the body depth is zero and becomes the opaque delimiter event,
-not generic expanded delivery. This follows TeX82 `get_next` (§343) and the
+not generic expanded delivery. A scalar `get_x_token` probe (including
+`scan_keyword` from `scan_rule_spec`) instead completes the same typed
+command-owned v-template handoff immediately and restarts expansion, matching
+TeX82 §25: it never converts that intercepted boundary to `endv` or exposes it
+to the executor. This follows TeX82 `get_next`/`get_x_token` (§§24--25),
+`scan_keyword` and `scan_rule_spec` (§26), and the
 `init_col`/`fin_col`/`do_endv` template lifecycle (§§765--772). On an
-intercepted delimiter, executor `end_template` handling calls
+intercepted delimiter delivered to main control, executor `end_template` handling calls
 `CommandProcessor::begin_alignment_v_template`: it records the original
 delimiter as an opaque `fin_col` outcome while the stored v-template replays,
 so all suffix tokens (including macro expansion and definitions) restart

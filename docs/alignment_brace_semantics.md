@@ -26,16 +26,16 @@ TeX82's `get_next` recognizes an active-cell terminator at `align_state=0`
 before main control receives an ordinary command. It then takes the
 v-template path. This is the lifecycle specified by `get_next`, `init_col`,
 v-template insertion, `fin_col`, and `do_endv` in `tex.web` §§343 and
-765--772. Consequently, when a command-owned scanner backs up a non-keyword
-lookahead (for example after completing a `\vrule` specification), replay
-must resume via `get_x_alignment_delivery`, not generic expanded delivery.
-That typed path reports the original TeX82 delimiter identity (`tab`, `span`,
-`cr`, or `crcr`) at state 0, before replacing its effective command with
-inaccessible `end_template`; it then backs up the exact delivery, pushes the
-selected v-template, and enters the `1000000`
-sentinel. The intercepted delimiter is not separately observed as an ordinary
-raw command; it resumes only after `do_endv` retires the exact v-template
-frame. At that retained boundary, `get_next` first delivers frozen
+765--772. A scalar `get_x_token` probe, such as `scan_keyword` in
+`scan_rule_spec`, can be the consumer that observes this boundary. In that
+case command processing completes the typed v-template handoff and restarts
+its expanded loop immediately, exactly as TeX82 §25 does after §24's
+interception. It must not back up or convert the intercepted delimiter to
+`endv`. The ordinary alignment-delivery path reports the original TeX82
+delimiter identity (`tab`, `span`, `cr`, or `crcr`) at state 0 before selecting
+the same v-template transition. In either path, the intercepted delimiter is
+not separately observed as an ordinary raw command. At the later retained
+v-template boundary, `get_next` first delivers frozen
 `end_template`; TeX82 §343 expands it to frozen `endv`, and only then does
 §772's `do_endv` retire the frame. Retention itself is not a retirement
 observation. Both inaccessible frozen control sequences retain the canonical
@@ -73,7 +73,8 @@ events; it neither reconstructs nor owns alignment depth.
 | control-sequence brace alias                 | no depth change                                                                                                                                                                                                                                                                      | `tex_command::CommandProcessor::get_next`                                                                                  |
 | exhausted u-template                         | if state is above 500000, assign `0`; otherwise interwoven-preamble failure                                                                                                                                                                                                          | `InputStack::intercept_alignment_token` and its exact replay marker                                                        |
 | top-level tab, `\span`, or `\cr`             | convert to frozen end-template delivery and assign `1000000`                                                                                                                                                                                                                         | `tex_command::CommandProcessor::get_next`                                                                                  |
-| completed cell-body scanner                  | resume through typed expanded alignment delivery, so a backed-up delimiter remains an opaque end-template event                                                                                                                                                                      | `tex_exec::CommandReplayControl`, `CommandProcessor::get_x_alignment_delivery`                                             |
+| scalar `get_x_token` delimiter probe         | complete the command-owned v-template handoff and restart expansion; the intercepted delimiter is never converted to `endv`                                                                                                                                                          | `CommandProcessor::begin_scalar_alignment_v_template`                                                                      |
+| completed cell-body scanner                  | resume through typed expanded alignment delivery, so an ordinary main-control delimiter remains an opaque end-template event                                                                                                                                                         | `tex_exec::CommandReplayControl`, `CommandProcessor::get_x_alignment_delivery`                                             |
 | `\omit` cell                                 | begin directly at `0`                                                                                                                                                                                                                                                                | `InputStack::begin_alignment_cell`                                                                                         |
 | `align_peek` and `fin_col` restart           | assign `1000000` before lookahead/u-template                                                                                                                                                                                                                                         | `tex_exec::align::execution`, `AlignmentScannerPhase::BetweenEntries`                                                      |
 | `back_input` / `back_error`                  | undo the recorded delivery adjustment before replay and publish the correction after the backup lifecycle transition                                                                                                                                                                 | `tex_command::CommandProcessor::back_input`                                                                                |

@@ -275,6 +275,93 @@ fn rule_spec_scans_expanded_keywords_and_dimensions() {
 }
 
 #[test]
+fn rule_spec_starts_v_template_when_scalar_lookahead_hits_cell_delimiters() {
+    for (name, primitive, expected) in [
+        ("tab", None, crate::AlignmentCellDelimiter::Tab),
+        (
+            "span",
+            Some(UnexpandablePrimitive::Span),
+            crate::AlignmentCellDelimiter::Span,
+        ),
+        (
+            "cr",
+            Some(UnexpandablePrimitive::Cr),
+            crate::AlignmentCellDelimiter::Row,
+        ),
+    ] {
+        let mut command = CommandState::default();
+        let alignment = crate::AlignmentIdentity::new(1);
+        let mut runtime = CommandRuntime::default();
+        let mut universe = Universe::new();
+        let mut capabilities = CommandHostCapabilities::default();
+        let delimiter = if let Some(primitive) = primitive {
+            let symbol = universe.intern(name).symbol();
+            universe.set_meaning(symbol, Meaning::UnexpandablePrimitive(primitive));
+            Token::Cs(symbol)
+        } else {
+            Token::Char {
+                ch: '&',
+                cat: Catcode::AlignmentTab,
+            }
+        };
+        let v_template =
+            tex_state::input::TracedTokenList::synthetic(universe.intern_token_list(&[
+                Token::Char {
+                    ch: 'v',
+                    cat: Catcode::Letter,
+                },
+            ]));
+        command.begin_alignment(alignment);
+        command
+            .begin_alignment_cell(
+                alignment,
+                crate::AlignmentCellTemplates {
+                    u_template: None,
+                    v_template,
+                },
+            )
+            .expect("cell begins");
+        command
+            .install_alignment_cell_template(alignment)
+            .expect("omit-style cell has no u-template input");
+        let mut tokens = b"width1pt height2pt depth0pt"
+            .iter()
+            .map(|byte| Token::Char {
+                ch: char::from(*byte),
+                cat: if byte.is_ascii_alphabetic() {
+                    Catcode::Letter
+                } else {
+                    Catcode::Other
+                },
+            })
+            .collect::<Vec<_>>();
+        tokens.push(delimiter);
+        push(&mut command, tokens);
+
+        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+        let spec = processor
+            .scan_rule_spec(UnexpandablePrimitive::VRule)
+            .unwrap_or_else(|error| panic!("{name} rule scan succeeds: {error}"));
+        assert_eq!(spec.depth.map(Scaled::raw), Some(0));
+        let v = processor
+            .get_x_token()
+            .unwrap_or_else(|error| panic!("{name} v-template delivery succeeds: {error}"))
+            .expect("v-template token is live");
+        assert!(matches!(v.meaning(), Meaning::CharToken { ch: 'v', .. }));
+        let endv = processor
+            .get_x_token()
+            .unwrap_or_else(|error| panic!("{name} end-template delivery succeeds: {error}"))
+            .expect("retained v-template emits endv");
+        assert!(matches!(endv.meaning(), Meaning::EndV));
+        let finished = processor
+            .command
+            .finish_alignment_cell(alignment)
+            .expect("only exhausted v-template completes the cell");
+        assert_eq!(finished.delimiter, expected, "{name} delimiter is retained");
+    }
+}
+
+#[test]
 fn alignment_preamble_discards_leading_spaces_from_each_u_template_only() {
     let mut command = CommandState::default();
     let alignment = crate::AlignmentIdentity::new(1);

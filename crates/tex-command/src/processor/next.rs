@@ -4,7 +4,7 @@
 //! TeX.web §343 (`get_next`).  Later scanner and alignment milestones extend
 //! the two explicit entry points below; they do not add another lexical path.
 
-use tex_state::meaning::{ExpandablePrimitive, Meaning, UnexpandablePrimitive};
+use tex_state::meaning::{ExpandablePrimitive, Meaning};
 use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 
 use crate::command::{CurrentCommand, DeliveryStamp};
@@ -88,46 +88,49 @@ impl CommandProcessor<'_> {
         alignment: crate::AlignmentIdentity,
         event: AlignmentDeliveryEvent,
     ) -> Result<(), CommandError> {
-        let AlignmentDeliveryEvent::EndTemplate(delimiter) = event;
-        if self.last_delivery != Some(delimiter.delivery_stamp())
-            || !matches!(
-                delimiter.meaning(),
-                Meaning::ExpandablePrimitive(ExpandablePrimitive::EndTemplate)
-            )
-        {
-            return Err(CommandError::StaleDelivery);
-        }
-        // TeX82 saves the delimiter in `extra_info(cur_align)` for `fin_col`.
-        // Retain only that typed result: after `do_endv` it must select the
-        // next structural transition, never re-enter raw delivery.
-        self.command
-            .alignment
-            .v_template(alignment)
-            .map_err(|_| CommandError::InputInvariant)?;
-        self.last_delivery = None;
-        let saved_delimiter = match delimiter.spelling().semantic_token() {
-            Token::Char {
-                cat: Catcode::AlignmentTab,
-                ..
-            } => crate::AlignmentCellDelimiter::Tab,
-            _ if matches!(
-                delimiter.meaning(),
-                Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Span)
-            ) =>
-            {
-                crate::AlignmentCellDelimiter::Span
+        let saved_delimiter = match event {
+            AlignmentDeliveryEvent::EndTemplate(delimiter) => {
+                if self.last_delivery != Some(delimiter.delivery_stamp())
+                    || !matches!(
+                        delimiter.meaning(),
+                        Meaning::ExpandablePrimitive(ExpandablePrimitive::EndTemplate)
+                    )
+                {
+                    return Err(CommandError::StaleDelivery);
+                }
+                self.last_delivery = None;
+                Self::saved_alignment_delimiter(&delimiter)?
             }
-            _ if matches!(
-                delimiter.meaning(),
-                Meaning::UnexpandablePrimitive(
-                    UnexpandablePrimitive::Cr | UnexpandablePrimitive::CrCr
-                )
-            ) =>
-            {
-                crate::AlignmentCellDelimiter::Row
-            }
-            _ => return Err(CommandError::InputInvariant),
         };
+        self.start_alignment_v_template(alignment, saved_delimiter)
+    }
+
+    fn saved_alignment_delimiter(
+        command: &CurrentCommand,
+    ) -> Result<crate::AlignmentCellDelimiter, CommandError> {
+        match command.alignment_adjustment() {
+            crate::processor::AlignmentDeliveryAdjustment::Delimiter(
+                crate::processor::alignment::AlignmentDelimiter::Tab,
+            ) => Ok(crate::AlignmentCellDelimiter::Tab),
+            crate::processor::AlignmentDeliveryAdjustment::Delimiter(
+                crate::processor::alignment::AlignmentDelimiter::Span,
+            ) => Ok(crate::AlignmentCellDelimiter::Span),
+            crate::processor::AlignmentDeliveryAdjustment::Delimiter(
+                crate::processor::alignment::AlignmentDelimiter::Cr
+                | crate::processor::alignment::AlignmentDelimiter::CrCr,
+            ) => Ok(crate::AlignmentCellDelimiter::Row),
+            _ => Err(CommandError::InputInvariant),
+        }
+    }
+
+    /// TeX82 saves this typed outcome in `extra_info(cur_align)` for
+    /// `fin_col`; after `do_endv` it selects structural continuation without
+    /// re-entering raw delimiter delivery.
+    fn start_alignment_v_template(
+        &mut self,
+        alignment: crate::AlignmentIdentity,
+        saved_delimiter: crate::AlignmentCellDelimiter,
+    ) -> Result<(), CommandError> {
         self.command
             .begin_alignment_v_template(alignment, saved_delimiter)
             .map_err(|_| CommandError::InputInvariant)?;
@@ -282,6 +285,27 @@ impl CommandProcessor<'_> {
             }
         }
         Ok(())
+    }
+
+    /// Completes TeX82 §760's v-template insertion when a scalar
+    /// `get_x_token` lookahead reaches an active-cell delimiter. `get_next`
+    /// has already made the delimiter decision, so this accepts only that
+    /// typed adjustment and never reclassifies its spelling.
+    pub(crate) fn begin_scalar_alignment_v_template(
+        &mut self,
+        command: CurrentCommand,
+    ) -> Result<(), CommandError> {
+        let alignment = self
+            .command
+            .alignment
+            .active_alignment
+            .ok_or(CommandError::InputInvariant)?;
+        let delimiter = Self::saved_alignment_delimiter(&command)?;
+        if self.last_delivery != Some(command.delivery_stamp()) {
+            return Err(CommandError::StaleDelivery);
+        }
+        self.last_delivery = None;
+        self.start_alignment_v_template(alignment, delimiter)
     }
 
     fn get_next_with_control_sequence_creation(

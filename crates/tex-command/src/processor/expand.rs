@@ -50,6 +50,17 @@ impl CommandProcessor<'_> {
                 command.meaning(),
                 Meaning::ExpandablePrimitive(ExpandablePrimitive::EndTemplate)
             ) {
+                // TeX82 §24 has already crossed this active-cell delimiter.
+                // Complete the command-owned v-template handoff, then restart
+                // expansion; only retained frozen end-template input from
+                // v-template exhaustion becomes `endv` below.
+                if matches!(
+                    command.alignment_adjustment(),
+                    crate::processor::AlignmentDeliveryAdjustment::Delimiter(_)
+                ) {
+                    self.begin_scalar_alignment_v_template(command)?;
+                    continue;
+                }
                 command.convert_end_template_to_endv();
                 #[cfg(any(test, feature = "instrumentation"))]
                 self.observe_expanded_delivery(&command);
