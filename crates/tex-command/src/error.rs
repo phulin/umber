@@ -13,6 +13,9 @@ pub enum CommandError {
     ParagraphInMacroArgument,
     /// An outer token was recovered while a macro argument was being matched.
     OuterInMacroArgument,
+    /// The installed input capability has no immutable backing for a
+    /// requested logical filename.
+    MissingInput,
     /// This expansion slice has not installed the primitive's canonical
     /// scalar handler yet.
     UnsupportedExpandablePrimitive(tex_state::meaning::ExpandablePrimitive),
@@ -32,6 +35,7 @@ impl std::fmt::Display for CommandError {
             Self::OuterInMacroArgument => {
                 formatter.write_str("outer token found while scanning macro argument")
             }
+            Self::MissingInput => formatter.write_str("input source is unavailable"),
             Self::UnsupportedExpandablePrimitive(primitive) => {
                 write!(
                     formatter,

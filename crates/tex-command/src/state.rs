@@ -89,6 +89,22 @@ impl CommandState {
         Ok(())
     }
 
+    /// Applies TeX's `\endinput` retirement request to the active physical
+    /// source.  The remainder of its current line is still tokenized; no
+    /// later physical line may be loaded.
+    pub(crate) fn end_current_source_after_current_line(&mut self) -> bool {
+        self.input
+            .levels
+            .iter_mut()
+            .rev()
+            .find_map(|level| match level {
+                InputLevel::Source(level) => Some(level),
+                InputLevel::Tokens(_) => None,
+            })
+            .map(|level| level.cursor.end_after_line = true)
+            .is_some()
+    }
+
     /// Splits and normalizes the next physical line on the active source.
     ///
     /// LF, CR, and CRLF are retained as distinct physical metadata. TeX

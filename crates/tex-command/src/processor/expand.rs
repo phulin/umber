@@ -3,6 +3,7 @@
 use tex_state::env::banks::{IntParam, TokParam};
 use tex_state::ids::{MacroDefinitionId, OriginListId, TokenListId};
 use tex_state::meaning::{ExpandablePrimitive, Meaning};
+use tex_state::page::PageMark;
 use tex_state::provenance::SynthesizedOriginKind;
 use tex_state::token::{OriginId, Token, TracedTokenWord};
 
@@ -78,6 +79,27 @@ impl CommandProcessor<'_> {
             Meaning::ExpandablePrimitive(ExpandablePrimitive::FontName) => {
                 self.expand_fontname(command)
             }
+            Meaning::ExpandablePrimitive(ExpandablePrimitive::Input) => self.expand_input(command),
+            Meaning::ExpandablePrimitive(ExpandablePrimitive::EndInput) => self.expand_endinput(),
+            Meaning::ExpandablePrimitive(ExpandablePrimitive::JobName) => {
+                let job_name = self.host.job_name().to_owned();
+                self.push_rendered_text(&job_name, command.origin());
+                Ok(())
+            }
+            Meaning::ExpandablePrimitive(
+                primitive @ (ExpandablePrimitive::TopMark
+                | ExpandablePrimitive::FirstMark
+                | ExpandablePrimitive::BotMark
+                | ExpandablePrimitive::SplitFirstMark
+                | ExpandablePrimitive::SplitBotMark),
+            ) => self.expand_mark(primitive),
+            Meaning::ExpandablePrimitive(
+                primitive @ (ExpandablePrimitive::TopMarks
+                | ExpandablePrimitive::FirstMarks
+                | ExpandablePrimitive::BotMarks
+                | ExpandablePrimitive::SplitFirstMarks
+                | ExpandablePrimitive::SplitBotMarks),
+            ) => self.expand_mark_class(primitive),
             Meaning::ExpandablePrimitive(primitive) => {
                 Err(CommandError::UnsupportedExpandablePrimitive(primitive))
             }
@@ -206,6 +228,96 @@ impl CommandProcessor<'_> {
         };
         self.push_rendered_text(&self.state.font_name(font), opener.origin());
         Ok(())
+    }
+
+    fn expand_input(&mut self, opener: CurrentCommand) -> Result<(), CommandError> {
+        let name = self.scan_input_name()?;
+        let source = self.host.input(&name).ok_or(CommandError::MissingInput)?;
+        let id = self
+            .command
+            .register_source(source)
+            .map_err(|_| CommandError::InputInvariant)?;
+        self.command
+            .open_registered_source(id)
+            .map_err(|_| CommandError::InputInvariant)?;
+        let _ = opener;
+        Ok(())
+    }
+
+    fn expand_endinput(&mut self) -> Result<(), CommandError> {
+        self.command
+            .end_current_source_after_current_line()
+            .then_some(())
+            .ok_or(CommandError::InputInvariant)
+    }
+
+    fn expand_mark(&mut self, primitive: ExpandablePrimitive) -> Result<(), CommandError> {
+        self.push_the_tokens(self.state.page_mark(page_mark(primitive)), 0, false)
+    }
+
+    fn expand_mark_class(&mut self, primitive: ExpandablePrimitive) -> Result<(), CommandError> {
+        let class = self.scan_decimal_integer()?;
+        let class = u16::try_from(class).unwrap_or(0);
+        self.push_the_tokens(
+            self.state.page_mark_class(page_mark(primitive), class),
+            class,
+            false,
+        )
+    }
+
+    /// TeX's `scan_file_name`, restricted to the command processor so the
+    /// helper cannot reach input-opening authority.
+    fn scan_input_name(&mut self) -> Result<String, CommandError> {
+        let first = loop {
+            let command = self.get_x_token()?.ok_or(CommandError::InputInvariant)?;
+            if !matches!(
+                command.meaning(),
+                Meaning::CharToken {
+                    ch: ' ',
+                    cat: tex_state::token::Catcode::Space
+                }
+            ) {
+                break command;
+            }
+        };
+        let grouped = matches!(
+            first.meaning(),
+            Meaning::CharToken {
+                cat: tex_state::token::Catcode::BeginGroup,
+                ..
+            }
+        );
+        let mut name = String::new();
+        let mut quoted = false;
+        let mut next = if grouped { None } else { Some(first) };
+        loop {
+            let command = match next.take() {
+                Some(command) => command,
+                None => self.get_x_token()?.ok_or(CommandError::InputInvariant)?,
+            };
+            match command.meaning() {
+                Meaning::CharToken { ch: '"', .. } => quoted = !quoted,
+                Meaning::CharToken {
+                    cat: tex_state::token::Catcode::EndGroup,
+                    ..
+                } if grouped && !quoted => break,
+                Meaning::CharToken {
+                    ch: ' ',
+                    cat: tex_state::token::Catcode::Space,
+                } if !grouped && !quoted => break,
+                Meaning::CharToken { ch, .. } => name.push(ch),
+                _ if !grouped => {
+                    self.back_input(command)?;
+                    break;
+                }
+                _ => return Err(CommandError::InputInvariant),
+            }
+        }
+        if name.is_empty() {
+            Err(CommandError::InputInvariant)
+        } else {
+            Ok(name)
+        }
     }
 
     fn push_the_tokens(
@@ -338,6 +450,21 @@ fn is_expandable(meaning: Meaning) -> bool {
         )
 }
 
+fn page_mark(primitive: ExpandablePrimitive) -> PageMark {
+    match primitive {
+        ExpandablePrimitive::TopMark | ExpandablePrimitive::TopMarks => PageMark::Top,
+        ExpandablePrimitive::FirstMark | ExpandablePrimitive::FirstMarks => PageMark::First,
+        ExpandablePrimitive::BotMark | ExpandablePrimitive::BotMarks => PageMark::Bot,
+        ExpandablePrimitive::SplitFirstMark | ExpandablePrimitive::SplitFirstMarks => {
+            PageMark::SplitFirst
+        }
+        ExpandablePrimitive::SplitBotMark | ExpandablePrimitive::SplitBotMarks => {
+            PageMark::SplitBot
+        }
+        _ => unreachable!("only mark primitives reach page_mark"),
+    }
+}
+
 fn string_text(state: &tex_state::CommandContext<'_>, token: Token) -> String {
     match token {
         Token::Cs(symbol) => {
@@ -406,14 +533,20 @@ fn roman_numeral(value: i32) -> String {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use tex_state::Universe;
     use tex_state::macro_store::MacroMeaning;
     use tex_state::meaning::{ExpandablePrimitive, Meaning, MeaningFlags};
+    use tex_state::page::PageMark;
     use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 
     use super::*;
     use crate::input::{ReplayTrace, RetirementBehavior};
-    use crate::{CommandHostCapabilities, CommandHostContext, CommandRuntime, CommandState};
+    use crate::{
+        CommandHostCapabilities, CommandHostContext, CommandRuntime, CommandState,
+        RegisteredSourceKind, SourceRegistration,
+    };
 
     fn traced(token: Token) -> TracedTokenWord {
         TracedTokenWord::pack(token, OriginId::UNKNOWN)
@@ -472,6 +605,101 @@ mod tests {
             text.push(ch);
         }
         text
+    }
+
+    fn chars(processor: &mut CommandProcessor<'_>) -> String {
+        let mut text = String::new();
+        while let Some(command) = processor.get_x_token().expect("input expands") {
+            if let Token::Char { ch, .. } = command.spelling().semantic_token() {
+                text.push(ch);
+            }
+        }
+        text
+    }
+
+    #[test]
+    fn input_uses_only_capability_registered_backing_and_returns_to_parent() {
+        let mut command = CommandState::default();
+        let parent = command
+            .register_source(SourceRegistration::new(
+                RegisteredSourceKind::Generated,
+                Arc::<[u8]>::from(b"\\input{inc}z".as_slice()),
+            ))
+            .expect("parent registers");
+        command
+            .open_registered_source(parent)
+            .expect("parent opens");
+        let mut runtime = CommandRuntime::default();
+        let mut universe = Universe::new();
+        install_expandable(&mut universe, "input", ExpandablePrimitive::Input);
+        let mut capabilities = CommandHostCapabilities::default();
+        capabilities.register_input(
+            "inc",
+            SourceRegistration::new(
+                RegisteredSourceKind::World,
+                Arc::<[u8]>::from(b"ab".as_slice()),
+            ),
+        );
+        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+
+        assert_eq!(chars(&mut processor), "ab z ");
+    }
+
+    #[test]
+    fn endinput_keeps_its_line_but_retires_nested_source_before_the_next_line() {
+        let mut command = CommandState::default();
+        let parent = command
+            .register_source(SourceRegistration::new(
+                RegisteredSourceKind::Generated,
+                Arc::<[u8]>::from(b"\\input{inc}z".as_slice()),
+            ))
+            .expect("parent registers");
+        command
+            .open_registered_source(parent)
+            .expect("parent opens");
+        let mut runtime = CommandRuntime::default();
+        let mut universe = Universe::new();
+        install_expandable(&mut universe, "input", ExpandablePrimitive::Input);
+        install_expandable(&mut universe, "endinput", ExpandablePrimitive::EndInput);
+        let mut capabilities = CommandHostCapabilities::default();
+        capabilities.register_input(
+            "inc",
+            SourceRegistration::new(
+                RegisteredSourceKind::World,
+                Arc::<[u8]>::from(b"a\\endinput b\nc".as_slice()),
+            ),
+        );
+        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+
+        assert_eq!(chars(&mut processor), "ab z ");
+    }
+
+    #[test]
+    fn jobname_and_mark_retrieval_replay_deterministic_state_values() {
+        let mut command = CommandState::default();
+        let mut runtime = CommandRuntime::default();
+        let mut universe = Universe::new();
+        let jobname = install_expandable(&mut universe, "jobname", ExpandablePrimitive::JobName);
+        let topmark = install_expandable(&mut universe, "topmark", ExpandablePrimitive::TopMark);
+        let mark = universe.intern_token_list(&[Token::Char {
+            ch: 'M',
+            cat: Catcode::Letter,
+        }]);
+        universe.set_page_mark(PageMark::Top, mark);
+        command.push_token_level(
+            TokenPayload::Transient(SharedTokenBuffer::new(vec![
+                traced(Token::Cs(jobname)),
+                traced(Token::Cs(topmark)),
+            ])),
+            TokenBehavior::Ordinary,
+            RetirementBehavior::Pop,
+            ReplayTrace::BackedUp,
+        );
+        let mut capabilities = CommandHostCapabilities::default();
+        capabilities.set_job_name("paper");
+        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+
+        assert_eq!(rendered(&mut processor), "paperM");
     }
 
     #[test]

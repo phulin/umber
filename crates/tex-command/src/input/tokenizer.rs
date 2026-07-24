@@ -173,6 +173,9 @@ impl SourceCursor {
                 self.next_reduced_character(&bytes, mode, superscript, &mut catcode)
             else {
                 self.finish_line();
+                if self.end_after_line {
+                    return SourceTokenizationStep::End;
+                }
                 continue;
             };
             let scalar_range = self.spelling_scalar_range(character);

@@ -1252,6 +1252,16 @@ or scanner continuation is stored in `CommandState`. The enclosing executor
 restores its complete pre-step savepoint and retries after the host binds a
 stable positive or negative response.
 
+The promoted scalar input/state slice keeps the same split concretely:
+`CommandHostCapabilities` maps a logical `\input` name to already-acquired
+immutable backing and supplies the immutable job name for the bounded
+processor call. `\input` registers that backing before opening a source level;
+`\endinput` marks only the active source to retire after its current physical
+line. Mark enquiries read the aggregate page-mark slots through
+`CommandContext` and replay their immutable token lists. Scanner helpers do
+not receive either host capability, so they cannot acquire sources or widen
+the processor's authority.
+
 Resource request order is deterministic and checkpointed where it can affect
 future request identity. A failed attempt cannot leak input levels,
 diagnostics, stream effects, random consumption, generated files, or

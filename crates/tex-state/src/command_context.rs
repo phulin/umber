@@ -12,6 +12,7 @@ use crate::{
     interner::Symbol,
     macro_store::{MacroDefinitionProvenance, MacroMeaning, MacroParameterPattern},
     meaning::Meaning,
+    page::PageMark,
     provenance::SynthesizedOriginKind,
     token::{Catcode, OriginId, Token},
 };
@@ -80,6 +81,18 @@ impl CommandContext<'_> {
     #[must_use]
     pub fn toks(&self, index: u16) -> TokenListId {
         self.universe.toks(index)
+    }
+
+    /// Reads one TeX82 page-mark slot for expandable mark retrieval.
+    #[must_use]
+    pub fn page_mark(&self, mark: PageMark) -> TokenListId {
+        self.universe.page_mark(mark)
+    }
+
+    /// Reads one e-TeX mark-class slot for expandable mark retrieval.
+    #[must_use]
+    pub fn page_mark_class(&self, mark: PageMark, class: u16) -> TokenListId {
+        self.universe.page_mark_class(mark, class)
     }
 
     /// Reads a font's immutable external name for `\\fontname` and meaning.
