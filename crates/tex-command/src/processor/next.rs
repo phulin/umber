@@ -24,6 +24,9 @@ use super::CommandProcessor;
 use super::status::{EofLegality, RecoveryContext, ScannerStatus};
 
 #[cfg(any(test, feature = "instrumentation"))]
+use super::alignment::CELL_ALIGN_STATE;
+
+#[cfg(any(test, feature = "instrumentation"))]
 use crate::input::InputRetirementReason;
 #[cfg(any(test, feature = "instrumentation"))]
 use crate::observation::{
@@ -60,6 +63,8 @@ impl CommandProcessor<'_> {
                 self.expand(command)?;
                 continue;
             }
+            #[cfg(any(test, feature = "instrumentation"))]
+            self.observe_expanded_delivery(&command);
             return Ok(Some(AlignmentDelivery::Command(command)));
         }
     }
@@ -102,12 +107,25 @@ impl CommandProcessor<'_> {
             .begin_alignment_v_template(alignment)
             .map_err(|_| CommandError::InputInvariant)?;
         #[cfg(any(test, feature = "instrumentation"))]
-        self.observe(CommandObservation::Alignment(AlignmentRecord {
-            transition: "begin_v_template",
-            alignment: Some(alignment.raw()),
-            align_state: self.command.alignment.align_state,
-            previous_align_state: None,
-        }));
+        if let Some(input) = self
+            .command
+            .alignment_v_template_push_observation(alignment)
+        {
+            self.observe(CommandObservation::Input(input));
+            if let Some(template) = self
+                .command
+                .alignment_v_template_push_alignment_observation(alignment)
+            {
+                self.observe(CommandObservation::Alignment(template));
+            }
+            self.observe(CommandObservation::Alignment(AlignmentRecord {
+                transition: "state_change",
+                alignment: Some(alignment.raw()),
+                align_state: self.command.alignment.align_state,
+                delimiter: None,
+                previous_align_state: Some(CELL_ALIGN_STATE),
+            }));
+        }
         Ok(())
     }
 
@@ -233,6 +251,7 @@ impl CommandProcessor<'_> {
                         .active_alignment
                         .map(|identity| identity.raw()),
                     align_state: self.command.alignment.align_state,
+                    delimiter: None,
                     previous_align_state: Some(previous_align_state),
                 }));
             }
@@ -319,7 +338,22 @@ impl CommandProcessor<'_> {
                         .alignment
                         .active_alignment
                         .map(|identity| identity.raw()),
-                    align_state: self.command.alignment.align_state,
+                    align_state: if matches!(
+                        adjustment,
+                        crate::processor::AlignmentDeliveryAdjustment::Delimiter
+                    ) {
+                        previous_align_state
+                    } else {
+                        self.command.alignment.align_state
+                    },
+                    delimiter: matches!(
+                        command.spelling().semantic_token(),
+                        Token::Char {
+                            cat: Catcode::AlignmentTab,
+                            ..
+                        }
+                    )
+                    .then_some("tab"),
                     previous_align_state: matches!(
                         adjustment,
                         crate::processor::AlignmentDeliveryAdjustment::BeginGroup
@@ -329,7 +363,12 @@ impl CommandProcessor<'_> {
                 }));
             }
             #[cfg(any(test, feature = "instrumentation"))]
-            self.observe_raw_delivery(&command);
+            if !matches!(
+                adjustment,
+                crate::processor::AlignmentDeliveryAdjustment::Delimiter
+            ) {
+                self.observe_raw_delivery(&command);
+            }
             return Ok(Some(command));
         }
     }
@@ -448,6 +487,7 @@ impl CommandProcessor<'_> {
                     .active_alignment
                     .map(|alignment| alignment.raw()),
                 align_state: self.command.alignment.align_state,
+                delimiter: None,
                 previous_align_state: None,
             }));
         }
@@ -462,6 +502,7 @@ impl CommandProcessor<'_> {
             | InputRetirementAction::TokenListPopped
             | InputRetirementAction::ScantokensClosed
             | InputRetirementAction::VTemplatePopped => {
+                #[cfg(any(test, feature = "instrumentation"))]
                 let previous_align_state = self.command.alignment.align_state;
                 if self.command.alignment.finish_u_template(identity) {
                     #[cfg(any(test, feature = "instrumentation"))]
@@ -473,6 +514,7 @@ impl CommandProcessor<'_> {
                             .active_alignment
                             .map(|alignment| alignment.raw()),
                         align_state: self.command.alignment.align_state,
+                        delimiter: None,
                         previous_align_state: Some(previous_align_state),
                     }));
                 }

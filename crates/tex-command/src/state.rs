@@ -13,6 +13,8 @@ use crate::input::{
 };
 use crate::input::{ReplayTrace, RetirementBehavior, TokenBehavior, TokenPayload};
 use crate::macro_call::ParameterState;
+#[cfg(any(test, feature = "instrumentation"))]
+use crate::processor::CELL_ALIGN_STATE;
 use crate::processor::{
     AlignmentCellTemplates, AlignmentDeliveryState, AlignmentIdentity, AlignmentLifecycleError,
     AlignmentRequest, AlignmentRequestResult, ExpansionState, ScannerState,
@@ -55,6 +57,7 @@ impl CommandState {
                 transition: "begin",
                 alignment: Some(alignment.raw()),
                 align_state: self.alignment.align_state,
+                delimiter: None,
                 previous_align_state: None,
             })
     }
@@ -191,6 +194,7 @@ impl CommandState {
                 transition: "u_template_push",
                 alignment: Some(alignment.raw()),
                 align_state: self.alignment.align_state,
+                delimiter: None,
                 previous_align_state: None,
             })
     }
@@ -220,6 +224,7 @@ impl CommandState {
                 transition: "state_change",
                 alignment: Some(cell.alignment.raw()),
                 align_state: self.alignment.align_state,
+                delimiter: None,
                 previous_align_state: None,
             })
     }
@@ -240,6 +245,47 @@ impl CommandState {
             ReplayTrace::VTemplate,
         );
         self.alignment.begin_v_template(alignment, level)
+    }
+
+    /// Returns the committed v-template push made after a command-owned
+    /// delimiter interception.
+    #[cfg(any(test, feature = "instrumentation"))]
+    #[must_use]
+    pub fn alignment_v_template_push_observation(
+        &self,
+        alignment: AlignmentIdentity,
+    ) -> Option<crate::InputRecord> {
+        let cell = self.alignment.active_cell.as_ref()?;
+        (cell.alignment == alignment).then_some(())?;
+        cell.v_level.map(|level| crate::InputRecord {
+            transition: crate::InputTransition::Push,
+            reason: crate::InputReason::AlignmentVTemplate,
+            level: level.0,
+            position: 0,
+        })
+    }
+
+    /// Returns the template lifecycle transition paired with the v-template
+    /// input push, without exposing template tokens to the executor.
+    #[cfg(any(test, feature = "instrumentation"))]
+    #[must_use]
+    pub fn alignment_v_template_push_alignment_observation(
+        &self,
+        alignment: AlignmentIdentity,
+    ) -> Option<AlignmentRecord> {
+        self.alignment_v_template_push_observation(alignment)
+            .map(|_| AlignmentRecord {
+                transition: "v_template_push",
+                alignment: Some(alignment.raw()),
+                // TeX82's v-template insertion (`init_col`) begins the
+                // token list before assigning the post-insertion sentinel.
+                // The command state is already guarded against a second
+                // delimiter, but the committed lifecycle records that
+                // canonical pre-sentinel point.
+                align_state: CELL_ALIGN_STATE,
+                delimiter: None,
+                previous_align_state: None,
+            })
     }
 
     /// Retires the exact exhausted v-template after a delivered frozen end-v.

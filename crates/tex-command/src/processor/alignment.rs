@@ -14,7 +14,7 @@ use crate::input::InputLevelId;
 
 pub(crate) const PREAMBLE_ALIGN_STATE: i32 = -1_000_000;
 pub(crate) const TEMPLATE_ALIGN_STATE: i32 = 1_000_000;
-const CELL_ALIGN_STATE: i32 = 0;
+pub(crate) const CELL_ALIGN_STATE: i32 = 0;
 
 /// Stable identity supplied by the executor for one structural alignment.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]

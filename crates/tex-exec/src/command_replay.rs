@@ -162,26 +162,7 @@ impl CommandReplayControl {
                 stores.command_context(),
                 CommandHostContext::new(&mut self.capabilities),
             );
-            match processor
-                .get_x_alignment_delivery()
-                .map_err(command_error)?
-            {
-                None => ScannedStep::EndOfInput,
-                Some(AlignmentDelivery::Command(command)) => scan_command(
-                    &mut processor,
-                    command,
-                    false,
-                    MeaningFlags::EMPTY,
-                    false,
-                    &ReplayBoxes::default(),
-                )?,
-                Some(AlignmentDelivery::Event(event)) => {
-                    processor
-                        .begin_alignment_v_template(alignment, event)
-                        .map_err(command_error)?;
-                    ScannedStep::Continue
-                }
-            }
+            scan_alignment_delivery_step(&mut processor, alignment, &ReplayBoxes::default())?
         };
         apply_scanned_step(
             scanned,
@@ -490,6 +471,9 @@ fn scan_replay_step(
                     .map_err(command_error)?;
                 Ok(ScannedStep::AlignmentCellOpening { alignment })
             }
+            AlignmentPreamblePhase::CellDelivery => {
+                scan_alignment_delivery_step(processor, alignment, boxes)
+            }
         };
     }
     scan_step(processor, starts_paragraph, boxes)
@@ -501,6 +485,7 @@ enum AlignmentPreamblePhase {
     ReplayOpening,
     Start,
     CellOpening,
+    CellDelivery,
 }
 
 fn alignment_preamble(
@@ -513,10 +498,36 @@ fn alignment_preamble(
         Some((active.identity, AlignmentPreamblePhase::ReplayOpening))
     } else if active.preamble_start_pending {
         Some((active.identity, AlignmentPreamblePhase::Start))
+    } else if active.cell_opening_pending {
+        Some((active.identity, AlignmentPreamblePhase::CellOpening))
     } else {
-        active
-            .cell_opening_pending
-            .then_some((active.identity, AlignmentPreamblePhase::CellOpening))
+        Some((active.identity, AlignmentPreamblePhase::CellDelivery))
+    }
+}
+
+/// Delivers one active cell command through the command-owned alignment
+/// boundary.  This remains separate from preamble and opener scans because a
+/// completed scanner (such as a rule specification) can leave a backed-up
+/// delimiter ready for the next main-control step.
+fn scan_alignment_delivery_step(
+    processor: &mut CommandProcessor<'_>,
+    alignment: AlignmentIdentity,
+    boxes: &ReplayBoxes,
+) -> Result<ScannedStep, ExecError> {
+    match processor
+        .get_x_alignment_delivery()
+        .map_err(command_error)?
+    {
+        None => Ok(ScannedStep::EndOfInput),
+        Some(AlignmentDelivery::Command(command)) => {
+            scan_command(processor, command, false, MeaningFlags::EMPTY, false, boxes)
+        }
+        Some(AlignmentDelivery::Event(event)) => {
+            processor
+                .begin_alignment_v_template(alignment, event)
+                .map_err(command_error)?;
+            Ok(ScannedStep::Continue)
+        }
     }
 }
 

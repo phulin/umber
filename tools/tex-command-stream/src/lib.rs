@@ -992,7 +992,7 @@ fn translate_alignment(record: AlignmentRecord) -> Event {
         },
         nesting: record.alignment.and_then(|value| u32::try_from(value).ok()),
         previous_align_state: record.previous_align_state.map(i64::from),
-        delimiter: None,
+        delimiter: record.delimiter.map(str::to_owned),
         recovery: None,
     })
 }
@@ -1270,6 +1270,7 @@ mod tests {
                     transition,
                     alignment: Some(1),
                     align_state,
+                    delimiter: None,
                     previous_align_state: Some(previous_align_state),
                 }),
                 Event::Alignment(AlignmentEvent {

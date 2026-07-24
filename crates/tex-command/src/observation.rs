@@ -347,6 +347,8 @@ pub struct AlignmentRecord {
     pub transition: &'static str,
     pub alignment: Option<u64>,
     pub align_state: i32,
+    /// Original spelling for an intercepted alignment delimiter.
+    pub delimiter: Option<&'static str>,
     /// The raw-delivery value immediately before a state-changing transition.
     ///
     /// Lifecycle observations without a direct `align_state` mutation leave

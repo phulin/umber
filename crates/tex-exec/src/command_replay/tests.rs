@@ -361,7 +361,7 @@ fn alignment_preamble_opener_uses_command_owned_backup_before_source_resumes() {
         control
             .step_with_observer(&mut universe, &mut observations)
             .expect("u-template retires before the cell body resumes"),
-        ReplayStep::Continue
+        ReplayStep::End
     );
     assert!(
         observations.0.windows(3).any(|events| {
@@ -378,6 +378,86 @@ fn alignment_preamble_opener_uses_command_owned_backup_before_source_resumes() {
                     && body.transition == "state_change"
                     && body.align_state == 0
                     && body.previous_align_state == Some(1_000_000)
+            )
+        }),
+        "unexpected observations: {:?}",
+        observations.0
+    );
+}
+
+#[test]
+fn completed_rule_spec_restarts_active_cell_through_typed_delimiter_delivery() {
+    let mut universe = Universe::new();
+    let mut control = CommandReplayControl::tex82_initex(&mut universe);
+    register_source(&mut control, br"\halign{#\cr{\vrule width1pt}&\end");
+    let mut observations = ObservationRecorder::default();
+
+    for phase in [
+        "alignment begin",
+        "preamble opener backup",
+        "preamble opener replay",
+        "preamble scan and first cell",
+        "cell opener and template installation",
+        "replayed cell opener",
+    ] {
+        assert_eq!(
+            control
+                .step_with_observer(&mut universe, &mut observations)
+                .expect(phase),
+            ReplayStep::Continue
+        );
+        observations.0.clear();
+    }
+
+    assert_eq!(
+        control
+            .step_with_observer(&mut universe, &mut observations)
+            .expect("rule specification"),
+        ReplayStep::Continue
+    );
+    assert!(
+        observations.0.iter().any(|observation| {
+            matches!(
+                observation,
+                CommandObservation::Scanner(scanner)
+                    if scanner.kind == "dimension" && scanner.value == "65536"
+            )
+        }),
+        "unexpected rule observations: {:?}",
+        observations.0
+    );
+    observations.0.clear();
+
+    assert_eq!(
+        control
+            .step_with_observer(&mut universe, &mut observations)
+            .expect("cell-body closing brace"),
+        ReplayStep::Continue
+    );
+    observations.0.clear();
+
+    assert_eq!(
+        control
+            .step_with_observer(&mut universe, &mut observations)
+            .expect("backed-up tab reaches the alignment delivery boundary"),
+        ReplayStep::Continue
+    );
+    assert!(
+        observations.0.windows(4).any(|events| {
+            matches!(
+                events,
+                [
+                    CommandObservation::Alignment(delimiter),
+                    CommandObservation::Input(template_input),
+                    CommandObservation::Alignment(template),
+                    CommandObservation::Alignment(state_change),
+                ] if delimiter.transition == "delimiter"
+                    && delimiter.align_state == 0
+                    && template_input.transition == InputTransition::Push
+                    && template_input.reason == InputReason::AlignmentVTemplate
+                    && template.transition == "v_template_push"
+                    && state_change.transition == "state_change"
+                    && state_change.align_state == 1_000_000
             )
         }),
         "unexpected observations: {:?}",

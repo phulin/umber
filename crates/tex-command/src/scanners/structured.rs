@@ -249,6 +249,7 @@ impl CommandProcessor<'_> {
                 transition: "preamble_start",
                 alignment: Some(alignment.raw()),
                 align_state: self.command.alignment.align_state,
+                delimiter: None,
                 previous_align_state: None,
             },
         ));
@@ -314,6 +315,7 @@ impl CommandProcessor<'_> {
                 transition: "preamble_finish",
                 alignment: Some(alignment.raw()),
                 align_state: self.command.alignment.align_state,
+                delimiter: None,
                 previous_align_state: None,
             },
         ));

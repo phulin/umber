@@ -123,7 +123,11 @@ Starting a cell establishes its delivery state, then command processing
 delivers and backs up the first source opening brace before the executor's
 typed template-install request pushes its optional u-template as a stored
 input level; when that exact level retires, raw delivery returns to cell-body
-depth. On an
+depth. A completed cell-body scanner resumes through that same alignment
+delivery entry point: a backed-up tab, `\span`, or `\cr` is recognized by
+`get_next` while the body depth is zero and becomes the opaque delimiter event,
+not generic expanded delivery. This follows TeX82 `get_next` (§343) and the
+`init_col`/`fin_col`/`do_endv` template lifecycle (§§765--772). On an
 intercepted delimiter, executor `end_template` handling calls
 `CommandProcessor::begin_alignment_v_template`: it backs up the original
 delimiter below the stored v-template, so all suffix tokens (including macro
