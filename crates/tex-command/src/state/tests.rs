@@ -79,7 +79,7 @@ fn semantic_ownership_domains_are_exhaustively_classified() {
         next_level_identity,
         next_source_identity,
     } = input;
-    let ParameterState { activations } = parameters;
+    let ParameterState { activations, .. } = parameters;
     let ScannerState { .. } = scanner;
     let ConditionStack {
         frames,

@@ -49,7 +49,8 @@ Private state-machine modules must not be widened for compatibility with
   delivery, expansion, scanner-status, and alignment orchestration.
 - `src/scanners/`: private typed scanner family.
 - `src/primitives/`: private static TeX82, e-TeX, and pdfTeX dispatch families.
-- `src/macro_call.rs`: private canonical scalar macro matcher.
+- `src/macro_call.rs`, `src/macro_call/tests.rs`: private canonical scalar
+  macro matcher, invocation/argument activation ownership, and focused tests.
 - `src/conditionals.rs`: private independent condition-stack machine.
 - `src/scan_toks.rs`: private canonical token-list scanner.
 - `src/provenance.rs`: private command provenance construction.

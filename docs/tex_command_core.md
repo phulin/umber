@@ -709,6 +709,16 @@ struct MacroArguments {
 }
 ```
 
+The scalar matcher accumulates completed arguments in definition order through
+one `MacroArgumentBuilder`, then freezes that builder into the activation's
+single shared buffer. Empty arguments retain empty half-open ranges. A compact
+`OutParameter(u8)` remains distinct from a literal parameter character emitted
+by the canonical `##` escape, so replay can substitute only the former without
+rewriting immutable macro definition token lists. The processor allocates the
+invocation provenance node using the active activation's invocation as parent,
+then installs the activation owner before exposing its immutable replacement
+body level.
+
 An `OutParameter` read directly from a macro body pushes a parameter range.
 An `OutParameter` read from other nested token input resolves against the
 nearest live macro activation when canonical TeX semantics require

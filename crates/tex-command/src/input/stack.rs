@@ -2,7 +2,10 @@
 #![allow(dead_code)] // consumed by the ordered raw-delivery implementation issues
 
 use crate::CommandState;
-use crate::macro_call::MacroActivationId;
+use tex_state::ids::{MacroDefinitionId, OriginListId, TokenListId};
+use tex_state::token::OriginId;
+
+use crate::macro_call::{MacroActivationId, MacroArguments};
 
 use super::{
     InputLevel, InputLevelId, ReplayTrace, RetirementBehavior, TokenBehavior, TokenCursor,
@@ -77,6 +80,33 @@ pub(crate) enum ParameterReplayError {
 }
 
 impl CommandState {
+    /// Installs one complete macro activation and its replacement-body level.
+    ///
+    /// The canonical replacement list remains in immutable storage. Only the
+    /// already matched arguments are transient, and they have one activation
+    /// owner before this level can become visible to delivery.
+    pub(crate) fn push_macro_activation(
+        &mut self,
+        definition: MacroDefinitionId,
+        arguments: MacroArguments,
+        invocation: OriginId,
+        replacement_tokens: TokenListId,
+        replacement_origins: OriginListId,
+    ) -> InputLevelId {
+        let activation = self
+            .parameters
+            .push_activation(definition, arguments, invocation);
+        self.push_token_level(
+            TokenPayload::Stored {
+                tokens: replacement_tokens,
+                origins: replacement_origins,
+            },
+            TokenBehavior::MacroBody(activation),
+            RetirementBehavior::Pop,
+            ReplayTrace::MacroReplacement,
+        )
+    }
+
     pub(crate) fn push_token_level(
         &mut self,
         payload: TokenPayload,

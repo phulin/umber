@@ -6,8 +6,9 @@
 
 use crate::{
     ChangedAt, DependencyKey, DependencyValue, Universe,
-    ids::{OriginListId, TokenListId},
+    ids::{MacroDefinitionId, OriginListId, TokenListId},
     interner::Symbol,
+    macro_store::MacroDefinitionProvenance,
     meaning::Meaning,
     token::{Catcode, OriginId, Token},
 };
@@ -94,6 +95,38 @@ impl CommandContext<'_> {
     #[must_use]
     pub fn primitive_token(&self, name: &str) -> Option<Token> {
         self.universe.primitive_token(name)
+    }
+
+    /// Returns diagnostic provenance retained beside an immutable macro
+    /// definition. This is deliberately separate from the definition's
+    /// semantic token lists.
+    #[must_use]
+    pub fn macro_definition_provenance(
+        &self,
+        definition: MacroDefinitionId,
+    ) -> MacroDefinitionProvenance {
+        self.universe.macro_definition_provenance(definition)
+    }
+
+    /// Allocates one rollback-coupled macro invocation node.
+    ///
+    /// The command machine supplies the live parent invocation from its
+    /// activation stack. The aggregate state owns arena allocation, so an
+    /// invocation frame never stores an arena handle outside the usual origin
+    /// representation.
+    pub fn macro_invocation_origin(
+        &mut self,
+        definition: MacroDefinitionId,
+        invocation: OriginId,
+        definition_origin: OriginId,
+        parent_invocation: OriginId,
+    ) -> OriginId {
+        self.universe.macro_invocation_origin(
+            definition,
+            invocation,
+            definition_origin,
+            parent_invocation,
+        )
     }
 }
 
