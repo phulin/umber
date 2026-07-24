@@ -885,6 +885,92 @@ fn canonical_initex_replay_scans_setbox_then_hands_vbox_to_executor() {
 }
 
 #[test]
+fn canonical_initex_replay_scans_box_register_before_stomach_consumes_it() {
+    let mut universe = Universe::new();
+    let mut control = CommandReplayControl::tex82_initex(&mut universe);
+    register_source(&mut control, br"\setbox10=\vbox{}\box10\end");
+
+    for _ in 0..5 {
+        assert_eq!(
+            control.step(&mut universe).expect("setbox construction"),
+            ReplayStep::Continue
+        );
+    }
+    assert!(universe.box_reg(10).is_some(), "setbox completed");
+
+    let mut observations = ObservationRecorder::default();
+    assert_eq!(
+        control
+            .step_with_observer(&mut universe, &mut observations)
+            .expect("box register scan"),
+        ReplayStep::Continue
+    );
+    assert!(universe.box_reg(10).is_none(), "box consumes its register");
+
+    let make_box = observations
+        .0
+        .iter()
+        .position(|event| {
+            matches!(event, CommandObservation::Command(command)
+            if command.boundary == CommandDeliveryBoundary::Raw
+                && command.command == "make_box"
+                && command.command_operand == Some(0))
+        })
+        .expect("raw make_box(box_code) identity");
+    let first_digit = observations
+        .0
+        .iter()
+        .enumerate()
+        .skip(make_box + 1)
+        .find_map(|(index, event)| {
+            matches!(event, CommandObservation::Command(command)
+            if command.boundary == CommandDeliveryBoundary::Raw
+                && command.spelling == ObservedToken::Character {
+                    character: '1', catcode: tex_state::token::Catcode::Other,
+                })
+            .then_some(index)
+        })
+        .expect("command-owned scan_int delivers the first register digit raw");
+    assert!(
+        !observations.0[make_box + 1..first_digit]
+            .iter()
+            .any(|event| matches!(event, CommandObservation::Input(input)
+                if input.transition == InputTransition::Backup)),
+        "the register digit is not an executor-created backup replay: {:?}",
+        observations.0
+    );
+    let second_digit = observations
+        .0
+        .iter()
+        .enumerate()
+        .skip(first_digit + 1)
+        .find_map(|(index, event)| {
+            matches!(event, CommandObservation::Command(command)
+            if command.boundary == CommandDeliveryBoundary::Raw
+                && command.spelling == ObservedToken::Character {
+                    character: '0', catcode: tex_state::token::Catcode::Other,
+                })
+            .then_some(index)
+        })
+        .expect("second register digit remains raw command input");
+    let terminator_backup = observations
+        .0
+        .iter()
+        .enumerate()
+        .skip(second_digit + 1)
+        .find_map(|(index, event)| {
+            matches!(event, CommandObservation::Input(input)
+            if input.transition == InputTransition::Backup)
+            .then_some(index)
+        })
+        .expect("scan_int backs up the following box terminator after both digits");
+    assert!(
+        second_digit < terminator_backup,
+        "integer terminator backup follows the completed register operand"
+    );
+}
+
+#[test]
 fn canonical_initex_replay_observes_committed_message_effects() {
     let mut universe = Universe::new();
     let mut control = CommandReplayControl::tex82_initex(&mut universe);

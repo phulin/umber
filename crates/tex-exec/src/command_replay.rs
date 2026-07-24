@@ -533,6 +533,7 @@ enum ScannedStep {
         tokens: TracedTokenList,
     },
     ImmediateExtension(ImmediateExtension),
+    BoxRegister(u16),
     BeginAlignment {
         vertical: bool,
     },
@@ -1161,6 +1162,16 @@ fn scan_command(
             let index = u16::try_from(assignment.index)
                 .map_err(|_| ExecError::RegisterNumberOutOfRange(assignment.index))?;
             Ok(ScannedStep::SetBox(SetBoxTarget { index, global }))
+        }
+        // TeX82 §1071's `make_box(box_code)` scans the register through
+        // `scan_int` before handing the completed box-list operation to the
+        // stomach. In particular, the first digit remains raw command input,
+        // never an executor-side backup/replay artifact.
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Box) => {
+            let register = processor.scan_box_register().map_err(command_error)?;
+            let index = u16::try_from(register.index)
+                .map_err(|_| ExecError::RegisterNumberOutOfRange(register.index))?;
+            Ok(ScannedStep::BoxRegister(index))
         }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::VBox) => {
             processor.scan_box_group_opening().map_err(command_error)?;
@@ -1911,6 +1922,17 @@ fn apply_scanned_step(
         }
         ScannedStep::SetBox(target) => {
             boxes.pending_setbox = Some(target);
+            Ok(ReplayStep::Continue)
+        }
+        ScannedStep::BoxRegister(index) => {
+            let id = stores.take_box_reg_same_level(index);
+            crate::assignments::execute_scanned_box_register(
+                UnexpandablePrimitive::Box,
+                id,
+                modes,
+                stores,
+            )?;
+            crate::vertical::build_page_if_outer_vertical(modes, stores)?;
             Ok(ReplayStep::Continue)
         }
         ScannedStep::BeginVBox => {

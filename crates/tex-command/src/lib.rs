@@ -52,7 +52,7 @@ pub use profile::{
 };
 pub use scanners::{
     AlignmentCellOpening, FileNameTermination, ImmediateExtension, InternalValue, RegisteredInput,
-    ScalarProvenance, ScalarRecovery, ScannedBalancedText, ScannedFileName,
+    ScalarProvenance, ScalarRecovery, ScannedBalancedText, ScannedBoxRegister, ScannedFileName,
     ScannedGlueParameterAssignment, ScannedLetAssignment, ScannedMacroDefinition, ScannedRuleSpec,
     ScannedScalar, ScannedSetBoxAssignment, ScannedTokenRegisterAssignment, StructuredProvenance,
 };

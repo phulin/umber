@@ -69,6 +69,16 @@ pub struct ScannedSetBoxAssignment {
     pub index: i32,
 }
 
+/// The completed register operand of TeX82's `\\box` command.
+///
+/// `make_box(box_code)` calls `scan_int` before main control can apply the
+/// resulting box-list operation. Keeping that scan here preserves the raw
+/// digit delivery and any integer-scanner backup entirely in command control.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ScannedBoxRegister {
+    pub index: i32,
+}
+
 /// A completed named glue-parameter assignment.
 ///
 /// Command processing owns the optional equals sign and scalar glue scan;
@@ -304,6 +314,13 @@ impl CommandProcessor<'_> {
         let index = self.scan_integer()?.value;
         let _ = self.scan_optional_equals()?;
         Ok(ScannedSetBoxAssignment { index })
+    }
+
+    /// Scans the register operand of TeX82 §1071's `make_box(box_code)`.
+    pub fn scan_box_register(&mut self) -> Result<ScannedBoxRegister, CommandError> {
+        Ok(ScannedBoxRegister {
+            index: self.scan_integer()?.value,
+        })
     }
 
     /// Scans TeX82's named glue-parameter assignment operand.

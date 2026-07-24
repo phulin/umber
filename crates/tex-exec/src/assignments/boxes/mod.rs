@@ -165,19 +165,7 @@ pub(super) fn execute_box_list_command(
     match primitive {
         UnexpandablePrimitive::Box | UnexpandablePrimitive::Copy => {
             let index = scan_register_index(input, stores, execution, context)?;
-            let source_proven = execution.paragraph_box_is_source_proven(index);
-            let id = if primitive == UnexpandablePrimitive::Box {
-                stores.take_box_reg_same_level(index)
-            } else {
-                stores.box_reg(index)
-            };
-            account_external_box_access(execution, index, source_proven, primitive, id.is_some());
-            if primitive == UnexpandablePrimitive::Copy
-                && let Some(id) = id
-            {
-                stores.pin_survivor(id);
-            }
-            append_box_register(nest, stores, id)?;
+            execute_box_register_read(primitive, index, nest, stores, execution)?;
         }
         UnexpandablePrimitive::UnHBox
         | UnexpandablePrimitive::UnHCopy
@@ -280,6 +268,46 @@ pub(super) fn execute_box_list_command(
     ) {
         build_page_if_outer_vertical(nest, stores)?;
     }
+    Ok(())
+}
+
+/// Applies an already command-scanned `\\box` or `\\copy` register read.
+///
+/// The command-core owns `scan_int`; this stomach helper receives only its
+/// completed index and applies the TeX82 box-list mutation.
+pub(crate) fn execute_box_register_read(
+    primitive: UnexpandablePrimitive,
+    index: u16,
+    nest: &mut ModeNest,
+    stores: &mut Universe,
+    execution: &mut crate::ExecutionContext<'_>,
+) -> Result<(), ExecError> {
+    let source_proven = execution.paragraph_box_is_source_proven(index);
+    let id = if primitive == UnexpandablePrimitive::Box {
+        stores.take_box_reg_same_level(index)
+    } else {
+        stores.box_reg(index)
+    };
+    account_external_box_access(execution, index, source_proven, primitive, id.is_some());
+    if primitive == UnexpandablePrimitive::Copy
+        && let Some(id) = id
+    {
+        stores.pin_survivor(id);
+    }
+    execute_scanned_box_register(primitive, id, nest, stores)
+}
+
+/// Applies the box-list mutation after command control has scanned an operand.
+///
+/// This intentionally has no input or execution context: replay reaches it
+/// only with a completed typed register index.
+pub(crate) fn execute_scanned_box_register(
+    _primitive: UnexpandablePrimitive,
+    id: Option<tex_state::ids::NodeListId>,
+    nest: &mut ModeNest,
+    stores: &mut Universe,
+) -> Result<(), ExecError> {
+    append_box_register(nest, stores, id)?;
     Ok(())
 }
 

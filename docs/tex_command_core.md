@@ -218,9 +218,11 @@ and §35 initializes `\shipout` with `a_leaders - 1` (`99`); the executor
 receives only the completed typed box/output semantics.
 
 Likewise, `\box` is observed as `make_box` with `cur_chr` 0 before command
-control scans its box-register operand. TeX82 §15 assigns the shared
-`make_box` command code, and §35 initializes `\box` with `box_code` (`0`);
-the executor consumes only the resulting typed box semantics.
+control invokes TeX82 §1071's `scan_int` for its box-register operand. That
+command-owned scan preserves raw digit delivery and any terminator backup;
+TeX82 §15 assigns the shared `make_box` command code, and §35 initializes
+`\box` with `box_code` (`0`). The executor consumes only the resulting typed
+box semantics.
 
 After `init_align` validates and replays its opening brace, the command
 processor owns the complete `get_preamble_token` episode. It retains raw
