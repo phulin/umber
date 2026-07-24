@@ -49,6 +49,7 @@ struct SetBoxTarget {
 #[derive(Clone, Copy, Debug)]
 struct ActiveReplayBox {
     target: Option<SetBoxTarget>,
+    ships_out: bool,
     opening_brace_replay: bool,
     body_opener_pending: bool,
     depth: u32,
@@ -73,6 +74,7 @@ struct ActiveReplayAlignment {
 #[derive(Debug, Default)]
 struct ReplayBoxes {
     pending_setbox: Option<SetBoxTarget>,
+    pending_shipout: bool,
     active_boxes: Vec<ActiveReplayBox>,
     suspended_alignments: Vec<ActiveReplayAlignment>,
     recovery_simple_group_pending: bool,
@@ -533,7 +535,11 @@ enum ScannedStep {
         tokens: TracedTokenList,
     },
     ImmediateExtension(ImmediateExtension),
-    BoxRegister(u16),
+    BoxRegister {
+        index: u16,
+        ships_out: bool,
+    },
+    BeginShipout,
     BeginAlignment {
         vertical: bool,
     },
@@ -588,7 +594,9 @@ enum ScannedStep {
     BeginVBox,
     ReplayBoxOpeningBrace,
     BoxBeginGroup,
-    BoxEndGroup,
+    BoxEndGroup {
+        ships_out: bool,
+    },
     Paragraph,
     MathShift,
     ParagraphStart,
@@ -936,7 +944,14 @@ fn scan_command(
             Meaning::CharToken {
                 cat: Catcode::EndGroup,
                 ..
-            } => return Ok(ScannedStep::BoxEndGroup),
+            } => {
+                return Ok(ScannedStep::BoxEndGroup {
+                    ships_out: boxes
+                        .active_boxes
+                        .last()
+                        .is_some_and(|box_state| box_state.ships_out),
+                });
+            }
             _ => {}
         }
     }
@@ -1171,7 +1186,13 @@ fn scan_command(
             let register = processor.scan_box_register().map_err(command_error)?;
             let index = u16::try_from(register.index)
                 .map_err(|_| ExecError::RegisterNumberOutOfRange(register.index))?;
-            Ok(ScannedStep::BoxRegister(index))
+            Ok(ScannedStep::BoxRegister {
+                index,
+                ships_out: boxes.pending_shipout,
+            })
+        }
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Shipout) => {
+            Ok(ScannedStep::BeginShipout)
         }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::VBox) => {
             processor.scan_box_group_opening().map_err(command_error)?;
@@ -1541,8 +1562,27 @@ fn applied_effect_observation(scanned: &ScannedStep, stores: &Universe) -> Optio
                 _ => None,
             }
         }
+        ScannedStep::BoxRegister {
+            ships_out: true, ..
+        }
+        | ScannedStep::BoxEndGroup { ships_out: true } => Some(EffectRecord {
+            kind: "shipout",
+            detail: format!("dvi:{}", stores.world().artifact_commits().len()),
+            tokens: None,
+        }),
         _ => None,
     }
+}
+
+/// TeX82 §1071 completes `box_end` synchronously: a `\shipout` box is
+/// published while its command-owned terminator backup is still live.  The
+/// temporary legacy stack is solely the existing artifact kernel's
+/// publication-summary input; it never scans the command operand.
+fn shipout_replay_box(node: Node, stores: &mut Universe) -> Result<(), ExecError> {
+    let mut input = tex_lex::InputStack::empty();
+    let mut execution = crate::ExecutionContext::new("texput");
+    let _ = crate::assignments::shipout_node(node, &mut input, stores, &mut execution)?;
+    Ok(())
 }
 
 #[cfg(any(test, feature = "instrumentation"))]
@@ -1924,23 +1964,38 @@ fn apply_scanned_step(
             boxes.pending_setbox = Some(target);
             Ok(ReplayStep::Continue)
         }
-        ScannedStep::BoxRegister(index) => {
+        ScannedStep::BoxRegister { index, ships_out } => {
             let id = stores.take_box_reg_same_level(index);
-            crate::assignments::execute_scanned_box_register(
-                UnexpandablePrimitive::Box,
-                id,
-                modes,
-                stores,
-            )?;
-            crate::vertical::build_page_if_outer_vertical(modes, stores)?;
+            if ships_out {
+                boxes.pending_shipout = false;
+                if let Some(node) =
+                    id.and_then(|id| stores.nodes(id).first().map(|node| node.to_owned()))
+                {
+                    shipout_replay_box(node, stores)?;
+                }
+            } else {
+                crate::assignments::execute_scanned_box_register(
+                    UnexpandablePrimitive::Box,
+                    id,
+                    modes,
+                    stores,
+                )?;
+                crate::vertical::build_page_if_outer_vertical(modes, stores)?;
+            }
+            Ok(ReplayStep::Continue)
+        }
+        ScannedStep::BeginShipout => {
+            boxes.pending_shipout = true;
             Ok(ReplayStep::Continue)
         }
         ScannedStep::BeginVBox => {
             let target = boxes.pending_setbox.take();
+            let ships_out = std::mem::take(&mut boxes.pending_shipout);
             stores.enter_group_with_kind(GroupKind::VBox);
             modes.push(Mode::InternalVertical);
             boxes.active_boxes.push(ActiveReplayBox {
                 target,
+                ships_out,
                 opening_brace_replay: true,
                 body_opener_pending: true,
                 depth: 1,
@@ -2009,7 +2064,7 @@ fn apply_scanned_step(
             }
             Ok(ReplayStep::Continue)
         }
-        ScannedStep::BoxEndGroup => {
+        ScannedStep::BoxEndGroup { ships_out } => {
             let box_state = boxes
                 .active_boxes
                 .last_mut()
@@ -2021,8 +2076,8 @@ fn apply_scanned_step(
                 return Ok(ReplayStep::Continue);
             }
             let box_state = boxes.active_boxes.pop().expect("active box was checked");
-            let _ = modes.pop()?;
-            let children = stores.freeze_node_list(&[]);
+            let level = modes.pop()?;
+            let children = stores.freeze_node_list(level.list().nodes());
             let packed = crate::packing_params::vpack(
                 stores,
                 children,
@@ -2035,7 +2090,10 @@ fn apply_scanned_step(
                 .map_err(|_| ExecError::MissingToken {
                     context: "vbox group",
                 })?;
-            if let Some(target) = box_state.target {
+            if ships_out {
+                debug_assert!(box_state.ships_out);
+                shipout_replay_box(Node::VList(packed.node), stores)?;
+            } else if let Some(target) = box_state.target {
                 if target.global {
                     stores.set_box_reg_global(target.index, boxed);
                 } else {

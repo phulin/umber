@@ -217,6 +217,14 @@ replay scans its box. TeX82 §15 assigns the shared `leader_ship` command code,
 and §35 initializes `\shipout` with `a_leaders - 1` (`99`); the executor
 receives only the completed typed box/output semantics.
 
+For TeX82 §§1071 and 1076, `\shipout` begins a typed box-completion episode:
+command control delivers the next `make_box` command and owns every scalar
+box-register scan, including its one-token terminator backup. On the closing
+brace, replay performs §1071's `box_end`/`ship_out(cur_box)` synchronously;
+the DVI-page effect is consequently published before that terminator backup
+retires on the next raw fetch. The executor receives the completed box node,
+not an input capability or a token to reread.
+
 Likewise, `\box` is observed as `make_box` with `cur_chr` 0 before command
 control invokes TeX82 §1071's `scan_int` for its box-register operand. That
 command-owned scan preserves raw digit delivery and any terminator backup;

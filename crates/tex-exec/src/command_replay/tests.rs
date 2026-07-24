@@ -971,6 +971,53 @@ fn canonical_initex_replay_scans_box_register_before_stomach_consumes_it() {
 }
 
 #[test]
+fn shipout_box_completion_precedes_its_terminator_backup_retirement() {
+    let mut universe = Universe::new();
+    let mut control = CommandReplayControl::tex82_initex(&mut universe);
+    register_source(
+        &mut control,
+        br"\setbox10=\vbox{}\setbox11=\vbox{}\shipout\vbox{\box10\box11}\end",
+    );
+    let mut observations = ObservationRecorder::default();
+
+    for _ in 0..32 {
+        if matches!(
+            control
+                .step_with_observer(&mut universe, &mut observations)
+                .expect("canonical replay"),
+            ReplayStep::End | ReplayStep::EndOfInput
+        ) {
+            break;
+        }
+    }
+
+    let shipout = observations
+        .0
+        .iter()
+        .position(|event| {
+            matches!(event, CommandObservation::Effect(effect)
+                if effect.kind == "shipout" && effect.detail == "dvi:1")
+        })
+        .expect("completed vbox publishes DVI page one");
+    let retirement = observations
+        .0
+        .iter()
+        .enumerate()
+        .skip(shipout + 1)
+        .find_map(|(index, event)| {
+            matches!(event, CommandObservation::Input(input)
+                if input.transition == InputTransition::Retire && input.reason == InputReason::Backup)
+            .then_some(index)
+        })
+        .expect("box-register terminator backup retires on the next raw fetch");
+    assert!(
+        shipout < retirement,
+        "TeX82 box_end ships out before scan_int's terminator backup retires: {:?}",
+        observations.0
+    );
+}
+
+#[test]
 fn canonical_initex_replay_observes_committed_message_effects() {
     let mut universe = Universe::new();
     let mut control = CommandReplayControl::tex82_initex(&mut universe);
