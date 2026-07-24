@@ -66,6 +66,7 @@ struct ActiveReplayAlignment {
     cell_opening_pending: bool,
     next_cell_opening_pending: bool,
     align_peek_pending: bool,
+    align_peek_after_noalign: bool,
     noalign_depth: Option<u32>,
 }
 
@@ -194,7 +195,7 @@ impl CommandReplayControl {
             self.modes.current_mode(),
             Mode::Vertical | Mode::InternalVertical
         );
-        let alignment_preamble = alignment_preamble(self.active_alignment.as_ref());
+        let alignment_preamble = alignment_preamble(self.active_alignment.as_mut());
         let scanned = {
             let mut processor = CommandProcessor::new(
                 &mut self.command,
@@ -232,7 +233,7 @@ impl CommandReplayControl {
             self.modes.current_mode(),
             Mode::Vertical | Mode::InternalVertical
         );
-        let alignment_preamble = alignment_preamble(self.active_alignment.as_ref());
+        let alignment_preamble = alignment_preamble(self.active_alignment.as_mut());
         let scanned = {
             let mut processor = CommandProcessor::new(
                 &mut self.command,
@@ -256,6 +257,12 @@ impl CommandReplayControl {
             ScannedStep::AlignmentCellOpening {
                 alignment,
                 opening: AlignmentCellOpening::Template,
+            } => Some(*alignment),
+            // `align_peek` already fetched and backed up the first nonblank
+            // command before it calls TeX82's `init_col`.
+            ScannedStep::AlignmentPeekCell {
+                alignment,
+                omit: false,
             } => Some(*alignment),
             _ => None,
         };
@@ -546,7 +553,9 @@ fn scan_replay_step(
                     .map_err(command_error)?;
                 Ok(ScannedStep::AlignmentCellOpening { alignment, opening })
             }
-            AlignmentPreamblePhase::AlignPeek => scan_alignment_peek(processor, alignment),
+            AlignmentPreamblePhase::AlignPeek { after_noalign } => {
+                scan_alignment_peek(processor, alignment, after_noalign)
+            }
             AlignmentPreamblePhase::NoAlignBody => scan_noalign_body(processor, alignment, boxes),
             AlignmentPreamblePhase::CellDelivery => {
                 scan_alignment_delivery_step(processor, alignment, boxes)
@@ -563,13 +572,13 @@ enum AlignmentPreamblePhase {
     Start,
     CellOpening,
     NextCellOpening,
-    AlignPeek,
+    AlignPeek { after_noalign: bool },
     NoAlignBody,
     CellDelivery,
 }
 
 fn alignment_preamble(
-    active: Option<&ActiveReplayAlignment>,
+    active: Option<&mut ActiveReplayAlignment>,
 ) -> Option<(AlignmentIdentity, AlignmentPreamblePhase)> {
     let active = active?;
     if active.preamble_opening_pending {
@@ -583,7 +592,12 @@ fn alignment_preamble(
     } else if active.next_cell_opening_pending {
         Some((active.identity, AlignmentPreamblePhase::NextCellOpening))
     } else if active.align_peek_pending {
-        Some((active.identity, AlignmentPreamblePhase::AlignPeek))
+        let after_noalign = active.align_peek_after_noalign;
+        active.align_peek_after_noalign = false;
+        Some((
+            active.identity,
+            AlignmentPreamblePhase::AlignPeek { after_noalign },
+        ))
     } else if active.noalign_depth.is_some() {
         Some((active.identity, AlignmentPreamblePhase::NoAlignBody))
     } else {
@@ -597,8 +611,11 @@ fn alignment_preamble(
 fn scan_alignment_peek(
     processor: &mut CommandProcessor<'_>,
     alignment: AlignmentIdentity,
+    after_noalign: bool,
 ) -> Result<ScannedStep, ExecError> {
-    processor.begin_alignment_peek().map_err(command_error)?;
+    processor
+        .begin_alignment_peek(after_noalign)
+        .map_err(command_error)?;
     let command = next_non_space(processor)?.ok_or(ExecError::MissingToken {
         context: "alignment lookahead",
     })?;
@@ -1638,6 +1655,7 @@ fn apply_scanned_step(
                 cell_opening_pending: false,
                 next_cell_opening_pending: false,
                 align_peek_pending: false,
+                align_peek_after_noalign: false,
                 noalign_depth: None,
             });
             if vertical && modes.current_mode() == Mode::Vertical {
@@ -1753,7 +1771,15 @@ fn apply_scanned_step(
                         context: "alignment omit-cell lifecycle",
                     })?;
             } else {
-                active.next_cell_opening_pending = true;
+                // TeX82 §37 now calls `init_col`, which immediately pushes
+                // the selected u-template above the command backed up by
+                // `align_peek`. A second lookahead would re-deliver that
+                // command before the template is installed.
+                command
+                    .apply_alignment_request(AlignmentRequest::InstallCellTemplate(alignment))
+                    .map_err(|_| ExecError::MissingToken {
+                        context: "alignment next-row cell-template lifecycle",
+                    })?;
             }
             Ok(ReplayStep::Continue)
         }
@@ -1786,6 +1812,7 @@ fn apply_scanned_step(
             }
             active.noalign_depth = None;
             active.align_peek_pending = true;
+            active.align_peek_after_noalign = true;
             stores
                 .leave_group_with_kind(GroupKind::NoAlign)
                 .map_err(|_| ExecError::MissingToken {

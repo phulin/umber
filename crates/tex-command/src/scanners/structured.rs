@@ -297,10 +297,31 @@ impl CommandProcessor<'_> {
     /// Installs TeX82 §37's `align_peek` sentinel before its expanded
     /// lookahead.  The command processor owns this state because it is raw
     /// token-delivery state, not executor group state.
-    pub fn begin_alignment_peek(&mut self) -> Result<(), CommandError> {
+    pub fn begin_alignment_peek(&mut self, after_noalign: bool) -> Result<(), CommandError> {
+        let changed = self.command.alignment.align_state != 1_000_000;
         self.command
             .prepare_alignment_cell_lookahead()
-            .map_err(|_| CommandError::InputInvariant)
+            .map_err(|_| CommandError::InputInvariant)?;
+        // TeX82 §37 assigns the `align_peek` sentinel before its first
+        // expanded lookahead.  Keep that transition command-owned and emit
+        // it before an exhausted backup is retired by `get_x_token`.
+        #[cfg(any(test, feature = "instrumentation"))]
+        if changed || after_noalign {
+            self.observe(crate::CommandObservation::Alignment(
+                crate::AlignmentRecord {
+                    transition: "state_change",
+                    alignment: self
+                        .command
+                        .alignment
+                        .active_alignment
+                        .map(|alignment| alignment.raw()),
+                    align_state: self.command.alignment.align_state,
+                    delimiter: None,
+                    previous_align_state: None,
+                },
+            ));
+        }
+        Ok(())
     }
 
     /// Enters TeX82's live alignment-preamble scanner episode.
