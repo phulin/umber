@@ -6,6 +6,8 @@
 
 use crate::{
     ChangedAt, DependencyKey, DependencyValue, Universe,
+    env::banks::{IntParam, TokParam},
+    ids::FontId,
     ids::{MacroDefinitionId, OriginListId, TokenListId},
     interner::Symbol,
     macro_store::{MacroDefinitionProvenance, MacroMeaning, MacroParameterPattern},
@@ -48,6 +50,42 @@ impl CommandContext<'_> {
     #[must_use]
     pub fn tokens(&self, id: TokenListId) -> &[Token] {
         self.universe.tokens(id)
+    }
+
+    /// Reads the immutable spelling of a control sequence.
+    #[must_use]
+    pub fn resolve(&self, symbol: Symbol) -> &str {
+        self.universe.resolve(symbol)
+    }
+
+    /// Reads one integer parameter for canonical expandable conversion.
+    #[must_use]
+    pub fn int_param(&self, param: IntParam) -> i32 {
+        self.universe.int_param(param)
+    }
+
+    /// Reads one token parameter for direct `\\the` insertion.
+    #[must_use]
+    pub fn tok_param(&self, param: TokParam) -> TokenListId {
+        self.universe.tok_param(param)
+    }
+
+    /// Reads one count register for canonical expandable conversion.
+    #[must_use]
+    pub fn count(&self, index: u16) -> i32 {
+        self.universe.count(index)
+    }
+
+    /// Reads one token register for direct `\\the` insertion.
+    #[must_use]
+    pub fn toks(&self, index: u16) -> TokenListId {
+        self.universe.toks(index)
+    }
+
+    /// Reads a font's immutable external name for `\\fontname` and meaning.
+    #[must_use]
+    pub fn font_name(&self, font: FontId) -> String {
+        self.universe.font_name(font)
     }
 
     /// Returns the parallel provenance words of one stored token list.

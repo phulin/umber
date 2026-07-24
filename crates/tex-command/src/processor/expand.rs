@@ -1,5 +1,6 @@
 //! Ordinary expanded-command delivery.
 
+use tex_state::env::banks::{IntParam, TokParam};
 use tex_state::ids::{MacroDefinitionId, OriginListId, TokenListId};
 use tex_state::meaning::{ExpandablePrimitive, Meaning};
 use tex_state::provenance::SynthesizedOriginKind;
@@ -60,6 +61,22 @@ impl CommandProcessor<'_> {
             }
             Meaning::ExpandablePrimitive(ExpandablePrimitive::CsName) => {
                 self.expand_csname(command)
+            }
+            Meaning::ExpandablePrimitive(ExpandablePrimitive::String) => {
+                self.expand_string(command)
+            }
+            Meaning::ExpandablePrimitive(ExpandablePrimitive::Meaning) => {
+                self.expand_meaning(command)
+            }
+            Meaning::ExpandablePrimitive(ExpandablePrimitive::Number) => {
+                self.expand_number(command, false)
+            }
+            Meaning::ExpandablePrimitive(ExpandablePrimitive::RomanNumeral) => {
+                self.expand_number(command, true)
+            }
+            Meaning::ExpandablePrimitive(ExpandablePrimitive::The) => self.expand_the(command),
+            Meaning::ExpandablePrimitive(ExpandablePrimitive::FontName) => {
+                self.expand_fontname(command)
             }
             Meaning::ExpandablePrimitive(primitive) => {
                 Err(CommandError::UnsupportedExpandablePrimitive(primitive))
@@ -126,6 +143,149 @@ impl CommandProcessor<'_> {
         Ok(())
     }
 
+    /// `\\string` observes spelling, never an effective control-sequence meaning.
+    fn expand_string(&mut self, opener: CurrentCommand) -> Result<(), CommandError> {
+        let target = self.get_token()?.ok_or(CommandError::InputInvariant)?;
+        self.push_rendered_text(
+            &string_text(&self.state, target.spelling().semantic_token()),
+            opener.origin(),
+        );
+        Ok(())
+    }
+
+    fn expand_meaning(&mut self, opener: CurrentCommand) -> Result<(), CommandError> {
+        let target = self.get_token()?.ok_or(CommandError::InputInvariant)?;
+        self.push_rendered_text(&meaning_text(&self.state, &target), opener.origin());
+        Ok(())
+    }
+
+    fn expand_number(&mut self, opener: CurrentCommand, roman: bool) -> Result<(), CommandError> {
+        let value = self.scan_decimal_integer()?;
+        let text = if roman {
+            roman_numeral(value)
+        } else {
+            value.to_string()
+        };
+        self.push_rendered_text(&text, opener.origin());
+        Ok(())
+    }
+
+    /// Direct token-list `\\the` splicing has no recursive expansion and only
+    /// consumes its target command; scanner collection owns any later expansion.
+    fn expand_the(&mut self, opener: CurrentCommand) -> Result<(), CommandError> {
+        let target = self.get_token()?.ok_or(CommandError::InputInvariant)?;
+        match target.meaning() {
+            Meaning::ToksRegister(index) => {
+                self.push_the_tokens(self.state.toks(index), index, false)
+            }
+            Meaning::TokParam(index) => {
+                self.push_the_tokens(self.state.tok_param(TokParam::new(index)), index, true)
+            }
+            Meaning::CountRegister(index) => {
+                self.push_rendered_text(&self.state.count(index).to_string(), opener.origin());
+                Ok(())
+            }
+            Meaning::IntParam(index) => {
+                self.push_rendered_text(
+                    &self.state.int_param(IntParam::new(index)).to_string(),
+                    opener.origin(),
+                );
+                Ok(())
+            }
+            _ => {
+                self.push_rendered_text("0", opener.origin());
+                Ok(())
+            }
+        }
+    }
+
+    fn expand_fontname(&mut self, opener: CurrentCommand) -> Result<(), CommandError> {
+        let target = self.get_token()?.ok_or(CommandError::InputInvariant)?;
+        let Meaning::Font(font) = target.meaning() else {
+            return Err(CommandError::InputInvariant);
+        };
+        self.push_rendered_text(&self.state.font_name(font), opener.origin());
+        Ok(())
+    }
+
+    fn push_the_tokens(
+        &mut self,
+        tokens: TokenListId,
+        index: u16,
+        parameter: bool,
+    ) -> Result<(), CommandError> {
+        self.command.push_token_level(
+            TokenPayload::Stored {
+                tokens,
+                origins: OriginListId::EMPTY,
+            },
+            TokenBehavior::Ordinary,
+            RetirementBehavior::Pop,
+            ReplayTrace::Stored(if parameter {
+                crate::input::StoredReplayReason::TokenParameter(index)
+            } else {
+                crate::input::StoredReplayReason::TokenRegister(index)
+            }),
+        );
+        Ok(())
+    }
+
+    fn scan_decimal_integer(&mut self) -> Result<i32, CommandError> {
+        let mut sign = 1_i32;
+        let mut value = 0_i32;
+        let mut saw_digit = false;
+        loop {
+            let command = self.get_x_token()?.ok_or(CommandError::InputInvariant)?;
+            match command.meaning() {
+                Meaning::CharToken {
+                    ch: ' ',
+                    cat: tex_state::token::Catcode::Space,
+                } if !saw_digit => {}
+                Meaning::CharToken { ch: '+', .. } if !saw_digit => {}
+                Meaning::CharToken { ch: '-', .. } if !saw_digit => sign = -sign,
+                Meaning::CharToken { ch, .. } if ch.is_ascii_digit() => {
+                    saw_digit = true;
+                    value = value
+                        .saturating_mul(10)
+                        .saturating_add(i32::from(ch as u8 - b'0'));
+                }
+                _ => {
+                    self.back_input(command)?;
+                    break;
+                }
+            }
+        }
+        Ok(sign.saturating_mul(value))
+    }
+
+    fn push_rendered_text(&mut self, text: &str, parent: OriginId) {
+        let origin = self
+            .state
+            .synthesized_origin(SynthesizedOriginKind::ValueRendering, parent);
+        let tokens = text
+            .chars()
+            .map(|ch| {
+                TracedTokenWord::pack(
+                    Token::Char {
+                        ch,
+                        cat: if ch == ' ' {
+                            tex_state::token::Catcode::Space
+                        } else {
+                            tex_state::token::Catcode::Other
+                        },
+                    },
+                    origin,
+                )
+            })
+            .collect::<Vec<_>>();
+        self.command.push_token_level(
+            TokenPayload::Transient(SharedTokenBuffer::new(tokens)),
+            TokenBehavior::Ordinary,
+            RetirementBehavior::Pop,
+            ReplayTrace::Transient(crate::input::TransientReplayReason::Inserted),
+        );
+    }
+
     fn replay_expandafter_first(&mut self, command: CurrentCommand) {
         self.undo_alignment_delivery(&command);
         self.command.push_token_level(
@@ -176,6 +336,72 @@ fn is_expandable(meaning: Meaning) -> bool {
             Meaning::ExpandablePrimitive(primitive)
                 if primitive != ExpandablePrimitive::EndCsName
         )
+}
+
+fn string_text(state: &tex_state::CommandContext<'_>, token: Token) -> String {
+    match token {
+        Token::Cs(symbol) => {
+            let mut text = String::new();
+            let escape = state.int_param(IntParam::ESCAPE_CHAR);
+            if let Some(ch) = char::from_u32(u32::try_from(escape).unwrap_or(u32::MAX)) {
+                text.push(ch);
+            }
+            text.push_str(state.resolve(symbol));
+            text
+        }
+        Token::Char { ch, .. } => ch.to_string(),
+        Token::Param(slot) => format!("#{slot}"),
+        Token::Frozen(_) => "\\relax".to_owned(),
+    }
+}
+
+fn meaning_text(state: &tex_state::CommandContext<'_>, command: &CurrentCommand) -> String {
+    match command.meaning() {
+        Meaning::Undefined => "undefined".to_owned(),
+        Meaning::Relax => "\\relax".to_owned(),
+        Meaning::CharToken { ch, cat } => format!("the character {ch} (catcode {})", cat as u8),
+        Meaning::CharGiven(ch) => format!("the character {ch}"),
+        Meaning::CountRegister(index) => format!("\\count{index}"),
+        Meaning::ToksRegister(index) => format!("\\toks{index}"),
+        Meaning::IntParam(index) => format!("integer parameter {index}"),
+        Meaning::TokParam(index) => format!("token parameter {index}"),
+        Meaning::Font(font) => format!("select font {}", state.font_name(font)),
+        Meaning::Macro { .. } => "macro:".to_owned(),
+        Meaning::ExpandablePrimitive(_) | Meaning::UnexpandablePrimitive(_) => command
+            .control_sequence()
+            .map(|symbol| format!("\\{}", state.resolve(symbol)))
+            .unwrap_or_else(|| "primitive".to_owned()),
+        other => format!("{other:?}"),
+    }
+}
+
+fn roman_numeral(value: i32) -> String {
+    if value <= 0 {
+        return String::new();
+    }
+    let mut remaining = value;
+    let mut output = String::new();
+    for (amount, glyph) in [
+        (1000, "m"),
+        (900, "cm"),
+        (500, "d"),
+        (400, "cd"),
+        (100, "c"),
+        (90, "xc"),
+        (50, "l"),
+        (40, "xl"),
+        (10, "x"),
+        (9, "ix"),
+        (5, "v"),
+        (4, "iv"),
+        (1, "i"),
+    ] {
+        while remaining >= amount {
+            output.push_str(glyph);
+            remaining -= amount;
+        }
+    }
+    output
 }
 
 #[cfg(test)]
@@ -235,6 +461,120 @@ mod tests {
         let symbol = universe.intern(name).symbol();
         universe.set_meaning(symbol, Meaning::ExpandablePrimitive(primitive));
         symbol
+    }
+
+    fn rendered(processor: &mut CommandProcessor<'_>) -> String {
+        let mut text = String::new();
+        while let Some(command) = processor.get_x_token().expect("conversion expands") {
+            let Token::Char { ch, .. } = command.spelling().semantic_token() else {
+                panic!("expected rendered character")
+            };
+            text.push(ch);
+        }
+        text
+    }
+
+    #[test]
+    fn scalar_conversions_render_immutable_other_character_tokens() {
+        let mut command = CommandState::default();
+        let mut runtime = CommandRuntime::default();
+        let mut universe = Universe::new();
+        let number = install_expandable(&mut universe, "number", ExpandablePrimitive::Number);
+        let roman = install_expandable(
+            &mut universe,
+            "romannumeral",
+            ExpandablePrimitive::RomanNumeral,
+        );
+        let string = install_expandable(&mut universe, "string", ExpandablePrimitive::String);
+        let target = universe.intern("target").symbol();
+        command.push_token_level(
+            TokenPayload::Transient(SharedTokenBuffer::new(vec![
+                traced(Token::Cs(number)),
+                traced(Token::Char {
+                    ch: '-',
+                    cat: Catcode::Other,
+                }),
+                traced(Token::Char {
+                    ch: '4',
+                    cat: Catcode::Other,
+                }),
+                traced(Token::Char {
+                    ch: '2',
+                    cat: Catcode::Other,
+                }),
+                traced(Token::Cs(roman)),
+                traced(Token::Char {
+                    ch: '9',
+                    cat: Catcode::Other,
+                }),
+                traced(Token::Cs(string)),
+                traced(Token::Cs(target)),
+            ])),
+            TokenBehavior::Ordinary,
+            RetirementBehavior::Pop,
+            ReplayTrace::BackedUp,
+        );
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+        assert_eq!(rendered(&mut processor), "-42ix\\target");
+    }
+
+    #[test]
+    fn the_toks_pushes_immutable_stored_input_without_reading_beyond_target() {
+        let mut command = CommandState::default();
+        let mut runtime = CommandRuntime::default();
+        let mut universe = Universe::new();
+        let the = install_expandable(&mut universe, "the", ExpandablePrimitive::The);
+        let register = universe.intern("stored").symbol();
+        universe.set_meaning(register, Meaning::ToksRegister(7));
+        let stored = universe.intern_token_list(&[Token::Char {
+            ch: 'x',
+            cat: Catcode::Letter,
+        }]);
+        universe.set_toks(7, stored);
+        let trailing = Token::Char {
+            ch: 'z',
+            cat: Catcode::Letter,
+        };
+        command.push_token_level(
+            TokenPayload::Transient(SharedTokenBuffer::new(vec![
+                traced(Token::Cs(the)),
+                traced(Token::Cs(register)),
+                traced(trailing),
+            ])),
+            TokenBehavior::Ordinary,
+            RetirementBehavior::Pop,
+            ReplayTrace::BackedUp,
+        );
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+        let opener = processor.get_next().expect("raw the").expect("the command");
+        processor.expand(opener).expect("the inserts stored list");
+        assert!(
+            matches!(processor.command.input.levels.last(), Some(crate::input::InputLevel::Tokens(cursor))
+            if matches!(cursor.payload, TokenPayload::Stored { tokens, .. } if tokens == stored))
+        );
+        assert_eq!(
+            processor
+                .get_x_token()
+                .expect("stored token")
+                .expect("x")
+                .spelling()
+                .semantic_token(),
+            Token::Char {
+                ch: 'x',
+                cat: Catcode::Letter
+            }
+        );
+        assert_eq!(
+            processor
+                .get_x_token()
+                .expect("trailing token")
+                .expect("z")
+                .spelling()
+                .semantic_token(),
+            trailing
+        );
     }
 
     #[test]

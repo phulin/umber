@@ -877,6 +877,16 @@ Every raw semantic consumer uses `get_next` or `get_token`, including:
 Lower-level lexical reads are private and cannot be called by scanners or
 `tex-exec`.
 
+The scalar expansion implementation produces `\number`, `\romannumeral`,
+`\string`, `\meaning`, and `\fontname` as bounded transient character input
+with synthesized value-rendering provenance. `\string` uses the delivered
+token spelling, while `\meaning` uses its separately retained effective
+meaning. Token-register and token-parameter `\the` results are instead
+inserted as immutable stored-token input: producing that splice consumes only
+the quantity target and never expands or reads beyond its contents. A later
+ordinary expansion loop remains responsible if those tokens subsequently
+become normal input.
+
 ## 15. `get_token`, backup, and exact delivery
 
 `get_token` invokes `get_next` under canonical control-sequence creation policy
