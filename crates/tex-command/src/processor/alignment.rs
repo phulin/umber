@@ -87,6 +87,9 @@ pub enum AlignmentRequest {
     /// Install the selected cell's optional u-template after its source
     /// opening brace has been delivered and backed up by command processing.
     InstallCellTemplate(AlignmentIdentity),
+    /// Complete `init_col`'s typed `\omit` branch without replaying a
+    /// u-template.
+    InstallOmitCellTemplate(AlignmentIdentity),
     /// Retire the exhausted v-template for one finished cell.
     FinishCell(AlignmentIdentity),
     /// Preserve the outer raw-delivery context before entering a nested alignment.
@@ -202,6 +205,7 @@ pub(crate) struct ActiveCellDelivery {
     pub(crate) u_level: Option<InputLevelId>,
     pub(crate) v_level: Option<InputLevelId>,
     pub(crate) delimiter: Option<AlignmentCellDelimiter>,
+    pub(crate) omit_previous_align_state: Option<i32>,
 }
 
 /// The one semantic alignment adjustment made by a raw delivery.
@@ -300,6 +304,7 @@ impl AlignmentDeliveryState {
             u_level: None,
             v_level: None,
             delimiter: None,
+            omit_previous_align_state: None,
         });
         self.align_state = if templates.u_template.is_some() {
             TEMPLATE_ALIGN_STATE
@@ -568,7 +573,7 @@ impl AlignmentDeliveryState {
         Ok(cell)
     }
 
-    fn active_cell_mut(
+    pub(crate) fn active_cell_mut(
         &mut self,
         alignment: AlignmentIdentity,
     ) -> Result<&mut ActiveCellDelivery, AlignmentLifecycleError> {

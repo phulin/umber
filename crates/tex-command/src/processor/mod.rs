@@ -12,7 +12,6 @@ use crate::{CommandHostContext, CommandRuntime, CommandState, DeliveryStamp};
 #[cfg(any(test, feature = "instrumentation"))]
 use crate::observation::CommandObserver;
 
-#[cfg(any(test, feature = "instrumentation"))]
 pub(crate) use alignment::CELL_ALIGN_STATE;
 #[cfg(test)]
 pub(crate) use alignment::{ActiveCellDelivery, SuspendedAlignment};

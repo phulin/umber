@@ -13,12 +13,10 @@ use crate::input::{
 };
 use crate::input::{ReplayTrace, RetirementBehavior, TokenBehavior, TokenPayload};
 use crate::macro_call::ParameterState;
-#[cfg(any(test, feature = "instrumentation"))]
-use crate::processor::CELL_ALIGN_STATE;
 use crate::processor::{
     AlignmentCellDelimiter, AlignmentCellTemplates, AlignmentDeliveryState, AlignmentIdentity,
-    AlignmentLifecycleError, AlignmentRequest, AlignmentRequestResult, ExpansionState,
-    ScannerState,
+    AlignmentLifecycleError, AlignmentRequest, AlignmentRequestResult, CELL_ALIGN_STATE,
+    ExpansionState, ScannerState,
 };
 use crate::profile::{
     CommandProfile, CommandProfileBoundary, CommandProfileFingerprint, CommandProfileMismatch,
@@ -94,6 +92,10 @@ impl CommandState {
                 self.install_alignment_cell_template(alignment)?;
                 Ok(AlignmentRequestResult::Applied)
             }
+            AlignmentRequest::InstallOmitCellTemplate(alignment) => {
+                self.install_alignment_omit_cell_template(alignment)?;
+                Ok(AlignmentRequestResult::Applied)
+            }
             AlignmentRequest::FinishCell(alignment) => Ok(AlignmentRequestResult::FinishedCell(
                 self.finish_alignment_cell(alignment)?,
             )),
@@ -159,6 +161,56 @@ impl CommandState {
             self.alignment.mark_u_template_installed(alignment)?;
         }
         Ok(())
+    }
+
+    /// Restores `align_peek`'s lookahead sentinel before `init_col` consumes
+    /// the selected entry's first nonblank command.
+    pub(crate) fn prepare_alignment_cell_lookahead(
+        &mut self,
+    ) -> Result<(), AlignmentLifecycleError> {
+        let _alignment = self
+            .alignment
+            .active_alignment
+            .ok_or(AlignmentLifecycleError::NoActiveAlignment)?;
+        self.alignment.align_state = 1_000_000;
+        Ok(())
+    }
+
+    /// Completes TeX82 `init_col`'s `cur_cmd=omit` branch.
+    ///
+    /// The expanded omit command was already delivered by command processing.
+    /// It is neither backed up nor followed by a u-template input level; the
+    /// next delivery is cell-body input at the zero sentinel (TeX82 §37).
+    pub fn install_alignment_omit_cell_template(
+        &mut self,
+        alignment: AlignmentIdentity,
+    ) -> Result<(), AlignmentLifecycleError> {
+        let previous_align_state = self.alignment.align_state;
+        let cell = self.alignment.active_cell_mut(alignment)?;
+        if cell.u_template_installed {
+            return Err(AlignmentLifecycleError::UTemplateAlreadyInstalled);
+        }
+        cell.u_template_installed = true;
+        cell.omit_previous_align_state = Some(previous_align_state);
+        self.alignment.align_state = CELL_ALIGN_STATE;
+        Ok(())
+    }
+
+    /// Returns the state transition committed by TeX82's omit-cell branch.
+    #[cfg(any(test, feature = "instrumentation"))]
+    #[must_use]
+    pub fn alignment_omit_cell_observation(
+        &self,
+        alignment: AlignmentIdentity,
+    ) -> Option<AlignmentRecord> {
+        let cell = self.alignment.active_cell.as_ref()?;
+        (cell.alignment == alignment).then_some(AlignmentRecord {
+            transition: "state_change",
+            alignment: Some(alignment.raw()),
+            align_state: self.alignment.align_state,
+            delimiter: None,
+            previous_align_state: cell.omit_previous_align_state,
+        })
     }
 
     /// Returns the committed input push for a just-installed u-template.

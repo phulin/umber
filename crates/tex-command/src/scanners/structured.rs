@@ -110,6 +110,19 @@ pub struct RegisteredInput {
     pub source: SourceId,
 }
 
+/// The typed result of TeX82's `init_col` entry lookahead.
+///
+/// `\omit` is consumed as that lookahead rather than backed up for the
+/// selected u-template. The executor receives this semantic distinction,
+/// never the command spelling that established it.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum AlignmentCellOpening {
+    /// The selected column uses its ordinary u-template.
+    Template,
+    /// The selected column starts with TeX82's template-free `\omit` path.
+    Omit,
+}
+
 impl CommandProcessor<'_> {
     /// Scans the register number and optional equals sign of `\setbox`.
     ///
@@ -205,18 +218,48 @@ impl CommandProcessor<'_> {
     /// Delivers the first alignment cell's source opening brace, then backs
     /// it up before the selected u-template is installed.
     ///
-    /// This is TeX82's `init_row` ordering: the source brace changes and then
-    /// restores `align_state` through ordinary command delivery, while the
-    /// executor receives no raw token.
-    pub fn scan_alignment_cell_opening(&mut self) -> Result<(), CommandError> {
-        let opening = self.scan_left_brace(true)?;
-        self.back_input(opening)
+    /// This is TeX82's `init_col` lookahead ordering: an ordinary source
+    /// opener changes and then restores `align_state` through command-owned
+    /// backup, while `\omit` instead remains consumed and selects the typed
+    /// template-free path.
+    pub fn scan_alignment_cell_opening(&mut self) -> Result<AlignmentCellOpening, CommandError> {
+        loop {
+            let opening = self.get_x_token()?.ok_or(CommandError::InputInvariant)?;
+            match opening.meaning() {
+                Meaning::CharToken {
+                    cat: Catcode::Space,
+                    ..
+                } => continue,
+                Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Omit) => {
+                    self.command
+                        .prepare_alignment_cell_lookahead()
+                        .map_err(|_| CommandError::InputInvariant)?;
+                    return Ok(AlignmentCellOpening::Omit);
+                }
+                Meaning::CharToken {
+                    cat: Catcode::BeginGroup,
+                    ..
+                } => {
+                    self.back_input(opening)?;
+                    return Ok(AlignmentCellOpening::Template);
+                }
+                _ => {
+                    self.back_input(opening)?;
+                    return Err(CommandError::InputInvariant);
+                }
+            }
+        }
     }
 
     /// Performs TeX82 `fin_col`'s next-entry lookahead. Spaces are delivered
     /// normally; the first non-space token is restored before the selected
     /// u-template is installed.
-    pub fn scan_alignment_next_cell_opening(&mut self) -> Result<(), CommandError> {
+    pub fn scan_alignment_next_cell_opening(
+        &mut self,
+    ) -> Result<AlignmentCellOpening, CommandError> {
+        self.command
+            .prepare_alignment_cell_lookahead()
+            .map_err(|_| CommandError::InputInvariant)?;
         loop {
             let command = self.get_x_token()?.ok_or(CommandError::InputInvariant)?;
             if matches!(
@@ -228,7 +271,14 @@ impl CommandProcessor<'_> {
             ) {
                 continue;
             }
-            return self.back_input(command);
+            if matches!(
+                command.meaning(),
+                Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Omit)
+            ) {
+                return Ok(AlignmentCellOpening::Omit);
+            }
+            self.back_input(command)?;
+            return Ok(AlignmentCellOpening::Template);
         }
     }
 

@@ -5,9 +5,10 @@
 //! `tex-command`; no `InputStack` is accepted here.
 
 use tex_command::{
-    AlignmentCellDelimiter, AlignmentCellTemplates, AlignmentDelivery, AlignmentIdentity,
-    AlignmentRequest, AlignmentRequestResult, CommandError, CommandHostCapabilities,
-    CommandHostContext, CommandProcessor, CommandProfile, CommandRuntime, CommandState,
+    AlignmentCellDelimiter, AlignmentCellOpening, AlignmentCellTemplates, AlignmentDelivery,
+    AlignmentIdentity, AlignmentRequest, AlignmentRequestResult, CommandError,
+    CommandHostCapabilities, CommandHostContext, CommandProcessor, CommandProfile, CommandRuntime,
+    CommandState,
 };
 #[cfg(any(test, feature = "instrumentation"))]
 use tex_command::{
@@ -126,6 +127,7 @@ impl CommandReplayControl {
             AlignmentRequest::Begin(identity)
             | AlignmentRequest::Preamble(identity)
             | AlignmentRequest::InstallCellTemplate(identity)
+            | AlignmentRequest::InstallOmitCellTemplate(identity)
             | AlignmentRequest::FinishCell(identity)
             | AlignmentRequest::Suspend(identity)
             | AlignmentRequest::Resume(identity)
@@ -248,7 +250,17 @@ impl CommandReplayControl {
         let begins_alignment = matches!(&scanned, ScannedStep::BeginAlignment { .. });
         let begins_alignment_cell = matches!(&scanned, ScannedStep::AlignmentPreambleStart { .. });
         let installs_u_template = match &scanned {
-            ScannedStep::AlignmentCellOpening { alignment } => Some(*alignment),
+            ScannedStep::AlignmentCellOpening {
+                alignment,
+                opening: AlignmentCellOpening::Template,
+            } => Some(*alignment),
+            _ => None,
+        };
+        let installs_omit_cell = match &scanned {
+            ScannedStep::AlignmentCellOpening {
+                alignment,
+                opening: AlignmentCellOpening::Omit,
+            } => Some(*alignment),
             _ => None,
         };
         let finishes_alignment_cell = match &scanned {
@@ -288,6 +300,11 @@ impl CommandReplayControl {
                 {
                     observer.committed(CommandObservation::Alignment(template));
                 }
+            }
+            if let Some(alignment) = installs_omit_cell
+                && let Some(omit) = self.command.alignment_omit_cell_observation(alignment)
+            {
+                observer.committed(CommandObservation::Alignment(omit));
             }
             if let Some((state_change, retirement, template_retire)) = finishes_alignment_cell {
                 observer.committed(CommandObservation::Alignment(state_change));
@@ -442,6 +459,7 @@ enum ScannedStep {
     },
     AlignmentCellOpening {
         alignment: AlignmentIdentity,
+        opening: AlignmentCellOpening,
     },
     /// TeX82's `do_endv` completed a command-owned v-template.  Applying
     /// this result retires that exact frame before the backed-up delimiter
@@ -491,16 +509,16 @@ fn scan_replay_step(
                 Ok(ScannedStep::AlignmentPreambleStart { alignment })
             }
             AlignmentPreamblePhase::CellOpening => {
-                processor
+                let opening = processor
                     .scan_alignment_cell_opening()
                     .map_err(command_error)?;
-                Ok(ScannedStep::AlignmentCellOpening { alignment })
+                Ok(ScannedStep::AlignmentCellOpening { alignment, opening })
             }
             AlignmentPreamblePhase::NextCellOpening => {
-                processor
+                let opening = processor
                     .scan_alignment_next_cell_opening()
                     .map_err(command_error)?;
-                Ok(ScannedStep::AlignmentCellOpening { alignment })
+                Ok(ScannedStep::AlignmentCellOpening { alignment, opening })
             }
             AlignmentPreamblePhase::CellDelivery => {
                 scan_alignment_delivery_step(processor, alignment, boxes)
@@ -1578,9 +1596,16 @@ fn apply_scanned_step(
             }
             Ok(ReplayStep::Continue)
         }
-        ScannedStep::AlignmentCellOpening { alignment } => {
+        ScannedStep::AlignmentCellOpening { alignment, opening } => {
             command
-                .apply_alignment_request(AlignmentRequest::InstallCellTemplate(alignment))
+                .apply_alignment_request(match opening {
+                    AlignmentCellOpening::Template => {
+                        AlignmentRequest::InstallCellTemplate(alignment)
+                    }
+                    AlignmentCellOpening::Omit => {
+                        AlignmentRequest::InstallOmitCellTemplate(alignment)
+                    }
+                })
                 .map_err(|_| ExecError::MissingToken {
                     context: "alignment cell-template lifecycle",
                 })?;

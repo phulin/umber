@@ -173,6 +173,73 @@ fn canonical_initex_replay_scans_tabskip_before_alignment_preamble() {
 }
 
 #[test]
+fn omit_cell_sets_body_state_without_backing_up_or_installing_a_u_template() {
+    let mut universe = Universe::new();
+    let mut control = CommandReplayControl::tex82_initex(&mut universe);
+    register_source(&mut control, br"\halign{u#v\cr {a}\cr \omit b\cr}\end");
+    let mut observations = ObservationRecorder::default();
+
+    for _ in 0..20 {
+        if control
+            .step_with_observer(&mut universe, &mut observations)
+            .is_err()
+        {
+            break;
+        }
+        if observations.0.windows(3).any(|events| {
+            matches!(
+                events,
+                [
+                    CommandObservation::Command(raw),
+                    CommandObservation::Command(expanded),
+                    CommandObservation::Alignment(state_change),
+                ] if raw.command == "omit"
+                    && expanded.command == "omit"
+                    && state_change.transition == "state_change"
+                    && state_change.align_state == 0
+                    && state_change.previous_align_state == Some(1_000_000)
+            )
+        }) {
+            break;
+        }
+    }
+
+    assert!(
+        observations.0.windows(3).any(|events| {
+            matches!(
+                events,
+                [
+                    CommandObservation::Command(raw),
+                    CommandObservation::Command(expanded),
+                    CommandObservation::Alignment(state_change),
+                ] if raw.command == "omit"
+                    && expanded.command == "omit"
+                    && state_change.transition == "state_change"
+                    && state_change.align_state == 0
+                    && state_change.previous_align_state == Some(1_000_000)
+            )
+        }),
+        "omit must transition directly from the lookahead sentinel to the cell body: {:?}",
+        observations.0
+    );
+    assert!(
+        !observations.0.windows(3).any(|events| {
+            matches!(
+                events,
+                [
+                    CommandObservation::Command(command),
+                    CommandObservation::Input(input),
+                    ..
+                ] if command.command == "omit"
+                    && input.transition == InputTransition::Backup
+            )
+        }),
+        "TeX82 init_col never backs up its omit lookahead: {:?}",
+        observations.0
+    );
+}
+
+#[test]
 fn alignment_preamble_opener_uses_command_owned_backup_before_source_resumes() {
     let mut universe = Universe::new();
     let mut control = CommandReplayControl::tex82_initex(&mut universe);
