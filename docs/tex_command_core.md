@@ -293,6 +293,12 @@ assignments such as `\year`, `\dimen`, and `\skip` scan their operands through
 executor-side `Universe` mutation after the processor borrow ends, then
 publishes the committed mutation observation.
 
+Likewise, replay publishes a typed `\halign` or `\valign` begin observation
+immediately after applying its executor-selected alignment transition. Command
+state supplies the committed alignment identity and `align_state`; the next
+canonical raw fetch then retires any exhausted scanner backup. This preserves
+the TeX82 order without exposing a second input path to the executor.
+
 Named glue parameters such as `\tabskip` follow the same replay gate: command
 processing consumes their optional equals sign and ordinary or mu-glue operand
 as one typed assignment, preserving scanner backup and alignment delivery

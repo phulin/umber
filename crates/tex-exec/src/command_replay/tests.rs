@@ -123,17 +123,53 @@ fn canonical_initex_replay_scans_tabskip_before_alignment_preamble() {
                 && mutation.key.as_deref() == Some("glue_parameter:11")
                 && mutation.value.starts_with("glue:width=131072")
     ));
+    observations.0.clear();
 
     assert_eq!(
-        control.step(&mut universe).expect("alignment"),
+        control
+            .step_with_observer(&mut universe, &mut observations)
+            .expect("alignment"),
         ReplayStep::Continue
     );
+    assert!(matches!(
+        observations.0.as_slice(),
+        [..,
+            CommandObservation::Command(raw),
+            CommandObservation::Command(expanded),
+            CommandObservation::Alignment(alignment)]
+            if raw.command == "halign"
+                && expanded.command == "halign"
+                && alignment.transition == "begin"
+                && alignment.align_state == -1_000_000
+    ));
     let alignment = control
         .active_alignment()
         .expect("alignment begins after tabskip");
     control
         .apply_alignment_request(AlignmentRequest::Preamble(alignment))
         .expect("preamble lifecycle remains available");
+    assert_eq!(
+        control
+            .step_with_observer(&mut universe, &mut observations)
+            .expect("scanner-backed alignment token retires before the next delivery"),
+        ReplayStep::Continue
+    );
+    let alignment_begin = observations
+        .0
+        .iter()
+        .position(|event| {
+            matches!(event, CommandObservation::Alignment(alignment) if alignment.transition == "begin")
+        })
+        .expect("replayed hAlign publishes its typed begin transition");
+    let backup_retirement = observations
+        .0
+        .iter()
+        .position(|event| {
+            matches!(event, CommandObservation::Input(input)
+                if input.transition == InputTransition::Retire && input.reason == InputReason::Backup)
+        })
+        .expect("exhausted hAlign backup retires on the following delivery");
+    assert!(alignment_begin < backup_retirement);
 }
 
 #[test]

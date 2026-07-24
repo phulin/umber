@@ -70,6 +70,7 @@ impl CommandReplayControl {
         crate::install_unexpandable_primitives(stores);
         Self {
             command: CommandState::new(CommandProfile::TEX82),
+            next_alignment_identity: 1,
             ..Self::default()
         }
     }
@@ -225,6 +226,7 @@ impl CommandReplayControl {
         };
         let mutation = applied_mutation_observation(&scanned, stores);
         let effect = applied_effect_observation(&scanned, stores);
+        let begins_alignment = matches!(&scanned, ScannedStep::BeginAlignment { .. });
         let result = apply_scanned_step(
             scanned,
             stores,
@@ -234,15 +236,17 @@ impl CommandReplayControl {
             &mut self.command,
             &mut self.boxes,
         );
-        if result.is_ok()
-            && let Some(mutation) = mutation
-        {
-            observer.committed(CommandObservation::Mutation(mutation));
-        }
-        if result.is_ok()
-            && let Some(effect) = effect
-        {
-            observer.committed(CommandObservation::Effect(effect));
+        if result.is_ok() {
+            if begins_alignment && let Some(alignment) = self.command.alignment_begin_observation()
+            {
+                observer.committed(CommandObservation::Alignment(alignment));
+            }
+            if let Some(mutation) = mutation {
+                observer.committed(CommandObservation::Mutation(mutation));
+            }
+            if let Some(effect) = effect {
+                observer.committed(CommandObservation::Effect(effect));
+            }
         }
         result
     }

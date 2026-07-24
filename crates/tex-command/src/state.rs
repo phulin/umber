@@ -3,6 +3,8 @@
 use tex_state::input::TracedTokenList;
 use tex_state::token::TracedTokenWord;
 
+#[cfg(any(test, feature = "instrumentation"))]
+use crate::AlignmentRecord;
 use crate::conditionals::ConditionStack;
 use crate::input::InputState;
 use crate::input::{
@@ -37,6 +39,25 @@ pub struct CommandState {
 }
 
 impl CommandState {
+    /// Returns the committed observation for an executor-applied alignment
+    /// begin transition.
+    ///
+    /// The executor supplies the structural transition, while command state
+    /// remains the owner of its align-state and stable alignment identity.
+    /// Keeping that projection here prevents replay instrumentation from
+    /// reconstructing either value from raw input.
+    #[cfg(any(test, feature = "instrumentation"))]
+    #[must_use]
+    pub fn alignment_begin_observation(&self) -> Option<AlignmentRecord> {
+        self.alignment
+            .active_alignment
+            .map(|alignment| AlignmentRecord {
+                transition: "begin",
+                alignment: Some(alignment.raw()),
+                align_state: self.alignment.align_state,
+            })
+    }
+
     /// Applies an executor-owned structural alignment request.
     ///
     /// This is the only lifecycle entry point required by `tex-exec`.  It has
