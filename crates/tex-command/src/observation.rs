@@ -196,6 +196,21 @@ pub(crate) fn canonical_command_identity(meaning: Meaning) -> (String, Option<i6
             // storage operand.
             UnexpandablePrimitive::Par => ("par_end".into(), Some(256)),
             UnexpandablePrimitive::HAlign => ("halign".into(), Some(0)),
+            // TeX82 registers the horizontal glue shorthands with the same
+            // `hskip` command code and a zero `cur_chr`; their distinct
+            // Rust variants select the executor's prebuilt glue value only.
+            UnexpandablePrimitive::HSkip
+            | UnexpandablePrimitive::HFil
+            | UnexpandablePrimitive::HFill
+            | UnexpandablePrimitive::HSs
+            | UnexpandablePrimitive::HFilNeg => ("hskip".into(), Some(0)),
+            // The vertical family is analogous, sharing TeX82's `vskip`
+            // command identity rather than exposing shorthand variants.
+            UnexpandablePrimitive::VSkip
+            | UnexpandablePrimitive::VFil
+            | UnexpandablePrimitive::VFill
+            | UnexpandablePrimitive::VSs
+            | UnexpandablePrimitive::VFilNeg => ("vskip".into(), Some(0)),
             UnexpandablePrimitive::SetBox => ("set_box".into(), Some(0)),
             UnexpandablePrimitive::HBox => ("make_box".into(), Some(4)),
             UnexpandablePrimitive::VBox => ("make_box".into(), Some(5)),
@@ -455,6 +470,34 @@ mod tests {
             )),
             ("set_box".into(), Some(0))
         );
+    }
+
+    #[test]
+    fn glue_shorthands_use_tex82_skip_command_identities() {
+        for primitive in [
+            UnexpandablePrimitive::HSkip,
+            UnexpandablePrimitive::HFil,
+            UnexpandablePrimitive::HFill,
+            UnexpandablePrimitive::HSs,
+            UnexpandablePrimitive::HFilNeg,
+        ] {
+            assert_eq!(
+                canonical_command_identity(Meaning::UnexpandablePrimitive(primitive)),
+                ("hskip".into(), Some(0))
+            );
+        }
+        for primitive in [
+            UnexpandablePrimitive::VSkip,
+            UnexpandablePrimitive::VFil,
+            UnexpandablePrimitive::VFill,
+            UnexpandablePrimitive::VSs,
+            UnexpandablePrimitive::VFilNeg,
+        ] {
+            assert_eq!(
+                canonical_command_identity(Meaning::UnexpandablePrimitive(primitive)),
+                ("vskip".into(), Some(0))
+            );
+        }
     }
 
     #[test]

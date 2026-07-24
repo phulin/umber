@@ -1012,6 +1012,57 @@ mod tests {
     }
 
     #[test]
+    fn observer_projects_hfil_as_hskip_at_raw_and_expanded_boundaries() {
+        let mut command = CommandState::default();
+        let source = command
+            .register_source(SourceRegistration::new(
+                RegisteredSourceKind::Generated,
+                Arc::<[u8]>::from(br"\hfil".as_slice()),
+            ))
+            .expect("source registers");
+        command
+            .open_registered_source(source)
+            .expect("source opens");
+        let mut runtime = CommandRuntime::default();
+        let mut universe = Universe::new();
+        universe.install_primitive_meaning(
+            "hfil",
+            Meaning::UnexpandablePrimitive(UnexpandablePrimitive::HFil),
+        );
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut recorder = Recorder::default();
+        {
+            let mut processor =
+                processor(&mut command, &mut runtime, &mut universe, &mut capabilities)
+                    .with_observer(&mut recorder);
+            processor
+                .get_x_token()
+                .expect("hfil delivers")
+                .expect("input remains live");
+        }
+
+        let deliveries = recorder
+            .0
+            .iter()
+            .filter_map(|record| match record {
+                CommandObservation::Command(command) => Some(command),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert!(matches!(
+            deliveries.as_slice(),
+            [raw, expanded]
+                if raw.boundary == CommandDeliveryBoundary::Raw
+                    && expanded.boundary == CommandDeliveryBoundary::Expanded
+                    && raw.spelling == crate::ObservedToken::ControlSequence("hfil".into())
+                    && raw.command == "hskip"
+                    && raw.command_operand == Some(0)
+                    && expanded.command == raw.command
+                    && expanded.command_operand == raw.command_operand
+        ));
+    }
+
+    #[test]
     fn absent_observer_has_no_delivery_or_snapshot_effect() {
         let mut observed = CommandState::default();
         let mut unobserved = CommandState::default();
