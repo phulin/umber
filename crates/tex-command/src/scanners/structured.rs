@@ -252,8 +252,6 @@ impl CommandProcessor<'_> {
             .alignment
             .complete_preamble(alignment, AlignmentPreamble { columns })
             .map_err(|_| CommandError::InputInvariant)?;
-        let _ = self.command.begin_scanner_status(ScannerStatus::Normal);
-        self.observe_scanner_status(false);
         #[cfg(any(test, feature = "instrumentation"))]
         self.observe(crate::CommandObservation::Alignment(
             crate::AlignmentRecord {
@@ -263,6 +261,12 @@ impl CommandProcessor<'_> {
                 previous_align_state: None,
             },
         ));
+        // TeX's `fin_align` boundary becomes observable before `scanner_status`
+        // returns to normal. Retain the live aligning episode while publishing
+        // its completion, then restore normal status; otherwise an exit record
+        // loses its `aligning` identity and reverses the canonical ordering.
+        self.observe_scanner_status(false);
+        let _ = self.command.begin_scanner_status(ScannerStatus::Normal);
         Ok(())
     }
 

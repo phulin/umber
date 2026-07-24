@@ -273,8 +273,8 @@ fn alignment_preamble_opener_uses_command_owned_backup_before_source_resumes() {
                 CommandObservation::Command(space),
                 CommandObservation::Command(parameter),
                 CommandObservation::Command(terminator),
-                CommandObservation::ScannerStatus(finished),
                 CommandObservation::Alignment(preamble_finish),
+                CommandObservation::ScannerStatus(finished),
             ]
                 if state_change.transition == "begin_group"
                     && state_change.align_state == -999_999
@@ -291,6 +291,7 @@ fn alignment_preamble_opener_uses_command_owned_backup_before_source_resumes() {
                     && matches!(parameter.spelling, ObservedToken::Character { character: '#', .. })
                     && matches!(terminator.spelling, ObservedToken::ControlSequence(ref name) if name == "cr")
                     && !finished.entering
+                    && finished.status.starts_with("Aligning")
                     && preamble_finish.transition == "preamble_finish"
         ),
         "unexpected observations: {:?}",
