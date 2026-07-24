@@ -14,9 +14,9 @@ use crate::input::{
 use crate::input::{ReplayTrace, RetirementBehavior, TokenBehavior, TokenPayload};
 use crate::macro_call::ParameterState;
 use crate::processor::{
-    AlignmentCellDelimiter, AlignmentCellTemplates, AlignmentDeliveryState, AlignmentIdentity,
-    AlignmentLifecycleError, AlignmentRequest, AlignmentRequestResult, CELL_ALIGN_STATE,
-    ExpansionState, ScannerState,
+    AlignmentCellCompletion, AlignmentCellDelimiter, AlignmentCellTemplates,
+    AlignmentDeliveryState, AlignmentIdentity, AlignmentLifecycleError, AlignmentRequest,
+    AlignmentRequestResult, CELL_ALIGN_STATE, ExpansionState, ScannerState,
 };
 use crate::profile::{
     CommandProfile, CommandProfileBoundary, CommandProfileFingerprint, CommandProfileMismatch,
@@ -360,9 +360,68 @@ impl CommandState {
         alignment: AlignmentIdentity,
     ) -> Result<crate::FinishedAlignmentCell, AlignmentLifecycleError> {
         let level = self.alignment.active_v_template_level(alignment)?;
+        let completion = self.alignment_endv_completion(level)?;
+        // TeX82 §772 changes `align_state` in `fin_col` before `get_next`
+        // reaches the exhausted scanner backup and retained v-template. The
+        // shape is proven above, so these command-owned retirements cannot
+        // fail after the structural state transition.
+        let mut finished = self.alignment.finish_cell(alignment, level)?;
+        if matches!(
+            completion,
+            AlignmentCellCompletion::BackedUpEndVThenRetainedVTemplate
+        ) {
+            let backup = match self.input.levels.last() {
+                Some(InputLevel::Tokens(cursor)) => cursor.identity,
+                _ => unreachable!("completion proof requires a backup token level"),
+            };
+            self.retire_exhausted_input(backup)
+                .map_err(|_| AlignmentLifecycleError::VTemplateNotExhausted)?;
+        }
         self.retire_retained_v_template(level)
             .map_err(|_| AlignmentLifecycleError::VTemplateNotExhausted)?;
-        self.alignment.finish_cell(alignment, level)
+        finished.completion = completion;
+        Ok(finished)
+    }
+
+    /// Proves the only command-input shapes that can complete TeX82 `do_endv`.
+    ///
+    /// The optional upper level is the exhausted one-token `back_input`
+    /// replay produced by a scanner. It remains command-core state rather
+    /// than becoming executor-visible input.
+    fn alignment_endv_completion(
+        &self,
+        v_level: InputLevelId,
+    ) -> Result<AlignmentCellCompletion, AlignmentLifecycleError> {
+        let retained_v_template = |level: &InputLevel| {
+            matches!(level,
+                InputLevel::Tokens(cursor)
+                    if cursor.identity == v_level
+                        && matches!(cursor.behavior, TokenBehavior::VTemplate)
+                        && matches!(cursor.retirement, RetirementBehavior::AwaitingVTemplateRetirement)
+            )
+        };
+        let Some(top) = self.input.levels.last() else {
+            return Err(AlignmentLifecycleError::VTemplateNotExhausted);
+        };
+        if retained_v_template(top) {
+            return Ok(AlignmentCellCompletion::RetainedVTemplate);
+        }
+        let exhausted_backed_up_endv = matches!(top,
+            InputLevel::Tokens(cursor)
+                if matches!(cursor.behavior, TokenBehavior::BackedUp(_))
+                    && matches!(&cursor.payload, TokenPayload::BackedUp(tokens) if tokens.get(cursor.index).is_none())
+        );
+        if exhausted_backed_up_endv
+            && self
+                .input
+                .levels
+                .get(self.input.levels.len().saturating_sub(2))
+                .is_some_and(retained_v_template)
+        {
+            Ok(AlignmentCellCompletion::BackedUpEndVThenRetainedVTemplate)
+        } else {
+            Err(AlignmentLifecycleError::VTemplateNotExhausted)
+        }
     }
 
     /// Returns the canonical observations emitted after typed `do_endv`
@@ -374,30 +433,40 @@ impl CommandState {
     pub fn alignment_cell_finish_observations(
         &self,
         alignment: AlignmentIdentity,
-    ) -> Option<(
-        crate::AlignmentRecord,
-        crate::InputRecord,
-        crate::AlignmentRecord,
-    )> {
+    ) -> Option<crate::AlignmentCellFinishObservations> {
         let cell = self.alignment.active_cell.as_ref()?;
         if cell.alignment != alignment || cell.v_level.is_none() {
             return None;
         }
-        Some((
-            crate::AlignmentRecord {
+        let backed_up_endv = matches!(self.input.levels.last(),
+            Some(InputLevel::Tokens(cursor))
+                if matches!(cursor.behavior, TokenBehavior::BackedUp(_))
+                    && matches!(&cursor.payload, TokenPayload::BackedUp(tokens) if tokens.get(cursor.index).is_none())
+        );
+        Some(crate::AlignmentCellFinishObservations {
+            state_change: crate::AlignmentRecord {
                 transition: "state_change",
                 alignment: Some(alignment.raw()),
                 align_state: self.alignment.align_state,
                 delimiter: None,
                 previous_align_state: None,
             },
-            crate::InputRecord {
+            backed_up_endv_retirement: match self.input.levels.last()? {
+                InputLevel::Tokens(cursor) if backed_up_endv => Some(crate::InputRecord {
+                    transition: crate::InputTransition::Retire,
+                    reason: crate::InputReason::Backup,
+                    level: cursor.identity.0,
+                    position: 0,
+                }),
+                _ => None,
+            },
+            v_template_retirement: crate::InputRecord {
                 transition: crate::InputTransition::Retire,
                 reason: crate::InputReason::AlignmentVTemplate,
                 level: cell.v_level?.0,
                 position: 0,
             },
-            crate::AlignmentRecord {
+            template_retirement: crate::AlignmentRecord {
                 transition: if cell.omit {
                     "omit_template_retire"
                 } else {
@@ -408,7 +477,7 @@ impl CommandState {
                 delimiter: None,
                 previous_align_state: None,
             },
-        ))
+        })
     }
 
     /// Suspends the complete outer raw-delivery context for a nested alignment.

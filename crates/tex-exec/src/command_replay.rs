@@ -306,10 +306,13 @@ impl CommandReplayControl {
             {
                 observer.committed(CommandObservation::Alignment(omit));
             }
-            if let Some((state_change, retirement, template_retire)) = finishes_alignment_cell {
-                observer.committed(CommandObservation::Alignment(state_change));
-                observer.committed(CommandObservation::Input(retirement));
-                observer.committed(CommandObservation::Alignment(template_retire));
+            if let Some(finish) = finishes_alignment_cell {
+                observer.committed(CommandObservation::Alignment(finish.state_change));
+                if let Some(retirement) = finish.backed_up_endv_retirement {
+                    observer.committed(CommandObservation::Input(retirement));
+                }
+                observer.committed(CommandObservation::Input(finish.v_template_retirement));
+                observer.committed(CommandObservation::Alignment(finish.template_retirement));
             }
             if let Some(mutation) = mutation {
                 observer.committed(CommandObservation::Mutation(mutation));

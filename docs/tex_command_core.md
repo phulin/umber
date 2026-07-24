@@ -148,7 +148,11 @@ through `get_next`. Exhausting the exact v-template retains its frame and
 emits raw frozen `end_template`; §343 changes `cur_cs` to frozen `endv` while
 preserving the canonical `endtemplate` observation spelling,
 after which successful `do_endv` uses `CommandState::finish_alignment_cell`
-to retire that exact frame and return the saved delimiter structurally. Active frame identities live in
+to return a typed completion proof and retire that exact frame structurally.
+When a scalar scanner has backed up the effective `endv`, the proof validates
+the exhausted backup immediately above the retained frame; TeX82 §§343, 765,
+and 772 require the canonical completion order: `fin_col`'s state change,
+backup retirement, then v-template retirement. Active frame identities live in
 `AlignmentDeliveryState`, and therefore suspend with nested alignments and
 are cloned by command snapshots.
 

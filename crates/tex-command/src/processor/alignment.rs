@@ -60,6 +60,22 @@ pub enum AlignmentCellDelimiter {
 pub struct FinishedAlignmentCell {
     pub templates: AlignmentCellTemplates,
     pub delimiter: AlignmentCellDelimiter,
+    /// The command-owned input shape consumed by TeX82's `do_endv`.
+    ///
+    /// A scalar scanner may back up the effective frozen `endv`, leaving its
+    /// exhausted one-token backup above the retained v-template.  This result
+    /// proves that command state retired that backup before the v-template;
+    /// the executor receives no input-level capability.
+    pub completion: AlignmentCellCompletion,
+}
+
+/// Input completion proven and performed by the command core for `do_endv`.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum AlignmentCellCompletion {
+    /// The retained v-template was directly on top of command input.
+    RetainedVTemplate,
+    /// An exhausted scanner-backed effective `endv` was retired first.
+    BackedUpEndVThenRetainedVTemplate,
 }
 
 /// Frozen template pairs collected during one raw alignment preamble scan.
@@ -108,6 +124,19 @@ pub enum AlignmentRequestResult {
     Applied,
     /// A finished cell returned the exact templates that were active for it.
     FinishedCell(FinishedAlignmentCell),
+}
+
+/// Observer records published after a successful typed `do_endv` completion.
+///
+/// These records are constructed from command-owned proof state before the
+/// request and published only once all input retirement has committed.
+#[cfg(any(test, feature = "instrumentation"))]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AlignmentCellFinishObservations {
+    pub state_change: crate::AlignmentRecord,
+    pub backed_up_endv_retirement: Option<crate::InputRecord>,
+    pub v_template_retirement: crate::InputRecord,
+    pub template_retirement: crate::AlignmentRecord,
 }
 
 /// A command-core event that the executor must handle at an alignment boundary.
@@ -435,6 +464,7 @@ impl AlignmentDeliveryState {
             delimiter: cell
                 .delimiter
                 .ok_or(AlignmentLifecycleError::VTemplateNotExhausted)?,
+            completion: AlignmentCellCompletion::RetainedVTemplate,
         })
     }
 

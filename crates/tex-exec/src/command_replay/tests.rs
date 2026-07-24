@@ -1122,6 +1122,53 @@ fn command_owned_endv_finishes_cell_and_publishes_retirement_in_canonical_order(
 }
 
 #[test]
+fn scanner_backed_endv_retires_before_an_omit_template() {
+    let mut universe = Universe::new();
+    crate::install_unexpandable_primitives(&mut universe);
+    let mut control = CommandReplayControl::default();
+    // `scan_rule_spec` reads the alignment delimiter while scanning the
+    // omitted cell's rule. Its scalar retry backs up the effective `endv`,
+    // reproducing TeX82 §772's exhausted backup above `omit_template`.
+    register_source(
+        &mut control,
+        br"\halign{#&#\cr\omit\vrule width3pt&\relax\cr}\end",
+    );
+    let mut observations = ObservationRecorder::default();
+
+    for _ in 0..48 {
+        control
+            .step_with_observer(&mut universe, &mut observations)
+            .expect("scanner-backed end-v completion");
+        if observations.0.windows(6).any(|events| {
+            matches!(
+                events,
+                [
+                    CommandObservation::Command(raw),
+                    CommandObservation::Command(expanded),
+                    CommandObservation::Alignment(state_change),
+                    CommandObservation::Input(backup_retirement),
+                    CommandObservation::Input(template_retirement),
+                    CommandObservation::Alignment(template),
+                ] if raw.command == "endv"
+                    && expanded.command == "endv"
+                    && state_change.transition == "state_change"
+                    && backup_retirement.transition == InputTransition::Retire
+                    && backup_retirement.reason == InputReason::Backup
+                    && template_retirement.transition == InputTransition::Retire
+                    && template_retirement.reason == InputReason::AlignmentVTemplate
+                    && template.transition == "omit_template_retire"
+            )
+        }) {
+            return;
+        }
+    }
+    panic!(
+        "scanner-backed end-v must retire backup then omit-template: {:?}",
+        observations.0
+    );
+}
+
+#[test]
 fn paragraph_start_backs_up_the_triggering_macro_parameter_before_replay() {
     let mut universe = Universe::new();
     crate::install_unexpandable_primitives(&mut universe);
