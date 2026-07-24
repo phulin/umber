@@ -250,6 +250,17 @@ pub(crate) fn canonical_command_identity(meaning: Meaning) -> (String, Option<i6
             UnexpandablePrimitive::BeginGroup => ("begin_group".into(), Some(0)),
             UnexpandablePrimitive::EndGroup => ("end_group".into(), Some(0)),
             UnexpandablePrimitive::Message => ("message".into(), Some(0)),
+            // TeX82 §53 keeps these output primitives under the shared
+            // `extension` command code. Their operands are the canonical
+            // whatsit subtypes, plus `immediate_code` and `set_language_code`;
+            // the raw identity remains observable before tex-exec performs
+            // the selected extension behavior.
+            UnexpandablePrimitive::OpenOut => ("extension".into(), Some(0)),
+            UnexpandablePrimitive::Write => ("extension".into(), Some(1)),
+            UnexpandablePrimitive::CloseOut => ("extension".into(), Some(2)),
+            UnexpandablePrimitive::Special => ("extension".into(), Some(3)),
+            UnexpandablePrimitive::Immediate => ("extension".into(), Some(4)),
+            UnexpandablePrimitive::SetLanguage => ("extension".into(), Some(5)),
             UnexpandablePrimitive::End => ("stop".into(), Some(0)),
             _ => ("unexpandable".into(), None),
         },
@@ -577,6 +588,23 @@ mod tests {
             )),
             ("the".into(), Some(0))
         );
+    }
+
+    #[test]
+    fn output_primitives_use_tex82_extension_identities() {
+        for (primitive, operand) in [
+            (UnexpandablePrimitive::OpenOut, 0),
+            (UnexpandablePrimitive::Write, 1),
+            (UnexpandablePrimitive::CloseOut, 2),
+            (UnexpandablePrimitive::Special, 3),
+            (UnexpandablePrimitive::Immediate, 4),
+            (UnexpandablePrimitive::SetLanguage, 5),
+        ] {
+            assert_eq!(
+                canonical_command_identity(Meaning::UnexpandablePrimitive(primitive)),
+                ("extension".into(), Some(operand))
+            );
+        }
     }
 
     #[test]

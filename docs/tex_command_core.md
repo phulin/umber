@@ -803,6 +803,13 @@ the executor's shorthand representation: `\hfil`/`\vfil` are 0,
 `\hfill`/`\vfill` are 1, `\hss`/`\vss` are 2,
 `\hfilneg`/`\vfilneg` are 3, and `\hskip`/`\vskip` are 4. This follows
 TeX82 §15's command-code definitions and §18's primitive initialization.
+Likewise TeX82 §53 registers `\openout`, `\write`, `\closeout`, `\special`,
+`\immediate`, and `\setlanguage` as the shared `extension` command with
+operands 0 through 5. The command core emits those raw identities; the
+executor then owns only `\immediate`'s one-token extension behavior,
+recursively executing `\openout`, `\write`, or `\closeout` and backing up
+every other expanded token as §53 requires. This metadata does not participate
+in execution dispatch.
 This metadata does not participate in conditional evaluation or condition-stack
 state. Its `spelling` retains the traced token,
 and `origin` is exposed directly from that spelling; provenance never affects
