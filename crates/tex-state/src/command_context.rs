@@ -11,7 +11,7 @@ use crate::{
     ids::{MacroDefinitionId, OriginListId, TokenListId},
     interner::Symbol,
     macro_store::{MacroDefinitionProvenance, MacroMeaning, MacroParameterPattern},
-    meaning::Meaning,
+    meaning::{InternalInteger, Meaning},
     page::{PageInteger, PageMark},
     provenance::SynthesizedOriginKind,
     token::{Catcode, OriginId, Token, TracedTokenWord},
@@ -141,6 +141,39 @@ impl CommandContext<'_> {
     pub fn glue_param(&self, index: u16) -> GlueId {
         self.universe
             .glue_param(crate::env::banks::GlueParam::new(index))
+    }
+
+    /// Reads an engine-owned internal integer through the aggregate boundary.
+    #[must_use]
+    pub fn internal_integer(&self, integer: InternalInteger) -> Option<i32> {
+        let value = match integer {
+            InternalInteger::Badness => self.universe.last_badness(),
+            InternalInteger::ETeXVersion => 2,
+            InternalInteger::PdfTeXVersion => 140,
+            InternalInteger::PdfElapsedTime => self.universe.pdf_elapsed_time(),
+            InternalInteger::PdfRandomSeed => self.universe.pdf_random_seed(),
+            InternalInteger::PdfShellEscape => self.universe.pdf_shell_escape_status(),
+            InternalInteger::PdfLastObject => self.universe.pdf_last_object() as i32,
+            InternalInteger::PdfLastAnnot => self.universe.pdf_last_annotation() as i32,
+            InternalInteger::PdfLastLink => self.universe.pdf_last_link() as i32,
+            InternalInteger::PdfLastXForm => self.universe.pdf_last_form() as i32,
+            InternalInteger::PdfLastXImage => self.universe.pdf_last_ximage() as i32,
+            InternalInteger::PdfLastXImagePages => self.universe.pdf_last_ximage_pages() as i32,
+            InternalInteger::PdfLastXImageColorDepth => {
+                i32::from(self.universe.pdf_last_ximage_color_depth())
+            }
+            InternalInteger::LastNodeType => self.universe.page_last_node_type(),
+            InternalInteger::InputLineNumber
+            | InternalInteger::PdfLastXPos
+            | InternalInteger::PdfLastYPos
+            | InternalInteger::PdfReturnValue
+            | InternalInteger::CurrentGroupLevel
+            | InternalInteger::CurrentGroupType
+            | InternalInteger::CurrentIfLevel
+            | InternalInteger::CurrentIfType
+            | InternalInteger::CurrentIfBranch => return None,
+        };
+        Some(value)
     }
 
     /// Classifies a box register without exposing node-store ownership.

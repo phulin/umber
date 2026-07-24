@@ -458,6 +458,12 @@ impl CommandProcessor<'_> {
             Meaning::MuGlueParam(index) => {
                 InternalValue::Glue(self.state.glue(self.state.glue_param(index)))
             }
+            Meaning::InternalInteger(integer) => {
+                let Some(value) = self.state.internal_integer(integer) else {
+                    return Ok(None);
+                };
+                InternalValue::Integer(value)
+            }
             _ => return Ok(None),
         };
         Ok(Some(value))
