@@ -29,6 +29,33 @@ fn crate_dependency_direction_is_command_toward_state_only() {
     );
 }
 
+#[test]
+#[allow(clippy::disallowed_methods)] // host-side architecture test
+fn hot_character_delivery_has_no_host_lookup_surface() {
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    for relative in [
+        "src/state.rs",
+        "src/input/source.rs",
+        "src/input/lines.rs",
+        "src/input/tokenizer.rs",
+    ] {
+        let source = fs::read_to_string(manifest_dir.join(relative))
+            .unwrap_or_else(|error| panic!("failed to read {relative}: {error}"));
+        for forbidden in [
+            "std::fs",
+            "std::net",
+            "File::open",
+            "CommandHostContext",
+            "CommandHostCapabilities",
+        ] {
+            assert!(
+                !source.contains(forbidden),
+                "{relative} must not acquire host resources through {forbidden}"
+            );
+        }
+    }
+}
+
 fn dependency_names(manifest: &str) -> BTreeSet<&str> {
     let mut in_dependencies = false;
     let mut names = BTreeSet::new();
@@ -87,6 +114,24 @@ fn semantic_and_runtime_fields_are_opaque() {
             "field `input`",
             "field `state`",
             "field `meaning_cache`",
+        ],
+    );
+}
+
+#[test]
+fn command_profile_and_installed_mode_are_immutable() {
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let dependencies = [CompileFailDependency::path("tex-command", manifest_dir)];
+
+    assert_compile_fail(
+        "command-immutable-profile",
+        &manifest_dir.join("tests/ui/immutable_profile.rs"),
+        &dependencies,
+        &[
+            "E0616",
+            "field `dialect`",
+            "field `characters`",
+            "field `expansion`",
         ],
     );
 }

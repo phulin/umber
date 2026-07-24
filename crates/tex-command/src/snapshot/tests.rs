@@ -301,28 +301,47 @@ fn retained_source_backing_and_partial_line_cursors_restore_without_host_access(
 
 #[test]
 fn format_and_checkpoint_profile_components_reject_mismatch() {
-    let state = CommandState::new(CommandProfile::PDFTEX14027);
-    let matching = CommandProfile::PDFTEX14027.fingerprint();
-    let foreign = CommandProfile::TEX82.fingerprint();
+    let profiles = [
+        CommandProfile::TEX82,
+        CommandProfile::ETEX26,
+        CommandProfile::PDFTEX14027,
+        CommandProfile::unicode_extended(crate::CommandDialect::Tex82),
+        CommandProfile::unicode_extended(crate::CommandDialect::Etex26),
+        CommandProfile::unicode_extended(crate::CommandDialect::Pdftex14027),
+    ];
 
-    assert_eq!(state.validate_format_profile(matching), Ok(()));
-    let format_error = state
-        .validate_format_profile(foreign)
-        .expect_err("foreign format profile must be rejected");
-    assert_eq!(format_error.boundary(), CommandProfileBoundary::Format);
+    for profile in profiles {
+        let state = CommandState::new(profile);
+        let matching = profile.fingerprint();
+        assert_eq!(state.validate_format_profile(matching), Ok(()));
+        assert_eq!(state.validate_checkpoint_profile(matching), Ok(()));
+        assert_eq!(
+            state.format_profile_fingerprint(),
+            CommandProfileFingerprint::from_u64(matching.get())
+        );
+        assert_eq!(state.checkpoint_profile_fingerprint(), matching);
 
-    assert_eq!(state.validate_checkpoint_profile(matching), Ok(()));
-    let checkpoint_error = state
-        .validate_checkpoint_profile(foreign)
-        .expect_err("foreign checkpoint profile must be rejected");
-    assert_eq!(
-        checkpoint_error.boundary(),
-        CommandProfileBoundary::Checkpoint
-    );
+        for foreign in profiles
+            .into_iter()
+            .filter(|foreign| *foreign != profile)
+            .map(CommandProfile::fingerprint)
+        {
+            let format_error = state
+                .validate_format_profile(foreign)
+                .expect_err("foreign format profile must be rejected");
+            assert_eq!(format_error.boundary(), CommandProfileBoundary::Format);
+            assert_eq!(format_error.expected(), matching);
+            assert_eq!(format_error.found(), foreign);
 
-    assert_eq!(
-        state.format_profile_fingerprint(),
-        CommandProfileFingerprint::from_u64(matching.get())
-    );
-    assert_eq!(state.checkpoint_profile_fingerprint(), matching);
+            let checkpoint_error = state
+                .validate_checkpoint_profile(foreign)
+                .expect_err("foreign checkpoint profile must be rejected");
+            assert_eq!(
+                checkpoint_error.boundary(),
+                CommandProfileBoundary::Checkpoint
+            );
+            assert_eq!(checkpoint_error.expected(), matching);
+            assert_eq!(checkpoint_error.found(), foreign);
+        }
+    }
 }

@@ -40,6 +40,27 @@ fn valid_unicode_scalars_roundtrip_without_becoming_bytes() {
 }
 
 #[test]
+fn every_unicode_scalar_has_one_canonical_stable_encoding() {
+    for scalar in 0..=0x10_ffff {
+        let result = CharacterCode::from_unicode_scalar(scalar);
+        if (0xd800..=0xdfff).contains(&scalar) {
+            assert_eq!(
+                result,
+                Err(CharacterCodeError::InvalidUnicodeScalar(scalar))
+            );
+            continue;
+        }
+
+        let code = result.expect("every nonsurrogate code point is a scalar");
+        assert_eq!(code.to_unicode_scalar(), Ok(scalar));
+        assert_eq!(
+            CharacterCode::from_stable_bytes(code.to_stable_bytes()),
+            Ok(code)
+        );
+    }
+}
+
+#[test]
 fn invalid_scalars_and_noncanonical_encodings_are_rejected() {
     for scalar in [0xd800, 0xdfff, 0x11_0000, u32::MAX] {
         assert_eq!(
@@ -128,5 +149,29 @@ fn capabilities_are_semantic_and_validated_during_decode() {
             expected: 0b011,
             found: 0,
         })
+    );
+}
+
+#[test]
+fn profile_decode_rejects_every_unrecognized_identity_component() {
+    let mut unsupported_version = CommandProfile::TEX82.to_stable_bytes();
+    unsupported_version[0] = 2;
+    assert_eq!(
+        CommandProfile::from_stable_bytes(unsupported_version),
+        Err(CommandProfileEncodingError::UnsupportedVersion(2))
+    );
+
+    let mut unknown_dialect = CommandProfile::TEX82.to_stable_bytes();
+    unknown_dialect[1] = 3;
+    assert_eq!(
+        CommandProfile::from_stable_bytes(unknown_dialect),
+        Err(CommandProfileEncodingError::UnknownDialect(3))
+    );
+
+    let mut unknown_mode = CommandProfile::TEX82.to_stable_bytes();
+    unknown_mode[2] = 2;
+    assert_eq!(
+        CommandProfile::from_stable_bytes(unknown_mode),
+        Err(CommandProfileEncodingError::UnknownCharacterMode(2))
     );
 }

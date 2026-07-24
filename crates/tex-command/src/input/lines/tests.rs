@@ -118,6 +118,31 @@ fn unicode_cursor_decodes_scalars_but_preserves_utf8_byte_ranges() {
 }
 
 #[test]
+fn unicode_ranges_cover_every_utf8_width_and_scalar_position() {
+    let text = "\0¢€𐀀";
+    let mut cursor = cursor(CharacterMode::UnicodeExtended, text.as_bytes());
+    let bytes = Arc::clone(&cursor.backing.bytes);
+    let line = cursor.load_next_line(-1).expect("line");
+    let chars = drain(line, CharacterMode::UnicodeExtended, &bytes);
+
+    let expected = [
+        ('\0', 0, 1, 0),
+        ('¢', 1, 3, 1),
+        ('€', 3, 6, 2),
+        ('𐀀', 6, 10, 3),
+    ];
+    for (character, (scalar, start, end, scalar_offset)) in chars.into_iter().zip(expected) {
+        assert_eq!(character.code(), CharacterCode::from(scalar));
+        assert_eq!(
+            (character.range().start(), character.range().end()),
+            (start, end)
+        );
+        assert_eq!(character.scalar_offset(), scalar_offset);
+        assert!(!character.is_synthetic());
+    }
+}
+
+#[test]
 fn endlinechar_validation_is_profile_specific() {
     let cases = [
         (CharacterMode::EightBitExact, -1, false),

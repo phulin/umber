@@ -342,6 +342,29 @@ fn all_canonical_dialects_share_the_exact_byte_state_machine() {
 }
 
 #[test]
+fn ordinary_token_catcodes_are_observed_without_reclassification() {
+    let ordinary = [
+        Catcode::BeginGroup,
+        Catcode::EndGroup,
+        Catcode::MathShift,
+        Catcode::AlignmentTab,
+        Catcode::Parameter,
+        Catcode::Superscript,
+        Catcode::Subscript,
+        Catcode::Letter,
+        Catcode::Other,
+    ];
+
+    for expected in ordinary {
+        let mut state = state(b"x");
+        assert_eq!(
+            character(state.next_exact_source_step(-1, |_| expected)),
+            (b'x', expected, 0, 1)
+        );
+    }
+}
+
+#[test]
 fn snapshots_restore_the_lexer_state_and_exact_source_cursor() {
     let mut state = state(b"A\n");
     assert_eq!(
@@ -469,6 +492,55 @@ fn unicode_superscript_policy_accepts_unicode_forms_and_exact_ranges() {
 }
 
 #[test]
+fn unicode_superscript_introducer_is_selected_only_by_live_catcode() {
+    let mut state = unicode_state("⁁⁁4a ⁁⁁⁁⁁00E9");
+    let catcode = |code: CharacterCode| {
+        if code.to_char() == Ok('⁁') {
+            Catcode::Superscript
+        } else {
+            unicode_catcode(code)
+        }
+    };
+
+    assert_eq!(
+        unicode_character(state.next_unicode_source_step(-1, catcode)),
+        ('J', Catcode::Letter, 0, 8, 0, 4)
+    );
+    assert_eq!(
+        unicode_character(state.next_unicode_source_step(-1, catcode)),
+        (' ', Catcode::Space, 8, 9, 4, 5)
+    );
+    assert_eq!(
+        unicode_character(state.next_unicode_source_step(-1, catcode)),
+        ('é', Catcode::Letter, 9, 25, 5, 13)
+    );
+}
+
+#[test]
+fn unicode_categories_never_supply_implicit_catcodes() {
+    let mut state = unicode_state("\u{2003}λ");
+    let observed = Cell::new(0);
+    let catcode = |code: CharacterCode| {
+        observed.set(observed.get() + 1);
+        match code.to_char().expect("Unicode scalar") {
+            '\u{2003}' => Catcode::Other,
+            'λ' => Catcode::Active,
+            _ => Catcode::Other,
+        }
+    };
+
+    assert_eq!(
+        unicode_character(state.next_unicode_source_step(-1, catcode)),
+        ('\u{2003}', Catcode::Other, 0, 3, 0, 1)
+    );
+    assert_eq!(
+        unicode_control(state.next_unicode_source_step(-1, catcode)),
+        (vec!['λ'], SourceControlSequenceKind::Active, 3, 5, 1, 2)
+    );
+    assert!(observed.get() >= 2);
+}
+
+#[test]
 fn unicode_invalid_reduction_reports_semantic_code_and_scalar_spelling() {
     let mut state = unicode_state("^^^^263Aλ");
     let catcode = |code: CharacterCode| {
@@ -501,4 +573,11 @@ fn unicode_invalid_reduction_reports_semantic_code_and_scalar_spelling() {
 fn unicode_profile_cannot_enter_exact_byte_tokenizer() {
     let mut state = unicode_state("x");
     let _ = state.next_exact_source_step(-1, unicode_catcode);
+}
+
+#[test]
+#[should_panic(expected = "Unicode tokenization requires a UnicodeExtended command profile")]
+fn exact_profile_cannot_enter_unicode_tokenizer() {
+    let mut state = state(b"x");
+    let _ = state.next_unicode_source_step(-1, |_| Catcode::Other);
 }

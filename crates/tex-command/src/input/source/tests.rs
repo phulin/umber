@@ -89,6 +89,27 @@ fn exact_byte_registration_preserves_every_byte() {
 }
 
 #[test]
+fn every_registration_kind_is_retained_without_changing_backing() {
+    for (raw, kind) in [
+        (0, RegisteredSourceKind::World),
+        (1, RegisteredSourceKind::Generated),
+        (2, RegisteredSourceKind::EditorFragment),
+        (3, RegisteredSourceKind::ReadLine),
+    ] {
+        let bytes = Arc::<[u8]>::from([raw, 0xff]);
+        let registered = RegisteredSource::register(
+            SourceId::new(raw.into()),
+            CommandProfile::TEX82,
+            SourceRegistration::new(kind, Arc::clone(&bytes)),
+        )
+        .expect("already acquired exact backing must register");
+
+        assert_eq!(registered.kind, kind);
+        assert_eq!(registered.bytes, bytes);
+    }
+}
+
+#[test]
 fn opening_requires_a_retained_registration() {
     let mut state = CommandState::new(CommandProfile::TEX82);
 

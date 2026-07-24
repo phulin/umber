@@ -1554,6 +1554,15 @@ checkpoint schedule.
 Unicode-only behavior uses explicit Umber specifications and property tests;
 it is not compared to an 8-bit engine outside their shared domain.
 
+The character/input audit binds all three exact profiles to the committed
+TeX82 source-token fixture's shared-domain M/N/S, ignored/comment, end-line,
+blank-line, and control-sequence expectations. Exhaustive byte and Unicode
+scalar encoding tests, explicit Unicode-extension token/range fixtures, all
+profile-pair mismatch checks, and architecture gates for immutable profile
+selection and host-free registered-source delivery complete the executable
+coverage. Unicode fixture expectations remain Umber specifications and are
+never presented as pdfTeX behavior.
+
 ## 32. Performance architecture
 
 The first promoted implementation is the simplest canonical scalar machine.

@@ -52,3 +52,5 @@ Private state-machine modules must not be widened for compatibility with
 - `src/snapshot.rs` and `src/snapshot/tests.rs`: command snapshot, quiescent
   summary ownership, and focused internal roundtrip/rejection tests.
 - `tests/`: external dependency, visibility, and capability-boundary tests.
+  Character/input integration coverage binds the exact shared-domain tokenizer
+  to the pinned TeX82 fixture and compile-fail gates profile immutability.
