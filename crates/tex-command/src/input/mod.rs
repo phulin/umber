@@ -7,7 +7,7 @@ mod source;
 mod summary;
 mod tokenizer;
 
-use levels::InputLevel;
+pub(crate) use levels::InputLevel;
 
 /// Persistent input-stack ownership.
 ///

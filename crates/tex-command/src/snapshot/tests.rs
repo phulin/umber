@@ -2,8 +2,10 @@ use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 
 use crate::conditionals::ConditionFrame;
+use crate::input::InputLevel;
 use crate::macro_call::MacroActivation;
 use crate::processor::{ActiveCellDelivery, ScannerStatus, SuspendedAlignment};
+use crate::profile::{CharacterMode, CommandDialect};
 use crate::state::LiveTokenBuilder;
 use crate::{CommandRuntime, CommandState};
 
@@ -17,6 +19,7 @@ fn semantic_hash<T: Hash>(value: &T) -> u64 {
 
 fn populated_quiescent_state() -> CommandState {
     let mut state = CommandState::default();
+    state.input.levels.push(InputLevel { identity: 7 });
     state.input.next_level_identity = 11;
     state.input.next_source_identity = 13;
     state.parameters.activations.push(MacroActivation {
@@ -36,6 +39,8 @@ fn populated_quiescent_state() -> CommandState {
     state.expansion.pending_diagnostics.push(59);
     state.expansion.observed_dependencies.push(61);
     state.expansion.semantic_barriers.push(67);
+    state.expansion.profile.dialect = CommandDialect::Pdftex14027;
+    state.expansion.profile.characters = CharacterMode::UnicodeExtended;
     state.transient.next_builder_identity = 71;
     state
 }

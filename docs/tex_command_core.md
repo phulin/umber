@@ -1213,6 +1213,25 @@ suspended alignment delivery, live semantic builders, rollback roots, and
 stale scanner warning context. Scanner and transient domains are omitted from
 the summary and reconstructed only in their unique quiescent forms.
 
+### 28.3 Substrate acceptance gates
+
+The initial command-state substrate is guarded by executable architecture
+tests, not by a parallel compatibility facade:
+
+| Invariant                                                                                   | Executable boundary                                                                 |
+| ------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
+| `tex-state <- tex-command`, with no dependency on the retired command crates or `tex-exec`  | `crates/tex-command/tests/it/boundaries.rs` manifest-direction test                 |
+| crate-private state machines and opaque ownership fields                                    | compile-fail fixtures under `crates/tex-command/tests/ui/`                          |
+| one explicitly classified field for each semantic ownership domain                          | exhaustive destructuring in `crates/tex-command/src/state/tests.rs`                 |
+| runtime caches remain discardable and outside semantic equality, hashing, and serialization | runtime replacement test plus the runtime-trait compile-fail fixture                |
+| host capabilities and call-local command values cannot enter owned serialized boundaries    | host and ephemeral compile-fail fixtures                                            |
+| snapshots preserve all live semantic fields without runtime or host access                  | nonquiescent snapshot roundtrip in `crates/tex-command/src/snapshot/tests.rs`       |
+| durable summaries reconstruct exact quiescent state and reject every nonquiescent class     | summary roundtrip and rejection tests in `crates/tex-command/src/snapshot/tests.rs` |
+
+These gates audit the ownership substrate only. They do not supply command
+semantics or an alternate API while the canonical state machines are still
+being implemented.
+
 ## 29. Formats
 
 Umber formats remain portable, validated semantic images rather than TeX

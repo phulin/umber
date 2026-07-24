@@ -1,18 +1,54 @@
-use std::{fs, path::Path};
+use std::{collections::BTreeSet, fs, path::Path};
 
 use test_support::{CompileFailDependency, assert_compile_fail};
 
 #[test]
 #[allow(clippy::disallowed_methods)] // host-side architecture test
-fn command_crate_has_no_executor_dependency() {
+fn crate_dependency_direction_is_command_toward_state_only() {
     let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let manifest = fs::read_to_string(manifest_dir.join("Cargo.toml"))
+    let command_manifest = fs::read_to_string(manifest_dir.join("Cargo.toml"))
         .unwrap_or_else(|error| panic!("failed to read tex-command manifest: {error}"));
+    let state_manifest = fs::read_to_string(manifest_dir.join("../tex-state/Cargo.toml"))
+        .unwrap_or_else(|error| panic!("failed to read tex-state manifest: {error}"));
 
+    let command_dependencies = dependency_names(&command_manifest);
+    let state_dependencies = dependency_names(&state_manifest);
     assert!(
-        !manifest.contains("tex-exec"),
-        "tex-command must not depend on tex-exec"
+        command_dependencies.contains("tex-state"),
+        "tex-command must depend on the aggregate state boundary"
     );
+    for forbidden in ["tex-exec", "tex-expand", "tex-lex"] {
+        assert!(
+            !command_dependencies.contains(forbidden),
+            "tex-command must not depend on {forbidden}"
+        );
+    }
+    assert!(
+        !state_dependencies.contains("tex-command"),
+        "tex-state must remain unaware of command interpretation"
+    );
+}
+
+fn dependency_names(manifest: &str) -> BTreeSet<&str> {
+    let mut in_dependencies = false;
+    let mut names = BTreeSet::new();
+
+    for line in manifest.lines() {
+        let line = line.trim();
+        if line.starts_with('[') {
+            in_dependencies = line == "[dependencies]";
+            continue;
+        }
+        if in_dependencies
+            && !line.is_empty()
+            && !line.starts_with('#')
+            && let Some((name, _)) = line.split_once('=')
+        {
+            names.insert(name.trim());
+        }
+    }
+
+    names
 }
 
 #[test]
@@ -26,8 +62,31 @@ fn command_state_machines_are_private() {
         &dependencies,
         &[
             "E0603",
+            "module `conditionals` is private",
             "module `input` is private",
+            "module `macro_call` is private",
+            "module `primitives` is private",
             "module `processor` is private",
+            "module `scan_toks` is private",
+            "module `scanners` is private",
+        ],
+    );
+}
+
+#[test]
+fn semantic_and_runtime_fields_are_opaque() {
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let dependencies = [CompileFailDependency::path("tex-command", manifest_dir)];
+
+    assert_compile_fail(
+        "command-opaque-state",
+        &manifest_dir.join("tests/ui/opaque_state.rs"),
+        &dependencies,
+        &[
+            "E0616",
+            "field `input`",
+            "field `state`",
+            "field `meaning_cache`",
         ],
     );
 }
@@ -45,10 +104,34 @@ fn host_context_cannot_be_serialized() {
         &manifest_dir.join("tests/ui/host_serialization.rs"),
         &dependencies,
         &[
+            "CommandHostCapabilities",
             "CommandHostContext",
             "Serialize",
             "DeserializeOwned",
             "Clone",
+        ],
+    );
+}
+
+#[test]
+fn runtime_cannot_become_semantic_or_serialized_by_convenience() {
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let dependencies = [
+        CompileFailDependency::path("tex-command", manifest_dir),
+        CompileFailDependency::registry("serde", "1"),
+    ];
+
+    assert_compile_fail(
+        "command-runtime-traits",
+        &manifest_dir.join("tests/ui/runtime_traits.rs"),
+        &dependencies,
+        &[
+            "CommandRuntime",
+            "Clone",
+            "DeserializeOwned",
+            "Eq",
+            "Hash",
+            "Serialize",
         ],
     );
 }
