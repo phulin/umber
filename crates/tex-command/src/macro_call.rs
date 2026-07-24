@@ -11,7 +11,9 @@ use crate::processor::status::{ArgumentBuilderId, MatchingContext, ScannerStatus
 use crate::{CommandError, CommandProcessor};
 
 #[cfg(any(test, feature = "instrumentation"))]
-use crate::observation::{CommandObservation, MacroRecord};
+use crate::observation::{
+    CommandObservation, InputReason, InputRecord, InputTransition, MacroRecord, TokenListRecord,
+};
 
 /// Persistent ownership of live macro-argument activations.
 ///
@@ -205,29 +207,21 @@ impl CommandProcessor<'_> {
         let prior = self.command.begin_scanner_status(status);
         self.observe_scanner_status(true);
         self.outer_recovered_while_matching = false;
-        let result = self.macro_call_scalar(meaning.flags(), &pattern);
-        self.command.restore_scanner_status(prior);
-        self.observe_scanner_status(false);
-        let arguments = result?;
-
-        #[cfg(any(test, feature = "instrumentation"))]
-        for (index, range) in arguments.ranges.iter().enumerate() {
-            if let Some(range) = range {
-                self.observe(CommandObservation::Macro(MacroRecord {
-                    activation: false,
-                    definition: u64::from(definition.raw()),
-                    argument: Some((index + 1) as u8),
-                    token_count: (range.end() - range.start()) as u64,
-                }));
+        let arguments = match self.macro_call_scalar(definition, meaning.flags(), &pattern) {
+            Ok(arguments) => arguments,
+            Err(error) => {
+                self.observe_scanner_status(false);
+                self.command.restore_scanner_status(prior);
+                return Err(error);
             }
-        }
+        };
 
         // TeX.web §§391--400 freezes the completed ranges before replacing
         // the input. The activation owns that one shared buffer; its body
         // replays the canonical immutable replacement list and resolves
         // compact `OutParameter` tokens through that owner.
         let provenance = self.state.macro_definition_provenance(definition);
-        self.push_macro_activation(
+        let _level = self.push_macro_activation(
             definition,
             call.spelling().origin(),
             arguments.clone(),
@@ -235,17 +229,29 @@ impl CommandProcessor<'_> {
             provenance.replacement_origins(),
         );
         #[cfg(any(test, feature = "instrumentation"))]
+        self.observe(CommandObservation::Input(InputRecord {
+            transition: InputTransition::Push,
+            reason: InputReason::Macro,
+            level: _level.0,
+            position: 0,
+        }));
+        #[cfg(any(test, feature = "instrumentation"))]
         self.observe(CommandObservation::Macro(MacroRecord {
             activation: true,
             definition: u64::from(definition.raw()),
-            argument: None,
+            control_sequence: Some(self.state.resolve(macro_name).to_owned()),
+            argument: Some(pattern.parameter_count() as u8),
             token_count: arguments.buffer.len() as u64,
+            tokens: Vec::new(),
         }));
+        self.observe_scanner_status(false);
+        self.command.restore_scanner_status(prior);
         Ok(arguments)
     }
 
     fn macro_call_scalar(
         &mut self,
+        _definition: MacroDefinitionId,
         flags: MeaningFlags,
         pattern: &tex_state::macro_store::MacroParameterPattern,
     ) -> Result<MacroArguments, CommandError> {
@@ -270,6 +276,31 @@ impl CommandProcessor<'_> {
             } else {
                 self.scan_delimited_argument(flags, delimiter)?
             };
+            #[cfg(any(test, feature = "instrumentation"))]
+            self.observe(CommandObservation::TokenList(TokenListRecord {
+                transition: "splice",
+                purpose: "macro_delimiter_match",
+                tokens: delimiter
+                    .iter()
+                    .copied()
+                    .map(|token| {
+                        self.observed_token(TracedTokenWord::pack(token, OriginId::UNKNOWN))
+                    })
+                    .collect(),
+            }));
+            #[cfg(any(test, feature = "instrumentation"))]
+            self.observe(CommandObservation::Macro(MacroRecord {
+                activation: false,
+                definition: u64::from(_definition.raw()),
+                control_sequence: None,
+                argument: Some((parameter + 1) as u8),
+                token_count: argument.len() as u64,
+                tokens: argument
+                    .iter()
+                    .copied()
+                    .map(|token| self.observed_token(token))
+                    .collect(),
+            }));
             arguments
                 .complete((parameter + 1) as u8, argument)
                 .map_err(|_| CommandError::InputInvariant)?;

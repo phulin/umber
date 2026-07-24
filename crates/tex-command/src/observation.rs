@@ -100,6 +100,10 @@ pub struct CommandDeliveryRecord {
 pub(crate) fn canonical_command_identity(meaning: Meaning) -> (String, Option<i64>) {
     match meaning {
         Meaning::CharToken { .. } => ("character".into(), None),
+        // TeX.web's `relax` command has the fixed `cur_chr` value 256.  It
+        // is a distinguished meaning rather than a primitive-registry entry,
+        // but remains observable at both raw and expanded delivery.
+        Meaning::Relax => ("relax".into(), Some(256)),
         Meaning::Macro { flags, .. } => (
             if flags.contains(tex_state::meaning::MeaningFlags::LONG)
                 && flags.contains(tex_state::meaning::MeaningFlags::OUTER)
@@ -144,6 +148,7 @@ pub(crate) fn canonical_command_identity(meaning: Meaning) -> (String, Option<i6
 /// Logical input changes observable at the canonical raw-input seam.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum InputTransition {
+    Push,
     Retire,
     Stop,
     Backup,
@@ -194,8 +199,10 @@ pub struct ScannerStatusRecord {
 pub struct MacroRecord {
     pub activation: bool,
     pub definition: u64,
+    pub control_sequence: Option<String>,
     pub argument: Option<u8>,
     pub token_count: u64,
+    pub tokens: Vec<ObservedToken>,
 }
 
 /// A committed condition-stack transition.

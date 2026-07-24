@@ -1642,6 +1642,16 @@ must not create an alternative successful result inside the reference domain.
 Correctness uses pinned TeX82, e-TeX, and pdfTeX engines, never the retired
 implementation.
 
+The reference transport writes TeX's `cur_chr` for every command. For
+`call`, `long_call`, `outer_call`, and `long_outer_call`, that field is the
+mutable token-list reference (`def_ref`), not an operand in the macro
+meaning. The offline command-stream comparator therefore projects only that
+reference address to no operand: it still compares delivery boundary, call
+kind, control-sequence spelling, and location exactly. `tex-command` retains
+immutable macro definition identity and activation ownership instead of
+reintroducing a reference-engine allocation address; snapshots consequently
+remain allocation-independent.
+
 ### 31.1 Instrumented engines
 
 Dedicated reference executables are built from pinned canonical WEB and

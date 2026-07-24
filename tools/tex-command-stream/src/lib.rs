@@ -136,7 +136,7 @@ pub fn compare_streams(
     for index in 0..count {
         let expected_event = expected.get(index).map(|event| &event.semantic);
         let actual_event = actual.get(index);
-        if expected_event != actual_event.map(|event| &event.event) {
+        if !events_match(expected_event, actual_event.map(|event| &event.event)) {
             return Err(Box::new(StreamMismatch {
                 fixture: fixture.into(),
                 index,
@@ -146,6 +146,63 @@ pub fn compare_streams(
         }
     }
     Ok(())
+}
+
+/// Compares portable command observations with the committed TeX82 trace.
+///
+/// TeX82 records the `cur_chr` field for every raw command.  For a macro call
+/// that field is the mutable `def_ref` token-list address, rather than a
+/// semantic macro operand.  The command core intentionally replaces that
+/// allocator address with immutable macro-definition ownership, so the trace
+/// comparison projects this one reference-only field away.  Macro command
+/// kind and control-sequence spelling remain exact, and an observed macro
+/// call must likewise expose no operand.
+fn events_match(expected: Option<&Event>, actual: Option<&Event>) -> bool {
+    match (expected, actual) {
+        (Some(expected), Some(actual)) if macro_call_operand_is_reference(expected, actual) => true,
+        _ => expected == actual,
+    }
+}
+
+fn macro_call_operand_is_reference(expected: &Event, actual: &Event) -> bool {
+    let (
+        Event::Command(CommandEvent {
+            delivery: expected_delivery,
+            command:
+                CanonicalCommand {
+                    command: expected_command,
+                    operand: CanonicalValue::Integer(_),
+                    control_sequence: expected_control_sequence,
+                    location: expected_location,
+                },
+        }),
+        Event::Command(CommandEvent {
+            delivery: actual_delivery,
+            command:
+                CanonicalCommand {
+                    command: actual_command,
+                    operand: CanonicalValue::None,
+                    control_sequence: actual_control_sequence,
+                    location: actual_location,
+                },
+        }),
+    ) = (expected, actual)
+    else {
+        return false;
+    };
+
+    is_macro_call_command(expected_command)
+        && expected_delivery == actual_delivery
+        && expected_command == actual_command
+        && expected_control_sequence == actual_control_sequence
+        && expected_location == actual_location
+}
+
+fn is_macro_call_command(command: &str) -> bool {
+    matches!(
+        command,
+        "call" | "long_call" | "outer_call" | "long_outer_call"
+    )
 }
 
 /// One translated observer event plus source/provenance-only diagnostic context.
@@ -725,6 +782,7 @@ fn catcode_name(catcode: Catcode) -> &'static str {
 
 fn translate_input(record: InputRecord) -> Event {
     let transition = match record.transition {
+        InputTransition::Push => tex_oracle::InputTransition::Push,
         InputTransition::Retire => tex_oracle::InputTransition::Retire,
         InputTransition::Stop => tex_oracle::InputTransition::Stop,
         InputTransition::Backup | InputTransition::Recovery => tex_oracle::InputTransition::Push,
@@ -795,13 +853,15 @@ fn scanner_status(status: &str) -> ScannerStatus {
 fn translate_macro(record: MacroRecord) -> Event {
     if record.activation {
         Event::Macro(MacroEvent::Activation {
-            control_sequence: format!("definition-{}", record.definition),
+            control_sequence: record
+                .control_sequence
+                .unwrap_or_else(|| format!("definition-{}", record.definition)),
             argument_count: record.argument.unwrap_or(0).into(),
         })
     } else {
         Event::Macro(MacroEvent::Argument {
             parameter: record.argument.unwrap_or(0).into(),
-            tokens: Vec::new(),
+            tokens: record.tokens.into_iter().map(oracle_token).collect(),
         })
     }
 }
@@ -1005,6 +1065,49 @@ mod tests {
         assert!(report.contains("source=case.tex"));
         assert!(report.contains("zero"));
         assert!(!report.contains("three"));
+    }
+
+    #[test]
+    fn macro_call_comparison_projects_only_the_reference_operand() {
+        let expected = Event::Command(CommandEvent {
+            delivery: CommandDelivery::Raw,
+            command: CanonicalCommand {
+                command: "call".into(),
+                operand: CanonicalValue::Integer(249_985),
+                control_sequence: Some("identity".into()),
+                location: None,
+            },
+        });
+        let actual = Event::Command(CommandEvent {
+            delivery: CommandDelivery::Raw,
+            command: CanonicalCommand {
+                command: "call".into(),
+                operand: CanonicalValue::None,
+                control_sequence: Some("identity".into()),
+                location: None,
+            },
+        });
+        let expected = vec![NormalizedEvent {
+            sequence: 0,
+            semantic: expected,
+        }];
+        let actual = vec![ObservedEvent::new(actual, String::new())];
+
+        assert_eq!(compare_streams("tex82/macro", &expected, &actual), Ok(()));
+
+        let wrong_name = vec![ObservedEvent::new(
+            Event::Command(CommandEvent {
+                delivery: CommandDelivery::Raw,
+                command: CanonicalCommand {
+                    command: "call".into(),
+                    operand: CanonicalValue::None,
+                    control_sequence: Some("other".into()),
+                    location: None,
+                },
+            }),
+            String::new(),
+        )];
+        assert!(compare_streams("tex82/macro", &expected, &wrong_name).is_err());
     }
 
     #[test]

@@ -240,15 +240,21 @@ impl CommandProcessor<'_> {
                 source_range,
             } = delivery;
 
-            if let Token::Param(slot) = spelling.semantic_token()
-                && matches!(
-                    self.command
-                        .replay_out_parameter(level, slot)
-                        .map_err(|_| CommandError::InputInvariant)?,
-                    OutParameterReplay::Pushed(_)
-                )
-            {
-                continue;
+            if let Token::Param(slot) = spelling.semantic_token() {
+                let replay = self
+                    .command
+                    .replay_out_parameter(level, slot)
+                    .map_err(|_| CommandError::InputInvariant)?;
+                if let OutParameterReplay::Pushed(_parameter_level) = replay {
+                    #[cfg(any(test, feature = "instrumentation"))]
+                    self.observe(CommandObservation::Input(InputRecord {
+                        transition: InputTransition::Push,
+                        reason: InputReason::Parameter,
+                        level: _parameter_level.0,
+                        position: 0,
+                    }));
+                    continue;
+                }
             }
 
             let delivery_stamp = DeliveryStamp::new(level.0, position, self.next_delivery_sequence);
