@@ -102,6 +102,23 @@ cargo run -q -p tex-oracle --bin tex-oracle-validate -- \
   --audit-matrix tests/tex82-oracle/fixture-audit-matrix.txt
 ```
 
+The complete committed TeX82 command suite has one deterministic, offline
+entry point. It inventories every directory under `tests/corpus/command/tex82`,
+requires an exact corresponding `fixture` and `fixture-audit` record in the
+regeneration contract, verifies the pinned manifest and matrix identities,
+then validates each manifest-bound ordered stream and coverage audit:
+
+```bash
+cargo run -q -p tex-oracle --bin tex-oracle-validate -- --tex82-command-suite
+```
+
+The report lists each selector, canonical profile, inner schema-v1 oracle
+identity, event count, and every covered `family/boundary` command seam in
+bytewise order. It reads only committed files; it never builds, invokes, or
+consults a TeX engine or legacy Umber. A missing fixture record, unregistered
+fixture directory, stale identity, profile mismatch, event-order failure, or
+uncovered matrix requirement fails the command.
+
 `CommittedFixture::load` verifies canonical manifest encoding, contract and
 schema versions, canonical profile, required tools and citations, file
 lengths and hashes, source/output agreement with the inner manifest,

@@ -9,6 +9,7 @@ mod fixture;
 mod fixture_audit;
 mod normalize;
 mod schema;
+mod suite;
 mod transport;
 
 pub use encoding::{EncodingError, ManifestIdentity, StreamIdentity};
@@ -25,6 +26,7 @@ pub use schema::{
     RecoveryEvent, RecoveryKind, SCHEMA_VERSION, ScannerEvent, ScannerStatus, ScannerStatusEvent,
     SourceLocation, StateTarget, TokenListEvent, TokenListTransition,
 };
+pub use suite::{Tex82CommandTraceSuite, Tex82TraceFixture, validate_tex82_command_trace_suite};
 pub use transport::{
     DisabledObserver, EventObserver, JsonLinesObserver, ObservationError, ObservationHeader,
     ObservationStream,

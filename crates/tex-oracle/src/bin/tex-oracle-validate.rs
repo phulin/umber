@@ -2,7 +2,7 @@ use std::env;
 use std::fs;
 use std::process::ExitCode;
 
-use tex_oracle::{CommittedFixture, ObservationStream};
+use tex_oracle::{CommittedFixture, ObservationStream, validate_tex82_command_trace_suite};
 
 #[allow(
     clippy::disallowed_methods,
@@ -15,6 +15,49 @@ fn main() -> ExitCode {
         usage();
         return ExitCode::from(2);
     };
+    if first == "--tex82-command-suite" {
+        let repository = match arguments.next() {
+            Some(flag) if flag == "--repository" => match arguments.next() {
+                Some(path) if arguments.next().is_none() => path,
+                _ => {
+                    usage();
+                    return ExitCode::from(2);
+                }
+            },
+            None => match env::current_dir() {
+                Ok(path) => path.into_os_string(),
+                Err(error) => {
+                    eprintln!("failed to find current directory: {error}");
+                    return ExitCode::FAILURE;
+                }
+            },
+            _ => {
+                usage();
+                return ExitCode::from(2);
+            }
+        };
+        return match validate_tex82_command_trace_suite(repository) {
+            Ok(suite) => {
+                println!(
+                    "TeX82 command trace suite: {} fixture(s), {} ordered schema-v1 event(s)",
+                    suite.fixtures.len(),
+                    suite.events
+                );
+                for fixture in suite.fixtures {
+                    println!(
+                        "{} profile={} oracle={} events={}",
+                        fixture.selector, fixture.profile, fixture.oracle_identity, fixture.events
+                    );
+                    println!("  seams: {}", fixture.seams.join(", "));
+                }
+                ExitCode::SUCCESS
+            }
+            Err(error) => {
+                eprintln!("invalid TeX82 command trace suite: {error}");
+                ExitCode::FAILURE
+            }
+        };
+    }
     let (fixture, path) = if first == "--fixture" {
         let Some(path) = arguments.next() else {
             usage();
@@ -100,4 +143,5 @@ fn usage() {
         "usage: tex-oracle-validate TRACE.jsonl | --fixture DIRECTORY \
          [--semantic-matrix PATH --audit-matrix PATH]"
     );
+    eprintln!("       tex-oracle-validate --tex82-command-suite [--repository DIRECTORY]");
 }
