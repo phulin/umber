@@ -301,6 +301,12 @@ transition, and token-list completion therefore occur before replay applies
 the frozen list to `Universe`; replay emits the committed register mutation
 only after that application succeeds.
 
+TeX82 `\let` and `\futurelet` likewise cross replay as completed typed
+meaning assignments. `CommandProcessor` owns their raw target and source
+deliveries, optional-equals handling, and `\futurelet`'s two-token lookahead
+replay; `CommandReplayControl` applies the captured meaning only after that
+processor borrow ends and then publishes the committed meaning mutation.
+
 ### 5.4 Proposed module layout
 
 ```text

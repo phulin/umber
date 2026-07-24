@@ -4,6 +4,7 @@
 //! canonical filename termination only.  Input levels, raw tokens, and macro
 //! argument frames remain private to `tex-command`.
 
+use tex_state::interner::Symbol;
 use tex_state::meaning::Meaning;
 use tex_state::token::{Catcode, OriginId};
 use tex_state::{SourceId, TracedTokenList};
@@ -31,6 +32,18 @@ pub struct ScannedMacroDefinition {
     pub parameter_text: TracedTokenList,
     pub replacement_text: TracedTokenList,
     pub provenance: StructuredProvenance,
+}
+
+/// A completed TeX82 `\let` or `\futurelet` assignment.
+///
+/// The command processor owns every raw operand delivery, including the
+/// optional equals sign and `\futurelet`'s lookahead replay. Replay receives
+/// only the target and its already-resolved source meaning.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ScannedLetAssignment {
+    pub target: Symbol,
+    pub source: Option<Symbol>,
+    pub meaning: Meaning,
 }
 
 /// The canonical boundary that stopped an unbraced filename scan.
@@ -88,6 +101,49 @@ impl CommandProcessor<'_> {
             parameter_text: scanned.parameter_text,
             replacement_text: scanned.replacement_text,
             provenance: provenance(&scanned),
+        })
+    }
+
+    /// Scans TeX82's raw `\let` operand sequence.
+    ///
+    /// `future` selects `future_let`: the first two raw tokens following the
+    /// target are restored in their original order after the second token's
+    /// meaning has been captured.
+    pub fn scan_let_assignment(
+        &mut self,
+        future: bool,
+    ) -> Result<ScannedLetAssignment, CommandError> {
+        let target = self
+            .next_non_space_raw()?
+            .and_then(|command| command.control_sequence())
+            .ok_or(CommandError::InputInvariant)?;
+        let (source, meaning) = if future {
+            let first = self.get_token()?.ok_or(CommandError::InputInvariant)?;
+            let second = self.get_token()?.ok_or(CommandError::InputInvariant)?;
+            let source = second.control_sequence();
+            let meaning = second.meaning();
+            self.replay_raw_commands([first, second]);
+            (source, meaning)
+        } else {
+            let mut source = self.get_token()?.ok_or(CommandError::InputInvariant)?;
+            if matches!(source.meaning(), Meaning::CharToken { ch: '=', .. }) {
+                source = self.get_token()?.ok_or(CommandError::InputInvariant)?;
+                if matches!(
+                    source.meaning(),
+                    Meaning::CharToken {
+                        cat: Catcode::Space,
+                        ..
+                    }
+                ) {
+                    source = self.get_token()?.ok_or(CommandError::InputInvariant)?;
+                }
+            }
+            (source.control_sequence(), source.meaning())
+        };
+        Ok(ScannedLetAssignment {
+            target,
+            source,
+            meaning,
         })
     }
 
@@ -183,6 +239,40 @@ impl CommandProcessor<'_> {
             .open_registered_source(source)
             .map_err(|_| CommandError::InputInvariant)?;
         Ok(RegisteredInput { file_name, source })
+    }
+
+    fn next_non_space_raw(&mut self) -> Result<Option<crate::CurrentCommand>, CommandError> {
+        loop {
+            let Some(command) = self.get_token()? else {
+                return Ok(None);
+            };
+            if !matches!(
+                command.meaning(),
+                Meaning::CharToken {
+                    cat: Catcode::Space,
+                    ..
+                }
+            ) {
+                return Ok(Some(command));
+            }
+        }
+    }
+
+    fn replay_raw_commands(&mut self, commands: [crate::CurrentCommand; 2]) {
+        for command in &commands {
+            self.undo_alignment_delivery(command);
+        }
+        self.command.push_token_level(
+            crate::input::TokenPayload::BackedUp(crate::input::SharedBackedUpBuffer::new(
+                commands.map(|command| crate::input::BackedUpToken {
+                    spelling: command.spelling(),
+                    source_range: command.source_range(),
+                }),
+            )),
+            crate::input::TokenBehavior::BackedUp(crate::input::BackupTreatment::Ordinary),
+            crate::input::RetirementBehavior::Pop,
+            crate::input::ReplayTrace::BackedUp,
+        );
     }
 }
 

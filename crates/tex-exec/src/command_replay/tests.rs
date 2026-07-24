@@ -160,6 +160,99 @@ fn canonical_initex_replay_scans_and_applies_code_table_assignments() {
 }
 
 #[test]
+fn canonical_initex_replay_scans_raw_let_operands_and_commits_the_meaning() {
+    let mut universe = Universe::new();
+    let mut control = CommandReplayControl::tex82_initex(&mut universe);
+    register_source(&mut control, br"\let\alias = \begingroup\end");
+    let mut observations = ObservationRecorder::default();
+
+    assert_eq!(
+        control
+            .step_with_observer(&mut universe, &mut observations)
+            .expect("let assignment"),
+        ReplayStep::Continue
+    );
+    let alias = universe.symbol("alias").expect("let target is interned");
+    assert_eq!(
+        universe.meaning(alias),
+        Meaning::UnexpandablePrimitive(tex_state::meaning::UnexpandablePrimitive::BeginGroup)
+    );
+    assert!(matches!(
+        observations.0.last(),
+        Some(CommandObservation::Mutation(mutation))
+            if mutation.target == "meaning"
+                && mutation.key.as_deref() == Some("alias")
+                && mutation.value == "begin_group"
+    ));
+    assert_eq!(control.step(&mut universe).expect("end"), ReplayStep::End);
+}
+
+#[test]
+fn canonical_initex_replay_futurelet_preserves_lookahead_order_after_assignment() {
+    let mut universe = Universe::new();
+    let mut control = CommandReplayControl::tex82_initex(&mut universe);
+    register_source(&mut control, br"\futurelet\next\first x\end");
+    let mut observations = ObservationRecorder::default();
+
+    assert_eq!(
+        control
+            .step_with_observer(&mut universe, &mut observations)
+            .expect("futurelet assignment"),
+        ReplayStep::Continue
+    );
+    let next = universe
+        .symbol("next")
+        .expect("futurelet target is interned");
+    assert_eq!(
+        universe.meaning(next),
+        Meaning::CharToken {
+            ch: 'x',
+            cat: tex_state::token::Catcode::Letter,
+        }
+    );
+    assert!(matches!(
+        observations.0.last(),
+        Some(CommandObservation::Mutation(mutation))
+            if mutation.target == "meaning" && mutation.key.as_deref() == Some("next")
+    ));
+
+    observations.0.clear();
+    assert_eq!(
+        control
+            .step_with_observer(&mut universe, &mut observations)
+            .expect("first lookahead replay"),
+        ReplayStep::Continue
+    );
+    assert!(matches!(
+        observations.0.as_slice(),
+        [.., CommandObservation::Command(delivery)]
+            if matches!(delivery.spelling, ObservedToken::ControlSequence(ref name) if name == "first")
+    ));
+    observations.0.clear();
+    assert_eq!(
+        control
+            .step_with_observer(&mut universe, &mut observations)
+            .expect("second lookahead replay"),
+        ReplayStep::Continue
+    );
+    assert!(observations.0.iter().any(|observation| {
+        matches!(
+            observation,
+            CommandObservation::Command(delivery)
+                if matches!(delivery.spelling, ObservedToken::Character { character: 'x', .. })
+        )
+    }));
+    assert_eq!(control.current_mode(), crate::Mode::Horizontal);
+    assert_eq!(
+        control
+            .step(&mut universe)
+            .expect("paragraph character replay"),
+        ReplayStep::Continue
+    );
+    assert_eq!(control.step(&mut universe).expect("end"), ReplayStep::End);
+}
+
+#[test]
 fn canonical_initex_replay_scans_and_applies_dimension_and_glue_registers() {
     let mut universe = Universe::new();
     let mut control = CommandReplayControl::tex82_initex(&mut universe);

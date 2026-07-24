@@ -312,6 +312,12 @@ enum ScannedStep {
         replacement_text: TracedTokenList,
         definition_origin: tex_state::token::OriginId,
     },
+    Let {
+        target: Symbol,
+        source: Option<Symbol>,
+        meaning: Meaning,
+        global: bool,
+    },
     Message {
         tokens: TracedTokenList,
     },
@@ -479,6 +485,26 @@ fn scan_command(
                 parameter_text: definition.parameter_text,
                 replacement_text: definition.replacement_text,
                 definition_origin: definition.provenance.primary,
+            })
+        }
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Let) => {
+            let assignment = processor
+                .scan_let_assignment(false)
+                .map_err(command_error)?;
+            Ok(ScannedStep::Let {
+                target: assignment.target,
+                source: assignment.source,
+                meaning: assignment.meaning,
+                global,
+            })
+        }
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::FutureLet) => {
+            let assignment = processor.scan_let_assignment(true).map_err(command_error)?;
+            Ok(ScannedStep::Let {
+                target: assignment.target,
+                source: assignment.source,
+                meaning: assignment.meaning,
+                global,
             })
         }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Message) => {
@@ -706,6 +732,21 @@ fn applied_mutation_observation(
             global: *global,
         });
     }
+    if let ScannedStep::Let {
+        target,
+        source,
+        meaning,
+        global,
+    } = scanned
+    {
+        return Some(MutationRecord {
+            target: "meaning",
+            value: let_mutation_value(*meaning, *source, stores),
+            key: Some(stores.resolve(*target).to_owned()),
+            tokens: None,
+            global: *global,
+        });
+    }
     let ScannedStep::MacroDefinition {
         target,
         parameter_text,
@@ -740,6 +781,18 @@ fn applied_mutation_observation(
         tokens: Some(tokens),
         global: *global,
     })
+}
+
+#[cfg(any(test, feature = "instrumentation"))]
+fn let_mutation_value(meaning: Meaning, source: Option<Symbol>, stores: &Universe) -> String {
+    match meaning {
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::BeginGroup) => "begin_group".into(),
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::EndGroup) => "end_group".into(),
+        _ => source.map_or_else(
+            || format!("{meaning:?}"),
+            |source| stores.resolve(source).to_owned(),
+        ),
+    }
 }
 
 #[cfg(any(test, feature = "instrumentation"))]
@@ -921,6 +974,20 @@ fn apply_scanned_step(
                 stores.set_macro_meaning_global_with_provenance(target, meaning, provenance);
             } else {
                 stores.set_macro_meaning_with_provenance(target, meaning, provenance);
+            }
+            Ok(ReplayStep::Continue)
+        }
+        ScannedStep::Let {
+            target,
+            source,
+            meaning,
+            global,
+        } => {
+            let _ = source;
+            if global {
+                stores.set_meaning_global(target, meaning);
+            } else {
+                stores.set_meaning(target, meaning);
             }
             Ok(ReplayStep::Continue)
         }
