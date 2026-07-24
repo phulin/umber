@@ -13,6 +13,7 @@
 @!umber_recovery_insert:boolean;
 @!umber_alignment_depth:integer;
 @!umber_mutation_command:boolean;
+@!umber_trip_profile:boolean;
 @z
 
 @x [22] Detached schema-v1 JSON Lines transport.
@@ -229,7 +230,7 @@ end;
 
 procedure umber_trace_command(@!expanded:boolean);
 begin
-if not umber_trace_opened then return;
+if (not umber_trace_opened)or(umber_trip_profile) then return;
 umber_trace_begin;
 write(umber_trace_file,'{"event":"command","data":{"delivery":"');
 if expanded then write(umber_trace_file,'expanded')
@@ -276,6 +277,7 @@ end;
 procedure umber_trace_input(@!transition,@!reason,@!t:integer);
 begin
 if not umber_trace_opened then return;
+if umber_trip_profile and (transition<>2) then return;
 umber_trace_begin;
 write(umber_trace_file,'{"event":"input","data":{"transition":"');
 if transition=0 then write(umber_trace_file,'push')
@@ -332,7 +334,7 @@ end;
 procedure umber_trace_token_list(@!transition,@!purpose:integer;
   @!p,@!stop_pointer:pointer);
 begin
-if not umber_trace_opened then return;
+if (not umber_trace_opened)or(umber_trip_profile) then return;
 umber_trace_begin;
 write(umber_trace_file,'{"event":"token_list","data":{"transition":"');
 if transition=0 then write(umber_trace_file,'splice')
@@ -354,7 +356,7 @@ end;
 
 procedure umber_trace_token_splice(@!purpose:integer;@!t:halfword);
 begin
-if not umber_trace_opened then return;
+if (not umber_trace_opened)or(umber_trip_profile) then return;
 umber_trace_begin;
 write(umber_trace_file,
   '{"event":"token_list","data":{"transition":"splice","purpose":"');
@@ -367,7 +369,7 @@ end;
 
 procedure umber_trace_macro_argument(@!parameter_number:integer;@!p:pointer);
 begin
-if not umber_trace_opened then return;
+if (not umber_trace_opened)or(umber_trip_profile) then return;
 umber_trace_begin;
 write(umber_trace_file,
   '{"event":"macro","data":{"transition":"argument","parameter":',
@@ -378,7 +380,7 @@ end;
 
 procedure umber_trace_macro_activation(@!cs:pointer;@!arguments:integer);
 begin
-if not umber_trace_opened then return;
+if (not umber_trace_opened)or(umber_trip_profile) then return;
 umber_trace_begin;
 write(umber_trace_file,
   '{"event":"macro","data":{"transition":"activation",',
@@ -399,7 +401,7 @@ end;
 procedure umber_trace_scanner(@!scanner_kind,@!value_level:integer);
 var p:pointer;
 begin
-if not umber_trace_opened then return;
+if (not umber_trace_opened)or(umber_trip_profile) then return;
 umber_trace_begin;
 write(umber_trace_file,'{"event":"scanner","data":{"scanner":"');
 case scanner_kind of
@@ -464,7 +466,7 @@ end;
 procedure umber_trace_condition(@!transition,@!condition_kind,
   @!limit_kind,@!branch_kind:integer);
 begin
-if not umber_trace_opened then return;
+if (not umber_trace_opened)or(umber_trip_profile) then return;
 umber_trace_begin;
 write(umber_trace_file,'{"event":"condition","data":{"transition":"');
 case transition of
@@ -494,7 +496,7 @@ end;
 
 procedure umber_trace_conditional_diagnostic(@!diagnostic_kind:integer);
 begin
-if not umber_trace_opened then return;
+if (not umber_trace_opened)or(umber_trip_profile) then return;
 umber_trace_begin;
 write(umber_trace_file,
   '{"event":"diagnostic","data":{"severity":"error","diagnostic":"');
@@ -507,7 +509,7 @@ end;
 
 procedure umber_trace_recovery(@!kind:integer;@!t:halfword);
 begin
-if not umber_trace_opened then return;
+if (not umber_trace_opened)or(umber_trip_profile) then return;
 umber_trace_begin;
 write(umber_trace_file,'{"event":"recovery","data":{"kind":"');
 if kind=0 then write(umber_trace_file,'backup')
@@ -519,7 +521,7 @@ end;
 
 procedure umber_trace_off_save(@!at_bottom:boolean;@!t:halfword);
 begin
-if not umber_trace_opened then return;
+if (not umber_trace_opened)or(umber_trip_profile) then return;
 umber_trace_begin;
 write(umber_trace_file,
   '{"event":"diagnostic","data":{"severity":"error","diagnostic":"');
@@ -532,7 +534,7 @@ end;
 
 procedure umber_trace_status(@!old_status,@!new_status:integer);
 begin
-if (not umber_trace_opened)or(old_status=new_status) then return;
+if (not umber_trace_opened)or(umber_trip_profile)or(old_status=new_status) then return;
 umber_trace_begin;
 write(umber_trace_file,
   '{"event":"scanner_status","data":{"from":');
@@ -553,7 +555,7 @@ end;
 procedure umber_trace_alignment(@!transition,@!old_state,
   @!template_kind:integer);
 begin
-if (not umber_trace_opened)or(umber_alignment_depth=0) then return;
+if (not umber_trace_opened)or(umber_trip_profile)or(umber_alignment_depth=0) then return;
 umber_trace_begin;
 write(umber_trace_file,'{"event":"alignment","data":{"transition":"');
 case transition of
@@ -585,7 +587,7 @@ end;
 procedure umber_trace_alignment_delimiter(@!command_code,
   @!character_code:integer);
 begin
-if (not umber_trace_opened)or(umber_alignment_depth=0) then return;
+if (not umber_trace_opened)or(umber_trip_profile)or(umber_alignment_depth=0) then return;
 umber_trace_begin;
 write(umber_trace_file,
   '{"event":"alignment","data":{"transition":"delimiter","align_state":',
@@ -600,7 +602,7 @@ end;
 
 procedure umber_trace_alignment_recovery(@!recovery_kind:integer);
 begin
-if (not umber_trace_opened)or(umber_alignment_depth=0) then return;
+if (not umber_trace_opened)or(umber_trip_profile)or(umber_alignment_depth=0) then return;
 umber_trace_begin;
 write(umber_trace_file,
   '{"event":"alignment","data":{"transition":"recovery","align_state":',
@@ -624,7 +626,7 @@ end;
 
 procedure umber_trace_outer(@!at_eof:boolean);
 begin
-if not umber_trace_opened then return;
+if (not umber_trace_opened)or(umber_trip_profile) then return;
 umber_trace_begin;
 write(umber_trace_file,
  '{"event":"diagnostic","data":{"severity":"error","diagnostic":"');
@@ -699,7 +701,7 @@ procedure umber_trace_eq_mutation(@!p:pointer;@!t:quarterword;
   @!e:halfword;@!global_scope:boolean);
 var family,@!slot:integer;
 begin
-if (not umber_trace_opened)or(not umber_mutation_command) then return;
+if (not umber_trace_opened)or(umber_trip_profile)or(not umber_mutation_command) then return;
 if p<glue_base then
   begin
   if p>=undefined_control_sequence then return;
@@ -764,7 +766,7 @@ procedure umber_trace_word_mutation(@!p:pointer;@!w:integer;
   @!global_scope:boolean);
 var family,@!slot:integer;
 begin
-if (not umber_trace_opened)or(not umber_mutation_command) then return;
+if (not umber_trace_opened)or(umber_trip_profile)or(not umber_mutation_command) then return;
 family:=-1; slot:=0;
 if (p>=int_base)and(p<count_base) then
   begin family:=9; slot:=p-int_base; end
@@ -818,6 +820,7 @@ procedure umber_trace_effect(@!effect_kind:integer;@!channel:integer;
   @!value_kind:integer;@!value:integer);
 begin
 if not umber_trace_opened then return;
+if umber_trip_profile and (effect_kind<>4) then return;
 umber_trace_begin;
 write(umber_trace_file,'{"event":"effect","data":{"kind":"');
 case effect_kind of
@@ -848,6 +851,7 @@ end;
 procedure umber_trace_open;
 begin umber_trace_sequence:=0; umber_recovery_insert:=false;
 umber_alignment_depth:=0; umber_mutation_command:=false;
+umber_trip_profile:=false;
 rewrite(umber_trace_file,'tex82-events.jsonl');
 umber_trace_opened:=true;
 if umber_trace_opened then write_ln(umber_trace_file,

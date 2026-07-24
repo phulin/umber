@@ -167,6 +167,22 @@ unbound sentinel. It is not a committed fixture identity. Cross-engine
 fixture integration owns binding traces to complete canonical manifests; no
 trace with the sentinel may be committed as an oracle.
 
+## Full TRIP observer profile
+
+The focused command profile deliberately serializes complete canonical command
+and token values. The official full TRIP workload instead uses the separately
+built `umber-tex82-oracle-trip-profile` executable. Its schema-v1 stable
+observations are only ordered DVI `shipout` effects (page numbers), followed by
+the terminal-input `stop` and engine `terminate` effects. This bounded profile
+does not serialize command, control-sequence, token-list, macro, scanner,
+mutation, diagnostic, or textual-effect payloads. Validate it with
+`tex-oracle-validate --tex82-trip-profile`; that validator checks canonical
+JSONL and only the declared stable observations and final ordering.
+
+Run `scripts/test-tex82-trip-observer.sh` after fetching TRIP inputs to build
+the pinned oracle offline, execute both phases twice, validate deterministic
+profile streams, and compare status and final DVI against the clean oracle.
+
 The aggregate transparency gate is:
 
 ```bash

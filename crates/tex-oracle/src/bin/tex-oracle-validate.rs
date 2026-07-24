@@ -2,7 +2,9 @@ use std::env;
 use std::fs;
 use std::process::ExitCode;
 
-use tex_oracle::{CommittedFixture, ObservationStream, validate_tex82_command_trace_suite};
+use tex_oracle::{
+    CommittedFixture, ObservationStream, Tex82ObserverProfile, validate_tex82_command_trace_suite,
+};
 
 #[allow(
     clippy::disallowed_methods,
@@ -58,14 +60,20 @@ fn main() -> ExitCode {
             }
         };
     }
-    let (fixture, path) = if first == "--fixture" {
+    let (fixture, trip_profile, path) = if first == "--fixture" {
         let Some(path) = arguments.next() else {
             usage();
             return ExitCode::from(2);
         };
-        (true, path)
+        (true, false, path)
+    } else if first == "--tex82-trip-profile" {
+        let Some(path) = arguments.next() else {
+            usage();
+            return ExitCode::from(2);
+        };
+        (false, true, path)
     } else {
-        (false, first)
+        (false, false, first)
     };
     if fixture {
         let mut semantic_matrix = None;
@@ -130,6 +138,16 @@ fn main() -> ExitCode {
         }
     };
     match ObservationStream::from_canonical_json_lines(&bytes) {
+        Ok(stream) if trip_profile => match Tex82ObserverProfile::Trip.validate(&stream) {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(error) => {
+                eprintln!(
+                    "invalid TeX82 TRIP observer profile {}: {error}",
+                    path.to_string_lossy()
+                );
+                ExitCode::FAILURE
+            }
+        },
         Ok(_) => ExitCode::SUCCESS,
         Err(error) => {
             eprintln!("invalid oracle stream {}: {error}", path.to_string_lossy());
@@ -140,7 +158,7 @@ fn main() -> ExitCode {
 
 fn usage() {
     eprintln!(
-        "usage: tex-oracle-validate TRACE.jsonl | --fixture DIRECTORY \
+        "usage: tex-oracle-validate TRACE.jsonl | --tex82-trip-profile TRACE.jsonl | --fixture DIRECTORY \
          [--semantic-matrix PATH --audit-matrix PATH]"
     );
     eprintln!("       tex-oracle-validate --tex82-command-suite [--repository DIRECTORY]");

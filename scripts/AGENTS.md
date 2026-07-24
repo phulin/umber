@@ -37,6 +37,8 @@ Read the repository-root `AGENTS.md` first. This file adds the directory map for
   are gated together, including the focused expansion/macro/token-list,
   scanner/conditional, alignment-delivery, and source/input/EOF-recovery
   program set, and all identities are recorded.
+- `test-tex82-trip-observer.sh`: offline two-phase clean and bounded-profile
+  TeX82 TRIP comparison, schema validation, and profile repeatability gate.
 - `build-etex26-oracle.sh`: hash-pinned canonical e-TeX 2.6 source acquisition
   and reproducible clean/instrumented Web2C builds; compatibility and extended
   INITEX profiles are separately named, smoke- and schema-v1 base-command

@@ -19,6 +19,7 @@ out_dir="${target_dir}/tex82-oracle"
 bin_dir="${out_dir}/bin"
 clean_executable="${bin_dir}/umber-tex82-oracle"
 instrumentable_executable="${bin_dir}/umber-tex82-oracle-instrumentable"
+trip_profile_executable="${bin_dir}/umber-tex82-oracle-trip-profile"
 instrumentation_change="${UMBER_TEX82_INSTRUMENTATION_CHANGE:-${repo_root}/tests/tex82-oracle/instrumentation.ch}"
 smoke_input="${repo_root}/tests/tex82-oracle/smoke.tex"
 transition_input="${repo_root}/tests/tex82-oracle/transitions.tex"
@@ -129,6 +130,12 @@ verify_inputs() {
     fail "missing instrumentation change file: $instrumentation_change"
   [[ -f "$semantic_event_matrix" ]] ||
     fail "missing semantic event matrix: $semantic_event_matrix"
+}
+
+write_trip_profile_change() {
+  trip_profile_change="${out_dir}/trip-profile-instrumentation.ch"
+  sed 's/umber_trip_profile:=false;/umber_trip_profile:=true;/' \
+    "$instrumentation_change" >"$trip_profile_change"
 }
 
 extract_source() {
@@ -299,6 +306,7 @@ write_build_record() {
     done
     printf 'instrumentation-change %s\n' "${instrumentation_change#"${repo_root}/"}"
     printf 'instrumentation-change-sha256 %s\n' "$(sha_digest 256 "$instrumentation_change")"
+    printf 'trip-profile-change-sha256 %s\n' "$(sha_digest 256 "$trip_profile_change")"
     printf 'tool-sha256 tie %s\n' "$(sha_digest 256 "${web_build_dir}/tie")"
     printf 'tool-sha256 tangle %s\n' "$(sha_digest 256 "${web_build_dir}/tangle")"
     printf 'tool-sha256 web2c %s\n' \
@@ -329,6 +337,9 @@ write_build_record() {
     printf 'executable instrumentable %s %s\n' \
       "${instrumentable_executable#"${repo_root}/"}" \
       "$(sha_digest 256 "$instrumentable_executable")"
+    printf 'executable trip-profile %s %s\n' \
+      "${trip_profile_executable#"${repo_root}/"}" \
+      "$(sha_digest 256 "$trip_profile_executable")"
     printf 'smoke-ordinary-log-sha256 clean %s\n' \
       "$(sha_digest 256 "${out_dir}/smoke/clean/ordinary.log")"
     printf 'smoke-ordinary-log-sha256 instrumentable %s\n' \
@@ -353,6 +364,7 @@ mkdir -p "$bin_dir"
 fetch_source
 extract_source
 configure_tools
+write_trip_profile_change
 build_variant "$clean_executable"
 cp "${web_build_dir}/tex-final.ch" "${out_dir}/clean-final.ch"
 build_variant "$instrumentable_executable" "$instrumentation_change"
@@ -391,5 +403,6 @@ while IFS='|' read -r family boundary fixture seam pattern extra; do
   grep -Fq "$pattern" "$transition_trace" ||
     fail "transition trace is missing $family/$boundary from $fixture at $seam"
 done < "$semantic_event_matrix"
+build_variant "$trip_profile_executable" "$trip_profile_change"
 write_build_record
 printf '%s\n' "$bin_dir"

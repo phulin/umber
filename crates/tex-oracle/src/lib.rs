@@ -8,6 +8,7 @@ mod encoding;
 mod fixture;
 mod fixture_audit;
 mod normalize;
+mod profile;
 mod schema;
 mod suite;
 mod transport;
@@ -18,6 +19,7 @@ pub use fixture::{
     FixtureArtifact, FixtureError, FixtureManifest, FixtureProfile, ToolIdentity,
 };
 pub use normalize::{NormalizedEvent, Normalizer};
+pub use profile::Tex82ObserverProfile;
 pub use schema::{
     AlignmentEvent, AlignmentTransition, CanonicalCommand, CanonicalValue, CommandDelivery,
     CommandEvent, ConditionEvent, ConditionTransition, DiagnosticEvent, DiagnosticSeverity,
