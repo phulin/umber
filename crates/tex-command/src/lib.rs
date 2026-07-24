@@ -22,4 +22,5 @@ mod state;
 pub use command::CurrentCommand;
 pub use host::{CommandHostCapabilities, CommandHostContext};
 pub use processor::CommandProcessor;
+pub use snapshot::{CommandStateSnapshot, CommandSummary, CommandSummaryError};
 pub use state::{CommandRuntime, CommandState};

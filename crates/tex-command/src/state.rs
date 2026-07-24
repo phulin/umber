@@ -15,13 +15,13 @@ use crate::processor::{AlignmentDeliveryState, ExpansionState, ScannerState};
 /// deliberately absent.
 #[derive(Clone, Debug, Default, Eq, Hash, PartialEq)]
 pub struct CommandState {
-    input: InputState,
-    parameters: ParameterState,
-    scanner: ScannerState,
-    conditions: ConditionStack,
-    alignment: AlignmentDeliveryState,
-    expansion: ExpansionState,
-    transient: TransientState,
+    pub(crate) input: InputState,
+    pub(crate) parameters: ParameterState,
+    pub(crate) scanner: ScannerState,
+    pub(crate) conditions: ConditionStack,
+    pub(crate) alignment: AlignmentDeliveryState,
+    pub(crate) expansion: ExpansionState,
+    pub(crate) transient: TransientState,
 }
 
 /// Live temporary data referenced by persistent command state.
@@ -33,6 +33,10 @@ pub(crate) struct TransientState {
     pub(crate) builders: Vec<LiveTokenBuilder>,
     pub(crate) rollback_roots: Vec<u64>,
     pub(crate) next_builder_identity: u64,
+    /// Nesting of the call-local expansion episode currently borrowing the
+    /// command machine. This records only quiescence, never a continuation,
+    /// accumulator, fuel scope, host capability, or processor borrow.
+    pub(crate) active_expansion_depth: u32,
 }
 
 /// One semantic token builder named by a scanner-status variant.

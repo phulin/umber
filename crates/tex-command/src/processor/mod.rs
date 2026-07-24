@@ -10,8 +10,10 @@ use tex_state::CommandContext;
 use crate::{CommandHostContext, CommandRuntime, CommandState};
 
 pub(crate) use alignment::AlignmentDeliveryState;
+#[cfg(test)]
+pub(crate) use alignment::{ActiveCellDelivery, SuspendedAlignment};
 pub(crate) use expand::ExpansionState;
-pub(crate) use status::ScannerState;
+pub(crate) use status::{ScannerState, ScannerStatus};
 
 /// Optional observation sink for semantic command deliveries.
 pub(crate) trait CommandObserver {}

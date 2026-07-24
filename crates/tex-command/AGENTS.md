@@ -36,5 +36,6 @@ Private state-machine modules must not be widened for compatibility with
 - `src/scan_toks.rs`: private canonical token-list scanner.
 - `src/provenance.rs`: private command provenance construction.
 - `src/observation.rs`: private aggregate read observation.
-- `src/snapshot.rs`: private command snapshot and summary ownership.
+- `src/snapshot.rs` and `src/snapshot/tests.rs`: command snapshot, quiescent
+  summary ownership, and focused internal roundtrip/rejection tests.
 - `tests/`: external dependency, visibility, and capability-boundary tests.

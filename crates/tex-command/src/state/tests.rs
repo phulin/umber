@@ -51,4 +51,5 @@ fn default_state_is_quiescent() {
     assert!(state.alignment.active_cell.is_none());
     assert!(state.expansion.pending_diagnostics.is_empty());
     assert!(state.transient.builders.is_empty());
+    assert_eq!(state.transient.active_expansion_depth, 0);
 }

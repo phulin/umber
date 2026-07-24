@@ -1174,6 +1174,9 @@ There are two snapshot forms.
 `CommandStateSnapshot` owns the exact live command state over already retained
 source and token backing. Capture is bounded by live command-state structure,
 not total input bytes. Rollback does not reopen sources or consult host policy.
+The snapshot is an owned clone of `CommandState`; its trait bounds and private
+fields admit no `CommandRuntime`, `CommandProcessor` borrow,
+`CommandHostContext`, or `CurrentCommand`.
 
 It is paired atomically with:
 
@@ -1193,8 +1196,7 @@ It is paired atomically with:
 - token cursors and immutable payload identities;
 - macro activations and live argument ranges;
 - condition frames;
-- scanner status when the boundary contract permits it;
-- alignment delivery state;
+- quiescent alignment brace state, without active or suspended templates;
 - profile and source-id high-water marks;
 - persistent expansion counters; and
 - required provenance/source roots.
@@ -1203,9 +1205,13 @@ Host capabilities, `CurrentCommand`, delivery stamps, cache contents, spare
 buffer capacity, timers, and profiling counters are absent.
 
 Durable named checkpoints are emitted only at executor-owned boundaries. They
-do not capture a Rust stack continuation. Conditions may remain open when the
-boundary contract allows them; an active scanner builder or partially
-delivered current command may not.
+do not capture a Rust stack continuation. Conditions and completed macro
+activations may remain open when the boundary contract allows them. Summary
+publication rejects conditional skipping, macro matching, definition or token
+absorption, expansion episodes, alignment scanning or template delivery,
+suspended alignment delivery, live semantic builders, rollback roots, and
+stale scanner warning context. Scanner and transient domains are omitted from
+the summary and reconstructed only in their unique quiescent forms.
 
 ## 29. Formats
 
