@@ -5,7 +5,7 @@
 //! they represent typed reads or mutations of [`Universe`] state.
 
 use crate::{
-    ChangedAt, DependencyKey, DependencyValue, TracedTokenList, Universe,
+    ChangedAt, DependencyKey, DependencyValue, ExpansionState, TracedTokenList, Universe,
     env::banks::{IntParam, TokParam},
     ids::FontId,
     ids::{MacroDefinitionId, OriginListId, TokenListId},
@@ -51,6 +51,14 @@ impl CommandContext<'_> {
     #[must_use]
     pub fn tokens(&self, id: TokenListId) -> &[Token] {
         self.universe.tokens(id)
+    }
+
+    /// Returns TeX82's inaccessible frozen end-v sentinel for canonical
+    /// alignment-template retirement. Input delivery owns when it is emitted;
+    /// callers cannot intern or otherwise manufacture this token.
+    #[must_use]
+    pub fn frozen_endv_token(&self) -> Token {
+        self.universe.frozen_endv_token()
     }
 
     /// Freezes a scanner-owned traced token sequence through the aggregate

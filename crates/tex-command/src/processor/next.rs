@@ -4,6 +4,7 @@
 //! TeX.web §343 (`get_next`).  Later scanner and alignment milestones extend
 //! the two explicit entry points below; they do not add another lexical path.
 
+use tex_state::meaning::{ExpandablePrimitive, Meaning};
 use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 
 use crate::command::{CurrentCommand, DeliveryStamp};
@@ -21,6 +22,41 @@ use super::status::{EofLegality, RecoveryContext, ScannerStatus};
 const DEFAULT_END_LINE_CHAR: i32 = 13;
 
 impl CommandProcessor<'_> {
+    /// Hands an intercepted delimiter from `end_template` main control back
+    /// to canonical input, then starts the active cell's v-template above it.
+    /// The delimiter is never classified by an executor-side loop: after the
+    /// suffix retires, raw `get_next` sees it again with its original spelling.
+    pub fn begin_alignment_v_template(
+        &mut self,
+        alignment: crate::AlignmentIdentity,
+        delimiter: CurrentCommand,
+    ) -> Result<(), CommandError> {
+        if self.last_delivery != Some(delimiter.delivery_stamp())
+            || !matches!(
+                delimiter.meaning(),
+                Meaning::ExpandablePrimitive(ExpandablePrimitive::EndTemplate)
+            )
+        {
+            return Err(CommandError::StaleDelivery);
+        }
+        // Validate the lifecycle before changing the input stack, then make
+        // the original delimiter the first token beneath the v-template.
+        self.command
+            .alignment
+            .v_template(alignment)
+            .map_err(|_| CommandError::InputInvariant)?;
+        self.last_delivery = None;
+        self.command.push_token_level(
+            TokenPayload::Transient(SharedTokenBuffer::new(vec![delimiter.spelling()])),
+            TokenBehavior::BackedUp(BackupTreatment::Ordinary),
+            RetirementBehavior::Pop,
+            ReplayTrace::BackedUp,
+        );
+        self.command
+            .begin_alignment_v_template(alignment)
+            .map_err(|_| CommandError::InputInvariant)
+    }
+
     /// Delivers one unexpanded raw command through canonical `get_next`.
     pub fn get_next(&mut self) -> Result<Option<CurrentCommand>, CommandError> {
         self.last_delivery = None;
@@ -163,11 +199,11 @@ impl CommandProcessor<'_> {
                             }));
                         }
                         SourceTokenizationStep::InvalidCharacter(_) => continue,
-                        SourceTokenizationStep::End => {
-                            if self.retire_and_restart(identity)? {
-                                return Ok(None);
-                            }
-                        }
+                        SourceTokenizationStep::End => match self.retire_and_restart(identity)? {
+                            RetirementRestart::Stop => return Ok(None),
+                            RetirementRestart::Continue => {}
+                            RetirementRestart::EndV(_) => return Err(CommandError::InputInvariant),
+                        },
                     }
                 }
                 InputLevel::Tokens(cursor) => {
@@ -190,31 +226,50 @@ impl CommandProcessor<'_> {
                             behavior,
                         }));
                     }
-                    if self.retire_and_restart(identity)? {
-                        return Ok(None);
+                    match self.retire_and_restart(identity)? {
+                        RetirementRestart::Stop => return Ok(None),
+                        RetirementRestart::Continue => {}
+                        RetirementRestart::EndV(level) => {
+                            return Ok(Some(DeliveredToken {
+                                spelling: TracedTokenWord::pack(
+                                    self.state.frozen_endv_token(),
+                                    OriginId::UNKNOWN,
+                                ),
+                                level,
+                                position: u64::try_from(cursor.index)
+                                    .map_err(|_| CommandError::InputInvariant)?,
+                                behavior: TokenBehavior::VTemplate,
+                            }));
+                        }
                     }
                 }
             }
         }
     }
 
-    fn retire_and_restart(&mut self, identity: InputLevelId) -> Result<bool, CommandError> {
+    fn retire_and_restart(
+        &mut self,
+        identity: InputLevelId,
+    ) -> Result<RetirementRestart, CommandError> {
         match self
             .command
             .retire_exhausted_input(identity)
             .map_err(|_| CommandError::InputInvariant)?
             .action
         {
-            InputRetirementAction::TerminalStop => Ok(true),
+            InputRetirementAction::TerminalStop => Ok(RetirementRestart::Stop),
             InputRetirementAction::VTemplateRetained => {
-                // A retained v-template is intentionally left live for `do_endv`.
-                // No later level may be read past it.
-                Err(CommandError::InputInvariant)
+                // End-v is synthesized only after the exact v-template frame
+                // becomes retained. `do_endv` later pops that same frame.
+                Ok(RetirementRestart::EndV(identity))
             }
             InputRetirementAction::SourcePopped
             | InputRetirementAction::TokenListPopped
             | InputRetirementAction::ScantokensClosed
-            | InputRetirementAction::VTemplatePopped => Ok(false),
+            | InputRetirementAction::VTemplatePopped => {
+                self.command.alignment.finish_u_template(identity);
+                Ok(RetirementRestart::Continue)
+            }
         }
     }
 
@@ -377,6 +432,12 @@ struct DeliveredToken {
     behavior: TokenBehavior,
 }
 
+enum RetirementRestart {
+    Stop,
+    Continue,
+    EndV(InputLevelId),
+}
+
 fn character_from_code(code: CharacterCode) -> char {
     match code.to_byte() {
         Ok(byte) => char::from(byte),
@@ -428,6 +489,15 @@ mod tests {
             universe.command_context(),
             CommandHostContext::new(capabilities),
         )
+    }
+
+    fn templates() -> crate::AlignmentCellTemplates {
+        crate::AlignmentCellTemplates {
+            u_template: None,
+            v_template: tex_state::input::TracedTokenList::synthetic(
+                tex_state::ids::TokenListId::EMPTY,
+            ),
+        }
     }
 
     #[test]
@@ -650,13 +720,7 @@ mod tests {
         let alignment = crate::AlignmentIdentity::new(17);
         command.begin_alignment(alignment);
         command
-            .begin_alignment_cell(
-                alignment,
-                crate::AlignmentCellTemplates {
-                    u_template: 19,
-                    v_template: 23,
-                },
-            )
+            .begin_alignment_cell(alignment, templates())
             .expect("cell begins");
         command.push_token_level(
             TokenPayload::Transient(SharedTokenBuffer::new(vec![TracedTokenWord::pack(
@@ -704,13 +768,7 @@ mod tests {
         let alignment = crate::AlignmentIdentity::new(29);
         command.begin_alignment(alignment);
         command
-            .begin_alignment_cell(
-                alignment,
-                crate::AlignmentCellTemplates {
-                    u_template: 31,
-                    v_template: 37,
-                },
-            )
+            .begin_alignment_cell(alignment, templates())
             .expect("cell begins");
         command.push_token_level(
             TokenPayload::Transient(SharedTokenBuffer::new(vec![
@@ -773,6 +831,102 @@ mod tests {
                 .meaning(),
             Meaning::ExpandablePrimitive(ExpandablePrimitive::EndTemplate)
         ));
+    }
+
+    #[test]
+    fn alignment_templates_deliver_through_input_and_retire_before_delimiter_replay() {
+        let mut command = CommandState::default();
+        let alignment = crate::AlignmentIdentity::new(71);
+        command.push_token_level(
+            TokenPayload::Transient(SharedTokenBuffer::new(vec![TracedTokenWord::pack(
+                Token::Char {
+                    ch: '&',
+                    cat: Catcode::AlignmentTab,
+                },
+                OriginId::UNKNOWN,
+            )])),
+            TokenBehavior::Ordinary,
+            RetirementBehavior::Pop,
+            ReplayTrace::BackedUp,
+        );
+        let mut runtime = CommandRuntime::default();
+        let mut universe = Universe::new();
+        let u_template =
+            tex_state::input::TracedTokenList::synthetic(universe.intern_token_list(&[
+                Token::Char {
+                    ch: 'u',
+                    cat: Catcode::Letter,
+                },
+            ]));
+        let v_template =
+            tex_state::input::TracedTokenList::synthetic(universe.intern_token_list(&[
+                Token::Char {
+                    ch: 'v',
+                    cat: Catcode::Letter,
+                },
+            ]));
+        command.begin_alignment(alignment);
+        command
+            .begin_alignment_cell(
+                alignment,
+                crate::AlignmentCellTemplates {
+                    u_template: Some(u_template),
+                    v_template,
+                },
+            )
+            .expect("cell begins");
+        let snapshot = command.snapshot();
+        let mut capabilities = CommandHostCapabilities::default();
+        {
+            let mut processor =
+                processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+
+            let u = processor
+                .get_next()
+                .expect("u-template delivers")
+                .expect("u-template token");
+            assert!(matches!(u.meaning(), Meaning::CharToken { ch: 'u', .. }));
+            let end_template = processor
+                .get_next()
+                .expect("delimiter follows exhausted u-template")
+                .expect("intercepted delimiter");
+            assert!(matches!(
+                end_template.meaning(),
+                Meaning::ExpandablePrimitive(ExpandablePrimitive::EndTemplate)
+            ));
+            processor
+                .begin_alignment_v_template(alignment, end_template)
+                .expect("delimiter is backed up below v-template input");
+            let v = processor
+                .get_next()
+                .expect("v-template delivers")
+                .expect("v-template token");
+            assert!(matches!(v.meaning(), Meaning::CharToken { ch: 'v', .. }));
+            let endv = processor
+                .get_next()
+                .expect("retained v-template emits end-v")
+                .expect("frozen end-v");
+            assert!(endv.spelling().semantic_token().is_frozen_endv());
+            processor
+                .command
+                .finish_alignment_cell(alignment)
+                .expect("do_endv retires the exact retained frame once");
+            let delimiter = processor
+                .get_next()
+                .expect("backed-up delimiter replays")
+                .expect("delimiter is live");
+            assert!(matches!(
+                delimiter.meaning(),
+                Meaning::CharToken {
+                    cat: Catcode::AlignmentTab,
+                    ..
+                }
+            ));
+        }
+        command
+            .rollback(snapshot.clone())
+            .expect("template input rolls back exactly");
+        assert_eq!(command.snapshot(), snapshot);
     }
 
     #[test]

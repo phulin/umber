@@ -244,7 +244,7 @@ impl CommandState {
             return Err(InputRetirementError::VTemplateAlreadyRetained);
         }
         if cursor.retirement == RetirementBehavior::RetainExhaustedVTemplate {
-            if !matches!(cursor.behavior, TokenBehavior::VTemplate(_)) {
+            if !matches!(cursor.behavior, TokenBehavior::VTemplate) {
                 return Err(InputRetirementError::NotRetainedVTemplate);
             }
             let trace = cursor.trace.clone();
@@ -306,7 +306,7 @@ impl CommandState {
         }
         let InputLevel::Tokens(TokenCursor {
             retirement: RetirementBehavior::AwaitingVTemplateRetirement,
-            behavior: TokenBehavior::VTemplate(_),
+            behavior: TokenBehavior::VTemplate,
             ..
         }) = level
         else {

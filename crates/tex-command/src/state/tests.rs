@@ -10,6 +10,15 @@ use crate::macro_call::ParameterState;
 use crate::processor::{AlignmentDeliveryState, ExpansionState, ScannerState};
 use crate::{AlignmentCellTemplates, AlignmentIdentity, AlignmentLifecycleError};
 
+fn templates() -> AlignmentCellTemplates {
+    AlignmentCellTemplates {
+        u_template: None,
+        v_template: tex_state::input::TracedTokenList::synthetic(
+            tex_state::ids::TokenListId::EMPTY,
+        ),
+    }
+}
+
 fn semantic_hash(state: &CommandState) -> u64 {
     let mut hasher = DefaultHasher::new();
     state.hash(&mut hasher);
@@ -155,10 +164,7 @@ fn nested_alignment_suspension_restores_the_outer_cell_identity_and_templates() 
     let mut state = CommandState::default();
     let outer = AlignmentIdentity::new(41);
     let inner = AlignmentIdentity::new(43);
-    let outer_templates = AlignmentCellTemplates {
-        u_template: 47,
-        v_template: 53,
-    };
+    let outer_templates = templates();
 
     state.begin_alignment(outer);
     state
@@ -172,17 +178,8 @@ fn nested_alignment_suspension_restores_the_outer_cell_identity_and_templates() 
 
     state.begin_alignment(inner);
     state
-        .begin_alignment_cell(
-            inner,
-            AlignmentCellTemplates {
-                u_template: 59,
-                v_template: 61,
-            },
-        )
+        .begin_alignment_cell(inner, templates())
         .expect("inner cell begins");
-    state
-        .finish_alignment_cell(inner)
-        .expect("inner cell retires");
     state
         .finish_alignment(inner)
         .expect("inner alignment finishes");
@@ -191,8 +188,11 @@ fn nested_alignment_suspension_restores_the_outer_cell_identity_and_templates() 
         .expect("outer alignment resumes");
     assert_eq!(
         state
-            .finish_alignment_cell(outer)
-            .expect("outer cell identity restores"),
+            .alignment
+            .active_cell
+            .as_ref()
+            .expect("outer cell restores")
+            .templates,
         outer_templates
     );
 }

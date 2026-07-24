@@ -13,6 +13,8 @@ use crate::profile::{CommandProfile, CommandProfileBoundary, CommandProfileFinge
 use crate::state::LiveTokenBuilder;
 use crate::{CommandRuntime, CommandState};
 use crate::{RegisteredSourceKind, SourceRegistration};
+use tex_state::ids::TokenListId;
+use tex_state::input::TracedTokenList;
 
 use super::{CommandSummary, CommandSummaryError};
 
@@ -20,6 +22,13 @@ fn semantic_hash<T: Hash>(value: &T) -> u64 {
     let mut hasher = DefaultHasher::new();
     value.hash(&mut hasher);
     hasher.finish()
+}
+
+fn templates() -> AlignmentCellTemplates {
+    AlignmentCellTemplates {
+        u_template: Some(TracedTokenList::synthetic(TokenListId::EMPTY)),
+        v_template: TracedTokenList::synthetic(TokenListId::EMPTY),
+    }
 }
 
 fn populated_quiescent_state() -> CommandState {
@@ -94,10 +103,9 @@ fn snapshot_roundtrip_preserves_nonquiescent_semantic_state() {
         state.transient.active_expansion_depth = 2;
         state.alignment.active_cell = Some(ActiveCellDelivery {
             alignment: AlignmentIdentity::new(97),
-            templates: AlignmentCellTemplates {
-                u_template: 101,
-                v_template: 103,
-            },
+            templates: templates(),
+            u_level: None,
+            v_level: None,
         });
         (state.clone(), state.snapshot())
     });
@@ -198,10 +206,9 @@ fn summary_rejects_expansion_alignment_and_live_transients() {
         |state| {
             state.alignment.active_cell = Some(ActiveCellDelivery {
                 alignment: AlignmentIdentity::new(1),
-                templates: AlignmentCellTemplates {
-                    u_template: 2,
-                    v_template: 3,
-                },
+                templates: templates(),
+                u_level: None,
+                v_level: None,
             });
         },
         CommandSummaryError::AlignmentTemplateActive,

@@ -10,8 +10,8 @@ use super::{
     InputRetirementAction, InputRetirementError, OutParameterReplay, ParameterReplayError,
 };
 use crate::input::levels::{
-    ReplayTrace, RetirementBehavior, SharedTokenBuffer, StoredReplayReason, TemplateId,
-    TokenBehavior, TokenPayload, TransientReplayReason,
+    ReplayTrace, RetirementBehavior, SharedTokenBuffer, StoredReplayReason, TokenBehavior,
+    TokenPayload, TransientReplayReason,
 };
 
 fn traced(ch: char) -> TracedTokenWord {
@@ -115,7 +115,7 @@ fn exhausted_v_template_is_retained_once_until_explicit_do_endv_retirement() {
     let mut state = CommandState::default();
     let identity = state.push_token_level(
         transient_payload(&[]),
-        TokenBehavior::VTemplate(TemplateId(7)),
+        TokenBehavior::VTemplate,
         RetirementBehavior::RetainExhaustedVTemplate,
         ReplayTrace::VTemplate,
     );

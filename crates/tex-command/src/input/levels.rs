@@ -92,8 +92,8 @@ pub(crate) enum TokenBehavior {
     /// Literal replay of an already substituted macro argument.
     Parameter,
     BackedUp(BackupTreatment),
-    UTemplate(TemplateId),
-    VTemplate(TemplateId),
+    UTemplate,
+    VTemplate,
 }
 
 /// One-delivery handling attached to explicitly backed-up input.
@@ -102,10 +102,6 @@ pub(crate) enum BackupTreatment {
     Ordinary,
     SuppressExpandableControlSequence,
 }
-
-/// Typed identity of one alignment template.
-#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub(crate) struct TemplateId(pub(crate) u64);
 
 /// Action selected only when a token payload is exhausted.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]

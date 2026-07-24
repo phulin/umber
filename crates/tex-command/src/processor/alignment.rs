@@ -5,10 +5,12 @@
 //! lifecycle transitions here, but only `get_next` classifies a delivered tab,
 //! `\span`, or row terminator.
 
+use tex_state::input::TracedTokenList;
 use tex_state::meaning::{Meaning, UnexpandablePrimitive};
 use tex_state::token::{Catcode, Token};
 
 use crate::CurrentCommand;
+use crate::input::InputLevelId;
 
 pub(crate) const PREAMBLE_ALIGN_STATE: i32 = -1_000_000;
 pub(crate) const TEMPLATE_ALIGN_STATE: i32 = 1_000_000;
@@ -29,10 +31,10 @@ impl AlignmentIdentity {
 /// Exact identities of the templates selected for one cell.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct AlignmentCellTemplates {
-    /// Executor-owned u-template identity.
-    pub u_template: u64,
-    /// Executor-owned v-template identity.
-    pub v_template: u64,
+    /// Prefix replayed before the cell body. `None` is TeX's `\omit` path.
+    pub u_template: Option<TracedTokenList>,
+    /// Suffix replayed between the intercepted delimiter and its re-delivery.
+    pub v_template: TracedTokenList,
 }
 
 /// A lifecycle request did not match the currently active alignment.
@@ -48,6 +50,10 @@ pub enum AlignmentLifecycleError {
     NoActiveCell,
     /// Resume was requested without a suspended outer alignment.
     NoSuspendedAlignment,
+    /// The cell has not reached the point where its v-template may start.
+    UTemplateStillActive,
+    /// The cell has no retained, exhausted v-template to retire.
+    VTemplateNotExhausted,
 }
 
 impl std::fmt::Display for AlignmentLifecycleError {
@@ -58,6 +64,8 @@ impl std::fmt::Display for AlignmentLifecycleError {
             Self::CellAlreadyActive => "an alignment cell delivery is already active",
             Self::NoActiveCell => "no alignment cell delivery is active",
             Self::NoSuspendedAlignment => "no outer alignment delivery context is suspended",
+            Self::UTemplateStillActive => "the alignment u-template is still active",
+            Self::VTemplateNotExhausted => "the alignment v-template is not exhausted",
         })
     }
 }
@@ -84,6 +92,8 @@ pub(crate) struct SuspendedAlignment {
 pub(crate) struct ActiveCellDelivery {
     pub(crate) alignment: AlignmentIdentity,
     pub(crate) templates: AlignmentCellTemplates,
+    pub(crate) u_level: Option<InputLevelId>,
+    pub(crate) v_level: Option<InputLevelId>,
 }
 
 /// The one semantic alignment adjustment made by a raw delivery.
@@ -128,23 +138,87 @@ impl AlignmentDeliveryState {
         self.active_cell = Some(ActiveCellDelivery {
             alignment,
             templates,
+            u_level: None,
+            v_level: None,
         });
-        self.align_state = CELL_ALIGN_STATE;
+        self.align_state = if templates.u_template.is_some() {
+            TEMPLATE_ALIGN_STATE
+        } else {
+            CELL_ALIGN_STATE
+        };
         Ok(())
+    }
+
+    pub(crate) fn attach_u_template(
+        &mut self,
+        alignment: AlignmentIdentity,
+        level: InputLevelId,
+    ) -> Result<(), AlignmentLifecycleError> {
+        let cell = self.active_cell_mut(alignment)?;
+        cell.u_level = Some(level);
+        Ok(())
+    }
+
+    pub(crate) fn finish_u_template(&mut self, level: InputLevelId) -> bool {
+        let Some(cell) = self.active_cell.as_mut() else {
+            return false;
+        };
+        if cell.u_level != Some(level) {
+            return false;
+        }
+        cell.u_level = None;
+        self.align_state = CELL_ALIGN_STATE;
+        true
+    }
+
+    pub(crate) fn begin_v_template(
+        &mut self,
+        alignment: AlignmentIdentity,
+        level: InputLevelId,
+    ) -> Result<(), AlignmentLifecycleError> {
+        let cell = self.active_cell_mut(alignment)?;
+        if cell.u_level.is_some() {
+            return Err(AlignmentLifecycleError::UTemplateStillActive);
+        }
+        cell.v_level = Some(level);
+        self.align_state = TEMPLATE_ALIGN_STATE;
+        Ok(())
+    }
+
+    pub(crate) fn v_template(
+        &self,
+        alignment: AlignmentIdentity,
+    ) -> Result<TracedTokenList, AlignmentLifecycleError> {
+        let cell = self.active_cell_ref(alignment)?;
+        if cell.u_level.is_some() {
+            return Err(AlignmentLifecycleError::UTemplateStillActive);
+        }
+        Ok(cell.templates.v_template)
+    }
+
+    pub(crate) fn active_v_template_level(
+        &self,
+        alignment: AlignmentIdentity,
+    ) -> Result<InputLevelId, AlignmentLifecycleError> {
+        self.active_cell_ref(alignment)?
+            .v_level
+            .ok_or(AlignmentLifecycleError::VTemplateNotExhausted)
     }
 
     pub(crate) fn finish_cell(
         &mut self,
         alignment: AlignmentIdentity,
+        v_level: InputLevelId,
     ) -> Result<AlignmentCellTemplates, AlignmentLifecycleError> {
         self.require_alignment(alignment)?;
+        let cell = self.active_cell_ref(alignment)?;
+        if cell.v_level != Some(v_level) {
+            return Err(AlignmentLifecycleError::VTemplateNotExhausted);
+        }
         let cell = self
             .active_cell
             .take()
-            .ok_or(AlignmentLifecycleError::NoActiveCell)?;
-        if cell.alignment != alignment {
-            return Err(AlignmentLifecycleError::WrongAlignment);
-        }
+            .expect("active cell was just checked");
         self.align_state = TEMPLATE_ALIGN_STATE;
         Ok(cell.templates)
     }
@@ -263,5 +337,35 @@ impl AlignmentDeliveryState {
             Some(active) if active != alignment => Err(AlignmentLifecycleError::WrongAlignment),
             Some(_) => Ok(()),
         }
+    }
+
+    fn active_cell_ref(
+        &self,
+        alignment: AlignmentIdentity,
+    ) -> Result<&ActiveCellDelivery, AlignmentLifecycleError> {
+        self.require_alignment(alignment)?;
+        let cell = self
+            .active_cell
+            .as_ref()
+            .ok_or(AlignmentLifecycleError::NoActiveCell)?;
+        if cell.alignment != alignment {
+            return Err(AlignmentLifecycleError::WrongAlignment);
+        }
+        Ok(cell)
+    }
+
+    fn active_cell_mut(
+        &mut self,
+        alignment: AlignmentIdentity,
+    ) -> Result<&mut ActiveCellDelivery, AlignmentLifecycleError> {
+        self.require_alignment(alignment)?;
+        let cell = self
+            .active_cell
+            .as_mut()
+            .ok_or(AlignmentLifecycleError::NoActiveCell)?;
+        if cell.alignment != alignment {
+            return Err(AlignmentLifecycleError::WrongAlignment);
+        }
+        Ok(cell)
     }
 }

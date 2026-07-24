@@ -1,5 +1,6 @@
 //! Future-relevant state and discardable runtime ownership.
 
+use tex_state::input::TracedTokenList;
 use tex_state::token::TracedTokenWord;
 
 use crate::conditionals::ConditionStack;
@@ -8,6 +9,7 @@ use crate::input::{
     InputLevel, InputLevelId, PhysicalLine, RegisteredSource, SourceCharacter, SourceCursor,
     SourceLevel, SourceRegistration, SourceRegistrationError, SourceTokenizationStep,
 };
+use crate::input::{ReplayTrace, RetirementBehavior, TokenBehavior, TokenPayload};
 use crate::macro_call::ParameterState;
 use crate::processor::{
     AlignmentCellTemplates, AlignmentDeliveryState, AlignmentIdentity, AlignmentLifecycleError,
@@ -56,15 +58,48 @@ impl CommandState {
         alignment: AlignmentIdentity,
         templates: AlignmentCellTemplates,
     ) -> Result<(), AlignmentLifecycleError> {
-        self.alignment.begin_cell(alignment, templates)
+        self.alignment.begin_cell(alignment, templates)?;
+        if let Some(template) = templates.u_template {
+            let level = self.push_alignment_template(
+                template,
+                TokenBehavior::UTemplate,
+                RetirementBehavior::Pop,
+                ReplayTrace::UTemplate,
+            );
+            self.alignment.attach_u_template(alignment, level)?;
+        }
+        Ok(())
     }
 
-    /// Retires the active cell after successful end-template handling.
+    /// Starts the selected cell's v-template after `end_template` main control
+    /// has backed up the intercepted delimiter. The suffix is an ordinary
+    /// input level, so definitions and macro expansion inside it restart via
+    /// the canonical raw-delivery loop.
+    pub fn begin_alignment_v_template(
+        &mut self,
+        alignment: AlignmentIdentity,
+    ) -> Result<(), AlignmentLifecycleError> {
+        let template = self.alignment.v_template(alignment)?;
+        let level = self.push_alignment_template(
+            template,
+            TokenBehavior::VTemplate,
+            RetirementBehavior::RetainExhaustedVTemplate,
+            ReplayTrace::VTemplate,
+        );
+        self.alignment.begin_v_template(alignment, level)
+    }
+
+    /// Retires the exact exhausted v-template after a delivered frozen end-v.
+    /// The caller is the executor's `do_endv` boundary; no token classifier or
+    /// template loop exists outside the command input stack.
     pub fn finish_alignment_cell(
         &mut self,
         alignment: AlignmentIdentity,
     ) -> Result<AlignmentCellTemplates, AlignmentLifecycleError> {
-        self.alignment.finish_cell(alignment)
+        let level = self.alignment.active_v_template_level(alignment)?;
+        self.retire_retained_v_template(level)
+            .map_err(|_| AlignmentLifecycleError::VTemplateNotExhausted)?;
+        self.alignment.finish_cell(alignment, level)
     }
 
     /// Suspends the complete outer raw-delivery context for a nested alignment.
@@ -162,6 +197,24 @@ impl CommandState {
             })
             .map(|level| level.cursor.end_after_line = true)
             .is_some()
+    }
+
+    fn push_alignment_template(
+        &mut self,
+        template: TracedTokenList,
+        behavior: TokenBehavior,
+        retirement: RetirementBehavior,
+        trace: ReplayTrace,
+    ) -> InputLevelId {
+        self.push_token_level(
+            TokenPayload::Stored {
+                tokens: template.token_list(),
+                origins: template.origin_list(),
+            },
+            behavior,
+            retirement,
+            trace,
+        )
     }
 
     /// Splits and normalizes the next physical line on the active source.
