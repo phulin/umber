@@ -49,6 +49,33 @@ pub(crate) enum ConditionalKind {
 
 #[allow(dead_code)] // used by pass_text now; evaluation uses the same classifier next
 impl ConditionalKind {
+    #[cfg(any(test, feature = "instrumentation"))]
+    const fn canonical_name(self) -> &'static str {
+        match self {
+            Self::IfTrue => "iftrue",
+            Self::IfFalse => "iffalse",
+            Self::If => "if",
+            Self::IfCat => "ifcat",
+            Self::IfX => "ifx",
+            Self::IfNum => "ifnum",
+            Self::IfDim => "ifdim",
+            Self::IfOdd => "ifodd",
+            Self::IfCase => "ifcase",
+            Self::IfVMode => "ifvmode",
+            Self::IfHMode => "ifhmode",
+            Self::IfMMode => "ifmmode",
+            Self::IfInner => "ifinner",
+            Self::IfVoid => "ifvoid",
+            Self::IfHBox => "ifhbox",
+            Self::IfVBox => "ifvbox",
+            Self::IfEof => "ifeof",
+            Self::IfDefined => "ifdefined",
+            Self::IfCsName => "ifcsname",
+            Self::IfFontChar => "iffontchar",
+            Self::IfInCsName => "ifincsname",
+        }
+    }
+
     pub(crate) const fn from_primitive(primitive: ExpandablePrimitive) -> Option<Self> {
         Some(match primitive {
             ExpandablePrimitive::IfTrue => Self::IfTrue,
@@ -108,6 +135,16 @@ pub(crate) enum IfLimit {
 }
 
 impl IfLimit {
+    #[cfg(any(test, feature = "instrumentation"))]
+    const fn canonical_name(self) -> &'static str {
+        match self {
+            Self::Evaluating => "evaluating",
+            Self::Or => "or",
+            Self::Else => "else",
+            Self::Fi => "fi",
+        }
+    }
+
     /// Whether TeX's `fi_or_else` dispatcher accepts this delimiter for the
     /// live frame.  The ordering mirrors `fi_code`, `else_code`, and
     /// `or_code` without sharing their integer command-code representation.
@@ -180,6 +217,13 @@ impl ConditionStack {
             .map(|frame| frame.limit)
     }
 
+    pub(crate) fn frame(&self, identity: ConditionId) -> Option<&ConditionFrame> {
+        self.frames
+            .iter()
+            .rev()
+            .find(|frame| frame.identity == identity)
+    }
+
     /// Detects the TeX `Incomplete \if` recovery case without popping an
     /// arbitrary frame. The evaluator owns the actual diagnostic/insertion.
     pub(crate) fn evaluating_delimiter_recovery(
@@ -223,7 +267,13 @@ impl CommandProcessor<'_> {
         let kind =
             ConditionalKind::from_primitive(primitive).ok_or(CommandError::InputInvariant)?;
         let condition = self.command.conditions.push(kind, 0);
-        self.observe_condition("push", condition, format!("{:?}", kind));
+        let frame = self
+            .command
+            .conditions
+            .frame(condition)
+            .cloned()
+            .ok_or(CommandError::InputInvariant)?;
+        self.observe_condition("push", &frame, None);
         match kind {
             ConditionalKind::IfCase => {
                 let selected = self.scan_integer()?.value;
@@ -265,22 +315,39 @@ impl CommandProcessor<'_> {
         result: bool,
     ) -> Result<(), CommandError> {
         if result {
+            let evaluating = self
+                .command
+                .conditions
+                .frame(condition)
+                .cloned()
+                .ok_or(CommandError::InputInvariant)?;
             self.command
                 .conditions
                 .change_if_limit(condition, IfLimit::Else)
                 .then_some(())
                 .ok_or(CommandError::InputInvariant)?;
-            self.observe_condition("limit", condition, "else".to_owned());
-            self.observe_condition("branch", condition, "true".to_owned());
+            self.observe_condition("branch", &evaluating, Some("true".into()));
+            let frame = self
+                .command
+                .conditions
+                .frame(condition)
+                .cloned()
+                .ok_or(CommandError::InputInvariant)?;
+            self.observe_condition("limit", &frame, None);
             Ok(())
         } else {
+            let evaluating = self
+                .command
+                .conditions
+                .frame(condition)
+                .cloned()
+                .ok_or(CommandError::InputInvariant)?;
             self.command
                 .conditions
                 .change_if_limit(condition, IfLimit::Fi)
                 .then_some(())
                 .ok_or(CommandError::InputInvariant)?;
-            self.observe_condition("limit", condition, "fi".to_owned());
-            self.observe_condition("branch", condition, "false".to_owned());
+            self.observe_condition("branch", &evaluating, Some("false".into()));
             self.resume_after_skip(condition)
         }
     }
@@ -295,8 +362,14 @@ impl CommandProcessor<'_> {
             .change_if_limit(condition, IfLimit::Or)
             .then_some(())
             .ok_or(CommandError::InputInvariant)?;
-        self.observe_condition("limit", condition, "or".to_owned());
-        self.observe_condition("branch", condition, selected.to_string());
+        let frame = self
+            .command
+            .conditions
+            .frame(condition)
+            .cloned()
+            .ok_or(CommandError::InputInvariant)?;
+        self.observe_condition("limit", &frame, None);
+        self.observe_condition("branch", &frame, Some(selected.to_string()));
         if selected < 0 {
             self.skip_to_else_or_fi(condition)
         } else {
@@ -445,8 +518,12 @@ impl CommandProcessor<'_> {
                     return Ok(());
                 }
                 ConditionalDelimiter::Fi => {
-                    self.command.conditions.pop();
-                    self.observe_condition("pop", condition, "fi".to_owned());
+                    let frame = self
+                        .command
+                        .conditions
+                        .pop()
+                        .ok_or(CommandError::InputInvariant)?;
+                    self.observe_condition("pop", &frame, None);
                     return Ok(());
                 }
             }
@@ -464,8 +541,12 @@ impl CommandProcessor<'_> {
                     return Ok(());
                 }
                 ConditionalDelimiter::Fi => {
-                    self.command.conditions.pop();
-                    self.observe_condition("pop", condition, "fi".to_owned());
+                    let frame = self
+                        .command
+                        .conditions
+                        .pop()
+                        .ok_or(CommandError::InputInvariant)?;
+                    self.observe_condition("pop", &frame, None);
                     return Ok(());
                 }
             }
@@ -482,8 +563,12 @@ impl CommandProcessor<'_> {
                     return Ok(());
                 }
                 ConditionalDelimiter::Fi => {
-                    self.command.conditions.pop();
-                    self.observe_condition("pop", condition, "fi".to_owned());
+                    let frame = self
+                        .command
+                        .conditions
+                        .pop()
+                        .ok_or(CommandError::InputInvariant)?;
+                    self.observe_condition("pop", &frame, None);
                     return Ok(());
                 }
                 ConditionalDelimiter::Or => self.record_extra_delimiter(),
@@ -521,8 +606,12 @@ impl CommandProcessor<'_> {
         }
         match delimiter {
             ConditionalDelimiter::Fi => {
-                self.command.conditions.pop();
-                self.observe_condition("pop", frame.identity, "fi".to_owned());
+                let frame = self
+                    .command
+                    .conditions
+                    .pop()
+                    .ok_or(CommandError::InputInvariant)?;
+                self.observe_condition("pop", &frame, None);
                 Ok(())
             }
             ConditionalDelimiter::Else if frame.limit == IfLimit::Else => {
@@ -555,8 +644,12 @@ impl CommandProcessor<'_> {
         loop {
             match self.pass_text(condition, ScannerWarning(0))?.delimiter {
                 ConditionalDelimiter::Fi => {
-                    self.command.conditions.pop();
-                    self.observe_condition("pop", condition, "fi".to_owned());
+                    let frame = self
+                        .command
+                        .conditions
+                        .pop()
+                        .ok_or(CommandError::InputInvariant)?;
+                    self.observe_condition("pop", &frame, None);
                     return Ok(());
                 }
                 ConditionalDelimiter::Else | ConditionalDelimiter::Or => {
@@ -619,14 +712,16 @@ impl CommandProcessor<'_> {
     fn observe_condition(
         &mut self,
         transition: &'static str,
-        condition: ConditionId,
-        detail: String,
+        frame: &ConditionFrame,
+        branch: Option<String>,
     ) {
         #[cfg(any(test, feature = "instrumentation"))]
         self.observe(CommandObservation::Condition(ConditionRecord {
             transition,
-            condition: condition.0,
-            detail,
+            identity: frame.identity.0,
+            condition: frame.kind.canonical_name(),
+            limit: frame.limit.canonical_name(),
+            branch,
         }));
     }
 

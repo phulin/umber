@@ -626,7 +626,7 @@ fn translate_observation(
             ObservedEvent::new(translate_macro(record), context)
         }
         CommandObservation::Condition(record) => {
-            let context = format!("source={source}; condition={}", record.condition);
+            let context = format!("source={source}; condition={}", record.identity);
             ObservedEvent::new(translate_condition(record), context)
         }
         CommandObservation::Scanner(record) => {
@@ -906,9 +906,9 @@ fn translate_condition(record: ConditionRecord) -> Event {
     };
     Event::Condition(ConditionEvent {
         transition,
-        condition: record.condition.to_string(),
-        limit: record.detail.clone(),
-        branch: (record.transition == "branch").then_some(record.detail),
+        condition: record.condition.into(),
+        limit: record.limit.into(),
+        branch: record.branch,
     })
 }
 fn translate_token_list(record: TokenListRecord) -> Event {
@@ -1129,6 +1129,40 @@ mod tests {
         assert_eq!(catcode_name(Catcode::AlignmentTab), "tab_mark");
         assert_eq!(catcode_name(Catcode::Space), "spacer");
         assert_eq!(catcode_name(Catcode::Other), "other_char");
+    }
+
+    #[test]
+    fn condition_transitions_project_canonical_names_and_limits() {
+        assert_eq!(
+            translate_condition(ConditionRecord {
+                transition: "push",
+                identity: 17,
+                condition: "iftrue",
+                limit: "evaluating",
+                branch: None,
+            }),
+            Event::Condition(ConditionEvent {
+                transition: ConditionTransition::Push,
+                condition: "iftrue".into(),
+                limit: "evaluating".into(),
+                branch: None,
+            })
+        );
+        assert_eq!(
+            translate_condition(ConditionRecord {
+                transition: "branch",
+                identity: 17,
+                condition: "iftrue",
+                limit: "evaluating",
+                branch: Some("true".into()),
+            }),
+            Event::Condition(ConditionEvent {
+                transition: ConditionTransition::Branch,
+                condition: "iftrue".into(),
+                limit: "evaluating".into(),
+                branch: Some("true".into()),
+            })
+        );
     }
 
     #[test]

@@ -688,6 +688,14 @@ and `origin` is exposed directly from that spelling; provenance never affects
 the meaning lookup. Engine-owned frozen tokens resolve through their immutable
 frozen meaning rather than a mutable control-sequence cell.
 
+Condition-stack observations are likewise a projection, not condition state:
+each push, limit change, branch, and pop carries the canonical TeX condition
+name and `if_limit` name at that seam (and a branch name where applicable).
+The observer keeps a private frame identity only for host diagnostic context;
+it never enters the portable oracle event. Branch observations retain the
+pre-change limit, so their ordering matches the TeX82 trace even when Rust
+updates the independent frame before emitting the observation.
+
 No `CurrentCommand` is live at a durable named checkpoint.
 
 ## 12. Input levels

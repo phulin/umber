@@ -254,8 +254,15 @@ pub struct MacroRecord {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ConditionRecord {
     pub transition: &'static str,
-    pub condition: u64,
-    pub detail: String,
+    /// Stable stack identity for diagnostic context only; it is not part of
+    /// the portable oracle event.
+    pub identity: u64,
+    /// Canonical TeX conditional name, e.g. `iftrue` or `ifcase`.
+    pub condition: &'static str,
+    /// Canonical TeX `if_limit` name at the transition seam.
+    pub limit: &'static str,
+    /// A branch selected at this seam, when applicable.
+    pub branch: Option<String>,
 }
 
 /// A completed typed scanner result. Values are rendered only from the
