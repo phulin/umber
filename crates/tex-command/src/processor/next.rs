@@ -24,8 +24,8 @@ use super::status::{EofLegality, RecoveryContext, ScannerStatus};
 
 #[cfg(any(test, feature = "instrumentation"))]
 use crate::observation::{
-    CommandDeliveryBoundary, CommandDeliveryRecord, CommandObservation, CommandProvenance,
-    InputRecord, InputTransition, RecoveryRecord, observed_token,
+    AlignmentRecord, CommandDeliveryBoundary, CommandDeliveryRecord, CommandObservation,
+    CommandProvenance, InputRecord, InputTransition, RecoveryRecord, observed_token,
 };
 
 const DEFAULT_END_LINE_CHAR: i32 = 13;
@@ -94,7 +94,14 @@ impl CommandProcessor<'_> {
         );
         self.command
             .begin_alignment_v_template(alignment)
-            .map_err(|_| CommandError::InputInvariant)
+            .map_err(|_| CommandError::InputInvariant)?;
+        #[cfg(any(test, feature = "instrumentation"))]
+        self.observe(CommandObservation::Alignment(AlignmentRecord {
+            transition: "begin_v_template",
+            alignment: Some(alignment.raw()),
+            align_state: self.command.alignment.align_state,
+        }));
+        Ok(())
     }
 
     /// Delivers one unexpanded raw command through canonical `get_next`.
@@ -226,6 +233,26 @@ impl CommandProcessor<'_> {
             self.check_outer_validity_entry(&mut command)?;
             let adjustment = self.command.alignment.classify_delivery(&mut command);
             command.set_alignment_adjustment(adjustment);
+            #[cfg(any(test, feature = "instrumentation"))]
+            if !matches!(
+                adjustment,
+                crate::processor::AlignmentDeliveryAdjustment::None
+            ) {
+                self.observe(CommandObservation::Alignment(AlignmentRecord {
+                    transition: match adjustment {
+                        crate::processor::AlignmentDeliveryAdjustment::BeginGroup => "begin_group",
+                        crate::processor::AlignmentDeliveryAdjustment::EndGroup => "end_group",
+                        crate::processor::AlignmentDeliveryAdjustment::Delimiter => "delimiter",
+                        crate::processor::AlignmentDeliveryAdjustment::None => unreachable!(),
+                    },
+                    alignment: self
+                        .command
+                        .alignment
+                        .active_alignment
+                        .map(|identity| identity.raw()),
+                    align_state: self.command.alignment.align_state,
+                }));
+            }
             #[cfg(any(test, feature = "instrumentation"))]
             self.observe_raw_delivery(&command);
             return Ok(Some(command));

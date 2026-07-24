@@ -14,6 +14,9 @@ use crate::input::{
 use crate::processor::CommandProcessor;
 use crate::processor::status::{ConditionId, ScannerStatus, ScannerWarning, SkippingContext};
 
+#[cfg(any(test, feature = "instrumentation"))]
+use crate::observation::{CommandObservation, ConditionRecord};
+
 /// Stable pending-diagnostic identities for TeX.web part 28 recovery.
 const INCOMPLETE_IF_DIAGNOSTIC: u64 = 0x636f_6e64_0000_0001;
 const EXTRA_DELIMITER_DIAGNOSTIC: u64 = 0x636f_6e64_0000_0002;
@@ -220,6 +223,7 @@ impl CommandProcessor<'_> {
         let kind =
             ConditionalKind::from_primitive(primitive).ok_or(CommandError::InputInvariant)?;
         let condition = self.command.conditions.push(kind, 0);
+        self.observe_condition("push", condition, format!("{:?}", kind));
         match kind {
             ConditionalKind::IfCase => {
                 let selected = self.scan_decimal_integer()?;
@@ -265,13 +269,18 @@ impl CommandProcessor<'_> {
                 .conditions
                 .change_if_limit(condition, IfLimit::Else)
                 .then_some(())
-                .ok_or(CommandError::InputInvariant)
+                .ok_or(CommandError::InputInvariant)?;
+            self.observe_condition("limit", condition, "else".to_owned());
+            self.observe_condition("branch", condition, "true".to_owned());
+            Ok(())
         } else {
             self.command
                 .conditions
                 .change_if_limit(condition, IfLimit::Fi)
                 .then_some(())
                 .ok_or(CommandError::InputInvariant)?;
+            self.observe_condition("limit", condition, "fi".to_owned());
+            self.observe_condition("branch", condition, "false".to_owned());
             self.resume_after_skip(condition)
         }
     }
@@ -286,6 +295,8 @@ impl CommandProcessor<'_> {
             .change_if_limit(condition, IfLimit::Or)
             .then_some(())
             .ok_or(CommandError::InputInvariant)?;
+        self.observe_condition("limit", condition, "or".to_owned());
+        self.observe_condition("branch", condition, selected.to_string());
         if selected < 0 {
             self.skip_to_else_or_fi(condition)
         } else {
@@ -435,6 +446,7 @@ impl CommandProcessor<'_> {
                 }
                 ConditionalDelimiter::Fi => {
                     self.command.conditions.pop();
+                    self.observe_condition("pop", condition, "fi".to_owned());
                     return Ok(());
                 }
             }
@@ -453,6 +465,7 @@ impl CommandProcessor<'_> {
                 }
                 ConditionalDelimiter::Fi => {
                     self.command.conditions.pop();
+                    self.observe_condition("pop", condition, "fi".to_owned());
                     return Ok(());
                 }
             }
@@ -470,6 +483,7 @@ impl CommandProcessor<'_> {
                 }
                 ConditionalDelimiter::Fi => {
                     self.command.conditions.pop();
+                    self.observe_condition("pop", condition, "fi".to_owned());
                     return Ok(());
                 }
                 ConditionalDelimiter::Or => self.record_extra_delimiter(),
@@ -508,6 +522,7 @@ impl CommandProcessor<'_> {
         match delimiter {
             ConditionalDelimiter::Fi => {
                 self.command.conditions.pop();
+                self.observe_condition("pop", frame.identity, "fi".to_owned());
                 Ok(())
             }
             ConditionalDelimiter::Else if frame.limit == IfLimit::Else => {
@@ -541,6 +556,7 @@ impl CommandProcessor<'_> {
             match self.pass_text(condition, ScannerWarning(0))?.delimiter {
                 ConditionalDelimiter::Fi => {
                     self.command.conditions.pop();
+                    self.observe_condition("pop", condition, "fi".to_owned());
                     return Ok(());
                 }
                 ConditionalDelimiter::Else | ConditionalDelimiter::Or => {
@@ -592,9 +608,26 @@ impl CommandProcessor<'_> {
                 condition,
                 warning,
             }));
+        self.observe_scanner_status(true);
         let result = self.pass_text_scalar(condition);
         self.command.restore_scanner_status(prior);
+        self.observe_scanner_status(false);
         result
+    }
+
+    #[allow(unused_variables)]
+    fn observe_condition(
+        &mut self,
+        transition: &'static str,
+        condition: ConditionId,
+        detail: String,
+    ) {
+        #[cfg(any(test, feature = "instrumentation"))]
+        self.observe(CommandObservation::Condition(ConditionRecord {
+            transition,
+            condition: condition.0,
+            detail,
+        }));
     }
 
     fn pass_text_scalar(&mut self, condition: ConditionId) -> Result<PassTextStop, CommandError> {

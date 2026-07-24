@@ -10,6 +10,9 @@ use crate::input::SharedTokenBuffer;
 use crate::processor::status::{ArgumentBuilderId, MatchingContext, ScannerStatus, ScannerWarning};
 use crate::{CommandError, CommandProcessor};
 
+#[cfg(any(test, feature = "instrumentation"))]
+use crate::observation::{CommandObservation, MacroRecord};
+
 /// Persistent ownership of live macro-argument activations.
 ///
 /// This is the sole owner of the activation chain. Macro-body input behavior
@@ -200,10 +203,24 @@ impl CommandProcessor<'_> {
             warning: ScannerWarning(0),
         });
         let prior = self.command.begin_scanner_status(status);
+        self.observe_scanner_status(true);
         self.outer_recovered_while_matching = false;
         let result = self.macro_call_scalar(meaning.flags(), &pattern);
         self.command.restore_scanner_status(prior);
+        self.observe_scanner_status(false);
         let arguments = result?;
+
+        #[cfg(any(test, feature = "instrumentation"))]
+        for (index, range) in arguments.ranges.iter().enumerate() {
+            if let Some(range) = range {
+                self.observe(CommandObservation::Macro(MacroRecord {
+                    activation: false,
+                    definition: u64::from(definition.raw()),
+                    argument: Some((index + 1) as u8),
+                    token_count: (range.end() - range.start()) as u64,
+                }));
+            }
+        }
 
         // TeX.web §§391--400 freezes the completed ranges before replacing
         // the input. The activation owns that one shared buffer; its body
@@ -217,6 +234,13 @@ impl CommandProcessor<'_> {
             meaning.replacement_text(),
             provenance.replacement_origins(),
         );
+        #[cfg(any(test, feature = "instrumentation"))]
+        self.observe(CommandObservation::Macro(MacroRecord {
+            activation: true,
+            definition: u64::from(definition.raw()),
+            argument: None,
+            token_count: arguments.buffer.len() as u64,
+        }));
         Ok(arguments)
     }
 

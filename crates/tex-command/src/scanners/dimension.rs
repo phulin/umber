@@ -5,6 +5,9 @@ use tex_state::scaled::{PhysicalUnit, Scaled, round_decimal_fraction, scaled_fro
 
 use crate::{CommandError, processor::CommandProcessor};
 
+#[cfg(any(test, feature = "instrumentation"))]
+use crate::observation::{CommandObservation, ScannerRecord};
+
 impl CommandProcessor<'_> {
     pub(crate) fn scan_dimension(&mut self) -> Result<Scaled, CommandError> {
         let mut negative = false;
@@ -54,11 +57,17 @@ impl CommandProcessor<'_> {
             }
             _ => return Err(CommandError::InputInvariant),
         };
-        Ok(if negative {
+        let result = if negative {
             Scaled::from_raw(-value.raw())
         } else {
             value
-        })
+        };
+        #[cfg(any(test, feature = "instrumentation"))]
+        self.observe(CommandObservation::Scanner(ScannerRecord {
+            kind: "dimension",
+            value: result.raw().to_string(),
+        }));
+        Ok(result)
     }
 
     fn scan_dimension_unit(&mut self) -> Result<PhysicalUnit, CommandError> {

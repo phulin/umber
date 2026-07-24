@@ -20,6 +20,7 @@ use super::CommandProcessor;
 #[cfg(any(test, feature = "instrumentation"))]
 use crate::observation::{
     CommandDeliveryBoundary, CommandDeliveryRecord, CommandObservation, CommandProvenance,
+    EffectRecord, MutationRecord, ScannerRecord,
 };
 
 /// Stable pending-diagnostic identity for TeX.web's `Missing \\endcsname
@@ -188,6 +189,11 @@ impl CommandProcessor<'_> {
         }
 
         let symbol = self.state.intern_relaxed_control_sequence(&name);
+        #[cfg(any(test, feature = "instrumentation"))]
+        self.observe(CommandObservation::Mutation(MutationRecord {
+            target: "control_sequence",
+            value: name.clone(),
+        }));
         let origin = self
             .state
             .synthesized_origin(SynthesizedOriginKind::Expansion, opener.origin());
@@ -278,6 +284,11 @@ impl CommandProcessor<'_> {
         self.command
             .open_registered_source(id)
             .map_err(|_| CommandError::InputInvariant)?;
+        #[cfg(any(test, feature = "instrumentation"))]
+        self.observe(CommandObservation::Effect(EffectRecord {
+            kind: "input",
+            detail: name,
+        }));
         let _ = opener;
         Ok(())
     }
@@ -405,7 +416,13 @@ impl CommandProcessor<'_> {
                 }
             }
         }
-        Ok(sign.saturating_mul(value))
+        let result = sign.saturating_mul(value);
+        #[cfg(any(test, feature = "instrumentation"))]
+        self.observe(CommandObservation::Scanner(ScannerRecord {
+            kind: "integer",
+            value: result.to_string(),
+        }));
+        Ok(result)
     }
 
     fn push_rendered_text(&mut self, text: &str, parent: OriginId) {

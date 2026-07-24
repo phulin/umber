@@ -17,6 +17,9 @@ use crate::processor::status::{
 };
 use crate::{CommandError, CommandProcessor};
 
+#[cfg(any(test, feature = "instrumentation"))]
+use crate::observation::{CommandObservation, TokenListRecord};
+
 /// The two canonical `scan_toks` collection forms.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum ScanToksMode {
@@ -58,9 +61,21 @@ impl CommandProcessor<'_> {
             }),
         };
         let prior = self.command.begin_scanner_status(status);
+        self.observe_scanner_status(true);
         let result = self.scan_toks_inner(mode);
         self.command.restore_scanner_status(prior);
-        result
+        self.observe_scanner_status(false);
+        let result = result?;
+        #[cfg(any(test, feature = "instrumentation"))]
+        self.observe(CommandObservation::TokenList(TokenListRecord {
+            transition: "complete",
+            token_count: (self.state.tokens(result.parameter_text.token_list()).len()
+                + self
+                    .state
+                    .tokens(result.replacement_text.token_list())
+                    .len()) as u64,
+        }));
+        Ok(result)
     }
 
     fn scan_toks_inner(&mut self, mode: ScanToksMode) -> Result<ScannedToks, CommandError> {
@@ -262,6 +277,9 @@ impl CommandProcessor<'_> {
             self.back_input(target)?;
             return Ok(false);
         };
+        let count = self.state.tokens(tokens).len();
+        #[cfg(not(any(test, feature = "instrumentation")))]
+        let _ = count;
         output.extend(
             self.state
                 .tokens(tokens)
@@ -271,6 +289,11 @@ impl CommandProcessor<'_> {
         );
         self.command.expansion.cumulative_expansions =
             self.command.expansion.cumulative_expansions.wrapping_add(1);
+        #[cfg(any(test, feature = "instrumentation"))]
+        self.observe(CommandObservation::TokenList(TokenListRecord {
+            transition: "splice",
+            token_count: count as u64,
+        }));
         Ok(true)
     }
 

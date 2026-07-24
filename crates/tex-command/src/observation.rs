@@ -97,12 +97,83 @@ pub struct RecoveryRecord {
     pub tokens: Vec<ObservedToken>,
 }
 
+/// A committed entry to or restoration from a live scanner episode.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ScannerStatusRecord {
+    pub entering: bool,
+    pub status: String,
+}
+
+/// A completed scalar macro-match milestone.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MacroRecord {
+    pub activation: bool,
+    pub definition: u64,
+    pub argument: Option<u8>,
+    pub token_count: u64,
+}
+
+/// A committed condition-stack transition.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ConditionRecord {
+    pub transition: &'static str,
+    pub condition: u64,
+    pub detail: String,
+}
+
+/// A completed typed scanner result. Values are rendered only from the
+/// scanner's owned semantic result, never from aggregate allocation state.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ScannerRecord {
+    pub kind: &'static str,
+    pub value: String,
+}
+
+/// One `scan_toks` direct splice or completed immutable collection.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TokenListRecord {
+    pub transition: &'static str,
+    pub token_count: u64,
+}
+
+/// A raw-delivery alignment adjustment or template lifecycle transition.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AlignmentRecord {
+    pub transition: &'static str,
+    pub alignment: Option<u64>,
+    pub align_state: i32,
+}
+
+/// A typed command-relevant assignment seam. Assignment dispatch owns the
+/// payload in later slices; retaining this record here keeps the observer
+/// union complete without depending on an oracle transport.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MutationRecord {
+    pub target: &'static str,
+    pub value: String,
+}
+
+/// A committed externally-visible command effect or final ordering marker.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct EffectRecord {
+    pub kind: &'static str,
+    pub detail: String,
+}
+
 /// One committed command-core observation.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum CommandObservation {
     Command(CommandDeliveryRecord),
     Input(InputRecord),
     Recovery(RecoveryRecord),
+    ScannerStatus(ScannerStatusRecord),
+    Macro(MacroRecord),
+    Condition(ConditionRecord),
+    Scanner(ScannerRecord),
+    TokenList(TokenListRecord),
+    Alignment(AlignmentRecord),
+    Mutation(MutationRecord),
+    Effect(EffectRecord),
 }
 
 /// Test/instrumentation sink for committed command-owned semantic records.

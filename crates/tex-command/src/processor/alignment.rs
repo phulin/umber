@@ -26,6 +26,11 @@ impl AlignmentIdentity {
     pub const fn new(raw: u64) -> Self {
         Self(raw)
     }
+
+    #[allow(dead_code)]
+    pub(crate) const fn raw(self) -> u64 {
+        self.0
+    }
 }
 
 /// Exact identities of the templates selected for one cell.

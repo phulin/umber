@@ -1732,15 +1732,17 @@ transport is allowed to query engine storage.
 
 The new command core owns a test-only observer record surface rather than
 depending on `tex-oracle`. `CommandObservation` carries command delivery,
-logical input, and recovery records with an opaque-origin flag plus exact
-input-level, cursor-slot, and processor-delivery provenance. The future trace
-adapter maps those owned records to schema values outside the production
-command dependency graph. Observers are non-fallible, receive records only
-after the transition commits, and are neither retained in `CommandState` nor
-captured by snapshots. Production builds compile this seam out; explicit
-instrumentation builds enable it with the `tex-command/instrumentation`
-feature. Optimized span paths decompose into the same scalar events when
-observation is enabled.
+logical input, recovery, scanner-status, macro, condition, typed scanner,
+token-list, alignment, mutation, and effect records. Command deliveries carry
+an opaque-origin flag plus exact input-level, cursor-slot, and
+processor-delivery provenance; all other records retain only command-owned
+typed values and stable identities. The future trace adapter maps those owned
+records to schema values outside the production command dependency graph.
+Observers are non-fallible, receive records only after the transition commits,
+and are neither retained in `CommandState` nor captured by snapshots.
+Production builds compile this seam out; explicit instrumentation builds enable
+it with the `tex-command/instrumentation` feature. Optimized span paths
+decompose into the same scalar events when observation is enabled.
 
 ### 31.3 Fixture tiers
 

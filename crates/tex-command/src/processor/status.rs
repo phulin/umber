@@ -7,7 +7,10 @@
 
 use tex_state::interner::Symbol;
 
-use crate::CommandState;
+use crate::{CommandProcessor, CommandState};
+
+#[cfg(any(test, feature = "instrumentation"))]
+use crate::observation::{CommandObservation, ScannerStatusRecord};
 
 /// Persistent scanner status and the warning context owned by that status.
 #[derive(Clone, Debug, Default, Eq, Hash, PartialEq)]
@@ -78,6 +81,17 @@ impl CommandState {
         let result = operation(self);
         self.restore_scanner_status(prior);
         result
+    }
+}
+
+impl CommandProcessor<'_> {
+    #[allow(unused_variables)]
+    pub(crate) fn observe_scanner_status(&mut self, entering: bool) {
+        #[cfg(any(test, feature = "instrumentation"))]
+        self.observe(CommandObservation::ScannerStatus(ScannerStatusRecord {
+            entering,
+            status: format!("{:?}", self.command.scanner.status()),
+        }));
     }
 }
 
