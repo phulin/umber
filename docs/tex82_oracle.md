@@ -181,7 +181,12 @@ JSONL and only the declared stable observations and final ordering.
 
 Run `scripts/test-tex82-trip-observer.sh` after fetching TRIP inputs to build
 the pinned oracle offline, execute both phases twice, validate deterministic
-profile streams, and compare status and final DVI against the clean oracle.
+profile streams, and compare statuses, terminal transcripts, logs, and final
+DVI against the clean oracle. The DVI comparison normalizes exactly the
+preamble-comment payload; its length byte, every other preamble byte, and the
+complete body and postamble must match. The bounded profile's coverage is
+therefore the stable ordered `shipout` effects plus terminal `stop` and engine
+`terminate`, rather than the unstable full command stream.
 
 The aggregate transparency gate is:
 

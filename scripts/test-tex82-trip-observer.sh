@@ -42,6 +42,46 @@ normalize_output() {
   sed -E 's/preloaded format=[^)]*/preloaded format=<FORMAT>/' "$1"
 }
 
+dvi_byte_at() {
+  od -An -v -tu1 -j "$2" -N 1 "$1" | tr -d '[:space:]'
+}
+
+compare_normalized_dvi() {
+  local clean_dvi="$1" profile_dvi="$2"
+  local clean_comment_len profile_comment_len comment_end
+  local clean_size profile_size
+
+  [[ "$(dvi_byte_at "$clean_dvi" 0)" == 247 ]] || {
+    printf 'invalid clean DVI preamble: %s\n' "$clean_dvi" >&2
+    return 1
+  }
+  [[ "$(dvi_byte_at "$profile_dvi" 0)" == 247 ]] || {
+    printf 'invalid profiled DVI preamble: %s\n' "$profile_dvi" >&2
+    return 1
+  }
+  clean_comment_len="$(dvi_byte_at "$clean_dvi" 14)"
+  profile_comment_len="$(dvi_byte_at "$profile_dvi" 14)"
+  [[ -n "$clean_comment_len" && "$clean_comment_len" == "$profile_comment_len" ]] || {
+    printf 'DVI preamble comment lengths differ\n' >&2
+    return 1
+  }
+  comment_end=$((15 + clean_comment_len))
+  clean_size="$(wc -c <"$clean_dvi" | tr -d '[:space:]')"
+  profile_size="$(wc -c <"$profile_dvi" | tr -d '[:space:]')"
+  ((comment_end <= clean_size && comment_end <= profile_size)) || {
+    printf 'truncated DVI preamble comment\n' >&2
+    return 1
+  }
+
+  # The DVI banner is the sole permitted output normalization. This compares
+  # the complete preamble through its length byte, skips only its payload, and
+  # then compares every remaining byte (including the postamble and pointers).
+  cmp -n 15 "$clean_dvi" "$profile_dvi"
+  cmp -s \
+    <(dd if="$clean_dvi" bs=1 skip="$comment_end" status=none) \
+    <(dd if="$profile_dvi" bs=1 skip="$comment_end" status=none)
+}
+
 mkdir -p "$work_root/clean" "$work_root/profile-a" "$work_root/profile-b"
 run_phase "${oracle_bin}/umber-tex82-oracle" "$work_root/clean" clean
 run_phase "${oracle_bin}/umber-tex82-oracle-trip-profile" "$work_root/profile-a" profile
@@ -52,7 +92,7 @@ for profile in profile-a profile-b; do
     --tex82-trip-profile "$work_root/$profile/profile-initex-events.jsonl"
   cargo run -q -p tex-oracle --bin tex-oracle-validate -- \
     --tex82-trip-profile "$work_root/$profile/profile-trip-events.jsonl"
-  cmp "$work_root/clean/trip.dvi" "$work_root/$profile/trip.dvi"
+  compare_normalized_dvi "$work_root/clean/trip.dvi" "$work_root/$profile/trip.dvi"
   cmp "$work_root/clean/clean-initex-status.txt" "$work_root/$profile/profile-initex-status.txt"
   cmp "$work_root/clean/clean-trip-status.txt" "$work_root/$profile/profile-trip-status.txt"
   for channel in initex-terminal.txt trip-terminal.txt trip.log; do
