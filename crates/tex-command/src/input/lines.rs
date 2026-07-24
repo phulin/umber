@@ -96,10 +96,10 @@ impl PhysicalLine {
 /// One character read from a normalized physical line.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct SourceCharacter {
-    code: CharacterCode,
-    range: SourceRange,
-    scalar_offset: u64,
-    synthetic: bool,
+    pub(crate) code: CharacterCode,
+    pub(crate) range: SourceRange,
+    pub(crate) scalar_offset: u64,
+    pub(crate) synthetic: bool,
 }
 
 impl SourceCharacter {
@@ -254,6 +254,7 @@ impl SourceCursor {
             endline,
             endline_delivered: false,
         });
+        self.lexer_state = super::tokenizer::LexerState::NewLine;
         self.line.as_mut()
     }
 

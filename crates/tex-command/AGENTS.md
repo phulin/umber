@@ -33,6 +33,10 @@ Private state-machine modules must not be widened for compatibility with
 - `src/input/lines.rs`, `src/input/lines/tests.rs`: exact physical-line
   splitting, TeX line normalization, byte/scalar cursor and range accounting,
   and focused line-contract tests.
+- `src/input/tokenizer.rs`, `src/input/tokenizer/tests.rs`: canonical
+  token-at-a-time exact-byte M/N/S tokenization, control-sequence spelling,
+  superscript notation, invalid-character recovery steps, exact ranges, and
+  focused conformance tests.
 - `src/input/`: remaining private tokenizer, input-level, backup, and summary
   state machines.
 - `src/processor/`: public borrow-only processor facade with private raw

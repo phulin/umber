@@ -8,6 +8,7 @@ use tex_state::SourceId;
 use crate::profile::{CharacterMode, CommandProfile};
 
 use super::lines::SourceLineState;
+use super::tokenizer::LexerState;
 
 /// The acquisition class of immutable bytes handed to the command machine.
 ///
@@ -157,6 +158,7 @@ pub(crate) struct SourceCursor {
     pub(crate) next_physical_offset: u64,
     pub(crate) next_line_number: u64,
     pub(crate) line: Option<SourceLineState>,
+    pub(crate) lexer_state: LexerState,
     pub(crate) end_after_line: bool,
 }
 
@@ -167,6 +169,7 @@ impl SourceCursor {
             next_physical_offset: 0,
             next_line_number: 1,
             line: None,
+            lexer_state: LexerState::NewLine,
             end_after_line: false,
         }
     }

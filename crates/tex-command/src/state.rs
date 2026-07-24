@@ -6,7 +6,7 @@ use crate::conditionals::ConditionStack;
 use crate::input::InputState;
 use crate::input::{
     InputLevel, PhysicalLine, RegisteredSource, SourceCharacter, SourceCursor, SourceRegistration,
-    SourceRegistrationError,
+    SourceRegistrationError, SourceTokenizationStep,
 };
 use crate::macro_call::ParameterState;
 use crate::processor::{AlignmentDeliveryState, ExpansionState, ScannerState};
@@ -116,6 +116,33 @@ impl CommandState {
         if let Some(level) = self.input.levels.last_mut() {
             level.source.finish_line();
         }
+    }
+
+    /// Tokenizes one exact-byte source step using the caller's live catcodes.
+    ///
+    /// The callback is queried independently for every classified character;
+    /// it is not retained or cached across tokens. Invalid characters are
+    /// returned as recoverable steps after their complete spelling is
+    /// consumed.
+    ///
+    /// # Panics
+    ///
+    /// Panics when called for the separately implemented Unicode character
+    /// profile.
+    pub fn next_exact_source_step(
+        &mut self,
+        endlinechar: i32,
+        catcode: impl FnMut(crate::CharacterCode) -> tex_state::token::Catcode,
+    ) -> SourceTokenizationStep {
+        assert_eq!(
+            self.profile().character_mode(),
+            crate::CharacterMode::EightBitExact,
+            "exact-byte tokenization requires an exact-byte command profile"
+        );
+        let Some(level) = self.input.levels.last_mut() else {
+            return SourceTokenizationStep::End;
+        };
+        level.source.next_exact_byte_step(endlinechar, catcode)
     }
 
     /// Returns the immutable profile selected when this job was created.

@@ -22,8 +22,9 @@ mod state;
 pub use command::CurrentCommand;
 pub use host::{CommandHostCapabilities, CommandHostContext};
 pub use input::{
-    LineTerminator, MalformedUnicodeRange, PhysicalLine, RegisteredSourceKind, SourceCharacter,
-    SourceRange, SourceRegistration, SourceRegistrationError,
+    InvalidSourceCharacter, LexerState, LineTerminator, MalformedUnicodeRange, PhysicalLine,
+    RegisteredSourceKind, SourceCharacter, SourceControlSequenceKind, SourceRange,
+    SourceRegistration, SourceRegistrationError, SourceToken, SourceTokenizationStep,
 };
 pub use processor::CommandProcessor;
 pub use profile::{
@@ -34,3 +35,4 @@ pub use profile::{
 pub use snapshot::{CommandStateSnapshot, CommandSummary, CommandSummaryError};
 pub use state::{CommandRuntime, CommandState, UnknownRegisteredSource};
 pub use tex_state::SourceId;
+pub use tex_state::token::Catcode;

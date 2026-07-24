@@ -14,6 +14,10 @@ pub use lines::{LineTerminator, PhysicalLine, SourceCharacter, SourceRange};
 pub use source::{
     MalformedUnicodeRange, RegisteredSourceKind, SourceRegistration, SourceRegistrationError,
 };
+pub use tokenizer::{
+    InvalidSourceCharacter, LexerState, SourceControlSequenceKind, SourceToken,
+    SourceTokenizationStep,
+};
 
 /// Persistent input-stack ownership.
 ///
