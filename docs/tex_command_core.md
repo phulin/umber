@@ -661,6 +661,14 @@ enum RetirementBehavior {
 }
 ```
 
+The implemented ownership model keeps `MacroActivation` values in the
+`ParameterState` activation chain and stores a typed activation identity in
+`TokenBehavior::MacroBody`. This preserves one owner for each activation while
+letting its `MacroArguments` and any live `ArgumentRange` payloads retain the
+same reference-counted contiguous traced-token allocation. `InputLevelId` is
+typed separately from source identity and is present on both source and token
+levels. Exact-byte and Unicode source cursors use this identical enum.
+
 `EveryPar`, `EveryHBox`, `EveryVBox`, `EveryJob`, `EveryCr`, `Mark`,
 `OutputRoutine`, and similar explanations belong in `ReplayTrace` unless they
 demonstrably change retirement behavior. Trace reasons never select expansion

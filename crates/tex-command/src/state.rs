@@ -5,8 +5,8 @@ use tex_state::token::TracedTokenWord;
 use crate::conditionals::ConditionStack;
 use crate::input::InputState;
 use crate::input::{
-    InputLevel, PhysicalLine, RegisteredSource, SourceCharacter, SourceCursor, SourceRegistration,
-    SourceRegistrationError, SourceTokenizationStep,
+    InputLevel, InputLevelId, PhysicalLine, RegisteredSource, SourceCharacter, SourceCursor,
+    SourceLevel, SourceRegistration, SourceRegistrationError, SourceTokenizationStep,
 };
 use crate::macro_call::ParameterState;
 use crate::processor::{AlignmentDeliveryState, ExpansionState, ScannerState};
@@ -80,12 +80,12 @@ impl CommandState {
             .find(|registered| registered.id == source)
             .cloned()
             .ok_or(UnknownRegisteredSource(source))?;
-        let identity = self.input.next_level_identity;
+        let identity = InputLevelId(self.input.next_level_identity);
         self.input.next_level_identity = self.input.next_level_identity.wrapping_add(1);
-        self.input.levels.push(InputLevel {
+        self.input.levels.push(InputLevel::Source(SourceLevel {
             identity,
-            source: SourceCursor::new(registered),
-        });
+            cursor: SourceCursor::new(registered),
+        }));
         Ok(())
     }
 
@@ -95,9 +95,11 @@ impl CommandState {
     /// trailing spaces are removed and the current `endlinechar` is captured
     /// for this line without tokenizing any characters.
     pub fn load_next_source_line(&mut self, endlinechar: i32) -> Option<PhysicalLine> {
-        let level = self.input.levels.last_mut()?;
+        let InputLevel::Source(level) = self.input.levels.last_mut()? else {
+            return None;
+        };
         level
-            .source
+            .cursor
             .load_next_line(endlinechar)
             .map(|line| line.physical)
     }
@@ -105,16 +107,18 @@ impl CommandState {
     /// Reads one byte-domain character or decoded Unicode scalar from the
     /// active normalized line with its exact physical range.
     pub fn next_source_character(&mut self) -> Option<SourceCharacter> {
-        let level = self.input.levels.last_mut()?;
-        let mode = level.source.backing.mode;
-        let bytes = std::sync::Arc::clone(&level.source.backing.bytes);
-        level.source.line.as_mut()?.next_character(mode, &bytes)
+        let InputLevel::Source(level) = self.input.levels.last_mut()? else {
+            return None;
+        };
+        let mode = level.cursor.backing.mode;
+        let bytes = std::sync::Arc::clone(&level.cursor.backing.bytes);
+        level.cursor.line.as_mut()?.next_character(mode, &bytes)
     }
 
     /// Retires the active normalized line so the next physical line may load.
     pub fn finish_source_line(&mut self) {
-        if let Some(level) = self.input.levels.last_mut() {
-            level.source.finish_line();
+        if let Some(InputLevel::Source(level)) = self.input.levels.last_mut() {
+            level.cursor.finish_line();
         }
     }
 
@@ -139,10 +143,10 @@ impl CommandState {
             crate::CharacterMode::EightBitExact,
             "exact-byte tokenization requires an exact-byte command profile"
         );
-        let Some(level) = self.input.levels.last_mut() else {
+        let Some(InputLevel::Source(level)) = self.input.levels.last_mut() else {
             return SourceTokenizationStep::End;
         };
-        level.source.next_exact_byte_step(endlinechar, catcode)
+        level.cursor.next_exact_byte_step(endlinechar, catcode)
     }
 
     /// Tokenizes one Unicode-scalar source step using the caller's live code
@@ -166,10 +170,10 @@ impl CommandState {
             crate::CharacterMode::UnicodeExtended,
             "Unicode tokenization requires a UnicodeExtended command profile"
         );
-        let Some(level) = self.input.levels.last_mut() else {
+        let Some(InputLevel::Source(level)) = self.input.levels.last_mut() else {
             return SourceTokenizationStep::End;
         };
-        level.source.next_unicode_step(endlinechar, catcode)
+        level.cursor.next_unicode_step(endlinechar, catcode)
     }
 
     /// Returns the immutable profile selected when this job was created.

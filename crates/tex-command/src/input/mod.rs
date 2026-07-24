@@ -7,7 +7,7 @@ mod source;
 mod summary;
 mod tokenizer;
 
-pub(crate) use levels::InputLevel;
+pub(crate) use levels::{InputLevel, InputLevelId, SharedTokenBuffer, SourceLevel};
 pub(crate) use source::{RegisteredSource, SourceCursor};
 
 pub use lines::{LineTerminator, PhysicalLine, SourceCharacter, SourceRange, SourceScalarRange};

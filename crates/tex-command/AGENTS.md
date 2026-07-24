@@ -38,8 +38,10 @@ Private state-machine modules must not be widened for compatibility with
   tokenization, semantic control-sequence spelling, profile-specific
   superscript notation, invalid-character recovery steps, byte/scalar ranges,
   and focused conformance tests.
-- `src/input/`: remaining private tokenizer, input-level, backup, and summary
-  state machines.
+- `src/input/levels.rs`, `src/input/levels/tests.rs`: dense source/token-list
+  levels, stored/transient/argument payload ownership, orthogonal delivery and
+  retirement behavior, replay explanations, and focused ownership tests.
+- `src/input/`: remaining private backup and summary state machines.
 - `src/processor/`: public borrow-only processor facade with private raw
   delivery, expansion, scanner-status, and alignment orchestration.
 - `src/scanners/`: private typed scanner family.

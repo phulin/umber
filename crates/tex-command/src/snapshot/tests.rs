@@ -2,7 +2,8 @@ use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 
 use crate::conditionals::ConditionFrame;
-use crate::macro_call::MacroActivation;
+use crate::input::SharedTokenBuffer;
+use crate::macro_call::{MacroActivation, MacroActivationId, MacroArgumentRange, MacroArguments};
 use crate::processor::{ActiveCellDelivery, ScannerStatus, SuspendedAlignment};
 use crate::profile::{CommandProfile, CommandProfileBoundary, CommandProfileFingerprint};
 use crate::state::LiveTokenBuilder;
@@ -37,8 +38,23 @@ fn populated_quiescent_state() -> CommandState {
     state.input.next_level_identity = 11;
     state.input.next_source_identity = 13;
     state.parameters.activations.push(MacroActivation {
-        definition: 17,
-        invocation: 19,
+        identity: MacroActivationId(17),
+        definition: tex_state::ids::MacroDefinitionId::testing_new(19),
+        arguments: MacroArguments {
+            buffer: SharedTokenBuffer::default(),
+            ranges: [
+                MacroArgumentRange::new(0, 0),
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+            ],
+        },
+        invocation: tex_state::token::OriginId::UNKNOWN,
     });
     state.conditions.frames.push(ConditionFrame {
         identity: 23,

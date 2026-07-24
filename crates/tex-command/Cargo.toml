@@ -9,6 +9,7 @@ tex-state = { path = "../tex-state" }
 [dev-dependencies]
 serde.workspace = true
 test-support = { path = "../test-support" }
+tex-state = { path = "../tex-state", features = ["testing"] }
 
 [lints]
 workspace = true
