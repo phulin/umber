@@ -232,6 +232,14 @@ is likewise `end_cs_name` with selector zero. `CurrentCommand` carries both
 identities from raw delivery through that lifecycle, rather than having
 observation infer either from a generic expandable meaning.
 
+Likewise, TeX82's classic text conversions are observed as the shared
+`convert` command while `CurrentCommand` retains their §35 selector:
+`\number`, `\romannumeral`, `\string`, `\meaning`, `\fontname`, and
+`\jobname` use selectors 0 through 5. TeX82 §27's `conv_toks` continues to
+own their respective operand scans and inserted-token lifecycle; the command
+identity is selected at raw delivery, rather than projected later from a
+generic expandable primitive.
+
 For TeX82 §§1071 and 1076, `\shipout` begins a typed box-completion episode:
 command control delivers the next `make_box` command and owns every scalar
 box-register scan, including its one-token terminator backup. On the closing

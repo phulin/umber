@@ -307,6 +307,10 @@ pub(crate) fn canonical_current_command_identity(
         // The `\csname` collector observes its inaccessible boundary through
         // the same raw path, where TeX82 retains `end_cs_name` and selector zero.
         CommandIdentity::EndCsName => ("end_cs_name".into(), Some(0)),
+        // TeX82 §35 installs the six classic text conversions under the
+        // shared `convert` command; §27's `conv_toks` uses the retained
+        // selector to choose the existing scan/render lifecycle.
+        CommandIdentity::Convert(selector) => ("convert".into(), Some(selector.operand())),
         CommandIdentity::NoExpandFrozenRelax => {
             debug_assert_eq!(command.meaning(), Meaning::Relax);
             ("relax".into(), Some(257))
@@ -568,6 +572,36 @@ mod tests {
             canonical_current_command_identity(&command),
             ("end_cs_name".into(), Some(0))
         );
+    }
+
+    #[test]
+    fn classic_conversions_use_tex82_convert_selectors() {
+        let mut universe = tex_state::Universe::new();
+
+        for (name, primitive, operand) in [
+            ("number", ExpandablePrimitive::Number, 0),
+            ("romannumeral", ExpandablePrimitive::RomanNumeral, 1),
+            ("string", ExpandablePrimitive::String, 2),
+            ("meaning", ExpandablePrimitive::Meaning, 3),
+            ("fontname", ExpandablePrimitive::FontName, 4),
+            ("jobname", ExpandablePrimitive::JobName, 5),
+        ] {
+            let symbol = universe.intern(name).symbol();
+            universe.set_meaning(symbol, Meaning::ExpandablePrimitive(primitive));
+            let mut state = universe.command_context();
+            let command = CurrentCommand::resolve(
+                TracedTokenWord::pack(Token::Cs(symbol), OriginId::UNKNOWN),
+                DeliveryStamp::new(0, 0, 0),
+                None,
+                false,
+                &mut state,
+            );
+
+            assert_eq!(
+                canonical_current_command_identity(&command),
+                ("convert".into(), Some(operand))
+            );
+        }
     }
 
     #[test]

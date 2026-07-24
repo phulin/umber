@@ -33,16 +33,61 @@ pub struct CurrentCommand {
 /// effective meaning is `relax`, but its `cur_chr` is `no_expand_flag` (257),
 /// rather than the ordinary `relax` value (256). Separately, TeX82 §25's
 /// `\expandafter`, `\csname`, and its `\endcsname` boundary have dedicated
-/// command identities rather than the generic expandable fallback. These
-/// remain ephemeral with the current delivery and are never stored in
-/// snapshots or input payloads.
+/// command identities rather than the generic expandable fallback. TeX82's
+/// text conversions likewise share the `convert` command with a selector
+/// owned by the delivered primitive. These remain ephemeral with the current
+/// delivery and are never stored in snapshots or input payloads.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum CommandIdentity {
     Ordinary,
     ExpandAfter,
     CsName,
     EndCsName,
+    Convert(ConvertSelector),
     NoExpandFrozenRelax,
+}
+
+/// TeX82's `convert` selectors.
+///
+/// TeX.web §35 installs the classic conversion primitives with these values;
+/// §27's `conv_toks` then consumes the selector while retaining the original
+/// `convert` current-command identity throughout the conversion episode.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum ConvertSelector {
+    Number,
+    RomanNumeral,
+    String,
+    Meaning,
+    FontName,
+    JobName,
+}
+
+impl ConvertSelector {
+    const fn from_primitive(primitive: tex_state::meaning::ExpandablePrimitive) -> Option<Self> {
+        use tex_state::meaning::ExpandablePrimitive;
+
+        match primitive {
+            ExpandablePrimitive::Number => Some(Self::Number),
+            ExpandablePrimitive::RomanNumeral => Some(Self::RomanNumeral),
+            ExpandablePrimitive::String => Some(Self::String),
+            ExpandablePrimitive::Meaning => Some(Self::Meaning),
+            ExpandablePrimitive::FontName => Some(Self::FontName),
+            ExpandablePrimitive::JobName => Some(Self::JobName),
+            _ => None,
+        }
+    }
+
+    #[cfg(any(test, feature = "instrumentation"))]
+    pub(crate) const fn operand(self) -> i64 {
+        match self {
+            Self::Number => 0,
+            Self::RomanNumeral => 1,
+            Self::String => 2,
+            Self::Meaning => 3,
+            Self::FontName => 4,
+            Self::JobName => 5,
+        }
+    }
 }
 
 impl CommandIdentity {
@@ -56,6 +101,13 @@ impl CommandIdentity {
             }
             Meaning::ExpandablePrimitive(tex_state::meaning::ExpandablePrimitive::EndCsName) => {
                 Self::EndCsName
+            }
+            Meaning::ExpandablePrimitive(primitive) => {
+                if let Some(selector) = ConvertSelector::from_primitive(primitive) {
+                    Self::Convert(selector)
+                } else {
+                    Self::Ordinary
+                }
             }
             _ => Self::Ordinary,
         }

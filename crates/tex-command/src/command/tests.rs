@@ -2,7 +2,7 @@ use tex_state::Universe;
 use tex_state::meaning::{ExpandablePrimitive, Meaning};
 use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 
-use super::{CommandIdentity, CurrentCommand, DeliveryStamp};
+use super::{CommandIdentity, ConvertSelector, CurrentCommand, DeliveryStamp};
 
 fn resolve(universe: &mut Universe, token: Token, origin: OriginId) -> CurrentCommand {
     let mut state = universe.command_context();
@@ -118,4 +118,49 @@ fn endcsname_resolves_to_its_tex82_current_command_identity() {
     let command = resolve(&mut universe, Token::Cs(endcsname), OriginId::UNKNOWN);
 
     assert_eq!(command.identity(), CommandIdentity::EndCsName);
+}
+
+#[test]
+fn classic_conversions_resolve_to_the_shared_tex82_convert_identity() {
+    let mut universe = Universe::new();
+
+    for (name, primitive, selector) in [
+        (
+            "number",
+            ExpandablePrimitive::Number,
+            ConvertSelector::Number,
+        ),
+        (
+            "romannumeral",
+            ExpandablePrimitive::RomanNumeral,
+            ConvertSelector::RomanNumeral,
+        ),
+        (
+            "string",
+            ExpandablePrimitive::String,
+            ConvertSelector::String,
+        ),
+        (
+            "meaning",
+            ExpandablePrimitive::Meaning,
+            ConvertSelector::Meaning,
+        ),
+        (
+            "fontname",
+            ExpandablePrimitive::FontName,
+            ConvertSelector::FontName,
+        ),
+        (
+            "jobname",
+            ExpandablePrimitive::JobName,
+            ConvertSelector::JobName,
+        ),
+    ] {
+        let symbol = universe.intern(name).symbol();
+        universe.set_meaning(symbol, Meaning::ExpandablePrimitive(primitive));
+
+        let command = resolve(&mut universe, Token::Cs(symbol), OriginId::UNKNOWN);
+
+        assert_eq!(command.identity(), CommandIdentity::Convert(selector));
+    }
 }
