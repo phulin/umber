@@ -160,15 +160,15 @@ fn run_macro(
         .expect("source opens");
     let mut runtime = CommandRuntime::default();
     let mut universe = Universe::new();
+    universe.install_primitive_meaning(
+        "par",
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Par),
+    );
     let macro_name = universe.intern("m").symbol();
     let parameters = universe.intern_token_list(parameters);
     let replacement = universe.intern_token_list(&[Token::param(1)]);
     let definition = universe.intern_macro(MacroMeaning::new(flags, parameters, replacement));
     universe.set_meaning(macro_name, Meaning::Macro { flags, definition });
-    universe.install_primitive_meaning(
-        "par",
-        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Par),
-    );
     if install_outer {
         let outer = universe.intern("outer").symbol();
         let empty = universe.intern_token_list(&[]);
@@ -295,5 +295,241 @@ fn outer_argument_token_uses_raw_delivery_recovery_then_aborts_match() {
     assert_eq!(
         run_macro(b"\\m\\outer", MeaningFlags::EMPTY, &[Token::param(1)], true),
         Err(CommandError::OuterInMacroArgument)
+    );
+}
+
+fn other(ch: char) -> Token {
+    Token::Char {
+        ch,
+        cat: Catcode::Other,
+    }
+}
+
+fn argument_tokens(arguments: &MacroArguments) -> Vec<Token> {
+    (0..arguments.buffer.len())
+        .map(|index| {
+            arguments
+                .buffer
+                .get(index)
+                .expect("argument token")
+                .semantic_token()
+        })
+        .collect()
+}
+
+#[test]
+fn delimited_argument_stops_at_its_literal_token_sequence() {
+    let (_, arguments) = run_macro(
+        b"\\m x,",
+        MeaningFlags::EMPTY,
+        &[Token::param(1), other(',')],
+        false,
+    )
+    .expect("delimiter terminates the argument");
+    assert_eq!(
+        argument_tokens(&arguments),
+        vec![Token::Char {
+            ch: 'x',
+            cat: Catcode::Letter,
+        }]
+    );
+}
+
+#[test]
+fn delimited_argument_retries_a_mismatch_as_an_overlapping_prefix() {
+    let (_, arguments) = run_macro(
+        b"\\m aab",
+        MeaningFlags::EMPTY,
+        &[
+            Token::param(1),
+            Token::Char {
+                ch: 'a',
+                cat: Catcode::Letter,
+            },
+            Token::Char {
+                ch: 'b',
+                cat: Catcode::Letter,
+            },
+        ],
+        false,
+    )
+    .expect("second a begins the overlapping delimiter");
+    assert_eq!(
+        argument_tokens(&arguments),
+        vec![Token::Char {
+            ch: 'a',
+            cat: Catcode::Letter,
+        }]
+    );
+}
+
+#[test]
+fn delimited_argument_commits_a_partial_prefix_before_continuing() {
+    let (_, arguments) = run_macro(
+        b"\\m!x!?",
+        MeaningFlags::EMPTY,
+        &[Token::param(1), other('!'), other('?')],
+        false,
+    )
+    .expect("partial prefix is argument material");
+    assert_eq!(
+        argument_tokens(&arguments),
+        vec![
+            Token::Char {
+                ch: '!',
+                cat: Catcode::Other,
+            },
+            Token::Char {
+                ch: 'x',
+                cat: Catcode::Letter,
+            },
+        ]
+    );
+}
+
+#[test]
+fn delimiter_inside_literal_braces_remains_argument_material() {
+    let (_, arguments) = run_macro(
+        b"\\m{a,b}c,",
+        MeaningFlags::EMPTY,
+        &[Token::param(1), other(',')],
+        false,
+    )
+    .expect("nested delimiter does not terminate the argument");
+    assert_eq!(
+        argument_tokens(&arguments),
+        vec![
+            Token::Char {
+                ch: '{',
+                cat: Catcode::BeginGroup,
+            },
+            Token::Char {
+                ch: 'a',
+                cat: Catcode::Letter,
+            },
+            other(','),
+            Token::Char {
+                ch: 'b',
+                cat: Catcode::Letter,
+            },
+            Token::Char {
+                ch: '}',
+                cat: Catcode::EndGroup,
+            },
+            Token::Char {
+                ch: 'c',
+                cat: Catcode::Letter,
+            },
+        ]
+    );
+}
+
+#[test]
+fn delimited_argument_strips_one_complete_outer_group() {
+    let (_, arguments) = run_macro(
+        b"\\m{{a}},",
+        MeaningFlags::EMPTY,
+        &[Token::param(1), other(',')],
+        false,
+    )
+    .expect("complete outer group is stripped");
+    assert_eq!(
+        argument_tokens(&arguments),
+        vec![
+            Token::Char {
+                ch: '{',
+                cat: Catcode::BeginGroup,
+            },
+            Token::Char {
+                ch: 'a',
+                cat: Catcode::Letter,
+            },
+            Token::Char {
+                ch: '}',
+                cat: Catcode::EndGroup,
+            },
+        ]
+    );
+}
+
+#[test]
+fn non_long_delimited_argument_allows_a_recovered_paragraph_prefix() {
+    let mut universe = Universe::new();
+    let par = universe.intern("par").symbol();
+    drop(universe);
+    let (_, arguments) = run_macro(
+        b"\\m\\par?\\par!",
+        MeaningFlags::EMPTY,
+        &[Token::param(1), Token::Cs(par), other('!')],
+        false,
+    )
+    .expect("failed delimiter prefix is accepted literally");
+    assert_eq!(arguments.buffer.len(), 2);
+    assert!(matches!(
+        arguments
+            .buffer
+            .get(0)
+            .expect("recovered prefix")
+            .semantic_token(),
+        Token::Cs(_)
+    ));
+    assert_eq!(
+        arguments.buffer.get(1).expect("question").semantic_token(),
+        other('?')
+    );
+}
+
+#[test]
+fn non_long_delimited_argument_rejects_a_paragraph_mismatch() {
+    assert_eq!(
+        run_macro(
+            b"\\m a\\par",
+            MeaningFlags::EMPTY,
+            &[
+                Token::param(1),
+                Token::Char {
+                    ch: 'a',
+                    cat: Catcode::Letter,
+                },
+                Token::Char {
+                    ch: 'b',
+                    cat: Catcode::Letter,
+                },
+            ],
+            false,
+        ),
+        Err(CommandError::ParagraphInMacroArgument)
+    );
+}
+
+#[test]
+fn delimiter_opening_brace_does_not_leave_literal_brace_accounting() {
+    let (command, arguments) = run_macro(
+        b"\\m{",
+        MeaningFlags::EMPTY,
+        &[
+            Token::param(1),
+            Token::Char {
+                ch: '{',
+                cat: Catcode::BeginGroup,
+            },
+        ],
+        false,
+    )
+    .expect("opening brace may be a parameter delimiter");
+    assert_eq!(arguments.buffer.len(), 0);
+    assert_eq!(command.alignment.align_state, 0);
+}
+
+#[test]
+fn delimited_argument_eof_consumes_matching_recovery_before_failing() {
+    assert_eq!(
+        run_macro(
+            b"\\m x",
+            MeaningFlags::EMPTY,
+            &[Token::param(1), other(',')],
+            false,
+        ),
+        Err(CommandError::ParagraphInMacroArgument)
     );
 }

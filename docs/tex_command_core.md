@@ -1013,8 +1013,12 @@ the new subsystem.
 The first implementation slice installs `Matching` around compulsory-prefix
 and undelimited-argument delivery. It uses raw `get_token`, strips precisely
 one outer argument group, retains nested literal braces, and lets the existing
-outer-validity operation perform all inserted-token recovery. Delimited
-matching and replacement activation are separate ordered slices.
+outer-validity operation perform all inserted-token recovery. The next slice
+extends that same scalar path with direct delimited matching: it retries a
+partial-prefix mismatch as a possible overlapping prefix, commits failed
+prefixes literally, ignores delimiters below literal brace depth, and cancels
+the raw brace accounting for a matched `#{` delimiter. Replacement activation
+remains a separate ordered slice.
 
 ## 20. Canonical `scan_toks`
 

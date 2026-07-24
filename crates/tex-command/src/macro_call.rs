@@ -176,8 +176,7 @@ impl ParameterState {
 
 impl CommandProcessor<'_> {
     /// TeX.web's scalar `macro_call` path for compulsory parameter text and
-    /// undelimited arguments. Delimited matching remains deliberately absent
-    /// until its ordered follow-up lands.
+    /// literal argument matching.
     pub(crate) fn macro_call(
         &mut self,
         call: crate::CurrentCommand,
@@ -228,12 +227,12 @@ impl CommandProcessor<'_> {
 
         let mut arguments = MacroArgumentBuilder::default();
         for parameter in 0..pattern.parameter_count() {
-            // The next ordered milestone owns nonempty delimiters and their
-            // overlap recovery; do not silently substitute an alternate matcher.
-            if !pattern.delimiter(parameter).is_empty() {
-                return Err(CommandError::InputInvariant);
-            }
-            let argument = self.scan_undelimited_argument(flags)?;
+            let delimiter = pattern.delimiter(parameter);
+            let argument = if delimiter.is_empty() {
+                self.scan_undelimited_argument(flags)?
+            } else {
+                self.scan_delimited_argument(flags, delimiter)?
+            };
             arguments
                 .complete((parameter + 1) as u8, argument)
                 .map_err(|_| CommandError::InputInvariant)?;
@@ -309,6 +308,62 @@ impl CommandProcessor<'_> {
         }
     }
 
+    /// TeX.web §394's literal, scalar delimiter matcher. A failed delimiter
+    /// prefix is committed to the argument one token at a time, then the
+    /// mismatching token is considered again as a possible new prefix. This
+    /// is intentionally not a compiled string matcher: token catcodes and
+    /// brace depth are semantic here.
+    fn scan_delimited_argument(
+        &mut self,
+        flags: MeaningFlags,
+        delimiter: &[Token],
+    ) -> Result<Vec<TracedTokenWord>, CommandError> {
+        debug_assert!(!delimiter.is_empty());
+        let mut tokens = Vec::new();
+        let mut prefix = Vec::with_capacity(delimiter.len());
+        let mut depth = 0_u32;
+        let mut current = None;
+
+        loop {
+            let command = match current.take() {
+                Some(command) => command,
+                None => self
+                    .get_token()?
+                    .ok_or(CommandError::ParagraphInMacroArgument)?,
+            };
+            if self.outer_recovered_while_matching {
+                return Err(CommandError::OuterInMacroArgument);
+            }
+            let token = command.spelling().semantic_token();
+
+            if depth == 0 && token == delimiter[prefix.len()] {
+                prefix.push(command.spelling());
+                if prefix.len() == delimiter.len() {
+                    // `#{` consumes the opening brace as parameter text. Raw
+                    // delivery has accounted for it, but no replacement-body
+                    // replay exists yet to provide the balancing delivery.
+                    if is_begin_group(token) {
+                        self.undo_delimiter_begin_group_delivery();
+                    }
+                    return Ok(strip_one_outer_group(tokens));
+                }
+                continue;
+            }
+
+            if !prefix.is_empty() {
+                for prefix_token in prefix.drain(..) {
+                    push_delimited_argument_token(&mut tokens, &mut depth, prefix_token);
+                }
+                // A mismatching token can itself start an overlapping prefix.
+                current = Some(command);
+                continue;
+            }
+
+            self.check_argument_paragraph(&command, flags)?;
+            push_delimited_argument_token(&mut tokens, &mut depth, command.spelling());
+        }
+    }
+
     fn check_argument_paragraph(
         &self,
         command: &crate::CurrentCommand,
@@ -323,6 +378,79 @@ impl CommandProcessor<'_> {
         }
         Ok(())
     }
+}
+
+fn push_delimited_argument_token(
+    tokens: &mut Vec<TracedTokenWord>,
+    depth: &mut u32,
+    token: TracedTokenWord,
+) {
+    match token.semantic_token() {
+        Token::Char {
+            cat: Catcode::BeginGroup,
+            ..
+        } => *depth = depth.saturating_add(1),
+        Token::Char {
+            cat: Catcode::EndGroup,
+            ..
+        } if *depth > 0 => *depth -= 1,
+        _ => {}
+    }
+    tokens.push(token);
+}
+
+fn strip_one_outer_group(mut tokens: Vec<TracedTokenWord>) -> Vec<TracedTokenWord> {
+    if tokens.len() < 2
+        || !is_begin_group(tokens[0].semantic_token())
+        || !is_end_group(tokens[tokens.len() - 1].semantic_token())
+    {
+        return tokens;
+    }
+
+    let mut depth = 0_u32;
+    for (index, token) in tokens.iter().enumerate() {
+        match token.semantic_token() {
+            Token::Char {
+                cat: Catcode::BeginGroup,
+                ..
+            } => depth = depth.saturating_add(1),
+            Token::Char {
+                cat: Catcode::EndGroup,
+                ..
+            } if depth > 0 => {
+                depth -= 1;
+                if depth == 0 && index + 1 != tokens.len() {
+                    return tokens;
+                }
+            }
+            _ => {}
+        }
+    }
+    if depth == 0 {
+        tokens.pop();
+        tokens.remove(0);
+    }
+    tokens
+}
+
+fn is_begin_group(token: Token) -> bool {
+    matches!(
+        token,
+        Token::Char {
+            cat: Catcode::BeginGroup,
+            ..
+        }
+    )
+}
+
+fn is_end_group(token: Token) -> bool {
+    matches!(
+        token,
+        Token::Char {
+            cat: Catcode::EndGroup,
+            ..
+        }
+    )
 }
 
 #[cfg(test)]

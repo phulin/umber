@@ -383,6 +383,13 @@ impl CommandProcessor<'_> {
         }
     }
 
+    /// Cancels raw brace accounting for a matched `#{` delimiter. The opening
+    /// brace was delivered as parameter text, so scalar macro matching must
+    /// not leave a group entry for replacement replay to balance later.
+    pub(crate) fn undo_delimiter_begin_group_delivery(&mut self) {
+        self.command.alignment.align_state = self.command.alignment.align_state.saturating_sub(1);
+    }
+
     fn rewind_current_token_cursor(&mut self, stamp: DeliveryStamp) -> bool {
         let Some(InputLevel::Tokens(cursor)) = self.command.input.levels.last_mut() else {
             return false;
