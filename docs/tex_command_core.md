@@ -1383,9 +1383,16 @@ indexes, relations, and internal values. Helpers never open input sources,
 dispatch arbitrary expandable commands, or mutate input levels directly.
 
 Integer, dimension, glue, muglue, and expression arithmetic use shared exact
-types from `tex-arith` and `tex-state`. Overflow, rounding, radix, unit, and
-recovery behavior cite canonical sections and compare against reference
-fixtures.
+types from `tex-arith` and `tex-state`. The integer scanner owns decimal,
+octal (`'`), and hexadecimal (`"`) digit delivery: radix introducers and every
+accepted digit are expanded-command deliveries before the scalar observer
+publishes its completed value, while its one trailing space is absorbed. This
+keeps the canonical `scan_int` input/observer ordering within the command core
+rather than making the replay seam synthesize it. Internal register values
+also scan their register index through that same command-owned scalar path,
+then publish the nested integer, internal-value, and outer integer results in
+canonical order. Overflow, rounding, radix, unit, and recovery behavior cite
+canonical sections and compare against reference fixtures.
 
 ## 24. Static e-TeX and pdfTeX extension seams
 

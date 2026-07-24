@@ -578,6 +578,20 @@ fn applied_mutation_observation(
     scanned: &ScannedStep,
     stores: &Universe,
 ) -> Option<MutationRecord> {
+    if let ScannedStep::Count {
+        index,
+        value,
+        global,
+    } = scanned
+    {
+        return Some(MutationRecord {
+            target: "register",
+            value: format!("count:{index}={value}"),
+            key: None,
+            tokens: None,
+            global: *global,
+        });
+    }
     if let ScannedStep::Toks {
         index,
         tokens,

@@ -73,6 +73,57 @@ fn scalar_forms_recovery_and_snapshot_use_only_command_input() {
 }
 
 #[test]
+fn integer_radix_prefixes_deliver_digits_before_scanner_completion() {
+    let mut command = CommandState::default();
+    push(
+        &mut command,
+        "\"2A '17 42 ".chars().map(char_token).collect(),
+    );
+    let mut runtime = CommandRuntime::default();
+    let mut universe = Universe::new();
+    let mut capabilities = CommandHostCapabilities::default();
+    let mut processor = CommandProcessor::new(
+        &mut command,
+        &mut runtime,
+        universe.command_context(),
+        CommandHostContext::new(&mut capabilities),
+    );
+
+    assert_eq!(processor.scan_integer().expect("hex scans").value, 42);
+    assert_eq!(processor.scan_integer().expect("octal scans").value, 15);
+    assert_eq!(processor.scan_integer().expect("decimal scans").value, 42);
+}
+
+#[test]
+fn integer_internal_register_scans_its_index_through_command_input() {
+    let mut command = CommandState::default();
+    let mut runtime = CommandRuntime::default();
+    let mut universe = Universe::new();
+    let count = universe.intern("count").symbol();
+    universe.set_meaning(
+        count,
+        Meaning::UnexpandablePrimitive(tex_state::meaning::UnexpandablePrimitive::Count),
+    );
+    universe.set_count(0, 42);
+    push(&mut command, vec![Token::Cs(count), char_token('0')]);
+    let mut capabilities = CommandHostCapabilities::default();
+    let mut processor = CommandProcessor::new(
+        &mut command,
+        &mut runtime,
+        universe.command_context(),
+        CommandHostContext::new(&mut capabilities),
+    );
+
+    assert_eq!(
+        processor
+            .scan_integer()
+            .expect("internal count scans")
+            .value,
+        42
+    );
+}
+
+#[test]
 fn internal_values_and_failed_keywords_replay_canonically() {
     let mut command = CommandState::default();
     let mut runtime = CommandRuntime::default();

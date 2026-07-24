@@ -632,7 +632,7 @@ fn translate_observation(
         CommandObservation::Scanner(record) => {
             let result = if let Some(tokens) = record.tokens {
                 CanonicalValue::Tokens(tokens.into_iter().map(oracle_token).collect())
-            } else if record.kind == "integer" {
+            } else if matches!(record.kind, "integer" | "internal") {
                 record.value.parse::<i64>().map_or_else(
                     |_| CanonicalValue::Name(record.value),
                     CanonicalValue::Integer,
@@ -985,7 +985,7 @@ fn translate_mutation(record: MutationRecord) -> Event {
         },
         key,
         value,
-        scope: "local".into(),
+        scope: if record.global { "global" } else { "local" }.into(),
     })
 }
 fn translate_effect(record: EffectRecord) -> Event {

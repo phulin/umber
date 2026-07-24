@@ -1,7 +1,7 @@
 //! Executor-facing canonical scalar scanners.
 
 use tex_state::glue::{GlueSpec, Order};
-use tex_state::meaning::Meaning;
+use tex_state::meaning::{Meaning, UnexpandablePrimitive};
 use tex_state::scaled::{PhysicalUnit, Scaled, round_decimal_fraction, scaled_from_decimal_parts};
 use tex_state::token::OriginId;
 
@@ -213,8 +213,14 @@ impl CommandProcessor<'_> {
             }
             None => match first.meaning() {
                 Meaning::CharToken { ch, .. } if ch.is_ascii_digit() => {
-                    self.scan_decimal_tail(ch)?
+                    self.scan_radix_tail(ch, 10)?
                 }
+                // TeX.web `scan_int` treats an apostrophe or double quote as
+                // an octal or hexadecimal introducer. The following digits
+                // still travel through `get_x_token`, so their deliveries are
+                // observable before the completed scanner result.
+                Meaning::CharToken { ch: '\'', .. } => self.scan_radix_tail('0', 8)?,
+                Meaning::CharToken { ch: '"', .. } => self.scan_radix_tail('0', 16)?,
                 // TeX's `\` character-code form consumes its following token
                 // through raw delivery: that token supplies a character code,
                 // rather than participating in ordinary expansion.  The
@@ -349,17 +355,19 @@ impl CommandProcessor<'_> {
         }
     }
 
-    fn scan_decimal_tail(&mut self, first: char) -> Result<i32, CommandError> {
-        let mut value = i32::from(first as u8 - b'0');
+    fn scan_radix_tail(&mut self, first: char, radix: u8) -> Result<i32, CommandError> {
+        let mut value = i32::from(Self::radix_digit(first).expect("radix introducer is valid"));
         loop {
             let Some(command) = self.get_x_token()? else {
                 break;
             };
             match command.meaning() {
-                Meaning::CharToken { ch, .. } if ch.is_ascii_digit() => {
+                Meaning::CharToken { ch, .. }
+                    if Self::radix_digit(ch).is_some_and(|digit| digit < radix) =>
+                {
                     value = value
-                        .saturating_mul(10)
-                        .saturating_add(i32::from(ch as u8 - b'0'))
+                        .saturating_mul(i32::from(radix))
+                        .saturating_add(i32::from(Self::radix_digit(ch).expect("digit checked")))
                 }
                 // TeX's numeric scanner absorbs one trailing space after a
                 // decimal constant; replay must not manufacture a backup
@@ -372,6 +380,15 @@ impl CommandProcessor<'_> {
             }
         }
         Ok(value)
+    }
+
+    fn radix_digit(ch: char) -> Option<u8> {
+        match ch {
+            '0'..='9' => Some(ch as u8 - b'0'),
+            'a'..='f' => Some(ch as u8 - b'a' + 10),
+            'A'..='F' => Some(ch as u8 - b'A' + 10),
+            _ => None,
+        }
     }
 
     fn scan_character_code(&mut self) -> Result<i32, CommandError> {
@@ -471,6 +488,21 @@ impl CommandProcessor<'_> {
         command: &CurrentCommand,
     ) -> Result<Option<InternalValue>, CommandError> {
         let value = match command.meaning() {
+            // `scan_internal_int` owns a register primitive's index scan.
+            // Keeping it here means a RHS `\count0` produces its index
+            // deliveries, nested integer result, and internal-value observer
+            // before the outer `scan_int` completes (TeX.web `scan_int`).
+            Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Count) => {
+                let index = u16::try_from(self.scan_integer()?.value).unwrap_or(0);
+                let value = self.state.count(index);
+                #[cfg(any(test, feature = "instrumentation"))]
+                self.observe(CommandObservation::Scanner(ScannerRecord {
+                    kind: "internal",
+                    value: value.to_string(),
+                    tokens: None,
+                }));
+                InternalValue::Integer(value)
+            }
             Meaning::CountRegister(index) => InternalValue::Integer(self.state.count(index)),
             Meaning::IntParam(index) => InternalValue::Integer(
                 self.state
