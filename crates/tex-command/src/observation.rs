@@ -70,6 +70,11 @@ pub struct CommandDeliveryRecord {
     pub boundary: CommandDeliveryBoundary,
     pub spelling: ObservedToken,
     pub command: String,
+    /// Canonical TeX82 command operand when the meaning has one.
+    ///
+    /// This is an identity from the installed primitive registry, never a
+    /// fixture-derived value. Character spellings retain their own operand.
+    pub command_operand: Option<i64>,
     pub provenance: CommandProvenance,
 }
 

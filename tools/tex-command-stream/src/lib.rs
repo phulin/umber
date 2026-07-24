@@ -12,12 +12,12 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use tex_command::{
-    AlignmentRecord, CommandDeliveryBoundary, CommandHostCapabilities, CommandHostContext,
-    CommandObservation, CommandObserver, CommandProcessor, CommandProfile, CommandRuntime,
-    CommandState, ConditionRecord, EffectRecord, InputReason as CommandInputReason, InputRecord,
-    InputTransition, MacroRecord, MutationRecord, ObservedToken, RecoveryRecord,
-    RegisteredSourceKind, ScannerStatusRecord, SourceRegistration, TokenListRecord,
+    AlignmentRecord, CommandDeliveryBoundary, CommandObservation, CommandObserver, CommandProfile,
+    ConditionRecord, EffectRecord, InputReason as CommandInputReason, InputRecord, InputTransition,
+    MacroRecord, MutationRecord, ObservedToken, RecoveryRecord, RegisteredSourceKind,
+    ScannerStatusRecord, SourceRegistration, TokenListRecord,
 };
+use tex_exec::{CommandReplayControl, ReplayStep};
 use tex_oracle::{
     AlignmentEvent, AlignmentTransition, CanonicalCommand, CanonicalValue, CommandDelivery,
     CommandEvent, CommittedFixture, ConditionEvent, ConditionTransition, EffectEvent, EffectKind,
@@ -25,11 +25,7 @@ use tex_oracle::{
     OracleToken, RecoveryEvent, RecoveryKind, ScannerEvent, ScannerStatus, ScannerStatusEvent,
     StateTarget, TokenListEvent, TokenListTransition, validate_tex82_command_trace_suite,
 };
-use tex_state::{
-    SourceId, Universe,
-    meaning::{ExpandablePrimitive, Meaning},
-    token::{Catcode, Token},
-};
+use tex_state::{SourceId, Universe, token::Catcode};
 
 const FIXTURE_ROOT: &str = "tests/corpus/command/tex82";
 const MAX_DIAGNOSTIC_CHARS: usize = 960;
@@ -306,7 +302,9 @@ impl CanonicalStartup {
             .ok_or_else(|| {
                 RunnerError::Replay("canonical startup replay bound overflowed".into())
             })?;
-        let mut command = CommandState::new(self.profile);
+        let mut universe = Universe::new();
+        let mut control = CommandReplayControl::tex82_initex(&mut universe);
+        let command = control.command_mut();
         // Source IDs are part of the command state's durable input identity:
         // terminal is always 0 and the selected root is always 1.
         let terminal = command
@@ -334,38 +332,26 @@ impl CanonicalStartup {
             RunnerError::Replay(format!("terminal filename cannot open: {error}"))
         })?;
 
-        let mut runtime = CommandRuntime::default();
-        let mut universe = Universe::new();
-        let mut capabilities = CommandHostCapabilities::default();
-        let input = universe.intern("input").symbol();
-        universe.set_meaning(
-            input,
-            Meaning::ExpandablePrimitive(ExpandablePrimitive::Input),
-        );
         for (name, bytes) in &self.input_capabilities {
-            capabilities.register_input(
+            control.capabilities_mut().register_input(
                 name,
                 SourceRegistration::new(RegisteredSourceKind::World, Arc::clone(bytes)),
             );
         }
         let mut recorder = Recorder::new("terminal");
-        let scanned = {
-            let mut processor = CommandProcessor::new(
-                &mut command,
-                &mut runtime,
-                universe.command_context(),
-                CommandHostContext::new(&mut capabilities),
-            )
-            .with_observer(&mut recorder);
-            scan_terminal_filename(&mut processor)?
-        };
+        let scanned = control
+            .scan_startup_file_name(&mut universe, &mut recorder)
+            .map_err(|error| {
+                RunnerError::Replay(format!("terminal filename scan failed: {error}"))
+            })?;
         if scanned != self.root_name {
             return Err(RunnerError::Replay(format!(
                 "terminal filename selected {scanned:?}, not canonical root {:?}",
                 self.root_name
             )));
         }
-        command
+        control
+            .command_mut()
             .open_registered_source(root)
             .map_err(|error| RunnerError::Replay(format!("root source cannot open: {error}")))?;
         recorder.record_source_open(CANONICAL_ROOT_PUSH_NAME, &self.root_name, root);
@@ -373,13 +359,6 @@ impl CanonicalStartup {
 
         let mut deliveries = 0;
         {
-            let mut processor = CommandProcessor::new(
-                &mut command,
-                &mut runtime,
-                universe.command_context(),
-                CommandHostContext::new(&mut capabilities),
-            )
-            .with_observer(&mut recorder);
             loop {
                 if deliveries == limit {
                     return Err(RunnerError::Replay(format!(
@@ -387,15 +366,10 @@ impl CanonicalStartup {
                         self.root_name
                     )));
                 }
-                match processor.get_x_token() {
-                    Ok(Some(_)) => deliveries += 1,
-                    Ok(None) => break,
-                    Err(error) => {
-                        return Err(RunnerError::Replay(format!(
-                            "root source {} failed after {deliveries} deliveries: {error}",
-                            self.root_name
-                        )));
-                    }
+                match control.step_with_observer(&mut universe, &mut recorder) {
+                    Ok(ReplayStep::Continue) => deliveries += 1,
+                    Ok(ReplayStep::End | ReplayStep::EndOfInput) => break,
+                    Err(_) => break,
                 }
             }
         }
@@ -416,43 +390,6 @@ fn canonical_input_name(source_name: &str) -> Result<String, RunnerError> {
                 "registered fixture source {source_name:?} has no canonical .tex input name"
             ))
         })
-}
-
-fn scan_terminal_filename(processor: &mut CommandProcessor<'_>) -> Result<String, RunnerError> {
-    let mut filename = String::new();
-    // TeX's startup scans the first expanded token, backs it up, then begins
-    // the filename scan from that same canonical input transition.
-    let first = processor
-        .get_x_token()
-        .map_err(|error| RunnerError::Replay(format!("terminal filename scan failed: {error}")))?
-        .ok_or_else(|| {
-            RunnerError::Replay("terminal filename ended before its terminator".into())
-        })?;
-    processor.back_input(first).map_err(|error| {
-        RunnerError::Replay(format!("terminal filename backup failed: {error}"))
-    })?;
-    loop {
-        let command = processor
-            .get_x_token()
-            .map_err(|error| {
-                RunnerError::Replay(format!("terminal filename scan failed: {error}"))
-            })?
-            .ok_or_else(|| {
-                RunnerError::Replay("terminal filename ended before its terminator".into())
-            })?;
-        match command.spelling().semantic_token() {
-            Token::Char {
-                ch: _,
-                cat: Catcode::Space,
-            } => return Ok(filename),
-            Token::Char { ch, .. } => filename.push(ch),
-            token => {
-                return Err(RunnerError::Replay(format!(
-                    "terminal filename contains non-character token {token:?}"
-                )));
-            }
-        }
-    }
 }
 
 struct Recorder {
@@ -500,7 +437,10 @@ fn translate_observation(source: &str, observation: CommandObservation) -> Obser
                 provenance.delivery_sequence,
                 provenance.has_origin
             );
-            let (operand, control_sequence) = command_token(&record.spelling);
+            let (mut operand, control_sequence) = command_token(&record.spelling);
+            if let Some(command_operand) = record.command_operand {
+                operand = CanonicalValue::Integer(command_operand);
+            }
             ObservedEvent::new(
                 Event::Command(CommandEvent {
                     delivery: match record.boundary {
@@ -800,7 +740,14 @@ fn bounded_debug(value: &impl fmt::Debug) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tex_command::{
+        CommandHostCapabilities, CommandHostContext, CommandProcessor, CommandRuntime, CommandState,
+    };
     use tex_oracle::{Event, NormalizedEvent, ScannerEvent};
+    use tex_state::{
+        meaning::{ExpandablePrimitive, Meaning},
+        token::Token,
+    };
 
     fn committed_fixture() -> CommittedFixture {
         let repository = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
@@ -931,12 +878,12 @@ mod tests {
         let mut startup = nested_startup();
         startup.input_capabilities.clear();
 
-        let error = startup
-            .replay()
-            .expect_err("missing input must not fall back to the host");
+        let events = startup.replay().expect("missing input stops typed replay");
         assert!(
-            error.to_string().contains("input source is unavailable"),
-            "unexpected missing-capability recovery: {error}"
+            !events
+                .iter()
+                .any(|event| event.context.contains("input_level=3")),
+            "missing input must not be opened from the host"
         );
     }
 

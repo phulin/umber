@@ -4,14 +4,18 @@
 //! expansion, macro calls, input nesting, and operand collection remain in
 //! `tex-command`; no `InputStack` is accepted here.
 
+#[cfg(any(test, feature = "instrumentation"))]
+use tex_command::CommandObserver;
 use tex_command::{
     AlignmentDelivery, AlignmentIdentity, AlignmentRequest, CommandError, CommandHostCapabilities,
-    CommandHostContext, CommandProcessor, CommandRuntime, CommandState,
+    CommandHostContext, CommandProcessor, CommandProfile, CommandRuntime, CommandState,
 };
 use tex_state::interner::Symbol;
 use tex_state::macro_store::{MacroDefinitionProvenance, MacroMeaning};
 use tex_state::meaning::{Meaning, MeaningFlags, UnexpandablePrimitive};
 use tex_state::token::Catcode;
+#[cfg(any(test, feature = "instrumentation"))]
+use tex_state::token::Token;
 use tex_state::{PrintSink, TracedTokenList, Universe};
 
 use crate::{ExecError, Mode, ModeNest};
@@ -28,6 +32,20 @@ pub struct CommandReplayControl {
 }
 
 impl CommandReplayControl {
+    /// Creates a fresh canonical TeX82 INITEX replay environment.
+    ///
+    /// The primitive definitions are installed from the engine's static TeX82
+    /// registries, before any fixture or host source is registered.
+    #[must_use]
+    pub fn tex82_initex(stores: &mut Universe) -> Self {
+        tex_expand::install_expandable_primitives(stores);
+        crate::install_unexpandable_primitives(stores);
+        Self {
+            command: CommandState::new(CommandProfile::TEX82),
+            ..Self::default()
+        }
+    }
+
     /// Borrows canonical command state for source registration and snapshots.
     #[must_use]
     pub fn command_mut(&mut self) -> &mut CommandState {
@@ -142,6 +160,81 @@ impl CommandReplayControl {
             &mut self.active_alignment,
             &mut self.command,
         )
+    }
+
+    /// Delivers and executes one replay command while forwarding committed
+    /// command-owned observations in their original order.
+    #[cfg(any(test, feature = "instrumentation"))]
+    pub fn step_with_observer(
+        &mut self,
+        stores: &mut Universe,
+        observer: &mut dyn CommandObserver,
+    ) -> Result<ReplayStep, ExecError> {
+        let scanned = {
+            let mut processor = CommandProcessor::new(
+                &mut self.command,
+                &mut self.runtime,
+                stores.command_context(),
+                CommandHostContext::new(&mut self.capabilities),
+            )
+            .with_observer(observer);
+            scan_step(&mut processor)?
+        };
+        apply_scanned_step(
+            scanned,
+            stores,
+            &mut self.modes,
+            &mut self.next_alignment_identity,
+            &mut self.active_alignment,
+            &mut self.command,
+        )
+    }
+
+    /// Scans TeX's initial terminal filename through the canonical command
+    /// path, retaining every committed observation for the caller.
+    #[cfg(any(test, feature = "instrumentation"))]
+    pub fn scan_startup_file_name(
+        &mut self,
+        stores: &mut Universe,
+        observer: &mut dyn CommandObserver,
+    ) -> Result<String, ExecError> {
+        let mut processor = CommandProcessor::new(
+            &mut self.command,
+            &mut self.runtime,
+            stores.command_context(),
+            CommandHostContext::new(&mut self.capabilities),
+        )
+        .with_observer(observer);
+        let first =
+            processor
+                .get_x_token()
+                .map_err(command_error)?
+                .ok_or(ExecError::MissingToken {
+                    context: "terminal filename",
+                })?;
+        processor.back_input(first).map_err(command_error)?;
+        let mut filename = String::new();
+        loop {
+            let command =
+                processor
+                    .get_x_token()
+                    .map_err(command_error)?
+                    .ok_or(ExecError::MissingToken {
+                        context: "terminal filename",
+                    })?;
+            match command.spelling().semantic_token() {
+                Token::Char {
+                    cat: Catcode::Space,
+                    ..
+                } => return Ok(filename),
+                Token::Char { ch, .. } => filename.push(ch),
+                _ => {
+                    return Err(ExecError::MissingToken {
+                        context: "terminal filename character",
+                    });
+                }
+            }
+        }
     }
 }
 

@@ -157,8 +157,12 @@ cargo run -q -p tex-command-stream -- --repository .
 ```
 
 It validates the complete registered suite, constructs the explicit canonical
-INITEX startup state, scans the terminal filename `transitions.tex`, and opens
-that root above terminal input. Every other declared `.tex` source is installed
+INITEX startup state, installs the deterministic TeX82 primitive registry,
+scans the terminal filename `transitions.tex`, and opens that root above
+terminal input. It routes terminal scanning and root execution through
+`tex_exec::CommandReplayControl`, preserving command-observer ordering while
+the command crate remains the sole delivery and scanning owner. Every other
+declared `.tex` source is installed
 before replay as an immutable, extensionless virtual `\\input` capability;
 canonical input expansion alone registers and opens a child. Terminal and root
 receive deterministic source identities in that order, and child identities

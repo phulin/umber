@@ -5,6 +5,7 @@ edition.workspace = true
 
 [dependencies]
 tex-command = { path = "../../crates/tex-command", features = ["instrumentation"] }
+tex-exec = { path = "../../crates/tex-exec", features = ["instrumentation"] }
 tex-oracle = { path = "../../crates/tex-oracle" }
 tex-state = { path = "../../crates/tex-state" }
 
