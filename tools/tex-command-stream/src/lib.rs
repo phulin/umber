@@ -483,6 +483,7 @@ struct Recorder {
     registered_inputs: BTreeMap<String, Arc<[u8]>>,
     next_registered_source: u32,
     alignment_nesting: AlignmentNesting,
+    open_write_targets: BTreeMap<String, String>,
     events: Vec<ObservedEvent>,
 }
 
@@ -503,6 +504,7 @@ impl Recorder {
             registered_inputs,
             next_registered_source: 2,
             alignment_nesting: AlignmentNesting::default(),
+            open_write_targets: BTreeMap::new(),
             events: Vec::new(),
         }
     }
@@ -570,16 +572,29 @@ fn canonical_trace_source_name(name: &str) -> String {
 }
 
 impl CommandObserver for Recorder {
-    fn committed(&mut self, observation: CommandObservation) {
+    fn committed(&mut self, mut observation: CommandObservation) {
         if let CommandObservation::Effect(EffectRecord {
             kind: "input",
             detail,
+            ..
         }) = &observation
         {
             // The effect carries the command-core capability hand-off, while
             // the portable trace observes only the resulting source push.
             self.activate_registered_input(detail);
             return;
+        }
+        if let CommandObservation::Effect(effect) = &mut observation {
+            if effect.kind == "open" {
+                if let Some((stream, target)) = effect.detail.split_once('\0') {
+                    self.open_write_targets.insert(stream.into(), target.into());
+                }
+            } else if effect.kind == "close" && !effect.detail.contains('\0') {
+                if let Some(target) = self.open_write_targets.remove(&effect.detail) {
+                    effect.detail.push('\0');
+                    effect.detail.push_str(&target);
+                }
+            }
         }
         let (source_name, source_id, source_bytes) = {
             let source = self.current_source();
@@ -878,7 +893,9 @@ fn translate_input(record: InputRecord, active_source: &str) -> Event {
         CommandInputReason::Source => InputReason::Source,
         CommandInputReason::Backup => InputReason::Backup,
         CommandInputReason::Macro => InputReason::Macro,
-        CommandInputReason::Parameter | CommandInputReason::TokenList => InputReason::TokenList,
+        CommandInputReason::Parameter
+        | CommandInputReason::TokenList
+        | CommandInputReason::Write => InputReason::TokenList,
         CommandInputReason::AlignmentUTemplate | CommandInputReason::AlignmentVTemplate => {
             InputReason::AlignmentTemplate
         }
@@ -895,6 +912,7 @@ fn translate_input(record: InputRecord, active_source: &str) -> Event {
             CommandInputReason::AlignmentVTemplate => "v_template".into(),
             CommandInputReason::Recovery => "recovery".into(),
             CommandInputReason::TokenList => "output".into(),
+            CommandInputReason::Write => "write".into(),
             // TeX82's `end_file_reading` observer carries only the lifecycle
             // transition.  The harness attaches the source identity while the
             // source frame is still active, before it removes that frame from
@@ -1231,7 +1249,11 @@ fn translate_effect(record: EffectRecord) -> Event {
             _ => EffectKind::Terminate,
         },
         channel,
-        value: CanonicalValue::Name(detail),
+        value: record
+            .tokens
+            .map_or(CanonicalValue::Name(detail), |tokens| {
+                CanonicalValue::Tokens(tokens.into_iter().map(oracle_token).collect())
+            }),
     })
 }
 
@@ -1291,6 +1313,7 @@ mod tests {
             translate_effect(EffectRecord {
                 kind: "message",
                 detail: "READY".into(),
+                tokens: None,
             }),
             Event::Effect(EffectEvent {
                 kind: EffectKind::Message,

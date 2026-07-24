@@ -25,6 +25,11 @@ use crate::observation::{CommandObservation, TokenListRecord};
 pub(crate) enum ScanToksMode {
     /// Collect balanced general text; parameter characters are ordinary text.
     General { expanded: bool },
+    /// Collect general text after the caller has validated and backed up the
+    /// required opening brace. This preserves TeX82's scanner ordering for
+    /// `\\write`: `scan_int`'s terminator is first validated through the
+    /// expanded path, then the absorbing collector replays that exact backup.
+    GeneralAfterOpening { expanded: bool, primary: OriginId },
     /// Collect a macro parameter text followed by its replacement text.
     MacroDefinition { expanded: bool },
 }
@@ -50,11 +55,13 @@ impl CommandProcessor<'_> {
             self.command.transient.next_builder_identity.wrapping_add(1);
         let warning = ScannerWarning(builder.0);
         let status = match mode {
-            ScanToksMode::General { .. } => ScannerStatus::Absorbing(AbsorbingContext {
-                owner: None,
-                builder,
-                warning,
-            }),
+            ScanToksMode::General { .. } | ScanToksMode::GeneralAfterOpening { .. } => {
+                ScannerStatus::Absorbing(AbsorbingContext {
+                    owner: None,
+                    builder,
+                    warning,
+                })
+            }
             ScanToksMode::MacroDefinition { .. } => ScannerStatus::Defining(DefinitionContext {
                 target: None,
                 builder,
@@ -71,8 +78,12 @@ impl CommandProcessor<'_> {
         self.observe(CommandObservation::TokenList(TokenListRecord {
             transition: "complete",
             purpose: match mode {
-                ScanToksMode::General { expanded: true } => "expanded_scan_toks",
-                ScanToksMode::General { expanded: false } => "scan_toks",
+                ScanToksMode::General { expanded: true }
+                | ScanToksMode::GeneralAfterOpening { expanded: true, .. } => "expanded_scan_toks",
+                ScanToksMode::General { expanded: false }
+                | ScanToksMode::GeneralAfterOpening {
+                    expanded: false, ..
+                } => "scan_toks",
                 ScanToksMode::MacroDefinition { .. } => "macro_replacement",
             },
             tokens: self
@@ -93,6 +104,15 @@ impl CommandProcessor<'_> {
                 // expanded path even when the replacement text itself is
                 // collected unexpanded.
                 let primary = self.scan_left_brace(true)?.origin();
+                (expanded, Vec::new(), 0, None, primary)
+            }
+            ScanToksMode::GeneralAfterOpening { expanded, primary } => {
+                let opening = self.get_token()?.ok_or(CommandError::InputInvariant)?;
+                if !is_begin_group(opening.spelling().semantic_token()) {
+                    return Err(CommandError::InputInvariant);
+                }
+                #[cfg(any(test, feature = "instrumentation"))]
+                self.observe_expanded_delivery(&opening);
                 (expanded, Vec::new(), 0, None, primary)
             }
             ScanToksMode::MacroDefinition { expanded } => {

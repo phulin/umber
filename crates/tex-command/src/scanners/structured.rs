@@ -8,9 +8,13 @@ use tex_state::glue::GlueSpec;
 use tex_state::interner::Symbol;
 use tex_state::meaning::{Meaning, UnexpandablePrimitive};
 use tex_state::scaled::Scaled;
-use tex_state::token::{Catcode, OriginId, Token};
+use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 use tex_state::{SourceId, TracedTokenList};
 
+use crate::input::{
+    ReplayTrace, RetirementBehavior, SharedTokenBuffer, StoredReplayReason, TokenBehavior,
+    TokenPayload, TransientReplayReason,
+};
 use crate::processor::status::{
     AlignmentId, AlignmentScanContext, ScannerStatus, ScannerWarning, TokenBuilderId,
 };
@@ -177,10 +181,12 @@ impl CommandProcessor<'_> {
             }
             Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Write) => {
                 let stream = self.scan_integer()?.value;
-                // §1356 executes an immediate write through `write_out`;
-                // collect its text in the expanded scanner episode now, while
-                // command control still owns the recursive input path.
-                let tokens = self.scan_balanced_text(true)?.tokens;
+                // TeX82 §53 first saves write text without expansion, then
+                // `write_out` replays it under an outer `\\endwrite` stopper
+                // and scans the resulting expanded text. Keep both episodes
+                // command-owned; replay receives only the frozen result.
+                let tokens = self.scan_immediate_write_text()?;
+                let tokens = self.expand_write_text(tokens)?;
                 Ok(ImmediateExtension::Write { stream, tokens })
             }
             Meaning::UnexpandablePrimitive(UnexpandablePrimitive::CloseOut) => {
@@ -191,6 +197,95 @@ impl CommandProcessor<'_> {
                 self.back_input(command)?;
                 Ok(ImmediateExtension::Continue)
             }
+        }
+    }
+
+    fn expand_write_text(
+        &mut self,
+        tokens: TracedTokenList,
+    ) -> Result<TracedTokenList, CommandError> {
+        let endwrite = self
+            .state
+            .primitive_token("endwrite")
+            .ok_or(CommandError::InputInvariant)?;
+        let right_brace = Token::Char {
+            ch: '}',
+            cat: Catcode::EndGroup,
+        };
+        let left_brace = Token::Char {
+            ch: '{',
+            cat: Catcode::BeginGroup,
+        };
+
+        // The bottom stopper delivers the synthetic closing brace followed
+        // by frozen outer `\\endwrite`; the write list and opening brace sit
+        // above it exactly as TeX82's three `ins_list` calls do.
+        self.push_write_recovery(vec![right_brace, endwrite], right_brace);
+        let write_level = self.command.push_token_level(
+            TokenPayload::Stored {
+                tokens: tokens.token_list(),
+                origins: tokens.origin_list(),
+            },
+            TokenBehavior::Ordinary,
+            RetirementBehavior::Pop,
+            ReplayTrace::Stored(StoredReplayReason::Write),
+        );
+        #[cfg(any(test, feature = "instrumentation"))]
+        self.observe(crate::CommandObservation::Input(crate::InputRecord {
+            transition: crate::InputTransition::Push,
+            reason: crate::InputReason::Write,
+            level: write_level.0,
+            position: 0,
+        }));
+        self.push_write_recovery(vec![left_brace], left_brace);
+
+        let expanded = self.scan_balanced_text(true)?.tokens;
+        let stopper = self.get_token()?.ok_or(CommandError::InputInvariant)?;
+        if stopper.spelling().semantic_token() != endwrite {
+            return Err(CommandError::InputInvariant);
+        }
+        self.retire_last_delivery_level()?;
+        Ok(expanded)
+    }
+
+    /// Freezes the ordinary `\\write` text after TeX82's `scan_int`
+    /// terminator has been validated and backed up. Unlike general-text
+    /// callers, §53's `new_write_whatsit` enters the absorbing collection at
+    /// that already-backed-up brace.
+    fn scan_immediate_write_text(&mut self) -> Result<TracedTokenList, CommandError> {
+        let scanned = self.scan_toks(ScanToksMode::GeneralAfterOpening {
+            expanded: false,
+            primary: OriginId::UNKNOWN,
+        })?;
+        Ok(scanned.replacement_text)
+    }
+
+    fn push_write_recovery(&mut self, tokens: Vec<Token>, observed: Token) {
+        let level = self.command.push_token_level(
+            TokenPayload::Transient(SharedTokenBuffer::new(
+                tokens
+                    .into_iter()
+                    .map(|token| TracedTokenWord::pack(token, OriginId::UNKNOWN))
+                    .collect::<Vec<_>>(),
+            )),
+            TokenBehavior::Recovery,
+            RetirementBehavior::Pop,
+            ReplayTrace::Transient(TransientReplayReason::Inserted),
+        );
+        #[cfg(any(test, feature = "instrumentation"))]
+        {
+            self.observe(crate::CommandObservation::Input(crate::InputRecord {
+                transition: crate::InputTransition::Recovery,
+                reason: crate::InputReason::Recovery,
+                level: level.0,
+                position: 0,
+            }));
+            self.observe(crate::CommandObservation::Recovery(crate::RecoveryRecord {
+                backup: false,
+                tokens: vec![
+                    self.observed_token(TracedTokenWord::pack(observed, OriginId::UNKNOWN)),
+                ],
+            }));
         }
     }
 

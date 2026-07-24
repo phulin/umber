@@ -37,6 +37,23 @@ use crate::observation::{
 const DEFAULT_END_LINE_CHAR: i32 = 13;
 
 impl CommandProcessor<'_> {
+    /// Retires the exhausted level that supplied the immediately preceding
+    /// raw delivery without reading a subsequent token.
+    ///
+    /// TeX82's `write_out` consumes its artificial `\\endwrite` stopper
+    /// after `scan_toks` has restored scanner status.  The stopper's level
+    /// must retire before the caller publishes the write effect, but the
+    /// following source token must remain untouched (§53).
+    pub(crate) fn retire_last_delivery_level(&mut self) -> Result<(), CommandError> {
+        let stamp = self.last_delivery.ok_or(CommandError::InputInvariant)?;
+        match self.retire_and_restart(InputLevelId(stamp.input_level()))? {
+            RetirementRestart::Continue => Ok(()),
+            RetirementRestart::Stop | RetirementRestart::EndV(_) => {
+                Err(CommandError::InputInvariant)
+            }
+        }
+    }
+
     /// Delivers one expanded command, separating an intercepted alignment
     /// delimiter from ordinary main-control delivery.
     ///
@@ -771,7 +788,14 @@ impl CommandProcessor<'_> {
                 } else {
                     InputTransition::Retire
                 },
-                reason: observed_retirement_reason(action, retirement.reason),
+                reason: if matches!(
+                    retirement.trace,
+                    Some(ReplayTrace::Stored(crate::input::StoredReplayReason::Write))
+                ) {
+                    InputReason::Write
+                } else {
+                    observed_retirement_reason(action, retirement.reason)
+                },
                 level: identity.0,
                 position: 0,
             }));
@@ -1057,6 +1081,10 @@ impl CommandProcessor<'_> {
             // TeX82's observer presents the inaccessible frozen `\relax`
             // inserted by incomplete-conditional recovery as `\relax`.
             crate::observation::ObservedToken::ControlSequence("relax".into())
+        } else if matches!(command.spelling().semantic_token(), Token::Frozen(_))
+            && let Some(name) = self.state.primitive_name(command.meaning())
+        {
+            crate::observation::ObservedToken::ControlSequence(name.into())
         } else {
             self.observed_token(command.spelling())
         }

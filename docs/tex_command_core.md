@@ -807,8 +807,13 @@ Likewise TeX82 §53 registers `\openout`, `\write`, `\closeout`, `\special`,
 `\immediate`, and `\setlanguage` as the shared `extension` command with
 operands 0 through 5. The command core emits those raw identities. For
 `\immediate`, it also owns §53's recursive `get_x_token` lookahead, the
-integer/optional-equals/filename or write-text scan for `\openout`, `\write`,
-and `\closeout`, and backup of every other expanded token. It returns only a
+integer/optional-equals/filename scan for `\openout`, and backup of every
+other expanded token. An immediate `\write` first freezes its ordinary
+unexpanded general text, then command control replays that list between
+synthetic braces and the inaccessible outer `\endwrite` stopper before an
+expanded `scan_toks` collection. The stopper retires without reading the
+following source token; this preserves TeX82's raw/expanded deliveries,
+input lifecycle, and detached write observation. It returns only the final
 typed immediate-effect request; the executor applies that request without
 access to live command input. This metadata does not participate
 in execution dispatch.

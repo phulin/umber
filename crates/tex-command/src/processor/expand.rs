@@ -339,6 +339,7 @@ impl CommandProcessor<'_> {
         self.observe(CommandObservation::Effect(EffectRecord {
             kind: "input",
             detail: _input.file_name.name,
+            tokens: None,
         }));
         let _ = opener;
         Ok(())

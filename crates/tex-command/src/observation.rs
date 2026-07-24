@@ -294,6 +294,7 @@ pub enum InputReason {
     AlignmentVTemplate,
     Recovery,
     TokenList,
+    Write,
 }
 
 /// One input transition with its deterministic aggregate provenance.
@@ -403,6 +404,9 @@ pub struct MutationRecord {
 pub struct EffectRecord {
     pub kind: &'static str,
     pub detail: String,
+    /// The frozen expanded token payload for token-oriented effects such as
+    /// TeX82 `\\write`; textual effects leave this absent.
+    pub tokens: Option<Vec<ObservedToken>>,
 }
 
 /// A stable semantic diagnostic selected by a committed command transition.

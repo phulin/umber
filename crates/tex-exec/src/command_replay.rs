@@ -89,6 +89,7 @@ impl CommandReplayControl {
     pub fn tex82_initex(stores: &mut Universe) -> Self {
         tex_expand::install_expandable_primitives(stores);
         crate::install_unexpandable_primitives(stores);
+        install_write_stopper(stores);
         Self {
             command: CommandState::new(CommandProfile::TEX82),
             next_alignment_identity: 1,
@@ -434,6 +435,21 @@ impl CommandReplayControl {
             }
         }
     }
+}
+
+/// Installs TeX82 §53's inaccessible outer `\\endwrite` sentinel.
+///
+/// It is a frozen primitive spelling backed by an empty outer macro so the
+/// command core can observe its raw stopper delivery without exposing a
+/// fixture-specific marker to ordinary source input.
+fn install_write_stopper(stores: &mut Universe) {
+    let empty = stores.intern_token_list(&[]);
+    let definition = stores.intern_macro(MacroMeaning::new(MeaningFlags::OUTER, empty, empty));
+    let meaning = Meaning::Macro {
+        flags: MeaningFlags::OUTER,
+        definition,
+    };
+    stores.install_primitive_meaning("endwrite", meaning);
 }
 
 /// The structural outcome of one typed replay operation.
@@ -1478,12 +1494,28 @@ fn applied_effect_observation(scanned: &ScannedStep, stores: &Universe) -> Optio
         ScannedStep::Message { tokens } => Some(EffectRecord {
             kind: "message",
             detail: replay_text(stores.tokens(tokens.token_list())),
+            tokens: None,
         }),
+        ScannedStep::ImmediateExtension(ImmediateExtension::Write { stream, tokens }) => {
+            Some(EffectRecord {
+                kind: "write",
+                detail: format!("stream:{stream}\0"),
+                tokens: Some(
+                    stores
+                        .tokens(tokens.token_list())
+                        .iter()
+                        .copied()
+                        .map(|token| observed_macro_token(token, stores))
+                        .collect(),
+                ),
+            })
+        }
         ScannedStep::ImmediateExtension(ImmediateExtension::OpenOut { .. }) => {
             match stores.world().effect_records().last()? {
                 tex_state::EffectRecord::StreamOpen { slot, target } => Some(EffectRecord {
                     kind: "open",
                     detail: format!("stream:{}\0{}", slot.raw(), target.path().to_string_lossy()),
+                    tokens: None,
                 }),
                 _ => None,
             }
@@ -1493,6 +1525,7 @@ fn applied_effect_observation(scanned: &ScannedStep, stores: &Universe) -> Optio
                 tex_state::EffectRecord::StreamClose { slot } => Some(EffectRecord {
                     kind: "close",
                     detail: format!("stream:{}", slot.raw()),
+                    tokens: None,
                 }),
                 _ => None,
             }

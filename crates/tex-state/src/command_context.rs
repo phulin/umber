@@ -121,6 +121,13 @@ impl CommandContext<'_> {
         self.universe.resolve(symbol)
     }
 
+    /// Returns the registered canonical spelling of one frozen primitive
+    /// meaning, independent of a mutable control-sequence cell.
+    #[must_use]
+    pub fn primitive_name(&self, meaning: Meaning) -> Option<&str> {
+        self.universe.primitive_name(meaning)
+    }
+
     /// Reads one integer parameter for canonical expandable conversion.
     #[must_use]
     pub fn int_param(&self, param: IntParam) -> i32 {
