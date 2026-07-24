@@ -213,6 +213,25 @@ impl CommandProcessor<'_> {
         self.back_input(opening)
     }
 
+    /// Performs TeX82 `fin_col`'s next-entry lookahead. Spaces are delivered
+    /// normally; the first non-space token is restored before the selected
+    /// u-template is installed.
+    pub fn scan_alignment_next_cell_opening(&mut self) -> Result<(), CommandError> {
+        loop {
+            let command = self.get_x_token()?.ok_or(CommandError::InputInvariant)?;
+            if matches!(
+                command.meaning(),
+                Meaning::CharToken {
+                    cat: Catcode::Space,
+                    ..
+                }
+            ) {
+                continue;
+            }
+            return self.back_input(command);
+        }
+    }
+
     /// Enters TeX82's live alignment-preamble scanner episode.
     ///
     /// `init_align` establishes `scanner_status := aligning` after its

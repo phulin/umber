@@ -39,9 +39,9 @@ pub use observation::{
     ScannerStatusRecord, TokenListRecord,
 };
 pub use processor::{
-    AlignmentCellTemplates, AlignmentDelivery, AlignmentDeliveryEvent, AlignmentIdentity,
-    AlignmentLifecycleError, AlignmentPreamble, AlignmentRequest, AlignmentRequestResult,
-    CommandProcessor,
+    AlignmentCellDelimiter, AlignmentCellTemplates, AlignmentDelivery, AlignmentDeliveryEvent,
+    AlignmentIdentity, AlignmentLifecycleError, AlignmentPreamble, AlignmentRequest,
+    AlignmentRequestResult, CommandProcessor, FinishedAlignmentCell,
 };
 pub use profile::{
     CharacterCode, CharacterCodeError, CharacterMode, CommandCapabilities, CommandDialect,

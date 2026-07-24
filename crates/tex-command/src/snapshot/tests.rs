@@ -107,6 +107,7 @@ fn snapshot_roundtrip_preserves_nonquiescent_semantic_state() {
             u_template_installed: false,
             u_level: None,
             v_level: None,
+            delimiter: None,
         });
         (state.clone(), state.snapshot())
     });
@@ -244,6 +245,7 @@ fn summary_rejects_expansion_alignment_and_live_transients() {
                 u_template_installed: false,
                 u_level: None,
                 v_level: None,
+                delimiter: None,
             });
         },
         CommandSummaryError::AlignmentTemplateActive,

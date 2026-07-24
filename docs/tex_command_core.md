@@ -124,18 +124,18 @@ delivers and backs up the first source opening brace before the executor's
 typed template-install request pushes its optional u-template as a stored
 input level; when that exact level retires, raw delivery returns to cell-body
 depth. A completed cell-body scanner resumes through that same alignment
-delivery entry point: a backed-up tab, `\span`, or `\cr` is recognized by
+delivery entry point: a tab, `\span`, or `\cr` is recognized by
 `get_next` while the body depth is zero and becomes the opaque delimiter event,
 not generic expanded delivery. This follows TeX82 `get_next` (§343) and the
 `init_col`/`fin_col`/`do_endv` template lifecycle (§§765--772). On an
 intercepted delimiter, executor `end_template` handling calls
-`CommandProcessor::begin_alignment_v_template`: it backs up the original
-delimiter below the stored v-template, so all suffix tokens (including macro
-expansion and definitions) restart through `get_next`. Exhausting the exact
-v-template retains its frame and emits raw frozen `end_template`; §343 expands
-that delivery to frozen `endv`, after which successful `do_endv` uses
-`CommandState::finish_alignment_cell` to retire that exact frame before
-the backed-up delimiter can replay. Active frame identities live in
+`CommandProcessor::begin_alignment_v_template`: it records the original
+delimiter as an opaque `fin_col` outcome while the stored v-template replays,
+so all suffix tokens (including macro expansion and definitions) restart
+through `get_next`. Exhausting the exact v-template retains its frame and
+emits raw frozen `end_template`; §343 expands that delivery to frozen `endv`,
+after which successful `do_endv` uses `CommandState::finish_alignment_cell`
+to retire that exact frame and return the saved delimiter structurally. Active frame identities live in
 `AlignmentDeliveryState`, and therefore suspend with nested alignments and
 are cloned by command snapshots.
 
@@ -156,8 +156,11 @@ continuation. This is TeX82 §§343 and 772: the command processor still owns
 expansion and the retained frame, while the executor applies the cell
 lifecycle only after receiving the completed command. On success, replay
 publishes the canonical state-change, v-template input retirement, and
-v-template retirement observations in that order; the backed-up delimiter
-then remains command-owned input for the following alignment lifecycle.
+v-template retirement observations in that order. TeX82 §772's `fin_col`
+then selects the next column, span continuation, or row from that typed saved
+delimiter; §785's following-entry lookahead remains command-owned, delivering
+and skipping spaces before it backs up the first next-cell token for the
+selected u-template. The delimiter never reappears as ordinary raw delivery.
 
 Command observation preserves TeX82's raw command identity before that
 interception: `\cr` and `\crcr` are both `car_ret`, with `cur_chr` 257 and

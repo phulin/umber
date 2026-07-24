@@ -4,7 +4,7 @@
 //! TeX.web §343 (`get_next`).  Later scanner and alignment milestones extend
 //! the two explicit entry points below; they do not add another lexical path.
 
-use tex_state::meaning::{ExpandablePrimitive, Meaning};
+use tex_state::meaning::{ExpandablePrimitive, Meaning, UnexpandablePrimitive};
 use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 
 use crate::command::{CurrentCommand, DeliveryStamp};
@@ -97,24 +97,39 @@ impl CommandProcessor<'_> {
         {
             return Err(CommandError::StaleDelivery);
         }
-        // Validate the lifecycle before changing the input stack, then make
-        // the original delimiter the first token beneath the v-template.
+        // TeX82 saves the delimiter in `extra_info(cur_align)` for `fin_col`.
+        // Retain only that typed result: after `do_endv` it must select the
+        // next structural transition, never re-enter raw delivery.
         self.command
             .alignment
             .v_template(alignment)
             .map_err(|_| CommandError::InputInvariant)?;
         self.last_delivery = None;
-        self.command.push_token_level(
-            TokenPayload::BackedUp(SharedBackedUpBuffer::new(vec![BackedUpToken {
-                spelling: delimiter.spelling(),
-                source_range: delimiter.source_range(),
-            }])),
-            TokenBehavior::BackedUp(BackupTreatment::Ordinary),
-            RetirementBehavior::Pop,
-            ReplayTrace::BackedUp,
-        );
+        let saved_delimiter = match delimiter.spelling().semantic_token() {
+            Token::Char {
+                cat: Catcode::AlignmentTab,
+                ..
+            } => crate::AlignmentCellDelimiter::Tab,
+            _ if matches!(
+                delimiter.meaning(),
+                Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Span)
+            ) =>
+            {
+                crate::AlignmentCellDelimiter::Span
+            }
+            _ if matches!(
+                delimiter.meaning(),
+                Meaning::UnexpandablePrimitive(
+                    UnexpandablePrimitive::Cr | UnexpandablePrimitive::CrCr
+                )
+            ) =>
+            {
+                crate::AlignmentCellDelimiter::Row
+            }
+            _ => return Err(CommandError::InputInvariant),
+        };
         self.command
-            .begin_alignment_v_template(alignment)
+            .begin_alignment_v_template(alignment, saved_delimiter)
             .map_err(|_| CommandError::InputInvariant)?;
         #[cfg(any(test, feature = "instrumentation"))]
         if let Some(input) = self
@@ -1519,7 +1534,7 @@ mod tests {
     }
 
     #[test]
-    fn retained_v_template_delivers_end_template_then_endv_before_retirement() {
+    fn retained_v_template_returns_saved_delimiter_structurally_after_endv() {
         let mut command = CommandState::default();
         let alignment = crate::AlignmentIdentity::new(71);
         command.push_token_level(
@@ -1590,7 +1605,7 @@ mod tests {
             };
             processor
                 .begin_alignment_v_template(alignment, end_template)
-                .expect("delimiter is backed up below v-template input");
+                .expect("delimiter is saved for fin_col below v-template input");
             let v = processor
                 .get_next()
                 .expect("v-template delivers")
@@ -1601,21 +1616,17 @@ mod tests {
                 .expect("end-template expands to end-v")
                 .expect("end-v delivery");
             assert!(matches!(endv.meaning(), Meaning::EndV));
-            processor
+            let finished = processor
                 .command
                 .finish_alignment_cell(alignment)
                 .expect("do_endv retires the exact retained frame once");
-            let delimiter = processor
-                .get_next()
-                .expect("backed-up delimiter replays")
-                .expect("delimiter is live");
-            assert!(matches!(
-                delimiter.meaning(),
-                Meaning::CharToken {
-                    cat: Catcode::AlignmentTab,
-                    ..
-                }
-            ));
+            assert_eq!(finished.delimiter, crate::AlignmentCellDelimiter::Tab);
+            assert!(
+                processor
+                    .get_next()
+                    .expect("saved delimiter does not re-enter raw delivery")
+                    .is_none()
+            );
         }
         let end_template = recorder
             .0

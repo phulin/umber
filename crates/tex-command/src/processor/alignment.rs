@@ -42,6 +42,25 @@ pub struct AlignmentCellTemplates {
     pub v_template: TracedTokenList,
 }
 
+/// The delimiter saved when `get_next` enters a cell's v-template.
+///
+/// TeX82 keeps this as `extra_info(cur_align)` until `fin_col` consumes it
+/// after `do_endv`; it is never ordinary input on the far side of the
+/// template.  The executor receives only this structural outcome.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum AlignmentCellDelimiter {
+    Tab,
+    Span,
+    Row,
+}
+
+/// Template data and the saved `fin_col` delimiter returned by `do_endv`.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct FinishedAlignmentCell {
+    pub templates: AlignmentCellTemplates,
+    pub delimiter: AlignmentCellDelimiter,
+}
+
 /// Frozen template pairs collected during one raw alignment preamble scan.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct AlignmentPreamble {
@@ -84,7 +103,7 @@ pub enum AlignmentRequestResult {
     /// The request changed lifecycle state without returning template data.
     Applied,
     /// A finished cell returned the exact templates that were active for it.
-    FinishedCell(AlignmentCellTemplates),
+    FinishedCell(FinishedAlignmentCell),
 }
 
 /// A command-core event that the executor must handle at an alignment boundary.
@@ -182,6 +201,7 @@ pub(crate) struct ActiveCellDelivery {
     pub(crate) u_template_installed: bool,
     pub(crate) u_level: Option<InputLevelId>,
     pub(crate) v_level: Option<InputLevelId>,
+    pub(crate) delimiter: Option<AlignmentCellDelimiter>,
 }
 
 /// The one semantic alignment adjustment made by a raw delivery.
@@ -254,6 +274,7 @@ impl AlignmentDeliveryState {
             u_template_installed: false,
             u_level: None,
             v_level: None,
+            delimiter: None,
         });
         self.align_state = if templates.u_template.is_some() {
             TEMPLATE_ALIGN_STATE
@@ -316,6 +337,7 @@ impl AlignmentDeliveryState {
         &mut self,
         alignment: AlignmentIdentity,
         level: InputLevelId,
+        delimiter: AlignmentCellDelimiter,
     ) -> Result<(), AlignmentLifecycleError> {
         let cell = self.active_cell_mut(alignment)?;
         if !cell.u_template_installed {
@@ -325,6 +347,7 @@ impl AlignmentDeliveryState {
             return Err(AlignmentLifecycleError::UTemplateStillActive);
         }
         cell.v_level = Some(level);
+        cell.delimiter = Some(delimiter);
         self.align_state = TEMPLATE_ALIGN_STATE;
         Ok(())
     }
@@ -353,7 +376,7 @@ impl AlignmentDeliveryState {
         &mut self,
         alignment: AlignmentIdentity,
         v_level: InputLevelId,
-    ) -> Result<AlignmentCellTemplates, AlignmentLifecycleError> {
+    ) -> Result<FinishedAlignmentCell, AlignmentLifecycleError> {
         self.require_alignment(alignment)?;
         let cell = self.active_cell_ref(alignment)?;
         if cell.v_level != Some(v_level) {
@@ -364,7 +387,12 @@ impl AlignmentDeliveryState {
             .take()
             .expect("active cell was just checked");
         self.align_state = TEMPLATE_ALIGN_STATE;
-        Ok(cell.templates)
+        Ok(FinishedAlignmentCell {
+            templates: cell.templates,
+            delimiter: cell
+                .delimiter
+                .ok_or(AlignmentLifecycleError::VTemplateNotExhausted)?,
+        })
     }
 
     pub(crate) fn suspend_alignment(

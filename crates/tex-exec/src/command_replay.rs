@@ -5,7 +5,8 @@
 //! `tex-command`; no `InputStack` is accepted here.
 
 use tex_command::{
-    AlignmentDelivery, AlignmentIdentity, AlignmentRequest, CommandError, CommandHostCapabilities,
+    AlignmentCellDelimiter, AlignmentCellTemplates, AlignmentDelivery, AlignmentIdentity,
+    AlignmentRequest, AlignmentRequestResult, CommandError, CommandHostCapabilities,
     CommandHostContext, CommandProcessor, CommandProfile, CommandRuntime, CommandState,
 };
 #[cfg(any(test, feature = "instrumentation"))]
@@ -53,13 +54,16 @@ struct ActiveReplayBox {
     depth: u32,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 struct ActiveReplayAlignment {
     identity: AlignmentIdentity,
+    columns: Vec<AlignmentCellTemplates>,
+    column: usize,
     preamble_opening_pending: bool,
     preamble_opening_replay_pending: bool,
     preamble_start_pending: bool,
     cell_opening_pending: bool,
+    next_cell_opening_pending: bool,
 }
 
 #[derive(Debug, Default)]
@@ -106,7 +110,9 @@ impl CommandReplayControl {
     /// `\halign` or `\valign`, if it has not yet been finished.
     #[must_use]
     pub fn active_alignment(&self) -> Option<AlignmentIdentity> {
-        self.active_alignment.map(|alignment| alignment.identity)
+        self.active_alignment
+            .as_ref()
+            .map(|alignment| alignment.identity)
     }
 
     /// Applies an executor-selected alignment lifecycle transition.
@@ -132,7 +138,9 @@ impl CommandReplayControl {
             .map_err(|_| ExecError::MissingToken {
                 context: "alignment lifecycle",
             })?;
-        if finished && self.active_alignment.map(|active| active.identity) == Some(identity) {
+        if finished
+            && self.active_alignment.as_ref().map(|active| active.identity) == Some(identity)
+        {
             self.active_alignment = None;
         }
         if preamble
@@ -181,7 +189,7 @@ impl CommandReplayControl {
             self.modes.current_mode(),
             Mode::Vertical | Mode::InternalVertical
         );
-        let alignment_preamble = alignment_preamble(self.active_alignment);
+        let alignment_preamble = alignment_preamble(self.active_alignment.as_ref());
         let scanned = {
             let mut processor = CommandProcessor::new(
                 &mut self.command,
@@ -219,7 +227,7 @@ impl CommandReplayControl {
             self.modes.current_mode(),
             Mode::Vertical | Mode::InternalVertical
         );
-        let alignment_preamble = alignment_preamble(self.active_alignment);
+        let alignment_preamble = alignment_preamble(self.active_alignment.as_ref());
         let scanned = {
             let mut processor = CommandProcessor::new(
                 &mut self.command,
@@ -488,6 +496,12 @@ fn scan_replay_step(
                     .map_err(command_error)?;
                 Ok(ScannedStep::AlignmentCellOpening { alignment })
             }
+            AlignmentPreamblePhase::NextCellOpening => {
+                processor
+                    .scan_alignment_next_cell_opening()
+                    .map_err(command_error)?;
+                Ok(ScannedStep::AlignmentCellOpening { alignment })
+            }
             AlignmentPreamblePhase::CellDelivery => {
                 scan_alignment_delivery_step(processor, alignment, boxes)
             }
@@ -502,11 +516,12 @@ enum AlignmentPreamblePhase {
     ReplayOpening,
     Start,
     CellOpening,
+    NextCellOpening,
     CellDelivery,
 }
 
 fn alignment_preamble(
-    active: Option<ActiveReplayAlignment>,
+    active: Option<&ActiveReplayAlignment>,
 ) -> Option<(AlignmentIdentity, AlignmentPreamblePhase)> {
     let active = active?;
     if active.preamble_opening_pending {
@@ -517,6 +532,8 @@ fn alignment_preamble(
         Some((active.identity, AlignmentPreamblePhase::Start))
     } else if active.cell_opening_pending {
         Some((active.identity, AlignmentPreamblePhase::CellOpening))
+    } else if active.next_cell_opening_pending {
+        Some((active.identity, AlignmentPreamblePhase::NextCellOpening))
     } else {
         Some((active.identity, AlignmentPreamblePhase::CellDelivery))
     }
@@ -1144,6 +1161,56 @@ fn observed_macro_token(token: Token, stores: &Universe) -> ObservedToken {
     }
 }
 
+/// Applies TeX82 `fin_col`'s saved-delimiter selection after `do_endv`.
+///
+/// The delimiter was classified and retained by `tex-command` at the original
+/// `get_next` boundary.  This code receives only its typed outcome, chooses
+/// the next frozen template pair, and lets command-owned lookahead/back-up
+/// prepare the next entry.
+fn begin_next_replay_alignment_cell(
+    alignment: AlignmentIdentity,
+    delimiter: AlignmentCellDelimiter,
+    command: &mut CommandState,
+    active_alignment: &mut Option<ActiveReplayAlignment>,
+) -> Result<(), ExecError> {
+    let active = active_alignment
+        .as_mut()
+        .filter(|active| active.identity == alignment)
+        .ok_or(ExecError::MissingToken {
+            context: "active replay alignment",
+        })?;
+    // Focused lifecycle tests may construct a command-state cell directly,
+    // without replaying a preamble.  There is then no executor template
+    // selection to perform after the otherwise complete command transition.
+    if active.columns.is_empty() {
+        return Ok(());
+    }
+    active.column = match delimiter {
+        AlignmentCellDelimiter::Tab | AlignmentCellDelimiter::Span => active
+            .column
+            .checked_add(1)
+            .ok_or(ExecError::ArithmeticOverflow)?,
+        AlignmentCellDelimiter::Row => 0,
+    };
+    let templates = active
+        .columns
+        .get(active.column)
+        .copied()
+        .ok_or(ExecError::MissingToken {
+            context: "next alignment preamble column",
+        })?;
+    command
+        .apply_alignment_request(AlignmentRequest::BeginCell {
+            alignment,
+            templates,
+        })
+        .map_err(|_| ExecError::MissingToken {
+            context: "alignment next-cell lifecycle",
+        })?;
+    active.next_cell_opening_pending = true;
+    Ok(())
+}
+
 fn apply_scanned_step(
     scanned: ScannedStep,
     stores: &mut Universe,
@@ -1444,10 +1511,13 @@ fn apply_scanned_step(
                 })?;
             *active_alignment = Some(ActiveReplayAlignment {
                 identity,
+                columns: Vec::new(),
+                column: 0,
                 preamble_opening_pending: true,
                 preamble_opening_replay_pending: false,
                 preamble_start_pending: false,
                 cell_opening_pending: false,
+                next_cell_opening_pending: false,
             });
             if vertical && modes.current_mode() == Mode::Vertical {
                 modes.push(Mode::InternalVertical);
@@ -1501,6 +1571,8 @@ fn apply_scanned_step(
             if let Some(active) = active_alignment.as_mut()
                 && active.identity == alignment
             {
+                active.columns = preamble.columns;
+                active.column = 0;
                 active.preamble_start_pending = false;
                 active.cell_opening_pending = true;
             }
@@ -1516,15 +1588,25 @@ fn apply_scanned_step(
                 && active.identity == alignment
             {
                 active.cell_opening_pending = false;
+                active.next_cell_opening_pending = false;
             }
             Ok(ReplayStep::Continue)
         }
         ScannedStep::AlignmentCellFinish { alignment } => {
-            command
+            let finished = command
                 .apply_alignment_request(AlignmentRequest::FinishCell(alignment))
                 .map_err(|_| ExecError::MissingToken {
                     context: "alignment end-v lifecycle",
                 })?;
+            let AlignmentRequestResult::FinishedCell(finished) = finished else {
+                unreachable!("FinishCell returns its saved delimiter");
+            };
+            begin_next_replay_alignment_cell(
+                alignment,
+                finished.delimiter,
+                command,
+                active_alignment,
+            )?;
             Ok(ReplayStep::Continue)
         }
         ScannedStep::Paragraph => {

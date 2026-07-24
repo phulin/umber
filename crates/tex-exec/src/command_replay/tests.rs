@@ -949,10 +949,17 @@ fn replay_dispatches_modes_effects_and_typed_alignment_lifecycle() {
         .expect("alignment lifecycle finishes through command core");
     assert_eq!(control.active_alignment(), None);
     assert_eq!(
-        control.step(&mut universe).expect("backed-up delimiter"),
-        ReplayStep::Continue
+        control
+            .step(&mut universe)
+            .expect("saved delimiter does not re-enter ordinary delivery"),
+        ReplayStep::End
     );
-    assert_eq!(control.step(&mut universe).expect("end"), ReplayStep::End);
+    assert_eq!(
+        control
+            .step(&mut universe)
+            .expect("input exhausted after end"),
+        ReplayStep::EndOfInput
+    );
 }
 
 #[test]
@@ -1022,8 +1029,10 @@ fn command_owned_endv_finishes_cell_and_publishes_retirement_in_canonical_order(
         .apply_alignment_request(AlignmentRequest::Finish(alignment))
         .expect("alignment lifecycle finishes through command core");
     assert_eq!(
-        control.step(&mut universe).expect("backed-up delimiter"),
-        ReplayStep::Continue
+        control
+            .step(&mut universe)
+            .expect("saved delimiter does not re-enter ordinary delivery"),
+        ReplayStep::End
     );
 }
 

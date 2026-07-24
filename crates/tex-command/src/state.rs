@@ -16,8 +16,9 @@ use crate::macro_call::ParameterState;
 #[cfg(any(test, feature = "instrumentation"))]
 use crate::processor::CELL_ALIGN_STATE;
 use crate::processor::{
-    AlignmentCellTemplates, AlignmentDeliveryState, AlignmentIdentity, AlignmentLifecycleError,
-    AlignmentRequest, AlignmentRequestResult, ExpansionState, ScannerState,
+    AlignmentCellDelimiter, AlignmentCellTemplates, AlignmentDeliveryState, AlignmentIdentity,
+    AlignmentLifecycleError, AlignmentRequest, AlignmentRequestResult, ExpansionState,
+    ScannerState,
 };
 use crate::profile::{
     CommandProfile, CommandProfileBoundary, CommandProfileFingerprint, CommandProfileMismatch,
@@ -236,6 +237,7 @@ impl CommandState {
     pub fn begin_alignment_v_template(
         &mut self,
         alignment: AlignmentIdentity,
+        delimiter: AlignmentCellDelimiter,
     ) -> Result<(), AlignmentLifecycleError> {
         let template = self.alignment.v_template(alignment)?;
         let level = self.push_alignment_template(
@@ -244,7 +246,7 @@ impl CommandState {
             RetirementBehavior::RetainExhaustedVTemplate,
             ReplayTrace::VTemplate,
         );
-        self.alignment.begin_v_template(alignment, level)
+        self.alignment.begin_v_template(alignment, level, delimiter)
     }
 
     /// Returns the committed v-template push made after a command-owned
@@ -294,7 +296,7 @@ impl CommandState {
     pub fn finish_alignment_cell(
         &mut self,
         alignment: AlignmentIdentity,
-    ) -> Result<AlignmentCellTemplates, AlignmentLifecycleError> {
+    ) -> Result<crate::FinishedAlignmentCell, AlignmentLifecycleError> {
         let level = self.alignment.active_v_template_level(alignment)?;
         self.retire_retained_v_template(level)
             .map_err(|_| AlignmentLifecycleError::VTemplateNotExhausted)?;
