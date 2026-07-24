@@ -1075,9 +1075,13 @@ impl CommandProcessor<'_> {
             // sequence identity at the raw boundary, while `get_x_token`
             // changes only its effective command to `endv` (§343).
             crate::observation::ObservedToken::ControlSequence("endtemplate".into())
-        } else if matches!(command.meaning(), Meaning::Relax) {
+        } else if matches!(command.spelling().semantic_token(), Token::Frozen(_))
+            && matches!(command.meaning(), Meaning::Relax)
+        {
             // TeX82's observer presents the inaccessible frozen `\relax`
             // inserted by incomplete-conditional recovery as `\relax`.
+            // A `\noexpand` target has the same effective meaning but retains
+            // its original control-sequence spelling.
             crate::observation::ObservedToken::ControlSequence("relax".into())
         } else if matches!(command.spelling().semantic_token(), Token::Frozen(_))
             && let Some(name) = self.state.primitive_name(command.meaning())
@@ -1091,7 +1095,7 @@ impl CommandProcessor<'_> {
     #[cfg(any(test, feature = "instrumentation"))]
     fn observe_raw_delivery(&mut self, command: &CurrentCommand) {
         let (command_name, command_operand) =
-            crate::observation::canonical_command_identity(command.meaning());
+            crate::observation::canonical_current_command_identity(command);
         let spelling = if self.observe_next_raw_as_character_code {
             self.observe_next_raw_as_character_code = false;
             match self.observed_token(command.spelling()) {

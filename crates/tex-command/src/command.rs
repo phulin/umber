@@ -18,11 +18,26 @@ use crate::SourceRange;
 pub struct CurrentCommand {
     spelling: TracedTokenWord,
     meaning: Meaning,
+    identity: CommandIdentity,
     control_sequence: Option<Symbol>,
     delivery: DeliveryStamp,
     source_range: Option<SourceRange>,
     direct_source: bool,
     alignment_adjustment: crate::processor::AlignmentDeliveryAdjustment,
+}
+
+/// The command-code identity of a current delivery when its [`Meaning`] alone
+/// is not sufficient.
+///
+/// TeX82's `get_next` gives an expandable control sequence replayed by
+/// `\\noexpand` the inaccessible frozen-`\\relax` command identity: its
+/// effective meaning is `relax`, but its `cur_chr` is `no_expand_flag` (257),
+/// rather than the ordinary `relax` value (256). This remains ephemeral with
+/// the current delivery and is never stored in snapshots or input payloads.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum CommandIdentity {
+    Ordinary,
+    NoExpandFrozenRelax,
 }
 
 impl CurrentCommand {
@@ -72,6 +87,7 @@ impl CurrentCommand {
         Self {
             spelling,
             meaning,
+            identity: CommandIdentity::Ordinary,
             control_sequence,
             delivery,
             source_range,
@@ -89,7 +105,14 @@ impl CurrentCommand {
             Meaning::Macro { .. } | Meaning::ExpandablePrimitive(_)
         ) {
             self.meaning = Meaning::Relax;
+            self.identity = CommandIdentity::NoExpandFrozenRelax;
         }
+    }
+
+    /// Returns the command-owned identity selected by raw input delivery.
+    #[cfg(any(test, feature = "instrumentation"))]
+    pub(crate) const fn identity(&self) -> CommandIdentity {
+        self.identity
     }
 
     /// Converts the effective current command to TeX82's recovery space
@@ -207,6 +230,7 @@ impl CurrentCommand {
         Self {
             spelling: self.spelling,
             meaning: self.meaning,
+            identity: self.identity,
             control_sequence: self.control_sequence,
             delivery: self.delivery,
             source_range: self.source_range,

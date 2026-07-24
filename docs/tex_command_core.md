@@ -1035,9 +1035,11 @@ enum BackupTreatment {
 `\noexpand` temporarily uses normal scanner status to fetch its target, undoes
 that delivery through the canonical backup operation, and backs it with
 `SuppressExpandableControlSequence`. When `get_next` reads the target, an
-expandable control sequence receives the inaccessible no-expand meaning of
-`\relax`; its spelling remains the original control sequence. The treatment
-ends with that delivery.
+expandable control sequence receives the inaccessible frozen-`\relax` command
+identity (`cur_cmd=relax`, `cur_chr=no_expand_flag=257`); its spelling remains
+the original control sequence. This identity belongs to the ephemeral current
+command, alongside its delivery proof, rather than to snapshot state or
+observer reconstruction. The treatment ends with that delivery.
 
 There is no general `NoExpand` token-list replay kind and no sticky suppression
 property on returned tokens.

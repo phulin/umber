@@ -9,6 +9,8 @@
 #![cfg(any(test, feature = "instrumentation"))]
 
 use tex_state::meaning::{ExpandablePrimitive, Meaning, UnexpandablePrimitive};
+
+use crate::command::{CommandIdentity, CurrentCommand};
 use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 
 use crate::{DeliveryStamp, SourceRange};
@@ -278,6 +280,24 @@ pub(crate) fn canonical_command_identity(meaning: Meaning) -> (String, Option<i6
         },
         Meaning::Undefined => ("undefined_cs".into(), Some(-268_435_455)),
         _ => ("internal".into(), None),
+    }
+}
+
+/// Canonical TeX82 observer identity for one delivered current command.
+///
+/// Most identities derive from the effective meaning. `\\noexpand` is the
+/// deliberate exception: TeX82 keeps the relaxed meaning but changes the
+/// current-character identity to `no_expand_flag` (257). The distinction is
+/// carried by `CurrentCommand`, so observation merely projects command state.
+pub(crate) fn canonical_current_command_identity(
+    command: &CurrentCommand,
+) -> (String, Option<i64>) {
+    match command.identity() {
+        CommandIdentity::Ordinary => canonical_command_identity(command.meaning()),
+        CommandIdentity::NoExpandFrozenRelax => {
+            debug_assert_eq!(command.meaning(), Meaning::Relax);
+            ("relax".into(), Some(257))
+        }
     }
 }
 

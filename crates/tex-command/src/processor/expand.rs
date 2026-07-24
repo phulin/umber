@@ -78,7 +78,7 @@ impl CommandProcessor<'_> {
     #[cfg(any(test, feature = "instrumentation"))]
     pub(crate) fn observe_expanded_delivery(&mut self, command: &CurrentCommand) {
         let (command_name, command_operand) =
-            crate::observation::canonical_command_identity(command.meaning());
+            crate::observation::canonical_current_command_identity(command);
         let spelling = self.observed_command_spelling(command);
         self.observe(CommandObservation::Command(CommandDeliveryRecord {
             boundary: CommandDeliveryBoundary::Expanded,
@@ -948,6 +948,14 @@ mod tests {
             .expect("target");
         assert_eq!(delivered.spelling().semantic_token(), Token::Cs(macro_name));
         assert_eq!(delivered.meaning(), Meaning::Relax);
+        assert_eq!(
+            delivered.identity(),
+            crate::command::CommandIdentity::NoExpandFrozenRelax
+        );
+        assert_eq!(
+            processor.observed_command_spelling(&delivered),
+            crate::observation::ObservedToken::ControlSequence("m".into())
+        );
         assert_eq!(processor.command.expansion.cumulative_expansions, 1);
     }
 
