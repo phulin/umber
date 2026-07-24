@@ -16,7 +16,7 @@ use crate::profile::{CharacterCode, CharacterMode};
 use crate::{SourceControlSequenceKind, SourceToken, SourceTokenizationStep};
 
 use super::CommandProcessor;
-use super::status::{RecoveryContext, ScannerStatus};
+use super::status::{EofLegality, RecoveryContext, ScannerStatus};
 
 const DEFAULT_END_LINE_CHAR: i32 = 13;
 
@@ -77,7 +77,12 @@ impl CommandProcessor<'_> {
         self.last_delivery = None;
         self.undo_alignment_delivery(&command);
 
-        if self.rewind_current_token_cursor(stamp) {
+        // Ordinary `back_input` may restore a live token cursor in place.
+        // `\\noexpand`, however, associates a one-delivery treatment with the
+        // replayed level, so it must retain an explicit backed-up level even
+        // when the original cursor could otherwise be rewound.
+        if matches!(treatment, BackupTreatment::Ordinary) && self.rewind_current_token_cursor(stamp)
+        {
             return Ok(());
         }
 
@@ -294,7 +299,7 @@ impl CommandProcessor<'_> {
     /// inserted tokens are then delivered through this same raw loop.
     fn recover_runaway_eof(&mut self) -> Result<bool, CommandError> {
         let recovery = self.command.scanner.recovery_context();
-        if matches!(recovery.status, ScannerStatus::Normal) {
+        if matches!(self.command.scanner.eof_legality(), EofLegality::Legal) {
             return Ok(false);
         }
         self.install_outer_recovery(recovery)?;
@@ -749,6 +754,46 @@ mod tests {
                 ch: 'x',
                 cat: Catcode::Letter,
             }
+        );
+    }
+
+    #[test]
+    fn noexpand_treatment_survives_rewindable_token_input() {
+        let mut command = CommandState::default();
+        let mut runtime = CommandRuntime::default();
+        let mut universe = Universe::new();
+        let target = universe.intern("target").symbol();
+        universe.set_meaning(
+            target,
+            Meaning::ExpandablePrimitive(ExpandablePrimitive::ExpandAfter),
+        );
+        command.push_token_level(
+            TokenPayload::Transient(SharedTokenBuffer::new(vec![TracedTokenWord::pack(
+                Token::Cs(target),
+                OriginId::UNKNOWN,
+            )])),
+            TokenBehavior::Ordinary,
+            RetirementBehavior::Pop,
+            ReplayTrace::MacroReplacement,
+        );
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+
+        let target = processor
+            .get_next()
+            .expect("token-list target delivers")
+            .expect("token-list input is live");
+        processor
+            .back_input_with_treatment(target, BackupTreatment::SuppressExpandableControlSequence)
+            .expect("noexpand backs up the exact token-list delivery");
+        assert_eq!(processor.command.input.levels.len(), 2);
+        assert_eq!(
+            processor
+                .get_next()
+                .expect("suppressed token-list target delivers")
+                .expect("backed-up input is live")
+                .meaning(),
+            Meaning::Relax
         );
     }
 

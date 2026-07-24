@@ -863,8 +863,11 @@ and returns the same `CurrentCommand` with its packed token spelling.
 2. undoes exactly one literal-brace alignment adjustment made by that
    delivery;
 3. rewinds the current level without allocation when the exact level and
-   cursor remain current; otherwise
+   cursor remain current and the backup treatment is ordinary; otherwise
 4. pushes a backed-up token level carrying the exact spelling and origin.
+
+One-delivery treatments such as `\\noexpand` always use the backed-up level,
+including when the original token-list cursor remains rewindable.
 
 Semantic equality to a previously delivered token is not proof that the token
 can be rewound.

@@ -7,8 +7,8 @@
 #   fixture-audit SELECTOR SEMANTIC-MATRIX SEMANTIC-MATRIX-SHA256 AUDIT-MATRIX AUDIT-MATRIX-SHA256
 contract-schema 2
 event-schema 1
-engine tex82 initex-eight-bit tex82-oracle tests/tex82-oracle-manifest.txt 5f1b890599235ee5ff4f6be87aa085022a30d3f5dd5b6392520d8b0230b42f45 tex82-oracle-web2c-texlive-2025
+engine tex82 initex-eight-bit tex82-oracle tests/tex82-oracle-manifest.txt c0a18f85e1bfe56879635bbbd0b90e36cd3b69c4ccdf2793448ed96a5fdf5ba3 tex82-oracle-web2c-texlive-2025
 engine etex26 compatibility+extended-eight-bit etex26-oracle tests/etex26-oracle-manifest.txt 9ff06f2345ca2f94e28b2a3d01bdba81a1fbac60f7487dbcfb2ba33580ccf2c5 etex26-oracle-web2c-texlive-2025
-engine pdftex14027 initex-etex-eight-bit pdftex14027-oracle tests/pdftex14027-oracle-manifest.txt baf82557a558ff7ab5c078eda070d4582a51715ee3e7e2d25d3607e2bfeae762 pdftex14027-oracle-web2c-texlive-2025
+engine pdftex14027 initex-etex-eight-bit pdftex14027-oracle tests/pdftex14027-oracle-manifest.txt a2b5dcda04636135a0ebc25c3cd2be5319b5d8cc3da8d777a00344be91656700 pdftex14027-oracle-web2c-texlive-2025
 fixture tex82/command-transitions-v1 tex82 initex-eight-bit tests/corpus/command/tex82/command-transitions-v1/manifest.json e947ee43e6859155f5c19a1a04a24f73639063c903e9b9af698cd5cd4b134830
 fixture-audit tex82/command-transitions-v1 tests/tex82-oracle/semantic-event-matrix.txt 4ccd799dca9eaeb0e4de17ce05e0fc744a8bbe7e41992f31b6616cb2ce7e7c78 tests/tex82-oracle/fixture-audit-matrix.txt 4d0674665f7eca363b6bd0a4f4b075bb52f9e6a6eab1f1780e468deea3e3192e
