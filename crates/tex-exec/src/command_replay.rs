@@ -137,6 +137,7 @@ impl CommandReplayControl {
             | AlignmentRequest::InstallCellTemplate(identity)
             | AlignmentRequest::InstallOmitCellTemplate(identity)
             | AlignmentRequest::FinishCell(identity)
+            | AlignmentRequest::RecoverExtraTab(identity)
             | AlignmentRequest::Suspend(identity)
             | AlignmentRequest::Resume(identity)
             | AlignmentRequest::Finish(identity) => identity,
@@ -306,6 +307,7 @@ impl CommandReplayControl {
             }
             _ => None,
         };
+        let completes_alignment_cell = matches!(&scanned, ScannedStep::AlignmentCellFinish { .. });
         let finishes_alignment = match &scanned {
             ScannedStep::AlignmentFinish { alignment } => {
                 self.command.alignment_finish_observation(*alignment)
@@ -321,6 +323,11 @@ impl CommandReplayControl {
             &mut self.command,
             &mut self.boxes,
         );
+        let extra_tab_recovery = result
+            .as_ref()
+            .ok()
+            .filter(|_| completes_alignment_cell)
+            .and_then(|_| self.command.take_alignment_extra_tab_recovery_observation());
         if result.is_ok() {
             if suspends_alignment
                 && let Some(alignment) = self.command.alignment_suspend_observation()
@@ -353,6 +360,9 @@ impl CommandReplayControl {
                 && let Some(omit) = self.command.alignment_omit_cell_observation(alignment)
             {
                 observer.committed(CommandObservation::Alignment(omit));
+            }
+            if let Some(recovery) = extra_tab_recovery {
+                observer.committed(CommandObservation::Alignment(recovery));
             }
             if let Some(finish) = finishes_alignment_cell {
                 observer.committed(CommandObservation::Alignment(finish.state_change));
@@ -1459,6 +1469,26 @@ fn begin_next_replay_alignment_cell(
             .ok_or(ExecError::ArithmeticOverflow)?,
         AlignmentCellDelimiter::Row => 0,
     };
+    if next_column >= active.columns.len()
+        && active.repeat_start.is_none()
+        && matches!(
+            delimiter,
+            AlignmentCellDelimiter::Tab | AlignmentCellDelimiter::Span
+        )
+    {
+        let recovered = command
+            .apply_alignment_request(AlignmentRequest::RecoverExtraTab(alignment))
+            .map_err(|_| ExecError::MissingToken {
+                context: "alignment extra-tab recovery",
+            })?;
+        debug_assert!(matches!(
+            recovered,
+            AlignmentRequestResult::ExtraTabRecovered
+        ));
+        active.column = 0;
+        active.align_peek_pending = true;
+        return Ok(());
+    }
     active.column = if next_column < active.columns.len() {
         next_column
     } else if let Some(repeat_start) = active.repeat_start {

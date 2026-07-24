@@ -159,6 +159,10 @@ impl CommandState {
             AlignmentRequest::FinishCell(alignment) => Ok(AlignmentRequestResult::FinishedCell(
                 self.finish_alignment_cell(alignment)?,
             )),
+            AlignmentRequest::RecoverExtraTab(alignment) => {
+                self.alignment.recover_extra_tab(alignment)?;
+                Ok(AlignmentRequestResult::ExtraTabRecovered)
+            }
             AlignmentRequest::Suspend(alignment) => {
                 self.suspend_alignment(alignment)?;
                 Ok(AlignmentRequestResult::Applied)
@@ -540,6 +544,22 @@ impl CommandState {
                 delimiter: None,
                 previous_align_state: None,
             },
+        })
+    }
+
+    /// Takes the command-owned observation published when `fin_col` changes
+    /// an exhausted saved tab or span into a row ending.
+    #[cfg(any(test, feature = "instrumentation"))]
+    pub fn take_alignment_extra_tab_recovery_observation(
+        &mut self,
+    ) -> Option<crate::AlignmentRecord> {
+        let alignment = self.alignment.extra_tab_recovery.take()?;
+        Some(crate::AlignmentRecord {
+            transition: "extra_tab",
+            alignment: Some(alignment.raw()),
+            align_state: 1_000_000,
+            delimiter: None,
+            previous_align_state: None,
         })
     }
 

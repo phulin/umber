@@ -104,8 +104,12 @@ fn semantic_ownership_domains_are_exhaustively_classified() {
         suspended,
         active_cell,
         completed_preamble,
+        pending_fin_col_delimiter,
+        extra_tab_recovery,
     } = alignment;
     assert!(completed_preamble.is_none());
+    assert!(pending_fin_col_delimiter.is_none());
+    assert!(extra_tab_recovery.is_none());
     let ExpansionState {
         cumulative_expansions,
         next_resource_resolution,
@@ -147,6 +151,31 @@ fn semantic_ownership_domains_are_exhaustively_classified() {
         next_builder_identity,
         active_expansion_depth,
     ));
+}
+
+#[test]
+fn fin_col_extra_tab_recovery_is_command_owned_and_accepts_span_too() {
+    for delimiter in [
+        crate::AlignmentCellDelimiter::Tab,
+        crate::AlignmentCellDelimiter::Span,
+    ] {
+        let mut state = CommandState::default();
+        let alignment = AlignmentIdentity::new(41);
+        state.begin_alignment(alignment);
+        state.alignment.pending_fin_col_delimiter = Some((alignment, delimiter));
+
+        assert_eq!(
+            state
+                .apply_alignment_request(AlignmentRequest::RecoverExtraTab(alignment))
+                .expect("TeX82 fin_col converts an exhausted tab/span to cr"),
+            AlignmentRequestResult::ExtraTabRecovered,
+        );
+        assert_eq!(
+            state.alignment.pending_fin_col_delimiter,
+            Some((alignment, crate::AlignmentCellDelimiter::Row)),
+        );
+        assert_eq!(state.alignment.extra_tab_recovery, Some(alignment));
+    }
 }
 
 #[test]

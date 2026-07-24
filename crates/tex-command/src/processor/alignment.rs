@@ -118,6 +118,11 @@ pub enum AlignmentRequest {
     InstallOmitCellTemplate(AlignmentIdentity),
     /// Retire the exhausted v-template for one finished cell.
     FinishCell(AlignmentIdentity),
+    /// Convert TeX82 `fin_col`'s saved overrun tab or span to its row-ending
+    /// outcome after the executor has established that no preamble column can
+    /// be selected. Raw delimiter identity and the recovery observation stay
+    /// command-owned.
+    RecoverExtraTab(AlignmentIdentity),
     /// Preserve the outer raw-delivery context before entering a nested alignment.
     Suspend(AlignmentIdentity),
     /// Restore the outer raw-delivery context after a nested alignment.
@@ -133,6 +138,8 @@ pub enum AlignmentRequestResult {
     Applied,
     /// A finished cell returned the exact templates that were active for it.
     FinishedCell(FinishedAlignmentCell),
+    /// TeX82 `fin_col` changed the saved tab/span to `\\cr`.
+    ExtraTabRecovered,
 }
 
 /// Observer records published after a successful typed `do_endv` completion.
@@ -236,6 +243,11 @@ pub(crate) struct AlignmentDeliveryState {
     pub(crate) suspended: Vec<SuspendedAlignment>,
     pub(crate) active_cell: Option<ActiveCellDelivery>,
     pub(crate) completed_preamble: Option<AlignmentPreamble>,
+    /// The delimiter just returned from `do_endv`, retained until `fin_col`
+    /// either starts its next cell or changes an exhausted tab/span to `\\cr`.
+    pub(crate) pending_fin_col_delimiter: Option<(AlignmentIdentity, AlignmentCellDelimiter)>,
+    /// A one-shot observer marker for TeX82 `fin_col` extra-tab recovery.
+    pub(crate) extra_tab_recovery: Option<AlignmentIdentity>,
 }
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
@@ -371,6 +383,8 @@ impl AlignmentDeliveryState {
         self.active_alignment = Some(alignment);
         self.active_cell = None;
         self.completed_preamble = None;
+        self.pending_fin_col_delimiter = None;
+        self.extra_tab_recovery = None;
         self.align_state = PREAMBLE_ALIGN_STATE;
     }
 
@@ -546,13 +560,36 @@ impl AlignmentDeliveryState {
             .take()
             .expect("active cell was just checked");
         self.align_state = TEMPLATE_ALIGN_STATE;
+        let delimiter = cell
+            .delimiter
+            .ok_or(AlignmentLifecycleError::VTemplateNotExhausted)?;
+        self.pending_fin_col_delimiter = Some((alignment, delimiter));
         Ok(FinishedAlignmentCell {
             templates: cell.templates,
-            delimiter: cell
-                .delimiter
-                .ok_or(AlignmentLifecycleError::VTemplateNotExhausted)?,
+            delimiter,
             completion: AlignmentCellCompletion::RetainedVTemplate,
         })
+    }
+
+    /// Performs TeX82 §772's exhausted-preamble arm of `fin_col`.
+    pub(crate) fn recover_extra_tab(
+        &mut self,
+        alignment: AlignmentIdentity,
+    ) -> Result<(), AlignmentLifecycleError> {
+        self.require_alignment(alignment)?;
+        match self.pending_fin_col_delimiter {
+            Some((saved_alignment, AlignmentCellDelimiter::Tab | AlignmentCellDelimiter::Span))
+                if saved_alignment == alignment =>
+            {
+                // `extra_info(cur_align):=cr_code`: retain the structural
+                // replacement in command state; the executor will finish
+                // the row through its typed result.
+                self.pending_fin_col_delimiter = Some((alignment, AlignmentCellDelimiter::Row));
+                self.extra_tab_recovery = Some(alignment);
+                Ok(())
+            }
+            _ => Err(AlignmentLifecycleError::NoActiveCell),
+        }
     }
 
     pub(crate) fn suspend_alignment(

@@ -198,6 +198,8 @@ impl CommandState {
                 suspended: Vec::new(),
                 active_cell: None,
                 completed_preamble: None,
+                pending_fin_col_delimiter: None,
+                extra_tab_recovery: None,
             },
             expansion: summary.expansion,
             transient: TransientState {
