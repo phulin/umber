@@ -48,7 +48,7 @@ impl CommandProcessor<'_> {
 
     /// TeX.web's scalar `expand`: each case changes the active input/state
     /// directly, then returns to [`Self::get_x_token_scalar`].
-    fn expand(&mut self, command: CurrentCommand) -> Result<(), CommandError> {
+    pub(crate) fn expand(&mut self, command: CurrentCommand) -> Result<(), CommandError> {
         self.command.expansion.cumulative_expansions =
             self.command.expansion.cumulative_expansions.wrapping_add(1);
         match command.meaning() {

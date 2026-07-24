@@ -5,7 +5,7 @@
 //! they represent typed reads or mutations of [`Universe`] state.
 
 use crate::{
-    ChangedAt, DependencyKey, DependencyValue, Universe,
+    ChangedAt, DependencyKey, DependencyValue, TracedTokenList, Universe,
     env::banks::{IntParam, TokParam},
     ids::FontId,
     ids::{MacroDefinitionId, OriginListId, TokenListId},
@@ -14,7 +14,7 @@ use crate::{
     meaning::Meaning,
     page::PageMark,
     provenance::SynthesizedOriginKind,
-    token::{Catcode, OriginId, Token},
+    token::{Catcode, OriginId, Token, TracedTokenWord},
 };
 
 /// Borrow-scoped aggregate access to live TeX state.
@@ -51,6 +51,14 @@ impl CommandContext<'_> {
     #[must_use]
     pub fn tokens(&self, id: TokenListId) -> &[Token] {
         self.universe.tokens(id)
+    }
+
+    /// Freezes a scanner-owned traced token sequence through the aggregate
+    /// content and provenance stores.  Command scanners may allocate their
+    /// immutable result, but retain no wider store or host capability.
+    #[must_use]
+    pub fn finish_traced_token_list(&mut self, tokens: &[TracedTokenWord]) -> TracedTokenList {
+        self.universe.finish_traced_token_list(tokens)
     }
 
     /// Reads the immutable spelling of a control sequence.

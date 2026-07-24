@@ -1098,6 +1098,10 @@ Tokens returned by `\unexpanded` or token-list `\the` have no permanent
 suppression metadata. If they later re-enter ordinary input, ordinary
 `get_x_token` expands them.
 
+The collector freezes its traced result through the narrow aggregate command
+context capability. It receives no host or input-opening capability, so a
+direct splice remains a local immutable-store operation.
+
 ## 21. Conditionals
 
 Condition processing maps TeX's independent condition stack directly:
