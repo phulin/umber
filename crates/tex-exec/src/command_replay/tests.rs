@@ -38,7 +38,7 @@ fn replay_uses_typed_scanners_for_definitions_assignments_and_termination() {
     let mut control = CommandReplayControl::default();
     register_source(
         &mut control,
-        br"\def\id#1{#1}\count12=7\global\def\g{z}\end",
+        br"\def\id#1{#1}\count12=\id{7}\global\def\g{z}\end",
     );
 
     assert_eq!(
@@ -78,7 +78,7 @@ fn replay_expands_registered_input_without_executor_source_consumption() {
             Arc::<[u8]>::from(&b"\\count3=9"[..]),
         ),
     );
-    register_source(&mut control, br"\input child\end");
+    register_source(&mut control, br"\input child\count4=8\end");
 
     assert_eq!(
         control.step(&mut universe).expect("nested assignment"),
@@ -86,9 +86,14 @@ fn replay_expands_registered_input_without_executor_source_consumption() {
     );
     assert_eq!(universe.count(3), 9);
     assert_eq!(
-        control.step(&mut universe).expect("child endline"),
+        control.step(&mut universe).expect("child source retires"),
         ReplayStep::Continue
     );
+    assert_eq!(
+        control.step(&mut universe).expect("parent assignment"),
+        ReplayStep::Continue
+    );
+    assert_eq!(universe.count(4), 8);
     assert_eq!(control.step(&mut universe).expect("end"), ReplayStep::End);
 }
 
@@ -97,7 +102,7 @@ fn replay_dispatches_modes_effects_and_typed_alignment_lifecycle() {
     let mut universe = Universe::new();
     crate::install_unexpandable_primitives(&mut universe);
     let mut control = CommandReplayControl::default();
-    register_source(&mut control, br"a$ $\par\message{ok}\halign\end");
+    register_source(&mut control, br"a$ $\par\message{ok}\halign&\end");
 
     assert_eq!(
         control.step(&mut universe).expect("character"),
@@ -150,5 +155,28 @@ fn replay_dispatches_modes_effects_and_typed_alignment_lifecycle() {
             },
         })
         .expect("cell lifecycle");
+    assert_eq!(
+        control
+            .alignment_step(alignment, &mut universe)
+            .expect("command processor intercepts the cell delimiter"),
+        ReplayStep::Continue
+    );
+    assert_eq!(
+        control
+            .alignment_step(alignment, &mut universe)
+            .expect("command processor retires the v-template"),
+        ReplayStep::Continue
+    );
+    control
+        .apply_alignment_request(AlignmentRequest::FinishCell(alignment))
+        .expect("cell lifecycle finishes through command core");
+    control
+        .apply_alignment_request(AlignmentRequest::Finish(alignment))
+        .expect("alignment lifecycle finishes through command core");
+    assert_eq!(control.active_alignment(), None);
+    assert_eq!(
+        control.step(&mut universe).expect("backed-up delimiter"),
+        ReplayStep::Continue
+    );
     assert_eq!(control.step(&mut universe).expect("end"), ReplayStep::End);
 }
