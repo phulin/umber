@@ -498,13 +498,23 @@ fn translate_observation(
             let context = format!("source={source}; condition={}", record.condition);
             ObservedEvent::new(translate_condition(record), context)
         }
-        CommandObservation::Scanner(record) => ObservedEvent::new(
-            Event::Scanner(ScannerEvent {
-                scanner: record.kind.into(),
-                result: CanonicalValue::Name(record.value),
-            }),
-            format!("source={source}"),
-        ),
+        CommandObservation::Scanner(record) => {
+            let result = if record.kind == "integer" {
+                record.value.parse::<i64>().map_or_else(
+                    |_| CanonicalValue::Name(record.value),
+                    CanonicalValue::Integer,
+                )
+            } else {
+                CanonicalValue::Name(record.value)
+            };
+            ObservedEvent::new(
+                Event::Scanner(ScannerEvent {
+                    scanner: record.kind.into(),
+                    result,
+                }),
+                format!("source={source}"),
+            )
+        }
         CommandObservation::TokenList(record) => {
             ObservedEvent::new(translate_token_list(record), format!("source={source}"))
         }
@@ -739,6 +749,19 @@ fn translate_alignment(record: AlignmentRecord) -> Event {
     })
 }
 fn translate_mutation(record: MutationRecord) -> Event {
+    let parsed = record.value.split_once('=').and_then(|(key, value)| {
+        value
+            .parse::<i64>()
+            .ok()
+            .map(|value| (key.to_owned(), value))
+    });
+    let (key, value) = match parsed {
+        Some((key, value)) => (CanonicalValue::Name(key), CanonicalValue::Integer(value)),
+        None => (
+            CanonicalValue::Name(record.target.into()),
+            CanonicalValue::Name(record.value),
+        ),
+    };
     Event::Mutation(MutationEvent {
         target: match record.target {
             "meaning" => StateTarget::Meaning,
@@ -747,8 +770,8 @@ fn translate_mutation(record: MutationRecord) -> Event {
             "parameter" => StateTarget::Parameter,
             _ => StateTarget::Register,
         },
-        key: CanonicalValue::Name(record.target.into()),
-        value: CanonicalValue::Name(record.value),
+        key,
+        value,
         scope: "local".into(),
     })
 }

@@ -10,6 +10,7 @@ use tex_command::{
     AlignmentDelivery, AlignmentIdentity, AlignmentRequest, CommandError, CommandHostCapabilities,
     CommandHostContext, CommandProcessor, CommandProfile, CommandRuntime, CommandState,
 };
+use tex_state::env::banks::IntParam;
 use tex_state::interner::Symbol;
 use tex_state::macro_store::{MacroDefinitionProvenance, MacroMeaning};
 use tex_state::meaning::{Meaning, MeaningFlags, UnexpandablePrimitive};
@@ -255,6 +256,11 @@ enum ScannedStep {
         value: i32,
         global: bool,
     },
+    IntParam {
+        index: u16,
+        value: i32,
+        global: bool,
+    },
     MacroDefinition {
         target: Symbol,
         flags: MeaningFlags,
@@ -316,6 +322,18 @@ fn scan_command(
             let index =
                 u16::try_from(index).map_err(|_| ExecError::RegisterNumberOutOfRange(index))?;
             Ok(ScannedStep::Count {
+                index,
+                value,
+                global,
+            })
+        }
+        Meaning::IntParam(index) => {
+            let _ = processor.scan_optional_equals().map_err(command_error)?;
+            let value = processor.scan_integer().map_err(command_error)?.value;
+            #[cfg(any(test, feature = "instrumentation"))]
+            processor
+                .observe_typed_mutation("parameter", format!("integer_parameter:{index}={value}"));
+            Ok(ScannedStep::IntParam {
                 index,
                 value,
                 global,
@@ -429,6 +447,19 @@ fn apply_scanned_step(
                 stores.set_count_global(index, value);
             } else {
                 stores.set_count(index, value);
+            }
+            Ok(ReplayStep::Continue)
+        }
+        ScannedStep::IntParam {
+            index,
+            value,
+            global,
+        } => {
+            let parameter = IntParam::new(index);
+            if global {
+                stores.set_int_param_global(parameter, value);
+            } else {
+                stores.set_int_param(parameter, value);
             }
             Ok(ReplayStep::Continue)
         }

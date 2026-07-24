@@ -1,10 +1,11 @@
 use std::sync::Arc;
 
 use tex_command::{
-    AlignmentCellTemplates, AlignmentRequest, RegisteredSourceKind, SourceRegistration,
-    TracedTokenList,
+    AlignmentCellTemplates, AlignmentRequest, CommandObservation, CommandObserver,
+    RegisteredSourceKind, SourceRegistration, TracedTokenList,
 };
 use tex_state::Universe;
+use tex_state::env::banks::IntParam;
 use tex_state::meaning::{ExpandablePrimitive, Meaning};
 
 use super::*;
@@ -66,6 +67,48 @@ fn replay_uses_typed_scanners_for_definitions_assignments_and_termination() {
 }
 
 #[test]
+fn canonical_initex_replay_scans_and_applies_integer_parameters() {
+    let mut universe = Universe::new();
+    let mut control = CommandReplayControl::tex82_initex(&mut universe);
+    register_source(&mut control, br"\year=2026\month=7\end");
+    let mut observations = ObservationRecorder::default();
+
+    assert_eq!(
+        control
+            .step_with_observer(&mut universe, &mut observations)
+            .expect("year assignment"),
+        ReplayStep::Continue
+    );
+    assert_eq!(universe.int_param(IntParam::YEAR), 2026);
+    assert_eq!(
+        control.step(&mut universe).expect("month assignment"),
+        ReplayStep::Continue
+    );
+    assert_eq!(universe.int_param(IntParam::MONTH), 7);
+    assert_eq!(control.step(&mut universe).expect("end"), ReplayStep::End);
+
+    assert!(matches!(
+        observations.0.as_slice(),
+        [..,
+            CommandObservation::Scanner(scanner),
+            CommandObservation::Mutation(mutation)]
+            if scanner.kind == "integer"
+                && scanner.value == "2026"
+                && mutation.target == "parameter"
+                && mutation.value == "integer_parameter:23=2026"
+    ));
+}
+
+#[derive(Default)]
+struct ObservationRecorder(Vec<CommandObservation>);
+
+impl CommandObserver for ObservationRecorder {
+    fn committed(&mut self, observation: CommandObservation) {
+        self.0.push(observation);
+    }
+}
+
+#[test]
 fn replay_expands_registered_input_without_executor_source_consumption() {
     let mut universe = Universe::new();
     crate::install_unexpandable_primitives(&mut universe);
@@ -85,10 +128,6 @@ fn replay_expands_registered_input_without_executor_source_consumption() {
         ReplayStep::Continue
     );
     assert_eq!(universe.count(3), 9);
-    assert_eq!(
-        control.step(&mut universe).expect("child source retires"),
-        ReplayStep::Continue
-    );
     assert_eq!(
         control.step(&mut universe).expect("parent assignment"),
         ReplayStep::Continue

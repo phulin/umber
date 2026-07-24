@@ -6,6 +6,8 @@ use tex_state::scaled::{PhysicalUnit, Scaled, round_decimal_fraction, scaled_fro
 use tex_state::token::OriginId;
 
 use crate::{CommandError, CurrentCommand, processor::CommandProcessor};
+#[cfg(any(test, feature = "instrumentation"))]
+use crate::{CommandObservation, ScannerRecord};
 
 /// Recovery performed by a canonical scalar scan.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -225,7 +227,7 @@ impl CommandProcessor<'_> {
                 }
             },
         };
-        Ok(ScannedScalar {
+        let scanned = ScannedScalar {
             value: if negative {
                 value.saturating_neg()
             } else {
@@ -235,7 +237,13 @@ impl CommandProcessor<'_> {
             provenance: ScalarProvenance {
                 primary: provenance,
             },
-        })
+        };
+        #[cfg(any(test, feature = "instrumentation"))]
+        self.observe(CommandObservation::Scanner(ScannerRecord {
+            kind: "integer",
+            value: scanned.value.to_string(),
+        }));
+        Ok(scanned)
     }
 
     /// Scans a dimension or an internal dimension quantity.
@@ -347,6 +355,10 @@ impl CommandProcessor<'_> {
                         .saturating_mul(10)
                         .saturating_add(i32::from(ch as u8 - b'0'))
                 }
+                // TeX's numeric scanner absorbs one trailing space after a
+                // decimal constant; replay must not manufacture a backup
+                // transition before publishing the completed integer.
+                Meaning::CharToken { ch: ' ', .. } => break,
                 _ => {
                     self.back_input(command)?;
                     break;

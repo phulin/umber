@@ -264,7 +264,11 @@ executor remains an independent migration surface and may still depend on
 `tex-lex`/`tex-expand`; that temporary dependency does not grant the replay
 adapter a second input path. The `tex-exec` architecture test enforces this
 source-level boundary, while replay tests exercise typed scanner rollback and
-registered nested input.
+registered nested input. Canonical INITEX replay installs the static TeX82
+primitive registries before source registration. Integer-parameter assignments
+such as `\year` scan their operands through `CommandProcessor`, publish the
+completed scanner and typed-mutation observations in that order, and only then
+apply the executor-side `Universe` mutation.
 
 ### 5.4 Proposed module layout
 
