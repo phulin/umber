@@ -934,4 +934,94 @@ mod tests {
             },
         );
     }
+
+    #[test]
+    fn outer_recovery_is_bounded_and_snapshot_rollback_replays_the_episode() {
+        let mut command = CommandState::default();
+        let source = command
+            .register_source(SourceRegistration::new(
+                RegisteredSourceKind::Generated,
+                Arc::<[u8]>::from(b"\\outer".as_slice()),
+            ))
+            .expect("source registers");
+        command
+            .open_registered_source(source)
+            .expect("source opens");
+        let mut runtime = CommandRuntime::default();
+        let mut universe = Universe::new();
+        recovery_primitives(&mut universe);
+        let outer = universe.intern("outer").symbol();
+        let parameters = universe.intern_token_list(&[]);
+        let replacement = universe.intern_token_list(&[]);
+        let definition = universe.intern_macro(MacroMeaning::new(
+            MeaningFlags::OUTER,
+            parameters,
+            replacement,
+        ));
+        universe.set_meaning(
+            outer,
+            Meaning::Macro {
+                flags: MeaningFlags::OUTER,
+                definition,
+            },
+        );
+        let mut capabilities = CommandHostCapabilities::default();
+        let matching = ScannerStatus::Matching(MatchingContext {
+            macro_name: outer,
+            builder: ArgumentBuilderId(1),
+            warning: ScannerWarning(29),
+        });
+
+        let snapshot = command.with_scanner_status(matching.clone(), |command| {
+            let snapshot = command.snapshot();
+            let mut processor = processor(command, &mut runtime, &mut universe, &mut capabilities);
+            assert_eq!(
+                processor
+                    .get_next()
+                    .expect("outer recovery succeeds")
+                    .expect("recovery substitutes a space")
+                    .meaning(),
+                Meaning::CharToken {
+                    ch: ' ',
+                    cat: Catcode::Space,
+                }
+            );
+            assert!(
+                processor
+                    .get_next()
+                    .expect("one recovery token delivers")
+                    .is_some()
+            );
+            assert!(
+                processor
+                    .get_next()
+                    .expect("the backed-up outer token delivers")
+                    .is_some()
+            );
+            assert!(
+                processor
+                    .get_next()
+                    .expect("recovery input is bounded")
+                    .is_none()
+            );
+            snapshot
+        });
+
+        command
+            .rollback(snapshot)
+            .expect("snapshot restores the live scanner episode and input cursor");
+        assert_eq!(command.scanner.status(), &matching);
+        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+        assert_eq!(
+            processor
+                .get_next()
+                .expect("rolled-back outer recovery succeeds")
+                .expect("recovery substitutes a space again")
+                .meaning(),
+            Meaning::CharToken {
+                ch: ' ',
+                cat: Catcode::Space,
+            }
+        );
+    }
 }

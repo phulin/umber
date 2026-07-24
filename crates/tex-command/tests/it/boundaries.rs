@@ -99,6 +99,38 @@ fn raw_delivery_keeps_one_profile_shared_input_path_and_semantic_free_levels() {
     assert!(levels.contains("cannot select expansion"));
 }
 
+#[test]
+#[allow(clippy::disallowed_methods)] // host-side architecture test
+fn outer_validity_and_runaway_recovery_have_one_raw_delivery_owner() {
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let next = fs::read_to_string(manifest_dir.join("src/processor/next.rs"))
+        .expect("read raw delivery implementation");
+
+    assert_eq!(
+        next.matches("fn check_outer_validity_entry(").count(),
+        1,
+        "outer-command detection must have one raw-delivery entry point"
+    );
+    assert_eq!(
+        next.matches("fn recover_runaway_eof(").count(),
+        1,
+        "EOF legality must have one raw-delivery entry point"
+    );
+    assert_eq!(
+        next.matches("fn install_outer_recovery(").count(),
+        1,
+        "outer commands and runaway EOF must share one recovery table"
+    );
+    assert_eq!(
+        next.matches("self.install_outer_recovery(recovery)?;")
+            .count(),
+        2,
+        "only outer-command and runaway-EOF entry points may install recovery"
+    );
+    assert!(next.contains("self.back_input(command.copy_for_backup())?;"));
+    assert!(next.contains("self.command.scanner.clear_for_recovery();"));
+}
+
 fn dependency_names(manifest: &str) -> BTreeSet<&str> {
     let mut in_dependencies = false;
     let mut names = BTreeSet::new();

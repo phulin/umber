@@ -824,7 +824,11 @@ The input-delivery audit drives the focused committed TeX82
 exact TeX82/e-TeX/pdfTeX profile. It also binds the required raw-delivery,
 retirement, and terminal-stop observations to all three canonical semantic
 matrices, and literal-brace observations to each engine's focused alignment
-case. A crate boundary test mechanically preserves one
+case. The recovery audit additionally requires the three matrices to retain
+exact backup, outer-command, runaway-EOF, and every non-normal scanner-status
+observation; TeX82's focused EOF children bind each status to its canonical
+inserted recovery token. A rollback test captures a live matching episode,
+proves recovery is bounded, then restores and replays it. A crate boundary test mechanically preserves one
 shared scalar loop, keeps profile selection beneath it, and rejects semantic
 condition/cache/scanner/expansion/paragraph state on input levels or replay
 trace-controlled delivery.

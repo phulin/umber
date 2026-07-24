@@ -103,6 +103,7 @@ diagnostic|aligning EOF|input-eof-aligning.tex|check_outer_validity aligning EOF
 diagnostic|skipping EOF|input-recovery.tex and transitions-child.tex|check_outer_validity skipping EOF recovery|"diagnostic":"outer_validity_eof","arguments":[{"type":"name","value":"skipping"}]
 recovery|defining EOF right brace|input-eof-defining.tex|check_outer_validity defining insertion|"kind":"inserted_token","tokens":[{"character":125,"catcode":"right_brace"}]
 recovery|matching EOF par|input-eof-matching.tex|check_outer_validity matching insertion|"kind":"inserted_control_sequence","tokens":[{"character":0,"catcode":"escape","control_sequence":"par"}]
+recovery|absorbing EOF right brace|input-eof-absorbing.tex|check_outer_validity absorbing insertion|"kind":"inserted_token","tokens":[{"character":125,"catcode":"right_brace"}]
 recovery|aligning EOF frozen cr|input-eof-aligning.tex|check_outer_validity aligning insertion|"kind":"inserted_control_sequence","tokens":[{"character":0,"catcode":"escape","control_sequence":"cr"}]
 recovery|skipping EOF frozen fi|input-recovery.tex and transitions-child.tex|check_outer_validity skipping insertion|"kind":"inserted_token","tokens":[{"character":0,"catcode":"escape","control_sequence":"fi"}]
 alignment|begin|alignment-delivery.tex|push_alignment ownership commit|"event":"alignment","data":{"transition":"begin","align_state":-1000000,"nesting":1

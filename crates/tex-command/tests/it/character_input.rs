@@ -240,4 +240,46 @@ fn assert_shared_input_matrix_coverage() {
     assert!(CANONICAL_MATRIX.contains(
         "command|get_token string operand|input-recovery.tex|string_code scan_toks operand fetch"
     ));
+    assert!(CANONICAL_MATRIX.contains(
+        "command|noexpand one-delivery suppression|expansion-macros.tex|expand no_expand and backed-up get_next"
+    ));
+    for matrix in [
+        CANONICAL_MATRIX,
+        ETEX_CANONICAL_MATRIX,
+        PDFTEX_CANONICAL_MATRIX,
+    ] {
+        assert!(
+            matrix.contains("recovery|exact backup|transitions.tex|back_input committed level")
+        );
+        assert!(matrix.contains("diagnostic|outer control sequence|transitions.tex|check_outer_validity control-sequence recovery"));
+        assert!(matrix.contains(
+            "diagnostic|outer EOF|transitions-child.tex|check_outer_validity EOF recovery"
+        ));
+        for status in ["matching", "defining", "absorbing", "skipping", "aligning"] {
+            assert!(
+                matrix.contains(&format!("scanner_status|{status} entry and restoration")),
+                "canonical matrix must observe {status} scanner status"
+            );
+        }
+    }
+    for (source, status, recovery) in [
+        ("input-eof-defining.tex", "defining", "right brace"),
+        ("input-eof-matching.tex", "matching", "par"),
+        ("input-eof-absorbing.tex", "absorbing", "right brace"),
+        ("input-eof-aligning.tex", "aligning", "frozen cr"),
+        (
+            "input-recovery.tex and transitions-child.tex",
+            "skipping",
+            "frozen fi",
+        ),
+    ] {
+        assert!(
+            CANONICAL_MATRIX.contains(&format!("diagnostic|{status} EOF|{source}")),
+            "TeX82 fixture must trace EOF under {status} status"
+        );
+        assert!(
+            CANONICAL_MATRIX.contains(&format!("recovery|{status} EOF {recovery}|{source}")),
+            "TeX82 fixture must trace the canonical {status} EOF insertion"
+        );
+    }
 }
