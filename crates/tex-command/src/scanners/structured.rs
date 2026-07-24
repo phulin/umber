@@ -7,6 +7,7 @@
 use tex_state::glue::GlueSpec;
 use tex_state::interner::Symbol;
 use tex_state::meaning::{Meaning, UnexpandablePrimitive};
+use tex_state::scaled::Scaled;
 use tex_state::token::{Catcode, OriginId, Token};
 use tex_state::{SourceId, TracedTokenList};
 
@@ -73,6 +74,18 @@ pub struct ScannedGlueParameterAssignment {
     pub mu: bool,
 }
 
+/// A completed TeX82 `\hrule` or `\vrule` specification.
+///
+/// The command processor owns the expanded `width`, `height`, and `depth`
+/// keyword scans and their scalar operands. Replay receives only these final
+/// dimensions, so applying a rule cannot open another source-consumption path.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ScannedRuleSpec {
+    pub width: Option<Scaled>,
+    pub height: Option<Scaled>,
+    pub depth: Option<Scaled>,
+}
+
 /// The canonical boundary that stopped an unbraced filename scan.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum FileNameTermination {
@@ -122,6 +135,38 @@ impl CommandProcessor<'_> {
         let _ = self.scan_optional_equals()?;
         let value = self.scan_glue(mu)?.value;
         Ok(ScannedGlueParameterAssignment { index, value, mu })
+    }
+
+    /// Scans the complete expanded specification of a TeX82 rule.
+    ///
+    /// This is TeX.web's `scan_rule_spec`: keyword recognition and dimension
+    /// scanning stay in command control, including failed-keyword replay.
+    pub fn scan_rule_spec(
+        &mut self,
+        primitive: UnexpandablePrimitive,
+    ) -> Result<ScannedRuleSpec, CommandError> {
+        let default_rule = Scaled::from_raw(26_214);
+        let (mut width, mut height, mut depth) = if primitive == UnexpandablePrimitive::VRule {
+            (Some(default_rule), None, None)
+        } else {
+            (None, Some(default_rule), Some(Scaled::from_raw(0)))
+        };
+        loop {
+            if self.scan_keyword("width")?.value {
+                width = Some(self.scan_dimension()?.value);
+            } else if self.scan_keyword("height")?.value {
+                height = Some(self.scan_dimension()?.value);
+            } else if self.scan_keyword("depth")?.value {
+                depth = Some(self.scan_dimension()?.value);
+            } else {
+                break;
+            }
+        }
+        Ok(ScannedRuleSpec {
+            width,
+            height,
+            depth,
+        })
     }
 
     /// Validates a box body's required opening brace, then restores it for

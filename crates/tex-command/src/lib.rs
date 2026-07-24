@@ -51,8 +51,8 @@ pub use profile::{
 pub use scanners::{
     FileNameTermination, InternalValue, RegisteredInput, ScalarProvenance, ScalarRecovery,
     ScannedBalancedText, ScannedFileName, ScannedGlueParameterAssignment, ScannedLetAssignment,
-    ScannedMacroDefinition, ScannedScalar, ScannedSetBoxAssignment, ScannedTokenRegisterAssignment,
-    StructuredProvenance,
+    ScannedMacroDefinition, ScannedRuleSpec, ScannedScalar, ScannedSetBoxAssignment,
+    ScannedTokenRegisterAssignment, StructuredProvenance,
 };
 pub use snapshot::{CommandStateSnapshot, CommandSummary, CommandSummaryError};
 pub use state::{CommandRuntime, CommandState, UnknownRegisteredSource};

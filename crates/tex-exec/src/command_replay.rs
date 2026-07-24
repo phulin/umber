@@ -419,6 +419,12 @@ enum ScannedStep {
         meaning: Meaning,
         global: bool,
     },
+    Rule {
+        width: Option<Scaled>,
+        height: Option<Scaled>,
+        depth: Option<Scaled>,
+        horizontal: bool,
+    },
     Message {
         tokens: TracedTokenList,
     },
@@ -749,6 +755,17 @@ fn scan_command(
             let tokens = processor.scan_balanced_text(true).map_err(command_error)?;
             Ok(ScannedStep::Message {
                 tokens: tokens.tokens,
+            })
+        }
+        Meaning::UnexpandablePrimitive(
+            primitive @ (UnexpandablePrimitive::HRule | UnexpandablePrimitive::VRule),
+        ) => {
+            let spec = processor.scan_rule_spec(primitive).map_err(command_error)?;
+            Ok(ScannedStep::Rule {
+                width: spec.width,
+                height: spec.height,
+                depth: spec.depth,
+                horizontal: primitive == UnexpandablePrimitive::HRule,
             })
         }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::SetBox) => {
@@ -1288,6 +1305,27 @@ fn apply_scanned_step(
             } else {
                 stores.set_meaning(target, meaning);
             }
+            Ok(ReplayStep::Continue)
+        }
+        ScannedStep::Rule {
+            width,
+            height,
+            depth,
+            horizontal,
+        } => {
+            if horizontal
+                && matches!(
+                    modes.current_mode(),
+                    Mode::Horizontal | Mode::RestrictedHorizontal
+                )
+            {
+                let _ = modes.pop()?;
+            }
+            modes.current_list_mut().push(Node::Rule {
+                width,
+                height,
+                depth,
+            });
             Ok(ReplayStep::Continue)
         }
         ScannedStep::Message { tokens } => {

@@ -668,6 +668,54 @@ fn canonical_initex_replay_scans_and_applies_dimension_and_glue_registers() {
     assert_eq!(control.step(&mut universe).expect("end"), ReplayStep::End);
 }
 
+#[test]
+fn canonical_initex_replay_scans_complete_rule_specs_through_command_control() {
+    let mut universe = Universe::new();
+    let mut control = CommandReplayControl::tex82_initex(&mut universe);
+    register_source(
+        &mut control,
+        br"\vrule width1pt height2pt depth0pt\hrule width3pt height4pt depth1pt\end",
+    );
+    let mut observations = ObservationRecorder::default();
+
+    assert_eq!(
+        control
+            .step_with_observer(&mut universe, &mut observations)
+            .expect("vertical rule"),
+        ReplayStep::Continue
+    );
+    assert!(observations.0.iter().any(|observation| {
+        matches!(
+            observation,
+            CommandObservation::Scanner(scanner)
+                if scanner.kind == "dimension" && scanner.value == "65536"
+        )
+    }));
+    assert!(observations.0.iter().any(|observation| {
+        matches!(
+            observation,
+            CommandObservation::Command(delivery)
+                if matches!(delivery.spelling, ObservedToken::Character { character: 'w', .. })
+        )
+    }));
+
+    observations.0.clear();
+    assert_eq!(
+        control
+            .step_with_observer(&mut universe, &mut observations)
+            .expect("horizontal rule"),
+        ReplayStep::Continue
+    );
+    assert!(observations.0.iter().any(|observation| {
+        matches!(
+            observation,
+            CommandObservation::Scanner(scanner)
+                if scanner.kind == "dimension" && scanner.value == "196608"
+        )
+    }));
+    assert_eq!(control.step(&mut universe).expect("end"), ReplayStep::End);
+}
+
 #[derive(Default)]
 struct ObservationRecorder(Vec<CommandObservation>);
 

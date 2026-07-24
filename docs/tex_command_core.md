@@ -335,6 +335,14 @@ deliveries, optional-equals handling, and `\futurelet`'s two-token lookahead
 replay; `CommandReplayControl` applies the captured meaning only after that
 processor borrow ends and then publishes the committed meaning mutation.
 
+TeX82 `\hrule` and `\vrule` cross the same gate as completed
+`ScannedRuleSpec` values. `CommandProcessor::scan_rule_spec` owns every
+expanded `width`, `height`, and `depth` keyword and dimension scan, including
+the failed-keyword backup that begins subsequent main control. Replay only
+appends the resulting rule node; it neither reads a source token nor rebuilds
+rule provenance. This remains true inside alignment cells, where template
+delivery and rule scanning share the one command-owned input stream.
+
 TeX82 `\setbox` follows the same split in two phases. `CommandProcessor`
 scans the register integer and optional equals sign as a typed
 `ScannedSetBoxAssignment`, including the canonical backup of the equals

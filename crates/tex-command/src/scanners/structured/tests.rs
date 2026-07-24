@@ -243,6 +243,38 @@ fn expanded_balanced_text_uses_canonical_macro_argument_matching() {
 }
 
 #[test]
+fn rule_spec_scans_expanded_keywords_and_dimensions() {
+    let mut command = CommandState::default();
+    let source = command
+        .register_source(SourceRegistration::new(
+            RegisteredSourceKind::Generated,
+            Arc::<[u8]>::from(b"width1pt height2pt depth0pt!".as_slice()),
+        ))
+        .expect("source registers");
+    command
+        .open_registered_source(source)
+        .expect("source opens");
+    let mut runtime = CommandRuntime::default();
+    let mut universe = Universe::new();
+    let mut capabilities = CommandHostCapabilities::default();
+    let spec = processor(&mut command, &mut runtime, &mut universe, &mut capabilities)
+        .scan_rule_spec(UnexpandablePrimitive::VRule)
+        .expect("rule spec scans");
+
+    assert_eq!(spec.width.map(Scaled::raw), Some(Scaled::UNITY));
+    assert_eq!(spec.height.map(Scaled::raw), Some(2 * Scaled::UNITY));
+    assert_eq!(spec.depth.map(Scaled::raw), Some(0));
+    let terminator = processor(&mut command, &mut runtime, &mut universe, &mut capabilities)
+        .get_x_token()
+        .expect("terminator delivers")
+        .expect("terminator exists");
+    assert!(matches!(
+        terminator.meaning(),
+        Meaning::CharToken { ch: '!', .. }
+    ));
+}
+
+#[test]
 fn filename_registered_input_recovery_and_rollback_stay_command_owned() {
     let mut command = CommandState::default();
     push(
