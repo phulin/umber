@@ -168,7 +168,12 @@ canonical input expansion alone registers and opens a child. Terminal and root
 receive deterministic source identities in that order, and child identities
 are allocated only at their input transition; fixture-directory or logical-name
 iteration never selects or concatenates sources. It translates command-owned
-observer records at the host boundary and
+observer records at the host boundary. Token-list splice and completion
+records carry their committed purpose and semantic tokens from the
+command-owned collection seam; executor-owned macro-definition mutation is
+captured before application and emitted only after that application commits.
+This preserves observer ordering at the ownership boundary without
+reconstructing a fixture event from later state. The runner
 compares every produced event against the complete committed stream without
 filtering expected events. A mismatch reports its fixture
 identity, ordered index, typed expected and actual values, and available

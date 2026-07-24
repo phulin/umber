@@ -193,6 +193,9 @@ impl CommandProcessor<'_> {
         self.observe(CommandObservation::Mutation(MutationRecord {
             target: "control_sequence",
             value: name.clone(),
+            key: None,
+            tokens: None,
+            global: false,
         }));
         let origin = self
             .state

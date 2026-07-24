@@ -18,6 +18,8 @@ use crate::{DeliveryStamp, SourceRange};
 pub enum ObservedToken {
     Character { character: char, catcode: Catcode },
     ControlSequence(String),
+    MacroMatch,
+    MacroEndMatch,
     Parameter(u8),
     FrozenEndTemplate,
     FrozenEndV,
@@ -213,10 +215,17 @@ pub struct ScannerRecord {
 }
 
 /// One `scan_toks` direct splice or completed immutable collection.
+///
+/// `purpose` and `tokens` are captured at the command-owned collection seam,
+/// before the executor takes ownership of a completed definition or general
+/// text value.  They deliberately describe semantic token values rather than
+/// token-list identities, so host-only schema translation never has to infer
+/// a conversion from a later mutation.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TokenListRecord {
     pub transition: &'static str,
-    pub token_count: u64,
+    pub purpose: &'static str,
+    pub tokens: Vec<ObservedToken>,
 }
 
 /// A raw-delivery alignment adjustment or template lifecycle transition.
@@ -234,6 +243,9 @@ pub struct AlignmentRecord {
 pub struct MutationRecord {
     pub target: &'static str,
     pub value: String,
+    pub key: Option<String>,
+    pub tokens: Option<Vec<ObservedToken>>,
+    pub global: bool,
 }
 
 /// A committed externally-visible command effect or final ordering marker.

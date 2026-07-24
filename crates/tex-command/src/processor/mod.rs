@@ -96,6 +96,9 @@ impl<'a> CommandProcessor<'a> {
             crate::observation::MutationRecord {
                 target,
                 value: value.into(),
+                key: None,
+                tokens: None,
+                global: false,
             },
         ));
     }

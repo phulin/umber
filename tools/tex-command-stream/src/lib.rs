@@ -601,6 +601,24 @@ fn oracle_token(token: ObservedToken) -> OracleToken {
             control_sequence: Some(control_sequence),
             location: None,
         },
+        ObservedToken::MacroMatch => OracleToken {
+            character: u32::from('#'),
+            catcode: "match".into(),
+            control_sequence: None,
+            location: None,
+        },
+        ObservedToken::MacroEndMatch => OracleToken {
+            character: 0,
+            catcode: "end_match".into(),
+            control_sequence: None,
+            location: None,
+        },
+        ObservedToken::Parameter(slot) => OracleToken {
+            character: u32::from(slot),
+            catcode: "out_parameter".into(),
+            control_sequence: None,
+            location: None,
+        },
         other => OracleToken {
             character: 0,
             catcode: format!("{other:?}"),
@@ -734,8 +752,8 @@ fn translate_token_list(record: TokenListRecord) -> Event {
         } else {
             TokenListTransition::Complete
         },
-        purpose: record.transition.into(),
-        tokens: Vec::new(),
+        purpose: record.purpose.into(),
+        tokens: record.tokens.into_iter().map(oracle_token).collect(),
     })
 }
 fn translate_alignment(record: AlignmentRecord) -> Event {
@@ -763,6 +781,16 @@ fn translate_alignment(record: AlignmentRecord) -> Event {
     })
 }
 fn translate_mutation(record: MutationRecord) -> Event {
+    if record.target == "meaning"
+        && let (Some(key), Some(tokens)) = (record.key, record.tokens)
+    {
+        return Event::Mutation(MutationEvent {
+            target: StateTarget::Meaning,
+            key: CanonicalValue::Name(key),
+            value: CanonicalValue::Tokens(tokens.into_iter().map(oracle_token).collect()),
+            scope: if record.global { "global" } else { "local" }.into(),
+        });
+    }
     if record.target == "catcode" {
         if let Some((character, value)) = record.value.split_once('=') {
             if let Ok(character) = character.parse::<u32>() {

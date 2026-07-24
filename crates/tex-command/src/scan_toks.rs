@@ -70,11 +70,18 @@ impl CommandProcessor<'_> {
         #[cfg(any(test, feature = "instrumentation"))]
         self.observe(CommandObservation::TokenList(TokenListRecord {
             transition: "complete",
-            token_count: (self.state.tokens(result.parameter_text.token_list()).len()
-                + self
-                    .state
-                    .tokens(result.replacement_text.token_list())
-                    .len()) as u64,
+            purpose: match mode {
+                ScanToksMode::General { expanded: true } => "expanded_scan_toks",
+                ScanToksMode::General { expanded: false } => "scan_toks",
+                ScanToksMode::MacroDefinition { .. } => "macro_replacement",
+            },
+            tokens: self
+                .state
+                .tokens(result.replacement_text.token_list())
+                .iter()
+                .copied()
+                .map(|token| self.observed_token(TracedTokenWord::pack(token, OriginId::UNKNOWN)))
+                .collect(),
         }));
         Ok(result)
     }
@@ -240,10 +247,14 @@ impl CommandProcessor<'_> {
                 if let Some(number) = parameter_number(token)
                     && number <= highest_parameter
                 {
-                    output.push(TracedTokenWord::pack(
-                        Token::Param(number),
-                        spelling.origin(),
-                    ));
+                    let converted = TracedTokenWord::pack(Token::Param(number), spelling.origin());
+                    output.push(converted);
+                    #[cfg(any(test, feature = "instrumentation"))]
+                    self.observe(CommandObservation::TokenList(TokenListRecord {
+                        transition: "splice",
+                        purpose: "parameter_conversion",
+                        tokens: vec![self.observed_token(converted)],
+                    }));
                     continue;
                 }
                 self.back_input(command)?;
@@ -288,9 +299,14 @@ impl CommandProcessor<'_> {
             self.back_input(target)?;
             return Ok(false);
         };
-        let count = self.state.tokens(tokens).len();
-        #[cfg(not(any(test, feature = "instrumentation")))]
-        let _ = count;
+        #[cfg(any(test, feature = "instrumentation"))]
+        let observed = self
+            .state
+            .tokens(tokens)
+            .iter()
+            .copied()
+            .map(|token| self.observed_token(TracedTokenWord::pack(token, OriginId::UNKNOWN)))
+            .collect();
         output.extend(
             self.state
                 .tokens(tokens)
@@ -303,7 +319,8 @@ impl CommandProcessor<'_> {
         #[cfg(any(test, feature = "instrumentation"))]
         self.observe(CommandObservation::TokenList(TokenListRecord {
             transition: "splice",
-            token_count: count as u64,
+            purpose: "the_toks",
+            tokens: observed,
         }));
         Ok(true)
     }

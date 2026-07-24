@@ -4,12 +4,12 @@
 //! expansion, macro calls, input nesting, and operand collection remain in
 //! `tex-command`; no `InputStack` is accepted here.
 
-#[cfg(any(test, feature = "instrumentation"))]
-use tex_command::CommandObserver;
 use tex_command::{
     AlignmentDelivery, AlignmentIdentity, AlignmentRequest, CommandError, CommandHostCapabilities,
     CommandHostContext, CommandProcessor, CommandProfile, CommandRuntime, CommandState,
 };
+#[cfg(any(test, feature = "instrumentation"))]
+use tex_command::{CommandObservation, CommandObserver, MutationRecord, ObservedToken};
 use tex_state::env::banks::IntParam;
 use tex_state::interner::Symbol;
 use tex_state::macro_store::{MacroDefinitionProvenance, MacroMeaning};
@@ -181,14 +181,21 @@ impl CommandReplayControl {
             .with_observer(observer);
             scan_step(&mut processor)?
         };
-        apply_scanned_step(
+        let mutation = applied_mutation_observation(&scanned, stores);
+        let result = apply_scanned_step(
             scanned,
             stores,
             &mut self.modes,
             &mut self.next_alignment_identity,
             &mut self.active_alignment,
             &mut self.command,
-        )
+        );
+        if result.is_ok()
+            && let Some(mutation) = mutation
+        {
+            observer.committed(CommandObservation::Mutation(mutation));
+        }
+        result
     }
 
     /// Scans TeX's initial terminal filename through the canonical command
@@ -503,6 +510,68 @@ fn next_non_space_raw(
         ) {
             return Ok(Some(command));
         }
+    }
+}
+
+/// Captures executor-owned mutation data before structural application, then
+/// emits it only after that application commits. This preserves the command
+/// observer's canonical order without asking `tex-command` to inspect an
+/// executor-owned aggregate mutation.
+#[cfg(any(test, feature = "instrumentation"))]
+fn applied_mutation_observation(
+    scanned: &ScannedStep,
+    stores: &Universe,
+) -> Option<MutationRecord> {
+    let ScannedStep::MacroDefinition {
+        target,
+        parameter_text,
+        replacement_text,
+        global,
+        ..
+    } = scanned
+    else {
+        return None;
+    };
+    let mut tokens = stores
+        .tokens(parameter_text.token_list())
+        .iter()
+        .copied()
+        .map(|token| match token {
+            Token::Param(_) => ObservedToken::MacroMatch,
+            token => observed_macro_token(token, stores),
+        })
+        .collect::<Vec<_>>();
+    tokens.push(ObservedToken::MacroEndMatch);
+    tokens.extend(
+        stores
+            .tokens(replacement_text.token_list())
+            .iter()
+            .copied()
+            .map(|token| observed_macro_token(token, stores)),
+    );
+    Some(MutationRecord {
+        target: "meaning",
+        value: "macro definition".into(),
+        key: Some(stores.resolve(*target).to_owned()),
+        tokens: Some(tokens),
+        global: *global,
+    })
+}
+
+#[cfg(any(test, feature = "instrumentation"))]
+fn observed_macro_token(token: Token, stores: &Universe) -> ObservedToken {
+    match token {
+        Token::Char { ch, cat } => ObservedToken::Character {
+            character: ch,
+            catcode: cat,
+        },
+        Token::Cs(symbol) => ObservedToken::ControlSequence(stores.resolve(symbol).to_owned()),
+        Token::Param(slot) => ObservedToken::Parameter(slot),
+        Token::Frozen(_) if token.is_frozen_end_template() => ObservedToken::FrozenEndTemplate,
+        Token::Frozen(_) if token.is_frozen_endv() => ObservedToken::FrozenEndV,
+        Token::Frozen(frozen) => frozen
+            .primitive_index()
+            .map_or(ObservedToken::FrozenOther, ObservedToken::FrozenPrimitive),
     }
 }
 
