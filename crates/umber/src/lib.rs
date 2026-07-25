@@ -22,6 +22,7 @@ use tex_state::{
     WorldCommitMode, WorldError,
 };
 
+mod canonical_session;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod cli_resource;
 mod editor_session;
@@ -39,6 +40,10 @@ mod virtual_compile;
 
 pub const PACKAGE_VERSION: &str = env!("CARGO_PKG_VERSION");
 
+pub use canonical_session::{
+    CanonicalEngineSession, CanonicalResourceFulfillment, CanonicalResourceHost,
+    CanonicalSessionError, CanonicalSessionState, DEFAULT_CANONICAL_NO_PROGRESS_LIMIT,
+};
 pub use editor_session::{
     EditorCompileSession, EditorResourceError, EditorSessionOptions, EditorSessionStatus,
     EditorStabilizationAttempt,
@@ -356,6 +361,7 @@ impl<'a, 'context> EngineSession<'a, 'context> {
                 .map(tex_exec::PreparedDviPage::into_plan)
                 .collect(),
             committed_artifacts: run_committed.to_vec(),
+            effects: self.stores.world().effect_records().to_vec(),
             dumped_format: false,
         })
     }
@@ -374,6 +380,7 @@ impl<'a, 'context> EngineSession<'a, 'context> {
             committed_artifacts: self.stores.world().committed_artifacts()
                 [artifact_start..self.artifact_cursor]
                 .to_vec(),
+            effects: self.stores.world().effect_records().to_vec(),
             dumped_format: stats.dumped_format,
         }
     }
@@ -703,6 +710,8 @@ pub struct RunResult {
     pub dvi_pages: Vec<DviPagePlan>,
     /// Exact canonical bytes from this execution's successful shipout commits.
     pub committed_artifacts: Vec<CommittedArtifact>,
+    /// Effects committed by this successful execution, in World receipt order.
+    pub effects: Vec<EffectRecord>,
     pub dumped_format: bool,
 }
 

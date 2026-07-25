@@ -62,6 +62,10 @@ pub struct CanonicalMainControl {
     /// canonical aggregate operation. This is replay state so rollback drops
     /// it with the corresponding World artifact/effect roots.
     prepared_dvi_pages: Vec<crate::dispatch::PreparedDviPage>,
+    /// Named safe boundaries committed by the last aggregate operation.  The
+    /// host drains these only after `advance` has committed, so a resource
+    /// suspension never leaks a checkpoint from its rolled-back operation.
+    completed_boundaries: Vec<crate::EngineBoundary>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -180,6 +184,7 @@ struct CanonicalStepSnapshot {
     output_dead_cycles: i32,
     completed_replay_episode: Option<tex_command::CommandReplayEpisode>,
     prepared_dvi_pages: Vec<crate::dispatch::PreparedDviPage>,
+    completed_boundaries: Vec<crate::EngineBoundary>,
     universe: tex_state::Snapshot,
 }
 
@@ -394,6 +399,7 @@ impl CanonicalMainControl {
             output_dead_cycles: self.output_dead_cycles,
             completed_replay_episode: self.completed_replay_episode,
             prepared_dvi_pages: self.prepared_dvi_pages.clone(),
+            completed_boundaries: self.completed_boundaries.clone(),
             universe: stores.snapshot(),
         }
     }
@@ -416,6 +422,7 @@ impl CanonicalMainControl {
         self.output_dead_cycles = snapshot.output_dead_cycles;
         self.completed_replay_episode = snapshot.completed_replay_episode;
         self.prepared_dvi_pages = snapshot.prepared_dvi_pages;
+        self.completed_boundaries = snapshot.completed_boundaries;
         stores.rollback(&snapshot.universe);
     }
 
@@ -427,6 +434,14 @@ impl CanonicalMainControl {
     #[must_use]
     pub fn take_prepared_dvi_pages(&mut self) -> Vec<crate::dispatch::PreparedDviPage> {
         std::mem::take(&mut self.prepared_dvi_pages)
+    }
+
+    /// Drains named boundaries that became safe during committed aggregate
+    /// operations.  This is deliberately an event receipt, not a request for
+    /// the host to inspect modes or dispatch source tokens.
+    #[must_use]
+    pub fn take_completed_boundaries(&mut self) -> Vec<crate::EngineBoundary> {
+        std::mem::take(&mut self.completed_boundaries)
     }
 
     /// Returns the replay projection of TeX's current execution mode.
@@ -693,6 +708,7 @@ impl CanonicalMainControl {
     fn step_once(&mut self, stores: &mut Universe) -> Result<ReplayStep, ExecError> {
         self.refresh_host_capabilities();
         let mode = self.modes.current_mode();
+        let outer_paragraph_was_active = mode == Mode::Horizontal && self.modes.depth() == 2;
         let starts_paragraph = matches!(mode, Mode::Vertical | Mode::InternalVertical);
         let alignment_preamble = alignment_preamble(self.active_alignment.as_mut());
         let innermost_group = stores.innermost_group_kind();
@@ -754,6 +770,17 @@ impl CanonicalMainControl {
             self.output_dead_cycles = 0;
         }
         self.fire_pending_page_output(stores)?;
+        if stores.world().artifact_commits().len() != artifact_count {
+            self.completed_boundaries
+                .push(crate::EngineBoundary::ShipoutComplete);
+        }
+        if outer_paragraph_was_active
+            && self.modes.current_mode() == Mode::Vertical
+            && self.modes.depth() == 1
+        {
+            self.completed_boundaries
+                .push(crate::EngineBoundary::OuterParagraphEnd);
+        }
         Ok(result)
     }
 
