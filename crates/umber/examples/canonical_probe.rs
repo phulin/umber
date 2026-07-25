@@ -33,9 +33,12 @@
 //! `file:line` origin. Run with `RUST_BACKTRACE=1` for a full Rust backtrace.
 //!
 //! This is a diagnostic entry point, not the production e2e migration (that
-//! is tracked separately as `umber2-johp.28`). It is expected to fail today:
-//! see `umber2-johp.58` for the currently tracked earliest Gentle divergence
-//! this probe reproduces.
+//! is tracked separately as `umber2-johp.28`). Running against `gentle` is
+//! expected to fail today: see the current open successor issue under the
+//! `umber2-johp` epic (`bd show umber2-johp` for its children, or `bd ready`)
+//! for the earliest tracked Gentle divergence this probe reproduces -- that
+//! issue ID advances every time a divergence is fixed, so it is deliberately
+//! not hardcoded here.
 
 use std::env;
 use std::fs;

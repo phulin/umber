@@ -492,10 +492,12 @@ source context (`ExecError::format_with_provenance`), or, for a Rust panic,
 lets the default panic hook report the Rust-side `file:line` origin (rerun
 with `RUST_BACKTRACE=1` for a full backtrace). It intentionally does not run
 under `cargo test`: the command core is mid-migration and this probe is
-expected to fail until each earlier divergence in the `umber2-johp` chain is
-fixed. See Beads issue `umber2-johp.58` for the currently tracked earliest
-Gentle divergence it reproduces, and `docs/tex_command_core.md` for the
-canonical command-core architecture it exercises.
+expected to fail on `gentle` until each earlier divergence in the
+`umber2-johp` chain is fixed. See the current open successor issue under the
+`umber2-johp` epic (`bd show umber2-johp` for its children) for the earliest
+tracked Gentle divergence it reproduces -- that issue ID advances every time a
+divergence is fixed, so it is not pinned here -- and `docs/tex_command_core.md`
+for the canonical command-core architecture it exercises.
 
 ## TRIP Corpus
 
