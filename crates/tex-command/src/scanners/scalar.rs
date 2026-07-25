@@ -1007,6 +1007,17 @@ impl CommandProcessor<'_> {
                 };
                 InternalValue::Integer(value)
             }
+            // `space_factor` is owned by the executor's active horizontal
+            // list, rather than durable command state.  The bounded host
+            // capability is refreshed before each command operation, so an
+            // expanded definition can still scan `\the\spacefactor` through
+            // the ordinary internal-value path.
+            Meaning::UnexpandablePrimitive(UnexpandablePrimitive::SpaceFactor) => {
+                let Some(value) = self.host.space_factor() else {
+                    return Ok(None);
+                };
+                InternalValue::Integer(value)
+            }
             // TeX82 §424's `scan_something_internal` accepts a `\chardef`
             // value wherever `scan_int` accepts an internal integer. Plain
             // TeX relies on this for `\catcode` assignments such as

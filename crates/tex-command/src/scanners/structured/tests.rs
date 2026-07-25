@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use tex_state::Universe;
 use tex_state::macro_store::MacroMeaning;
-use tex_state::meaning::{Meaning, MeaningFlags};
+use tex_state::meaning::{ExpandablePrimitive, Meaning, MeaningFlags, UnexpandablePrimitive};
 use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 
 use super::*;
@@ -793,6 +793,95 @@ fn balanced_text_and_macro_definition_freeze_typed_lists_with_provenance() {
         universe.tokens(definition.replacement_text.token_list()),
         &[Token::Param(1)]
     );
+}
+
+#[test]
+fn expanded_macro_definition_splices_the_spacefactor_from_the_host() {
+    let mut command = CommandState::default();
+    let mut runtime = CommandRuntime::default();
+    let mut universe = Universe::new();
+    let target = universe.intern("captured_space_factor").symbol();
+    let the = universe.intern("the").symbol();
+    let space_factor = universe.intern("spacefactor").symbol();
+    universe.set_meaning(the, Meaning::ExpandablePrimitive(ExpandablePrimitive::The));
+    universe.set_meaning(
+        space_factor,
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::SpaceFactor),
+    );
+    let mut capabilities = CommandHostCapabilities::default();
+    capabilities.set_space_factor(Some(1000));
+    let mut recorder = Recorder::default();
+    push(
+        &mut command,
+        [
+            Token::Cs(target),
+            Token::Char {
+                ch: '{',
+                cat: Catcode::BeginGroup,
+            },
+            Token::Cs(the),
+            Token::Cs(space_factor),
+            Token::Char {
+                ch: '}',
+                cat: Catcode::EndGroup,
+            },
+        ],
+    );
+
+    let definition = processor(&mut command, &mut runtime, &mut universe, &mut capabilities)
+        .with_observer(&mut recorder)
+        .scan_macro_definition(true)
+        .expect("expanded definition scans the current space factor");
+
+    assert_eq!(definition.target, target);
+    assert_eq!(
+        universe.tokens(definition.replacement_text.token_list()),
+        &[
+            Token::Char {
+                ch: '1',
+                cat: Catcode::Other,
+            },
+            Token::Char {
+                ch: '0',
+                cat: Catcode::Other,
+            },
+            Token::Char {
+                ch: '0',
+                cat: Catcode::Other,
+            },
+            Token::Char {
+                ch: '0',
+                cat: Catcode::Other,
+            },
+        ]
+    );
+    assert!(recorder.0.iter().any(|observation| {
+        matches!(
+            observation,
+            CommandObservation::TokenList(record)
+                if record.transition == "splice"
+                    && record.purpose == "the_toks"
+                    && record.tokens
+                        == [
+                            crate::ObservedToken::Character {
+                                character: '1',
+                                catcode: Catcode::Other,
+                            },
+                            crate::ObservedToken::Character {
+                                character: '0',
+                                catcode: Catcode::Other,
+                            },
+                            crate::ObservedToken::Character {
+                                character: '0',
+                                catcode: Catcode::Other,
+                            },
+                            crate::ObservedToken::Character {
+                                character: '0',
+                                catcode: Catcode::Other,
+                            },
+                        ]
+        )
+    }));
 }
 
 #[test]

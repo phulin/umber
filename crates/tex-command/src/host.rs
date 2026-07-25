@@ -90,6 +90,7 @@ pub struct CommandHostCapabilities {
     images: Vec<(PdfImageRequest, PdfImageResource)>,
     job_name: String,
     conditional_state: ConditionalState,
+    space_factor: Option<i32>,
 }
 
 impl Default for CommandHostCapabilities {
@@ -102,6 +103,7 @@ impl Default for CommandHostCapabilities {
             // A processor outside main control observes TeX's initial outer
             // vertical mode. Real execution replaces this per operation.
             conditional_state: ConditionalState::new(ConditionalMode::Vertical, false),
+            space_factor: None,
         }
     }
 }
@@ -182,6 +184,13 @@ impl CommandHostCapabilities {
     pub fn set_conditional_state(&mut self, state: ConditionalState) {
         self.conditional_state = state;
     }
+
+    /// Installs the current horizontal-list space factor for one command
+    /// operation. `None` records that the executor is not in horizontal mode,
+    /// where TeX does not expose this internal quantity.
+    pub fn set_space_factor(&mut self, space_factor: Option<i32>) {
+        self.space_factor = space_factor;
+    }
 }
 
 /// A non-owning host-capability boundary for one command-processor operation.
@@ -224,6 +233,11 @@ impl<'a> CommandHostContext<'a> {
 
     pub(crate) const fn conditional_state(&self) -> ConditionalState {
         self._capabilities.conditional_state
+    }
+
+    #[must_use]
+    pub(crate) const fn space_factor(&self) -> Option<i32> {
+        self._capabilities.space_factor
     }
 }
 

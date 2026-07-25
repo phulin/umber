@@ -386,6 +386,13 @@ impl CanonicalMainControl {
     pub fn refresh_host_capabilities(&mut self) {
         self.capabilities
             .set_conditional_state(self.modes.conditional_state());
+        self.capabilities.set_space_factor(
+            matches!(
+                self.modes.current_mode(),
+                Mode::Horizontal | Mode::RestrictedHorizontal
+            )
+            .then(|| self.modes.current_list().space_factor()),
+        );
     }
 
     fn snapshot_step(&self, stores: &mut Universe) -> CanonicalStepSnapshot {
