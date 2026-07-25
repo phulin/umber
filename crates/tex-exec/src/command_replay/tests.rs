@@ -1112,6 +1112,40 @@ fn production_driver_indent_in_display_math_appends_an_ord_sub_box() {
 }
 
 #[test]
+fn production_driver_char_num_in_display_math_appends_a_math_char_noad() {
+    // TeX82 §1154's `mmode+char_num` scans the character number and calls
+    // `set_math_char` (§1155) exactly like an ordinary math-mode letter or
+    // other character: it must append a math-char noad, not reach the
+    // horizontal-mode character path.
+    let mut universe = Universe::new();
+    let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+    register_source(&mut control, b"$$\\char43 ");
+
+    assert_eq!(
+        control.step(&mut universe).expect("paragraph start"),
+        MainControlStep::Continue
+    );
+    assert_eq!(
+        control.step(&mut universe).expect("display math entry"),
+        MainControlStep::Continue
+    );
+    assert_eq!(
+        control.step(&mut universe).expect("display-math char_num"),
+        MainControlStep::Continue
+    );
+
+    assert_eq!(control.current_mode(), crate::Mode::DisplayMath);
+    assert!(matches!(
+        control.modes.current_list().nodes(),
+        [Node::MathNoad(MathNoad {
+            kind: NoadKind::Normal(NoadClass::Ord),
+            nucleus: MathField::MathChar(_),
+            ..
+        })]
+    ));
+}
+
+#[test]
 fn show_reads_its_target_raw_without_starting_macro_matching() {
     let mut universe = Universe::new();
     let mut control = CommandReplayControl::tex82_initex(&mut universe);

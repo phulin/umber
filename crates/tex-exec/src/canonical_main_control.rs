@@ -5229,6 +5229,24 @@ fn apply_scanned_step(
                     value,
                 },
             )?;
+            if matches!(modes.current_mode(), Mode::Math | Mode::DisplayMath) {
+                // TeX82 `main_control`'s `mmode+char_num` (§1154) scans the
+                // character number and then calls `set_math_char` (§1155)
+                // with its `math_code`, exactly like the sibling
+                // `mmode+letter`/`mmode+other_char`/`mmode+char_given` cases:
+                // it appends a math-char noad and never begins or continues
+                // a horizontal list from math mode.
+                let code = stores.mathcode(ch);
+                if code != 0x8000 {
+                    append_canonical_math_char(
+                        modes.current_list_mut(),
+                        stores,
+                        code,
+                        tex_state::token::OriginId::UNKNOWN,
+                    )?;
+                }
+                return Ok(ReplayStep::Continue);
+            }
             if matches!(
                 modes.current_mode(),
                 Mode::Vertical | Mode::InternalVertical
