@@ -4058,9 +4058,10 @@ fn replay_alignment_mode(kind: AlignmentKind) -> Mode {
 
 fn replay_alignment_row_mode(kind: AlignmentKind) -> Mode {
     match kind {
-        // `fin_align` has not migrated its unset-row conversion yet. Keep a
-        // row frame below the cell so a recovered paragraph can return to
-        // the alignment without consuming the outer list prematurely.
+        // Keep a row frame below the cell so a recovered paragraph can
+        // return to the alignment without consuming the outer list
+        // prematurely. `finish_replay_alignment` owns the later canonical
+        // unset-row conversion and final packing.
         AlignmentKind::HAlign => Mode::InternalVertical,
         AlignmentKind::VAlign => Mode::InternalVertical,
     }
