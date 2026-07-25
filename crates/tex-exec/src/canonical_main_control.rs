@@ -1907,6 +1907,15 @@ enum ScannedStep {
     /// exactly like a letter, then always appends the plain interword glue
     /// regardless of the current space factor.
     ControlSpace,
+    /// TeX82 §1214's `set_aux` assignment (`alter_aux`) for the vertical-mode
+    /// modifier: `\prevdepth=<dimen>` sets the enclosing vertical list's
+    /// `prev_depth`, the field `append_to_vlist` (§679) reads to decide
+    /// baselineskip/lineskip insertion before the next box. Legal only in
+    /// vertical or internal-vertical mode; §1214's `report_illegal_case`
+    /// (`abs(mode)<>vmode`) otherwise leaves the value alone.
+    PrevDepth {
+        value: Scaled,
+    },
     FixedHorizontalGlue {
         primitive: UnexpandablePrimitive,
     },
@@ -3147,6 +3156,11 @@ fn scan_command(
         }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::ControlSpace) => {
             Ok(ScannedStep::ControlSpace)
+        }
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::PrevDepth) => {
+            let _ = processor.scan_optional_equals().map_err(command_error)?;
+            let value = processor.scan_dimension().map_err(command_error)?.value;
+            Ok(ScannedStep::PrevDepth { value })
         }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Char) => {
             let value = processor.scan_integer().map_err(command_error)?.value;
@@ -5467,6 +5481,24 @@ fn apply_scanned_step(
                 _ => {
                     crate::assignments::append_canonical_control_space(modes, stores)?;
                 }
+            }
+            Ok(ReplayStep::Continue)
+        }
+        ScannedStep::PrevDepth { value } => {
+            if matches!(
+                modes.current_mode(),
+                Mode::Vertical | Mode::InternalVertical
+            ) {
+                modes.current_list_mut().set_prev_depth(value);
+            } else {
+                // TeX82 §1214's `alter_aux`: `if cur_chr<>abs(mode) then
+                // report_illegal_case`, which prints "You can't use
+                // `\prevdepth' in ... mode" and otherwise leaves the value
+                // alone -- it does not raise an executor error.
+                stores.world_mut().write_text(
+                    PrintSink::TerminalAndLog,
+                    "\n! You can't use `\\prevdepth' in this mode.\n",
+                );
             }
             Ok(ReplayStep::Continue)
         }
