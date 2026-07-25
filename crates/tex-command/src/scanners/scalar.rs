@@ -981,6 +981,24 @@ impl CommandProcessor<'_> {
                         .unwrap_or_else(|| Scaled::from_raw(0)),
                 )
             }
+            // TeX82 §424's `scan_something_internal` reaches `assign_font_dimen`
+            // through §8548's "Fetch a font dimension": `find_font_dimen(false)`
+            // scans the parameter number, then the font selector, and reads the
+            // named font's dimension (not just the current font, unlike
+            // `current_font_parameter`).
+            Meaning::UnexpandablePrimitive(UnexpandablePrimitive::FontDimen) => {
+                let number = self.scan_integer()?.value;
+                let font = self.scan_font_selector()?;
+                let number = u32::try_from(number).unwrap_or(0);
+                let value = self.state.font_dimen(font, number);
+                #[cfg(any(test, feature = "instrumentation"))]
+                self.observe(CommandObservation::Scanner(ScannerRecord {
+                    kind: "internal",
+                    value: format!("scaled:{}", value.raw()),
+                    tokens: None,
+                }));
+                InternalValue::Dimension(value)
+            }
             Meaning::CountRegister(index) => InternalValue::Integer(self.state.count(index)),
             Meaning::IntParam(index) => InternalValue::Integer(
                 self.state

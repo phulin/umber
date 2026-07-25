@@ -306,6 +306,17 @@ impl CommandContext<'_> {
             .font_parameter(self.universe.current_font(), number)
     }
 
+    /// Reads one named font's `\\fontdimen` parameter through the command
+    /// boundary. TeX82 §424's `scan_something_internal` reaches this through
+    /// `assign_font_dimen`'s "Fetch a font dimension" (§8548): an out-of-range
+    /// or non-positive parameter number recovers as zero, matching the
+    /// pre-canonical `Variable::FontDimen` read policy already established in
+    /// `tex-exec`'s `variable_access` module.
+    #[must_use]
+    pub fn font_dimen(&self, font: FontId, number: u32) -> crate::scaled::Scaled {
+        self.universe.font_parameter(font, number)
+    }
+
     /// Reads one font-family selector through the command boundary.
     #[must_use]
     pub fn math_family_font(&self, size: MathFontSize, family: u8) -> FontId {
