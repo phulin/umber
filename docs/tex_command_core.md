@@ -1348,6 +1348,10 @@ The semantic implementation follows TeX's scalar algorithm before any
 optimization is considered.
 
 Macro definitions retain canonical parameter and replacement token lists.
+TeX82 §27's `\\meaning` renders those immutable lists directly as
+`macro:<parameter-text>-><replacement-text>`; it never consults a live macro
+activation or macro-body input level, because §392 retires those call-local
+owners before later recovery input can be read.
 `macro_call`:
 
 1. installs `ScannerStatus::Matching` only when its parameter text is not

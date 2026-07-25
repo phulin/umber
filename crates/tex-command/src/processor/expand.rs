@@ -563,13 +563,48 @@ fn meaning_text(state: &tex_state::CommandContext<'_>, command: &CurrentCommand)
         Meaning::IntParam(index) => format!("integer parameter {index}"),
         Meaning::TokParam(index) => format!("token parameter {index}"),
         Meaning::Font(font) => format!("select font {}", state.font_name(font)),
-        Meaning::Macro { .. } => "macro:".to_owned(),
+        Meaning::Macro { definition, .. } => {
+            // `\\meaning` prints the definition, not a live macro-body input
+            // frame.  A completed macro call retires its activation and body,
+            // whereas the definition's parameter and replacement lists remain
+            // immutable state owned by the meaning.
+            let macro_meaning = state.macro_definition(definition);
+            format!(
+                "macro:{}->{}",
+                token_list_text(state, macro_meaning.parameter_text()),
+                token_list_text(state, macro_meaning.replacement_text()),
+            )
+        }
         Meaning::ExpandablePrimitive(_) | Meaning::UnexpandablePrimitive(_) => command
             .control_sequence()
             .map(|symbol| format!("\\{}", state.resolve(symbol)))
             .unwrap_or_else(|| "primitive".to_owned()),
         other => format!("{other:?}"),
     }
+}
+
+fn token_list_text(state: &tex_state::CommandContext<'_>, tokens: TokenListId) -> String {
+    state
+        .tokens(tokens)
+        .iter()
+        .copied()
+        .map(|token| token_list_token_text(state, token))
+        .collect()
+}
+
+/// TeX82's `show_token_list` representation used by `\\meaning` distinguishes
+/// a printed control word from following letter tokens with one space.  That
+/// delimiter belongs to the rendered definition, not to source input.
+fn token_list_token_text(state: &tex_state::CommandContext<'_>, token: Token) -> String {
+    let Token::Cs(symbol) = token else {
+        return string_text(state, token);
+    };
+    let name = state.resolve(symbol);
+    let mut text = format!("\\{name}");
+    if name.chars().last().is_some_and(char::is_alphabetic) {
+        text.push(' ');
+    }
+    text
 }
 
 fn roman_numeral(value: i32) -> String {
@@ -698,6 +733,15 @@ mod tests {
             }
         }
         text
+    }
+
+    fn letters(text: &str) -> Vec<Token> {
+        text.chars()
+            .map(|ch| Token::Char {
+                ch,
+                cat: Catcode::Letter,
+            })
+            .collect()
     }
 
     #[test]
@@ -1408,6 +1452,93 @@ mod tests {
         assert_eq!(
             universe.macro_invocation_provenance_stats().invocations(),
             2
+        );
+    }
+
+    #[test]
+    fn meaning_reads_immutable_replacement_after_nested_macro_retirement() {
+        let mut command = CommandState::default();
+        let mut runtime = CommandRuntime::default();
+        let mut universe = Universe::new();
+        let meaning = install_expandable(&mut universe, "meaning", ExpandablePrimitive::Meaning);
+        let empty = universe.intern_token_list(&[]);
+        let expanded = universe.intern_token_list(&letters("EXPANDED"));
+        let definition =
+            universe.intern_macro(MacroMeaning::new(MeaningFlags::EMPTY, empty, expanded));
+        let target = universe.intern("getxresult").symbol();
+        universe.set_meaning(
+            target,
+            Meaning::Macro {
+                flags: MeaningFlags::EMPTY,
+                definition,
+            },
+        );
+        command.push_token_level(
+            TokenPayload::Transient(SharedTokenBuffer::new(vec![
+                traced(Token::Cs(meaning)),
+                traced(Token::Cs(target)),
+            ])),
+            TokenBehavior::Ordinary,
+            RetirementBehavior::Pop,
+            ReplayTrace::Transient(crate::input::TransientReplayReason::Inserted),
+        );
+        command.push_macro_activation(
+            definition,
+            MacroArguments::default(),
+            OriginId::UNKNOWN,
+            empty,
+            OriginListId::EMPTY,
+        );
+        command.push_macro_activation(
+            definition,
+            MacroArguments::default(),
+            OriginId::UNKNOWN,
+            empty,
+            OriginListId::EMPTY,
+        );
+
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+        assert_eq!(rendered(&mut processor), "macro:->EXPANDED");
+        assert!(processor.command.parameters.activations.is_empty());
+    }
+
+    #[test]
+    fn meaning_separates_a_control_word_from_following_letters() {
+        let mut universe = Universe::new();
+        let leaf = universe.intern("leaf").symbol();
+        let replacement = universe.intern_token_list(&[
+            Token::Cs(leaf),
+            Token::Char {
+                ch: 'N',
+                cat: Catcode::Letter,
+            },
+        ]);
+        let empty = universe.intern_token_list(&[]);
+        let definition =
+            universe.intern_macro(MacroMeaning::new(MeaningFlags::EMPTY, empty, replacement));
+        let macro_name = universe.intern("result").symbol();
+        universe.set_meaning(
+            macro_name,
+            Meaning::Macro {
+                flags: MeaningFlags::EMPTY,
+                definition,
+            },
+        );
+        let command = {
+            let mut state = universe.command_context();
+            CurrentCommand::resolve(
+                traced(Token::Cs(macro_name)),
+                crate::command::DeliveryStamp::new(0, 0, 0),
+                None,
+                false,
+                &mut state,
+            )
+        };
+
+        assert_eq!(
+            meaning_text(&universe.command_context(), &command),
+            "macro:->\\leaf N"
         );
     }
 }
