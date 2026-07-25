@@ -85,6 +85,51 @@ pub(crate) fn ensure_horizontal_for_character(
     Ok(())
 }
 
+/// Performs TeX82 `new_graf` after command control has retained the
+/// triggering command and scheduled `\everypar`.  Canonical main control
+/// owns that scheduling; this helper deliberately accepts no input source.
+pub(crate) fn start_canonical_paragraph(
+    nest: &mut ModeNest,
+    stores: &mut Universe,
+    indent: bool,
+) -> Result<(), ExecError> {
+    match nest.current_mode() {
+        Mode::Vertical | Mode::InternalVertical => {
+            nest.set_enclosing_vertical_prev_graf(0);
+            let parskip = stores.glue_param(GlueParam::PAR_SKIP);
+            if nest.current_mode() == Mode::Vertical || !nest.current_list().is_empty() {
+                append_vertical_contribution(
+                    nest,
+                    stores,
+                    Node::Glue {
+                        spec: parskip,
+                        kind: GlueKind::Normal,
+                        leader: None,
+                    },
+                );
+                build_page_if_outer_vertical(nest, stores)?;
+            }
+            nest.push(Mode::Horizontal);
+            if indent {
+                append_indent_box(nest, stores)?;
+            }
+            Ok(())
+        }
+        Mode::Horizontal | Mode::RestrictedHorizontal => {
+            if indent {
+                append_indent_box(nest, stores)?;
+            }
+            Ok(())
+        }
+        mode => Err(ExecError::UnimplementedTypesetting {
+            mode,
+            token: tex_state::token::Token::Cs(stores.intern("par").symbol()),
+            origin: OriginId::UNKNOWN,
+            operation: "canonical paragraph start",
+        }),
+    }
+}
+
 fn start_paragraph(
     nest: &mut ModeNest,
     input: &mut InputStack,

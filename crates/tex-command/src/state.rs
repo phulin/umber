@@ -40,6 +40,21 @@ pub struct CommandState {
 }
 
 impl CommandState {
+    /// Schedules a frozen `\everypar` list after canonical main control has
+    /// completed TeX82's `new_graf` state transition.  Source ownership stays
+    /// entirely inside command state; executor control never fabricates an
+    /// input stack for token-list replay.
+    pub fn push_everypar(&mut self, tokens: TracedTokenList) {
+        self.push_token_level(
+            TokenPayload::Stored {
+                tokens: tokens.token_list(),
+                origins: tokens.origin_list(),
+            },
+            TokenBehavior::Ordinary,
+            RetirementBehavior::Pop,
+            ReplayTrace::Stored(crate::input::StoredReplayReason::EveryPar),
+        );
+    }
     /// Returns the committed observation for an executor-applied alignment
     /// begin transition.
     ///

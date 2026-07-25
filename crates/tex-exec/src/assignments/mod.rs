@@ -60,7 +60,8 @@ pub(crate) use hmode::fixed_infinite_glue;
 pub(crate) use hmode::scan_rule_node;
 use hmode::*;
 pub(crate) use hmode::{
-    append_given_char, flush_pending_hchars, try_append_character, try_append_tfm_character_span,
+    append_canonical_character, append_canonical_space, append_given_char, flush_pending_hchars,
+    try_append_character, try_append_tfm_character_span,
 };
 #[cfg(test)]
 pub(crate) use hyphenation::hyphenated_hlist as test_hyphenated_hlist_owned;
@@ -78,7 +79,7 @@ pub(crate) use paragraph::test_pretolerance_memo_key;
 use paragraph::*;
 pub(crate) use paragraph::{
     ParagraphBreakResult, display_line_dimensions, end_paragraph, ensure_horizontal_for_character,
-    interrupt_paragraph_for_display, make_indent_box, normal_paragraph,
+    interrupt_paragraph_for_display, make_indent_box, normal_paragraph, start_canonical_paragraph,
 };
 pub(crate) use paragraph::{install_reused_paragraph_hlist_after_start, start_reused_paragraph};
 use pdf_fonts::*;

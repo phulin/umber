@@ -140,6 +140,37 @@ pub(crate) fn append_given_char(
     }
 }
 
+/// Appends a character after canonical main control has already selected
+/// horizontal mode.  Keeping this small entry point here preserves the one
+/// ligature/space-factor implementation while ensuring canonical replay has
+/// no `InputStack` fallback.
+pub(crate) fn append_canonical_character(
+    nest: &mut ModeNest,
+    stores: &mut Universe,
+    ch: char,
+    origin: OriginId,
+) -> Result<(), ExecError> {
+    debug_assert!(matches!(
+        nest.current_mode(),
+        Mode::Horizontal | Mode::RestrictedHorizontal
+    ));
+    append_hchar(nest, stores, ch, origin);
+    Ok(())
+}
+
+/// Appends an ordinary space from canonical main control after horizontal
+/// mode has been selected by TeX82 §1095.
+pub(crate) fn append_canonical_space(
+    nest: &mut ModeNest,
+    stores: &mut Universe,
+) -> Result<(), ExecError> {
+    debug_assert!(matches!(
+        nest.current_mode(),
+        Mode::Horizontal | Mode::RestrictedHorizontal
+    ));
+    append_space(nest, stores)
+}
+
 pub(crate) fn flush_pending_hchars(
     nest: &mut ModeNest,
     stores: &mut Universe,

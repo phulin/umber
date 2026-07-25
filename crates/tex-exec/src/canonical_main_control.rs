@@ -901,7 +901,11 @@ enum ScannedStep {
     Paragraph,
     MathShift,
     ParagraphStart,
-    Character,
+    Character {
+        ch: char,
+        cat: Catcode,
+        origin: tex_state::token::OriginId,
+    },
 }
 
 /// Selects the one command-owned scanner that may consume input before
@@ -1643,9 +1647,13 @@ fn scan_command(
             Ok(ScannedStep::ParagraphStart)
         }
         Meaning::CharToken {
-            cat: Catcode::Letter | Catcode::Other,
-            ..
-        } => Ok(ScannedStep::Character),
+            ch,
+            cat: cat @ (Catcode::Letter | Catcode::Other | Catcode::Space),
+        } => Ok(ScannedStep::Character {
+            ch,
+            cat,
+            origin: command.spelling().origin(),
+        }),
         _ => Ok(ScannedStep::Continue),
     }
 }
@@ -2186,6 +2194,13 @@ fn apply_scanned_step(
             Ok(ReplayStep::Continue)
         }
         ScannedStep::HorizontalSkip { value } => {
+            if matches!(
+                modes.current_mode(),
+                Mode::Vertical | Mode::InternalVertical
+            ) {
+                start_canonical_paragraph(command, modes, stores, true)?;
+            }
+            crate::assignments::flush_pending_hchars(modes, stores)?;
             modes.current_list_mut().push(Node::Glue {
                 spec: stores.intern_glue(value),
                 kind: GlueKind::Normal,
@@ -2830,9 +2845,12 @@ fn apply_scanned_step(
         ScannedStep::Paragraph => {
             if matches!(
                 modes.current_mode(),
-                Mode::Horizontal | Mode::RestrictedHorizontal
+                Mode::Vertical | Mode::InternalVertical
             ) {
-                let _ = modes.pop()?;
+                crate::assignments::normal_paragraph(modes, stores);
+                crate::vertical::build_page_if_outer_vertical(modes, stores)?;
+            } else {
+                crate::assignments::end_paragraph(modes, stores)?;
             }
             Ok(ReplayStep::Continue)
         }
@@ -2847,21 +2865,66 @@ fn apply_scanned_step(
             Ok(ReplayStep::Continue)
         }
         ScannedStep::ParagraphStart => {
-            if matches!(
-                modes.current_mode(),
-                Mode::Vertical | Mode::InternalVertical
-            ) {
-                modes.push(Mode::Horizontal);
-            }
+            start_canonical_paragraph(command, modes, stores, true)?;
             Ok(ReplayStep::Continue)
         }
-        ScannedStep::Character => {
-            if modes.current_mode() == Mode::Vertical {
-                modes.push(Mode::Horizontal);
+        ScannedStep::Character { ch, cat, origin } => {
+            match cat {
+                Catcode::Space => {
+                    if matches!(
+                        modes.current_mode(),
+                        Mode::Vertical | Mode::InternalVertical
+                    ) {
+                        // Alignment-cell delivery reaches this branch without
+                        // the outer `starts_paragraph` probe, but TeX82 still
+                        // enters horizontal mode before ordinary text.
+                        start_canonical_paragraph(command, modes, stores, true)?;
+                    }
+                    if matches!(
+                        modes.current_mode(),
+                        Mode::Horizontal | Mode::RestrictedHorizontal
+                    ) {
+                        crate::assignments::append_canonical_space(modes, stores)?;
+                    }
+                }
+                Catcode::Letter | Catcode::Other => {
+                    if matches!(
+                        modes.current_mode(),
+                        Mode::Vertical | Mode::InternalVertical
+                    ) {
+                        start_canonical_paragraph(command, modes, stores, true)?;
+                    }
+                    crate::assignments::append_canonical_character(modes, stores, ch, origin)?;
+                }
+                _ => unreachable!("canonical character scan restricts catcodes"),
             }
             Ok(ReplayStep::Continue)
         }
     }
+}
+
+/// TeX82 §1095 `new_graf`: command control has already made any required
+/// backup, then this typed transition installs the indent and schedules the
+/// immutable `\everypar` payload through the same command state.
+fn start_canonical_paragraph(
+    command: &mut CommandState,
+    modes: &mut ModeNest,
+    stores: &mut Universe,
+    indent: bool,
+) -> Result<(), ExecError> {
+    crate::assignments::start_canonical_paragraph(modes, stores, indent)?;
+    let everypar = stores.tok_param(TokParam::EVERY_PAR);
+    if !stores.tokens(everypar).is_empty() {
+        let origin = stores.bootstrap_origin();
+        let traced: Vec<_> = stores
+            .tokens(everypar)
+            .iter()
+            .copied()
+            .map(|token| tex_state::token::TracedTokenWord::pack(token, origin))
+            .collect();
+        command.push_everypar(stores.finish_traced_token_list(&traced));
+    }
+    Ok(())
 }
 
 fn command_error(error: CommandError) -> ExecError {

@@ -93,6 +93,44 @@ fn production_driver_replays_paragraph_backup_and_typed_assignment() {
 }
 
 #[test]
+fn production_driver_schedules_everypar_before_replayed_first_character() {
+    let mut universe = Universe::new();
+    let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+    register_source(&mut control, br"\everypar{\count7=41}a\par\end");
+
+    assert_eq!(
+        control.step(&mut universe).expect("everypar assignment"),
+        MainControlStep::Continue
+    );
+    assert_eq!(
+        control.step(&mut universe).expect("paragraph start"),
+        MainControlStep::Continue
+    );
+    assert_eq!(control.current_mode(), crate::Mode::Horizontal);
+    assert_eq!(
+        control.step(&mut universe).expect("backup replay boundary"),
+        MainControlStep::Continue
+    );
+    assert_eq!(
+        control.step(&mut universe).expect("everypar replay"),
+        MainControlStep::Continue
+    );
+    assert_eq!(
+        universe.count(7),
+        41,
+        "everypar runs before the backup replay"
+    );
+    assert_eq!(
+        control.step(&mut universe).expect("first character replay"),
+        MainControlStep::Continue
+    );
+    assert_eq!(
+        control.step(&mut universe).expect("paragraph end"),
+        MainControlStep::Continue
+    );
+}
+
+#[test]
 fn production_driver_hands_box_math_and_alignment_to_typed_control() {
     let mut universe = Universe::new();
     let mut control = CanonicalMainControl::tex82_initex(&mut universe);
