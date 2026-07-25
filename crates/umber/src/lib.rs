@@ -1,9 +1,11 @@
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
+use tex_command::{RegisteredSourceKind, SourceRegistration, SourceRegistrationError};
 use tex_exec::{
-    CheckpointSink, ExecutionContext, ExecutionStats, Executor, FontResolver, PdfImageRequest,
-    PdfImageResolver, try_execute_assignment,
+    CanonicalMainControl, CheckpointSink, ExecutionContext, ExecutionStats, Executor, FontResolver,
+    MainControlStep, PdfImageRequest, PdfImageResolver, try_execute_assignment,
 };
 use tex_expand::{InputResolver, get_x_token_with_context};
 use tex_lex::{InputSource, InputStack, MemoryInput};
@@ -94,6 +96,11 @@ pub struct EngineSession<'a, 'context> {
     input: &'a mut InputStack,
     stores: &'a mut Universe,
     context: ExecutionContext<'context>,
+    /// The pending production command machine.  The selected run loop remains
+    /// legacy until the cutover issue, but every new session owns canonical
+    /// command state from startup so host-provided immutable resources can be
+    /// registered without consulting `InputStack`.
+    canonical: CanonicalMainControl,
     artifact_cursor: usize,
     checkpoint_policy: CheckpointPolicy,
 }
@@ -105,10 +112,15 @@ impl<'a, 'context> EngineSession<'a, 'context> {
         context: ExecutionContext<'context>,
     ) -> Self {
         let artifact_cursor = stores.world().artifact_commits().len();
+        // The selected engine profile/format has already installed meanings
+        // in `stores`; constructing this bridge must not mutate that shared
+        // state or re-register primitive identities.
+        let canonical = CanonicalMainControl::new();
         Self {
             input,
             stores,
             context,
+            canonical,
             artifact_cursor,
             checkpoint_policy: CheckpointPolicy::NamedExecutorBoundaries,
         }
@@ -126,6 +138,63 @@ impl<'a, 'context> EngineSession<'a, 'context> {
 
     pub fn stores_mut(&mut self) -> &mut Universe {
         self.stores
+    }
+
+    /// Registers the already-acquired immutable root bytes for the canonical
+    /// command machine and selects the job identity exposed by `\jobname`.
+    ///
+    /// This deliberately does not inspect the legacy `InputStack`: callers
+    /// which opt into the command path must provide the same retained root
+    /// bytes that their `World`/editor acquisition policy accepted.
+    pub fn register_canonical_root(
+        &mut self,
+        filename: &str,
+        kind: RegisteredSourceKind,
+        bytes: Arc<[u8]>,
+    ) -> Result<tex_state::SourceId, SourceRegistrationError> {
+        self.canonical
+            .capabilities_mut()
+            .set_startup_job_name(filename);
+        self.canonical
+            .register_root_source(SourceRegistration::new(kind, bytes))
+    }
+
+    /// Makes a completed host input acquisition available to a future typed
+    /// `\input` request.  Registration is capability-scoped; command state
+    /// receives the bytes only after it has scanned that request.
+    pub fn provide_canonical_input(
+        &mut self,
+        name: impl Into<String>,
+        kind: RegisteredSourceKind,
+        bytes: Arc<[u8]>,
+    ) {
+        self.canonical
+            .capabilities_mut()
+            .register_input(name, SourceRegistration::new(kind, bytes));
+    }
+
+    /// Convenience adapter for a `World` input that has already been
+    /// selected and recorded by the existing resolver policy.
+    pub fn provide_canonical_world_input(
+        &mut self,
+        name: impl Into<String>,
+        content: tex_state::FileContent,
+    ) {
+        self.provide_canonical_input(name, RegisteredSourceKind::World, content.shared_bytes());
+    }
+
+    /// Advances exactly one canonical main-control operation.  Effects and
+    /// artifacts are still committed through `World`, so callers can retain
+    /// the ordinary executor transaction boundary around this typed step.
+    pub fn step_canonical(&mut self) -> Result<MainControlStep, tex_exec::ExecError> {
+        self.canonical.step(self.stores)
+    }
+
+    /// Borrows the canonical driver for typed lifecycle operations such as
+    /// alignment requests.  It exposes no legacy source-consumption API.
+    #[must_use]
+    pub fn canonical_main_control_mut(&mut self) -> &mut CanonicalMainControl {
+        &mut self.canonical
     }
 
     pub fn execute(&mut self) -> Result<RunResult, tex_exec::ExecError> {
@@ -1446,9 +1515,58 @@ impl From<tex_out::html::HtmlError> for HtmlBuildError {
 
 #[cfg(test)]
 mod tests {
-    use super::{DriverFile, FinalizationError, PlannedFinalization};
+    use super::{
+        DriverFile, EngineSession, FinalizationError, PlannedFinalization,
+        uncommitted_terminal_text,
+    };
     use std::path::PathBuf;
+    use std::sync::Arc;
+    use tex_command::RegisteredSourceKind;
+    use tex_exec::{ExecutionContext, MainControlStep, install_unexpandable_primitives};
+    use tex_expand::install_expandable_primitives;
+    use tex_lex::{InputStack, MemoryInput};
     use tex_state::{PrintSink, StreamSlot, Universe, World};
+
+    #[test]
+    fn canonical_bridge_registers_only_acquired_root_and_nested_sources() {
+        let mut stores = Universe::new();
+        install_expandable_primitives(&mut stores);
+        install_unexpandable_primitives(&mut stores);
+        let mut legacy_input = InputStack::new(MemoryInput::new("legacy input is not consumed"));
+        let mut session = EngineSession::new(
+            &mut legacy_input,
+            &mut stores,
+            ExecutionContext::new("ignored-by-canonical-bridge"),
+        );
+        session
+            .register_canonical_root(
+                "inputs/report.tex",
+                RegisteredSourceKind::Generated,
+                Arc::from(&b"\\message{\\jobname}\\input child \\end"[..]),
+            )
+            .expect("root registers");
+        session.provide_canonical_input(
+            "child",
+            RegisteredSourceKind::Generated,
+            Arc::from(&b"\\message{nested}"[..]),
+        );
+
+        assert_eq!(
+            session.step_canonical().expect("root message"),
+            MainControlStep::Continue
+        );
+        assert_eq!(
+            session.step_canonical().expect("nested message"),
+            MainControlStep::Continue
+        );
+        assert_eq!(
+            (0..2)
+                .map(|_| session.step_canonical().expect("root terminator"))
+                .find(|step| *step == MainControlStep::End),
+            Some(MainControlStep::End)
+        );
+        assert_eq!(uncommitted_terminal_text(session.stores()), "reportnested");
+    }
 
     #[test]
     #[allow(clippy::disallowed_methods)] // Verifies real host ordering at the World boundary.

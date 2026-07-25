@@ -9,7 +9,7 @@ use tex_command::{
     AlignmentCellDelimiter, AlignmentCellOpening, AlignmentCellTemplates, AlignmentDelivery,
     AlignmentIdentity, AlignmentRequest, AlignmentRequestResult, CommandError,
     CommandHostCapabilities, CommandHostContext, CommandProcessor, CommandProfile, CommandRuntime,
-    CommandState, ImmediateExtension,
+    CommandState, ImmediateExtension, SourceRegistration, SourceRegistrationError,
 };
 #[cfg(any(test, feature = "instrumentation"))]
 use tex_command::{
@@ -87,6 +87,16 @@ struct ReplayBoxes {
 }
 
 impl CanonicalMainControl {
+    /// Creates command-owned state without changing the shared `Universe`.
+    ///
+    /// Composed sessions use this when their profile/format initializer has
+    /// already installed primitive meanings. [`Self::tex82_initex`] remains
+    /// the explicit fresh-INITEX constructor.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
     /// Creates a fresh canonical TeX82 INITEX replay environment.
     ///
     /// The primitive definitions are installed from the engine's static TeX82
@@ -113,6 +123,32 @@ impl CanonicalMainControl {
     #[must_use]
     pub fn capabilities_mut(&mut self) -> &mut CommandHostCapabilities {
         &mut self.capabilities
+    }
+
+    /// Registers and opens the one root source selected by the host before
+    /// canonical main control starts.  Source acquisition is deliberately
+    /// complete before this call: the command state retains only immutable
+    /// bytes and never reaches back into a host input stack.
+    pub fn register_root_source(
+        &mut self,
+        source: SourceRegistration,
+    ) -> Result<tex_state::SourceId, SourceRegistrationError> {
+        let id = self.command.register_source(source)?;
+        // `id` was just allocated by this command state, so this can fail
+        // only if the state implementation has violated its own invariant.
+        self.command
+            .open_registered_source(id)
+            .expect("freshly registered source must be openable");
+        Ok(id)
+    }
+
+    /// Refreshes executor-owned mode facts for the next processor borrow.
+    ///
+    /// This is intentionally call-local capability state rather than part of
+    /// a command snapshot or durable session summary.
+    pub fn refresh_host_capabilities(&mut self) {
+        self.capabilities
+            .set_conditional_state(self.modes.conditional_state());
     }
 
     /// Returns the replay projection of TeX's current execution mode.
@@ -219,6 +255,7 @@ impl CanonicalMainControl {
 
     /// Delivers and executes one replay command through the command processor.
     pub fn step(&mut self, stores: &mut Universe) -> Result<ReplayStep, ExecError> {
+        self.refresh_host_capabilities();
         let mode = self.modes.current_mode();
         let starts_paragraph = matches!(mode, Mode::Vertical | Mode::InternalVertical);
         let alignment_preamble = alignment_preamble(self.active_alignment.as_mut());

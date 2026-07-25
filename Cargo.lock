@@ -1379,6 +1379,7 @@ dependencies = [
  "tempfile",
  "test-support",
  "tex-arith",
+ "tex-command",
  "tex-exec",
  "tex-expand",
  "tex-fonts",

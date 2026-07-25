@@ -22,6 +22,13 @@ structural mutation after the processor borrow ends. Macro calls and
 registered `\\input` nesting therefore remain command-core operations; the
 executor never rereads their source text.
 
+`umber::EngineSession` constructs that command machine at startup and may
+register its root plus already-acquired nested `World` resources through typed
+capabilities. During the temporary migration phase the legacy executor loop is
+still the selected production runner; it is not a fallback for this canonical
+bridge. The later cutover replaces that loop, while resource acquisition,
+transaction rollback, and final effect/artifact commit remain host-owned.
+
 When main control starts a paragraph from vertical mode, replay makes the
 mode decision at the executor seam but asks the still-live command processor
 to perform TeX82's `back_input` on the triggering ordinary character. The
