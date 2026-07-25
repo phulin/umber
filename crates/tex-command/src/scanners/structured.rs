@@ -96,6 +96,9 @@ pub struct PdfImageRequest {
     pub depth: Option<Scaled>,
     pub page: i32,
     pub page_box: PdfImagePageBox,
+    /// Whether source selected `page_box` rather than leaving it to the live
+    /// pdfTeX page-box parameters applied by canonical main control.
+    pub page_box_explicit: bool,
     pub attr: Option<TracedTokenList>,
 }
 
@@ -928,6 +931,7 @@ impl CommandProcessor<'_> {
             page,
             // pdfTeX's default `pdf_pagebox` is configured outside the
             // scanner; Crop is the engine's effective no-parameter default.
+            page_box_explicit: page_box.is_some(),
             page_box: page_box.unwrap_or(PdfImagePageBox::Crop),
             attr,
         })

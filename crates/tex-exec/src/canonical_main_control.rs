@@ -329,19 +329,20 @@ impl CanonicalMainControl {
     fn resolve_pdf_image_resource(
         &self,
         scanned: ScannedStep,
-        pdf_output_enabled: bool,
+        stores: &Universe,
     ) -> Result<ScannedStep, ExecError> {
-        let ScannedStep::PdfXImage { request, .. } = scanned else {
+        let ScannedStep::PdfXImage { mut request, .. } = scanned else {
             return Ok(scanned);
         };
         // pdfTeX checks \pdfoutput before it enters `scan_image`; in DVI
         // mode this must be the diagnostic, not a host-resource suspension.
-        if !pdf_output_enabled {
+        if stores.int_param(IntParam::PDF_OUTPUT) <= 0 {
             return Ok(ScannedStep::PdfXImage {
                 request,
                 resource: PdfImageResource::Unavailable,
             });
         }
+        request.page_box = canonical_pdf_image_page_box(stores, &request);
         let resource = self.capabilities.pdf_image(&request).ok_or_else(|| {
             ExecError::MissingCanonicalPdfImage {
                 request: request.clone(),
@@ -515,8 +516,7 @@ impl CanonicalMainControl {
         };
         let scanned = self.resolve_font_resource(scanned)?;
         let scanned = self.resolve_input_stream_resource(scanned)?;
-        let scanned =
-            self.resolve_pdf_image_resource(scanned, stores.int_param(IntParam::PDF_OUTPUT) > 0)?;
+        let scanned = self.resolve_pdf_image_resource(scanned, stores)?;
         if let ScannedStep::ReplayCompleted(episode) = scanned {
             self.completed_replay_episode = Some(episode);
             return Ok(ReplayStep::Continue);
@@ -698,8 +698,7 @@ impl CanonicalMainControl {
         };
         let scanned = self.resolve_font_resource(scanned)?;
         let scanned = self.resolve_input_stream_resource(scanned)?;
-        let scanned =
-            self.resolve_pdf_image_resource(scanned, stores.int_param(IntParam::PDF_OUTPUT) > 0)?;
+        let scanned = self.resolve_pdf_image_resource(scanned, stores)?;
         if let ScannedStep::ReplayCompleted(episode) = scanned {
             self.completed_replay_episode = Some(episode);
             return Ok(ReplayStep::Continue);
@@ -1311,8 +1310,7 @@ impl CanonicalMainControl {
         };
         let scanned = self.resolve_font_resource(scanned)?;
         let scanned = self.resolve_input_stream_resource(scanned)?;
-        let scanned =
-            self.resolve_pdf_image_resource(scanned, stores.int_param(IntParam::PDF_OUTPUT) > 0)?;
+        let scanned = self.resolve_pdf_image_resource(scanned, stores)?;
         if let ScannedStep::ReplayCompleted(episode) = scanned {
             self.completed_replay_episode = Some(episode);
             return Ok(ReplayStep::Continue);
@@ -3921,6 +3919,32 @@ fn canonical_pdf_image_dimensions(
         width,
         height,
         depth: depth.unwrap_or_else(|| Scaled::from_raw(0)),
+    }
+}
+
+/// Applies pdfTeX's live `\pdfpagebox` and `\pdfforcepagebox` state after
+/// command-owned source scanning but before the immutable host request is
+/// exposed. This keeps `CommandProcessor` independent of `Universe` while
+/// ensuring the host sees the effective page-box identity.
+fn canonical_pdf_image_page_box(
+    stores: &Universe,
+    request: &PdfImageRequest,
+) -> tex_command::PdfImagePageBox {
+    let page_box = |value| match value {
+        1 => tex_command::PdfImagePageBox::Media,
+        2 => tex_command::PdfImagePageBox::Crop,
+        3 => tex_command::PdfImagePageBox::Bleed,
+        4 => tex_command::PdfImagePageBox::Trim,
+        5 => tex_command::PdfImagePageBox::Art,
+        _ => tex_command::PdfImagePageBox::Crop,
+    };
+    let forced = stores.int_param(IntParam::PDF_FORCE_PAGE_BOX);
+    if forced > 0 {
+        page_box(forced)
+    } else if request.page_box_explicit {
+        request.page_box
+    } else {
+        page_box(stores.int_param(IntParam::PDF_PAGE_BOX))
     }
 }
 

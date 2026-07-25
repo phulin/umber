@@ -1913,6 +1913,51 @@ mod tests {
     }
 
     #[test]
+    fn canonical_pdfximage_request_uses_live_pagebox_configuration() {
+        let request_for = |page_box, force_page_box, source: &[u8]| {
+            let mut stores = Universe::new();
+            crate::prepare_pdftex_run_stores(&mut stores);
+            stores.set_int_param_global(tex_state::env::banks::IntParam::PDF_OUTPUT, 1);
+            stores.set_int_param_global(tex_state::env::banks::IntParam::PDF_PAGE_BOX, page_box);
+            stores.set_int_param_global(
+                tex_state::env::banks::IntParam::PDF_FORCE_PAGE_BOX,
+                force_page_box,
+            );
+            let mut input = InputStack::new(MemoryInput::new("legacy input"));
+            let mut session = EngineSession::with_command_profile(
+                &mut input,
+                &mut stores,
+                ExecutionContext::new("pdf-image"),
+                tex_command::CommandProfile::PDFTEX14027,
+            );
+            session
+                .register_canonical_root(
+                    "job.tex",
+                    RegisteredSourceKind::Generated,
+                    Arc::<[u8]>::from(source),
+                )
+                .expect("root registers");
+            match session.advance_canonical().expect("image scan") {
+                CanonicalStepResult::Suspended(CanonicalResourceNeed::PdfImage { request }) => {
+                    request
+                }
+                other => panic!("expected image suspension, got {other:?}"),
+            }
+        };
+
+        assert_eq!(
+            request_for(1, 0, b"\\pdfximage image.pdf").page_box,
+            tex_command::PdfImagePageBox::Media,
+            "the live pdfpagebox default is part of the host identity"
+        );
+        assert_eq!(
+            request_for(2, 5, b"\\pdfximage mediabox image.pdf").page_box,
+            tex_command::PdfImagePageBox::Art,
+            "pdfforcepagebox overrides an explicit selector before acquisition"
+        );
+    }
+
+    #[test]
     fn canonical_pdfximage_rejects_dvi_mode_before_resource_acquisition() {
         let mut stores = Universe::new();
         crate::prepare_pdftex_run_stores(&mut stores);
