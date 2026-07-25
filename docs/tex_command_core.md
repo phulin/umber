@@ -385,12 +385,15 @@ expanded balanced scans continue to use the canonical macro matcher, so macro
 arguments never become executor-owned input.
 
 Within an expanded `scan_toks` collection, `\the` expands only its
-internal-value target, as TeX82's internal-value scanner requires. When that
-target yields a token-list value, the collector appends the frozen list
-directly: its tokens are neither reintroduced into input nor recursively
-expanded, and they do not affect the collector's brace depth. This remains a
-special case inside the collector's one-step `get_next`/`expand` loop rather
-than a second ordinary expanded-delivery loop.
+internal-value target, as TeX82's internal-value scanner requires. Primitive
+register targets (`\count`, `\dimen`, `\skip`, `\muskip`, and `\toks`) keep
+their `scan_eight_bit_int` episode in command core: every index digit is
+delivered before the first non-index token is backed up, then the completed
+value is rendered or spliced. When that target yields a token-list value, the
+collector appends the frozen list directly: its tokens are neither reintroduced
+into input nor recursively expanded, and they do not affect the collector's
+brace depth. This remains a special case inside the collector's one-step
+`get_next`/`expand` loop rather than a second ordinary expanded-delivery loop.
 
 `scan_file_name` returns a typed filename and its canonical `Group`, `Space`,
 `NonCharacter`, or `EndOfInput` termination. `open_registered_input` composes
@@ -1650,7 +1653,8 @@ canonical order. Overflow, rounding, radix, unit, and recovery behavior cite
 canonical sections and compare against reference fixtures.
 
 `scan_something_internal` applies TeX82's `scan_eight_bit_int` bound to every
-primitive register family (`\count`, `\dimen`, `\skip`, and `\muskip`): the
+primitive register family (`\count`, `\dimen`, `\skip`, `\muskip`, and
+`\toks`): the
 index is scanned through ordinary expanded command delivery, and a negative
 or greater-than-255 index recovers as register zero. A dimension-valued
 register bypasses the numeric dimension backup/replay path and reaches the

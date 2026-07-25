@@ -1,6 +1,7 @@
 //! Executor-facing canonical scalar scanners.
 
 use tex_state::glue::{GlueSpec, Order};
+use tex_state::ids::TokenListId;
 use tex_state::meaning::{Meaning, UnexpandablePrimitive};
 use tex_state::scaled::{PhysicalUnit, Scaled, round_decimal_fraction, scaled_from_decimal_parts};
 use tex_state::token::OriginId;
@@ -39,6 +40,12 @@ pub enum InternalValue {
     Integer(i32),
     Dimension(Scaled),
     Glue(GlueSpec),
+    MuGlue(GlueSpec),
+    Tokens {
+        tokens: TokenListId,
+        index: u16,
+        parameter: bool,
+    },
 }
 
 enum DimensionUnit {
@@ -747,7 +754,7 @@ impl CommandProcessor<'_> {
         Ok(DimensionUnit::Infinite(order))
     }
 
-    fn internal_value_from_command(
+    pub(crate) fn internal_value_from_command(
         &mut self,
         command: &CurrentCommand,
     ) -> Result<Option<InternalValue>, CommandError> {
@@ -813,7 +820,34 @@ impl CommandProcessor<'_> {
                     ),
                     tokens: None,
                 }));
-                InternalValue::Glue(value)
+                InternalValue::MuGlue(value)
+            }
+            Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Toks) => {
+                let index = self.scan_eight_bit_register_index()?;
+                let tokens = self.state.toks(index);
+                #[cfg(any(test, feature = "instrumentation"))]
+                self.observe(CommandObservation::Scanner(ScannerRecord {
+                    kind: "internal",
+                    value: "tokens".into(),
+                    tokens: Some(
+                        self.state
+                            .tokens(tokens)
+                            .iter()
+                            .copied()
+                            .map(|token| {
+                                self.observed_token(tex_state::token::TracedTokenWord::pack(
+                                    token,
+                                    OriginId::UNKNOWN,
+                                ))
+                            })
+                            .collect(),
+                    ),
+                }));
+                InternalValue::Tokens {
+                    tokens,
+                    index,
+                    parameter: false,
+                }
             }
             Meaning::CountRegister(index) => InternalValue::Integer(self.state.count(index)),
             Meaning::IntParam(index) => InternalValue::Integer(
@@ -832,14 +866,26 @@ impl CommandProcessor<'_> {
                 InternalValue::Glue(self.state.glue(self.state.skip(index)))
             }
             Meaning::MuskipRegister(index) => {
-                InternalValue::Glue(self.state.glue(self.state.muskip(index)))
+                InternalValue::MuGlue(self.state.glue(self.state.muskip(index)))
             }
             Meaning::GlueParam(index) => {
                 InternalValue::Glue(self.state.glue(self.state.glue_param(index)))
             }
             Meaning::MuGlueParam(index) => {
-                InternalValue::Glue(self.state.glue(self.state.glue_param(index)))
+                InternalValue::MuGlue(self.state.glue(self.state.glue_param(index)))
             }
+            Meaning::ToksRegister(index) => InternalValue::Tokens {
+                tokens: self.state.toks(index),
+                index,
+                parameter: false,
+            },
+            Meaning::TokParam(index) => InternalValue::Tokens {
+                tokens: self
+                    .state
+                    .tok_param(tex_state::env::banks::TokParam::new(index)),
+                index,
+                parameter: true,
+            },
             Meaning::InternalInteger(integer) => {
                 let Some(value) = self.state.internal_integer(integer) else {
                     return Ok(None);

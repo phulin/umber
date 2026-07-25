@@ -27,6 +27,7 @@ pub use alignment::{
 };
 pub(crate) use alignment::{AlignmentDeliveryAdjustment, AlignmentDeliveryState};
 pub(crate) use expand::ExpansionState;
+pub(crate) use expand::render_the_value;
 #[cfg(test)]
 pub(crate) use status::{
     AbsorbingContext, AlignmentId, AlignmentScanContext, ArgumentBuilderId, ConditionId,

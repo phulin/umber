@@ -1,10 +1,12 @@
 //! Ordinary expanded-command delivery.
 
-use tex_state::env::banks::{IntParam, TokParam};
+use tex_state::env::banks::IntParam;
+use tex_state::glue::{GlueSpec, Order};
 use tex_state::ids::{MacroDefinitionId, OriginListId, TokenListId};
 use tex_state::meaning::{ExpandablePrimitive, Meaning};
 use tex_state::page::PageMark;
 use tex_state::provenance::SynthesizedOriginKind;
+use tex_state::scaled::Scaled;
 use tex_state::token::{OriginId, Token, TracedTokenWord};
 
 use crate::input::{
@@ -21,12 +23,73 @@ use super::CommandProcessor;
 #[cfg(any(test, feature = "instrumentation"))]
 use crate::observation::{
     CommandDeliveryBoundary, CommandDeliveryRecord, CommandObservation, CommandProvenance,
-    EffectRecord, InputReason, InputRecord, InputTransition, RecoveryRecord, ScannerRecord,
+    EffectRecord, InputReason, InputRecord, InputTransition, RecoveryRecord,
 };
 
 /// Stable pending-diagnostic identity for TeX.web's `Missing \\endcsname
 /// inserted` recovery. Rendering belongs to the diagnostic milestone.
 const MISSING_ENDCSNAME_DIAGNOSTIC: u64 = 0x6373_6e61_6d65_0001;
+
+/// TeX82's decimal rendering for a scaled quantity, including its `pt` unit.
+fn format_scaled(value: Scaled) -> String {
+    let mut raw = i64::from(value.raw());
+    let mut output = String::new();
+    if raw < 0 {
+        output.push('-');
+        raw = -raw;
+    }
+    let unity = i64::from(Scaled::UNITY);
+    output.push_str(&(raw / unity).to_string());
+    output.push('.');
+    let mut scaled = 10 * (raw % unity) + 5;
+    let mut delta = 10;
+    loop {
+        if delta > unity {
+            scaled += 0o100000 - 50_000;
+        }
+        output.push(char::from(
+            b'0' + u8::try_from(scaled / unity).expect("scaled digit fits u8"),
+        ));
+        scaled = 10 * (scaled % unity);
+        delta *= 10;
+        if scaled <= delta {
+            break;
+        }
+    }
+    output.push_str("pt");
+    output
+}
+
+fn format_glue(value: GlueSpec, unit: &str) -> String {
+    let mut output = format_scaled(value.width);
+    replace_scaled_unit(&mut output, unit);
+    for (label, component, order) in [
+        (" plus ", value.stretch, value.stretch_order),
+        (" minus ", value.shrink, value.shrink_order),
+    ] {
+        if component.raw() == 0 {
+            continue;
+        }
+        output.push_str(label);
+        let mut component = format_scaled(component);
+        replace_scaled_unit(&mut component, unit);
+        output.push_str(component.trim_end_matches(unit));
+        output.push_str(match order {
+            Order::Normal => unit,
+            Order::Fil => "fil",
+            Order::Fill => "fill",
+            Order::Filll => "filll",
+        });
+    }
+    output
+}
+
+fn replace_scaled_unit(value: &mut String, unit: &str) {
+    if unit != "pt" {
+        value.truncate(value.len() - "pt".len());
+        value.push_str(unit);
+    }
+}
 
 impl CommandProcessor<'_> {
     /// Delivers one ordinary expanded command through TeX.web's `get_x_token`.
@@ -276,53 +339,38 @@ impl CommandProcessor<'_> {
         Ok(())
     }
 
-    /// Direct token-list `\\the` splicing has no recursive expansion and only
-    /// consumes its target command; scanner collection owns any later expansion.
+    /// Expands TeX82 `the_toks` after command-owned internal-quantity scanning.
+    ///
+    /// The internal scanner owns a primitive register's `scan_eight_bit_int`
+    /// episode.  In particular, `\\the\\count21` must deliver both index digits
+    /// before it backs up the next source token and installs rendered output.
+    /// Reaching into the target meaning here would leave that index to a later
+    /// scanner and changes the observable input ordering.
     fn expand_the(&mut self, opener: CurrentCommand) -> Result<(), CommandError> {
-        let target = self.get_x_token()?.ok_or(CommandError::InputInvariant)?;
-        match target.meaning() {
-            Meaning::UnexpandablePrimitive(tex_state::meaning::UnexpandablePrimitive::Toks) => {
-                let index = u16::try_from(self.scan_integer()?.value).unwrap_or(0);
-                let tokens = self.state.toks(index);
-                #[cfg(any(test, feature = "instrumentation"))]
-                self.observe(CommandObservation::Scanner(ScannerRecord {
-                    kind: "internal",
-                    value: "tokens".into(),
-                    tokens: Some(
-                        self.state
-                            .tokens(tokens)
-                            .iter()
-                            .copied()
-                            .map(|token| {
-                                self.observed_token(TracedTokenWord::pack(token, OriginId::UNKNOWN))
-                            })
-                            .collect(),
-                    ),
-                }));
-                self.push_the_tokens(tokens, index, false)
-            }
-            Meaning::ToksRegister(index) => {
-                self.push_the_tokens(self.state.toks(index), index, false)
-            }
-            Meaning::TokParam(index) => {
-                self.push_the_tokens(self.state.tok_param(TokParam::new(index)), index, true)
-            }
-            Meaning::CountRegister(index) => {
-                self.push_rendered_text(&self.state.count(index).to_string(), opener.origin());
-                Ok(())
-            }
-            Meaning::IntParam(index) => {
-                self.push_rendered_text(
-                    &self.state.int_param(IntParam::new(index)).to_string(),
-                    opener.origin(),
-                );
-                Ok(())
-            }
-            _ => {
-                self.push_rendered_text("0", opener.origin());
-                Ok(())
+        let Some(target) = self.scan_internal_value()? else {
+            return Err(CommandError::InputInvariant);
+        };
+        self.expand_the_value(opener.origin(), target.value)
+    }
+
+    pub(crate) fn expand_the_value(
+        &mut self,
+        opener: OriginId,
+        value: crate::InternalValue,
+    ) -> Result<(), CommandError> {
+        if let Some(text) = render_the_value(value) {
+            self.push_rendered_text(&text, opener);
+        } else {
+            match value {
+                crate::InternalValue::Tokens {
+                    tokens,
+                    index,
+                    parameter,
+                } => self.push_the_tokens(tokens, index, parameter)?,
+                _ => unreachable!("non-token internal values are rendered above"),
             }
         }
+        Ok(())
     }
 
     fn expand_fontname(&mut self, opener: CurrentCommand) -> Result<(), CommandError> {
@@ -508,6 +556,16 @@ impl CommandProcessor<'_> {
             replacement_tokens,
             replacement_origins,
         )
+    }
+}
+
+pub(crate) fn render_the_value(value: crate::InternalValue) -> Option<String> {
+    match value {
+        crate::InternalValue::Integer(value) => Some(value.to_string()),
+        crate::InternalValue::Dimension(value) => Some(format_scaled(value)),
+        crate::InternalValue::Glue(value) => Some(format_glue(value, "pt")),
+        crate::InternalValue::MuGlue(value) => Some(format_glue(value, "mu")),
+        crate::InternalValue::Tokens { .. } => None,
     }
 }
 

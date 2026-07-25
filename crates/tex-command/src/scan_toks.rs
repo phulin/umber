@@ -335,53 +335,43 @@ impl CommandProcessor<'_> {
         output: &mut Vec<TracedTokenWord>,
     ) -> Result<bool, CommandError> {
         let target = self.get_x_token()?.ok_or(CommandError::InputInvariant)?;
-        let tokens = match target.meaning() {
-            Meaning::UnexpandablePrimitive(tex_state::meaning::UnexpandablePrimitive::Toks) => {
-                let index = u16::try_from(self.scan_integer()?.value).unwrap_or(0);
-                let tokens = self.state.toks(index);
-                #[cfg(any(test, feature = "instrumentation"))]
-                self.observe(CommandObservation::Scanner(crate::ScannerRecord {
-                    kind: "internal",
-                    value: "tokens".into(),
-                    tokens: Some(
-                        self.state
-                            .tokens(tokens)
-                            .iter()
-                            .copied()
-                            .map(|token| {
-                                self.observed_token(TracedTokenWord::pack(token, OriginId::UNKNOWN))
-                            })
-                            .collect(),
-                    ),
-                }));
-                Some(tokens)
-            }
-            Meaning::ToksRegister(index) => Some(self.state.toks(index)),
-            Meaning::TokParam(index) => Some(
-                self.state
-                    .tok_param(tex_state::env::banks::TokParam::new(index)),
-            ),
-            _ => None,
-        };
-        let Some(tokens) = tokens else {
+        let Some(value) = self.internal_value_from_command(&target)? else {
             self.back_input(target)?;
             return Ok(false);
         };
-        #[cfg(any(test, feature = "instrumentation"))]
-        let observed = self
-            .state
-            .tokens(tokens)
-            .iter()
-            .copied()
-            .map(|token| self.observed_token(TracedTokenWord::pack(token, OriginId::UNKNOWN)))
-            .collect();
-        output.extend(
-            self.state
+        let tokens = match value {
+            crate::InternalValue::Tokens { tokens, .. } => self
+                .state
                 .tokens(tokens)
                 .iter()
                 .copied()
-                .map(|token| TracedTokenWord::pack(token, OriginId::UNKNOWN)),
-        );
+                .map(|token| TracedTokenWord::pack(token, OriginId::UNKNOWN))
+                .collect::<Vec<_>>(),
+            value => crate::processor::render_the_value(value)
+                .expect("non-token internal values render")
+                .chars()
+                .map(|ch| {
+                    TracedTokenWord::pack(
+                        Token::Char {
+                            ch,
+                            cat: if ch == ' ' {
+                                Catcode::Space
+                            } else {
+                                Catcode::Other
+                            },
+                        },
+                        OriginId::UNKNOWN,
+                    )
+                })
+                .collect(),
+        };
+        #[cfg(any(test, feature = "instrumentation"))]
+        let observed = tokens
+            .iter()
+            .copied()
+            .map(|token| self.observed_token(token))
+            .collect();
+        output.extend(tokens);
         self.command.expansion.cumulative_expansions =
             self.command.expansion.cumulative_expansions.wrapping_add(1);
         #[cfg(any(test, feature = "instrumentation"))]
@@ -472,7 +462,19 @@ mod tests {
     use crate::input::{
         ReplayTrace, RetirementBehavior, SharedTokenBuffer, TokenBehavior, TokenPayload,
     };
-    use crate::{CommandHostCapabilities, CommandHostContext, CommandRuntime, CommandState};
+    use crate::{
+        CommandHostCapabilities, CommandHostContext, CommandObservation, CommandObserver,
+        CommandRuntime, CommandState, InputTransition, ObservedToken,
+    };
+
+    #[derive(Default)]
+    struct Recorder(Vec<CommandObservation>);
+
+    impl CommandObserver for Recorder {
+        fn committed(&mut self, observation: CommandObservation) {
+            self.0.push(observation);
+        }
+    }
 
     fn traced(token: Token) -> TracedTokenWord {
         TracedTokenWord::pack(token, OriginId::UNKNOWN)
@@ -579,6 +581,96 @@ mod tests {
                 cat: Catcode::Letter,
             }
         );
+    }
+
+    #[test]
+    fn direct_the_count_scans_the_eight_bit_index_before_its_terminator_backup() {
+        let mut command = CommandState::default();
+        let mut runtime = CommandRuntime::default();
+        let mut universe = Universe::new();
+        let the = install_expandable(&mut universe, "the", ExpandablePrimitive::The);
+        let count = universe.intern("count").symbol();
+        universe.set_meaning(
+            count,
+            Meaning::UnexpandablePrimitive(tex_state::meaning::UnexpandablePrimitive::Count),
+        );
+        universe.set_count(21, -83);
+        push(
+            &mut command,
+            vec![
+                Token::Char {
+                    ch: '{',
+                    cat: Catcode::BeginGroup,
+                },
+                Token::Cs(the),
+                Token::Cs(count),
+                Token::Char {
+                    ch: '2',
+                    cat: Catcode::Other,
+                },
+                Token::Char {
+                    ch: '1',
+                    cat: Catcode::Other,
+                },
+                Token::Char {
+                    ch: ',',
+                    cat: Catcode::Other,
+                },
+                Token::Char {
+                    ch: '}',
+                    cat: Catcode::EndGroup,
+                },
+            ],
+        );
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut recorder = Recorder::default();
+        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities)
+            .with_observer(&mut recorder);
+
+        let scanned = processor
+            .scan_toks(ScanToksMode::General { expanded: true })
+            .expect("expanded collection succeeds");
+        assert_eq!(
+            processor
+                .state
+                .tokens(scanned.replacement_text.token_list()),
+            &[
+                Token::Char {
+                    ch: '-',
+                    cat: Catcode::Other
+                },
+                Token::Char {
+                    ch: '8',
+                    cat: Catcode::Other
+                },
+                Token::Char {
+                    ch: '3',
+                    cat: Catcode::Other
+                },
+                Token::Char {
+                    ch: ',',
+                    cat: Catcode::Other
+                },
+            ]
+        );
+        let two = recorder
+            .0
+            .iter()
+            .position(|observation| matches!(
+                observation,
+                CommandObservation::Command(record)
+                    if matches!(record.spelling, ObservedToken::Character { character: '2', .. })
+            ))
+            .expect("index digit is delivered");
+        let backup = recorder
+            .0
+            .iter()
+            .position(|observation| matches!(
+                observation,
+                CommandObservation::Input(record) if record.transition == InputTransition::Backup
+            ))
+            .expect("terminator is backed up");
+        assert!(two < backup);
     }
 
     #[test]
