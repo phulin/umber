@@ -17,7 +17,7 @@ use tex_command::{
     MacroRecord, MutationRecord, ObservedToken, RecoveryKind as CommandRecoveryKind,
     RecoveryRecord, RegisteredSourceKind, ScannerStatusRecord, SourceRegistration, TokenListRecord,
 };
-use tex_exec::{CommandReplayControl, ReplayStep};
+use tex_exec::{CanonicalMainControl, MainControlStep};
 use tex_oracle::{
     AlignmentEvent, AlignmentTransition, CanonicalCommand, CanonicalValue, CommandDelivery,
     CommandEvent, CommittedFixture, ConditionEvent, ConditionTransition, DiagnosticEvent,
@@ -378,7 +378,7 @@ impl CanonicalStartup {
                 RunnerError::Replay("canonical startup replay bound overflowed".into())
             })?;
         let mut universe = Universe::new();
-        let mut control = CommandReplayControl::tex82_initex(&mut universe);
+        let mut control = CanonicalMainControl::tex82_initex(&mut universe);
         let command = control.command_mut();
         // Source IDs are part of the command state's durable input identity:
         // terminal is always 0 and the selected root is always 1.
@@ -442,8 +442,8 @@ impl CanonicalStartup {
                     )));
                 }
                 match control.step_with_observer(&mut universe, &mut recorder) {
-                    Ok(ReplayStep::Continue) => deliveries += 1,
-                    Ok(ReplayStep::End | ReplayStep::EndOfInput) => break,
+                    Ok(MainControlStep::Continue) => deliveries += 1,
+                    Ok(MainControlStep::End | MainControlStep::EndOfInput) => break,
                     Err(error) => {
                         return Ok(ReplayOutput {
                             events: recorder.events,

@@ -1,4 +1,4 @@
-//! Command-core main-control seam used by canonical replay.
+//! Production canonical main-control driver.
 //!
 //! This intentionally owns only typed execution mutations. Raw delivery,
 //! expansion, macro calls, input nesting, and operand collection remain in
@@ -28,9 +28,9 @@ use tex_typeset::PackSpec;
 
 use crate::{ExecError, Mode, ModeNest};
 
-/// Replay-only command main control with command-owned source consumption.
+/// Production command main control with command-owned source consumption.
 #[derive(Debug, Default)]
-pub struct CommandReplayControl {
+pub struct CanonicalMainControl {
     command: CommandState,
     runtime: CommandRuntime,
     capabilities: CommandHostCapabilities,
@@ -86,7 +86,7 @@ struct ReplayBoxes {
     terminal_output_shipout_complete: bool,
 }
 
-impl CommandReplayControl {
+impl CanonicalMainControl {
     /// Creates a fresh canonical TeX82 INITEX replay environment.
     ///
     /// The primitive definitions are installed from the engine's static TeX82
@@ -484,13 +484,23 @@ fn install_write_stopper(stores: &mut Universe) {
     stores.install_primitive_meaning("endwrite", meaning);
 }
 
-/// The structural outcome of one typed replay operation.
+/// The structural outcome of one canonical main-control operation.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum ReplayStep {
+pub enum MainControlStep {
     Continue,
     EndOfInput,
     End,
 }
+
+// The fixture suite retains its historical vocabulary locally.  This alias is
+// deliberately unavailable to normal builds: production code names and uses
+// the canonical driver directly.
+#[cfg(test)]
+type CommandReplayControl = CanonicalMainControl;
+
+// Kept private while the implementation is migrated in place; callers only
+// see `MainControlStep`.
+type ReplayStep = MainControlStep;
 
 #[derive(Clone)]
 enum ScannedStep {
@@ -2611,4 +2621,5 @@ fn command_error(error: CommandError) -> ExecError {
 }
 
 #[cfg(test)]
+#[path = "command_replay/tests.rs"]
 mod tests;

@@ -69,6 +69,72 @@ fn replay_uses_typed_scanners_for_definitions_assignments_and_termination() {
 }
 
 #[test]
+fn production_driver_replays_paragraph_backup_and_typed_assignment() {
+    let mut universe = Universe::new();
+    let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+    register_source(&mut control, b"a\\count3=9\\end");
+
+    // TeX82 §1095 starts the paragraph only after the command processor has
+    // backed up the triggering character.  The next step redelivers it.
+    assert_eq!(
+        control.step(&mut universe).expect("paragraph start"),
+        MainControlStep::Continue
+    );
+    assert_eq!(control.current_mode(), crate::Mode::Horizontal);
+    assert_eq!(
+        control.step(&mut universe).expect("replayed character"),
+        MainControlStep::Continue
+    );
+    assert_eq!(
+        control.step(&mut universe).expect("typed count scan"),
+        MainControlStep::Continue
+    );
+    assert_eq!(universe.count(3), 9);
+}
+
+#[test]
+fn production_driver_hands_box_math_and_alignment_to_typed_control() {
+    let mut universe = Universe::new();
+    let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+    register_source(&mut control, br"\setbox0=\vbox{}$\halign{#\cr a\cr}\end");
+
+    assert_eq!(
+        control.step(&mut universe).expect("setbox scan"),
+        MainControlStep::Continue
+    );
+    assert_eq!(
+        control.step(&mut universe).expect("vbox opening"),
+        MainControlStep::Continue
+    );
+    assert_eq!(
+        control.step(&mut universe).expect("vbox body opening"),
+        MainControlStep::Continue
+    );
+    assert_eq!(
+        control.step(&mut universe).expect("replayed vbox brace"),
+        MainControlStep::Continue
+    );
+    assert_eq!(
+        control.step(&mut universe).expect("vbox completion"),
+        MainControlStep::Continue
+    );
+    assert_eq!(
+        control.step(&mut universe).expect("math entry"),
+        MainControlStep::Continue
+    );
+    assert!(matches!(control.current_mode(), crate::Mode::DisplayMath));
+    assert_eq!(
+        control.step(&mut universe).expect("math exit"),
+        MainControlStep::Continue
+    );
+    assert_eq!(
+        control.step(&mut universe).expect("alignment begin"),
+        MainControlStep::Continue
+    );
+    assert!(control.active_alignment().is_some());
+}
+
+#[test]
 fn show_reads_its_target_raw_without_starting_macro_matching() {
     let mut universe = Universe::new();
     let mut control = CommandReplayControl::tex82_initex(&mut universe);

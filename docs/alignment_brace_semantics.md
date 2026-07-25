@@ -134,7 +134,8 @@ Focused regressions live at the owning boundary:
 - raw brace accounting, nested suspension, and v-template retirement:
   `crates/tex-lex/src/tests.rs`;
 - command-owned nested close/outer-delivery resumption:
-  `crates/tex-exec/src/command_replay/tests.rs`;
+  `crates/tex-exec/src/command_replay/tests.rs` (fixture-only aliases for the
+  production canonical driver);
 - skipped braces and `\ifx`: `crates/tex-expand/src/tests.rs`;
 - macro arguments and expanded definitions:
   `crates/tex-expand/src/args_tests.rs` and `src/scan/tests.rs`;

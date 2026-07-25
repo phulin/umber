@@ -15,7 +15,7 @@ control-sequence meanings, enforces scanner status, updates `align_state`, and
 intercepts alignment delimiters. Its real downstream boundary is the delivery
 of an unexpandable current command to main control.
 
-`tex-exec::CommandReplayControl` is the narrow replay seam for that boundary:
+`tex-exec::CanonicalMainControl` is the production main-control seam for that boundary:
 it accepts no `InputStack`, obtains each `CurrentCommand` and every assignment
 operand through `CommandProcessor`, then applies only the completed typed
 structural mutation after the processor borrow ends. Macro calls and
@@ -447,9 +447,9 @@ the typed `CommandError::MissingInput` recovery. Neither API exposes a source
 cursor, input level, raw token, or host filesystem operation. Snapshot rollback
 therefore restores the complete future input state after every structured scan.
 
-### 5.3.1 Replay ownership gate
+### 5.3.1 Canonical main-control ownership gate
 
-`tex-exec::CommandReplayControl` is the only executor-facing replay adapter.
+`tex-exec::CanonicalMainControl` is the only production executor-facing command driver.
 It may classify `CurrentCommand::meaning()` and apply completed typed values,
 but it must not accept or construct `tex_lex::InputStack`, call raw-token
 delivery, or inspect a raw token carried by a delivered command. The legacy
@@ -490,7 +490,7 @@ mutation, which is emitted only after `Universe` applies the frozen list.
 TeX82 `\let` and `\futurelet` likewise cross replay as completed typed
 meaning assignments. `CommandProcessor` owns their raw target and source
 deliveries, optional-equals handling, and `\futurelet`'s two-token lookahead
-replay; `CommandReplayControl` applies the captured meaning only after that
+the canonical driver; `CanonicalMainControl` applies the captured meaning only after that
 processor borrow ends and then publishes the committed meaning mutation.
 
 TeX82 `\hrule` and `\vrule` cross the same gate as completed
@@ -2300,7 +2300,7 @@ typed values and stable identities. The test-only fixture adapter maps those
 owned records to a deterministic replay capture outside the production command
 dependency graph. It validates the locked TeX82 suite, scans the terminal root
 filename through the command processor, opens only that selected root, and
-drives command/executor replay through `CommandReplayControl` with a
+drives command/executor execution through `CanonicalMainControl` with a
 source-byte-derived bound. Remaining manifest sources are registered only as
 immutable `\\input` capabilities, so nested input remains command-owned;
 ordered schema comparison remains separate.

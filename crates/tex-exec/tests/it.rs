@@ -35,10 +35,10 @@ fn scoped_execution_transaction_cannot_escape_public_api() {
 
 #[test]
 #[allow(clippy::disallowed_methods)] // host-side architecture test
-fn command_replay_has_no_legacy_input_or_raw_command_classifier() {
+fn canonical_main_control_has_no_legacy_input_or_raw_command_classifier() {
     let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let replay = fs::read_to_string(manifest_dir.join("src/command_replay.rs"))
-        .expect("read command replay boundary");
+    let driver = fs::read_to_string(manifest_dir.join("src/canonical_main_control.rs"))
+        .expect("read canonical main-control boundary");
 
     for forbidden in [
         "use tex_lex",
@@ -47,16 +47,16 @@ fn command_replay_has_no_legacy_input_or_raw_command_classifier() {
         "next_semantic_raw_token",
     ] {
         assert!(
-            !replay.contains(forbidden),
-            "command replay must receive command-owned delivery, not {forbidden}"
+            !driver.contains(forbidden),
+            "canonical main control must receive command-owned delivery, not {forbidden}"
         );
     }
     assert!(
-        replay.contains("match command.meaning()"),
-        "replay dispatch must classify typed CurrentCommand meanings"
+        driver.contains("match command.meaning()"),
+        "canonical dispatch must classify typed CurrentCommand meanings"
     );
     assert!(
-        !replay.contains("command.token()"),
-        "replay must not classify a raw token from CurrentCommand"
+        !driver.contains("command.token()"),
+        "canonical main control must not classify a raw token from CurrentCommand"
     );
 }

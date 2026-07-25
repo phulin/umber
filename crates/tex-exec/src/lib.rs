@@ -8,8 +8,8 @@
 
 mod align;
 mod assignments;
+mod canonical_main_control;
 mod checkpoint;
-mod command_replay;
 mod diagnostics;
 mod dispatch;
 mod error;
@@ -34,11 +34,11 @@ pub use assignments::{
     install_unexpandable_primitives, register_etex_unexpandable_primitives,
     register_unexpandable_primitives, try_execute_assignment,
 };
+pub use canonical_main_control::{CanonicalMainControl, MainControlStep};
 pub use checkpoint::{
     CheckpointSink, ENGINE_CHECKPOINT_SCHEMA_VERSION, EditorRestoreError, EngineBoundary,
     EngineCheckpoint, EngineRestoreError, RootRehomeContext,
 };
-pub use command_replay::{CommandReplayControl, ReplayStep};
 pub use dispatch::{DispatchAction, ExecutionStats, dispatch_delivered_token};
 pub use error::ExecError;
 pub use executor::{
