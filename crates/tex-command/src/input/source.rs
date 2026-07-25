@@ -3,8 +3,9 @@
 use std::fmt;
 use std::sync::Arc;
 
-use tex_state::SourceId;
 use tex_state::source_map::SourceDescriptor;
+use tex_state::world::FileContent;
+use tex_state::{InputRecordId, SourceId};
 
 use crate::profile::{CharacterMode, CommandProfile};
 
@@ -33,6 +34,7 @@ pub enum RegisteredSourceKind {
 pub struct SourceRegistration {
     kind: RegisteredSourceKind,
     bytes: Arc<[u8]>,
+    world_record: Option<InputRecordId>,
 }
 
 impl SourceRegistration {
@@ -42,6 +44,18 @@ impl SourceRegistration {
         Self {
             kind,
             bytes: bytes.into(),
+            world_record: None,
+        }
+    }
+
+    /// Constructs a registration retaining the exact successful World read.
+    /// This preserves the input-record identity used by source provenance.
+    #[must_use]
+    pub fn world(content: FileContent) -> Self {
+        Self {
+            kind: RegisteredSourceKind::World,
+            bytes: content.shared_bytes(),
+            world_record: Some(content.record()),
         }
     }
 
@@ -115,18 +129,23 @@ pub(crate) struct RegisteredSource {
     pub(crate) kind: RegisteredSourceKind,
     pub(crate) mode: CharacterMode,
     pub(crate) bytes: Arc<[u8]>,
+    pub(crate) world_record: Option<InputRecordId>,
 }
 
 impl RegisteredSource {
     /// Returns the immutable backing descriptor used to register source
     /// coordinates with the aggregate source map.
-    ///
-    /// Command input has retained bytes but no World input-record capability,
-    /// so even `RegisteredSourceKind::World` is registered as generated
-    /// immutable backing at this boundary. The kind remains command input
-    /// ownership metadata; it cannot manufacture a World record identity.
     pub(crate) fn source_descriptor(&self) -> SourceDescriptor {
-        SourceDescriptor::generated(Arc::clone(&self.bytes))
+        self.world_record.map_or_else(
+            || SourceDescriptor::generated(Arc::clone(&self.bytes)),
+            |record| {
+                SourceDescriptor::world(
+                    record,
+                    u64::try_from(self.bytes.len())
+                        .expect("registered source length was validated"),
+                )
+            },
+        )
     }
 
     pub(crate) fn register(
@@ -159,6 +178,7 @@ impl RegisteredSource {
             kind: registration.kind,
             mode,
             bytes: registration.bytes,
+            world_record: registration.world_record,
         })
     }
 }

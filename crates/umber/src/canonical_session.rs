@@ -6,7 +6,7 @@
 //! registrations and aggregate retry policy; it has no token-delivery API.
 
 use std::fmt;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use tex_command::{
@@ -18,7 +18,7 @@ use tex_exec::{
     EngineBoundary, ExecutionBudgetCounters, MainControlStep,
 };
 use tex_out::dvi::DviPagePlan;
-use tex_state::Universe;
+use tex_state::{FileContent, InputOpenState, InputReadState, Universe, WorldError};
 
 use crate::RunResult;
 
@@ -30,8 +30,7 @@ pub const DEFAULT_CANONICAL_NO_PROGRESS_LIMIT: u8 = 8;
 pub enum CanonicalResourceFulfillment {
     Input {
         name: String,
-        kind: RegisteredSourceKind,
-        bytes: Arc<[u8]>,
+        source: SourceRegistration,
     },
     Font {
         request: FontLoadRequest,
@@ -49,16 +48,62 @@ impl CanonicalResourceFulfillment {
     pub fn input(name: impl Into<String>, kind: RegisteredSourceKind, bytes: Arc<[u8]>) -> Self {
         Self::Input {
             name: name.into(),
-            kind,
-            bytes,
+            source: SourceRegistration::new(kind, bytes),
         }
+    }
+
+    /// Creates an input answer whose selected bytes and provenance are pinned
+    /// by a successful read from the active World.
+    #[must_use]
+    pub fn world_input(name: impl Into<String>, content: FileContent) -> Self {
+        Self::Input {
+            name: name.into(),
+            source: SourceRegistration::world(content),
+        }
+    }
+}
+
+/// Borrow-scoped access to the active aggregate World at one declared
+/// canonical resource suspension.
+///
+/// This capability has no command, input-frame, executor, or semantic-dispatch
+/// API and cannot outlive the host fulfillment call.
+pub struct CanonicalResourceWorld<'a> {
+    stores: &'a mut Universe,
+}
+
+impl<'a> CanonicalResourceWorld<'a> {
+    fn new(stores: &'a mut Universe) -> Self {
+        Self { stores }
+    }
+
+    /// Resolves a selected path through World, retaining generated-output
+    /// precedence and recording the selected immutable input once.
+    pub fn read_file(&mut self, path: impl AsRef<Path>) -> Result<FileContent, WorldError> {
+        self.stores.world_mut().read_file(path)
+    }
+
+    /// Registers bytes selected by host policy outside World storage while
+    /// preserving same-run generated-output precedence and input accounting.
+    pub fn register_selected_file(
+        &mut self,
+        path: impl AsRef<Path>,
+        bytes: Arc<[u8]>,
+    ) -> Result<FileContent, WorldError> {
+        self.stores
+            .input_open_context()
+            .read_supplied_input_file(path.as_ref(), bytes)
     }
 }
 
 /// Host-side acquisition policy. It may only return immutable bytes or a
 /// final typed absence; it cannot observe input delivery or execute commands.
 pub trait CanonicalResourceHost {
-    fn fulfill(&mut self, need: &CanonicalResourceNeed) -> Option<CanonicalResourceFulfillment>;
+    fn fulfill(
+        &mut self,
+        world: &mut CanonicalResourceWorld<'_>,
+        need: &CanonicalResourceNeed,
+    ) -> Option<CanonicalResourceFulfillment>;
 }
 
 /// Result of driving the retained engine until it either completes or awaits
@@ -252,10 +297,9 @@ impl<'a> CanonicalEngineSession<'a> {
             });
         }
         match fulfillment {
-            CanonicalResourceFulfillment::Input { name, kind, bytes } => self
-                .control
-                .capabilities_mut()
-                .register_input(name, SourceRegistration::new(kind, bytes)),
+            CanonicalResourceFulfillment::Input { name, source } => {
+                self.control.capabilities_mut().register_input(name, source)
+            }
             CanonicalResourceFulfillment::Font { request, resource } => self
                 .control
                 .capabilities_mut()
@@ -281,7 +325,11 @@ impl<'a> CanonicalEngineSession<'a> {
             match self.advance_until_waiting(checkpoints)? {
                 CanonicalSessionState::Complete(result) => return Ok(result),
                 CanonicalSessionState::NeedResource(need) => {
-                    let Some(fulfillment) = host.fulfill(&need) else {
+                    let fulfillment = {
+                        let mut world = CanonicalResourceWorld::new(self.stores);
+                        host.fulfill(&mut world, &need)
+                    };
+                    let Some(fulfillment) = fulfillment else {
                         declined = declined.saturating_add(1);
                         if declined >= self.no_progress_limit {
                             return Err(CanonicalSessionError::NoProgress {
@@ -374,6 +422,56 @@ mod tests {
     use super::*;
     use tex_exec::EngineBoundary;
 
+    const CMR10: &[u8] = include_bytes!("../../tex-fonts/tests/fixtures/cm/cmr10.tfm");
+
+    struct WorldHost;
+
+    impl CanonicalResourceHost for WorldHost {
+        fn fulfill(
+            &mut self,
+            world: &mut CanonicalResourceWorld<'_>,
+            need: &CanonicalResourceNeed,
+        ) -> Option<CanonicalResourceFulfillment> {
+            match need {
+                CanonicalResourceNeed::Input { name } => world
+                    .read_file(format!("{name}.tex"))
+                    .ok()
+                    .map(|content| CanonicalResourceFulfillment::world_input(name, content)),
+                CanonicalResourceNeed::Font { request } => world
+                    .read_file(canonical_font_path(&request.name))
+                    .ok()
+                    .map(|metrics| CanonicalResourceFulfillment::Font {
+                        request: request.clone(),
+                        resource: Box::new(FontResource::Tfm {
+                            metrics,
+                            opentype: None,
+                        }),
+                    }),
+                CanonicalResourceNeed::PdfImage { request } => world
+                    .read_file(&request.name)
+                    .ok()
+                    .map(|content| CanonicalResourceFulfillment::PdfImage {
+                        request: request.clone(),
+                        resource: Box::new(PdfImageResource::Available(
+                            tex_state::PdfExternalImageSource {
+                                identity: content.hash(),
+                                metadata: tex_state::PdfExternalImageMetadata::Raster(
+                                    tex_state::PdfRasterImageMetadata::placeholder(),
+                                ),
+                                natural_width: tex_state::scaled::Scaled::from_raw(
+                                    tex_state::scaled::Scaled::UNITY,
+                                ),
+                                natural_height: tex_state::scaled::Scaled::from_raw(
+                                    tex_state::scaled::Scaled::UNITY,
+                                ),
+                                bytes: content.shared_bytes(),
+                            },
+                        )),
+                    }),
+            }
+        }
+    }
+
     struct OneInputHost {
         calls: usize,
     }
@@ -381,6 +479,7 @@ mod tests {
     impl CanonicalResourceHost for OneInputHost {
         fn fulfill(
             &mut self,
+            _world: &mut CanonicalResourceWorld<'_>,
             need: &CanonicalResourceNeed,
         ) -> Option<CanonicalResourceFulfillment> {
             self.calls += 1;
@@ -453,5 +552,119 @@ mod tests {
             CanonicalSessionError::NoProgress { attempts: 2, .. }
         ));
         assert!(session.stores().world().effect_records().is_empty());
+    }
+
+    #[test]
+    fn world_host_records_selected_input_once_and_preserves_retry_effects() {
+        let (mut stores, root) = prepared_session(b"\\message{once}\\input child\\end");
+        stores
+            .world_mut()
+            .set_memory_file("child.tex", b"\\message{child}")
+            .expect("child is seeded");
+        let mut session = CanonicalEngineSession::new(&mut stores, CommandProfile::TEX82);
+        session
+            .register_root("job.tex", RegisteredSourceKind::Generated, root)
+            .expect("root registers");
+
+        let run = session
+            .run(&mut WorldHost, &mut Vec::new())
+            .expect("world-backed input completes");
+
+        assert_eq!(run.terminal_text, "oncechild");
+        let records = session.stores().world().input_records();
+        assert_eq!(records.len(), 1, "the selected child is recorded once");
+        assert_eq!(records[0].path(), Path::new("child.tex"));
+        assert_eq!(
+            session.stores().world().input_content(records[0].hash()),
+            Some(&b"\\message{child}"[..])
+        );
+    }
+
+    #[test]
+    fn world_host_fulfills_font_and_image_with_matching_selected_bytes() {
+        let (mut font_stores, font_root) = prepared_session(b"\\font\\tenrm=cmr10 \\tenrm A\\end");
+        font_stores
+            .world_mut()
+            .set_memory_file("cmr10.tfm", CMR10)
+            .expect("font is seeded");
+        let mut font_session = CanonicalEngineSession::new(&mut font_stores, CommandProfile::TEX82);
+        font_session
+            .register_root("font.tex", RegisteredSourceKind::Generated, font_root)
+            .expect("font root registers");
+        font_session
+            .run(&mut WorldHost, &mut Vec::new())
+            .expect("world-backed font completes");
+        let font_record = font_session
+            .stores()
+            .world()
+            .input_records()
+            .first()
+            .expect("selected font is recorded");
+        assert_eq!(font_record.path(), Path::new("cmr10.tfm"));
+        assert_eq!(font_record.len(), CMR10.len());
+
+        let mut image_stores = Universe::new();
+        crate::prepare_pdftex_run_stores(&mut image_stores);
+        image_stores.set_int_param_global(tex_state::env::banks::IntParam::PDF_OUTPUT, 1);
+        image_stores
+            .world_mut()
+            .set_memory_file("image.png", b"world-selected image")
+            .expect("image is seeded");
+        let mut image_session =
+            CanonicalEngineSession::new(&mut image_stores, CommandProfile::PDFTEX14027);
+        image_session
+            .register_root(
+                "image.tex",
+                RegisteredSourceKind::Generated,
+                Arc::from(&b"\\pdfximage image.png\\end"[..]),
+            )
+            .expect("image root registers");
+        image_session
+            .run(&mut WorldHost, &mut Vec::new())
+            .expect("world-backed image completes");
+        let image_record = image_session
+            .stores()
+            .world()
+            .input_records()
+            .first()
+            .expect("selected image is recorded");
+        assert_eq!(image_record.path(), Path::new("image.png"));
+        assert_eq!(
+            image_session
+                .stores()
+                .pdf_last_external_image()
+                .map(|image| image.identity()),
+            Some(image_record.hash())
+        );
+    }
+
+    #[test]
+    fn fulfillment_rejects_mismatched_typed_need() {
+        let (mut stores, root) = prepared_session(b"\\input child\\end");
+        let mut session = CanonicalEngineSession::new(&mut stores, CommandProfile::TEX82);
+        session
+            .register_root("job.tex", RegisteredSourceKind::Generated, root)
+            .expect("root registers");
+        let need = match session
+            .advance_until_waiting(&mut Vec::new())
+            .expect("input suspends")
+        {
+            CanonicalSessionState::NeedResource(need) => need,
+            other => panic!("expected resource need, got {other:?}"),
+        };
+        let error = session
+            .fulfill(
+                &need,
+                CanonicalResourceFulfillment::input(
+                    "other",
+                    RegisteredSourceKind::Generated,
+                    Arc::from(&b"\\end"[..]),
+                ),
+            )
+            .expect_err("mismatched input is rejected");
+        assert!(matches!(
+            error,
+            CanonicalSessionError::UnexpectedFulfillment { .. }
+        ));
     }
 }

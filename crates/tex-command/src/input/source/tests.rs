@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use tex_state::SourceId;
+use tex_state::{SourceId, World};
 
 use super::{
     MalformedUnicodeRange, RegisteredSource, RegisteredSourceKind, SourceRegistration,
@@ -107,6 +107,30 @@ fn every_registration_kind_is_retained_without_changing_backing() {
         assert_eq!(registered.kind, kind);
         assert_eq!(registered.bytes, bytes);
     }
+}
+
+#[test]
+fn world_registration_retains_the_selected_input_record_for_provenance() {
+    let mut world = World::memory();
+    world
+        .set_memory_file("child.tex", b"child")
+        .expect("memory file is seeded");
+    let content = world.read_file("child.tex").expect("world read succeeds");
+    let record = content.record();
+    let registered = RegisteredSource::register(
+        SourceId::new(5),
+        CommandProfile::TEX82,
+        SourceRegistration::world(content),
+    )
+    .expect("world backing registers");
+
+    assert!(matches!(
+        registered.source_descriptor(),
+        tex_state::source_map::SourceDescriptor::World {
+            input_record,
+            byte_len: 5,
+        } if input_record == record
+    ));
 }
 
 #[test]

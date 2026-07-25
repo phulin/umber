@@ -42,7 +42,8 @@ pub const PACKAGE_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 pub use canonical_session::{
     CanonicalEngineSession, CanonicalResourceFulfillment, CanonicalResourceHost,
-    CanonicalSessionError, CanonicalSessionState, DEFAULT_CANONICAL_NO_PROGRESS_LIMIT,
+    CanonicalResourceWorld, CanonicalSessionError, CanonicalSessionState,
+    DEFAULT_CANONICAL_NO_PROGRESS_LIMIT,
 };
 pub use editor_session::{
     EditorCompileSession, EditorResourceError, EditorSessionOptions, EditorSessionStatus,
