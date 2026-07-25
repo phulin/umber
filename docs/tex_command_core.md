@@ -2185,6 +2185,11 @@ drives command/executor replay through `CommandReplayControl` with a
 source-byte-derived bound. Remaining manifest sources are registered only as
 immutable `\\input` capabilities, so nested input remains command-owned;
 ordered schema comparison remains separate.
+TeX82 diagnostic consumers retain their own command-demand boundary within
+that replay: §46's `\\show` obtains its displayed token through raw
+`get_token`, so a shown macro is observed but never enters macro matching or
+replacement replay. The executor receives only the completed diagnostic
+operation, not a second input path.
 Observers are non-fallible, receive records only after the transition commits,
 and are neither retained in `CommandState` nor captured by snapshots.
 Production builds compile this seam out; explicit instrumentation builds enable

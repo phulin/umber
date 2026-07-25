@@ -1155,6 +1155,14 @@ fn scan_command(
                 tokens: tokens.tokens,
             })
         }
+        // TeX82 §46's `show_whatever` uses `get_token`, rather than the
+        // expanded delivery used by main control.  This must stay on the
+        // command side of replay: a macro shown by `\show` is observed raw
+        // and is not invoked as the following main-control command.
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Show) => {
+            let _ = processor.get_token().map_err(command_error)?;
+            Ok(ScannedStep::Continue)
+        }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Immediate) => {
             Ok(ScannedStep::ImmediateExtension(
                 processor

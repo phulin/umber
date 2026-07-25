@@ -69,6 +69,42 @@ fn replay_uses_typed_scanners_for_definitions_assignments_and_termination() {
 }
 
 #[test]
+fn show_reads_its_target_raw_without_starting_macro_matching() {
+    let mut universe = Universe::new();
+    let mut control = CommandReplayControl::tex82_initex(&mut universe);
+    register_source(&mut control, br"\def\shown#1{#1}\show\shown\end");
+    let mut observations = ObservationRecorder::default();
+
+    assert_eq!(
+        control
+            .step_with_observer(&mut universe, &mut observations)
+            .expect("definition"),
+        ReplayStep::Continue
+    );
+    observations.0.clear();
+
+    assert_eq!(
+        control
+            .step_with_observer(&mut universe, &mut observations)
+            .expect("show"),
+        ReplayStep::Continue
+    );
+    assert!(matches!(
+        observations.0.as_slice(),
+        [
+            CommandObservation::Command(show_raw),
+            CommandObservation::Command(show_expanded),
+            CommandObservation::Command(target_raw),
+        ] if show_raw.command == "xray"
+            && show_raw.boundary == CommandDeliveryBoundary::Raw
+            && show_expanded.command == "xray"
+            && show_expanded.boundary == CommandDeliveryBoundary::Expanded
+            && target_raw.command == "call"
+            && target_raw.boundary == CommandDeliveryBoundary::Raw
+    ));
+}
+
+#[test]
 fn canonical_initex_replay_scans_and_applies_integer_parameters() {
     let mut universe = Universe::new();
     let mut control = CommandReplayControl::tex82_initex(&mut universe);
