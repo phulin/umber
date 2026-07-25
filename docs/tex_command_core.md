@@ -1863,6 +1863,14 @@ command state. Mark enquiries read the aggregate page-mark slots through
 not receive either host capability, so they cannot acquire sources or widen
 the processor's authority.
 
+At ordinary EOF, TeX82 §343 calls `end_file_reading`, checks outer validity,
+and restarts raw delivery at the caller. Thus a nested `\input` retirement and
+the parent source's normalized line-ending space can each occupy later
+main-control operations before the parent delivers `\end`. The composed
+canonical bridge must delegate that sequence to `CanonicalMainControl`'s
+command loop; it must neither consume legacy input nor impose a host-side
+post-input step count.
+
 Resource request order is deterministic and checkpointed where it can affect
 future request identity. A failed attempt cannot leak input levels,
 diagnostics, stream effects, random consumption, generated files, or

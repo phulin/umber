@@ -1657,12 +1657,13 @@ mod tests {
             session.step_canonical().expect("nested message"),
             MainControlStep::Continue
         );
-        assert_eq!(
-            (0..2)
-                .map(|_| session.step_canonical().expect("root terminator"))
-                .find(|step| *step == MainControlStep::End),
-            Some(MainControlStep::End)
-        );
+        // TeX82 §343 retires the nested source and resumes the parent inside
+        // command delivery. Each source also contributes its normalized line
+        // ending, so the number of following main-control operations is not a
+        // bridge contract. `execute` owns the canonical loop through its
+        // command-delivered `MainControlStep::End` instead.
+        let result = session.execute().expect("canonical root terminates");
+        assert_eq!(result.terminal_text, "reportnested");
         assert_eq!(uncommitted_terminal_text(session.stores()), "reportnested");
     }
 
