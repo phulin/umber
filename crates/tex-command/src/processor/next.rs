@@ -1235,7 +1235,18 @@ impl CommandProcessor<'_> {
         &self,
         command: &CurrentCommand,
     ) -> crate::observation::ObservedToken {
-        if command.spelling().semantic_token().is_frozen_end_template()
+        if let Some(symbol) = command.control_sequence() {
+            // TeX82's active characters are character tokens in `cur_tok`,
+            // but `get_next` resolves them through their distinct active
+            // control-sequence cells and records that cell in `cur_cs`.
+            // Observations expose the latter identity at the current-command
+            // boundary, just as they do for escaped control sequences.  The
+            // raw token spelling remains available on `CurrentCommand` for
+            // token-sensitive consumers.
+            crate::observation::ObservedToken::ControlSequence(
+                self.state.resolve(symbol).to_owned(),
+            )
+        } else if command.spelling().semantic_token().is_frozen_end_template()
             || command.spelling().semantic_token().is_frozen_endv()
         {
             // TeX82 stores both inaccessible template sentinels in distinct
@@ -1627,6 +1638,48 @@ mod tests {
                 .expect("source retirement succeeds")
                 .is_none()
         );
+    }
+
+    #[test]
+    fn observer_preserves_active_control_sequence_identity_at_raw_delivery() {
+        let mut command = CommandState::default();
+        let source = command
+            .register_source(SourceRegistration::new(
+                RegisteredSourceKind::Generated,
+                Arc::<[u8]>::from(b"~".as_slice()),
+            ))
+            .expect("source registers");
+        command
+            .open_registered_source(source)
+            .expect("source opens");
+        let mut runtime = CommandRuntime::default();
+        let mut universe = Universe::new();
+        universe.set_catcode('~', Catcode::Active);
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut recorder = Recorder::default();
+        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities)
+            .with_observer(&mut recorder);
+
+        let delivered = processor
+            .get_next()
+            .expect("active token delivers")
+            .expect("input is live");
+
+        assert!(matches!(
+            delivered.spelling().semantic_token(),
+            Token::Char {
+                ch: '~',
+                cat: Catcode::Active,
+            }
+        ));
+        assert!(matches!(
+            recorder.0.as_slice(),
+            [CommandObservation::Command(delivery)]
+                if delivery.boundary == CommandDeliveryBoundary::Raw
+                    && delivery.command == "undefined_cs"
+                    && delivery.spelling
+                        == crate::ObservedToken::ControlSequence("~".into())
+        ));
     }
 
     #[test]
