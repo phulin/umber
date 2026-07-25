@@ -178,6 +178,7 @@ pub(crate) enum StoredReplayReason {
     Write,
     Discretionary,
     AfterGroup,
+    AfterAssignment,
 }
 
 /// Canonical explanations for a materialized transient insertion.

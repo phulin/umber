@@ -78,6 +78,20 @@ impl CommandState {
         ))
     }
 
+    /// Replays TeX's one-token `\afterassignment` payload after its owning
+    /// assignment has committed to the aggregate state.
+    pub fn push_afterassignment(&mut self, tokens: TracedTokenList) -> CommandReplayEpisode {
+        CommandReplayEpisode(self.push_token_level(
+            TokenPayload::Stored {
+                tokens: tokens.token_list(),
+                origins: tokens.origin_list(),
+            },
+            TokenBehavior::Ordinary,
+            RetirementBehavior::Pop,
+            ReplayTrace::Stored(crate::input::StoredReplayReason::AfterAssignment),
+        ))
+    }
+
     /// Whether the requested immutable replay level is still live.
     #[must_use]
     pub fn replay_episode_is_active(&self, episode: CommandReplayEpisode) -> bool {

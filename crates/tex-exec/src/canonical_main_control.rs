@@ -390,7 +390,8 @@ impl CanonicalMainControl {
         if let ScannedStep::Discretionary(discretionary) = scanned {
             return self.apply_discretionary(discretionary, stores);
         }
-        apply_scanned_step(
+        let fires_afterassignment = scanned.fires_afterassignment();
+        let result = apply_scanned_step(
             scanned,
             stores,
             &mut self.modes,
@@ -398,7 +399,11 @@ impl CanonicalMainControl {
             &mut self.active_alignment,
             &mut self.command,
             &mut self.boxes,
-        )
+        )?;
+        if fires_afterassignment {
+            schedule_afterassignment(&mut self.command, stores);
+        }
+        Ok(result)
     }
 
     /// Executes TeX82's three completed discretionary parts as isolated
@@ -533,7 +538,8 @@ impl CanonicalMainControl {
         if let ScannedStep::Discretionary(discretionary) = scanned {
             return self.apply_discretionary(discretionary, stores);
         }
-        apply_scanned_step(
+        let fires_afterassignment = scanned.fires_afterassignment();
+        let result = apply_scanned_step(
             scanned,
             stores,
             &mut self.modes,
@@ -541,7 +547,11 @@ impl CanonicalMainControl {
             &mut self.active_alignment,
             &mut self.command,
             &mut self.boxes,
-        )
+        )?;
+        if fires_afterassignment {
+            schedule_afterassignment(&mut self.command, stores);
+        }
+        Ok(result)
     }
 
     /// Delivers and executes one replay command while forwarding committed
@@ -665,6 +675,7 @@ impl CanonicalMainControl {
             }
             _ => None,
         };
+        let fires_afterassignment = scanned.fires_afterassignment();
         let result = apply_scanned_step(
             scanned.clone(),
             stores,
@@ -674,6 +685,9 @@ impl CanonicalMainControl {
             &mut self.command,
             &mut self.boxes,
         );
+        if result.is_ok() && fires_afterassignment {
+            schedule_afterassignment(&mut self.command, stores);
+        }
         let extra_tab_recovery = result
             .as_ref()
             .ok()
@@ -937,6 +951,8 @@ enum ScannedStep {
         meaning: Meaning,
         global: bool,
     },
+    AfterGroup(Token),
+    AfterAssignment(Token),
     Rule {
         width: Option<Scaled>,
         height: Option<Scaled>,
@@ -1027,6 +1043,28 @@ enum ScannedStep {
     },
     Accent(ScannedAccent),
     Discretionary(ScannedDiscretionary),
+}
+
+impl ScannedStep {
+    const fn fires_afterassignment(&self) -> bool {
+        matches!(
+            self,
+            Self::Count { .. }
+                | Self::Dimen { .. }
+                | Self::Skip { .. }
+                | Self::Muskip { .. }
+                | Self::Toks { .. }
+                | Self::IntParam { .. }
+                | Self::DimenParam { .. }
+                | Self::TokParam { .. }
+                | Self::GlueParam { .. }
+                | Self::CodeTable { .. }
+                | Self::Arithmetic { .. }
+                | Self::MacroDefinition { .. }
+                | Self::Let { .. }
+                | Self::ParagraphShape { .. }
+        )
+    }
 }
 
 /// A completed assignable quantity selector.  It is intentionally a semantic
@@ -1787,6 +1825,30 @@ fn scan_command(
                 meaning: assignment.meaning,
                 global,
             })
+        }
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::AfterGroup) => {
+            Ok(ScannedStep::AfterGroup(
+                processor
+                    .get_token()
+                    .map_err(command_error)?
+                    .ok_or(ExecError::MissingToken {
+                        context: "\\aftergroup",
+                    })?
+                    .spelling()
+                    .semantic_token(),
+            ))
+        }
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::AfterAssignment) => {
+            Ok(ScannedStep::AfterAssignment(
+                processor
+                    .get_token()
+                    .map_err(command_error)?
+                    .ok_or(ExecError::MissingToken {
+                        context: "\\afterassignment",
+                    })?
+                    .spelling()
+                    .semantic_token(),
+            ))
         }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Message) => {
             let tokens = processor.scan_balanced_text(true).map_err(command_error)?;
@@ -2812,6 +2874,14 @@ fn apply_scanned_step(
             }
             Ok(ReplayStep::Continue)
         }
+        ScannedStep::AfterGroup(token) => {
+            stores.push_aftergroup(token);
+            Ok(ReplayStep::Continue)
+        }
+        ScannedStep::AfterAssignment(token) => {
+            stores.set_afterassignment(token);
+            Ok(ReplayStep::Continue)
+        }
         ScannedStep::Rule {
             width,
             height,
@@ -2982,7 +3052,7 @@ fn apply_scanned_step(
             Ok(ReplayStep::Continue)
         }
         ScannedStep::EndOrdinaryGroup => {
-            stores
+            let aftergroup = stores
                 .leave_group_with_kind(GroupKind::Simple)
                 .map_err(|_| ExecError::MissingToken {
                     context: "ordinary simple group",
@@ -2991,6 +3061,7 @@ fn apply_scanned_step(
                 .ordinary_simple_group_depth
                 .checked_sub(1)
                 .expect("ordinary simple group depth is nonzero");
+            schedule_aftergroup(command, stores, aftergroup);
             Ok(ReplayStep::Continue)
         }
         ScannedStep::AlignmentRecovery { opens_simple_group } => {
@@ -3408,6 +3479,41 @@ fn apply_scanned_step(
             unreachable!("discretionary is applied by CanonicalMainControl")
         }
     }
+}
+
+/// Moves TeX's FIFO group-exit payload into a command-owned replay level only
+/// after `Universe` has restored the enclosing group state.
+fn schedule_aftergroup(command: &mut CommandState, stores: &mut Universe, tokens: Vec<Token>) {
+    if tokens.is_empty() {
+        return;
+    }
+    let traced: Vec<_> = tokens
+        .into_iter()
+        .map(|token| {
+            let origin = stores.inserted_origin(
+                tex_state::provenance::InsertedOriginKind::AfterGroup,
+                token,
+                tex_state::token::OriginId::UNKNOWN,
+            );
+            tex_state::token::TracedTokenWord::pack(token, origin)
+        })
+        .collect();
+    let _ = command.push_aftergroup(stores.finish_traced_token_list(&traced));
+}
+
+/// Releases the single pending after-assignment token only after the typed
+/// assignment has committed. Its replay remains entirely command-owned.
+fn schedule_afterassignment(command: &mut CommandState, stores: &mut Universe) {
+    let Some(token) = stores.take_afterassignment() else {
+        return;
+    };
+    let origin = stores.inserted_origin(
+        tex_state::provenance::InsertedOriginKind::AfterAssignment,
+        token,
+        tex_state::token::OriginId::UNKNOWN,
+    );
+    let traced = [tex_state::token::TracedTokenWord::pack(token, origin)];
+    let _ = command.push_afterassignment(stores.finish_traced_token_list(&traced));
 }
 
 fn assignment_global(explicit_global: bool, stores: &Universe) -> bool {

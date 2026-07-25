@@ -1816,6 +1816,42 @@ fn canonical_initex_replay_keeps_macro_target_and_expanded_body_in_command_core(
 }
 
 #[test]
+fn canonical_initex_replays_afterassignment_before_fifo_aftergroup_tokens() {
+    let mut universe = Universe::new();
+    let mut control = CommandReplayControl::tex82_initex(&mut universe);
+    register_source(
+        &mut control,
+        br"\def\first{\global\count0=1}\def\second{\global\count0=2}\def\assigned{\global\count2=\count1}{\aftergroup\first\aftergroup\second\afterassignment\assigned\count1=7}\end",
+    );
+
+    loop {
+        if matches!(
+            control
+                .step(&mut universe)
+                .expect("canonical after-token replay"),
+            ReplayStep::End
+        ) {
+            break;
+        }
+    }
+    assert_eq!(
+        universe.count(0),
+        2,
+        "aftergroup tokens replay FIFO after restoration"
+    );
+    assert_eq!(
+        universe.count(2),
+        7,
+        "afterassignment observes the committed assignment"
+    );
+    assert_eq!(
+        universe.count(1),
+        0,
+        "the local assignment restores before group exit"
+    );
+}
+
+#[test]
 fn canonical_initex_replay_futurelet_preserves_lookahead_order_after_assignment() {
     let mut universe = Universe::new();
     let mut control = CommandReplayControl::tex82_initex(&mut universe);
