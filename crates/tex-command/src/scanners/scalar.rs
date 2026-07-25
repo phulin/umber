@@ -381,15 +381,18 @@ impl CommandProcessor<'_> {
                     // Keep that hand-off inside the command scanner rather
                     // than collapsing it into a private decimal parser.
                     self.last_integer_terminator = None;
+                    let leading_decimal =
+                        matches!(first.meaning(), Meaning::CharToken { ch: '.', .. });
                     let integer = self
                         .complete_integer(first, false, provenance.primary)?
                         .value;
-                    let decimal = self
-                        .last_integer_terminator
-                        .as_ref()
-                        .is_some_and(|command| {
-                            matches!(command.meaning(), Meaning::CharToken { ch: '.', .. })
-                        });
+                    let decimal = leading_decimal
+                        || self
+                            .last_integer_terminator
+                            .as_ref()
+                            .is_some_and(|command| {
+                                matches!(command.meaning(), Meaning::CharToken { ch: '.', .. })
+                            });
                     if decimal {
                         // The decimal point is replayed raw after `scan_int`
                         // backed it up.  A unit stays in the backed-up input

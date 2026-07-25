@@ -420,3 +420,34 @@ fn fractional_in_unit_retires_the_final_probe_backup_before_n() {
         Some(CommandObservation::Input(record)) if record.transition == InputTransition::Retire
     ));
 }
+
+#[test]
+fn leading_decimal_dimension_replays_the_point_before_scanning_its_fraction() {
+    let mut command = CommandState::default();
+    push(&mut command, ".75in 42".chars().map(char_token).collect());
+    let mut runtime = CommandRuntime::default();
+    let mut universe = Universe::new();
+    let mut capabilities = CommandHostCapabilities::default();
+    let mut processor = CommandProcessor::new(
+        &mut command,
+        &mut runtime,
+        universe.command_context(),
+        CommandHostContext::new(&mut capabilities),
+    );
+
+    assert_eq!(
+        processor
+            .scan_dimension()
+            .expect("leading-decimal dimension scans")
+            .value
+            .raw(),
+        3_552_215
+    );
+    assert_eq!(
+        processor
+            .scan_integer()
+            .expect("following token remains available")
+            .value,
+        42
+    );
+}
