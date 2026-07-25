@@ -9,8 +9,8 @@ use tex_command::{
     AlignmentCellDelimiter, AlignmentCellOpening, AlignmentCellTemplates, AlignmentDelivery,
     AlignmentIdentity, AlignmentRequest, AlignmentRequestResult, CommandError,
     CommandHostCapabilities, CommandHostContext, CommandProcessor, CommandProfile, CommandRuntime,
-    CommandState, CommandStateSnapshot, ImmediateExtension, SourceRegistration,
-    SourceRegistrationError,
+    CommandState, CommandStateSnapshot, ImmediateExtension, ScannedAccent, ScannedDiscretionary,
+    SourceRegistration, SourceRegistrationError,
 };
 #[cfg(any(test, feature = "instrumentation"))]
 use tex_command::{
@@ -21,7 +21,7 @@ use tex_state::glue::GlueSpec;
 use tex_state::interner::Symbol;
 use tex_state::macro_store::{MacroDefinitionProvenance, MacroMeaning};
 use tex_state::meaning::{Meaning, MeaningFlags, UnexpandablePrimitive};
-use tex_state::node::{GlueKind, KernKind, Node};
+use tex_state::node::{DiscKind, GlueKind, KernKind, Node};
 use tex_state::scaled::Scaled;
 use tex_state::token::{Catcode, Token};
 use tex_state::{GroupKind, ParagraphShapeLine, PrintSink, StreamSlot, TracedTokenList, Universe};
@@ -386,6 +386,9 @@ impl CanonicalMainControl {
                 mode,
             )?
         };
+        if let ScannedStep::Discretionary(discretionary) = scanned {
+            return self.apply_discretionary(discretionary, stores);
+        }
         apply_scanned_step(
             scanned,
             stores,
@@ -395,6 +398,76 @@ impl CanonicalMainControl {
             &mut self.command,
             &mut self.boxes,
         )
+    }
+
+    /// Executes TeX82's three completed discretionary parts as isolated
+    /// restricted-horizontal episodes. The command machine owns replay of the
+    /// immutable lists, including expansion, grouping recovery, and origins;
+    /// this layer owns only the temporary mode/group lifecycle and final node.
+    fn apply_discretionary(
+        &mut self,
+        discretionary: ScannedDiscretionary,
+        stores: &mut Universe,
+    ) -> Result<ReplayStep, ExecError> {
+        if matches!(
+            self.modes.current_mode(),
+            Mode::Vertical | Mode::InternalVertical
+        ) {
+            start_canonical_paragraph(&mut self.command, &mut self.modes, stores, true)?;
+        }
+        crate::assignments::flush_pending_hchars(&mut self.modes, stores)?;
+        let pre = self.execute_discretionary_part(discretionary.pre_break.tokens, stores)?;
+        let post = self.execute_discretionary_part(discretionary.post_break.tokens, stores)?;
+        let replace = self.execute_discretionary_part(discretionary.replacement.tokens, stores)?;
+        self.modes.current_list_mut().push(Node::Disc {
+            kind: DiscKind::Discretionary,
+            pre,
+            post,
+            replace,
+        });
+        Ok(ReplayStep::Continue)
+    }
+
+    fn execute_discretionary_part(
+        &mut self,
+        tokens: TracedTokenList,
+        stores: &mut Universe,
+    ) -> Result<tex_state::ids::NodeListId, ExecError> {
+        stores.enter_group_with_kind(GroupKind::Disc);
+        self.modes.push(Mode::RestrictedHorizontal);
+        let episode = self.command.push_discretionary_episode(tokens);
+        while self.command.replay_episode_is_active(episode) {
+            let _ = self.step_once(stores)?;
+        }
+        crate::assignments::flush_pending_hchars(&mut self.modes, stores)?;
+        let level = self.modes.pop()?;
+        let nodes = stores.freeze_node_list(level.list().nodes());
+        let aftergroup =
+            stores
+                .leave_group_with_kind(GroupKind::Disc)
+                .map_err(|_| ExecError::MissingToken {
+                    context: "discretionary group",
+                })?;
+        if !aftergroup.is_empty() {
+            let traced: Vec<_> = aftergroup
+                .into_iter()
+                .map(|token| {
+                    let origin = stores.inserted_origin(
+                        tex_state::provenance::InsertedOriginKind::AfterGroup,
+                        token,
+                        tex_state::token::OriginId::UNKNOWN,
+                    );
+                    tex_state::token::TracedTokenWord::pack(token, origin)
+                })
+                .collect();
+            let aftergroup = self
+                .command
+                .push_aftergroup(stores.finish_traced_token_list(&traced));
+            while self.command.replay_episode_is_active(aftergroup) {
+                let _ = self.step_once(stores)?;
+            }
+        }
+        Ok(nodes)
     }
 
     /// Attempts one atomic canonical main-control operation.
@@ -456,6 +529,9 @@ impl CanonicalMainControl {
                 max_dead_cycles,
             )?
         };
+        if let ScannedStep::Discretionary(discretionary) = scanned {
+            return self.apply_discretionary(discretionary, stores);
+        }
         apply_scanned_step(
             scanned,
             stores,
@@ -539,6 +615,9 @@ impl CanonicalMainControl {
                 max_dead_cycles,
             )?
         };
+        if let ScannedStep::Discretionary(discretionary) = scanned {
+            return self.apply_discretionary(discretionary, stores);
+        }
         let mutation = applied_mutation_observation(&scanned, stores);
         let begins_alignment = matches!(&scanned, ScannedStep::BeginAlignment { .. });
         let suspends_alignment = begins_alignment && self.active_alignment.is_some();
@@ -924,6 +1003,8 @@ enum ScannedStep {
         cat: Catcode,
         origin: tex_state::token::OriginId,
     },
+    Accent(ScannedAccent),
+    Discretionary(ScannedDiscretionary),
 }
 
 /// Selects the one command-owned scanner that may consume input before
@@ -1470,6 +1551,12 @@ fn scan_command(
             let value = processor.scan_integer().map_err(command_error)?.value;
             Ok(ScannedStep::CharacterCode { value })
         }
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Accent) => Ok(ScannedStep::Accent(
+            processor.scan_accent().map_err(command_error)?,
+        )),
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Discretionary) => Ok(
+            ScannedStep::Discretionary(processor.scan_discretionary().map_err(command_error)?),
+        ),
         Meaning::UnexpandablePrimitive(
             primitive @ (UnexpandablePrimitive::HFil
             | UnexpandablePrimitive::HFill
@@ -3047,7 +3134,114 @@ fn apply_scanned_step(
             }
             Ok(ReplayStep::Continue)
         }
+        ScannedStep::Accent(accent) => {
+            if matches!(
+                modes.current_mode(),
+                Mode::Vertical | Mode::InternalVertical
+            ) {
+                start_canonical_paragraph(command, modes, stores, true)?;
+            }
+            apply_scanned_accent(modes, stores, accent)
+        }
+        // `step_once` consumes the three command-owned episodes while its
+        // aggregate snapshot is live. Observed replay is not an alternate
+        // production execution path, so reaching this arm is an invariant.
+        ScannedStep::Discretionary(_) => {
+            unreachable!("discretionary is applied by CanonicalMainControl")
+        }
     }
+}
+
+fn apply_scanned_accent(
+    modes: &mut ModeNest,
+    stores: &mut Universe,
+    scanned: ScannedAccent,
+) -> Result<ReplayStep, ExecError> {
+    crate::assignments::flush_pending_hchars(modes, stores)?;
+    let accent = u8::try_from(scanned.accent).map_err(|_| ExecError::InvalidCode {
+        context: "\\accent",
+        value: scanned.accent,
+    })?;
+    let accent_font = stores.current_font();
+    let Some(accent_metrics) = stores.font_char_metrics(accent_font, accent) else {
+        report_missing_character(stores, accent_font, char::from(accent));
+        return Ok(ReplayStep::Continue);
+    };
+    let Some(base) = scanned.base else {
+        modes.current_list_mut().push(Node::Char {
+            font: accent_font,
+            ch: char::from(accent),
+            origin: scanned.accent_provenance.primary,
+        });
+        return Ok(ReplayStep::Continue);
+    };
+    let base_font = stores.current_font();
+    let Some(base_metrics) = stores.font_char_metrics(base_font, base.character) else {
+        report_missing_character(stores, base_font, char::from(base.character));
+        modes.current_list_mut().push(Node::Char {
+            font: accent_font,
+            ch: char::from(accent),
+            origin: scanned.accent_provenance.primary,
+        });
+        modes.current_list_mut().set_space_factor(1000);
+        return Ok(ReplayStep::Continue);
+    };
+    let accent_x_height = stores.font_parameter(accent_font, 5);
+    let accent_slant = stores.font_parameter(accent_font, 1);
+    let base_slant = stores.font_parameter(base_font, 1);
+    let delta = tex_state::scaled::text_accent_delta(
+        base_metrics.width,
+        accent_metrics.width,
+        base_metrics.height,
+        base_slant,
+        accent_x_height,
+        accent_slant,
+    );
+    modes.current_list_mut().push(Node::Kern {
+        amount: delta,
+        kind: KernKind::Accent,
+    });
+    let accent_node = Node::Char {
+        font: accent_font,
+        ch: char::from(accent),
+        origin: scanned.accent_provenance.primary,
+    };
+    if base_metrics.height == accent_x_height {
+        modes.current_list_mut().push(accent_node);
+    } else {
+        let children = stores.freeze_node_list(&[accent_node]);
+        let mut boxed =
+            crate::assignments::hpack_with_overfull_rule(stores, children, PackSpec::Natural);
+        boxed.shift = accent_x_height
+            .checked_sub(base_metrics.height)
+            .ok_or(ExecError::ArithmeticOverflow)?;
+        modes.current_list_mut().push(Node::HList(boxed));
+    }
+    modes.current_list_mut().push(Node::Kern {
+        amount: Scaled::from_raw(-accent_metrics.width.raw() - delta.raw()),
+        kind: KernKind::Accent,
+    });
+    modes.current_list_mut().push(Node::Char {
+        font: base_font,
+        ch: char::from(base.character),
+        origin: base.provenance.primary,
+    });
+    modes.current_list_mut().set_space_factor(1000);
+    Ok(ReplayStep::Continue)
+}
+
+fn report_missing_character(stores: &mut Universe, font: tex_state::ids::FontId, ch: char) {
+    if stores.int_param(IntParam::new(36)) <= 0 {
+        return;
+    }
+    let text = format!(
+        "Missing character: There is no {} in font {}!\\n",
+        ch.escape_default(),
+        stores.font_name(font)
+    );
+    stores
+        .world_mut()
+        .write_text(PrintSink::TerminalAndLog, &text);
 }
 
 /// TeX82 §1095 `new_graf`: command control has already made any required

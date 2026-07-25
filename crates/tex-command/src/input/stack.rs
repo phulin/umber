@@ -405,7 +405,7 @@ fn input_retirement_reason(behavior: &TokenBehavior, trace: &ReplayTrace) -> Inp
     }
 }
 
-fn input_level_identity(level: &InputLevel) -> InputLevelId {
+pub(crate) fn input_level_identity(level: &InputLevel) -> InputLevelId {
     match level {
         InputLevel::Source(level) => level.identity,
         InputLevel::Tokens(level) => level.identity,

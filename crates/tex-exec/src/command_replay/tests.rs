@@ -175,6 +175,50 @@ fn production_driver_applies_typed_parshape_indent_and_horizontal_nodes() {
 }
 
 #[test]
+fn production_driver_executes_discretionary_parts_in_isolated_hmode_episodes() {
+    let mut universe = Universe::new();
+    let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+    register_source(
+        &mut control,
+        br"\noindent\discretionary{\count3=7\kern1pt}{\kern2pt}{\kern3pt}\count4=9",
+    );
+
+    assert_eq!(
+        control.step(&mut universe).expect("paragraph start"),
+        MainControlStep::Continue
+    );
+    assert_eq!(
+        control.step(&mut universe).expect("discretionary episodes"),
+        MainControlStep::Continue
+    );
+    assert_eq!(universe.count(3), 0, "disc group assignments stay local");
+    let Some(tex_state::node::Node::Disc {
+        kind: tex_state::node::DiscKind::Discretionary,
+        pre,
+        post,
+        replace,
+    }) = control.modes.current_list().nodes().last()
+    else {
+        panic!("canonical replay appended a discretionary node");
+    };
+    for (part, expected) in [
+        (pre, Scaled::from_raw(Scaled::UNITY)),
+        (post, Scaled::from_raw(2 * Scaled::UNITY)),
+        (replace, Scaled::from_raw(3 * Scaled::UNITY)),
+    ] {
+        assert!(matches!(
+            universe.nodes(*part).first(),
+            Some(tex_state::node_arena::NodeRef::Kern { amount, .. }) if amount == expected
+        ));
+    }
+    assert_eq!(
+        control.step(&mut universe).expect("following command"),
+        MainControlStep::Continue
+    );
+    assert_eq!(universe.count(4), 9);
+}
+
+#[test]
 fn production_driver_enters_and_packs_hbox_without_legacy_dispatch() {
     let mut universe = Universe::new();
     let mut control = CanonicalMainControl::tex82_initex(&mut universe);

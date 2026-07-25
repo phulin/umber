@@ -48,9 +48,14 @@ consumer.
 Text `\\accent` and `\\discretionary` use the same completed-scanner boundary:
 the command processor owns the accent number, expanded base-character lookup,
 and non-character replay, and freezes each discretionary group as traced,
-immutable material. A later restricted-horizontal material episode consumes
-those frozen groups using the live command machine; it must not recreate an
-`InputStack` or expose raw group delimiters to the executor.
+immutable material. `CanonicalMainControl` replays each frozen part as its own
+stored command level inside a `disc_group` restricted-horizontal episode,
+flushes and freezes the completed node list, then applies the typed `Disc`
+node. Group-local definitions and recovery remain live command/Universe state;
+the group's `\aftergroup` payload is returned to a command-owned replay level
+before the next part. This aggregate operation remains under one rollback
+snapshot: it must not recreate an `InputStack` or expose raw group delimiters
+to the executor.
 
 During the command-owned preamble scan, TeX82 §760 removes catcode-10 spacer
 commands only while collecting the beginning of each u-template; a v-template

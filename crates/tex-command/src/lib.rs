@@ -58,7 +58,7 @@ pub use scanners::{
     ScannedSetBoxAssignment, ScannedTokenRegisterAssignment, StructuredProvenance,
 };
 pub use snapshot::{CommandStateSnapshot, CommandSummary, CommandSummaryError};
-pub use state::{CommandRuntime, CommandState, UnknownRegisteredSource};
+pub use state::{CommandReplayEpisode, CommandRuntime, CommandState, UnknownRegisteredSource};
 pub use tex_state::SourceId;
 pub use tex_state::TracedTokenList;
 pub use tex_state::token::Catcode;

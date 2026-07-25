@@ -39,7 +39,54 @@ pub struct CommandState {
     pub(crate) transient: TransientState,
 }
 
+/// Opaque boundary for one executor-requested immutable token-list episode.
+///
+/// The command machine retains the input-level identity so the executor can
+/// drive a completed list without observing raw input-stack structure.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct CommandReplayEpisode(InputLevelId);
+
 impl CommandState {
+    /// Schedules one completed `\\discretionary` part for canonical replay.
+    ///
+    /// This is deliberately a stored command level, not an executor-owned
+    /// input stack: macro expansion, recovery, provenance, and retirement all
+    /// remain command-owned while the stomach supplies the restricted hmode
+    /// lifecycle.
+    pub fn push_discretionary_episode(&mut self, tokens: TracedTokenList) -> CommandReplayEpisode {
+        CommandReplayEpisode(self.push_token_level(
+            TokenPayload::Stored {
+                tokens: tokens.token_list(),
+                origins: tokens.origin_list(),
+            },
+            TokenBehavior::Ordinary,
+            RetirementBehavior::Pop,
+            ReplayTrace::Stored(crate::input::StoredReplayReason::Discretionary),
+        ))
+    }
+
+    /// Replays `\\aftergroup` payload after its owning executor group exits.
+    pub fn push_aftergroup(&mut self, tokens: TracedTokenList) -> CommandReplayEpisode {
+        CommandReplayEpisode(self.push_token_level(
+            TokenPayload::Stored {
+                tokens: tokens.token_list(),
+                origins: tokens.origin_list(),
+            },
+            TokenBehavior::Ordinary,
+            RetirementBehavior::Pop,
+            ReplayTrace::Stored(crate::input::StoredReplayReason::AfterGroup),
+        ))
+    }
+
+    /// Whether the requested immutable replay level is still live.
+    #[must_use]
+    pub fn replay_episode_is_active(&self, episode: CommandReplayEpisode) -> bool {
+        self.input
+            .levels
+            .iter()
+            .any(|level| crate::input::input_level_identity(level) == episode.0)
+    }
+
     /// Schedules a frozen `\everypar` list after canonical main control has
     /// completed TeX82's `new_graf` state transition.  Source ownership stays
     /// entirely inside command state; executor control never fabricates an
