@@ -1053,14 +1053,19 @@ impl CommandProcessor<'_> {
                 };
                 InternalValue::Integer(value)
             }
-            // TeX82 §424's `scan_something_internal` accepts a `\chardef`
-            // value wherever `scan_int` accepts an internal integer. Plain
-            // TeX relies on this for `\catcode` assignments such as
-            // `\catcode`\^^L=\active`; treating it as a missing number
-            // silently assigns catcode 0 and changes later tokenization.
+            // TeX82 §424's `scan_something_internal` groups `char_given` and
+            // `math_given` under one case: `scanned_result(cur_chr)(int_val)`.
+            // A `\chardef` or `\mathchardef` constant scans as its stored
+            // code, exactly like an internal integer. Plain TeX relies on the
+            // former for `\catcode` assignments such as `\catcode`\^^L=\active`,
+            // and on the latter for `\@M` (`\mathchardef\@M=10000`), which
+            // `\break`/`\eject` scan as `\penalty-\@M`; treating either as a
+            // missing number silently produces zero instead of the stored
+            // code.
             Meaning::CharGiven(character) => InternalValue::Integer(
                 i32::try_from(u32::from(character)).expect("characters fit in i32"),
             ),
+            Meaning::MathCharGiven(value) => InternalValue::Integer(i32::from(value)),
             // TeX82 §424 represents `set_font`, `def_font`, and `def_family`
             // as ident_val at the token-list level. Preserve the control
             // sequence identity instead of rendering a font number or name.

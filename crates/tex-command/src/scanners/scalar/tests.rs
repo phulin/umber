@@ -126,6 +126,32 @@ fn integer_scanner_accepts_chardef_values() {
 }
 
 #[test]
+fn integer_scanner_accepts_mathchardef_values() {
+    // TeX82 §424 groups `char_given` and `math_given` under one
+    // `scanned_result(cur_chr)(int_val)` case. plain.tex's
+    // `\mathchardef\@M=10000` must scan as the integer 10000 wherever an
+    // internal integer is accepted, e.g. `\penalty-\@M` inside `\break`.
+    let mut command = CommandState::default();
+    let mut runtime = CommandRuntime::default();
+    let mut universe = Universe::new();
+    let at_m = universe.intern("@M").symbol();
+    universe.set_meaning(at_m, Meaning::MathCharGiven(10_000));
+    push(&mut command, vec![Token::Cs(at_m)]);
+    let mut capabilities = CommandHostCapabilities::default();
+    let mut processor = CommandProcessor::new(
+        &mut command,
+        &mut runtime,
+        universe.command_context(),
+        CommandHostContext::new(&mut capabilities),
+    );
+
+    assert_eq!(
+        processor.scan_integer().expect("mathchardef scans").value,
+        10_000
+    );
+}
+
+#[test]
 fn character_code_scanning_accepts_an_active_character_before_optional_equals() {
     let mut command = CommandState::default();
     push(
