@@ -1114,6 +1114,7 @@ enum ScannedStep {
     },
     Message {
         tokens: TracedTokenList,
+        error: bool,
     },
     VSplit(ScannedVSplit),
     ImmediateExtension(ImmediateExtension),
@@ -2301,10 +2302,13 @@ fn scan_command(
                     .semantic_token(),
             ))
         }
-        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Message) => {
+        Meaning::UnexpandablePrimitive(
+            primitive @ (UnexpandablePrimitive::Message | UnexpandablePrimitive::ErrMessage),
+        ) => {
             let tokens = processor.scan_balanced_text(true).map_err(command_error)?;
             Ok(ScannedStep::Message {
                 tokens: tokens.tokens,
+                error: primitive == UnexpandablePrimitive::ErrMessage,
             })
         }
         // TeX82 §46's `show_whatever` uses `get_token`, rather than the
@@ -2935,7 +2939,7 @@ fn applied_mutation_observation(
 #[cfg(any(test, feature = "instrumentation"))]
 fn applied_effect_observation(scanned: &ScannedStep, stores: &Universe) -> Option<EffectRecord> {
     match scanned {
-        ScannedStep::Message { tokens } => Some(EffectRecord {
+        ScannedStep::Message { tokens, .. } => Some(EffectRecord {
             kind: "message",
             detail: replay_text(stores.tokens(tokens.token_list())),
             tokens: None,
@@ -3664,11 +3668,17 @@ fn apply_scanned_step(
             });
             Ok(ReplayStep::Continue)
         }
-        ScannedStep::Message { tokens } => {
+        ScannedStep::Message { tokens, error } => {
             let text = replay_text(stores.tokens(tokens.token_list()));
-            stores
-                .world_mut()
-                .write_text(PrintSink::TerminalAndLog, &text);
+            if error {
+                stores
+                    .world_mut()
+                    .write_text(PrintSink::TerminalAndLog, &format!("\n! {text}.\n"));
+            } else {
+                stores
+                    .world_mut()
+                    .write_text(PrintSink::TerminalAndLog, &text);
+            }
             Ok(ReplayStep::Continue)
         }
         ScannedStep::ImmediateExtension(extension) => {
