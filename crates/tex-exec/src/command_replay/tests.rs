@@ -2432,6 +2432,27 @@ fn simple_group_ancestor_does_not_close_nested_output_box() {
 }
 
 #[test]
+fn hrule_contributes_to_outer_page_before_final_shipout() {
+    // TeX82 §1095 puts a vertical-mode \hrule directly on the current page;
+    // it must not remain stranded on the mode-nest list until job cleanup.
+    let mut universe = Universe::new();
+    let mut control = CommandReplayControl::tex82_initex(&mut universe);
+    register_source(&mut control, br"\hrule height1pt width2pt");
+
+    assert_eq!(
+        control.step(&mut universe).expect("hrule executes"),
+        ReplayStep::Continue
+    );
+    assert!(matches!(
+        universe.current_page_nodes().as_slice(),
+        [.., Node::Rule { width, height, depth }]
+            if *width == Some(Scaled::from_raw(2 * Scaled::UNITY))
+                && *height == Some(Scaled::from_raw(Scaled::UNITY))
+                && *depth == Some(Scaled::from_raw(0))
+    ));
+}
+
+#[test]
 fn dead_output_cycle_forces_shipout_after_final_stop_backup() {
     // TeX82 §§46 and 1005: after `maxdeadcycles` completed output routines
     // that leave `\box255` unused, `its_all_over` backs up the final stop

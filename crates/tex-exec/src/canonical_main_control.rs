@@ -5795,22 +5795,7 @@ fn apply_scanned_step(
             height,
             depth,
             horizontal,
-        } => {
-            if horizontal
-                && matches!(
-                    modes.current_mode(),
-                    Mode::Horizontal | Mode::RestrictedHorizontal
-                )
-            {
-                let _ = modes.pop()?;
-            }
-            modes.current_list_mut().push(Node::Rule {
-                width,
-                height,
-                depth,
-            });
-            Ok(ReplayStep::Continue)
-        }
+        } => apply_scanned_rule(command, modes, stores, width, height, depth, horizontal),
         ScannedStep::Message { tokens, error } => {
             let text = replay_text(stores.tokens(tokens.token_list()));
             if error {
@@ -6873,6 +6858,66 @@ fn glue_scale(spec: GlueSpec, factor: i32, divide: bool) -> Result<GlueSpec, Exe
         shrink: scale(spec.shrink)?,
         shrink_order: spec.shrink_order,
     })
+}
+
+/// Replays TeX82's distinct vertical and horizontal rule paths.
+///
+/// TeX82 §1095 routes `\hrule` through `head_for_vmode`, so an ordinary
+/// horizontal paragraph must finish before its rule reaches the page builder.
+/// In vertical mode the rule is a direct contribution and resets `prev_depth`;
+/// `\vrule`, conversely, enters horizontal mode before it appends its node.
+fn apply_scanned_rule(
+    command: &mut CommandState,
+    modes: &mut ModeNest,
+    stores: &mut Universe,
+    width: Option<Scaled>,
+    height: Option<Scaled>,
+    depth: Option<Scaled>,
+    horizontal: bool,
+) -> Result<ReplayStep, ExecError> {
+    let node = Node::Rule {
+        width,
+        height,
+        depth,
+    };
+    if horizontal {
+        match modes.current_mode() {
+            Mode::Vertical | Mode::InternalVertical => {}
+            Mode::Horizontal => {
+                let mut memo = crate::paragraph_memo::NoParagraphMemoConsumer;
+                crate::assignments::end_paragraph_with_consumer(modes, stores, &mut memo)?;
+            }
+            Mode::RestrictedHorizontal => {
+                stores.world_mut().write_text(
+                    PrintSink::TerminalAndLog,
+                    "\n! You can't use `\\hrule' here except with leaders.\nTo put a horizontal rule in an hbox or an alignment,\nyou should use \\leaders or \\hrulefill.\n",
+                );
+                return Ok(ReplayStep::Continue);
+            }
+            mode => {
+                return Err(ExecError::UnimplementedTypesetting {
+                    mode,
+                    token: Token::Cs(stores.intern("hrule").symbol()),
+                    origin: tex_state::token::OriginId::UNKNOWN,
+                    operation: "\\hrule",
+                });
+            }
+        }
+        crate::vertical::append_vertical_contribution(modes, stores, node);
+        modes
+            .current_list_mut()
+            .set_prev_depth(crate::mode::ignored_depth(stores));
+        crate::vertical::build_page_if_outer_vertical(modes, stores)?;
+    } else {
+        if matches!(
+            modes.current_mode(),
+            Mode::Vertical | Mode::InternalVertical
+        ) {
+            start_canonical_paragraph(command, modes, stores, true)?;
+        }
+        modes.current_list_mut().push(node);
+    }
+    Ok(ReplayStep::Continue)
 }
 
 fn apply_scanned_accent(
