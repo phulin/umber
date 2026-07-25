@@ -89,6 +89,19 @@ braced math group—then requests the next expanded delivery. Ordinary
 boundary internally. Thus no stomach operation can peek at or back up a
 parent token merely to discover that a stored episode ended.
 
+Because ordinary `get_x_token` consumes that boundary internally, the
+one-shot `Completed` event is only guaranteed to surface at the executor's
+own top-level fetch for the *next* command. A scalar operand scan belonging
+to the episode's own *last* command (`scan_dimen`'s optional-space lookahead
+after a trailing `\kern1pt`, for example, per TeX82 §455) can just as well be
+the exact probe that retires the stored level, and that swallowed retirement
+never reaches the executor as an event. A driving loop must therefore treat
+`CommandState::replay_episode_is_active` as the authoritative retirement
+test—polled after each step, not merely inferred from one `Completed`
+delivery—exactly as `execute_discretionary_part` already does; watching only
+for the event risks continuing past the episode's true end and folding
+unrelated following material into it.
+
 Text `\\accent` and `\\discretionary` use the same completed-scanner boundary:
 the command processor owns the accent number, expanded base-character lookup,
 and non-character replay, and freezes each discretionary group as traced,

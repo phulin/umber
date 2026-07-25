@@ -829,8 +829,21 @@ impl CanonicalMainControl {
         stores: &mut Universe,
     ) -> Result<tex_state::ids::NodeListId, ExecError> {
         self.modes.push(Mode::Math);
-        loop {
-            self.completed_replay_episode = None;
+        // Liveness of the stored level, not a per-step completion event, is
+        // the robust retirement test here. TeX82's `get_next`/`get_x_token`
+        // deliberately let an operand scanner (`scan_dimen`'s optional-space
+        // lookahead after `\kern1pt`, for example) probe one token past this
+        // episode's own last token and back it up -- "ordinary `get_x_token`
+        // retains TeX82's uninterrupted behavior by consuming this boundary
+        // internally" (see docs/tex_command_core.md §2.1). That nested probe
+        // silently retires the stored level without ever producing this
+        // loop's own `ScannedStep::ReplayCompleted`, so watching for that one
+        // event here would keep looping past the field's true end and
+        // consume unrelated following material as if it were still part of
+        // the field. Checking liveness directly is correct regardless of
+        // which nested scan discovered the retirement, and matches the
+        // already-established pattern in `execute_discretionary_part`.
+        while self.command.replay_episode_is_active(episode) {
             match self.step_once(stores)? {
                 ReplayStep::End | ReplayStep::EndOfInput => {
                     return Err(ExecError::MissingToken {
@@ -838,9 +851,6 @@ impl CanonicalMainControl {
                     });
                 }
                 ReplayStep::Continue => {}
-            }
-            if self.completed_replay_episode == Some(episode) {
-                break;
             }
         }
         while canonical_left_group_open(&self.modes, stores) {

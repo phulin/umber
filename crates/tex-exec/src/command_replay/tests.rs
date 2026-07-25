@@ -410,6 +410,68 @@ fn canonical_math_replay_finalizes_fields_and_delimiter_groups_before_parent_sou
 }
 
 #[test]
+fn canonical_math_field_kern_lookahead_does_not_leak_past_field_boundary() {
+    // TeX82's `scan_dimen` (§455) reads one token past a unit like `pt` to
+    // check for an optional trailing space, backing it up when absent
+    // (§448's `scan_keyword`/optional-space handling). When that lookahead
+    // happens to land on the very last token of a command-owned math field
+    // episode -- `{\kern1pt}` as a braced nucleus, say -- retiring the
+    // stored replay level is discovered deep inside `scan_dimension`, not at
+    // `execute_math_episode`'s own top-level command fetch. TeX82's
+    // `get_x_token` deliberately "retains TeX82's uninterrupted behavior by
+    // consuming this boundary internally" here (docs/tex_command_core.md
+    // §2.1's description of scalar lookahead crossing a stored episode), so
+    // `execute_math_episode` must detect the field's end by polling
+    // `CommandState::replay_episode_is_active` rather than by waiting for
+    // its own `ScannedStep::ReplayCompleted` event, which this exact
+    // lookahead never produces. Before that fix this source would loop past
+    // the field into `Z` and beyond, eventually hitting an EOF-driven
+    // `ExecError::MissingToken`; the fix keeps `Z` a sibling ordinary math
+    // character noad instead of folding it into the kern field's sub-mlist.
+    let mut universe = Universe::new();
+    let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+    control.modes.push(Mode::Math);
+    register_source(&mut control, br"\mathord{\kern1pt}Z\end");
+    run_to_end(&mut control, &mut universe);
+
+    let content = take_finished_canonical_math_list(&mut control.modes, &mut universe)
+        .expect("math material freezes");
+    let nodes = universe.nodes(content);
+    assert_eq!(
+        nodes.len(),
+        2,
+        "the kern field and the following Z must be separate noads"
+    );
+    assert!(
+        matches!(
+            nodes.first(),
+            Some(tex_state::node_arena::NodeRef::MathNoad(
+                tex_state::math::MathNoad {
+                    nucleus: tex_state::math::MathField::SubMlist(_),
+                    ..
+                }
+            ))
+        ),
+        "the braced kern field freezes as its own sub-mlist nucleus"
+    );
+    assert!(
+        matches!(
+            nodes.get(1),
+            Some(tex_state::node_arena::NodeRef::MathNoad(
+                tex_state::math::MathNoad {
+                    nucleus: tex_state::math::MathField::MathChar(tex_state::math::MathChar {
+                        character: 'Z',
+                        ..
+                    }),
+                    ..
+                }
+            ))
+        ),
+        "Z must land as ordinary trailing math content, not inside the kern field"
+    );
+}
+
+#[test]
 fn canonical_math_replay_observer_does_not_change_frozen_mlist() {
     let source = br"\mathord{a}_b^c\mskip2mu\mkern3mu\over d\end";
     let mut plain_universe = Universe::new();
