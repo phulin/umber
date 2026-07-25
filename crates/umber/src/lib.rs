@@ -192,40 +192,92 @@ impl<'a, 'context> EngineSession<'a, 'context> {
         self.stores
     }
 
-    /// Registers the already-acquired immutable root bytes for the canonical
+    /// Registers the already-acquired immutable root for the canonical
     /// command machine and selects the job identity exposed by `\jobname`.
     ///
     /// This deliberately does not inspect the legacy `InputStack`: callers
-    /// which opt into the command path must provide the same retained root
-    /// bytes that their `World`/editor acquisition policy accepted.
-    pub fn register_canonical_root(
+    /// transfer the original registration selected by their World/editor
+    /// policy, including any World input-record provenance.
+    pub fn register_canonical_retained_root(
         &mut self,
-        filename: &str,
-        kind: RegisteredSourceKind,
-        bytes: Arc<[u8]>,
+        job_name: &str,
+        source: SourceRegistration,
     ) -> Result<tex_state::SourceId, SourceRegistrationError> {
         self.canonical
             .capabilities_mut()
-            .set_startup_job_name(filename);
-        let source = self
-            .canonical
-            .register_root_source(SourceRegistration::new(kind, bytes))?;
+            .set_startup_job_name(job_name);
+        let source = self.canonical.register_root_source(source)?;
         self.canonical_root_registered = true;
         Ok(source)
+    }
+
+    /// Registers a root selected through the active World without rebuilding
+    /// its source identity or provenance from bytes.
+    pub fn register_canonical_world_root(
+        &mut self,
+        job_name: &str,
+        content: tex_state::FileContent,
+    ) -> Result<tex_state::SourceId, SourceRegistrationError> {
+        self.register_canonical_retained_root(job_name, SourceRegistration::world(content))
+    }
+
+    /// Registers a deliberately authored in-memory root.
+    ///
+    /// This byte helper is not suitable for a root selected through World;
+    /// use [`Self::register_canonical_world_root`] in that case.
+    pub fn register_canonical_authored_root(
+        &mut self,
+        job_name: &str,
+        bytes: Arc<[u8]>,
+    ) -> Result<tex_state::SourceId, SourceRegistrationError> {
+        self.register_canonical_retained_root(
+            job_name,
+            SourceRegistration::new(RegisteredSourceKind::Generated, bytes),
+        )
+    }
+
+    #[cfg(test)]
+    fn register_canonical_root(
+        &mut self,
+        job_name: &str,
+        kind: RegisteredSourceKind,
+        bytes: Arc<[u8]>,
+    ) -> Result<tex_state::SourceId, SourceRegistrationError> {
+        assert_eq!(kind, RegisteredSourceKind::Generated);
+        self.register_canonical_authored_root(job_name, bytes)
     }
 
     /// Makes a completed host input acquisition available to a future typed
     /// `\input` request.  Registration is capability-scoped; command state
     /// receives the bytes only after it has scanned that request.
-    pub fn provide_canonical_input(
+    pub fn provide_canonical_retained_input(
+        &mut self,
+        name: impl Into<String>,
+        source: SourceRegistration,
+    ) {
+        self.canonical
+            .capabilities_mut()
+            .register_input(name, source);
+    }
+
+    /// Registers deliberately authored in-memory input bytes. World-selected
+    /// inputs must use [`Self::provide_canonical_world_input`].
+    pub fn provide_canonical_authored_input(&mut self, name: impl Into<String>, bytes: Arc<[u8]>) {
+        self.provide_canonical_retained_input(
+            name,
+            SourceRegistration::new(RegisteredSourceKind::Generated, bytes),
+        );
+    }
+
+    #[cfg(test)]
+    fn provide_canonical_input(
         &mut self,
         name: impl Into<String>,
         kind: RegisteredSourceKind,
         bytes: Arc<[u8]>,
     ) {
-        self.canonical
-            .capabilities_mut()
-            .register_input(name, SourceRegistration::new(kind, bytes));
+        assert_eq!(kind, RegisteredSourceKind::Generated);
+        self.provide_canonical_authored_input(name, bytes);
     }
 
     /// Convenience adapter for a `World` input that has already been
@@ -235,7 +287,7 @@ impl<'a, 'context> EngineSession<'a, 'context> {
         name: impl Into<String>,
         content: tex_state::FileContent,
     ) {
-        self.provide_canonical_input(name, RegisteredSourceKind::World, content.shared_bytes());
+        self.provide_canonical_retained_input(name, SourceRegistration::world(content));
     }
 
     /// Registers a host-acquired immutable font resource for a suspended
@@ -1687,6 +1739,18 @@ mod tests {
         let mut stores = Universe::new();
         install_expandable_primitives(&mut stores);
         install_unexpandable_primitives(&mut stores);
+        stores
+            .world_mut()
+            .set_memory_file(
+                "selected/report.tex",
+                b"\\message{\\jobname}\\input child \\end",
+            )
+            .expect("World root is seeded");
+        let root = stores
+            .world_mut()
+            .read_file("selected/report.tex")
+            .expect("World selects root");
+        let root_hash = root.hash();
         let mut legacy_input = InputStack::new(MemoryInput::new("legacy input is not consumed"));
         let mut session = EngineSession::new(
             &mut legacy_input,
@@ -1694,11 +1758,7 @@ mod tests {
             ExecutionContext::new("ignored-by-canonical-bridge"),
         );
         session
-            .register_canonical_root(
-                "inputs/report.tex",
-                RegisteredSourceKind::Generated,
-                Arc::from(&b"\\message{\\jobname}\\input child \\end"[..]),
-            )
+            .register_canonical_world_root("inputs/report.tex", root)
             .expect("root registers");
         session.provide_canonical_input(
             "child",
@@ -1721,6 +1781,11 @@ mod tests {
         // command-delivered `MainControlStep::End` instead.
         let result = session.execute().expect("canonical root terminates");
         assert_eq!(result.terminal_text, "reportnested");
+        assert!(matches!(
+            session.stores().world().input_records(),
+            [record] if record.hash() == root_hash
+                && record.path() == std::path::Path::new("selected/report.tex")
+        ));
         assert_eq!(uncommitted_terminal_text(session.stores()), "reportnested");
     }
 
@@ -2187,10 +2252,18 @@ mod tests {
         use crate::EngineMode;
 
         for mode in [EngineMode::Tex82, EngineMode::ETex, EngineMode::PdfTex] {
-            let root = Arc::<[u8]>::from(&b"\\message{canonical format}\\end"[..]);
+            let root = b"\\message{canonical format}\\end";
 
             let mut fresh = Universe::new();
             mode.prepare_fresh(&mut fresh);
+            fresh
+                .world_mut()
+                .set_memory_file("selected/job.tex", root)
+                .expect("fresh World root is seeded");
+            let fresh_root = fresh
+                .world_mut()
+                .read_file("selected/job.tex")
+                .expect("fresh World selects root");
             let mut fresh_input = InputStack::new(MemoryInput::new("legacy fresh input"));
             let mut fresh_session = EngineSession::with_command_profile(
                 &mut fresh_input,
@@ -2199,7 +2272,7 @@ mod tests {
                 mode.command_profile(),
             );
             fresh_session
-                .register_canonical_root("job.tex", RegisteredSourceKind::Generated, root.clone())
+                .register_canonical_world_root("job.tex", fresh_root)
                 .expect("fresh canonical root registers");
             let fresh_run = fresh_session.execute().expect("fresh canonical run");
             let format = fresh_session.stores().dump_format().expect("format dumps");
@@ -2208,6 +2281,14 @@ mod tests {
             let mut loaded =
                 Universe::from_format(World::default(), &format).expect("format loads");
             mode.install_after_format(&mut loaded);
+            loaded
+                .world_mut()
+                .set_memory_file("selected/job.tex", root)
+                .expect("format-loaded World root is seeded");
+            let loaded_root = loaded
+                .world_mut()
+                .read_file("selected/job.tex")
+                .expect("format-loaded World selects root");
             let mut loaded_input = InputStack::new(MemoryInput::new("legacy loaded input"));
             let mut loaded_session = EngineSession::with_command_profile(
                 &mut loaded_input,
@@ -2216,7 +2297,7 @@ mod tests {
                 mode.command_profile(),
             );
             loaded_session
-                .register_canonical_root("job.tex", RegisteredSourceKind::Generated, root)
+                .register_canonical_world_root("job.tex", loaded_root)
                 .expect("format-loaded canonical root registers");
             let loaded_run = loaded_session
                 .execute()

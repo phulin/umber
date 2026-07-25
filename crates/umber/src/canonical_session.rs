@@ -221,24 +221,53 @@ impl<'a> CanonicalEngineSession<'a> {
         self.no_progress_limit = limit.max(1);
     }
 
-    /// Registers the sole immutable root before any canonical operation.
-    pub fn register_root(
+    /// Registers the sole World- or host-selected immutable root before any
+    /// canonical operation.
+    ///
+    /// The registration is transferred unchanged so its World input-record
+    /// identity remains available to source provenance. Job naming is driver
+    /// policy, deliberately separate from source acquisition.
+    pub fn register_retained_root(
         &mut self,
-        filename: &str,
-        kind: RegisteredSourceKind,
-        bytes: Arc<[u8]>,
+        job_name: &str,
+        source: SourceRegistration,
     ) -> Result<tex_state::SourceId, CanonicalSessionError> {
         if self.root_registered {
             return Err(CanonicalSessionError::RootAlreadyRegistered);
         }
         self.control
             .capabilities_mut()
-            .set_startup_job_name(filename);
-        let source = self
-            .control
-            .register_root_source(SourceRegistration::new(kind, bytes))?;
+            .set_startup_job_name(job_name);
+        let source = self.control.register_root_source(source)?;
         self.root_registered = true;
         Ok(source)
+    }
+
+    /// Registers a root selected through the active World without rebuilding
+    /// its provenance from bytes.
+    pub fn register_world_root(
+        &mut self,
+        job_name: &str,
+        content: FileContent,
+    ) -> Result<tex_state::SourceId, CanonicalSessionError> {
+        self.register_retained_root(job_name, SourceRegistration::world(content))
+    }
+
+    /// Registers an authored in-memory root.
+    ///
+    /// This is intentionally not a World-input adapter: selected World roots
+    /// must use [`Self::register_world_root`] or
+    /// [`Self::register_retained_root`] so their input-record identity is not
+    /// discarded.
+    pub fn register_authored_root(
+        &mut self,
+        job_name: &str,
+        bytes: Arc<[u8]>,
+    ) -> Result<tex_state::SourceId, CanonicalSessionError> {
+        self.register_retained_root(
+            job_name,
+            SourceRegistration::new(RegisteredSourceKind::Generated, bytes),
+        )
     }
 
     /// Drives committed aggregate operations until completion or a typed
@@ -509,7 +538,7 @@ mod tests {
             prepared_session(b"\\message{once}\\input child x\\par\\shipout\\hbox{x}\\end");
         let mut session = CanonicalEngineSession::new(&mut stores, CommandProfile::TEX82);
         session
-            .register_root("job.tex", RegisteredSourceKind::Generated, root)
+            .register_authored_root("job.tex", root)
             .expect("root registers");
         let mut host = OneInputHost { calls: 0 };
         let mut checkpoints = Vec::new();
@@ -540,7 +569,7 @@ mod tests {
         let mut session = CanonicalEngineSession::new(&mut stores, CommandProfile::TEX82);
         session.set_no_progress_limit(2);
         session
-            .register_root("job.tex", RegisteredSourceKind::Generated, root)
+            .register_authored_root("job.tex", root)
             .expect("root registers");
         let mut host = OneInputHost { calls: 0 };
         let mut checkpoints = Vec::new();
@@ -563,7 +592,7 @@ mod tests {
             .expect("child is seeded");
         let mut session = CanonicalEngineSession::new(&mut stores, CommandProfile::TEX82);
         session
-            .register_root("job.tex", RegisteredSourceKind::Generated, root)
+            .register_authored_root("job.tex", root)
             .expect("root registers");
 
         let run = session
@@ -589,7 +618,7 @@ mod tests {
             .expect("font is seeded");
         let mut font_session = CanonicalEngineSession::new(&mut font_stores, CommandProfile::TEX82);
         font_session
-            .register_root("font.tex", RegisteredSourceKind::Generated, font_root)
+            .register_authored_root("font.tex", font_root)
             .expect("font root registers");
         font_session
             .run(&mut WorldHost, &mut Vec::new())
@@ -613,11 +642,7 @@ mod tests {
         let mut image_session =
             CanonicalEngineSession::new(&mut image_stores, CommandProfile::PDFTEX14027);
         image_session
-            .register_root(
-                "image.tex",
-                RegisteredSourceKind::Generated,
-                Arc::from(&b"\\pdfximage image.png\\end"[..]),
-            )
+            .register_authored_root("image.tex", Arc::from(&b"\\pdfximage image.png\\end"[..]))
             .expect("image root registers");
         image_session
             .run(&mut WorldHost, &mut Vec::new())
@@ -643,7 +668,7 @@ mod tests {
         let (mut stores, root) = prepared_session(b"\\input child\\end");
         let mut session = CanonicalEngineSession::new(&mut stores, CommandProfile::TEX82);
         session
-            .register_root("job.tex", RegisteredSourceKind::Generated, root)
+            .register_authored_root("job.tex", root)
             .expect("root registers");
         let need = match session
             .advance_until_waiting(&mut Vec::new())
