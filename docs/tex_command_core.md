@@ -1653,8 +1653,11 @@ available to the canonical keyword retry sequence. `scan_glue` first probes a
 complete internal glue value; an ordinary numeric width is backed up and only
 then passed to `scan_dimen`. These retry frames retire before their replacement
 backup, preserving the TeX82 input lifecycle for whole-number dimensions,
-physical units, and `fil` orders. The replay adapter receives only the final
-`Scaled` or `GlueSpec` and never reconstructs these transitions.
+physical units, and `fil` orders. In particular, after a fractional value,
+TeX82 §455's internal-unit, `em`, `ex`, `true`, and `pt` probes each own their
+failed replay before `scan_keyword("in")` consumes `i` and `n` directly. The
+replay adapter receives only the final `Scaled` or `GlueSpec` and never
+reconstructs these transitions.
 
 ## 24. Static e-TeX and pdfTeX extension seams
 

@@ -6,7 +6,19 @@ use super::*;
 use crate::input::{
     ReplayTrace, RetirementBehavior, SharedTokenBuffer, TokenBehavior, TokenPayload,
 };
-use crate::{CommandHostCapabilities, CommandHostContext, CommandRuntime, CommandState};
+use crate::{
+    CommandHostCapabilities, CommandHostContext, CommandObservation, CommandObserver,
+    CommandRuntime, CommandState, InputTransition, ObservedToken,
+};
+
+#[derive(Default)]
+struct Recorder(Vec<CommandObservation>);
+
+impl CommandObserver for Recorder {
+    fn committed(&mut self, observation: CommandObservation) {
+        self.0.push(observation);
+    }
+}
 
 fn push(command: &mut CommandState, tokens: Vec<Token>) {
     command.push_token_level(
@@ -175,4 +187,47 @@ fn internal_values_and_failed_keywords_replay_canonically() {
             .value,
         InternalValue::Integer(41)
     );
+}
+
+#[test]
+fn fractional_in_unit_retires_the_final_probe_backup_before_n() {
+    let mut command = CommandState::default();
+    push(&mut command, "1.25in ".chars().map(char_token).collect());
+    let mut runtime = CommandRuntime::default();
+    let mut universe = Universe::new();
+    let mut capabilities = CommandHostCapabilities::default();
+    let mut recorder = Recorder::default();
+    let mut processor = CommandProcessor::new(
+        &mut command,
+        &mut runtime,
+        universe.command_context(),
+        CommandHostContext::new(&mut capabilities),
+    )
+    .with_observer(&mut recorder);
+
+    assert_eq!(
+        processor
+            .scan_dimension()
+            .expect("dimension scans")
+            .value
+            .raw(),
+        5_920_358
+    );
+
+    let n = recorder
+        .0
+        .iter()
+        .position(|observation| {
+            matches!(
+                observation,
+                CommandObservation::Command(record)
+                    if matches!(record.spelling, ObservedToken::Character { character: 'n', .. })
+                        && record.boundary == crate::CommandDeliveryBoundary::Raw
+            )
+        })
+        .expect("in suffix n is delivered raw");
+    assert!(matches!(
+        recorder.0.get(n - 1),
+        Some(CommandObservation::Input(record)) if record.transition == InputTransition::Retire
+    ));
 }

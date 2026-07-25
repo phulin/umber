@@ -592,25 +592,29 @@ impl CommandProcessor<'_> {
     }
 
     fn scan_dimension_unit(&mut self, allow_infinite: bool) -> Result<DimensionUnit, CommandError> {
-        // TeX82 recognizes units through `scan_keyword`, not by collecting
-        // two letters.  A failed keyword is observable because it replays
-        // the candidate through `back_input`; this matters even for ordinary
-        // whole-number glue components.  Keep those retries in the scanner
-        // instead of hiding them in a private string parser.
-        let _true_dimension = self.scan_keyword("true")?.value;
+        // TeX82 §455 first looks for an internal dimension, then probes `em`
+        // and `ex`, before accepting `true`, `pt`, or a physical unit.  Each
+        // unsuccessful probe owns one `back_input` hand-off.  In particular,
+        // an `in` following a fraction must be replayed through precisely the
+        // internal/`em`/`ex`/`true`/`pt` probes before `scan_keyword("in")`
+        // consumes its `i` and its following `n` directly.
         if allow_infinite && self.scan_keyword("fil")?.value {
             return self.scan_infinite_unit(Order::Fil);
         }
+        self.probe_dimension_unit()?;
+        for keyword in ["em", "ex"] {
+            let _ = self.scan_keyword(keyword)?;
+        }
+        let _true_dimension = self.scan_keyword("true")?.value;
+        if self.scan_keyword("pt")?.value {
+            return Ok(DimensionUnit::Physical(PhysicalUnit::Pt));
+        }
         for (keyword, unit) in [
-            ("em", PhysicalUnit::Pt),
-            ("ex", PhysicalUnit::Pt),
-            ("mu", PhysicalUnit::Pt),
-            ("pt", PhysicalUnit::Pt),
-            ("pc", PhysicalUnit::Pc),
             ("in", PhysicalUnit::In),
-            ("bp", PhysicalUnit::Bp),
+            ("pc", PhysicalUnit::Pc),
             ("cm", PhysicalUnit::Cm),
             ("mm", PhysicalUnit::Mm),
+            ("bp", PhysicalUnit::Bp),
             ("dd", PhysicalUnit::Dd),
             ("cc", PhysicalUnit::Cc),
             ("sp", PhysicalUnit::Sp),
@@ -620,6 +624,20 @@ impl CommandProcessor<'_> {
             }
         }
         Err(CommandError::InputInvariant)
+    }
+
+    /// Performs TeX82 §455's internal-dimension unit lookahead.
+    ///
+    /// This scanner does not yet materialize internal units, but the failed
+    /// lookahead is still a real command-owned operation: when it consumes a
+    /// token replayed by the fractional scanner, TeX's `back_input` first
+    /// retires that exhausted backup before installing the new one.
+    fn probe_dimension_unit(&mut self) -> Result<(), CommandError> {
+        let Some(command) = self.get_x_token()? else {
+            return Ok(());
+        };
+        self.retire_exhausted_backup_before_scalar_replay(command.delivery_stamp())?;
+        self.back_input(command)
     }
 
     fn scan_optional_space(&mut self) -> Result<(), CommandError> {
