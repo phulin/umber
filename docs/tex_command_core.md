@@ -1411,6 +1411,11 @@ It owns:
 - possible `#{` handling; and
 - expanded versus unexpanded collection.
 
+For the `#{` parameter-text case, TeX82 §476 stores the left brace in the
+parameter text, terminates that text with `end_match`, and appends the same
+left-brace token after the completed replacement body. The parameter character
+only introduces this special case; it is not retained by either list.
+
 For an unexpanded scan it repeatedly calls `get_token`.
 
 Before a general-text collector installs `ScannerStatus::Absorbing`, its

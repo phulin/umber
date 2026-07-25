@@ -128,11 +128,11 @@ impl CommandProcessor<'_> {
         };
         let replacement = self.collect_replacement(expanded, highest_parameter)?;
         let mut replacement = replacement;
-        // TeX's `#{` parameter-text special case treats the brace as a
-        // delimiter and places the saved parameter character after the
-        // replacement text (TeX.web §476).
-        if let Some(hash) = hash_brace {
-            replacement.push(hash);
+        // TeX's `#{` parameter-text special case treats that left brace as a
+        // delimiter and appends the same saved brace after the replacement
+        // text (TeX.web §476).
+        if let Some(brace) = hash_brace {
+            replacement.push(brace);
         }
         Ok(ScannedToks {
             parameter_text: self.state.finish_traced_token_list(&parameter_text),
@@ -198,7 +198,7 @@ impl CommandProcessor<'_> {
                 return Ok((
                     output,
                     next_parameter - 1,
-                    Some(command.spelling()),
+                    Some(follower.spelling()),
                     primary,
                 ));
             }
@@ -701,6 +701,90 @@ mod tests {
                 Token::Char {
                     ch: '#',
                     cat: Catcode::Parameter,
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn macro_definition_hash_brace_reuses_the_left_brace_after_the_body() {
+        let mut command = CommandState::default();
+        let mut runtime = CommandRuntime::default();
+        let mut universe = Universe::new();
+        push(
+            &mut command,
+            vec![
+                Token::Char {
+                    ch: '#',
+                    cat: Catcode::Parameter,
+                },
+                Token::Char {
+                    ch: '1',
+                    cat: Catcode::Other,
+                },
+                Token::Char {
+                    ch: '#',
+                    cat: Catcode::Parameter,
+                },
+                Token::Char {
+                    ch: '{',
+                    cat: Catcode::BeginGroup,
+                },
+                Token::Char {
+                    ch: '[',
+                    cat: Catcode::Other,
+                },
+                Token::Char {
+                    ch: '#',
+                    cat: Catcode::Parameter,
+                },
+                Token::Char {
+                    ch: '1',
+                    cat: Catcode::Other,
+                },
+                Token::Char {
+                    ch: ']',
+                    cat: Catcode::Other,
+                },
+                Token::Char {
+                    ch: '}',
+                    cat: Catcode::EndGroup,
+                },
+            ],
+        );
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+
+        let scanned = processor
+            .scan_toks(ScanToksMode::MacroDefinition { expanded: false })
+            .expect("definition scans");
+        assert_eq!(
+            processor.state.tokens(scanned.parameter_text.token_list()),
+            &[
+                Token::Param(1),
+                Token::Char {
+                    ch: '{',
+                    cat: Catcode::BeginGroup,
+                },
+            ]
+        );
+        assert_eq!(
+            processor
+                .state
+                .tokens(scanned.replacement_text.token_list()),
+            &[
+                Token::Char {
+                    ch: '[',
+                    cat: Catcode::Other,
+                },
+                Token::Param(1),
+                Token::Char {
+                    ch: ']',
+                    cat: Catcode::Other,
+                },
+                Token::Char {
+                    ch: '{',
+                    cat: Catcode::BeginGroup,
                 },
             ]
         );
