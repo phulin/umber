@@ -1786,7 +1786,7 @@ impl CommandProcessor<'_> {
         let source = self
             .host
             .input(&file_name.name)
-            .ok_or(CommandError::MissingInput)?;
+            .ok_or_else(|| CommandError::MissingInput(file_name.name.clone()))?;
         let source = self
             .command
             .register_source(source)

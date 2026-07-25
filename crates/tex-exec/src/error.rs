@@ -114,6 +114,16 @@ pub enum ExecError {
     MissingToken {
         context: &'static str,
     },
+    /// A canonical command-core operation scanned an input name, but its
+    /// borrow-scoped host capability has not supplied immutable bytes yet.
+    MissingCanonicalInput {
+        name: String,
+    },
+    /// A canonical font definition completed scanning, but its transient
+    /// host capability has not supplied the immutable resource yet.
+    MissingCanonicalFont {
+        request: tex_command::FontLoadRequest,
+    },
     MissingTracedToken {
         context: TracedTokenWord,
     },
@@ -293,6 +303,12 @@ impl fmt::Display for ExecError {
                 )
             }
             Self::MissingToken { context } => write!(f, "missing token while scanning {context}"),
+            Self::MissingCanonicalInput { name } => {
+                write!(f, "input source `{name}` is unavailable")
+            }
+            Self::MissingCanonicalFont { request } => {
+                write!(f, "font resource `{}` is unavailable", request.name)
+            }
             Self::MissingTracedToken { .. } => f.write_str("missing token while scanning input"),
             Self::InvalidLetRhs { token, .. } => {
                 write!(f, "\\let cannot assign macro parameter token {token:?}")
@@ -474,6 +490,8 @@ impl std::error::Error for ExecError {
             | Self::MissingControlSequence { .. }
             | Self::ExpectedControlSequence { .. }
             | Self::MissingToken { .. }
+            | Self::MissingCanonicalInput { .. }
+            | Self::MissingCanonicalFont { .. }
             | Self::MissingTracedToken { .. }
             | Self::InvalidLetRhs { .. }
             | Self::UnsupportedAssignmentTarget
@@ -580,6 +598,8 @@ impl ExecError {
             | Self::MissingPrefixedCommand
             | Self::MissingControlSequence { .. }
             | Self::MissingToken { .. }
+            | Self::MissingCanonicalInput { .. }
+            | Self::MissingCanonicalFont { .. }
             | Self::UnsupportedAssignmentTarget
             | Self::RegisterNumberOutOfRange(_)
             | Self::ArithmeticOverflow

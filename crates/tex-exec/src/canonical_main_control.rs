@@ -141,14 +141,18 @@ struct ReplayBoxes {
 /// this value deliberately retains neither a command nor a host capability.
 /// Retrying therefore starts a fresh TeX82 §§24--25 processor episode at the
 /// enclosing main-control operation.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum CanonicalResourceNeed {
-    Input,
-    Font,
+    /// TeX82's `start_input` scanned this logical filename (§529 / §1030+),
+    /// but the host has not supplied its immutable source registration.
+    Input { name: String },
+    /// TeX82's `new_font` completed its filename and size scan (§1254), but
+    /// the host has not supplied the immutable font bytes.
+    Font { request: FontLoadRequest },
 }
 
 /// Outcome of one atomic canonical main-control operation.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum CanonicalStepResult {
     Progress(MainControlStep),
     Suspended(CanonicalResourceNeed),
@@ -282,12 +286,12 @@ impl CanonicalMainControl {
             return Ok(scanned);
         };
         let path = canonical_font_path(&request.name);
-        let resource = self
-            .capabilities
-            .font(&path)
-            .ok_or(ExecError::MissingToken {
-                context: "\\font resource",
-            })?;
+        let resource =
+            self.capabilities
+                .font(&path)
+                .ok_or_else(|| ExecError::MissingCanonicalFont {
+                    request: request.clone(),
+                })?;
         Ok(ScannedStep::FontDefinition {
             request,
             resource: Box::new(Some(resource)),
@@ -307,13 +311,13 @@ impl CanonicalMainControl {
             return Ok(scanned);
         };
         let resource = match &request {
-            InputStreamRequest::Open { file_name, .. } => {
-                Some(self.capabilities.input_resource(&file_name.name).ok_or(
-                    ExecError::MissingToken {
-                        context: "\\openin resource",
-                    },
-                )?)
-            }
+            InputStreamRequest::Open { file_name, .. } => Some(
+                self.capabilities
+                    .input_resource(&file_name.name)
+                    .ok_or_else(|| ExecError::MissingCanonicalInput {
+                        name: file_name.name.clone(),
+                    })?,
+            ),
             InputStreamRequest::Close { .. } | InputStreamRequest::Read { .. } => None,
         };
         Ok(ScannedStep::InputStream { request, resource })
@@ -598,22 +602,14 @@ impl CanonicalMainControl {
             Ok(step) => Ok(CanonicalStepResult::Progress(step)),
             Err(error) => {
                 self.rollback_step(snapshot, stores);
-                if matches!(
-                    error,
-                    ExecError::MissingToken {
-                        context: "\\input" | "\\openin resource"
-                    }
-                ) {
-                    Ok(CanonicalStepResult::Suspended(CanonicalResourceNeed::Input))
-                } else if matches!(
-                    error,
-                    ExecError::MissingToken {
-                        context: "\\font resource"
-                    }
-                ) {
-                    Ok(CanonicalStepResult::Suspended(CanonicalResourceNeed::Font))
-                } else {
-                    Err(error)
+                match error {
+                    ExecError::MissingCanonicalInput { name } => Ok(
+                        CanonicalStepResult::Suspended(CanonicalResourceNeed::Input { name }),
+                    ),
+                    ExecError::MissingCanonicalFont { request } => Ok(
+                        CanonicalStepResult::Suspended(CanonicalResourceNeed::Font { request }),
+                    ),
+                    error => Err(error),
                 }
             }
         }
@@ -626,10 +622,10 @@ impl CanonicalMainControl {
     pub fn step(&mut self, stores: &mut Universe) -> Result<ReplayStep, ExecError> {
         match self.advance(stores)? {
             CanonicalStepResult::Progress(step) => Ok(step),
-            CanonicalStepResult::Suspended(CanonicalResourceNeed::Input) => {
+            CanonicalStepResult::Suspended(CanonicalResourceNeed::Input { .. }) => {
                 Err(ExecError::MissingToken { context: "\\input" })
             }
-            CanonicalStepResult::Suspended(CanonicalResourceNeed::Font) => {
+            CanonicalStepResult::Suspended(CanonicalResourceNeed::Font { .. }) => {
                 Err(ExecError::MissingToken {
                     context: "\\font resource",
                 })
@@ -1189,10 +1185,10 @@ impl CanonicalMainControl {
     ) -> Result<ReplayStep, ExecError> {
         match self.advance_with_observer(stores, observer)? {
             CanonicalStepResult::Progress(step) => Ok(step),
-            CanonicalStepResult::Suspended(CanonicalResourceNeed::Input) => {
+            CanonicalStepResult::Suspended(CanonicalResourceNeed::Input { .. }) => {
                 Err(ExecError::MissingToken { context: "\\input" })
             }
-            CanonicalStepResult::Suspended(CanonicalResourceNeed::Font) => {
+            CanonicalStepResult::Suspended(CanonicalResourceNeed::Font { .. }) => {
                 Err(ExecError::MissingToken {
                     context: "\\font resource",
                 })
@@ -1217,22 +1213,14 @@ impl CanonicalMainControl {
             }
             Err(error) => {
                 self.rollback_step(snapshot, stores);
-                if matches!(
-                    error,
-                    ExecError::MissingToken {
-                        context: "\\input" | "\\openin resource"
-                    }
-                ) {
-                    Ok(CanonicalStepResult::Suspended(CanonicalResourceNeed::Input))
-                } else if matches!(
-                    error,
-                    ExecError::MissingToken {
-                        context: "\\font resource"
-                    }
-                ) {
-                    Ok(CanonicalStepResult::Suspended(CanonicalResourceNeed::Font))
-                } else {
-                    Err(error)
+                match error {
+                    ExecError::MissingCanonicalInput { name } => Ok(
+                        CanonicalStepResult::Suspended(CanonicalResourceNeed::Input { name }),
+                    ),
+                    ExecError::MissingCanonicalFont { request } => Ok(
+                        CanonicalStepResult::Suspended(CanonicalResourceNeed::Font { request }),
+                    ),
+                    error => Err(error),
                 }
             }
         }
@@ -6057,7 +6045,7 @@ fn schedule_everymath(command: &mut CommandState, stores: &mut Universe, display
 
 fn command_error(error: CommandError) -> ExecError {
     match error {
-        CommandError::MissingInput => ExecError::MissingToken { context: "\\input" },
+        CommandError::MissingInput(name) => ExecError::MissingCanonicalInput { name },
         _ => ExecError::MissingToken {
             context: "command processor",
         },

@@ -1263,5 +1263,5 @@ fn filename_registered_input_recovery_and_rollback_stay_command_owned() {
             .open_registered_input()
             .expect_err("unregistered input is structured recovery")
     };
-    assert_eq!(error, CommandError::MissingInput);
+    assert_eq!(error, CommandError::MissingInput("x".to_owned()));
 }

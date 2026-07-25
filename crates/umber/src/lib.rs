@@ -3,12 +3,12 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use tex_command::{
-    CommandProfile, RegisteredSourceKind, SourceRegistration, SourceRegistrationError,
+    CommandProfile, FontResource, RegisteredSourceKind, SourceRegistration, SourceRegistrationError,
 };
 use tex_exec::{
-    CanonicalMainControl, CheckpointSink, EngineBoundary, ExecutionBudgetCounters,
-    ExecutionContext, ExecutionStats, Executor, FontResolver, MainControlStep, PdfImageRequest,
-    PdfImageResolver, try_execute_assignment,
+    CanonicalMainControl, CanonicalStepResult, CheckpointSink, EngineBoundary,
+    ExecutionBudgetCounters, ExecutionContext, ExecutionStats, Executor, FontResolver,
+    MainControlStep, PdfImageRequest, PdfImageResolver, try_execute_assignment,
 };
 use tex_expand::{InputResolver, get_x_token_with_context};
 use tex_lex::{InputSource, InputStack, MemoryInput};
@@ -228,6 +228,23 @@ impl<'a, 'context> EngineSession<'a, 'context> {
         content: tex_state::FileContent,
     ) {
         self.provide_canonical_input(name, RegisteredSourceKind::World, content.shared_bytes());
+    }
+
+    /// Registers a host-acquired immutable font resource for a suspended
+    /// canonical `\font` request. `path` is the canonical request path (for
+    /// example `cmr10.tfm`), never a retained host handle.
+    pub fn provide_canonical_font(&mut self, path: impl Into<PathBuf>, resource: FontResource) {
+        self.canonical
+            .capabilities_mut()
+            .register_font(path, resource);
+    }
+
+    /// Advances one aggregate canonical operation and exposes a typed
+    /// resource suspension to every direct caller. Supplying immutable bytes
+    /// through the corresponding `provide_canonical_*` method then retries
+    /// the same bounded TeX82 operation from its rollback boundary.
+    pub fn advance_canonical(&mut self) -> Result<CanonicalStepResult, tex_exec::ExecError> {
+        self.canonical.advance(self.stores)
     }
 
     /// Advances exactly one canonical main-control operation.  Effects and

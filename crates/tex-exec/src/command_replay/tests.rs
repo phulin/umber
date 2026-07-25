@@ -232,12 +232,13 @@ fn canonical_missing_font_rolls_back_then_retries_once_with_registered_resource(
     register_source(&mut control, br"\font\f=cmr10\message{ok}\end");
     let mut observations = ObservationRecorder::default();
 
-    assert_eq!(
+    assert!(matches!(
         control
             .advance_with_observer(&mut universe, &mut observations)
             .expect("missing font suspends"),
-        CanonicalStepResult::Suspended(CanonicalResourceNeed::Font)
-    );
+        CanonicalStepResult::Suspended(CanonicalResourceNeed::Font { request })
+            if request.name == "cmr10"
+    ));
     let f = universe.intern("f");
     assert!(matches!(universe.meaning(f), Meaning::Undefined));
     assert!(
@@ -412,10 +413,10 @@ fn canonical_openin_missing_resource_rolls_back_and_retries_fresh() {
     let mut control = CanonicalMainControl::tex82_initex(&mut universe);
     register_source(&mut control, br"\openin1=child.tex\read1to\line\end");
 
-    assert_eq!(
+    assert!(matches!(
         control.advance(&mut universe).expect("openin suspends"),
-        CanonicalStepResult::Suspended(CanonicalResourceNeed::Input)
-    );
+        CanonicalStepResult::Suspended(CanonicalResourceNeed::Input { name }) if name == "child.tex"
+    ));
     assert!(universe.world().input_stream_eof(StreamSlot::new(1)));
 
     control.capabilities_mut().register_input(
@@ -2958,12 +2959,12 @@ fn missing_canonical_input_rolls_back_the_whole_step_and_retries_fresh() {
     register_source(&mut failed, br"\input child\end");
     let mut failed_observations = ObservationRecorder::default();
 
-    assert_eq!(
+    assert!(matches!(
         failed
             .advance_with_observer(&mut failed_universe, &mut failed_observations)
             .expect("missing input suspends"),
-        CanonicalStepResult::Suspended(CanonicalResourceNeed::Input)
-    );
+        CanonicalStepResult::Suspended(CanonicalResourceNeed::Input { name }) if name == "child"
+    ));
     assert_eq!(failed_universe.count(3), 0);
     assert_eq!(failed.current_mode(), Mode::Vertical);
     assert!(
