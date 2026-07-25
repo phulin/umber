@@ -2817,18 +2817,6 @@ fn scan_command(
     {
         return Ok(ScannedStep::OutputRoutineOpeningBrace);
     }
-    if boxes.output_routine_active
-        && boxes.ordinary_simple_group_depth == 0
-        && matches!(
-            command.meaning(),
-            Meaning::CharToken {
-                cat: Catcode::EndGroup,
-                ..
-            }
-        )
-    {
-        return Ok(ScannedStep::EndOutputRoutine);
-    }
     // `align_error`'s inserted brace is an actual execution group, even when
     // it appears inside a replayed box body.  It must therefore win over the
     // box body's brace-depth bookkeeping so §1131 can observe it at end-v.
@@ -2905,6 +2893,23 @@ fn scan_command(
             }
             _ => {}
         }
+    }
+    // TeX82 §1016 opens `output_group` before replaying the braced output
+    // token list. A box body nested in that list owns its closing brace first;
+    // only an end-group with no active box can close the enclosing output
+    // group. In particular, Plain's `\vbox to 8.5\p@{}` is not the end of
+    // `\output`.
+    if boxes.output_routine_active
+        && boxes.ordinary_simple_group_depth == 0
+        && matches!(
+            command.meaning(),
+            Meaning::CharToken {
+                cat: Catcode::EndGroup,
+                ..
+            }
+        )
+    {
+        return Ok(ScannedStep::EndOutputRoutine);
     }
     match command.meaning() {
         Meaning::CharToken {

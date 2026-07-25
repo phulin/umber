@@ -451,7 +451,9 @@ opens each box or output group and `unsave` restores its local definitions only
 when that exact group ends. Box construction follows §§1073--1087, especially
 `box_end`, `begin_box`, `scan_box`, and `package`; output fire-up and teardown
 follow §§1015--1028, with §1025 entering an internal-vertical `output_group`
-and §1026 ending the paragraph, unsaving that group, splicing held-over
+before replaying the braced `\\output` list. Nested box-body braces always
+close their box groups before the list's outer brace reaches §1026, which ends
+the paragraph, unsaves that group, and splices held-over
 material, and resuming the page builder. A resource suspension is an Umber
 execution boundary, not a TeX group boundary: the aggregate step rollback
 unwinds descendant groups to the pre-step lineage, then replay recreates the
