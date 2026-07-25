@@ -1190,7 +1190,18 @@ impl CommandProcessor<'_> {
             ScannerStatus::Matching(_) => vec![self.frozen_primitive("par")?],
             ScannerStatus::Aligning(_) => vec![self.frozen_primitive("cr")?, right_brace()],
         };
-        self.command.scanner.clear_for_recovery();
+        // TeX82 §23 leaves `scanner_status := aligning` live while its
+        // inserted frozen `\cr` finishes `init_align`'s preamble scan.
+        // `get_preamble_token` therefore owns the one aligning-to-normal
+        // transition at typed preamble completion. Every other recovery
+        // remains an immediate scanner-episode exit before its inserted input
+        // is delivered.
+        let retains_aligning_until_preamble_completion =
+            matches!(status, ScannerStatus::Aligning(_))
+                && self.command.alignment.active_alignment.is_some();
+        if !retains_aligning_until_preamble_completion {
+            self.command.scanner.clear_for_recovery();
+        }
         if let Some(warning) = warning {
             self.command.expansion.pending_diagnostics.push(warning.0);
         }
@@ -2783,6 +2794,7 @@ mod tests {
         let mut capabilities = CommandHostCapabilities::default();
         let mut recorder = Recorder::default();
 
+        command.begin_alignment(crate::AlignmentIdentity::new(4));
         command.with_scanner_status(
             ScannerStatus::Aligning(AlignmentScanContext {
                 alignment: AlignmentId(4),
@@ -2801,6 +2813,10 @@ mod tests {
                         .spelling()
                         .semantic_token(),
                     frozen_cr,
+                );
+                assert!(
+                    matches!(processor.command.scanner.status(), ScannerStatus::Aligning(_)),
+                    "TeX82 §23 keeps the aligning episode live until the recovered \\cr completes the preamble"
                 );
             },
         );

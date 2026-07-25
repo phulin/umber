@@ -190,6 +190,9 @@ the typed `outer_validity` alignment recovery after its EOF diagnostic and
 before command processing pushes the frozen `\cr` recovery list. The record
 carries the live command-owned alignment identity and `align_state`; frozen
 token spelling and recovery kind remain the separate input/recovery records.
+Unlike other recovered scanner episodes, `aligning` remains live through the
+inserted frozen `\cr`; typed preamble completion then publishes its sole
+`aligning -> normal` transition before the executor begins cell lookahead.
 
 When that same delivery entry point expands the retained frame's
 `frozen_end_template` to `EndV`, replay routes the command through the typed
@@ -689,7 +692,9 @@ If outer-validity recovery clears a non-normal episode before its scoped
 caller returns, that caller publishes the installed-status-to-prior-status
 transition (rather than a misleading `normal -> normal`) and then restores the
 complete prior scanner state. This applies uniformly to `scan_toks`, macro
-matching, and skipped-condition scanning.
+matching, and skipped-condition scanning. Alignment preamble recovery is the
+exception: it retains `aligning` until the recovered frozen `\cr` completes
+the typed preamble scan.
 
 ```rust
 pub enum ScannerStatus {
