@@ -9,6 +9,7 @@ use tex_state::TracedTokenList;
 use tex_state::meaning::{Meaning, UnexpandablePrimitive};
 use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 
+use crate::scan_toks::ScanToksMode;
 use crate::{CommandError, CommandProcessor};
 
 /// A completed TeX token-register assignment operand.
@@ -90,6 +91,25 @@ impl CommandProcessor<'_> {
             Meaning::TokParam(index) => self
                 .state
                 .tok_param(tex_state::env::banks::TokParam::new(index)),
+            Meaning::CharToken {
+                cat: Catcode::BeginGroup,
+                ..
+            } => {
+                // TeX82 has already delivered the required opening brace to
+                // choose the non-internal branch. Back it up once, then let
+                // `scan_toks` install absorbing status before it redelivers
+                // that exact token. Re-scanning it through `scan_left_brace`
+                // would add a second raw delivery before that transition.
+                let primary = command.origin();
+                self.back_input(command)?;
+                return Ok(TokenListRightHandSide::Collected(
+                    self.scan_toks(ScanToksMode::GeneralAfterOpening {
+                        expanded: false,
+                        primary,
+                    })?
+                    .replacement_text,
+                ));
+            }
             _ => {
                 self.back_input(command)?;
                 return Ok(TokenListRightHandSide::Collected(
