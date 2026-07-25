@@ -12,10 +12,11 @@ use tex_command::{
     CommandRuntime, CommandState, CommandStateSnapshot, FontLoadRequest, FontResource,
     ImmediateExtension, InputStreamRequest, MathDelimiterBoundary, MathDelimiterBoundaryKind,
     MathEpisodeRecovery, MathLimitKind, MathScriptKind, MathStyleKind, MathTextFieldKind,
-    PdfColorStackActionRequest, PdfGraphicsRequest, PdfImageRequest, PdfImageResource,
-    ScannedAccent, ScannedBoxConstruction, ScannedBoxKind, ScannedDiscretionary,
-    ScannedDisplayDiagnostic, ScannedLeaderPayload, ScannedMathMuMaterial, ScannedPackingSpec,
-    ScannedVSplit, SourceRegistration, SourceRegistrationError,
+    PdfColorStackActionRequest, PdfDocumentFragmentRequest, PdfFormRequest, PdfGraphicsRequest,
+    PdfImageRequest, PdfImageResource, PdfObjectRequest, PdfReferenceObjectRequest, ScannedAccent,
+    ScannedBoxConstruction, ScannedBoxKind, ScannedDiscretionary, ScannedDisplayDiagnostic,
+    ScannedLeaderPayload, ScannedMathMuMaterial, ScannedPackingSpec, ScannedVSplit,
+    SourceRegistration, SourceRegistrationError,
 };
 #[cfg(any(test, feature = "instrumentation"))]
 use tex_command::{
@@ -1924,6 +1925,10 @@ enum ScannedStep {
         object: i32,
     },
     PdfGraphics(PdfGraphicsRequest),
+    PdfObject(PdfObjectRequest),
+    PdfReferenceObject(PdfReferenceObjectRequest),
+    PdfForm(PdfFormRequest),
+    PdfDocumentFragment(PdfDocumentFragmentRequest),
     FontDimen {
         font: FontId,
         number: u32,
@@ -3137,6 +3142,34 @@ fn scan_command(
                 object: processor.scan_integer().map_err(command_error)?.value,
             })
         }
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::PdfObject) => Ok(
+            ScannedStep::PdfObject(processor.scan_pdf_object_request().map_err(command_error)?),
+        ),
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::PdfReferenceObject) => {
+            Ok(ScannedStep::PdfReferenceObject(
+                processor
+                    .scan_pdf_reference_object_request()
+                    .map_err(command_error)?,
+            ))
+        }
+        Meaning::UnexpandablePrimitive(
+            primitive @ (UnexpandablePrimitive::PdfXForm | UnexpandablePrimitive::PdfRefXForm),
+        ) => Ok(ScannedStep::PdfForm(
+            processor
+                .scan_pdf_form_request(primitive)
+                .map_err(command_error)?,
+        )),
+        Meaning::UnexpandablePrimitive(
+            primitive @ (UnexpandablePrimitive::PdfInfo
+            | UnexpandablePrimitive::PdfCatalog
+            | UnexpandablePrimitive::PdfNames
+            | UnexpandablePrimitive::PdfTrailer
+            | UnexpandablePrimitive::PdfTrailerId),
+        ) => Ok(ScannedStep::PdfDocumentFragment(
+            processor
+                .scan_pdf_document_fragment_request(primitive)
+                .map_err(command_error)?,
+        )),
         Meaning::UnexpandablePrimitive(
             primitive @ (UnexpandablePrimitive::PdfLiteral
             | UnexpandablePrimitive::PdfSetMatrix
@@ -3663,6 +3696,128 @@ fn apply_pdf_graphics_request(
         }
     };
     modes.current_list_mut().push(node);
+    Ok(ReplayStep::Continue)
+}
+
+fn apply_pdf_object_request(
+    request: PdfObjectRequest,
+    stores: &mut Universe,
+    immediate: bool,
+) -> Result<ReplayStep, ExecError> {
+    if stores.int_param(IntParam::PDF_OUTPUT) <= 0 {
+        return Err(ExecError::PdfExtensionInDviMode("pdfobj"));
+    }
+    match request {
+        PdfObjectRequest::Reserve => {
+            stores
+                .reserve_pdf_raw_object()
+                .map_err(|_| ExecError::PdfObjectCapacity)?;
+        }
+        PdfObjectRequest::Define {
+            use_object,
+            stream,
+            stream_attr,
+            file,
+            data,
+        } => {
+            let requested = use_object.and_then(|raw| {
+                u32::try_from(raw).ok().and_then(|raw| {
+                    stores
+                        .pdf_raw_object(raw)
+                        .filter(|record| record.data().is_none())
+                        .map(|r| r.id())
+                })
+            });
+            let id = match requested {
+                Some(id) => id,
+                None => {
+                    if use_object.is_some() {
+                        stores.set_pdf_return_value(-1);
+                        stores.world_mut().write_text(
+                            PrintSink::TerminalAndLog,
+                            "\npdfTeX warning (\\pdfobj): invalid object number being ignored\n",
+                        );
+                    }
+                    stores
+                        .reserve_pdf_raw_object()
+                        .map_err(|_| ExecError::PdfObjectCapacity)?
+                }
+            };
+            stores
+                .initialize_pdf_raw_object(
+                    id,
+                    stream,
+                    stream_attr.map(|text| text.tokens.token_list()),
+                    file,
+                    data.tokens.token_list(),
+                    immediate,
+                )
+                .map_err(|_| ExecError::PdfReferencedObjectNotFound)?;
+        }
+    }
+    Ok(ReplayStep::Continue)
+}
+
+fn apply_pdf_form_request(
+    request: PdfFormRequest,
+    stores: &mut Universe,
+    modes: &mut ModeNest,
+    immediate: bool,
+) -> Result<ReplayStep, ExecError> {
+    if stores.int_param(IntParam::PDF_OUTPUT) <= 0 {
+        let name = match request {
+            PdfFormRequest::Create { .. } => "pdfxform",
+            PdfFormRequest::Reference { .. } => "pdfrefxform",
+        };
+        return Err(ExecError::PdfExtensionInDviMode(name));
+    }
+    match request {
+        PdfFormRequest::Reference { object } => {
+            let form = u32::try_from(object)
+                .ok()
+                .and_then(|object| stores.pdf_form(object))
+                .ok_or(ExecError::PdfReferencedObjectNotFound)?;
+            modes
+                .current_list_mut()
+                .push(Node::Whatsit(Whatsit::PdfRefXForm {
+                    object: form.object(),
+                    width: form.width(),
+                    height: form.height(),
+                    depth: form.depth(),
+                }));
+        }
+        PdfFormRequest::Create {
+            attr,
+            resources,
+            box_register,
+        } => {
+            let index = u16::try_from(box_register)
+                .map_err(|_| ExecError::RegisterNumberOutOfRange(box_register))?;
+            // pdfTeX allocates the form identity before it consumes the box.
+            let identity = stores
+                .reserve_pdf_form()
+                .map_err(|_| ExecError::PdfObjectCapacity)?;
+            let list = stores
+                .take_box_reg_same_level(index)
+                .ok_or(ExecError::PdfXFormVoidBox)?;
+            let dimensions = match stores.nodes(list).first().map(|node| node.to_owned()) {
+                Some(Node::HList(node) | Node::VList(node)) => {
+                    (node.width, node.height, node.depth)
+                }
+                _ => return Err(ExecError::PdfXFormVoidBox),
+            };
+            stores
+                .initialize_pdf_form(
+                    identity,
+                    list,
+                    dimensions,
+                    attr.map(|text| text.tokens.token_list()),
+                    resources.map(|text| text.tokens.token_list()),
+                    immediate,
+                )
+                .map_err(|_| ExecError::PdfObjectCapacity)?;
+        }
+    }
     Ok(ReplayStep::Continue)
 }
 
@@ -4968,6 +5123,32 @@ fn apply_scanned_step(
             Ok(ReplayStep::Continue)
         }
         ScannedStep::PdfGraphics(request) => apply_pdf_graphics_request(request, stores, modes),
+        ScannedStep::PdfObject(request) => apply_pdf_object_request(request, stores, false),
+        ScannedStep::PdfReferenceObject(request) => {
+            if stores.int_param(IntParam::PDF_OUTPUT) <= 0 {
+                return Err(ExecError::PdfExtensionInDviMode("pdfrefobj"));
+            }
+            let object = u32::try_from(request.object)
+                .ok()
+                .filter(|object| stores.pdf_raw_object(*object).is_some())
+                .ok_or(ExecError::PdfReferencedObjectNotFound)?;
+            modes
+                .current_list_mut()
+                .push(Node::Whatsit(Whatsit::PdfReferenceObject { object }));
+            Ok(ReplayStep::Continue)
+        }
+        ScannedStep::PdfForm(request) => apply_pdf_form_request(request, stores, modes, false),
+        ScannedStep::PdfDocumentFragment(request) => {
+            let dvi_only_error = matches!(request.kind, tex_state::PdfDocumentFragmentKind::Names);
+            if stores.int_param(IntParam::PDF_OUTPUT) <= 0 {
+                if dvi_only_error {
+                    return Err(ExecError::PdfExtensionInDviMode("pdfnames"));
+                }
+                return Ok(ReplayStep::Continue);
+            }
+            stores.append_pdf_document_fragment(request.kind, request.text.tokens.token_list());
+            Ok(ReplayStep::Continue)
+        }
         ScannedStep::FontDimen {
             font,
             number,
@@ -5160,6 +5341,16 @@ fn apply_scanned_step(
                 ImmediateExtension::CloseOut { stream } => {
                     let stream = replay_stream_slot(stream, stores);
                     stores.world_mut().close_out(stream);
+                }
+                ImmediateExtension::PdfObject(request) => {
+                    if matches!(request, PdfObjectRequest::Reserve) {
+                        apply_pdf_object_request(request, stores, false)?;
+                        return Err(ExecError::PdfImmediateReservedObject);
+                    }
+                    apply_pdf_object_request(request, stores, true)?;
+                }
+                ImmediateExtension::PdfForm(request) => {
+                    apply_pdf_form_request(request, stores, modes, true)?;
                 }
             }
             Ok(ReplayStep::Continue)

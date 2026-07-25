@@ -145,6 +145,47 @@ pub enum PdfColorStackActionRequest {
     Current,
 }
 
+/// Completed `\\pdfobj` request.  The processor owns keyword recognition and
+/// every retained general-text scan; object allocation remains an application
+/// concern so it occurs after the processor borrow.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum PdfObjectRequest {
+    Reserve,
+    Define {
+        use_object: Option<i32>,
+        stream: bool,
+        stream_attr: Option<ScannedBalancedText>,
+        file: bool,
+        data: ScannedBalancedText,
+    },
+}
+
+/// Completed `\\pdfxform`/`\\pdfrefxform` request.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum PdfFormRequest {
+    Create {
+        attr: Option<ScannedBalancedText>,
+        resources: Option<ScannedBalancedText>,
+        box_register: i32,
+    },
+    Reference {
+        object: i32,
+    },
+}
+
+/// Completed `\\pdfrefobj` operand.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PdfReferenceObjectRequest {
+    pub object: i32,
+}
+
+/// Completed document-level PDF token-list assignment.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PdfDocumentFragmentRequest {
+    pub kind: tex_state::PdfDocumentFragmentKind,
+    pub text: ScannedBalancedText,
+}
+
 /// The command-owned operand prefix of TeX82's `\setbox` assignment.
 ///
 /// The following box command deliberately remains a normal main-control
@@ -556,6 +597,8 @@ pub enum ImmediateExtension {
     CloseOut {
         stream: i32,
     },
+    PdfObject(PdfObjectRequest),
+    PdfForm(PdfFormRequest),
 }
 
 /// One successfully opened capability-registered input source.
@@ -632,6 +675,90 @@ impl CommandProcessor<'_> {
             _ => return Ok(None),
         };
         Ok(Some(request))
+    }
+
+    /// Scans pdfTeX's raw-object, form, and document-fragment extensions.
+    ///
+    /// This is the command boundary corresponding to pdftex.web's extension
+    /// cases: `scan_keyword` and expanded `scan_pdf_ext_toks` are complete
+    /// before the executor mutates its PDF ledger or mode list.
+    pub fn scan_pdf_object_request(&mut self) -> Result<PdfObjectRequest, CommandError> {
+        if self.scan_keyword("reserveobjnum")?.value {
+            return Ok(PdfObjectRequest::Reserve);
+        }
+        let use_object = self
+            .scan_keyword("useobjnum")?
+            .value
+            .then(|| self.scan_integer().map(|value| value.value))
+            .transpose()?;
+        let stream = self.scan_keyword("stream")?.value;
+        let stream_attr = if stream && self.scan_keyword("attr")?.value {
+            Some(self.scan_balanced_text(true)?)
+        } else {
+            None
+        };
+        let file = self.scan_keyword("file")?.value;
+        let data = self.scan_balanced_text(true)?;
+        Ok(PdfObjectRequest::Define {
+            use_object,
+            stream,
+            stream_attr,
+            file,
+            data,
+        })
+    }
+
+    pub fn scan_pdf_form_request(
+        &mut self,
+        primitive: UnexpandablePrimitive,
+    ) -> Result<PdfFormRequest, CommandError> {
+        if primitive == UnexpandablePrimitive::PdfRefXForm {
+            return Ok(PdfFormRequest::Reference {
+                object: self.scan_integer()?.value,
+            });
+        }
+        let attr = self
+            .scan_keyword("attr")?
+            .value
+            .then(|| self.scan_balanced_text(true))
+            .transpose()?;
+        let resources = self
+            .scan_keyword("resources")?
+            .value
+            .then(|| self.scan_balanced_text(true))
+            .transpose()?;
+        Ok(PdfFormRequest::Create {
+            attr,
+            resources,
+            box_register: self.scan_integer()?.value,
+        })
+    }
+
+    pub fn scan_pdf_reference_object_request(
+        &mut self,
+    ) -> Result<PdfReferenceObjectRequest, CommandError> {
+        Ok(PdfReferenceObjectRequest {
+            object: self.scan_integer()?.value,
+        })
+    }
+
+    pub fn scan_pdf_document_fragment_request(
+        &mut self,
+        primitive: UnexpandablePrimitive,
+    ) -> Result<PdfDocumentFragmentRequest, CommandError> {
+        use tex_state::PdfDocumentFragmentKind as Kind;
+        let kind = match primitive {
+            UnexpandablePrimitive::PdfInfo => Kind::Info,
+            UnexpandablePrimitive::PdfCatalog => Kind::Catalog,
+            UnexpandablePrimitive::PdfNames => Kind::Names,
+            UnexpandablePrimitive::PdfTrailer => Kind::Trailer,
+            UnexpandablePrimitive::PdfTrailerId => Kind::TrailerId,
+            _ => return Err(CommandError::InputInvariant),
+        };
+        Ok(PdfDocumentFragmentRequest {
+            kind,
+            text: self.scan_balanced_text(true)?,
+        })
     }
 
     /// Completes one TeX82 math field into immutable command-owned material.
@@ -1135,6 +1262,14 @@ impl CommandProcessor<'_> {
             Meaning::UnexpandablePrimitive(UnexpandablePrimitive::CloseOut) => {
                 let stream = self.scan_integer()?.value;
                 Ok(ImmediateExtension::CloseOut { stream })
+            }
+            Meaning::UnexpandablePrimitive(UnexpandablePrimitive::PdfObject) => Ok(
+                ImmediateExtension::PdfObject(self.scan_pdf_object_request()?),
+            ),
+            Meaning::UnexpandablePrimitive(UnexpandablePrimitive::PdfXForm) => {
+                Ok(ImmediateExtension::PdfForm(
+                    self.scan_pdf_form_request(UnexpandablePrimitive::PdfXForm)?,
+                ))
             }
             _ => {
                 self.back_input(command)?;
