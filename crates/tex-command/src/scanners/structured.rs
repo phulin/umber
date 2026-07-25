@@ -71,6 +71,17 @@ pub struct ScannedLetAssignment {
     pub meaning: Meaning,
 }
 
+/// A completed TeX82 §1220 `\\chardef` or `\\mathchardef` operand.
+///
+/// Command processing owns the raw target, optional equals sign, and integer
+/// scan. Main control receives no token or input capability: it only applies
+/// the assignment's effective scope and primitive-specific value bound.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ScannedCharacterDefinition {
+    pub target: Symbol,
+    pub value: i32,
+}
+
 /// TeX82 §§1254--1261's completed `\\font` definition request.
 ///
 /// The target, optional equals, expanded filename, and size clause are all
@@ -671,6 +682,36 @@ pub enum AlignmentCellOpening {
 }
 
 impl CommandProcessor<'_> {
+    /// Scans TeX82 §1220's complete `\\chardef` or `\\mathchardef` operand.
+    ///
+    /// The target remains a raw control-sequence delivery as required by
+    /// `get_r_token`; the optional equals sign and numeric value use the
+    /// canonical command-owned scalar scanners.
+    pub fn scan_character_definition(
+        &mut self,
+        provisional_global: bool,
+    ) -> Result<ScannedCharacterDefinition, CommandError> {
+        let target = self
+            .next_non_space_raw()?
+            .and_then(|command| command.control_sequence())
+            .ok_or(CommandError::InputInvariant)?;
+        self.state
+            .set_provisional_meaning(target, Meaning::Relax, provisional_global);
+        #[cfg(any(test, feature = "instrumentation"))]
+        self.observe(crate::CommandObservation::Mutation(crate::MutationRecord {
+            target: "meaning",
+            value: "relax".into(),
+            key: Some(self.state.resolve(target).to_owned()),
+            tokens: None,
+            global: provisional_global,
+        }));
+        let _ = self.scan_optional_equals()?;
+        Ok(ScannedCharacterDefinition {
+            target,
+            value: self.scan_integer()?.value,
+        })
+    }
+
     /// Scans the unexpandable pdfTeX graphics whatsit family.
     ///
     /// This follows pdftex.web's `pdfliteral` through `pdfrestore` scanners:

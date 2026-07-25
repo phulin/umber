@@ -1982,6 +1982,12 @@ enum ScannedStep {
         missing_target: bool,
         malformed_parameter: bool,
     },
+    CharacterDefinition {
+        primitive: UnexpandablePrimitive,
+        target: Symbol,
+        value: i32,
+        global: bool,
+    },
     Let {
         target: Symbol,
         source: Option<Symbol>,
@@ -2138,6 +2144,7 @@ impl ScannedStep {
                 | Self::InputStream { .. }
                 | Self::Arithmetic { .. }
                 | Self::MacroDefinition { .. }
+                | Self::CharacterDefinition { .. }
                 | Self::Let { .. }
                 | Self::ParagraphShape { .. }
         )
@@ -3327,6 +3334,29 @@ fn scan_command(
                 malformed_parameter: definition.malformed_parameter,
             })
         }
+        Meaning::UnexpandablePrimitive(
+            primitive @ (UnexpandablePrimitive::CharDef | UnexpandablePrimitive::MathCharDef),
+        ) => {
+            // TeX82 §1220 installs the scanner-time `\relax` through
+            // `define`, so it has the same effective scope as the eventual
+            // definition, including `\globaldefs`. This remains main-control
+            // scope policy; the command processor only receives the selected
+            // provisional scope while it owns raw operand delivery.
+            let provisional_global = match processor.int_param(IntParam::GLOBAL_DEFS).cmp(&0) {
+                std::cmp::Ordering::Greater => true,
+                std::cmp::Ordering::Less => false,
+                std::cmp::Ordering::Equal => global,
+            };
+            let definition = processor
+                .scan_character_definition(provisional_global)
+                .map_err(command_error)?;
+            Ok(ScannedStep::CharacterDefinition {
+                primitive,
+                target: definition.target,
+                value: definition.value,
+                global,
+            })
+        }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Let) => {
             let assignment = processor
                 .scan_let_assignment(false)
@@ -4457,6 +4487,26 @@ fn applied_mutation_observation(
             global: *global,
         });
     }
+    if let ScannedStep::CharacterDefinition {
+        primitive,
+        target,
+        value,
+        global,
+    } = scanned
+    {
+        let value = match primitive {
+            UnexpandablePrimitive::CharDef => format!("character:{value}"),
+            UnexpandablePrimitive::MathCharDef => format!("integer:{value}"),
+            _ => unreachable!("character-definition step carries only §1220 primitives"),
+        };
+        return Some(MutationRecord {
+            target: "meaning",
+            value,
+            key: Some(stores.resolve(*target).to_owned()),
+            tokens: None,
+            global: *global,
+        });
+    }
     let ScannedStep::MacroDefinition {
         target,
         parameter_text,
@@ -5539,6 +5589,44 @@ fn apply_scanned_step(
                 stores.set_macro_meaning_global_with_provenance(target, meaning, provenance);
             } else {
                 stores.set_macro_meaning_with_provenance(target, meaning, provenance);
+            }
+            Ok(ReplayStep::Continue)
+        }
+        ScannedStep::CharacterDefinition {
+            primitive,
+            target,
+            value,
+            global,
+        } => {
+            let meaning = match primitive {
+                UnexpandablePrimitive::CharDef => {
+                    let value = recover_character_definition_value(
+                        stores,
+                        value,
+                        255,
+                        "Bad character code",
+                        "A character number must be between 0 and 255.",
+                    );
+                    Meaning::CharGiven(
+                        char::from_u32(value as u32)
+                            .expect("TeX82 character definitions are eight-bit values"),
+                    )
+                }
+                UnexpandablePrimitive::MathCharDef => {
+                    Meaning::MathCharGiven(recover_character_definition_value(
+                        stores,
+                        value,
+                        32_767,
+                        "Bad mathchar",
+                        "A mathchar number must be between 0 and 32767.",
+                    ) as u16)
+                }
+                _ => unreachable!("character-definition step carries only §1220 primitives"),
+            };
+            if assignment_global(global, stores) {
+                stores.set_meaning_global(target, meaning);
+            } else {
+                stores.set_meaning(target, meaning);
             }
             Ok(ReplayStep::Continue)
         }
@@ -6896,6 +6984,25 @@ fn schedule_everymath(command: &mut CommandState, stores: &mut Universe, display
         .map(|token| tex_state::token::TracedTokenWord::pack(token, origin))
         .collect();
     command.push_everymath(stores.finish_traced_token_list(&traced), display);
+}
+
+/// TeX82's `scan_char_num` and `scan_fifteen_bit_int` recover an out-of-range
+/// result only after command processing completes the integer scan.
+fn recover_character_definition_value(
+    stores: &mut Universe,
+    value: i32,
+    maximum: i32,
+    message: &str,
+    help: &str,
+) -> i32 {
+    if (0..=maximum).contains(&value) {
+        return value;
+    }
+    stores.world_mut().write_text(
+        PrintSink::TerminalAndLog,
+        &format!("\n! {message} ({value}).\n{help}\nI changed this one to zero.\n"),
+    );
+    0
 }
 
 fn command_error(error: CommandError) -> ExecError {

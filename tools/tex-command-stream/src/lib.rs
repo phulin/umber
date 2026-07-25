@@ -1179,10 +1179,23 @@ fn translate_mutation(record: MutationRecord) -> Event {
     if record.target == "meaning"
         && let Some(key) = record.key
     {
+        let value = if let Some(value) = record.value.strip_prefix("character:") {
+            value
+                .parse::<u32>()
+                .map(CanonicalValue::Character)
+                .unwrap_or_else(|_| CanonicalValue::Name(record.value.clone()))
+        } else if let Some(value) = record.value.strip_prefix("integer:") {
+            value
+                .parse::<i64>()
+                .map(CanonicalValue::Integer)
+                .unwrap_or_else(|_| CanonicalValue::Name(record.value.clone()))
+        } else {
+            CanonicalValue::Name(record.value)
+        };
         return Event::Mutation(MutationEvent {
             target: StateTarget::Meaning,
             key: CanonicalValue::Name(key),
-            value: CanonicalValue::Name(record.value),
+            value,
             scope: if record.global { "global" } else { "local" }.into(),
         });
     }

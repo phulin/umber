@@ -574,6 +574,14 @@ deliveries, optional-equals handling, and `\futurelet`'s two-token lookahead
 the canonical driver; `CanonicalMainControl` applies the captured meaning only after that
 processor borrow ends and then publishes the committed meaning mutation.
 
+TeX82 §1220 `\chardef` and `\mathchardef` use that same completed-definition
+boundary. `CommandProcessor` owns the raw control-sequence target, optional
+equals sign, and complete integer scan. `CanonicalMainControl` selects the
+effective `\global`/`\globaldefs` scope for TeX82's provisional
+`\relax`, validates the eight- or fifteen-bit code, emits the recoverable
+restricted-code diagnostic where required, and commits the resulting character
+or math-character meaning without raw input.
+
 TeX82 `\hrule` and `\vrule` cross the same gate as completed
 `ScannedRuleSpec` values. `CommandProcessor::scan_rule_spec` owns every
 expanded `width`, `height`, and `depth` keyword and dimension scan, including

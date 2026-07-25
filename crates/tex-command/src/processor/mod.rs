@@ -110,6 +110,13 @@ impl<'a> CommandProcessor<'a> {
         }
     }
 
+    /// Reads a live integer parameter while main control selects an
+    /// assignment policy for a completed command operation.
+    #[must_use]
+    pub fn int_param(&self, parameter: tex_state::env::banks::IntParam) -> i32 {
+        self.state.int_param(parameter)
+    }
+
     /// Installs a non-fallible semantic observer for this bounded processor
     /// episode. This exists only in tests and explicit instrumentation builds.
     #[cfg(any(test, feature = "instrumentation"))]

@@ -309,6 +309,17 @@ impl CommandContext<'_> {
         self.universe.meaning(symbol)
     }
 
+    /// Applies a command-scanner-owned provisional meaning. TeX82 §1220
+    /// temporarily makes a definition target `\\relax` before it scans an
+    /// expanded integer, preventing a self-reference from expanding.
+    pub fn set_provisional_meaning(&mut self, symbol: Symbol, meaning: Meaning, global: bool) {
+        if global {
+            self.universe.set_meaning_global(symbol, meaning);
+        } else {
+            self.universe.set_meaning(symbol, meaning);
+        }
+    }
+
     /// Interns the distinct control sequence represented by an active
     /// character, if it has not already been interned.
     #[must_use]

@@ -84,6 +84,55 @@ fn register_cmr10_font(control: &mut CanonicalMainControl, universe: &mut Univer
 }
 
 #[test]
+fn canonical_character_definitions_scan_scope_and_recovery() {
+    let mut universe = Universe::new();
+    let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+    register_source(
+        &mut control,
+        br"\chardef\local=65 \mathchardef\math=4660
+           {\chardef\local=66 \global\mathchardef\math=9029}
+           \globaldefs=1 {\chardef\forced=67}
+           \globaldefs=-1 {\global\chardef\suppressed=68}
+           \globaldefs=0 \chardef\self=69\self
+           \chardef\badchar=256 \mathchardef\badmath=32768 \end",
+    );
+
+    run_to_end(&mut control, &mut universe);
+
+    assert_eq!(
+        universe.meaning(universe.symbol("local").expect("local character")),
+        Meaning::CharGiven('A')
+    );
+    assert_eq!(
+        universe.meaning(universe.symbol("math").expect("math character")),
+        Meaning::MathCharGiven(9029)
+    );
+    assert_eq!(
+        universe.meaning(universe.symbol("badchar").expect("bad character")),
+        Meaning::CharGiven('\0')
+    );
+    assert_eq!(
+        universe.meaning(universe.symbol("badmath").expect("bad math character")),
+        Meaning::MathCharGiven(0)
+    );
+    assert_eq!(
+        universe.meaning(universe.symbol("forced").expect("globaldefs character")),
+        Meaning::CharGiven('C')
+    );
+    assert_eq!(
+        universe.meaning(universe.symbol("suppressed").expect("suppressed character")),
+        Meaning::Undefined
+    );
+    assert_eq!(
+        universe.meaning(universe.symbol("self").expect("self-referential character")),
+        Meaning::CharGiven('E')
+    );
+    let output = terminal_text(&universe);
+    assert!(output.contains("Bad character code (256)"));
+    assert!(output.contains("Bad mathchar (32768)"));
+}
+
+#[test]
 fn canonical_pdf_navigation_scans_rules_actions_and_deferred_markers() {
     let mut universe = Universe::new();
     universe.set_int_param(IntParam::PDF_OUTPUT, 1);

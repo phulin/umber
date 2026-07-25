@@ -115,6 +115,44 @@ fn math_scalar_requests_are_completed_before_replay() {
 }
 
 #[test]
+fn character_definition_scanner_owns_target_optional_equals_and_integer() {
+    let mut command = CommandState::default();
+    let mut runtime = CommandRuntime::default();
+    let mut universe = Universe::new();
+    let mut capabilities = CommandHostCapabilities::default();
+    let target = universe.intern("definedchar").symbol();
+    push(
+        &mut command,
+        [
+            Token::Char {
+                ch: ' ',
+                cat: Catcode::Space,
+            },
+            Token::Cs(target),
+            Token::Char {
+                ch: '=',
+                cat: Catcode::Other,
+            },
+            Token::Char {
+                ch: '6',
+                cat: Catcode::Other,
+            },
+            Token::Char {
+                ch: '5',
+                cat: Catcode::Other,
+            },
+        ],
+    );
+
+    let definition = processor(&mut command, &mut runtime, &mut universe, &mut capabilities)
+        .scan_character_definition(false)
+        .expect("character definition scans");
+
+    assert_eq!(definition.target, target);
+    assert_eq!(definition.value, 65);
+}
+
+#[test]
 fn completed_math_field_replays_nested_group_without_exposing_tokens() {
     let mut command = CommandState::default();
     let mut runtime = CommandRuntime::default();
