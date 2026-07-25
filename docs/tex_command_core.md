@@ -2446,6 +2446,14 @@ preimage. The contract and first TeX82 fixture are documented in
 [`command_semantic_fixtures.md`](command_semantic_fixtures.md). Live
 regeneration goes only through supported `scripts/regen-fixtures.sh` modes.
 
+For a composed Story, Gentle, TRIP, or e-TRIP failure, the committed canonical
+semantic trace is the primary convergence oracle whenever that profile and
+source are available: compare it in sequence and repair the first divergent
+event against the pinned TeX82, e-TeX, or pdfTeX trace. Final DVI, transcript,
+and provenance checks remain mandatory acceptance gates, but are too late and
+too aggregate to identify a command-core ownership error. The retired Umber
+pipeline is never an event or behavioral oracle.
+
 ### 31.4 Incremental and provenance proof
 
 Reference engines cannot validate incremental machinery directly. The proof

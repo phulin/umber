@@ -931,6 +931,14 @@ impl CommandProcessor<'_> {
                 };
                 InternalValue::Integer(value)
             }
+            // TeX82 §424's `scan_something_internal` accepts a `\chardef`
+            // value wherever `scan_int` accepts an internal integer. Plain
+            // TeX relies on this for `\catcode` assignments such as
+            // `\catcode`\^^L=\active`; treating it as a missing number
+            // silently assigns catcode 0 and changes later tokenization.
+            Meaning::CharGiven(character) => InternalValue::Integer(
+                i32::try_from(u32::from(character)).expect("characters fit in i32"),
+            ),
             _ => return Ok(None),
         };
         Ok(Some(value))

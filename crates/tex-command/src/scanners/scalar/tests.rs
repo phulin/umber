@@ -107,6 +107,25 @@ fn integer_radix_prefixes_deliver_digits_before_scanner_completion() {
 }
 
 #[test]
+fn integer_scanner_accepts_chardef_values() {
+    let mut command = CommandState::default();
+    let mut runtime = CommandRuntime::default();
+    let mut universe = Universe::new();
+    let active = universe.intern("active").symbol();
+    universe.set_meaning(active, Meaning::CharGiven('\r'));
+    push(&mut command, vec![Token::Cs(active)]);
+    let mut capabilities = CommandHostCapabilities::default();
+    let mut processor = CommandProcessor::new(
+        &mut command,
+        &mut runtime,
+        universe.command_context(),
+        CommandHostContext::new(&mut capabilities),
+    );
+
+    assert_eq!(processor.scan_integer().expect("chardef scans").value, 13);
+}
+
+#[test]
 fn character_code_scanning_accepts_an_active_character_before_optional_equals() {
     let mut command = CommandState::default();
     push(
