@@ -2761,6 +2761,7 @@ fn nested_alignment_begin_suspends_the_outer_replay_context() {
         &mut control.active_alignment,
         &mut control.command,
         &mut control.boxes,
+        &mut control.prepared_dvi_pages,
     )
     .expect("nested alignment begins through typed suspension");
 
@@ -2777,6 +2778,7 @@ fn nested_alignment_begin_suspends_the_outer_replay_context() {
         &mut control.active_alignment,
         &mut control.command,
         &mut control.boxes,
+        &mut control.prepared_dvi_pages,
     )
     .expect("right-brace align_peek finish resumes the outer context");
     assert_eq!(control.active_alignment(), Some(outer));

@@ -1,4 +1,5 @@
 use tex_lex::InputStack;
+use tex_out::dvi::DviPagePlan;
 use tex_state::env::banks::{DimenParam, IntParam};
 use tex_state::node::Node;
 use tex_state::token::TracedTokenWord;
@@ -91,7 +92,7 @@ pub(crate) fn shipout_node_with_input_summary(
         let detached = entry.artifact.artifact(MemoValueLimits::default());
         if let Ok(detached) = detached {
             let imported_bytes = entry.artifact.retained_bytes();
-            stores.commit_replayed_artifact(
+            let hash = stores.commit_replayed_artifact(
                 detached.payload,
                 entry.render_origin_ends,
                 entry.render_provenance,
@@ -102,7 +103,20 @@ pub(crate) fn shipout_node_with_input_summary(
                 import_started.elapsed(),
             );
             stores.record_pure_shipout_hit(imported_bytes);
-            return Ok(None);
+            // The memo retains the detached artifact, not an execution-owned
+            // plan. Rebuild its equivalent pure receipt exactly once at this
+            // publication boundary so canonical callers never need to lower
+            // an already-committed page during finalization.
+            let plan = DviPagePlan::compile_v10(
+                stores
+                    .world()
+                    .committed_artifacts()
+                    .last()
+                    .expect("replayed artifact commit must publish a receipt")
+                    .bytes(),
+            )
+            .map_err(|error| ExecError::InvalidShipoutArtifact(error.to_string()))?;
+            return Ok(Some(PreparedDviPage { hash, plan }));
         }
         stores.record_pure_memo_timing(
             PureMemoLayer::Shipout,

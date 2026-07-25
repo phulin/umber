@@ -333,17 +333,29 @@ impl<'a, 'context> EngineSession<'a, 'context> {
             committed_steps = committed_steps.saturating_add(1);
         }
         let committed = self.stores.world().artifact_commits();
+        let receipts = self.canonical.take_prepared_dvi_pages();
+        let committed_artifacts = self.stores.world().committed_artifacts();
+        let run_artifacts = &committed[artifact_start..];
+        let run_committed = &committed_artifacts[artifact_start..];
+        if receipts.len() != run_artifacts.len()
+            || receipts
+                .iter()
+                .zip(run_artifacts)
+                .any(|(receipt, hash)| receipt.hash() != *hash)
+        {
+            return Err(tex_exec::ExecError::InvalidShipoutArtifact(
+                "canonical DVI receipts are not aligned with committed artifacts".into(),
+            ));
+        }
         self.artifact_cursor = committed.len();
         Ok(RunResult {
             terminal_text: uncommitted_terminal_text(self.stores),
-            artifacts: committed[artifact_start..self.artifact_cursor].to_vec(),
-            // Canonical shipout already commits the authoritative artifact.
-            // DVI planning remains the output-driver's detached concern until
-            // the final executor deletion task joins those receipts.
-            dvi_pages: Vec::new(),
-            committed_artifacts: self.stores.world().committed_artifacts()
-                [artifact_start..self.artifact_cursor]
-                .to_vec(),
+            artifacts: run_artifacts.to_vec(),
+            dvi_pages: receipts
+                .into_iter()
+                .map(tex_exec::PreparedDviPage::into_plan)
+                .collect(),
+            committed_artifacts: run_committed.to_vec(),
             dumped_format: false,
         })
     }
@@ -1647,7 +1659,7 @@ impl From<tex_out::html::HtmlError> for HtmlBuildError {
 mod tests {
     use super::{
         DriverFile, EngineSession, FinalizationError, PlannedFinalization,
-        uncommitted_terminal_text,
+        dvi_from_committed_artifacts, dvi_from_page_plans, uncommitted_terminal_text,
     };
     use std::path::PathBuf;
     use std::sync::Arc;
@@ -1725,6 +1737,95 @@ mod tests {
 
         assert_eq!(result.terminal_text, "canonical");
         assert_eq!(session.stores().count(0), 17);
+    }
+
+    #[test]
+    fn canonical_explicit_shipout_publishes_aligned_prepared_dvi_receipt() {
+        let mut stores = Universe::new();
+        install_expandable_primitives(&mut stores);
+        install_unexpandable_primitives(&mut stores);
+        let mut input = InputStack::new(MemoryInput::new("legacy input"));
+        let mut session = EngineSession::new(
+            &mut input,
+            &mut stores,
+            ExecutionContext::new("canonical-shipout"),
+        );
+        session
+            .register_canonical_root(
+                "shipout.tex",
+                RegisteredSourceKind::Generated,
+                Arc::from(&b"\\shipout\\vbox{}\\end"[..]),
+            )
+            .expect("root registers");
+
+        let result = session.execute().expect("canonical shipout completes");
+
+        assert_eq!(result.artifacts.len(), 1);
+        assert_eq!(result.dvi_pages.len(), result.artifacts.len());
+        assert_eq!(
+            dvi_from_page_plans(&result.dvi_pages).expect("prepared plans assemble"),
+            dvi_from_committed_artifacts(&result.committed_artifacts)
+                .expect("committed artifact reference assembles"),
+        );
+    }
+
+    #[test]
+    fn canonical_effect_free_shipout_memo_republishes_one_aligned_receipt() {
+        let mut stores = Universe::new();
+        install_expandable_primitives(&mut stores);
+        install_unexpandable_primitives(&mut stores);
+        stores.enable_pure_memo(tex_state::PureMemoConfig::default());
+        stores.enable_shipout_memo();
+        let mut input = InputStack::new(MemoryInput::new("legacy input"));
+        let mut session = EngineSession::new(
+            &mut input,
+            &mut stores,
+            ExecutionContext::new("canonical-memo-shipout"),
+        );
+        session
+            .register_canonical_root(
+                "memo.tex",
+                RegisteredSourceKind::Generated,
+                Arc::from(
+                    &b"\\setbox0=\\hbox{\\vrule width1pt height1pt}\\shipout\\copy0\\shipout\\copy0\\end"[..],
+                ),
+            )
+            .expect("root registers");
+
+        let result = session.execute().expect("canonical memo run completes");
+
+        assert_eq!(result.artifacts.len(), 2);
+        assert_eq!(result.dvi_pages.len(), result.artifacts.len());
+        assert!(session.stores().pure_memo_stats().shipout_hits >= 1);
+    }
+
+    #[test]
+    fn canonical_default_page_shipout_publishes_an_aligned_receipt() {
+        let mut stores = Universe::new();
+        install_expandable_primitives(&mut stores);
+        install_unexpandable_primitives(&mut stores);
+        let mut input = InputStack::new(MemoryInput::new("legacy input"));
+        let mut session = EngineSession::new(
+            &mut input,
+            &mut stores,
+            ExecutionContext::new("canonical-default-shipout"),
+        );
+        session
+            .register_canonical_root(
+                "default.tex",
+                RegisteredSourceKind::Generated,
+                Arc::from(
+                    &b"\\topskip=0pt\\setbox0=\\hbox{\\vrule width1pt height1pt}\\copy0\\penalty-10000\\end"[..],
+                ),
+            )
+            .expect("root registers");
+
+        let result = session
+            .execute()
+            .expect("canonical default shipout completes");
+
+        assert_eq!(result.artifacts.len(), 1);
+        assert_eq!(result.dvi_pages.len(), result.artifacts.len());
     }
 
     #[test]

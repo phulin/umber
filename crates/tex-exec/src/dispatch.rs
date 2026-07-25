@@ -42,6 +42,20 @@ pub struct PreparedDviPage {
     pub(crate) plan: DviPagePlan,
 }
 
+impl PreparedDviPage {
+    /// Identity of the artifact published by the same committed shipout.
+    #[must_use]
+    pub const fn hash(&self) -> ContentHash {
+        self.hash
+    }
+
+    /// Returns the detached page plan prepared before the artifact commit.
+    #[must_use]
+    pub fn into_plan(self) -> DviPagePlan {
+        self.plan
+    }
+}
+
 /// Dispatches one gullet-delivered token in the current mode.
 pub fn dispatch_delivered_token(
     nest: &mut ModeNest,

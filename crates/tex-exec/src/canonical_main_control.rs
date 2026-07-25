@@ -55,6 +55,10 @@ pub struct CanonicalMainControl {
     boxes: ReplayBoxes,
     output_dead_cycles: i32,
     completed_replay_episode: Option<tex_command::CommandReplayEpisode>,
+    /// Detached DVI receipts whose artifact commits have survived an entire
+    /// canonical aggregate operation. This is replay state so rollback drops
+    /// it with the corresponding World artifact/effect roots.
+    prepared_dvi_pages: Vec<crate::dispatch::PreparedDviPage>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -172,6 +176,7 @@ struct CanonicalStepSnapshot {
     boxes: ReplayBoxes,
     output_dead_cycles: i32,
     completed_replay_episode: Option<tex_command::CommandReplayEpisode>,
+    prepared_dvi_pages: Vec<crate::dispatch::PreparedDviPage>,
     universe: tex_state::Snapshot,
 }
 
@@ -386,6 +391,7 @@ impl CanonicalMainControl {
             boxes: self.boxes.clone(),
             output_dead_cycles: self.output_dead_cycles,
             completed_replay_episode: self.completed_replay_episode,
+            prepared_dvi_pages: self.prepared_dvi_pages.clone(),
             universe: stores.snapshot(),
         }
     }
@@ -407,7 +413,18 @@ impl CanonicalMainControl {
         self.boxes = snapshot.boxes;
         self.output_dead_cycles = snapshot.output_dead_cycles;
         self.completed_replay_episode = snapshot.completed_replay_episode;
+        self.prepared_dvi_pages = snapshot.prepared_dvi_pages;
         stores.rollback(&snapshot.universe);
+    }
+
+    /// Drains committed canonical shipout receipts in artifact order.
+    ///
+    /// Each plan was prepared during shipout and is retained only after the
+    /// enclosing aggregate operation commits; finalizers must not re-lower
+    /// these pages from artifact bytes.
+    #[must_use]
+    pub fn take_prepared_dvi_pages(&mut self) -> Vec<crate::dispatch::PreparedDviPage> {
+        std::mem::take(&mut self.prepared_dvi_pages)
     }
 
     /// Returns the replay projection of TeX's current execution mode.
@@ -542,6 +559,7 @@ impl CanonicalMainControl {
             &mut self.active_alignment,
             &mut self.command,
             &mut self.boxes,
+            &mut self.prepared_dvi_pages,
         )?;
         if fires_afterassignment {
             schedule_afterassignment(&mut self.command, stores);
@@ -725,6 +743,7 @@ impl CanonicalMainControl {
             &mut self.active_alignment,
             &mut self.command,
             &mut self.boxes,
+            &mut self.prepared_dvi_pages,
         )?;
         if fires_afterassignment {
             schedule_afterassignment(&mut self.command, stores);
@@ -746,7 +765,9 @@ impl CanonicalMainControl {
             };
             match crate::output::select_pending_page_output(stores, fire_up)? {
                 crate::output::SelectedPageOutput::Default(page) => {
-                    shipout_replay_box(page, stores)?;
+                    if let Some(receipt) = shipout_replay_box(page, stores)? {
+                        self.prepared_dvi_pages.push(receipt);
+                    }
                 }
                 crate::output::SelectedPageOutput::UserRoutine => {
                     CommandProcessor::new(
@@ -1410,6 +1431,7 @@ impl CanonicalMainControl {
             &mut self.active_alignment,
             &mut self.command,
             &mut self.boxes,
+            &mut self.prepared_dvi_pages,
         );
         if result.is_ok() && fires_afterassignment {
             schedule_afterassignment(&mut self.command, stores);
@@ -4049,10 +4071,13 @@ fn applied_effect_observation(scanned: &ScannedStep, stores: &Universe) -> Optio
 /// published while its command-owned terminator backup is still live.  The
 /// artifact kernel receives only an already-published detached input summary;
 /// it never receives a legacy source stack or scans the command operand.
-fn shipout_replay_box(node: Node, stores: &mut Universe) -> Result<(), ExecError> {
+fn shipout_replay_box(
+    node: Node,
+    stores: &mut Universe,
+) -> Result<Option<crate::dispatch::PreparedDviPage>, ExecError> {
     let mut execution = crate::ExecutionContext::new("texput");
     let input_summary = stores.input_summary().clone();
-    let _ = crate::assignments::shipout_node_with_input_summary(
+    let receipt = crate::assignments::shipout_node_with_input_summary(
         node,
         input_summary,
         stores,
@@ -4062,7 +4087,7 @@ fn shipout_replay_box(node: Node, stores: &mut Universe) -> Result<(), ExecError
     // Canonical lowering bypasses the legacy executor's bookkeeping, so keep
     // the page-state transition at the typed shipout boundary.
     stores.set_page_integer(tex_state::page::PageInteger::DeadCycles, 0);
-    Ok(())
+    Ok(receipt)
 }
 
 #[cfg(any(test, feature = "instrumentation"))]
@@ -4358,6 +4383,7 @@ fn finish_replay_alignment(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)] // applies the complete canonical replay state atomically
 fn apply_scanned_step(
     scanned: ScannedStep,
     stores: &mut Universe,
@@ -4366,6 +4392,7 @@ fn apply_scanned_step(
     active_alignment: &mut Option<ActiveReplayAlignment>,
     command: &mut CommandState,
     boxes: &mut ReplayBoxes,
+    prepared_dvi_pages: &mut Vec<crate::dispatch::PreparedDviPage>,
 ) -> Result<ReplayStep, ExecError> {
     match scanned {
         ScannedStep::Continue => Ok(ReplayStep::Continue),
@@ -5040,8 +5067,9 @@ fn apply_scanned_step(
                 boxes.pending_shipout = false;
                 if let Some(node) =
                     id.and_then(|id| stores.nodes(id).first().map(|node| node.to_owned()))
+                    && let Some(receipt) = shipout_replay_box(node, stores)?
                 {
-                    shipout_replay_box(node, stores)?;
+                    prepared_dvi_pages.push(receipt);
                 }
             } else {
                 crate::assignments::execute_scanned_box_register(
@@ -5254,7 +5282,9 @@ fn apply_scanned_step(
             // chosen material into \\box255 for the default shipout.  The
             // helper has no input capability and returns only that typed box.
             let page = crate::output::take_final_default_output_page(stores)?;
-            shipout_replay_box(page, stores)?;
+            if let Some(receipt) = shipout_replay_box(page, stores)? {
+                prepared_dvi_pages.push(receipt);
+            }
             boxes.terminal_output_shipout_complete = true;
             Ok(ReplayStep::Continue)
         }
@@ -5400,7 +5430,9 @@ fn apply_scanned_step(
                 boxes.pending_leader = Some((kind, payload));
             } else if ships_out {
                 debug_assert!(box_state.ships_out);
-                shipout_replay_box(node, stores)?;
+                if let Some(receipt) = shipout_replay_box(node, stores)? {
+                    prepared_dvi_pages.push(receipt);
+                }
             } else if let Some(target) = box_state.target {
                 if target.global {
                     stores.set_box_reg_global(target.index, boxed);
