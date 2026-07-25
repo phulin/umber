@@ -10,7 +10,8 @@ use tex_command::{
     AlignmentIdentity, AlignmentRequest, AlignmentRequestResult, CommandError,
     CommandHostCapabilities, CommandHostContext, CommandProcessor, CommandProfile, CommandRuntime,
     CommandState, CommandStateSnapshot, FontLoadRequest, FontResource, ImmediateExtension,
-    ScannedAccent, ScannedDiscretionary, SourceRegistration, SourceRegistrationError,
+    InputStreamRequest, ScannedAccent, ScannedDiscretionary, SourceRegistration,
+    SourceRegistrationError,
 };
 #[cfg(any(test, feature = "instrumentation"))]
 use tex_command::{
@@ -26,7 +27,10 @@ use tex_state::meaning::{Meaning, MeaningFlags, UnexpandablePrimitive};
 use tex_state::node::{DiscKind, GlueKind, KernKind, Node, Whatsit};
 use tex_state::scaled::Scaled;
 use tex_state::token::{Catcode, Token};
-use tex_state::{GroupKind, ParagraphShapeLine, PrintSink, StreamSlot, TracedTokenList, Universe};
+use tex_state::{
+    GroupKind, InputOpenState, InputReadState, ParagraphShapeLine, PrintSink, StreamSlot,
+    TracedTokenList, Universe,
+};
 use tex_typeset::PackSpec;
 
 use crate::{ExecError, Mode, ModeNest};
@@ -249,6 +253,30 @@ impl CanonicalMainControl {
         })
     }
 
+    fn resolve_input_stream_resource(
+        &self,
+        scanned: ScannedStep,
+    ) -> Result<ScannedStep, ExecError> {
+        let ScannedStep::InputStream {
+            request,
+            resource: _,
+        } = scanned
+        else {
+            return Ok(scanned);
+        };
+        let resource = match &request {
+            InputStreamRequest::Open { file_name, .. } => {
+                Some(self.capabilities.input_resource(&file_name.name).ok_or(
+                    ExecError::MissingToken {
+                        context: "\\openin resource",
+                    },
+                )?)
+            }
+            InputStreamRequest::Close { .. } | InputStreamRequest::Read { .. } => None,
+        };
+        Ok(ScannedStep::InputStream { request, resource })
+    }
+
     /// Registers and opens the one root source selected by the host before
     /// canonical main control starts.  Source acquisition is deliberately
     /// complete before this call: the command state retains only immutable
@@ -411,6 +439,7 @@ impl CanonicalMainControl {
             )?
         };
         let scanned = self.resolve_font_resource(scanned)?;
+        let scanned = self.resolve_input_stream_resource(scanned)?;
         if let ScannedStep::Discretionary(discretionary) = scanned {
             return self.apply_discretionary(discretionary, stores);
         }
@@ -512,7 +541,12 @@ impl CanonicalMainControl {
             Ok(step) => Ok(CanonicalStepResult::Progress(step)),
             Err(error) => {
                 self.rollback_step(snapshot, stores);
-                if matches!(error, ExecError::MissingToken { context: "\\input" }) {
+                if matches!(
+                    error,
+                    ExecError::MissingToken {
+                        context: "\\input" | "\\openin resource"
+                    }
+                ) {
                     Ok(CanonicalStepResult::Suspended(CanonicalResourceNeed::Input))
                 } else if matches!(
                     error,
@@ -572,6 +606,7 @@ impl CanonicalMainControl {
             )?
         };
         let scanned = self.resolve_font_resource(scanned)?;
+        let scanned = self.resolve_input_stream_resource(scanned)?;
         if let ScannedStep::Discretionary(discretionary) = scanned {
             return self.apply_discretionary(discretionary, stores);
         }
@@ -629,7 +664,12 @@ impl CanonicalMainControl {
             }
             Err(error) => {
                 self.rollback_step(snapshot, stores);
-                if matches!(error, ExecError::MissingToken { context: "\\input" }) {
+                if matches!(
+                    error,
+                    ExecError::MissingToken {
+                        context: "\\input" | "\\openin resource"
+                    }
+                ) {
                     Ok(CanonicalStepResult::Suspended(CanonicalResourceNeed::Input))
                 } else if matches!(
                     error,
@@ -681,6 +721,7 @@ impl CanonicalMainControl {
             )?
         };
         let scanned = self.resolve_font_resource(scanned)?;
+        let scanned = self.resolve_input_stream_resource(scanned)?;
         if let ScannedStep::Discretionary(discretionary) = scanned {
             return self.apply_discretionary(discretionary, stores);
         }
@@ -991,6 +1032,10 @@ enum ScannedStep {
         resource: Box<Option<FontResource>>,
         global: bool,
     },
+    InputStream {
+        request: InputStreamRequest,
+        resource: Option<SourceRegistration>,
+    },
     FontDimen {
         font: FontId,
         number: u32,
@@ -1150,6 +1195,7 @@ impl ScannedStep {
                 | Self::FontDimen { .. }
                 | Self::FontInteger { .. }
                 | Self::FontDefinition { .. }
+                | Self::InputStream { .. }
                 | Self::Arithmetic { .. }
                 | Self::MacroDefinition { .. }
                 | Self::Let { .. }
@@ -1866,6 +1912,17 @@ fn scan_command(
                 global,
             })
         }
+        Meaning::UnexpandablePrimitive(
+            primitive @ (UnexpandablePrimitive::OpenIn
+            | UnexpandablePrimitive::CloseIn
+            | UnexpandablePrimitive::Read
+            | UnexpandablePrimitive::ReadLine),
+        ) => Ok(ScannedStep::InputStream {
+            request: processor
+                .scan_input_stream_request(primitive)
+                .map_err(command_error)?,
+            resource: None,
+        }),
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Font) => {
             let request = processor.scan_font_definition().map_err(command_error)?;
             Ok(ScannedStep::FontDefinition {
@@ -2244,6 +2301,45 @@ fn replay_stream_slot(value: i32, stores: &mut Universe) -> StreamSlot {
         ),
     );
     StreamSlot::new(0)
+}
+
+/// Converts one World-provided physical line to the immutable replacement
+/// text of `\\read`/`\\readline`.  World owns the stream cursor; this helper
+/// has no input level or file handle and therefore cannot become an alternate
+/// source-consumption path.
+fn canonical_read_line_tokens(line: &str, raw_catcodes: bool, stores: &Universe) -> Vec<Token> {
+    let mut tokens = line
+        .chars()
+        .map(|ch| Token::Char {
+            ch,
+            cat: if raw_catcodes {
+                if ch == ' ' {
+                    Catcode::Space
+                } else {
+                    Catcode::Other
+                }
+            } else {
+                stores.catcode(ch)
+            },
+        })
+        .collect::<Vec<_>>();
+    if let Ok(code) = u32::try_from(stores.int_param(IntParam::END_LINE_CHAR))
+        && let Some(ch) = char::from_u32(code)
+    {
+        tokens.push(Token::Char {
+            ch,
+            cat: if raw_catcodes {
+                if ch == ' ' {
+                    Catcode::Space
+                } else {
+                    Catcode::Other
+                }
+            } else {
+                stores.catcode(ch)
+            },
+        });
+    }
+    tokens
 }
 
 fn replay_write_sink(value: i32) -> PrintSink {
@@ -3048,6 +3144,44 @@ fn apply_scanned_step(
                 stores.set_meaning_global(request.target, Meaning::Font(id));
             } else {
                 stores.set_meaning(request.target, Meaning::Font(id));
+            }
+            Ok(ReplayStep::Continue)
+        }
+        ScannedStep::InputStream { request, resource } => {
+            match request {
+                InputStreamRequest::Open { stream, file_name } => {
+                    let slot = replay_stream_slot(stream, stores);
+                    let resource =
+                        resource.expect("openin resource resolves after processor borrow");
+                    stores
+                        .world_mut()
+                        .set_memory_file(&file_name.name, resource.bytes().to_vec())?;
+                    let content = InputReadState::read_input_file(
+                        &mut stores.input_open_context(),
+                        std::path::Path::new(&file_name.name),
+                    )?;
+                    stores.world_mut().open_in_content(slot, &content)?;
+                }
+                InputStreamRequest::Close { stream } => {
+                    let slot = replay_stream_slot(stream, stores);
+                    stores.world_mut().close_in(slot);
+                }
+                InputStreamRequest::Read {
+                    stream,
+                    target,
+                    raw_catcodes,
+                } => {
+                    let slot = replay_stream_slot(stream, stores);
+                    let line = stores.world_mut().read_stream_line(slot)?;
+                    let line = line.ok_or(ExecError::ReadNotImplemented)?;
+                    let tokens = canonical_read_line_tokens(&line, raw_catcodes, stores);
+                    let replacement = stores.intern_token_list(&tokens);
+                    let parameters = stores.intern_token_list(&[]);
+                    stores.set_macro_meaning(
+                        target,
+                        MacroMeaning::new(MeaningFlags::EMPTY, parameters, replacement),
+                    );
+                }
             }
             Ok(ReplayStep::Continue)
         }

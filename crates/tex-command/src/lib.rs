@@ -53,11 +53,12 @@ pub use profile::{
     CommandProfileMismatch,
 };
 pub use scanners::{
-    AlignmentCellOpening, FileNameTermination, FontLoadRequest, ImmediateExtension, InternalValue,
-    RegisteredInput, ScalarProvenance, ScalarRecovery, ScannedAccent, ScannedAccentBase,
-    ScannedBalancedText, ScannedBoxRegister, ScannedDiscretionary, ScannedFileName,
-    ScannedGlueParameterAssignment, ScannedLetAssignment, ScannedMacroDefinition, ScannedRuleSpec,
-    ScannedScalar, ScannedSetBoxAssignment, ScannedTokenRegisterAssignment, StructuredProvenance,
+    AlignmentCellOpening, FileNameTermination, FontLoadRequest, ImmediateExtension,
+    InputStreamRequest, InternalValue, RegisteredInput, ScalarProvenance, ScalarRecovery,
+    ScannedAccent, ScannedAccentBase, ScannedBalancedText, ScannedBoxRegister,
+    ScannedDiscretionary, ScannedFileName, ScannedGlueParameterAssignment, ScannedLetAssignment,
+    ScannedMacroDefinition, ScannedRuleSpec, ScannedScalar, ScannedSetBoxAssignment,
+    ScannedTokenRegisterAssignment, StructuredProvenance,
 };
 pub use snapshot::{CommandStateSnapshot, CommandSummary, CommandSummaryError};
 pub use state::{CommandReplayEpisode, CommandRuntime, CommandState, UnknownRegisteredSource};

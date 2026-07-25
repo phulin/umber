@@ -180,6 +180,25 @@ pub struct ScannedFileName {
     pub provenance: StructuredProvenance,
 }
 
+/// Completed input-stream operation.  The command core owns every operand;
+/// replay only acquires an already-registered immutable resource and mutates
+/// World stream state.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum InputStreamRequest {
+    Open {
+        stream: i32,
+        file_name: ScannedFileName,
+    },
+    Close {
+        stream: i32,
+    },
+    Read {
+        stream: i32,
+        target: Symbol,
+        raw_catcodes: bool,
+    },
+}
+
 /// A completed TeX82 §53 `\immediate` extension request.
 ///
 /// Command control owns the recursive expanded lookahead and all operand
@@ -222,6 +241,42 @@ pub enum AlignmentCellOpening {
 }
 
 impl CommandProcessor<'_> {
+    /// Scans TeX82's `\\openin`, `\\closein`, `\\read`, and e-TeX's
+    /// `\\readline` operands without exposing a raw delivery to replay.
+    pub fn scan_input_stream_request(
+        &mut self,
+        primitive: tex_state::meaning::UnexpandablePrimitive,
+    ) -> Result<InputStreamRequest, CommandError> {
+        use tex_state::meaning::UnexpandablePrimitive;
+
+        let stream = self.scan_integer()?.value;
+        match primitive {
+            UnexpandablePrimitive::OpenIn => {
+                let _ = self.scan_optional_equals()?;
+                Ok(InputStreamRequest::Open {
+                    stream,
+                    file_name: self.scan_file_name()?,
+                })
+            }
+            UnexpandablePrimitive::CloseIn => Ok(InputStreamRequest::Close { stream }),
+            UnexpandablePrimitive::Read | UnexpandablePrimitive::ReadLine => {
+                if !self.scan_keyword("to")?.value {
+                    return Err(CommandError::InputInvariant);
+                }
+                let target = self
+                    .next_non_space_raw()?
+                    .and_then(|command| command.control_sequence())
+                    .ok_or(CommandError::InputInvariant)?;
+                Ok(InputStreamRequest::Read {
+                    stream,
+                    target,
+                    raw_catcodes: primitive == UnexpandablePrimitive::ReadLine,
+                })
+            }
+            _ => Err(CommandError::InputInvariant),
+        }
+    }
+
     /// Scans a complete ordinary font definition without retaining a raw
     /// command, cursor, or host capability.
     pub fn scan_font_definition(&mut self) -> Result<FontLoadRequest, CommandError> {

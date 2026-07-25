@@ -115,6 +115,15 @@ impl CommandHostCapabilities {
         self.fonts.get(path).cloned()
     }
 
+    /// Borrows immutable bytes selected by the host for an input-stream
+    /// request.  This is intentionally separate from command-owned `\\input`
+    /// registration: replay may pin the same bytes in World without gaining a
+    /// source cursor.
+    #[must_use]
+    pub fn input_resource(&self, name: &str) -> Option<SourceRegistration> {
+        self.input.get(name).cloned()
+    }
+
     /// Sets the immutable job name presented by `\jobname` for this command
     /// operation.
     pub fn set_job_name(&mut self, name: impl Into<String>) {

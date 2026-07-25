@@ -1886,6 +1886,15 @@ command state. Mark enquiries read the aggregate page-mark slots through
 not receive either host capability, so they cannot acquire sources or widen
 the processor's authority.
 
+Input streams follow the same transaction boundary. `\openin`, `\closein`,
+`\read`, and `\readline` scan their stream number, optional equals, filename,
+`to` keyword, and definition target into an `InputStreamRequest`; no raw
+command or source cursor crosses to replay. The bounded replay borrows the
+registered immutable bytes only to pin an input record in `World`, whose stream
+state owns nested targets and line cursors. A missing `\openin` registration is
+an input suspension, so the whole command aggregate rolls back before a fresh
+processor episode retries.
+
 At ordinary EOF, TeX82 §343 calls `end_file_reading`, checks outer validity,
 and restarts raw delivery at the caller. Thus a nested `\input` retirement and
 the parent source's normalized line-ending space can each occupy later

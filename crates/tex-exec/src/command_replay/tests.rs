@@ -150,6 +150,67 @@ fn canonical_unavailable_font_recovers_to_nullfont() {
 }
 
 #[test]
+fn canonical_openin_read_and_closein_use_registered_immutable_input() {
+    let mut universe = Universe::new();
+    let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+    control.capabilities_mut().register_input(
+        "child.tex",
+        SourceRegistration::new(
+            RegisteredSourceKind::World,
+            Arc::<[u8]>::from(&b"hello"[..]),
+        ),
+    );
+    register_source(
+        &mut control,
+        br"\openin1=child.tex \read1 to \line \closein1\end",
+    );
+
+    run_to_end(&mut control, &mut universe);
+
+    let line = universe.intern("line");
+    let replacement = universe
+        .macro_meaning(line)
+        .expect("read target is defined")
+        .replacement_text();
+    assert_eq!(
+        universe.tokens(replacement).first(),
+        Some(&tex_state::token::Token::Char {
+            ch: 'h',
+            cat: tex_state::token::Catcode::Letter
+        })
+    );
+    assert!(universe.world().input_stream_eof(StreamSlot::new(1)));
+}
+
+#[test]
+fn canonical_openin_missing_resource_rolls_back_and_retries_fresh() {
+    let mut universe = Universe::new();
+    let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+    register_source(&mut control, br"\openin1=child.tex\read1to\line\end");
+
+    assert_eq!(
+        control.advance(&mut universe).expect("openin suspends"),
+        CanonicalStepResult::Suspended(CanonicalResourceNeed::Input)
+    );
+    assert!(universe.world().input_stream_eof(StreamSlot::new(1)));
+
+    control.capabilities_mut().register_input(
+        "child.tex",
+        SourceRegistration::new(
+            RegisteredSourceKind::World,
+            Arc::<[u8]>::from(&b"retry"[..]),
+        ),
+    );
+    assert!(matches!(
+        control.advance(&mut universe).expect("fresh openin retry"),
+        CanonicalStepResult::Progress(ReplayStep::Continue)
+    ));
+    run_to_end(&mut control, &mut universe);
+    let line = universe.intern("line");
+    assert!(universe.macro_meaning(line).is_some());
+}
+
+#[test]
 fn canonical_begingroup_uses_semisimple_local_and_global_restoration() {
     let mut universe = Universe::new();
     let mut control = CanonicalMainControl::tex82_initex(&mut universe);
