@@ -289,6 +289,42 @@ fn internal_dimension_register_scans_and_bounds_its_index_through_command_input(
 }
 
 #[test]
+fn dimension_scanner_accepts_an_internal_dimension_as_its_unit() {
+    let mut command = CommandState::default();
+    let mut runtime = CommandRuntime::default();
+    let mut universe = Universe::new();
+    let unit = universe.intern("unit").symbol();
+    universe.set_meaning(unit, Meaning::DimenRegister(0));
+    universe.set_dimen(0, tex_state::scaled::Scaled::from_raw(Scaled::UNITY));
+    let mut capabilities = CommandHostCapabilities::default();
+
+    push(
+        &mut command,
+        vec![
+            char_token('8'),
+            char_token('.'),
+            char_token('5'),
+            Token::Cs(unit),
+        ],
+    );
+    let mut processor = CommandProcessor::new(
+        &mut command,
+        &mut runtime,
+        universe.command_context(),
+        CommandHostContext::new(&mut capabilities),
+    );
+
+    assert_eq!(
+        processor
+            .scan_dimension()
+            .expect("internal unit scans")
+            .value
+            .raw(),
+        8 * Scaled::UNITY + Scaled::UNITY / 2
+    );
+}
+
+#[test]
 fn internal_values_and_failed_keywords_replay_canonically() {
     let mut command = CommandState::default();
     let mut runtime = CommandRuntime::default();

@@ -3,7 +3,9 @@
 use tex_state::glue::{GlueSpec, Order};
 use tex_state::ids::TokenListId;
 use tex_state::meaning::{Meaning, UnexpandablePrimitive};
-use tex_state::scaled::{PhysicalUnit, Scaled, round_decimal_fraction, scaled_from_decimal_parts};
+use tex_state::scaled::{
+    PhysicalUnit, Scaled, nx_plus_y, round_decimal_fraction, scaled_from_decimal_parts, xn_over_d,
+};
 use tex_state::token::{OriginId, Token};
 
 use crate::{CommandError, CurrentCommand, processor::CommandProcessor};
@@ -50,6 +52,7 @@ pub enum InternalValue {
 
 enum DimensionUnit {
     Physical(PhysicalUnit),
+    Internal(Scaled),
     Infinite(Order),
     Mu,
 }
@@ -649,23 +652,44 @@ impl CommandProcessor<'_> {
             self.scan_dimension_unit(allow_infinite, mu)?
         };
         let digits = fraction.bytes().map(|byte| byte - b'0').collect::<Vec<_>>();
-        let (unit, order) = match unit {
-            DimensionUnit::Physical(unit) => (unit, Order::Normal),
+        let fraction = round_decimal_fraction(&digits);
+        let (value, order) = match unit {
+            DimensionUnit::Internal(unit) => (
+                nx_plus_y(
+                    integer,
+                    unit,
+                    xn_over_d(unit, fraction, Scaled::UNITY)
+                        .map_err(|_| CommandError::InputInvariant)?
+                        .quotient,
+                )
+                .map_err(|_| CommandError::InputInvariant),
+                Order::Normal,
+            ),
+            DimensionUnit::Physical(unit) => (
+                if matches!(unit, PhysicalUnit::Pt) && mu {
+                    // A mu unit has the same scaled representation as a point; its
+                    // distinctness belongs to the surrounding glue family.
+                    scaled_from_decimal_parts(integer, fraction, PhysicalUnit::Pt)
+                } else {
+                    scaled_from_decimal_parts(integer, fraction, unit)
+                }
+                .map_err(|_| CommandError::InputInvariant),
+                Order::Normal,
+            ),
             // TeX stores an infinite glue component's finite coefficient as a
             // scaled value, while its order is carried separately.
-            DimensionUnit::Infinite(order) => (PhysicalUnit::Pt, order),
-            DimensionUnit::Mu => (PhysicalUnit::Pt, Order::Normal),
+            DimensionUnit::Infinite(order) => (
+                scaled_from_decimal_parts(integer, fraction, PhysicalUnit::Pt)
+                    .map_err(|_| CommandError::InputInvariant),
+                order,
+            ),
+            DimensionUnit::Mu => (
+                scaled_from_decimal_parts(integer, fraction, PhysicalUnit::Pt)
+                    .map_err(|_| CommandError::InputInvariant),
+                Order::Normal,
+            ),
         };
-        let value = if matches!(unit, PhysicalUnit::Pt) && mu {
-            // A mu unit has the same scaled representation as a point; its
-            // distinctness belongs to the surrounding glue family.
-            scaled_from_decimal_parts(integer, round_decimal_fraction(&digits), PhysicalUnit::Pt)
-        } else {
-            scaled_from_decimal_parts(integer, round_decimal_fraction(&digits), unit)
-        };
-        value
-            .map(|value| (value, order))
-            .map_err(|_| CommandError::InputInvariant)
+        value.map(|value| (value, order))
     }
 
     fn scan_dimension_unit(
@@ -682,7 +706,9 @@ impl CommandProcessor<'_> {
         if allow_infinite && self.scan_keyword("fil")?.value {
             return self.scan_infinite_unit(Order::Fil);
         }
-        self.probe_dimension_unit()?;
+        if let Some(unit) = self.probe_dimension_unit(mu)? {
+            return Ok(DimensionUnit::Internal(unit));
+        }
         for keyword in ["em", "ex"] {
             let _ = self.scan_keyword(keyword)?;
         }
@@ -716,12 +742,20 @@ impl CommandProcessor<'_> {
     /// lookahead is still a real command-owned operation: when it consumes a
     /// token replayed by the fractional scanner, TeX's `back_input` first
     /// retires that exhausted backup before installing the new one.
-    fn probe_dimension_unit(&mut self) -> Result<(), CommandError> {
+    fn probe_dimension_unit(&mut self, mu: bool) -> Result<Option<Scaled>, CommandError> {
         let Some(command) = self.get_x_token()? else {
-            return Ok(());
+            return Ok(None);
         };
-        self.retire_exhausted_backup_before_scalar_replay(command.delivery_stamp())?;
-        self.back_input(command)
+        let unit = match self.internal_value_from_command(&command)? {
+            Some(InternalValue::Dimension(value)) if !mu => Some(value),
+            Some(InternalValue::MuGlue(value)) if mu => Some(value.width),
+            _ => None,
+        };
+        if unit.is_none() {
+            self.retire_exhausted_backup_before_scalar_replay(command.delivery_stamp())?;
+            self.back_input(command)?;
+        }
+        Ok(unit)
     }
 
     fn scan_optional_space(&mut self) -> Result<(), CommandError> {
