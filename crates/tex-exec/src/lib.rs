@@ -34,7 +34,9 @@ pub use assignments::{
     install_unexpandable_primitives, register_etex_unexpandable_primitives,
     register_unexpandable_primitives, try_execute_assignment,
 };
-pub use canonical_main_control::{CanonicalMainControl, MainControlStep};
+pub use canonical_main_control::{
+    CanonicalMainControl, CanonicalResourceNeed, CanonicalStepResult, MainControlStep,
+};
 pub use checkpoint::{
     CanonicalCheckpointRestoreError, CheckpointSink, ENGINE_CHECKPOINT_SCHEMA_VERSION,
     EditorRestoreError, EngineBoundary, EngineCheckpoint, EngineRestoreError, RootRehomeContext,

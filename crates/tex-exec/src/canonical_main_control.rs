@@ -9,7 +9,8 @@ use tex_command::{
     AlignmentCellDelimiter, AlignmentCellOpening, AlignmentCellTemplates, AlignmentDelivery,
     AlignmentIdentity, AlignmentRequest, AlignmentRequestResult, CommandError,
     CommandHostCapabilities, CommandHostContext, CommandProcessor, CommandProfile, CommandRuntime,
-    CommandState, ImmediateExtension, SourceRegistration, SourceRegistrationError,
+    CommandState, CommandStateSnapshot, ImmediateExtension, SourceRegistration,
+    SourceRegistrationError,
 };
 #[cfg(any(test, feature = "instrumentation"))]
 use tex_command::{
@@ -72,7 +73,7 @@ struct ActiveReplayAlignment {
     noalign_depth: Option<u32>,
 }
 
-#[derive(Debug, Default)]
+#[derive(Clone, Debug, Default)]
 struct ReplayBoxes {
     pending_setbox: Option<SetBoxTarget>,
     pending_shipout: bool,
@@ -84,6 +85,57 @@ struct ReplayBoxes {
     output_routine_active: bool,
     output_routine_opening_pending: bool,
     terminal_output_shipout_complete: bool,
+}
+
+/// The only normal reason a canonical operation may be retried by its host.
+///
+/// The command core has already classified the unavailable resource, while
+/// this value deliberately retains neither a command nor a host capability.
+/// Retrying therefore starts a fresh TeX82 §§24--25 processor episode at the
+/// enclosing main-control operation.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum CanonicalResourceNeed {
+    Input,
+}
+
+/// Outcome of one atomic canonical main-control operation.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum CanonicalStepResult {
+    Progress(MainControlStep),
+    Suspended(CanonicalResourceNeed),
+}
+
+/// All replay-owned state that must move with a bounded canonical operation.
+/// Host capabilities are intentionally absent: their borrow ends before this
+/// checkpoint can be restored.
+struct CanonicalStepSnapshot {
+    command: CommandStateSnapshot,
+    modes: ModeNest,
+    next_alignment_identity: u64,
+    active_alignment: Option<ActiveReplayAlignment>,
+    boxes: ReplayBoxes,
+    output_dead_cycles: i32,
+    universe: tex_state::Snapshot,
+}
+
+#[cfg(any(test, feature = "instrumentation"))]
+#[derive(Default)]
+struct ObservationBuffer(Vec<CommandObservation>);
+
+#[cfg(any(test, feature = "instrumentation"))]
+impl ObservationBuffer {
+    fn flush_into(self, observer: &mut dyn CommandObserver) {
+        for observation in self.0 {
+            observer.committed(observation);
+        }
+    }
+}
+
+#[cfg(any(test, feature = "instrumentation"))]
+impl CommandObserver for ObservationBuffer {
+    fn committed(&mut self, observation: CommandObservation) {
+        self.0.push(observation);
+    }
 }
 
 impl CanonicalMainControl {
@@ -198,6 +250,37 @@ impl CanonicalMainControl {
             .set_conditional_state(self.modes.conditional_state());
     }
 
+    fn snapshot_step(&self, stores: &mut Universe) -> CanonicalStepSnapshot {
+        CanonicalStepSnapshot {
+            command: self.command.snapshot(),
+            modes: self.modes.clone(),
+            next_alignment_identity: self.next_alignment_identity,
+            active_alignment: self.active_alignment.clone(),
+            boxes: self.boxes.clone(),
+            output_dead_cycles: self.output_dead_cycles,
+            universe: stores.snapshot(),
+        }
+    }
+
+    fn rollback_step(&mut self, snapshot: CanonicalStepSnapshot, stores: &mut Universe) {
+        // This snapshot was created by this command state immediately before
+        // the operation, so a profile mismatch would be an internal invariant
+        // failure rather than a recoverable host condition.
+        self.command
+            .rollback(snapshot.command)
+            .expect("canonical step snapshot keeps its command profile");
+        // CommandRuntime is deliberately non-cloneable: its caches and
+        // profiling cannot become semantic or durable state. Its fresh value
+        // is therefore the canonical retry restoration form.
+        self.runtime = CommandRuntime::default();
+        self.modes = snapshot.modes;
+        self.next_alignment_identity = snapshot.next_alignment_identity;
+        self.active_alignment = snapshot.active_alignment;
+        self.boxes = snapshot.boxes;
+        self.output_dead_cycles = snapshot.output_dead_cycles;
+        stores.rollback(&snapshot.universe);
+    }
+
     /// Returns the replay projection of TeX's current execution mode.
     #[must_use]
     pub fn current_mode(&self) -> Mode {
@@ -272,6 +355,19 @@ impl CanonicalMainControl {
         alignment: AlignmentIdentity,
         stores: &mut Universe,
     ) -> Result<ReplayStep, ExecError> {
+        let snapshot = self.snapshot_step(stores);
+        let result = self.alignment_step_once(alignment, stores);
+        if result.is_err() {
+            self.rollback_step(snapshot, stores);
+        }
+        result
+    }
+
+    fn alignment_step_once(
+        &mut self,
+        alignment: AlignmentIdentity,
+        stores: &mut Universe,
+    ) -> Result<ReplayStep, ExecError> {
         let mode = self.modes.current_mode();
         let innermost_group = stores.innermost_group_kind();
         let scanned = {
@@ -300,8 +396,41 @@ impl CanonicalMainControl {
         )
     }
 
+    /// Attempts one atomic canonical main-control operation.
+    ///
+    /// Missing retained input rolls back the complete aggregate operation and
+    /// is returned as a typed suspension. All other failures are restored and
+    /// remain ordinary diagnostics. In either case the next call creates a
+    /// fresh command processor; no delivered `CurrentCommand` is retained.
+    pub fn advance(&mut self, stores: &mut Universe) -> Result<CanonicalStepResult, ExecError> {
+        let snapshot = self.snapshot_step(stores);
+        match self.step_once(stores) {
+            Ok(step) => Ok(CanonicalStepResult::Progress(step)),
+            Err(error) => {
+                self.rollback_step(snapshot, stores);
+                if matches!(error, ExecError::MissingToken { context: "\\input" }) {
+                    Ok(CanonicalStepResult::Suspended(CanonicalResourceNeed::Input))
+                } else {
+                    Err(error)
+                }
+            }
+        }
+    }
+
     /// Delivers and executes one replay command through the command processor.
+    ///
+    /// Compatibility wrapper for callers which have not yet adopted typed
+    /// resource suspension. New production hosts should use [`Self::advance`].
     pub fn step(&mut self, stores: &mut Universe) -> Result<ReplayStep, ExecError> {
+        match self.advance(stores)? {
+            CanonicalStepResult::Progress(step) => Ok(step),
+            CanonicalStepResult::Suspended(CanonicalResourceNeed::Input) => {
+                Err(ExecError::MissingToken { context: "\\input" })
+            }
+        }
+    }
+
+    fn step_once(&mut self, stores: &mut Universe) -> Result<ReplayStep, ExecError> {
         self.refresh_host_capabilities();
         let mode = self.modes.current_mode();
         let starts_paragraph = matches!(mode, Mode::Vertical | Mode::InternalVertical);
@@ -341,6 +470,46 @@ impl CanonicalMainControl {
     /// command-owned observations in their original order.
     #[cfg(any(test, feature = "instrumentation"))]
     pub fn step_with_observer(
+        &mut self,
+        stores: &mut Universe,
+        observer: &mut dyn CommandObserver,
+    ) -> Result<ReplayStep, ExecError> {
+        match self.advance_with_observer(stores, observer)? {
+            CanonicalStepResult::Progress(step) => Ok(step),
+            CanonicalStepResult::Suspended(CanonicalResourceNeed::Input) => {
+                Err(ExecError::MissingToken { context: "\\input" })
+            }
+        }
+    }
+
+    /// Atomic observed variant of [`Self::advance`]. Observations are held
+    /// until both command delivery and executor application have committed.
+    #[cfg(any(test, feature = "instrumentation"))]
+    pub fn advance_with_observer(
+        &mut self,
+        stores: &mut Universe,
+        observer: &mut dyn CommandObserver,
+    ) -> Result<CanonicalStepResult, ExecError> {
+        let snapshot = self.snapshot_step(stores);
+        let mut pending = ObservationBuffer::default();
+        match self.step_with_observer_once(stores, &mut pending) {
+            Ok(step) => {
+                pending.flush_into(observer);
+                Ok(CanonicalStepResult::Progress(step))
+            }
+            Err(error) => {
+                self.rollback_step(snapshot, stores);
+                if matches!(error, ExecError::MissingToken { context: "\\input" }) {
+                    Ok(CanonicalStepResult::Suspended(CanonicalResourceNeed::Input))
+                } else {
+                    Err(error)
+                }
+            }
+        }
+    }
+
+    #[cfg(any(test, feature = "instrumentation"))]
+    fn step_with_observer_once(
         &mut self,
         stores: &mut Universe,
         observer: &mut dyn CommandObserver,

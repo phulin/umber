@@ -2454,6 +2454,17 @@ An explicit `CurrentCommand` is consumed once. Re-execution after resource
 rollback begins from the enclosing executor step, not from a retained command
 value.
 
+Each bounded `CanonicalMainControl` operation captures the aggregate command
+state, discardable command runtime, mode nest, Universe roots, replay-local
+box/alignment/output state, and pending World effects/artifacts before it
+creates a processor. A command-core `MissingInput` is translated to a typed
+suspension only after that complete rollback; observer records are buffered
+until the structural application commits. The next attempt constructs a fresh
+processor episode and begins again through `get_next`/`get_x_token`, following
+TeX82 §§24--25 rather than retaining a delivered command. Host capabilities
+remain borrow-scoped outside this snapshot, so supplying a resource changes
+only the next attempt's capability set.
+
 ## 34. End-state invariants
 
 The replacement is complete only when all of these hold:

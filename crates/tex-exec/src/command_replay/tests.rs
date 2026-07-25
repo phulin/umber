@@ -2150,3 +2150,59 @@ fn paragraph_start_backs_up_the_triggering_macro_parameter_before_replay() {
         )
     }));
 }
+
+#[test]
+fn missing_canonical_input_rolls_back_the_whole_step_and_retries_fresh() {
+    let child = SourceRegistration::new(
+        RegisteredSourceKind::Generated,
+        Arc::<[u8]>::from(&b"\\count3=9"[..]),
+    );
+
+    let mut failed_universe = Universe::new();
+    crate::install_unexpandable_primitives(&mut failed_universe);
+    install_input(&mut failed_universe);
+    let mut failed = CommandReplayControl::default();
+    register_source(&mut failed, br"\input child\end");
+    let mut failed_observations = ObservationRecorder::default();
+
+    assert_eq!(
+        failed
+            .advance_with_observer(&mut failed_universe, &mut failed_observations)
+            .expect("missing input suspends"),
+        CanonicalStepResult::Suspended(CanonicalResourceNeed::Input)
+    );
+    assert_eq!(failed_universe.count(3), 0);
+    assert_eq!(failed.current_mode(), Mode::Vertical);
+    assert!(
+        failed_observations.0.is_empty(),
+        "failed delivery leaked observation"
+    );
+
+    failed
+        .capabilities_mut()
+        .register_input("child", child.clone());
+    assert_eq!(
+        failed
+            .advance_with_observer(&mut failed_universe, &mut failed_observations)
+            .expect("retry succeeds"),
+        CanonicalStepResult::Progress(ReplayStep::Continue)
+    );
+
+    let mut fresh_universe = Universe::new();
+    crate::install_unexpandable_primitives(&mut fresh_universe);
+    install_input(&mut fresh_universe);
+    let mut fresh = CommandReplayControl::default();
+    register_source(&mut fresh, br"\input child\end");
+    fresh.capabilities_mut().register_input("child", child);
+    let mut fresh_observations = ObservationRecorder::default();
+    assert_eq!(
+        fresh
+            .advance_with_observer(&mut fresh_universe, &mut fresh_observations)
+            .expect("fresh input succeeds"),
+        CanonicalStepResult::Progress(ReplayStep::Continue)
+    );
+
+    assert_eq!(failed_universe.count(3), fresh_universe.count(3));
+    assert_eq!(failed.current_mode(), fresh.current_mode());
+    assert_eq!(failed_observations.0, fresh_observations.0);
+}
