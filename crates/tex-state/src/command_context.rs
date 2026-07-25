@@ -271,6 +271,12 @@ impl CommandContext<'_> {
         self.universe.font_name(font)
     }
 
+    /// Reads the currently selected font through the command boundary.
+    #[must_use]
+    pub fn current_font(&self) -> FontId {
+        self.universe.current_font()
+    }
+
     /// Returns the parallel provenance words of one stored token list.
     #[must_use]
     pub fn origin_list(&self, id: OriginListId) -> &[OriginId] {

@@ -19,10 +19,11 @@ use tex_command::{
 use tex_state::code_tables::{DelCode, LcCode, MathCode, SfCode, UcCode};
 use tex_state::env::banks::{DimenParam, GlueParam, IntParam, TokParam};
 use tex_state::glue::{GlueSpec, Order};
+use tex_state::ids::FontId;
 use tex_state::interner::Symbol;
 use tex_state::macro_store::{MacroDefinitionProvenance, MacroMeaning};
 use tex_state::meaning::{Meaning, MeaningFlags, UnexpandablePrimitive};
-use tex_state::node::{DiscKind, GlueKind, KernKind, Node};
+use tex_state::node::{DiscKind, GlueKind, KernKind, Node, Whatsit};
 use tex_state::scaled::Scaled;
 use tex_state::token::{Catcode, Token};
 use tex_state::{GroupKind, ParagraphShapeLine, PrintSink, StreamSlot, TracedTokenList, Universe};
@@ -931,6 +932,32 @@ enum ScannedStep {
         value: i32,
         global: bool,
     },
+    FontSelect {
+        font: FontId,
+        selector: Option<Symbol>,
+        global: bool,
+    },
+    FontDimen {
+        font: FontId,
+        number: u32,
+        value: Scaled,
+    },
+    FontInteger {
+        font: FontId,
+        skew: bool,
+        value: i32,
+    },
+    DeferredOpenOut {
+        stream: i32,
+        file_name: String,
+    },
+    DeferredCloseOut {
+        stream: i32,
+    },
+    DeferredWrite {
+        stream: i32,
+        tokens: TracedTokenList,
+    },
     Arithmetic {
         primitive: UnexpandablePrimitive,
         target: ArithmeticTarget,
@@ -1066,6 +1093,8 @@ impl ScannedStep {
                 | Self::TokParam { .. }
                 | Self::GlueParam { .. }
                 | Self::CodeTable { .. }
+                | Self::FontDimen { .. }
+                | Self::FontInteger { .. }
                 | Self::Arithmetic { .. }
                 | Self::MacroDefinition { .. }
                 | Self::Let { .. }
@@ -1781,6 +1810,61 @@ fn scan_command(
                 value: assignment.value,
                 global,
             })
+        }
+        Meaning::Font(font) => Ok(ScannedStep::FontSelect {
+            font,
+            selector: command.control_sequence(),
+            global,
+        }),
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::FontDimen) => {
+            let number = processor.scan_integer().map_err(command_error)?.value;
+            let number =
+                u32::try_from(number).map_err(|_| ExecError::RegisterNumberOutOfRange(number))?;
+            if number == 0 {
+                return Err(ExecError::RegisterNumberOutOfRange(0));
+            }
+            let font = processor.scan_font_selector().map_err(command_error)?;
+            let _ = processor.scan_optional_equals().map_err(command_error)?;
+            let value = processor.scan_dimension().map_err(command_error)?.value;
+            Ok(ScannedStep::FontDimen {
+                font,
+                number,
+                value,
+            })
+        }
+        Meaning::UnexpandablePrimitive(
+            primitive @ (UnexpandablePrimitive::HyphenChar | UnexpandablePrimitive::SkewChar),
+        ) => {
+            let font = processor.scan_font_selector().map_err(command_error)?;
+            let _ = processor.scan_optional_equals().map_err(command_error)?;
+            let value = processor.scan_integer().map_err(command_error)?.value;
+            Ok(ScannedStep::FontInteger {
+                font,
+                skew: primitive == UnexpandablePrimitive::SkewChar,
+                value,
+            })
+        }
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::OpenOut) => {
+            let stream = processor.scan_integer().map_err(command_error)?.value;
+            let _ = processor.scan_optional_equals().map_err(command_error)?;
+            let file_name = processor.scan_file_name().map_err(command_error)?;
+            Ok(ScannedStep::DeferredOpenOut {
+                stream,
+                file_name: file_name.name,
+            })
+        }
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::CloseOut) => {
+            Ok(ScannedStep::DeferredCloseOut {
+                stream: processor.scan_integer().map_err(command_error)?.value,
+            })
+        }
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Write) => {
+            let stream = processor.scan_integer().map_err(command_error)?.value;
+            let tokens = processor
+                .scan_balanced_text(false)
+                .map_err(command_error)?
+                .tokens;
+            Ok(ScannedStep::DeferredWrite { stream, tokens })
         }
         Meaning::UnexpandablePrimitive(
             primitive @ (UnexpandablePrimitive::CatCode
@@ -2857,6 +2941,66 @@ fn apply_scanned_step(
                 }
                 _ => unreachable!("only code-table primitives are scanned"),
             }
+            Ok(ReplayStep::Continue)
+        }
+        ScannedStep::FontSelect {
+            font,
+            selector,
+            global,
+        } => {
+            if assignment_global(global, stores) {
+                if let Some(selector) = selector {
+                    stores.set_current_font_selector_global(selector, font);
+                } else {
+                    stores.set_current_font_global(font);
+                }
+            } else if let Some(selector) = selector {
+                stores.set_current_font_selector(selector, font);
+            } else {
+                stores.set_current_font(font);
+            }
+            Ok(ReplayStep::Continue)
+        }
+        ScannedStep::FontDimen {
+            font,
+            number,
+            value,
+        } => {
+            stores.set_font_dimen(font, number, value)?;
+            Ok(ReplayStep::Continue)
+        }
+        ScannedStep::FontInteger { font, skew, value } => {
+            if skew {
+                stores.set_font_skew_char(font, value);
+            } else {
+                stores.set_font_hyphen_char(font, value);
+            }
+            Ok(ReplayStep::Continue)
+        }
+        ScannedStep::DeferredOpenOut { stream, file_name } => {
+            modes
+                .current_list_mut()
+                .push(Node::Whatsit(Whatsit::OpenOut {
+                    slot: replay_stream_slot(stream, stores),
+                    path: file_name,
+                }));
+            Ok(ReplayStep::Continue)
+        }
+        ScannedStep::DeferredCloseOut { stream } => {
+            modes
+                .current_list_mut()
+                .push(Node::Whatsit(Whatsit::CloseOut {
+                    slot: replay_stream_slot(stream, stores),
+                }));
+            Ok(ReplayStep::Continue)
+        }
+        ScannedStep::DeferredWrite { stream, tokens } => {
+            modes
+                .current_list_mut()
+                .push(Node::Whatsit(Whatsit::DeferredWrite {
+                    sink: replay_write_sink(stream),
+                    tokens: tokens.token_list(),
+                }));
             Ok(ReplayStep::Continue)
         }
         ScannedStep::Arithmetic {
