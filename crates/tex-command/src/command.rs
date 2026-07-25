@@ -35,8 +35,10 @@ pub struct CurrentCommand {
 /// `\expandafter`, `\csname`, and its `\endcsname` boundary have dedicated
 /// command identities rather than the generic expandable fallback. TeX82's
 /// text conversions likewise share the `convert` command with a selector
-/// owned by the delivered primitive. These remain ephemeral with the current
-/// delivery and are never stored in snapshots or input payloads.
+/// owned by the delivered primitive. Its diagnostic commands likewise share
+/// `xray`, with a selector installed by the primitive table. These remain
+/// ephemeral with the current delivery and are never stored in snapshots or
+/// input payloads.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum CommandIdentity {
     Ordinary,
@@ -44,6 +46,7 @@ pub(crate) enum CommandIdentity {
     CsName,
     EndCsName,
     Convert(ConvertSelector),
+    XRay(XRaySelector),
     NoExpandFrozenRelax,
 }
 
@@ -90,6 +93,44 @@ impl ConvertSelector {
     }
 }
 
+/// TeX82's `xray` selectors.
+///
+/// TeX.web §18 installs the diagnostic primitives under the shared `xray`
+/// command: `\show`, `\showbox`, `\showthe`, and `\showlists`. Their
+/// selector is current-command identity; the executor still owns each
+/// primitive's distinct typed diagnostic behavior.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum XRaySelector {
+    Show,
+    ShowBox,
+    ShowThe,
+    ShowLists,
+}
+
+impl XRaySelector {
+    const fn from_primitive(primitive: tex_state::meaning::UnexpandablePrimitive) -> Option<Self> {
+        use tex_state::meaning::UnexpandablePrimitive;
+
+        match primitive {
+            UnexpandablePrimitive::Show => Some(Self::Show),
+            UnexpandablePrimitive::ShowBox => Some(Self::ShowBox),
+            UnexpandablePrimitive::ShowThe => Some(Self::ShowThe),
+            UnexpandablePrimitive::ShowLists => Some(Self::ShowLists),
+            _ => None,
+        }
+    }
+
+    #[cfg(any(test, feature = "instrumentation"))]
+    pub(crate) const fn operand(self) -> i64 {
+        match self {
+            Self::Show => 0,
+            Self::ShowBox => 1,
+            Self::ShowThe => 2,
+            Self::ShowLists => 3,
+        }
+    }
+}
+
 impl CommandIdentity {
     const fn from_meaning(meaning: Meaning) -> Self {
         match meaning {
@@ -105,6 +146,13 @@ impl CommandIdentity {
             Meaning::ExpandablePrimitive(primitive) => {
                 if let Some(selector) = ConvertSelector::from_primitive(primitive) {
                     Self::Convert(selector)
+                } else {
+                    Self::Ordinary
+                }
+            }
+            Meaning::UnexpandablePrimitive(primitive) => {
+                if let Some(selector) = XRaySelector::from_primitive(primitive) {
+                    Self::XRay(selector)
                 } else {
                     Self::Ordinary
                 }

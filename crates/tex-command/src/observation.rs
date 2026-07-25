@@ -311,6 +311,10 @@ pub(crate) fn canonical_current_command_identity(
         // shared `convert` command; §27's `conv_toks` uses the retained
         // selector to choose the existing scan/render lifecycle.
         CommandIdentity::Convert(selector) => ("convert".into(), Some(selector.operand())),
+        // TeX82 §18 installs the classic diagnostic primitives under the
+        // shared `xray` command. The selector remains with the delivery even
+        // though the executor later dispatches each typed diagnostic action.
+        CommandIdentity::XRay(selector) => ("xray".into(), Some(selector.operand())),
         CommandIdentity::NoExpandFrozenRelax => {
             debug_assert_eq!(command.meaning(), Meaning::Relax);
             ("relax".into(), Some(257))
@@ -600,6 +604,34 @@ mod tests {
             assert_eq!(
                 canonical_current_command_identity(&command),
                 ("convert".into(), Some(operand))
+            );
+        }
+    }
+
+    #[test]
+    fn tex82_diagnostics_use_shared_xray_selectors() {
+        let mut universe = tex_state::Universe::new();
+
+        for (name, primitive, operand) in [
+            ("show", UnexpandablePrimitive::Show, 0),
+            ("showbox", UnexpandablePrimitive::ShowBox, 1),
+            ("showthe", UnexpandablePrimitive::ShowThe, 2),
+            ("showlists", UnexpandablePrimitive::ShowLists, 3),
+        ] {
+            let symbol = universe.intern(name).symbol();
+            universe.set_meaning(symbol, Meaning::UnexpandablePrimitive(primitive));
+            let mut state = universe.command_context();
+            let command = CurrentCommand::resolve(
+                TracedTokenWord::pack(Token::Cs(symbol), OriginId::UNKNOWN),
+                DeliveryStamp::new(0, 0, 0),
+                None,
+                false,
+                &mut state,
+            );
+
+            assert_eq!(
+                canonical_current_command_identity(&command),
+                ("xray".into(), Some(operand))
             );
         }
     }

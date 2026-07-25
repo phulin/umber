@@ -1,8 +1,8 @@
 use tex_state::Universe;
-use tex_state::meaning::{ExpandablePrimitive, Meaning};
+use tex_state::meaning::{ExpandablePrimitive, Meaning, UnexpandablePrimitive};
 use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 
-use super::{CommandIdentity, ConvertSelector, CurrentCommand, DeliveryStamp};
+use super::{CommandIdentity, ConvertSelector, CurrentCommand, DeliveryStamp, XRaySelector};
 
 fn resolve(universe: &mut Universe, token: Token, origin: OriginId) -> CurrentCommand {
     let mut state = universe.command_context();
@@ -162,5 +162,36 @@ fn classic_conversions_resolve_to_the_shared_tex82_convert_identity() {
         let command = resolve(&mut universe, Token::Cs(symbol), OriginId::UNKNOWN);
 
         assert_eq!(command.identity(), CommandIdentity::Convert(selector));
+    }
+}
+
+#[test]
+fn tex82_diagnostics_resolve_to_the_shared_xray_identity() {
+    let mut universe = Universe::new();
+
+    for (name, primitive, selector) in [
+        ("show", UnexpandablePrimitive::Show, XRaySelector::Show),
+        (
+            "showbox",
+            UnexpandablePrimitive::ShowBox,
+            XRaySelector::ShowBox,
+        ),
+        (
+            "showthe",
+            UnexpandablePrimitive::ShowThe,
+            XRaySelector::ShowThe,
+        ),
+        (
+            "showlists",
+            UnexpandablePrimitive::ShowLists,
+            XRaySelector::ShowLists,
+        ),
+    ] {
+        let symbol = universe.intern(name).symbol();
+        universe.set_meaning(symbol, Meaning::UnexpandablePrimitive(primitive));
+
+        let command = resolve(&mut universe, Token::Cs(symbol), OriginId::UNKNOWN);
+
+        assert_eq!(command.identity(), CommandIdentity::XRay(selector));
     }
 }
