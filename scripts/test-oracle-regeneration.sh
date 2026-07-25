@@ -28,5 +28,11 @@ if scripts/regen-fixtures.sh --oracle etex26 \
   printf '%s\n' 'oracle regeneration accepted a fixture under the wrong engine' >&2
   exit 1
 fi
+if scripts/regen-fixtures.sh --oracle tex82 --profile initex-eight-bit \
+  --fixture tex82/command-transitions-v1 --bootstrap-fixture \
+  --validate-only >/dev/null 2>&1; then
+  printf '%s\n' 'oracle regeneration accepted bootstrap without a live candidate' >&2
+  exit 1
+fi
 
 printf '%s\n' 'oracle regeneration contract tests passed'

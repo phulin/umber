@@ -4,6 +4,7 @@
 //! engines and Umber must copy committed semantic values across this boundary;
 //! observation may not inspect either engine's storage representation.
 
+mod bootstrap;
 mod encoding;
 mod fixture;
 mod fixture_audit;
@@ -13,6 +14,7 @@ mod schema;
 mod suite;
 mod transport;
 
+pub use bootstrap::bootstrap_tex82_fixture;
 pub use encoding::{EncodingError, ManifestIdentity, StreamIdentity};
 pub use fixture::{
     CanonicalCitation, CommittedFixture, FIXTURE_CONTRACT_VERSION, FIXTURE_MANIFEST_NAME,

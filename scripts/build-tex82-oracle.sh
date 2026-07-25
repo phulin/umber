@@ -23,20 +23,7 @@ trip_profile_executable="${bin_dir}/umber-tex82-oracle-trip-profile"
 instrumentation_change="${UMBER_TEX82_INSTRUMENTATION_CHANGE:-${repo_root}/tests/tex82-oracle/instrumentation.ch}"
 smoke_input="${repo_root}/tests/tex82-oracle/smoke.tex"
 transition_input="${repo_root}/tests/tex82-oracle/transitions.tex"
-transition_child="${repo_root}/tests/tex82-oracle/transitions-child.tex"
-transition_support=(
-  "${repo_root}/tests/tex82-oracle/expansion-macros.tex"
-  "${repo_root}/tests/tex82-oracle/alignment-delivery.tex"
-  "${repo_root}/tests/tex82-oracle/off-save.tex"
-  "${repo_root}/tests/tex82-oracle/scanner-conditionals.tex"
-  "${repo_root}/tests/tex82-oracle/scanner-conditionals-eof.tex"
-  "${repo_root}/tests/tex82-oracle/input-recovery.tex"
-  "${repo_root}/tests/tex82-oracle/input-eof-normal.tex"
-  "${repo_root}/tests/tex82-oracle/input-eof-defining.tex"
-  "${repo_root}/tests/tex82-oracle/input-eof-matching.tex"
-  "${repo_root}/tests/tex82-oracle/input-eof-absorbing.tex"
-  "${repo_root}/tests/tex82-oracle/input-eof-aligning.tex"
-)
+transition_source_dir="${repo_root}/tests/tex82-oracle"
 semantic_event_matrix="${repo_root}/tests/tex82-oracle/semantic-event-matrix.txt"
 cflags="-O2"
 cxxflags="-O2"
@@ -232,14 +219,15 @@ run_smoke() {
 }
 
 run_transitions() {
-  local executable="$1" variant="$2" run_dir status=0 support
+  local executable="$1" variant="$2" run_dir status=0 source source_name
   run_dir="${out_dir}/transitions/${variant}"
   rm -rf "$run_dir"
   mkdir -p "$run_dir"
   cp "$transition_input" "${run_dir}/transitions.tex"
-  cp "$transition_child" "${run_dir}/transitions-child.tex"
-  for support in "${transition_support[@]}"; do
-    cp "$support" "$run_dir/"
+  for source in "${transition_source_dir}"/*.tex; do
+    source_name="$(basename "$source")"
+    [[ "$source_name" == smoke.tex || "$source_name" == transitions.tex ]] && continue
+    cp "$source" "$run_dir/"
   done
   (
     cd "$run_dir"

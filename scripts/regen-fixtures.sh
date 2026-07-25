@@ -41,6 +41,8 @@ usage:
   scripts/regen-fixtures.sh --case AREA/CASE
   scripts/regen-fixtures.sh --case AREA CASE
   scripts/regen-fixtures.sh --oracle ENGINE --profile PROFILE [--fixture FIXTURE] [--offline]
+  scripts/regen-fixtures.sh --oracle tex82 --profile initex-eight-bit \\
+    --fixture tex82/command-transitions-v1 --bootstrap-fixture [--offline]
   scripts/regen-fixtures.sh --oracle all --profile canonical [--offline]
   scripts/regen-fixtures.sh --oracle ENGINE --profile PROFILE --validate-only
 
@@ -108,6 +110,9 @@ Reference tools:
   clean/instrumented transparency checks, and writes one aggregate record.
   --offline forbids acquisition in every selected builder. --validate-only
   checks identities and schemas without building or using the network.
+  --bootstrap-fixture derives a complete temporary candidate from the pinned
+  TeX82 oracle, validates its manifest, stream, artifacts, and coverage audit,
+  then publishes it with the updated regeneration-contract identity.
 EOF
 }
 
@@ -633,6 +638,7 @@ validate_oracle_source_manifest() {
 
 validate_oracle_contract() {
   local selected_engine="$1"
+  local bootstrap_fixture="${2:-0}"
   local contract_schema event_schema
   local row_count=0
   local engine profile area manifest_path manifest_digest build_identity extra
@@ -712,9 +718,11 @@ validate_oracle_contract() {
       "$fixture_manifest" == \
         tests/corpus/command/tex82/command-transitions-v1/manifest.json ]] ||
     die 'representative fixture regeneration identity drift'
-  [[ -f "$fixture_manifest" &&
-      "$(sha256_file "$fixture_manifest")" == "$fixture_manifest_digest" ]] ||
-    die 'representative committed fixture manifest identity drift'
+  if [[ "$bootstrap_fixture" -eq 0 ]]; then
+    [[ -f "$fixture_manifest" &&
+        "$(sha256_file "$fixture_manifest")" == "$fixture_manifest_digest" ]] ||
+      die 'representative committed fixture manifest identity drift'
+  fi
   [[ "$(awk '$1 == "fixture-audit" &&
       $2 == "tex82/command-transitions-v1" {
       count++
@@ -836,6 +844,58 @@ validate_committed_oracle_fixture() {
   rm -f "$candidate_events"
 }
 
+bootstrap_tex82_oracle_fixture() {
+  local fixture="$1"
+  local fixture_dir="${repo_root}/${tex82_committed_fixture}"
+  local fixture_parent fixture_name candidate_dir backup_dir
+  local contract_candidate manifest_digest
+  fixture_parent="$(dirname "$fixture_dir")"
+  fixture_name="$(basename "$fixture_dir")"
+  candidate_dir="$(mktemp -d "${fixture_parent}/.${fixture_name}.bootstrap.XXXXXX")"
+  contract_candidate="$(mktemp "${repo_root}/tests/.oracle-regeneration-manifest.XXXXXX")"
+
+  run_command "Deriving ${fixture} candidate from pinned TeX82 oracle" \
+    cargo run -q -p tex-oracle --bin tex-oracle-bootstrap -- \
+      --template "$fixture_dir" \
+      --live-directory "${target_dir}/tex82-oracle/transitions/clean" \
+      --event-stream "${target_dir}/tex82-oracle/transitions/instrumentable/tex82-events.jsonl" \
+      --build-record "${target_dir}/tex82-oracle/build-record.txt" \
+      --output "$candidate_dir"
+  run_command "Validating derived ${fixture} candidate" \
+    cargo run -q -p tex-oracle --bin tex-oracle-validate -- \
+      --fixture "$candidate_dir" \
+      --semantic-matrix tests/tex82-oracle/semantic-event-matrix.txt \
+      --audit-matrix tests/tex82-oracle/fixture-audit-matrix.txt
+
+  manifest_digest="$(sha256_file "${candidate_dir}/manifest.json")"
+  awk -v selector="$fixture" -v digest="$manifest_digest" '
+    $1 == "fixture" && $2 == selector { $6 = digest }
+    { print }
+  ' "$oracle_regeneration_manifest" >"$contract_candidate"
+  [[ "$(awk -v selector="$fixture" -v digest="$manifest_digest" \
+      '$1 == "fixture" && $2 == selector && $6 == digest { count++ } END { print count + 0 }' \
+      "$contract_candidate")" -eq 1 ]] ||
+    die 'derived fixture contract does not bind the candidate manifest'
+
+  backup_dir="${fixture_parent}/.${fixture_name}.pre-bootstrap.$$"
+  [[ ! -e "$backup_dir" ]] || die "bootstrap backup path exists: ${backup_dir}"
+  mv "$fixture_dir" "$backup_dir"
+  if ! mv "$candidate_dir" "$fixture_dir"; then
+    mv "$backup_dir" "$fixture_dir"
+    rm -f "$contract_candidate"
+    die 'failed to publish derived fixture candidate'
+  fi
+  if ! mv "$contract_candidate" "$oracle_regeneration_manifest"; then
+    mv "$fixture_dir" "$candidate_dir"
+    mv "$backup_dir" "$fixture_dir"
+    rm -rf "$candidate_dir"
+    die 'failed to publish derived fixture contract'
+  fi
+  rm -rf "$backup_dir"
+  run_command "Validating published ${fixture} suite" \
+    cargo run -q -p tex-oracle --bin tex-oracle-validate -- --tex82-command-suite
+}
+
 write_cross_engine_oracle_record() {
   local output_dir="${target_dir}/oracle-regeneration"
   local engine row profile area manifest_path manifest_digest build_identity
@@ -861,6 +921,7 @@ regen_oracle() {
   local offline="$3"
   local validate_only="$4"
   local fixture="${5:-}"
+  local bootstrap_fixture="${6:-0}"
   local expected_profile
   local area
   local selected_engines
@@ -880,7 +941,13 @@ regen_oracle() {
           "tex82:initex-eight-bit:tex82/command-transitions-v1" ]]; then
     die "fixture ${fixture} requires --oracle tex82 --profile initex-eight-bit"
   fi
-  validate_oracle_contract "$engine"
+  [[ "$bootstrap_fixture" -eq 0 || "$validate_only" -eq 0 ]] ||
+    die '--bootstrap-fixture cannot be combined with --validate-only'
+  [[ "$bootstrap_fixture" -eq 0 ||
+      "${engine}:${profile}:${fixture}" == \
+        "tex82:initex-eight-bit:tex82/command-transitions-v1" ]] ||
+    die '--bootstrap-fixture requires the canonical TeX82 fixture selector'
+  validate_oracle_contract "$engine" "$bootstrap_fixture"
   if [[ "$validate_only" -eq 1 ]]; then
     if [[ -n "$fixture" || "$engine" == tex82 || "$engine" == all ]]; then
       validate_committed_oracle_fixture tex82/command-transitions-v1 0
@@ -904,7 +971,9 @@ regen_oracle() {
       "${repo_root}/scripts/build-${area}.sh" "${builder_args[@]}"
     validate_oracle_build_record "$engine"
   done
-  if [[ -n "$fixture" || "$profile" == canonical || "$engine" == tex82 ]]; then
+  if [[ "$bootstrap_fixture" -eq 1 ]]; then
+    bootstrap_tex82_oracle_fixture "$fixture"
+  elif [[ -n "$fixture" || "$profile" == canonical || "$engine" == tex82 ]]; then
     validate_committed_oracle_fixture tex82/command-transitions-v1 1
   fi
   if [[ "$profile" == canonical ]]; then
@@ -1403,6 +1472,7 @@ oracle_profile=""
 oracle_offline=0
 oracle_validate_only=0
 oracle_fixture=""
+oracle_bootstrap_fixture=0
 
 if [[ "$#" -eq 0 ]]; then
   usage
@@ -1476,6 +1546,11 @@ while [[ "$#" -gt 0 ]]; do
       oracle_validate_only=1
       shift
       ;;
+    --bootstrap-fixture)
+      [[ "$mode" == oracle ]] || die "--bootstrap-fixture requires --oracle"
+      oracle_bootstrap_fixture=1
+      shift
+      ;;
     *)
       die "unknown argument: $1"
       ;;
@@ -1510,7 +1585,8 @@ case "$mode" in
     [[ -n "$oracle_engine" ]] || die "missing oracle engine"
     [[ -n "$oracle_profile" ]] || die "--oracle requires --profile"
     regen_oracle "$oracle_engine" "$oracle_profile" \
-      "$oracle_offline" "$oracle_validate_only" "$oracle_fixture"
+      "$oracle_offline" "$oracle_validate_only" "$oracle_fixture" \
+      "$oracle_bootstrap_fixture"
     ;;
   *)
     usage

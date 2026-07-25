@@ -200,12 +200,35 @@ scripts/regen-fixtures.sh \
   [--offline]
 ```
 
-The workflow first completes the pinned clean/instrumented TeX82 transparency
-build. It validates the committed fixture, compares the focused source and
-every ordinary output with the clean run, replaces only the live observer's
-documented all-zero unbound header in a temporary candidate with the committed
-inner-manifest identity, and then requires the candidate stream to be
+The normal workflow first validates the committed fixture, then completes the
+pinned clean/instrumented TeX82 transparency build, compares every focused
+source and ordinary output with the clean run, replaces only the live
+observer's documented all-zero unbound header in a temporary candidate with the
+committed inner-manifest identity, and then requires the candidate stream to be
 byte-identical to `events.jsonl`. The live unbound stream is never committed.
+
+When adding a focused trace source intentionally makes the previous fixture
+stale, use the explicit bootstrap command instead of weakening that normal
+check:
+
+```bash
+scripts/regen-fixtures.sh \
+  --oracle tex82 \
+  --profile initex-eight-bit \
+  --fixture tex82/command-transitions-v1 \
+  --bootstrap-fixture \
+  [--offline]
+```
+
+Bootstrap still validates the pinned source and audit matrices before the live
+run. It stages every focused `.tex` input from the oracle run, ordinary clean
+outputs, and the instrumented stream in a new directory; re-derives source,
+output, tool, ordered-change, event, and manifest digests; binds the zero
+sentinel only after deriving the inner manifest; and runs the full fixture plus
+coverage audit on that candidate. Only then does it publish the candidate and
+the matching regeneration-contract manifest digest. Thus a newly added source
+does not require hand-written expected events or a valid obsolete fixture,
+while normal stale or corrupt fixture detection remains strict.
 
 `--validate-only` validates the source/regeneration manifests, both pinned
 coverage matrices, and committed fixture without acquiring or executing the

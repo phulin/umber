@@ -305,7 +305,7 @@ mod tests {
         let repository = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
         let suite = validate_tex82_command_trace_suite(repository).expect("committed suite");
         assert_eq!(suite.fixtures.len(), 1);
-        assert_eq!(suite.events, 11_665);
+        assert_eq!(suite.events, 11_780);
         assert_eq!(suite.fixtures[0].selector, "tex82/command-transitions-v1");
         assert!(
             suite.fixtures[0]

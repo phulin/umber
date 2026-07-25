@@ -49,6 +49,22 @@ terminal/log/status/DVI/generated-effect observations under
 file's all-zero sentinel only in a temporary candidate and requires exact
 agreement with the committed stream. The general repository contract is
 documented in [`command_semantic_fixtures.md`](command_semantic_fixtures.md).
+When adding a focused trace source, run the corresponding atomic bootstrap
+instead:
+
+```bash
+scripts/regen-fixtures.sh --oracle tex82 --profile initex-eight-bit \
+  --fixture tex82/command-transitions-v1 --bootstrap-fixture [--offline]
+```
+
+This is the only exception to validating the prior fixture before live
+regeneration. It derives a separate candidate's focused sources, clean ordinary
+outputs, bound semantic stream, manifest, and contract digest from the pinned
+oracle, validates the candidate with both coverage matrices, and publishes
+only after that validation. The ordinary selector continues to reject stale or
+corrupt committed artifacts. The TeX82 builder stages every `.tex` sibling of
+`transitions.tex` (except `smoke.tex`) into the focused run, so a newly pinned
+child source participates in the same reproducible command.
 The focused source pins TeX's four job-clock parameters before shipout so the
 ordinary DVI preamble remains exact even though the canonical `onlyTeX`
 program does not consume Web2C's reproducible-clock environment variables.
