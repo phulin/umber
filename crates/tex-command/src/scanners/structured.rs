@@ -712,6 +712,72 @@ impl CommandProcessor<'_> {
         }
     }
 
+    /// Completes the scalar portion of a math-mode primitive.  Any following
+    /// field or braced list is intentionally represented by a later opaque
+    /// replay episode, so the stomach never receives a source cursor.
+    pub fn scan_canonical_math_request(
+        &mut self,
+        primitive: UnexpandablePrimitive,
+    ) -> Result<Option<CanonicalMathRequest>, CommandError> {
+        use CanonicalMathRequest as Request;
+        use MathTextFieldKind as Field;
+        let request = match primitive {
+            UnexpandablePrimitive::MathChar => Request::Character(self.scan_math_character()?),
+            UnexpandablePrimitive::Delimiter => Request::Delimiter(self.scan_math_delimiter()?),
+            UnexpandablePrimitive::MathOrd => Request::TextField(Field::Ord),
+            UnexpandablePrimitive::MathOp => Request::TextField(Field::Op),
+            UnexpandablePrimitive::MathBin => Request::TextField(Field::Bin),
+            UnexpandablePrimitive::MathRel => Request::TextField(Field::Rel),
+            UnexpandablePrimitive::MathOpen => Request::TextField(Field::Open),
+            UnexpandablePrimitive::MathClose => Request::TextField(Field::Close),
+            UnexpandablePrimitive::MathPunct => Request::TextField(Field::Punct),
+            UnexpandablePrimitive::MathInner => Request::TextField(Field::Inner),
+            UnexpandablePrimitive::Underline => Request::TextField(Field::Underline),
+            UnexpandablePrimitive::Overline => Request::TextField(Field::Overline),
+            UnexpandablePrimitive::VCenter => Request::TextField(Field::VCenter),
+            UnexpandablePrimitive::Limits => Request::Limits(MathLimitKind::Limits),
+            UnexpandablePrimitive::NoLimits => Request::Limits(MathLimitKind::NoLimits),
+            UnexpandablePrimitive::DisplayLimits => Request::Limits(MathLimitKind::DisplayLimits),
+            UnexpandablePrimitive::Over => {
+                Request::Fraction(self.scan_math_fraction(MathFractionKind::Over, false)?)
+            }
+            UnexpandablePrimitive::Atop => {
+                Request::Fraction(self.scan_math_fraction(MathFractionKind::Atop, false)?)
+            }
+            UnexpandablePrimitive::Above => {
+                Request::Fraction(self.scan_math_fraction(MathFractionKind::Above, false)?)
+            }
+            UnexpandablePrimitive::OverWithDelims => {
+                Request::Fraction(self.scan_math_fraction(MathFractionKind::Over, true)?)
+            }
+            UnexpandablePrimitive::AtopWithDelims => {
+                Request::Fraction(self.scan_math_fraction(MathFractionKind::Atop, true)?)
+            }
+            UnexpandablePrimitive::AboveWithDelims => {
+                Request::Fraction(self.scan_math_fraction(MathFractionKind::Above, true)?)
+            }
+            UnexpandablePrimitive::Radical => Request::Radical(self.scan_math_delimiter()?),
+            UnexpandablePrimitive::Accent | UnexpandablePrimitive::MathAccent => {
+                Request::Accent(self.scan_math_character()?)
+            }
+            UnexpandablePrimitive::MSkip => Request::MuMaterial(self.scan_math_mu_material(true)?),
+            UnexpandablePrimitive::MKern => Request::MuMaterial(self.scan_math_mu_material(false)?),
+            UnexpandablePrimitive::MathChoice => Request::Choice,
+            UnexpandablePrimitive::DisplayStyle => Request::Style(MathStyleKind::Display),
+            UnexpandablePrimitive::TextStyle => Request::Style(MathStyleKind::Text),
+            UnexpandablePrimitive::ScriptStyle => Request::Style(MathStyleKind::Script),
+            UnexpandablePrimitive::ScriptScriptStyle => Request::Style(MathStyleKind::ScriptScript),
+            UnexpandablePrimitive::EqNo => Request::EquationNumber(ScannedEquationNumber {
+                side: EquationNumberSide::Right,
+            }),
+            UnexpandablePrimitive::LeftEqNo => Request::EquationNumber(ScannedEquationNumber {
+                side: EquationNumberSide::Left,
+            }),
+            _ => return Ok(None),
+        };
+        Ok(Some(request))
+    }
+
     /// Scans TeX82's `\\openin`, `\\closein`, `\\read`, and e-TeX's
     /// `\\readline` operands without exposing a raw delivery to replay.
     pub fn scan_input_stream_request(

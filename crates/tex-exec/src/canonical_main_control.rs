@@ -7,12 +7,13 @@
 use std::path::PathBuf;
 use tex_command::{
     AlignmentCellDelimiter, AlignmentCellOpening, AlignmentCellTemplates, AlignmentDelivery,
-    AlignmentIdentity, AlignmentRequest, AlignmentRequestResult, CommandError,
-    CommandHostCapabilities, CommandHostContext, CommandProcessor, CommandProfile, CommandRuntime,
-    CommandState, CommandStateSnapshot, FontLoadRequest, FontResource, ImmediateExtension,
-    InputStreamRequest, ScannedAccent, ScannedBoxConstruction, ScannedBoxKind,
-    ScannedDiscretionary, ScannedDisplayDiagnostic, ScannedLeaderPayload, ScannedPackingSpec,
-    ScannedVSplit, SourceRegistration, SourceRegistrationError,
+    AlignmentIdentity, AlignmentRequest, AlignmentRequestResult, CanonicalMathRequest,
+    CommandError, CommandHostCapabilities, CommandHostContext, CommandProcessor, CommandProfile,
+    CommandRuntime, CommandState, CommandStateSnapshot, FontLoadRequest, FontResource,
+    ImmediateExtension, InputStreamRequest, MathEpisodeRecovery, MathLimitKind, MathScriptKind,
+    MathStyleKind, MathTextFieldKind, ScannedAccent, ScannedBoxConstruction, ScannedBoxKind,
+    ScannedDiscretionary, ScannedDisplayDiagnostic, ScannedLeaderPayload, ScannedMathMuMaterial,
+    ScannedPackingSpec, ScannedVSplit, SourceRegistration, SourceRegistrationError,
 };
 #[cfg(any(test, feature = "instrumentation"))]
 use tex_command::{
@@ -24,6 +25,10 @@ use tex_state::glue::{GlueSpec, Order};
 use tex_state::ids::FontId;
 use tex_state::interner::Symbol;
 use tex_state::macro_store::{MacroDefinitionProvenance, MacroMeaning};
+use tex_state::math::{
+    FractionThickness, LimitType, MathChar, MathChoice, MathField, MathFraction, MathNoad,
+    MathStyle, NoadClass, NoadKind,
+};
 use tex_state::meaning::{Meaning, MeaningFlags, UnexpandablePrimitive};
 use tex_state::node::{DiscKind, GlueKind, KernKind, LeaderPayload, Node, Whatsit};
 use tex_state::scaled::Scaled;
@@ -47,6 +52,7 @@ pub struct CanonicalMainControl {
     active_alignment: Option<ActiveReplayAlignment>,
     boxes: ReplayBoxes,
     output_dead_cycles: i32,
+    completed_replay_episode: Option<tex_command::CommandReplayEpisode>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -148,6 +154,7 @@ struct CanonicalStepSnapshot {
     active_alignment: Option<ActiveReplayAlignment>,
     boxes: ReplayBoxes,
     output_dead_cycles: i32,
+    completed_replay_episode: Option<tex_command::CommandReplayEpisode>,
     universe: tex_state::Snapshot,
 }
 
@@ -336,6 +343,7 @@ impl CanonicalMainControl {
             active_alignment: self.active_alignment.clone(),
             boxes: self.boxes.clone(),
             output_dead_cycles: self.output_dead_cycles,
+            completed_replay_episode: self.completed_replay_episode,
             universe: stores.snapshot(),
         }
     }
@@ -356,6 +364,7 @@ impl CanonicalMainControl {
         self.active_alignment = snapshot.active_alignment;
         self.boxes = snapshot.boxes;
         self.output_dead_cycles = snapshot.output_dead_cycles;
+        self.completed_replay_episode = snapshot.completed_replay_episode;
         stores.rollback(&snapshot.universe);
     }
 
@@ -465,6 +474,13 @@ impl CanonicalMainControl {
         };
         let scanned = self.resolve_font_resource(scanned)?;
         let scanned = self.resolve_input_stream_resource(scanned)?;
+        if let ScannedStep::ReplayCompleted(episode) = scanned {
+            self.completed_replay_episode = Some(episode);
+            return Ok(ReplayStep::Continue);
+        }
+        if let ScannedStep::Math(request) = scanned {
+            return self.apply_canonical_math_request(request, stores);
+        }
         if let ScannedStep::Discretionary(discretionary) = scanned {
             return self.apply_discretionary(discretionary, stores);
         }
@@ -632,6 +648,13 @@ impl CanonicalMainControl {
         };
         let scanned = self.resolve_font_resource(scanned)?;
         let scanned = self.resolve_input_stream_resource(scanned)?;
+        if let ScannedStep::ReplayCompleted(episode) = scanned {
+            self.completed_replay_episode = Some(episode);
+            return Ok(ReplayStep::Continue);
+        }
+        if let ScannedStep::Math(request) = scanned {
+            return self.apply_canonical_math_request(request, stores);
+        }
         if let ScannedStep::Discretionary(discretionary) = scanned {
             return self.apply_discretionary(discretionary, stores);
         }
@@ -649,6 +672,211 @@ impl CanonicalMainControl {
             schedule_afterassignment(&mut self.command, stores);
         }
         Ok(result)
+    }
+
+    fn execute_math_episode(
+        &mut self,
+        episode: tex_command::CommandReplayEpisode,
+        stores: &mut Universe,
+    ) -> Result<tex_state::ids::NodeListId, ExecError> {
+        self.modes.push(Mode::Math);
+        loop {
+            self.completed_replay_episode = None;
+            match self.step_once(stores)? {
+                ReplayStep::End | ReplayStep::EndOfInput => {
+                    return Err(ExecError::MissingToken {
+                        context: "math replay episode",
+                    });
+                }
+                ReplayStep::Continue => {}
+            }
+            if self.completed_replay_episode == Some(episode) {
+                break;
+            }
+        }
+        let level = self.modes.pop()?;
+        finish_canonical_math_list(
+            level.list().nodes(),
+            level.list().incomplete_fraction(),
+            stores,
+        )
+    }
+
+    fn execute_math_field(
+        &mut self,
+        field: tex_command::MathFieldEpisode,
+        stores: &mut Universe,
+    ) -> Result<MathField, ExecError> {
+        if matches!(field.recovery, MathEpisodeRecovery::MissingField) {
+            return Ok(MathField::Empty);
+        }
+        let episode = self.command.push_math_field_episode(field);
+        let list = self.execute_math_episode(episode, stores)?;
+        Ok(simplify_canonical_math_field(stores, list))
+    }
+
+    fn execute_math_group(
+        &mut self,
+        group: tex_command::MathGroupEpisode,
+        stores: &mut Universe,
+    ) -> Result<tex_state::ids::NodeListId, ExecError> {
+        let episode = self.command.push_math_group_episode(group);
+        self.execute_math_episode(episode, stores)
+    }
+
+    fn apply_canonical_math_request(
+        &mut self,
+        request: CanonicalMathRequest,
+        stores: &mut Universe,
+    ) -> Result<ReplayStep, ExecError> {
+        match request {
+            CanonicalMathRequest::Character(value) => {
+                append_canonical_math_char(
+                    self.modes.current_list_mut(),
+                    stores,
+                    u32::from(value.code),
+                    value.provenance.primary,
+                )?;
+            }
+            CanonicalMathRequest::Delimiter(value) => {
+                append_canonical_math_char(
+                    self.modes.current_list_mut(),
+                    stores,
+                    value.code >> 12,
+                    value.provenance.primary,
+                )?;
+            }
+            CanonicalMathRequest::TextField(kind) => {
+                let episode = self.command_scan_math_field(stores)?;
+                let field = self.execute_math_field(episode, stores)?;
+                self.modes
+                    .current_list_mut()
+                    .push(Node::MathNoad(MathNoad::new(
+                        noad_kind_for_text(kind),
+                        field,
+                    )));
+            }
+            CanonicalMathRequest::Script(script) => {
+                let episode = self.command_scan_math_script(script.kind, stores)?;
+                let field = self.execute_math_field(episode, stores)?;
+                attach_canonical_script(self.modes.current_list_mut(), stores, field, script.kind);
+            }
+            CanonicalMathRequest::Limits(kind) => {
+                apply_canonical_limits(self.modes.current_list_mut(), stores, kind)
+            }
+            CanonicalMathRequest::Fraction(fraction) => {
+                start_canonical_fraction(self.modes.current_list_mut(), stores, fraction)
+            }
+            CanonicalMathRequest::Style(style) => {
+                self.modes
+                    .current_list_mut()
+                    .push(Node::MathStyle(match style {
+                        MathStyleKind::Display => MathStyle::Display,
+                        MathStyleKind::Text => MathStyle::Text,
+                        MathStyleKind::Script => MathStyle::Script,
+                        MathStyleKind::ScriptScript => MathStyle::ScriptScript,
+                    }))
+            }
+            CanonicalMathRequest::Choice => {
+                let choices = self.command_scan_math_choice(stores)?;
+                let display = self.execute_math_group(choices.display, stores)?;
+                let text = self.execute_math_group(choices.text, stores)?;
+                let script = self.execute_math_group(choices.script, stores)?;
+                let script_script = self.execute_math_group(choices.scriptscript, stores)?;
+                self.modes
+                    .current_list_mut()
+                    .push(Node::MathChoice(MathChoice {
+                        display,
+                        text,
+                        script,
+                        script_script,
+                    }));
+            }
+            CanonicalMathRequest::Radical(delimiter) => {
+                let episode = self.command_scan_math_field(stores)?;
+                let field = self.execute_math_field(episode, stores)?;
+                self.modes
+                    .current_list_mut()
+                    .push(Node::MathNoad(MathNoad::new(
+                        NoadKind::Radical {
+                            delimiter: delimiter.code,
+                        },
+                        field,
+                    )));
+            }
+            CanonicalMathRequest::Accent(accent) => {
+                let episode = self.command_scan_math_field(stores)?;
+                let field = self.execute_math_field(episode, stores)?;
+                let accent =
+                    canonical_math_char(stores, u32::from(accent.code), accent.provenance.primary)?
+                        .1;
+                self.modes
+                    .current_list_mut()
+                    .push(Node::MathNoad(MathNoad::new(
+                        NoadKind::Accent { accent },
+                        field,
+                    )));
+            }
+            CanonicalMathRequest::MuMaterial(ScannedMathMuMaterial::Glue(glue)) => {
+                self.modes.current_list_mut().push(Node::Glue {
+                    spec: stores.intern_glue(glue),
+                    kind: GlueKind::MuSkip,
+                    leader: None,
+                })
+            }
+            CanonicalMathRequest::MuMaterial(ScannedMathMuMaterial::Kern(amount)) => {
+                self.modes.current_list_mut().push(Node::Kern {
+                    amount,
+                    kind: KernKind::Mu,
+                })
+            }
+            CanonicalMathRequest::Family(_) | CanonicalMathRequest::EquationNumber(_) => {}
+        }
+        Ok(ReplayStep::Continue)
+    }
+
+    fn command_scan_math_field(
+        &mut self,
+        stores: &mut Universe,
+    ) -> Result<tex_command::MathFieldEpisode, ExecError> {
+        CommandProcessor::new(
+            &mut self.command,
+            &mut self.runtime,
+            stores.command_context(),
+            CommandHostContext::new(&mut self.capabilities),
+        )
+        .scan_math_field_episode()
+        .map_err(command_error)
+    }
+
+    fn command_scan_math_script(
+        &mut self,
+        kind: MathScriptKind,
+        stores: &mut Universe,
+    ) -> Result<tex_command::MathFieldEpisode, ExecError> {
+        CommandProcessor::new(
+            &mut self.command,
+            &mut self.runtime,
+            stores.command_context(),
+            CommandHostContext::new(&mut self.capabilities),
+        )
+        .scan_math_script_attachment(kind)
+        .map(|attachment| attachment.field)
+        .map_err(command_error)
+    }
+
+    fn command_scan_math_choice(
+        &mut self,
+        stores: &mut Universe,
+    ) -> Result<tex_command::MathChoiceEpisodes, ExecError> {
+        CommandProcessor::new(
+            &mut self.command,
+            &mut self.runtime,
+            stores.command_context(),
+            CommandHostContext::new(&mut self.capabilities),
+        )
+        .scan_math_choice_episodes()
+        .map_err(command_error)
     }
 
     /// Delivers and executes one replay command while forwarding committed
@@ -971,9 +1199,188 @@ type CommandReplayControl = CanonicalMainControl;
 // see `MainControlStep`.
 type ReplayStep = MainControlStep;
 
+fn canonical_math_char(
+    stores: &Universe,
+    code: u32,
+    origin: tex_state::token::OriginId,
+) -> Result<(NoadClass, MathChar), ExecError> {
+    if code > 0x7fff {
+        return Err(ExecError::InvalidCode {
+            context: "\\mathchar",
+            value: code as i32,
+        });
+    }
+    let class = match (code >> 12) & 7 {
+        0 => NoadClass::Ord,
+        1 => NoadClass::Op,
+        2 => NoadClass::Bin,
+        3 => NoadClass::Rel,
+        4 => NoadClass::Open,
+        5 => NoadClass::Close,
+        6 => NoadClass::Punct,
+        _ => NoadClass::Ord,
+    };
+    let mut family = ((code >> 8) & 15) as u8;
+    if ((code >> 12) & 7) == 7 {
+        let fam = stores.int_param(IntParam::FAM);
+        if (0..16).contains(&fam) {
+            family = fam as u8;
+        }
+    }
+    Ok((
+        class,
+        MathChar {
+            family,
+            character: char::from_u32(code & 0xff).unwrap_or('\0'),
+            origin,
+        },
+    ))
+}
+
+fn append_canonical_math_char(
+    list: &mut crate::ModeList,
+    stores: &Universe,
+    code: u32,
+    origin: tex_state::token::OriginId,
+) -> Result<(), ExecError> {
+    let (class, character) = canonical_math_char(stores, code, origin)?;
+    list.push(Node::MathNoad(MathNoad::new(
+        NoadKind::Normal(class),
+        MathField::MathChar(character),
+    )));
+    Ok(())
+}
+
+fn noad_kind_for_text(kind: MathTextFieldKind) -> NoadKind {
+    match kind {
+        MathTextFieldKind::Ord => NoadKind::Normal(NoadClass::Ord),
+        MathTextFieldKind::Op => NoadKind::Normal(NoadClass::Op),
+        MathTextFieldKind::Bin => NoadKind::Normal(NoadClass::Bin),
+        MathTextFieldKind::Rel => NoadKind::Normal(NoadClass::Rel),
+        MathTextFieldKind::Open => NoadKind::Normal(NoadClass::Open),
+        MathTextFieldKind::Close => NoadKind::Normal(NoadClass::Close),
+        MathTextFieldKind::Punct => NoadKind::Normal(NoadClass::Punct),
+        MathTextFieldKind::Inner => NoadKind::Normal(NoadClass::Inner),
+        MathTextFieldKind::Underline => NoadKind::Underline,
+        MathTextFieldKind::Overline => NoadKind::Overline,
+        MathTextFieldKind::VCenter => NoadKind::VCenter,
+    }
+}
+
+fn simplify_canonical_math_field(stores: &Universe, list: tex_state::ids::NodeListId) -> MathField {
+    let nodes = stores.nodes(list);
+    if nodes.len() == 1
+        && let Some(tex_state::node_arena::NodeRef::MathNoad(noad)) = nodes.first()
+        && matches!(noad.kind, NoadKind::Normal(NoadClass::Ord))
+        && matches!(noad.subscript, MathField::Empty)
+        && matches!(noad.superscript, MathField::Empty)
+    {
+        noad.nucleus
+    } else {
+        MathField::SubMlist(list)
+    }
+}
+
+fn attach_canonical_script(
+    list: &mut crate::ModeList,
+    stores: &mut Universe,
+    field: MathField,
+    kind: MathScriptKind,
+) {
+    let Some(mut node) = list.pop_last_node() else {
+        let mut noad = MathNoad::new(NoadKind::Normal(NoadClass::Ord), MathField::Empty);
+        if kind == MathScriptKind::Superscript {
+            noad.superscript = field
+        } else {
+            noad.subscript = field
+        };
+        list.push(Node::MathNoad(noad));
+        return;
+    };
+    if let Node::MathNoad(noad) = &mut node {
+        let target = if kind == MathScriptKind::Superscript {
+            &mut noad.superscript
+        } else {
+            &mut noad.subscript
+        };
+        if matches!(target, MathField::Empty) {
+            *target = field;
+            list.push(node);
+            return;
+        }
+    }
+    list.push(node);
+    let mut noad = MathNoad::new(NoadKind::Normal(NoadClass::Ord), MathField::Empty);
+    if kind == MathScriptKind::Superscript {
+        noad.superscript = field
+    } else {
+        noad.subscript = field
+    };
+    list.push(Node::MathNoad(noad));
+    stores
+        .world_mut()
+        .write_text(PrintSink::TerminalAndLog, "\n! Double math script.\n");
+}
+
+fn apply_canonical_limits(list: &mut crate::ModeList, _stores: &mut Universe, kind: MathLimitKind) {
+    if let Some(Node::MathNoad(noad)) = list.last_node_mut()
+        && matches!(
+            noad.kind,
+            NoadKind::Normal(NoadClass::Op) | NoadKind::Operator(_)
+        )
+    {
+        noad.kind = NoadKind::Operator(match kind {
+            MathLimitKind::Limits => LimitType::Limits,
+            MathLimitKind::NoLimits => LimitType::NoLimits,
+            MathLimitKind::DisplayLimits => LimitType::DisplayLimits,
+        });
+    }
+}
+
+fn start_canonical_fraction(
+    list: &mut crate::ModeList,
+    stores: &mut Universe,
+    fraction: tex_command::ScannedMathFraction,
+) {
+    if list.incomplete_fraction().is_some() {
+        return;
+    }
+    let numerator = stores.freeze_node_list(&list.take_nodes());
+    list.set_incomplete_fraction(crate::mode::IncompleteFraction {
+        numerator,
+        thickness: match fraction.thickness {
+            Some(value) => FractionThickness::Explicit(value),
+            None => FractionThickness::Default,
+        },
+        left_delimiter: fraction.left_delimiter.map(|value| value.code),
+        right_delimiter: fraction.right_delimiter.map(|value| value.code),
+    });
+}
+
+fn finish_canonical_math_list(
+    nodes: &[Node],
+    incomplete: Option<&crate::mode::IncompleteFraction>,
+    stores: &mut Universe,
+) -> Result<tex_state::ids::NodeListId, ExecError> {
+    let mut output = nodes.to_vec();
+    if let Some(fraction) = incomplete {
+        let denominator = stores.freeze_node_list(&output);
+        output = vec![Node::FractionNoad(MathFraction {
+            numerator: fraction.numerator,
+            denominator,
+            thickness: fraction.thickness,
+            left_delimiter: fraction.left_delimiter,
+            right_delimiter: fraction.right_delimiter,
+        })];
+    }
+    Ok(stores.freeze_node_list(&output))
+}
+
 #[derive(Clone)]
 enum ScannedStep {
     Continue,
+    ReplayCompleted(tex_command::CommandReplayEpisode),
+    Math(CanonicalMathRequest),
     EndOfInput,
     Terminate,
     End,
@@ -1562,12 +1969,21 @@ fn scan_step(
     output_dead_cycles: &mut i32,
     max_dead_cycles: i32,
 ) -> Result<ScannedStep, ExecError> {
-    let Some(mut command) = processor.get_x_token().map_err(command_error)? else {
+    let Some(delivery) = processor
+        .get_x_token_with_replay_completion()
+        .map_err(command_error)?
+    else {
         return Ok(if boxes.terminal_output_shipout_complete {
             ScannedStep::Terminate
         } else {
             ScannedStep::EndOfInput
         });
+    };
+    let tex_command::CommandReplayDelivery::Command(mut command) = delivery else {
+        let tex_command::CommandReplayDelivery::Completed(episode) = delivery else {
+            unreachable!();
+        };
+        return Ok(ScannedStep::ReplayCompleted(episode));
     };
     let mut global = false;
     let mut flags = MeaningFlags::EMPTY;
@@ -1766,6 +2182,47 @@ fn scan_command(
     output_dead_cycles: &mut i32,
     max_dead_cycles: i32,
 ) -> Result<ScannedStep, ExecError> {
+    // Math operands are scanned exclusively by `tex-command`.  The replay
+    // driver receives a typed scalar request and schedules any opaque field
+    // episode only after this processor borrow has ended.
+    if matches!(mode, Mode::Math | Mode::DisplayMath)
+        && let Meaning::UnexpandablePrimitive(primitive) = command.meaning()
+        && let Some(request) = processor
+            .scan_canonical_math_request(primitive)
+            .map_err(command_error)?
+    {
+        return Ok(ScannedStep::Math(request));
+    }
+    if matches!(mode, Mode::Math | Mode::DisplayMath)
+        && let Meaning::CharToken {
+            cat: Catcode::Superscript,
+            ..
+        } = command.meaning()
+    {
+        return Ok(ScannedStep::Math(CanonicalMathRequest::Script(
+            tex_command::ScannedMathScript {
+                kind: MathScriptKind::Superscript,
+                provenance: tex_command::StructuredProvenance {
+                    primary: command.origin(),
+                },
+            },
+        )));
+    }
+    if matches!(mode, Mode::Math | Mode::DisplayMath)
+        && let Meaning::CharToken {
+            cat: Catcode::Subscript,
+            ..
+        } = command.meaning()
+    {
+        return Ok(ScannedStep::Math(CanonicalMathRequest::Script(
+            tex_command::ScannedMathScript {
+                kind: MathScriptKind::Subscript,
+                provenance: tex_command::StructuredProvenance {
+                    primary: command.origin(),
+                },
+            },
+        )));
+    }
     // TeX82 permits \long/\outer only on macro definitions.  Keep this
     // check beside prefix collection so every ordinary assignment family has
     // the same legality rule and cannot silently discard a prefix.
@@ -3156,6 +3613,9 @@ fn apply_scanned_step(
 ) -> Result<ReplayStep, ExecError> {
     match scanned {
         ScannedStep::Continue => Ok(ReplayStep::Continue),
+        // These are intercepted by `CanonicalMainControl::step_once`, where
+        // the owning opaque episode and mutable replay driver are available.
+        ScannedStep::ReplayCompleted(_) | ScannedStep::Math(_) => Ok(ReplayStep::Continue),
         ScannedStep::EndOfInput | ScannedStep::Terminate => Ok(ReplayStep::EndOfInput),
         ScannedStep::End => Ok(ReplayStep::End),
         ScannedStep::Count {
@@ -4419,6 +4879,15 @@ fn apply_scanned_step(
             Ok(ReplayStep::Continue)
         }
         ScannedStep::Character { ch, cat, origin } => {
+            if matches!(modes.current_mode(), Mode::Math | Mode::DisplayMath) {
+                if !matches!(cat, Catcode::Space) {
+                    let code = stores.mathcode(ch);
+                    if code != 0x8000 {
+                        append_canonical_math_char(modes.current_list_mut(), stores, code, origin)?;
+                    }
+                }
+                return Ok(ReplayStep::Continue);
+            }
             match cat {
                 Catcode::Space => {
                     if matches!(
