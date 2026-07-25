@@ -483,7 +483,7 @@ impl CommandProcessor<'_> {
     }
 
     fn check_argument_paragraph(
-        &self,
+        &mut self,
         command: &crate::CurrentCommand,
         flags: MeaningFlags,
     ) -> Result<(), CommandError> {
@@ -492,6 +492,12 @@ impl CommandProcessor<'_> {
             Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Par)
         ) && !flags.contains(MeaningFlags::LONG)
         {
+            // TeX82 §394 reports this through `back_error` while the macro
+            // matcher is still live.  The caller will then restore its
+            // enclosing scanner status, so retain the exact `\par` input
+            // ahead of that restoration rather than merely returning an
+            // error from the scalar matcher.
+            self.back_input(command.copy_for_backup())?;
             return Err(CommandError::ParagraphInMacroArgument);
         }
         Ok(())

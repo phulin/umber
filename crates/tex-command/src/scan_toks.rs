@@ -264,8 +264,15 @@ impl CommandProcessor<'_> {
                     // Protected macros are terminal tokens in an e-TeX
                     // expanded token-list scan.
                 } else {
-                    self.expand(command)?;
-                    continue;
+                    // TeX82 §394 recovers a non-`\long` macro argument's
+                    // `\par` by backing it up while `matching` is live. The
+                    // failed macro expansion is then discarded, but the
+                    // enclosing definition scan remains live and consumes
+                    // that backed-up paragraph token.
+                    match self.expand(command) {
+                        Ok(()) | Err(CommandError::ParagraphInMacroArgument) => continue,
+                        Err(error) => return Err(error),
+                    }
                 }
             }
 

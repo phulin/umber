@@ -207,7 +207,7 @@ fn scan_toks_keeps_its_one_step_collector_and_direct_splice_boundary() {
 
     assert_eq!(scanner.matches("fn scan_toks_inner(").count(), 1);
     assert!(collector.contains("self.get_next()?"));
-    assert!(collector.contains("self.expand(command)?;"));
+    assert!(collector.contains("self.expand(command)"));
     assert!(collector.contains("self.append_direct_the_toks(&mut output)?"));
     assert!(
         !collector.contains("self.get_x_token()?"),

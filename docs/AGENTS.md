@@ -41,6 +41,10 @@ canonical TeX82/e-TeX/pdfTeX command-machine replacement tracked by Beads epic
 levels, command delivery, expansion, scanners, extensions, provenance,
 incrementality, reference oracles, and optimization promotion.
 
+`writeback/` records concise issue-scoped authority notes required by command
+conformance work; each note names the governing TeX82 section and the adopted
+semantic boundary, not temporary implementation plans.
+
 `command_semantic_fixtures.md` defines repository fixture contract v1 for
 committed canonical command streams, profile/tool/source/output identity,
 mandatory WEB citations, hermetic correctness consumption, and explicit live

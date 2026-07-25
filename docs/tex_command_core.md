@@ -1376,7 +1376,12 @@ with `end_match`: a parameterless macro pushes its replacement body directly,
 without a `Matching` observation. Otherwise the implementation installs
 `Matching` around compulsory-prefix and argument delivery. It uses raw `get_token`, strips precisely one outer argument group,
 retains nested literal braces, and lets the existing outer-validity operation
-perform all inserted-token recovery. Direct delimited matching retains the
+perform all inserted-token recovery. TeX82 §394 backs up a forbidden `\par`
+while `Matching` is still live, before the failed call restores its enclosing
+scanner status; this preserves the recoverable input and scanner-transition
+order for a non-`\long` macro. An expanded definition scan then discards that
+failed expansion and collects the backed-up paragraph while `Defining` remains
+live. Direct delimited matching retains the
 maximal overlapping delimiter prefix after a partial mismatch, commits each
 unreusable leading token literally with its command-owned
 `macro_delimiter_recovery` observation, ignores delimiters below literal brace

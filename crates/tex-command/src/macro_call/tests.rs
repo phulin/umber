@@ -414,6 +414,86 @@ fn paragraph_is_rejected_only_for_non_long_macros() {
 }
 
 #[test]
+fn non_long_paragraph_backs_up_before_restoring_matching_status() {
+    let mut command = CommandState::default();
+    let source = command
+        .register_source(SourceRegistration::new(
+            RegisteredSourceKind::Generated,
+            Arc::<[u8]>::from(&b"\\m\\par"[..]),
+        ))
+        .expect("source registers");
+    command
+        .open_registered_source(source)
+        .expect("source opens");
+    let mut runtime = CommandRuntime::default();
+    let mut universe = Universe::new();
+    universe.install_primitive_meaning(
+        "par",
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Par),
+    );
+    let name = universe.intern("m").symbol();
+    let parameters = universe.intern_token_list(&[Token::param(1)]);
+    let replacement = universe.intern_token_list(&[]);
+    let definition = universe.intern_macro(MacroMeaning::new(
+        MeaningFlags::EMPTY,
+        parameters,
+        replacement,
+    ));
+    universe.set_meaning(
+        name,
+        Meaning::Macro {
+            flags: MeaningFlags::EMPTY,
+            definition,
+        },
+    );
+    let _prior = command.begin_scanner_status(ScannerStatus::Defining(DefinitionContext {
+        target: None,
+        builder: TokenBuilderId(9),
+        warning: ScannerWarning(9),
+    }));
+    let mut capabilities = CommandHostCapabilities::default();
+    let mut recorder = Recorder::default();
+    let mut processor = CommandProcessor::new(
+        &mut command,
+        &mut runtime,
+        universe.command_context(),
+        CommandHostContext::new(&mut capabilities),
+    )
+    .with_observer(&mut recorder);
+
+    let call = processor
+        .get_next()
+        .expect("macro call delivery")
+        .expect("macro token");
+    assert_eq!(
+        processor.macro_call(call),
+        Err(CommandError::ParagraphInMacroArgument)
+    );
+
+    let backup = recorder
+        .0
+        .iter()
+        .position(|observation| matches!(
+            observation,
+            CommandObservation::Input(record)
+                if record.transition == InputTransition::Backup && record.reason == InputReason::Backup
+        ))
+        .expect("paragraph is backed up while matching");
+    let restored = recorder
+        .0
+        .iter()
+        .position(|observation| {
+            matches!(
+                observation,
+                CommandObservation::ScannerStatus(status)
+                    if status.from.starts_with("Matching") && status.to.starts_with("Defining")
+            )
+        })
+        .expect("matching restores enclosing definition status");
+    assert!(backup < restored);
+}
+
+#[test]
 fn outer_argument_token_uses_raw_delivery_recovery_then_aborts_match() {
     assert_eq!(
         run_macro(b"\\m\\outer", MeaningFlags::EMPTY, &[Token::param(1)], true),
