@@ -629,6 +629,84 @@ fn successful_call_activates_canonical_replacement_and_replays_parameter_range()
 }
 
 #[test]
+fn nested_macro_activation_retires_the_exhausted_caller_before_pushing_the_callee() {
+    let mut command = CommandState::default();
+    let source = command
+        .register_source(SourceRegistration::new(
+            RegisteredSourceKind::Generated,
+            Arc::<[u8]>::from(&b"\\outer"[..]),
+        ))
+        .expect("source registers");
+    command
+        .open_registered_source(source)
+        .expect("source opens");
+    let mut runtime = CommandRuntime::default();
+    let mut universe = Universe::new();
+    let outer = universe.intern("outer").symbol();
+    let inner = universe.intern("inner").symbol();
+    let empty = universe.intern_token_list(&[]);
+    let outer_replacement = universe.intern_token_list(&[Token::Cs(inner)]);
+    let outer_definition = universe.intern_macro(MacroMeaning::new(
+        MeaningFlags::EMPTY,
+        empty,
+        outer_replacement,
+    ));
+    let inner_definition =
+        universe.intern_macro(MacroMeaning::new(MeaningFlags::EMPTY, empty, empty));
+    universe.set_meaning(
+        outer,
+        Meaning::Macro {
+            flags: MeaningFlags::EMPTY,
+            definition: outer_definition,
+        },
+    );
+    universe.set_meaning(
+        inner,
+        Meaning::Macro {
+            flags: MeaningFlags::EMPTY,
+            definition: inner_definition,
+        },
+    );
+    let mut capabilities = CommandHostCapabilities::default();
+    let mut recorder = Recorder::default();
+    let mut processor = CommandProcessor::new(
+        &mut command,
+        &mut runtime,
+        universe.command_context(),
+        CommandHostContext::new(&mut capabilities),
+    )
+    .with_observer(&mut recorder);
+
+    assert!(
+        processor
+            .get_x_token()
+            .expect("nested macro expansion succeeds")
+            .is_none()
+    );
+
+    let macro_lifecycle: Vec<_> = recorder
+        .0
+        .iter()
+        .filter_map(|observation| match observation {
+            CommandObservation::Input(record) if record.reason == InputReason::Macro => {
+                Some(record.transition)
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        macro_lifecycle,
+        vec![
+            InputTransition::Push,
+            InputTransition::Retire,
+            InputTransition::Push,
+            InputTransition::Retire,
+        ],
+        "TeX82 §392 retires the depleted caller before the callee body is pushed"
+    );
+}
+
+#[test]
 fn nested_calls_keep_out_parameter_ownership_and_invocation_provenance() {
     let mut command = CommandState::default();
     let source = command

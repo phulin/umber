@@ -239,12 +239,15 @@ impl CommandProcessor<'_> {
         // the input. The activation owns that one shared buffer; its body
         // replays the canonical immutable replacement list and resolves
         // compact `OutParameter` tokens through that owner.
-        // If the macro itself was the one saved by TeX82 §25's
-        // `\expandafter`, its one-token backup must retire before this new
-        // macro activation takes the input top. Otherwise the backup's
-        // canonical retirement would be delayed until after the replacement
-        // list, reversing TeX's input lifecycle.
-        self.retire_exhausted_backup_before_scalar_replay(call.delivery_stamp())?;
+        // TeX82 §392's replacement hand-off drains an exhausted macro body
+        // before `begin_token_list(..., macro)`. A recovered paragraph can
+        // leave that caller at the input top, and recursive macros rely on
+        // the same cleanup to avoid unbounded stack growth. Backups retain
+        // their separate §25 hand-off rule below; other transient recovery
+        // input remains live until the ordinary raw-delivery loop consumes
+        // it. The macro retirement must precede this body's input push.
+        self.retire_exhausted_backup_before_macro_replay(call.delivery_stamp())?;
+        self.retire_exhausted_macro_bodies_before_macro_replay()?;
         let provenance = self.state.macro_definition_provenance(definition);
         let _level = self.push_macro_activation(
             definition,

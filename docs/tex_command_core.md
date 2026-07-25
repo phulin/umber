@@ -1361,9 +1361,12 @@ Macro definitions retain canonical parameter and replacement token lists.
 8. applies the `#{` delimiter/brace rule;
 9. strips one complete outer group when required;
 10. stores every completed argument once in one shared packed buffer;
-11. creates one macro invocation provenance node and pushes the replacement
+11. retires any exhausted macro-body level before placing the replacement
+    list above its caller, while preserving the independently observable
+    backup and recovery lifecycles;
+12. creates one macro invocation provenance node and pushes the replacement
     as a macro-body input level owning the argument ranges; and
-12. restores the matching scanner status, when one was installed.
+13. restores the matching scanner status, when one was installed.
 
 The initial promoted implementation does not use a compiled delimiter
 automaton, macro bytecode, or alternate fast matcher. Such acceleration may be
@@ -1388,8 +1391,13 @@ unreusable leading token literally with its command-owned
 depth, and cancels the raw brace accounting for a matched `#{` delimiter. A
 successful call freezes every range once, creates one invocation origin, and
 installs exactly one activation/body pair over the canonical replacement list;
-replay resolves
-its compact `OutParameter` tokens through that activation.
+replay resolves its compact `OutParameter` tokens through that activation.
+Before this replacement hand-off, TeX82 §392 cleans the exhausted calling
+macro body before the new body is pushed. The typed input stack preserves its
+separate raw-delivery lifecycles for transient recovery and §25 backups, while
+the v-template remains live for its `end_template`/`endv` hand-off. This
+preserves recursive-macro stack bounds and the committed macro-retirement
+order after recovered paragraph input.
 
 The committed TeX82 `expansion-macros.tex` fixture is the focused canonical
 audit for compulsory, undelimited, delimited, overlapping-prefix,

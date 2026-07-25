@@ -1018,6 +1018,63 @@ impl CommandProcessor<'_> {
         }
     }
 
+    /// TeX82 §25's `\\expandafter` hand-off retires only its one-token
+    /// backup before a macro body is installed. Recovery insertions share the
+    /// scalar scanner retry helper above, but must remain visible until the
+    /// ordinary raw-delivery loop retires them.
+    pub(crate) fn retire_exhausted_backup_before_macro_replay(
+        &mut self,
+        stamp: DeliveryStamp,
+    ) -> Result<(), CommandError> {
+        let exhausted_backup = matches!(
+            self.command.input.levels.last(),
+            Some(InputLevel::Tokens(cursor))
+                if cursor.identity.0 == stamp.input_level()
+                    && matches!(cursor.behavior, TokenBehavior::BackedUp(_))
+                    && self.next_stored_token(cursor).is_none()
+        );
+        if exhausted_backup {
+            match self.retire_and_restart(InputLevelId(stamp.input_level()))? {
+                RetirementRestart::Continue => Ok(()),
+                RetirementRestart::Stop | RetirementRestart::EndV(_) => {
+                    Err(CommandError::InputInvariant)
+                }
+            }
+        } else {
+            Ok(())
+        }
+    }
+
+    /// TeX82 §392 drains a depleted macro body before `macro_call` pushes its
+    /// replacement body. In this typed stack, ordinary inserted recovery
+    /// input remains for the raw-delivery loop, while `BackedUp` input follows
+    /// its distinct §25 hand-off. Restricting this cleanup to macro bodies
+    /// preserves those two independently observable lifecycles.
+    pub(crate) fn retire_exhausted_macro_bodies_before_macro_replay(
+        &mut self,
+    ) -> Result<(), CommandError> {
+        loop {
+            let exhausted = match self.command.input.levels.last() {
+                Some(InputLevel::Tokens(cursor))
+                    if matches!(cursor.behavior, TokenBehavior::MacroBody(_))
+                        && self.next_stored_token(cursor).is_none() =>
+                {
+                    Some(cursor.identity)
+                }
+                Some(InputLevel::Tokens(_)) | Some(InputLevel::Source(_)) | None => None,
+            };
+            let Some(identity) = exhausted else {
+                return Ok(());
+            };
+            match self.retire_and_restart(identity)? {
+                RetirementRestart::Continue => {}
+                RetirementRestart::Stop | RetirementRestart::EndV(_) => {
+                    return Err(CommandError::InputInvariant);
+                }
+            }
+        }
+    }
+
     fn check_outer_validity_entry(
         &mut self,
         command: &mut CurrentCommand,
