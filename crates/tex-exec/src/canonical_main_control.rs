@@ -10,10 +10,11 @@ use tex_command::{
     AlignmentIdentity, AlignmentRequest, AlignmentRequestResult, CanonicalMathRequest,
     CommandError, CommandHostCapabilities, CommandHostContext, CommandProcessor, CommandProfile,
     CommandRuntime, CommandState, CommandStateSnapshot, FontLoadRequest, FontResource,
-    ImmediateExtension, InputStreamRequest, MathEpisodeRecovery, MathLimitKind, MathScriptKind,
-    MathStyleKind, MathTextFieldKind, ScannedAccent, ScannedBoxConstruction, ScannedBoxKind,
-    ScannedDiscretionary, ScannedDisplayDiagnostic, ScannedLeaderPayload, ScannedMathMuMaterial,
-    ScannedPackingSpec, ScannedVSplit, SourceRegistration, SourceRegistrationError,
+    ImmediateExtension, InputStreamRequest, MathDelimiterBoundary, MathDelimiterBoundaryKind,
+    MathEpisodeRecovery, MathLimitKind, MathScriptKind, MathStyleKind, MathTextFieldKind,
+    ScannedAccent, ScannedBoxConstruction, ScannedBoxKind, ScannedDiscretionary,
+    ScannedDisplayDiagnostic, ScannedLeaderPayload, ScannedMathMuMaterial, ScannedPackingSpec,
+    ScannedVSplit, SourceRegistration, SourceRegistrationError,
 };
 #[cfg(any(test, feature = "instrumentation"))]
 use tex_command::{
@@ -26,8 +27,8 @@ use tex_state::ids::FontId;
 use tex_state::interner::Symbol;
 use tex_state::macro_store::{MacroDefinitionProvenance, MacroMeaning};
 use tex_state::math::{
-    FractionThickness, LimitType, MathChar, MathChoice, MathField, MathFraction, MathNoad,
-    MathStyle, NoadClass, NoadKind,
+    FractionThickness, LimitType, MathChar, MathChoice, MathField, MathFontSize, MathFraction,
+    MathNoad, MathStyle, NoadClass, NoadKind,
 };
 use tex_state::meaning::{Meaning, MeaningFlags, UnexpandablePrimitive};
 use tex_state::node::{DiscKind, GlueKind, KernKind, LeaderPayload, Node, Whatsit};
@@ -481,6 +482,9 @@ impl CanonicalMainControl {
         if let ScannedStep::Math(request) = scanned {
             return self.apply_canonical_math_request(request, stores);
         }
+        if let ScannedStep::MathDelimiter(boundary) = scanned {
+            return self.apply_canonical_math_delimiter(boundary, stores);
+        }
         if let ScannedStep::Discretionary(discretionary) = scanned {
             return self.apply_discretionary(discretionary, stores);
         }
@@ -655,6 +659,9 @@ impl CanonicalMainControl {
         if let ScannedStep::Math(request) = scanned {
             return self.apply_canonical_math_request(request, stores);
         }
+        if let ScannedStep::MathDelimiter(boundary) = scanned {
+            return self.apply_canonical_math_delimiter(boundary, stores);
+        }
         if let ScannedStep::Discretionary(discretionary) = scanned {
             return self.apply_discretionary(discretionary, stores);
         }
@@ -693,6 +700,25 @@ impl CanonicalMainControl {
             if self.completed_replay_episode == Some(episode) {
                 break;
             }
+        }
+        while canonical_left_group_open(&self.modes, stores) {
+            stores.world_mut().write_text(
+                PrintSink::TerminalAndLog,
+                "\n! Missing \\right. inserted.\n",
+            );
+            self.apply_canonical_math_delimiter(
+                MathDelimiterBoundary {
+                    kind: MathDelimiterBoundaryKind::Right,
+                    delimiter: tex_command::ScannedMathDelimiter {
+                        code: 0,
+                        recovered: true,
+                        provenance: tex_command::StructuredProvenance {
+                            primary: tex_state::token::OriginId::UNKNOWN,
+                        },
+                    },
+                },
+                stores,
+            )?;
         }
         let level = self.modes.pop()?;
         finish_canonical_math_list(
@@ -831,6 +857,71 @@ impl CanonicalMainControl {
                 })
             }
             CanonicalMathRequest::Family(_) | CanonicalMathRequest::EquationNumber(_) => {}
+        }
+        Ok(ReplayStep::Continue)
+    }
+
+    fn apply_canonical_math_delimiter(
+        &mut self,
+        boundary: MathDelimiterBoundary,
+        stores: &mut Universe,
+    ) -> Result<ReplayStep, ExecError> {
+        match boundary.kind {
+            MathDelimiterBoundaryKind::Left => {
+                self.modes.push(Mode::Math);
+                self.modes
+                    .current_list_mut()
+                    .push(Node::MathNoad(MathNoad::new(
+                        NoadKind::LeftDelimiter {
+                            delimiter: boundary.delimiter.code,
+                        },
+                        MathField::Empty,
+                    )));
+            }
+            MathDelimiterBoundaryKind::Middle => {
+                if canonical_left_group_open(&self.modes, stores) {
+                    self.modes
+                        .current_list_mut()
+                        .push(Node::MathNoad(MathNoad::new(
+                            NoadKind::MiddleDelimiter {
+                                delimiter: boundary.delimiter.code,
+                            },
+                            MathField::Empty,
+                        )));
+                } else {
+                    stores
+                        .world_mut()
+                        .write_text(PrintSink::TerminalAndLog, "\n! Extra \\middle.\n");
+                }
+            }
+            MathDelimiterBoundaryKind::Right => {
+                if !canonical_left_group_open(&self.modes, stores) {
+                    stores
+                        .world_mut()
+                        .write_text(PrintSink::TerminalAndLog, "\n! Extra \\right.\n");
+                    return Ok(ReplayStep::Continue);
+                }
+                let content = take_finished_canonical_math_list(&mut self.modes, stores)?;
+                let _ = self.modes.pop()?;
+                let mut nodes: Vec<_> = stores
+                    .nodes(content)
+                    .into_iter()
+                    .map(|node| node.to_owned())
+                    .collect();
+                nodes.push(Node::MathNoad(MathNoad::new(
+                    NoadKind::RightDelimiter {
+                        delimiter: boundary.delimiter.code,
+                    },
+                    MathField::Empty,
+                )));
+                let content = stores.freeze_node_list(&nodes);
+                self.modes
+                    .current_list_mut()
+                    .push(Node::MathNoad(MathNoad::new(
+                        NoadKind::Normal(NoadClass::Inner),
+                        MathField::SubMlist(content),
+                    )));
+            }
         }
         Ok(ReplayStep::Continue)
     }
@@ -975,6 +1066,16 @@ impl CanonicalMainControl {
         };
         let scanned = self.resolve_font_resource(scanned)?;
         let scanned = self.resolve_input_stream_resource(scanned)?;
+        if let ScannedStep::ReplayCompleted(episode) = scanned {
+            self.completed_replay_episode = Some(episode);
+            return Ok(ReplayStep::Continue);
+        }
+        if let ScannedStep::Math(request) = scanned {
+            return self.apply_canonical_math_request(request, stores);
+        }
+        if let ScannedStep::MathDelimiter(boundary) = scanned {
+            return self.apply_canonical_math_delimiter(boundary, stores);
+        }
         if let ScannedStep::Discretionary(discretionary) = scanned {
             return self.apply_discretionary(discretionary, stores);
         }
@@ -1376,11 +1477,54 @@ fn finish_canonical_math_list(
     Ok(stores.freeze_node_list(&output))
 }
 
+fn take_finished_canonical_math_list(
+    modes: &mut ModeNest,
+    stores: &mut Universe,
+) -> Result<tex_state::ids::NodeListId, ExecError> {
+    let (nodes, incomplete) = {
+        let list = modes.current_list_mut();
+        (list.take_nodes(), list.take_incomplete_fraction())
+    };
+    finish_canonical_math_list(&nodes, incomplete.as_ref(), stores)
+}
+
+fn canonical_left_group_open(modes: &ModeNest, stores: &Universe) -> bool {
+    let starts_left_node = |node: Option<&Node>| {
+        matches!(
+            node,
+            Some(Node::MathNoad(MathNoad {
+                kind: NoadKind::LeftDelimiter { .. },
+                ..
+            }))
+        )
+    };
+    let starts_left_ref = |node: Option<tex_state::node_arena::NodeRef<'_>>| {
+        matches!(
+            node,
+            Some(tex_state::node_arena::NodeRef::MathNoad(MathNoad {
+                kind: NoadKind::LeftDelimiter { .. },
+                ..
+            }))
+        )
+    };
+    starts_left_node(modes.current_list().nodes().first())
+        || modes
+            .current_list()
+            .incomplete_fraction()
+            .is_some_and(|fraction| starts_left_ref(stores.nodes(fraction.numerator).first()))
+}
+
 #[derive(Clone)]
 enum ScannedStep {
     Continue,
     ReplayCompleted(tex_command::CommandReplayEpisode),
     Math(CanonicalMathRequest),
+    MathDelimiter(MathDelimiterBoundary),
+    MathFamily {
+        family: tex_command::ScannedMathFamily,
+        font: FontId,
+        global: bool,
+    },
     EndOfInput,
     Terminate,
     End,
@@ -2182,9 +2326,57 @@ fn scan_command(
     output_dead_cycles: &mut i32,
     max_dead_cycles: i32,
 ) -> Result<ScannedStep, ExecError> {
+    if let Meaning::UnexpandablePrimitive(
+        primitive @ (UnexpandablePrimitive::TextFont
+        | UnexpandablePrimitive::ScriptFont
+        | UnexpandablePrimitive::ScriptScriptFont),
+    ) = command.meaning()
+    {
+        let size = match primitive {
+            UnexpandablePrimitive::TextFont => tex_command::MathFamilySize::Text,
+            UnexpandablePrimitive::ScriptFont => tex_command::MathFamilySize::Script,
+            UnexpandablePrimitive::ScriptScriptFont => tex_command::MathFamilySize::ScriptScript,
+            _ => unreachable!(),
+        };
+        let family = processor.scan_math_family(size).map_err(command_error)?;
+        let font = match processor.get_x_token().map_err(command_error)? {
+            Some(font) => match font.meaning() {
+                Meaning::Font(id) => id,
+                _ => {
+                    processor.back_input(font).map_err(command_error)?;
+                    tex_state::font::NULL_FONT
+                }
+            },
+            None => tex_state::font::NULL_FONT,
+        };
+        return Ok(ScannedStep::MathFamily {
+            family,
+            font,
+            global,
+        });
+    }
     // Math operands are scanned exclusively by `tex-command`.  The replay
     // driver receives a typed scalar request and schedules any opaque field
     // episode only after this processor borrow has ended.
+    if matches!(mode, Mode::Math | Mode::DisplayMath)
+        && let Meaning::UnexpandablePrimitive(
+            primitive @ (UnexpandablePrimitive::Left
+            | UnexpandablePrimitive::Right
+            | UnexpandablePrimitive::Middle),
+        ) = command.meaning()
+    {
+        let kind = match primitive {
+            UnexpandablePrimitive::Left => MathDelimiterBoundaryKind::Left,
+            UnexpandablePrimitive::Right => MathDelimiterBoundaryKind::Right,
+            UnexpandablePrimitive::Middle => MathDelimiterBoundaryKind::Middle,
+            _ => unreachable!(),
+        };
+        return Ok(ScannedStep::MathDelimiter(
+            processor
+                .scan_math_delimiter_boundary(kind)
+                .map_err(command_error)?,
+        ));
+    }
     if matches!(mode, Mode::Math | Mode::DisplayMath)
         && let Meaning::UnexpandablePrimitive(primitive) = command.meaning()
         && let Some(request) = processor
@@ -3615,7 +3807,27 @@ fn apply_scanned_step(
         ScannedStep::Continue => Ok(ReplayStep::Continue),
         // These are intercepted by `CanonicalMainControl::step_once`, where
         // the owning opaque episode and mutable replay driver are available.
-        ScannedStep::ReplayCompleted(_) | ScannedStep::Math(_) => Ok(ReplayStep::Continue),
+        ScannedStep::ReplayCompleted(_) | ScannedStep::Math(_) | ScannedStep::MathDelimiter(_) => {
+            Ok(ReplayStep::Continue)
+        }
+        ScannedStep::MathFamily {
+            family,
+            font,
+            global,
+        } => {
+            let size = match family.size {
+                tex_command::MathFamilySize::Text => MathFontSize::Text,
+                tex_command::MathFamilySize::Script => MathFontSize::Script,
+                tex_command::MathFamilySize::ScriptScript => MathFontSize::ScriptScript,
+            };
+            stores.set_math_family_font(
+                size,
+                family.family,
+                font,
+                assignment_global(global, stores),
+            );
+            Ok(ReplayStep::Continue)
+        }
         ScannedStep::EndOfInput | ScannedStep::Terminate => Ok(ReplayStep::EndOfInput),
         ScannedStep::End => Ok(ReplayStep::End),
         ScannedStep::Count {

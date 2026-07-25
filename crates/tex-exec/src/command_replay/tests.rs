@@ -83,6 +83,131 @@ fn register_cmr10_font(control: &mut CanonicalMainControl, universe: &mut Univer
 }
 
 #[test]
+fn canonical_math_replay_finalizes_fields_and_delimiter_groups_before_parent_source() {
+    let mut universe = Universe::new();
+    let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+    control.modes.push(Mode::Math);
+    register_source(&mut control, br"\mathop{a}^b\left( c d \right)\over e\end");
+    run_to_end(&mut control, &mut universe);
+
+    let content = take_finished_canonical_math_list(&mut control.modes, &mut universe)
+        .expect("math material freezes");
+    let nodes = universe.nodes(content);
+    assert_eq!(nodes.len(), 1, "generalized fraction completes at list end");
+    let tex_state::node_arena::NodeRef::FractionNoad(fraction) = nodes.first().expect("fraction")
+    else {
+        panic!("expected generalized fraction");
+    };
+    let numerator = universe.nodes(fraction.numerator);
+    assert!(numerator.len() >= 2);
+    let tex_state::node_arena::NodeRef::MathNoad(operator) = numerator.first().expect("operator")
+    else {
+        panic!("operator noad");
+    };
+    assert!(matches!(
+        operator.kind,
+        tex_state::math::NoadKind::Normal(tex_state::math::NoadClass::Op)
+    ));
+    assert!(!matches!(
+        operator.superscript,
+        tex_state::math::MathField::Empty
+    ));
+    let inner = numerator
+        .iter()
+        .find_map(|node| match node {
+            tex_state::node_arena::NodeRef::MathNoad(noad)
+                if matches!(
+                    noad.kind,
+                    tex_state::math::NoadKind::Normal(tex_state::math::NoadClass::Inner)
+                ) =>
+            {
+                Some(noad)
+            }
+            _ => None,
+        })
+        .expect("left/right inner noad");
+    let tex_state::math::MathField::SubMlist(inner_list) = inner.nucleus else {
+        panic!("left/right inner noad");
+    };
+    assert!(universe.nodes(inner_list).iter().any(|node| matches!(node, tex_state::node_arena::NodeRef::MathNoad(noad) if matches!(noad.kind, tex_state::math::NoadKind::RightDelimiter { .. }))));
+}
+
+#[test]
+fn canonical_math_replay_observer_does_not_change_frozen_mlist() {
+    let source = br"\mathord{a}_b^c\mskip2mu\mkern3mu\over d\end";
+    let mut plain_universe = Universe::new();
+    let mut plain = CanonicalMainControl::tex82_initex(&mut plain_universe);
+    plain.modes.push(Mode::Math);
+    register_source(&mut plain, source);
+    run_to_end(&mut plain, &mut plain_universe);
+    let plain_list = take_finished_canonical_math_list(&mut plain.modes, &mut plain_universe)
+        .expect("plain mlist freezes");
+
+    let mut observed_universe = Universe::new();
+    let mut observed = CanonicalMainControl::tex82_initex(&mut observed_universe);
+    observed.modes.push(Mode::Math);
+    register_source(&mut observed, source);
+    let mut observations = ObservationRecorder::default();
+    loop {
+        match observed
+            .step_with_observer(&mut observed_universe, &mut observations)
+            .expect("observed canonical math executes")
+        {
+            MainControlStep::End | MainControlStep::EndOfInput => break,
+            MainControlStep::Continue => {}
+        }
+    }
+    let observed_list =
+        take_finished_canonical_math_list(&mut observed.modes, &mut observed_universe)
+            .expect("observed mlist freezes");
+    let plain_nodes = plain_universe.nodes(plain_list);
+    let observed_nodes = observed_universe.nodes(observed_list);
+    assert_eq!(plain_nodes.len(), observed_nodes.len());
+    assert!(matches!(
+        plain_nodes.first(),
+        Some(tex_state::node_arena::NodeRef::FractionNoad(_))
+    ));
+    assert!(matches!(
+        observed_nodes.first(),
+        Some(tex_state::node_arena::NodeRef::FractionNoad(_))
+    ));
+    assert_eq!(
+        plain_universe.world().effect_records(),
+        observed_universe.world().effect_records()
+    );
+}
+
+#[test]
+fn canonical_math_family_assignment_and_fam_select_variable_mathcode_family() {
+    let mut universe = Universe::new();
+    let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+    register_cmr10_font(&mut control, &mut universe);
+    control.modes.push(Mode::Math);
+    register_source(
+        &mut control,
+        br#"\font\f=cmr10 \textfont2\f \mathcode`a="7161 \fam2 a\end"#,
+    );
+    run_to_end(&mut control, &mut universe);
+    let f = universe.intern("f");
+    let font = match universe.meaning(f) {
+        Meaning::Font(font) => font,
+        meaning => panic!("font definition missing: {meaning:?}"),
+    };
+    assert_eq!(
+        universe.math_family_font(tex_state::math::MathFontSize::Text, 2),
+        font
+    );
+    let nodes = control.modes.current_list().nodes();
+    let tex_state::node::Node::MathNoad(noad) = nodes.last().expect("variable-family noad") else {
+        panic!("math noad");
+    };
+    let tex_state::math::MathField::MathChar(character) = noad.nucleus else {
+        panic!("math character field");
+    };
+    assert_eq!(character.family, 2);
+}
+
+#[test]
 fn canonical_font_definition_scans_size_and_respects_local_global_scope() {
     let mut universe = Universe::new();
     let mut control = CanonicalMainControl::tex82_initex(&mut universe);
