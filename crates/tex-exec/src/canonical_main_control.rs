@@ -97,6 +97,17 @@ impl CanonicalMainControl {
         Self::default()
     }
 
+    /// Creates a fresh command machine pinned to the selected compatibility
+    /// profile.  Format loading installs primitive meanings separately, then
+    /// uses this same constructor as a cold session.
+    #[must_use]
+    pub fn with_profile(profile: CommandProfile) -> Self {
+        Self {
+            command: CommandState::new(profile),
+            ..Self::default()
+        }
+    }
+
     /// Creates a fresh canonical TeX82 INITEX replay environment.
     ///
     /// The primitive definitions are installed from the engine's static TeX82
@@ -117,6 +128,42 @@ impl CanonicalMainControl {
     #[must_use]
     pub fn command_mut(&mut self) -> &mut CommandState {
         &mut self.command
+    }
+
+    /// Returns the immutable profile of this command processor.
+    #[must_use]
+    pub const fn command_profile(&self) -> CommandProfile {
+        self.command.profile()
+    }
+
+    /// Captures a quiescent named checkpoint for this command processor.
+    pub fn capture_checkpoint(
+        &self,
+        boundary: crate::EngineBoundary,
+        stores: &mut Universe,
+        budget_counters: crate::ExecutionBudgetCounters,
+    ) -> Result<crate::EngineCheckpoint, tex_command::CommandSummaryError> {
+        crate::EngineCheckpoint::capture_canonical(
+            boundary,
+            &self.command,
+            &self.modes,
+            stores,
+            budget_counters,
+        )
+    }
+
+    /// Restores a named checkpoint into this command processor.  The
+    /// checkpoint is quiescent, so command-owned replay episodes are reset
+    /// rather than serialized into a durable format or editor boundary.
+    pub fn restore_checkpoint(
+        &mut self,
+        checkpoint: &crate::EngineCheckpoint,
+        stores: &mut Universe,
+    ) -> Result<(), crate::CanonicalCheckpointRestoreError> {
+        checkpoint.restore_canonical_state(&mut self.command, &mut self.modes, stores)?;
+        self.active_alignment = None;
+        self.boxes = ReplayBoxes::default();
+        Ok(())
     }
 
     /// Borrows executor-installed host capabilities for the next operation.

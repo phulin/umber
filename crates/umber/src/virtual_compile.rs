@@ -334,6 +334,16 @@ pub enum EngineMode {
 }
 
 impl EngineMode {
+    /// The canonical command profile shared by fresh and format-loaded runs.
+    #[must_use]
+    pub const fn command_profile(self) -> tex_command::CommandProfile {
+        match self {
+            Self::Tex82 => tex_command::CommandProfile::TEX82,
+            Self::ETex => tex_command::CommandProfile::ETEX26,
+            Self::PdfTex | Self::Latex | Self::PdfLatex => tex_command::CommandProfile::PDFTEX14027,
+        }
+    }
+
     #[must_use]
     pub const fn name(self) -> &'static str {
         match self {

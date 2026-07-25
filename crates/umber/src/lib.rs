@@ -2,7 +2,9 @@ use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use tex_command::{RegisteredSourceKind, SourceRegistration, SourceRegistrationError};
+use tex_command::{
+    CommandProfile, RegisteredSourceKind, SourceRegistration, SourceRegistrationError,
+};
 use tex_exec::{
     CanonicalMainControl, CheckpointSink, ExecutionContext, ExecutionStats, Executor, FontResolver,
     MainControlStep, PdfImageRequest, PdfImageResolver, try_execute_assignment,
@@ -111,11 +113,22 @@ impl<'a, 'context> EngineSession<'a, 'context> {
         stores: &'a mut Universe,
         context: ExecutionContext<'context>,
     ) -> Self {
-        let artifact_cursor = stores.world().artifact_commits().len();
         // The selected engine profile/format has already installed meanings
         // in `stores`; constructing this bridge must not mutate that shared
         // state or re-register primitive identities.
-        let canonical = CanonicalMainControl::new();
+        Self::with_command_profile(input, stores, context, CommandProfile::TEX82)
+    }
+
+    /// Constructs a session whose canonical processor is pinned to the same
+    /// profile selected by fresh or format startup.
+    pub fn with_command_profile(
+        input: &'a mut InputStack,
+        stores: &'a mut Universe,
+        context: ExecutionContext<'context>,
+        profile: CommandProfile,
+    ) -> Self {
+        let artifact_cursor = stores.world().artifact_commits().len();
+        let canonical = CanonicalMainControl::with_profile(profile);
         Self {
             input,
             stores,
@@ -124,6 +137,31 @@ impl<'a, 'context> EngineSession<'a, 'context> {
             artifact_cursor,
             checkpoint_policy: CheckpointPolicy::NamedExecutorBoundaries,
         }
+    }
+
+    /// Returns the profile pinned into this session's canonical processor.
+    #[must_use]
+    pub fn canonical_command_profile(&self) -> CommandProfile {
+        self.canonical.command_profile()
+    }
+
+    /// Publishes a canonical named boundary without deriving continuation
+    /// state from the legacy input stack.
+    pub fn capture_canonical_checkpoint(
+        &mut self,
+        boundary: tex_exec::EngineBoundary,
+        budget_counters: tex_exec::ExecutionBudgetCounters,
+    ) -> Result<tex_exec::EngineCheckpoint, tex_command::CommandSummaryError> {
+        self.canonical
+            .capture_checkpoint(boundary, self.stores, budget_counters)
+    }
+
+    /// Restores a canonical named boundary into this session's processor.
+    pub fn restore_canonical_checkpoint(
+        &mut self,
+        checkpoint: &tex_exec::EngineCheckpoint,
+    ) -> Result<(), tex_exec::CanonicalCheckpointRestoreError> {
+        self.canonical.restore_checkpoint(checkpoint, self.stores)
     }
 
     #[must_use]
@@ -1566,6 +1604,71 @@ mod tests {
             Some(MainControlStep::End)
         );
         assert_eq!(uncommitted_terminal_text(session.stores()), "reportnested");
+    }
+
+    #[test]
+    fn fresh_and_format_sessions_pin_the_same_command_profile() {
+        use crate::EngineMode;
+
+        for mode in [EngineMode::Tex82, EngineMode::ETex, EngineMode::PdfTex] {
+            let mut fresh = Universe::new();
+            mode.prepare_fresh(&mut fresh);
+            let mut fresh_input = InputStack::new(MemoryInput::new(""));
+            let fresh_session = EngineSession::with_command_profile(
+                &mut fresh_input,
+                &mut fresh,
+                ExecutionContext::new("fresh"),
+                mode.command_profile(),
+            );
+            let fresh_profile = fresh_session.canonical_command_profile();
+            let format = fresh_session.stores().dump_format().expect("format dumps");
+            drop(fresh_session);
+            let mut loaded =
+                Universe::from_format(World::default(), &format).expect("format loads");
+            mode.install_after_format(&mut loaded);
+            let mut loaded_input = InputStack::new(MemoryInput::new(""));
+            let loaded_session = EngineSession::with_command_profile(
+                &mut loaded_input,
+                &mut loaded,
+                ExecutionContext::new("loaded"),
+                mode.command_profile(),
+            );
+            assert_eq!(
+                fresh_profile,
+                loaded_session.canonical_command_profile(),
+                "{}",
+                mode.name()
+            );
+        }
+    }
+
+    #[test]
+    fn canonical_session_checkpoint_uses_command_summary_not_legacy_input() {
+        use tex_exec::{EngineBoundary, ExecutionBudgetCounters};
+
+        let mut stores = Universe::new();
+        install_expandable_primitives(&mut stores);
+        install_unexpandable_primitives(&mut stores);
+        let mut input = InputStack::new(MemoryInput::new("legacy input"));
+        let mut session = EngineSession::new(&mut input, &mut stores, ExecutionContext::new("job"));
+        session
+            .register_canonical_root(
+                "job.tex",
+                RegisteredSourceKind::Generated,
+                Arc::from(&b"x"[..]),
+            )
+            .expect("root registers");
+        let checkpoint = session
+            .capture_canonical_checkpoint(
+                EngineBoundary::JobStart,
+                ExecutionBudgetCounters::default(),
+            )
+            .expect("quiescent command checkpoint");
+        assert!(checkpoint.command_summary().is_some());
+        assert!(checkpoint.input_summary().is_empty());
+        session
+            .restore_canonical_checkpoint(&checkpoint)
+            .expect("canonical checkpoint restores");
     }
 
     #[test]

@@ -3,6 +3,7 @@ use std::time::Duration;
 #[cfg(not(target_arch = "wasm32"))]
 use std::time::Instant;
 
+use tex_command::{CommandProfileMismatch, CommandState, CommandSummary, CommandSummaryError};
 use tex_lex::{InputSource, InputStack, LayoutCursor, MemoryInput, WorldInput};
 use tex_state::source_map::SourceMapError;
 use tex_state::{
@@ -14,8 +15,8 @@ use crate::{ExecError, ModeNest, ModeNestSummary};
 
 /// In-memory schema version for aggregate engine checkpoints.
 ///
-/// Version 4 adds future-relevant execution-budget counters.
-pub const ENGINE_CHECKPOINT_SCHEMA_VERSION: u32 = 4;
+/// Version 5 adds the canonical command-machine boundary summary.
+pub const ENGINE_CHECKPOINT_SCHEMA_VERSION: u32 = 5;
 
 /// A safe point at which the outer executor can publish restartable state.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -34,6 +35,9 @@ pub struct EngineCheckpoint {
     schema_version: u32,
     boundary: EngineBoundary,
     universe: Snapshot,
+    // This is the authoritative continuation for canonical sessions.  The
+    // legacy input summary remains only for the pre-cutover executor path.
+    command: Option<CommandSummary>,
     input: InputSummary,
     modes: ModeNestSummary,
     state_hash: u64,
@@ -77,6 +81,41 @@ impl<'a> RootRehomeContext<'a> {
 }
 
 impl EngineCheckpoint {
+    /// Captures a canonical named boundary.  Command publication proves that
+    /// no scanner, macro matcher, or alignment delivery remains live.
+    pub fn capture_canonical(
+        boundary: EngineBoundary,
+        command: &CommandState,
+        nest: &ModeNest,
+        universe: &mut Universe,
+        budget_counters: crate::ExecutionBudgetCounters,
+    ) -> Result<Self, CommandSummaryError> {
+        let command = command.publish_summary()?;
+        let modes = nest.summary();
+        let mode_hash = modes.semantic_fingerprint(universe);
+        let effect_prefix = usize::try_from(universe.world().effect_pos().raw())
+            .expect("effect log position must fit in memory address space");
+        let artifact_prefix = universe.world().artifact_pos();
+        let universe = universe.snapshot();
+        let state_hash = combine_mode_hash(universe.state_hash(), mode_hash);
+        Ok(Self {
+            schema_version: ENGINE_CHECKPOINT_SCHEMA_VERSION,
+            boundary,
+            universe,
+            command: Some(command),
+            // Canonical command input is owned by CommandSummary, never by
+            // tex-lex's legacy InputSummary.
+            input: InputSummary::default(),
+            modes,
+            state_hash,
+            root_anchor: 0,
+            root_content_hash: None,
+            effect_prefix,
+            artifact_prefix,
+            budget_counters,
+        })
+    }
+
     /// Verifies that this checkpoint still names restorable roots in `substrate`.
     #[doc(hidden)]
     pub fn validate_retained_by(
@@ -111,6 +150,38 @@ impl EngineCheckpoint {
         &self.input
     }
 
+    /// Returns the validated canonical continuation, when this checkpoint was
+    /// published by the canonical command machine.
+    #[must_use]
+    pub const fn command_summary(&self) -> Option<&CommandSummary> {
+        self.command.as_ref()
+    }
+
+    /// Restores the canonical state roots.  Preparation validates the command
+    /// profile and mode summary before it changes the live command, mode, or
+    /// Universe roots.
+    pub fn restore_canonical_state(
+        &self,
+        command: &mut CommandState,
+        nest: &mut ModeNest,
+        universe: &mut Universe,
+    ) -> Result<(), CanonicalCheckpointRestoreError> {
+        let summary = self
+            .command
+            .clone()
+            .ok_or(CanonicalCheckpointRestoreError::MissingCommandSummary)?;
+        let mut restored_command = command.clone();
+        restored_command
+            .restore_summary(summary)
+            .map_err(CanonicalCheckpointRestoreError::CommandProfile)?;
+        let restored_modes = ModeNest::from_summary(self.modes.clone())
+            .map_err(CanonicalCheckpointRestoreError::Mode)?;
+        universe.rollback(&self.universe);
+        *command = restored_command;
+        *nest = restored_modes;
+        Ok(())
+    }
+
     #[must_use]
     pub const fn mode_summary(&self) -> &ModeNestSummary {
         &self.modes
@@ -139,6 +210,7 @@ impl EngineCheckpoint {
     pub fn exact_future_state_matches(&self, other: &Self) -> bool {
         self.boundary == other.boundary
             && self.universe.exact_future_state_matches(&other.universe)
+            && self.command == other.command
             && self.modes == other.modes
     }
 
@@ -330,6 +402,7 @@ impl<'a, C: CheckpointSink> EngineSession<'a, C> {
             schema_version: ENGINE_CHECKPOINT_SCHEMA_VERSION,
             boundary,
             universe,
+            command: None,
             input: input_summary,
             modes,
             state_hash,
@@ -352,6 +425,30 @@ pub enum EngineRestoreError<E> {
     Input(E),
     Mode(ExecError),
 }
+
+/// Failure to restore a canonical command checkpoint.
+#[derive(Debug)]
+pub enum CanonicalCheckpointRestoreError {
+    MissingCommandSummary,
+    CommandProfile(CommandProfileMismatch),
+    Mode(ExecError),
+}
+
+impl fmt::Display for CanonicalCheckpointRestoreError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::MissingCommandSummary => {
+                f.write_str("checkpoint has no canonical command summary")
+            }
+            Self::CommandProfile(error) => {
+                write!(f, "could not restore checkpoint command profile: {error}")
+            }
+            Self::Mode(error) => write!(f, "could not restore checkpoint mode nest: {error}"),
+        }
+    }
+}
+
+impl std::error::Error for CanonicalCheckpointRestoreError {}
 
 /// Failure to atomically restore and rebind an editor checkpoint.
 #[derive(Debug)]
@@ -401,6 +498,20 @@ impl<E: fmt::Display> fmt::Display for EngineRestoreError<E> {
 impl<E: std::error::Error + 'static> std::error::Error for EngineRestoreError<E> {}
 
 impl crate::Executor {
+    /// Restores a canonical checkpoint without consulting a host or legacy
+    /// input stack.  All fallible reconstruction happens before any live root
+    /// is changed, so a profile or mode mismatch is atomic.
+    pub fn restore_canonical_checkpoint(
+        &mut self,
+        command: &mut CommandState,
+        universe: &mut Universe,
+        checkpoint: &EngineCheckpoint,
+    ) -> Result<(), CanonicalCheckpointRestoreError> {
+        checkpoint.restore_canonical_state(command, &mut self.nest, universe)?;
+        self.budget_counters = checkpoint.budget_counters;
+        Ok(())
+    }
+
     /// Restores every engine-owned root from a published checkpoint.
     pub fn restore_checkpoint<E, F, T>(
         &mut self,
@@ -530,4 +641,80 @@ impl Timer {
 
 fn combine_mode_hash(universe_hash: u64, mode_hash: u64) -> u64 {
     universe_hash.rotate_left(17) ^ mode_hash
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{CanonicalCheckpointRestoreError, EngineBoundary, EngineCheckpoint};
+    use crate::{ExecutionBudgetCounters, Executor, Mode};
+    use tex_command::{CommandProfile, CommandState, RegisteredSourceKind, SourceRegistration};
+    use tex_state::Universe;
+
+    #[test]
+    fn canonical_checkpoint_restores_command_mode_and_universe_atomically() {
+        let mut universe = Universe::new();
+        universe.set_count(3, 41);
+        let mut command = CommandState::new(CommandProfile::TEX82);
+        command
+            .register_source(SourceRegistration::new(
+                RegisteredSourceKind::Generated,
+                b"x".to_vec(),
+            ))
+            .expect("source registers");
+        let mut executor = Executor::new();
+        let checkpoint = EngineCheckpoint::capture_canonical(
+            EngineBoundary::JobStart,
+            &command,
+            executor.nest(),
+            &mut universe,
+            ExecutionBudgetCounters::default(),
+        )
+        .expect("quiescent command publishes");
+        let expected_command = checkpoint.command_summary().cloned().expect("summary");
+
+        universe.set_count(3, 99);
+        executor.nest_mut().push(Mode::Horizontal);
+        command
+            .register_source(SourceRegistration::new(
+                RegisteredSourceKind::Generated,
+                b"y".to_vec(),
+            ))
+            .expect("second source registers");
+        executor
+            .restore_canonical_checkpoint(&mut command, &mut universe, &checkpoint)
+            .expect("canonical checkpoint restores");
+
+        assert_eq!(universe.count(3), 41);
+        assert_eq!(executor.nest().current_mode(), Mode::Vertical);
+        assert_eq!(
+            command.publish_summary().expect("restored quiescent state"),
+            expected_command
+        );
+    }
+
+    #[test]
+    fn canonical_checkpoint_rejects_profile_before_mutation() {
+        let mut source_universe = Universe::new();
+        let source = CommandState::new(CommandProfile::TEX82);
+        let checkpoint = EngineCheckpoint::capture_canonical(
+            EngineBoundary::JobStart,
+            &source,
+            Executor::new().nest(),
+            &mut source_universe,
+            ExecutionBudgetCounters::default(),
+        )
+        .expect("quiescent command publishes");
+        let mut universe = Universe::new();
+        universe.set_count(7, 19);
+        let before = universe.snapshot().state_hash();
+        let mut command = CommandState::new(CommandProfile::ETEX26);
+        let mut executor = Executor::new();
+
+        assert!(matches!(
+            executor.restore_canonical_checkpoint(&mut command, &mut universe, &checkpoint),
+            Err(CanonicalCheckpointRestoreError::CommandProfile(_))
+        ));
+        assert_eq!(universe.snapshot().state_hash(), before);
+        assert_eq!(command.profile(), CommandProfile::ETEX26);
+    }
 }

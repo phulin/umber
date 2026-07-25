@@ -36,8 +36,8 @@ pub use assignments::{
 };
 pub use canonical_main_control::{CanonicalMainControl, MainControlStep};
 pub use checkpoint::{
-    CheckpointSink, ENGINE_CHECKPOINT_SCHEMA_VERSION, EditorRestoreError, EngineBoundary,
-    EngineCheckpoint, EngineRestoreError, RootRehomeContext,
+    CanonicalCheckpointRestoreError, CheckpointSink, ENGINE_CHECKPOINT_SCHEMA_VERSION,
+    EditorRestoreError, EngineBoundary, EngineCheckpoint, EngineRestoreError, RootRehomeContext,
 };
 pub use dispatch::{DispatchAction, ExecutionStats, dispatch_delivered_token};
 pub use error::ExecError;
