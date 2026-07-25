@@ -866,6 +866,41 @@ fn canonical_initex_replay_scans_token_register_assignments_through_command_core
 }
 
 #[test]
+fn canonical_initex_replay_copies_direct_token_register_rhs() {
+    let mut universe = Universe::new();
+    let mut control = CommandReplayControl::tex82_initex(&mut universe);
+    register_source(
+        &mut control,
+        br"\toks0={zero}\toks20={twenty}\toks1=\toks20\toks2=\toks256\end",
+    );
+    let mut observations = ObservationRecorder::default();
+
+    for _ in 0..4 {
+        assert_eq!(
+            control
+                .step_with_observer(&mut universe, &mut observations)
+                .expect("token-register assignment"),
+            ReplayStep::Continue
+        );
+    }
+
+    assert_eq!(replay_text(universe.tokens(universe.toks(1))), "twenty");
+    assert_eq!(replay_text(universe.tokens(universe.toks(2))), "zero");
+    assert!(observations.0.windows(2).any(|pair| {
+        matches!(
+            pair,
+            [
+                CommandObservation::Scanner(scanner),
+                CommandObservation::Mutation(mutation),
+            ] if scanner.kind == "integer"
+                && scanner.value == "20"
+                && mutation.key.as_deref() == Some("toks:1")
+        )
+    }));
+    assert_eq!(control.step(&mut universe).expect("end"), ReplayStep::End);
+}
+
+#[test]
 fn canonical_initex_replay_scans_setbox_then_hands_vbox_to_executor() {
     let mut universe = Universe::new();
     let mut control = CommandReplayControl::tex82_initex(&mut universe);

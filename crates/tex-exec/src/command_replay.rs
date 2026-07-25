@@ -1031,10 +1031,8 @@ fn scan_command(
             let assignment = processor
                 .scan_token_register_assignment()
                 .map_err(command_error)?;
-            let index = u16::try_from(assignment.index)
-                .map_err(|_| ExecError::RegisterNumberOutOfRange(assignment.index))?;
             Ok(ScannedStep::Toks {
-                index,
+                index: assignment.index,
                 tokens: assignment.tokens,
                 global,
             })

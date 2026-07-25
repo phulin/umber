@@ -856,7 +856,7 @@ impl CommandProcessor<'_> {
     /// `scan_something_internal` uses this bounded scan for `\count`,
     /// `\dimen`, `\skip`, and `\muskip`; an out-of-range value recovers as
     /// register zero rather than truncating or addressing an extended bank.
-    fn scan_eight_bit_register_index(&mut self) -> Result<u16, CommandError> {
+    pub(crate) fn scan_eight_bit_register_index(&mut self) -> Result<u16, CommandError> {
         let value = self.scan_integer()?.value;
         Ok(u16::try_from(value)
             .ok()

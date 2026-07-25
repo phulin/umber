@@ -431,12 +431,14 @@ through `Universe`; it never leaves an operand for later main control or scans
 inside an alignment preamble.
 
 Token-register assignments use the same ownership rule through
-`CommandProcessor::scan_token_register_assignment`: it scans the register
-integer, optional equals sign, and unexpanded balanced token list as one
-completed request. Any optional-equals backup, absorbing scanner-status
-transition, and token-list completion therefore occur before replay applies
-the frozen list to `Universe`; replay emits the committed register mutation
-only after that application succeeds.
+`CommandProcessor::scan_token_register_assignment`: it scans the bounded
+eight-bit register integer and optional equals sign, then probes the RHS as
+TeX82 does. An internal token-list value (`\toks<n>`, a token-register
+shorthand, or a token parameter) is copied directly; otherwise the rejected
+token is backed up and unexpanded `scan_toks` collects balanced text. The
+bounded-index scanner observation or optional-equals backup and absorbing
+scanner-status transition therefore precede replay's committed register
+mutation, which is emitted only after `Universe` applies the frozen list.
 
 TeX82 `\let` and `\futurelet` likewise cross replay as completed typed
 meaning assignments. `CommandProcessor` owns their raw target and source
