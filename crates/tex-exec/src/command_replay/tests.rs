@@ -762,7 +762,7 @@ fn production_driver_enters_and_packs_hbox_without_legacy_dispatch() {
 fn production_driver_hands_box_math_and_alignment_to_typed_control() {
     let mut universe = Universe::new();
     let mut control = CanonicalMainControl::tex82_initex(&mut universe);
-    register_source(&mut control, br"\setbox0=\vbox{}$\halign{#\cr a\cr}\end");
+    register_source(&mut control, br"\setbox0=\vbox{}$$\halign{#\cr a\cr}\end");
 
     assert_eq!(
         control.step(&mut universe).expect("setbox scan"),
@@ -785,14 +785,17 @@ fn production_driver_hands_box_math_and_alignment_to_typed_control() {
         MainControlStep::Continue
     );
     assert_eq!(
-        control.step(&mut universe).expect("math entry"),
+        control
+            .step(&mut universe)
+            .expect("paragraph start before math"),
+        MainControlStep::Continue
+    );
+    assert!(matches!(control.current_mode(), crate::Mode::Horizontal));
+    assert_eq!(
+        control.step(&mut universe).expect("display math entry"),
         MainControlStep::Continue
     );
     assert!(matches!(control.current_mode(), crate::Mode::DisplayMath));
-    assert_eq!(
-        control.step(&mut universe).expect("math exit"),
-        MainControlStep::Continue
-    );
     assert_eq!(
         control.step(&mut universe).expect("alignment begin"),
         MainControlStep::Continue

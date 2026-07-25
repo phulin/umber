@@ -408,6 +408,27 @@ impl CommandProcessor<'_> {
         self.back_input_with_treatment(command, BackupTreatment::Ordinary)
     }
 
+    /// Performs the command-owned paired-shift probe used by TeX's math
+    /// entry and display closing paths.  A non-shift is restored through the
+    /// ordinary backup machinery, rather than becoming executor replay state.
+    pub fn scan_paired_math_shift(&mut self) -> Result<bool, CommandError> {
+        let Some(next) = self.get_x_token()? else {
+            return Ok(false);
+        };
+        if matches!(
+            next.meaning(),
+            tex_state::meaning::Meaning::CharToken {
+                cat: tex_state::token::Catcode::MathShift,
+                ..
+            }
+        ) {
+            Ok(true)
+        } else {
+            self.back_input(next)?;
+            Ok(false)
+        }
+    }
+
     /// Backs up a token manufactured by command processing rather than by a
     /// preceding raw delivery. TeX82 §25 uses this for the control sequence
     /// constructed by `\\csname`: after name lookup it assigns `cur_tok` and

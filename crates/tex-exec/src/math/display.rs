@@ -74,12 +74,12 @@ pub(super) fn start_eq_no(
     Ok(())
 }
 
-pub(super) struct FinishedEqNo {
+pub(crate) struct FinishedEqNo {
     pub side: EqNoSide,
     pub boxed: BoxNode,
 }
 
-pub(super) fn finish_eq_no(
+pub(crate) fn finish_eq_no(
     stores: &mut Universe,
     side: EqNoSide,
     content: tex_state::ids::NodeListId,
@@ -92,7 +92,7 @@ pub(super) fn finish_eq_no(
     FinishedEqNo { side, boxed }
 }
 
-pub(super) fn finish_display_math(
+pub(crate) fn finish_display_math(
     nest: &mut ModeNest,
     stores: &mut Universe,
     content: tex_state::ids::NodeListId,
@@ -470,7 +470,7 @@ fn hlist_shrink(stores: &Universe, nodes: &[Node]) -> ShrinkTotals {
     }
 }
 
-pub(super) fn pre_display_size(stores: &Universe, line: &BoxNode) -> Scaled {
+pub(crate) fn pre_display_size(stores: &Universe, line: &BoxNode) -> Scaled {
     let quad = stores.font_parameter(stores.current_font(), 6);
     let mut v = line.shift + quad + quad;
     let mut w = Scaled::from_raw(-Scaled::MAX_DIMEN.raw());

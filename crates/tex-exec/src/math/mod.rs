@@ -20,7 +20,7 @@ use crate::{
     push_tokens, push_traced_tokens,
 };
 
-mod display;
+pub(crate) mod display;
 mod lower;
 mod scan;
 mod support;

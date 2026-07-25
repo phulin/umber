@@ -371,6 +371,34 @@ pub(crate) fn interrupt_paragraph_for_display(
     )
 }
 
+/// Canonical main control has no legacy execution context, but display entry
+/// still needs the same stomach-side paragraph interruption.  Memo reuse is
+/// an optimization boundary, not a TeX semantic dependency.
+pub(crate) fn interrupt_canonical_paragraph_for_display(
+    nest: &mut ModeNest,
+    stores: &mut Universe,
+) -> Result<ParagraphBreakResult, ExecError> {
+    flush_pending_hchars(nest, stores)?;
+    if nest.current_list().is_empty() {
+        let _ = nest.pop()?;
+        return Ok(ParagraphBreakResult {
+            last_line: None,
+            active_directions: Vec::new(),
+        });
+    }
+    let final_widow_penalty = stores.int_param(IntParam::DISPLAY_WIDOW_PENALTY);
+    let final_widow_penalties = stores.penalty_array(PenaltyArrayKind::DisplayWidow);
+    let mut memo = crate::paragraph_memo::NoParagraphMemoConsumer;
+    break_current_paragraph(
+        nest,
+        stores,
+        final_widow_penalty,
+        final_widow_penalties,
+        false,
+        Some(&mut memo),
+    )
+}
+
 pub(crate) fn display_line_dimensions(nest: &ModeNest, stores: &Universe) -> LineDimensions {
     let params = ParagraphParams {
         left_skip: stores.glue_param(GlueParam::LEFT_SKIP),

@@ -174,6 +174,25 @@ impl CommandState {
         );
     }
 
+    /// Schedules the immutable math-entry hook after the stomach has entered
+    /// the matching math-shift group.  The command machine owns this replay
+    /// so macro expansion, origins, and retirement stay canonical.
+    pub fn push_everymath(&mut self, tokens: TracedTokenList, display: bool) {
+        self.push_token_level(
+            TokenPayload::Stored {
+                tokens: tokens.token_list(),
+                origins: tokens.origin_list(),
+            },
+            TokenBehavior::Ordinary,
+            RetirementBehavior::Pop,
+            ReplayTrace::Stored(if display {
+                crate::input::StoredReplayReason::EveryDisplay
+            } else {
+                crate::input::StoredReplayReason::EveryMath
+            }),
+        );
+    }
+
     /// Schedules the immutable `\everyhbox` or `\everyvbox` payload after
     /// canonical replay has entered the corresponding box group and mode.
     pub fn push_everybox(&mut self, tokens: TracedTokenList, horizontal: bool) {

@@ -485,6 +485,9 @@ impl CanonicalMainControl {
         if let ScannedStep::MathDelimiter(boundary) = scanned {
             return self.apply_canonical_math_delimiter(boundary, stores);
         }
+        if let ScannedStep::MathShift { paired } = scanned {
+            return self.apply_canonical_math_shift(paired, stores);
+        }
         if let ScannedStep::Discretionary(discretionary) = scanned {
             return self.apply_discretionary(discretionary, stores);
         }
@@ -648,6 +651,7 @@ impl CanonicalMainControl {
                 innermost_group,
                 &mut self.output_dead_cycles,
                 max_dead_cycles,
+                self.modes.current_list().display_eq_no().is_some(),
             )?
         };
         let scanned = self.resolve_font_resource(scanned)?;
@@ -661,6 +665,9 @@ impl CanonicalMainControl {
         }
         if let ScannedStep::MathDelimiter(boundary) = scanned {
             return self.apply_canonical_math_delimiter(boundary, stores);
+        }
+        if let ScannedStep::MathShift { paired } = scanned {
+            return self.apply_canonical_math_shift(paired, stores);
         }
         if let ScannedStep::Discretionary(discretionary) = scanned {
             return self.apply_discretionary(discretionary, stores);
@@ -856,9 +863,202 @@ impl CanonicalMainControl {
                     kind: KernKind::Mu,
                 })
             }
-            CanonicalMathRequest::Family(_) | CanonicalMathRequest::EquationNumber(_) => {}
+            CanonicalMathRequest::EquationNumber(number) => {
+                if self.modes.current_mode() != Mode::DisplayMath {
+                    stores.world_mut().write_text(
+                        PrintSink::TerminalAndLog,
+                        "\n! You can't use `\\eqno' in this mode.\n",
+                    );
+                } else {
+                    let display = take_finished_canonical_math_list(&mut self.modes, stores)?;
+                    stores.enter_group_with_kind(GroupKind::MathShift);
+                    stores.set_int_param(IntParam::FAM, -1);
+                    self.modes.push(Mode::Math);
+                    self.modes
+                        .current_list_mut()
+                        .set_display_eq_no(crate::mode::DisplayEqNo {
+                            side: match number.side {
+                                tex_command::EquationNumberSide::Left => {
+                                    crate::mode::EqNoSide::Left
+                                }
+                                tex_command::EquationNumberSide::Right => {
+                                    crate::mode::EqNoSide::Right
+                                }
+                            },
+                            display,
+                        });
+                }
+            }
+            CanonicalMathRequest::Family(_) => {}
         }
         Ok(ReplayStep::Continue)
+    }
+
+    fn apply_canonical_math_shift(
+        &mut self,
+        paired: bool,
+        stores: &mut Universe,
+    ) -> Result<ReplayStep, ExecError> {
+        match self.modes.current_mode() {
+            Mode::Horizontal | Mode::RestrictedHorizontal => {
+                crate::assignments::flush_pending_hchars(&mut self.modes, stores)?;
+                if paired && self.modes.current_mode() == Mode::Horizontal {
+                    self.enter_canonical_display(stores)?;
+                } else {
+                    self.enter_canonical_math(false, stores);
+                }
+            }
+            Mode::Math => {
+                if self.modes.current_list().display_eq_no().is_some() {
+                    if !paired {
+                        stores.world_mut().write_text(
+                            PrintSink::TerminalAndLog,
+                            "\n! Display math should end with $$.\n",
+                        );
+                    }
+                    self.finish_canonical_equation_number(stores)?;
+                } else {
+                    self.finish_canonical_inline_math(stores)?;
+                }
+            }
+            Mode::DisplayMath => {
+                if !paired {
+                    stores.world_mut().write_text(
+                        PrintSink::TerminalAndLog,
+                        "\n! Display math should end with $$.\n",
+                    );
+                }
+                self.finish_canonical_display_math(stores, None)?;
+            }
+            Mode::Vertical | Mode::InternalVertical => {
+                unreachable!("vertical math shifts retry through ParagraphStart")
+            }
+        }
+        Ok(ReplayStep::Continue)
+    }
+
+    fn enter_canonical_math(&mut self, display: bool, stores: &mut Universe) {
+        stores.enter_group_with_kind(GroupKind::MathShift);
+        stores.set_int_param(IntParam::FAM, -1);
+        self.modes.push(if display {
+            Mode::DisplayMath
+        } else {
+            Mode::Math
+        });
+        schedule_everymath(&mut self.command, stores, display);
+    }
+
+    fn enter_canonical_display(&mut self, stores: &mut Universe) -> Result<(), ExecError> {
+        let paragraph =
+            crate::assignments::interrupt_canonical_paragraph_for_display(&mut self.modes, stores)?;
+        let dimensions = crate::assignments::display_line_dimensions(&self.modes, stores);
+        let pre_display_size = paragraph
+            .last_line
+            .as_ref()
+            .map_or(Scaled::from_raw(-Scaled::MAX_DIMEN.raw()), |line| {
+                crate::math::display::pre_display_size(stores, line)
+            });
+        stores.set_dimen_param(DimenParam::PRE_DISPLAY_SIZE, pre_display_size);
+        stores.set_dimen_param(DimenParam::DISPLAY_WIDTH, dimensions.width);
+        stores.set_dimen_param(DimenParam::DISPLAY_INDENT, dimensions.indent);
+        stores.set_int_param(
+            IntParam::PRE_DISPLAY_DIRECTION,
+            match paragraph.active_directions.last() {
+                Some(tex_state::node::Direction::BeginL) => 1,
+                Some(tex_state::node::Direction::BeginR) => -1,
+                _ => 0,
+            },
+        );
+        self.enter_canonical_math(true, stores);
+        self.modes
+            .current_list_mut()
+            .set_display_interrupt(crate::mode::DisplayInterrupt {
+                active_directions: paragraph.active_directions,
+            });
+        Ok(())
+    }
+
+    fn finish_canonical_inline_math(&mut self, stores: &mut Universe) -> Result<(), ExecError> {
+        let content = take_finished_canonical_math_list(&mut self.modes, stores)?;
+        let _ = self.modes.pop()?;
+        let insert_penalties = self.modes.current_mode() == Mode::Horizontal;
+        let (nodes, _) = crate::math::finish_inline_math_list_node(
+            stores,
+            tex_state::math::MathListNode {
+                display: false,
+                content,
+            },
+            insert_penalties,
+        );
+        self.modes.current_list_mut().append(nodes);
+        self.modes.current_list_mut().set_space_factor(1000);
+        let aftergroup = stores
+            .leave_group_with_kind(GroupKind::MathShift)
+            .map_err(|_| ExecError::MissingToken {
+                context: "math shift group",
+            })?;
+        schedule_aftergroup(&mut self.command, stores, aftergroup);
+        Ok(())
+    }
+
+    fn finish_canonical_equation_number(&mut self, stores: &mut Universe) -> Result<(), ExecError> {
+        let content = take_finished_canonical_math_list(&mut self.modes, stores)?;
+        let mut level = self.modes.pop()?;
+        let eq = level
+            .list_mut()
+            .take_display_eq_no()
+            .expect("equation number mode state");
+        let finished = crate::math::display::finish_eq_no(stores, eq.side, content);
+        let aftergroup = stores
+            .leave_group_with_kind(GroupKind::MathShift)
+            .map_err(|_| ExecError::MissingToken {
+                context: "equation number group",
+            })?;
+        schedule_aftergroup(&mut self.command, stores, aftergroup);
+        self.finish_canonical_display_math(stores, Some(finished))
+    }
+
+    fn finish_canonical_display_math(
+        &mut self,
+        stores: &mut Universe,
+        eq_no: Option<crate::math::display::FinishedEqNo>,
+    ) -> Result<(), ExecError> {
+        let content = take_finished_canonical_math_list(&mut self.modes, stores)?;
+        let mut level = self.modes.pop()?;
+        let interrupt =
+            level
+                .list_mut()
+                .take_display_interrupt()
+                .ok_or(ExecError::MissingToken {
+                    context: "display interrupt",
+                })?;
+        crate::math::display::finish_display_math(&mut self.modes, stores, content, eq_no)?;
+        let aftergroup = stores
+            .leave_group_with_kind(GroupKind::MathShift)
+            .map_err(|_| ExecError::MissingToken {
+                context: "display math group",
+            })?;
+        schedule_aftergroup(&mut self.command, stores, aftergroup);
+        self.resume_canonical_display(stores, interrupt.active_directions)
+    }
+
+    fn resume_canonical_display(
+        &mut self,
+        stores: &mut Universe,
+        directions: Vec<tex_state::node::Direction>,
+    ) -> Result<(), ExecError> {
+        let prev = self
+            .modes
+            .enclosing_vertical_prev_graf()
+            .checked_add(3)
+            .expect("display prev_graf overflow");
+        self.modes.set_enclosing_vertical_prev_graf(prev);
+        self.modes.push(Mode::Horizontal);
+        self.modes.current_list_mut().set_space_factor(1000);
+        self.modes
+            .current_list_mut()
+            .append(directions.into_iter().map(Node::Direction));
+        crate::vertical::build_page_if_outer_vertical(&self.modes, stores)
     }
 
     fn apply_canonical_math_delimiter(
@@ -1062,6 +1262,7 @@ impl CanonicalMainControl {
                 innermost_group,
                 &mut self.output_dead_cycles,
                 max_dead_cycles,
+                self.modes.current_list().display_eq_no().is_some(),
             )?
         };
         let scanned = self.resolve_font_resource(scanned)?;
@@ -1771,7 +1972,9 @@ enum ScannedStep {
         ships_out: bool,
     },
     Paragraph,
-    MathShift,
+    MathShift {
+        paired: bool,
+    },
     ParagraphStart,
     Character {
         ch: char,
@@ -1841,6 +2044,7 @@ fn scan_replay_step(
     innermost_group: Option<GroupKind>,
     output_dead_cycles: &mut i32,
     max_dead_cycles: i32,
+    display_eq_no: bool,
 ) -> Result<ScannedStep, ExecError> {
     if let Some((alignment, phase)) = alignment_preamble {
         return match phase {
@@ -1893,6 +2097,7 @@ fn scan_replay_step(
         innermost_group,
         output_dead_cycles,
         max_dead_cycles,
+        display_eq_no,
     )
 }
 
@@ -2008,6 +2213,7 @@ fn scan_noalign_body(
             innermost_group,
             &mut 0,
             0,
+            false,
         ),
     }
 }
@@ -2069,6 +2275,7 @@ fn scan_alignment_delivery_step(
                 innermost_group,
                 &mut 0,
                 0,
+                false,
             )
         }
         Some(AlignmentDelivery::Event(event)) => {
@@ -2104,6 +2311,7 @@ fn scan_alignment_delivery_step(
     }
 }
 
+#[allow(clippy::too_many_arguments)] // carries command-owned replay facts
 fn scan_step(
     processor: &mut CommandProcessor<'_>,
     mode: Mode,
@@ -2112,6 +2320,7 @@ fn scan_step(
     innermost_group: Option<GroupKind>,
     output_dead_cycles: &mut i32,
     max_dead_cycles: i32,
+    display_eq_no: bool,
 ) -> Result<ScannedStep, ExecError> {
     let Some(delivery) = processor
         .get_x_token_with_replay_completion()
@@ -2158,6 +2367,7 @@ fn scan_step(
         innermost_group,
         output_dead_cycles,
         max_dead_cycles,
+        display_eq_no,
     )
 }
 
@@ -2325,6 +2535,7 @@ fn scan_command(
     innermost_group: Option<GroupKind>,
     output_dead_cycles: &mut i32,
     max_dead_cycles: i32,
+    display_eq_no: bool,
 ) -> Result<ScannedStep, ExecError> {
     if let Meaning::UnexpandablePrimitive(
         primitive @ (UnexpandablePrimitive::TextFont
@@ -3061,7 +3272,25 @@ fn scan_command(
         Meaning::CharToken {
             cat: Catcode::MathShift,
             ..
-        } => Ok(ScannedStep::MathShift),
+        } => {
+            if matches!(mode, Mode::Vertical | Mode::InternalVertical) {
+                // §1090 retries this exact shift after `new_graf`; probing it
+                // here would run before `\everypar`.
+                processor.back_input(command).map_err(command_error)?;
+                Ok(ScannedStep::ParagraphStart)
+            } else {
+                let paired = matches!(
+                    mode,
+                    Mode::Horizontal | Mode::RestrictedHorizontal | Mode::DisplayMath
+                ) || (mode == Mode::Math && display_eq_no);
+                let paired = if paired {
+                    processor.scan_paired_math_shift().map_err(command_error)?
+                } else {
+                    false
+                };
+                Ok(ScannedStep::MathShift { paired })
+            }
+        }
         Meaning::CharToken {
             cat: Catcode::Letter | Catcode::Other,
             ..
@@ -5076,15 +5305,8 @@ fn apply_scanned_step(
             }
             Ok(ReplayStep::Continue)
         }
-        ScannedStep::MathShift => {
-            match modes.current_mode() {
-                Mode::Math | Mode::DisplayMath => {
-                    let _ = modes.pop()?;
-                }
-                Mode::Vertical => modes.push(Mode::DisplayMath),
-                _ => modes.push(Mode::Math),
-            }
-            Ok(ReplayStep::Continue)
+        ScannedStep::MathShift { .. } => {
+            unreachable!("canonical math shifts are applied by CanonicalMainControl")
         }
         ScannedStep::ParagraphStart => {
             start_canonical_paragraph(command, modes, stores, true)?;
@@ -5614,6 +5836,26 @@ fn schedule_everybox(command: &mut CommandState, stores: &mut Universe, horizont
         })
         .collect();
     command.push_everybox(stores.finish_traced_token_list(&traced), horizontal);
+}
+
+fn schedule_everymath(command: &mut CommandState, stores: &mut Universe, display: bool) {
+    let parameter = if display {
+        TokParam::EVERY_DISPLAY
+    } else {
+        TokParam::EVERY_MATH
+    };
+    let tokens = stores.tok_param(parameter);
+    if stores.tokens(tokens).is_empty() {
+        return;
+    }
+    let origin = stores.bootstrap_origin();
+    let traced: Vec<_> = stores
+        .tokens(tokens)
+        .iter()
+        .copied()
+        .map(|token| tex_state::token::TracedTokenWord::pack(token, origin))
+        .collect();
+    command.push_everymath(stores.finish_traced_token_list(&traced), display);
 }
 
 fn command_error(error: CommandError) -> ExecError {

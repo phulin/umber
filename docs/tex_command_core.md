@@ -58,6 +58,13 @@ episodes only through typed command-state handles, so mlist construction and
 display packaging receive no raw token, input stack, or scanner-status
 capability.
 
+Math-shift pairing is command-owned: entry and display-closing lookahead
+either consumes the second shift or restores a non-shift through the ordinary
+backup level. Canonical main control then owns only typed math-shift
+group/mode transitions, `\everymath` or `\everydisplay` replay, paragraph
+interruption/resumption, Appendix-G lowering, equation-number subformula
+packaging, and vertical display contribution.
+
 The replay seam also retains the executor-side mode projection and obtains
 observable general-text effects (currently `\\message`) through the typed
 structured scanner. Alignment lifecycle state crosses it only as
