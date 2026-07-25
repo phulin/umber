@@ -495,6 +495,29 @@ fn take_box255_node(stores: &mut Universe) -> Result<Node, ExecError> {
         .ok_or(ExecError::MissingToken { context: "box" })
 }
 
+/// Performs TeX82 §46's final default-output selection after the output-loop
+/// escape.  This is deliberately page-builder work, not a synthetic shipout:
+/// the residual contribution list receives the end-job hbox/vfill/penalty,
+/// `build_page` chooses the actual best break, and §1016's `fire_up` packing
+/// produces the real `\\box255` payload.
+///
+/// The caller owns lowering and publication of the returned page.  Keeping
+/// that commit outside this state-only selection makes the same helper usable
+/// by canonical main control without admitting a legacy input path.
+pub(crate) fn take_final_default_output_page(stores: &mut Universe) -> Result<Node, ExecError> {
+    append_end_cleanup_contributions(stores);
+    build_page(stores)?;
+    let fire_up = stores.page_fire_up().ok_or(ExecError::MissingToken {
+        context: "final page break",
+    })?;
+    prepare_box255(stores, fire_up)?;
+    prepend_output_heldover(stores, Vec::new());
+    let page = take_box255_node(stores)?;
+    stores.clear_page_discards();
+    build_page(stores)?;
+    Ok(page)
+}
+
 fn append_end_cleanup_contributions(stores: &mut Universe) {
     let empty = stores.freeze_node_list(&[]);
     stores.append_page_contribution(Node::HList(BoxNode::new(BoxNodeFields {
@@ -598,5 +621,32 @@ mod tests {
             stores.page_contributions().back(),
             Some(&Node::Penalty(-1_073_741_824))
         );
+    }
+
+    #[test]
+    fn final_default_output_selects_the_residual_page() {
+        let mut stores = Universe::new();
+        let residual = Node::HList(BoxNode::new(BoxNodeFields {
+            width: Scaled::from_raw(17),
+            height: Scaled::from_raw(11),
+            depth: Scaled::from_raw(3),
+            shift: Scaled::from_raw(0),
+            display: false,
+            glue_set: GlueSetRatio::ZERO,
+            glue_sign: Sign::Normal,
+            glue_order: Order::Normal,
+            children: stores.freeze_node_list(&[]),
+        }));
+        stores.append_page_contribution(residual);
+
+        let page = take_final_default_output_page(&mut stores)
+            .expect("final cleanup selects the residual page");
+        let Node::VList(page) = page else {
+            panic!("final cleanup must package its selected page in a vbox");
+        };
+        assert!(stores.nodes(page.children).iter().any(|node| {
+            matches!(node.to_owned(), Node::HList(node) if node.width == Scaled::from_raw(17))
+        }));
+        assert!(stores.current_page_nodes().is_empty());
     }
 }

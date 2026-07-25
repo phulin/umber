@@ -1998,8 +1998,9 @@ enum ScannedStep {
     OutputRoutineOpeningBrace,
     EndOutputRoutine,
     /// TeX82 §46 reaches the output-loop escape after the final-stop backup
-    /// has been installed. The canonical trace omits the intervening dead
-    /// cycles, leaving this forced shipout as their only observable boundary.
+    /// has been installed.  Main control now asks the typed page builder for
+    /// the selected final page before canonical lowering; it never invents a
+    /// synthetic box for this recovery path.
     ForcedOutputShipout,
     AlignmentPeekCell {
         alignment: AlignmentIdentity,
@@ -5204,17 +5205,12 @@ fn apply_scanned_step(
             Ok(ReplayStep::Continue)
         }
         ScannedStep::ForcedOutputShipout => {
-            // Page construction remains outside command replay. At the §46
-            // escape, publish the selected forced page as a deterministic,
-            // detached empty vbox through the ordinary shipout transaction.
-            let children = stores.freeze_node_list(&[]);
-            let packed = crate::packing_params::vpack(
-                stores,
-                children,
-                PackSpec::Natural,
-                crate::packing_params::vpack_params(stores),
-            );
-            shipout_replay_box(Node::VList(packed.node), stores)?;
+            // TeX82 §46 appends its end-job contribution trio and delegates
+            // page selection to §1006's `build_page`; §1016 then packs the
+            // chosen material into \\box255 for the default shipout.  The
+            // helper has no input capability and returns only that typed box.
+            let page = crate::output::take_final_default_output_page(stores)?;
+            shipout_replay_box(page, stores)?;
             boxes.terminal_output_shipout_complete = true;
             Ok(ReplayStep::Continue)
         }

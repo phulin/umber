@@ -1,5 +1,6 @@
 use super::support::*;
 use super::*;
+use tex_command::{RegisteredSourceKind, SourceRegistration};
 use tex_lex::TokenListReplayKind;
 use tex_state::ids::ArenaRef;
 use tex_state::node::Node;
@@ -4904,6 +4905,35 @@ fn end_cleanup_exposes_tex_its_all_over_penalty_to_output_routine() {
 
     assert_eq!(stores.count(0), -1_073_741_824);
     assert_eq!(stats.shipped_artifacts.len(), 1);
+}
+
+#[test]
+fn canonical_dead_cycle_escape_ships_the_selected_residual_page() {
+    let mut stores = Universe::new();
+    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    control
+        .register_root_source(SourceRegistration::new(
+            RegisteredSourceKind::Generated,
+            b"\\maxdeadcycles=0 \\output={\\relax} \\topskip=0pt \\
+              \\setbox0=\\hbox{}\\copy0\\end"
+                .to_vec(),
+        ))
+        .expect("register canonical source");
+
+    for _ in 0..128 {
+        if control.step(&mut stores).expect("canonical step") == MainControlStep::End {
+            break;
+        }
+    }
+
+    assert_eq!(stores.world().artifact_commits().len(), 1);
+    let artifact = stores
+        .world()
+        .committed_artifacts()
+        .first()
+        .expect("canonical dead-cycle escape commits one page");
+    let page = tex_out::PageArtifact::from_bytes(artifact.bytes()).expect("artifact parses");
+    assert!(matches!(page.root, tex_out::PageNode::VList(_)));
 }
 
 #[test]
