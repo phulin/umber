@@ -533,6 +533,17 @@ fn append_control_space(
     if matches!(nest.current_mode(), Mode::Vertical | Mode::InternalVertical) {
         ensure_horizontal_for_character(nest, input, stores)?;
     }
+    append_control_space_glue(nest, stores)
+}
+
+/// Appends the explicit `\ ` control-space glue after horizontal mode has
+/// already been selected. TeX82 §1030's `hmode+ex_space,mmode+ex_space: goto
+/// append_normal_space` always takes the space-factor-1000 branch, unlike an
+/// ordinary `spacer` token, which only reaches `append_normal_space` when
+/// `space_factor=1000` and otherwise scales the glue through `app_space`
+/// (§1042). This is shared by the legacy `InputStack`-driven dispatch above
+/// and canonical main control's mode-switch-then-append split below.
+fn append_control_space_glue(nest: &mut ModeNest, stores: &mut Universe) -> Result<(), ExecError> {
     flush_pending_hchars(nest, stores)?;
     let mut spec = nonzero_glue_param_or_font_space(stores, GlueParam::SPACE_SKIP, 1000);
     if stores.pdf_font_configuration().adjusts_interword_glue() {
@@ -545,6 +556,29 @@ fn append_control_space(
         leader: None,
     });
     Ok(())
+}
+
+/// Appends the explicit `\ ` control-space glue from canonical main control
+/// after TeX82 §1090's vertical-mode paragraph start (if any) has already run.
+/// Mirrors `append_canonical_space`'s split from `append_space` above.
+pub(crate) fn append_canonical_control_space(
+    nest: &mut ModeNest,
+    stores: &mut Universe,
+) -> Result<(), ExecError> {
+    debug_assert!(matches!(
+        nest.current_mode(),
+        Mode::Horizontal | Mode::RestrictedHorizontal
+    ));
+    append_control_space_glue(nest, stores)
+}
+
+/// The `\ ` glue specification for TeX82 §1041's `append_normal_space` when
+/// used from math mode (`mmode+ex_space`, §1030), which has no pending
+/// ligature run or pdfTeX interword-glue adjustment to consider -- those are
+/// exclusively horizontal-list concerns. Callers push the returned spec
+/// directly onto the current (math) list.
+pub(crate) fn control_space_glue_spec(stores: &Universe) -> GlueSpec {
+    nonzero_glue_param_or_font_space(stores, GlueParam::SPACE_SKIP, 1000)
 }
 
 fn append_hchar(nest: &mut ModeNest, stores: &mut Universe, ch: char, origin: OriginId) {

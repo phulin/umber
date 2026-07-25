@@ -1901,6 +1901,12 @@ enum ScannedStep {
     CharacterCode {
         value: i32,
     },
+    /// TeX82 §1030's `hmode+ex_space,mmode+ex_space: goto append_normal_space`
+    /// and §1090's `vmode+ex_space: back_input; new_graf(true)` -- `\ ` (the
+    /// explicit control-space primitive) starts a paragraph in vertical mode
+    /// exactly like a letter, then always appends the plain interword glue
+    /// regardless of the current space factor.
+    ControlSpace,
     FixedHorizontalGlue {
         primitive: UnexpandablePrimitive,
     },
@@ -3138,6 +3144,9 @@ fn scan_command(
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Penalty) => {
             let amount = processor.scan_integer().map_err(command_error)?.value;
             Ok(ScannedStep::Penalty { amount })
+        }
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::ControlSpace) => {
+            Ok(ScannedStep::ControlSpace)
         }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Char) => {
             let value = processor.scan_integer().map_err(command_error)?.value;
@@ -5436,6 +5445,29 @@ fn apply_scanned_step(
                 ch,
                 tex_state::token::OriginId::UNKNOWN,
             )?;
+            Ok(ReplayStep::Continue)
+        }
+        ScannedStep::ControlSpace => {
+            match modes.current_mode() {
+                Mode::Math | Mode::DisplayMath => {
+                    // TeX82 §1030's `mmode+ex_space: goto append_normal_space`
+                    // (§1041) appends real interword glue in math mode, unlike
+                    // an ordinary `mmode+spacer`, which §1045 makes a no-op.
+                    let spec = crate::assignments::control_space_glue_spec(stores);
+                    modes.current_list_mut().push(Node::Glue {
+                        spec: stores.intern_glue(spec),
+                        kind: GlueKind::Normal,
+                        leader: None,
+                    });
+                }
+                Mode::Vertical | Mode::InternalVertical => {
+                    start_canonical_paragraph(command, modes, stores, true)?;
+                    crate::assignments::append_canonical_control_space(modes, stores)?;
+                }
+                _ => {
+                    crate::assignments::append_canonical_control_space(modes, stores)?;
+                }
+            }
             Ok(ReplayStep::Continue)
         }
         ScannedStep::FixedHorizontalGlue { primitive } => {
