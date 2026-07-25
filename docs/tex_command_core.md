@@ -45,6 +45,13 @@ returned to that same processor episode for v-template installation. Thus
 replay does not turn alignment, mode changes, or effects into a second source
 consumer.
 
+Text `\\accent` and `\\discretionary` use the same completed-scanner boundary:
+the command processor owns the accent number, expanded base-character lookup,
+and non-character replay, and freezes each discretionary group as traced,
+immutable material. A later restricted-horizontal material episode consumes
+those frozen groups using the live command machine; it must not recreate an
+`InputStack` or expose raw group delimiters to the executor.
+
 During the command-owned preamble scan, TeX82 §760 removes catcode-10 spacer
 commands only while collecting the beginning of each u-template; a v-template
 and spaces after the first u-template token remain frozen verbatim. This

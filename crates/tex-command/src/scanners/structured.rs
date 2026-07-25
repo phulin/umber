@@ -104,6 +104,44 @@ pub struct ScannedRuleSpec {
     pub depth: Option<Scaled>,
 }
 
+/// The character selected as the base of a completed TeX82 `\accent` scan.
+///
+/// A missing base is deliberately represented explicitly: TeX82 backs the
+/// first non-character command up, then inserts the accent by itself.  The
+/// command processor owns that backup, so the executor never needs the
+/// rejected command or an input cursor to implement this case.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ScannedAccentBase {
+    pub character: u8,
+    pub provenance: StructuredProvenance,
+}
+
+/// Completed command-owned operands for TeX82's text `\accent`.
+///
+/// The accent code is scanned as an integer, and the following expanded
+/// character (including `\char`'s integer operand) is consumed here.  If the
+/// next expanded command is not a character, it has already been replayed by
+/// the command processor and `base` is `None`.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ScannedAccent {
+    pub accent: i32,
+    pub accent_provenance: StructuredProvenance,
+    pub base: Option<ScannedAccentBase>,
+}
+
+/// Completed command-owned group material for TeX82's `\discretionary`.
+///
+/// Each list is an immutable, traced token list.  The group delimiters and
+/// all nested token collection stay in command control; a caller may execute
+/// each completed list in an isolated restricted-horizontal episode without
+/// reopening source input.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ScannedDiscretionary {
+    pub pre_break: ScannedBalancedText,
+    pub post_break: ScannedBalancedText,
+    pub replacement: ScannedBalancedText,
+}
+
 /// The canonical boundary that stopped an unbraced filename scan.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum FileNameTermination {
@@ -163,6 +201,78 @@ pub enum AlignmentCellOpening {
 }
 
 impl CommandProcessor<'_> {
+    /// Scans TeX82 §1124's text-accent operands through command-owned input.
+    ///
+    /// Assignment execution between the accent code and base character is an
+    /// executor lifecycle concern; this bounded scanner intentionally owns
+    /// only expanded delivery, `\char`'s scalar operand, and the canonical
+    /// replay of a non-character lookahead.
+    pub fn scan_accent(&mut self) -> Result<ScannedAccent, CommandError> {
+        let accent = self.scan_integer()?;
+        let base = loop {
+            let Some(command) = self.get_x_token()? else {
+                break None;
+            };
+            match command.meaning() {
+                Meaning::CharToken {
+                    cat: Catcode::Space,
+                    ..
+                }
+                | Meaning::Relax => continue,
+                Meaning::CharToken {
+                    ch,
+                    cat: Catcode::Letter | Catcode::Other,
+                }
+                | Meaning::CharGiven(ch)
+                | Meaning::CharToken {
+                    ch,
+                    cat: Catcode::Active,
+                } => {
+                    let character =
+                        u8::try_from(ch as u32).map_err(|_| CommandError::InputInvariant)?;
+                    break Some(ScannedAccentBase {
+                        character,
+                        provenance: StructuredProvenance {
+                            primary: command.origin(),
+                        },
+                    });
+                }
+                Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Char) => {
+                    let character = u8::try_from(self.scan_integer()?.value)
+                        .map_err(|_| CommandError::InputInvariant)?;
+                    break Some(ScannedAccentBase {
+                        character,
+                        provenance: StructuredProvenance {
+                            primary: command.origin(),
+                        },
+                    });
+                }
+                _ => {
+                    self.back_input(command)?;
+                    break None;
+                }
+            }
+        };
+        Ok(ScannedAccent {
+            accent: accent.value,
+            accent_provenance: StructuredProvenance {
+                primary: accent.provenance.primary,
+            },
+            base,
+        })
+    }
+
+    /// Collects all three TeX82 `\discretionary` groups as immutable traced
+    /// material. Their eventual restricted-horizontal execution is separate
+    /// from raw source collection and cannot access an `InputStack`.
+    pub fn scan_discretionary(&mut self) -> Result<ScannedDiscretionary, CommandError> {
+        Ok(ScannedDiscretionary {
+            pre_break: self.scan_balanced_text(false)?,
+            post_break: self.scan_balanced_text(false)?,
+            replacement: self.scan_balanced_text(false)?,
+        })
+    }
+
     /// Scans TeX82 §53's one-token `\immediate` extension execution.
     ///
     /// `do_extension` calls `get_x_token`, executes only `openout`, `write`,

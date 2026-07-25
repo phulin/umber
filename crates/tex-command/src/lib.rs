@@ -52,9 +52,10 @@ pub use profile::{
 };
 pub use scanners::{
     AlignmentCellOpening, FileNameTermination, ImmediateExtension, InternalValue, RegisteredInput,
-    ScalarProvenance, ScalarRecovery, ScannedBalancedText, ScannedBoxRegister, ScannedFileName,
-    ScannedGlueParameterAssignment, ScannedLetAssignment, ScannedMacroDefinition, ScannedRuleSpec,
-    ScannedScalar, ScannedSetBoxAssignment, ScannedTokenRegisterAssignment, StructuredProvenance,
+    ScalarProvenance, ScalarRecovery, ScannedAccent, ScannedAccentBase, ScannedBalancedText,
+    ScannedBoxRegister, ScannedDiscretionary, ScannedFileName, ScannedGlueParameterAssignment,
+    ScannedLetAssignment, ScannedMacroDefinition, ScannedRuleSpec, ScannedScalar,
+    ScannedSetBoxAssignment, ScannedTokenRegisterAssignment, StructuredProvenance,
 };
 pub use snapshot::{CommandStateSnapshot, CommandSummary, CommandSummaryError};
 pub use state::{CommandRuntime, CommandState, UnknownRegisteredSource};

@@ -275,6 +275,87 @@ fn rule_spec_scans_expanded_keywords_and_dimensions() {
 }
 
 #[test]
+fn accent_scanner_returns_completed_operands_and_replays_noncharacter_base() {
+    let mut command = CommandState::default();
+    push(
+        &mut command,
+        [
+            Token::Char {
+                ch: '1',
+                cat: Catcode::Other,
+            },
+            Token::Char {
+                ch: '8',
+                cat: Catcode::Other,
+            },
+            Token::Char {
+                ch: ' ',
+                cat: Catcode::Space,
+            },
+            Token::Char {
+                ch: 'A',
+                cat: Catcode::Letter,
+            },
+            Token::Char {
+                ch: '!',
+                cat: Catcode::Other,
+            },
+        ],
+    );
+    let mut runtime = CommandRuntime::default();
+    let mut universe = Universe::new();
+    let mut capabilities = CommandHostCapabilities::default();
+    let accent = processor(&mut command, &mut runtime, &mut universe, &mut capabilities)
+        .scan_accent()
+        .expect("accent operands scan");
+    assert_eq!(accent.accent, 18);
+    assert_eq!(accent.base.expect("base character").character, b'A');
+
+    let punctuation = processor(&mut command, &mut runtime, &mut universe, &mut capabilities)
+        .get_x_token()
+        .expect("punctuation delivers")
+        .expect("punctuation exists");
+    assert!(matches!(
+        punctuation.meaning(),
+        Meaning::CharToken { ch: '!', .. }
+    ));
+}
+
+#[test]
+fn discretionary_scanner_freezes_all_three_groups_with_provenance() {
+    let mut command = CommandState::default();
+    let source = command
+        .register_source(SourceRegistration::new(
+            RegisteredSourceKind::Generated,
+            Arc::<[u8]>::from(b"{a}{b}{c}".as_slice()),
+        ))
+        .expect("source registers");
+    command
+        .open_registered_source(source)
+        .expect("source opens");
+    let mut runtime = CommandRuntime::default();
+    let mut universe = Universe::new();
+    let mut capabilities = CommandHostCapabilities::default();
+    let discretionary = processor(&mut command, &mut runtime, &mut universe, &mut capabilities)
+        .scan_discretionary()
+        .expect("three groups scan");
+    for (group, character) in [
+        (discretionary.pre_break, 'a'),
+        (discretionary.post_break, 'b'),
+        (discretionary.replacement, 'c'),
+    ] {
+        assert_ne!(group.provenance.primary, OriginId::UNKNOWN);
+        assert_eq!(
+            universe.tokens(group.tokens.token_list()),
+            &[Token::Char {
+                ch: character,
+                cat: Catcode::Letter,
+            }]
+        );
+    }
+}
+
+#[test]
 fn rule_spec_starts_v_template_when_scalar_lookahead_hits_cell_delimiters() {
     for (name, primitive, expected) in [
         ("tab", None, crate::AlignmentCellDelimiter::Tab),
