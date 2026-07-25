@@ -2,8 +2,8 @@ use std::sync::Arc;
 
 use tex_command::{
     AlignmentCellTemplates, AlignmentRequest, CommandDeliveryBoundary, CommandObservation,
-    CommandObserver, InputReason, InputTransition, ObservedToken, RegisteredSourceKind,
-    SourceRegistration, TracedTokenList,
+    CommandObserver, InputReason, InputTransition, ObservedToken, RecoveryKind,
+    RegisteredSourceKind, SourceRegistration, TracedTokenList,
 };
 use tex_state::env::banks::{GlueParam, IntParam};
 use tex_state::meaning::{ExpandablePrimitive, Meaning};
@@ -441,7 +441,7 @@ fn alignment_preamble_opener_uses_command_owned_backup_before_source_resumes() {
                     && matches!(expanded.spelling, ObservedToken::Character { character: '{', .. })
                     && backup.transition == InputTransition::Backup
                     && backup.reason == InputReason::Backup
-                    && recovery.backup
+                    && recovery.kind == RecoveryKind::Backup
                     && correction.transition == "backup_correction"
                     && correction.align_state == -1_000_000
                     && correction.previous_align_state == Some(-999_999)
@@ -478,7 +478,7 @@ fn alignment_preamble_opener_uses_command_owned_backup_before_source_resumes() {
                     && retirement.reason == InputReason::Backup
                     && backup.transition == InputTransition::Backup
                     && backup.reason == InputReason::Backup
-                    && recovery.backup
+                    && recovery.kind == RecoveryKind::Backup
                     && correction.transition == "backup_correction"
                     && correction.align_state == -1_000_000
                     && correction.previous_align_state == Some(-999_999)
@@ -565,7 +565,7 @@ fn alignment_preamble_opener_uses_command_owned_backup_before_source_resumes() {
                     && matches!(expanded.spelling, ObservedToken::Character { character: '{', .. })
                     && backup.transition == InputTransition::Backup
                     && backup.reason == InputReason::Backup
-                    && recovery.backup
+                    && recovery.kind == RecoveryKind::Backup
                     && correction.transition == "backup_correction"
                     && correction.align_state == 1_000_000
                     && correction.previous_align_state == Some(1_000_001)
@@ -730,7 +730,7 @@ fn periodic_preamble_replays_its_u_template_before_retirement() {
                     && matches!(expanded_numeric.spelling, ObservedToken::Character { character: '1', .. })
                     && backup.transition == InputTransition::Backup
                     && backup.reason == InputReason::Backup
-                    && recovery.backup
+                    && recovery.kind == RecoveryKind::Backup
                     && matches!(recovery.tokens.as_slice(), [ObservedToken::Character { character: '1', .. }])
             )
         }) {
@@ -845,7 +845,7 @@ fn canonical_initex_replay_scans_token_register_assignments_through_command_core
                 if input.transition == InputTransition::Backup && input.reason == InputReason::Backup
         ) && matches!(
             &pair[1],
-            CommandObservation::Recovery(recovery) if recovery.backup
+            CommandObservation::Recovery(recovery) if recovery.kind == RecoveryKind::Backup
         )
     }));
     assert!(matches!(
@@ -946,7 +946,7 @@ fn canonical_initex_replay_scans_setbox_then_hands_vbox_to_executor() {
             [CommandObservation::Input(input), CommandObservation::Recovery(recovery)]
                 if input.transition == InputTransition::Backup
                     && input.reason == InputReason::Backup
-                    && recovery.backup
+                    && recovery.kind == RecoveryKind::Backup
         )
     }));
     assert!(observations.0.iter().any(|event| {
@@ -1141,9 +1141,9 @@ fn off_save_reports_before_replaying_its_inserted_closer() {
             CommandObservation::Recovery(inserted_recovery),
         ] if diagnostic.diagnostic == "off_save_replay"
             && backup.transition == InputTransition::Backup
-            && recovery.backup
+            && recovery.kind == RecoveryKind::Backup
             && inserted.transition == InputTransition::Recovery
-            && !inserted_recovery.backup
+            && inserted_recovery.kind == RecoveryKind::InsertedToken
     ));
 
     observations.0.clear();
@@ -1768,7 +1768,7 @@ fn paragraph_start_backs_up_the_triggering_macro_parameter_before_replay() {
         ) && matches!(
             &pair[1],
             CommandObservation::Recovery(recovery)
-                if recovery.backup
+                if recovery.kind == RecoveryKind::Backup
                     && matches!(
                         recovery.tokens.as_slice(),
                         [ObservedToken::Character { character: 'B', .. }]

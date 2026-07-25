@@ -14,8 +14,8 @@ use std::sync::Arc;
 use tex_command::{
     AlignmentRecord, CommandDeliveryBoundary, CommandObservation, CommandObserver, CommandProfile,
     ConditionRecord, EffectRecord, InputReason as CommandInputReason, InputRecord, InputTransition,
-    MacroRecord, MutationRecord, ObservedToken, RecoveryRecord, RegisteredSourceKind,
-    ScannerStatusRecord, SourceRegistration, TokenListRecord,
+    MacroRecord, MutationRecord, ObservedToken, RecoveryKind as CommandRecoveryKind,
+    RecoveryRecord, RegisteredSourceKind, ScannerStatusRecord, SourceRegistration, TokenListRecord,
 };
 use tex_exec::{CommandReplayControl, ReplayStep};
 use tex_oracle::{
@@ -941,10 +941,10 @@ fn translate_input(record: InputRecord, active_source: &str) -> Event {
 
 fn translate_recovery(record: RecoveryRecord) -> Event {
     Event::Recovery(RecoveryEvent {
-        kind: if record.backup {
-            RecoveryKind::Backup
-        } else {
-            RecoveryKind::InsertedToken
+        kind: match record.kind {
+            CommandRecoveryKind::Backup => RecoveryKind::Backup,
+            CommandRecoveryKind::InsertedToken => RecoveryKind::InsertedToken,
+            CommandRecoveryKind::InsertedControlSequence => RecoveryKind::InsertedControlSequence,
         },
         tokens: record.tokens.into_iter().map(oracle_token).collect(),
     })
@@ -1323,6 +1323,30 @@ mod tests {
         assert_eq!(catcode_name(Catcode::AlignmentTab), "tab_mark");
         assert_eq!(catcode_name(Catcode::Space), "spacer");
         assert_eq!(catcode_name(Catcode::Other), "other_char");
+    }
+
+    #[test]
+    fn recovery_transport_preserves_the_command_owned_kind() {
+        let token = ObservedToken::ControlSequence("par".into());
+        for (kind, expected) in [
+            (CommandRecoveryKind::Backup, RecoveryKind::Backup),
+            (
+                CommandRecoveryKind::InsertedToken,
+                RecoveryKind::InsertedToken,
+            ),
+            (
+                CommandRecoveryKind::InsertedControlSequence,
+                RecoveryKind::InsertedControlSequence,
+            ),
+        ] {
+            assert!(matches!(
+                translate_recovery(RecoveryRecord {
+                    kind,
+                    tokens: vec![token.clone()],
+                }),
+                Event::Recovery(RecoveryEvent { kind: actual, .. }) if actual == expected
+            ));
+        }
     }
 
     #[test]

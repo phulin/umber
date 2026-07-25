@@ -297,7 +297,7 @@ impl CommandProcessor<'_> {
                 position: 0,
             }));
             self.observe(crate::CommandObservation::Recovery(crate::RecoveryRecord {
-                backup: false,
+                kind: crate::RecoveryKind::InsertedToken,
                 tokens: vec![
                     self.observed_token(TracedTokenWord::pack(observed, OriginId::UNKNOWN)),
                 ],

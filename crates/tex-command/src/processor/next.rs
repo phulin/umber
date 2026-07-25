@@ -33,7 +33,7 @@ use crate::input::InputRetirementReason;
 use crate::observation::{
     AlignmentRecord, CommandDeliveryBoundary, CommandDeliveryRecord, CommandObservation,
     CommandProvenance, DiagnosticArgument, DiagnosticRecord, InputReason, InputRecord,
-    InputTransition, RecoveryRecord, observed_token,
+    InputTransition, RecoveryKind, RecoveryRecord, observed_token,
 };
 
 impl CommandProcessor<'_> {
@@ -207,7 +207,7 @@ impl CommandProcessor<'_> {
         }));
         #[cfg(any(test, feature = "instrumentation"))]
         self.observe(CommandObservation::Recovery(RecoveryRecord {
-            backup: false,
+            kind: RecoveryKind::InsertedToken,
             tokens: vec![self.observed_token(TracedTokenWord::pack(recovery, OriginId::UNKNOWN))],
         }));
         let before_backup = self.command.alignment.align_state;
@@ -275,7 +275,7 @@ impl CommandProcessor<'_> {
                 position: 0,
             }));
             self.observe(CommandObservation::Recovery(RecoveryRecord {
-                backup: false,
+                kind: RecoveryKind::InsertedControlSequence,
                 // TeX82's inaccessible frozen control sequence retains the
                 // canonical `\\cr` spelling in observer transport.
                 tokens: vec![crate::observation::ObservedToken::ControlSequence(
@@ -404,7 +404,7 @@ impl CommandProcessor<'_> {
                 position: 0,
             }));
             self.observe(CommandObservation::Recovery(RecoveryRecord {
-                backup: true,
+                kind: RecoveryKind::Backup,
                 tokens: vec![self.observed_token(spelling)],
             }));
         }
@@ -453,7 +453,7 @@ impl CommandProcessor<'_> {
                 position: 0,
             }));
             self.observe(CommandObservation::Recovery(RecoveryRecord {
-                backup: false,
+                kind: RecoveryKind::InsertedToken,
                 tokens: vec![
                     self.observed_token(TracedTokenWord::pack(closing, OriginId::UNKNOWN)),
                 ],
@@ -568,7 +568,7 @@ impl CommandProcessor<'_> {
                 position: 0,
             }));
             self.observe(CommandObservation::Recovery(RecoveryRecord {
-                backup: true,
+                kind: RecoveryKind::Backup,
                 tokens: vec![self.observed_command_spelling(&command)],
             }));
             if self.command.alignment.active_alignment.is_some()
@@ -1144,12 +1144,12 @@ impl CommandProcessor<'_> {
         #[cfg(any(test, feature = "instrumentation"))]
         self.observe_runaway_eof_diagnostics(&status);
         #[cfg(any(test, feature = "instrumentation"))]
-        let frozen_recovery_name = match &status {
-            ScannerStatus::Skipping(_) => Some("fi"),
-            ScannerStatus::Matching(_) => Some("par"),
-            ScannerStatus::Aligning(_) => Some("cr"),
+        let (frozen_recovery_name, recovery_kind) = match &status {
+            ScannerStatus::Skipping(_) => (Some("fi"), RecoveryKind::InsertedToken),
+            ScannerStatus::Matching(_) => (Some("par"), RecoveryKind::InsertedControlSequence),
+            ScannerStatus::Aligning(_) => (Some("cr"), RecoveryKind::InsertedControlSequence),
             ScannerStatus::Normal | ScannerStatus::Defining(_) | ScannerStatus::Absorbing(_) => {
-                None
+                (None, RecoveryKind::InsertedToken)
             }
         };
         let tokens = match status {
@@ -1193,7 +1193,7 @@ impl CommandProcessor<'_> {
         }));
         #[cfg(any(test, feature = "instrumentation"))]
         self.observe(CommandObservation::Recovery(RecoveryRecord {
-            backup: false,
+            kind: recovery_kind,
             tokens: observed_tokens,
         }));
         Ok(())
@@ -1566,7 +1566,9 @@ mod tests {
         let recovery = recorder
             .0
             .iter()
-            .position(|record| matches!(record, CommandObservation::Recovery(recovery) if !recovery.backup && recovery.tokens == vec![crate::observation::ObservedToken::ControlSequence("cr".into())]))
+            .position(|record| matches!(record, CommandObservation::Recovery(recovery)
+                if recovery.kind == RecoveryKind::InsertedControlSequence
+                    && recovery.tokens == vec![crate::observation::ObservedToken::ControlSequence("cr".into())]))
             .expect("frozen cr insertion is observed canonically");
         assert!(
             backup < recovery,
@@ -2788,9 +2790,10 @@ mod tests {
         let recovery = recorder
             .0
             .iter()
-            .position(
-                |record| matches!(record, CommandObservation::Recovery(record) if !record.backup),
-            )
+            .position(|record| {
+                matches!(record, CommandObservation::Recovery(record)
+                    if record.kind == RecoveryKind::InsertedToken)
+            })
             .expect("frozen fi recovery is observed");
         assert!(
             diagnostic_positions[1].0 < recovery,

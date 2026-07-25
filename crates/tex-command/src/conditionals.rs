@@ -17,7 +17,7 @@ use crate::processor::status::{ConditionId, ScannerStatus, ScannerWarning, Skipp
 #[cfg(any(test, feature = "instrumentation"))]
 use crate::observation::{
     CommandObservation, ConditionRecord, DiagnosticRecord, InputReason, InputRecord,
-    InputTransition, ObservedToken, RecoveryRecord,
+    InputTransition, ObservedToken, RecoveryKind, RecoveryRecord,
 };
 
 /// Stable pending-diagnostic identities for TeX.web part 28 recovery.
@@ -774,7 +774,7 @@ impl CommandProcessor<'_> {
                 position: 0,
             }));
             self.observe(CommandObservation::Recovery(RecoveryRecord {
-                backup: false,
+                kind: RecoveryKind::InsertedToken,
                 // The frozen token is deliberately opaque to TeX input, but
                 // the canonical observer reports its primitive spelling.
                 tokens: vec![ObservedToken::ControlSequence("relax".into())],

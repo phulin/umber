@@ -23,7 +23,7 @@ use super::CommandProcessor;
 #[cfg(any(test, feature = "instrumentation"))]
 use crate::observation::{
     CommandDeliveryBoundary, CommandDeliveryRecord, CommandObservation, CommandProvenance,
-    EffectRecord, InputReason, InputRecord, InputTransition, RecoveryRecord,
+    EffectRecord, InputReason, InputRecord, InputTransition, RecoveryKind, RecoveryRecord,
 };
 
 /// Stable pending-diagnostic identity for TeX.web's `Missing \\endcsname
@@ -486,7 +486,7 @@ impl CommandProcessor<'_> {
                 position: 0,
             }));
             self.observe(CommandObservation::Recovery(RecoveryRecord {
-                backup: false,
+                kind: RecoveryKind::InsertedToken,
                 tokens: observed
                     .into_iter()
                     .map(|token| self.observed_token(token))
@@ -520,7 +520,7 @@ impl CommandProcessor<'_> {
                 position: 0,
             }));
             self.observe(CommandObservation::Recovery(RecoveryRecord {
-                backup: true,
+                kind: RecoveryKind::Backup,
                 tokens: vec![self.observed_command_spelling(&command)],
             }));
         }
@@ -992,7 +992,9 @@ mod tests {
         let inserted = recorder
             .0
             .iter()
-            .position(|record| matches!(record, CommandObservation::Recovery(recovery) if !recovery.backup && matches!(recovery.tokens.as_slice(), [crate::ObservedToken::Character { character: '-', catcode: Catcode::Other }, ..])))
+            .position(|record| matches!(record, CommandObservation::Recovery(recovery)
+                if recovery.kind == RecoveryKind::InsertedToken
+                    && matches!(recovery.tokens.as_slice(), [crate::ObservedToken::Character { character: '-', catcode: Catcode::Other }, ..])))
             .expect("conversion output reports its inserted minus token");
         let raw = recorder
             .0
