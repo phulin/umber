@@ -746,7 +746,12 @@ fn translate_observation(
                     .arguments
                     .iter()
                     .cloned()
-                    .map(|token| CanonicalValue::Token(oracle_token(token)))
+                    .map(|argument| match argument {
+                        tex_command::DiagnosticArgument::Token(token) => {
+                            CanonicalValue::Token(oracle_token(token))
+                        }
+                        tex_command::DiagnosticArgument::Name(name) => CanonicalValue::Name(name),
+                    })
                     .collect(),
             }),
             format!("source={source}"),

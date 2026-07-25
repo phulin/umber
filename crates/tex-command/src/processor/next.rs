@@ -31,7 +31,8 @@ use crate::input::InputRetirementReason;
 #[cfg(any(test, feature = "instrumentation"))]
 use crate::observation::{
     AlignmentRecord, CommandDeliveryBoundary, CommandDeliveryRecord, CommandObservation,
-    CommandProvenance, InputReason, InputRecord, InputTransition, RecoveryRecord, observed_token,
+    CommandProvenance, DiagnosticArgument, DiagnosticRecord, InputReason, InputRecord,
+    InputTransition, RecoveryRecord, observed_token,
 };
 
 const DEFAULT_END_LINE_CHAR: i32 = 13;
@@ -427,7 +428,9 @@ impl CommandProcessor<'_> {
             crate::observation::DiagnosticRecord {
                 severity: "error",
                 diagnostic: "off_save_replay",
-                arguments: vec![self.observed_command_spelling(&command)],
+                arguments: vec![DiagnosticArgument::Token(
+                    self.observed_command_spelling(&command),
+                )],
             },
         ));
         self.back_input(command)?;
@@ -471,7 +474,9 @@ impl CommandProcessor<'_> {
             crate::observation::DiagnosticRecord {
                 severity: "error",
                 diagnostic: "off_save_bottom_drop",
-                arguments: vec![self.observed_command_spelling(command)],
+                arguments: vec![DiagnosticArgument::Token(
+                    self.observed_command_spelling(command),
+                )],
             },
         ));
     }
@@ -1109,6 +1114,11 @@ impl CommandProcessor<'_> {
     /// reassigned their visible spellings.
     fn install_outer_recovery(&mut self, recovery: RecoveryContext) -> Result<(), CommandError> {
         let RecoveryContext { status, warning } = recovery;
+        // TeX82 §379 reports the outer-validity EOF before it clears the
+        // scanner episode.  §510 then reports the incomplete skipped
+        // conditional before `ins_error` inserts frozen `\fi`.
+        #[cfg(any(test, feature = "instrumentation"))]
+        self.observe_runaway_eof_diagnostics(&status);
         let tokens = match status {
             ScannerStatus::Normal => return Ok(()),
             ScannerStatus::Skipping(_) => vec![self.frozen_primitive("fi")?],
@@ -1136,6 +1146,30 @@ impl CommandProcessor<'_> {
             ReplayTrace::Transient(crate::input::TransientReplayReason::Inserted),
         );
         Ok(())
+    }
+
+    #[cfg(any(test, feature = "instrumentation"))]
+    fn observe_runaway_eof_diagnostics(&mut self, status: &ScannerStatus) {
+        let status_name = match status {
+            ScannerStatus::Normal => "normal",
+            ScannerStatus::Skipping(_) => "skipping",
+            ScannerStatus::Defining(_) => "defining",
+            ScannerStatus::Matching(_) => "matching",
+            ScannerStatus::Aligning(_) => "aligning",
+            ScannerStatus::Absorbing(_) => "absorbing",
+        };
+        self.observe(CommandObservation::Diagnostic(DiagnosticRecord {
+            severity: "error",
+            diagnostic: "outer_validity_eof",
+            arguments: vec![DiagnosticArgument::Name(status_name.into())],
+        }));
+        if matches!(status, ScannerStatus::Skipping(_)) {
+            self.observe(CommandObservation::Diagnostic(DiagnosticRecord {
+                severity: "error",
+                diagnostic: "conditional_incomplete",
+                arguments: Vec::new(),
+            }));
+        }
     }
 
     fn frozen_primitive(&self, name: &str) -> Result<TracedTokenWord, CommandError> {
@@ -2546,6 +2580,67 @@ mod tests {
             assert_eq!(actual, expected);
         }
         assert_eq!(command.expansion.pending_diagnostics, vec![17; 5]);
+    }
+
+    #[test]
+    fn skipping_eof_reports_diagnostics_before_frozen_fi_recovery() {
+        let mut command = CommandState::default();
+        let mut runtime = CommandRuntime::default();
+        let mut universe = Universe::new();
+        recovery_primitives(&mut universe);
+        let frozen_fi = universe.primitive_token("fi").expect("fi is registered");
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut recorder = Recorder::default();
+
+        command.with_scanner_status(
+            ScannerStatus::Skipping(SkippingContext {
+                condition: ConditionId(1),
+                warning: ScannerWarning(17),
+            }),
+            |command| {
+                let mut processor =
+                    processor(command, &mut runtime, &mut universe, &mut capabilities)
+                        .with_observer(&mut recorder);
+                let recovered = processor
+                    .get_next()
+                    .expect("EOF recovery succeeds")
+                    .expect("frozen fi is inserted");
+                assert_eq!(recovered.spelling().semantic_token(), frozen_fi);
+            },
+        );
+
+        let diagnostic_positions = recorder
+            .0
+            .iter()
+            .enumerate()
+            .filter_map(|(index, record)| match record {
+                CommandObservation::Diagnostic(diagnostic) => Some((index, diagnostic)),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(diagnostic_positions.len(), 2);
+        assert_eq!(diagnostic_positions[0].1.diagnostic, "outer_validity_eof");
+        assert_eq!(
+            diagnostic_positions[0].1.arguments,
+            vec![crate::observation::DiagnosticArgument::Name(
+                "skipping".into()
+            )]
+        );
+        assert_eq!(
+            diagnostic_positions[1].1.diagnostic,
+            "conditional_incomplete"
+        );
+        let recovery = recorder
+            .0
+            .iter()
+            .position(
+                |record| matches!(record, CommandObservation::Recovery(record) if !record.backup),
+            )
+            .expect("frozen fi recovery is observed");
+        assert!(
+            diagnostic_positions[1].0 < recovery,
+            "§§379/510 diagnose skipped EOF before inserting frozen fi"
+        );
     }
 
     #[test]

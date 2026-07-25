@@ -29,6 +29,14 @@ pub enum ObservedToken {
     FrozenOther,
 }
 
+/// A canonical diagnostic argument, which can be a token spelling or a
+/// diagnostic-specific symbolic value.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum DiagnosticArgument {
+    Token(ObservedToken),
+    Name(String),
+}
+
 /// Exact source and aggregate delivery provenance for an observed command.
 ///
 /// The input-level identity and cursor slot identify the aggregate input
@@ -471,7 +479,7 @@ pub struct DiagnosticRecord {
     pub severity: &'static str,
     pub diagnostic: &'static str,
     /// Canonical token arguments selected by the recovery site.
-    pub arguments: Vec<ObservedToken>,
+    pub arguments: Vec<DiagnosticArgument>,
 }
 
 /// One committed command-core observation.

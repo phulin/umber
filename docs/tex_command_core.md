@@ -1175,7 +1175,10 @@ recovery follows the same path: definitions and absorbed text receive `}`;
 macro matching receives frozen `\par`; alignment preambles receive frozen
 `\cr` then `}`; and skipped conditional text receives frozen `\fi`. The
 insertions restart canonical `get_next`; no scanner caller chooses semantic
-recovery.
+recovery. For TeX82 §§379 and 510, terminal skipped text publishes
+`outer_validity_eof(skipping)` followed by `conditional_incomplete` before
+the recovery input push and frozen-`\fi` observation; this remains
+command-owned so `pass_text` restores its prior scanner status normally.
 
 The input-delivery audit drives the focused committed TeX82
 `input-recovery.tex` source through both public raw entry points for every

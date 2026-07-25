@@ -34,9 +34,9 @@ pub use input::{
 #[cfg(any(test, feature = "instrumentation"))]
 pub use observation::{
     AlignmentRecord, CommandDeliveryBoundary, CommandDeliveryRecord, CommandObservation,
-    CommandObserver, CommandProvenance, ConditionRecord, EffectRecord, InputReason, InputRecord,
-    InputTransition, MacroRecord, MutationRecord, ObservedToken, RecoveryRecord, ScannerRecord,
-    ScannerStatusRecord, TokenListRecord,
+    CommandObserver, CommandProvenance, ConditionRecord, DiagnosticArgument, EffectRecord,
+    InputReason, InputRecord, InputTransition, MacroRecord, MutationRecord, ObservedToken,
+    RecoveryRecord, ScannerRecord, ScannerStatusRecord, TokenListRecord,
 };
 #[cfg(any(test, feature = "instrumentation"))]
 pub use processor::AlignmentCellFinishObservations;
