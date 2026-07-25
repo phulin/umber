@@ -679,6 +679,12 @@ retires, before raw delivery resumes a parent source or token list. That
 decision does not inject recovery tokens; command-owned outer-validity
 recovery consumes it at that boundary.
 
+If outer-validity recovery clears a non-normal episode before its scoped
+caller returns, that caller publishes the installed-status-to-prior-status
+transition (rather than a misleading `normal -> normal`) and then restores the
+complete prior scanner state. This applies uniformly to `scan_toks`, macro
+matching, and skipped-condition scanning.
+
 ```rust
 pub enum ScannerStatus {
     Normal,

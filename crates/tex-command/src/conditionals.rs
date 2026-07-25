@@ -811,15 +811,7 @@ impl CommandProcessor<'_> {
         // this `pass_text` invocation, so retain its canonical
         // skipping-to-prior transition instead of publishing a spurious
         // normal-to-normal restoration after nested-source EOF.
-        let restored_from = if matches!(self.command.scanner.status(), ScannerStatus::Normal)
-            && matches!(skipping, ScannerStatus::Skipping(_))
-        {
-            skipping
-        } else {
-            self.command.scanner.status().clone()
-        };
-        self.observe_scanner_status_transition(restored_from, prior.status().clone());
-        self.command.restore_scanner_status(prior);
+        self.restore_scanner_status_with_observation(skipping, prior);
         result
     }
 

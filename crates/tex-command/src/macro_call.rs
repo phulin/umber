@@ -211,12 +211,12 @@ impl CommandProcessor<'_> {
                 // warning slot now so outer recovery has one canonical path.
                 warning: ScannerWarning(0),
             });
-            let prior = self.command.begin_scanner_status(status);
+            let prior = self.command.begin_scanner_status(status.clone());
             self.observe_scanner_status_transition(
                 prior.status().clone(),
                 self.command.scanner.status().clone(),
             );
-            Some(prior)
+            Some((prior, status))
         } else {
             None
         };
@@ -224,12 +224,8 @@ impl CommandProcessor<'_> {
         let arguments = match self.macro_call_scalar(definition, meaning.flags(), &pattern) {
             Ok(arguments) => arguments,
             Err(error) => {
-                if let Some(prior) = prior {
-                    self.observe_scanner_status_transition(
-                        self.command.scanner.status().clone(),
-                        prior.status().clone(),
-                    );
-                    self.command.restore_scanner_status(prior);
+                if let Some((prior, status)) = prior {
+                    self.restore_scanner_status_with_observation(status, prior);
                 }
                 return Err(error);
             }
@@ -272,12 +268,8 @@ impl CommandProcessor<'_> {
             token_count: arguments.buffer.len() as u64,
             tokens: Vec::new(),
         }));
-        if let Some(prior) = prior {
-            self.observe_scanner_status_transition(
-                self.command.scanner.status().clone(),
-                prior.status().clone(),
-            );
-            self.command.restore_scanner_status(prior);
+        if let Some((prior, status)) = prior {
+            self.restore_scanner_status_with_observation(status, prior);
         }
         Ok(arguments)
     }

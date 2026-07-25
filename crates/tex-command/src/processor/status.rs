@@ -97,6 +97,27 @@ impl CommandProcessor<'_> {
             to: format!("{to:?}"),
         }));
     }
+
+    /// Publishes a scoped scanner-status exit before restoring its complete
+    /// former state. Outer-validity recovery clears a live episode so that its
+    /// inserted token is delivered normally; that lexical cleanup must still
+    /// retain the episode's canonical exit transition.
+    pub(crate) fn restore_scanner_status_with_observation(
+        &mut self,
+        installed: ScannerStatus,
+        prior: ScannerState,
+    ) {
+        let current = self.command.scanner.status().clone();
+        let from = if matches!(current, ScannerStatus::Normal)
+            && !matches!(installed, ScannerStatus::Normal)
+        {
+            installed
+        } else {
+            current
+        };
+        self.observe_scanner_status_transition(from, prior.status().clone());
+        self.command.restore_scanner_status(prior);
+    }
 }
 
 /// Typed shell for TeX's live `scanner_status`.

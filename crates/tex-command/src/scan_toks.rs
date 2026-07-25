@@ -68,17 +68,13 @@ impl CommandProcessor<'_> {
                 warning,
             }),
         };
-        let prior = self.command.begin_scanner_status(status);
+        let prior = self.command.begin_scanner_status(status.clone());
         self.observe_scanner_status_transition(
             prior.status().clone(),
             self.command.scanner.status().clone(),
         );
         let result = self.scan_toks_inner(mode);
-        self.observe_scanner_status_transition(
-            self.command.scanner.status().clone(),
-            prior.status().clone(),
-        );
-        self.command.restore_scanner_status(prior);
+        self.restore_scanner_status_with_observation(status, prior);
         let result = result?;
         #[cfg(any(test, feature = "instrumentation"))]
         self.observe(CommandObservation::TokenList(TokenListRecord {
@@ -455,6 +451,8 @@ fn is_end_group(token: Token) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use tex_state::Universe;
     use tex_state::macro_store::MacroMeaning;
 
@@ -464,7 +462,8 @@ mod tests {
     };
     use crate::{
         CommandHostCapabilities, CommandHostContext, CommandObservation, CommandObserver,
-        CommandRuntime, CommandState, InputTransition, ObservedToken,
+        CommandRuntime, CommandState, InputTransition, ObservedToken, RegisteredSourceKind,
+        SourceRegistration,
     };
 
     #[derive(Default)]
@@ -503,6 +502,56 @@ mod tests {
             RetirementBehavior::Pop,
             ReplayTrace::BackedUp,
         );
+    }
+
+    #[test]
+    fn eof_recovery_restores_defining_status_before_macro_replacement_completes() {
+        let mut command = CommandState::default();
+        let source = command
+            .register_source(SourceRegistration::new(
+                RegisteredSourceKind::Generated,
+                Arc::<[u8]>::from(&b"{DEF"[..]),
+            ))
+            .expect("source registers");
+        command
+            .open_registered_source(source)
+            .expect("source opens");
+        let mut runtime = CommandRuntime::default();
+        let mut universe = Universe::new();
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut recorder = Recorder::default();
+        let mut processor = CommandProcessor::new(
+            &mut command,
+            &mut runtime,
+            universe.command_context(),
+            CommandHostContext::new(&mut capabilities),
+        )
+        .with_observer(&mut recorder);
+
+        processor
+            .scan_toks(ScanToksMode::MacroDefinition { expanded: false })
+            .expect("EOF recovery closes the replacement text");
+
+        let close = recorder
+            .0
+            .iter()
+            .position(|event| {
+                matches!(event, CommandObservation::Command(command)
+                if matches!(command.spelling, ObservedToken::Character {
+                    character: '}',
+                    catcode: Catcode::EndGroup,
+                }))
+            })
+            .expect("inserted right brace is delivered");
+        let restored = recorder
+            .0
+            .iter()
+            .position(|event| {
+                matches!(event, CommandObservation::ScannerStatus(status)
+                if status.from.starts_with("Defining") && status.to == "Normal")
+            })
+            .expect("defining status restores after the inserted right brace");
+        assert!(close < restored);
     }
 
     fn install_expandable(
