@@ -513,6 +513,54 @@ impl CommandProcessor<'_> {
         Ok(())
     }
 
+    /// Performs TeX82 §1047's `insert_dollar_sign` replay for a command that
+    /// §1046 lists among the "math-only cases in non-math modes, or vice
+    /// versa" (for example `mmode+hrule`). TeX backs the offending command
+    /// up, sets `cur_tok` to an inserted `$`, and backs that synthesized
+    /// token up too, so the next two deliveries close the current math (or
+    /// non-math) mode and then replay the original command in the resulting
+    /// mode. The executor is responsible for the accompanying "Missing $
+    /// inserted" diagnostic text; only the raw input recovery lives here.
+    pub fn recover_missing_math_shift(
+        &mut self,
+        command: CurrentCommand,
+    ) -> Result<(), CommandError> {
+        self.back_input(command)?;
+        let dollar = TracedTokenWord::pack(
+            Token::Char {
+                ch: '$',
+                cat: Catcode::MathShift,
+            },
+            OriginId::UNKNOWN,
+        );
+        let level = self.command.push_token_level(
+            TokenPayload::Transient(SharedTokenBuffer::new(vec![dollar])),
+            TokenBehavior::Recovery,
+            RetirementBehavior::Pop,
+            ReplayTrace::Transient(crate::input::TransientReplayReason::Inserted),
+        );
+        #[cfg(not(any(test, feature = "instrumentation")))]
+        let _ = level;
+        #[cfg(any(test, feature = "instrumentation"))]
+        {
+            // `insert_dollar_sign` calls `back_input` before assigning
+            // `cur_tok`; the push is therefore observed as backup even
+            // though its inserted ownership makes retirement a recovery
+            // transition, mirroring `recover_stop_for_vertical_mode` above.
+            self.observe(CommandObservation::Input(InputRecord {
+                transition: InputTransition::Backup,
+                reason: InputReason::Backup,
+                level: level.0,
+                position: 0,
+            }));
+            self.observe(CommandObservation::Recovery(RecoveryRecord {
+                kind: RecoveryKind::Backup,
+                tokens: vec![self.observed_token(dollar)],
+            }));
+        }
+        Ok(())
+    }
+
     /// Performs TeX82 §46's `its_all_over` hand-off to `\output`.
     ///
     /// `main_control` has just redelivered a stop command from the one-token

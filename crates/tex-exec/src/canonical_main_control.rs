@@ -1840,6 +1840,7 @@ fn canonical_left_group_open(modes: &ModeNest, stores: &Universe) -> bool {
 #[derive(Clone)]
 enum ScannedStep {
     Continue,
+    MissingMathShift,
     ReplayCompleted(tex_command::CommandReplayEpisode),
     Math(CanonicalMathRequest),
     MathDelimiter(MathDelimiterBoundary),
@@ -3527,6 +3528,19 @@ fn scan_command(
                     .map_err(command_error)?,
             ))
         }
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::HRule)
+            if matches!(mode, Mode::Math | Mode::DisplayMath) =>
+        {
+            // TeX82 §1046 lists `mmode+hrule` among the "math-only cases in
+            // non-math modes, or vice versa"; unlike `mmode+vrule` (§1056,
+            // handled below), `\hrule` never reaches `scan_rule_spec` while
+            // in math mode. §1047's `insert_dollar_sign` closes math with an
+            // inserted `$` and replays `\hrule` in the resulting mode.
+            processor
+                .recover_missing_math_shift(command)
+                .map_err(command_error)?;
+            Ok(ScannedStep::MissingMathShift)
+        }
         Meaning::UnexpandablePrimitive(
             primitive @ (UnexpandablePrimitive::HRule | UnexpandablePrimitive::VRule),
         ) => {
@@ -5115,6 +5129,16 @@ fn apply_scanned_step(
 ) -> Result<ReplayStep, ExecError> {
     match scanned {
         ScannedStep::Continue => Ok(ReplayStep::Continue),
+        ScannedStep::MissingMathShift => {
+            // TeX82 §1047's `insert_dollar_sign` diagnostic; the matching
+            // input recovery (backing up the offending command behind an
+            // inserted `$`) already ran in `recover_missing_math_shift`.
+            stores.world_mut().write_text(
+                PrintSink::TerminalAndLog,
+                "\n! Missing $ inserted.\n<inserted text>\n<to be read again>\nI've inserted a begin-math/end-math symbol since I think\nyou left one out. Proceed, with fingers crossed.\n",
+            );
+            Ok(ReplayStep::Continue)
+        }
         // These are intercepted by `CanonicalMainControl::step_once`, where
         // the owning opaque episode and mutable replay driver are available.
         ScannedStep::ReplayCompleted(_) | ScannedStep::Math(_) | ScannedStep::MathDelimiter(_) => {
@@ -6907,6 +6931,12 @@ fn glue_scale(spec: GlueSpec, factor: i32, divide: bool) -> Result<GlueSpec, Exe
 /// horizontal paragraph must finish before its rule reaches the page builder.
 /// In vertical mode the rule is a direct contribution and resets `prev_depth`;
 /// `\vrule`, conversely, enters horizontal mode before it appends its node.
+///
+/// `\hrule` in math mode never reaches this function: `scan_command`
+/// intercepts `mmode+hrule` before scanning a rule spec at all (TeX82 §1046)
+/// and replays §1047's `insert_dollar_sign` instead. `\vrule` in math mode
+/// (§1056's `mmode+vrule`) is an ordinary direct contribution and falls
+/// through the `else` branch below like any other mode.
 fn apply_scanned_rule(
     command: &mut CommandState,
     modes: &mut ModeNest,

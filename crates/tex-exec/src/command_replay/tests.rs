@@ -1146,6 +1146,72 @@ fn production_driver_char_num_in_display_math_appends_a_math_char_noad() {
 }
 
 #[test]
+fn production_driver_hrule_in_math_mode_inserts_missing_dollar_and_replays_hrule() {
+    // TeX82 §1046 lists `mmode+hrule` among the "math-only cases in
+    // non-math modes, or vice versa"; §1047's `insert_dollar_sign` closes
+    // math mode with an inserted `$` and replays `\hrule` in the resulting
+    // mode instead of reaching the generic unimplemented-typesetting error.
+    let mut universe = Universe::new();
+    let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+    register_source(&mut control, b"a$\\hrule\\par");
+
+    // TeX82 §1090's `vmode+letter` backs the letter up and starts the
+    // paragraph; the letter itself is appended on the next delivery.
+    assert_eq!(
+        control
+            .step(&mut universe)
+            .expect("letter starts paragraph"),
+        MainControlStep::Continue
+    );
+    assert_eq!(control.current_mode(), crate::Mode::Horizontal);
+    assert_eq!(
+        control
+            .step(&mut universe)
+            .expect("backed-up letter appends"),
+        MainControlStep::Continue
+    );
+    assert_eq!(control.current_mode(), crate::Mode::Horizontal);
+
+    assert_eq!(
+        control.step(&mut universe).expect("math shift enters math"),
+        MainControlStep::Continue
+    );
+    assert_eq!(control.current_mode(), crate::Mode::Math);
+
+    assert_eq!(
+        control
+            .step(&mut universe)
+            .expect("hrule recovers a missing math shift"),
+        MainControlStep::Continue
+    );
+    assert!(terminal_text(&universe).contains("Missing $ inserted"));
+    // The recovery only rewrites pending input; the mode transition happens
+    // once the inserted `$` is itself replayed as the next command.
+    assert_eq!(control.current_mode(), crate::Mode::Math);
+
+    assert_eq!(
+        control.step(&mut universe).expect("inserted $ closes math"),
+        MainControlStep::Continue
+    );
+    assert_eq!(control.current_mode(), crate::Mode::Horizontal);
+
+    assert_eq!(
+        control
+            .step(&mut universe)
+            .expect("replayed hrule ends the paragraph and contributes a rule"),
+        MainControlStep::Continue
+    );
+    assert_eq!(control.current_mode(), crate::Mode::Vertical);
+    // §1056's `vmode+hrule` resets `prev_depth` to the ignored-depth
+    // sentinel; observing that confirms the replayed `\hrule` reached the
+    // ordinary vertical rule path rather than being silently dropped.
+    assert_eq!(
+        control.modes.current_list().prev_depth(),
+        Some(crate::mode::ignored_depth(&universe))
+    );
+}
+
+#[test]
 fn show_reads_its_target_raw_without_starting_macro_matching() {
     let mut universe = Universe::new();
     let mut control = CommandReplayControl::tex82_initex(&mut universe);

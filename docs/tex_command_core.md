@@ -608,7 +608,17 @@ expanded `width`, `height`, and `depth` keyword and dimension scan, including
 the failed-keyword backup that begins subsequent main control. Replay only
 appends the resulting rule node; it neither reads a source token nor rebuilds
 rule provenance. This remains true inside alignment cells, where template
-delivery and rule scanning share the one command-owned input stream.
+delivery and rule scanning share the one command-owned input stream. `\vrule`
+in math mode (`mmode+vrule`) takes this same completed-spec path, since TeX82
+§1056 treats it as an ordinary direct contribution. `\hrule` in math mode
+(`mmode+hrule`) never reaches `scan_rule_spec`: `tex-exec` recognizes the
+mode before scanning and calls `CommandProcessor::recover_missing_math_shift`
+instead, TeX82 §1047's `insert_dollar_sign` recovery from the §1046
+"math-only cases in non-math modes, or vice versa" list. That method owns the
+same two-backup shape as §1095's `head_for_vmode` above -- back up the
+offending command, then back up a synthesized `$` with inserted ownership --
+so the next two deliveries close math and replay `\hrule` in the resulting
+mode; the executor applies only the "Missing $ inserted" diagnostic text.
 
 TeX82 `\setbox` follows the same split in two phases. `CommandProcessor`
 scans the register integer and optional equals sign as a typed
