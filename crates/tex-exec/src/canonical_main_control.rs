@@ -21,10 +21,10 @@ use tex_state::glue::GlueSpec;
 use tex_state::interner::Symbol;
 use tex_state::macro_store::{MacroDefinitionProvenance, MacroMeaning};
 use tex_state::meaning::{Meaning, MeaningFlags, UnexpandablePrimitive};
-use tex_state::node::{GlueKind, Node};
+use tex_state::node::{GlueKind, KernKind, Node};
 use tex_state::scaled::Scaled;
 use tex_state::token::{Catcode, Token};
-use tex_state::{GroupKind, PrintSink, StreamSlot, TracedTokenList, Universe};
+use tex_state::{GroupKind, ParagraphShapeLine, PrintSink, StreamSlot, TracedTokenList, Universe};
 use tex_typeset::PackSpec;
 
 use crate::{ExecError, Mode, ModeNest};
@@ -55,6 +55,7 @@ struct ActiveReplayBox {
     opening_brace_replay: bool,
     body_opener_pending: bool,
     depth: u32,
+    horizontal: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -779,6 +780,22 @@ enum ScannedStep {
     HorizontalSkip {
         value: GlueSpec,
     },
+    Kern {
+        amount: Scaled,
+    },
+    CharacterCode {
+        value: i32,
+    },
+    FixedHorizontalGlue {
+        primitive: UnexpandablePrimitive,
+    },
+    ParagraphIndent {
+        indent: bool,
+    },
+    ParagraphShape {
+        lines: Vec<ParagraphShapeLine>,
+        global: bool,
+    },
     Toks {
         index: u16,
         tokens: TracedTokenList,
@@ -893,6 +910,7 @@ enum ScannedStep {
     },
     SetBox(SetBoxTarget),
     BeginVBox,
+    BeginHBox,
     ReplayBoxOpeningBrace,
     BoxBeginGroup,
     BoxEndGroup {
@@ -1444,6 +1462,42 @@ fn scan_command(
             let value = processor.scan_glue(false).map_err(command_error)?.value;
             Ok(ScannedStep::HorizontalSkip { value })
         }
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Kern) => {
+            let amount = processor.scan_dimension().map_err(command_error)?.value;
+            Ok(ScannedStep::Kern { amount })
+        }
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Char) => {
+            let value = processor.scan_integer().map_err(command_error)?.value;
+            Ok(ScannedStep::CharacterCode { value })
+        }
+        Meaning::UnexpandablePrimitive(
+            primitive @ (UnexpandablePrimitive::HFil
+            | UnexpandablePrimitive::HFill
+            | UnexpandablePrimitive::HSs
+            | UnexpandablePrimitive::HFilNeg),
+        ) => Ok(ScannedStep::FixedHorizontalGlue { primitive }),
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Indent) => {
+            Ok(ScannedStep::ParagraphIndent { indent: true })
+        }
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::NoIndent) => {
+            Ok(ScannedStep::ParagraphIndent { indent: false })
+        }
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::ParShape) => {
+            let _ = processor.scan_optional_equals().map_err(command_error)?;
+            let count = processor
+                .scan_integer()
+                .map_err(command_error)?
+                .value
+                .max(0) as usize;
+            let mut lines = Vec::with_capacity(count);
+            for _ in 0..count {
+                lines.push(ParagraphShapeLine {
+                    indent: processor.scan_dimension().map_err(command_error)?.value,
+                    width: processor.scan_dimension().map_err(command_error)?.value,
+                });
+            }
+            Ok(ScannedStep::ParagraphShape { lines, global })
+        }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Toks) => {
             let assignment = processor
                 .scan_token_register_assignment()
@@ -1621,6 +1675,10 @@ fn scan_command(
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::VBox) => {
             processor.scan_box_group_opening().map_err(command_error)?;
             Ok(ScannedStep::BeginVBox)
+        }
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::HBox) => {
+            processor.scan_box_group_opening().map_err(command_error)?;
+            Ok(ScannedStep::BeginHBox)
         }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::HAlign) => {
             Ok(ScannedStep::BeginAlignment { vertical: false })
@@ -2208,6 +2266,64 @@ fn apply_scanned_step(
             });
             Ok(ReplayStep::Continue)
         }
+        ScannedStep::Kern { amount } => {
+            if matches!(
+                modes.current_mode(),
+                Mode::Vertical | Mode::InternalVertical
+            ) {
+                start_canonical_paragraph(command, modes, stores, true)?;
+            }
+            crate::assignments::flush_pending_hchars(modes, stores)?;
+            modes.current_list_mut().push(Node::Kern {
+                amount,
+                kind: KernKind::Explicit,
+            });
+            Ok(ReplayStep::Continue)
+        }
+        ScannedStep::CharacterCode { value } => {
+            let ch = u32::try_from(value).ok().and_then(char::from_u32).ok_or(
+                ExecError::InvalidCode {
+                    context: "\\char",
+                    value,
+                },
+            )?;
+            if matches!(
+                modes.current_mode(),
+                Mode::Vertical | Mode::InternalVertical
+            ) {
+                start_canonical_paragraph(command, modes, stores, true)?;
+            }
+            crate::assignments::append_canonical_character(
+                modes,
+                stores,
+                ch,
+                tex_state::token::OriginId::UNKNOWN,
+            )?;
+            Ok(ReplayStep::Continue)
+        }
+        ScannedStep::FixedHorizontalGlue { primitive } => {
+            if matches!(
+                modes.current_mode(),
+                Mode::Vertical | Mode::InternalVertical
+            ) {
+                start_canonical_paragraph(command, modes, stores, true)?;
+            }
+            crate::assignments::flush_pending_hchars(modes, stores)?;
+            modes.current_list_mut().push(Node::Glue {
+                spec: stores.intern_glue(crate::assignments::fixed_infinite_glue(primitive)),
+                kind: GlueKind::Normal,
+                leader: None,
+            });
+            Ok(ReplayStep::Continue)
+        }
+        ScannedStep::ParagraphIndent { indent } => {
+            start_canonical_paragraph(command, modes, stores, indent)?;
+            Ok(ReplayStep::Continue)
+        }
+        ScannedStep::ParagraphShape { lines, global } => {
+            stores.set_paragraph_shape(&lines, global);
+            Ok(ReplayStep::Continue)
+        }
         ScannedStep::Toks {
             index,
             tokens,
@@ -2440,6 +2556,22 @@ fn apply_scanned_step(
                 opening_brace_replay: true,
                 body_opener_pending: true,
                 depth: 1,
+                horizontal: false,
+            });
+            Ok(ReplayStep::Continue)
+        }
+        ScannedStep::BeginHBox => {
+            let target = boxes.pending_setbox.take();
+            let ships_out = std::mem::take(&mut boxes.pending_shipout);
+            stores.enter_group_with_kind(GroupKind::HBox);
+            modes.push(Mode::RestrictedHorizontal);
+            boxes.active_boxes.push(ActiveReplayBox {
+                target,
+                ships_out,
+                opening_brace_replay: true,
+                body_opener_pending: true,
+                depth: 1,
+                horizontal: true,
             });
             Ok(ReplayStep::Continue)
         }
@@ -2561,21 +2693,36 @@ fn apply_scanned_step(
             let box_state = boxes.active_boxes.pop().expect("active box was checked");
             let level = modes.pop()?;
             let children = stores.freeze_node_list(level.list().nodes());
-            let packed = crate::packing_params::vpack(
-                stores,
-                children,
-                PackSpec::Natural,
-                crate::packing_params::vpack_params(stores),
-            );
-            let boxed = stores.freeze_node_list(&[Node::VList(packed.node)]);
+            let node = if box_state.horizontal {
+                Node::HList(crate::assignments::hpack_with_overfull_rule(
+                    stores,
+                    children,
+                    PackSpec::Natural,
+                ))
+            } else {
+                Node::VList(
+                    crate::packing_params::vpack(
+                        stores,
+                        children,
+                        PackSpec::Natural,
+                        crate::packing_params::vpack_params(stores),
+                    )
+                    .node,
+                )
+            };
+            let boxed = stores.freeze_node_list(std::slice::from_ref(&node));
             stores
-                .leave_group_with_kind(GroupKind::VBox)
+                .leave_group_with_kind(if box_state.horizontal {
+                    GroupKind::HBox
+                } else {
+                    GroupKind::VBox
+                })
                 .map_err(|_| ExecError::MissingToken {
-                    context: "vbox group",
+                    context: "box group",
                 })?;
             if ships_out {
                 debug_assert!(box_state.ships_out);
-                shipout_replay_box(Node::VList(packed.node), stores)?;
+                shipout_replay_box(node, stores)?;
             } else if let Some(target) = box_state.target {
                 if target.global {
                     stores.set_box_reg_global(target.index, boxed);
@@ -2583,7 +2730,7 @@ fn apply_scanned_step(
                     stores.set_box_reg(target.index, boxed);
                 }
             } else {
-                modes.current_list_mut().push(Node::VList(packed.node));
+                modes.current_list_mut().push(node);
             }
             Ok(ReplayStep::Continue)
         }

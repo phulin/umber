@@ -131,6 +131,79 @@ fn production_driver_schedules_everypar_before_replayed_first_character() {
 }
 
 #[test]
+fn production_driver_applies_typed_parshape_indent_and_horizontal_nodes() {
+    let mut universe = Universe::new();
+    let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+    register_source(
+        &mut control,
+        br"\parshape=1 2pt 20pt\noindent\char65\kern2pt\hskip3pt\hfil",
+    );
+
+    for context in ["parshape", "noindent", "char", "kern", "hskip", "hfil"] {
+        assert_eq!(
+            control.step(&mut universe).expect(context),
+            MainControlStep::Continue
+        );
+    }
+
+    assert_eq!(control.current_mode(), crate::Mode::Horizontal);
+    assert_eq!(universe.paragraph_shape().len(), 1);
+    assert_eq!(
+        universe.paragraph_shape()[0].indent,
+        Scaled::from_raw(2 * Scaled::UNITY)
+    );
+    assert_eq!(
+        universe.paragraph_shape()[0].width,
+        Scaled::from_raw(20 * Scaled::UNITY)
+    );
+    assert!(
+        control
+            .modes
+            .current_list()
+            .nodes()
+            .iter()
+            .any(|node| matches!(node, tex_state::node::Node::Kern { .. }))
+    );
+    assert!(
+        control
+            .modes
+            .current_list()
+            .nodes()
+            .iter()
+            .any(|node| matches!(node, tex_state::node::Node::Glue { .. }))
+    );
+}
+
+#[test]
+fn production_driver_enters_and_packs_hbox_without_legacy_dispatch() {
+    let mut universe = Universe::new();
+    let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+    register_source(&mut control, br"\setbox0=\hbox{A}");
+
+    for context in [
+        "setbox",
+        "hbox opening",
+        "body brace",
+        "replayed brace",
+        "hbox character",
+        "hbox close",
+    ] {
+        assert_eq!(
+            control.step(&mut universe).expect(context),
+            MainControlStep::Continue
+        );
+    }
+    let box_nodes = universe
+        .box_reg(0)
+        .map(|id| universe.nodes(id))
+        .expect("canonical hbox was assigned");
+    assert!(matches!(
+        box_nodes.first(),
+        Some(tex_state::node_arena::NodeRef::HList(_))
+    ));
+}
+
+#[test]
 fn production_driver_hands_box_math_and_alignment_to_typed_control() {
     let mut universe = Universe::new();
     let mut control = CanonicalMainControl::tex82_initex(&mut universe);
