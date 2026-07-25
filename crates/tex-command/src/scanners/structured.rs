@@ -129,6 +129,19 @@ pub struct ScannedBoxRegister {
     pub index: i32,
 }
 
+/// The completed payload prefix of TeX82's `\\leaders` family.
+///
+/// A constructed box deliberately remains a construction request: its body is
+/// replayed through the ordinary box lifecycle before command control scans
+/// the following glue operand.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ScannedLeaderPayload {
+    Missing,
+    BoxRegister { index: i32, copy: bool },
+    Construction(ScannedBoxConstruction),
+    Rule(ScannedRuleSpec),
+}
+
 /// A completed named glue-parameter assignment.
 ///
 /// Command processing owns the optional equals sign and scalar glue scan;
@@ -570,6 +583,41 @@ impl CommandProcessor<'_> {
         Ok(ScannedBoxRegister {
             index: self.scan_integer()?.value,
         })
+    }
+
+    /// Scans the payload prefix of TeX82 §1090's leader commands.
+    pub fn scan_leader_payload(&mut self) -> Result<ScannedLeaderPayload, CommandError> {
+        let Some(command) = self.get_x_token()? else {
+            return Ok(ScannedLeaderPayload::Missing);
+        };
+        match command.meaning() {
+            Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Box) => {
+                Ok(ScannedLeaderPayload::BoxRegister {
+                    index: self.scan_integer()?.value,
+                    copy: false,
+                })
+            }
+            Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Copy) => {
+                Ok(ScannedLeaderPayload::BoxRegister {
+                    index: self.scan_integer()?.value,
+                    copy: true,
+                })
+            }
+            Meaning::UnexpandablePrimitive(
+                primitive @ (UnexpandablePrimitive::HBox
+                | UnexpandablePrimitive::VBox
+                | UnexpandablePrimitive::VTop),
+            ) => Ok(ScannedLeaderPayload::Construction(
+                self.scan_box_construction(primitive)?,
+            )),
+            Meaning::UnexpandablePrimitive(
+                primitive @ (UnexpandablePrimitive::HRule | UnexpandablePrimitive::VRule),
+            ) => Ok(ScannedLeaderPayload::Rule(self.scan_rule_spec(primitive)?)),
+            _ => {
+                self.back_input(command)?;
+                Ok(ScannedLeaderPayload::Missing)
+            }
+        }
     }
 
     /// Scans TeX82's named glue-parameter assignment operand.

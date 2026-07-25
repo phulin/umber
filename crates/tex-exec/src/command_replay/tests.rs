@@ -2989,6 +2989,38 @@ fn canonical_box_groups_nest_recover_and_preserve_everybox_provenance() {
 }
 
 #[test]
+fn canonical_box_lifecycle_unboxing_and_leaders_do_not_reopen_input() {
+    let mut universe = Universe::new();
+    let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+    register_source(
+        &mut control,
+        br"\setbox0=\hbox{A}\setbox1=\hbox{\unhcopy0}\setbox2=\hbox{\unhbox0}\setbox3=\hbox{\leaders\hbox{}\hskip10pt}\setbox4=\hbox{\cleaders\hrule\hskip10pt}\setbox5=\hbox{\xleaders\copy3\hskip10pt}\end",
+    );
+    run_to_end(&mut control, &mut universe);
+
+    assert!(
+        universe.box_reg(0).is_none(),
+        "unhbox consumes its register"
+    );
+    assert!(
+        universe.box_reg(1).is_some(),
+        "unhcopy retains source children"
+    );
+    for index in [3, 4, 5] {
+        let node = universe
+            .box_reg(index)
+            .and_then(|id| universe.nodes(id).first().map(|node| node.to_owned()))
+            .expect("leader result box");
+        let Node::HList(box_node) = node else {
+            panic!("leader result is hbox")
+        };
+        assert!(
+            matches!(universe.nodes(box_node.children).first(), Some(node) if matches!(node.to_owned(), Node::Glue { leader: Some(_), .. }))
+        );
+    }
+}
+
+#[test]
 fn canonical_assignments_cover_code_tables_and_reject_macro_prefixes() {
     let mut universe = Universe::new();
     let mut control = CanonicalMainControl::tex82_initex(&mut universe);

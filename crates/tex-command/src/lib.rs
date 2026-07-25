@@ -57,8 +57,9 @@ pub use scanners::{
     InputStreamRequest, InternalValue, RegisteredInput, ScalarProvenance, ScalarRecovery,
     ScannedAccent, ScannedAccentBase, ScannedBalancedText, ScannedBoxConstruction, ScannedBoxKind,
     ScannedBoxRegister, ScannedDiscretionary, ScannedFileName, ScannedGlueParameterAssignment,
-    ScannedLetAssignment, ScannedMacroDefinition, ScannedPackingSpec, ScannedRuleSpec,
-    ScannedScalar, ScannedSetBoxAssignment, ScannedTokenRegisterAssignment, StructuredProvenance,
+    ScannedLeaderPayload, ScannedLetAssignment, ScannedMacroDefinition, ScannedPackingSpec,
+    ScannedRuleSpec, ScannedScalar, ScannedSetBoxAssignment, ScannedTokenRegisterAssignment,
+    StructuredProvenance,
 };
 pub use snapshot::{CommandStateSnapshot, CommandSummary, CommandSummaryError};
 pub use state::{CommandReplayEpisode, CommandRuntime, CommandState, UnknownRegisteredSource};

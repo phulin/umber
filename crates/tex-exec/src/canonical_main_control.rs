@@ -11,7 +11,8 @@ use tex_command::{
     CommandHostCapabilities, CommandHostContext, CommandProcessor, CommandProfile, CommandRuntime,
     CommandState, CommandStateSnapshot, FontLoadRequest, FontResource, ImmediateExtension,
     InputStreamRequest, ScannedAccent, ScannedBoxConstruction, ScannedBoxKind,
-    ScannedDiscretionary, ScannedPackingSpec, SourceRegistration, SourceRegistrationError,
+    ScannedDiscretionary, ScannedLeaderPayload, ScannedPackingSpec, SourceRegistration,
+    SourceRegistrationError,
 };
 #[cfg(any(test, feature = "instrumentation"))]
 use tex_command::{
@@ -24,7 +25,7 @@ use tex_state::ids::FontId;
 use tex_state::interner::Symbol;
 use tex_state::macro_store::{MacroDefinitionProvenance, MacroMeaning};
 use tex_state::meaning::{Meaning, MeaningFlags, UnexpandablePrimitive};
-use tex_state::node::{DiscKind, GlueKind, KernKind, Node, Whatsit};
+use tex_state::node::{DiscKind, GlueKind, KernKind, LeaderPayload, Node, Whatsit};
 use tex_state::scaled::Scaled;
 use tex_state::token::{Catcode, Token};
 use tex_state::{
@@ -63,6 +64,7 @@ struct ActiveReplayBox {
     depth: u32,
     kind: ReplayBoxKind,
     packing: PackSpec,
+    leader_kind: Option<GlueKind>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -106,6 +108,7 @@ struct ActiveReplayAlignment {
 struct ReplayBoxes {
     pending_setbox: Option<SetBoxTarget>,
     pending_shipout: bool,
+    pending_leader: Option<(GlueKind, LeaderPayload)>,
     active_boxes: Vec<ActiveReplayBox>,
     suspended_alignments: Vec<ActiveReplayAlignment>,
     recovery_simple_group_pending: bool,
@@ -1115,8 +1118,27 @@ enum ScannedStep {
     ImmediateExtension(ImmediateExtension),
     BoxRegister {
         index: u16,
+        copy: bool,
         ships_out: bool,
     },
+    Unbox {
+        primitive: UnexpandablePrimitive,
+        index: u16,
+    },
+    LastBox,
+    Leaders {
+        kind: GlueKind,
+        payload: LeaderPayload,
+        glue: GlueSpec,
+    },
+    LeaderRegister {
+        kind: GlueKind,
+        index: u16,
+        copy: bool,
+        glue: GlueSpec,
+    },
+    MissingLeaderPayload,
+    LeadersNotFollowedByGlue,
     BeginShipout,
     BeginAlignment {
         vertical: bool,
@@ -1182,6 +1204,10 @@ enum ScannedStep {
     },
     SetBox(SetBoxTarget),
     BeginBox(ScannedBoxConstruction),
+    BeginLeaderBox {
+        construction: ScannedBoxConstruction,
+        kind: GlueKind,
+    },
     ReplayBoxOpeningBrace,
     BoxBeginGroup,
     BoxEndGroup {
@@ -1569,6 +1595,158 @@ fn scan_step(
     )
 }
 
+fn leader_kind(primitive: UnexpandablePrimitive) -> GlueKind {
+    match primitive {
+        UnexpandablePrimitive::Leaders => GlueKind::Leaders,
+        UnexpandablePrimitive::CLeaders => GlueKind::Cleaders,
+        UnexpandablePrimitive::XLeaders => GlueKind::Xleaders,
+        _ => unreachable!("leader scanner only receives leader primitives"),
+    }
+}
+
+fn payload_from_node(node: Node) -> Option<LeaderPayload> {
+    match node {
+        Node::HList(node) => Some(LeaderPayload::HList(node)),
+        Node::VList(node) => Some(LeaderPayload::VList(node)),
+        Node::Rule {
+            width,
+            height,
+            depth,
+        } => Some(LeaderPayload::Rule {
+            width,
+            height,
+            depth,
+        }),
+        _ => None,
+    }
+}
+
+fn scan_leaders_step(
+    processor: &mut CommandProcessor<'_>,
+    primitive: UnexpandablePrimitive,
+    mode: Mode,
+) -> Result<ScannedStep, ExecError> {
+    let kind = leader_kind(primitive);
+    match processor.scan_leader_payload().map_err(command_error)? {
+        ScannedLeaderPayload::Missing => Ok(ScannedStep::MissingLeaderPayload),
+        ScannedLeaderPayload::Construction(construction) => {
+            Ok(ScannedStep::BeginLeaderBox { construction, kind })
+        }
+        ScannedLeaderPayload::Rule(rule) => {
+            let glue_command =
+                processor
+                    .get_x_token()
+                    .map_err(command_error)?
+                    .ok_or(ExecError::MissingToken {
+                        context: "leader glue",
+                    })?;
+            let Some(glue) = scan_leader_glue_command(processor, glue_command, mode)? else {
+                return Ok(ScannedStep::LeadersNotFollowedByGlue);
+            };
+            let payload = LeaderPayload::Rule {
+                width: rule.width,
+                height: rule.height,
+                depth: rule.depth,
+            };
+            Ok(ScannedStep::Leaders {
+                kind,
+                payload,
+                glue,
+            })
+        }
+        // Register payloads must retain their destructive/copy ownership at
+        // replay time.  Keep the command scanner's completed glue read, then
+        // use the regular typed box read path to obtain the node.
+        ScannedLeaderPayload::BoxRegister { index, copy } => {
+            let index =
+                u16::try_from(index).map_err(|_| ExecError::RegisterNumberOutOfRange(index))?;
+            let glue_command =
+                processor
+                    .get_x_token()
+                    .map_err(command_error)?
+                    .ok_or(ExecError::MissingToken {
+                        context: "leader glue",
+                    })?;
+            let Some(glue) = scan_leader_glue_command(processor, glue_command, mode)? else {
+                return Ok(ScannedStep::LeadersNotFollowedByGlue);
+            };
+            Ok(ScannedStep::LeaderRegister {
+                kind,
+                index,
+                copy,
+                glue,
+            })
+        }
+    }
+}
+
+fn scan_leader_glue_command(
+    processor: &mut CommandProcessor<'_>,
+    command: tex_command::CurrentCommand,
+    mode: Mode,
+) -> Result<Option<GlueSpec>, ExecError> {
+    let horizontal = matches!(
+        mode,
+        Mode::Horizontal | Mode::RestrictedHorizontal | Mode::Math | Mode::DisplayMath
+    );
+    let primitive = match command.meaning() {
+        Meaning::UnexpandablePrimitive(primitive) => primitive,
+        _ => {
+            processor.back_input(command).map_err(command_error)?;
+            return Ok(None);
+        }
+    };
+    if (horizontal && primitive == UnexpandablePrimitive::HSkip)
+        || (!horizontal && primitive == UnexpandablePrimitive::VSkip)
+    {
+        return Ok(Some(
+            processor.scan_glue(false).map_err(command_error)?.value,
+        ));
+    }
+    let infinite = match (horizontal, primitive) {
+        (true, UnexpandablePrimitive::HFil) | (false, UnexpandablePrimitive::VFil) => {
+            Some((Order::Fil, false, false))
+        }
+        (true, UnexpandablePrimitive::HFill) | (false, UnexpandablePrimitive::VFill) => {
+            Some((Order::Fill, false, false))
+        }
+        (true, UnexpandablePrimitive::HSs) | (false, UnexpandablePrimitive::VSs) => {
+            Some((Order::Fil, false, true))
+        }
+        (true, UnexpandablePrimitive::HFilNeg) | (false, UnexpandablePrimitive::VFilNeg) => {
+            Some((Order::Fil, true, false))
+        }
+        _ => None,
+    };
+    let Some((order, negative, shrink)) = infinite else {
+        processor.back_input(command).map_err(command_error)?;
+        return Ok(None);
+    };
+    let unit = Scaled::from_raw(if negative {
+        -Scaled::UNITY
+    } else {
+        Scaled::UNITY
+    });
+    let zero = Scaled::from_raw(0);
+    Ok(Some(if shrink {
+        GlueSpec {
+            width: zero,
+            stretch: zero,
+            stretch_order: Order::Normal,
+            shrink: unit,
+            shrink_order: order,
+        }
+    } else {
+        GlueSpec {
+            width: zero,
+            stretch: unit,
+            stretch_order: order,
+            shrink: zero,
+            shrink_order: Order::Normal,
+        }
+    }))
+}
+
 #[allow(clippy::too_many_arguments)] // mirrors TeX main-control dispatch inputs
 fn scan_command(
     processor: &mut CommandProcessor<'_>,
@@ -1597,6 +1775,19 @@ fn scan_command(
         )
     {
         return Err(ExecError::PrefixWithNonDefinition { origin: None });
+    }
+    // A constructed leader payload has just completed its box group.  The
+    // following glue command is still raw input, so consume it here before
+    // replay turns the frozen payload into a glue node.
+    if let Some((kind, payload)) = boxes.pending_leader.as_ref() {
+        let Some(glue) = scan_leader_glue_command(processor, command, mode)? else {
+            return Ok(ScannedStep::LeadersNotFollowedByGlue);
+        };
+        return Ok(ScannedStep::Leaders {
+            kind: *kind,
+            payload: *payload,
+            glue,
+        });
     }
     if boxes.output_routine_opening_pending
         && matches!(
@@ -2151,15 +2342,35 @@ fn scan_command(
         // `scan_int` before handing the completed box-list operation to the
         // stomach. In particular, the first digit remains raw command input,
         // never an executor-side backup/replay artifact.
-        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Box) => {
+        Meaning::UnexpandablePrimitive(
+            primitive @ (UnexpandablePrimitive::Box | UnexpandablePrimitive::Copy),
+        ) => {
             let register = processor.scan_box_register().map_err(command_error)?;
             let index = u16::try_from(register.index)
                 .map_err(|_| ExecError::RegisterNumberOutOfRange(register.index))?;
             Ok(ScannedStep::BoxRegister {
                 index,
+                copy: primitive == UnexpandablePrimitive::Copy,
                 ships_out: boxes.pending_shipout,
             })
         }
+        Meaning::UnexpandablePrimitive(
+            primitive @ (UnexpandablePrimitive::UnHBox
+            | UnexpandablePrimitive::UnHCopy
+            | UnexpandablePrimitive::UnVBox
+            | UnexpandablePrimitive::UnVCopy),
+        ) => {
+            let register = processor.scan_box_register().map_err(command_error)?;
+            let index = u16::try_from(register.index)
+                .map_err(|_| ExecError::RegisterNumberOutOfRange(register.index))?;
+            Ok(ScannedStep::Unbox { primitive, index })
+        }
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::LastBox) => Ok(ScannedStep::LastBox),
+        Meaning::UnexpandablePrimitive(
+            primitive @ (UnexpandablePrimitive::Leaders
+            | UnexpandablePrimitive::CLeaders
+            | UnexpandablePrimitive::XLeaders),
+        ) => scan_leaders_step(processor, primitive, mode),
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Shipout) => {
             Ok(ScannedStep::BeginShipout)
         }
@@ -3481,8 +3692,19 @@ fn apply_scanned_step(
             boxes.pending_setbox = Some(target);
             Ok(ReplayStep::Continue)
         }
-        ScannedStep::BoxRegister { index, ships_out } => {
-            let id = stores.take_box_reg_same_level(index);
+        ScannedStep::BoxRegister {
+            index,
+            copy,
+            ships_out,
+        } => {
+            let id = if copy {
+                stores.box_reg(index)
+            } else {
+                stores.take_box_reg_same_level(index)
+            };
+            if copy && let Some(id) = id {
+                stores.pin_survivor(id);
+            }
             if ships_out {
                 boxes.pending_shipout = false;
                 if let Some(node) =
@@ -3492,13 +3714,92 @@ fn apply_scanned_step(
                 }
             } else {
                 crate::assignments::execute_scanned_box_register(
-                    UnexpandablePrimitive::Box,
+                    if copy {
+                        UnexpandablePrimitive::Copy
+                    } else {
+                        UnexpandablePrimitive::Box
+                    },
                     id,
                     modes,
                     stores,
                 )?;
                 crate::vertical::build_page_if_outer_vertical(modes, stores)?;
             }
+            Ok(ReplayStep::Continue)
+        }
+        ScannedStep::Unbox { primitive, index } => {
+            crate::assignments::execute_scanned_unbox(primitive, index, modes, stores)?;
+            Ok(ReplayStep::Continue)
+        }
+        ScannedStep::LastBox => {
+            crate::assignments::execute_scanned_last_box(modes, stores)?;
+            crate::vertical::build_page_if_outer_vertical(modes, stores)?;
+            Ok(ReplayStep::Continue)
+        }
+        ScannedStep::Leaders {
+            kind,
+            payload,
+            glue,
+        } => {
+            boxes.pending_leader = None;
+            let spec = stores.intern_glue(glue);
+            crate::vertical::append_node_to_current_list(
+                modes,
+                stores,
+                Node::Glue {
+                    spec,
+                    kind,
+                    leader: Some(payload),
+                },
+            )?;
+            crate::vertical::build_page_if_outer_vertical(modes, stores)?;
+            Ok(ReplayStep::Continue)
+        }
+        ScannedStep::LeaderRegister {
+            kind,
+            index,
+            copy,
+            glue,
+        } => {
+            let id = if copy {
+                stores.box_reg(index)
+            } else {
+                stores.take_box_reg_same_level(index)
+            };
+            if copy && let Some(id) = id {
+                stores.pin_survivor(id);
+            }
+            if let Some(payload) = id
+                .and_then(|id| stores.nodes(id).first().map(|node| node.to_owned()))
+                .and_then(payload_from_node)
+            {
+                let spec = stores.intern_glue(glue);
+                crate::vertical::append_node_to_current_list(
+                    modes,
+                    stores,
+                    Node::Glue {
+                        spec,
+                        kind,
+                        leader: Some(payload),
+                    },
+                )?;
+                crate::vertical::build_page_if_outer_vertical(modes, stores)?;
+            }
+            Ok(ReplayStep::Continue)
+        }
+        ScannedStep::MissingLeaderPayload => {
+            stores.world_mut().write_text(
+                PrintSink::TerminalAndLog,
+                "\n! A <box> was supposed to be here.\nI'm ignoring these leaders.\n",
+            );
+            Ok(ReplayStep::Continue)
+        }
+        ScannedStep::LeadersNotFollowedByGlue => {
+            boxes.pending_leader = None;
+            stores.world_mut().write_text(
+                PrintSink::TerminalAndLog,
+                "\n! Leaders not followed by proper glue.\nYou should say `\\leaders <box or rule><hskip or vskip>'.\nI'm ignoring these leaders.\n",
+            );
             Ok(ReplayStep::Continue)
         }
         ScannedStep::BeginShipout => {
@@ -3532,6 +3833,40 @@ fn apply_scanned_step(
                 depth: 1,
                 kind,
                 packing,
+                leader_kind: None,
+            });
+            schedule_everybox(command, stores, kind.horizontal());
+            Ok(ReplayStep::Continue)
+        }
+        ScannedStep::BeginLeaderBox {
+            construction,
+            kind: leader_kind,
+        } => {
+            let kind = match construction.kind {
+                ScannedBoxKind::HBox => ReplayBoxKind::HBox,
+                ScannedBoxKind::VBox => ReplayBoxKind::VBox,
+                ScannedBoxKind::VTop => ReplayBoxKind::VTop,
+            };
+            let packing = match construction.packing {
+                ScannedPackingSpec::Natural => PackSpec::Natural,
+                ScannedPackingSpec::Exactly(size) => PackSpec::Exactly(size),
+                ScannedPackingSpec::Spread(size) => PackSpec::Spread(size),
+            };
+            stores.enter_group_with_kind(kind.group_kind());
+            modes.push(if kind.horizontal() {
+                Mode::RestrictedHorizontal
+            } else {
+                Mode::InternalVertical
+            });
+            boxes.active_boxes.push(ActiveReplayBox {
+                target: None,
+                ships_out: false,
+                opening_brace_replay: construction.opening_brace_replay,
+                body_opener_pending: construction.opening_brace_replay,
+                depth: 1,
+                kind,
+                packing,
+                leader_kind: Some(leader_kind),
             });
             schedule_everybox(command, stores, kind.horizontal());
             Ok(ReplayStep::Continue)
@@ -3728,7 +4063,12 @@ fn apply_scanned_step(
                 .map_err(|_| ExecError::MissingToken {
                     context: "box group",
                 })?;
-            if ships_out {
+            if let Some(kind) = box_state.leader_kind {
+                let payload = payload_from_node(node).ok_or(ExecError::MissingToken {
+                    context: "leader box payload",
+                })?;
+                boxes.pending_leader = Some((kind, payload));
+            } else if ships_out {
                 debug_assert!(box_state.ships_out);
                 shipout_replay_box(node, stores)?;
             } else if let Some(target) = box_state.target {

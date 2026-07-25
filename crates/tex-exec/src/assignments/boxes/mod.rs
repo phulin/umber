@@ -311,6 +311,65 @@ pub(crate) fn execute_scanned_box_register(
     Ok(())
 }
 
+/// Replays a command-scanned unboxing register operation without reopening
+/// the input stream.  Ownership remains in `Universe` so a failed aggregate
+/// replay rolls back both the register and its child-list liveness together.
+pub(crate) fn execute_scanned_unbox(
+    primitive: UnexpandablePrimitive,
+    index: u16,
+    nest: &mut ModeNest,
+    stores: &mut Universe,
+) -> Result<(), ExecError> {
+    let destructive = matches!(
+        primitive,
+        UnexpandablePrimitive::UnHBox | UnexpandablePrimitive::UnVBox
+    );
+    let expected = if matches!(
+        primitive,
+        UnexpandablePrimitive::UnHBox | UnexpandablePrimitive::UnHCopy
+    ) {
+        UnboxKind::Horizontal
+    } else {
+        UnboxKind::Vertical
+    };
+    let source = if destructive {
+        match stores.take_unbox_children_same_level(index, expected) {
+            TakeUnboxResult::Void => None,
+            TakeUnboxResult::Incompatible => {
+                report_incompatible_unbox(stores);
+                return Ok(());
+            }
+            TakeUnboxResult::Children(children) => Some(UnboxSource::PinnedSurvivor(children)),
+        }
+    } else {
+        let Some(node) = first_box_node(stores, stores.box_reg(index)) else {
+            return Ok(());
+        };
+        if !unbox_kind_matches(primitive, &node) {
+            report_incompatible_unbox(stores);
+            return Ok(());
+        }
+        let children = match node {
+            Node::HList(node) | Node::VList(node) => node.children,
+            _ => unreachable!(),
+        };
+        Some(UnboxSource::Shared(children))
+    };
+    append_unboxed(nest, stores, source)
+}
+
+/// Replays command-scanned `\\lastbox`; its mode and tail barriers are pure
+/// mode-list state and require no source access.
+pub(crate) fn execute_scanned_last_box(
+    nest: &mut ModeNest,
+    stores: &mut Universe,
+) -> Result<(), ExecError> {
+    if let Some(node) = take_last_box(nest, stores)? {
+        append_box_node_to_current_list(nest, stores, node)?;
+    }
+    Ok(())
+}
+
 fn account_external_box_access(
     execution: &mut crate::ExecutionContext<'_>,
     index: u16,

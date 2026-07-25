@@ -54,6 +54,7 @@ pub(crate) use boxes::execute_scanned_box_register;
 pub(crate) use boxes::hpack_with_overfull_rule;
 pub(crate) use boxes::scan_math_box;
 use boxes::*;
+pub(crate) use boxes::{execute_scanned_last_box, execute_scanned_unbox};
 pub(crate) use boxes::{scan_box_group, scan_pack_spec};
 use fonts::*;
 pub(crate) use hmode::fixed_infinite_glue;
