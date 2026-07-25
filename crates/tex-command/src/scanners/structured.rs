@@ -129,6 +129,17 @@ pub struct ScannedBoxRegister {
     pub index: i32,
 }
 
+/// The complete command-owned operand of TeX82's `\\vsplit`.
+///
+/// The keyword's absence is preserved so replay can issue its diagnostic, but
+/// both the register and dimension have already been consumed canonically.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ScannedVSplit {
+    pub index: i32,
+    pub height: Scaled,
+    pub missing_to: bool,
+}
+
 /// The completed payload prefix of TeX82's `\\leaders` family.
 ///
 /// A constructed box deliberately remains a construction request: its body is
@@ -582,6 +593,18 @@ impl CommandProcessor<'_> {
     pub fn scan_box_register(&mut self) -> Result<ScannedBoxRegister, CommandError> {
         Ok(ScannedBoxRegister {
             index: self.scan_integer()?.value,
+        })
+    }
+
+    /// Scans TeX82 §§1076--1081's `\\vsplit <number> to <dimen>` prefix.
+    pub fn scan_vsplit(&mut self) -> Result<ScannedVSplit, CommandError> {
+        let index = self.scan_integer()?.value;
+        let missing_to = !self.scan_keyword("to")?.value;
+        let height = self.scan_dimension()?.value;
+        Ok(ScannedVSplit {
+            index,
+            height,
+            missing_to,
         })
     }
 

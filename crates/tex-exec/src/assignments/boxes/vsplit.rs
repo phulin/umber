@@ -37,7 +37,7 @@ pub(super) fn scan_vsplit_node(
     split_vbox_register(stores, index, height)
 }
 
-fn split_vbox_register(
+pub(crate) fn split_vbox_register(
     stores: &mut Universe,
     index: u16,
     height: Scaled,

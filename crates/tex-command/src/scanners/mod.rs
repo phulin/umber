@@ -12,6 +12,6 @@ pub use structured::{
     ScannedBoxConstruction, ScannedBoxKind, ScannedBoxRegister, ScannedDiscretionary,
     ScannedFileName, ScannedGlueParameterAssignment, ScannedLeaderPayload, ScannedLetAssignment,
     ScannedMacroDefinition, ScannedPackingSpec, ScannedRuleSpec, ScannedSetBoxAssignment,
-    StructuredProvenance,
+    ScannedVSplit, StructuredProvenance,
 };
 pub use token_list::ScannedTokenRegisterAssignment;

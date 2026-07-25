@@ -2926,11 +2926,10 @@ fn canonical_box_groups_nest_recover_and_preserve_everybox_provenance() {
     let mut universe = Universe::new();
     let mut control = CanonicalMainControl::tex82_initex(&mut universe);
     register_source(&mut control, br"\setbox0=\hbox{\hbox{}}");
-    let mut observations = ObservationRecorder::default();
     loop {
         if matches!(
             control
-                .step_with_observer(&mut universe, &mut observations)
+                .step(&mut universe)
                 .expect("nested and recovered box program executes"),
             MainControlStep::End | MainControlStep::EndOfInput
         ) {
@@ -3050,4 +3049,32 @@ fn canonical_assignments_cover_code_tables_and_reject_macro_prefixes() {
         invalid.step(&mut invalid_universe),
         Err(ExecError::PrefixWithNonDefinition { .. })
     ));
+}
+
+#[test]
+fn canonical_vsplit_scans_operands_before_replaying_destructive_repack() {
+    let mut universe = Universe::new();
+    let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+    register_source(
+        &mut control,
+        br"\setbox0=\vbox{\hrule height 10pt\vskip10pt\hrule height 10pt}\setbox1=\vsplit0 to 10pt\end",
+    );
+    let mut observations = ObservationRecorder::default();
+    loop {
+        if matches!(
+            control
+                .step_with_observer(&mut universe, &mut observations)
+                .expect("canonical vsplit executes"),
+            MainControlStep::End | MainControlStep::EndOfInput
+        ) {
+            break;
+        }
+    }
+
+    let split = universe.box_reg(1).expect("split result is assigned");
+    let remainder = universe.box_reg(0).expect("remainder is repacked");
+    assert_ne!(
+        split, remainder,
+        "vsplit does not alias its destructive remainder"
+    );
 }

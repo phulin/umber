@@ -59,7 +59,7 @@ pub use scanners::{
     ScannedBoxRegister, ScannedDiscretionary, ScannedFileName, ScannedGlueParameterAssignment,
     ScannedLeaderPayload, ScannedLetAssignment, ScannedMacroDefinition, ScannedPackingSpec,
     ScannedRuleSpec, ScannedScalar, ScannedSetBoxAssignment, ScannedTokenRegisterAssignment,
-    StructuredProvenance,
+    ScannedVSplit, StructuredProvenance,
 };
 pub use snapshot::{CommandStateSnapshot, CommandSummary, CommandSummaryError};
 pub use state::{CommandReplayEpisode, CommandRuntime, CommandState, UnknownRegisteredSource};

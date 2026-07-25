@@ -15,7 +15,7 @@ use crate::{ExecError, Mode, ModeNest};
 
 mod leaders;
 mod packaging;
-mod vsplit;
+pub(crate) mod vsplit;
 
 use leaders::{leader_glue_kind, scan_leader_glue, scan_leader_payload};
 pub(super) use packaging::scan_box_value_node;
@@ -26,6 +26,7 @@ use packaging::{
 pub(crate) use packaging::{hpack_owned_with_overfull_rule, hpack_with_overfull_rule};
 pub(crate) use packaging::{scan_box_group, scan_pack_spec};
 use vsplit::scan_vsplit_node;
+pub(crate) use vsplit::split_vbox_register;
 
 pub(super) fn execute_make_box(
     primitive: UnexpandablePrimitive,

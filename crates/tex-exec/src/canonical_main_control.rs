@@ -11,8 +11,8 @@ use tex_command::{
     CommandHostCapabilities, CommandHostContext, CommandProcessor, CommandProfile, CommandRuntime,
     CommandState, CommandStateSnapshot, FontLoadRequest, FontResource, ImmediateExtension,
     InputStreamRequest, ScannedAccent, ScannedBoxConstruction, ScannedBoxKind,
-    ScannedDiscretionary, ScannedLeaderPayload, ScannedPackingSpec, SourceRegistration,
-    SourceRegistrationError,
+    ScannedDiscretionary, ScannedLeaderPayload, ScannedPackingSpec, ScannedVSplit,
+    SourceRegistration, SourceRegistrationError,
 };
 #[cfg(any(test, feature = "instrumentation"))]
 use tex_command::{
@@ -1115,6 +1115,7 @@ enum ScannedStep {
     Message {
         tokens: TracedTokenList,
     },
+    VSplit(ScannedVSplit),
     ImmediateExtension(ImmediateExtension),
     BoxRegister {
         index: u16,
@@ -2338,6 +2339,9 @@ fn scan_command(
                 .map_err(|_| ExecError::RegisterNumberOutOfRange(assignment.index))?;
             Ok(ScannedStep::SetBox(SetBoxTarget { index, global }))
         }
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::VSplit) => Ok(ScannedStep::VSplit(
+            processor.scan_vsplit().map_err(command_error)?,
+        )),
         // TeX82 §1071's `make_box(box_code)` scans the register through
         // `scan_int` before handing the completed box-list operation to the
         // stomach. In particular, the first digit remains raw command input,
@@ -3690,6 +3694,27 @@ fn apply_scanned_step(
         }
         ScannedStep::SetBox(target) => {
             boxes.pending_setbox = Some(target);
+            Ok(ReplayStep::Continue)
+        }
+        ScannedStep::VSplit(split) => {
+            if split.missing_to {
+                stores.world_mut().write_text(
+                    PrintSink::TerminalAndLog,
+                    "\n! Missing `to' inserted.\nI'm working on `\\vsplit<box number> to <dimen>';\nwill look for the <dimen> next.\n",
+                );
+            }
+            let index = u16::try_from(split.index)
+                .map_err(|_| ExecError::RegisterNumberOutOfRange(split.index))?;
+            let node = crate::assignments::split_vbox_register(stores, index, split.height)?;
+            let target = boxes.pending_setbox.take();
+            if let (Some(target), Some(node)) = (target, node) {
+                let boxed = stores.freeze_node_list(std::slice::from_ref(&node));
+                if target.global {
+                    stores.set_box_reg_global(target.index, boxed);
+                } else {
+                    stores.set_box_reg(target.index, boxed);
+                }
+            }
             Ok(ReplayStep::Continue)
         }
         ScannedStep::BoxRegister {
