@@ -231,6 +231,11 @@ impl CommandProcessor<'_> {
     ) -> Result<ScannedScalar<i32>, CommandError> {
         let value = match self.internal_value_from_command(&first)? {
             Some(InternalValue::Integer(value)) => value,
+            // TeX82 §424 lowers an internal dimension to `int_val` for
+            // `scan_int`; the scaled representation is already its integer
+            // value. Plain's `\ht\z@` relies on this because `\z@` is a
+            // dimension register containing zero, not a numeric literal.
+            Some(InternalValue::Dimension(value)) => value.raw(),
             Some(_) => {
                 self.retire_exhausted_backup_before_scalar_replay(first.delivery_stamp())?;
                 self.back_input(first)?;

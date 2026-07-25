@@ -734,6 +734,59 @@ fn ifdim_scans_box_dimensions_as_internal_dimensions() {
 }
 
 #[test]
+fn ifdim_box_dimension_accepts_a_dimension_register_selector() {
+    use tex_state::font::NULL_FONT;
+    use tex_state::meaning::UnexpandablePrimitive;
+    use tex_state::scaled::Scaled;
+
+    let mut command = CommandState::default();
+    let mut runtime = CommandRuntime::default();
+    let mut universe = Universe::new();
+    let ifdim = install(&mut universe, "ifdim", ExpandablePrimitive::IfDim);
+    let otherwise = install(&mut universe, "else", ExpandablePrimitive::Else);
+    let fi = install(&mut universe, "fi", ExpandablePrimitive::Fi);
+    let ht = universe.intern("ht").symbol();
+    let zero_dimension = universe.intern("z@").symbol();
+    universe.set_meaning(
+        ht,
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Ht),
+    );
+    universe.set_meaning(zero_dimension, Meaning::DimenRegister(12));
+    universe.set_dimen(12, Scaled::from_raw(0));
+    universe
+        .set_font_dimen(NULL_FONT, 5, Scaled::from_raw(2 * Scaled::UNITY))
+        .expect("nullfont has an x-height parameter");
+    let box_node = boxed_with_dimensions(
+        &mut universe,
+        false,
+        Scaled::from_raw(0),
+        Scaled::from_raw(2 * Scaled::UNITY),
+        Scaled::from_raw(0),
+    );
+    universe.set_box_reg(0, box_node);
+    push(
+        &mut command,
+        vec![
+            ifdim,
+            Token::Cs(ht),
+            Token::Cs(zero_dimension),
+            other('='),
+            other('1'),
+            other('e'),
+            other('x'),
+            other('y'),
+            otherwise,
+            other('n'),
+            fi,
+        ],
+    );
+    let mut capabilities = CommandHostCapabilities::default();
+    let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+
+    assert_eq!(next_character(&mut processor), 'y');
+}
+
+#[test]
 fn mode_and_box_predicates_use_host_and_aggregate_queries() {
     let mut command = CommandState::default();
     let mut runtime = CommandRuntime::default();
