@@ -558,6 +558,10 @@ opening brace. Replay enters the typed group and mode, schedules the matching
 immutable `\everyhbox`/`\everyvbox` command episode, and applies pure packing
 only after the body closes; scoped `\setbox` assignment then occurs at the
 same aggregate boundary.
+If the opener is malformed, the command scanner retains the rejected command
+through its normal backup and marks an inserted-brace recovery; replay enters
+the typed box group without fabricating a command event, so that backed-up
+command becomes the first box-body material.
 
 ### 5.4 Proposed module layout
 

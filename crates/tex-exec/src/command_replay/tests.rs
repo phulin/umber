@@ -2831,7 +2831,7 @@ fn canonical_assignments_apply_prefix_globaldefs_registers_and_arithmetic() {
     loop {
         if matches!(
             control.step(&mut universe).expect("canonical assignment"),
-            MainControlStep::End
+            MainControlStep::End | MainControlStep::EndOfInput
         ) {
             break;
         }
@@ -2868,7 +2868,17 @@ fn canonical_box_construction_scans_specs_hooks_and_scopes_targets() {
         br"\everyhbox{\global\advance\count6 by1}\everyvbox{\global\advance\count7 by1}\begingroup\setbox0=\hbox to 10pt{}\global\setbox1=\vbox to 12pt{}\global\setbox2=\vtop spread 2pt{}\global\setbox3=\hbox{}\endgroup\end",
     );
 
-    run_to_end(&mut control, &mut universe);
+    loop {
+        match control.advance(&mut universe).expect("fresh hook retry") {
+            CanonicalStepResult::Progress(MainControlStep::End | MainControlStep::EndOfInput) => {
+                break;
+            }
+            CanonicalStepResult::Progress(MainControlStep::Continue) => {}
+            CanonicalStepResult::Suspended(need) => {
+                panic!("registered hook remained suspended: {need:?}")
+            }
+        }
+    }
 
     assert!(universe.box_reg(0).is_none(), "local setbox restores");
     assert_eq!((universe.count(6), universe.count(7)), (2, 2));
@@ -2909,6 +2919,73 @@ fn canonical_box_construction_scans_specs_hooks_and_scopes_targets() {
         panic!("setbox0 contains an hbox");
     };
     assert_eq!(hbox.width, Scaled::from_raw(10 * Scaled::UNITY));
+}
+
+#[test]
+fn canonical_box_groups_nest_recover_and_preserve_everybox_provenance() {
+    let mut universe = Universe::new();
+    let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+    register_source(&mut control, br"\setbox0=\hbox{\hbox{}}");
+    let mut observations = ObservationRecorder::default();
+    loop {
+        if matches!(
+            control
+                .step_with_observer(&mut universe, &mut observations)
+                .expect("nested and recovered box program executes"),
+            MainControlStep::End | MainControlStep::EndOfInput
+        ) {
+            break;
+        }
+    }
+
+    let outer = universe
+        .box_reg(0)
+        .and_then(|id| universe.nodes(id).first().map(|node| node.to_owned()))
+        .expect("outer hbox stores");
+    let Node::HList(outer) = outer else {
+        panic!("nested result is an hbox");
+    };
+    assert!(
+        matches!(universe.nodes(outer.children).first(), Some(node) if matches!(node.to_owned(), Node::HList(_)))
+    );
+
+    let mut provenance = Universe::new();
+    let mut provenance_control = CanonicalMainControl::tex82_initex(&mut provenance);
+    register_source(
+        &mut provenance_control,
+        br"\everyhbox{\relax}\setbox0=\hbox{}",
+    );
+    let mut hook_observations = ObservationRecorder::default();
+    loop {
+        if matches!(
+            provenance_control
+                .step_with_observer(&mut provenance, &mut hook_observations)
+                .expect("everyhbox program executes"),
+            MainControlStep::End | MainControlStep::EndOfInput
+        ) {
+            break;
+        }
+    }
+    let hook_origin = hook_observations
+        .0
+        .iter()
+        .find_map(|event| match event {
+            CommandObservation::Command(command) if command.command == "relax" => {
+                Some(command.provenance.origin)
+            }
+            _ => None,
+        })
+        .expect("everyhbox relax is delivered");
+    assert_ne!(hook_origin, tex_state::token::OriginId::UNKNOWN);
+
+    let mut recovered = Universe::new();
+    let mut recovery_control = CanonicalMainControl::tex82_initex(&mut recovered);
+    register_source(&mut recovery_control, br"\setbox1=\hbox to 1pt\relax}");
+    run_to_end(&mut recovery_control, &mut recovered);
+    assert!(
+        recovered.box_reg(1).is_some(),
+        "missing brace recovers as a box group"
+    );
 }
 
 #[test]

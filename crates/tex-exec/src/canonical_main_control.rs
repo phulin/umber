@@ -3527,8 +3527,8 @@ fn apply_scanned_step(
             boxes.active_boxes.push(ActiveReplayBox {
                 target,
                 ships_out,
-                opening_brace_replay: true,
-                body_opener_pending: true,
+                opening_brace_replay: construction.opening_brace_replay,
+                body_opener_pending: construction.opening_brace_replay,
                 depth: 1,
                 kind,
                 packing,
@@ -4522,12 +4522,21 @@ fn schedule_everybox(command: &mut CommandState, stores: &mut Universe, horizont
     if stores.tokens(tokens).is_empty() {
         return;
     }
-    let origin = stores.bootstrap_origin();
-    let traced: Vec<_> = stores
-        .tokens(tokens)
-        .iter()
-        .copied()
-        .map(|token| tex_state::token::TracedTokenWord::pack(token, origin))
+    let tokens: Vec<_> = stores.tokens(tokens).to_vec();
+    let traced: Vec<_> = tokens
+        .into_iter()
+        .map(|token| {
+            let origin = stores.inserted_origin(
+                tex_state::provenance::InsertedOriginKind::TokenListReplay(if horizontal {
+                    tex_state::TokenListReplayKind::EveryHBox
+                } else {
+                    tex_state::TokenListReplayKind::EveryVBox
+                }),
+                token,
+                stores.bootstrap_origin(),
+            );
+            tex_state::token::TracedTokenWord::pack(token, origin)
+        })
         .collect();
     command.push_everybox(stores.finish_traced_token_list(&traced), horizontal);
 }

@@ -99,6 +99,10 @@ pub struct ScannedSetBoxAssignment {
 pub struct ScannedBoxConstruction {
     pub kind: ScannedBoxKind,
     pub packing: ScannedPackingSpec,
+    /// Whether the required body brace was accepted and backed up for its
+    /// ordinary replay delivery. `false` represents TeX's inserted-brace
+    /// recovery; the rejected command has already been backed up.
+    pub opening_brace_replay: bool,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -617,9 +621,18 @@ impl CommandProcessor<'_> {
 
     /// Validates a box body's required opening brace, then restores it for
     /// executor-owned group entry.
-    pub fn scan_box_group_opening(&mut self) -> Result<(), CommandError> {
-        let opening = self.scan_left_brace(true)?;
-        self.back_input(opening)
+    pub fn scan_box_group_opening(&mut self) -> Result<bool, CommandError> {
+        match self.scan_left_brace(true) {
+            Ok(opening) => {
+                self.back_input(opening)?;
+                Ok(true)
+            }
+            // `scan_left_brace` has retained the rejected command through
+            // its canonical backup. Replay opens the required group as the
+            // inserted brace, then consumes that command as box material.
+            Err(CommandError::InputInvariant) => Ok(false),
+            Err(error) => Err(error),
+        }
     }
 
     /// Scans TeX82 §§1070--1071's complete box-construction prefix.
@@ -640,8 +653,12 @@ impl CommandProcessor<'_> {
         } else {
             ScannedPackingSpec::Natural
         };
-        self.scan_box_group_opening()?;
-        Ok(ScannedBoxConstruction { kind, packing })
+        let opening_brace_replay = self.scan_box_group_opening()?;
+        Ok(ScannedBoxConstruction {
+            kind,
+            packing,
+            opening_brace_replay,
+        })
     }
 
     /// Validates an alignment preamble's required opening brace, then restores
