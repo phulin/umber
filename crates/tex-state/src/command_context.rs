@@ -248,6 +248,19 @@ impl CommandContext<'_> {
         }
     }
 
+    /// Reads one box-register dimension through the aggregate state boundary.
+    ///
+    /// A void box has no dimension; TeX's internal-quantity scanner maps
+    /// that case to zero at the command semantic layer.
+    #[must_use]
+    pub fn box_dimension(
+        &self,
+        index: u16,
+        dimension: crate::BoxDimension,
+    ) -> Option<crate::scaled::Scaled> {
+        self.universe.box_dimension(index, dimension)
+    }
+
     /// Reads one token register for direct `\\the` insertion.
     #[must_use]
     pub fn toks(&self, index: u16) -> TokenListId {

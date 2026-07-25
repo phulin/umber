@@ -1,5 +1,6 @@
 //! Executor-facing canonical scalar scanners.
 
+use tex_state::BoxDimension;
 use tex_state::glue::{GlueSpec, Order};
 use tex_state::ids::{FontId, TokenListId};
 use tex_state::interner::Symbol;
@@ -927,6 +928,28 @@ impl CommandProcessor<'_> {
                     index,
                     parameter: false,
                 }
+            }
+            // TeX82 §424's `scan_something_internal` treats `\wd`, `\ht`,
+            // and `\dp` as dimensions. Their register selectors use the
+            // same bounded scan as the classical register primitives, and a
+            // void box supplies the zero dimension.
+            Meaning::UnexpandablePrimitive(
+                primitive @ (UnexpandablePrimitive::Wd
+                | UnexpandablePrimitive::Ht
+                | UnexpandablePrimitive::Dp),
+            ) => {
+                let index = self.scan_eight_bit_register_index()?;
+                let dimension = match primitive {
+                    UnexpandablePrimitive::Wd => BoxDimension::Width,
+                    UnexpandablePrimitive::Ht => BoxDimension::Height,
+                    UnexpandablePrimitive::Dp => BoxDimension::Depth,
+                    _ => unreachable!("outer match restricts primitive"),
+                };
+                InternalValue::Dimension(
+                    self.state
+                        .box_dimension(index, dimension)
+                        .unwrap_or_else(|| Scaled::from_raw(0)),
+                )
             }
             Meaning::CountRegister(index) => InternalValue::Integer(self.state.count(index)),
             Meaning::IntParam(index) => InternalValue::Integer(

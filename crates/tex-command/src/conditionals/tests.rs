@@ -191,16 +191,32 @@ fn chars(text: &str) -> Vec<Token> {
 }
 
 fn boxed(universe: &mut Universe, vertical: bool) -> tex_state::ids::NodeListId {
+    boxed_with_dimensions(
+        universe,
+        vertical,
+        tex_state::scaled::Scaled::from_raw(0),
+        tex_state::scaled::Scaled::from_raw(0),
+        tex_state::scaled::Scaled::from_raw(0),
+    )
+}
+
+fn boxed_with_dimensions(
+    universe: &mut Universe,
+    vertical: bool,
+    width: tex_state::scaled::Scaled,
+    height: tex_state::scaled::Scaled,
+    depth: tex_state::scaled::Scaled,
+) -> tex_state::ids::NodeListId {
     use tex_state::glue::Order;
     use tex_state::node::{BoxNode, BoxNodeFields, Node, Sign};
-    use tex_state::scaled::{GlueSetRatio, Scaled};
+    use tex_state::scaled::GlueSetRatio;
 
     let children = universe.freeze_node_list(&[]);
     let node = BoxNode::new(BoxNodeFields {
-        width: Scaled::from_raw(0),
-        height: Scaled::from_raw(0),
-        depth: Scaled::from_raw(0),
-        shift: Scaled::from_raw(0),
+        width,
+        height,
+        depth,
+        shift: tex_state::scaled::Scaled::from_raw(0),
         display: false,
         glue_set: GlueSetRatio::ZERO,
         glue_sign: Sign::Normal,
@@ -665,6 +681,56 @@ fn ifdim_uses_typed_units_and_internal_dimensions() {
 
     assert_eq!(next_character(&mut processor), 'y');
     assert_eq!(next_character(&mut processor), 'i');
+}
+
+#[test]
+fn ifdim_scans_box_dimensions_as_internal_dimensions() {
+    use tex_state::meaning::UnexpandablePrimitive;
+    use tex_state::scaled::Scaled;
+
+    let mut command = CommandState::default();
+    let mut runtime = CommandRuntime::default();
+    let mut universe = Universe::new();
+    let ifdim = install(&mut universe, "ifdim", ExpandablePrimitive::IfDim);
+    let otherwise = install(&mut universe, "else", ExpandablePrimitive::Else);
+    let fi = install(&mut universe, "fi", ExpandablePrimitive::Fi);
+    let wd = universe.intern("wd").symbol();
+    let ht = universe.intern("ht").symbol();
+    let dp = universe.intern("dp").symbol();
+    universe.set_meaning(
+        wd,
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Wd),
+    );
+    universe.set_meaning(
+        ht,
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Ht),
+    );
+    universe.set_meaning(
+        dp,
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Dp),
+    );
+    let box_node = boxed_with_dimensions(
+        &mut universe,
+        false,
+        Scaled::from_raw(Scaled::UNITY),
+        Scaled::from_raw(2 * Scaled::UNITY),
+        Scaled::from_raw(3 * Scaled::UNITY),
+    );
+    universe.set_box_reg(3, box_node);
+
+    let mut tokens = Vec::new();
+    for (primitive, expected, selected) in [(wd, "1pt", 'w'), (ht, "2pt", 'h'), (dp, "3pt", 'd')] {
+        tokens.extend([ifdim, Token::Cs(primitive)]);
+        tokens.extend(chars(&format!("3={expected}")));
+        tokens.extend([other(selected), otherwise, other('n'), fi]);
+    }
+    push(&mut command, tokens);
+    let mut capabilities = CommandHostCapabilities::default();
+    let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+
+    assert_eq!(next_character(&mut processor), 'w');
+    assert_eq!(next_character(&mut processor), 'h');
+    assert_eq!(next_character(&mut processor), 'd');
 }
 
 #[test]
