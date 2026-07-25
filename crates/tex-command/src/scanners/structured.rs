@@ -82,6 +82,18 @@ pub struct ScannedCharacterDefinition {
     pub value: i32,
 }
 
+/// A completed TeX82 §1221 register-definition assignment.
+///
+/// The processor owns the raw target, its provisional `\relax` meaning,
+/// optional equals sign, and bounded classical register index. Main control
+/// receives only the chosen target and register selector to apply with the
+/// already determined assignment scope.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ScannedRegisterDefinition {
+    pub target: Symbol,
+    pub index: u16,
+}
+
 /// TeX82 §§1254--1261's completed `\\font` definition request.
 ///
 /// The target, optional equals, expanded filename, and size clause are all
@@ -709,6 +721,36 @@ impl CommandProcessor<'_> {
         Ok(ScannedCharacterDefinition {
             target,
             value: self.scan_integer()?.value,
+        })
+    }
+
+    /// Scans TeX82 §1221's complete register-definition operand.
+    ///
+    /// As in §1220, TeX temporarily gives the target `\relax` before the
+    /// index scan. This makes a repeated target terminate its own integer
+    /// scan rather than expand its previous meaning or report undefined.
+    pub fn scan_register_definition(
+        &mut self,
+        provisional_global: bool,
+    ) -> Result<ScannedRegisterDefinition, CommandError> {
+        let target = self
+            .next_non_space_raw()?
+            .and_then(|command| command.control_sequence())
+            .ok_or(CommandError::InputInvariant)?;
+        self.state
+            .set_provisional_meaning(target, Meaning::Relax, provisional_global);
+        #[cfg(any(test, feature = "instrumentation"))]
+        self.observe(crate::CommandObservation::Mutation(crate::MutationRecord {
+            target: "meaning",
+            value: "relax".into(),
+            key: Some(self.state.resolve(target).to_owned()),
+            tokens: None,
+            global: provisional_global,
+        }));
+        let _ = self.scan_optional_equals()?;
+        Ok(ScannedRegisterDefinition {
+            target,
+            index: self.scan_eight_bit_register_index()?,
         })
     }
 

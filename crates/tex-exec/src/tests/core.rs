@@ -4936,6 +4936,112 @@ fn canonical_dead_cycle_escape_ships_the_selected_residual_page() {
     assert!(matches!(page.root, tex_out::PageNode::VList(_)));
 }
 
+fn run_canonical_tex82(source: &str) -> Universe {
+    let mut stores = Universe::new();
+    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    control
+        .register_root_source(SourceRegistration::new(
+            RegisteredSourceKind::Generated,
+            source.as_bytes().to_vec(),
+        ))
+        .expect("register canonical source");
+    for _ in 0..1024 {
+        if control.step(&mut stores).expect("canonical step") == MainControlStep::End {
+            return stores;
+        }
+    }
+    panic!("canonical source did not terminate");
+}
+
+#[test]
+fn canonical_named_register_aliases_match_primitive_assignments() {
+    let stores = run_canonical_tex82(
+        r"\countdef\countalias=1 \dimendef\dimenalias=2
+          \skipdef\skipalias=3 \muskipdef\muskipalias=4 \toksdef\toksalias=5
+          \countalias=7 \dimenalias=8pt \skipalias=9pt plus 1fil
+          \muskipalias=10mu plus 2fill \toksalias={A{B}} \end",
+    );
+
+    assert_eq!(stores.count(1), 7);
+    assert_eq!(stores.dimen(2).raw(), 8 * 65_536);
+    assert_eq!(stores.glue(stores.skip(3)).width.raw(), 9 * 65_536);
+    assert_eq!(stores.glue(stores.muskip(4)).width.raw(), 10 * 65_536);
+    assert_eq!(stores.tokens(stores.toks(5)).len(), 4);
+}
+
+#[test]
+fn canonical_register_definitions_honor_nested_scope_and_globaldefs() {
+    let stores = run_canonical_tex82(
+        r"\countdef\local=1
+          {\countdef\local=2 \local=22}
+          \local=11
+          \globaldefs=1 {\countdef\globalalias=3}
+          \globaldefs=0
+          {\globaldefs=-1 \global\countdef\suppressed=4}
+          \end",
+    );
+
+    assert_eq!(
+        stores.meaning(stores.symbol("local").expect("local symbol")),
+        Meaning::CountRegister(1)
+    );
+    assert_eq!(stores.count(1), 11);
+    assert_eq!(
+        stores.meaning(stores.symbol("globalalias").expect("global alias symbol")),
+        Meaning::CountRegister(3)
+    );
+    assert_eq!(
+        stores.meaning(stores.symbol("suppressed").expect("suppressed symbol")),
+        Meaning::Undefined
+    );
+}
+
+#[test]
+fn canonical_register_definitions_recover_out_of_range_indices_to_zero() {
+    let stores = run_canonical_tex82(
+        r"\countdef\badcount=-1 \dimendef\baddimen=256
+          \skipdef\badskip=-2 \muskipdef\badmuskip=999 \toksdef\badtoks=256
+          \badcount=7 \baddimen=8pt \badskip=9pt \badmuskip=10mu \badtoks={Z}\end",
+    );
+
+    assert_eq!(
+        stores.meaning(stores.symbol("badcount").expect("bad count symbol")),
+        Meaning::CountRegister(0)
+    );
+    assert_eq!(
+        stores.meaning(stores.symbol("baddimen").expect("bad dimen symbol")),
+        Meaning::DimenRegister(0)
+    );
+    assert_eq!(
+        stores.meaning(stores.symbol("badskip").expect("bad skip symbol")),
+        Meaning::SkipRegister(0)
+    );
+    assert_eq!(
+        stores.meaning(stores.symbol("badmuskip").expect("bad muskip symbol")),
+        Meaning::MuskipRegister(0)
+    );
+    assert_eq!(
+        stores.meaning(stores.symbol("badtoks").expect("bad toks symbol")),
+        Meaning::ToksRegister(0)
+    );
+    assert_eq!(stores.count(0), 7);
+    assert_eq!(stores.dimen(0).raw(), 8 * 65_536);
+    assert_eq!(stores.glue(stores.skip(0)).width.raw(), 9 * 65_536);
+    assert_eq!(stores.glue(stores.muskip(0)).width.raw(), 10 * 65_536);
+    assert_eq!(stores.tokens(stores.toks(0)).len(), 1);
+}
+
+#[test]
+fn canonical_named_toks_assignment_collects_and_copies_token_lists() {
+    let stores = run_canonical_tex82(r"\toksdef\tokens=12 \tokens={A{B}} \toks13=\tokens \end");
+
+    assert_eq!(
+        stores.tokens(stores.toks(12)),
+        stores.tokens(stores.toks(13))
+    );
+    assert_eq!(stores.tokens(stores.toks(12)).len(), 4);
+}
+
 #[test]
 fn end_inside_unterminated_box_reaches_outer_cleanup() {
     let mut stores = Universe::new();

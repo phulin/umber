@@ -1988,6 +1988,12 @@ enum ScannedStep {
         value: i32,
         global: bool,
     },
+    RegisterDefinition {
+        primitive: UnexpandablePrimitive,
+        target: Symbol,
+        index: u16,
+        global: bool,
+    },
     Let {
         target: Symbol,
         source: Option<Symbol>,
@@ -2145,6 +2151,7 @@ impl ScannedStep {
                 | Self::Arithmetic { .. }
                 | Self::MacroDefinition { .. }
                 | Self::CharacterDefinition { .. }
+                | Self::RegisterDefinition { .. }
                 | Self::Let { .. }
                 | Self::ParagraphShape { .. }
         )
@@ -2986,10 +2993,28 @@ fn scan_command(
                 global,
             })
         }
+        Meaning::CountRegister(index) => {
+            let _ = processor.scan_optional_equals().map_err(command_error)?;
+            let value = processor.scan_integer().map_err(command_error)?.value;
+            Ok(ScannedStep::Count {
+                index,
+                value,
+                global,
+            })
+        }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Dimen) => {
             let index = processor
                 .scan_eight_bit_register_index()
                 .map_err(command_error)?;
+            let _ = processor.scan_optional_equals().map_err(command_error)?;
+            let value = processor.scan_dimension().map_err(command_error)?.value;
+            Ok(ScannedStep::Dimen {
+                index,
+                value,
+                global,
+            })
+        }
+        Meaning::DimenRegister(index) => {
             let _ = processor.scan_optional_equals().map_err(command_error)?;
             let value = processor.scan_dimension().map_err(command_error)?.value;
             Ok(ScannedStep::Dimen {
@@ -3010,10 +3035,28 @@ fn scan_command(
                 global,
             })
         }
+        Meaning::SkipRegister(index) => {
+            let _ = processor.scan_optional_equals().map_err(command_error)?;
+            let value = processor.scan_glue(false).map_err(command_error)?.value;
+            Ok(ScannedStep::Skip {
+                index,
+                value,
+                global,
+            })
+        }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Muskip) => {
             let index = processor
                 .scan_eight_bit_register_index()
                 .map_err(command_error)?;
+            let _ = processor.scan_optional_equals().map_err(command_error)?;
+            let value = processor.scan_glue(true).map_err(command_error)?.value;
+            Ok(ScannedStep::Muskip {
+                index,
+                value,
+                global,
+            })
+        }
+        Meaning::MuskipRegister(index) => {
             let _ = processor.scan_optional_equals().map_err(command_error)?;
             let value = processor.scan_glue(true).map_err(command_error)?.value;
             Ok(ScannedStep::Muskip {
@@ -3082,6 +3125,13 @@ fn scan_command(
                 global,
             })
         }
+        Meaning::ToksRegister(index) => Ok(ScannedStep::Toks {
+            index,
+            tokens: processor
+                .scan_token_register_value()
+                .map_err(command_error)?,
+            global,
+        }),
         Meaning::IntParam(index) => {
             let _ = processor.scan_optional_equals().map_err(command_error)?;
             let value = processor.scan_integer().map_err(command_error)?.value;
@@ -3354,6 +3404,28 @@ fn scan_command(
                 primitive,
                 target: definition.target,
                 value: definition.value,
+                global,
+            })
+        }
+        Meaning::UnexpandablePrimitive(
+            primitive @ (UnexpandablePrimitive::CountDef
+            | UnexpandablePrimitive::DimenDef
+            | UnexpandablePrimitive::SkipDef
+            | UnexpandablePrimitive::MuskipDef
+            | UnexpandablePrimitive::ToksDef),
+        ) => {
+            let provisional_global = match processor.int_param(IntParam::GLOBAL_DEFS).cmp(&0) {
+                std::cmp::Ordering::Greater => true,
+                std::cmp::Ordering::Less => false,
+                std::cmp::Ordering::Equal => global,
+            };
+            let definition = processor
+                .scan_register_definition(provisional_global)
+                .map_err(command_error)?;
+            Ok(ScannedStep::RegisterDefinition {
+                primitive,
+                target: definition.target,
+                index: definition.index,
                 global,
             })
         }
@@ -5622,6 +5694,27 @@ fn apply_scanned_step(
                     ) as u16)
                 }
                 _ => unreachable!("character-definition step carries only §1220 primitives"),
+            };
+            if assignment_global(global, stores) {
+                stores.set_meaning_global(target, meaning);
+            } else {
+                stores.set_meaning(target, meaning);
+            }
+            Ok(ReplayStep::Continue)
+        }
+        ScannedStep::RegisterDefinition {
+            primitive,
+            target,
+            index,
+            global,
+        } => {
+            let meaning = match primitive {
+                UnexpandablePrimitive::CountDef => Meaning::CountRegister(index),
+                UnexpandablePrimitive::DimenDef => Meaning::DimenRegister(index),
+                UnexpandablePrimitive::SkipDef => Meaning::SkipRegister(index),
+                UnexpandablePrimitive::MuskipDef => Meaning::MuskipRegister(index),
+                UnexpandablePrimitive::ToksDef => Meaning::ToksRegister(index),
+                _ => unreachable!("register-definition step carries only §1221 primitives"),
             };
             if assignment_global(global, stores) {
                 stores.set_meaning_global(target, meaning);

@@ -68,8 +68,8 @@ pub use scanners::{
     ScannedGlueParameterAssignment, ScannedLeaderPayload, ScannedLetAssignment,
     ScannedMacroDefinition, ScannedMathCharacter, ScannedMathDelimiter, ScannedMathFamily,
     ScannedMathFraction, ScannedMathMuMaterial, ScannedMathScript, ScannedPackingSpec,
-    ScannedRuleSpec, ScannedScalar, ScannedSetBoxAssignment, ScannedTokenRegisterAssignment,
-    ScannedVSplit, StructuredProvenance,
+    ScannedRegisterDefinition, ScannedRuleSpec, ScannedScalar, ScannedSetBoxAssignment,
+    ScannedTokenRegisterAssignment, ScannedVSplit, StructuredProvenance,
 };
 pub use snapshot::{CommandStateSnapshot, CommandSummary, CommandSummaryError};
 pub use state::{

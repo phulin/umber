@@ -582,6 +582,16 @@ effective `\global`/`\globaldefs` scope for TeX82's provisional
 restricted-code diagnostic where required, and commits the resulting character
 or math-character meaning without raw input.
 
+TeX82 §1221 `\countdef`, `\dimendef`, `\skipdef`, `\muskipdef`, and
+`\toksdef` follow the same split. `CommandProcessor` installs the scoped
+provisional `\relax`, then owns target delivery, optional-equals handling,
+and the `scan_eight_bit_int` register selector. `CanonicalMainControl` maps
+the completed selector to the corresponding named register meaning under the
+effective `\global`/`\globaldefs` scope. Those meanings re-enter the same
+typed count, dimension, glue, muglue, and token-list assignment scanners as
+their primitive forms; a named token register therefore uses the shared
+optional-equals and RHS collection path.
+
 TeX82 `\hrule` and `\vrule` cross the same gate as completed
 `ScannedRuleSpec` values. `CommandProcessor::scan_rule_spec` owns every
 expanded `width`, `height`, and `depth` keyword and dimension scan, including

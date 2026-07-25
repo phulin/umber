@@ -20,7 +20,7 @@ pub use structured::{
     ScannedEquationNumber, ScannedFileName, ScannedGlueParameterAssignment, ScannedLeaderPayload,
     ScannedLetAssignment, ScannedMacroDefinition, ScannedMathCharacter, ScannedMathDelimiter,
     ScannedMathFamily, ScannedMathFraction, ScannedMathMuMaterial, ScannedMathScript,
-    ScannedPackingSpec, ScannedRuleSpec, ScannedSetBoxAssignment, ScannedVSplit,
-    StructuredProvenance,
+    ScannedPackingSpec, ScannedRegisterDefinition, ScannedRuleSpec, ScannedSetBoxAssignment,
+    ScannedVSplit, StructuredProvenance,
 };
 pub use token_list::ScannedTokenRegisterAssignment;

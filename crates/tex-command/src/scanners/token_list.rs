@@ -44,6 +44,15 @@ impl CommandProcessor<'_> {
         Ok(ScannedTokenRegisterAssignment { index, tokens })
     }
 
+    /// Scans the right-hand side of an already selected token register.
+    ///
+    /// Register shorthands installed by `\toksdef` share TeX82's exact
+    /// optional-equals and internal-token-list behavior with `\toks<n>`.
+    pub fn scan_token_register_value(&mut self) -> Result<TracedTokenList, CommandError> {
+        let _ = self.scan_optional_equals()?;
+        Ok(self.scan_token_list_right_hand_side()?.tokens())
+    }
+
     /// Scans a token-parameter assignment such as `\output={...}`.
     ///
     /// TeX82 retains the outer braces in token parameters, unlike `\toks`
