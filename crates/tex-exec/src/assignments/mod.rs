@@ -69,6 +69,9 @@ pub(crate) use hyphenation::hyphenated_hlist as test_hyphenated_hlist_owned;
 #[cfg(test)]
 pub(crate) use hyphenation::test_hyphenated_word as test_hyphenated_hlist;
 use hyphenation::*;
+pub(crate) use hyphenation::{
+    apply_hyphenation_exceptions, apply_patterns, hyphenation_words_from_tokens,
+};
 use macros::*;
 #[cfg(test)]
 pub(crate) use paragraph::apply_line_expansion as test_apply_line_expansion;

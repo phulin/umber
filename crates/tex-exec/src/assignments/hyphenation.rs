@@ -14,8 +14,29 @@ pub(super) fn execute_patterns(
     stores: &mut Universe,
     execution: &mut crate::ExecutionContext<'_>,
 ) -> Result<(), ExecError> {
+    let words = scan_hyphenation_words(input, stores, execution, "\\patterns")?;
+    apply_patterns(stores, words);
+    Ok(())
+}
+
+pub(super) fn execute_hyphenation(
+    input: &mut InputStack,
+    stores: &mut Universe,
+    execution: &mut crate::ExecutionContext<'_>,
+) -> Result<(), ExecError> {
+    let words = scan_hyphenation_words(input, stores, execution, "\\hyphenation")?;
+    apply_hyphenation_exceptions(stores, words);
+    Ok(())
+}
+
+/// TeX82 §961's `k>0` branch ("Insert a new pattern into the linked trie")
+/// applied once per word collected from `\patterns`'s balanced group. Shared
+/// by the legacy `InputStack` scanner above and canonical main control, which
+/// collects the same raw words from an already-frozen expanded token list
+/// instead of a live input stream.
+pub(crate) fn apply_patterns(stores: &mut Universe, words: Vec<Vec<char>>) {
     let language = current_language(stores);
-    for word in scan_hyphenation_words(input, stores, execution, "\\patterns")? {
+    for word in words {
         if let Some(pattern) = parse_pattern_word(stores, &word) {
             stores.add_hyphenation_pattern_for_language(language, pattern);
         }
@@ -29,21 +50,50 @@ pub(super) fn execute_patterns(
         });
         stores.save_hyphenation_codes(language, codes.collect::<Vec<_>>());
     }
-    Ok(())
 }
 
-pub(super) fn execute_hyphenation(
-    input: &mut InputStack,
-    stores: &mut Universe,
-    execution: &mut crate::ExecutionContext<'_>,
-) -> Result<(), ExecError> {
+/// TeX82's analogous `new_hyph_exceptions` word application for
+/// `\hyphenation`, shared with canonical main control; see [`apply_patterns`].
+pub(crate) fn apply_hyphenation_exceptions(stores: &mut Universe, words: Vec<Vec<char>>) {
     let language = current_language(stores);
-    for word in scan_hyphenation_words(input, stores, execution, "\\hyphenation")? {
+    for word in words {
         if let Some(exception) = parse_exception_word(stores, language, &word) {
             stores.add_hyphenation_exception_for_language(language, exception);
         }
     }
-    Ok(())
+}
+
+/// Splits an already fully expanded, brace-balanced token list into raw
+/// hyphenation-data words, exactly as TeX82 §961's `get_x_token` loop would
+/// classify each delivered command while scanning `\patterns`/`\hyphenation`'s
+/// braced group directly from a live input stream. `Catcode::Space` and the
+/// group's own closing brace are TeX82's `spacer`/`right_brace` word
+/// boundaries; any nested `Catcode::BeginGroup`/`EndGroup` pair that
+/// `scan_balanced_text` retained verbatim is otherwise inert here, like the
+/// control-sequence and parameter tokens TeX82's `othercases` would instead
+/// diagnose as "Bad \patterns" (Appendix H); real pattern data contains
+/// neither.
+pub(crate) fn hyphenation_words_from_tokens(tokens: &[Token]) -> Vec<Vec<char>> {
+    let mut words = Vec::new();
+    let mut current = Vec::new();
+    for token in tokens {
+        match token {
+            Token::Char {
+                cat: Catcode::Space,
+                ..
+            } => {
+                if !current.is_empty() {
+                    words.push(std::mem::take(&mut current));
+                }
+            }
+            Token::Char { ch, .. } => current.push(*ch),
+            Token::Cs(_) | Token::Param(_) | Token::Frozen(_) => {}
+        }
+    }
+    if !current.is_empty() {
+        words.push(current);
+    }
+    words
 }
 
 pub(crate) fn hyphenated_hlist(stores: &mut Universe, nodes: Vec<Node>) -> Vec<Node> {

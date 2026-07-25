@@ -2015,6 +2015,15 @@ enum ScannedStep {
         tokens: TracedTokenList,
         uppercase: bool,
     },
+    /// TeX82 §960/§1252's `hyph_data` command: `\patterns` (`chr_code=1`)
+    /// installs pattern data through `new_patterns` (§961); `\hyphenation`
+    /// (`chr_code=0`) installs exception words through the analogous
+    /// `new_hyph_exceptions` scan. Both consume one expanded balanced group;
+    /// the flag selects which table the frozen word data populates.
+    HyphenationData {
+        tokens: TracedTokenList,
+        patterns: bool,
+    },
     RegisterDefinition {
         primitive: UnexpandablePrimitive,
         target: Symbol,
@@ -3725,6 +3734,28 @@ fn scan_command(
             cat,
             origin: command.spelling().origin(),
         }),
+        Meaning::UnexpandablePrimitive(
+            primitive @ (UnexpandablePrimitive::Patterns | UnexpandablePrimitive::Hyphenation),
+        ) => {
+            // TeX82 §960's `new_patterns` (`\patterns`) and its analogous
+            // `new_hyph_exceptions` (`\hyphenation`) both require `scan_left_brace`
+            // and then read an expanded balanced group through `get_x_token`
+            // (§961), classifying each delivered command as a pattern
+            // letter/digit, a word boundary, or the closing brace. `plain.tex`'s
+            // `\input hyphen` loads this data directly, so Umber treats both
+            // primitives as always legal here (matching TeX82's
+            // INITEX-only legality, since Umber has no non-INITEX format-loaded
+            // distinction) rather than raising §1252's "Patterns can be loaded
+            // only by INITEX" diagnostic.
+            let tokens = processor
+                .scan_balanced_text(true)
+                .map_err(command_error)?
+                .tokens;
+            Ok(ScannedStep::HyphenationData {
+                tokens,
+                patterns: primitive == UnexpandablePrimitive::Patterns,
+            })
+        }
         _ => Ok(ScannedStep::Continue),
     }
 }
@@ -5957,6 +5988,17 @@ fn apply_scanned_step(
         }
         ScannedStep::CaseShift { tokens, uppercase } => {
             command.push_case_shift(case_shift_tokens(tokens, uppercase, stores));
+            Ok(ReplayStep::Continue)
+        }
+        ScannedStep::HyphenationData { tokens, patterns } => {
+            let words = crate::assignments::hyphenation_words_from_tokens(
+                stores.tokens(tokens.token_list()),
+            );
+            if patterns {
+                crate::assignments::apply_patterns(stores, words);
+            } else {
+                crate::assignments::apply_hyphenation_exceptions(stores, words);
+            }
             Ok(ReplayStep::Continue)
         }
         ScannedStep::Let {
