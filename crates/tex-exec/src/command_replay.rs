@@ -2175,21 +2175,16 @@ fn apply_scanned_step(
                 .map_err(|_| ExecError::MissingToken {
                     context: "completed alignment preamble",
                 })?;
-            let templates = preamble
-                .columns
-                .first()
-                .copied()
-                .ok_or(ExecError::MissingToken {
+            if preamble.columns.is_empty() {
+                return Err(ExecError::MissingToken {
                     context: "first alignment preamble column",
-                })?;
-            command
-                .apply_alignment_request(AlignmentRequest::BeginCell {
-                    alignment,
-                    templates,
-                })
-                .map_err(|_| ExecError::MissingToken {
-                    context: "alignment first-cell lifecycle",
-                })?;
+                });
+            }
+            // `init_row` reaches `align_peek` before `init_col` selects the
+            // first cell. Keep the first pair validated here, but defer
+            // `BeginCell` until that lookahead has classified the next token.
+            // In particular, a recovered preamble may be followed directly
+            // by `}`, which `align_peek` passes to `fin_align`.
             if let Some(active) = active_alignment.as_mut()
                 && active.identity == alignment
             {
@@ -2197,7 +2192,14 @@ fn apply_scanned_step(
                 active.repeat_start = preamble.repeat_start;
                 active.column = 0;
                 active.preamble_start_pending = false;
-                active.cell_opening_pending = true;
+                // TeX82 §777 enters `align_peek` after `init_row`, before
+                // `init_col` gets a cell opener.  This distinction matters
+                // when §23 recovered a runaway preamble with frozen `\\cr`:
+                // the following right brace belongs to `fin_align`, not to a
+                // u-template lookahead that must be backed up.  Keep this
+                // post-preamble probe command-owned so ordinary first-cell
+                // input still reaches the existing typed init-col path.
+                active.align_peek_pending = true;
             }
             Ok(ReplayStep::Continue)
         }

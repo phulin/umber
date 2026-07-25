@@ -510,7 +510,6 @@ fn alignment_preamble_opener_uses_command_owned_backup_before_source_resumes() {
                 CommandObservation::Command(terminator),
                 CommandObservation::Alignment(preamble_finish),
                 CommandObservation::ScannerStatus(finished),
-                CommandObservation::Alignment(cell),
             ]
                 if state_change.transition == "begin_group"
                     && state_change.align_state == -999_999
@@ -530,9 +529,6 @@ fn alignment_preamble_opener_uses_command_owned_backup_before_source_resumes() {
                     && finished.from.starts_with("Aligning")
                     && finished.to.starts_with("Normal")
                     && preamble_finish.transition == "preamble_finish"
-                    && cell.transition == "state_change"
-                    && cell.align_state == 1_000_000
-                    && cell.previous_align_state.is_none()
         ),
         "unexpected observations: {:?}",
         observations.0
@@ -549,6 +545,7 @@ fn alignment_preamble_opener_uses_command_owned_backup_before_source_resumes() {
         matches!(
             observations.0.as_slice(),
             [
+                CommandObservation::Alignment(peek),
                 CommandObservation::Alignment(state_change),
                 CommandObservation::Command(raw),
                 CommandObservation::Command(expanded),
@@ -558,7 +555,10 @@ fn alignment_preamble_opener_uses_command_owned_backup_before_source_resumes() {
                 CommandObservation::Input(template),
                 CommandObservation::Alignment(template_alignment),
             ]
-                if state_change.transition == "begin_group"
+                if peek.transition == "state_change"
+                    && peek.align_state == 1_000_000
+                    && peek.previous_align_state.is_none()
+                    && state_change.transition == "begin_group"
                     && state_change.align_state == 1_000_001
                     && state_change.previous_align_state == Some(1_000_000)
                     && matches!(raw.spelling, ObservedToken::Character { character: '{', .. })

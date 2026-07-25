@@ -271,8 +271,11 @@ After `init_align` validates and replays its opening brace, the command
 processor owns the complete `get_preamble_token` episode. It retains raw
 delivery while `scanner_status=aligning`, freezes u/v template pairs at `#`
 and their column boundaries, and restores normal scanner status only after
-the terminating `\cr`. A preamble `\message{...}` is therefore template data,
-never an executor effect.
+the terminating `\cr`. TeX82 `init_row` then reaches command-owned
+`align_peek` before `init_col` selects the first cell, so a following right
+brace enters `fin_align` instead of being backed up as a u-template opener.
+A preamble `\message{...}` is therefore template data, never an executor
+effect.
 
 Source citations in implementation comments should identify the narrowest
 relevant TeX.web or pdfTeX.web section.
