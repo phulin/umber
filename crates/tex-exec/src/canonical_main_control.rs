@@ -4597,6 +4597,29 @@ fn applied_mutation_observation(
             global: *global,
         });
     }
+    if let ScannedStep::RegisterDefinition {
+        primitive,
+        target,
+        global,
+        ..
+    } = scanned
+    {
+        let value = match primitive {
+            UnexpandablePrimitive::CountDef => "assign_int",
+            UnexpandablePrimitive::DimenDef => "assign_dimen",
+            UnexpandablePrimitive::SkipDef => "assign_glue",
+            UnexpandablePrimitive::MuskipDef => "assign_mu_glue",
+            UnexpandablePrimitive::ToksDef => "assign_toks",
+            _ => unreachable!("register-definition step carries only §1221 primitives"),
+        };
+        return Some(MutationRecord {
+            target: "meaning",
+            value: value.into(),
+            key: Some(stores.resolve(*target).to_owned()),
+            tokens: None,
+            global: *global,
+        });
+    }
     let ScannedStep::MacroDefinition {
         target,
         parameter_text,

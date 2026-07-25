@@ -1909,6 +1909,34 @@ fn canonical_initex_replay_scans_token_register_assignments_through_command_core
 }
 
 #[test]
+fn canonical_toksdef_projects_its_committed_named_register_meaning() {
+    let mut universe = Universe::new();
+    let mut control = CommandReplayControl::tex82_initex(&mut universe);
+    register_source(&mut control, br"\toksdef\tokens=256\end");
+    let mut observations = ObservationRecorder::default();
+
+    assert_eq!(
+        control
+            .step_with_observer(&mut universe, &mut observations)
+            .expect("toksdef"),
+        ReplayStep::Continue
+    );
+    assert_eq!(
+        universe.meaning(universe.symbol("tokens").expect("toksdef target")),
+        Meaning::ToksRegister(0)
+    );
+    assert!(matches!(
+        observations.0.last(),
+        Some(CommandObservation::Mutation(mutation))
+            if mutation.target == "meaning"
+                && mutation.key.as_deref() == Some("tokens")
+                && mutation.value == "assign_toks"
+                && !mutation.global
+    ));
+    assert_eq!(control.step(&mut universe).expect("end"), ReplayStep::End);
+}
+
+#[test]
 fn canonical_initex_replay_copies_direct_token_register_rhs() {
     let mut universe = Universe::new();
     let mut control = CommandReplayControl::tex82_initex(&mut universe);

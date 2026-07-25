@@ -1559,6 +1559,26 @@ mod tests {
     }
 
     #[test]
+    fn toksdef_meanings_project_as_assign_toks() {
+        let event = translate_mutation(MutationRecord {
+            target: "meaning",
+            value: "assign_toks".into(),
+            key: Some("tokens".into()),
+            tokens: None,
+            global: false,
+        });
+        assert_eq!(
+            event,
+            Event::Mutation(MutationEvent {
+                target: StateTarget::Meaning,
+                key: CanonicalValue::Name("tokens".into()),
+                value: CanonicalValue::Name("assign_toks".into()),
+                scope: "local".into(),
+            })
+        );
+    }
+
+    #[test]
     fn glue_scanners_and_mutations_keep_structured_orders() {
         let value =
             "width=131072;stretch=196608;stretch_order=Fil;shrink=262144;shrink_order=Normal";
