@@ -5259,7 +5259,23 @@ fn apply_scanned_step(
             Ok(ReplayStep::Continue)
         }
         ScannedStep::ParagraphIndent { indent } => {
-            start_canonical_paragraph(command, modes, stores, indent)?;
+            if matches!(modes.current_mode(), Mode::Math | Mode::DisplayMath) {
+                // TeX82 `main_control` routes `mmode+start_par` through
+                // `indent_in_hmode`: `\indent` contributes an ordinary
+                // noad whose nucleus is the paragraph-indent null box, while
+                // `\noindent` contributes nothing. It does not begin a
+                // paragraph from math mode.
+                if indent {
+                    let box_node = crate::assignments::make_indent_box(stores);
+                    let list = stores.freeze_node_list(&[box_node]);
+                    modes.current_list_mut().push(Node::MathNoad(MathNoad::new(
+                        NoadKind::Normal(NoadClass::Ord),
+                        MathField::SubBox(list),
+                    )));
+                }
+            } else {
+                start_canonical_paragraph(command, modes, stores, indent)?;
+            }
             Ok(ReplayStep::Continue)
         }
         ScannedStep::ParagraphShape { lines, global } => {
