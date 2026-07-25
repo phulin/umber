@@ -2740,6 +2740,11 @@ fn scan_command(
             _ => unreachable!(),
         };
         let family = processor.scan_math_family(size).map_err(command_error)?;
+        // tex.web section 23069-23070 (def_family): scan_four_bit_int is
+        // followed by scan_optional_equals before scan_font_ident. Skipping
+        // this let a literal `=` in `\textfont0=\tenrm` fall through to
+        // ordinary main control instead of being consumed here.
+        let _ = processor.scan_optional_equals().map_err(command_error)?;
         let font = match processor.get_x_token().map_err(command_error)? {
             Some(font) => match font.meaning() {
                 Meaning::Font(id) => id,

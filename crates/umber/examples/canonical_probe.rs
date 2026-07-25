@@ -13,10 +13,14 @@
 //! ```text
 //! cargo run -p umber --example canonical_probe -- gentle
 //! cargo run -p umber --example canonical_probe -- story
+//! cargo run -p umber --example canonical_probe -- story /tmp/story.actual.dvi
 //! ```
 //!
-//! The argument names a document in `third_party/corpus/<name>.tex` (the
-//! `.tex` suffix is optional); it defaults to `gentle`. The probe requires
+//! The first argument names a document in `third_party/corpus/<name>.tex`
+//! (the `.tex` suffix is optional); it defaults to `gentle`. An optional
+//! second argument is a path to write the assembled DVI bytes to, for
+//! comparison against a fixture such as `tests/corpus/e2e/story.expected.dvi`
+//! (e.g. with `cmp` or `sha256sum`). The probe requires
 //! `third_party/corpus/plain.tex`, `third_party/corpus/<name>.tex`, and
 //! `third_party/hyphen/hyphen.tex` (fetched by
 //! `scripts/setup-conformance-tests.sh` or `scripts/fetch-conformance-inputs.sh`),
@@ -113,6 +117,30 @@ fn main() -> ExitCode {
                 run.artifacts.len(),
                 run.dvi_pages.len()
             );
+            if !run.dvi_pages.is_empty() {
+                match umber::dvi_from_page_plans(&run.dvi_pages) {
+                    Ok(dvi) => {
+                        if let Some(out_path) = env::args().nth(2) {
+                            if let Err(error) = write_probe_output(&out_path, &dvi) {
+                                eprintln!(
+                                    "canonical_probe: failed to write DVI to {out_path}: {error}"
+                                );
+                            } else {
+                                println!(
+                                    "canonical_probe: wrote {} DVI byte(s) to {out_path}",
+                                    dvi.len()
+                                );
+                            }
+                        } else {
+                            println!("canonical_probe: assembled {} DVI byte(s)", dvi.len());
+                        }
+                    }
+                    Err(error) => {
+                        eprintln!("canonical_probe: failed to assemble DVI: {error}");
+                        return ExitCode::FAILURE;
+                    }
+                }
+            }
             ExitCode::SUCCESS
         }
         Ok(Err(error)) => {
@@ -169,6 +197,11 @@ fn repo_root() -> PathBuf {
         .join("../..")
         .canonicalize()
         .expect("resolve repository root")
+}
+
+#[allow(clippy::disallowed_methods)] // Host-side probe output; engine I/O still goes through World.
+fn write_probe_output(path: &str, bytes: &[u8]) -> std::io::Result<()> {
+    fs::write(path, bytes)
 }
 
 #[allow(clippy::disallowed_methods)] // Host-side probe staging; engine I/O still goes through World.
