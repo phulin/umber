@@ -363,12 +363,16 @@ through the same `get_next` path, so executor code cannot create a second
 lexer, expansion loop, or backup mechanism. `CommandState::snapshot` remains
 the transaction boundary for the resulting future input state.
 
-The integer scanner also owns TeX's backtick character-code form: its
-following token is delivered raw, interpreted as a character code, and its
-optional trailing space is consumed by the normal expanded scanner path.
-Replay therefore receives only the completed code-table character and value;
-it applies `\catcode` and `\lccode` through `Universe` without inspecting the
-underlying tokens.
+The integer scanner also owns TeX82 §442's backtick character-code form: its
+following token is delivered raw and interpreted from `cur_tok`, rather than
+from its resolved meaning. Therefore active characters and one-character
+control sequences are valid character constants even though they resolve
+through a control-sequence meaning; only null or multi-character control
+sequences take the improper-constant recovery. The optional trailing space is
+then consumed by the normal expanded scanner path, which backs up any
+non-space probe. Replay therefore receives only the completed code-table
+character and value; it applies `\catcode` and `\lccode` through `Universe`
+without inspecting the underlying tokens.
 
 Input levels, scanner frames, condition frames, replay payloads, macro
 activations, expansion budgets, provenance construction, and command dispatch

@@ -4,7 +4,7 @@ use tex_state::glue::{GlueSpec, Order};
 use tex_state::ids::TokenListId;
 use tex_state::meaning::{Meaning, UnexpandablePrimitive};
 use tex_state::scaled::{PhysicalUnit, Scaled, round_decimal_fraction, scaled_from_decimal_parts};
-use tex_state::token::OriginId;
+use tex_state::token::{OriginId, Token};
 
 use crate::{CommandError, CurrentCommand, processor::CommandProcessor};
 #[cfg(any(test, feature = "instrumentation"))]
@@ -566,8 +566,23 @@ impl CommandProcessor<'_> {
         let Some(command) = self.get_next_character_code()? else {
             return Ok(0);
         };
-        let value = match command.meaning() {
-            Meaning::CharToken { ch, .. } => i32::try_from(u32::from(ch)).unwrap_or(0),
+        // TeX82 §442 tests `cur_tok`, not `cur_cmd`: an active character is
+        // represented by a control-sequence meaning, but remains a valid
+        // alphabetic character constant. Likewise a one-character control
+        // sequence denotes that character. Only multi-character (or null)
+        // control sequences take the improper-constant recovery path.
+        let value = match command.spelling().semantic_token() {
+            Token::Char { ch, .. } => i32::try_from(u32::from(ch)).unwrap_or(0),
+            Token::Cs(symbol) => {
+                let mut name = self.state.resolve(symbol).chars();
+                match (name.next(), name.next()) {
+                    (Some(ch), None) => i32::try_from(u32::from(ch)).unwrap_or(0),
+                    _ => {
+                        self.back_input(command)?;
+                        return Ok(0);
+                    }
+                }
+            }
             _ => {
                 self.back_input(command)?;
                 return Ok(0);

@@ -107,6 +107,80 @@ fn integer_radix_prefixes_deliver_digits_before_scanner_completion() {
 }
 
 #[test]
+fn character_code_scanning_accepts_an_active_character_before_optional_equals() {
+    let mut command = CommandState::default();
+    push(
+        &mut command,
+        vec![
+            char_token('`'),
+            Token::Char {
+                ch: '~',
+                cat: Catcode::Active,
+            },
+            char_token('='),
+            char_token('1'),
+            char_token('3'),
+        ],
+    );
+    let mut runtime = CommandRuntime::default();
+    let mut universe = Universe::new();
+    let mut capabilities = CommandHostCapabilities::default();
+    let mut recorder = Recorder::default();
+    {
+        let mut processor = CommandProcessor::new(
+            &mut command,
+            &mut runtime,
+            universe.command_context(),
+            CommandHostContext::new(&mut capabilities),
+        )
+        .with_observer(&mut recorder);
+
+        assert_eq!(
+            processor
+                .scan_integer()
+                .expect("active character code")
+                .value,
+            126
+        );
+        assert!(
+            processor
+                .scan_optional_equals()
+                .expect("equals scans")
+                .value
+        );
+        assert_eq!(processor.scan_integer().expect("value scans").value, 13);
+    }
+
+    let raw_equals = recorder
+        .0
+        .iter()
+        .position(|record| {
+            matches!(record, CommandObservation::Command(command)
+            if command.boundary == crate::CommandDeliveryBoundary::Raw
+                && matches!(command.spelling, ObservedToken::Character { character: '=', .. }))
+        })
+        .expect("optional-space probe delivers equals raw");
+    let expanded_equals = recorder
+        .0
+        .iter()
+        .position(|record| {
+            matches!(record, CommandObservation::Command(command)
+            if command.boundary == crate::CommandDeliveryBoundary::Expanded
+                && matches!(command.spelling, ObservedToken::Character { character: '=', .. }))
+        })
+        .expect("optional-space probe expands equals");
+    let backup = recorder
+        .0
+        .iter()
+        .position(|record| {
+            matches!(record, CommandObservation::Input(record)
+            if record.transition == InputTransition::Backup)
+        })
+        .expect("non-space optional-space probe backs equals up");
+    assert!(raw_equals < expanded_equals && expanded_equals < backup);
+}
+
+#[test]
 fn integer_internal_register_scans_its_index_through_command_input() {
     let mut command = CommandState::default();
     let mut runtime = CommandRuntime::default();
