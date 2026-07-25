@@ -3613,10 +3613,17 @@ fn canonical_alignment_finalizes_rows_into_the_enclosing_list() {
 
     run_to_end(&mut control, &mut universe);
 
-    assert_eq!(control.current_mode(), Mode::Horizontal);
-    let nodes = control.modes.current_list().nodes();
+    // TeX82 §800's `fin_align` pops the alignment's nest level and returns
+    // to whatever mode enclosed it (§812's "Insert the current list into
+    // its environment"); a top-level `\halign` therefore leaves outer
+    // vertical mode exactly as `new_graf` never ran. The finished row
+    // becomes a page contribution rather than a `current_list` node because
+    // outer-vertical material is routed through the page builder (TeX82
+    // §994's `build_page`), not retained on the enclosing nest level.
+    assert_eq!(control.current_mode(), Mode::Vertical);
+    let nodes = universe.current_page_nodes();
     assert!(
-        matches!(nodes.first(), Some(Node::HList(_))),
+        nodes.iter().any(|node| matches!(node, Node::HList(_))),
         "nodes: {nodes:?}; terminal: {}",
         terminal_text(&universe)
     );

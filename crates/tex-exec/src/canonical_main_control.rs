@@ -6760,16 +6760,14 @@ fn apply_scanned_step(
                 return Ok(ReplayStep::Continue);
             }
             match cat {
+                // TeX82 §1045's `any_mode(relax),vmode+spacer,mmode+spacer,
+                // mmode+no_boundary:do_nothing` leaves vertical mode
+                // untouched by an ordinary space; only `start_par`, a
+                // letter/other/char_num/char_given, or an explicit
+                // box/rule/etc. triggers `new_graf` via §1090's
+                // `back_input; new_graf(true)`. A space therefore never
+                // itself opens a paragraph here.
                 Catcode::Space => {
-                    if matches!(
-                        modes.current_mode(),
-                        Mode::Vertical | Mode::InternalVertical
-                    ) {
-                        // Alignment-cell delivery reaches this branch without
-                        // the outer `starts_paragraph` probe, but TeX82 still
-                        // enters horizontal mode before ordinary text.
-                        start_canonical_paragraph(command, modes, stores, true)?;
-                    }
                     if matches!(
                         modes.current_mode(),
                         Mode::Horizontal | Mode::RestrictedHorizontal
