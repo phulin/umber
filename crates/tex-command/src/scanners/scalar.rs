@@ -1,7 +1,8 @@
 //! Executor-facing canonical scalar scanners.
 
 use tex_state::glue::{GlueSpec, Order};
-use tex_state::ids::TokenListId;
+use tex_state::ids::{FontId, TokenListId};
+use tex_state::interner::Symbol;
 use tex_state::meaning::{Meaning, UnexpandablePrimitive};
 use tex_state::scaled::{
     PhysicalUnit, Scaled, nx_plus_y, round_decimal_fraction, scaled_from_decimal_parts, xn_over_d,
@@ -43,6 +44,8 @@ pub enum InternalValue {
     Dimension(Scaled),
     Glue(GlueSpec),
     MuGlue(GlueSpec),
+    /// TeX82's `ident_val`: a font's stable control-sequence identity.
+    Font(Symbol),
     Tokens {
         tokens: TokenListId,
         index: u16,
@@ -976,9 +979,47 @@ impl CommandProcessor<'_> {
             Meaning::CharGiven(character) => InternalValue::Integer(
                 i32::try_from(u32::from(character)).expect("characters fit in i32"),
             ),
+            // TeX82 §424 represents `set_font`, `def_font`, and `def_family`
+            // as ident_val at the token-list level. Preserve the control
+            // sequence identity instead of rendering a font number or name.
+            Meaning::Font(font) => self.font_identity(font),
+            Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Font) => {
+                self.font_identity(self.state.current_font())
+            }
+            Meaning::UnexpandablePrimitive(
+                primitive @ (UnexpandablePrimitive::TextFont
+                | UnexpandablePrimitive::ScriptFont
+                | UnexpandablePrimitive::ScriptScriptFont),
+            ) => {
+                let size = match primitive {
+                    UnexpandablePrimitive::TextFont => crate::MathFamilySize::Text,
+                    UnexpandablePrimitive::ScriptFont => crate::MathFamilySize::Script,
+                    UnexpandablePrimitive::ScriptScriptFont => crate::MathFamilySize::ScriptScript,
+                    _ => unreachable!("font-family primitive is exhaustive"),
+                };
+                let family = self.scan_math_family(size)?;
+                self.font_identity(self.state.math_family_font(
+                    match family.size {
+                        crate::MathFamilySize::Text => tex_state::math::MathFontSize::Text,
+                        crate::MathFamilySize::Script => tex_state::math::MathFontSize::Script,
+                        crate::MathFamilySize::ScriptScript => {
+                            tex_state::math::MathFontSize::ScriptScript
+                        }
+                    },
+                    family.family,
+                ))
+            }
             _ => return Ok(None),
         };
         Ok(Some(value))
+    }
+
+    fn font_identity(&self, font: FontId) -> InternalValue {
+        InternalValue::Font(
+            self.state
+                .font_identifier_symbol(font)
+                .expect("TeX font identifiers have a control-sequence identity"),
+        )
     }
 
     /// Scans TeX82's `scan_eight_bit_int` register index.

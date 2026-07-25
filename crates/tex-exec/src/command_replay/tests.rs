@@ -3828,6 +3828,23 @@ fn canonical_display_diagnostics_keep_show_raw_and_scan_other_operands() {
 }
 
 #[test]
+fn canonical_showthe_and_the_preserve_font_identifier_tokens() {
+    let mut universe = Universe::new();
+    let nullfont = universe.intern("nullfont");
+    universe.set_font_identifier_symbol(tex_state::font::NULL_FONT, nullfont);
+    let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+    register_source(
+        &mut control,
+        br"\showthe\font\showthe\nullfont\showthe\textfont0\message{\the\font}\end",
+    );
+    run_to_end(&mut control, &mut universe);
+
+    let text = terminal_text(&universe);
+    assert_eq!(text.matches("> \\nullfont.").count(), 3, "{text}");
+    assert!(text.contains("\\nullfont"), "{text}");
+}
+
+#[test]
 fn canonical_errmessage_uses_the_world_terminal_and_log_boundary() {
     // TeX82's `issue_message` sends \errmessage through `print_err`/`error`,
     // then main control resumes normally.

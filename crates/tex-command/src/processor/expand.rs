@@ -405,6 +405,9 @@ impl CommandProcessor<'_> {
                     index,
                     parameter,
                 } => self.push_the_tokens(tokens, index, parameter)?,
+                crate::InternalValue::Font(symbol) => {
+                    self.push_rendered_tokens(vec![Token::Cs(symbol)], opener);
+                }
                 _ => unreachable!("non-token internal values are rendered above"),
             }
         }
@@ -483,24 +486,28 @@ impl CommandProcessor<'_> {
     /// observation follow the actual input transition, rather than asking a
     /// trace adapter to recognize rendered text later.
     fn push_rendered_text(&mut self, text: &str, parent: OriginId) {
+        self.push_rendered_tokens(
+            text.chars()
+                .map(|ch| Token::Char {
+                    ch,
+                    cat: if ch == ' ' {
+                        tex_state::token::Catcode::Space
+                    } else {
+                        tex_state::token::Catcode::Other
+                    },
+                })
+                .collect(),
+            parent,
+        );
+    }
+
+    fn push_rendered_tokens(&mut self, tokens: Vec<Token>, parent: OriginId) {
         let origin = self
             .state
             .synthesized_origin(SynthesizedOriginKind::ValueRendering, parent);
-        let tokens = text
-            .chars()
-            .map(|ch| {
-                TracedTokenWord::pack(
-                    Token::Char {
-                        ch,
-                        cat: if ch == ' ' {
-                            tex_state::token::Catcode::Space
-                        } else {
-                            tex_state::token::Catcode::Other
-                        },
-                    },
-                    origin,
-                )
-            })
+        let tokens = tokens
+            .into_iter()
+            .map(|token| TracedTokenWord::pack(token, origin))
             .collect::<Vec<_>>();
         // `conv_toks` enters the inserted list through `back_list`, whose
         // trace seam reports its current token. The full rendered string is
@@ -603,6 +610,7 @@ pub(crate) fn render_the_value(value: crate::InternalValue) -> Option<String> {
         crate::InternalValue::Dimension(value) => Some(format_scaled(value)),
         crate::InternalValue::Glue(value) => Some(format_glue(value, "pt")),
         crate::InternalValue::MuGlue(value) => Some(format_glue(value, "mu")),
+        crate::InternalValue::Font(_) => None,
         crate::InternalValue::Tokens { .. } => None,
     }
 }

@@ -1830,6 +1830,7 @@ impl CommandProcessor<'_> {
             | InternalValue::MuGlue(_)) => {
                 render_the_value(value).expect("non-token values render")
             }
+            InternalValue::Font(symbol) => string_text(&self.state, Token::Cs(symbol)),
             InternalValue::Tokens { tokens, .. } => self
                 .state
                 .tokens(tokens)

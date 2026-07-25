@@ -9,8 +9,9 @@ use crate::{
     env::banks::{IntParam, TokParam},
     ids::{FontId, GlueId},
     ids::{MacroDefinitionId, OriginListId, TokenListId},
-    interner::Symbol,
+    interner::{Symbol, SymbolId},
     macro_store::{MacroDefinitionProvenance, MacroMeaning, MacroParameterPattern},
+    math::MathFontSize,
     meaning::{InternalInteger, Meaning},
     page::{PageInteger, PageMark},
     provenance::SynthesizedOriginKind,
@@ -271,10 +272,24 @@ impl CommandContext<'_> {
         self.universe.font_name(font)
     }
 
+    /// Reads the control-sequence identity assigned to a font.
+    #[must_use]
+    pub fn font_identifier_symbol(&self, font: FontId) -> Option<Symbol> {
+        self.universe
+            .font_identifier_symbol(font)
+            .map(SymbolId::symbol)
+    }
+
     /// Reads the currently selected font through the command boundary.
     #[must_use]
     pub fn current_font(&self) -> FontId {
         self.universe.current_font()
+    }
+
+    /// Reads one font-family selector through the command boundary.
+    #[must_use]
+    pub fn math_family_font(&self, size: MathFontSize, family: u8) -> FontId {
+        self.universe.math_family_font(size, family)
     }
 
     /// Returns the parallel provenance words of one stored token list.

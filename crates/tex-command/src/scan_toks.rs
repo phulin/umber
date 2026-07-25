@@ -361,6 +361,9 @@ impl CommandProcessor<'_> {
             return Ok(false);
         };
         let tokens = match value {
+            crate::InternalValue::Font(symbol) => {
+                vec![TracedTokenWord::pack(Token::Cs(symbol), OriginId::UNKNOWN)]
+            }
             crate::InternalValue::Tokens { tokens, .. } => self
                 .state
                 .tokens(tokens)
