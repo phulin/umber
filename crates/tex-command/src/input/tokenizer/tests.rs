@@ -173,7 +173,7 @@ fn m_n_s_states_cover_ignored_comments_spaces_endlines_and_blank_lines() {
             b"par".to_vec(),
             SourceControlSequenceKind::Paragraph,
             19,
-            19
+            20
         )
     );
     assert_eq!(
@@ -423,7 +423,7 @@ fn unicode_m_n_s_states_use_unicode_domain_space_par_and_endline() {
             vec!['p', 'a', 'r'],
             SourceControlSequenceKind::Paragraph,
             5,
-            5,
+            6,
             0,
             1
         )

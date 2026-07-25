@@ -4,6 +4,7 @@
 //! TeX.web §343 (`get_next`).  Later scanner and alignment milestones extend
 //! the two explicit entry points below; they do not add another lexical path.
 
+use tex_state::env::banks::IntParam;
 use tex_state::meaning::{ExpandablePrimitive, Meaning};
 use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 
@@ -34,8 +35,6 @@ use crate::observation::{
     CommandProvenance, DiagnosticArgument, DiagnosticRecord, InputReason, InputRecord,
     InputTransition, RecoveryRecord, observed_token,
 };
-
-const DEFAULT_END_LINE_CHAR: i32 = 13;
 
 impl CommandProcessor<'_> {
     /// Retires the exhausted level that supplied the immediately preceding
@@ -903,14 +902,19 @@ impl CommandProcessor<'_> {
 
     fn next_source_step(&mut self) -> SourceTokenizationStep {
         let profile = self.command.profile();
+        // TeX82's `firm_up_the_line` captures `end_line_char` when it loads
+        // each physical line.  The cursor keeps that captured value through
+        // the line, so assignments affect the next refill but cannot rewrite
+        // a partially consumed line.
+        let endlinechar = self.state.int_param(IntParam::END_LINE_CHAR);
         let catcode = |code: CharacterCode| self.state.catcode(character_from_code(code));
         match profile.character_mode() {
-            CharacterMode::EightBitExact => self
-                .command
-                .next_exact_source_step(DEFAULT_END_LINE_CHAR, catcode),
-            CharacterMode::UnicodeExtended => self
-                .command
-                .next_unicode_source_step(DEFAULT_END_LINE_CHAR, catcode),
+            CharacterMode::EightBitExact => {
+                self.command.next_exact_source_step(endlinechar, catcode)
+            }
+            CharacterMode::UnicodeExtended => {
+                self.command.next_unicode_source_step(endlinechar, catcode)
+            }
         }
     }
 

@@ -239,6 +239,15 @@ impl SourceCursor {
                         continue;
                     }
                     LexerState::NewLine => {
+                        // The generated paragraph is a control sequence, so
+                        // its canonical source position is the physical line
+                        // terminator that caused it. Retaining this typed
+                        // distinction avoids treating the zero-width
+                        // synthetic endline anchor like an explicit `\par`
+                        // spelling (whose position is its final source
+                        // character). Unterminated EOF input intentionally
+                        // remains a zero-width anchor.
+                        let range = self.current_terminator_range();
                         return SourceTokenizationStep::Token(SourceToken::ControlSequence {
                             name: b"par"
                                 .iter()
@@ -246,7 +255,7 @@ impl SourceCursor {
                                 .map(|byte| semantic_ascii(mode, byte))
                                 .collect(),
                             kind: SourceControlSequenceKind::Paragraph,
-                            range: character.range(),
+                            range,
                             scalar_range,
                         });
                     }

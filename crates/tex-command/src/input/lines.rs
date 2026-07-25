@@ -225,6 +225,23 @@ impl SourceLineState {
 }
 
 impl SourceCursor {
+    /// Returns the physical terminator of the currently loaded line, if it
+    /// has one. The tokenizer uses this only for the generated blank-line
+    /// `\par` spelling; ordinary synthetic `endlinechar` remains anchored at
+    /// its normalized content end.
+    pub(crate) fn current_terminator_range(&self) -> SourceRange {
+        self.line.as_ref().map_or_else(
+            || {
+                SourceRange::new(
+                    self.backing.id,
+                    self.next_physical_offset,
+                    self.next_physical_offset,
+                )
+            },
+            |line| line.physical.terminator,
+        )
+    }
+
     pub(crate) fn load_next_line(&mut self, endlinechar: i32) -> Option<&mut SourceLineState> {
         if self.line.is_some() {
             return self.line.as_mut();
