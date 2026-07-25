@@ -175,6 +175,70 @@ fn production_driver_applies_typed_parshape_indent_and_horizontal_nodes() {
 }
 
 #[test]
+fn canonical_paragraph_page_builder_is_observer_neutral() {
+    #[derive(Debug, Eq, PartialEq)]
+    struct MemoParity {
+        lookups: u64,
+        hits: u64,
+        misses: u64,
+        inserts: u64,
+        page_lookups: u64,
+        page_hits: u64,
+        page_inserts: u64,
+        page_contributions_skipped: u64,
+        page_key_misses: u64,
+        page_validation_failures: u64,
+    }
+
+    fn run(observed: bool) -> (u64, Vec<EffectRecord>, MemoParity, Mode) {
+        let mut universe = Universe::with_world(tex_state::World::memory());
+        let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+        universe.enable_pure_memo(tex_state::PureMemoConfig::default());
+        universe.enable_page_memo();
+        register_source(
+            &mut control,
+            br"\vsize=1pt\noindent paragraph text\ifhmode\count7=1\else\count7=2\fi\par\hrule height 10pt\vfill\eject\end",
+        );
+        let mut observations = ObservationRecorder::default();
+
+        loop {
+            let step = if observed {
+                control.step_with_observer(&mut universe, &mut observations)
+            } else {
+                control.step(&mut universe)
+            }
+            .expect("canonical paragraph/page-builder program");
+            if matches!(step, ReplayStep::End | ReplayStep::EndOfInput) {
+                break;
+            }
+        }
+        assert_eq!(universe.count(7), 1, "conditional sees horizontal mode");
+        let memo = universe.pure_memo_stats();
+        (
+            universe.snapshot().state_hash(),
+            universe.world().effect_records().to_vec(),
+            MemoParity {
+                lookups: memo.lookups,
+                hits: memo.hits,
+                misses: memo.misses,
+                inserts: memo.inserts,
+                page_lookups: memo.page_lookups,
+                page_hits: memo.page_hits,
+                page_inserts: memo.page_inserts,
+                page_contributions_skipped: memo.page_contributions_skipped,
+                page_key_misses: memo.page.key_misses,
+                page_validation_failures: memo.page.validation_failures,
+            },
+            control.current_mode(),
+        )
+    }
+
+    let cold = run(false);
+    let observed = run(true);
+    assert_eq!(observed, cold);
+}
+
+#[test]
 fn production_driver_executes_discretionary_parts_in_isolated_hmode_episodes() {
     let mut universe = Universe::new();
     let mut control = CanonicalMainControl::tex82_initex(&mut universe);

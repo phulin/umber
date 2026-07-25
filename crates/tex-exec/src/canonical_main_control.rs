@@ -591,6 +591,11 @@ impl CanonicalMainControl {
         stores: &mut Universe,
         observer: &mut dyn CommandObserver,
     ) -> Result<ReplayStep, ExecError> {
+        // Observation is an instrumentation boundary, not an alternate
+        // execution mode. Keep the command processor's borrowed mode facts
+        // identical to an unobserved step (notably for \ifhmode after a
+        // paragraph-start transition).
+        self.refresh_host_capabilities();
         let mode = self.modes.current_mode();
         let starts_paragraph = matches!(mode, Mode::Vertical | Mode::InternalVertical);
         let alignment_preamble = alignment_preamble(self.active_alignment.as_mut());
