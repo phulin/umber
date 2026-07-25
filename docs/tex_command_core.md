@@ -656,8 +656,11 @@ scanner caller reconstructs warning ownership after nested work. The detached
 observer records each actual typed `from`/`to` transition, so a macro matcher
 entered during an expanded definition reports `defining -> matching` rather
 than flattening the enclosing scanner scope to `normal`. Terminal EOF
-is classified centrally as legal or as one typed runaway family. That decision
-does not inject recovery tokens; outer-validity recovery consumes it later.
+is classified centrally as legal or as one typed runaway family. A physical
+source EOF invokes that classification immediately after its own input level
+retires, before raw delivery resumes a parent source or token list. That
+decision does not inject recovery tokens; command-owned outer-validity
+recovery consumes it at that boundary.
 
 ```rust
 pub enum ScannerStatus {
@@ -1261,6 +1264,12 @@ ordinary future delivery semantics.
 - an alignment preamble receives frozen `\cr` and a right brace; or
 - skipped conditional text receives frozen `\fi`.
 
+This check runs after every source-level retirement, including a nested
+`\input`; skipped text cannot return to the parent source before its frozen
+recovery input is installed. For skipped conditional EOF, the observer records
+the EOF and incomplete-condition diagnostics, then the recovery input push and
+frozen `\fi`, before `pass_text` records its `skipping -> normal` restoration.
+
 The diagnostic captures the status's typed warning identity and partial
 builder. Presentation is deferred, but the recovery token sequence and future
 state match the canonical batch engine.
@@ -1523,7 +1532,8 @@ publishes its extra-delimiter diagnostic at that raw delimiter delivery
 4. stops at the next outer `\or`, `\else`, or `\fi`, leaving frame-limit
    validation and extra-delimiter recovery to the caller;
 5. preserves literal-brace alignment accounting and template interception;
-6. applies outer-validity recovery through the shared mechanism; and
+6. applies outer-validity recovery at each exhausted source boundary through
+   the shared mechanism, before parent input resumes; and
 7. observes the live `skipping` to prior-status restoration, then restores
    the prior scanner status.
 

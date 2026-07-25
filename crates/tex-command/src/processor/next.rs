@@ -758,11 +758,26 @@ impl CommandProcessor<'_> {
                             }));
                         }
                         SourceTokenizationStep::InvalidCharacter(_) => continue,
-                        SourceTokenizationStep::End => match self.retire_and_restart(identity)? {
-                            RetirementRestart::Stop => return Ok(None),
-                            RetirementRestart::Continue => {}
-                            RetirementRestart::EndV(_) => return Err(CommandError::InputInvariant),
-                        },
+                        SourceTokenizationStep::End => {
+                            // TeX82 §343 checks outer validity immediately
+                            // after `end_file_reading`, before `get_next`
+                            // resumes the caller's input level.  In
+                            // particular, a skipped conditional that reaches
+                            // EOF in a nested `\\input` must insert frozen
+                            // `\\fi` above the parent, rather than allowing
+                            // the parent's next token to escape `pass_text`.
+                            match self.retire_and_restart(identity)? {
+                                RetirementRestart::Stop => return Ok(None),
+                                RetirementRestart::Continue => {
+                                    if self.recover_runaway_eof()? {
+                                        continue;
+                                    }
+                                }
+                                RetirementRestart::EndV(_) => {
+                                    return Err(CommandError::InputInvariant);
+                                }
+                            }
+                        }
                     }
                 }
                 InputLevel::Tokens(cursor) => {
@@ -1119,6 +1134,15 @@ impl CommandProcessor<'_> {
         // conditional before `ins_error` inserts frozen `\fi`.
         #[cfg(any(test, feature = "instrumentation"))]
         self.observe_runaway_eof_diagnostics(&status);
+        #[cfg(any(test, feature = "instrumentation"))]
+        let frozen_recovery_name = match &status {
+            ScannerStatus::Skipping(_) => Some("fi"),
+            ScannerStatus::Matching(_) => Some("par"),
+            ScannerStatus::Aligning(_) => Some("cr"),
+            ScannerStatus::Normal | ScannerStatus::Defining(_) | ScannerStatus::Absorbing(_) => {
+                None
+            }
+        };
         let tokens = match status {
             ScannerStatus::Normal => return Ok(()),
             ScannerStatus::Skipping(_) => vec![self.frozen_primitive("fi")?],
@@ -1131,20 +1155,38 @@ impl CommandProcessor<'_> {
             self.command.expansion.pending_diagnostics.push(warning.0);
         }
         #[cfg(any(test, feature = "instrumentation"))]
-        self.observe(CommandObservation::Recovery(RecoveryRecord {
-            backup: false,
-            tokens: tokens
-                .iter()
-                .copied()
-                .map(|token| self.observed_token(token))
-                .collect(),
-        }));
-        self.command.push_token_level(
+        let observed_tokens = tokens
+            .iter()
+            .copied()
+            .enumerate()
+            .map(|(index, token)| {
+                (index == 0)
+                    .then_some(frozen_recovery_name)
+                    .flatten()
+                    .map(|name| crate::observation::ObservedToken::ControlSequence(name.into()))
+                    .unwrap_or_else(|| self.observed_token(token))
+            })
+            .collect();
+        let level = self.command.push_token_level(
             TokenPayload::Transient(SharedTokenBuffer::new(tokens)),
             TokenBehavior::Ordinary,
             RetirementBehavior::Pop,
             ReplayTrace::Transient(crate::input::TransientReplayReason::Inserted),
         );
+        #[cfg(not(any(test, feature = "instrumentation")))]
+        let _ = level;
+        #[cfg(any(test, feature = "instrumentation"))]
+        self.observe(CommandObservation::Input(InputRecord {
+            transition: InputTransition::Recovery,
+            reason: InputReason::Recovery,
+            level: level.0,
+            position: 0,
+        }));
+        #[cfg(any(test, feature = "instrumentation"))]
+        self.observe(CommandObservation::Recovery(RecoveryRecord {
+            backup: false,
+            tokens: observed_tokens,
+        }));
         Ok(())
     }
 
@@ -2640,6 +2682,74 @@ mod tests {
         assert!(
             diagnostic_positions[1].0 < recovery,
             "§§379/510 diagnose skipped EOF before inserting frozen fi"
+        );
+    }
+
+    #[test]
+    fn nested_source_eof_recovers_skipping_before_parent_input_resumes() {
+        let mut command = CommandState::default();
+        let parent = command
+            .register_source(SourceRegistration::new(
+                RegisteredSourceKind::Generated,
+                Arc::<[u8]>::from(b"z".as_slice()),
+            ))
+            .expect("parent source registers");
+        let child = command
+            .register_source(SourceRegistration::new(
+                RegisteredSourceKind::Generated,
+                Arc::<[u8]>::from(b"".as_slice()),
+            ))
+            .expect("child source registers");
+        command
+            .open_registered_source(parent)
+            .expect("parent source opens");
+        command
+            .open_registered_source(child)
+            .expect("nested source opens above parent");
+        let mut runtime = CommandRuntime::default();
+        let mut universe = Universe::new();
+        recovery_primitives(&mut universe);
+        let frozen_fi = universe.primitive_token("fi").expect("fi is registered");
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut recorder = Recorder::default();
+
+        command.with_scanner_status(
+            ScannerStatus::Skipping(SkippingContext {
+                condition: ConditionId(1),
+                warning: ScannerWarning(17),
+            }),
+            |command| {
+                let mut processor =
+                    processor(command, &mut runtime, &mut universe, &mut capabilities)
+                        .with_observer(&mut recorder);
+                let recovered = processor
+                    .get_next()
+                    .expect("nested EOF recovery succeeds")
+                    .expect("frozen fi is inserted above the parent source");
+                assert_eq!(recovered.spelling().semantic_token(), frozen_fi);
+                let parent_token = processor
+                    .get_next()
+                    .expect("recovery retires before parent resumes")
+                    .expect("parent source remains live after recovery");
+                assert!(matches!(
+                    parent_token.meaning(),
+                    Meaning::CharToken { ch: 'z', .. }
+                ));
+            },
+        );
+
+        let diagnostics = recorder
+            .0
+            .iter()
+            .filter_map(|record| match record {
+                CommandObservation::Diagnostic(diagnostic) => Some(diagnostic.diagnostic),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            diagnostics,
+            vec!["outer_validity_eof", "conditional_incomplete"],
+            "TeX82 §§379/510 recover the exhausted nested source before parent input"
         );
     }
 

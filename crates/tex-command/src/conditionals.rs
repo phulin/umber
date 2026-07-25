@@ -804,11 +804,21 @@ impl CommandProcessor<'_> {
             prior.status().clone(),
             self.command.scanner.status().clone(),
         );
+        let skipping = self.command.scanner.status().clone();
         let result = self.pass_text_scalar(condition);
-        self.observe_scanner_status_transition(
-            self.command.scanner.status().clone(),
-            prior.status().clone(),
-        );
+        // `check_outer_validity` clears a live skipping episode before it
+        // inserts frozen `\\fi`.  The lexical recovery is still the end of
+        // this `pass_text` invocation, so retain its canonical
+        // skipping-to-prior transition instead of publishing a spurious
+        // normal-to-normal restoration after nested-source EOF.
+        let restored_from = if matches!(self.command.scanner.status(), ScannerStatus::Normal)
+            && matches!(skipping, ScannerStatus::Skipping(_))
+        {
+            skipping
+        } else {
+            self.command.scanner.status().clone()
+        };
+        self.observe_scanner_status_transition(restored_from, prior.status().clone());
         self.command.restore_scanner_status(prior);
         result
     }
