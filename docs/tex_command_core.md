@@ -74,6 +74,11 @@ returned to that same processor episode for v-template installation. Thus
 replay does not turn alignment, mode changes, or effects into a second source
 consumer.
 
+Canonical replay opens typed alignment, row, and cell mode frames around that
+delivery and freezes each completed cell list as structural material. The
+later `fin_align` migration alone is responsible for resolving unset widths,
+converting those frozen records, and inserting the finished alignment list.
+
 An executor-requested stored replay list has a second, typed delivery result:
 after command processing retires the exact stored level (including its normal
 observer and provenance transition), it delivers `Completed(CommandReplayEpisode)` before

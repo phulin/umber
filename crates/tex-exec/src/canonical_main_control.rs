@@ -23,7 +23,7 @@ use tex_command::{
 use tex_state::code_tables::{DelCode, LcCode, MathCode, SfCode, UcCode};
 use tex_state::env::banks::{DimenParam, GlueParam, IntParam, TokParam};
 use tex_state::glue::{GlueSpec, Order};
-use tex_state::ids::FontId;
+use tex_state::ids::{FontId, NodeListId};
 use tex_state::interner::Symbol;
 use tex_state::macro_store::{MacroDefinitionProvenance, MacroMeaning};
 use tex_state::math::{
@@ -40,6 +40,7 @@ use tex_state::{
 };
 use tex_typeset::PackSpec;
 
+use crate::mode::AlignmentKind;
 use crate::{ExecError, Mode, ModeNest};
 
 /// Production command main control with command-owned source consumption.
@@ -98,6 +99,7 @@ impl ReplayBoxKind {
 #[derive(Clone, Debug)]
 struct ActiveReplayAlignment {
     identity: AlignmentIdentity,
+    kind: AlignmentKind,
     columns: Vec<AlignmentCellTemplates>,
     repeat_start: Option<usize>,
     column: usize,
@@ -109,6 +111,13 @@ struct ActiveReplayAlignment {
     align_peek_pending: bool,
     align_peek_after_noalign: bool,
     noalign_depth: Option<u32>,
+    /// The canonical replay driver captures row and cell material at the
+    /// structural boundary.  Width resolution and insertion remain a later
+    /// `fin_align` migration, so these frozen lists deliberately have no
+    /// effect on the enclosing list yet.
+    captured_rows: Vec<Vec<NodeListId>>,
+    row_open: bool,
+    cell_open: bool,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -3939,6 +3948,8 @@ fn begin_next_replay_alignment_cell(
     delimiter: AlignmentCellDelimiter,
     command: &mut CommandState,
     active_alignment: &mut Option<ActiveReplayAlignment>,
+    modes: &mut ModeNest,
+    stores: &mut Universe,
 ) -> Result<(), ExecError> {
     let active = active_alignment
         .as_mut()
@@ -3952,6 +3963,7 @@ fn begin_next_replay_alignment_cell(
     if active.columns.is_empty() {
         return Ok(());
     }
+    capture_replay_alignment_cell(active, modes, stores)?;
     let next_column = match delimiter {
         AlignmentCellDelimiter::Tab | AlignmentCellDelimiter::Span => active
             .column
@@ -3975,6 +3987,7 @@ fn begin_next_replay_alignment_cell(
             recovered,
             AlignmentRequestResult::ExtraTabRecovered
         ));
+        finish_replay_alignment_row(active, modes, stores)?;
         active.column = 0;
         active.align_peek_pending = true;
         return Ok(());
@@ -4007,7 +4020,10 @@ fn begin_next_replay_alignment_cell(
             context: "next alignment preamble column",
         })?;
     match delimiter {
-        AlignmentCellDelimiter::Row => active.align_peek_pending = true,
+        AlignmentCellDelimiter::Row => {
+            finish_replay_alignment_row(active, modes, stores)?;
+            active.align_peek_pending = true;
+        }
         AlignmentCellDelimiter::Tab | AlignmentCellDelimiter::Span => {
             command
                 .apply_alignment_request(AlignmentRequest::BeginCell {
@@ -4017,9 +4033,100 @@ fn begin_next_replay_alignment_cell(
                 .map_err(|_| ExecError::MissingToken {
                     context: "alignment next-cell lifecycle",
                 })?;
+            begin_replay_alignment_cell(active, modes)?;
             active.next_cell_opening_pending = true;
         }
     }
+    Ok(())
+}
+
+fn replay_alignment_mode(kind: AlignmentKind) -> Mode {
+    match kind {
+        AlignmentKind::HAlign => Mode::InternalVertical,
+        AlignmentKind::VAlign => Mode::RestrictedHorizontal,
+    }
+}
+
+fn replay_alignment_row_mode(kind: AlignmentKind) -> Mode {
+    match kind {
+        // `fin_align` has not migrated its unset-row conversion yet. Keep a
+        // row frame below the cell so a recovered paragraph can return to
+        // the alignment without consuming the outer list prematurely.
+        AlignmentKind::HAlign => Mode::InternalVertical,
+        AlignmentKind::VAlign => Mode::InternalVertical,
+    }
+}
+
+fn replay_alignment_cell_mode(kind: AlignmentKind) -> Mode {
+    match kind {
+        AlignmentKind::HAlign => Mode::Horizontal,
+        AlignmentKind::VAlign => Mode::InternalVertical,
+    }
+}
+
+fn begin_replay_alignment_cell(
+    active: &mut ActiveReplayAlignment,
+    modes: &mut ModeNest,
+) -> Result<(), ExecError> {
+    if !active.row_open {
+        modes.push(replay_alignment_row_mode(active.kind));
+        active.captured_rows.push(Vec::new());
+        active.row_open = true;
+    }
+    if active.cell_open {
+        return Err(ExecError::MissingToken {
+            context: "active replay alignment cell",
+        });
+    }
+    modes.push(replay_alignment_cell_mode(active.kind));
+    active.cell_open = true;
+    Ok(())
+}
+
+fn capture_replay_alignment_cell(
+    active: &mut ActiveReplayAlignment,
+    modes: &mut ModeNest,
+    stores: &mut Universe,
+) -> Result<(), ExecError> {
+    if !active.cell_open {
+        return Ok(());
+    }
+    crate::assignments::flush_pending_hchars(modes, stores)?;
+    let mut cell = modes.pop()?;
+    let material = stores.freeze_node_list(&cell.list_mut().take_nodes());
+    active
+        .captured_rows
+        .last_mut()
+        .ok_or(ExecError::MissingToken {
+            context: "active replay alignment row",
+        })?
+        .push(material);
+    active.cell_open = false;
+    Ok(())
+}
+
+fn finish_replay_alignment_row(
+    active: &mut ActiveReplayAlignment,
+    modes: &mut ModeNest,
+    stores: &mut Universe,
+) -> Result<(), ExecError> {
+    capture_replay_alignment_cell(active, modes, stores)?;
+    if !active.row_open {
+        return Ok(());
+    }
+    crate::assignments::flush_pending_hchars(modes, stores)?;
+    let _row_material = stores.freeze_node_list(&modes.pop()?.list_mut().take_nodes());
+    active.row_open = false;
+    Ok(())
+}
+
+fn finish_replay_alignment(
+    active: &mut ActiveReplayAlignment,
+    modes: &mut ModeNest,
+    stores: &mut Universe,
+) -> Result<(), ExecError> {
+    finish_replay_alignment_row(active, modes, stores)?;
+    let _alignment_material = stores.freeze_node_list(&modes.pop()?.list_mut().take_nodes());
     Ok(())
 }
 
@@ -5055,6 +5162,11 @@ fn apply_scanned_step(
                 })?;
             *active_alignment = Some(ActiveReplayAlignment {
                 identity,
+                kind: if vertical {
+                    AlignmentKind::VAlign
+                } else {
+                    AlignmentKind::HAlign
+                },
                 columns: Vec::new(),
                 repeat_start: None,
                 column: 0,
@@ -5066,10 +5178,15 @@ fn apply_scanned_step(
                 align_peek_pending: false,
                 align_peek_after_noalign: false,
                 noalign_depth: None,
+                captured_rows: Vec::new(),
+                row_open: false,
+                cell_open: false,
             });
-            if vertical && modes.current_mode() == Mode::Vertical {
-                modes.push(Mode::InternalVertical);
-            }
+            modes.push(replay_alignment_mode(if vertical {
+                AlignmentKind::VAlign
+            } else {
+                AlignmentKind::HAlign
+            }));
             Ok(ReplayStep::Continue)
         }
         ScannedStep::AlignmentPreambleOpening { alignment } => {
@@ -5170,6 +5287,7 @@ fn apply_scanned_step(
                 .map_err(|_| ExecError::MissingToken {
                     context: "alignment next-row lifecycle",
                 })?;
+            begin_replay_alignment_cell(active, modes)?;
             active.align_peek_pending = false;
             if omit {
                 command
@@ -5267,6 +5385,8 @@ fn apply_scanned_step(
                 finished.delimiter,
                 command,
                 active_alignment,
+                modes,
+                stores,
             )?;
             Ok(ReplayStep::Continue)
         }
@@ -5276,6 +5396,10 @@ fn apply_scanned_step(
                     context: "active replay alignment",
                 });
             }
+            let active = active_alignment
+                .as_mut()
+                .expect("active replay alignment was checked");
+            finish_replay_alignment(active, modes, stores)?;
             command
                 .apply_alignment_request(AlignmentRequest::Finish(alignment))
                 .map_err(|_| ExecError::MissingToken {

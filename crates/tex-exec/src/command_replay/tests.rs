@@ -2732,6 +2732,7 @@ fn nested_alignment_begin_suspends_the_outer_replay_context() {
         .expect("outer alignment begins");
     control.active_alignment = Some(ActiveReplayAlignment {
         identity: outer,
+        kind: AlignmentKind::HAlign,
         columns: Vec::new(),
         repeat_start: None,
         column: 0,
@@ -2743,6 +2744,9 @@ fn nested_alignment_begin_suspends_the_outer_replay_context() {
         align_peek_pending: false,
         align_peek_after_noalign: false,
         noalign_depth: None,
+        captured_rows: Vec::new(),
+        row_open: false,
+        cell_open: false,
     });
     control.next_alignment_identity = 2;
 
@@ -2774,6 +2778,35 @@ fn nested_alignment_begin_suspends_the_outer_replay_context() {
     .expect("right-brace align_peek finish resumes the outer context");
     assert_eq!(control.active_alignment(), Some(outer));
     assert_eq!(control.boxes.suspended_alignments.len(), 0);
+}
+
+#[test]
+fn canonical_alignment_captures_completed_cell_material_before_fin_align() {
+    let mut universe = Universe::new();
+    let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+    register_source(&mut control, br"\halign{#\cr\kern1pt\cr\kern2pt\cr}\end");
+
+    for _ in 0..32 {
+        control
+            .step(&mut universe)
+            .expect("canonical alignment structural step");
+        let Some(active) = control.active_alignment.as_ref() else {
+            continue;
+        };
+        if active
+            .captured_rows
+            .first()
+            .is_some_and(|row| !row.is_empty())
+        {
+            assert!(
+                !universe.nodes(active.captured_rows[0][0]).is_empty(),
+                "the first completed cell is frozen before final alignment packaging"
+            );
+            assert_eq!(control.current_mode(), Mode::InternalVertical);
+            return;
+        }
+    }
+    panic!("canonical alignment did not capture its first completed row");
 }
 
 #[test]
