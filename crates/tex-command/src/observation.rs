@@ -374,10 +374,11 @@ pub struct InputRecord {
 
 /// Canonical class of a committed input recovery.
 ///
-/// TeX's recovery trace distinguishes an inserted frozen control sequence
-/// from an ordinary inserted token even though both are delivered from an
-/// inserted token list.  Preserve that semantic fact at the command observer
-/// boundary; transports must not infer it from a token's spelling.
+/// TeX's recovery trace classifies the recovery operation independently from
+/// the concrete token that it inserts. In particular, an inserted frozen
+/// control-sequence token can be an `InsertedToken` operation. Preserve that
+/// semantic fact at the command observer boundary; transports must not infer
+/// it from a token's spelling.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum RecoveryKind {
     Backup,

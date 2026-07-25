@@ -275,7 +275,9 @@ impl CommandProcessor<'_> {
                 position: 0,
             }));
             self.observe(CommandObservation::Recovery(RecoveryRecord {
-                kind: RecoveryKind::InsertedControlSequence,
+                // `ins_error` records this as a token insertion even though
+                // the concrete recovery token is TeX82's frozen `\\cr`.
+                kind: RecoveryKind::InsertedToken,
                 // TeX82's inaccessible frozen control sequence retains the
                 // canonical `\\cr` spelling in observer transport.
                 tokens: vec![crate::observation::ObservedToken::ControlSequence(
@@ -1147,7 +1149,10 @@ impl CommandProcessor<'_> {
         let (frozen_recovery_name, recovery_kind) = match &status {
             ScannerStatus::Skipping(_) => (Some("fi"), RecoveryKind::InsertedToken),
             ScannerStatus::Matching(_) => (Some("par"), RecoveryKind::InsertedControlSequence),
-            ScannerStatus::Aligning(_) => (Some("cr"), RecoveryKind::InsertedControlSequence),
+            // TeX82's `check_outer_validity` inserts the frozen `\\cr` as a
+            // token-list recovery operation. Its control-sequence spelling is
+            // preserved independently in `observed_tokens` below.
+            ScannerStatus::Aligning(_) => (Some("cr"), RecoveryKind::InsertedToken),
             ScannerStatus::Normal | ScannerStatus::Defining(_) | ScannerStatus::Absorbing(_) => {
                 (None, RecoveryKind::InsertedToken)
             }
@@ -1567,7 +1572,7 @@ mod tests {
             .0
             .iter()
             .position(|record| matches!(record, CommandObservation::Recovery(recovery)
-                if recovery.kind == RecoveryKind::InsertedControlSequence
+                if recovery.kind == RecoveryKind::InsertedToken
                     && recovery.tokens == vec![crate::observation::ObservedToken::ControlSequence("cr".into())]))
             .expect("frozen cr insertion is observed canonically");
         assert!(
@@ -2737,6 +2742,56 @@ mod tests {
             assert_eq!(actual, expected);
         }
         assert_eq!(command.expansion.pending_diagnostics, vec![17; 5]);
+    }
+
+    #[test]
+    fn aligning_eof_recovery_preserves_frozen_cr_identity_as_an_inserted_token() {
+        let mut command = CommandState::default();
+        let mut runtime = CommandRuntime::default();
+        let mut universe = Universe::new();
+        recovery_primitives(&mut universe);
+        let frozen_cr = universe.primitive_token("cr").expect("cr is registered");
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut recorder = Recorder::default();
+
+        command.with_scanner_status(
+            ScannerStatus::Aligning(AlignmentScanContext {
+                alignment: AlignmentId(4),
+                builder: TokenBuilderId(5),
+                warning: ScannerWarning(17),
+            }),
+            |command| {
+                let mut processor =
+                    processor(command, &mut runtime, &mut universe, &mut capabilities)
+                        .with_observer(&mut recorder);
+                assert_eq!(
+                    processor
+                        .get_next()
+                        .expect("EOF recovery succeeds")
+                        .expect("frozen cr is inserted")
+                        .spelling()
+                        .semantic_token(),
+                    frozen_cr,
+                );
+            },
+        );
+
+        assert!(
+            recorder.0.iter().any(|record| {
+                matches!(record, CommandObservation::Recovery(recovery)
+                if recovery.kind == RecoveryKind::InsertedToken
+                    && recovery.tokens
+                        == vec![
+                            crate::observation::ObservedToken::ControlSequence("cr".into()),
+                            crate::observation::ObservedToken::Character {
+                                character: '}',
+                                catcode: Catcode::EndGroup,
+                            },
+                        ])
+            }),
+            "recovery observations: {:?}",
+            recorder.0
+        );
     }
 
     #[test]

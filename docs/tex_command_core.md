@@ -1300,6 +1300,12 @@ The diagnostic captures the status's typed warning identity and partial
 builder. Presentation is deferred, but the recovery token sequence and future
 state match the canonical batch engine.
 
+Observer recovery kind records the TeX82 insertion operation, separately from
+the inserted token identity. Thus frozen-`\cr` recovery preserves the
+inaccessible control-sequence spelling while classifying the TeX82 recovery
+operation as `InsertedToken`; consumers must not infer the operation kind from
+the token's spelling.
+
 The supported transcript-parity target is deterministic batch/nonstop
 operation. Interactive deletion and insertion prompts are host UI and are not
 implemented as a semantic execution mode.
