@@ -241,11 +241,23 @@ impl CurrentCommand {
     /// while preserving the original spelling for diagnostics and exact input
     /// replay. This is the final step of `check_outer_validity`.
     pub(crate) fn recover_as_space(&mut self) {
+        // TeX82 §23 has already retained the original `cur_tok` in backup
+        // input. Its live current token is now the synthetic space selected
+        // by `cur_cmd := spacer; cur_chr := " "`.
+        self.spelling = TracedTokenWord::pack(
+            Token::Char {
+                ch: ' ',
+                cat: Catcode::Space,
+            },
+            tex_state::token::OriginId::UNKNOWN,
+        );
         self.meaning = Meaning::CharToken {
             ch: ' ',
             cat: Catcode::Space,
         };
         self.control_sequence = None;
+        self.source_provenance = None;
+        self.direct_source = false;
     }
 
     /// Replaces an intercepted alignment terminator's effective meaning while

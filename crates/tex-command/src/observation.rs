@@ -114,7 +114,26 @@ pub struct CommandDeliveryRecord {
 /// primitive registry, not from a fixture or host replay policy.
 pub(crate) fn canonical_command_identity(meaning: Meaning) -> (String, Option<i64>) {
     match meaning {
-        Meaning::CharToken { .. } => ("character".into(), None),
+        // TeX82 §23 can replace an offending outer control sequence's
+        // `cur_cmd`/`cur_chr` with a space while the original control-sequence
+        // token remains backed up for rereading.  Project character commands
+        // from that effective pair, never from the input spelling.
+        Meaning::CharToken { ch, cat } => (
+            match cat {
+                Catcode::BeginGroup => "left_brace",
+                Catcode::EndGroup => "right_brace",
+                Catcode::MathShift => "math_shift",
+                Catcode::AlignmentTab => "tab_mark",
+                Catcode::EndLine => "car_ret",
+                Catcode::Parameter => "mac_param",
+                Catcode::Letter => "letter",
+                Catcode::Space => "spacer",
+                Catcode::Other => "other_char",
+                _ => "character",
+            }
+            .into(),
+            Some(i64::from(u32::from(ch))),
+        ),
         // TeX.web's `relax` command has the fixed `cur_chr` value 256.  It
         // is a distinguished meaning rather than a primitive-registry entry,
         // but remains observable at both raw and expanded delivery.
@@ -556,6 +575,42 @@ mod tests {
         assert_eq!(
             canonical_command_identity(Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Par)),
             ("par_end".into(), Some(256))
+        );
+    }
+
+    #[test]
+    fn recovered_outer_control_projects_the_effective_space_command() {
+        // TeX82 §23 backs up the outer control-sequence token, then replaces
+        // the live `cur_cmd`/`cur_chr` pair with spacer/" ".
+        let mut universe = tex_state::Universe::new();
+        let outer = universe.intern("outer").symbol();
+        let empty = universe.intern_token_list(&[]);
+        let definition = universe.intern_macro(tex_state::macro_store::MacroMeaning::new(
+            tex_state::meaning::MeaningFlags::OUTER,
+            empty,
+            empty,
+        ));
+        universe.set_meaning(
+            outer,
+            Meaning::Macro {
+                flags: tex_state::meaning::MeaningFlags::OUTER,
+                definition,
+            },
+        );
+        let mut state = universe.command_context();
+        let mut command = CurrentCommand::resolve(
+            TracedTokenWord::pack(Token::Cs(outer), OriginId::UNKNOWN),
+            DeliveryStamp::new(0, 0, 0),
+            None,
+            false,
+            &mut state,
+        );
+
+        command.recover_as_space();
+
+        assert_eq!(
+            canonical_current_command_identity(&command),
+            ("spacer".into(), Some(i64::from(u32::from(' '))))
         );
     }
 

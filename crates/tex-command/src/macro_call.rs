@@ -283,7 +283,7 @@ impl CommandProcessor<'_> {
     ) -> Result<MacroArguments, CommandError> {
         for expected in pattern.leading() {
             let actual = self.get_token()?.ok_or(CommandError::MacroPrefixMismatch)?;
-            if self.outer_recovered_while_matching
+            if (self.outer_recovered_while_matching && is_paragraph_command(&actual))
                 || actual.spelling().semantic_token() != *expected
             {
                 return Err(if self.outer_recovered_while_matching {
@@ -342,7 +342,7 @@ impl CommandProcessor<'_> {
             let command = self
                 .get_token()?
                 .ok_or(CommandError::ParagraphInMacroArgument)?;
-            if self.outer_recovered_while_matching {
+            if self.outer_recovered_while_matching && is_paragraph_command(&command) {
                 return Err(CommandError::OuterInMacroArgument);
             }
             if matches!(
@@ -373,7 +373,7 @@ impl CommandProcessor<'_> {
             let command = self
                 .get_token()?
                 .ok_or(CommandError::ParagraphInMacroArgument)?;
-            if self.outer_recovered_while_matching {
+            if self.outer_recovered_while_matching && is_paragraph_command(&command) {
                 return Err(CommandError::OuterInMacroArgument);
             }
             self.check_argument_paragraph(&command, flags)?;
@@ -423,7 +423,7 @@ impl CommandProcessor<'_> {
                     .get_token()?
                     .ok_or(CommandError::ParagraphInMacroArgument)?,
             };
-            if self.outer_recovered_while_matching {
+            if self.outer_recovered_while_matching && is_paragraph_command(&command) {
                 return Err(CommandError::OuterInMacroArgument);
             }
             let token = command.spelling().semantic_token();
@@ -505,6 +505,15 @@ impl CommandProcessor<'_> {
         }
         Ok(())
     }
+}
+
+/// TeX82 §394 aborts a match on the recovery paragraph that follows its
+/// synthetic outer-validity space, not on that space itself.
+fn is_paragraph_command(command: &crate::CurrentCommand) -> bool {
+    matches!(
+        command.meaning(),
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Par)
+    )
 }
 
 /// Returns the number of tokens from `prefix` plus `current` that form the

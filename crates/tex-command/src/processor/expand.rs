@@ -139,7 +139,13 @@ impl CommandProcessor<'_> {
             // A user paragraph has been backed up for that loop; an EOF
             // recovery paragraph was consumed by the failed match instead.
             match self.expand(command) {
-                Ok(()) | Err(CommandError::ParagraphInMacroArgument) => {}
+                // TeX82 §394 resumes expanded delivery after both an ordinary
+                // runaway paragraph and §23's outer-validity recovery has
+                // aborted a macro match. The latter leaves the recovered
+                // outer token in backup input for its normal reread.
+                Ok(())
+                | Err(CommandError::ParagraphInMacroArgument)
+                | Err(CommandError::OuterInMacroArgument) => {}
                 Err(error) => return Err(error),
             }
         }

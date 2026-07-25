@@ -1213,7 +1213,10 @@ before backing up an offending outer macro through exact delivery identity,
 substitutes the current recovery space, clears the live scanner episode, and
 pushes bounded ordinary recovery input. This follows the pinned TeX82 §23
 instrumentation boundary; terminal EOF reports its separate diagnostic before
-the same recovery insertion. Terminal runaway
+the same recovery insertion. The recovered delivery projects its effective
+`spacer` command and character code even though the original outer
+control-sequence spelling remains in the exact backup input for rereading.
+Terminal runaway
 recovery follows the same path: definitions and absorbed text receive `}`;
 macro matching receives frozen `\par`; alignment preambles receive frozen
 `\cr` then `}`; and skipped conditional text receives frozen `\fi`. The
