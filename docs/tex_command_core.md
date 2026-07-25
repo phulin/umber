@@ -1508,7 +1508,9 @@ space. `ConditionId` is monotonic within the command state and
 that expands a nested condition cannot retarget its outer frame. A delimiter
 observed while its frame remains `Evaluating` produces typed incomplete-if
 recovery context; recovery insertion and conditional evaluation consume that
-context at their own command transitions.
+context at their own command transitions. A delimiter exceeding `if_limit`
+publishes its extra-delimiter diagnostic at that raw delimiter delivery
+(TeX82 §509), before the following input command.
 
 `pass_text`:
 

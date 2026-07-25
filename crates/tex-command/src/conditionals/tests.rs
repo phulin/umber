@@ -453,6 +453,42 @@ fn skipped_text_recovers_extra_delimiters_deterministically() {
 }
 
 #[test]
+fn extra_delimiter_is_observed_at_its_raw_delivery() {
+    let mut command = CommandState::default();
+    let mut runtime = CommandRuntime::default();
+    let mut universe = Universe::new();
+    let or = install(&mut universe, "or", ExpandablePrimitive::Or);
+    push(&mut command, vec![or]);
+    let mut capabilities = CommandHostCapabilities::default();
+    let mut recorder = Recorder::default();
+    {
+        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities)
+            .with_observer(&mut recorder);
+        assert_eq!(
+            processor.get_x_token().expect("extra delimiter is ignored"),
+            None
+        );
+    }
+
+    assert!(recorder.0.windows(2).any(|pair| {
+        matches!(
+            pair,
+            [
+                CommandObservation::Command(raw),
+                CommandObservation::Diagnostic(diagnostic),
+            ] if raw.boundary == crate::CommandDeliveryBoundary::Raw
+                && diagnostic.severity == "error"
+                && diagnostic.diagnostic == "conditional_extra_delimiter"
+                && diagnostic.arguments.is_empty()
+        )
+    }));
+    assert_eq!(
+        command.expansion.pending_diagnostics,
+        [EXTRA_DELIMITER_DIAGNOSTIC]
+    );
+}
+
+#[test]
 fn delimiter_during_operand_scan_replays_each_missing_if_operand() {
     let mut command = CommandState::default();
     let mut runtime = CommandRuntime::default();

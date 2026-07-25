@@ -730,6 +730,17 @@ impl CommandProcessor<'_> {
             .expansion
             .pending_diagnostics
             .push(EXTRA_DELIMITER_DIAGNOSTIC);
+        // TeX82 §509 diagnoses a delimiter which exceeds the current
+        // `if_limit` at the delimiter transition itself.  Keep the pending
+        // diagnostic for engine-facing recovery, but publish the detached
+        // command event here so it remains ordered after raw delivery and
+        // before the following token.
+        #[cfg(any(test, feature = "instrumentation"))]
+        self.observe(CommandObservation::Diagnostic(DiagnosticRecord {
+            severity: "error",
+            diagnostic: "conditional_extra_delimiter",
+            arguments: Vec::new(),
+        }));
     }
 
     /// TeX inserts its inaccessible frozen `\\relax` when a delimiter is
