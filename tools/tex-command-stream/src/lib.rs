@@ -1258,6 +1258,13 @@ fn translate_effect(record: EffectRecord) -> Event {
             value: CanonicalValue::Integer(page),
         });
     }
+    if record.kind == "terminate" {
+        return Event::Effect(EffectEvent {
+            kind: EffectKind::Terminate,
+            channel,
+            value: CanonicalValue::None,
+        });
+    }
     Event::Effect(EffectEvent {
         kind: match record.kind {
             "message" => EffectKind::Message,

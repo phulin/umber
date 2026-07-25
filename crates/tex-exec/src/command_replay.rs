@@ -83,6 +83,7 @@ struct ReplayBoxes {
     ordinary_simple_group_depth: u32,
     output_routine_active: bool,
     output_routine_opening_pending: bool,
+    terminal_output_shipout_complete: bool,
 }
 
 impl CommandReplayControl {
@@ -444,6 +445,25 @@ impl CommandReplayControl {
                     }
                 }
             };
+        // The terminal line supplies only the startup filename.  It is not a
+        // normal file-input level beneath the selected root, so retire its
+        // exhausted source silently before main control starts.  The eventual
+        // terminal stop is then emitted by command input after the root file
+        // retires (TeX82 §46 final cleanup).
+        let terminal_exhausted = CommandProcessor::new(
+            &mut self.command,
+            &mut self.runtime,
+            stores.command_context(),
+            CommandHostContext::new(&mut self.capabilities),
+        )
+        .get_x_token()
+        .map_err(command_error)?
+        .is_none();
+        if !terminal_exhausted {
+            return Err(ExecError::MissingToken {
+                context: "terminal filename terminator",
+            });
+        }
         self.capabilities.set_startup_job_name(&filename);
         Ok(filename)
     }
@@ -476,6 +496,7 @@ pub enum ReplayStep {
 enum ScannedStep {
     Continue,
     EndOfInput,
+    Terminate,
     End,
     Count {
         index: u16,
@@ -593,6 +614,10 @@ enum ScannedStep {
     BeginOutputRoutine,
     OutputRoutineOpeningBrace,
     EndOutputRoutine,
+    /// TeX82 §46 reaches the output-loop escape after the final-stop backup
+    /// has been installed. The canonical trace omits the intervening dead
+    /// cycles, leaving this forced shipout as their only observable boundary.
+    ForcedOutputShipout,
     AlignmentPeekCell {
         alignment: AlignmentIdentity,
         omit: bool,
@@ -898,7 +923,11 @@ fn scan_step(
     max_dead_cycles: i32,
 ) -> Result<ScannedStep, ExecError> {
     let Some(mut command) = processor.get_x_token().map_err(command_error)? else {
-        return Ok(ScannedStep::EndOfInput);
+        return Ok(if boxes.terminal_output_shipout_complete {
+            ScannedStep::Terminate
+        } else {
+            ScannedStep::EndOfInput
+        });
     };
     let mut global = false;
     let mut flags = MeaningFlags::EMPTY;
@@ -1081,6 +1110,9 @@ fn scan_command(
         Meaning::UnexpandablePrimitive(
             UnexpandablePrimitive::End | UnexpandablePrimitive::Dump,
         ) => {
+            if boxes.terminal_output_shipout_complete {
+                return Ok(ScannedStep::Continue);
+            }
             if processor.output_routine_is_empty() {
                 return Ok(ScannedStep::End);
             }
@@ -1092,7 +1124,7 @@ fn scan_command(
                 processor
                     .back_input_after_backup_replay(command)
                     .map_err(command_error)?;
-                Ok(ScannedStep::End)
+                Ok(ScannedStep::ForcedOutputShipout)
             } else {
                 processor
                     .begin_output_routine_after_stop(command)
@@ -1690,9 +1722,15 @@ fn applied_effect_observation(scanned: &ScannedStep, stores: &Universe) -> Optio
         ScannedStep::BoxRegister {
             ships_out: true, ..
         }
-        | ScannedStep::BoxEndGroup { ships_out: true } => Some(EffectRecord {
+        | ScannedStep::BoxEndGroup { ships_out: true }
+        | ScannedStep::ForcedOutputShipout => Some(EffectRecord {
             kind: "shipout",
             detail: format!("dvi\0{}", stores.world().artifact_commits().len()),
+            tokens: None,
+        }),
+        ScannedStep::Terminate => Some(EffectRecord {
+            kind: "terminate",
+            detail: "engine\0".into(),
             tokens: None,
         }),
         _ => None,
@@ -1845,7 +1883,7 @@ fn apply_scanned_step(
 ) -> Result<ReplayStep, ExecError> {
     match scanned {
         ScannedStep::Continue => Ok(ReplayStep::Continue),
-        ScannedStep::EndOfInput => Ok(ReplayStep::EndOfInput),
+        ScannedStep::EndOfInput | ScannedStep::Terminate => Ok(ReplayStep::EndOfInput),
         ScannedStep::End => Ok(ReplayStep::End),
         ScannedStep::Count {
             index,
@@ -2167,6 +2205,21 @@ fn apply_scanned_step(
                     context: "output routine group",
                 })?;
             boxes.output_routine_active = false;
+            Ok(ReplayStep::Continue)
+        }
+        ScannedStep::ForcedOutputShipout => {
+            // Page construction remains outside command replay. At the §46
+            // escape, publish the selected forced page as a deterministic,
+            // detached empty vbox through the ordinary shipout transaction.
+            let children = stores.freeze_node_list(&[]);
+            let packed = crate::packing_params::vpack(
+                stores,
+                children,
+                PackSpec::Natural,
+                crate::packing_params::vpack_params(stores),
+            );
+            shipout_replay_box(Node::VList(packed.node), stores)?;
+            boxes.terminal_output_shipout_complete = true;
             Ok(ReplayStep::Continue)
         }
         ScannedStep::BeginOrdinaryGroup => {

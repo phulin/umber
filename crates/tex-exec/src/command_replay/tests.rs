@@ -1335,6 +1335,44 @@ fn final_stop_retires_its_backup_before_starting_output_input() {
 }
 
 #[test]
+fn dead_output_cycle_forces_shipout_after_final_stop_backup() {
+    // TeX82 §§46 and 1005: after `maxdeadcycles` completed output routines
+    // that leave `\box255` unused, `its_all_over` backs up the final stop
+    // before `fire_up` forces the page through `ship_out`.
+    let mut universe = Universe::new();
+    let mut control = CommandReplayControl::tex82_initex(&mut universe);
+    register_source(&mut control, br"\maxdeadcycles=1\output={X}\end");
+    let mut observations = ObservationRecorder::default();
+
+    for _ in 0..32 {
+        match control
+            .step_with_observer(&mut universe, &mut observations)
+            .expect("output-cycle replay")
+        {
+            ReplayStep::Continue => {}
+            ReplayStep::End | ReplayStep::EndOfInput => break,
+        }
+    }
+
+    let shipout = observations
+        .0
+        .iter()
+        .position(|observation| {
+            matches!(
+                observation,
+                CommandObservation::Effect(effect)
+                    if effect.kind == "shipout" && effect.detail == "dvi\0".to_owned() + "1"
+            )
+        })
+        .expect("forced output shipout effect");
+    assert!(matches!(
+        observations.0.get(shipout.checked_sub(1).expect("effect has predecessor")),
+        Some(CommandObservation::Recovery(recovery)) if recovery.kind == RecoveryKind::Backup
+    ));
+    assert_eq!(universe.world().artifact_commits().len(), 1);
+}
+
+#[test]
 fn off_save_reports_before_replaying_its_inserted_closer() {
     let mut universe = Universe::new();
     let mut control = CommandReplayControl::tex82_initex(&mut universe);

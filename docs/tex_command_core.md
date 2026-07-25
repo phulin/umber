@@ -199,6 +199,12 @@ before the `\output` token list is pushed. This preserves the final-stop retry
 below the output routine and fixes the canonical input order independently of
 the executor's typed page/output effects.
 
+When TeX82 §46 reaches the `max_dead_cycles` escape after completed output
+routines, replay preserves that same final-stop backup and then publishes the
+single detached forced-shipout effect through the ordinary artifact commit
+boundary. The command seam does not reconstruct the repeated dead-cycle page
+lists; their only canonical trace consequence is that ordered DVI effect.
+
 Replay models that routine as an explicit output group and internal-vertical
 mode. Its required opening brace is consumed by `scan_left_brace`, not as a
 nested ordinary group; the matching close ends its paragraph, leaves the
