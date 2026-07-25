@@ -195,6 +195,8 @@ pub enum PdfNavigationRequest {
     StartLink(PdfStartLinkRequest),
     EndLink,
     Destination(PdfDestinationRequest),
+    Thread(PdfThreadRequest),
+    EndThread,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -219,6 +221,17 @@ pub struct PdfDestinationRequest {
     pub structure: Option<u32>,
     pub identifier: tex_state::PdfActionIdentifier,
     pub kind: tex_state::node::PdfDestinationKind,
+}
+
+/// Fully scanned `\\pdfthread` or `\\pdfstartthread` marker.  The
+/// dimensions deliberately retain running values: pdfTeX resolves them while
+/// traversing the containing box at shipout, not while it scans the command.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PdfThreadRequest {
+    pub dimensions: tex_state::PdfAnnotationDimensions,
+    pub attributes: Option<ScannedBalancedText>,
+    pub identifier: tex_state::PdfActionIdentifier,
+    pub running: bool,
 }
 
 /// The command-owned operand prefix of TeX82's `\setbox` assignment.
@@ -712,8 +725,8 @@ impl CommandProcessor<'_> {
         Ok(Some(request))
     }
 
-    /// Scans the pdfTeX annotation/link/destination family (pdftex.web
-    /// 34847--35120).  `scan_alt_rule` deliberately resets all dimensions on
+    /// Scans the pdfTeX annotation/link/destination/thread family (pdftex.web
+    /// 34847--35208).  `scan_alt_rule` deliberately resets all dimensions on
     /// each invocation and accepts repeated fields, with the last one winning.
     pub fn scan_pdf_navigation_request(
         &mut self,
@@ -794,6 +807,18 @@ impl CommandProcessor<'_> {
                     kind,
                 }))
             }
+            primitive @ (UnexpandablePrimitive::PdfThread
+            | UnexpandablePrimitive::PdfStartThread) => Ok(Request::Thread(PdfThreadRequest {
+                dimensions: self.scan_pdf_alt_rule()?,
+                attributes: self
+                    .scan_keyword("attr")?
+                    .value
+                    .then(|| self.scan_balanced_text(true))
+                    .transpose()?,
+                identifier: self.scan_pdf_identifier("thread identifier")?,
+                running: primitive == UnexpandablePrimitive::PdfStartThread,
+            })),
+            UnexpandablePrimitive::PdfEndThread => Ok(Request::EndThread),
             _ => Err(CommandError::InputInvariant),
         }
     }

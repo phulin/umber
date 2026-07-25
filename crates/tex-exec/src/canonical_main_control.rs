@@ -3189,7 +3189,10 @@ fn scan_command(
             primitive @ (UnexpandablePrimitive::PdfAnnot
             | UnexpandablePrimitive::PdfStartLink
             | UnexpandablePrimitive::PdfEndLink
-            | UnexpandablePrimitive::PdfDest),
+            | UnexpandablePrimitive::PdfDest
+            | UnexpandablePrimitive::PdfThread
+            | UnexpandablePrimitive::PdfStartThread
+            | UnexpandablePrimitive::PdfEndThread),
         ) => Ok(ScannedStep::PdfNavigation(
             processor
                 .scan_pdf_navigation_request(primitive)
@@ -3770,6 +3773,40 @@ fn apply_pdf_navigation_request(
                         kind,
                     },
                 ))));
+        }
+        PdfNavigationRequest::Thread(tex_command::PdfThreadRequest {
+            dimensions,
+            attributes,
+            identifier,
+            running,
+        }) => {
+            let primitive = if running {
+                "pdfstartthread"
+            } else {
+                "pdfthread"
+            };
+            if stores.int_param(IntParam::PDF_OUTPUT) <= 0 {
+                return Err(ExecError::PdfExtensionInDviMode(primitive));
+            }
+            modes
+                .current_list_mut()
+                .push(Node::Whatsit(Whatsit::PdfThread(Box::new(
+                    tex_state::node::PdfThreadNode {
+                        identifier,
+                        dimensions,
+                        attributes: attributes
+                            .map_or(TokenListId::EMPTY, |value| value.tokens.token_list()),
+                        running,
+                    },
+                ))));
+        }
+        PdfNavigationRequest::EndThread => {
+            if stores.int_param(IntParam::PDF_OUTPUT) <= 0 {
+                return Err(ExecError::PdfExtensionInDviMode("pdfendthread"));
+            }
+            modes
+                .current_list_mut()
+                .push(Node::Whatsit(Whatsit::PdfEndThread));
         }
     }
     Ok(ReplayStep::Continue)

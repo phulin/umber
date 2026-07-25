@@ -6,6 +6,7 @@ use tex_command::{
     RegisteredSourceKind, SourceRegistration, TracedTokenList,
 };
 use tex_state::env::banks::{DimenParam, GlueParam, IntParam};
+use tex_state::ids::TokenListId;
 use tex_state::meaning::{ExpandablePrimitive, Meaning};
 use tex_state::node::Node;
 use tex_state::scaled::Scaled;
@@ -103,6 +104,18 @@ fn canonical_pdf_navigation_scans_rules_actions_and_deferred_markers() {
             "pdfendlink",
             tex_state::meaning::UnexpandablePrimitive::PdfEndLink,
         ),
+        (
+            "pdfthread",
+            tex_state::meaning::UnexpandablePrimitive::PdfThread,
+        ),
+        (
+            "pdfstartthread",
+            tex_state::meaning::UnexpandablePrimitive::PdfStartThread,
+        ),
+        (
+            "pdfendthread",
+            tex_state::meaning::UnexpandablePrimitive::PdfEndThread,
+        ),
     ] {
         let symbol = universe.intern(name).symbol();
         universe.set_meaning(symbol, Meaning::UnexpandablePrimitive(primitive));
@@ -111,7 +124,7 @@ fn canonical_pdf_navigation_scans_rules_actions_and_deferred_markers() {
     control.modes.push(Mode::Horizontal);
     register_source(
         &mut control,
-        br"\pdfannot width 2pt height 3pt { /Subtype /Text }\pdfdest name {target} fitr depth 4pt\pdfstartlink width 5pt attr { /Border [0 0 0] } goto name {target}\pdfendlink",
+        br"\pdfannot width 2pt height 3pt { /Subtype /Text }\pdfdest name {target} fitr depth 4pt\pdfstartlink width 5pt attr { /Border [0 0 0] } goto name {target}\pdfendlink\pdfthread depth 3pt width 10pt height 4pt attr { /I << /Title (custom) >> } name {chapter}\pdfstartthread height 7pt name {running}\pdfendthread",
     );
     run_to_end(&mut control, &mut universe);
 
@@ -134,6 +147,25 @@ fn canonical_pdf_navigation_scans_rules_actions_and_deferred_markers() {
     assert!(matches!(
         nodes[3],
         Node::Whatsit(tex_state::node::Whatsit::PdfLinkEnd { .. })
+    ));
+    let Node::Whatsit(tex_state::node::Whatsit::PdfThread(thread)) = &nodes[4] else {
+        panic!("expected one-shot thread marker: {nodes:#?}");
+    };
+    assert_eq!(thread.dimensions.width, Some(Scaled::from_raw(10 * 65_536)));
+    assert_eq!(thread.dimensions.height, Some(Scaled::from_raw(4 * 65_536)));
+    assert_eq!(thread.dimensions.depth, Some(Scaled::from_raw(3 * 65_536)));
+    assert!(!thread.running);
+    assert_ne!(thread.attributes, TokenListId::EMPTY);
+    let Node::Whatsit(tex_state::node::Whatsit::PdfThread(thread)) = &nodes[5] else {
+        panic!("expected running thread marker: {nodes:#?}");
+    };
+    assert_eq!(thread.dimensions.width, None);
+    assert_eq!(thread.dimensions.height, Some(Scaled::from_raw(7 * 65_536)));
+    assert_eq!(thread.dimensions.depth, None);
+    assert!(thread.running);
+    assert!(matches!(
+        nodes[6],
+        Node::Whatsit(tex_state::node::Whatsit::PdfEndThread)
     ));
 }
 

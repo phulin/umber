@@ -61,14 +61,15 @@ pub use scanners::{
     MathScriptKind, MathStyleKind, MathTextFieldKind, PdfAnnotationRequest,
     PdfColorStackActionRequest, PdfDestinationRequest, PdfDocumentFragmentRequest, PdfFormRequest,
     PdfGraphicsRequest, PdfImagePageBox, PdfImageRequest, PdfNavigationRequest, PdfObjectRequest,
-    PdfReferenceObjectRequest, PdfStartLinkRequest, RegisteredInput, ScalarProvenance,
-    ScalarRecovery, ScannedAccent, ScannedAccentBase, ScannedBalancedText, ScannedBoxConstruction,
-    ScannedBoxKind, ScannedBoxRegister, ScannedDiscretionary, ScannedDisplayDiagnostic,
-    ScannedEquationNumber, ScannedFileName, ScannedGlueParameterAssignment, ScannedLeaderPayload,
-    ScannedLetAssignment, ScannedMacroDefinition, ScannedMathCharacter, ScannedMathDelimiter,
-    ScannedMathFamily, ScannedMathFraction, ScannedMathMuMaterial, ScannedMathScript,
-    ScannedPackingSpec, ScannedRuleSpec, ScannedScalar, ScannedSetBoxAssignment,
-    ScannedTokenRegisterAssignment, ScannedVSplit, StructuredProvenance,
+    PdfReferenceObjectRequest, PdfStartLinkRequest, PdfThreadRequest, RegisteredInput,
+    ScalarProvenance, ScalarRecovery, ScannedAccent, ScannedAccentBase, ScannedBalancedText,
+    ScannedBoxConstruction, ScannedBoxKind, ScannedBoxRegister, ScannedDiscretionary,
+    ScannedDisplayDiagnostic, ScannedEquationNumber, ScannedFileName,
+    ScannedGlueParameterAssignment, ScannedLeaderPayload, ScannedLetAssignment,
+    ScannedMacroDefinition, ScannedMathCharacter, ScannedMathDelimiter, ScannedMathFamily,
+    ScannedMathFraction, ScannedMathMuMaterial, ScannedMathScript, ScannedPackingSpec,
+    ScannedRuleSpec, ScannedScalar, ScannedSetBoxAssignment, ScannedTokenRegisterAssignment,
+    ScannedVSplit, StructuredProvenance,
 };
 pub use snapshot::{CommandStateSnapshot, CommandSummary, CommandSummaryError};
 pub use state::{
