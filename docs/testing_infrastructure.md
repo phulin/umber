@@ -406,6 +406,62 @@ command exercises the bundle writer with synthetic DVI.
 e2e/gentle` verify the manifest-pinned normalized reference hash before
 rewriting either fixture.
 
+## Diagnosing A Canonical Divergence
+
+Investigating a `umber2-johp` command-core divergence has a fixed order of
+diagnostics. Do not start with hand-added `eprintln!`/debug-panic
+instrumentation or another ad hoc reproduction: both tools below already
+report a source-attributed divergence or a Rust panic origin, and skipping
+them wastes a run re-deriving what they would have named directly. The
+retired Umber implementation (`Executor`/`InputStack`, `tex-lex`, `tex-expand`)
+is never an oracle for expected behavior at any step; canonical expectations
+come only from the pinned TeX82/e-TeX/pdfTeX oracle traces described in
+[The Canonical Command Core](tex_command_core.md).
+
+1. **Differential tracer first**, for the earliest ordered semantic
+   divergence against committed fixtures:
+
+   ```bash
+   cargo run -q -p tex-command-stream -- --repository .
+   ```
+
+   Run this from the repository root. It is fully hermetic against the
+   committed `tests/corpus/command/tex82` fixture registry (no external
+   corpus, distribution, or live TeX tool required) and never invokes a
+   reference engine. On success it prints nothing and exits `0`. On a genuine
+   stream mismatch it exits `1` and prints the earliest ordered divergence:
+   `fixture <name> diverged at event <index>` followed by the expected event,
+   the actual observed event, and source context. On an engine panic reached
+   before any semantic mismatch is produced, it instead exits `101` with the
+   ordinary Rust panic message and `file:line` (rerun with
+   `RUST_BACKTRACE=1` for a full backtrace) — that panic origin is itself the
+   diagnosis, and it takes priority over a stream-mismatch report because it
+   is reached first. See `docs/command_semantic_fixtures.md` and
+   `docs/alignment_brace_semantics.md` for the fixture registry and event
+   schema this replays and compares against, and `tools/AGENTS.md` for what
+   the tool does and does not do.
+
+2. **`canonical_probe` next**, for the live end-to-end front, when the
+   tracer's fixture registry does not cover the failing input (for example, it
+   depends on live document/font/hyphenation material outside
+   `tests/corpus/command`):
+
+   ```bash
+   cargo run --profile test -p umber --example canonical_probe -- gentle
+   cargo run --profile test -p umber --example canonical_probe -- story
+   ```
+
+   See "Canonical Divergence Probe" below for its exact staged inputs and
+   reported output. `story` currently completes cleanly and is a regression
+   gate: a new `story` failure is a regression to fix, not the divergence
+   under investigation, and must not be treated as expected.
+
+3. **Manual instrumentation only if both come up short.** Reach for
+   `eprintln!`/debug-panic probes or a custom reproduction only after the
+   tracer's fixtures do not exercise the failing input and `canonical_probe`
+   does not reproduce it with actionable context. Keep any such instrumentation
+   temporary and remove it once the tracer or probe confirms the fix.
+
 ## Canonical Divergence Probe
 
 `crates/umber/examples/canonical_probe.rs` is a standalone diagnostic entry
