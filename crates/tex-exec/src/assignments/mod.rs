@@ -93,8 +93,8 @@ pub(crate) use scanning::{
     is_assignment_target_meaning, next_non_space_traced_x, next_non_space_x, scan_glue_id,
     scan_i32, scan_optional_keyword_x, scan_scaled,
 };
-pub(crate) use shipout::shipout_node;
 use shipout::*;
+pub(crate) use shipout::{shipout_node, shipout_node_with_input_summary};
 use tokens::*;
 pub(crate) use tokens::{
     active_character_symbol, has_catcode_meaning, is_begin_group, is_end_group, is_space,

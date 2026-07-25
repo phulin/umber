@@ -133,7 +133,7 @@ fn stage_form_inner(
 
 pub(super) fn stage_shipout(
     node: Node,
-    input: &mut InputStack,
+    input_summary: tex_state::InputSummary,
     stores: &mut Universe,
     execution: &mut crate::ExecutionContext<'_>,
 ) -> Result<StagedShipout, ExecError> {
@@ -270,7 +270,6 @@ pub(super) fn stage_shipout(
         streamed_dvi_plan
     };
 
-    let input_summary = input.publication_summary(stores);
     stores.set_input_summary(input_summary);
     let effect_pos = stores.world().effect_pos();
     let retained_diagnostics = overlay.diagnostics.clone();

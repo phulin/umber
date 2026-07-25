@@ -50,6 +50,10 @@ pub struct ScannedMacroDefinition {
     pub parameter_text: TracedTokenList,
     pub replacement_text: TracedTokenList,
     pub provenance: StructuredProvenance,
+    /// TeX82 §1215 substituted the inaccessible recovery target.
+    pub missing_target: bool,
+    /// TeX82's parameter-text scanner repaired an out-of-order marker.
+    pub malformed_parameter: bool,
 }
 
 /// A completed TeX82 `\let` or `\futurelet` assignment.
@@ -851,16 +855,23 @@ impl CommandProcessor<'_> {
         &mut self,
         expanded: bool,
     ) -> Result<ScannedMacroDefinition, CommandError> {
-        let target = self
+        let command = self
             .next_non_space_raw()?
-            .and_then(|command| command.control_sequence())
             .ok_or(CommandError::InputInvariant)?;
+        let (target, missing_target) = if let Some(target) = command.control_sequence() {
+            (target, false)
+        } else {
+            self.back_input(command)?;
+            (self.state.intern_control_sequence("inaccessible"), true)
+        };
         let scanned = self.scan_toks(ScanToksMode::MacroDefinition { expanded })?;
         Ok(ScannedMacroDefinition {
             target,
             parameter_text: scanned.parameter_text,
             replacement_text: scanned.replacement_text,
             provenance: provenance(&scanned),
+            missing_target,
+            malformed_parameter: scanned.malformed_parameter,
         })
     }
 

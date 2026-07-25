@@ -34,6 +34,80 @@ fn register_source(control: &mut CommandReplayControl, bytes: &[u8]) {
         .expect("source opens");
 }
 
+fn run_to_end(control: &mut CanonicalMainControl, universe: &mut Universe) {
+    loop {
+        match control.step(universe).expect("canonical program executes") {
+            MainControlStep::End | MainControlStep::EndOfInput => break,
+            MainControlStep::Continue => {}
+        }
+    }
+}
+
+fn terminal_text(universe: &Universe) -> String {
+    universe
+        .world()
+        .effect_records()
+        .iter()
+        .filter_map(|effect| match effect {
+            EffectRecord::StreamWrite {
+                sink:
+                    tex_state::PrintSink::Terminal
+                    | tex_state::PrintSink::TerminalAndLog
+                    | tex_state::PrintSink::Log,
+                text,
+            } => Some(text.as_str()),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn canonical_begingroup_uses_semisimple_local_and_global_restoration() {
+    let mut universe = Universe::new();
+    let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+    register_source(
+        &mut control,
+        br"\begingroup\count0=1\global\count1=2\endgroup\count2=3\end",
+    );
+
+    run_to_end(&mut control, &mut universe);
+
+    assert_eq!(universe.count(0), 0);
+    assert_eq!(universe.count(1), 2);
+    assert_eq!(universe.count(2), 3);
+}
+
+#[test]
+fn canonical_definition_recovery_keeps_target_and_parameter_tokens_command_owned() {
+    let mut universe = Universe::new();
+    let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+    register_source(&mut control, br"\def A{}\def\f#2{#2}\count7=9\end");
+
+    run_to_end(&mut control, &mut universe);
+
+    let inaccessible = universe.intern("inaccessible");
+    assert!(universe.macro_meaning(inaccessible).is_some());
+    assert_eq!(universe.count(7), 9);
+    let output = terminal_text(&universe);
+    assert!(output.contains("Missing control sequence inserted"));
+    assert!(output.contains("Illegal parameter number in definition"));
+}
+
+#[test]
+fn canonical_grouping_reports_and_recovers_extra_closers() {
+    let mut universe = Universe::new();
+    let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+    register_source(&mut control, br"}\endgroup\begingroup}\count7=9\end");
+
+    run_to_end(&mut control, &mut universe);
+
+    assert_eq!(universe.count(7), 9);
+    let output = terminal_text(&universe);
+    assert!(output.contains("Too many }'s"));
+    assert!(output.contains("Extra \\endgroup"));
+    assert!(output.contains("Extra }, or forgotten \\endgroup"));
+}
+
 #[test]
 fn replay_uses_typed_scanners_for_definitions_assignments_and_termination() {
     let mut universe = Universe::new();

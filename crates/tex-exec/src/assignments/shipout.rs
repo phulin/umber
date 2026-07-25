@@ -41,6 +41,22 @@ pub(crate) fn shipout_node(
     stores: &mut Universe,
     execution: &mut crate::ExecutionContext<'_>,
 ) -> Result<Option<PreparedDviPage>, ExecError> {
+    let input_summary = input.publication_summary(stores);
+    shipout_node_with_input_summary(node, input_summary, stores, execution)
+}
+
+/// Ships a completed box using an already-owned publication summary.
+///
+/// Canonical command replay has no legacy `InputStack`: it publishes the
+/// most recently committed input summary while retaining command input in its
+/// own state.  The direct artifact kernel needs only this detached summary,
+/// never a source-consumption capability.
+pub(crate) fn shipout_node_with_input_summary(
+    node: Node,
+    input_summary: tex_state::InputSummary,
+    stores: &mut Universe,
+    execution: &mut crate::ExecutionContext<'_>,
+) -> Result<Option<PreparedDviPage>, ExecError> {
     prepare_pdf_output_policy(stores)?;
     if huge_shipout_box(&node, stores) {
         stores.world_mut().write_text(
@@ -97,7 +113,7 @@ pub(crate) fn shipout_node(
     }
     let effect_start = stores.world().effect_records().len();
     let mut transaction = stores.begin_shipout();
-    let staged = direct::stage_shipout(node, input, &mut transaction, execution)?;
+    let staged = direct::stage_shipout(node, input_summary, &mut transaction, execution)?;
     let retained_diagnostics = staged.retained_diagnostics.clone();
     let memo_payload =
         (key.is_some() && !staged.artifact.has_deferred_render_origins()).then(|| {

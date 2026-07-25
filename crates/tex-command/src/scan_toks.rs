@@ -40,6 +40,15 @@ pub(crate) struct ScannedToks {
     pub(crate) parameter_text: TracedTokenList,
     pub(crate) replacement_text: TracedTokenList,
     pub(crate) primary: OriginId,
+    pub(crate) malformed_parameter: bool,
+}
+
+struct ScannedParameterText {
+    tokens: Vec<TracedTokenWord>,
+    highest_parameter: u8,
+    hash_brace: Option<TracedTokenWord>,
+    primary: OriginId,
+    malformed_parameter: bool,
 }
 
 impl CommandProcessor<'_> {
@@ -100,28 +109,36 @@ impl CommandProcessor<'_> {
     }
 
     fn scan_toks_inner(&mut self, mode: ScanToksMode) -> Result<ScannedToks, CommandError> {
-        let (expanded, parameter_text, highest_parameter, hash_brace, primary) = match mode {
-            ScanToksMode::General { expanded } => {
-                // TeX scans the required opening brace through the ordinary
-                // expanded path even when the replacement text itself is
-                // collected unexpanded.
-                let primary = self.scan_left_brace(true)?.origin();
-                (expanded, Vec::new(), 0, None, primary)
-            }
-            ScanToksMode::GeneralAfterOpening { expanded, primary } => {
-                let opening = self.get_token()?.ok_or(CommandError::InputInvariant)?;
-                if !is_begin_group(opening.spelling().semantic_token()) {
-                    return Err(CommandError::InputInvariant);
+        let (expanded, parameter_text, highest_parameter, hash_brace, primary, malformed_parameter) =
+            match mode {
+                ScanToksMode::General { expanded } => {
+                    // TeX scans the required opening brace through the ordinary
+                    // expanded path even when the replacement text itself is
+                    // collected unexpanded.
+                    let primary = self.scan_left_brace(true)?.origin();
+                    (expanded, Vec::new(), 0, None, primary, false)
                 }
-                #[cfg(any(test, feature = "instrumentation"))]
-                self.observe_expanded_delivery(&opening);
-                (expanded, Vec::new(), 0, None, primary)
-            }
-            ScanToksMode::MacroDefinition { expanded } => {
-                let (parameters, highest, hash_brace, primary) = self.scan_parameter_text()?;
-                (expanded, parameters, highest, hash_brace, primary)
-            }
-        };
+                ScanToksMode::GeneralAfterOpening { expanded, primary } => {
+                    let opening = self.get_token()?.ok_or(CommandError::InputInvariant)?;
+                    if !is_begin_group(opening.spelling().semantic_token()) {
+                        return Err(CommandError::InputInvariant);
+                    }
+                    #[cfg(any(test, feature = "instrumentation"))]
+                    self.observe_expanded_delivery(&opening);
+                    (expanded, Vec::new(), 0, None, primary, false)
+                }
+                ScanToksMode::MacroDefinition { expanded } => {
+                    let parameters = self.scan_parameter_text()?;
+                    (
+                        expanded,
+                        parameters.tokens,
+                        parameters.highest_parameter,
+                        parameters.hash_brace,
+                        parameters.primary,
+                        parameters.malformed_parameter,
+                    )
+                }
+            };
         let replacement = self.collect_replacement(expanded, highest_parameter)?;
         let mut replacement = replacement;
         // TeX's `#{` parameter-text special case treats that left brace as a
@@ -134,6 +151,7 @@ impl CommandProcessor<'_> {
             parameter_text: self.state.finish_traced_token_list(&parameter_text),
             replacement_text: self.state.finish_traced_token_list(&replacement),
             primary,
+            malformed_parameter,
         })
     }
 
@@ -168,12 +186,11 @@ impl CommandProcessor<'_> {
     /// Scans the prefix before a macro replacement's compulsory opening
     /// brace.  Compact `Token::Param` values are the stored out-parameter
     /// representation; doubled hashes remain literal parameter characters.
-    fn scan_parameter_text(
-        &mut self,
-    ) -> Result<(Vec<TracedTokenWord>, u8, Option<TracedTokenWord>, OriginId), CommandError> {
+    fn scan_parameter_text(&mut self) -> Result<ScannedParameterText, CommandError> {
         let mut output = Vec::new();
         let mut next_parameter = 1_u8;
         let mut primary = OriginId::UNKNOWN;
+        let mut malformed_parameter = false;
         loop {
             let command = self.get_token()?.ok_or(CommandError::InputInvariant)?;
             if primary == OriginId::UNKNOWN {
@@ -181,7 +198,13 @@ impl CommandProcessor<'_> {
             }
             let token = command.spelling().semantic_token();
             if is_begin_group(token) {
-                return Ok((output, next_parameter - 1, None, primary));
+                return Ok(ScannedParameterText {
+                    tokens: output,
+                    highest_parameter: next_parameter - 1,
+                    hash_brace: None,
+                    primary,
+                    malformed_parameter,
+                });
             }
             if !is_parameter(token) {
                 output.push(command.spelling());
@@ -191,12 +214,13 @@ impl CommandProcessor<'_> {
             let follower_token = follower.spelling().semantic_token();
             if is_begin_group(follower_token) {
                 output.push(follower.spelling());
-                return Ok((
-                    output,
-                    next_parameter - 1,
-                    Some(follower.spelling()),
+                return Ok(ScannedParameterText {
+                    tokens: output,
+                    highest_parameter: next_parameter - 1,
+                    hash_brace: Some(follower.spelling()),
                     primary,
-                ));
+                    malformed_parameter,
+                });
             }
             if let Some(number) = parameter_number(follower_token)
                 && number == next_parameter
@@ -214,6 +238,7 @@ impl CommandProcessor<'_> {
             // validity operation remains responsible for all inaccessible
             // token recovery.
             self.back_input(follower)?;
+            malformed_parameter = true;
             if next_parameter <= 9 {
                 output.push(TracedTokenWord::pack(
                     Token::Param(next_parameter),

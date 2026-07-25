@@ -224,6 +224,15 @@ single detached forced-shipout effect through the ordinary artifact commit
 boundary. The command seam does not reconstruct the repeated dead-cycle page
 lists; their only canonical trace consequence is that ordered DVI effect.
 
+Canonical `\shipout` replay likewise crosses the executor only as a completed
+box. The artifact kernel receives an already-published detached input summary;
+it must not construct a `tex_lex::InputStack` as a publication fallback.
+Explicit `\begingroup` is a typed `SemiSimple` entry and `\endgroup` its
+matching typed exit. TeX82 §1064 recovery remains command-owned: malformed
+macro targets and parameter markers preserve/replay their source spellings in
+the command machine, while main control applies only the resulting diagnostic
+effect and recovered definition.
+
 Replay models that routine as an explicit output group and internal-vertical
 mode. Its required opening brace is consumed by `scan_left_brace`, not as a
 nested ordinary group; the matching close ends its paragraph, leaves the

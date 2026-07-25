@@ -944,6 +944,8 @@ enum ScannedStep {
         parameter_text: TracedTokenList,
         replacement_text: TracedTokenList,
         definition_origin: tex_state::token::OriginId,
+        missing_target: bool,
+        malformed_parameter: bool,
     },
     Let {
         target: Symbol,
@@ -1006,6 +1008,11 @@ enum ScannedStep {
     },
     BeginSimpleGroup,
     EndSimpleGroup,
+    BeginSemiSimpleGroup,
+    EndSemiSimpleGroup,
+    ExtraRightBrace,
+    ExtraRightBraceEndsSemiSimpleGroup,
+    ExtraEndGroup,
     BeginOrdinaryGroup,
     EndOrdinaryGroup,
     BeginOutputRoutine,
@@ -1137,7 +1144,7 @@ fn scan_replay_step(
                 scan_alignment_peek(processor, alignment, after_noalign)
             }
             AlignmentPreamblePhase::NoAlignBody => {
-                scan_noalign_body(processor, alignment, boxes, mode)
+                scan_noalign_body(processor, alignment, boxes, innermost_group, mode)
             }
             AlignmentPreamblePhase::CellDelivery => {
                 scan_alignment_delivery_step(processor, alignment, boxes, innermost_group, mode)
@@ -1149,6 +1156,7 @@ fn scan_replay_step(
         mode,
         starts_paragraph,
         boxes,
+        innermost_group,
         output_dead_cycles,
         max_dead_cycles,
     )
@@ -1240,6 +1248,7 @@ fn scan_noalign_body(
     processor: &mut CommandProcessor<'_>,
     alignment: AlignmentIdentity,
     boxes: &ReplayBoxes,
+    innermost_group: Option<GroupKind>,
     mode: Mode,
 ) -> Result<ScannedStep, ExecError> {
     let Some(command) = processor.get_x_token().map_err(command_error)? else {
@@ -1262,6 +1271,7 @@ fn scan_noalign_body(
             mode,
             false,
             boxes,
+            innermost_group,
             &mut 0,
             0,
         ),
@@ -1322,6 +1332,7 @@ fn scan_alignment_delivery_step(
                 mode,
                 false,
                 boxes,
+                innermost_group,
                 &mut 0,
                 0,
             )
@@ -1364,6 +1375,7 @@ fn scan_step(
     mode: Mode,
     starts_paragraph: bool,
     boxes: &ReplayBoxes,
+    innermost_group: Option<GroupKind>,
     output_dead_cycles: &mut i32,
     max_dead_cycles: i32,
 ) -> Result<ScannedStep, ExecError> {
@@ -1400,6 +1412,7 @@ fn scan_step(
         mode,
         starts_paragraph,
         boxes,
+        innermost_group,
         output_dead_cycles,
         max_dead_cycles,
     )
@@ -1414,6 +1427,7 @@ fn scan_command(
     mode: Mode,
     starts_paragraph: bool,
     boxes: &ReplayBoxes,
+    innermost_group: Option<GroupKind>,
     output_dead_cycles: &mut i32,
     max_dead_cycles: i32,
 ) -> Result<ScannedStep, ExecError> {
@@ -1538,13 +1552,31 @@ fn scan_command(
             cat: Catcode::BeginGroup,
             ..
         } => Ok(ScannedStep::BeginOrdinaryGroup),
+        Meaning::CharToken {
+            cat: Catcode::EndGroup,
+            ..
+        } if innermost_group == Some(GroupKind::SemiSimple) => {
+            Ok(ScannedStep::ExtraRightBraceEndsSemiSimpleGroup)
+        }
+        Meaning::CharToken {
+            cat: Catcode::EndGroup,
+            ..
+        } => Ok(ScannedStep::ExtraRightBrace),
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::BeginGroup) => {
+            Ok(ScannedStep::BeginSemiSimpleGroup)
+        }
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::EndGroup)
+            if innermost_group == Some(GroupKind::SemiSimple) =>
+        {
+            Ok(ScannedStep::EndSemiSimpleGroup)
+        }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::EndGroup) => {
             if !processor.has_control_sequence_spelling(&command, "endgroup") {
                 return Ok(ScannedStep::Continue);
             }
             if boxes.ordinary_simple_group_depth == 0 {
                 processor.report_off_save_bottom_drop(&command);
-                return Ok(ScannedStep::Continue);
+                return Ok(ScannedStep::ExtraEndGroup);
             }
             processor
                 .recover_off_save(
@@ -1804,6 +1836,8 @@ fn scan_command(
                 parameter_text: definition.parameter_text,
                 replacement_text: definition.replacement_text,
                 definition_origin: definition.provenance.primary,
+                missing_target: definition.missing_target,
+                malformed_parameter: definition.malformed_parameter,
             })
         }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Let) => {
@@ -2375,12 +2409,17 @@ fn applied_effect_observation(scanned: &ScannedStep, stores: &Universe) -> Optio
 
 /// TeX82 §1071 completes `box_end` synchronously: a `\shipout` box is
 /// published while its command-owned terminator backup is still live.  The
-/// temporary legacy stack is solely the existing artifact kernel's
-/// publication-summary input; it never scans the command operand.
+/// artifact kernel receives only an already-published detached input summary;
+/// it never receives a legacy source stack or scans the command operand.
 fn shipout_replay_box(node: Node, stores: &mut Universe) -> Result<(), ExecError> {
-    let mut input = tex_lex::InputStack::empty();
     let mut execution = crate::ExecutionContext::new("texput");
-    let _ = crate::assignments::shipout_node(node, &mut input, stores, &mut execution)?;
+    let input_summary = stores.input_summary().clone();
+    let _ = crate::assignments::shipout_node_with_input_summary(
+        node,
+        input_summary,
+        stores,
+        &mut execution,
+    )?;
     Ok(())
 }
 
@@ -2842,7 +2881,21 @@ fn apply_scanned_step(
             parameter_text,
             replacement_text,
             definition_origin,
+            missing_target,
+            malformed_parameter,
         } => {
+            if missing_target {
+                stores.world_mut().write_text(
+                    PrintSink::TerminalAndLog,
+                    "\n! Missing control sequence inserted.\nPlease don't say `\\def cs{...}', say `\\def\\cs{...}'.\nI've inserted an inaccessible control sequence so that your\ndefinition will be completed without mixing me up too badly.\n",
+                );
+            }
+            if malformed_parameter {
+                stores.world_mut().write_text(
+                    PrintSink::TerminalAndLog,
+                    "\n! Illegal parameter number in definition.\nYou meant to type ## instead of #, right?\n",
+                );
+            }
             let meaning = MacroMeaning::new(
                 flags,
                 parameter_text.token_list(),
@@ -3049,6 +3102,44 @@ fn apply_scanned_step(
         ScannedStep::BeginOrdinaryGroup => {
             stores.enter_group_with_kind(GroupKind::Simple);
             boxes.ordinary_simple_group_depth += 1;
+            Ok(ReplayStep::Continue)
+        }
+        ScannedStep::BeginSemiSimpleGroup => {
+            stores.enter_group_with_kind(GroupKind::SemiSimple);
+            Ok(ReplayStep::Continue)
+        }
+        ScannedStep::EndSemiSimpleGroup => {
+            let aftergroup = stores
+                .leave_group_with_kind(GroupKind::SemiSimple)
+                .map_err(|_| ExecError::MissingToken {
+                    context: "semi simple group",
+                })?;
+            schedule_aftergroup(command, stores, aftergroup);
+            Ok(ReplayStep::Continue)
+        }
+        ScannedStep::ExtraRightBrace => {
+            stores
+                .world_mut()
+                .write_text(PrintSink::TerminalAndLog, "\n! Too many }'s.\n");
+            Ok(ReplayStep::Continue)
+        }
+        ScannedStep::ExtraRightBraceEndsSemiSimpleGroup => {
+            stores.world_mut().write_text(
+                PrintSink::TerminalAndLog,
+                "\n! Extra }, or forgotten \\endgroup.\n",
+            );
+            let aftergroup = stores
+                .leave_group_with_kind(GroupKind::SemiSimple)
+                .map_err(|_| ExecError::MissingToken {
+                    context: "semi simple group right-brace recovery",
+                })?;
+            schedule_aftergroup(command, stores, aftergroup);
+            Ok(ReplayStep::Continue)
+        }
+        ScannedStep::ExtraEndGroup => {
+            stores
+                .world_mut()
+                .write_text(PrintSink::TerminalAndLog, "\n! Extra \\endgroup.\n");
             Ok(ReplayStep::Continue)
         }
         ScannedStep::EndOrdinaryGroup => {
