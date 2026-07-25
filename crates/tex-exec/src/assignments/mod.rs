@@ -50,6 +50,7 @@ mod variables;
 use admissibility::is_assignment_primitive;
 pub(crate) use admissibility::math_allows_mode_independent_primitive;
 use arithmetic::*;
+pub(crate) use boxes::append_box_node_to_current_list;
 pub(crate) use boxes::execute_scanned_box_register;
 pub(crate) use boxes::hpack_with_overfull_rule;
 pub(crate) use boxes::scan_math_box;

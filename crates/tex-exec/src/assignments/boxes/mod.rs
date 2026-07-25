@@ -624,7 +624,7 @@ fn append_box_register(
     Ok(())
 }
 
-fn append_box_node_to_current_list(
+pub(crate) fn append_box_node_to_current_list(
     nest: &mut ModeNest,
     stores: &mut Universe,
     mut node: Node,

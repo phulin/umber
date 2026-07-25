@@ -6525,7 +6525,20 @@ fn apply_scanned_step(
                     stores.set_box_reg(target.index, boxed);
                 }
             } else {
-                modes.current_list_mut().push(node);
+                // TeX82 §1073's `box_end` for an ordinary (non-register,
+                // non-shipout, non-leader) box appends the freshly built box
+                // to whatever list is currently open, exactly like `\box<n>`
+                // (`execute_scanned_box_register`/`append_box_node_to_current_list`
+                // below): baseline-skip insertion, migration extraction, and
+                // (in outer vertical mode) page-builder contribution all
+                // apply. A bare `modes.current_list_mut().push(node)` here
+                // bypassed all of that, silently dropping every standalone
+                // `\hbox`/`\vbox`/`\vtop` (and macros built on them, such as
+                // plain.tex's `\centerline`) appended directly in vertical
+                // mode: the node landed in the mode-nest list rather than the
+                // page contribution list the page builder actually drains.
+                crate::assignments::append_box_node_to_current_list(modes, stores, node)?;
+                crate::vertical::build_page_if_outer_vertical(modes, stores)?;
             }
             Ok(ReplayStep::Continue)
         }
