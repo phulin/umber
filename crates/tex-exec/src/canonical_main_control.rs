@@ -3816,23 +3816,56 @@ fn reserve_navigation_action_targets(
     stores: &mut Universe,
     action: tex_state::PdfActionSpec,
 ) -> Result<(), ExecError> {
-    let tex_state::PdfActionSpec::GoTo(destination) = action else {
-        return Ok(());
-    };
-    if destination.file.is_some() {
-        return Ok(());
-    }
-    if let tex_state::PdfActionTarget::Destination(identifier) = destination.target {
+    let (destination, structure, thread) = pdf_action_target_identities(stores, action);
+    if let Some(identity) = thread {
         stores
-            .reserve_pdf_destination(pdf_navigation_identity(stores, identifier), false)
+            .reserve_pdf_thread(identity)
             .map_err(|_| ExecError::PdfObjectCapacity)?;
     }
-    if let Some(identifier) = destination.structure {
+    if let Some(identity) = destination {
         stores
-            .reserve_pdf_destination(pdf_navigation_identity(stores, identifier), true)
+            .reserve_pdf_destination(identity, false)
+            .map_err(|_| ExecError::PdfObjectCapacity)?;
+    }
+    if let Some(identity) = structure {
+        stores
+            .reserve_pdf_destination(identity, true)
             .map_err(|_| ExecError::PdfObjectCapacity)?;
     }
     Ok(())
+}
+
+fn pdf_action_target_identities(
+    stores: &Universe,
+    action: tex_state::PdfActionSpec,
+) -> (
+    Option<tex_state::PdfDestinationIdentity>,
+    Option<tex_state::PdfDestinationIdentity>,
+    Option<tex_state::PdfDestinationIdentity>,
+) {
+    let destination = match action {
+        tex_state::PdfActionSpec::GoTo(destination) if destination.file.is_none() => destination,
+        tex_state::PdfActionSpec::Thread(thread) if thread.file.is_none() => {
+            let identity = match thread.target {
+                tex_state::PdfActionTarget::Destination(identifier) => {
+                    Some(pdf_navigation_identity(stores, identifier))
+                }
+                tex_state::PdfActionTarget::Page { .. } => None,
+            };
+            return (None, None, identity);
+        }
+        _ => return (None, None, None),
+    };
+    let target = match destination.target {
+        tex_state::PdfActionTarget::Destination(identifier) => {
+            Some(pdf_navigation_identity(stores, identifier))
+        }
+        tex_state::PdfActionTarget::Page { .. } => None,
+    };
+    let structure = destination
+        .structure
+        .map(|identifier| pdf_navigation_identity(stores, identifier));
+    (target, structure, None)
 }
 
 fn apply_pdf_graphics_request(
@@ -5363,6 +5396,20 @@ fn apply_scanned_step(
                 return Ok(ReplayStep::Continue);
             }
             stores.append_pdf_document_fragment(request.kind, request.text.tokens.token_list());
+            if let Some(action) = request.open_action {
+                if stores.pdf_catalog_open_action().is_some() {
+                    return Err(ExecError::PdfDuplicateOpenAction);
+                }
+                let (destination, structure, thread) = pdf_action_target_identities(stores, action);
+                stores
+                    .set_pdf_catalog_open_action_with_targets(
+                        action,
+                        destination,
+                        structure,
+                        thread,
+                    )
+                    .map_err(|_| ExecError::PdfObjectCapacity)?;
+            }
             Ok(ReplayStep::Continue)
         }
         ScannedStep::FontDimen {

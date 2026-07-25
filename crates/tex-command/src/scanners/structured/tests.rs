@@ -1354,3 +1354,52 @@ fn pdf_colorstack_scanner_keeps_setter_text_and_missing_action_typed() {
         }
     ));
 }
+
+#[test]
+fn pdf_navigation_applies_halfword_bound_only_to_dest_and_thread_ids() {
+    let mut command = CommandState::default();
+    let mut runtime = CommandRuntime::default();
+    let mut universe = Universe::new();
+    let mut capabilities = CommandHostCapabilities::default();
+    push(
+        &mut command,
+        text_tokens("struct 1073741824 num 1 fit goto page 1073741824{Fit}num 1073741824 fit"),
+    );
+    let (destination, action, too_large) = {
+        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+        let destination = processor
+            .scan_pdf_navigation_request(UnexpandablePrimitive::PdfDest)
+            .expect("large structure object remains a scan_int value");
+        let action = processor
+            .scan_pdf_navigation_request(UnexpandablePrimitive::PdfStartLink)
+            .expect("large page number remains a scan_int value");
+        let too_large = processor
+            .scan_pdf_navigation_request(UnexpandablePrimitive::PdfDest)
+            .expect_err("destination identifiers retain max_halfword bound");
+        (destination, action, too_large)
+    };
+    assert!(matches!(
+        destination,
+        PdfNavigationRequest::Destination(PdfDestinationRequest {
+            structure: Some(1_073_741_824),
+            ..
+        })
+    ));
+    assert!(matches!(
+        action,
+        PdfNavigationRequest::StartLink(PdfStartLinkRequest {
+            action: tex_state::PdfActionSpec::GoTo(tex_state::PdfActionDestination {
+                target: tex_state::PdfActionTarget::Page {
+                    number: 1_073_741_824,
+                    ..
+                },
+                ..
+            }),
+            ..
+        })
+    ));
+    assert_eq!(
+        too_large,
+        CommandError::PdfNavigation("pdfTeX error (ext1): number too big")
+    );
+}

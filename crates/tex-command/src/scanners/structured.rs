@@ -184,6 +184,7 @@ pub struct PdfReferenceObjectRequest {
 pub struct PdfDocumentFragmentRequest {
     pub kind: tex_state::PdfDocumentFragmentKind,
     pub text: ScannedBalancedText,
+    pub open_action: Option<tex_state::PdfActionSpec>,
 }
 
 /// Fully scanned pdfTeX navigation whatsit.  All general text is frozen in
@@ -763,11 +764,11 @@ impl CommandProcessor<'_> {
             UnexpandablePrimitive::PdfEndLink => Ok(Request::EndLink),
             UnexpandablePrimitive::PdfDest => {
                 let structure = if self.scan_keyword("struct")?.value {
-                    Some(self.scan_pdf_positive("struct identifier")?)
+                    Some(self.scan_pdf_positive("struct identifier", false)?)
                 } else {
                     None
                 };
-                let identifier = self.scan_pdf_identifier("destination identifier")?;
+                let identifier = self.scan_pdf_identifier("destination identifier", true)?;
                 // Prefix-sharing names must be tested longest-first.
                 let kind = if self.scan_keyword("xyz")?.value {
                     let zoom = if self.scan_keyword("zoom")?.value {
@@ -798,7 +799,7 @@ impl CommandProcessor<'_> {
                     PdfDestinationKind::Fit
                 } else {
                     return Err(CommandError::PdfNavigation(
-                        "pdfTeX error (ext4): destination type missing",
+                        "pdfTeX error (ext1): destination type missing",
                     ));
                 };
                 Ok(Request::Destination(PdfDestinationRequest {
@@ -815,7 +816,7 @@ impl CommandProcessor<'_> {
                     .value
                     .then(|| self.scan_balanced_text(true))
                     .transpose()?,
-                identifier: self.scan_pdf_identifier("thread identifier")?,
+                identifier: self.scan_pdf_identifier("thread identifier", true)?,
                 running: primitive == UnexpandablePrimitive::PdfStartThread,
             })),
             UnexpandablePrimitive::PdfEndThread => Ok(Request::EndThread),
@@ -838,15 +839,20 @@ impl CommandProcessor<'_> {
         }
     }
 
-    fn scan_pdf_positive(&mut self, kind: &'static str) -> Result<u32, CommandError> {
+    fn scan_pdf_positive(
+        &mut self,
+        kind: &'static str,
+        bounded_by_halfword: bool,
+    ) -> Result<u32, CommandError> {
         let value = self.scan_integer()?.value;
         if value <= 0 {
             return Err(CommandError::PdfNavigation(match kind {
                 "struct identifier" => "pdfTeX error (ext1): struct identifier must be positive",
+                "page number" => "pdfTeX error (ext1): page number must be positive",
                 _ => "pdfTeX error (ext1): num identifier must be positive",
             }));
         }
-        if value > 1_073_741_823 {
+        if bounded_by_halfword && value > 1_073_741_823 {
             return Err(CommandError::PdfNavigation(
                 "pdfTeX error (ext1): number too big",
             ));
@@ -857,6 +863,7 @@ impl CommandProcessor<'_> {
     fn scan_pdf_identifier(
         &mut self,
         kind: &'static str,
+        bounded_by_halfword: bool,
     ) -> Result<tex_state::PdfActionIdentifier, CommandError> {
         if self.scan_keyword("name")?.value {
             Ok(tex_state::PdfActionIdentifier::Name(
@@ -864,7 +871,7 @@ impl CommandProcessor<'_> {
             ))
         } else if self.scan_keyword("num")?.value {
             Ok(tex_state::PdfActionIdentifier::Number(
-                self.scan_pdf_positive(kind)?,
+                self.scan_pdf_positive(kind, bounded_by_halfword)?,
             ))
         } else {
             Err(CommandError::PdfNavigation(
@@ -908,7 +915,7 @@ impl CommandProcessor<'_> {
                     self.scan_balanced_text(true)?.tokens.token_list(),
                 ))
             } else {
-                Some(self.scan_pdf_identifier("struct identifier")?)
+                Some(self.scan_pdf_identifier("struct identifier", false)?)
             }
         } else {
             None
@@ -919,7 +926,7 @@ impl CommandProcessor<'_> {
                     "pdfTeX error (ext1): only GoTo action can be used with `page'",
                 ));
             }
-            let number = self.scan_pdf_positive("page number")?;
+            let number = self.scan_pdf_positive("page number", false)?;
             PdfActionTarget::Page {
                 number,
                 view: self.scan_balanced_text(true)?.tokens.token_list(),
@@ -935,7 +942,7 @@ impl CommandProcessor<'_> {
                 ));
             }
             PdfActionTarget::Destination(tex_state::PdfActionIdentifier::Number(
-                self.scan_pdf_positive("num identifier")?,
+                self.scan_pdf_positive("num identifier", false)?,
             ))
         } else {
             return Err(CommandError::PdfNavigation(
@@ -1045,9 +1052,18 @@ impl CommandProcessor<'_> {
             UnexpandablePrimitive::PdfTrailerId => Kind::TrailerId,
             _ => return Err(CommandError::InputInvariant),
         };
+        let text = self.scan_balanced_text(true)?;
+        let open_action = if primitive == UnexpandablePrimitive::PdfCatalog
+            && self.scan_keyword("openaction")?.value
+        {
+            Some(self.scan_pdf_action()?)
+        } else {
+            None
+        };
         Ok(PdfDocumentFragmentRequest {
             kind,
-            text: self.scan_balanced_text(true)?,
+            text,
+            open_action,
         })
     }
 

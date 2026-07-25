@@ -124,7 +124,7 @@ fn canonical_pdf_navigation_scans_rules_actions_and_deferred_markers() {
     control.modes.push(Mode::Horizontal);
     register_source(
         &mut control,
-        br"\pdfannot width 2pt height 3pt { /Subtype /Text }\pdfdest name {target} fitr depth 4pt\pdfstartlink width 5pt attr { /Border [0 0 0] } goto name {target}\pdfendlink\pdfthread depth 3pt width 10pt height 4pt attr { /I << /Title (custom) >> } name {chapter}\pdfstartthread height 7pt name {running}\pdfendthread",
+        br"\pdfannot width 2pt height 3pt { /Subtype /Text }\pdfdest name {target} fitr depth 4pt\pdfstartlink width 5pt attr { /Border [0 0 0] } goto name {target}\pdfendlink\pdfthread depth 3pt width 10pt height 4pt attr { /I << /Title (custom) >> } name {chapter}\pdfstartthread height 7pt name {running}\pdfendthread\pdfstartlink thread name {reserved}\pdfendlink",
     );
     run_to_end(&mut control, &mut universe);
 
@@ -167,6 +167,147 @@ fn canonical_pdf_navigation_scans_rules_actions_and_deferred_markers() {
         nodes[6],
         Node::Whatsit(tex_state::node::Whatsit::PdfEndThread)
     ));
+    assert!(matches!(
+        nodes[7],
+        Node::Whatsit(tex_state::node::Whatsit::PdfLinkStart { .. })
+    ));
+    assert!(matches!(
+        nodes[8],
+        Node::Whatsit(tex_state::node::Whatsit::PdfLinkEnd { .. })
+    ));
+    assert!(universe.pdf_threads().iter().any(|thread| {
+        thread.identity() == &tex_state::PdfDestinationIdentity::Name(b"reserved".to_vec())
+            && thread.beads().is_empty()
+    }));
+    assert!(
+        universe.open_pdf_links().is_empty(),
+        "canonical scanning defers link nesting to final traversal"
+    );
+}
+
+#[test]
+fn canonical_pdf_graphics_objects_and_forms_cross_only_typed_requests() {
+    let mut universe = Universe::new();
+    universe.set_int_param(IntParam::PDF_OUTPUT, 1);
+    for (name, primitive) in [
+        (
+            "pdfliteral",
+            tex_state::meaning::UnexpandablePrimitive::PdfLiteral,
+        ),
+        (
+            "pdfsetmatrix",
+            tex_state::meaning::UnexpandablePrimitive::PdfSetMatrix,
+        ),
+        (
+            "pdfsave",
+            tex_state::meaning::UnexpandablePrimitive::PdfSave,
+        ),
+        (
+            "pdfrestore",
+            tex_state::meaning::UnexpandablePrimitive::PdfRestore,
+        ),
+        (
+            "pdfcolorstack",
+            tex_state::meaning::UnexpandablePrimitive::PdfColorStack,
+        ),
+        (
+            "pdfsavepos",
+            tex_state::meaning::UnexpandablePrimitive::PdfSavePos,
+        ),
+        (
+            "pdfobj",
+            tex_state::meaning::UnexpandablePrimitive::PdfObject,
+        ),
+        (
+            "pdfrefobj",
+            tex_state::meaning::UnexpandablePrimitive::PdfReferenceObject,
+        ),
+        (
+            "pdfxform",
+            tex_state::meaning::UnexpandablePrimitive::PdfXForm,
+        ),
+        (
+            "pdfrefxform",
+            tex_state::meaning::UnexpandablePrimitive::PdfRefXForm,
+        ),
+        (
+            "pdfinfo",
+            tex_state::meaning::UnexpandablePrimitive::PdfInfo,
+        ),
+        (
+            "pdfcatalog",
+            tex_state::meaning::UnexpandablePrimitive::PdfCatalog,
+        ),
+    ] {
+        let symbol = universe.intern(name).symbol();
+        universe.set_meaning(symbol, Meaning::UnexpandablePrimitive(primitive));
+    }
+    let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+    control.modes.push(Mode::Horizontal);
+    register_source(
+        &mut control,
+        br"\pdfliteral direct{q}\pdfliteral shipout page{Q}\pdfsetmatrix{1 0 0 1}\pdfsave\pdfrestore\pdfcolorstack0 current\pdfsavepos\setbox0=\hbox{}\pdfobj{raw}\pdfrefobj1\pdfxform0\pdfrefxform2\pdfinfo{/Producer(test)}\pdfcatalog{/PageMode/UseNone}openaction thread name{catalog-thread}",
+    );
+    run_to_end(&mut control, &mut universe);
+
+    let nodes = control.modes.current_list().nodes();
+    assert!(matches!(
+        nodes[0],
+        Node::Whatsit(tex_state::node::Whatsit::PdfLiteral { .. })
+    ));
+    assert!(matches!(
+        nodes[1],
+        Node::Whatsit(tex_state::node::Whatsit::DeferredPdfLiteral { .. })
+    ));
+    assert!(matches!(
+        nodes[2],
+        Node::Whatsit(tex_state::node::Whatsit::PdfSetMatrix { .. })
+    ));
+    assert!(matches!(
+        nodes[3],
+        Node::Whatsit(tex_state::node::Whatsit::PdfSave)
+    ));
+    assert!(matches!(
+        nodes[4],
+        Node::Whatsit(tex_state::node::Whatsit::PdfRestore)
+    ));
+    assert!(matches!(
+        nodes[5],
+        Node::Whatsit(tex_state::node::Whatsit::PdfColorStack { .. })
+    ));
+    assert!(matches!(
+        nodes[6],
+        Node::Whatsit(tex_state::node::Whatsit::PdfSavePos)
+    ));
+    assert!(matches!(
+        nodes[7],
+        Node::Whatsit(tex_state::node::Whatsit::PdfReferenceObject { object: 1 })
+    ));
+    assert!(matches!(
+        nodes[8],
+        Node::Whatsit(tex_state::node::Whatsit::PdfRefXForm { object: 2, .. })
+    ));
+    assert_eq!(universe.pdf_raw_objects().len(), 1);
+    assert!(
+        !universe.pdf_raw_objects()[0].is_referenced(),
+        "pdfrefobj remains a deferred shipout handoff"
+    );
+    assert_eq!(
+        universe.pdf_form(2).expect("form exists").resource(),
+        1,
+        "form resource names use their independent source-order identity"
+    );
+    assert_eq!(
+        universe
+            .pdf_document_fragments(tex_state::PdfDocumentFragmentKind::Info)
+            .count(),
+        1
+    );
+    assert!(universe.pdf_catalog_open_action().is_some());
+    assert!(universe.pdf_threads().iter().any(|thread| {
+        thread.identity() == &tex_state::PdfDestinationIdentity::Name(b"catalog-thread".to_vec())
+            && thread.beads().is_empty()
+    }));
 }
 
 #[test]

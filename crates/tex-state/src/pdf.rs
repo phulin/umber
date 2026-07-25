@@ -2156,10 +2156,13 @@ impl PdfState {
         fingerprint: StateHashFragment,
         destination_identity: Option<PdfDestinationIdentity>,
         structure_identity: Option<PdfDestinationIdentity>,
+        thread_identity: Option<PdfDestinationIdentity>,
     ) -> Result<PdfActionRecord, PdfObjectCapacityError> {
         debug_assert!(self.catalog_open_action.is_none());
         let id = self.reserve_document_object()?;
-        let target_object = if let Some(identity) = destination_identity {
+        let target_object = if let Some(identity) = thread_identity {
+            Some(self.reserve_thread(identity)?.object())
+        } else if let Some(identity) = destination_identity {
             Some(self.reserve_destination(identity, false)?.object())
         } else {
             spec.needs_target_object()
@@ -3859,6 +3862,7 @@ mod tests {
                 action.fingerprint(|_| test_identity(17)),
                 None,
                 None,
+                None,
             )
             .expect("reserve action and page target");
         assert_eq!(record.id(), 1);
@@ -3915,12 +3919,53 @@ mod tests {
                 action.fingerprint(|_| test_identity(17)),
                 None,
                 None,
+                None,
             )
             .expect("replay action reservation");
         assert_eq!(replay, record);
         state.rollback(initial);
         assert_eq!(state.hash_fragment(), initial_hash);
         assert_ne!(completed_hash, initial_hash);
+    }
+
+    #[test]
+    fn catalog_thread_action_reuses_the_checkpointed_thread_identity() {
+        let mut state = PdfState::default();
+        state.enable();
+        let initial = state.snapshot();
+        let action = PdfActionSpec::Thread(PdfActionDestination {
+            file: None,
+            structure: None,
+            target: PdfActionTarget::Destination(PdfActionIdentifier::Number(7)),
+            window: PdfActionWindow::Unspecified,
+        });
+        let identity = PdfDestinationIdentity::Number(7);
+        let record = state
+            .set_catalog_open_action(
+                action,
+                action.fingerprint(|_| test_identity(17)),
+                None,
+                None,
+                Some(identity.clone()),
+            )
+            .expect("reserve action and thread target");
+        assert_eq!(record.id(), 1);
+        assert_eq!(record.target_object(), Some(2));
+        assert_eq!(state.threads()[0].identity(), &identity);
+        assert_eq!(state.threads()[0].object(), 2);
+
+        state.rollback(initial);
+        assert!(state.threads().is_empty());
+        let replay = state
+            .set_catalog_open_action(
+                action,
+                action.fingerprint(|_| test_identity(17)),
+                None,
+                None,
+                Some(identity),
+            )
+            .expect("replay action and thread reservation");
+        assert_eq!(replay, record);
     }
 
     #[test]

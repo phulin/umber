@@ -3696,6 +3696,21 @@ impl Universe {
         destination_identity: Option<crate::PdfDestinationIdentity>,
         structure_identity: Option<crate::PdfDestinationIdentity>,
     ) -> Result<crate::PdfActionRecord, PdfObjectCapacityError> {
+        self.set_pdf_catalog_open_action_with_targets(
+            spec,
+            destination_identity,
+            structure_identity,
+            None,
+        )
+    }
+
+    pub fn set_pdf_catalog_open_action_with_targets(
+        &mut self,
+        spec: crate::PdfActionSpec,
+        destination_identity: Option<crate::PdfDestinationIdentity>,
+        structure_identity: Option<crate::PdfDestinationIdentity>,
+        thread_identity: Option<crate::PdfDestinationIdentity>,
+    ) -> Result<crate::PdfActionRecord, PdfObjectCapacityError> {
         let fingerprint =
             spec.fingerprint(|tokens| self.stores.token_list_semantic_fragment(tokens));
         self.pdf.set_catalog_open_action(
@@ -3703,6 +3718,7 @@ impl Universe {
             fingerprint,
             destination_identity,
             structure_identity,
+            thread_identity,
         )
     }
 
