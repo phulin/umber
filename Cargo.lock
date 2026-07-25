@@ -673,10 +673,12 @@ dependencies = [
  "anyhow",
  "corpus-manifest",
  "refexec",
+ "serde_json",
  "sha2",
  "similar",
  "tempfile",
  "test-support",
+ "tex-oracle",
  "tex-out",
 ]
 

@@ -17,10 +17,12 @@ bench = false
 anyhow.workspace = true
 corpus-manifest = { path = "../../crates/corpus-manifest" }
 refexec = { path = "../refexec", optional = true }
+serde_json.workspace = true
 sha2.workspace = true
 similar.workspace = true
 tempfile.workspace = true
 test-support = { path = "../../crates/test-support" }
+tex-oracle = { path = "../../crates/tex-oracle" }
 tex-out = { path = "../../crates/tex-out" }
 
 [dev-dependencies]

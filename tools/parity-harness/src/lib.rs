@@ -1,5 +1,11 @@
 #![allow(clippy::disallowed_methods)] // Host-side parity runner and triage writer.
 
+mod trip_triage;
+
+pub use trip_triage::{
+    TripTriageChannels, TripTriageInput, TripTriageSource, write_trip_triage_artifact,
+};
+
 use std::fmt::Write as _;
 use std::fs;
 use std::path::{Path, PathBuf};

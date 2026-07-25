@@ -2,7 +2,12 @@ use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use parity_harness::{compare_dvi_files, run_named_fixture_document};
+use parity_harness::{
+    TripTriageChannels, TripTriageInput, TripTriageSource, compare_dvi_files,
+    run_named_fixture_document, write_trip_triage_artifact,
+};
+use sha2::{Digest, Sha256};
+use test_support::dvi::normalized_dvi_for_comparison;
 use tex_exec::{ExecutionContext, FontResolver};
 use tex_expand::InputResolver;
 use tex_lex::{InputStack, WorldInput};
@@ -311,6 +316,41 @@ fn run_two_phase_fixture(source_name: &str, local_name: &str, fixture_name: &str
     fs::create_dir_all(actual.parent().expect("artifact parent"))
         .expect("create conformance artifact directory");
     fs::write(&actual, dvi).expect("write conformance artifact");
+    let expected_dvi = fs::read(&fixture).expect("read conformance DVI oracle");
+    let actual_dvi = fs::read(&actual).expect("read conformance DVI artifact");
+    let expected_normalized =
+        normalized_dvi_for_comparison(&expected_dvi).expect("normalize conformance DVI oracle");
+    let expected_name = format!("tests/corpus/e2e/{fixture_name}.expected.dvi");
+    let expected_identity = format!("sha256:{:x}", Sha256::digest(&expected_normalized));
+    let actual_identity = format!("sha256:{:x}", Sha256::digest(&format));
+    write_trip_triage_artifact(
+        &target_dir(&root).join("conformance-triage"),
+        TripTriageInput {
+            label: fixture_name,
+            phase: "format-loaded",
+            expected_source: TripTriageSource {
+                name: &expected_name,
+                identity: &expected_identity,
+            },
+            actual_source: TripTriageSource {
+                name: "umber in-process format-loaded run",
+                identity: &actual_identity,
+            },
+            expected: TripTriageChannels {
+                command_events: None,
+                transcript: b"",
+                log: b"",
+                dvi: &expected_dvi,
+            },
+            actual: TripTriageChannels {
+                command_events: None,
+                transcript: b"",
+                log: b"",
+                dvi: &actual_dvi,
+            },
+        },
+    )
+    .expect("write bounded TRIP triage artifact");
     compare_dvi_files(
         &fixture,
         &actual,

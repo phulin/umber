@@ -114,6 +114,31 @@ Umber's final-DVI oracle normalizes only the preamble comment and otherwise
 requires byte identity. Any mismatch writes byte, page, opcode, and
 disassembly context under `target/conformance-triage/trip/`.
 
+## Bounded mismatch triage
+
+TRIP-specific mismatch reporting additionally writes
+`target/conformance-triage/<trip|etrip>/trip-triage-v1.txt`. The report is a
+deterministic, line-oriented schema `umber.trip-triage.v1` artifact, capped at
+8 KiB. It records the phase, both source names and content identities, and
+SHA-256 identities for canonical command events, terminal transcript, log, and
+preamble-comment-normalized DVI. It never copies an output channel, an event
+stream, or an unbounded log into the artifact.
+
+Channels are compared in semantic diagnostic order: canonical schema-v1
+command events (including manifest/header identity), transcript, log, then
+normalized DVI. `earliest.channel`, `earliest.position`,
+`earliest.expected`, and `earliest.actual` describe only the first difference
+in that order. Event context is a serialized `NormalizedEvent`; textual and
+DVI context is escaped and bounded, and EOF is explicit. This makes a report
+reproducible from the same comparison inputs while preserving the distinction
+between a command-semantic failure and later output evidence.
+
+The in-process two-phase TRIP gate currently supplies its pinned DVI fixture
+and loaded-format identities; external/profile harnesses can additionally
+supply the canonical event, transcript, and log channels through the same
+writer. A successful comparison removes any stale TRIP-specific artifact and
+emits no new triage output.
+
 ## Umber format images
 
 `umber run INPUT --format-out NAME.fmt` writes a format when INPUT terminates
