@@ -299,6 +299,13 @@ impl CommandContext<'_> {
         self.universe.current_font()
     }
 
+    /// Reads one current-font parameter through the command boundary.
+    #[must_use]
+    pub fn current_font_parameter(&self, number: u32) -> crate::scaled::Scaled {
+        self.universe
+            .font_parameter(self.universe.current_font(), number)
+    }
+
     /// Reads one font-family selector through the command boundary.
     #[must_use]
     pub fn math_family_font(&self, size: MathFontSize, family: u8) -> FontId {

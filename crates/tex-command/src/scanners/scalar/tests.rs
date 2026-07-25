@@ -325,6 +325,73 @@ fn dimension_scanner_accepts_an_internal_dimension_as_its_unit() {
 }
 
 #[test]
+fn dimension_scanner_recognizes_current_font_em_and_ex_units() {
+    use tex_state::font::NULL_FONT;
+    use tex_state::scaled::Scaled;
+
+    let mut command = CommandState::default();
+    push(&mut command, "1em 1ex 42".chars().map(char_token).collect());
+    let mut runtime = CommandRuntime::default();
+    let mut universe = Universe::new();
+    universe
+        .set_font_dimen(NULL_FONT, 6, Scaled::from_raw(10 * Scaled::UNITY))
+        .expect("nullfont has a quad parameter");
+    universe
+        .set_font_dimen(NULL_FONT, 5, Scaled::from_raw(4 * Scaled::UNITY))
+        .expect("nullfont has an x-height parameter");
+    let mut capabilities = CommandHostCapabilities::default();
+    let mut recorder = Recorder::default();
+    let mut processor = CommandProcessor::new(
+        &mut command,
+        &mut runtime,
+        universe.command_context(),
+        CommandHostContext::new(&mut capabilities),
+    )
+    .with_observer(&mut recorder);
+
+    assert_eq!(
+        processor
+            .scan_dimension()
+            .expect("em dimension scans")
+            .value
+            .raw(),
+        10 * Scaled::UNITY
+    );
+    assert_eq!(
+        processor
+            .scan_dimension()
+            .expect("ex dimension scans")
+            .value
+            .raw(),
+        4 * Scaled::UNITY
+    );
+    assert_eq!(
+        processor
+            .scan_integer()
+            .expect("post-unit token remains available")
+            .value,
+        42
+    );
+    let scanned_dimensions = recorder
+        .0
+        .iter()
+        .filter_map(|observation| match observation {
+            CommandObservation::Scanner(record) if record.kind == "dimension" => {
+                Some(record.value.clone())
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        scanned_dimensions,
+        vec![
+            (10 * Scaled::UNITY).to_string(),
+            (4 * Scaled::UNITY).to_string(),
+        ]
+    );
+}
+
+#[test]
 fn internal_values_and_failed_keywords_replay_canonically() {
     let mut command = CommandState::default();
     let mut runtime = CommandRuntime::default();

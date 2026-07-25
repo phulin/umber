@@ -716,8 +716,16 @@ impl CommandProcessor<'_> {
         if let Some(unit) = self.probe_dimension_unit(mu)? {
             return Ok(DimensionUnit::Internal(unit));
         }
-        for keyword in ["em", "ex"] {
-            let _ = self.scan_keyword(keyword)?;
+        // §455 recognizes `em` and `ex` before the physical units.  They are
+        // current-font parameters 6 (quad) and 5 (x-height), respectively;
+        // keep the successful keyword result so the shared internal-unit
+        // fixed-point path scales both whole and fractional dimensions.
+        for (keyword, parameter) in [("em", 6), ("ex", 5)] {
+            if self.scan_keyword(keyword)?.value {
+                return Ok(DimensionUnit::Internal(
+                    self.state.current_font_parameter(parameter),
+                ));
+            }
         }
         let _true_dimension = self.scan_keyword("true")?.value;
         if mu && self.scan_keyword("mu")?.value {
