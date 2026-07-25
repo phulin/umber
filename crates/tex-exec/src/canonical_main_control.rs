@@ -1891,6 +1891,13 @@ enum ScannedStep {
     Kern {
         amount: Scaled,
     },
+    /// TeX82 §1102's `any_mode(break_penalty): append_penalty` -- `\penalty`
+    /// is legal in every mode (vertical, horizontal, and math alike) with no
+    /// mode switch of its own, unlike `\hskip`/`\kern`'s vertical-mode
+    /// paragraph-start recovery above.
+    Penalty {
+        amount: i32,
+    },
     CharacterCode {
         value: i32,
     },
@@ -3118,6 +3125,14 @@ fn scan_command(
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Kern) => {
             let amount = processor.scan_dimension().map_err(command_error)?.value;
             Ok(ScannedStep::Kern { amount })
+        }
+        // TeX82 §1102's `any_mode(break_penalty): append_penalty` (§1103:
+        // `scan_int; tail_append(new_penalty(cur_val))`). `\penalty` never
+        // switches mode -- it appends directly to whatever list (main
+        // vertical, horizontal, restricted horizontal, or math) is current.
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Penalty) => {
+            let amount = processor.scan_integer().map_err(command_error)?.value;
+            Ok(ScannedStep::Penalty { amount })
         }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Char) => {
             let value = processor.scan_integer().map_err(command_error)?.value;
@@ -5367,6 +5382,18 @@ fn apply_scanned_step(
             });
             Ok(ReplayStep::Continue)
         }
+        ScannedStep::Penalty { amount } => {
+            // TeX82 §1103's `append_penalty`: `tail_append(new_penalty(cur_val))`
+            // in whichever list is current, then `if mode=vmode then
+            // build_page` -- i.e. only in *outer* vertical mode, not internal
+            // vertical mode, matching `append_vertical_contribution`'s own
+            // `is_outer_vertical` gate and (unlike `\vskip`'s `append_glue`,
+            // §1057) always followed by a page-builder call in that case.
+            crate::assignments::flush_pending_hchars(modes, stores)?;
+            crate::vertical::append_vertical_contribution(modes, stores, Node::Penalty(amount));
+            crate::vertical::build_page_if_outer_vertical(modes, stores)?;
+            Ok(ReplayStep::Continue)
+        }
         ScannedStep::CharacterCode { value } => {
             let ch = u32::try_from(value).ok().and_then(char::from_u32).ok_or(
                 ExecError::InvalidCode {
@@ -5428,7 +5455,7 @@ fn apply_scanned_step(
             // mode is already `Vertical` or `InternalVertical`. §1057 also
             // notes `append_glue` deliberately never calls `build_page`
             // itself ("it is used in at least one place where that would be
-            // a mistake"), unlike `append_penalty` (§1099); no page build
+            // a mistake"), unlike `append_penalty` (§1103); no page build
             // follows here.
             let spec = stores.intern_glue(value);
             crate::vertical::append_node_to_current_list(
