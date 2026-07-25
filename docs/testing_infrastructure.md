@@ -406,6 +406,41 @@ command exercises the bundle writer with synthetic DVI.
 e2e/gentle` verify the manifest-pinned normalized reference hash before
 rewriting either fixture.
 
+## Canonical Divergence Probe
+
+`crates/umber/examples/canonical_probe.rs` is a standalone diagnostic entry
+point for the `umber2-johp` command-core migration, separate from the
+DVI-parity Cargo tests above and from the `umber2-johp.28` production
+migration itself. It stages `third_party/corpus/{plain,<source>}.tex`,
+`third_party/hyphen/hyphen.tex`, and the plain-format CM/`manfnt` TFMs into an
+in-memory `World` (reusing the same `parity_harness::CORPUS_TFMS`/`locate_tfm`
+resolution as the harness above), then drives them directly through
+`umber::CanonicalEngineSession` -- no `tex-lex::InputStack`, no legacy
+`Executor` -- so it exercises exactly the same canonical command-core path the
+migration is converging:
+
+```bash
+cargo run --profile test -p umber --example canonical_probe -- gentle
+cargo run --profile test -p umber --example canonical_probe -- story
+```
+
+Use `--profile test` (matching `cargo run-dev`'s alias) rather than the plain
+`dev` profile: Gentle and Story are large documents, and an unoptimized
+`opt-level = 0` debug build of the still-unmigrated canonical path can take
+several minutes where the `test` profile's `opt-level = 1` finishes in
+seconds.
+
+The probe reports the first divergence it hits: the live execution mode, the
+`ExecError`/`CanonicalSessionError` rendered with provenance-resolved TeX
+source context (`ExecError::format_with_provenance`), or, for a Rust panic,
+lets the default panic hook report the Rust-side `file:line` origin (rerun
+with `RUST_BACKTRACE=1` for a full backtrace). It intentionally does not run
+under `cargo test`: the command core is mid-migration and this probe is
+expected to fail until each earlier divergence in the `umber2-johp` chain is
+fixed. See Beads issue `umber2-johp.58` for the currently tracked earliest
+Gentle divergence it reproduces, and `docs/tex_command_core.md` for the
+canonical command-core architecture it exercises.
+
 ## TRIP Corpus
 
 The original Knuth TeX82 TRIP and e-TeX V2 e-TRIP workloads are end-to-end DVI

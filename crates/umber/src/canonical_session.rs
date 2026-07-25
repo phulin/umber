@@ -216,6 +216,16 @@ impl<'a> CanonicalEngineSession<'a> {
         self.stores
     }
 
+    /// Reports the live execution mode at the top of the mode nest.
+    ///
+    /// This is diagnostic-only: it exists so a host driving the retained
+    /// session (for example the `canonical_probe` example) can attribute a
+    /// suspension or error to the mode active when it occurred.
+    #[must_use]
+    pub fn current_mode(&self) -> tex_exec::Mode {
+        self.control.current_mode()
+    }
+
     /// Bounds only consecutive host declines for one suspension epoch.
     pub fn set_no_progress_limit(&mut self, limit: u8) {
         self.no_progress_limit = limit.max(1);

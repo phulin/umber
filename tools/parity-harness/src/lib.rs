@@ -28,7 +28,12 @@ use tex_out::dvi::disasm::DviFile;
 const TRACE_PREFIX: &str =
     "\\tracingoutput=1 \\tracingonline=0 \\showboxbreadth=-1 \\showboxdepth=-1\n";
 const JOB_NAME: &str = "parity-job.tex";
-const CORPUS_TFMS: &[&str] = &[
+
+/// TFM font metrics loaded by `plain.tex`'s preload block. Shared by the
+/// staged parity job directory and by diagnostic probes (for example the
+/// `umber` crate's `canonical_probe` example) that need to seed a plain-TeX
+/// corpus run without duplicating this list.
+pub const CORPUS_TFMS: &[&str] = &[
     "cmbsy10", "cmbx10", "cmbx5", "cmbx6", "cmbx7", "cmbx8", "cmbx9", "cmcsc10", "cmdunh10",
     "cmex10", "cmmi10", "cmmi5", "cmmi6", "cmmi7", "cmmi8", "cmmi9", "cmmib10", "cmr10", "cmr5",
     "cmr6", "cmr7", "cmr8", "cmr9", "cmsl10", "cmsl8", "cmsl9", "cmsltt10", "cmss10", "cmssbx10",
@@ -753,7 +758,13 @@ fn copy_corpus_tfms(repo_root: &Path, dest: &Path, allow_system_lookup: bool) ->
     Ok(())
 }
 
-fn locate_tfm(repo_root: &Path, name: &str, allow_system_lookup: bool) -> Result<Option<PathBuf>> {
+/// Resolves one `CORPUS_TFMS` entry to an on-disk TFM path: a committed
+/// fixture, the gitignored corpus cache, then (when permitted) `kpsewhich`.
+pub fn locate_tfm(
+    repo_root: &Path,
+    name: &str,
+    allow_system_lookup: bool,
+) -> Result<Option<PathBuf>> {
     let local = repo_root.join(format!("crates/tex-fonts/tests/fixtures/cm/{name}.tfm"));
     if local.exists() {
         return Ok(Some(local));

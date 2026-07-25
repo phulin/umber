@@ -19,6 +19,7 @@ Use this crate when behavior is about driving the engine, presenting CLI output,
 
 - `AGENTS.md`: crate-local guidance for CLI-driver ownership, boundaries, validation, and this file map.
 - `Cargo.toml`: package metadata, feature flags, workspace lint inheritance, and engine/test dependencies.
+- `src/canonical_session.rs`: `CanonicalEngineSession`, the retained host-neutral entry point for canonical `tex-command`/`CanonicalMainControl` execution; typed resource-suspension fulfillment, checkpoint publication, and the `CanonicalResourceHost` contract used by real drivers and by `examples/canonical_probe.rs`.
 - `src/expand_dump.rs`: implementation of the `expand-dump` CLI command through the shared engine session and dump primitive setup.
 - `src/format_cache_cli.rs`: pinned LaTeX/pdfLaTeX generated-format cache identity, validated restore, and atomic publication CLI adapter.
 - `src/bib.rs`: native host-file staging, resource retry, and detached artifact publication for the in-process `bib` command.
@@ -69,6 +70,7 @@ Use this crate when behavior is about driving the engine, presenting CLI output,
   program, cmap, MATH, license, and retained-object inventory audit.
 - `tests/it/pdf_parity.rs`: hermetic pinned-pdfTeX normalized structure, exact Umber byte, and Poppler raster-attestation fixture gate.
 - `tests/it/replay_identity.rs`: property and regression tests that generated primitive programs rollback to identical state.
+- `examples/canonical_probe.rs`: reusable direct canonical Gentle/Story e2e divergence probe (`umber2-johp.57`). Stages `third_party/corpus/{plain,<source>}.tex`, `third_party/hyphen/hyphen.tex`, and the plain-format CM/`manfnt` TFMs (via `parity_harness::{CORPUS_TFMS, locate_tfm}`) into an in-memory `World`, drives them through `CanonicalEngineSession`, and on the first `ExecError`/panic reports the live mode, provenance-resolved TeX source context, and (for panics) lets the default panic hook report the Rust `file:line` origin. Run with `cargo run -p umber --example canonical_probe -- gentle` (or `story`); not part of `cargo test`. See `docs/tex_command_core.md` and `umber2-johp.58` for the currently tracked divergence it reproduces.
 
 ## Validation
 
