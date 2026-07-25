@@ -5,7 +5,7 @@ use tex_command::{
     CommandObserver, InputReason, InputTransition, ObservedToken, RecoveryKind,
     RegisteredSourceKind, SourceRegistration, TracedTokenList,
 };
-use tex_state::env::banks::{GlueParam, IntParam};
+use tex_state::env::banks::{DimenParam, GlueParam, IntParam};
 use tex_state::meaning::{ExpandablePrimitive, Meaning};
 use tex_state::scaled::Scaled;
 use tex_state::{EffectRecord, StreamSlot, Universe};
@@ -2424,4 +2424,75 @@ fn missing_canonical_input_rolls_back_the_whole_step_and_retries_fresh() {
     assert_eq!(failed_universe.count(3), fresh_universe.count(3));
     assert_eq!(failed.current_mode(), fresh.current_mode());
     assert_eq!(failed_observations.0, fresh_observations.0);
+}
+
+#[test]
+fn canonical_assignments_apply_prefix_globaldefs_registers_and_arithmetic() {
+    let mut universe = Universe::new();
+    let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+    register_source(
+        &mut control,
+        br"{\count0=9}\globaldefs=1{\count1=4}\globaldefs=-1{\global\count2=5}\globaldefs=0 \count3=7\advance\count3 by 5\multiply\count3 3\divide\count3 by 2 \dimen4=2pt\advance\dimen4 by 1pt \hsize=4pt\advance\hsize by 2pt \skip5=1pt\advance\skip5 by 2pt \muskip6=1mu\advance\muskip6 by 2mu \end",
+    );
+    loop {
+        if matches!(
+            control.step(&mut universe).expect("canonical assignment"),
+            MainControlStep::End
+        ) {
+            break;
+        }
+    }
+    assert_eq!(universe.count(0), 0, "local count restores");
+    assert_eq!(universe.count(1), 4, "positive globaldefs forces global");
+    assert_eq!(
+        universe.count(2),
+        0,
+        "negative globaldefs suppresses global prefix"
+    );
+    assert_eq!(universe.count(3), 18);
+    assert_eq!(universe.dimen(4), Scaled::from_raw(3 * Scaled::UNITY));
+    assert_eq!(
+        universe.dimen_param(DimenParam::H_SIZE),
+        Scaled::from_raw(6 * Scaled::UNITY)
+    );
+    assert_eq!(
+        universe.glue(universe.skip(5)).width,
+        Scaled::from_raw(3 * Scaled::UNITY)
+    );
+    assert_eq!(
+        universe.glue(universe.muskip(6)).width,
+        Scaled::from_raw(3 * Scaled::UNITY)
+    );
+}
+
+#[test]
+fn canonical_assignments_cover_code_tables_and_reject_macro_prefixes() {
+    let mut universe = Universe::new();
+    let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+    register_source(
+        &mut control,
+        br#"\catcode`@=11\lccode`A=`a\uccode`a=`A\sfcode`A=1000\mathcode`x="7131\delcode`(=123\end"#,
+    );
+    loop {
+        if matches!(
+            control.step(&mut universe).expect("code table assignment"),
+            MainControlStep::End
+        ) {
+            break;
+        }
+    }
+    assert_eq!(universe.catcode('@'), tex_state::token::Catcode::Letter);
+    assert_eq!(universe.lccode('A'), 'a' as u32);
+    assert_eq!(universe.uccode('a'), 'A' as u32);
+    assert_eq!(universe.sfcode('A'), 1000);
+    assert_eq!(universe.mathcode('x'), 0x7131);
+    assert_eq!(universe.delcode('('), 123);
+
+    let mut invalid_universe = Universe::new();
+    let mut invalid = CanonicalMainControl::tex82_initex(&mut invalid_universe);
+    register_source(&mut invalid, br"\long\count0=1");
+    assert!(matches!(
+        invalid.step(&mut invalid_universe),
+        Err(ExecError::PrefixWithNonDefinition { .. })
+    ));
 }

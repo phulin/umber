@@ -477,11 +477,16 @@ executor remains an independent migration surface and may still depend on
 adapter a second input path. The `tex-exec` architecture test enforces this
 source-level boundary, while replay tests exercise typed scanner rollback and
 registered nested input. Canonical INITEX replay installs the static TeX82
-primitive registries before source registration. Integer, dimension, and glue
-assignments such as `\year`, `\dimen`, and `\skip` scan their operands through
-`CommandProcessor`. Replay retains only the completed typed value, applies the
-executor-side `Universe` mutation after the processor borrow ends, then
-publishes the committed mutation observation.
+primitive registries before source registration. Prefix collection, bounded
+classical-register recovery, `\globaldefs` resolution, integer/dimension/glue
+assignments, and `\advance`/`\multiply`/`\divide` all scan their selectors,
+optional equals signs, keywords, and operands through `CommandProcessor`.
+This includes ordinary and mu glue: the scalar scanner recognizes `mu` only
+for a mu-glue request. Replay retains only a completed typed selector and
+value, resolves the effective global bit exactly once at the `Universe`
+mutation boundary, then publishes the committed mutation observation. Code
+tables (`\catcode`, case, space-factor, math, and delimiter codes) follow the
+same boundary and validate their completed values before mutation.
 
 Likewise, replay publishes a typed `\halign` or `\valign` begin observation
 immediately after applying its executor-selected alignment transition. Command

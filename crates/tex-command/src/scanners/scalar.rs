@@ -51,6 +51,7 @@ pub enum InternalValue {
 enum DimensionUnit {
     Physical(PhysicalUnit),
     Infinite(Order),
+    Mu,
 }
 
 impl CommandProcessor<'_> {
@@ -298,12 +299,13 @@ impl CommandProcessor<'_> {
 
     /// Scans a dimension or an internal dimension quantity.
     pub fn scan_dimension(&mut self) -> Result<ScannedScalar<Scaled>, CommandError> {
-        Ok(self.scan_dimension_with_order(false)?.0)
+        Ok(self.scan_dimension_with_order(false, false)?.0)
     }
 
     fn scan_dimension_with_order(
         &mut self,
         allow_infinite: bool,
+        mu: bool,
     ) -> Result<(ScannedScalar<Scaled>, Order), CommandError> {
         // TeX82 §455's signed lookahead normally backs up its first non-sign
         // token before the integer scanner owns it. An internal dimension is
@@ -385,7 +387,7 @@ impl CommandProcessor<'_> {
                         let _ = self.get_next()?;
                     }
                     let (value, order) =
-                        self.scan_decimal_dimension(integer, decimal, allow_infinite)?;
+                        self.scan_decimal_dimension(integer, decimal, allow_infinite, mu)?;
                     (value, order, false)
                 }
                 _ => {
@@ -441,7 +443,7 @@ impl CommandProcessor<'_> {
                 ),
                 Some(_) | None => {
                     self.back_input(command)?;
-                    let width = self.scan_dimension()?;
+                    let width = self.scan_dimension_with_order(false, mu)?.0;
                     (
                         GlueSpec {
                             width: width.value,
@@ -454,7 +456,7 @@ impl CommandProcessor<'_> {
                 }
             },
             None => {
-                let width = self.scan_dimension()?;
+                let width = self.scan_dimension_with_order(false, mu)?.0;
                 (
                     GlueSpec {
                         width: width.value,
@@ -468,19 +470,18 @@ impl CommandProcessor<'_> {
         };
         if !internal_glue {
             if self.scan_keyword("plus")?.value {
-                let (stretch, order) = self.scan_dimension_with_order(true)?;
+                let (stretch, order) = self.scan_dimension_with_order(true, mu)?;
                 value.stretch = stretch.value;
                 recovery = stretch.recovery;
                 value.stretch_order = order;
             }
             if self.scan_keyword("minus")?.value {
-                let (shrink, order) = self.scan_dimension_with_order(true)?;
+                let (shrink, order) = self.scan_dimension_with_order(true, mu)?;
                 value.shrink = shrink.value;
                 recovery = shrink.recovery;
                 value.shrink_order = order;
             }
         }
-        let _ = mu;
         let scanned = ScannedScalar {
             value,
             recovery,
@@ -602,6 +603,7 @@ impl CommandProcessor<'_> {
         integer: i32,
         decimal: bool,
         allow_infinite: bool,
+        mu: bool,
     ) -> Result<(Scaled, Order), CommandError> {
         let mut fraction = String::new();
         if decimal {
@@ -637,7 +639,7 @@ impl CommandProcessor<'_> {
             }
             self.scan_infinite_unit_from_fil()?
         } else {
-            self.scan_dimension_unit(allow_infinite)?
+            self.scan_dimension_unit(allow_infinite, mu)?
         };
         let digits = fraction.bytes().map(|byte| byte - b'0').collect::<Vec<_>>();
         let (unit, order) = match unit {
@@ -645,13 +647,25 @@ impl CommandProcessor<'_> {
             // TeX stores an infinite glue component's finite coefficient as a
             // scaled value, while its order is carried separately.
             DimensionUnit::Infinite(order) => (PhysicalUnit::Pt, order),
+            DimensionUnit::Mu => (PhysicalUnit::Pt, Order::Normal),
         };
-        scaled_from_decimal_parts(integer, round_decimal_fraction(&digits), unit)
+        let value = if matches!(unit, PhysicalUnit::Pt) && mu {
+            // A mu unit has the same scaled representation as a point; its
+            // distinctness belongs to the surrounding glue family.
+            scaled_from_decimal_parts(integer, round_decimal_fraction(&digits), PhysicalUnit::Pt)
+        } else {
+            scaled_from_decimal_parts(integer, round_decimal_fraction(&digits), unit)
+        };
+        value
             .map(|value| (value, order))
             .map_err(|_| CommandError::InputInvariant)
     }
 
-    fn scan_dimension_unit(&mut self, allow_infinite: bool) -> Result<DimensionUnit, CommandError> {
+    fn scan_dimension_unit(
+        &mut self,
+        allow_infinite: bool,
+        mu: bool,
+    ) -> Result<DimensionUnit, CommandError> {
         // TeX82 §455 first looks for an internal dimension, then probes `em`
         // and `ex`, before accepting `true`, `pt`, or a physical unit.  Each
         // unsuccessful probe owns one `back_input` hand-off.  In particular,
@@ -666,6 +680,9 @@ impl CommandProcessor<'_> {
             let _ = self.scan_keyword(keyword)?;
         }
         let _true_dimension = self.scan_keyword("true")?.value;
+        if mu && self.scan_keyword("mu")?.value {
+            return Ok(DimensionUnit::Mu);
+        }
         if self.scan_keyword("pt")?.value {
             return Ok(DimensionUnit::Physical(PhysicalUnit::Pt));
         }
@@ -917,7 +934,12 @@ impl CommandProcessor<'_> {
     /// `scan_something_internal` uses this bounded scan for `\count`,
     /// `\dimen`, `\skip`, and `\muskip`; an out-of-range value recovers as
     /// register zero rather than truncating or addressing an extended bank.
-    pub(crate) fn scan_eight_bit_register_index(&mut self) -> Result<u16, CommandError> {
+    /// Scans one bounded classical register selector for an assignment.
+    ///
+    /// The recovery is part of TeX82's `scan_eight_bit_int`: values outside
+    /// the classical range select register zero after the integer scanner has
+    /// completed its normal command-owned delivery and backup lifecycle.
+    pub fn scan_eight_bit_register_index(&mut self) -> Result<u16, CommandError> {
         let value = self.scan_integer()?.value;
         Ok(u16::try_from(value)
             .ok()

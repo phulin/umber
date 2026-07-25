@@ -16,8 +16,9 @@ use tex_command::{
 use tex_command::{
     CommandObservation, CommandObserver, EffectRecord, MutationRecord, ObservedToken,
 };
-use tex_state::env::banks::{GlueParam, IntParam, TokParam};
-use tex_state::glue::GlueSpec;
+use tex_state::code_tables::{DelCode, LcCode, MathCode, SfCode, UcCode};
+use tex_state::env::banks::{DimenParam, GlueParam, IntParam, TokParam};
+use tex_state::glue::{GlueSpec, Order};
 use tex_state::interner::Symbol;
 use tex_state::macro_store::{MacroDefinitionProvenance, MacroMeaning};
 use tex_state::meaning::{Meaning, MeaningFlags, UnexpandablePrimitive};
@@ -861,6 +862,11 @@ enum ScannedStep {
         value: GlueSpec,
         global: bool,
     },
+    Muskip {
+        index: u16,
+        value: GlueSpec,
+        global: bool,
+    },
     HorizontalSkip {
         value: GlueSpec,
     },
@@ -890,6 +896,11 @@ enum ScannedStep {
         value: i32,
         global: bool,
     },
+    DimenParam {
+        index: u16,
+        value: Scaled,
+        global: bool,
+    },
     TokParam {
         index: u16,
         tokens: TracedTokenList,
@@ -904,6 +915,12 @@ enum ScannedStep {
         primitive: UnexpandablePrimitive,
         character: char,
         value: i32,
+        global: bool,
+    },
+    Arithmetic {
+        primitive: UnexpandablePrimitive,
+        target: ArithmeticTarget,
+        operand: ArithmeticOperand,
         global: bool,
     },
     MacroDefinition {
@@ -1010,6 +1027,25 @@ enum ScannedStep {
     },
     Accent(ScannedAccent),
     Discretionary(ScannedDiscretionary),
+}
+
+/// A completed assignable quantity selector.  It is intentionally a semantic
+/// selector, never a delivered command or a raw input handle.
+#[derive(Clone, Copy, Debug)]
+enum ArithmeticTarget {
+    IntegerRegister(u16),
+    DimensionRegister(u16),
+    GlueRegister { index: u16, mu: bool },
+    IntegerParameter(u16),
+    DimensionParameter(u16),
+    GlueParameter { index: u16, mu: bool },
+}
+
+#[derive(Clone, Copy, Debug)]
+enum ArithmeticOperand {
+    Integer(i32),
+    Dimension(Scaled),
+    Glue(GlueSpec),
 }
 
 /// Selects the one command-owned scanner that may consume input before
@@ -1343,6 +1379,22 @@ fn scan_command(
     output_dead_cycles: &mut i32,
     max_dead_cycles: i32,
 ) -> Result<ScannedStep, ExecError> {
+    // TeX82 permits \long/\outer only on macro definitions.  Keep this
+    // check beside prefix collection so every ordinary assignment family has
+    // the same legality rule and cannot silently discard a prefix.
+    if flags != MeaningFlags::EMPTY
+        && !matches!(
+            command.meaning(),
+            Meaning::UnexpandablePrimitive(
+                UnexpandablePrimitive::Def
+                    | UnexpandablePrimitive::Edef
+                    | UnexpandablePrimitive::Gdef
+                    | UnexpandablePrimitive::Xdef
+            )
+        )
+    {
+        return Err(ExecError::PrefixWithNonDefinition { origin: None });
+    }
     if boxes.output_routine_opening_pending
         && matches!(
             command.meaning(),
@@ -1505,11 +1557,11 @@ fn scan_command(
             }
         }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Count) => {
-            let index = processor.scan_integer().map_err(command_error)?.value;
+            let index = processor
+                .scan_eight_bit_register_index()
+                .map_err(command_error)?;
             let _ = processor.scan_optional_equals().map_err(command_error)?;
             let value = processor.scan_integer().map_err(command_error)?.value;
-            let index =
-                u16::try_from(index).map_err(|_| ExecError::RegisterNumberOutOfRange(index))?;
             Ok(ScannedStep::Count {
                 index,
                 value,
@@ -1517,11 +1569,11 @@ fn scan_command(
             })
         }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Dimen) => {
-            let index = processor.scan_integer().map_err(command_error)?.value;
+            let index = processor
+                .scan_eight_bit_register_index()
+                .map_err(command_error)?;
             let _ = processor.scan_optional_equals().map_err(command_error)?;
             let value = processor.scan_dimension().map_err(command_error)?.value;
-            let index =
-                u16::try_from(index).map_err(|_| ExecError::RegisterNumberOutOfRange(index))?;
             Ok(ScannedStep::Dimen {
                 index,
                 value,
@@ -1529,12 +1581,24 @@ fn scan_command(
             })
         }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Skip) => {
-            let index = processor.scan_integer().map_err(command_error)?.value;
+            let index = processor
+                .scan_eight_bit_register_index()
+                .map_err(command_error)?;
             let _ = processor.scan_optional_equals().map_err(command_error)?;
             let value = processor.scan_glue(false).map_err(command_error)?.value;
-            let index =
-                u16::try_from(index).map_err(|_| ExecError::RegisterNumberOutOfRange(index))?;
             Ok(ScannedStep::Skip {
+                index,
+                value,
+                global,
+            })
+        }
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Muskip) => {
+            let index = processor
+                .scan_eight_bit_register_index()
+                .map_err(command_error)?;
+            let _ = processor.scan_optional_equals().map_err(command_error)?;
+            let value = processor.scan_glue(true).map_err(command_error)?.value;
+            Ok(ScannedStep::Muskip {
                 index,
                 value,
                 global,
@@ -1609,6 +1673,15 @@ fn scan_command(
                 global,
             })
         }
+        Meaning::DimenParam(index) => {
+            let _ = processor.scan_optional_equals().map_err(command_error)?;
+            let value = processor.scan_dimension().map_err(command_error)?.value;
+            Ok(ScannedStep::DimenParam {
+                index,
+                value,
+                global,
+            })
+        }
         Meaning::TokParam(index) => {
             let tokens = processor
                 .scan_token_parameter_assignment()
@@ -1640,7 +1713,12 @@ fn scan_command(
             })
         }
         Meaning::UnexpandablePrimitive(
-            primitive @ (UnexpandablePrimitive::CatCode | UnexpandablePrimitive::LcCode),
+            primitive @ (UnexpandablePrimitive::CatCode
+            | UnexpandablePrimitive::LcCode
+            | UnexpandablePrimitive::UcCode
+            | UnexpandablePrimitive::SfCode
+            | UnexpandablePrimitive::MathCode
+            | UnexpandablePrimitive::DelCode),
         ) => {
             let character = processor.scan_integer().map_err(command_error)?.value;
             let _ = processor.scan_optional_equals().map_err(command_error)?;
@@ -1659,6 +1737,11 @@ fn scan_command(
                 global,
             })
         }
+        Meaning::UnexpandablePrimitive(
+            primitive @ (UnexpandablePrimitive::Advance
+            | UnexpandablePrimitive::Multiply
+            | UnexpandablePrimitive::Divide),
+        ) => scan_arithmetic_assignment(processor, primitive, global),
         Meaning::UnexpandablePrimitive(
             primitive @ (UnexpandablePrimitive::Def
             | UnexpandablePrimitive::Edef
@@ -1806,6 +1889,100 @@ fn scan_command(
         }),
         _ => Ok(ScannedStep::Continue),
     }
+}
+
+/// Scans TeX82's `advance`/`multiply`/`divide` operand sequence wholly
+/// through the command processor.  The target's meaning is classified here;
+/// application only sees this completed typed description after the processor
+/// borrow ends.
+fn scan_arithmetic_assignment(
+    processor: &mut CommandProcessor<'_>,
+    primitive: UnexpandablePrimitive,
+    global: bool,
+) -> Result<ScannedStep, ExecError> {
+    let target_command = processor
+        .get_x_token()
+        .map_err(command_error)?
+        .ok_or(ExecError::UnsupportedAssignmentTarget)?;
+    let target = match target_command.meaning() {
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Count) => {
+            ArithmeticTarget::IntegerRegister(
+                processor
+                    .scan_eight_bit_register_index()
+                    .map_err(command_error)?,
+            )
+        }
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Dimen) => {
+            ArithmeticTarget::DimensionRegister(
+                processor
+                    .scan_eight_bit_register_index()
+                    .map_err(command_error)?,
+            )
+        }
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Skip) => {
+            ArithmeticTarget::GlueRegister {
+                index: processor
+                    .scan_eight_bit_register_index()
+                    .map_err(command_error)?,
+                mu: false,
+            }
+        }
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Muskip) => {
+            ArithmeticTarget::GlueRegister {
+                index: processor
+                    .scan_eight_bit_register_index()
+                    .map_err(command_error)?,
+                mu: true,
+            }
+        }
+        Meaning::CountRegister(index) => ArithmeticTarget::IntegerRegister(index),
+        Meaning::DimenRegister(index) => ArithmeticTarget::DimensionRegister(index),
+        Meaning::SkipRegister(index) => ArithmeticTarget::GlueRegister { index, mu: false },
+        Meaning::MuskipRegister(index) => ArithmeticTarget::GlueRegister { index, mu: true },
+        Meaning::IntParam(index) => ArithmeticTarget::IntegerParameter(index),
+        Meaning::DimenParam(index) => ArithmeticTarget::DimensionParameter(index),
+        Meaning::GlueParam(index) => ArithmeticTarget::GlueParameter { index, mu: false },
+        Meaning::MuGlueParam(index) => ArithmeticTarget::GlueParameter { index, mu: true },
+        _ => return Err(ExecError::UnsupportedAssignmentTarget),
+    };
+    let _ = processor.scan_keyword("by").map_err(command_error)?;
+    let operand = match target {
+        ArithmeticTarget::IntegerRegister(_) | ArithmeticTarget::IntegerParameter(_) => {
+            ArithmeticOperand::Integer(processor.scan_integer().map_err(command_error)?.value)
+        }
+        ArithmeticTarget::DimensionRegister(_) | ArithmeticTarget::DimensionParameter(_) => {
+            match primitive {
+                UnexpandablePrimitive::Advance => ArithmeticOperand::Dimension(
+                    processor.scan_dimension().map_err(command_error)?.value,
+                ),
+                UnexpandablePrimitive::Multiply | UnexpandablePrimitive::Divide => {
+                    ArithmeticOperand::Integer(
+                        processor.scan_integer().map_err(command_error)?.value,
+                    )
+                }
+                _ => unreachable!("arithmetic primitive is filtered above"),
+            }
+        }
+        ArithmeticTarget::GlueRegister { mu, .. } | ArithmeticTarget::GlueParameter { mu, .. } => {
+            match primitive {
+                UnexpandablePrimitive::Advance => {
+                    ArithmeticOperand::Glue(processor.scan_glue(mu).map_err(command_error)?.value)
+                }
+                UnexpandablePrimitive::Multiply | UnexpandablePrimitive::Divide => {
+                    ArithmeticOperand::Integer(
+                        processor.scan_integer().map_err(command_error)?.value,
+                    )
+                }
+                _ => unreachable!("arithmetic primitive is filtered above"),
+            }
+        }
+    };
+    Ok(ScannedStep::Arithmetic {
+        primitive,
+        target,
+        operand,
+        global,
+    })
 }
 
 fn replay_text(tokens: &[tex_state::token::Token]) -> String {
@@ -2311,6 +2488,7 @@ fn apply_scanned_step(
             value,
             global,
         } => {
+            let global = assignment_global(global, stores);
             if global {
                 stores.set_count_global(index, value);
             } else {
@@ -2323,6 +2501,7 @@ fn apply_scanned_step(
             value,
             global,
         } => {
+            let global = assignment_global(global, stores);
             if global {
                 stores.set_dimen_global(index, value);
             } else {
@@ -2335,11 +2514,25 @@ fn apply_scanned_step(
             value,
             global,
         } => {
+            let global = assignment_global(global, stores);
             let value = stores.intern_glue(value);
             if global {
                 stores.set_skip_global(index, value);
             } else {
                 stores.set_skip(index, value);
+            }
+            Ok(ReplayStep::Continue)
+        }
+        ScannedStep::Muskip {
+            index,
+            value,
+            global,
+        } => {
+            let value = stores.intern_glue(value);
+            if assignment_global(global, stores) {
+                stores.set_muskip_global(index, value);
+            } else {
+                stores.set_muskip(index, value);
             }
             Ok(ReplayStep::Continue)
         }
@@ -2421,6 +2614,7 @@ fn apply_scanned_step(
             tokens,
             global,
         } => {
+            let global = assignment_global(global, stores);
             if global {
                 stores.set_toks_global(index, tokens.token_list());
             } else {
@@ -2433,6 +2627,7 @@ fn apply_scanned_step(
             value,
             global,
         } => {
+            let global = assignment_global(global, stores);
             let parameter = IntParam::new(index);
             if global {
                 stores.set_int_param_global(parameter, value);
@@ -2441,11 +2636,25 @@ fn apply_scanned_step(
             }
             Ok(ReplayStep::Continue)
         }
+        ScannedStep::DimenParam {
+            index,
+            value,
+            global,
+        } => {
+            let parameter = DimenParam::new(index);
+            if assignment_global(global, stores) {
+                stores.set_dimen_param_global(parameter, value);
+            } else {
+                stores.set_dimen_param(parameter, value);
+            }
+            Ok(ReplayStep::Continue)
+        }
         ScannedStep::TokParam {
             index,
             tokens,
             global,
         } => {
+            let global = assignment_global(global, stores);
             let parameter = TokParam::new(index);
             if global {
                 stores.set_tok_param_global(parameter, tokens.token_list());
@@ -2459,6 +2668,7 @@ fn apply_scanned_step(
             value,
             global,
         } => {
+            let global = assignment_global(global, stores);
             let parameter = GlueParam::new(index);
             let value = stores.intern_glue(value);
             if global {
@@ -2474,6 +2684,7 @@ fn apply_scanned_step(
             value,
             global,
         } => {
+            let global = assignment_global(global, stores);
             match primitive {
                 UnexpandablePrimitive::CatCode => {
                     let value = match value {
@@ -2510,15 +2721,80 @@ fn apply_scanned_step(
                     let value = u32::try_from(value).map_err(|_| ExecError::InvalidCode {
                         context: "\\lccode",
                         value,
-                    })?;
+                    })? as LcCode;
                     if global {
                         stores.set_lccode_global(character, value);
                     } else {
                         stores.set_lccode(character, value);
                     }
                 }
+                UnexpandablePrimitive::UcCode => {
+                    let value = checked_character_code(value, "\\uccode")? as UcCode;
+                    if global {
+                        stores.set_uccode_global(character, value);
+                    } else {
+                        stores.set_uccode(character, value);
+                    }
+                }
+                UnexpandablePrimitive::SfCode => {
+                    let value = u16::try_from(value)
+                        .ok()
+                        .filter(|value| *value <= 32_767)
+                        .ok_or(ExecError::InvalidCode {
+                            context: "\\sfcode",
+                            value,
+                        })? as SfCode;
+                    if global {
+                        stores.set_sfcode_global(character, value);
+                    } else {
+                        stores.set_sfcode(character, value);
+                    }
+                }
+                UnexpandablePrimitive::MathCode => {
+                    let value = u32::try_from(value)
+                        .ok()
+                        .filter(|value| *value <= 32_768)
+                        .ok_or(ExecError::InvalidCode {
+                            context: "\\mathcode",
+                            value,
+                        })? as MathCode;
+                    if global {
+                        stores.set_mathcode_global(character, value);
+                    } else {
+                        stores.set_mathcode(character, value);
+                    }
+                }
+                UnexpandablePrimitive::DelCode => {
+                    let value = (-1..=0xFF_FFFF)
+                        .contains(&value)
+                        .then_some(value as DelCode)
+                        .ok_or(ExecError::InvalidCode {
+                            context: "\\delcode",
+                            value,
+                        })?;
+                    if global {
+                        stores.set_delcode_global(character, value);
+                    } else {
+                        stores.set_delcode(character, value);
+                    }
+                }
                 _ => unreachable!("only code-table primitives are scanned"),
             }
+            Ok(ReplayStep::Continue)
+        }
+        ScannedStep::Arithmetic {
+            primitive,
+            target,
+            operand,
+            global,
+        } => {
+            apply_arithmetic(
+                primitive,
+                target,
+                operand,
+                assignment_global(global, stores),
+                stores,
+            )?;
             Ok(ReplayStep::Continue)
         }
         ScannedStep::MacroDefinition {
@@ -3156,6 +3432,214 @@ fn apply_scanned_step(
             unreachable!("discretionary is applied by CanonicalMainControl")
         }
     }
+}
+
+fn assignment_global(explicit_global: bool, stores: &Universe) -> bool {
+    match stores.int_param(IntParam::GLOBAL_DEFS).cmp(&0) {
+        std::cmp::Ordering::Greater => true,
+        std::cmp::Ordering::Less => false,
+        std::cmp::Ordering::Equal => explicit_global,
+    }
+}
+
+fn checked_character_code(value: i32, context: &'static str) -> Result<u32, ExecError> {
+    u32::try_from(value)
+        .ok()
+        .and_then(char::from_u32)
+        .map(|character| character as u32)
+        .ok_or(ExecError::InvalidCode { context, value })
+}
+
+fn apply_arithmetic(
+    primitive: UnexpandablePrimitive,
+    target: ArithmeticTarget,
+    operand: ArithmeticOperand,
+    global: bool,
+    stores: &mut Universe,
+) -> Result<(), ExecError> {
+    match (target, operand) {
+        (ArithmeticTarget::IntegerRegister(index), ArithmeticOperand::Integer(rhs)) => {
+            let value = arithmetic_integer(primitive, stores.count(index), rhs)?;
+            if global {
+                stores.set_count_global(index, value);
+            } else {
+                stores.set_count(index, value);
+            }
+        }
+        (ArithmeticTarget::IntegerParameter(index), ArithmeticOperand::Integer(rhs)) => {
+            let parameter = IntParam::new(index);
+            let value = arithmetic_integer(primitive, stores.int_param(parameter), rhs)?;
+            if global {
+                stores.set_int_param_global(parameter, value);
+            } else {
+                stores.set_int_param(parameter, value);
+            }
+        }
+        (ArithmeticTarget::DimensionRegister(index), operand) => {
+            let value = arithmetic_dimension(primitive, stores.dimen(index), operand)?;
+            if global {
+                stores.set_dimen_global(index, value);
+            } else {
+                stores.set_dimen(index, value);
+            }
+        }
+        (ArithmeticTarget::DimensionParameter(index), operand) => {
+            let parameter = DimenParam::new(index);
+            let value = arithmetic_dimension(primitive, stores.dimen_param(parameter), operand)?;
+            if global {
+                stores.set_dimen_param_global(parameter, value);
+            } else {
+                stores.set_dimen_param(parameter, value);
+            }
+        }
+        (ArithmeticTarget::GlueRegister { index, mu }, operand) => {
+            let old = stores.glue(if mu {
+                stores.muskip(index)
+            } else {
+                stores.skip(index)
+            });
+            let value = stores.intern_glue(arithmetic_glue(primitive, old, operand)?);
+            if mu {
+                if global {
+                    stores.set_muskip_global(index, value);
+                } else {
+                    stores.set_muskip(index, value);
+                }
+            } else if global {
+                stores.set_skip_global(index, value);
+            } else {
+                stores.set_skip(index, value);
+            }
+        }
+        (ArithmeticTarget::GlueParameter { index, .. }, operand) => {
+            let parameter = GlueParam::new(index);
+            let old = stores.glue(stores.glue_param(parameter));
+            let value = stores.intern_glue(arithmetic_glue(primitive, old, operand)?);
+            if global {
+                stores.set_glue_param_global(parameter, value);
+            } else {
+                stores.set_glue_param(parameter, value);
+            }
+        }
+        _ => return Err(ExecError::UnsupportedAssignmentTarget),
+    }
+    Ok(())
+}
+
+fn arithmetic_integer(
+    primitive: UnexpandablePrimitive,
+    old: i32,
+    rhs: i32,
+) -> Result<i32, ExecError> {
+    match primitive {
+        UnexpandablePrimitive::Advance => old.checked_add(rhs),
+        UnexpandablePrimitive::Multiply => old.checked_mul(rhs),
+        UnexpandablePrimitive::Divide => old.checked_div(rhs),
+        _ => None,
+    }
+    .ok_or(ExecError::ArithmeticOverflow)
+}
+
+fn arithmetic_dimension(
+    primitive: UnexpandablePrimitive,
+    old: Scaled,
+    operand: ArithmeticOperand,
+) -> Result<Scaled, ExecError> {
+    match (primitive, operand) {
+        (UnexpandablePrimitive::Advance, ArithmeticOperand::Dimension(rhs)) => old.checked_add(rhs),
+        (UnexpandablePrimitive::Multiply, ArithmeticOperand::Integer(rhs)) => {
+            old.raw().checked_mul(rhs).map(Scaled::from_raw)
+        }
+        (UnexpandablePrimitive::Divide, ArithmeticOperand::Integer(rhs)) => {
+            old.raw().checked_div(rhs).map(Scaled::from_raw)
+        }
+        _ => None,
+    }
+    .ok_or(ExecError::ArithmeticOverflow)
+}
+
+fn arithmetic_glue(
+    primitive: UnexpandablePrimitive,
+    old: GlueSpec,
+    operand: ArithmeticOperand,
+) -> Result<GlueSpec, ExecError> {
+    match (primitive, operand) {
+        (UnexpandablePrimitive::Advance, ArithmeticOperand::Glue(rhs)) => Ok(GlueSpec {
+            width: old
+                .width
+                .checked_add(rhs.width)
+                .ok_or(ExecError::ArithmeticOverflow)?,
+            stretch: glue_component_add(
+                old.stretch,
+                old.stretch_order,
+                rhs.stretch,
+                rhs.stretch_order,
+            )?
+            .0,
+            stretch_order: glue_component_add(
+                old.stretch,
+                old.stretch_order,
+                rhs.stretch,
+                rhs.stretch_order,
+            )?
+            .1,
+            shrink: glue_component_add(old.shrink, old.shrink_order, rhs.shrink, rhs.shrink_order)?
+                .0,
+            shrink_order: glue_component_add(
+                old.shrink,
+                old.shrink_order,
+                rhs.shrink,
+                rhs.shrink_order,
+            )?
+            .1,
+        }),
+        (UnexpandablePrimitive::Multiply, ArithmeticOperand::Integer(rhs)) => {
+            glue_scale(old, rhs, false)
+        }
+        (UnexpandablePrimitive::Divide, ArithmeticOperand::Integer(rhs)) => {
+            glue_scale(old, rhs, true)
+        }
+        _ => Err(ExecError::UnsupportedAssignmentTarget),
+    }
+}
+
+fn glue_component_add(
+    left: Scaled,
+    left_order: Order,
+    right: Scaled,
+    right_order: Order,
+) -> Result<(Scaled, Order), ExecError> {
+    if left_order == right_order {
+        return Ok((
+            left.checked_add(right)
+                .ok_or(ExecError::ArithmeticOverflow)?,
+            left_order,
+        ));
+    }
+    Ok(if left_order > right_order {
+        (left, left_order)
+    } else {
+        (right, right_order)
+    })
+}
+
+fn glue_scale(spec: GlueSpec, factor: i32, divide: bool) -> Result<GlueSpec, ExecError> {
+    let scale = |value: Scaled| {
+        let raw = if divide {
+            value.raw().checked_div(factor)
+        } else {
+            value.raw().checked_mul(factor)
+        };
+        raw.map(Scaled::from_raw)
+            .ok_or(ExecError::ArithmeticOverflow)
+    };
+    Ok(GlueSpec {
+        width: scale(spec.width)?,
+        stretch: scale(spec.stretch)?,
+        stretch_order: spec.stretch_order,
+        shrink: scale(spec.shrink)?,
+        shrink_order: spec.shrink_order,
+    })
 }
 
 fn apply_scanned_accent(
