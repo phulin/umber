@@ -1089,6 +1089,7 @@ fn translate_alignment(record: AlignmentRecord, nesting: Option<u32>) -> Event {
             "missing_left_brace" => Some("missing_left_brace".into()),
             "missing_right_brace" => Some("missing_right_brace".into()),
             "extra_tab" => Some("extra_tab".into()),
+            "outer_validity" => Some("outer_validity".into()),
             _ => None,
         },
     })

@@ -1153,13 +1153,32 @@ impl CommandProcessor<'_> {
         #[cfg(any(test, feature = "instrumentation"))]
         self.observe_runaway_eof_diagnostics(&status);
         #[cfg(any(test, feature = "instrumentation"))]
+        if matches!(status, ScannerStatus::Aligning(_)) {
+            // TeX82 §23's `check_outer_validity` reports the aligning
+            // recovery before `ins_error` inserts inaccessible frozen `\cr`.
+            // This remains a command-owned observation: the executor has no
+            // raw scanner-status or token-list recovery capability.
+            self.observe(CommandObservation::Alignment(AlignmentRecord {
+                transition: "outer_validity",
+                alignment: self
+                    .command
+                    .alignment
+                    .active_alignment
+                    .map(|identity| identity.raw()),
+                align_state: self.command.alignment.align_state,
+                delimiter: None,
+                previous_align_state: None,
+            }));
+        }
+        #[cfg(any(test, feature = "instrumentation"))]
         let (frozen_recovery_name, recovery_kind) = match &status {
             ScannerStatus::Skipping(_) => (Some("fi"), RecoveryKind::InsertedToken),
             ScannerStatus::Matching(_) => (Some("par"), RecoveryKind::InsertedControlSequence),
-            // TeX82's `check_outer_validity` inserts the frozen `\\cr` as a
-            // token-list recovery operation. Its control-sequence spelling is
-            // preserved independently in `observed_tokens` below.
-            ScannerStatus::Aligning(_) => (Some("cr"), RecoveryKind::InsertedToken),
+            // TeX82's `check_outer_validity` inserts frozen `\\cr` before
+            // its required follow-up right brace. The recovery event denotes
+            // the inaccessible control sequence alone; raw delivery still
+            // owns the whole inserted token list.
+            ScannerStatus::Aligning(_) => (Some("cr"), RecoveryKind::InsertedControlSequence),
             ScannerStatus::Normal | ScannerStatus::Defining(_) | ScannerStatus::Absorbing(_) => {
                 (None, RecoveryKind::InsertedToken)
             }
@@ -1180,12 +1199,15 @@ impl CommandProcessor<'_> {
             .iter()
             .copied()
             .enumerate()
-            .map(|(index, token)| {
+            .filter_map(|(index, token)| {
+                if index != 0 && matches!(&status, ScannerStatus::Aligning(_)) {
+                    return None;
+                }
                 (index == 0)
                     .then_some(frozen_recovery_name)
                     .flatten()
                     .map(|name| crate::observation::ObservedToken::ControlSequence(name.into()))
-                    .unwrap_or_else(|| self.observed_token(token))
+                    .or_else(|| Some(self.observed_token(token)))
             })
             .collect();
         let level = self.command.push_token_level(
@@ -2752,7 +2774,7 @@ mod tests {
     }
 
     #[test]
-    fn aligning_eof_recovery_preserves_frozen_cr_identity_as_an_inserted_token() {
+    fn aligning_eof_recovery_preserves_frozen_cr_identity_as_an_inserted_control_sequence() {
         let mut command = CommandState::default();
         let mut runtime = CommandRuntime::default();
         let mut universe = Universe::new();
@@ -2785,19 +2807,35 @@ mod tests {
 
         assert!(
             recorder.0.iter().any(|record| {
+                matches!(record, CommandObservation::Alignment(alignment)
+                    if alignment.transition == "outer_validity")
+            }),
+            "outer-validity alignment recovery is observed: {:?}",
+            recorder.0
+        );
+        let outer_validity = recorder
+            .0
+            .iter()
+            .position(|record| {
+                matches!(record, CommandObservation::Alignment(alignment)
+                if alignment.transition == "outer_validity")
+            })
+            .expect("outer-validity recovery is observed");
+        let frozen_cr_recovery = recorder
+            .0
+            .iter()
+            .position(|record| {
                 matches!(record, CommandObservation::Recovery(recovery)
-                if recovery.kind == RecoveryKind::InsertedToken
+                if recovery.kind == RecoveryKind::InsertedControlSequence
                     && recovery.tokens
                         == vec![
                             crate::observation::ObservedToken::ControlSequence("cr".into()),
-                            crate::observation::ObservedToken::Character {
-                                character: '}',
-                                catcode: Catcode::EndGroup,
-                            },
                         ])
-            }),
-            "recovery observations: {:?}",
-            recorder.0
+            })
+            .expect("frozen cr recovery is observed");
+        assert!(
+            outer_validity < frozen_cr_recovery,
+            "TeX82 §23 observes outer-validity recovery before frozen \\cr insertion"
         );
     }
 

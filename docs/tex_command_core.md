@@ -185,6 +185,12 @@ overtake the diagnostic; at bottom level it reports the drop before the backup
 retires. This applies equally to ordinary `\endgroup` recovery and alignment
 `endv` replay.
 
+At TeX82 §23's `check_outer_validity` boundary, an aligning scanner reports
+the typed `outer_validity` alignment recovery after its EOF diagnostic and
+before command processing pushes the frozen `\cr` recovery list. The record
+carries the live command-owned alignment identity and `align_state`; frozen
+token spelling and recovery kind remain the separate input/recovery records.
+
 When that same delivery entry point expands the retained frame's
 `frozen_end_template` to `EndV`, replay routes the command through the typed
 `FinishCell` request rather than treating `EndV` as ordinary main-control
