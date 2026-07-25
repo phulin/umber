@@ -227,25 +227,37 @@ fn end_paragraph_with_memo(
     stores: &mut Universe,
     execution: &mut crate::ExecutionContext<'_>,
 ) -> Result<(), ExecError> {
+    let mut memo = crate::paragraph_memo::ExecutorParagraphMemoConsumer::new(
+        input,
+        execution,
+        crate::executor::ParagraphContinuation::End,
+    );
+    end_paragraph_with_consumer(nest, stores, &mut memo)
+}
+
+/// Ends an outer paragraph while publishing only typed completion values to
+/// an optional optimization consumer.  This is the canonical main-control
+/// seam: it has no raw input or legacy dispatcher dependency.
+pub(crate) fn end_paragraph_with_consumer(
+    nest: &mut ModeNest,
+    stores: &mut Universe,
+    memo: &mut dyn crate::paragraph_memo::ParagraphMemoConsumer,
+) -> Result<(), ExecError> {
     if nest.current_mode() == Mode::Horizontal {
         flush_pending_hchars(nest, stores)?;
-        crate::paragraph_memo::publish_prepared_hlist(
-            input,
+        memo.prepare_hlist(
             stores,
-            execution,
             nest.current_list().nodes(),
             nest.enclosing_vertical_prev_graf(),
             crate::executor::ParagraphContinuation::End,
         );
-    } else {
-        execution.pending_paragraph_memo = None;
     }
     if nest.current_mode() != Mode::Horizontal {
-        execution.pending_paragraph_memo = None;
+        memo.abandon();
         return end_paragraph(nest, stores);
     }
     if nest.current_list().is_empty() {
-        execution.pending_paragraph_memo = None;
+        memo.abandon();
         return end_paragraph(nest, stores);
     }
     let final_widow_penalty = stores.int_param(IntParam::WIDOW_PENALTY);
@@ -256,7 +268,7 @@ fn end_paragraph_with_memo(
         final_widow_penalty,
         final_widow_penalties,
         true,
-        Some(execution),
+        Some(memo),
     )?;
     Ok(())
 }
@@ -287,13 +299,14 @@ pub(crate) fn install_reused_paragraph_hlist_after_start(
     let Some((finished, line_count, last_badness)) = finished else {
         let final_widow_penalty = stores.int_param(IntParam::WIDOW_PENALTY);
         let final_widow_penalties = stores.penalty_array(PenaltyArrayKind::Widow);
+        let mut memo = crate::paragraph_memo::PendingParagraphMemoConsumer::new(execution);
         let _ = break_current_paragraph(
             nest,
             stores,
             final_widow_penalty,
             final_widow_penalties,
             true,
-            Some(execution),
+            Some(&mut memo),
         )?;
         return Ok(None);
     };
@@ -347,13 +360,14 @@ pub(crate) fn interrupt_paragraph_for_display(
     }
     let final_widow_penalty = stores.int_param(IntParam::DISPLAY_WIDOW_PENALTY);
     let final_widow_penalties = stores.penalty_array(PenaltyArrayKind::DisplayWidow);
+    let mut memo = crate::paragraph_memo::PendingParagraphMemoConsumer::new(execution);
     break_current_paragraph(
         nest,
         stores,
         final_widow_penalty,
         final_widow_penalties,
         false,
-        Some(execution),
+        Some(&mut memo),
     )
 }
 
@@ -396,7 +410,7 @@ fn break_current_paragraph(
     final_widow_penalty: i32,
     final_widow_penalties: Vec<i32>,
     reset_paragraph: bool,
-    mut memo: Option<&mut crate::ExecutionContext<'_>>,
+    mut memo: Option<&mut dyn crate::paragraph_memo::ParagraphMemoConsumer>,
 ) -> Result<ParagraphBreakResult, ExecError> {
     flush_pending_hchars(nest, stores)?;
     let active_directions = active_text_directions(nest.current_list().nodes());
@@ -496,14 +510,8 @@ fn break_current_paragraph(
             .checked_add(line_count)
             .expect("TeX prev_graf overflow"),
     );
-    if let Some(execution) = memo.take() {
-        crate::paragraph_memo::publish_finished_lines(
-            stores,
-            execution,
-            &finished_nodes,
-            line_count,
-            &active_directions,
-        );
+    if let Some(memo) = memo.take() {
+        memo.publish_finished_lines(stores, &finished_nodes, line_count, &active_directions);
     }
     if reset_paragraph {
         reset_after_par(nest, stores);

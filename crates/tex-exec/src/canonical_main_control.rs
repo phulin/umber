@@ -3084,7 +3084,8 @@ fn apply_scanned_step(
                 crate::assignments::normal_paragraph(modes, stores);
                 crate::vertical::build_page_if_outer_vertical(modes, stores)?;
             } else {
-                crate::assignments::end_paragraph(modes, stores)?;
+                let mut memo = crate::paragraph_memo::NoParagraphMemoConsumer;
+                crate::assignments::end_paragraph_with_consumer(modes, stores, &mut memo)?;
             }
             Ok(ReplayStep::Continue)
         }

@@ -11,6 +11,153 @@ use crate::{ExecError, ExecutionContext, ModeNest};
 
 const MAX_PARAGRAPH_DEPENDENCY_CACHE_ENTRIES: usize = 4_096;
 
+/// Typed, source-free paragraph completion boundary.
+///
+/// Main control owns paragraph sequencing.  Memoization may observe the
+/// completed hlist and finished vertical material, but it must never decide
+/// paragraph semantics or reach back into a command source.  The executor
+/// adapter below supplies its legacy recording state at the edge only.
+pub(crate) trait ParagraphMemoConsumer {
+    fn prepare_hlist(
+        &mut self,
+        stores: &mut Universe,
+        nodes: &[tex_state::node::Node],
+        prev_graf: i32,
+        continuation: crate::executor::ParagraphContinuation,
+    );
+
+    fn publish_finished_lines(
+        &mut self,
+        stores: &mut Universe,
+        nodes: &[tex_state::node::Node],
+        line_count: i32,
+        active_directions: &[tex_state::node::Direction],
+    );
+
+    fn abandon(&mut self);
+}
+
+/// Consumer for canonical callers that have no memo recording session.
+/// It deliberately leaves memo optimization inert while retaining exactly the
+/// same paragraph state/effects/artifacts as an unobserved cold run.
+#[derive(Default)]
+pub(crate) struct NoParagraphMemoConsumer;
+
+impl ParagraphMemoConsumer for NoParagraphMemoConsumer {
+    fn prepare_hlist(
+        &mut self,
+        _: &mut Universe,
+        _: &[tex_state::node::Node],
+        _: i32,
+        _: crate::executor::ParagraphContinuation,
+    ) {
+    }
+
+    fn publish_finished_lines(
+        &mut self,
+        _: &mut Universe,
+        _: &[tex_state::node::Node],
+        _: i32,
+        _: &[tex_state::node::Direction],
+    ) {
+    }
+
+    fn abandon(&mut self) {}
+}
+
+/// Compatibility adapter which confines InputStack/ExecutionContext coupling
+/// to the executor-owned recording path.
+pub(crate) struct ExecutorParagraphMemoConsumer<'a, 'input> {
+    input: &'a mut InputStack,
+    execution: &'a mut ExecutionContext<'input>,
+    continuation: crate::executor::ParagraphContinuation,
+}
+
+impl<'a, 'input> ExecutorParagraphMemoConsumer<'a, 'input> {
+    pub(crate) fn new(
+        input: &'a mut InputStack,
+        execution: &'a mut ExecutionContext<'input>,
+        continuation: crate::executor::ParagraphContinuation,
+    ) -> Self {
+        Self {
+            input,
+            execution,
+            continuation,
+        }
+    }
+}
+
+impl ParagraphMemoConsumer for ExecutorParagraphMemoConsumer<'_, '_> {
+    fn prepare_hlist(
+        &mut self,
+        stores: &mut Universe,
+        nodes: &[tex_state::node::Node],
+        prev_graf: i32,
+        _: crate::executor::ParagraphContinuation,
+    ) {
+        publish_prepared_hlist(
+            self.input,
+            stores,
+            self.execution,
+            nodes,
+            prev_graf,
+            self.continuation,
+        );
+    }
+
+    fn publish_finished_lines(
+        &mut self,
+        stores: &mut Universe,
+        nodes: &[tex_state::node::Node],
+        line_count: i32,
+        active_directions: &[tex_state::node::Direction],
+    ) {
+        publish_finished_lines(stores, self.execution, nodes, line_count, active_directions);
+    }
+
+    fn abandon(&mut self) {
+        self.execution.pending_paragraph_memo = None;
+    }
+}
+
+/// Completion-only adapter for paragraph paths whose hlist was published
+/// before they enter the shared line-break kernel (display interruption and
+/// retained-result fallback).
+pub(crate) struct PendingParagraphMemoConsumer<'a, 'execution> {
+    execution: &'a mut ExecutionContext<'execution>,
+}
+
+impl<'a, 'execution> PendingParagraphMemoConsumer<'a, 'execution> {
+    pub(crate) fn new(execution: &'a mut ExecutionContext<'execution>) -> Self {
+        Self { execution }
+    }
+}
+
+impl ParagraphMemoConsumer for PendingParagraphMemoConsumer<'_, '_> {
+    fn prepare_hlist(
+        &mut self,
+        _: &mut Universe,
+        _: &[tex_state::node::Node],
+        _: i32,
+        _: crate::executor::ParagraphContinuation,
+    ) {
+    }
+
+    fn publish_finished_lines(
+        &mut self,
+        stores: &mut Universe,
+        nodes: &[tex_state::node::Node],
+        line_count: i32,
+        active_directions: &[tex_state::node::Direction],
+    ) {
+        publish_finished_lines(stores, self.execution, nodes, line_count, active_directions);
+    }
+
+    fn abandon(&mut self) {
+        self.execution.pending_paragraph_memo = None;
+    }
+}
+
 struct ValidatedParagraphEntry {
     input: tex_lex::PreparedParagraphTransition,
     lines: tex_state::survivor::RetainedNodeList,
