@@ -4634,6 +4634,11 @@ fn applied_mutation_observation(
         global,
     } = scanned
     {
+        // tex.web §232 lists cat_code, lc_code, uc_code, sf_code, math_code,
+        // and del_code as the eqtb code-table regions written by
+        // \catcode/\lccode/\uccode/\sfcode/\mathcode/\delcode (§239, §1123);
+        // every scan arm that produces `ScannedStep::CodeTable` (see the
+        // grouped primitive match above) must have a corresponding arm here.
         let (target, value) = match primitive {
             UnexpandablePrimitive::CatCode => {
                 ("catcode", format!("{}={value}", u32::from(*character)))
@@ -4641,6 +4646,22 @@ fn applied_mutation_observation(
             UnexpandablePrimitive::LcCode => (
                 "code_table",
                 format!("lccode:{}={value}", u32::from(*character)),
+            ),
+            UnexpandablePrimitive::UcCode => (
+                "code_table",
+                format!("uccode:{}={value}", u32::from(*character)),
+            ),
+            UnexpandablePrimitive::SfCode => (
+                "code_table",
+                format!("sfcode:{}={value}", u32::from(*character)),
+            ),
+            UnexpandablePrimitive::MathCode => (
+                "code_table",
+                format!("mathcode:{}={value}", u32::from(*character)),
+            ),
+            UnexpandablePrimitive::DelCode => (
+                "code_table",
+                format!("delcode:{}={value}", u32::from(*character)),
             ),
             _ => unreachable!("only code-table primitives are scanned"),
         };
