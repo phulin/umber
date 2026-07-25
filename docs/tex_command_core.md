@@ -1439,7 +1439,10 @@ while `Matching` is still live, before the failed call restores its enclosing
 scanner status; this preserves the recoverable input and scanner-transition
 order for a non-`\long` macro. An expanded definition scan then discards that
 failed expansion and collects the backed-up paragraph while `Defining` remains
-live. Direct delimited matching retains the
+live. By contrast, §23 EOF recovery inserts frozen `\par` while matching;
+that terminator is consumed by the failed call, so it must not acquire a
+visible §394 backup replay after the matching-status exit. Direct delimited
+matching retains the
 maximal overlapping delimiter prefix after a partial mismatch, commits each
 unreusable leading token literally with its command-owned
 `macro_delimiter_recovery` observation, ignores delimiters below literal brace

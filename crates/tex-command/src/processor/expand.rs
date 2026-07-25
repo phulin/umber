@@ -134,7 +134,14 @@ impl CommandProcessor<'_> {
                 self.observe_expanded_delivery(&command);
                 return Ok(Some(command));
             }
-            self.expand(command)?;
+            // TeX82 §394 aborts a non-`\long` macro call after its recovery
+            // bookkeeping, then resumes the enclosing expanded-token loop.
+            // A user paragraph has been backed up for that loop; an EOF
+            // recovery paragraph was consumed by the failed match instead.
+            match self.expand(command) {
+                Ok(()) | Err(CommandError::ParagraphInMacroArgument) => {}
+                Err(error) => return Err(error),
+            }
         }
     }
 

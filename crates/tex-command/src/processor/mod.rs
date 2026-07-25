@@ -68,6 +68,11 @@ pub struct CommandProcessor<'a> {
     /// Set only by canonical outer-validity recovery while a scalar macro
     /// matcher owns `ScannerStatus::Matching`.
     pub(crate) outer_recovered_while_matching: bool,
+    /// Set only when terminal EOF invokes TeX82's `check_outer_validity`
+    /// recovery while a scalar macro matcher is live. The inserted frozen
+    /// `\\par` terminates the failed match, but must not become a visible
+    /// §394 `back_error` replay token.
+    pub(crate) eof_recovered_while_matching: bool,
 }
 
 impl<'a> CommandProcessor<'a> {
@@ -94,6 +99,7 @@ impl<'a> CommandProcessor<'a> {
             last_integer_terminator: None,
             next_delivery_sequence: 0,
             outer_recovered_while_matching: false,
+            eof_recovered_while_matching: false,
         }
     }
 

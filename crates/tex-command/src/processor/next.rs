@@ -1131,6 +1131,13 @@ impl CommandProcessor<'_> {
         if matches!(self.command.scanner.eof_legality(), EofLegality::Legal) {
             return Ok(false);
         }
+        if matches!(recovery.status, ScannerStatus::Matching(_)) {
+            // TeX82 §23 calls `check_outer_validity` after retiring an input
+            // file at EOF. Its frozen `\par` ends the failed §394 match; it
+            // is not an ordinary paragraph that `back_error` replays after
+            // the expansion returns.
+            self.eof_recovered_while_matching = true;
+        }
         self.install_outer_recovery(recovery)?;
         Ok(true)
     }

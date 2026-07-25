@@ -221,6 +221,7 @@ impl CommandProcessor<'_> {
             None
         };
         self.outer_recovered_while_matching = false;
+        self.eof_recovered_while_matching = false;
         let arguments = match self.macro_call_scalar(definition, meaning.flags(), &pattern) {
             Ok(arguments) => arguments,
             Err(error) => {
@@ -487,6 +488,13 @@ impl CommandProcessor<'_> {
             Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Par)
         ) && !flags.contains(MeaningFlags::LONG)
         {
+            if self.eof_recovered_while_matching {
+                // TeX82 §23 calls `check_outer_validity` after source EOF;
+                // §394 then aborts this match on its inserted frozen `\par`.
+                // That terminator is consumed by the failed expansion, unlike
+                // a user-supplied paragraph which `back_error` must replay.
+                return Err(CommandError::ParagraphInMacroArgument);
+            }
             // TeX82 §394 reports this through `back_error` while the macro
             // matcher is still live.  The caller will then restore its
             // enclosing scanner status, so retain the exact `\par` input
