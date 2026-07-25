@@ -38,6 +38,7 @@ pub struct CommandReplayControl {
     next_alignment_identity: u64,
     active_alignment: Option<ActiveReplayAlignment>,
     boxes: ReplayBoxes,
+    output_dead_cycles: i32,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -219,6 +220,7 @@ impl CommandReplayControl {
         let starts_paragraph = matches!(mode, Mode::Vertical | Mode::InternalVertical);
         let alignment_preamble = alignment_preamble(self.active_alignment.as_mut());
         let innermost_group = stores.innermost_group_kind();
+        let max_dead_cycles = stores.int_param(IntParam::MAX_DEAD_CYCLES);
         let scanned = {
             let mut processor = CommandProcessor::new(
                 &mut self.command,
@@ -233,6 +235,8 @@ impl CommandReplayControl {
                 &self.boxes,
                 alignment_preamble,
                 innermost_group,
+                &mut self.output_dead_cycles,
+                max_dead_cycles,
             )?
         };
         apply_scanned_step(
@@ -258,6 +262,7 @@ impl CommandReplayControl {
         let starts_paragraph = matches!(mode, Mode::Vertical | Mode::InternalVertical);
         let alignment_preamble = alignment_preamble(self.active_alignment.as_mut());
         let innermost_group = stores.innermost_group_kind();
+        let max_dead_cycles = stores.int_param(IntParam::MAX_DEAD_CYCLES);
         let scanned = {
             let mut processor = CommandProcessor::new(
                 &mut self.command,
@@ -273,6 +278,8 @@ impl CommandReplayControl {
                 &self.boxes,
                 alignment_preamble,
                 innermost_group,
+                &mut self.output_dead_cycles,
+                max_dead_cycles,
             )?
         };
         let mutation = applied_mutation_observation(&scanned, stores);
@@ -608,6 +615,7 @@ enum ScannedStep {
 /// ordinary main control.  Alignment preamble setup validates and backs up
 /// its opening brace twice through successive command-owned backup levels;
 /// only the second replay reaches TeX82's live preamble scanner.
+#[allow(clippy::too_many_arguments)] // owns the replay-only command/input seam
 fn scan_replay_step(
     processor: &mut CommandProcessor<'_>,
     mode: Mode,
@@ -615,6 +623,8 @@ fn scan_replay_step(
     boxes: &ReplayBoxes,
     alignment_preamble: Option<(AlignmentIdentity, AlignmentPreamblePhase)>,
     innermost_group: Option<GroupKind>,
+    output_dead_cycles: &mut i32,
+    max_dead_cycles: i32,
 ) -> Result<ScannedStep, ExecError> {
     if let Some((alignment, phase)) = alignment_preamble {
         return match phase {
@@ -659,7 +669,14 @@ fn scan_replay_step(
             }
         };
     }
-    scan_step(processor, mode, starts_paragraph, boxes)
+    scan_step(
+        processor,
+        mode,
+        starts_paragraph,
+        boxes,
+        output_dead_cycles,
+        max_dead_cycles,
+    )
 }
 
 #[derive(Clone, Copy)]
@@ -770,6 +787,8 @@ fn scan_noalign_body(
             mode,
             false,
             boxes,
+            &mut 0,
+            0,
         ),
     }
 }
@@ -828,6 +847,8 @@ fn scan_alignment_delivery_step(
                 mode,
                 false,
                 boxes,
+                &mut 0,
+                0,
             )
         }
         Some(AlignmentDelivery::Event(event)) => {
@@ -868,6 +889,8 @@ fn scan_step(
     mode: Mode,
     starts_paragraph: bool,
     boxes: &ReplayBoxes,
+    output_dead_cycles: &mut i32,
+    max_dead_cycles: i32,
 ) -> Result<ScannedStep, ExecError> {
     let Some(mut command) = processor.get_x_token().map_err(command_error)? else {
         return Ok(ScannedStep::EndOfInput);
@@ -898,9 +921,12 @@ fn scan_step(
         mode,
         starts_paragraph,
         boxes,
+        output_dead_cycles,
+        max_dead_cycles,
     )
 }
 
+#[allow(clippy::too_many_arguments)] // mirrors TeX main-control dispatch inputs
 fn scan_command(
     processor: &mut CommandProcessor<'_>,
     command: tex_command::CurrentCommand,
@@ -909,6 +935,8 @@ fn scan_command(
     mode: Mode,
     starts_paragraph: bool,
     boxes: &ReplayBoxes,
+    output_dead_cycles: &mut i32,
+    max_dead_cycles: i32,
 ) -> Result<ScannedStep, ExecError> {
     // `align_error`'s inserted brace is an actual execution group, even when
     // it appears inside a replayed box body.  It must therefore win over the
@@ -1024,7 +1052,27 @@ fn scan_command(
         }
         Meaning::UnexpandablePrimitive(
             UnexpandablePrimitive::End | UnexpandablePrimitive::Dump,
-        ) => Ok(ScannedStep::End),
+        ) => {
+            if processor.output_routine_is_empty() {
+                return Ok(ScannedStep::End);
+            }
+            // TeX82 §46's `its_all_over` does not discard the stop command
+            // that has just been replayed from §1095's backup.  Command input
+            // retires that exhausted level, backs `\end` up for the final
+            // retry, and only then enters the output token list.
+            if *output_dead_cycles >= max_dead_cycles {
+                processor
+                    .back_input_after_backup_replay(command)
+                    .map_err(command_error)?;
+                Ok(ScannedStep::End)
+            } else {
+                processor
+                    .begin_output_routine_after_stop(command)
+                    .map_err(command_error)?;
+                *output_dead_cycles += 1;
+                Ok(ScannedStep::Continue)
+            }
+        }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Count) => {
             let index = processor.scan_integer().map_err(command_error)?.value;
             let _ = processor.scan_optional_equals().map_err(command_error)?;

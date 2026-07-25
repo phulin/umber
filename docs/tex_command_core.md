@@ -193,6 +193,12 @@ processing retires that inserted recovery level and redelivers the stop in
 vertical mode. This precedes §46's `its_all_over` end-game decision; no
 executor source-read path may manufacture either token.
 
+At TeX82 §46's `its_all_over` output hand-off, that redelivered vertical stop
+first retires its exhausted backup, then receives a fresh command-owned backup
+before the `\output` token list is pushed. This preserves the final-stop retry
+below the output routine and fixes the canonical input order independently of
+the executor's typed page/output effects.
+
 At TeX82 §23's `check_outer_validity` boundary, an aligning scanner reports
 the typed `outer_validity` alignment recovery after its EOF diagnostic and
 before command processing pushes the frozen `\cr` recovery list. The record

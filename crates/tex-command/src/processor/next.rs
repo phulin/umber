@@ -4,7 +4,8 @@
 //! TeX.web §343 (`get_next`).  Later scanner and alignment milestones extend
 //! the two explicit entry points below; they do not add another lexical path.
 
-use tex_state::env::banks::IntParam;
+use tex_state::env::banks::{IntParam, TokParam};
+use tex_state::input::TracedTokenList;
 use tex_state::meaning::{ExpandablePrimitive, Meaning};
 use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 
@@ -37,6 +38,14 @@ use crate::observation::{
 };
 
 impl CommandProcessor<'_> {
+    /// Whether TeX's current `\output` token list is empty.
+    #[must_use]
+    pub fn output_routine_is_empty(&self) -> bool {
+        self.state
+            .tokens(self.state.tok_param(TokParam::OUTPUT))
+            .is_empty()
+    }
+
     /// Retires the exhausted level that supplied the immediately preceding
     /// raw delivery without reading a subsequent token.
     ///
@@ -458,6 +467,43 @@ impl CommandProcessor<'_> {
                 tokens: vec![self.observed_token(par)],
             }));
         }
+        Ok(())
+    }
+
+    /// Performs TeX82 §46's `its_all_over` hand-off to `\output`.
+    ///
+    /// `main_control` has just redelivered a stop command from the one-token
+    /// backup made by `head_for_vmode`.  TeX retires that exhausted backup
+    /// before it backs the stop up for the eventual final retry, then starts
+    /// the output token list.  Keeping all three input operations here makes
+    /// the command processor, rather than an executor-side input path, own
+    /// their observable order.
+    pub fn begin_output_routine_after_stop(
+        &mut self,
+        command: CurrentCommand,
+    ) -> Result<(), CommandError> {
+        self.retire_exhausted_backup_before_scalar_replay(command.delivery_stamp())?;
+        self.back_input(command)?;
+
+        let output = TracedTokenList::synthetic(self.state.tok_param(TokParam::OUTPUT));
+        let level = self.command.push_token_level(
+            TokenPayload::Stored {
+                tokens: output.token_list(),
+                origins: output.origin_list(),
+            },
+            TokenBehavior::Ordinary,
+            RetirementBehavior::Pop,
+            ReplayTrace::Stored(crate::input::StoredReplayReason::OutputRoutine),
+        );
+        #[cfg(not(any(test, feature = "instrumentation")))]
+        let _ = level;
+        #[cfg(any(test, feature = "instrumentation"))]
+        self.observe(CommandObservation::Input(InputRecord {
+            transition: InputTransition::Push,
+            reason: InputReason::TokenList,
+            level: level.0,
+            position: 0,
+        }));
         Ok(())
     }
 

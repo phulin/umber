@@ -1215,6 +1215,78 @@ fn end_in_outer_horizontal_mode_replays_paragraph_before_retrying_stop() {
 }
 
 #[test]
+fn final_stop_retires_its_backup_before_starting_output_input() {
+    // TeX82 §46 (`its_all_over`) starts \output only after the §1095
+    // redelivery's exhausted \end backup has retired and a new final-stop
+    // backup is in place.
+    let mut universe = Universe::new();
+    let mut control = CommandReplayControl::tex82_initex(&mut universe);
+    register_source(&mut control, br"\output={O}x\end");
+    let mut observations = ObservationRecorder::default();
+
+    for expected in [
+        "output assignment",
+        "paragraph start",
+        "paragraph character",
+    ] {
+        assert_eq!(
+            control
+                .step_with_observer(&mut universe, &mut observations)
+                .expect(expected),
+            ReplayStep::Continue
+        );
+        observations.0.clear();
+    }
+
+    assert_eq!(
+        control
+            .step_with_observer(&mut universe, &mut observations)
+            .expect("horizontal stop recovery"),
+        ReplayStep::Continue
+    );
+    observations.0.clear();
+    assert_eq!(
+        control
+            .step_with_observer(&mut universe, &mut observations)
+            .expect("inserted paragraph"),
+        ReplayStep::Continue
+    );
+    observations.0.clear();
+
+    assert_eq!(
+        control
+            .step_with_observer(&mut universe, &mut observations)
+            .expect("output hand-off"),
+        ReplayStep::Continue
+    );
+    assert!(
+        matches!(
+            observations.0.as_slice(),
+            [
+                CommandObservation::Input(recovery_retirement),
+                CommandObservation::Command(raw),
+                CommandObservation::Command(expanded),
+                CommandObservation::Input(retirement),
+                CommandObservation::Input(backup),
+                CommandObservation::Recovery(recovery),
+                CommandObservation::Input(output),
+            ] if recovery_retirement.transition == InputTransition::Retire
+                && recovery_retirement.reason == InputReason::Recovery
+                && retirement.transition == InputTransition::Retire
+                && retirement.reason == InputReason::Backup
+                && raw.command == "stop"
+                && expanded.command == "stop"
+                && backup.transition == InputTransition::Backup
+                && recovery.kind == RecoveryKind::Backup
+                && output.transition == InputTransition::Push
+                && output.reason == InputReason::TokenList
+        ),
+        "unexpected output hand-off observations: {:?}",
+        observations.0
+    );
+}
+
+#[test]
 fn off_save_reports_before_replaying_its_inserted_closer() {
     let mut universe = Universe::new();
     let mut control = CommandReplayControl::tex82_initex(&mut universe);
