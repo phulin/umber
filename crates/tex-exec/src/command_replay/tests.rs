@@ -3760,3 +3760,36 @@ fn canonical_display_diagnostics_keep_show_raw_and_scan_other_operands() {
         "raw show must not expand its operand: {text}"
     );
 }
+
+#[test]
+fn canonical_errmessage_uses_the_world_terminal_and_log_boundary() {
+    // TeX82's `issue_message` sends \errmessage through `print_err`/`error`,
+    // then main control resumes normally.
+    let mut universe = Universe::new();
+    let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+    register_source(
+        &mut control,
+        br"\errmessage{canonical diagnostic}\message{recovered}\end",
+    );
+    run_to_end(&mut control, &mut universe);
+
+    let error_effects = universe
+        .world()
+        .effect_records()
+        .iter()
+        .filter(|effect| {
+            matches!(
+                effect,
+                EffectRecord::StreamWrite {
+                    sink: tex_state::PrintSink::TerminalAndLog,
+                    text,
+                } if text == "\n! canonical diagnostic.\n"
+            )
+        })
+        .count();
+    assert_eq!(error_effects, 1, "diagnostic must be a World output effect");
+
+    let text = terminal_text(&universe);
+    assert!(text.contains("! canonical diagnostic."), "{text}");
+    assert!(text.contains("recovered"), "{text}");
+}
