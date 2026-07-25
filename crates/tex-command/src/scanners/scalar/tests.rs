@@ -229,6 +229,47 @@ fn integer_internal_register_scans_its_index_through_command_input() {
 }
 
 #[test]
+fn glue_scan_accepts_internal_box_height_without_backing_up_the_primitive() {
+    let mut command = CommandState::default();
+    let mut runtime = CommandRuntime::default();
+    let mut universe = Universe::new();
+    let height = universe.intern("ht").symbol();
+    universe.set_meaning(
+        height,
+        Meaning::UnexpandablePrimitive(tex_state::meaning::UnexpandablePrimitive::Ht),
+    );
+    push(&mut command, vec![Token::Cs(height), char_token('0')]);
+    let mut capabilities = CommandHostCapabilities::default();
+    let mut recorder = Recorder::default();
+    let mut processor = CommandProcessor::new(
+        &mut command,
+        &mut runtime,
+        universe.command_context(),
+        CommandHostContext::new(&mut capabilities),
+    )
+    .with_observer(&mut recorder);
+
+    assert_eq!(
+        processor
+            .scan_glue(false)
+            .expect("internal box dimension scans as glue")
+            .value
+            .width
+            .raw(),
+        0
+    );
+    assert!(
+        !recorder.0.iter().any(|observation| {
+            matches!(
+                observation,
+                CommandObservation::Input(record) if record.transition == InputTransition::Backup
+            )
+        }),
+        "TeX82 consumes the internal dimension directly instead of backing up \\ht"
+    );
+}
+
+#[test]
 fn internal_dimension_register_scans_and_bounds_its_index_through_command_input() {
     let mut command = CommandState::default();
     let mut runtime = CommandRuntime::default();

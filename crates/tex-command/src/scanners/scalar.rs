@@ -463,6 +463,23 @@ impl CommandProcessor<'_> {
                     },
                     true,
                 ),
+                // TeX82's `scan_glue` accepts an internal dimension as the
+                // width of an ordinary glue specification.  In particular,
+                // `\ht<box>` has already consumed its bounded box index;
+                // backing up the primitive here would both replay an
+                // incomplete internal value and use a stale delivery proof.
+                // See TeX.web §458 (`scan_glue`).
+                Some(InternalValue::Dimension(width)) if !mu => (
+                    GlueSpec {
+                        width,
+                        ..GlueSpec::ZERO
+                    },
+                    ScalarRecovery::None,
+                    ScalarProvenance {
+                        primary: command.origin(),
+                    },
+                    false,
+                ),
                 Some(_) | None => {
                     self.back_input(command)?;
                     let width = self.scan_dimension_with_order(false, mu)?.0;
