@@ -3,7 +3,7 @@
 use tex_state::env::banks::IntParam;
 use tex_state::glue::{GlueSpec, Order};
 use tex_state::ids::{MacroDefinitionId, OriginListId, TokenListId};
-use tex_state::meaning::{ExpandablePrimitive, Meaning};
+use tex_state::meaning::{ExpandablePrimitive, Meaning, MeaningFlags};
 use tex_state::page::PageMark;
 use tex_state::provenance::SynthesizedOriginKind;
 use tex_state::scaled::Scaled;
@@ -621,14 +621,26 @@ fn meaning_text(state: &tex_state::CommandContext<'_>, command: &CurrentCommand)
         Meaning::IntParam(index) => format!("integer parameter {index}"),
         Meaning::TokParam(index) => format!("token parameter {index}"),
         Meaning::Font(font) => format!("select font {}", state.font_name(font)),
-        Meaning::Macro { definition, .. } => {
+        Meaning::Macro { flags, definition } => {
             // `\\meaning` prints the definition, not a live macro-body input
             // frame.  A completed macro call retires its activation and body,
             // whereas the definition's parameter and replacement lists remain
             // immutable state owned by the meaning.
             let macro_meaning = state.macro_definition(definition);
+            let prefix = match (
+                flags.contains(MeaningFlags::LONG),
+                flags.contains(MeaningFlags::OUTER),
+            ) {
+                (false, false) => "macro".to_owned(),
+                // TeX82's `print_cmd_chr` uses `print_esc` for these command
+                // identities, so the escape character is part of conv_toks'
+                // inserted spelling, not source provenance.
+                (true, false) => "\\long macro".to_owned(),
+                (false, true) => "\\outer macro".to_owned(),
+                (true, true) => "\\long\\outer macro".to_owned(),
+            };
             format!(
-                "macro:{}->{}",
+                "{prefix}:{}->{}",
                 token_list_text(state, macro_meaning.parameter_text()),
                 token_list_text(state, macro_meaning.replacement_text()),
             )
@@ -1598,6 +1610,43 @@ mod tests {
             meaning_text(&universe.command_context(), &command),
             "macro:->\\leaf N"
         );
+    }
+
+    #[test]
+    fn meaning_renders_tex82_long_and_outer_macro_command_identity() {
+        let mut universe = Universe::new();
+        let empty = universe.intern_token_list(&[]);
+        for (index, (flags, expected)) in [
+            (MeaningFlags::EMPTY, "macro:->"),
+            (MeaningFlags::LONG, "\\long macro:->"),
+            (MeaningFlags::OUTER, "\\outer macro:->"),
+            (
+                MeaningFlags::LONG | MeaningFlags::OUTER,
+                "\\long\\outer macro:->",
+            ),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let definition = universe.intern_macro(MacroMeaning::new(flags, empty, empty));
+            let macro_name = universe.intern(&format!("result{index}")).symbol();
+            universe.set_meaning(macro_name, Meaning::Macro { flags, definition });
+            let command = {
+                let mut state = universe.command_context();
+                CurrentCommand::resolve(
+                    traced(Token::Cs(macro_name)),
+                    crate::command::DeliveryStamp::new(0, 0, 0),
+                    None,
+                    false,
+                    &mut state,
+                )
+            };
+
+            assert_eq!(
+                meaning_text(&universe.command_context(), &command),
+                expected
+            );
+        }
     }
 }
 

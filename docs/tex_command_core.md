@@ -1235,7 +1235,9 @@ The scalar expansion implementation produces `\number`, `\romannumeral`,
 `\string`, `\meaning`, and `\fontname` as bounded transient character input
 with synthesized value-rendering provenance. `\string` uses the delivered
 token spelling, while `\meaning` uses its separately retained effective
-meaning. Token-register and token-parameter `\the` results are instead
+meaning, including TeX82's `macro`, `\long macro`, `\outer macro`, and
+`\long\outer macro` command spelling before its immutable definition text.
+Token-register and token-parameter `\the` results are instead
 inserted as immutable stored-token input: producing that splice consumes only
 the quantity target and never expands or reads beyond its contents. A later
 ordinary expansion loop remains responsible if those tokens subsequently
@@ -1383,8 +1385,10 @@ The semantic implementation follows TeX's scalar algorithm before any
 optimization is considered.
 
 Macro definitions retain canonical parameter and replacement token lists.
-TeX82 §27's `\\meaning` renders those immutable lists directly as
-`macro:<parameter-text>-><replacement-text>`; it never consults a live macro
+TeX82 §27's `\\meaning` renders those immutable lists directly after the
+effective macro command spelling (`macro`, `\long macro`, `\outer macro`, or
+`\long\outer macro`), followed by
+`:<parameter-text>-><replacement-text>`; it never consults a live macro
 activation or macro-body input level, because §392 retires those call-local
 owners before later recovery input can be read.
 `macro_call`:
