@@ -1647,6 +1647,15 @@ then publish the nested integer, internal-value, and outer integer results in
 canonical order. Overflow, rounding, radix, unit, and recovery behavior cite
 canonical sections and compare against reference fixtures.
 
+`scan_something_internal` applies TeX82's `scan_eight_bit_int` bound to every
+primitive register family (`\count`, `\dimen`, `\skip`, and `\muskip`): the
+index is scanned through ordinary expanded command delivery, and a negative
+or greater-than-255 index recovers as register zero. A dimension-valued
+register bypasses the numeric dimension backup/replay path and reaches the
+internal result directly; a complete glue-valued register likewise bypasses
+the trailing `plus`/`minus` scan. The observer records the resulting typed
+internal integer, scaled, or glue value without leaking register storage.
+
 `scan_dimen` delegates its integral prefix to that same integer scanner. Its
 backed-up decimal point is then consumed raw, while a backed-up unit remains
 available to the canonical keyword retry sequence. `scan_glue` first probes a

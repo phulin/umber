@@ -136,6 +136,66 @@ fn integer_internal_register_scans_its_index_through_command_input() {
 }
 
 #[test]
+fn internal_dimension_register_scans_and_bounds_its_index_through_command_input() {
+    let mut command = CommandState::default();
+    let mut runtime = CommandRuntime::default();
+    let mut universe = Universe::new();
+    let dimen = universe.intern("dimen").symbol();
+    universe.set_meaning(
+        dimen,
+        Meaning::UnexpandablePrimitive(tex_state::meaning::UnexpandablePrimitive::Dimen),
+    );
+    universe.set_dimen(20, tex_state::scaled::Scaled::from_raw(42));
+    universe.set_dimen(0, tex_state::scaled::Scaled::from_raw(7));
+    let mut capabilities = CommandHostCapabilities::default();
+
+    push(
+        &mut command,
+        vec![Token::Cs(dimen), char_token('2'), char_token('0')],
+    );
+    {
+        let mut processor = CommandProcessor::new(
+            &mut command,
+            &mut runtime,
+            universe.command_context(),
+            CommandHostContext::new(&mut capabilities),
+        );
+        assert_eq!(
+            processor
+                .scan_dimension()
+                .expect("internal dimension scans")
+                .value
+                .raw(),
+            42
+        );
+    }
+
+    push(
+        &mut command,
+        vec![
+            Token::Cs(dimen),
+            char_token('2'),
+            char_token('5'),
+            char_token('6'),
+        ],
+    );
+    let mut processor = CommandProcessor::new(
+        &mut command,
+        &mut runtime,
+        universe.command_context(),
+        CommandHostContext::new(&mut capabilities),
+    );
+    assert_eq!(
+        processor
+            .scan_dimension()
+            .expect("out-of-range dimension register recovers")
+            .value
+            .raw(),
+        7
+    );
+}
+
+#[test]
 fn internal_values_and_failed_keywords_replay_canonically() {
     let mut command = CommandState::default();
     let mut runtime = CommandRuntime::default();

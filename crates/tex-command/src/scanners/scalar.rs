@@ -298,20 +298,49 @@ impl CommandProcessor<'_> {
         &mut self,
         allow_infinite: bool,
     ) -> Result<(ScannedScalar<Scaled>, Order), CommandError> {
-        let sign = self.scan_optional_sign()?;
-        let provenance = sign.provenance;
-        let Some(first) = self.get_x_token()? else {
-            return Ok((
-                ScannedScalar {
-                    value: Scaled::from_raw(0),
-                    recovery: ScalarRecovery::InsertedZero,
-                    provenance,
-                },
-                Order::Normal,
-            ));
+        // TeX82 §455's signed lookahead normally backs up its first non-sign
+        // token before the integer scanner owns it. An internal dimension is
+        // the exception: it goes directly to `scan_something_internal`.
+        let mut negative = false;
+        let mut provenance = OriginId::UNKNOWN;
+        let retained_internal_dimension = loop {
+            let Some(command) = self.get_x_token()? else {
+                return Ok((
+                    ScannedScalar {
+                        value: Scaled::from_raw(0),
+                        recovery: ScalarRecovery::InsertedZero,
+                        provenance: ScalarProvenance {
+                            primary: provenance,
+                        },
+                    },
+                    Order::Normal,
+                ));
+            };
+            if provenance == OriginId::UNKNOWN {
+                provenance = command.origin();
+            }
+            match command.meaning() {
+                Meaning::CharToken { ch: ' ', .. } | Meaning::CharToken { ch: '+', .. } => {}
+                Meaning::CharToken { ch: '-', .. } => negative = !negative,
+                Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Dimen) => {
+                    break Some(command);
+                }
+                _ => {
+                    self.retire_exhausted_backup_before_scalar_replay(command.delivery_stamp())?;
+                    self.back_input(command)?;
+                    break None;
+                }
+            }
         };
-        let (value, order) = match self.internal_value_from_command(&first)? {
-            Some(InternalValue::Dimension(value)) => (value, Order::Normal),
+        let provenance = ScalarProvenance {
+            primary: provenance,
+        };
+        let first = match retained_internal_dimension {
+            Some(command) => command,
+            None => self.get_x_token()?.ok_or(CommandError::InputInvariant)?,
+        };
+        let (value, order, internal_dimension) = match self.internal_value_from_command(&first)? {
+            Some(InternalValue::Dimension(value)) => (value, Order::Normal, true),
             Some(_) => {
                 self.back_input(first)?;
                 return Ok((
@@ -348,7 +377,9 @@ impl CommandProcessor<'_> {
                         // for the keyword scanner instead.
                         let _ = self.get_next()?;
                     }
-                    self.scan_decimal_dimension(integer, decimal, allow_infinite)?
+                    let (value, order) =
+                        self.scan_decimal_dimension(integer, decimal, allow_infinite)?;
+                    (value, order, false)
                 }
                 _ => {
                     self.back_input(first)?;
@@ -363,9 +394,11 @@ impl CommandProcessor<'_> {
                 }
             },
         };
-        self.scan_optional_space()?;
+        if !internal_dimension {
+            self.scan_optional_space()?;
+        }
         let scanned = ScannedScalar {
-            value: if sign.value {
+            value: if negative {
                 Scaled::from_raw(-value.raw())
             } else {
                 value
@@ -389,7 +422,7 @@ impl CommandProcessor<'_> {
         // one canonical backup/replay cycle before `scan_dimen` owns its
         // integer prefix; collapsing the probe loses that input lifecycle and
         // also prevents a direct `\skip` RHS from being accepted as glue.
-        let (mut value, mut recovery, provenance) = match self.get_x_token()? {
+        let (mut value, mut recovery, provenance, internal_glue) = match self.get_x_token()? {
             Some(command) => match self.internal_value_from_command(&command)? {
                 Some(InternalValue::Glue(value)) => (
                     value,
@@ -397,6 +430,7 @@ impl CommandProcessor<'_> {
                     ScalarProvenance {
                         primary: command.origin(),
                     },
+                    true,
                 ),
                 Some(_) | None => {
                     self.back_input(command)?;
@@ -408,6 +442,7 @@ impl CommandProcessor<'_> {
                         },
                         width.recovery,
                         width.provenance,
+                        false,
                     )
                 }
             },
@@ -420,20 +455,23 @@ impl CommandProcessor<'_> {
                     },
                     width.recovery,
                     width.provenance,
+                    false,
                 )
             }
         };
-        if self.scan_keyword("plus")?.value {
-            let (stretch, order) = self.scan_dimension_with_order(true)?;
-            value.stretch = stretch.value;
-            recovery = stretch.recovery;
-            value.stretch_order = order;
-        }
-        if self.scan_keyword("minus")?.value {
-            let (shrink, order) = self.scan_dimension_with_order(true)?;
-            value.shrink = shrink.value;
-            recovery = shrink.recovery;
-            value.shrink_order = order;
+        if !internal_glue {
+            if self.scan_keyword("plus")?.value {
+                let (stretch, order) = self.scan_dimension_with_order(true)?;
+                value.stretch = stretch.value;
+                recovery = stretch.recovery;
+                value.stretch_order = order;
+            }
+            if self.scan_keyword("minus")?.value {
+                let (shrink, order) = self.scan_dimension_with_order(true)?;
+                value.shrink = shrink.value;
+                recovery = shrink.recovery;
+                value.shrink_order = order;
+            }
         }
         let _ = mu;
         let scanned = ScannedScalar {
@@ -714,12 +752,13 @@ impl CommandProcessor<'_> {
         command: &CurrentCommand,
     ) -> Result<Option<InternalValue>, CommandError> {
         let value = match command.meaning() {
-            // `scan_internal_int` owns a register primitive's index scan.
-            // Keeping it here means a RHS `\count0` produces its index
-            // deliveries, nested integer result, and internal-value observer
-            // before the outer `scan_int` completes (TeX.web `scan_int`).
+            // TeX82 `scan_something_internal` owns a register primitive's
+            // restricted (`scan_eight_bit_int`) index scan. Keeping every
+            // register family here means its index deliveries, nested integer
+            // result, and internal-value observer precede the outer scalar
+            // scanner's result (TeX.web `scan_something_internal`/`scan_int`).
             Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Count) => {
-                let index = u16::try_from(self.scan_integer()?.value).unwrap_or(0);
+                let index = self.scan_eight_bit_register_index()?;
                 let value = self.state.count(index);
                 #[cfg(any(test, feature = "instrumentation"))]
                 self.observe(CommandObservation::Scanner(ScannerRecord {
@@ -728,6 +767,53 @@ impl CommandProcessor<'_> {
                     tokens: None,
                 }));
                 InternalValue::Integer(value)
+            }
+            Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Dimen) => {
+                let index = self.scan_eight_bit_register_index()?;
+                let value = self.state.dimen(index);
+                #[cfg(any(test, feature = "instrumentation"))]
+                self.observe(CommandObservation::Scanner(ScannerRecord {
+                    kind: "internal",
+                    value: format!("scaled:{}", value.raw()),
+                    tokens: None,
+                }));
+                InternalValue::Dimension(value)
+            }
+            Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Skip) => {
+                let index = self.scan_eight_bit_register_index()?;
+                let value = self.state.glue(self.state.skip(index));
+                #[cfg(any(test, feature = "instrumentation"))]
+                self.observe(CommandObservation::Scanner(ScannerRecord {
+                    kind: "internal",
+                    value: format!(
+                        "glue:width={};stretch={};stretch_order={:?};shrink={};shrink_order={:?}",
+                        value.width.raw(),
+                        value.stretch.raw(),
+                        value.stretch_order,
+                        value.shrink.raw(),
+                        value.shrink_order,
+                    ),
+                    tokens: None,
+                }));
+                InternalValue::Glue(value)
+            }
+            Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Muskip) => {
+                let index = self.scan_eight_bit_register_index()?;
+                let value = self.state.glue(self.state.muskip(index));
+                #[cfg(any(test, feature = "instrumentation"))]
+                self.observe(CommandObservation::Scanner(ScannerRecord {
+                    kind: "internal",
+                    value: format!(
+                        "glue:width={};stretch={};stretch_order={:?};shrink={};shrink_order={:?}",
+                        value.width.raw(),
+                        value.stretch.raw(),
+                        value.stretch_order,
+                        value.shrink.raw(),
+                        value.shrink_order,
+                    ),
+                    tokens: None,
+                }));
+                InternalValue::Glue(value)
             }
             Meaning::CountRegister(index) => InternalValue::Integer(self.state.count(index)),
             Meaning::IntParam(index) => InternalValue::Integer(
@@ -763,6 +849,19 @@ impl CommandProcessor<'_> {
             _ => return Ok(None),
         };
         Ok(Some(value))
+    }
+
+    /// Scans TeX82's `scan_eight_bit_int` register index.
+    ///
+    /// `scan_something_internal` uses this bounded scan for `\count`,
+    /// `\dimen`, `\skip`, and `\muskip`; an out-of-range value recovers as
+    /// register zero rather than truncating or addressing an extended bank.
+    fn scan_eight_bit_register_index(&mut self) -> Result<u16, CommandError> {
+        let value = self.scan_integer()?.value;
+        Ok(u16::try_from(value)
+            .ok()
+            .filter(|index| *index <= 255)
+            .unwrap_or(0))
     }
 
     fn replay_scalar_commands(

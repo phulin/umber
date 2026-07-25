@@ -683,7 +683,22 @@ fn translate_observation(
         CommandObservation::Scanner(record) => {
             let result = if let Some(tokens) = record.tokens {
                 CanonicalValue::Tokens(tokens.into_iter().map(oracle_token).collect())
-            } else if matches!(record.kind, "integer" | "internal") {
+            } else if record.kind == "internal" {
+                if let Some(value) = record.value.strip_prefix("scaled:") {
+                    value.parse::<i64>().map_or_else(
+                        |_| CanonicalValue::Name(record.value),
+                        CanonicalValue::Scaled,
+                    )
+                } else if let Some(value) = record.value.strip_prefix("glue:") {
+                    parse_glue_scanner_value(value)
+                        .unwrap_or_else(|| CanonicalValue::Name(record.value))
+                } else {
+                    record.value.parse::<i64>().map_or_else(
+                        |_| CanonicalValue::Name(record.value),
+                        CanonicalValue::Integer,
+                    )
+                }
+            } else if record.kind == "integer" {
                 record.value.parse::<i64>().map_or_else(
                     |_| CanonicalValue::Name(record.value),
                     CanonicalValue::Integer,
