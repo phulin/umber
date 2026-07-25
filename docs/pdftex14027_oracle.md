@@ -64,6 +64,14 @@ changes selected by the canonical pdfTeX build profile, and builds static
 archive-owned library inputs. No network access occurs after the archive is
 present, and acquisition remains outside correctness tests.
 
+The manifest also pins `Cargo.lock`, because the independent PDF normalizer is
+built through Cargo during the oracle workflow. When a reviewed dependency
+change updates that lockfile, refresh its SHA-256 entry, then refresh the
+pdfTeX row's manifest digest in `tests/oracle-regeneration-manifest.txt` and
+run the validate-only preflight before the full pinned workflow. The validators
+intentionally reject either stale identity; this is a build-input refresh, not
+a semantic-trace regeneration.
+
 The observer makes the merged pdfTeX WEB exceed TANGLE's historical
 16-bit token/name-byte and expansion-stack capacities. The workflow therefore
 derives a private capacity-only TANGLE C source from the pinned generated
