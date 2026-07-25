@@ -406,6 +406,58 @@ command exercises the bundle writer with synthetic DVI.
 e2e/gentle` verify the manifest-pinned normalized reference hash before
 rewriting either fixture.
 
+### Canonical Story Regression Gate
+
+`e2e_conformance_story_canonical` in the same `crates/umber/tests/it/e2e_conformance.rs`
+protects the `umber2-johp` epic's first canonical/reference byte-identical DVI
+milestone (commit 5eed4dc3): the canonical `tex-command`/`CanonicalEngineSession`
+architecture's assembled DVI for `story.tex` must remain byte-identical to real
+pdfTeX's output, normalized only the same way `e2e_conformance_story` already
+is. It is kept alongside, not instead of, the legacy `e2e_conformance_story`
+test while the migration is in progress; both share the exact same staged
+fixture directory (`parity_harness::run_named_fixture_document`, the same
+`plain.tex`/`story.tex`/`hyphen.tex`/TFM staging the legacy in-process runner
+consumes) and the same `plain_inputs_available` oracle-presence check, so it
+skips with an explicit message when the locally generated `tests/corpus/e2e`
+oracle or external corpus inputs are absent, exactly like every other e2e
+case, and never reports a failure for a missing local oracle.
+
+```bash
+cargo test -p umber --test it e2e_conformance_story_canonical -- --nocapture
+```
+
+Unlike the legacy runner (`EngineSession` over `ExecutionContext`/
+`InputResolver`/`FontResolver`), this test drives
+`umber::CanonicalEngineSession` directly: it seeds the staged directory into a
+memory `World` (via the shared `staged_world` helper both runners now use),
+installs the canonical primitive tables with
+`tex_expand::install_expandable_primitives`/
+`tex_exec::install_unexpandable_primitives` (matching
+`examples/canonical_probe.rs`'s proven-working setup rather than the CLI's
+`prepare_run_stores`), registers the staged job wrapper as an authored root,
+and answers `\input`/font resource suspensions from a `StagedDirResourceHost`
+that reads the same staged files the legacy resolvers do. It does not perform
+the legacy test's macro-invocation-provenance budget check: that budget is a
+legacy `EngineSession`/`ExecutionContext` observation that does not yet have a
+canonical-session equivalent (see `umber2-johp.75`).
+
+Under the `cargo test --tests`/`profile.test` (`opt-level = 1`) build this test
+uses, Story's canonical run is fast (a few seconds), not the roughly 50-second
+debug-build cost tracked separately in `umber2-johp.74`; the whole gate adds
+on the order of 2 seconds to `cargo test -p umber --test it`'s wall time
+alongside the other e2e cases.
+
+On a mismatch it fails through the exact same `parity_harness::compare_dvi_files`
+byte-identity contract as the legacy test, reporting the divergent page and
+DVI opcode and writing a triage bundle under
+`target/conformance-triage/story.tex/`. This was verified directly: temporarily
+corrupting one assembled byte before the DVI comparison made
+`e2e_conformance_story_canonical` fail with an exact byte/page/opcode mismatch
+while `e2e_conformance_story` (legacy) kept passing; reverting the corruption
+restored both to green. See "Diagnosing A Canonical Divergence" below for the
+differential-tracer/`canonical_probe` recipe to use once this gate actually
+fails on a real regression.
+
 ## Diagnosing A Canonical Divergence
 
 Investigating a `umber2-johp` command-core divergence has a fixed order of

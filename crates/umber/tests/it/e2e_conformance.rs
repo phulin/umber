@@ -1,6 +1,7 @@
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use parity_harness::{
     TripTriageChannels, TripTriageInput, TripTriageSource, compare_dvi_files,
@@ -8,14 +9,18 @@ use parity_harness::{
 };
 use sha2::{Digest, Sha256};
 use test_support::dvi::normalized_dvi_for_comparison;
-use tex_exec::{ExecutionContext, FontResolver};
+use tex_command::{CommandProfile, FontResource};
+use tex_exec::{CanonicalResourceNeed, EngineCheckpoint, ExecutionContext, FontResolver};
 use tex_expand::InputResolver;
 use tex_lex::{InputStack, WorldInput};
 use tex_state::provenance::MacroInvocationProvenanceStats;
 use tex_state::provenance::ProvenanceStats;
 use tex_state::{InputReadState, JobClock, Universe, World};
 
-use umber::{EngineMode, EngineSession, dvi_from_page_plans};
+use umber::{
+    CanonicalEngineSession, CanonicalResourceFulfillment, CanonicalResourceHost,
+    CanonicalResourceWorld, CanonicalSessionError, EngineMode, EngineSession, dvi_from_page_plans,
+};
 
 fn repo_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -126,12 +131,13 @@ impl InProcessResolvers {
     }
 }
 
+/// Canonicalizes a staged fixture directory's job path and loads every file
+/// it contains into a memory `World`, keyed by absolute path so both the
+/// legacy and canonical in-process runners can address the same staged
+/// inputs (source document, format source, hyphenation data, TFMs) the same
+/// way `parity_harness::staged_source_dir` assembled them.
 #[allow(clippy::disallowed_methods)] // Host-side fixture loading; engine I/O still goes through World.
-fn run_file_in_process(
-    path: &Path,
-    format: Option<&[u8]>,
-    engine: EngineMode,
-) -> Result<InProcessRun, String> {
+fn staged_world(path: &Path) -> Result<(World, PathBuf), String> {
     let path = path
         .canonicalize()
         .map_err(|error| format!("resolve {}: {error}", path.display()))?;
@@ -160,6 +166,16 @@ fn run_file_in_process(
                 .map_err(|error| error.to_string())?;
         }
     }
+    Ok((world, path))
+}
+
+#[allow(clippy::disallowed_methods)] // Host-side fixture loading; engine I/O still goes through World.
+fn run_file_in_process(
+    path: &Path,
+    format: Option<&[u8]>,
+    engine: EngineMode,
+) -> Result<InProcessRun, String> {
+    let (world, path) = staged_world(path)?;
 
     let mut stores = if let Some(format) = format {
         let mut stores = Universe::from_format(world, format).map_err(|error| error.to_string())?;
@@ -261,6 +277,143 @@ fn e2e_conformance_story() {
 #[test]
 fn e2e_conformance_gentle() {
     run_plain_fixture_case("gentle.tex", "gentle");
+}
+
+/// Adds an extension inferred from the resource kind (`.tex` for input
+/// requests, `.tfm` for font requests) when a canonical resource need names a
+/// file without one, mirroring the legacy `InProcessInputResolver`/
+/// `InProcessFontResolver`'s own default-extension behavior above.
+fn with_default_extension(name: &str, extension: &str) -> PathBuf {
+    let mut path = PathBuf::from(name);
+    if path.extension().is_none() {
+        path.set_extension(extension);
+    }
+    path
+}
+
+/// Resolves canonical resource suspensions (`\input`, font loads) directly
+/// against the same staged fixture directory the legacy runner reads,
+/// keeping the two engines' host-side fixture wiring identical so a DVI
+/// difference between them reflects only engine behavior.
+struct StagedDirResourceHost {
+    base_dir: PathBuf,
+}
+
+impl CanonicalResourceHost for StagedDirResourceHost {
+    fn fulfill(
+        &mut self,
+        world: &mut CanonicalResourceWorld<'_>,
+        need: &CanonicalResourceNeed,
+    ) -> Option<CanonicalResourceFulfillment> {
+        match need {
+            CanonicalResourceNeed::Input { name } => {
+                let path = with_default_extension(name, "tex");
+                world
+                    .read_file(self.base_dir.join(path))
+                    .ok()
+                    .map(|content| CanonicalResourceFulfillment::world_input(name, content))
+            }
+            CanonicalResourceNeed::Font { request } => {
+                let path = with_default_extension(&request.name, "tfm");
+                world
+                    .read_file(self.base_dir.join(path))
+                    .ok()
+                    .map(|metrics| CanonicalResourceFulfillment::Font {
+                        request: request.clone(),
+                        resource: Box::new(FontResource::Tfm {
+                            metrics,
+                            opentype: None,
+                        }),
+                    })
+            }
+            CanonicalResourceNeed::PdfImage { .. } => None,
+        }
+    }
+}
+
+/// Renders a canonical session failure the same way `canonical_probe.rs`
+/// does: an execution error gets its provenance-resolved TeX source context,
+/// while every other `CanonicalSessionError` variant already carries enough
+/// context through its own `Display` impl.
+fn canonical_error_message(
+    session: &CanonicalEngineSession<'_>,
+    error: &CanonicalSessionError,
+) -> String {
+    match error {
+        CanonicalSessionError::Execution(exec_error) => {
+            exec_error.format_with_provenance(session.stores())
+        }
+        other => other.to_string(),
+    }
+}
+
+/// Drives the same staged fixture job through `CanonicalEngineSession`
+/// (the canonical `tex-command` architecture, not the legacy
+/// `EngineSession`/`ExecutionContext` path above) and returns its assembled
+/// DVI bytes. This is the production migration path's equivalent of
+/// `run_file_in_process`, sharing the same staged directory contract so
+/// `e2e_conformance_story_canonical` below is a real regression gate on
+/// `umber2-johp`'s first canonical/reference byte-identical DVI milestone.
+#[allow(clippy::disallowed_methods)] // Host-side fixture loading; engine I/O still goes through World.
+fn run_file_in_process_canonical(path: &Path) -> Result<Vec<u8>, String> {
+    let (world, path) = staged_world(path)?;
+    let base_dir = path
+        .parent()
+        .ok_or_else(|| format!("input has no parent: {}", path.display()))?
+        .to_owned();
+    let job_name = path
+        .file_stem()
+        .and_then(std::ffi::OsStr::to_str)
+        .unwrap_or("texput")
+        .to_owned();
+    let job_bytes = fs::read(&path).map_err(|error| format!("read {}: {error}", path.display()))?;
+
+    let mut stores = Universe::with_world(world);
+    tex_expand::install_expandable_primitives(&mut stores);
+    tex_exec::install_unexpandable_primitives(&mut stores);
+
+    let mut session = CanonicalEngineSession::new(&mut stores, CommandProfile::TEX82);
+    session
+        .register_authored_root(&job_name, Arc::from(job_bytes))
+        .map_err(|error| format!("register canonical root {job_name}: {error}"))?;
+
+    let mut host = StagedDirResourceHost { base_dir };
+    let mut checkpoints: Vec<EngineCheckpoint> = Vec::new();
+    let run = session
+        .run(&mut host, &mut checkpoints)
+        .map_err(|error| canonical_error_message(&session, &error))?;
+    if run.dvi_pages.is_empty() {
+        return Err("canonical Umber run did not produce DVI".to_owned());
+    }
+    dvi_from_page_plans(&run.dvi_pages).map_err(|error| error.to_string())
+}
+
+fn run_plain_fixture_case_canonical(document: &str, fixture_name: &str) {
+    let root = repo_root();
+    let fixture = root
+        .join("tests/corpus/e2e")
+        .join(format!("{fixture_name}.expected.dvi"));
+    if !plain_inputs_available(&root, document, &fixture) {
+        eprintln!(
+            "skipping canonical {document} end-to-end conformance: an external input or locally generated DVI oracle is absent; run scripts/setup-conformance-tests.sh"
+        );
+        return;
+    }
+    run_named_fixture_document(&root, document, &fixture, run_file_in_process_canonical)
+        .unwrap_or_else(|error| panic!("{error:#}"));
+}
+
+/// Protects `umber2-johp`'s first canonical/reference byte-identical DVI
+/// milestone (commit 5eed4dc3): the canonical `tex-command`
+/// architecture's DVI for `story.tex` must remain byte-identical to real
+/// pdfTeX's output after only the same preamble-comment normalization the
+/// legacy `e2e_conformance_story` test above already tolerates. Kept
+/// alongside (not replacing) the legacy test while the `umber2-johp`
+/// migration is in progress; both are oracle-presence-conditional in the
+/// same way (see `plain_inputs_available` above).
+#[test]
+fn e2e_conformance_story_canonical() {
+    run_plain_fixture_case_canonical("story.tex", "story");
 }
 
 #[allow(clippy::disallowed_methods)] // Host-side fixture staging and artifact comparison.
