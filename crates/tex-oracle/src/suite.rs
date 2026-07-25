@@ -9,6 +9,9 @@ use crate::CommittedFixture;
 const REGENERATION_MANIFEST: &str = "tests/oracle-regeneration-manifest.txt";
 const TEX82_FIXTURE_ROOT: &str = "tests/corpus/command/tex82";
 
+#[cfg(test)]
+pub(crate) const COMMITTED_TEX82_COMMAND_TRACE_EVENT_COUNT: usize = 12_352;
+
 /// A deterministic inventory of the offline TeX82 command-trace suite.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Tex82CommandTraceSuite {
@@ -297,7 +300,7 @@ fn sha256(bytes: &[u8]) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::validate_tex82_command_trace_suite;
+    use super::{COMMITTED_TEX82_COMMAND_TRACE_EVENT_COUNT, validate_tex82_command_trace_suite};
     use std::path::PathBuf;
 
     #[test]
@@ -305,7 +308,7 @@ mod tests {
         let repository = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
         let suite = validate_tex82_command_trace_suite(repository).expect("committed suite");
         assert_eq!(suite.fixtures.len(), 1);
-        assert_eq!(suite.events, 11_780);
+        assert_eq!(suite.events, COMMITTED_TEX82_COMMAND_TRACE_EVENT_COUNT);
         assert_eq!(suite.fixtures[0].selector, "tex82/command-transitions-v1");
         assert!(
             suite.fixtures[0]

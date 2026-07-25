@@ -10,6 +10,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use sha2::{Digest, Sha256};
 
+use crate::suite::COMMITTED_TEX82_COMMAND_TRACE_EVENT_COUNT;
 use crate::{
     AlignmentEvent, AlignmentTransition, CanonicalCitation, CanonicalCommand, CanonicalValue,
     CommandDelivery, CommandEvent, CommittedFixture, DisabledObserver, EngineDialect,
@@ -241,7 +242,10 @@ fn committed_tex82_fixture_is_consumed_hermetically() {
     )
     .expect("committed canonical fixture");
     assert_eq!(fixture.manifest.name, "tex82/command-transitions-v1");
-    assert_eq!(fixture.stream.events.len(), 11_780);
+    assert_eq!(
+        fixture.stream.events.len(),
+        COMMITTED_TEX82_COMMAND_TRACE_EVENT_COUNT
+    );
     fixture
         .audit_matrices(
             &fs::read(repository.join("tests/tex82-oracle/semantic-event-matrix.txt"))
