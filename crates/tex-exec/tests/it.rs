@@ -35,7 +35,7 @@ fn scoped_execution_transaction_cannot_escape_public_api() {
 
 #[test]
 #[allow(clippy::disallowed_methods)] // host-side architecture test
-fn canonical_main_control_has_no_legacy_input_or_raw_command_classifier() {
+fn canonical_main_control_has_one_command_owned_delivery_and_aggregate_rollback_boundary() {
     let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
     let driver = fs::read_to_string(manifest_dir.join("src/canonical_main_control.rs"))
         .expect("read canonical main-control boundary");
@@ -45,6 +45,8 @@ fn canonical_main_control_has_no_legacy_input_or_raw_command_classifier() {
         ": InputStack",
         "&mut InputStack",
         "next_semantic_raw_token",
+        "crate::executor",
+        "Executor::",
     ] {
         assert!(
             !driver.contains(forbidden),
@@ -58,5 +60,30 @@ fn canonical_main_control_has_no_legacy_input_or_raw_command_classifier() {
     assert!(
         !driver.contains("command.token()"),
         "canonical main control must not classify a raw token from CurrentCommand"
+    );
+    assert_eq!(
+        driver.matches("fn snapshot_step(").count(),
+        1,
+        "canonical main control must have one aggregate snapshot constructor"
+    );
+    assert_eq!(
+        driver.matches("fn rollback_step(").count(),
+        1,
+        "canonical main control must have one aggregate rollback implementation"
+    );
+    assert_eq!(
+        driver.matches("stores.rollback(").count(),
+        1,
+        "no family may introduce a separate Universe rollback path"
+    );
+    assert!(
+        !driver.contains("cached_command") && !driver.contains("retained_command"),
+        "canonical retries must start a fresh command-owned processor episode"
+    );
+    assert!(
+        driver.contains("struct ObservationBuffer")
+            && driver.contains("pending.flush_into(observer)")
+            && driver.contains(".with_observer(observer)"),
+        "observation must be transaction-buffered output from the same command processor, not a cached delivery path"
     );
 }

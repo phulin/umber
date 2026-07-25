@@ -2567,6 +2567,41 @@ TeX82 §§24--25 rather than retaining a delivered command. Host capabilities
 remain borrow-scoped outside this snapshot, so supplying a resource changes
 only the next attempt's capability set.
 
+### 33.1 Canonical main-control coverage matrix
+
+This is the closure inventory for Beads
+`umber2-johp.8.5.1.1.1.4.1.7`. TeX82 is the semantic authority: §§24--25 own
+delivery and expansion, while §1030 and its mode tables own the consumer.
+The pinned pdfTeX 1.40.27 source boundary is
+[`pdftex_primitives.md`](pdftex_primitives.md), not the former executor. A
+legacy `Executor`/`InputStack` occurrence is therefore only a deletion and
+entry-point-migration checklist; it is never a behavioral oracle. Routing
+direct, CLI, virtual, editor, and incremental callers is deliberately outside
+this matrix and remains Beads `.4.2`.
+
+| Canonical family                                                                                   | WEB authority                                                                                                        | Canonical owner and committed test inventory                                                                                                                                                                                                                                                                  |
+| -------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Delivery, expansion, recovery, and scanner state                                                   | TeX82 §§24--25; §1030                                                                                                | `CommandProcessor::{get_next,get_x_token}` is the only source path; `tex-command` raw/expanded delivery, macro, conditional, and structured-scanner tests plus `tex-exec` architecture gate.                                                                                                                  |
+| Mode selection, groups, prefixes, definitions, registers, parameters, code tables, and diagnostics | TeX82 §1030+ mode tables; §§1064, 1066, 1095, 1131; §1254 (`new_font`)                                               | Typed `ScannedStep` application; `canonical_assignments_*`, `canonical_definition_*`, `canonical_font_definition_*`, `canonical_grouping_*`, and `canonical_display_diagnostics_*`.                                                                                                                           |
+| Paragraph and horizontal material                                                                  | TeX82 §1030+ horizontal/vertical branches                                                                            | Typed paragraph start/backup, `\\everypar`, characters, spaces, ligatures, accents, discretionary, kern/glue, parshape, line breaking, and page contribution; `production_driver_*paragraph*`, `production_driver_*horizontal*`, and `canonical_paragraph_page_builder_is_observer_neutral`.                  |
+| Boxes, leaders, packing, splitting, and explicit shipment                                          | TeX82 §1071 (`box_end`/`\\shipout`) and §1030+ box branches                                                          | Typed box construction/selection/unboxing/leaders/vsplit; `canonical_box_*`, `canonical_vsplit_*`, `canonical_initex_replay_scans_setbox_*`, and `shipout_box_completion_*`.                                                                                                                                  |
+| Math and display material                                                                          | TeX82 §§691--734 and §1030+ math branches                                                                            | Typed `CanonicalMathRequest`/`MathDelimiterBoundary`; `canonical_math_*`, `canonical_math_replay_observer_does_not_change_frozen_mlist`, and math scanner recovery tests.                                                                                                                                     |
+| Alignment preamble, cells, templates, recovery, and final packing                                  | TeX82 §§760--780; §1131 recovery                                                                                     | Command-owned `AlignmentDelivery`; `canonical_alignment_*`, `command_owned_endv_*`, `nested_alignment_*`, `noalign_*`, and committed TeX82 alignment fixtures.                                                                                                                                                |
+| Input, font, and image resources                                                                   | TeX82 §529 (`start_input`/filename scan), §1254; pdfTeX `scan_image`/`scan_pdf_box_spec`                             | Immutable typed suspension only; `missing_canonical_input_*`, `canonical_missing_font_*`, `canonical_openin_*`, `canonical_pdfximage_*`, and `canonical_pdf_resource_retry_*`. Host-byte fulfillment is a deliberate modern envelope, not a TeX82 semantic substitute.                                        |
+| Page building, output routines, DVI/PDF lowering, streams, effects, and artifacts                  | TeX82 §46, §§608--642, §§1006--1028, §1071, §§1337--1338; pdfTeX `pdf_ship_out`, `hlist_out`/`vlist_out`, `out_what` | Typed page/output lifecycle and detached receipts; `canonical_*shipout*`, `canonical_stream_effects_*`, `canonical_pdf_whatsits_*`, and `tex-out` artifact/DVI tests.                                                                                                                                         |
+| pdfTeX extension registry and PDF semantic families                                                | pdfTeX 1.40.27 registration blocks and routines pinned by `pdftex_primitives.md` (158 exact names)                   | One static profile dispatch over the same command machine; source-derived 158-name inventory, `pdftex::*`, `pdf_output::*`, graphics/navigation/font fixtures, and typed image retry coverage. Engine-neutral aliases are documented there; no new extension boundary is introduced here.                     |
+| Fresh/format-loaded session and observer equivalence                                               | TeX82 INITEX/format model; §§24--25 and §1030+                                                                       | `fresh_and_format_sessions_pin_the_same_command_profile`, `canonical_fresh_and_format_loaded_sessions_execute_the_same_root`, and observed/unobserved paragraph/math/retry tests. Observers buffer only committed records from the same processor episode; they do not replay or synthesize command delivery. |
+
+The architecture test in `crates/tex-exec/tests/it.rs` rejects raw
+`InputStack` delivery and executor dispatch in `CanonicalMainControl`, requires
+the typed `CurrentCommand::meaning()` dispatch boundary, and fixes one
+aggregate snapshot/rollback implementation. The rollback snapshot includes
+command state, fresh discardable runtime, mode nest, Universe, active
+box/alignment/output state, artifacts, and effect roots. `ObservationBuffer`
+is a transaction-local commit buffer, not cached command state: a failed
+operation rolls it back without publication, then retries with a fresh
+processor episode.
+
 ## 34. End-state invariants
 
 The replacement is complete only when all of these hold:

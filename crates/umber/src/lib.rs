@@ -2173,6 +2173,50 @@ mod tests {
     }
 
     #[test]
+    fn canonical_fresh_and_format_loaded_sessions_execute_the_same_root() {
+        use crate::EngineMode;
+
+        for mode in [EngineMode::Tex82, EngineMode::ETex, EngineMode::PdfTex] {
+            let root = Arc::<[u8]>::from(&b"\\message{canonical format}\\end"[..]);
+
+            let mut fresh = Universe::new();
+            mode.prepare_fresh(&mut fresh);
+            let mut fresh_input = InputStack::new(MemoryInput::new("legacy fresh input"));
+            let mut fresh_session = EngineSession::with_command_profile(
+                &mut fresh_input,
+                &mut fresh,
+                ExecutionContext::new("fresh"),
+                mode.command_profile(),
+            );
+            fresh_session
+                .register_canonical_root("job.tex", RegisteredSourceKind::Generated, root.clone())
+                .expect("fresh canonical root registers");
+            let fresh_run = fresh_session.execute().expect("fresh canonical run");
+            let format = fresh_session.stores().dump_format().expect("format dumps");
+            drop(fresh_session);
+
+            let mut loaded =
+                Universe::from_format(World::default(), &format).expect("format loads");
+            mode.install_after_format(&mut loaded);
+            let mut loaded_input = InputStack::new(MemoryInput::new("legacy loaded input"));
+            let mut loaded_session = EngineSession::with_command_profile(
+                &mut loaded_input,
+                &mut loaded,
+                ExecutionContext::new("loaded"),
+                mode.command_profile(),
+            );
+            loaded_session
+                .register_canonical_root("job.tex", RegisteredSourceKind::Generated, root)
+                .expect("format-loaded canonical root registers");
+            let loaded_run = loaded_session
+                .execute()
+                .expect("format-loaded canonical run");
+
+            assert_eq!(fresh_run, loaded_run, "{}", mode.name());
+        }
+    }
+
+    #[test]
     fn canonical_session_checkpoint_uses_command_summary_not_legacy_input() {
         use tex_exec::{EngineBoundary, ExecutionBudgetCounters};
 
