@@ -66,6 +66,7 @@ fn balanced_text_and_macro_definition_freeze_typed_lists_with_provenance() {
         .expect("source opens");
     let mut runtime = CommandRuntime::default();
     let mut universe = Universe::new();
+    let target = universe.intern("defined").symbol();
     let mut capabilities = CommandHostCapabilities::default();
     let snapshot = command.snapshot();
     let balanced = {
@@ -102,6 +103,7 @@ fn balanced_text_and_macro_definition_freeze_typed_lists_with_provenance() {
     push(
         &mut command,
         [
+            Token::Cs(target),
             Token::Char {
                 ch: '#',
                 cat: Catcode::Parameter,
@@ -134,6 +136,7 @@ fn balanced_text_and_macro_definition_freeze_typed_lists_with_provenance() {
             .scan_macro_definition(false)
             .expect("definition scans")
     };
+    assert_eq!(definition.target, target);
     assert_eq!(
         universe.tokens(definition.parameter_text.token_list()),
         &[Token::Param(1)]

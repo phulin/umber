@@ -1748,11 +1748,6 @@ fn scan_command(
             | UnexpandablePrimitive::Gdef
             | UnexpandablePrimitive::Xdef),
         ) => {
-            let target = next_non_space_raw(processor)?
-                .and_then(|target| target.control_sequence())
-                .ok_or(ExecError::MissingControlSequence {
-                    context: "macro definition",
-                })?;
             let expanded = matches!(
                 primitive,
                 UnexpandablePrimitive::Edef | UnexpandablePrimitive::Xdef
@@ -1761,7 +1756,7 @@ fn scan_command(
                 .scan_macro_definition(expanded)
                 .map_err(command_error)?;
             Ok(ScannedStep::MacroDefinition {
-                target,
+                target: definition.target,
                 flags,
                 global: global
                     || matches!(
@@ -2029,25 +2024,6 @@ fn next_non_space(
 ) -> Result<Option<tex_command::CurrentCommand>, ExecError> {
     loop {
         let Some(command) = processor.get_x_token().map_err(command_error)? else {
-            return Ok(None);
-        };
-        if !matches!(
-            command.meaning(),
-            Meaning::CharToken {
-                cat: tex_state::token::Catcode::Space,
-                ..
-            }
-        ) {
-            return Ok(Some(command));
-        }
-    }
-}
-
-fn next_non_space_raw(
-    processor: &mut CommandProcessor<'_>,
-) -> Result<Option<tex_command::CurrentCommand>, ExecError> {
-    loop {
-        let Some(command) = processor.get_token().map_err(command_error)? else {
             return Ok(None);
         };
         if !matches!(

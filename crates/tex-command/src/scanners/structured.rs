@@ -42,6 +42,11 @@ pub struct ScannedBalancedText {
 /// The two immutable lists collected for a macro definition.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ScannedMacroDefinition {
+    /// The raw control-sequence (or active-character) target accepted by
+    /// TeX82's `prefixed_command`.  Target delivery is command-owned so the
+    /// executor never has to reopen raw input between the primitive and its
+    /// parameter/replacement scan.
+    pub target: Symbol,
     pub parameter_text: TracedTokenList,
     pub replacement_text: TracedTokenList,
     pub provenance: StructuredProvenance,
@@ -846,8 +851,13 @@ impl CommandProcessor<'_> {
         &mut self,
         expanded: bool,
     ) -> Result<ScannedMacroDefinition, CommandError> {
+        let target = self
+            .next_non_space_raw()?
+            .and_then(|command| command.control_sequence())
+            .ok_or(CommandError::InputInvariant)?;
         let scanned = self.scan_toks(ScanToksMode::MacroDefinition { expanded })?;
         Ok(ScannedMacroDefinition {
+            target,
             parameter_text: scanned.parameter_text,
             replacement_text: scanned.replacement_text,
             provenance: provenance(&scanned),

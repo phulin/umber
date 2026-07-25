@@ -1780,6 +1780,42 @@ fn canonical_initex_replay_scans_raw_let_operands_and_commits_the_meaning() {
 }
 
 #[test]
+fn canonical_initex_replay_keeps_macro_target_and_expanded_body_in_command_core() {
+    let mut universe = Universe::new();
+    let mut control = CommandReplayControl::tex82_initex(&mut universe);
+    register_source(
+        &mut control,
+        br"\def\source{expanded}\long\outer\edef\target{\source}\end",
+    );
+
+    assert_eq!(
+        control.step(&mut universe).expect("source definition"),
+        ReplayStep::Continue
+    );
+    assert_eq!(
+        control.step(&mut universe).expect("expanded definition"),
+        ReplayStep::Continue
+    );
+    let target = universe.symbol("target").expect("macro target is interned");
+    let meaning = universe.macro_meaning(target).expect("target is a macro");
+    assert!(
+        meaning
+            .flags()
+            .contains(tex_state::meaning::MeaningFlags::LONG)
+    );
+    assert!(
+        meaning
+            .flags()
+            .contains(tex_state::meaning::MeaningFlags::OUTER)
+    );
+    assert_eq!(
+        replay_text(universe.tokens(meaning.replacement_text())),
+        "expanded"
+    );
+    assert_eq!(control.step(&mut universe).expect("end"), ReplayStep::End);
+}
+
+#[test]
 fn canonical_initex_replay_futurelet_preserves_lookahead_order_after_assignment() {
     let mut universe = Universe::new();
     let mut control = CommandReplayControl::tex82_initex(&mut universe);
