@@ -284,6 +284,69 @@ pub struct ScannedMathScript {
     pub provenance: StructuredProvenance,
 }
 
+/// Recovery performed while completing a math field or braced math-list
+/// episode. The rejected command has already been retained for canonical
+/// replay; consumers receive no source cursor or raw command.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum MathEpisodeRecovery {
+    None,
+    MissingOpeningBrace,
+    MissingField,
+}
+
+/// Immutable command-owned material for one math field.
+///
+/// The frozen payload is deliberately private. A consumer can only schedule
+/// it through [`CommandState`](crate::CommandState)'s typed replay entry point,
+/// keeping command delivery, expansion, and provenance in `tex-command`.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct MathFieldEpisode {
+    pub(crate) tokens: TracedTokenList,
+    pub recovery: MathEpisodeRecovery,
+    pub provenance: StructuredProvenance,
+}
+
+/// Immutable command-owned braced mlist episode.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct MathGroupEpisode {
+    pub(crate) tokens: TracedTokenList,
+    pub recovery: MathEpisodeRecovery,
+    pub provenance: StructuredProvenance,
+}
+
+/// The four independently frozen branches of TeX82's `\mathchoice`.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct MathChoiceEpisodes {
+    pub display: MathGroupEpisode,
+    pub text: MathGroupEpisode,
+    pub script: MathGroupEpisode,
+    pub scriptscript: MathGroupEpisode,
+}
+
+/// A completed script attachment. The executor selects the incomplete noad;
+/// command processing has already completed the field it attaches.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct MathScriptAttachment {
+    pub kind: MathScriptKind,
+    pub field: MathFieldEpisode,
+}
+
+/// The structural delimiter boundary selected by `\left`, `\right`, or
+/// e-TeX's `\middle`. The corresponding delimiter scan is complete before
+/// this value crosses the command boundary.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct MathDelimiterBoundary {
+    pub kind: MathDelimiterBoundaryKind,
+    pub delimiter: ScannedMathDelimiter,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum MathDelimiterBoundaryKind {
+    Left,
+    Right,
+    Middle,
+}
+
 /// The generalized-fraction form selected before its numerator is frozen.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum MathFractionKind {
@@ -454,6 +517,115 @@ pub enum AlignmentCellOpening {
 }
 
 impl CommandProcessor<'_> {
+    /// Completes one TeX82 math field into immutable command-owned material.
+    ///
+    /// A braced field becomes a grouped mlist episode; an unbraced field is
+    /// one expanded command spelling. Active characters are resolved by
+    /// `get_x_token` before freezing, so their replay cannot reopen source
+    /// input or bypass command provenance.
+    pub fn scan_math_field_episode(&mut self) -> Result<MathFieldEpisode, CommandError> {
+        loop {
+            let Some(command) = self.get_x_token()? else {
+                return Ok(MathFieldEpisode {
+                    tokens: self.state.finish_traced_token_list(&[]),
+                    recovery: MathEpisodeRecovery::MissingField,
+                    provenance: StructuredProvenance {
+                        primary: OriginId::UNKNOWN,
+                    },
+                });
+            };
+            match command.meaning() {
+                Meaning::CharToken {
+                    cat: Catcode::Space,
+                    ..
+                }
+                | Meaning::Relax => continue,
+                Meaning::CharToken {
+                    cat: Catcode::BeginGroup,
+                    ..
+                } => {
+                    self.back_input(command)?;
+                    let group = self.scan_math_group_episode()?;
+                    return Ok(MathFieldEpisode {
+                        tokens: group.tokens,
+                        recovery: group.recovery,
+                        provenance: group.provenance,
+                    });
+                }
+                _ => {
+                    let provenance = StructuredProvenance {
+                        primary: command.origin(),
+                    };
+                    return Ok(MathFieldEpisode {
+                        tokens: self.state.finish_traced_token_list(&[command.spelling()]),
+                        recovery: MathEpisodeRecovery::None,
+                        provenance,
+                    });
+                }
+            }
+        }
+    }
+
+    /// Completes one required braced math list. A missing opening brace is
+    /// recovered here after `scan_left_brace` has backed the rejected command
+    /// up, matching TeX's recovery ownership without exposing it to replay.
+    pub fn scan_math_group_episode(&mut self) -> Result<MathGroupEpisode, CommandError> {
+        match self.scan_left_brace(true) {
+            Ok(opening) => {
+                let primary = opening.origin();
+                self.back_input(opening)?;
+                let scanned = self.scan_toks(ScanToksMode::General { expanded: false })?;
+                Ok(MathGroupEpisode {
+                    tokens: scanned.replacement_text,
+                    recovery: MathEpisodeRecovery::None,
+                    provenance: StructuredProvenance { primary },
+                })
+            }
+            Err(CommandError::InputInvariant) => Ok(MathGroupEpisode {
+                tokens: self.state.finish_traced_token_list(&[]),
+                recovery: MathEpisodeRecovery::MissingOpeningBrace,
+                provenance: StructuredProvenance {
+                    primary: OriginId::UNKNOWN,
+                },
+            }),
+            Err(error) => Err(error),
+        }
+    }
+
+    /// Completes all four required `\mathchoice` groups before replay starts
+    /// constructing any branch.
+    pub fn scan_math_choice_episodes(&mut self) -> Result<MathChoiceEpisodes, CommandError> {
+        Ok(MathChoiceEpisodes {
+            display: self.scan_math_group_episode()?,
+            text: self.scan_math_group_episode()?,
+            script: self.scan_math_group_episode()?,
+            scriptscript: self.scan_math_group_episode()?,
+        })
+    }
+
+    /// Completes a script marker and its field in one command-owned episode.
+    pub fn scan_math_script_attachment(
+        &mut self,
+        kind: MathScriptKind,
+    ) -> Result<MathScriptAttachment, CommandError> {
+        Ok(MathScriptAttachment {
+            kind,
+            field: self.scan_math_field_episode()?,
+        })
+    }
+
+    /// Completes the delimiter immediately following a structural math
+    /// boundary (`\left`, `\right`, or `\middle`).
+    pub fn scan_math_delimiter_boundary(
+        &mut self,
+        kind: MathDelimiterBoundaryKind,
+    ) -> Result<MathDelimiterBoundary, CommandError> {
+        Ok(MathDelimiterBoundary {
+            kind,
+            delimiter: self.scan_math_delimiter()?,
+        })
+    }
+
     /// Scans and range-checks TeX82's 15-bit math-character number.
     pub fn scan_math_character(&mut self) -> Result<ScannedMathCharacter, CommandError> {
         let scanned = self.scan_integer()?;

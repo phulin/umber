@@ -11,7 +11,9 @@ use crate::input::{
     InputLevel, InputLevelId, PhysicalLine, RegisteredSource, SourceCharacter, SourceCursor,
     SourceLevel, SourceRegistration, SourceRegistrationError, SourceTokenizationStep,
 };
-use crate::input::{ReplayTrace, RetirementBehavior, TokenBehavior, TokenPayload};
+use crate::input::{
+    ReplayTrace, RetirementBehavior, StoredReplayReason, TokenBehavior, TokenPayload,
+};
 use crate::macro_call::ParameterState;
 use crate::processor::{
     AlignmentCellCompletion, AlignmentCellDelimiter, AlignmentCellTemplates,
@@ -21,6 +23,7 @@ use crate::processor::{
 use crate::profile::{
     CommandProfile, CommandProfileBoundary, CommandProfileFingerprint, CommandProfileMismatch,
 };
+use crate::{MathFieldEpisode, MathGroupEpisode};
 
 /// Complete future-relevant state owned by the command machine.
 ///
@@ -47,6 +50,34 @@ pub struct CommandState {
 pub struct CommandReplayEpisode(InputLevelId);
 
 impl CommandState {
+    /// Schedules one completed math field without exposing its frozen token
+    /// list to the executor. The returned opaque identity bounds replay.
+    pub fn push_math_field_episode(&mut self, field: MathFieldEpisode) -> CommandReplayEpisode {
+        self.push_math_episode(field.tokens, StoredReplayReason::MathField)
+    }
+
+    /// Schedules one completed braced math-list episode. The executor owns
+    /// math-group state, while command processing retains delivery ownership.
+    pub fn push_math_group_episode(&mut self, group: MathGroupEpisode) -> CommandReplayEpisode {
+        self.push_math_episode(group.tokens, StoredReplayReason::MathGroup)
+    }
+
+    fn push_math_episode(
+        &mut self,
+        tokens: TracedTokenList,
+        reason: StoredReplayReason,
+    ) -> CommandReplayEpisode {
+        CommandReplayEpisode(self.push_token_level(
+            TokenPayload::Stored {
+                tokens: tokens.token_list(),
+                origins: tokens.origin_list(),
+            },
+            TokenBehavior::Ordinary,
+            RetirementBehavior::Pop,
+            ReplayTrace::Stored(reason),
+        ))
+    }
+
     /// Schedules one completed `\\discretionary` part for canonical replay.
     ///
     /// This is deliberately a stored command level, not an executor-owned

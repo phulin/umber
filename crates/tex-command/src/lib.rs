@@ -54,16 +54,17 @@ pub use profile::{
 };
 pub use scanners::{
     AlignmentCellOpening, CanonicalMathRequest, EquationNumberSide, FileNameTermination,
-    FontLoadRequest, ImmediateExtension, InputStreamRequest, InternalValue, MathFamilySize,
-    MathFractionKind, MathLimitKind, MathScriptKind, MathStyleKind, MathTextFieldKind,
-    RegisteredInput, ScalarProvenance, ScalarRecovery, ScannedAccent, ScannedAccentBase,
-    ScannedBalancedText, ScannedBoxConstruction, ScannedBoxKind, ScannedBoxRegister,
-    ScannedDiscretionary, ScannedDisplayDiagnostic, ScannedEquationNumber, ScannedFileName,
-    ScannedGlueParameterAssignment, ScannedLeaderPayload, ScannedLetAssignment,
-    ScannedMacroDefinition, ScannedMathCharacter, ScannedMathDelimiter, ScannedMathFamily,
-    ScannedMathFraction, ScannedMathMuMaterial, ScannedMathScript, ScannedPackingSpec,
-    ScannedRuleSpec, ScannedScalar, ScannedSetBoxAssignment, ScannedTokenRegisterAssignment,
-    ScannedVSplit, StructuredProvenance,
+    FontLoadRequest, ImmediateExtension, InputStreamRequest, InternalValue, MathChoiceEpisodes,
+    MathDelimiterBoundary, MathDelimiterBoundaryKind, MathEpisodeRecovery, MathFamilySize,
+    MathFieldEpisode, MathFractionKind, MathGroupEpisode, MathLimitKind, MathScriptAttachment,
+    MathScriptKind, MathStyleKind, MathTextFieldKind, RegisteredInput, ScalarProvenance,
+    ScalarRecovery, ScannedAccent, ScannedAccentBase, ScannedBalancedText, ScannedBoxConstruction,
+    ScannedBoxKind, ScannedBoxRegister, ScannedDiscretionary, ScannedDisplayDiagnostic,
+    ScannedEquationNumber, ScannedFileName, ScannedGlueParameterAssignment, ScannedLeaderPayload,
+    ScannedLetAssignment, ScannedMacroDefinition, ScannedMathCharacter, ScannedMathDelimiter,
+    ScannedMathFamily, ScannedMathFraction, ScannedMathMuMaterial, ScannedMathScript,
+    ScannedPackingSpec, ScannedRuleSpec, ScannedScalar, ScannedSetBoxAssignment,
+    ScannedTokenRegisterAssignment, ScannedVSplit, StructuredProvenance,
 };
 pub use snapshot::{CommandStateSnapshot, CommandSummary, CommandSummaryError};
 pub use state::{CommandReplayEpisode, CommandRuntime, CommandState, UnknownRegisteredSource};

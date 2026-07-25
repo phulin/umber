@@ -51,9 +51,12 @@ script markers, limit switches, generalized fractions, styles and choices,
 delimiters/radicals/accents, `mu` glue or kerns, and equation-number entry.
 Command processing completes scalar operands (including optional fraction
 delimiters and `mu` units) and retains range recovery/provenance before the
-borrow ends. Mlist construction, display packaging, and any later math-field
-episode remain executor work; they receive no raw token, input stack, or
-scanner-status capability.
+borrow ends. It also freezes opaque completed math-field and braced-mlist
+episodes, including script attachments, four `\mathchoice` branches, and
+`\left`/`\right`/`\middle` delimiter boundaries. The executor replays those
+episodes only through typed command-state handles, so mlist construction and
+display packaging receive no raw token, input stack, or scanner-status
+capability.
 
 The replay seam also retains the executor-side mode projection and obtains
 observable general-text effects (currently `\\message`) through the typed

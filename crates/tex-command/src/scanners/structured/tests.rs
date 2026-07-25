@@ -100,6 +100,249 @@ fn math_scalar_requests_are_completed_before_replay() {
 }
 
 #[test]
+fn completed_math_field_replays_nested_group_without_exposing_tokens() {
+    let mut command = CommandState::default();
+    let mut runtime = CommandRuntime::default();
+    let mut universe = Universe::new();
+    let mut capabilities = CommandHostCapabilities::default();
+    push(
+        &mut command,
+        [
+            Token::Char {
+                ch: '{',
+                cat: Catcode::BeginGroup,
+            },
+            Token::Char {
+                ch: '{',
+                cat: Catcode::BeginGroup,
+            },
+            Token::Char {
+                ch: 'x',
+                cat: Catcode::Letter,
+            },
+            Token::Char {
+                ch: '}',
+                cat: Catcode::EndGroup,
+            },
+            Token::Char {
+                ch: '}',
+                cat: Catcode::EndGroup,
+            },
+        ],
+    );
+    let field = {
+        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+        processor.scan_math_field_episode().expect("field scans")
+    };
+    assert_eq!(field.recovery, MathEpisodeRecovery::None);
+    let episode = command.push_math_field_episode(field);
+    let nested = {
+        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+        processor
+            .scan_math_group_episode()
+            .expect("nested group scans")
+    };
+    assert_eq!(nested.recovery, MathEpisodeRecovery::None);
+    let nested_episode = command.push_math_group_episode(nested);
+    let token = {
+        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+        processor
+            .get_x_token()
+            .expect("delivery succeeds")
+            .expect("x arrives")
+    };
+    assert_eq!(
+        token.spelling().semantic_token(),
+        Token::Char {
+            ch: 'x',
+            cat: Catcode::Letter
+        }
+    );
+    assert!(command.replay_episode_is_active(episode));
+    assert!(command.replay_episode_is_active(nested_episode));
+}
+
+#[test]
+fn math_choice_groups_are_completed_independently() {
+    let mut command = CommandState::default();
+    let mut runtime = CommandRuntime::default();
+    let mut universe = Universe::new();
+    let mut capabilities = CommandHostCapabilities::default();
+    push(
+        &mut command,
+        [
+            Token::Char {
+                ch: '{',
+                cat: Catcode::BeginGroup,
+            },
+            Token::Char {
+                ch: 'a',
+                cat: Catcode::Letter,
+            },
+            Token::Char {
+                ch: '}',
+                cat: Catcode::EndGroup,
+            },
+            Token::Char {
+                ch: '{',
+                cat: Catcode::BeginGroup,
+            },
+            Token::Char {
+                ch: 'b',
+                cat: Catcode::Letter,
+            },
+            Token::Char {
+                ch: '}',
+                cat: Catcode::EndGroup,
+            },
+            Token::Char {
+                ch: '{',
+                cat: Catcode::BeginGroup,
+            },
+            Token::Char {
+                ch: 'c',
+                cat: Catcode::Letter,
+            },
+            Token::Char {
+                ch: '}',
+                cat: Catcode::EndGroup,
+            },
+            Token::Char {
+                ch: '{',
+                cat: Catcode::BeginGroup,
+            },
+            Token::Char {
+                ch: 'd',
+                cat: Catcode::Letter,
+            },
+            Token::Char {
+                ch: '}',
+                cat: Catcode::EndGroup,
+            },
+        ],
+    );
+    let choices = {
+        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+        processor.scan_math_choice_episodes().expect("choice scans")
+    };
+    for group in [
+        choices.display,
+        choices.text,
+        choices.script,
+        choices.scriptscript,
+    ] {
+        assert_eq!(group.recovery, MathEpisodeRecovery::None);
+        command.push_math_group_episode(group);
+    }
+    let replayed = {
+        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+        processor
+            .get_x_token()
+            .expect("replay remains command owned")
+            .expect("last branch replays first")
+    };
+    assert_eq!(
+        replayed.spelling().semantic_token(),
+        Token::Char {
+            ch: 'd',
+            cat: Catcode::Letter
+        }
+    );
+}
+
+#[test]
+fn missing_math_group_brace_recovers_without_consuming_rejected_command() {
+    let mut command = CommandState::default();
+    let mut runtime = CommandRuntime::default();
+    let mut universe = Universe::new();
+    let mut capabilities = CommandHostCapabilities::default();
+    push(
+        &mut command,
+        [Token::Char {
+            ch: 'x',
+            cat: Catcode::Letter,
+        }],
+    );
+    let group = {
+        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+        processor
+            .scan_math_group_episode()
+            .expect("recovery completes")
+    };
+    assert_eq!(group.recovery, MathEpisodeRecovery::MissingOpeningBrace);
+    let replayed = {
+        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+        processor
+            .get_x_token()
+            .expect("replay remains command owned")
+            .expect("rejected token replays")
+    };
+    assert_eq!(
+        replayed.spelling().semantic_token(),
+        Token::Char {
+            ch: 'x',
+            cat: Catcode::Letter
+        }
+    );
+}
+
+#[test]
+fn math_episode_observation_does_not_change_frozen_command_state() {
+    let mut plain = CommandState::default();
+    let mut observed = CommandState::default();
+    let tokens = [
+        Token::Char {
+            ch: '{',
+            cat: Catcode::BeginGroup,
+        },
+        Token::Char {
+            ch: 'x',
+            cat: Catcode::Letter,
+        },
+        Token::Char {
+            ch: '}',
+            cat: Catcode::EndGroup,
+        },
+    ];
+    push(&mut plain, tokens);
+    push(&mut observed, tokens);
+    let mut plain_runtime = CommandRuntime::default();
+    let mut observed_runtime = CommandRuntime::default();
+    let mut plain_universe = Universe::new();
+    let mut observed_universe = Universe::new();
+    let mut plain_capabilities = CommandHostCapabilities::default();
+    let mut observed_capabilities = CommandHostCapabilities::default();
+    let plain_field = {
+        let mut processor = processor(
+            &mut plain,
+            &mut plain_runtime,
+            &mut plain_universe,
+            &mut plain_capabilities,
+        );
+        processor
+            .scan_math_field_episode()
+            .expect("plain field scans")
+    };
+    let mut recorder = Recorder::default();
+    let observed_field = {
+        let mut processor = processor(
+            &mut observed,
+            &mut observed_runtime,
+            &mut observed_universe,
+            &mut observed_capabilities,
+        )
+        .with_observer(&mut recorder);
+        processor
+            .scan_math_field_episode()
+            .expect("observed field scans")
+    };
+    assert_eq!(plain_field.recovery, observed_field.recovery);
+    assert_eq!(plain_field.provenance, observed_field.provenance);
+    assert_eq!(plain.snapshot(), observed.snapshot());
+    assert!(!recorder.0.is_empty());
+}
+
+#[test]
 fn math_delimiter_and_mu_requests_recover_and_consume_units() {
     let mut command = CommandState::default();
     let mut runtime = CommandRuntime::default();

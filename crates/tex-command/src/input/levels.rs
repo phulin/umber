@@ -167,6 +167,12 @@ pub(crate) enum StoredReplayReason {
     TokenParameter(u16),
     EveryPar,
     EveryMath,
+    /// A completed math field, replayed while the executor constructs its
+    /// typed field without acquiring a source cursor.
+    MathField,
+    /// A completed braced math list, replayed while the executor owns the
+    /// corresponding math-group lifecycle.
+    MathGroup,
     EveryDisplay,
     EveryHBox,
     EveryVBox,
