@@ -2,7 +2,7 @@
 
 use std::collections::BTreeMap;
 
-use crate::SourceRegistration;
+use crate::{PdfImageRequest, SourceRegistration};
 use std::path::{Path, PathBuf};
 use tex_state::world::FileContent;
 
@@ -29,6 +29,17 @@ pub enum FontResource {
         metrics: FileContent,
     },
     OpenType(tex_fonts::OpenTypeProgramSelection),
+}
+
+/// Host-completed result for a canonical pdfTeX image request.
+///
+/// Parsed metadata and retained immutable bytes are safe to hand to the
+/// engine; a missing map entry means acquisition has not completed and must
+/// suspend the aggregate operation instead.
+#[derive(Clone, Debug)]
+pub enum PdfImageResource {
+    Unavailable,
+    Available(tex_state::PdfExternalImageSource),
 }
 
 /// The executor facts observed by TeX's mode predicates.
@@ -76,6 +87,7 @@ pub enum ConditionalMode {
 pub struct CommandHostCapabilities {
     input: BTreeMap<String, SourceRegistration>,
     fonts: BTreeMap<PathBuf, FontResource>,
+    images: Vec<(PdfImageRequest, PdfImageResource)>,
     job_name: String,
     conditional_state: ConditionalState,
 }
@@ -85,6 +97,7 @@ impl Default for CommandHostCapabilities {
         Self {
             input: BTreeMap::new(),
             fonts: BTreeMap::new(),
+            images: Vec::new(),
             job_name: String::new(),
             // A processor outside main control observes TeX's initial outer
             // vertical mode. Real execution replaces this per operation.
@@ -106,6 +119,23 @@ impl CommandHostCapabilities {
     /// Registers a host-acquired immutable font resource for one request path.
     pub fn register_font(&mut self, path: impl Into<PathBuf>, resource: FontResource) {
         self.fonts.insert(path.into(), resource);
+    }
+
+    /// Registers a validated immutable image response for its exact request.
+    pub fn register_pdf_image(&mut self, request: PdfImageRequest, resource: PdfImageResource) {
+        if let Some((_, existing)) = self.images.iter_mut().find(|(key, _)| *key == request) {
+            *existing = resource;
+        } else {
+            self.images.push((request, resource));
+        }
+    }
+
+    #[must_use]
+    pub fn pdf_image(&self, request: &PdfImageRequest) -> Option<PdfImageResource> {
+        self.images
+            .iter()
+            .find(|(key, _)| key == request)
+            .map(|(_, resource)| resource.clone())
     }
 
     /// Borrows a registered font resource for one replay operation. The
@@ -181,6 +211,11 @@ impl<'a> CommandHostContext<'a> {
     #[must_use]
     pub fn font(&self, path: &Path) -> Option<FontResource> {
         self._capabilities.font(path)
+    }
+
+    #[must_use]
+    pub fn pdf_image(&self, request: &PdfImageRequest) -> Option<PdfImageResource> {
+        self._capabilities.pdf_image(request)
     }
 
     pub(crate) fn job_name(&self) -> &str {

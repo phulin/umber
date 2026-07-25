@@ -83,6 +83,32 @@ pub struct FontLoadRequest {
     pub size: FontSizeSpec,
 }
 
+/// Immutable, command-owned identity of one pdfTeX `\\pdfximage` lookup.
+///
+/// This deliberately contains the selected filename and scalar scan results,
+/// but neither an open file nor parsed image state.  The host supplies those
+/// only after the enclosing canonical operation has suspended.
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub struct PdfImageRequest {
+    pub name: String,
+    pub width: Option<Scaled>,
+    pub height: Option<Scaled>,
+    pub depth: Option<Scaled>,
+    pub page: i32,
+    pub page_box: PdfImagePageBox,
+    pub attr: Option<TracedTokenList>,
+}
+
+/// pdfTeX's `scan_pdf_box_spec` selectors.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum PdfImagePageBox {
+    Media,
+    Crop,
+    Bleed,
+    Trim,
+    Art,
+}
+
 /// The command-owned operand prefix of TeX82's `\setbox` assignment.
 ///
 /// The following box command deliberately remains a normal main-control
@@ -846,6 +872,64 @@ impl CommandProcessor<'_> {
             target,
             name: file_name.name,
             size,
+        })
+    }
+
+    /// Scans pdfTeX's `scan_image` request prefix.
+    ///
+    /// The ordering follows pdfTeX 1.40.27's `scan_image`: a repeated rule
+    /// specification, optional `attr` general text, optional `page`, then one
+    /// page-box selector and the filename.  Resource acquisition is expressly
+    /// outside this scanner.
+    pub fn scan_pdf_image_request(&mut self) -> Result<PdfImageRequest, CommandError> {
+        let mut width = None;
+        let mut height = None;
+        let mut depth = None;
+        loop {
+            if self.scan_keyword("width")?.value {
+                width = Some(self.scan_dimension()?.value);
+            } else if self.scan_keyword("height")?.value {
+                height = Some(self.scan_dimension()?.value);
+            } else if self.scan_keyword("depth")?.value {
+                depth = Some(self.scan_dimension()?.value);
+            } else {
+                break;
+            }
+        }
+        let attr = if self.scan_keyword("attr")?.value {
+            Some(self.scan_balanced_text(true)?.tokens)
+        } else {
+            None
+        };
+        let page = if self.scan_keyword("page")?.value {
+            self.scan_integer()?.value
+        } else {
+            1
+        };
+        let page_box = if self.scan_keyword("mediabox")?.value {
+            Some(PdfImagePageBox::Media)
+        } else if self.scan_keyword("cropbox")?.value {
+            Some(PdfImagePageBox::Crop)
+        } else if self.scan_keyword("bleedbox")?.value {
+            Some(PdfImagePageBox::Bleed)
+        } else if self.scan_keyword("trimbox")?.value {
+            Some(PdfImagePageBox::Trim)
+        } else if self.scan_keyword("artbox")?.value {
+            Some(PdfImagePageBox::Art)
+        } else {
+            None
+        };
+        let name = self.scan_file_name()?.name;
+        Ok(PdfImageRequest {
+            name,
+            width,
+            height,
+            depth,
+            page,
+            // pdfTeX's default `pdf_pagebox` is configured outside the
+            // scanner; Crop is the engine's effective no-parameter default.
+            page_box: page_box.unwrap_or(PdfImagePageBox::Crop),
+            attr,
         })
     }
     /// Scans TeX82 §1124's text-accent operands through command-owned input.

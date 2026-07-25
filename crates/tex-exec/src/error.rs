@@ -124,6 +124,9 @@ pub enum ExecError {
     MissingCanonicalFont {
         request: tex_command::FontLoadRequest,
     },
+    MissingCanonicalPdfImage {
+        request: tex_command::PdfImageRequest,
+    },
     MissingTracedToken {
         context: TracedTokenWord,
     },
@@ -309,6 +312,9 @@ impl fmt::Display for ExecError {
             Self::MissingCanonicalFont { request } => {
                 write!(f, "font resource `{}` is unavailable", request.name)
             }
+            Self::MissingCanonicalPdfImage { request } => {
+                write!(f, "image resource `{}` is unavailable", request.name)
+            }
             Self::MissingTracedToken { .. } => f.write_str("missing token while scanning input"),
             Self::InvalidLetRhs { token, .. } => {
                 write!(f, "\\let cannot assign macro parameter token {token:?}")
@@ -492,6 +498,7 @@ impl std::error::Error for ExecError {
             | Self::MissingToken { .. }
             | Self::MissingCanonicalInput { .. }
             | Self::MissingCanonicalFont { .. }
+            | Self::MissingCanonicalPdfImage { .. }
             | Self::MissingTracedToken { .. }
             | Self::InvalidLetRhs { .. }
             | Self::UnsupportedAssignmentTarget
@@ -600,6 +607,7 @@ impl ExecError {
             | Self::MissingToken { .. }
             | Self::MissingCanonicalInput { .. }
             | Self::MissingCanonicalFont { .. }
+            | Self::MissingCanonicalPdfImage { .. }
             | Self::UnsupportedAssignmentTarget
             | Self::RegisterNumberOutOfRange(_)
             | Self::ArithmeticOverflow

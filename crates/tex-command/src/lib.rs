@@ -26,6 +26,7 @@ pub use command::{CurrentCommand, DeliveryStamp};
 pub use error::CommandError;
 pub use host::{
     CommandHostCapabilities, CommandHostContext, ConditionalMode, ConditionalState, FontResource,
+    PdfImageResource,
 };
 pub use input::{
     InvalidSourceCharacter, LexerState, LineTerminator, MalformedUnicodeRange, PhysicalLine,
@@ -57,14 +58,15 @@ pub use scanners::{
     FontLoadRequest, ImmediateExtension, InputStreamRequest, InternalValue, MathChoiceEpisodes,
     MathDelimiterBoundary, MathDelimiterBoundaryKind, MathEpisodeRecovery, MathFamilySize,
     MathFieldEpisode, MathFractionKind, MathGroupEpisode, MathLimitKind, MathScriptAttachment,
-    MathScriptKind, MathStyleKind, MathTextFieldKind, RegisteredInput, ScalarProvenance,
-    ScalarRecovery, ScannedAccent, ScannedAccentBase, ScannedBalancedText, ScannedBoxConstruction,
-    ScannedBoxKind, ScannedBoxRegister, ScannedDiscretionary, ScannedDisplayDiagnostic,
-    ScannedEquationNumber, ScannedFileName, ScannedGlueParameterAssignment, ScannedLeaderPayload,
-    ScannedLetAssignment, ScannedMacroDefinition, ScannedMathCharacter, ScannedMathDelimiter,
-    ScannedMathFamily, ScannedMathFraction, ScannedMathMuMaterial, ScannedMathScript,
-    ScannedPackingSpec, ScannedRuleSpec, ScannedScalar, ScannedSetBoxAssignment,
-    ScannedTokenRegisterAssignment, ScannedVSplit, StructuredProvenance,
+    MathScriptKind, MathStyleKind, MathTextFieldKind, PdfImagePageBox, PdfImageRequest,
+    RegisteredInput, ScalarProvenance, ScalarRecovery, ScannedAccent, ScannedAccentBase,
+    ScannedBalancedText, ScannedBoxConstruction, ScannedBoxKind, ScannedBoxRegister,
+    ScannedDiscretionary, ScannedDisplayDiagnostic, ScannedEquationNumber, ScannedFileName,
+    ScannedGlueParameterAssignment, ScannedLeaderPayload, ScannedLetAssignment,
+    ScannedMacroDefinition, ScannedMathCharacter, ScannedMathDelimiter, ScannedMathFamily,
+    ScannedMathFraction, ScannedMathMuMaterial, ScannedMathScript, ScannedPackingSpec,
+    ScannedRuleSpec, ScannedScalar, ScannedSetBoxAssignment, ScannedTokenRegisterAssignment,
+    ScannedVSplit, StructuredProvenance,
 };
 pub use snapshot::{CommandStateSnapshot, CommandSummary, CommandSummaryError};
 pub use state::{

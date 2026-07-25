@@ -12,9 +12,9 @@ use tex_command::{
     CommandRuntime, CommandState, CommandStateSnapshot, FontLoadRequest, FontResource,
     ImmediateExtension, InputStreamRequest, MathDelimiterBoundary, MathDelimiterBoundaryKind,
     MathEpisodeRecovery, MathLimitKind, MathScriptKind, MathStyleKind, MathTextFieldKind,
-    ScannedAccent, ScannedBoxConstruction, ScannedBoxKind, ScannedDiscretionary,
-    ScannedDisplayDiagnostic, ScannedLeaderPayload, ScannedMathMuMaterial, ScannedPackingSpec,
-    ScannedVSplit, SourceRegistration, SourceRegistrationError,
+    PdfImageRequest, PdfImageResource, ScannedAccent, ScannedBoxConstruction, ScannedBoxKind,
+    ScannedDiscretionary, ScannedDisplayDiagnostic, ScannedLeaderPayload, ScannedMathMuMaterial,
+    ScannedPackingSpec, ScannedVSplit, SourceRegistration, SourceRegistrationError,
 };
 #[cfg(any(test, feature = "instrumentation"))]
 use tex_command::{
@@ -149,6 +149,9 @@ pub enum CanonicalResourceNeed {
     /// TeX82's `new_font` completed its filename and size scan (§1254), but
     /// the host has not supplied the immutable font bytes.
     Font { request: FontLoadRequest },
+    /// pdfTeX's `scan_image` completed an immutable request, but its retained
+    /// bytes and validated metadata have not been supplied by the host.
+    PdfImage { request: PdfImageRequest },
 }
 
 /// Outcome of one atomic canonical main-control operation.
@@ -323,6 +326,18 @@ impl CanonicalMainControl {
         Ok(ScannedStep::InputStream { request, resource })
     }
 
+    fn resolve_pdf_image_resource(&self, scanned: ScannedStep) -> Result<ScannedStep, ExecError> {
+        let ScannedStep::PdfXImage { request, .. } = scanned else {
+            return Ok(scanned);
+        };
+        let resource = self.capabilities.pdf_image(&request).ok_or_else(|| {
+            ExecError::MissingCanonicalPdfImage {
+                request: request.clone(),
+            }
+        })?;
+        Ok(ScannedStep::PdfXImage { request, resource })
+    }
+
     /// Registers and opens the one root source selected by the host before
     /// canonical main control starts.  Source acquisition is deliberately
     /// complete before this call: the command state retains only immutable
@@ -488,6 +503,7 @@ impl CanonicalMainControl {
         };
         let scanned = self.resolve_font_resource(scanned)?;
         let scanned = self.resolve_input_stream_resource(scanned)?;
+        let scanned = self.resolve_pdf_image_resource(scanned)?;
         if let ScannedStep::ReplayCompleted(episode) = scanned {
             self.completed_replay_episode = Some(episode);
             return Ok(ReplayStep::Continue);
@@ -609,6 +625,9 @@ impl CanonicalMainControl {
                     ExecError::MissingCanonicalFont { request } => Ok(
                         CanonicalStepResult::Suspended(CanonicalResourceNeed::Font { request }),
                     ),
+                    ExecError::MissingCanonicalPdfImage { request } => Ok(
+                        CanonicalStepResult::Suspended(CanonicalResourceNeed::PdfImage { request }),
+                    ),
                     error => Err(error),
                 }
             }
@@ -628,6 +647,11 @@ impl CanonicalMainControl {
             CanonicalStepResult::Suspended(CanonicalResourceNeed::Font { .. }) => {
                 Err(ExecError::MissingToken {
                     context: "\\font resource",
+                })
+            }
+            CanonicalStepResult::Suspended(CanonicalResourceNeed::PdfImage { .. }) => {
+                Err(ExecError::MissingToken {
+                    context: "\\pdfximage resource",
                 })
             }
         }
@@ -661,6 +685,7 @@ impl CanonicalMainControl {
         };
         let scanned = self.resolve_font_resource(scanned)?;
         let scanned = self.resolve_input_stream_resource(scanned)?;
+        let scanned = self.resolve_pdf_image_resource(scanned)?;
         if let ScannedStep::ReplayCompleted(episode) = scanned {
             self.completed_replay_episode = Some(episode);
             return Ok(ReplayStep::Continue);
@@ -1193,6 +1218,11 @@ impl CanonicalMainControl {
                     context: "\\font resource",
                 })
             }
+            CanonicalStepResult::Suspended(CanonicalResourceNeed::PdfImage { .. }) => {
+                Err(ExecError::MissingToken {
+                    context: "\\pdfximage resource",
+                })
+            }
         }
     }
 
@@ -1219,6 +1249,9 @@ impl CanonicalMainControl {
                     ),
                     ExecError::MissingCanonicalFont { request } => Ok(
                         CanonicalStepResult::Suspended(CanonicalResourceNeed::Font { request }),
+                    ),
+                    ExecError::MissingCanonicalPdfImage { request } => Ok(
+                        CanonicalStepResult::Suspended(CanonicalResourceNeed::PdfImage { request }),
                     ),
                     error => Err(error),
                 }
@@ -1264,6 +1297,7 @@ impl CanonicalMainControl {
         };
         let scanned = self.resolve_font_resource(scanned)?;
         let scanned = self.resolve_input_stream_resource(scanned)?;
+        let scanned = self.resolve_pdf_image_resource(scanned)?;
         if let ScannedStep::ReplayCompleted(episode) = scanned {
             self.completed_replay_episode = Some(episode);
             return Ok(ReplayStep::Continue);
@@ -1809,6 +1843,13 @@ enum ScannedStep {
     InputStream {
         request: InputStreamRequest,
         resource: Option<SourceRegistration>,
+    },
+    PdfXImage {
+        request: PdfImageRequest,
+        resource: PdfImageResource,
+    },
+    PdfRefXImage {
+        object: i32,
     },
     FontDimen {
         font: FontId,
@@ -3006,6 +3047,19 @@ fn scan_command(
                 global,
             })
         }
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::PdfXImage) => {
+            Ok(ScannedStep::PdfXImage {
+                request: processor.scan_pdf_image_request().map_err(command_error)?,
+                // This placeholder is replaced after the processor borrow;
+                // it can never reach application.
+                resource: PdfImageResource::Unavailable,
+            })
+        }
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::PdfRefXImage) => {
+            Ok(ScannedStep::PdfRefXImage {
+                object: processor.scan_integer().map_err(command_error)?.value,
+            })
+        }
         Meaning::Font(font) => Ok(ScannedStep::FontSelect {
             font,
             selector: command.control_sequence(),
@@ -3820,6 +3874,41 @@ fn applied_mutation_observation(
 
 /// Captures an executor-owned observable effect before application, then
 /// emits it only after that application commits through the replay seam.
+fn canonical_pdf_image_dimensions(
+    source: &tex_state::PdfExternalImageSource,
+    width: Option<Scaled>,
+    height: Option<Scaled>,
+    depth: Option<Scaled>,
+) -> tex_state::PdfExternalImageDimensions {
+    let natural_width = source.natural_width;
+    let natural_height = source.natural_height;
+    let (width, height) = match (width, height) {
+        (Some(width), Some(height)) => (width, height),
+        (Some(width), None) if natural_width.raw() != 0 => (
+            width,
+            Scaled::from_raw(
+                (i64::from(natural_height.raw()) * i64::from(width.raw())
+                    / i64::from(natural_width.raw())) as i32,
+            ),
+        ),
+        (None, Some(height)) if natural_height.raw() != 0 => (
+            Scaled::from_raw(
+                (i64::from(natural_width.raw()) * i64::from(height.raw())
+                    / i64::from(natural_height.raw())) as i32,
+            ),
+            height,
+        ),
+        (Some(width), None) => (width, natural_height),
+        (None, Some(height)) => (natural_width, height),
+        (None, None) => (natural_width, natural_height),
+    };
+    tex_state::PdfExternalImageDimensions {
+        width,
+        height,
+        depth: depth.unwrap_or_else(|| Scaled::from_raw(0)),
+    }
+}
+
 #[cfg(any(test, feature = "instrumentation"))]
 fn applied_effect_observation(scanned: &ScannedStep, stores: &Universe) -> Option<EffectRecord> {
     match scanned {
@@ -4603,6 +4692,47 @@ fn apply_scanned_step(
                     );
                 }
             }
+            Ok(ReplayStep::Continue)
+        }
+        ScannedStep::PdfXImage { request, resource } => {
+            if stores.int_param(IntParam::PDF_OUTPUT) <= 0 {
+                return Err(ExecError::PdfExtensionInDviMode("pdfximage"));
+            }
+            let PdfImageResource::Available(source) = resource else {
+                return Err(ExecError::PdfImageOpen {
+                    name: request.name,
+                    message: "image is unavailable".to_owned(),
+                });
+            };
+            let dimensions = canonical_pdf_image_dimensions(
+                &source,
+                request.width,
+                request.height,
+                request.depth,
+            );
+            stores
+                .allocate_pdf_external_image(source, dimensions)
+                .map_err(|_| ExecError::PdfObjectCapacity)?;
+            Ok(ReplayStep::Continue)
+        }
+        ScannedStep::PdfRefXImage { object } => {
+            if stores.int_param(IntParam::PDF_OUTPUT) <= 0 {
+                return Err(ExecError::PdfExtensionInDviMode("pdfrefximage"));
+            }
+            let image = u32::try_from(object)
+                .ok()
+                .and_then(|raw| tex_state::PdfExternalImageId::new(raw).ok())
+                .and_then(|id| stores.pdf_external_image_record(id))
+                .ok_or(ExecError::PdfReferencedObjectNotFound)?;
+            let dimensions = image.dimensions();
+            modes
+                .current_list_mut()
+                .push(Node::Whatsit(Whatsit::PdfRefXImage {
+                    object: image.id().raw(),
+                    width: dimensions.width,
+                    height: dimensions.height,
+                    depth: dimensions.depth,
+                }));
             Ok(ReplayStep::Continue)
         }
         ScannedStep::FontDimen {
