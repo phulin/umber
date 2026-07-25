@@ -24,7 +24,9 @@ mod fixture_replay;
 
 pub use command::{CurrentCommand, DeliveryStamp};
 pub use error::CommandError;
-pub use host::{CommandHostCapabilities, CommandHostContext, ConditionalMode, ConditionalState};
+pub use host::{
+    CommandHostCapabilities, CommandHostContext, ConditionalMode, ConditionalState, FontResource,
+};
 pub use input::{
     InvalidSourceCharacter, LexerState, LineTerminator, MalformedUnicodeRange, PhysicalLine,
     RegisteredSourceKind, SourceCharacter, SourceControlSequenceKind, SourceLocation,
@@ -51,11 +53,11 @@ pub use profile::{
     CommandProfileMismatch,
 };
 pub use scanners::{
-    AlignmentCellOpening, FileNameTermination, ImmediateExtension, InternalValue, RegisteredInput,
-    ScalarProvenance, ScalarRecovery, ScannedAccent, ScannedAccentBase, ScannedBalancedText,
-    ScannedBoxRegister, ScannedDiscretionary, ScannedFileName, ScannedGlueParameterAssignment,
-    ScannedLetAssignment, ScannedMacroDefinition, ScannedRuleSpec, ScannedScalar,
-    ScannedSetBoxAssignment, ScannedTokenRegisterAssignment, StructuredProvenance,
+    AlignmentCellOpening, FileNameTermination, FontLoadRequest, ImmediateExtension, InternalValue,
+    RegisteredInput, ScalarProvenance, ScalarRecovery, ScannedAccent, ScannedAccentBase,
+    ScannedBalancedText, ScannedBoxRegister, ScannedDiscretionary, ScannedFileName,
+    ScannedGlueParameterAssignment, ScannedLetAssignment, ScannedMacroDefinition, ScannedRuleSpec,
+    ScannedScalar, ScannedSetBoxAssignment, ScannedTokenRegisterAssignment, StructuredProvenance,
 };
 pub use snapshot::{CommandStateSnapshot, CommandSummary, CommandSummaryError};
 pub use state::{CommandReplayEpisode, CommandRuntime, CommandState, UnknownRegisteredSource};

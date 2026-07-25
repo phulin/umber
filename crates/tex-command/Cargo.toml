@@ -10,6 +10,7 @@ edition.workspace = true
 instrumentation = []
 
 [dependencies]
+tex-fonts = { path = "../tex-fonts" }
 tex-state = { path = "../tex-state" }
 
 [dev-dependencies]

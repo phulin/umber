@@ -36,6 +36,15 @@ typed paragraph-start result then changes the executor mode after that borrow
 ends; the first character is reconsidered only through the command core's
 backed-up input level.
 
+Canonical `\font` definitions scan their target, optional equals, expanded
+filename, and `at`/`scaled` clause into an immutable `FontLoadRequest`. After
+that processor borrow ends, replay resolves the request through its transient
+registered-font capability and installs the loaded meaning atomically. An
+absent capability is a typed font suspension, so the enclosing aggregate rolls
+back before a fresh processor episode retries; a completed unavailable lookup
+instead recovers the target to `nullfont`. Font capabilities and loaded
+resources never enter command snapshots or durable summaries.
+
 The replay seam also retains the executor-side mode projection and obtains
 observable general-text effects (currently `\\message`) through the typed
 structured scanner. Alignment lifecycle state crosses it only as

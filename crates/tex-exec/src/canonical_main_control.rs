@@ -9,8 +9,8 @@ use tex_command::{
     AlignmentCellDelimiter, AlignmentCellOpening, AlignmentCellTemplates, AlignmentDelivery,
     AlignmentIdentity, AlignmentRequest, AlignmentRequestResult, CommandError,
     CommandHostCapabilities, CommandHostContext, CommandProcessor, CommandProfile, CommandRuntime,
-    CommandState, CommandStateSnapshot, ImmediateExtension, ScannedAccent, ScannedDiscretionary,
-    SourceRegistration, SourceRegistrationError,
+    CommandState, CommandStateSnapshot, FontLoadRequest, FontResource, ImmediateExtension,
+    ScannedAccent, ScannedDiscretionary, SourceRegistration, SourceRegistrationError,
 };
 #[cfg(any(test, feature = "instrumentation"))]
 use tex_command::{
@@ -99,6 +99,7 @@ struct ReplayBoxes {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum CanonicalResourceNeed {
     Input,
+    Font,
 }
 
 /// Outcome of one atomic canonical main-control operation.
@@ -225,6 +226,27 @@ impl CanonicalMainControl {
     #[must_use]
     pub fn capabilities_mut(&mut self) -> &mut CommandHostCapabilities {
         &mut self.capabilities
+    }
+
+    fn resolve_font_resource(&self, scanned: ScannedStep) -> Result<ScannedStep, ExecError> {
+        let ScannedStep::FontDefinition {
+            request, global, ..
+        } = scanned
+        else {
+            return Ok(scanned);
+        };
+        let path = canonical_font_path(&request.name);
+        let resource = self
+            .capabilities
+            .font(&path)
+            .ok_or(ExecError::MissingToken {
+                context: "\\font resource",
+            })?;
+        Ok(ScannedStep::FontDefinition {
+            request,
+            resource: Box::new(Some(resource)),
+            global,
+        })
     }
 
     /// Registers and opens the one root source selected by the host before
@@ -388,6 +410,7 @@ impl CanonicalMainControl {
                 mode,
             )?
         };
+        let scanned = self.resolve_font_resource(scanned)?;
         if let ScannedStep::Discretionary(discretionary) = scanned {
             return self.apply_discretionary(discretionary, stores);
         }
@@ -491,6 +514,13 @@ impl CanonicalMainControl {
                 self.rollback_step(snapshot, stores);
                 if matches!(error, ExecError::MissingToken { context: "\\input" }) {
                     Ok(CanonicalStepResult::Suspended(CanonicalResourceNeed::Input))
+                } else if matches!(
+                    error,
+                    ExecError::MissingToken {
+                        context: "\\font resource"
+                    }
+                ) {
+                    Ok(CanonicalStepResult::Suspended(CanonicalResourceNeed::Font))
                 } else {
                     Err(error)
                 }
@@ -507,6 +537,11 @@ impl CanonicalMainControl {
             CanonicalStepResult::Progress(step) => Ok(step),
             CanonicalStepResult::Suspended(CanonicalResourceNeed::Input) => {
                 Err(ExecError::MissingToken { context: "\\input" })
+            }
+            CanonicalStepResult::Suspended(CanonicalResourceNeed::Font) => {
+                Err(ExecError::MissingToken {
+                    context: "\\font resource",
+                })
             }
         }
     }
@@ -536,6 +571,7 @@ impl CanonicalMainControl {
                 max_dead_cycles,
             )?
         };
+        let scanned = self.resolve_font_resource(scanned)?;
         if let ScannedStep::Discretionary(discretionary) = scanned {
             return self.apply_discretionary(discretionary, stores);
         }
@@ -568,6 +604,11 @@ impl CanonicalMainControl {
             CanonicalStepResult::Suspended(CanonicalResourceNeed::Input) => {
                 Err(ExecError::MissingToken { context: "\\input" })
             }
+            CanonicalStepResult::Suspended(CanonicalResourceNeed::Font) => {
+                Err(ExecError::MissingToken {
+                    context: "\\font resource",
+                })
+            }
         }
     }
 
@@ -590,6 +631,13 @@ impl CanonicalMainControl {
                 self.rollback_step(snapshot, stores);
                 if matches!(error, ExecError::MissingToken { context: "\\input" }) {
                     Ok(CanonicalStepResult::Suspended(CanonicalResourceNeed::Input))
+                } else if matches!(
+                    error,
+                    ExecError::MissingToken {
+                        context: "\\font resource"
+                    }
+                ) {
+                    Ok(CanonicalStepResult::Suspended(CanonicalResourceNeed::Font))
                 } else {
                     Err(error)
                 }
@@ -632,6 +680,7 @@ impl CanonicalMainControl {
                 max_dead_cycles,
             )?
         };
+        let scanned = self.resolve_font_resource(scanned)?;
         if let ScannedStep::Discretionary(discretionary) = scanned {
             return self.apply_discretionary(discretionary, stores);
         }
@@ -937,6 +986,11 @@ enum ScannedStep {
         selector: Option<Symbol>,
         global: bool,
     },
+    FontDefinition {
+        request: FontLoadRequest,
+        resource: Box<Option<FontResource>>,
+        global: bool,
+    },
     FontDimen {
         font: FontId,
         number: u32,
@@ -1095,6 +1149,7 @@ impl ScannedStep {
                 | Self::CodeTable { .. }
                 | Self::FontDimen { .. }
                 | Self::FontInteger { .. }
+                | Self::FontDefinition { .. }
                 | Self::Arithmetic { .. }
                 | Self::MacroDefinition { .. }
                 | Self::Let { .. }
@@ -1808,6 +1863,14 @@ fn scan_command(
             Ok(ScannedStep::GlueParam {
                 index: assignment.index,
                 value: assignment.value,
+                global,
+            })
+        }
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Font) => {
+            let request = processor.scan_font_definition().map_err(command_error)?;
+            Ok(ScannedStep::FontDefinition {
+                request,
+                resource: Box::new(None),
                 global,
             })
         }
@@ -2961,6 +3024,33 @@ fn apply_scanned_step(
             }
             Ok(ReplayStep::Continue)
         }
+        ScannedStep::FontDefinition {
+            request,
+            resource,
+            global,
+        } => {
+            let resource =
+                (*resource).expect("font resource is resolved after the processor borrow");
+            if matches!(resource, FontResource::Unavailable) {
+                if assignment_global(global, stores) {
+                    stores.set_meaning_global(
+                        request.target,
+                        Meaning::Font(tex_state::font::NULL_FONT),
+                    );
+                } else {
+                    stores.set_meaning(request.target, Meaning::Font(tex_state::font::NULL_FONT));
+                }
+                return Ok(ReplayStep::Continue);
+            }
+            let loaded = load_canonical_font(&request, resource)?;
+            let id = stores.try_intern_font_with_identifier(loaded, request.target)?;
+            if assignment_global(global, stores) {
+                stores.set_meaning_global(request.target, Meaning::Font(id));
+            } else {
+                stores.set_meaning(request.target, Meaning::Font(id));
+            }
+            Ok(ReplayStep::Continue)
+        }
         ScannedStep::FontDimen {
             font,
             number,
@@ -4035,6 +4125,82 @@ fn apply_scanned_accent(
     });
     modes.current_list_mut().set_space_factor(1000);
     Ok(ReplayStep::Continue)
+}
+
+fn canonical_font_path(name: &str) -> PathBuf {
+    let mut path = PathBuf::from(name);
+    if !name.starts_with("opentype:") && path.extension().is_none() {
+        path.set_extension("tfm");
+    }
+    path
+}
+
+fn load_canonical_font(
+    request: &FontLoadRequest,
+    resource: FontResource,
+) -> Result<tex_fonts::LoadedFont, ExecError> {
+    let display_name = request.name.strip_suffix(".tfm").unwrap_or(&request.name);
+    let from_tfm = |metrics: tex_state::world::FileContent,
+                    opentype: Option<tex_fonts::OpenTypeProgramSelection>,
+                    mapped: Option<(
+        tex_fonts::OpenTypeProgramSelection,
+        tex_fonts::LegacyEncodingMap,
+    )>|
+     -> Result<tex_fonts::LoadedFont, ExecError> {
+        let tfm = tex_fonts::TfmFont::parse_with_size(metrics.bytes(), request.size)?;
+        let parameters = tfm
+            .parameters
+            .values
+            .iter()
+            .map(|parameter| parameter.value)
+            .collect();
+        let mut font = tex_fonts::LoadedFont::new(
+            display_name,
+            metrics.path().to_owned(),
+            metrics.hash().bytes(),
+            tfm.header.checksum,
+            tfm.header.design_size,
+            tfm.font_size,
+            parameters,
+            tfm.font_metrics(),
+        );
+        if let Some((selection, encoding_map)) = mapped {
+            font = font.with_mapped_opentype(selection, encoding_map);
+        } else if let Some(selection) = opentype {
+            font = font.with_opentype(selection);
+        }
+        Ok(font)
+    };
+    match resource {
+        FontResource::Unavailable => unreachable!("unavailable resources recover before parsing"),
+        FontResource::Tfm { metrics, opentype } => from_tfm(metrics, opentype, None),
+        FontResource::MappedTfm {
+            metrics,
+            opentype,
+            encoding_map,
+        } => from_tfm(metrics, None, Some((opentype, encoding_map))),
+        FontResource::ClassicTfmFallback { metrics } => {
+            Ok(from_tfm(metrics, None, None)?.with_classic_mapping_fallback())
+        }
+        FontResource::OpenType(selection) => {
+            let design_size = Scaled::from_raw(10 * Scaled::UNITY);
+            let size = tex_state::scaled::tfm_font_size(design_size, request.size)
+                .map_err(|_| ExecError::ArithmeticOverflow)?;
+            Ok(tex_fonts::LoadedFont::new_opentype(
+                request
+                    .name
+                    .strip_prefix("opentype:")
+                    .unwrap_or(&request.name),
+                request
+                    .name
+                    .strip_prefix("opentype:")
+                    .unwrap_or(&request.name),
+                design_size,
+                size,
+                selection,
+            ))
+        }
+    }
 }
 
 fn report_missing_character(stores: &mut Universe, font: tex_state::ids::FontId, ch: char) {

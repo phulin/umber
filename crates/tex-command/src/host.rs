@@ -3,6 +3,33 @@
 use std::collections::BTreeMap;
 
 use crate::SourceRegistration;
+use std::path::{Path, PathBuf};
+use tex_state::world::FileContent;
+
+/// Immutable font bytes selected by the host for a canonical `\\font` replay.
+///
+/// This transient capability value is never retained by command state or
+/// snapshots: a missing entry is an explicit resource suspension at the
+/// replay boundary.
+#[derive(Clone, Debug)]
+pub enum FontResource {
+    /// The host completed lookup and determined that no font is available.
+    /// This differs from an absent capability entry, which suspends replay.
+    Unavailable,
+    Tfm {
+        metrics: FileContent,
+        opentype: Option<tex_fonts::OpenTypeProgramSelection>,
+    },
+    MappedTfm {
+        metrics: FileContent,
+        opentype: tex_fonts::OpenTypeProgramSelection,
+        encoding_map: tex_fonts::LegacyEncodingMap,
+    },
+    ClassicTfmFallback {
+        metrics: FileContent,
+    },
+    OpenType(tex_fonts::OpenTypeProgramSelection),
+}
 
 /// The executor facts observed by TeX's mode predicates.
 ///
@@ -48,6 +75,7 @@ pub enum ConditionalMode {
 #[derive(Debug)]
 pub struct CommandHostCapabilities {
     input: BTreeMap<String, SourceRegistration>,
+    fonts: BTreeMap<PathBuf, FontResource>,
     job_name: String,
     conditional_state: ConditionalState,
 }
@@ -56,6 +84,7 @@ impl Default for CommandHostCapabilities {
     fn default() -> Self {
         Self {
             input: BTreeMap::new(),
+            fonts: BTreeMap::new(),
             job_name: String::new(),
             // A processor outside main control observes TeX's initial outer
             // vertical mode. Real execution replaces this per operation.
@@ -72,6 +101,18 @@ impl CommandHostCapabilities {
     /// opens files itself.
     pub fn register_input(&mut self, name: impl Into<String>, source: SourceRegistration) {
         self.input.insert(name.into(), source);
+    }
+
+    /// Registers a host-acquired immutable font resource for one request path.
+    pub fn register_font(&mut self, path: impl Into<PathBuf>, resource: FontResource) {
+        self.fonts.insert(path.into(), resource);
+    }
+
+    /// Borrows a registered font resource for one replay operation. The
+    /// capability owner itself is transient and excluded from snapshots.
+    #[must_use]
+    pub fn font(&self, path: &Path) -> Option<FontResource> {
+        self.fonts.get(path).cloned()
     }
 
     /// Sets the immutable job name presented by `\jobname` for this command
@@ -124,6 +165,13 @@ impl<'a> CommandHostContext<'a> {
 
     pub(crate) fn input(&self, name: &str) -> Option<SourceRegistration> {
         self._capabilities.input.get(name).cloned()
+    }
+
+    /// Resolves a previously registered font only while the host capability
+    /// is borrowed by a bounded replay operation.
+    #[must_use]
+    pub fn font(&self, path: &Path) -> Option<FontResource> {
+        self._capabilities.font(path)
     }
 
     pub(crate) fn job_name(&self) -> &str {

@@ -2,13 +2,13 @@ use std::sync::Arc;
 
 use tex_command::{
     AlignmentCellTemplates, AlignmentRequest, CommandDeliveryBoundary, CommandObservation,
-    CommandObserver, InputReason, InputTransition, ObservedToken, RecoveryKind,
+    CommandObserver, FontResource, InputReason, InputTransition, ObservedToken, RecoveryKind,
     RegisteredSourceKind, SourceRegistration, TracedTokenList,
 };
 use tex_state::env::banks::{DimenParam, GlueParam, IntParam};
 use tex_state::meaning::{ExpandablePrimitive, Meaning};
 use tex_state::scaled::Scaled;
-use tex_state::{EffectRecord, StreamSlot, Universe};
+use tex_state::{EffectRecord, InputOpenState, StreamSlot, Universe};
 
 use super::*;
 
@@ -59,6 +59,94 @@ fn terminal_text(universe: &Universe) -> String {
             _ => None,
         })
         .collect()
+}
+
+fn register_cmr10_font(control: &mut CanonicalMainControl, universe: &mut Universe) {
+    const CMR10: &[u8] = include_bytes!("../../../tex-fonts/tests/fixtures/cm/cmr10.tfm");
+    universe
+        .world_mut()
+        .set_memory_file("cmr10.tfm", CMR10.to_vec())
+        .expect("font fixture installs");
+    let metrics = tex_state::InputReadState::read_input_file(
+        &mut universe.input_open_context(),
+        std::path::Path::new("cmr10.tfm"),
+    )
+    .expect("font fixture reads");
+    control.capabilities_mut().register_font(
+        "cmr10.tfm",
+        FontResource::Tfm {
+            metrics,
+            opentype: None,
+        },
+    );
+}
+
+#[test]
+fn canonical_font_definition_scans_size_and_respects_local_global_scope() {
+    let mut universe = Universe::new();
+    let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+    register_cmr10_font(&mut control, &mut universe);
+    register_source(
+        &mut control,
+        br"\begingroup\font\local=cmr10 at 11pt\global\font\global=cmr10 scaled 1200\endgroup\end",
+    );
+
+    run_to_end(&mut control, &mut universe);
+
+    let local = universe.intern("local");
+    let global = universe.intern("global");
+    assert!(matches!(universe.meaning(local), Meaning::Undefined));
+    assert!(matches!(universe.meaning(global), Meaning::Font(_)));
+}
+
+#[test]
+fn canonical_missing_font_rolls_back_then_retries_once_with_registered_resource() {
+    let mut universe = Universe::new();
+    let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+    register_source(&mut control, br"\font\f=cmr10\message{ok}\end");
+    let mut observations = ObservationRecorder::default();
+
+    assert_eq!(
+        control
+            .advance_with_observer(&mut universe, &mut observations)
+            .expect("missing font suspends"),
+        CanonicalStepResult::Suspended(CanonicalResourceNeed::Font)
+    );
+    let f = universe.intern("f");
+    assert!(matches!(universe.meaning(f), Meaning::Undefined));
+    assert!(
+        observations.0.is_empty(),
+        "suspended command leaked observations"
+    );
+
+    register_cmr10_font(&mut control, &mut universe);
+    assert!(matches!(
+        control
+            .advance_with_observer(&mut universe, &mut observations)
+            .expect("fresh retry installs font"),
+        CanonicalStepResult::Progress(ReplayStep::Continue)
+    ));
+    assert!(matches!(universe.meaning(f), Meaning::Font(_)));
+    run_to_end(&mut control, &mut universe);
+    assert_eq!(terminal_text(&universe), "ok");
+}
+
+#[test]
+fn canonical_unavailable_font_recovers_to_nullfont() {
+    let mut universe = Universe::new();
+    let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+    control
+        .capabilities_mut()
+        .register_font("missing.tfm", FontResource::Unavailable);
+    register_source(&mut control, br"\font\missing=missing\end");
+
+    run_to_end(&mut control, &mut universe);
+
+    let missing = universe.intern("missing");
+    assert_eq!(
+        universe.meaning(missing),
+        Meaning::Font(tex_state::font::NULL_FONT)
+    );
 }
 
 #[test]

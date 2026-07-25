@@ -7,7 +7,7 @@
 use tex_state::glue::GlueSpec;
 use tex_state::interner::Symbol;
 use tex_state::meaning::{Meaning, UnexpandablePrimitive};
-use tex_state::scaled::Scaled;
+use tex_state::scaled::{FontSizeSpec, Scaled};
 use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 use tex_state::{SourceId, TracedTokenList};
 
@@ -66,6 +66,18 @@ pub struct ScannedLetAssignment {
     pub target: Symbol,
     pub source: Option<Symbol>,
     pub meaning: Meaning,
+}
+
+/// TeX82 §§1254--1261's completed `\\font` definition request.
+///
+/// The target, optional equals, expanded filename, and size clause are all
+/// consumed while the command processor is borrowed.  Resource acquisition
+/// deliberately happens later through the transient host capability.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FontLoadRequest {
+    pub target: Symbol,
+    pub name: String,
+    pub size: FontSizeSpec,
 }
 
 /// The command-owned operand prefix of TeX82's `\setbox` assignment.
@@ -210,6 +222,40 @@ pub enum AlignmentCellOpening {
 }
 
 impl CommandProcessor<'_> {
+    /// Scans a complete ordinary font definition without retaining a raw
+    /// command, cursor, or host capability.
+    pub fn scan_font_definition(&mut self) -> Result<FontLoadRequest, CommandError> {
+        let target = self
+            .next_non_space_raw()?
+            .and_then(|command| command.control_sequence())
+            .ok_or(CommandError::InputInvariant)?;
+        let _ = self.scan_optional_equals()?;
+        let file_name = self.scan_file_name()?;
+        let size = if self.scan_keyword("at")?.value {
+            let requested = self.scan_dimension()?.value;
+            FontSizeSpec::At(
+                if requested.raw() > 0 && requested.raw() < 2048 * Scaled::UNITY {
+                    requested
+                } else {
+                    Scaled::from_raw(10 * Scaled::UNITY)
+                },
+            )
+        } else if self.scan_keyword("scaled")?.value {
+            let requested = self.scan_integer()?.value;
+            FontSizeSpec::Scale(if (1..=32_768).contains(&requested) {
+                requested
+            } else {
+                1000
+            })
+        } else {
+            FontSizeSpec::Design
+        };
+        Ok(FontLoadRequest {
+            target,
+            name: file_name.name,
+            size,
+        })
+    }
     /// Scans TeX82 §1124's text-accent operands through command-owned input.
     ///
     /// Assignment execution between the accent code and base character is an
