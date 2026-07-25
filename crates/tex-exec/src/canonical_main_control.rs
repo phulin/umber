@@ -6471,6 +6471,24 @@ fn apply_scanned_step(
                 return Ok(ReplayStep::Continue);
             }
             let box_state = boxes.active_boxes.pop().expect("active box was checked");
+            // TeX82's main-control loop appends every character (and its
+            // resolved ligature/kern chain) to the current list synchronously
+            // as it is scanned, so by the time `handle_right_brace` reaches
+            // `package` (§1086) to `hpack`/`vpack` a finished box, the list
+            // is already complete. Umber batches a run of pending horizontal
+            // characters (for ligature/kerning/shaping) in
+            // `ModeList::pending_hchars` rather than materializing nodes
+            // immediately, so any box-body list a `}` is about to freeze must
+            // first flush that batch -- exactly like every other site that
+            // treats a list as finished (`execute_discretionary_part`,
+            // `capture_replay_alignment_cell`, `finish_replay_alignment_row`).
+            // Without this, a box whose body ends in a bare character run
+            // with no trailing glue/kern/space to force an earlier flush
+            // (e.g. `\hbox{c}`, or plain.tex's `\setbox\z@\hbox{#1}` inside
+            // `\c`) silently packages an empty list: the pending characters
+            // are dropped along with the popped mode level instead of ever
+            // becoming node.
+            crate::assignments::flush_pending_hchars(modes, stores)?;
             let level = modes.pop()?;
             let children = stores.freeze_node_list(level.list().nodes());
             let node = if box_state.kind.horizontal() {
