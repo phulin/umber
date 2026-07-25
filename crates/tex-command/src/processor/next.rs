@@ -18,8 +18,8 @@ use crate::input::{
 };
 use crate::profile::{CharacterCode, CharacterMode};
 use crate::{
-    AlignmentDelivery, AlignmentDeliveryEvent, SourceControlSequenceKind, SourceProvenance,
-    SourceToken, SourceTokenizationStep,
+    AlignmentDelivery, AlignmentDeliveryEvent, CommandReplayDelivery, SourceControlSequenceKind,
+    SourceProvenance, SourceToken, SourceTokenizationStep,
 };
 
 use super::CommandProcessor;
@@ -57,7 +57,7 @@ impl CommandProcessor<'_> {
         let stamp = self.last_delivery.ok_or(CommandError::InputInvariant)?;
         match self.retire_and_restart(InputLevelId(stamp.input_level()))? {
             RetirementRestart::Continue => Ok(()),
-            RetirementRestart::Stop | RetirementRestart::EndV(_) => {
+            RetirementRestart::Stop | RetirementRestart::EndV(_) | RetirementRestart::Completed => {
                 Err(CommandError::InputInvariant)
             }
         }
@@ -352,6 +352,22 @@ impl CommandProcessor<'_> {
     /// Delivers one unexpanded raw command through canonical `get_next`.
     pub fn get_next(&mut self) -> Result<Option<CurrentCommand>, CommandError> {
         self.last_delivery = None;
+        loop {
+            match self.get_next_with_control_sequence_creation(false)? {
+                Some(CommandReplayDelivery::Command(command)) => return Ok(Some(command)),
+                Some(CommandReplayDelivery::Completed(_)) => continue,
+                None => return Ok(None),
+            }
+        }
+    }
+
+    /// Delivers one raw command or an executor-owned stored-episode
+    /// completion. This is the raw counterpart of
+    /// [`Self::get_x_token_with_replay_completion`].
+    pub fn get_next_with_replay_completion(
+        &mut self,
+    ) -> Result<Option<CommandReplayDelivery>, CommandError> {
+        self.last_delivery = None;
         self.get_next_with_control_sequence_creation(false)
     }
 
@@ -373,7 +389,13 @@ impl CommandProcessor<'_> {
     /// even before diagnostic-only interning is separated further.
     pub fn get_token(&mut self) -> Result<Option<CurrentCommand>, CommandError> {
         self.last_delivery = None;
-        self.get_next_with_control_sequence_creation(true)
+        loop {
+            match self.get_next_with_control_sequence_creation(true)? {
+                Some(CommandReplayDelivery::Command(command)) => return Ok(Some(command)),
+                Some(CommandReplayDelivery::Completed(_)) => continue,
+                None => return Ok(None),
+            }
+        }
     }
 
     /// Restores the immediately preceding raw delivery to TeX's input.
@@ -714,9 +736,15 @@ impl CommandProcessor<'_> {
     fn get_next_with_control_sequence_creation(
         &mut self,
         _allow_control_sequence_creation: bool,
-    ) -> Result<Option<CurrentCommand>, CommandError> {
+    ) -> Result<Option<CommandReplayDelivery>, CommandError> {
         loop {
+            if let Some(episode) = self.replay_completion.take() {
+                return Ok(Some(CommandReplayDelivery::Completed(episode)));
+            }
             let Some(delivery) = self.take_input_token()? else {
+                if let Some(episode) = self.replay_completion.take() {
+                    return Ok(Some(CommandReplayDelivery::Completed(episode)));
+                }
                 if self.recover_runaway_eof()? {
                     continue;
                 }
@@ -819,7 +847,7 @@ impl CommandProcessor<'_> {
             ) {
                 self.observe_raw_delivery(&command);
             }
-            return Ok(Some(command));
+            return Ok(Some(CommandReplayDelivery::Command(command)));
         }
     }
 
@@ -871,6 +899,9 @@ impl CommandProcessor<'_> {
                                 RetirementRestart::EndV(_) => {
                                     return Err(CommandError::InputInvariant);
                                 }
+                                RetirementRestart::Completed => {
+                                    return Ok(None);
+                                }
                             }
                         }
                     }
@@ -916,6 +947,7 @@ impl CommandProcessor<'_> {
                                 direct_source: false,
                             }));
                         }
+                        RetirementRestart::Completed => return Ok(None),
                     }
                 }
             }
@@ -991,7 +1023,12 @@ impl CommandProcessor<'_> {
                         previous_align_state: Some(previous_align_state),
                     }));
                 }
-                Ok(RetirementRestart::Continue)
+                if let Some(episode) = self.command.take_replay_completion(identity) {
+                    self.replay_completion = Some(episode);
+                    Ok(RetirementRestart::Completed)
+                } else {
+                    Ok(RetirementRestart::Continue)
+                }
             }
         }
     }
@@ -1104,9 +1141,9 @@ impl CommandProcessor<'_> {
         if exhausted_parameter {
             match self.retire_and_restart(InputLevelId(stamp.input_level()))? {
                 RetirementRestart::Continue => Ok(()),
-                RetirementRestart::Stop | RetirementRestart::EndV(_) => {
-                    Err(CommandError::InputInvariant)
-                }
+                RetirementRestart::Stop
+                | RetirementRestart::EndV(_)
+                | RetirementRestart::Completed => Err(CommandError::InputInvariant),
             }
         } else {
             Ok(())
@@ -1134,9 +1171,9 @@ impl CommandProcessor<'_> {
         if exhausted_backup {
             match self.retire_and_restart(InputLevelId(stamp.input_level()))? {
                 RetirementRestart::Continue => Ok(()),
-                RetirementRestart::Stop | RetirementRestart::EndV(_) => {
-                    Err(CommandError::InputInvariant)
-                }
+                RetirementRestart::Stop
+                | RetirementRestart::EndV(_)
+                | RetirementRestart::Completed => Err(CommandError::InputInvariant),
             }
         } else {
             Ok(())
@@ -1161,9 +1198,9 @@ impl CommandProcessor<'_> {
         if exhausted_backup {
             match self.retire_and_restart(InputLevelId(stamp.input_level()))? {
                 RetirementRestart::Continue => Ok(()),
-                RetirementRestart::Stop | RetirementRestart::EndV(_) => {
-                    Err(CommandError::InputInvariant)
-                }
+                RetirementRestart::Stop
+                | RetirementRestart::EndV(_)
+                | RetirementRestart::Completed => Err(CommandError::InputInvariant),
             }
         } else {
             Ok(())
@@ -1193,7 +1230,9 @@ impl CommandProcessor<'_> {
             };
             match self.retire_and_restart(identity)? {
                 RetirementRestart::Continue => {}
-                RetirementRestart::Stop | RetirementRestart::EndV(_) => {
+                RetirementRestart::Stop
+                | RetirementRestart::EndV(_)
+                | RetirementRestart::Completed => {
                     return Err(CommandError::InputInvariant);
                 }
             }
@@ -1515,6 +1554,7 @@ enum RetirementRestart {
     Stop,
     Continue,
     EndV(InputLevelId),
+    Completed,
 }
 
 fn character_from_code(code: CharacterCode) -> char {

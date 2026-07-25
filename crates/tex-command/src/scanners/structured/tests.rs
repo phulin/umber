@@ -11,7 +11,7 @@ use crate::input::{
 };
 use crate::{
     CommandHostCapabilities, CommandHostContext, CommandObservation, CommandObserver,
-    CommandRuntime, CommandState, RegisteredSourceKind, SourceRegistration,
+    CommandReplayDelivery, CommandRuntime, CommandState, RegisteredSourceKind, SourceRegistration,
 };
 
 #[derive(Default)]
@@ -160,6 +160,80 @@ fn completed_math_field_replays_nested_group_without_exposing_tokens() {
     );
     assert!(command.replay_episode_is_active(episode));
     assert!(command.replay_episode_is_active(nested_episode));
+}
+
+#[test]
+fn replay_completion_precedes_parent_delivery() {
+    let mut command = CommandState::default();
+    let mut runtime = CommandRuntime::default();
+    let mut universe = Universe::new();
+    let mut capabilities = CommandHostCapabilities::default();
+    push(
+        &mut command,
+        [
+            Token::Char {
+                ch: '{',
+                cat: Catcode::BeginGroup,
+            },
+            Token::Char {
+                ch: 'a',
+                cat: Catcode::Letter,
+            },
+            Token::Char {
+                ch: '}',
+                cat: Catcode::EndGroup,
+            },
+            Token::Char {
+                ch: 'z',
+                cat: Catcode::Letter,
+            },
+        ],
+    );
+    let field = {
+        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+        processor.scan_math_field_episode().expect("field scans")
+    };
+    let episode = command.push_math_field_episode(field);
+
+    let first = {
+        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+        processor
+            .get_x_token_with_replay_completion()
+            .expect("episode token delivers")
+            .expect("episode token exists")
+    };
+    assert!(matches!(
+        first,
+        CommandReplayDelivery::Command(ref command)
+            if command.spelling().semantic_token()
+                == Token::Char { ch: 'a', cat: Catcode::Letter }
+    ));
+
+    let completed = {
+        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+        processor
+            .get_x_token_with_replay_completion()
+            .expect("completion delivers")
+            .expect("episode completion exists")
+    };
+    assert!(matches!(
+        completed,
+        CommandReplayDelivery::Completed(completed) if completed == episode
+    ));
+
+    let parent = {
+        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+        processor
+            .get_x_token_with_replay_completion()
+            .expect("parent delivery succeeds")
+            .expect("parent command exists")
+    };
+    assert!(matches!(
+        parent,
+        CommandReplayDelivery::Command(ref command)
+            if command.spelling().semantic_token()
+                == Token::Char { ch: 'z', cat: Catcode::Letter }
+    ));
 }
 
 #[test]

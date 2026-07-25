@@ -16,7 +16,7 @@ use crate::input::{
 use crate::macro_call::MacroArguments;
 use crate::processor::status::ScannerStatus;
 use crate::profile::CommandProfile;
-use crate::{CommandError, CurrentCommand};
+use crate::{CommandError, CommandReplayDelivery, CurrentCommand};
 
 use super::CommandProcessor;
 
@@ -99,15 +99,40 @@ impl CommandProcessor<'_> {
     /// push-bearing dispatch result or enters a second interpreter.
     pub fn get_x_token(&mut self) -> Result<Option<CurrentCommand>, CommandError> {
         self.command.transient.active_expansion_depth += 1;
+        let result = loop {
+            match self.get_x_token_scalar()? {
+                Some(CommandReplayDelivery::Command(command)) => break Ok(Some(command)),
+                Some(CommandReplayDelivery::Completed(_)) => continue,
+                None => break Ok(None),
+            }
+        };
+        self.command.transient.active_expansion_depth -= 1;
+        result
+    }
+
+    /// Delivers one expanded command or the completion of an executor-owned
+    /// stored replay episode.
+    ///
+    /// Completion is published after the command machine has retired and
+    /// observed the exact stored level, but before it resumes the enclosing
+    /// source.  Callers must finish the corresponding isolated execution
+    /// lifecycle before requesting another delivery.
+    pub fn get_x_token_with_replay_completion(
+        &mut self,
+    ) -> Result<Option<CommandReplayDelivery>, CommandError> {
+        self.command.transient.active_expansion_depth += 1;
         let result = self.get_x_token_scalar();
         self.command.transient.active_expansion_depth -= 1;
         result
     }
 
-    fn get_x_token_scalar(&mut self) -> Result<Option<CurrentCommand>, CommandError> {
+    fn get_x_token_scalar(&mut self) -> Result<Option<CommandReplayDelivery>, CommandError> {
         loop {
-            let Some(mut command) = self.get_next()? else {
+            let Some(delivery) = self.get_next_with_replay_completion()? else {
                 return Ok(None);
+            };
+            let CommandReplayDelivery::Command(mut command) = delivery else {
+                return Ok(Some(delivery));
             };
             if matches!(
                 command.meaning(),
@@ -127,12 +152,12 @@ impl CommandProcessor<'_> {
                 command.convert_end_template_to_endv(self.state.frozen_endv_token());
                 #[cfg(any(test, feature = "instrumentation"))]
                 self.observe_expanded_delivery(&command);
-                return Ok(Some(command));
+                return Ok(Some(CommandReplayDelivery::Command(command)));
             }
             if !is_expandable(command.meaning()) {
                 #[cfg(any(test, feature = "instrumentation"))]
                 self.observe_expanded_delivery(&command);
-                return Ok(Some(command));
+                return Ok(Some(CommandReplayDelivery::Command(command)));
             }
             // TeX82 §394 aborts a non-`\long` macro call after its recovery
             // bookkeeping, then resumes the enclosing expanded-token loop.

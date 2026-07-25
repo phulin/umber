@@ -7,7 +7,9 @@ pub(crate) mod status;
 
 use tex_state::CommandContext;
 
-use crate::{CommandHostContext, CommandRuntime, CommandState, DeliveryStamp};
+use crate::{
+    CommandHostContext, CommandReplayEpisode, CommandRuntime, CommandState, DeliveryStamp,
+};
 
 #[cfg(any(test, feature = "instrumentation"))]
 use crate::input::InputLevelId;
@@ -60,6 +62,10 @@ pub struct CommandProcessor<'a> {
     /// Only the immediately preceding raw delivery may be backed up. This is
     /// processor-local so stamps cannot survive a snapshot or a new episode.
     last_delivery: Option<DeliveryStamp>,
+    /// Completion published by raw retirement to the episode-aware expanded
+    /// delivery boundary. It is processor-local because retirement itself is
+    /// already represented by command state.
+    replay_completion: Option<CommandReplayEpisode>,
     /// The non-numeric command that completed the most recent integer scan.
     /// It remains backed up in input; dimension scanning uses the semantic
     /// fact to decide whether that replay is a decimal point or a unit.
@@ -96,6 +102,7 @@ impl<'a> CommandProcessor<'a> {
             #[cfg(any(test, feature = "instrumentation"))]
             immediate_write_retirement: None,
             last_delivery: None,
+            replay_completion: None,
             last_integer_terminator: None,
             next_delivery_sequence: 0,
             outer_recovered_while_matching: false,

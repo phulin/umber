@@ -67,6 +67,16 @@ returned to that same processor episode for v-template installation. Thus
 replay does not turn alignment, mode changes, or effects into a second source
 consumer.
 
+An executor-requested stored replay list has a second, typed delivery result:
+after command processing retires the exact stored level (including its normal
+observer and provenance transition), it delivers `Completed(CommandReplayEpisode)` before
+fetching from the enclosing input level. The executor uses that result to
+finalize an isolated mode/group—for example, to freeze an mlist field or a
+braced math group—then requests the next expanded delivery. Ordinary
+`get_x_token` retains TeX82's uninterrupted behavior by consuming this
+boundary internally. Thus no stomach operation can peek at or back up a
+parent token merely to discover that a stored episode ended.
+
 Text `\\accent` and `\\discretionary` use the same completed-scanner boundary:
 the command processor owns the accent number, expanded base-character lookup,
 and non-character replay, and freezes each discretionary group as traced,

@@ -40,6 +40,7 @@ pub struct CommandState {
     pub(crate) alignment: AlignmentDeliveryState,
     pub(crate) expansion: ExpansionState,
     pub(crate) transient: TransientState,
+    pub(crate) replay_completions: Vec<InputLevelId>,
 }
 
 /// Opaque boundary for one executor-requested immutable token-list episode.
@@ -48,6 +49,19 @@ pub struct CommandState {
 /// drive a completed list without observing raw input-stack structure.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct CommandReplayEpisode(InputLevelId);
+
+/// One expanded delivery from the episode-aware command boundary.
+///
+/// A completed stored episode is delivered on its own, after command-owned
+/// retirement (and its observation/provenance effects) but before any token
+/// from the enclosing input level is fetched.  This lets a stomach consumer
+/// finalize its isolated mode or group without peeking at, or backing up,
+/// parent source.
+#[derive(Debug)]
+pub enum CommandReplayDelivery {
+    Command(crate::CurrentCommand),
+    Completed(CommandReplayEpisode),
+}
 
 impl CommandState {
     /// Schedules one completed math field without exposing its frozen token
@@ -67,7 +81,7 @@ impl CommandState {
         tokens: TracedTokenList,
         reason: StoredReplayReason,
     ) -> CommandReplayEpisode {
-        CommandReplayEpisode(self.push_token_level(
+        let identity = self.push_token_level(
             TokenPayload::Stored {
                 tokens: tokens.token_list(),
                 origins: tokens.origin_list(),
@@ -75,7 +89,9 @@ impl CommandState {
             TokenBehavior::Ordinary,
             RetirementBehavior::Pop,
             ReplayTrace::Stored(reason),
-        ))
+        );
+        self.replay_completions.push(identity);
+        CommandReplayEpisode(identity)
     }
 
     /// Schedules one completed `\\discretionary` part for canonical replay.
@@ -85,42 +101,36 @@ impl CommandState {
     /// remain command-owned while the stomach supplies the restricted hmode
     /// lifecycle.
     pub fn push_discretionary_episode(&mut self, tokens: TracedTokenList) -> CommandReplayEpisode {
-        CommandReplayEpisode(self.push_token_level(
-            TokenPayload::Stored {
-                tokens: tokens.token_list(),
-                origins: tokens.origin_list(),
-            },
-            TokenBehavior::Ordinary,
-            RetirementBehavior::Pop,
-            ReplayTrace::Stored(crate::input::StoredReplayReason::Discretionary),
-        ))
+        self.push_stored_episode(tokens, crate::input::StoredReplayReason::Discretionary)
     }
 
     /// Replays `\\aftergroup` payload after its owning executor group exits.
     pub fn push_aftergroup(&mut self, tokens: TracedTokenList) -> CommandReplayEpisode {
-        CommandReplayEpisode(self.push_token_level(
+        self.push_stored_episode(tokens, crate::input::StoredReplayReason::AfterGroup)
+    }
+
+    fn push_stored_episode(
+        &mut self,
+        tokens: TracedTokenList,
+        reason: StoredReplayReason,
+    ) -> CommandReplayEpisode {
+        let identity = self.push_token_level(
             TokenPayload::Stored {
                 tokens: tokens.token_list(),
                 origins: tokens.origin_list(),
             },
             TokenBehavior::Ordinary,
             RetirementBehavior::Pop,
-            ReplayTrace::Stored(crate::input::StoredReplayReason::AfterGroup),
-        ))
+            ReplayTrace::Stored(reason),
+        );
+        self.replay_completions.push(identity);
+        CommandReplayEpisode(identity)
     }
 
     /// Replays TeX's one-token `\afterassignment` payload after its owning
     /// assignment has committed to the aggregate state.
     pub fn push_afterassignment(&mut self, tokens: TracedTokenList) -> CommandReplayEpisode {
-        CommandReplayEpisode(self.push_token_level(
-            TokenPayload::Stored {
-                tokens: tokens.token_list(),
-                origins: tokens.origin_list(),
-            },
-            TokenBehavior::Ordinary,
-            RetirementBehavior::Pop,
-            ReplayTrace::Stored(crate::input::StoredReplayReason::AfterAssignment),
-        ))
+        self.push_stored_episode(tokens, crate::input::StoredReplayReason::AfterAssignment)
     }
 
     /// Whether the requested immutable replay level is still live.
@@ -130,6 +140,22 @@ impl CommandState {
             .levels
             .iter()
             .any(|level| crate::input::input_level_identity(level) == episode.0)
+    }
+
+    /// Claims the completion boundary for an executor-requested stored level
+    /// after command-owned retirement. Input replay explanations remain
+    /// diagnostic-only; this independent state records only the typed
+    /// executor delivery contract.
+    pub(crate) fn take_replay_completion(
+        &mut self,
+        identity: InputLevelId,
+    ) -> Option<CommandReplayEpisode> {
+        let index = self
+            .replay_completions
+            .iter()
+            .position(|candidate| *candidate == identity)?;
+        self.replay_completions.swap_remove(index);
+        Some(CommandReplayEpisode(identity))
     }
 
     /// Schedules a frozen `\everypar` list after canonical main control has

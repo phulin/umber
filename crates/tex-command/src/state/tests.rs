@@ -84,6 +84,7 @@ fn semantic_ownership_domains_are_exhaustively_classified() {
         alignment,
         expansion,
         transient,
+        ..
     } = CommandState::default();
 
     let InputState {

@@ -202,6 +202,7 @@ impl CommandState {
                 extra_tab_recovery: None,
             },
             expansion: summary.expansion,
+            replay_completions: Vec::new(),
             transient: TransientState {
                 next_builder_identity: summary.next_builder_identity,
                 ..TransientState::default()
