@@ -81,6 +81,8 @@ struct ReplayBoxes {
     recovery_simple_group_pending: bool,
     recovery_simple_group_open: bool,
     ordinary_simple_group_depth: u32,
+    output_routine_active: bool,
+    output_routine_opening_pending: bool,
 }
 
 impl CommandReplayControl {
@@ -588,6 +590,9 @@ enum ScannedStep {
     EndSimpleGroup,
     BeginOrdinaryGroup,
     EndOrdinaryGroup,
+    BeginOutputRoutine,
+    OutputRoutineOpeningBrace,
+    EndOutputRoutine,
     AlignmentPeekCell {
         alignment: AlignmentIdentity,
         omit: bool,
@@ -938,6 +943,29 @@ fn scan_command(
     output_dead_cycles: &mut i32,
     max_dead_cycles: i32,
 ) -> Result<ScannedStep, ExecError> {
+    if boxes.output_routine_opening_pending
+        && matches!(
+            command.meaning(),
+            Meaning::CharToken {
+                cat: Catcode::BeginGroup,
+                ..
+            }
+        )
+    {
+        return Ok(ScannedStep::OutputRoutineOpeningBrace);
+    }
+    if boxes.output_routine_active
+        && boxes.ordinary_simple_group_depth == 0
+        && matches!(
+            command.meaning(),
+            Meaning::CharToken {
+                cat: Catcode::EndGroup,
+                ..
+            }
+        )
+    {
+        return Ok(ScannedStep::EndOutputRoutine);
+    }
     // `align_error`'s inserted brace is an actual execution group, even when
     // it appears inside a replayed box body.  It must therefore win over the
     // box body's brace-depth bookkeeping so §1131 can observe it at end-v.
@@ -1070,7 +1098,7 @@ fn scan_command(
                     .begin_output_routine_after_stop(command)
                     .map_err(command_error)?;
                 *output_dead_cycles += 1;
-                Ok(ScannedStep::Continue)
+                Ok(ScannedStep::BeginOutputRoutine)
             }
         }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Count) => {
@@ -2112,6 +2140,33 @@ fn apply_scanned_step(
                     context: "simple recovery group",
                 })?;
             boxes.recovery_simple_group_open = false;
+            Ok(ReplayStep::Continue)
+        }
+        ScannedStep::BeginOutputRoutine => {
+            stores.enter_group_with_kind(GroupKind::Output);
+            modes.push(Mode::InternalVertical);
+            boxes.output_routine_active = true;
+            boxes.output_routine_opening_pending = true;
+            Ok(ReplayStep::Continue)
+        }
+        ScannedStep::OutputRoutineOpeningBrace => {
+            boxes.output_routine_opening_pending = false;
+            Ok(ReplayStep::Continue)
+        }
+        ScannedStep::EndOutputRoutine => {
+            if matches!(
+                modes.current_mode(),
+                Mode::Horizontal | Mode::RestrictedHorizontal
+            ) {
+                let _ = modes.pop()?;
+            }
+            let _ = modes.pop()?;
+            stores
+                .leave_group_with_kind(GroupKind::Output)
+                .map_err(|_| ExecError::MissingToken {
+                    context: "output routine group",
+                })?;
+            boxes.output_routine_active = false;
             Ok(ReplayStep::Continue)
         }
         ScannedStep::BeginOrdinaryGroup => {

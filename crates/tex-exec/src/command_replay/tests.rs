@@ -1284,6 +1284,54 @@ fn final_stop_retires_its_backup_before_starting_output_input() {
         "unexpected output hand-off observations: {:?}",
         observations.0
     );
+
+    for expected in [
+        "output opening brace",
+        "output paragraph start",
+        "output paragraph character",
+        "output closing brace",
+    ] {
+        observations.0.clear();
+        assert_eq!(
+            control
+                .step_with_observer(&mut universe, &mut observations)
+                .expect(expected),
+            ReplayStep::Continue
+        );
+    }
+
+    observations.0.clear();
+    assert_eq!(
+        control
+            .step_with_observer(&mut universe, &mut observations)
+            .expect("final stop retries below the completed output routine"),
+        ReplayStep::Continue
+    );
+    assert!(
+        matches!(
+            observations.0.as_slice(),
+            [
+                CommandObservation::Input(output_retirement),
+                CommandObservation::Command(raw),
+                CommandObservation::Command(expanded),
+                CommandObservation::Input(backup_retirement),
+                CommandObservation::Input(backup),
+                CommandObservation::Recovery(recovery),
+                CommandObservation::Input(output),
+            ] if output_retirement.transition == InputTransition::Retire
+                && output_retirement.reason == InputReason::TokenList
+                && raw.command == "stop"
+                && expanded.command == "stop"
+                && backup_retirement.transition == InputTransition::Retire
+                && backup_retirement.reason == InputReason::Backup
+                && backup.transition == InputTransition::Backup
+                && recovery.kind == RecoveryKind::Backup
+                && output.transition == InputTransition::Push
+                && output.reason == InputReason::TokenList
+        ),
+        "completed output routine must restore vertical final-stop retry: {:?}",
+        observations.0
+    );
 }
 
 #[test]

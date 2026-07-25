@@ -199,6 +199,14 @@ before the `\output` token list is pushed. This preserves the final-stop retry
 below the output routine and fixes the canonical input order independently of
 the executor's typed page/output effects.
 
+Replay models that routine as an explicit output group and internal-vertical
+mode. Its required opening brace is consumed by `scan_left_brace`, not as a
+nested ordinary group; the matching close ends its paragraph, leaves the
+output group, and restores outer vertical mode before output-list retirement.
+The final-stop backup below the output list can therefore retire before a later
+`its_all_over` retry, instead of spuriously taking `head_for_vmode`'s
+horizontal recovery path (TeX82 §§46, 1095, 1131).
+
 At TeX82 §23's `check_outer_validity` boundary, an aligning scanner reports
 the typed `outer_validity` alignment recovery after its EOF diagnostic and
 before command processing pushes the frozen `\cr` recovery list. The record
