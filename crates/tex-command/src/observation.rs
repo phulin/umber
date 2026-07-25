@@ -13,7 +13,7 @@ use tex_state::meaning::{ExpandablePrimitive, Meaning, UnexpandablePrimitive};
 use crate::command::{CommandIdentity, CurrentCommand};
 use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 
-use crate::{DeliveryStamp, SourceRange};
+use crate::{DeliveryStamp, SourceLocation, SourceProvenance, SourceRange};
 
 /// An owned, allocation-independent spelling used by command observation.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -53,6 +53,9 @@ pub struct CommandProvenance {
     /// Exact physical range for direct source delivery. Replayed and expanded
     /// commands retain it through their traced spelling origin instead.
     pub source_range: Option<SourceRange>,
+    /// TeX82's post-delivery source cursor location. This differs from the
+    /// raw span start for decoded caret notation.
+    pub source_location: Option<SourceLocation>,
 }
 
 impl PartialEq for CommandProvenance {
@@ -62,6 +65,7 @@ impl PartialEq for CommandProvenance {
             && self.delivery_sequence == other.delivery_sequence
             && self.has_origin == other.has_origin
             && self.source_range == other.source_range
+            && self.source_location == other.source_location
     }
 }
 
@@ -69,7 +73,7 @@ impl CommandProvenance {
     pub(crate) fn from_stamp(
         stamp: DeliveryStamp,
         origin: OriginId,
-        source_range: Option<SourceRange>,
+        source_provenance: Option<SourceProvenance>,
     ) -> Self {
         Self {
             input_level: stamp.input_level(),
@@ -77,7 +81,8 @@ impl CommandProvenance {
             delivery_sequence: stamp.sequence(),
             has_origin: origin != OriginId::UNKNOWN,
             origin,
-            source_range,
+            source_range: source_provenance.map(SourceProvenance::range),
+            source_location: source_provenance.map(SourceProvenance::location),
         }
     }
 }

@@ -593,6 +593,14 @@ range (when present), so its control-sequence source position stays on the
 blank line rather than falling back to the preceding line's anchor. An
 unterminated final line remains zero-width.
 
+Each direct source delivery also carries a typed canonical location distinct
+from its raw span. It is TeX82's post-delivery `loc - start - 1`: ordinary
+one-byte spellings therefore locate at their span start, while a decoded
+`^^41` retains its full four-byte raw span but locates at the final `1`.
+Zero-width synthetic spellings retain their physical anchor. This provenance
+pair is ordinary snapshot-owned input state, including backup replay; it is
+not reconstructed by fixture observation.
+
 Control-sequence names are semantically sequences of `CharacterCode`. Their
 storage may use a compact UTF-8 representation when lossless for the active
 profile, but string encoding is an implementation detail. Name identity,
@@ -1247,7 +1255,8 @@ and returns the same `CurrentCommand` with its packed token spelling.
    delivery;
 3. rewinds the current level without allocation when the exact level and
    cursor remain current and the backup treatment is ordinary; otherwise
-4. pushes a backed-up token level carrying the exact spelling and origin.
+4. pushes a backed-up token level carrying the exact spelling, origin, raw
+   source span, and typed canonical location.
 
 One-delivery treatments such as `\\noexpand` always use the backed-up level,
 including when the original token-list cursor remains rewindable.
@@ -2214,8 +2223,9 @@ The new command core owns a test-only observer record surface rather than
 depending on `tex-oracle`. `CommandObservation` carries command delivery,
 logical input, recovery, scanner-status, macro, condition, typed scanner,
 token-list, alignment, mutation, and effect records. Command deliveries carry
-an opaque origin identity and optional exact registered physical source range,
-plus input-level, cursor-slot, and processor-delivery provenance. Raw source
+an opaque origin identity and optional exact registered physical source range
+plus its typed canonical location, alongside input-level, cursor-slot, and
+processor-delivery provenance. Raw source
 delivery installs its backing through the aggregate source-map boundary before
 spelling construction; expanded and replayed delivery retain that traced
 origin without fixture-derived locations. All other records retain only command-owned

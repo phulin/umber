@@ -17,8 +17,8 @@ use crate::input::{
 };
 use crate::profile::{CharacterCode, CharacterMode};
 use crate::{
-    AlignmentDelivery, AlignmentDeliveryEvent, SourceControlSequenceKind, SourceRange, SourceToken,
-    SourceTokenizationStep,
+    AlignmentDelivery, AlignmentDeliveryEvent, SourceControlSequenceKind, SourceProvenance,
+    SourceToken, SourceTokenizationStep,
 };
 
 use super::CommandProcessor;
@@ -387,7 +387,7 @@ impl CommandProcessor<'_> {
         let level = self.command.push_token_level(
             TokenPayload::BackedUp(SharedBackedUpBuffer::new(vec![BackedUpToken {
                 spelling,
-                source_range: None,
+                source_provenance: None,
             }])),
             TokenBehavior::BackedUp(BackupTreatment::Ordinary),
             RetirementBehavior::Pop,
@@ -551,7 +551,7 @@ impl CommandProcessor<'_> {
         let level = self.command.push_token_level(
             TokenPayload::BackedUp(SharedBackedUpBuffer::new(vec![BackedUpToken {
                 spelling: command.spelling(),
-                source_range: command.source_range(),
+                source_provenance: command.source_provenance(),
             }])),
             TokenBehavior::BackedUp(treatment),
             RetirementBehavior::Pop,
@@ -631,7 +631,7 @@ impl CommandProcessor<'_> {
                 level,
                 position,
                 behavior,
-                source_range,
+                source_provenance,
                 direct_source,
             } = delivery;
 
@@ -657,7 +657,7 @@ impl CommandProcessor<'_> {
             let mut command = CurrentCommand::resolve(
                 spelling,
                 delivery_stamp,
-                source_range,
+                source_provenance,
                 direct_source,
                 &mut self.state,
             );
@@ -752,7 +752,7 @@ impl CommandProcessor<'_> {
                                 level: identity,
                                 position,
                                 behavior: TokenBehavior::Ordinary,
-                                source_range: Some(token.range()),
+                                source_provenance: Some(token.provenance()),
                                 direct_source: true,
                             }));
                         }
@@ -781,7 +781,7 @@ impl CommandProcessor<'_> {
                 }
                 InputLevel::Tokens(cursor) => {
                     let identity = cursor.identity;
-                    if let Some((spelling, position, behavior, source_range)) =
+                    if let Some((spelling, position, behavior, source_provenance)) =
                         self.next_stored_token(&cursor)
                     {
                         let InputLevel::Tokens(cursor) = self
@@ -799,7 +799,7 @@ impl CommandProcessor<'_> {
                             level: identity,
                             position,
                             behavior,
-                            source_range,
+                            source_provenance,
                             direct_source: false,
                         }));
                     }
@@ -816,7 +816,7 @@ impl CommandProcessor<'_> {
                                 position: u64::try_from(cursor.index)
                                     .map_err(|_| CommandError::InputInvariant)?,
                                 behavior: TokenBehavior::VTemplate,
-                                source_range: None,
+                                source_provenance: None,
                                 direct_source: false,
                             }));
                         }
@@ -958,7 +958,12 @@ impl CommandProcessor<'_> {
     fn next_stored_token(
         &self,
         cursor: &TokenCursor,
-    ) -> Option<(TracedTokenWord, u64, TokenBehavior, Option<SourceRange>)> {
+    ) -> Option<(
+        TracedTokenWord,
+        u64,
+        TokenBehavior,
+        Option<SourceProvenance>,
+    )> {
         let position = u64::try_from(cursor.index).ok()?;
         let spelling = match &cursor.payload {
             TokenPayload::Transient(buffer) => {
@@ -966,7 +971,7 @@ impl CommandProcessor<'_> {
             }
             TokenPayload::BackedUp(buffer) => buffer
                 .get(cursor.index)
-                .map(|token| (token.spelling, token.source_range)),
+                .map(|token| (token.spelling, token.source_provenance)),
             TokenPayload::ArgumentRange { buffer, range } => (cursor.index
                 < range.end().saturating_sub(range.start()))
             .then(|| buffer.get(range.start() + cursor.index))
@@ -1309,7 +1314,7 @@ impl CommandProcessor<'_> {
             provenance: CommandProvenance::from_stamp(
                 command.delivery_stamp(),
                 command.origin(),
-                command.direct_source_range(),
+                command.direct_source_provenance(),
             ),
         }));
     }
@@ -1353,7 +1358,7 @@ struct DeliveredToken {
     level: InputLevelId,
     position: u64,
     behavior: TokenBehavior,
-    source_range: Option<SourceRange>,
+    source_provenance: Option<SourceProvenance>,
     /// True only for a token read directly from a physical source cursor.
     /// Backups preserve their diagnostic range while remaining replay input.
     direct_source: bool,
@@ -1740,6 +1745,10 @@ mod tests {
             Some(crate::SourceRange::new(source, 0, 1))
         );
         assert_eq!(
+            source_deliveries[0].provenance.source_location,
+            Some(crate::SourceLocation::new(source, 0))
+        );
+        assert_eq!(
             source_deliveries[0].provenance.source_range,
             source_deliveries[1].provenance.source_range,
             "raw and expanded delivery retain the registered source range"
@@ -2082,6 +2091,53 @@ mod tests {
             .back_input(replayed)
             .expect("replayed delivery backs up");
         assert_eq!(processor.command.alignment.align_state, 0);
+    }
+
+    #[test]
+    fn decoded_caret_spelling_keeps_its_raw_span_and_terminal_location_through_backup() {
+        let mut command = CommandState::default();
+        let source = command
+            .register_source(SourceRegistration::new(
+                RegisteredSourceKind::Generated,
+                Arc::<[u8]>::from(b"^^41".as_slice()),
+            ))
+            .expect("source registers");
+        command
+            .open_registered_source(source)
+            .expect("source opens");
+        let mut runtime = CommandRuntime::default();
+        let mut universe = Universe::new();
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+
+        let decoded = processor
+            .get_next()
+            .expect("caret spelling delivers")
+            .expect("source is live");
+        assert_eq!(
+            decoded.source_range(),
+            Some(crate::SourceRange::new(source, 0, 4))
+        );
+        assert_eq!(
+            decoded.source_location(),
+            Some(crate::SourceLocation::new(source, 3))
+        );
+        processor
+            .back_input(decoded)
+            .expect("decoded token backs up");
+
+        let replayed = processor
+            .get_next()
+            .expect("backed-up spelling delivers")
+            .expect("backup is live");
+        assert_eq!(
+            replayed.source_range(),
+            Some(crate::SourceRange::new(source, 0, 4))
+        );
+        assert_eq!(
+            replayed.source_location(),
+            Some(crate::SourceLocation::new(source, 3))
+        );
     }
 
     #[test]

@@ -42,6 +42,87 @@ impl SourceRange {
     pub const fn is_empty(self) -> bool {
         self.start == self.end
     }
+
+    /// TeX82's current source location after this spelling was consumed.
+    ///
+    /// `get_next` observes `loc - start - 1`, so a reduced `^^` spelling is
+    /// located at its final physical byte even though its provenance span
+    /// covers every byte consumed to produce the decoded character. Synthetic
+    /// spellings retain their zero-width physical anchor.
+    #[must_use]
+    pub const fn terminal_location(self) -> SourceLocation {
+        SourceLocation {
+            source: self.source,
+            byte: if self.is_empty() {
+                self.start
+            } else {
+                self.end - 1
+            },
+        }
+    }
+}
+
+/// TeX82's canonical physical source location for one delivered spelling.
+///
+/// This is intentionally separate from [`SourceRange`]: the latter retains
+/// every raw source byte that formed a decoded token, while this value mirrors
+/// the post-delivery `loc - start - 1` location observed by `get_next`.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct SourceLocation {
+    source: SourceId,
+    byte: u64,
+}
+
+impl SourceLocation {
+    /// Constructs one exact physical source location.
+    #[must_use]
+    pub const fn new(source: SourceId, byte: u64) -> Self {
+        Self { source, byte }
+    }
+
+    /// Source whose immutable bytes contain this location.
+    #[must_use]
+    pub const fn source(self) -> SourceId {
+        self.source
+    }
+
+    /// Zero-based physical byte offset.
+    #[must_use]
+    pub const fn byte(self) -> u64 {
+        self.byte
+    }
+}
+
+/// Complete direct-source provenance for one decoded spelling.
+///
+/// The span keeps raw-source attribution exact; the location keeps TeX82's
+/// cursor observation exact. It is carried through backups as ordinary input
+/// state and therefore remains stable across executor snapshots.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct SourceProvenance {
+    range: SourceRange,
+    location: SourceLocation,
+}
+
+impl SourceProvenance {
+    pub(crate) const fn from_range(range: SourceRange) -> Self {
+        Self {
+            range,
+            location: range.terminal_location(),
+        }
+    }
+
+    /// Exact raw spelling range.
+    #[must_use]
+    pub const fn range(self) -> SourceRange {
+        self.range
+    }
+
+    /// Canonical post-delivery TeX82 location.
+    #[must_use]
+    pub const fn location(self) -> SourceLocation {
+        self.location
+    }
 }
 
 /// A half-open decoded-scalar range within one normalized physical line.

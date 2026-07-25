@@ -11,7 +11,7 @@ use tex_state::token::Catcode;
 
 use crate::profile::{CharacterCode, CharacterMode};
 
-use super::lines::{SourceCharacter, SourceRange, SourceScalarRange};
+use super::lines::{SourceCharacter, SourceProvenance, SourceRange, SourceScalarRange};
 use super::source::SourceCursor;
 
 /// TeX's source-line lexical state (`mid_line`, `skip_blanks`, `new_line`).
@@ -77,6 +77,12 @@ impl SourceToken {
                 *scalar_range
             }
         }
+    }
+
+    /// Raw span and canonical TeX82 location for this decoded spelling.
+    #[must_use]
+    pub fn provenance(&self) -> SourceProvenance {
+        SourceProvenance::from_range(self.range())
     }
 }
 

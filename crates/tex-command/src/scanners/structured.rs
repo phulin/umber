@@ -906,7 +906,7 @@ impl CommandProcessor<'_> {
             crate::input::TokenPayload::BackedUp(crate::input::SharedBackedUpBuffer::new(
                 commands.map(|command| crate::input::BackedUpToken {
                     spelling: command.spelling(),
-                    source_range: command.source_range(),
+                    source_provenance: command.source_provenance(),
                 }),
             )),
             crate::input::TokenBehavior::BackedUp(crate::input::BackupTreatment::Ordinary),

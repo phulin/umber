@@ -237,9 +237,29 @@ fn constructs_words_symbols_active_characters_and_null_names_with_exact_ranges()
 fn canonical_superscript_forms_use_lowercase_hex_and_complete_ranges() {
     let mut state = state(b"^^41^^7a^^8^^5A");
 
+    let first = token(state.next_exact_source_step(-1, classic_catcode));
     assert_eq!(
-        character(state.next_exact_source_step(-1, classic_catcode)),
-        (b'A', Catcode::Letter, 0, 4)
+        first.provenance().location().byte(),
+        3,
+        "TeX82 observes the post-reduction cursor, while the raw span keeps the complete ^^41 spelling"
+    );
+    let SourceToken::Character {
+        code,
+        catcode,
+        range,
+        ..
+    } = first
+    else {
+        panic!("expected character token");
+    };
+    assert_eq!(
+        (
+            code.to_byte().expect("exact byte"),
+            catcode,
+            range.start(),
+            range.end()
+        ),
+        (b'A', Catcode::Letter, 0, 4),
     );
     assert_eq!(
         character(state.next_exact_source_step(-1, classic_catcode)),

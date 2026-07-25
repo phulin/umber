@@ -20,7 +20,10 @@ pub(crate) use stack::{
     OutParameterReplay, ParameterReplayError,
 };
 
-pub use lines::{LineTerminator, PhysicalLine, SourceCharacter, SourceRange, SourceScalarRange};
+pub use lines::{
+    LineTerminator, PhysicalLine, SourceCharacter, SourceLocation, SourceProvenance, SourceRange,
+    SourceScalarRange,
+};
 pub use source::{
     MalformedUnicodeRange, RegisteredSourceKind, SourceRegistration, SourceRegistrationError,
 };

@@ -151,7 +151,7 @@ impl CommandProcessor<'_> {
             provenance: CommandProvenance::from_stamp(
                 command.delivery_stamp(),
                 command.origin(),
-                command.direct_source_range(),
+                command.direct_source_provenance(),
             ),
         }));
     }
@@ -500,7 +500,7 @@ impl CommandProcessor<'_> {
         let level = self.command.push_token_level(
             TokenPayload::BackedUp(SharedBackedUpBuffer::new(vec![BackedUpToken {
                 spelling: command.spelling(),
-                source_range: command.source_range(),
+                source_provenance: command.source_provenance(),
             }])),
             TokenBehavior::BackedUp(BackupTreatment::Ordinary),
             RetirementBehavior::Pop,

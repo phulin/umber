@@ -8,7 +8,7 @@ use tex_state::token::TracedTokenWord;
 
 use crate::macro_call::{MacroActivationId, MacroArgumentRange};
 
-use super::{lines::SourceRange, source::SourceCursor};
+use super::{lines::SourceProvenance, source::SourceCursor};
 
 /// Stable identity for one live input level.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -107,7 +107,7 @@ impl SharedBackedUpBuffer {
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub(crate) struct BackedUpToken {
     pub(crate) spelling: TracedTokenWord,
-    pub(crate) source_range: Option<SourceRange>,
+    pub(crate) source_provenance: Option<SourceProvenance>,
 }
 
 /// Semantic treatment applied while a token level delivers its payload.

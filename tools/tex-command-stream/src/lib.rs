@@ -787,15 +787,12 @@ fn command_location(
     source_id: Option<SourceId>,
     source_bytes: Option<&[u8]>,
 ) -> Option<SourceLocation> {
-    let range = record.provenance.source_range?;
-    if Some(range.source()) != source_id {
+    let location = record.provenance.source_location?;
+    if Some(location.source()) != source_id {
         return None;
     }
     let bytes = source_bytes?;
-    let mut byte = usize::try_from(range.start()).ok()?;
-    if matches!(record.spelling, ObservedToken::ControlSequence(_)) {
-        byte = usize::try_from(range.end().checked_sub(1)?).ok()?;
-    }
+    let byte = usize::try_from(location.byte()).ok()?;
     let prefix = bytes.get(..byte)?;
     let line_start = prefix
         .iter()

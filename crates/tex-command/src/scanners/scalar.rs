@@ -946,7 +946,7 @@ impl CommandProcessor<'_> {
                     .into_iter()
                     .map(|command| crate::input::BackedUpToken {
                         spelling: command.spelling(),
-                        source_range: command.source_range(),
+                        source_provenance: command.source_provenance(),
                     })
                     .collect::<Vec<_>>(),
             )),

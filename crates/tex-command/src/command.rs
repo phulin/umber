@@ -5,7 +5,7 @@ use tex_state::interner::Symbol;
 use tex_state::meaning::Meaning;
 use tex_state::token::{Catcode, Token, TracedTokenWord};
 
-use crate::SourceRange;
+use crate::{SourceLocation, SourceProvenance, SourceRange};
 
 /// One command delivery, equivalent to TeX's `cur_cmd`, `cur_chr`, `cur_cs`,
 /// and `cur_tok`.
@@ -21,7 +21,7 @@ pub struct CurrentCommand {
     identity: CommandIdentity,
     control_sequence: Option<Symbol>,
     delivery: DeliveryStamp,
-    source_range: Option<SourceRange>,
+    source_provenance: Option<SourceProvenance>,
     direct_source: bool,
     alignment_adjustment: crate::processor::AlignmentDeliveryAdjustment,
 }
@@ -174,7 +174,7 @@ impl CurrentCommand {
     pub(crate) fn resolve(
         spelling: TracedTokenWord,
         delivery: DeliveryStamp,
-        source_range: Option<SourceRange>,
+        source_provenance: Option<SourceProvenance>,
         direct_source: bool,
         state: &mut CommandContext<'_>,
     ) -> Self {
@@ -212,7 +212,7 @@ impl CurrentCommand {
             identity: CommandIdentity::from_meaning(meaning),
             control_sequence,
             delivery,
-            source_range,
+            source_provenance,
             direct_source,
             alignment_adjustment: crate::processor::AlignmentDeliveryAdjustment::None,
         }
@@ -331,16 +331,33 @@ impl CurrentCommand {
     /// this range without making it part of token identity.
     #[must_use]
     pub const fn source_range(&self) -> Option<SourceRange> {
-        self.source_range
+        match self.source_provenance {
+            Some(provenance) => Some(provenance.range()),
+            None => None,
+        }
+    }
+
+    /// Returns TeX82's post-delivery physical source location, if this
+    /// command originated in registered source input.
+    #[must_use]
+    pub const fn source_location(&self) -> Option<SourceLocation> {
+        match self.source_provenance {
+            Some(provenance) => Some(provenance.location()),
+            None => None,
+        }
+    }
+
+    pub(crate) const fn source_provenance(&self) -> Option<SourceProvenance> {
+        self.source_provenance
     }
 
     /// Returns the physical range only when this delivery came directly from
     /// a source level. Replayed tokens retain their range for diagnostics but
     /// must not masquerade as a second physical-source transition.
     #[cfg(any(test, feature = "instrumentation"))]
-    pub(crate) const fn direct_source_range(&self) -> Option<SourceRange> {
+    pub(crate) const fn direct_source_provenance(&self) -> Option<SourceProvenance> {
         if self.direct_source {
-            self.source_range
+            self.source_provenance
         } else {
             None
         }
@@ -355,7 +372,7 @@ impl CurrentCommand {
             identity: self.identity,
             control_sequence: self.control_sequence,
             delivery: self.delivery,
-            source_range: self.source_range,
+            source_provenance: self.source_provenance,
             direct_source: self.direct_source,
             alignment_adjustment: self.alignment_adjustment,
         }

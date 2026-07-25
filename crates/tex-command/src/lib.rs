@@ -27,9 +27,9 @@ pub use error::CommandError;
 pub use host::{CommandHostCapabilities, CommandHostContext, ConditionalMode, ConditionalState};
 pub use input::{
     InvalidSourceCharacter, LexerState, LineTerminator, MalformedUnicodeRange, PhysicalLine,
-    RegisteredSourceKind, SourceCharacter, SourceControlSequenceKind, SourceRange,
-    SourceRegistration, SourceRegistrationError, SourceScalarRange, SourceToken,
-    SourceTokenizationStep,
+    RegisteredSourceKind, SourceCharacter, SourceControlSequenceKind, SourceLocation,
+    SourceProvenance, SourceRange, SourceRegistration, SourceRegistrationError, SourceScalarRange,
+    SourceToken, SourceTokenizationStep,
 };
 #[cfg(any(test, feature = "instrumentation"))]
 pub use observation::{
