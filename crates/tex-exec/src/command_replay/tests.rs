@@ -2385,6 +2385,25 @@ fn output_group_waits_for_nested_box_body_before_closing() {
 }
 
 #[test]
+fn simple_group_ancestor_does_not_close_nested_output_box() {
+    // TeX82 §1068 dispatches `}` from the live `cur_group`.  Plain's `\big`
+    // has this shape: its simple group stays open while the nested `\vbox`
+    // body closes.  The closer must package the vbox, not unsave that
+    // ancestor simple group.
+    let mut universe = Universe::new();
+    let mut control = CommandReplayControl::tex82_initex(&mut universe);
+    register_source(
+        &mut control,
+        br"\output={{\global\output={}\shipout\vbox{\hbox{\vbox to8.5pt{}}}}}\topskip=0pt\vsize=1pt\setbox0=\hbox{}\ht0=2pt\copy0\penalty-10000\end",
+    );
+
+    run_to_end(&mut control, &mut universe);
+
+    assert_eq!(universe.world().artifact_commits().len(), 2);
+    assert!(universe.box_reg(255).is_none());
+}
+
+#[test]
 fn dead_output_cycle_forces_shipout_after_final_stop_backup() {
     // TeX82 §§46 and 1005: after `maxdeadcycles` completed output routines
     // that leave `\box255` unused, `its_all_over` backs up the final stop

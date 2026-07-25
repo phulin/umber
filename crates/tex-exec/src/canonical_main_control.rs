@@ -140,7 +140,6 @@ struct ReplayBoxes {
     suspended_alignments: Vec<ActiveReplayAlignment>,
     recovery_simple_group_pending: bool,
     recovery_simple_group_open: bool,
-    ordinary_simple_group_depth: u32,
     output_routine_active: bool,
     output_routine_opening_pending: bool,
     terminal_output_shipout_complete: bool,
@@ -2842,7 +2841,10 @@ fn scan_command(
     {
         return Ok(ScannedStep::EndSimpleGroup);
     }
-    if boxes.ordinary_simple_group_depth > 0
+    // TeX82 §1068 dispatches a right brace from the current `cur_group`.
+    // An ancestor simple group must not make a nested box's body closer look
+    // like an ordinary group closer.
+    if innermost_group == Some(GroupKind::Simple)
         && matches!(
             command.meaning(),
             Meaning::CharToken {
@@ -2896,11 +2898,9 @@ fn scan_command(
     }
     // TeX82 §1016 opens `output_group` before replaying the braced output
     // token list. A box body nested in that list owns its closing brace first;
-    // only an end-group with no active box can close the enclosing output
-    // group. In particular, Plain's `\vbox to 8.5\p@{}` is not the end of
-    // `\output`.
+    // only the live output group can close the enclosing output routine.
     if boxes.output_routine_active
-        && boxes.ordinary_simple_group_depth == 0
+        && innermost_group == Some(GroupKind::Output)
         && matches!(
             command.meaning(),
             Meaning::CharToken {
@@ -2938,7 +2938,7 @@ fn scan_command(
             if !processor.has_control_sequence_spelling(&command, "endgroup") {
                 return Ok(ScannedStep::Continue);
             }
-            if boxes.ordinary_simple_group_depth == 0 {
+            if innermost_group.is_none() {
                 processor.report_off_save_bottom_drop(&command);
                 return Ok(ScannedStep::ExtraEndGroup);
             }
@@ -6107,7 +6107,6 @@ fn apply_scanned_step(
         }
         ScannedStep::BeginOrdinaryGroup => {
             stores.enter_group_with_kind(GroupKind::Simple);
-            boxes.ordinary_simple_group_depth += 1;
             Ok(ReplayStep::Continue)
         }
         ScannedStep::BeginSemiSimpleGroup => {
@@ -6154,10 +6153,6 @@ fn apply_scanned_step(
                 .map_err(|_| ExecError::MissingToken {
                     context: "ordinary simple group",
                 })?;
-            boxes.ordinary_simple_group_depth = boxes
-                .ordinary_simple_group_depth
-                .checked_sub(1)
-                .expect("ordinary simple group depth is nonzero");
             schedule_aftergroup(command, stores, aftergroup);
             Ok(ReplayStep::Continue)
         }
