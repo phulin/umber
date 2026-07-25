@@ -38,6 +38,21 @@ fn push(command: &mut CommandState, tokens: impl IntoIterator<Item = Token>) {
     );
 }
 
+fn text_tokens(text: &str) -> Vec<Token> {
+    text.chars()
+        .map(|ch| Token::Char {
+            ch,
+            cat: match ch {
+                '{' => Catcode::BeginGroup,
+                '}' => Catcode::EndGroup,
+                ' ' => Catcode::Space,
+                'a'..='z' | 'A'..='Z' => Catcode::Letter,
+                _ => Catcode::Other,
+            },
+        })
+        .collect()
+}
+
 #[test]
 fn math_scalar_requests_are_completed_before_replay() {
     let mut command = CommandState::default();
@@ -1264,4 +1279,78 @@ fn filename_registered_input_recovery_and_rollback_stay_command_owned() {
             .expect_err("unregistered input is structured recovery")
     };
     assert_eq!(error, CommandError::MissingInput("x".to_owned()));
+}
+
+#[test]
+fn pdf_graphics_scanners_freeze_immediate_and_shipout_literal_payloads() {
+    let mut command = CommandState::default();
+    let mut runtime = CommandRuntime::default();
+    let mut universe = Universe::new();
+    let mut capabilities = CommandHostCapabilities::default();
+    push(&mut command, text_tokens("direct{q}shipout page{Q}"));
+    let (immediate, deferred) = {
+        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+        (
+            processor
+                .scan_pdf_graphics_request(UnexpandablePrimitive::PdfLiteral)
+                .expect("immediate literal scans")
+                .expect("literal request"),
+            processor
+                .scan_pdf_graphics_request(UnexpandablePrimitive::PdfLiteral)
+                .expect("shipout literal scans")
+                .expect("literal request"),
+        )
+    };
+    assert!(matches!(
+        immediate,
+        PdfGraphicsRequest::Literal {
+            mode: tex_state::node::PdfLiteralMode::Direct,
+            deferred: false,
+            ..
+        }
+    ));
+    assert!(matches!(
+        deferred,
+        PdfGraphicsRequest::Literal {
+            mode: tex_state::node::PdfLiteralMode::Page,
+            deferred: true,
+            ..
+        }
+    ));
+}
+
+#[test]
+fn pdf_colorstack_scanner_keeps_setter_text_and_missing_action_typed() {
+    let mut command = CommandState::default();
+    let mut runtime = CommandRuntime::default();
+    let mut universe = Universe::new();
+    let mut capabilities = CommandHostCapabilities::default();
+    push(&mut command, text_tokens("2 set{g}3"));
+    let (set, missing) = {
+        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+        (
+            processor
+                .scan_pdf_graphics_request(UnexpandablePrimitive::PdfColorStack)
+                .expect("setter scans")
+                .expect("color request"),
+            processor
+                .scan_pdf_graphics_request(UnexpandablePrimitive::PdfColorStack)
+                .expect("missing action scans")
+                .expect("color request"),
+        )
+    };
+    assert!(matches!(
+        set,
+        PdfGraphicsRequest::ColorStack {
+            id: 2,
+            action: Some(PdfColorStackActionRequest::Set(_)),
+        }
+    ));
+    assert!(matches!(
+        missing,
+        PdfGraphicsRequest::ColorStack {
+            id: 3,
+            action: None
+        }
+    ));
 }

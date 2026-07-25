@@ -112,6 +112,39 @@ pub enum PdfImagePageBox {
     Art,
 }
 
+/// Immutable command-owned request for one pdfTeX graphics whatsit.
+///
+/// The balanced text has already been collected (and, where pdfTeX requires
+/// it, expanded) by [`CommandProcessor`].  Replay receives neither a token
+/// cursor nor a mutable input frame.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum PdfGraphicsRequest {
+    Literal {
+        mode: tex_state::node::PdfLiteralMode,
+        deferred: bool,
+        text: ScannedBalancedText,
+    },
+    SetMatrix {
+        text: ScannedBalancedText,
+    },
+    Save,
+    Restore,
+    ColorStack {
+        id: i32,
+        action: Option<PdfColorStackActionRequest>,
+    },
+    SavePosition,
+}
+
+/// The completed action word and, for setters, its expanded payload.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum PdfColorStackActionRequest {
+    Set(ScannedBalancedText),
+    Push(ScannedBalancedText),
+    Pop,
+    Current,
+}
+
 /// The command-owned operand prefix of TeX82's `\setbox` assignment.
 ///
 /// The following box command deliberately remains a normal main-control
@@ -546,6 +579,61 @@ pub enum AlignmentCellOpening {
 }
 
 impl CommandProcessor<'_> {
+    /// Scans the unexpandable pdfTeX graphics whatsit family.
+    ///
+    /// This follows pdftex.web's `pdfliteral` through `pdfrestore` scanners:
+    /// `shipout` is recognized before the literal mode, immediate literals
+    /// and setters expand their balanced text now, and a shipout literal
+    /// retains its unexpanded token list for traversal-time expansion.
+    pub fn scan_pdf_graphics_request(
+        &mut self,
+        primitive: UnexpandablePrimitive,
+    ) -> Result<Option<PdfGraphicsRequest>, CommandError> {
+        use PdfColorStackActionRequest as Action;
+        use PdfGraphicsRequest as Request;
+
+        let request = match primitive {
+            UnexpandablePrimitive::PdfLiteral => {
+                let deferred = self.scan_keyword("shipout")?.value;
+                let mode = if self.scan_keyword("direct")?.value {
+                    tex_state::node::PdfLiteralMode::Direct
+                } else if self.scan_keyword("page")?.value {
+                    tex_state::node::PdfLiteralMode::Page
+                } else {
+                    tex_state::node::PdfLiteralMode::Origin
+                };
+                Request::Literal {
+                    mode,
+                    deferred,
+                    text: self.scan_balanced_text(!deferred)?,
+                }
+            }
+            UnexpandablePrimitive::PdfSetMatrix => Request::SetMatrix {
+                text: self.scan_balanced_text(true)?,
+            },
+            UnexpandablePrimitive::PdfSave => Request::Save,
+            UnexpandablePrimitive::PdfRestore => Request::Restore,
+            UnexpandablePrimitive::PdfColorStack => {
+                let id = self.scan_integer()?.value;
+                let action = if self.scan_keyword("set")?.value {
+                    Some(Action::Set(self.scan_balanced_text(true)?))
+                } else if self.scan_keyword("push")?.value {
+                    Some(Action::Push(self.scan_balanced_text(true)?))
+                } else if self.scan_keyword("pop")?.value {
+                    Some(Action::Pop)
+                } else if self.scan_keyword("current")?.value {
+                    Some(Action::Current)
+                } else {
+                    None
+                };
+                Request::ColorStack { id, action }
+            }
+            UnexpandablePrimitive::PdfSavePos => Request::SavePosition,
+            _ => return Ok(None),
+        };
+        Ok(Some(request))
+    }
+
     /// Completes one TeX82 math field into immutable command-owned material.
     ///
     /// A braced field becomes a grouped mlist episode; an unbraced field is

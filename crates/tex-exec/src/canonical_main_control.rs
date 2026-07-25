@@ -12,9 +12,10 @@ use tex_command::{
     CommandRuntime, CommandState, CommandStateSnapshot, FontLoadRequest, FontResource,
     ImmediateExtension, InputStreamRequest, MathDelimiterBoundary, MathDelimiterBoundaryKind,
     MathEpisodeRecovery, MathLimitKind, MathScriptKind, MathStyleKind, MathTextFieldKind,
-    PdfImageRequest, PdfImageResource, ScannedAccent, ScannedBoxConstruction, ScannedBoxKind,
-    ScannedDiscretionary, ScannedDisplayDiagnostic, ScannedLeaderPayload, ScannedMathMuMaterial,
-    ScannedPackingSpec, ScannedVSplit, SourceRegistration, SourceRegistrationError,
+    PdfColorStackActionRequest, PdfGraphicsRequest, PdfImageRequest, PdfImageResource,
+    ScannedAccent, ScannedBoxConstruction, ScannedBoxKind, ScannedDiscretionary,
+    ScannedDisplayDiagnostic, ScannedLeaderPayload, ScannedMathMuMaterial, ScannedPackingSpec,
+    ScannedVSplit, SourceRegistration, SourceRegistrationError,
 };
 #[cfg(any(test, feature = "instrumentation"))]
 use tex_command::{
@@ -1922,6 +1923,7 @@ enum ScannedStep {
     PdfRefXImage {
         object: i32,
     },
+    PdfGraphics(PdfGraphicsRequest),
     FontDimen {
         font: FontId,
         number: u32,
@@ -3135,6 +3137,19 @@ fn scan_command(
                 object: processor.scan_integer().map_err(command_error)?.value,
             })
         }
+        Meaning::UnexpandablePrimitive(
+            primitive @ (UnexpandablePrimitive::PdfLiteral
+            | UnexpandablePrimitive::PdfSetMatrix
+            | UnexpandablePrimitive::PdfSave
+            | UnexpandablePrimitive::PdfRestore
+            | UnexpandablePrimitive::PdfColorStack
+            | UnexpandablePrimitive::PdfSavePos),
+        ) => Ok(ScannedStep::PdfGraphics(
+            processor
+                .scan_pdf_graphics_request(primitive)
+                .map_err(command_error)?
+                .expect("graphics primitive has a typed request"),
+        )),
         Meaning::Font(font) => Ok(ScannedStep::FontSelect {
             font,
             selector: command.control_sequence(),
@@ -3562,6 +3577,93 @@ fn tex_byte_text(text: &str) -> Vec<u8> {
         }
     }
     bytes
+}
+
+fn pdf_graphics_text(tokens: TracedTokenList, stores: &Universe) -> Vec<u8> {
+    let mut text = String::new();
+    for &token in stores.tokens(tokens.token_list()) {
+        tex_expand::append_token_string_text(stores, token, &mut text);
+    }
+    tex_byte_text(&text)
+}
+
+fn apply_pdf_graphics_request(
+    request: PdfGraphicsRequest,
+    stores: &mut Universe,
+    modes: &mut ModeNest,
+) -> Result<ReplayStep, ExecError> {
+    use PdfColorStackActionRequest as Action;
+
+    if !matches!(request, PdfGraphicsRequest::SavePosition)
+        && stores.int_param(IntParam::PDF_OUTPUT) <= 0
+    {
+        let primitive = match request {
+            PdfGraphicsRequest::Literal { .. } => "pdfliteral",
+            PdfGraphicsRequest::SetMatrix { .. } => "pdfsetmatrix",
+            PdfGraphicsRequest::Save => "pdfsave",
+            PdfGraphicsRequest::Restore => "pdfrestore",
+            PdfGraphicsRequest::ColorStack { .. } => "pdfcolorstack",
+            PdfGraphicsRequest::SavePosition => unreachable!(),
+        };
+        return Err(ExecError::PdfExtensionInDviMode(primitive));
+    }
+
+    let node = match request {
+        PdfGraphicsRequest::Literal {
+            mode,
+            deferred: true,
+            text,
+        } => Node::Whatsit(Whatsit::DeferredPdfLiteral {
+            mode,
+            tokens: text.tokens.token_list(),
+        }),
+        PdfGraphicsRequest::Literal { mode, text, .. } => Node::Whatsit(Whatsit::PdfLiteral {
+            mode,
+            payload: pdf_graphics_text(text.tokens, stores),
+        }),
+        PdfGraphicsRequest::SetMatrix { text } => Node::Whatsit(Whatsit::PdfSetMatrix {
+            payload: pdf_graphics_text(text.tokens, stores),
+        }),
+        PdfGraphicsRequest::Save => Node::Whatsit(Whatsit::PdfSave),
+        PdfGraphicsRequest::Restore => Node::Whatsit(Whatsit::PdfRestore),
+        PdfGraphicsRequest::SavePosition => Node::Whatsit(Whatsit::PdfSavePos),
+        PdfGraphicsRequest::ColorStack { id, action } => {
+            let id = if id < 0 {
+                stores.world_mut().write_text(
+                    PrintSink::TerminalAndLog,
+                    "Invalid negative color stack number\n",
+                );
+                0
+            } else if !stores.has_pdf_color_stack(id as u32) {
+                stores.world_mut().write_text(
+                    PrintSink::TerminalAndLog,
+                    &format!("Unknown color stack number {id}\n"),
+                );
+                0
+            } else {
+                id as u32
+            };
+            let Some(action) = action else {
+                stores
+                    .world_mut()
+                    .write_text(PrintSink::TerminalAndLog, "Color stack action is missing\n");
+                return Ok(ReplayStep::Continue);
+            };
+            let action = match action {
+                Action::Set(text) => {
+                    tex_state::PdfColorStackAction::Set(pdf_graphics_text(text.tokens, stores))
+                }
+                Action::Push(text) => {
+                    tex_state::PdfColorStackAction::Push(pdf_graphics_text(text.tokens, stores))
+                }
+                Action::Pop => tex_state::PdfColorStackAction::Pop,
+                Action::Current => tex_state::PdfColorStackAction::Current,
+            };
+            Node::Whatsit(Whatsit::PdfColorStack { id, action })
+        }
+    };
+    modes.current_list_mut().push(node);
+    Ok(ReplayStep::Continue)
 }
 
 fn replay_stream_slot(value: i32, stores: &mut Universe) -> StreamSlot {
@@ -4865,6 +4967,7 @@ fn apply_scanned_step(
                 }));
             Ok(ReplayStep::Continue)
         }
+        ScannedStep::PdfGraphics(request) => apply_pdf_graphics_request(request, stores, modes),
         ScannedStep::FontDimen {
             font,
             number,
