@@ -1885,6 +1885,9 @@ enum ScannedStep {
     HorizontalSkip {
         value: GlueSpec,
     },
+    VerticalSkip {
+        value: GlueSpec,
+    },
     Kern {
         amount: Scaled,
     },
@@ -1892,6 +1895,9 @@ enum ScannedStep {
         value: i32,
     },
     FixedHorizontalGlue {
+        primitive: UnexpandablePrimitive,
+    },
+    FixedVerticalGlue {
         primitive: UnexpandablePrimitive,
     },
     ParagraphIndent {
@@ -3120,6 +3126,59 @@ fn scan_command(
             | UnexpandablePrimitive::HSs
             | UnexpandablePrimitive::HFilNeg),
         ) => Ok(ScannedStep::FixedHorizontalGlue { primitive }),
+        // `\vskip`/`\vfil`/`\vfill`/`\vss`/`\vfilneg` are legal only in
+        // vertical mode. TeX82 §1046's "math-only cases in non-math modes, or
+        // vice versa" table lists `mmode+vskip` (and the fil variants) among
+        // the cases §1047's `insert_dollar_sign` recovers from, identically
+        // to `mmode+hrule` above.
+        Meaning::UnexpandablePrimitive(
+            UnexpandablePrimitive::VSkip
+            | UnexpandablePrimitive::VFil
+            | UnexpandablePrimitive::VFill
+            | UnexpandablePrimitive::VSs
+            | UnexpandablePrimitive::VFilNeg,
+        ) if matches!(mode, Mode::Math | Mode::DisplayMath) => {
+            processor
+                .recover_missing_math_shift(command)
+                .map_err(command_error)?;
+            Ok(ScannedStep::MissingMathShift)
+        }
+        // §1091's `head_for_vmode` distinguishes unrestricted `hmode`
+        // (`mode>=0`) from restricted `hmode` (`mode<0`, e.g. inside an
+        // `\hbox`): only the unrestricted case takes the simple
+        // "back up, insert `\par`, retry" path that
+        // `recover_stop_for_vertical_mode` implements; the restricted case
+        // instead calls `off_save`, unimplemented here, so `RestrictedHorizontal`
+        // is intentionally left unmatched (falling through to the ordinary
+        // `ScannedStep::Continue` default, unchanged from before this arm).
+        Meaning::UnexpandablePrimitive(
+            UnexpandablePrimitive::VSkip
+            | UnexpandablePrimitive::VFil
+            | UnexpandablePrimitive::VFill
+            | UnexpandablePrimitive::VSs
+            | UnexpandablePrimitive::VFilNeg,
+        ) if mode == Mode::Horizontal => {
+            processor
+                .recover_stop_for_vertical_mode(command)
+                .map_err(command_error)?;
+            Ok(ScannedStep::Continue)
+        }
+        // TeX82 §1054's `vmode+vskip: append_glue` (using `abs(mode)`, so both
+        // outer `Vertical` and `InternalVertical` match `vmode`).
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::VSkip)
+            if matches!(mode, Mode::Vertical | Mode::InternalVertical) =>
+        {
+            let value = processor.scan_glue(false).map_err(command_error)?.value;
+            Ok(ScannedStep::VerticalSkip { value })
+        }
+        Meaning::UnexpandablePrimitive(
+            primitive @ (UnexpandablePrimitive::VFil
+            | UnexpandablePrimitive::VFill
+            | UnexpandablePrimitive::VSs
+            | UnexpandablePrimitive::VFilNeg),
+        ) if matches!(mode, Mode::Vertical | Mode::InternalVertical) => {
+            Ok(ScannedStep::FixedVerticalGlue { primitive })
+        }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Indent) => {
             Ok(ScannedStep::ParagraphIndent { indent: true })
         }
@@ -5308,6 +5367,42 @@ fn apply_scanned_step(
                 kind: GlueKind::Normal,
                 leader: None,
             });
+            Ok(ReplayStep::Continue)
+        }
+        ScannedStep::VerticalSkip { value } => {
+            // TeX82 §1054's `vmode+vskip: append_glue` (§1057): unlike
+            // `\hskip` in vertical mode, `\vskip` never starts a paragraph --
+            // the scan side (`scan_command`) only produces this step when the
+            // mode is already `Vertical` or `InternalVertical`. §1057 also
+            // notes `append_glue` deliberately never calls `build_page`
+            // itself ("it is used in at least one place where that would be
+            // a mistake"), unlike `append_penalty` (§1099); no page build
+            // follows here.
+            let spec = stores.intern_glue(value);
+            crate::vertical::append_node_to_current_list(
+                modes,
+                stores,
+                Node::Glue {
+                    spec,
+                    kind: GlueKind::Normal,
+                    leader: None,
+                },
+            )?;
+            Ok(ReplayStep::Continue)
+        }
+        ScannedStep::FixedVerticalGlue { primitive } => {
+            // See `ScannedStep::VerticalSkip` above: same §1054/§1057
+            // `append_glue`, no paragraph start, no page build.
+            let spec = stores.intern_glue(crate::assignments::fixed_infinite_glue(primitive));
+            crate::vertical::append_node_to_current_list(
+                modes,
+                stores,
+                Node::Glue {
+                    spec,
+                    kind: GlueKind::Normal,
+                    leader: None,
+                },
+            )?;
             Ok(ReplayStep::Continue)
         }
         ScannedStep::ParagraphIndent { indent } => {
