@@ -227,6 +227,155 @@ pub struct ScannedDiscretionary {
     pub replacement: ScannedBalancedText,
 }
 
+/// A completed TeX82 math-character operand (`\\mathchar` or `\\mathaccent`).
+///
+/// The command processor validates the canonical 15-bit range before this
+/// crosses the main-control boundary.  Replay therefore has neither an
+/// integer scanner nor an invalid-code recovery path for the operand.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ScannedMathCharacter {
+    pub code: u16,
+    pub recovered: bool,
+    pub provenance: StructuredProvenance,
+}
+
+/// A completed TeX82 delimiter code.  `0` is the canonical missing-delimiter
+/// replacement; the diagnostic and rejected-command replay remain command
+/// owned.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ScannedMathDelimiter {
+    pub code: u32,
+    pub recovered: bool,
+    pub provenance: StructuredProvenance,
+}
+
+/// The font-size bank addressed by a math family assignment.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum MathFamilySize {
+    Text,
+    Script,
+    ScriptScript,
+}
+
+/// The completed family index prefix of `\\textfont`, `\\scriptfont`, or
+/// `\\scriptscriptfont`.  Resolving the following font meaning is deliberately
+/// a separate typed operation, so source delivery cannot leak into replay.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ScannedMathFamily {
+    pub size: MathFamilySize,
+    pub family: u8,
+    pub recovered: bool,
+    pub provenance: StructuredProvenance,
+}
+
+/// Placement selected by TeX82's math script controls.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum MathScriptKind {
+    Subscript,
+    Superscript,
+}
+
+/// A script marker whose following math field is collected by the canonical
+/// math-field episode.  Keeping the marker typed prevents replay from ever
+/// reinterpreting `^` or `_` as source tokens.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ScannedMathScript {
+    pub kind: MathScriptKind,
+    pub provenance: StructuredProvenance,
+}
+
+/// The generalized-fraction form selected before its numerator is frozen.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum MathFractionKind {
+    Over,
+    Atop,
+    Above,
+}
+
+/// Completed command-owned operands of a generalized fraction.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ScannedMathFraction {
+    pub kind: MathFractionKind,
+    pub left_delimiter: Option<ScannedMathDelimiter>,
+    pub right_delimiter: Option<ScannedMathDelimiter>,
+    pub thickness: Option<Scaled>,
+}
+
+/// A completed `\\mskip` or `\\mkern` operand.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ScannedMathMuMaterial {
+    Glue(GlueSpec),
+    Kern(Scaled),
+}
+
+/// Which side receives a display equation number.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum EquationNumberSide {
+    Right,
+    Left,
+}
+
+/// Immutable entry request for `\\eqno` and `\\leqno`.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ScannedEquationNumber {
+    pub side: EquationNumberSide,
+}
+
+/// The noad constructor selected by a math-text primitive. Its field is
+/// completed by the dedicated canonical math-field episode, not by executor
+/// source reads.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum MathTextFieldKind {
+    Ord,
+    Op,
+    Bin,
+    Rel,
+    Open,
+    Close,
+    Punct,
+    Inner,
+    Underline,
+    Overline,
+    VCenter,
+}
+
+/// Immutable request kinds delivered from command processing to canonical main
+/// control for TeX82 §§691–734.  Variants that introduce an mlist episode
+/// deliberately contain no source cursor: the later stomach migration can
+/// consume only the already-classified request and ask the same processor for
+/// the next completed field/group episode.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum CanonicalMathRequest {
+    Character(ScannedMathCharacter),
+    Family(ScannedMathFamily),
+    TextField(MathTextFieldKind),
+    Script(ScannedMathScript),
+    Limits(MathLimitKind),
+    Fraction(ScannedMathFraction),
+    Style(MathStyleKind),
+    Choice,
+    Delimiter(ScannedMathDelimiter),
+    Radical(ScannedMathDelimiter),
+    Accent(ScannedMathCharacter),
+    MuMaterial(ScannedMathMuMaterial),
+    EquationNumber(ScannedEquationNumber),
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum MathLimitKind {
+    Limits,
+    NoLimits,
+    DisplayLimits,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum MathStyleKind {
+    Display,
+    Text,
+    Script,
+    ScriptScript,
+}
+
 /// The canonical boundary that stopped an unbraced filename scan.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum FileNameTermination {
@@ -305,6 +454,92 @@ pub enum AlignmentCellOpening {
 }
 
 impl CommandProcessor<'_> {
+    /// Scans and range-checks TeX82's 15-bit math-character number.
+    pub fn scan_math_character(&mut self) -> Result<ScannedMathCharacter, CommandError> {
+        let scanned = self.scan_integer()?;
+        let recovered = !(0..=0x7fff).contains(&scanned.value);
+        Ok(ScannedMathCharacter {
+            code: if recovered { 0 } else { scanned.value as u16 },
+            recovered,
+            provenance: StructuredProvenance {
+                primary: scanned.provenance.primary,
+            },
+        })
+    }
+
+    /// Scans and range-checks TeX82's 27-bit delimiter number.
+    pub fn scan_math_delimiter(&mut self) -> Result<ScannedMathDelimiter, CommandError> {
+        let scanned = self.scan_integer()?;
+        let recovered = !(0..=0x07ff_ffff).contains(&scanned.value);
+        Ok(ScannedMathDelimiter {
+            code: if recovered { 0 } else { scanned.value as u32 },
+            recovered,
+            provenance: StructuredProvenance {
+                primary: scanned.provenance.primary,
+            },
+        })
+    }
+
+    /// Scans the family index prefix common to TeX82's three math-font
+    /// assignment primitives. Out-of-range families recover to family zero;
+    /// the later font-meaning scan is intentionally not part of this request.
+    pub fn scan_math_family(
+        &mut self,
+        size: MathFamilySize,
+    ) -> Result<ScannedMathFamily, CommandError> {
+        let scanned = self.scan_integer()?;
+        let family = u8::try_from(scanned.value).ok().filter(|value| *value < 16);
+        Ok(ScannedMathFamily {
+            size,
+            family: family.unwrap_or(0),
+            recovered: family.is_none(),
+            provenance: StructuredProvenance {
+                primary: scanned.provenance.primary,
+            },
+        })
+    }
+
+    /// Collects the command-owned scalar prefix of TeX82's generalized
+    /// fraction forms. Numerator/denominator mlist construction stays in the
+    /// executor and is deliberately absent from this scanner boundary.
+    pub fn scan_math_fraction(
+        &mut self,
+        kind: MathFractionKind,
+        with_delimiters: bool,
+    ) -> Result<ScannedMathFraction, CommandError> {
+        let (left_delimiter, right_delimiter) = if with_delimiters {
+            (
+                Some(self.scan_math_delimiter()?),
+                Some(self.scan_math_delimiter()?),
+            )
+        } else {
+            (None, None)
+        };
+        let thickness = match kind {
+            MathFractionKind::Above => Some(self.scan_dimension()?.value),
+            MathFractionKind::Atop => Some(Scaled::from_raw(0)),
+            MathFractionKind::Over => None,
+        };
+        Ok(ScannedMathFraction {
+            kind,
+            left_delimiter,
+            right_delimiter,
+            thickness,
+        })
+    }
+
+    /// Scans the `mu`-unit material operands used only in math mode.
+    pub fn scan_math_mu_material(
+        &mut self,
+        glue: bool,
+    ) -> Result<ScannedMathMuMaterial, CommandError> {
+        if glue {
+            Ok(ScannedMathMuMaterial::Glue(self.scan_glue(true)?.value))
+        } else {
+            Ok(ScannedMathMuMaterial::Kern(self.scan_mu_dimension()?.value))
+        }
+    }
+
     /// Scans TeX82's `\\openin`, `\\closein`, `\\read`, and e-TeX's
     /// `\\readline` operands without exposing a raw delivery to replay.
     pub fn scan_input_stream_request(

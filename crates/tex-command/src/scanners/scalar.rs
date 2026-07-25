@@ -302,6 +302,13 @@ impl CommandProcessor<'_> {
         Ok(self.scan_dimension_with_order(false, false)?.0)
     }
 
+    /// Scans a dimension requiring TeX's `mu` unit. This is public only at
+    /// the command-scanner boundary; replay receives the completed scaled
+    /// value and never performs unit recognition itself.
+    pub fn scan_mu_dimension(&mut self) -> Result<ScannedScalar<Scaled>, CommandError> {
+        Ok(self.scan_dimension_with_order(false, true)?.0)
+    }
+
     fn scan_dimension_with_order(
         &mut self,
         allow_infinite: bool,

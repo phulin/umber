@@ -45,6 +45,16 @@ back before a fresh processor episode retries; a completed unavailable lookup
 instead recovers the target to `nullfont`. Font capabilities and loaded
 resources never enter command snapshots or durable summaries.
 
+The same boundary has a typed canonical math-request vocabulary for TeX82
+§§691–734 and §1030+: math characters and family selectors, text-field and
+script markers, limit switches, generalized fractions, styles and choices,
+delimiters/radicals/accents, `mu` glue or kerns, and equation-number entry.
+Command processing completes scalar operands (including optional fraction
+delimiters and `mu` units) and retains range recovery/provenance before the
+borrow ends. Mlist construction, display packaging, and any later math-field
+episode remain executor work; they receive no raw token, input stack, or
+scanner-status capability.
+
 The replay seam also retains the executor-side mode projection and obtains
 observable general-text effects (currently `\\message`) through the typed
 structured scanner. Alignment lifecycle state crosses it only as

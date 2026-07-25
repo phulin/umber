@@ -38,6 +38,241 @@ fn push(command: &mut CommandState, tokens: impl IntoIterator<Item = Token>) {
     );
 }
 
+#[test]
+fn math_scalar_requests_are_completed_before_replay() {
+    let mut command = CommandState::default();
+    let mut runtime = CommandRuntime::default();
+    let mut universe = Universe::new();
+    let mut capabilities = CommandHostCapabilities::default();
+    push(
+        &mut command,
+        [
+            Token::Char {
+                ch: '4',
+                cat: Catcode::Other,
+            },
+            Token::Char {
+                ch: '0',
+                cat: Catcode::Other,
+            },
+            Token::Char {
+                ch: '9',
+                cat: Catcode::Other,
+            },
+            Token::Char {
+                ch: '6',
+                cat: Catcode::Other,
+            },
+            Token::Char {
+                ch: ' ',
+                cat: Catcode::Space,
+            },
+            Token::Char {
+                ch: '0',
+                cat: Catcode::Other,
+            },
+            Token::Char {
+                ch: 'p',
+                cat: Catcode::Letter,
+            },
+            Token::Char {
+                ch: 't',
+                cat: Catcode::Letter,
+            },
+        ],
+    );
+    let (character, fraction) = {
+        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+        let character = processor
+            .scan_math_character()
+            .expect("math character scans");
+        let fraction = processor
+            .scan_math_fraction(MathFractionKind::Atop, false)
+            .expect("atop request scans");
+        (character, fraction)
+    };
+    assert_eq!(character.code, 4096);
+    assert!(!character.recovered);
+    assert_eq!(
+        fraction.thickness,
+        Some(tex_state::scaled::Scaled::from_raw(0))
+    );
+}
+
+#[test]
+fn math_delimiter_and_mu_requests_recover_and_consume_units() {
+    let mut command = CommandState::default();
+    let mut runtime = CommandRuntime::default();
+    let mut universe = Universe::new();
+    let mut capabilities = CommandHostCapabilities::default();
+    push(
+        &mut command,
+        [
+            Token::Char {
+                ch: '9',
+                cat: Catcode::Other,
+            },
+            Token::Char {
+                ch: '9',
+                cat: Catcode::Other,
+            },
+            Token::Char {
+                ch: '9',
+                cat: Catcode::Other,
+            },
+            Token::Char {
+                ch: '9',
+                cat: Catcode::Other,
+            },
+            Token::Char {
+                ch: '9',
+                cat: Catcode::Other,
+            },
+            Token::Char {
+                ch: '9',
+                cat: Catcode::Other,
+            },
+            Token::Char {
+                ch: '9',
+                cat: Catcode::Other,
+            },
+            Token::Char {
+                ch: '9',
+                cat: Catcode::Other,
+            },
+            Token::Char {
+                ch: '9',
+                cat: Catcode::Other,
+            },
+            Token::Char {
+                ch: ' ',
+                cat: Catcode::Space,
+            },
+            Token::Char {
+                ch: '2',
+                cat: Catcode::Other,
+            },
+            Token::Char {
+                ch: 'm',
+                cat: Catcode::Letter,
+            },
+            Token::Char {
+                ch: 'u',
+                cat: Catcode::Letter,
+            },
+        ],
+    );
+    let (delimiter, material) = {
+        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+        let delimiter = processor.scan_math_delimiter().expect("delimiter scans");
+        let material = processor
+            .scan_math_mu_material(false)
+            .expect("mu kern scans");
+        (delimiter, material)
+    };
+    assert_eq!(delimiter.code, 0);
+    assert!(delimiter.recovered);
+    assert_eq!(
+        material,
+        ScannedMathMuMaterial::Kern(tex_state::scaled::Scaled::from_raw(131_072))
+    );
+}
+
+#[test]
+fn math_fraction_delimiters_and_family_recovery_are_command_owned() {
+    let mut command = CommandState::default();
+    let mut runtime = CommandRuntime::default();
+    let mut universe = Universe::new();
+    let mut capabilities = CommandHostCapabilities::default();
+    push(
+        &mut command,
+        [
+            Token::Char {
+                ch: '4',
+                cat: Catcode::Other,
+            },
+            Token::Char {
+                ch: '0',
+                cat: Catcode::Other,
+            },
+            Token::Char {
+                ch: '9',
+                cat: Catcode::Other,
+            },
+            Token::Char {
+                ch: '6',
+                cat: Catcode::Other,
+            },
+            Token::Char {
+                ch: ' ',
+                cat: Catcode::Space,
+            },
+            Token::Char {
+                ch: '4',
+                cat: Catcode::Other,
+            },
+            Token::Char {
+                ch: '0',
+                cat: Catcode::Other,
+            },
+            Token::Char {
+                ch: '9',
+                cat: Catcode::Other,
+            },
+            Token::Char {
+                ch: '7',
+                cat: Catcode::Other,
+            },
+            Token::Char {
+                ch: ' ',
+                cat: Catcode::Space,
+            },
+            Token::Char {
+                ch: '3',
+                cat: Catcode::Other,
+            },
+            Token::Char {
+                ch: 'p',
+                cat: Catcode::Letter,
+            },
+            Token::Char {
+                ch: 't',
+                cat: Catcode::Letter,
+            },
+            Token::Char {
+                ch: ' ',
+                cat: Catcode::Space,
+            },
+            Token::Char {
+                ch: '1',
+                cat: Catcode::Other,
+            },
+            Token::Char {
+                ch: '6',
+                cat: Catcode::Other,
+            },
+        ],
+    );
+    let (fraction, family) = {
+        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+        let fraction = processor
+            .scan_math_fraction(MathFractionKind::Above, true)
+            .expect("fraction scans");
+        let family = processor
+            .scan_math_family(MathFamilySize::Text)
+            .expect("family scans");
+        (fraction, family)
+    };
+    assert_eq!(fraction.left_delimiter.expect("left").code, 4096);
+    assert_eq!(fraction.right_delimiter.expect("right").code, 4097);
+    assert_eq!(
+        fraction.thickness,
+        Some(tex_state::scaled::Scaled::from_raw(196_608))
+    );
+    assert_eq!(family.family, 0);
+    assert!(family.recovered);
+}
+
 fn processor<'a>(
     command: &'a mut CommandState,
     runtime: &'a mut CommandRuntime,

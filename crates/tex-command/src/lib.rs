@@ -53,13 +53,17 @@ pub use profile::{
     CommandProfileMismatch,
 };
 pub use scanners::{
-    AlignmentCellOpening, FileNameTermination, FontLoadRequest, ImmediateExtension,
-    InputStreamRequest, InternalValue, RegisteredInput, ScalarProvenance, ScalarRecovery,
-    ScannedAccent, ScannedAccentBase, ScannedBalancedText, ScannedBoxConstruction, ScannedBoxKind,
-    ScannedBoxRegister, ScannedDiscretionary, ScannedDisplayDiagnostic, ScannedFileName,
+    AlignmentCellOpening, CanonicalMathRequest, EquationNumberSide, FileNameTermination,
+    FontLoadRequest, ImmediateExtension, InputStreamRequest, InternalValue, MathFamilySize,
+    MathFractionKind, MathLimitKind, MathScriptKind, MathStyleKind, MathTextFieldKind,
+    RegisteredInput, ScalarProvenance, ScalarRecovery, ScannedAccent, ScannedAccentBase,
+    ScannedBalancedText, ScannedBoxConstruction, ScannedBoxKind, ScannedBoxRegister,
+    ScannedDiscretionary, ScannedDisplayDiagnostic, ScannedEquationNumber, ScannedFileName,
     ScannedGlueParameterAssignment, ScannedLeaderPayload, ScannedLetAssignment,
-    ScannedMacroDefinition, ScannedPackingSpec, ScannedRuleSpec, ScannedScalar,
-    ScannedSetBoxAssignment, ScannedTokenRegisterAssignment, ScannedVSplit, StructuredProvenance,
+    ScannedMacroDefinition, ScannedMathCharacter, ScannedMathDelimiter, ScannedMathFamily,
+    ScannedMathFraction, ScannedMathMuMaterial, ScannedMathScript, ScannedPackingSpec,
+    ScannedRuleSpec, ScannedScalar, ScannedSetBoxAssignment, ScannedTokenRegisterAssignment,
+    ScannedVSplit, StructuredProvenance,
 };
 pub use snapshot::{CommandStateSnapshot, CommandSummary, CommandSummaryError};
 pub use state::{CommandReplayEpisode, CommandRuntime, CommandState, UnknownRegisteredSource};
