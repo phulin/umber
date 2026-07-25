@@ -326,10 +326,22 @@ impl CanonicalMainControl {
         Ok(ScannedStep::InputStream { request, resource })
     }
 
-    fn resolve_pdf_image_resource(&self, scanned: ScannedStep) -> Result<ScannedStep, ExecError> {
+    fn resolve_pdf_image_resource(
+        &self,
+        scanned: ScannedStep,
+        pdf_output_enabled: bool,
+    ) -> Result<ScannedStep, ExecError> {
         let ScannedStep::PdfXImage { request, .. } = scanned else {
             return Ok(scanned);
         };
+        // pdfTeX checks \pdfoutput before it enters `scan_image`; in DVI
+        // mode this must be the diagnostic, not a host-resource suspension.
+        if !pdf_output_enabled {
+            return Ok(ScannedStep::PdfXImage {
+                request,
+                resource: PdfImageResource::Unavailable,
+            });
+        }
         let resource = self.capabilities.pdf_image(&request).ok_or_else(|| {
             ExecError::MissingCanonicalPdfImage {
                 request: request.clone(),
@@ -503,7 +515,8 @@ impl CanonicalMainControl {
         };
         let scanned = self.resolve_font_resource(scanned)?;
         let scanned = self.resolve_input_stream_resource(scanned)?;
-        let scanned = self.resolve_pdf_image_resource(scanned)?;
+        let scanned =
+            self.resolve_pdf_image_resource(scanned, stores.int_param(IntParam::PDF_OUTPUT) > 0)?;
         if let ScannedStep::ReplayCompleted(episode) = scanned {
             self.completed_replay_episode = Some(episode);
             return Ok(ReplayStep::Continue);
@@ -685,7 +698,8 @@ impl CanonicalMainControl {
         };
         let scanned = self.resolve_font_resource(scanned)?;
         let scanned = self.resolve_input_stream_resource(scanned)?;
-        let scanned = self.resolve_pdf_image_resource(scanned)?;
+        let scanned =
+            self.resolve_pdf_image_resource(scanned, stores.int_param(IntParam::PDF_OUTPUT) > 0)?;
         if let ScannedStep::ReplayCompleted(episode) = scanned {
             self.completed_replay_episode = Some(episode);
             return Ok(ReplayStep::Continue);
@@ -1297,7 +1311,8 @@ impl CanonicalMainControl {
         };
         let scanned = self.resolve_font_resource(scanned)?;
         let scanned = self.resolve_input_stream_resource(scanned)?;
-        let scanned = self.resolve_pdf_image_resource(scanned)?;
+        let scanned =
+            self.resolve_pdf_image_resource(scanned, stores.int_param(IntParam::PDF_OUTPUT) > 0)?;
         if let ScannedStep::ReplayCompleted(episode) = scanned {
             self.completed_replay_episode = Some(episode);
             return Ok(ReplayStep::Continue);

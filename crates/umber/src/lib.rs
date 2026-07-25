@@ -3,12 +3,14 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use tex_command::{
-    CommandProfile, FontResource, RegisteredSourceKind, SourceRegistration, SourceRegistrationError,
+    CommandProfile, FontResource, PdfImageRequest, PdfImageResource, RegisteredSourceKind,
+    SourceRegistration, SourceRegistrationError,
 };
 use tex_exec::{
     CanonicalMainControl, CanonicalStepResult, CheckpointSink, EngineBoundary,
     ExecutionBudgetCounters, ExecutionContext, ExecutionStats, Executor, FontResolver,
-    MainControlStep, PdfImageRequest, PdfImageResolver, try_execute_assignment,
+    MainControlStep, PdfImageRequest as LegacyPdfImageRequest, PdfImageResolver,
+    try_execute_assignment,
 };
 use tex_expand::{InputResolver, get_x_token_with_context};
 use tex_lex::{InputSource, InputStack, MemoryInput};
@@ -237,6 +239,19 @@ impl<'a, 'context> EngineSession<'a, 'context> {
         self.canonical
             .capabilities_mut()
             .register_font(path, resource);
+    }
+
+    /// Registers the complete host result of an exact canonical
+    /// `\\pdfximage` request.  This is deliberately the same retained-byte
+    /// contract used by direct callers and all higher-level session drivers.
+    pub fn provide_canonical_pdf_image(
+        &mut self,
+        request: PdfImageRequest,
+        resource: PdfImageResource,
+    ) {
+        self.canonical
+            .capabilities_mut()
+            .register_pdf_image(request, resource);
     }
 
     /// Advances one aggregate canonical operation and exposes a typed
@@ -639,7 +654,7 @@ impl PdfImageResolver for FileImageResolver {
     fn open_image(
         &mut self,
         input: &mut dyn tex_state::InputReadState,
-        request: &PdfImageRequest,
+        request: &LegacyPdfImageRequest,
         _request_index: u64,
     ) -> tex_expand::ResourceResult<tex_state::PdfExternalImageSource> {
         let content = match self.0.read(input, &request.name) {
@@ -1636,8 +1651,11 @@ mod tests {
     };
     use std::path::PathBuf;
     use std::sync::Arc;
-    use tex_command::RegisteredSourceKind;
-    use tex_exec::{ExecutionContext, MainControlStep, install_unexpandable_primitives};
+    use tex_command::{PdfImageResource, RegisteredSourceKind};
+    use tex_exec::{
+        CanonicalResourceNeed, CanonicalStepResult, ExecutionContext, MainControlStep,
+        install_unexpandable_primitives,
+    };
     use tex_expand::install_expandable_primitives;
     use tex_lex::{InputStack, MemoryInput};
     use tex_state::{PrintSink, StreamSlot, Universe, World};
@@ -1772,6 +1790,150 @@ mod tests {
         session
             .restore_canonical_checkpoint(&checkpoint)
             .expect("canonical checkpoint restores");
+    }
+
+    #[test]
+    fn canonical_pdfximage_suspends_then_retries_with_the_exact_request() {
+        let mut stores = Universe::new();
+        crate::prepare_pdftex_run_stores(&mut stores);
+        stores.set_int_param_global(tex_state::env::banks::IntParam::PDF_OUTPUT, 1);
+        let mut input = InputStack::new(MemoryInput::new("legacy input"));
+        let mut session = EngineSession::with_command_profile(
+            &mut input,
+            &mut stores,
+            ExecutionContext::new("pdf-image"),
+            tex_command::CommandProfile::PDFTEX14027,
+        );
+        session
+            .register_canonical_root(
+                "job.tex",
+                RegisteredSourceKind::Generated,
+                Arc::from(&b"\\pdfximage width 10pt height 20pt depth 3pt page 2 mediabox image.pdf\\pdfrefximage1\\end"[..]),
+            )
+            .expect("root registers");
+
+        let request = match session.advance_canonical().expect("image scan") {
+            CanonicalStepResult::Suspended(CanonicalResourceNeed::PdfImage { request }) => request,
+            other => panic!("expected image suspension, got {other:?}"),
+        };
+        assert_eq!(request.name, "image.pdf");
+        assert_eq!(request.page, 2);
+        assert_eq!(
+            request.width.expect("width scanned").raw(),
+            10 * tex_state::scaled::Scaled::UNITY
+        );
+        assert_eq!(
+            request.height.expect("height scanned").raw(),
+            20 * tex_state::scaled::Scaled::UNITY
+        );
+        assert_eq!(
+            request.depth.expect("depth scanned").raw(),
+            3 * tex_state::scaled::Scaled::UNITY
+        );
+        assert_eq!(request.page_box, tex_command::PdfImagePageBox::Media);
+        assert!(session.stores().pdf_external_images().is_empty());
+
+        let source = tex_state::PdfExternalImageSource {
+            identity: tex_state::ContentHash::from_bytes(b"canonical image"),
+            metadata: tex_state::PdfExternalImageMetadata::Raster(
+                tex_state::PdfRasterImageMetadata {
+                    format: tex_state::PdfRasterFormat::Png,
+                    width: 1,
+                    height: 1,
+                    bits_per_component: 8,
+                    color_space: tex_state::PdfRasterColorSpace::Gray,
+                    alpha: false,
+                    png_color_type: Some(0),
+                },
+            ),
+            natural_width: tex_state::scaled::Scaled::from_raw(tex_state::scaled::Scaled::UNITY),
+            natural_height: tex_state::scaled::Scaled::from_raw(tex_state::scaled::Scaled::UNITY),
+            bytes: Arc::from(&b"image bytes"[..]),
+        };
+        session.provide_canonical_pdf_image(request.clone(), PdfImageResource::Available(source));
+        assert!(matches!(
+            session
+                .advance_canonical()
+                .expect("fulfilled image retries"),
+            CanonicalStepResult::Progress(MainControlStep::Continue)
+        ));
+        let image = session
+            .stores()
+            .pdf_last_external_image()
+            .expect("image allocated");
+        assert_eq!(
+            image.dimensions().width.raw(),
+            10 * tex_state::scaled::Scaled::UNITY
+        );
+        assert_eq!(
+            image.dimensions().height.raw(),
+            20 * tex_state::scaled::Scaled::UNITY
+        );
+        assert_eq!(
+            image.dimensions().depth.raw(),
+            3 * tex_state::scaled::Scaled::UNITY
+        );
+        assert!(matches!(
+            session.advance_canonical().expect("reference image"),
+            CanonicalStepResult::Progress(MainControlStep::Continue)
+        ));
+    }
+
+    #[test]
+    fn canonical_pdfximage_authoritative_absence_is_a_pdftex_diagnostic() {
+        let mut stores = Universe::new();
+        crate::prepare_pdftex_run_stores(&mut stores);
+        stores.set_int_param_global(tex_state::env::banks::IntParam::PDF_OUTPUT, 1);
+        let mut input = InputStack::new(MemoryInput::new("legacy input"));
+        let mut session = EngineSession::with_command_profile(
+            &mut input,
+            &mut stores,
+            ExecutionContext::new("pdf-image"),
+            tex_command::CommandProfile::PDFTEX14027,
+        );
+        session
+            .register_canonical_root(
+                "job.tex",
+                RegisteredSourceKind::Generated,
+                Arc::from(&b"\\pdfximage absent.png"[..]),
+            )
+            .expect("root registers");
+        let request = match session.advance_canonical().expect("image scan") {
+            CanonicalStepResult::Suspended(CanonicalResourceNeed::PdfImage { request }) => request,
+            other => panic!("expected image suspension, got {other:?}"),
+        };
+        session.provide_canonical_pdf_image(request, PdfImageResource::Unavailable);
+        let error = session.advance_canonical().expect_err("absence is final");
+        assert!(matches!(
+            error,
+            tex_exec::ExecError::PdfImageOpen { ref name, ref message }
+                if name == "absent.png" && message == "image is unavailable"
+        ));
+        assert!(session.stores().pdf_external_images().is_empty());
+    }
+
+    #[test]
+    fn canonical_pdfximage_rejects_dvi_mode_before_resource_acquisition() {
+        let mut stores = Universe::new();
+        crate::prepare_pdftex_run_stores(&mut stores);
+        let mut input = InputStack::new(MemoryInput::new("legacy input"));
+        let mut session = EngineSession::with_command_profile(
+            &mut input,
+            &mut stores,
+            ExecutionContext::new("pdf-image"),
+            tex_command::CommandProfile::PDFTEX14027,
+        );
+        session
+            .register_canonical_root(
+                "job.tex",
+                RegisteredSourceKind::Generated,
+                Arc::from(&b"\\pdfximage unavailable.png"[..]),
+            )
+            .expect("root registers");
+        assert!(matches!(
+            session.advance_canonical(),
+            Err(tex_exec::ExecError::PdfExtensionInDviMode("pdfximage"))
+        ));
     }
 
     #[test]
