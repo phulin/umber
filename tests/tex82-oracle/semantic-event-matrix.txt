@@ -59,6 +59,9 @@ token_list|hash-brace parameter rule|expansion-macros.tex|scan_toks hash_brace c
 token_list|parameter conversion|transitions.tex|scan_toks parameter token conversion|"purpose":"parameter_conversion"
 token_list|macro replacement completion|transitions.tex|scan_toks macro-definition completion|"purpose":"macro_replacement"
 token_list|ordinary scan_toks completion|transitions.tex|scan_toks absorbing completion|"purpose":"scan_toks"
+command|uppercase case-shift command|case-shift.tex|shift_case balanced-text collection|"control_sequence":"uppercase"
+command|lowercase case-shift command|case-shift.tex|shift_case balanced-text collection|"control_sequence":"lowercase"
+token_list|case-shift code-zero macro definition|case-shift.tex|shift_case replay into macro definition|"control_sequence":"tracezerocode"
 token_list|expanded scan_toks completion|transitions.tex|scan_toks expanded completion|"purpose":"expanded_scan_toks"
 token_list|direct the splice|transitions.tex|scan_toks the_toks splice|"purpose":"the_toks"
 token_list|focused ordinary scan_toks|expansion-macros.tex|scan_toks unexpanded collection|"purpose":"scan_toks","tokens":[{"character":68,"catcode":"letter"},{"character":73,"catcode":"letter"},{"character":82,"catcode":"letter"},{"character":69,"catcode":"letter"},{"character":67,"catcode":"letter"},{"character":84,"catcode":"letter"},{"character":32,"catcode":"spacer"},{"character":0,"catcode":"escape","control_sequence":"expandleaf"}]

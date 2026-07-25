@@ -133,6 +133,21 @@ impl CommandState {
         self.push_stored_episode(tokens, crate::input::StoredReplayReason::AfterAssignment)
     }
 
+    /// Replays TeX82 §914's already case-shifted token list. The command
+    /// machine remains its sole delivery owner after main control applies the
+    /// current `\lccode` or `\uccode` table.
+    pub fn push_case_shift(&mut self, tokens: TracedTokenList) {
+        self.push_token_level(
+            TokenPayload::Stored {
+                tokens: tokens.token_list(),
+                origins: tokens.origin_list(),
+            },
+            TokenBehavior::Ordinary,
+            RetirementBehavior::Pop,
+            ReplayTrace::Stored(crate::input::StoredReplayReason::CaseShift),
+        );
+    }
+
     /// Whether the requested immutable replay level is still live.
     #[must_use]
     pub fn replay_episode_is_active(&self, episode: CommandReplayEpisode) -> bool {

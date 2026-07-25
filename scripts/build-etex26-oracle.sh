@@ -21,6 +21,7 @@ instrumentation_change="${UMBER_ETEX26_INSTRUMENTATION_CHANGE:-${repo_root}/test
 smoke_input="${repo_root}/tests/etex26-oracle/smoke.tex"
 transition_input="${repo_root}/tests/etex26-oracle/transitions.tex"
 transition_child="${repo_root}/tests/etex26-oracle/transitions-child.tex"
+case_shift_input="${repo_root}/tests/etex26-oracle/case-shift.tex"
 semantic_event_matrix="${repo_root}/tests/etex26-oracle/semantic-event-matrix.txt"
 extension_input="${repo_root}/tests/etex26-oracle/extensions.tex"
 extension_readline_input="${repo_root}/tests/etex26-oracle/extensions-readline.txt"
@@ -292,6 +293,7 @@ run_transitions() {
   mkdir -p "$run_dir"
   cp "$transition_input" "${run_dir}/transitions.tex"
   cp "$transition_child" "${run_dir}/transitions-child.tex"
+  cp "$case_shift_input" "${run_dir}/case-shift.tex"
   (
     cd "$run_dir"
     env -i PATH=/usr/bin:/bin LC_ALL=C LANGUAGE=C \

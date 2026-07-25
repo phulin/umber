@@ -24,6 +24,9 @@ The `scanner-conditionals.tex` child isolates typed integer, dimension, glue,
 internal, and token-list scanner results plus condition-frame lifecycle,
 skipping, delimiter changes, nested evaluation, and recovery. Its EOF child
 keeps incomplete skipped-text recovery focused and reference-visible.
+The `case-shift.tex` child isolates TeX82 §914 `\uppercase` and
+`\lowercase` code-table substitution, stored replay, and macro-definition
+effects for all pinned base-engine traces.
 The `alignment-delivery.tex` child isolates preamble repetition, brace-state
 delivery, delimiter interception, u/v/omit templates, `\noalign`, nested
 ownership, backup correction, recovery, and template retirement. Its messages

@@ -185,6 +185,7 @@ pub(crate) enum StoredReplayReason {
     Discretionary,
     AfterGroup,
     AfterAssignment,
+    CaseShift,
 }
 
 /// Canonical explanations for a materialized transient insertion.

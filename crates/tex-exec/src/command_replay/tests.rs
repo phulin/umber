@@ -2562,6 +2562,190 @@ fn canonical_initex_replay_keeps_macro_target_and_expanded_body_in_command_core(
 }
 
 #[test]
+fn canonical_case_shift_replays_raw_text_with_categories_and_order_intact() {
+    let mut universe = Universe::new();
+    let mut control = CommandReplayControl::tex82_initex(&mut universe);
+    register_source(
+        &mut control,
+        br"\uccode`!=`Z \lccode`?=`y
+           \uppercase{\def\up{!\relax}}
+           \lowercase{\def\down{?\relax}}
+           \uppercase{\def\zero{@}}\end",
+    );
+
+    for _ in 0..2 {
+        assert_eq!(
+            control.step(&mut universe).expect("case setup"),
+            ReplayStep::Continue
+        );
+    }
+
+    let mut observations = ObservationRecorder::default();
+    assert_eq!(
+        control
+            .step_with_observer(&mut universe, &mut observations)
+            .expect("uppercase scans its balanced text"),
+        ReplayStep::Continue
+    );
+    assert!(matches!(
+        observations.0.last(),
+        Some(CommandObservation::TokenList(record))
+            if record.transition == "complete" && record.purpose == "scan_toks"
+    ));
+    assert_eq!(
+        control
+            .step(&mut universe)
+            .expect("uppercase replays definition"),
+        ReplayStep::Continue
+    );
+
+    observations.0.clear();
+    assert_eq!(
+        control
+            .step_with_observer(&mut universe, &mut observations)
+            .expect("lowercase follows the retired uppercase replay"),
+        ReplayStep::Continue
+    );
+    assert!(matches!(
+        observations.0.as_slice(),
+        [CommandObservation::Input(retirement), ..]
+            if retirement.transition == InputTransition::Retire
+                && retirement.reason == InputReason::TokenList
+    ));
+    assert_eq!(
+        control
+            .step(&mut universe)
+            .expect("lowercase replays definition"),
+        ReplayStep::Continue
+    );
+    assert_eq!(
+        control
+            .step(&mut universe)
+            .expect("zero-code uppercase scans"),
+        ReplayStep::Continue
+    );
+    assert_eq!(
+        control
+            .step(&mut universe)
+            .expect("zero-code definition replays"),
+        ReplayStep::Continue
+    );
+    assert_eq!(
+        control
+            .step(&mut universe)
+            .expect("zero-code replay retires before the next command"),
+        ReplayStep::Continue
+    );
+
+    let relax = universe
+        .symbol("relax")
+        .expect("primitive is interned")
+        .symbol();
+    let up = universe
+        .macro_meaning(universe.symbol("up").expect("uppercase macro"))
+        .expect("uppercase definition persists");
+    assert_eq!(
+        universe.tokens(up.replacement_text()),
+        &[
+            Token::Char {
+                ch: 'Z',
+                cat: Catcode::Other,
+            },
+            Token::Cs(relax),
+        ]
+    );
+    let down = universe
+        .macro_meaning(universe.symbol("down").expect("lowercase macro"))
+        .expect("lowercase definition persists");
+    assert_eq!(
+        universe.tokens(down.replacement_text()),
+        &[
+            Token::Char {
+                ch: 'y',
+                cat: Catcode::Other,
+            },
+            Token::Cs(relax),
+        ]
+    );
+    while matches!(
+        control.step(&mut universe).expect("finish case replay"),
+        ReplayStep::Continue
+    ) {}
+    let zero = universe
+        .macro_meaning(universe.symbol("zero").expect("zero-code macro"))
+        .unwrap_or_else(|| {
+            panic!(
+                "zero-code definition persists: {}",
+                terminal_text(&universe)
+            )
+        });
+    assert_eq!(
+        universe.tokens(zero.replacement_text()),
+        &[Token::Char {
+            ch: '@',
+            cat: Catcode::Other,
+        }]
+    );
+}
+
+#[test]
+fn case_shift_substitution_preserves_active_categories_and_origins() {
+    let mut universe = Universe::new();
+    let origin = universe.bootstrap_origin();
+    let control = universe.intern("control").symbol();
+    let tokens = universe.finish_traced_token_list(&[
+        tex_state::token::TracedTokenWord::pack(
+            Token::Char {
+                ch: 'a',
+                cat: Catcode::Letter,
+            },
+            origin,
+        ),
+        tex_state::token::TracedTokenWord::pack(
+            Token::Char {
+                ch: 'b',
+                cat: Catcode::Active,
+            },
+            origin,
+        ),
+        tex_state::token::TracedTokenWord::pack(
+            Token::Char {
+                ch: '@',
+                cat: Catcode::Other,
+            },
+            origin,
+        ),
+        tex_state::token::TracedTokenWord::pack(Token::Cs(control), origin),
+        tex_state::token::TracedTokenWord::pack(Token::param(1), origin),
+    ]);
+
+    let shifted = case_shift_tokens(tokens, true, &mut universe);
+    assert_eq!(
+        universe.tokens(shifted.token_list()),
+        &[
+            Token::Char {
+                ch: 'A',
+                cat: Catcode::Letter,
+            },
+            Token::Char {
+                ch: 'B',
+                cat: Catcode::Active,
+            },
+            Token::Char {
+                ch: '@',
+                cat: Catcode::Other,
+            },
+            Token::Cs(control),
+            Token::param(1),
+        ]
+    );
+    assert_eq!(
+        universe.origin_list(shifted.origin_list()),
+        universe.origin_list(tokens.origin_list())
+    );
+}
+
+#[test]
 fn canonical_initex_replays_afterassignment_before_fifo_aftergroup_tokens() {
     let mut universe = Universe::new();
     let mut control = CommandReplayControl::tex82_initex(&mut universe);

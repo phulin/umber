@@ -24,6 +24,7 @@ dvi_input="${repo_root}/tests/pdftex14027-oracle/smoke-dvi.tex"
 pdf_input="${repo_root}/tests/pdftex14027-oracle/smoke-pdf.tex"
 transition_input="${repo_root}/tests/pdftex14027-oracle/transitions.tex"
 transition_child="${repo_root}/tests/pdftex14027-oracle/transitions-child.tex"
+case_shift_input="${repo_root}/tests/pdftex14027-oracle/case-shift.tex"
 semantic_event_matrix="${repo_root}/tests/pdftex14027-oracle/semantic-event-matrix.txt"
 extension_input="${repo_root}/tests/pdftex14027-oracle/extensions.tex"
 extension_bytes_input="${repo_root}/tests/pdftex14027-oracle/extensions-bytes.txt"
@@ -338,6 +339,7 @@ run_transitions() {
   mkdir -p "$run_dir"
   cp "$transition_input" "${run_dir}/transitions.tex"
   cp "$transition_child" "${run_dir}/transitions-child.tex"
+  cp "$case_shift_input" "${run_dir}/case-shift.tex"
   (
     cd "$run_dir"
     env -i PATH=/usr/bin:/bin LC_ALL=C LANGUAGE=C \

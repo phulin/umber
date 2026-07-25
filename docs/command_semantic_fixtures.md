@@ -256,6 +256,10 @@ macro matching through nine parameters, paragraph and overlap recovery,
 nested parameter replay, definition forms and prefixes, ordinary and expanded
 `scan_toks`, and direct `\the` splices. Committed `\meaning` and `\show`
 transcript bytes independently expose the representative resulting meanings.
+The `case-shift.tex` child independently pins TeX82 §914's unexpanded
+`\uppercase` and `\lowercase` collection, current code-table substitution,
+zero-code preservation, replay ordering, and macro-definition result through
+both command events and transcript-visible `\meaning` output.
 Its `scanner-conditionals.tex` child separately exercises signed radix
 integers, fractional physical dimensions, infinite-order glue, typed internal
 integer/dimension/glue/token-list values, and reference-visible `\the`

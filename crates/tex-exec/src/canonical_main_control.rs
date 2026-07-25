@@ -1988,6 +1988,10 @@ enum ScannedStep {
         value: i32,
         global: bool,
     },
+    CaseShift {
+        tokens: TracedTokenList,
+        uppercase: bool,
+    },
     RegisterDefinition {
         primitive: UnexpandablePrimitive,
         target: Symbol,
@@ -3429,6 +3433,15 @@ fn scan_command(
                 global,
             })
         }
+        Meaning::UnexpandablePrimitive(
+            primitive @ (UnexpandablePrimitive::Uppercase | UnexpandablePrimitive::Lowercase),
+        ) => Ok(ScannedStep::CaseShift {
+            tokens: processor
+                .scan_balanced_text(false)
+                .map_err(command_error)?
+                .tokens,
+            uppercase: primitive == UnexpandablePrimitive::Uppercase,
+        }),
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Let) => {
             let assignment = processor
                 .scan_let_assignment(false)
@@ -5723,6 +5736,10 @@ fn apply_scanned_step(
             }
             Ok(ReplayStep::Continue)
         }
+        ScannedStep::CaseShift { tokens, uppercase } => {
+            command.push_case_shift(case_shift_tokens(tokens, uppercase, stores));
+            Ok(ReplayStep::Continue)
+        }
         ScannedStep::Let {
             target,
             source,
@@ -7096,6 +7113,42 @@ fn recover_character_definition_value(
         &format!("\n! {message} ({value}).\n{help}\nI changed this one to zero.\n"),
     );
     0
+}
+
+/// Applies TeX82 §914's case-table substitution without changing token
+/// categories or source provenance. Control-sequence tokens are deliberately
+/// untouched; active characters are ordinary character tokens here and are
+/// therefore remapped through the selected table.
+fn case_shift_tokens(
+    tokens: TracedTokenList,
+    uppercase: bool,
+    stores: &mut Universe,
+) -> TracedTokenList {
+    let source_tokens = stores.tokens(tokens.token_list());
+    let origins = stores.origin_list(tokens.origin_list());
+    debug_assert_eq!(source_tokens.len(), origins.len());
+    let shifted = source_tokens
+        .iter()
+        .copied()
+        .zip(origins.iter().copied())
+        .map(|(token, origin)| {
+            let token = match token {
+                Token::Char { ch, cat } => {
+                    let code = if uppercase {
+                        stores.uccode(ch)
+                    } else {
+                        stores.lccode(ch)
+                    };
+                    char::from_u32(code)
+                        .filter(|_| code != 0)
+                        .map_or(token, |ch| Token::Char { ch, cat })
+                }
+                _ => token,
+            };
+            tex_state::token::TracedTokenWord::pack(token, origin)
+        })
+        .collect::<Vec<_>>();
+    stores.finish_traced_token_list(&shifted)
 }
 
 fn command_error(error: CommandError) -> ExecError {

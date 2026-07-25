@@ -545,6 +545,16 @@ mutation boundary, then publishes the committed mutation observation. Code
 tables (`\catcode`, case, space-factor, math, and delimiter codes) follow the
 same boundary and validate their completed values before mutation.
 
+For TeX82 §914 `\uppercase` and `\lowercase`, `CommandProcessor` owns the
+unexpanded balanced-text scan, including its opening-brace backup and
+absorbing collection episode. Replay applies the selected current `\uccode`
+or `\lccode` table only to character tokens, retaining each token's original
+category and origin, leaving control-sequence and parameter tokens untouched,
+and leaving a zero table entry unchanged. The resulting immutable list is a
+typed stored command replay level, so normal command-owned retirement occurs
+before the enclosing source resumes; consequently definitions in the shifted
+text are defined only when that replay reaches ordinary main control.
+
 Likewise, replay publishes a typed `\halign` or `\valign` begin observation
 immediately after applying its executor-selected alignment transition. Command
 state supplies the committed alignment identity and `align_state`; the next
