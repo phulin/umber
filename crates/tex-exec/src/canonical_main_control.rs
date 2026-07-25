@@ -10,8 +10,8 @@ use tex_command::{
     AlignmentIdentity, AlignmentRequest, AlignmentRequestResult, CommandError,
     CommandHostCapabilities, CommandHostContext, CommandProcessor, CommandProfile, CommandRuntime,
     CommandState, CommandStateSnapshot, FontLoadRequest, FontResource, ImmediateExtension,
-    InputStreamRequest, ScannedAccent, ScannedDiscretionary, SourceRegistration,
-    SourceRegistrationError,
+    InputStreamRequest, ScannedAccent, ScannedBoxConstruction, ScannedBoxKind,
+    ScannedDiscretionary, ScannedPackingSpec, SourceRegistration, SourceRegistrationError,
 };
 #[cfg(any(test, feature = "instrumentation"))]
 use tex_command::{
@@ -61,7 +61,29 @@ struct ActiveReplayBox {
     opening_brace_replay: bool,
     body_opener_pending: bool,
     depth: u32,
-    horizontal: bool,
+    kind: ReplayBoxKind,
+    packing: PackSpec,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ReplayBoxKind {
+    HBox,
+    VBox,
+    VTop,
+}
+
+impl ReplayBoxKind {
+    const fn horizontal(self) -> bool {
+        matches!(self, Self::HBox)
+    }
+
+    const fn group_kind(self) -> GroupKind {
+        match self {
+            Self::HBox => GroupKind::HBox,
+            Self::VBox => GroupKind::VBox,
+            Self::VTop => GroupKind::VTop,
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -1159,8 +1181,7 @@ enum ScannedStep {
         alignment: AlignmentIdentity,
     },
     SetBox(SetBoxTarget),
-    BeginVBox,
-    BeginHBox,
+    BeginBox(ScannedBoxConstruction),
     ReplayBoxOpeningBrace,
     BoxBeginGroup,
     BoxEndGroup {
@@ -2142,14 +2163,15 @@ fn scan_command(
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Shipout) => {
             Ok(ScannedStep::BeginShipout)
         }
-        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::VBox) => {
-            processor.scan_box_group_opening().map_err(command_error)?;
-            Ok(ScannedStep::BeginVBox)
-        }
-        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::HBox) => {
-            processor.scan_box_group_opening().map_err(command_error)?;
-            Ok(ScannedStep::BeginHBox)
-        }
+        Meaning::UnexpandablePrimitive(
+            primitive @ (UnexpandablePrimitive::HBox
+            | UnexpandablePrimitive::VBox
+            | UnexpandablePrimitive::VTop),
+        ) => Ok(ScannedStep::BeginBox(
+            processor
+                .scan_box_construction(primitive)
+                .map_err(command_error)?,
+        )),
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::HAlign) => {
             Ok(ScannedStep::BeginAlignment { vertical: false })
         }
@@ -3483,34 +3505,35 @@ fn apply_scanned_step(
             boxes.pending_shipout = true;
             Ok(ReplayStep::Continue)
         }
-        ScannedStep::BeginVBox => {
+        ScannedStep::BeginBox(construction) => {
             let target = boxes.pending_setbox.take();
             let ships_out = std::mem::take(&mut boxes.pending_shipout);
-            stores.enter_group_with_kind(GroupKind::VBox);
-            modes.push(Mode::InternalVertical);
+            let kind = match construction.kind {
+                ScannedBoxKind::HBox => ReplayBoxKind::HBox,
+                ScannedBoxKind::VBox => ReplayBoxKind::VBox,
+                ScannedBoxKind::VTop => ReplayBoxKind::VTop,
+            };
+            let packing = match construction.packing {
+                ScannedPackingSpec::Natural => PackSpec::Natural,
+                ScannedPackingSpec::Exactly(size) => PackSpec::Exactly(size),
+                ScannedPackingSpec::Spread(size) => PackSpec::Spread(size),
+            };
+            stores.enter_group_with_kind(kind.group_kind());
+            modes.push(if kind.horizontal() {
+                Mode::RestrictedHorizontal
+            } else {
+                Mode::InternalVertical
+            });
             boxes.active_boxes.push(ActiveReplayBox {
                 target,
                 ships_out,
                 opening_brace_replay: true,
                 body_opener_pending: true,
                 depth: 1,
-                horizontal: false,
+                kind,
+                packing,
             });
-            Ok(ReplayStep::Continue)
-        }
-        ScannedStep::BeginHBox => {
-            let target = boxes.pending_setbox.take();
-            let ships_out = std::mem::take(&mut boxes.pending_shipout);
-            stores.enter_group_with_kind(GroupKind::HBox);
-            modes.push(Mode::RestrictedHorizontal);
-            boxes.active_boxes.push(ActiveReplayBox {
-                target,
-                ships_out,
-                opening_brace_replay: true,
-                body_opener_pending: true,
-                depth: 1,
-                horizontal: true,
-            });
+            schedule_everybox(command, stores, kind.horizontal());
             Ok(ReplayStep::Continue)
         }
         ScannedStep::BeginSimpleGroup => {
@@ -3670,30 +3693,38 @@ fn apply_scanned_step(
             let box_state = boxes.active_boxes.pop().expect("active box was checked");
             let level = modes.pop()?;
             let children = stores.freeze_node_list(level.list().nodes());
-            let node = if box_state.horizontal {
+            let node = if box_state.kind.horizontal() {
                 Node::HList(crate::assignments::hpack_with_overfull_rule(
                     stores,
                     children,
-                    PackSpec::Natural,
+                    box_state.packing,
                 ))
             } else {
-                Node::VList(
-                    crate::packing_params::vpack(
-                        stores,
-                        children,
-                        PackSpec::Natural,
-                        crate::packing_params::vpack_params(stores),
-                    )
-                    .node,
-                )
+                Node::VList(match box_state.kind {
+                    ReplayBoxKind::VBox => {
+                        crate::packing_params::vpack(
+                            stores,
+                            children,
+                            box_state.packing,
+                            crate::packing_params::vpack_params(stores),
+                        )
+                        .node
+                    }
+                    ReplayBoxKind::VTop => {
+                        crate::packing_params::vtop(
+                            stores,
+                            children,
+                            box_state.packing,
+                            crate::packing_params::vpack_params(stores),
+                        )
+                        .node
+                    }
+                    ReplayBoxKind::HBox => unreachable!("horizontal box was handled above"),
+                })
             };
             let boxed = stores.freeze_node_list(std::slice::from_ref(&node));
             stores
-                .leave_group_with_kind(if box_state.horizontal {
-                    GroupKind::HBox
-                } else {
-                    GroupKind::VBox
-                })
+                .leave_group_with_kind(box_state.kind.group_kind())
                 .map_err(|_| ExecError::MissingToken {
                     context: "box group",
                 })?;
@@ -4476,6 +4507,29 @@ fn start_canonical_paragraph(
         command.push_everypar(stores.finish_traced_token_list(&traced));
     }
     Ok(())
+}
+
+/// Schedules an every-box list after replay has entered its scoped group and
+/// mode.  The immutable traced list is owned by command state, preserving the
+/// ordinary macro, recovery, retirement, and provenance path for hook tokens.
+fn schedule_everybox(command: &mut CommandState, stores: &mut Universe, horizontal: bool) {
+    let parameter = if horizontal {
+        TokParam::EVERY_HBOX
+    } else {
+        TokParam::EVERY_VBOX
+    };
+    let tokens = stores.tok_param(parameter);
+    if stores.tokens(tokens).is_empty() {
+        return;
+    }
+    let origin = stores.bootstrap_origin();
+    let traced: Vec<_> = stores
+        .tokens(tokens)
+        .iter()
+        .copied()
+        .map(|token| tex_state::token::TracedTokenWord::pack(token, origin))
+        .collect();
+    command.push_everybox(stores.finish_traced_token_list(&traced), horizontal);
 }
 
 fn command_error(error: CommandError) -> ExecError {

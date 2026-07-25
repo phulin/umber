@@ -7,6 +7,7 @@ use tex_command::{
 };
 use tex_state::env::banks::{DimenParam, GlueParam, IntParam};
 use tex_state::meaning::{ExpandablePrimitive, Meaning};
+use tex_state::node::Node;
 use tex_state::scaled::Scaled;
 use tex_state::{EffectRecord, InputOpenState, StreamSlot, Universe};
 
@@ -2856,6 +2857,58 @@ fn canonical_assignments_apply_prefix_globaldefs_registers_and_arithmetic() {
         universe.glue(universe.muskip(6)).width,
         Scaled::from_raw(3 * Scaled::UNITY)
     );
+}
+
+#[test]
+fn canonical_box_construction_scans_specs_hooks_and_scopes_targets() {
+    let mut universe = Universe::new();
+    let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+    register_source(
+        &mut control,
+        br"\everyhbox{\global\advance\count6 by1}\everyvbox{\global\advance\count7 by1}\begingroup\setbox0=\hbox to 10pt{}\global\setbox1=\vbox to 12pt{}\global\setbox2=\vtop spread 2pt{}\global\setbox3=\hbox{}\endgroup\end",
+    );
+
+    run_to_end(&mut control, &mut universe);
+
+    assert!(universe.box_reg(0).is_none(), "local setbox restores");
+    assert_eq!((universe.count(6), universe.count(7)), (2, 2));
+    let vbox = universe
+        .box_reg(1)
+        .and_then(|id| universe.nodes(id).first().map(|node| node.to_owned()))
+        .expect("global vbox survives");
+    let Node::VList(vbox) = vbox else {
+        panic!("setbox1 contains a vbox");
+    };
+    assert_eq!(
+        vbox.height + vbox.depth,
+        Scaled::from_raw(12 * Scaled::UNITY)
+    );
+    let vtop = universe
+        .box_reg(2)
+        .and_then(|id| universe.nodes(id).first().map(|node| node.to_owned()))
+        .expect("global vtop survives");
+    assert!(matches!(vtop, Node::VList(_)), "setbox2 contains a vtop");
+    let natural = universe
+        .box_reg(3)
+        .and_then(|id| universe.nodes(id).first().map(|node| node.to_owned()))
+        .expect("global natural hbox survives");
+    let Node::HList(natural) = natural else {
+        panic!("setbox3 contains an hbox");
+    };
+    assert_eq!(natural.width, Scaled::from_raw(0));
+
+    let mut packed = Universe::new();
+    let mut packed_control = CanonicalMainControl::tex82_initex(&mut packed);
+    register_source(&mut packed_control, br"\setbox0=\hbox to 10pt{}\end");
+    run_to_end(&mut packed_control, &mut packed);
+    let hbox = packed
+        .box_reg(0)
+        .and_then(|id| packed.nodes(id).first().map(|node| node.to_owned()))
+        .expect("hbox stores");
+    let Node::HList(hbox) = hbox else {
+        panic!("setbox0 contains an hbox");
+    };
+    assert_eq!(hbox.width, Scaled::from_raw(10 * Scaled::UNITY));
 }
 
 #[test]

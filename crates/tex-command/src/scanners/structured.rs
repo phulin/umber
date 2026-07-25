@@ -90,6 +90,31 @@ pub struct ScannedSetBoxAssignment {
     pub index: i32,
 }
 
+/// The completed command-owned prefix of a TeX82 box construction.
+///
+/// `make_box` scans its optional `to`/`spread` clause before it validates the
+/// required opening brace.  Keeping both operations here means replay only
+/// receives a typed construction request and never needs to reopen input.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ScannedBoxConstruction {
+    pub kind: ScannedBoxKind,
+    pub packing: ScannedPackingSpec,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ScannedBoxKind {
+    HBox,
+    VBox,
+    VTop,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ScannedPackingSpec {
+    Natural,
+    Exactly(Scaled),
+    Spread(Scaled),
+}
+
 /// The completed register operand of TeX82's `\\box` command.
 ///
 /// `make_box(box_code)` calls `scan_int` before main control can apply the
@@ -595,6 +620,28 @@ impl CommandProcessor<'_> {
     pub fn scan_box_group_opening(&mut self) -> Result<(), CommandError> {
         let opening = self.scan_left_brace(true)?;
         self.back_input(opening)
+    }
+
+    /// Scans TeX82 §§1070--1071's complete box-construction prefix.
+    pub fn scan_box_construction(
+        &mut self,
+        primitive: UnexpandablePrimitive,
+    ) -> Result<ScannedBoxConstruction, CommandError> {
+        let kind = match primitive {
+            UnexpandablePrimitive::HBox => ScannedBoxKind::HBox,
+            UnexpandablePrimitive::VBox => ScannedBoxKind::VBox,
+            UnexpandablePrimitive::VTop => ScannedBoxKind::VTop,
+            _ => return Err(CommandError::InputInvariant),
+        };
+        let packing = if self.scan_keyword("to")?.value {
+            ScannedPackingSpec::Exactly(self.scan_dimension()?.value)
+        } else if self.scan_keyword("spread")?.value {
+            ScannedPackingSpec::Spread(self.scan_dimension()?.value)
+        } else {
+            ScannedPackingSpec::Natural
+        };
+        self.scan_box_group_opening()?;
+        Ok(ScannedBoxConstruction { kind, packing })
     }
 
     /// Validates an alignment preamble's required opening brace, then restores

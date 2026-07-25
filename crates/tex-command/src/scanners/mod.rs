@@ -9,8 +9,8 @@ pub use scalar::{InternalValue, ScalarProvenance, ScalarRecovery, ScannedScalar}
 pub use structured::{
     AlignmentCellOpening, FileNameTermination, FontLoadRequest, ImmediateExtension,
     InputStreamRequest, RegisteredInput, ScannedAccent, ScannedAccentBase, ScannedBalancedText,
-    ScannedBoxRegister, ScannedDiscretionary, ScannedFileName, ScannedGlueParameterAssignment,
-    ScannedLetAssignment, ScannedMacroDefinition, ScannedRuleSpec, ScannedSetBoxAssignment,
-    StructuredProvenance,
+    ScannedBoxConstruction, ScannedBoxKind, ScannedBoxRegister, ScannedDiscretionary,
+    ScannedFileName, ScannedGlueParameterAssignment, ScannedLetAssignment, ScannedMacroDefinition,
+    ScannedPackingSpec, ScannedRuleSpec, ScannedSetBoxAssignment, StructuredProvenance,
 };
 pub use token_list::ScannedTokenRegisterAssignment;

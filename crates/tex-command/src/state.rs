@@ -116,6 +116,24 @@ impl CommandState {
             ReplayTrace::Stored(crate::input::StoredReplayReason::EveryPar),
         );
     }
+
+    /// Schedules the immutable `\everyhbox` or `\everyvbox` payload after
+    /// canonical replay has entered the corresponding box group and mode.
+    pub fn push_everybox(&mut self, tokens: TracedTokenList, horizontal: bool) {
+        self.push_token_level(
+            TokenPayload::Stored {
+                tokens: tokens.token_list(),
+                origins: tokens.origin_list(),
+            },
+            TokenBehavior::Ordinary,
+            RetirementBehavior::Pop,
+            ReplayTrace::Stored(if horizontal {
+                crate::input::StoredReplayReason::EveryHBox
+            } else {
+                crate::input::StoredReplayReason::EveryVBox
+            }),
+        );
+    }
     /// Returns the committed observation for an executor-applied alignment
     /// begin transition.
     ///

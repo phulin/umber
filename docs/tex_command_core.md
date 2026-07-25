@@ -552,6 +552,13 @@ opens, packages, and assigns the executor-owned box group.
 This keeps box construction from acquiring a raw-input API while retaining the
 observable scanner and backup ordering.
 
+For `\hbox`, `\vbox`, and `\vtop`, command processing also owns the optional
+`to`/`spread` packing clause and dimension before validating and backing up the
+opening brace. Replay enters the typed group and mode, schedules the matching
+immutable `\everyhbox`/`\everyvbox` command episode, and applies pure packing
+only after the body closes; scoped `\setbox` assignment then occurs at the
+same aggregate boundary.
+
 ### 5.4 Proposed module layout
 
 ```text
