@@ -6,8 +6,9 @@ use tex_command::{
     CommandProfile, RegisteredSourceKind, SourceRegistration, SourceRegistrationError,
 };
 use tex_exec::{
-    CanonicalMainControl, CheckpointSink, ExecutionContext, ExecutionStats, Executor, FontResolver,
-    MainControlStep, PdfImageRequest, PdfImageResolver, try_execute_assignment,
+    CanonicalMainControl, CheckpointSink, EngineBoundary, ExecutionBudgetCounters,
+    ExecutionContext, ExecutionStats, Executor, FontResolver, MainControlStep, PdfImageRequest,
+    PdfImageResolver, try_execute_assignment,
 };
 use tex_expand::{InputResolver, get_x_token_with_context};
 use tex_lex::{InputSource, InputStack, MemoryInput};
@@ -103,6 +104,10 @@ pub struct EngineSession<'a, 'context> {
     /// command state from startup so host-provided immutable resources can be
     /// registered without consulting `InputStack`.
     canonical: CanonicalMainControl,
+    /// A root capability selects the canonical run loop.  Sessions without
+    /// one retain the compatibility adapter while callers are migrated to
+    /// register their retained root bytes at construction.
+    canonical_root_registered: bool,
     artifact_cursor: usize,
     checkpoint_policy: CheckpointPolicy,
 }
@@ -134,6 +139,7 @@ impl<'a, 'context> EngineSession<'a, 'context> {
             stores,
             context,
             canonical,
+            canonical_root_registered: false,
             artifact_cursor,
             checkpoint_policy: CheckpointPolicy::NamedExecutorBoundaries,
         }
@@ -193,8 +199,11 @@ impl<'a, 'context> EngineSession<'a, 'context> {
         self.canonical
             .capabilities_mut()
             .set_startup_job_name(filename);
-        self.canonical
-            .register_root_source(SourceRegistration::new(kind, bytes))
+        let source = self
+            .canonical
+            .register_root_source(SourceRegistration::new(kind, bytes))?;
+        self.canonical_root_registered = true;
+        Ok(source)
     }
 
     /// Makes a completed host input acquisition available to a future typed
@@ -236,6 +245,9 @@ impl<'a, 'context> EngineSession<'a, 'context> {
     }
 
     pub fn execute(&mut self) -> Result<RunResult, tex_exec::ExecError> {
+        if self.canonical_root_registered {
+            return self.execute_canonical(None);
+        }
         let artifact_start = self.artifact_cursor;
         let stats = Executor::new().run_with_context(self.input, self.stores, &mut self.context)?;
         Ok(self.finish_execution(artifact_start, stats))
@@ -246,6 +258,9 @@ impl<'a, 'context> EngineSession<'a, 'context> {
         &mut self,
         checkpoints: &mut C,
     ) -> Result<RunResult, tex_exec::ExecError> {
+        if self.canonical_root_registered {
+            return self.execute_canonical(Some(checkpoints));
+        }
         let artifact_start = self.artifact_cursor;
         let stats = Executor::new().run_with_context_and_checkpoints(
             self.input,
@@ -254,6 +269,51 @@ impl<'a, 'context> EngineSession<'a, 'context> {
             checkpoints,
         )?;
         Ok(self.finish_execution(artifact_start, stats))
+    }
+
+    /// Runs a source capability through the single canonical TeX82 command
+    /// machine.  The legacy `InputStack` is deliberately not observed here:
+    /// it remains only for compatibility sessions that have not yet supplied
+    /// retained root bytes to the host bridge.
+    fn execute_canonical(
+        &mut self,
+        checkpoints: Option<&mut dyn CheckpointSink>,
+    ) -> Result<RunResult, tex_exec::ExecError> {
+        let artifact_start = self.artifact_cursor;
+        let mut committed_steps = 0_u64;
+        if let Some(sink) = checkpoints
+            && sink.wants_checkpoint(EngineBoundary::JobStart)
+        {
+            let checkpoint = self
+                .capture_canonical_checkpoint(
+                    EngineBoundary::JobStart,
+                    ExecutionBudgetCounters {
+                        committed_steps,
+                        cumulative_fuel: 0,
+                    },
+                )
+                .map_err(|_| tex_exec::ExecError::MissingToken {
+                    context: "canonical checkpoint",
+                })?;
+            sink.checkpoint(checkpoint);
+        }
+        while let MainControlStep::Continue = self.step_canonical()? {
+            committed_steps = committed_steps.saturating_add(1);
+        }
+        let committed = self.stores.world().artifact_commits();
+        self.artifact_cursor = committed.len();
+        Ok(RunResult {
+            terminal_text: uncommitted_terminal_text(self.stores),
+            artifacts: committed[artifact_start..self.artifact_cursor].to_vec(),
+            // Canonical shipout already commits the authoritative artifact.
+            // DVI planning remains the output-driver's detached concern until
+            // the final executor deletion task joins those receipts.
+            dvi_pages: Vec::new(),
+            committed_artifacts: self.stores.world().committed_artifacts()
+                [artifact_start..self.artifact_cursor]
+                .to_vec(),
+            dumped_format: false,
+        })
     }
 
     fn finish_execution(&mut self, artifact_start: usize, stats: ExecutionStats) -> RunResult {
@@ -1604,6 +1664,31 @@ mod tests {
             Some(MainControlStep::End)
         );
         assert_eq!(uncommitted_terminal_text(session.stores()), "reportnested");
+    }
+
+    #[test]
+    fn registered_root_executes_through_the_canonical_session_path() {
+        let mut stores = Universe::new();
+        install_expandable_primitives(&mut stores);
+        install_unexpandable_primitives(&mut stores);
+        let mut legacy_input = InputStack::new(MemoryInput::new("\\message{legacy}"));
+        let mut session = EngineSession::new(
+            &mut legacy_input,
+            &mut stores,
+            ExecutionContext::new("canonical"),
+        );
+        session
+            .register_canonical_root(
+                "canonical.tex",
+                RegisteredSourceKind::Generated,
+                Arc::from(&b"\\count0=17\\message{canonical}\\end"[..]),
+            )
+            .expect("root registers");
+
+        let result = session.execute().expect("canonical run completes");
+
+        assert_eq!(result.terminal_text, "canonical");
+        assert_eq!(session.stores().count(0), 17);
     }
 
     #[test]
