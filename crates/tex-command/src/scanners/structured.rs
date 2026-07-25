@@ -186,6 +186,41 @@ pub struct PdfDocumentFragmentRequest {
     pub text: ScannedBalancedText,
 }
 
+/// Fully scanned pdfTeX navigation whatsit.  All general text is frozen in
+/// the command token store; application never reopens input to finish an
+/// action or rule specification.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum PdfNavigationRequest {
+    Annotation(PdfAnnotationRequest),
+    StartLink(PdfStartLinkRequest),
+    EndLink,
+    Destination(PdfDestinationRequest),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum PdfAnnotationRequest {
+    Reserve,
+    Define {
+        use_object: Option<i32>,
+        dimensions: tex_state::PdfAnnotationDimensions,
+        entries: ScannedBalancedText,
+    },
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PdfStartLinkRequest {
+    pub dimensions: tex_state::PdfAnnotationDimensions,
+    pub attributes: Option<ScannedBalancedText>,
+    pub action: tex_state::PdfActionSpec,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PdfDestinationRequest {
+    pub structure: Option<u32>,
+    pub identifier: tex_state::PdfActionIdentifier,
+    pub kind: tex_state::node::PdfDestinationKind,
+}
+
 /// The command-owned operand prefix of TeX82's `\setbox` assignment.
 ///
 /// The following box command deliberately remains a normal main-control
@@ -675,6 +710,236 @@ impl CommandProcessor<'_> {
             _ => return Ok(None),
         };
         Ok(Some(request))
+    }
+
+    /// Scans the pdfTeX annotation/link/destination family (pdftex.web
+    /// 34847--35120).  `scan_alt_rule` deliberately resets all dimensions on
+    /// each invocation and accepts repeated fields, with the last one winning.
+    pub fn scan_pdf_navigation_request(
+        &mut self,
+        primitive: UnexpandablePrimitive,
+    ) -> Result<PdfNavigationRequest, CommandError> {
+        use PdfNavigationRequest as Request;
+        use tex_state::node::PdfDestinationKind;
+
+        match primitive {
+            UnexpandablePrimitive::PdfAnnot => {
+                if self.scan_keyword("reserveobjnum")?.value {
+                    return Ok(Request::Annotation(PdfAnnotationRequest::Reserve));
+                }
+                let use_object = self
+                    .scan_keyword("useobjnum")?
+                    .value
+                    .then(|| self.scan_integer().map(|value| value.value))
+                    .transpose()?;
+                Ok(Request::Annotation(PdfAnnotationRequest::Define {
+                    use_object,
+                    dimensions: self.scan_pdf_alt_rule()?,
+                    entries: self.scan_balanced_text(true)?,
+                }))
+            }
+            UnexpandablePrimitive::PdfStartLink => Ok(Request::StartLink(PdfStartLinkRequest {
+                dimensions: self.scan_pdf_alt_rule()?,
+                attributes: self
+                    .scan_keyword("attr")?
+                    .value
+                    .then(|| self.scan_balanced_text(true))
+                    .transpose()?,
+                action: self.scan_pdf_action()?,
+            })),
+            UnexpandablePrimitive::PdfEndLink => Ok(Request::EndLink),
+            UnexpandablePrimitive::PdfDest => {
+                let structure = if self.scan_keyword("struct")?.value {
+                    Some(self.scan_pdf_positive("struct identifier")?)
+                } else {
+                    None
+                };
+                let identifier = self.scan_pdf_identifier("destination identifier")?;
+                // Prefix-sharing names must be tested longest-first.
+                let kind = if self.scan_keyword("xyz")?.value {
+                    let zoom = if self.scan_keyword("zoom")?.value {
+                        let value = self.scan_integer()?.value;
+                        if value > 1_073_741_823 {
+                            return Err(CommandError::PdfNavigation(
+                                "pdfTeX error (ext1): number too big",
+                            ));
+                        }
+                        Some(value)
+                    } else {
+                        None
+                    };
+                    PdfDestinationKind::Xyz { zoom }
+                } else if self.scan_keyword("fitbh")?.value {
+                    PdfDestinationKind::FitBoundingBoxHorizontal
+                } else if self.scan_keyword("fitbv")?.value {
+                    PdfDestinationKind::FitBoundingBoxVertical
+                } else if self.scan_keyword("fitb")?.value {
+                    PdfDestinationKind::FitBoundingBox
+                } else if self.scan_keyword("fith")?.value {
+                    PdfDestinationKind::FitHorizontal
+                } else if self.scan_keyword("fitv")?.value {
+                    PdfDestinationKind::FitVertical
+                } else if self.scan_keyword("fitr")?.value {
+                    PdfDestinationKind::FitRectangle(self.scan_pdf_alt_rule()?)
+                } else if self.scan_keyword("fit")?.value {
+                    PdfDestinationKind::Fit
+                } else {
+                    return Err(CommandError::PdfNavigation(
+                        "pdfTeX error (ext4): destination type missing",
+                    ));
+                };
+                Ok(Request::Destination(PdfDestinationRequest {
+                    structure,
+                    identifier,
+                    kind,
+                }))
+            }
+            _ => Err(CommandError::InputInvariant),
+        }
+    }
+
+    fn scan_pdf_alt_rule(&mut self) -> Result<tex_state::PdfAnnotationDimensions, CommandError> {
+        let mut dimensions = tex_state::PdfAnnotationDimensions::RUNNING;
+        loop {
+            if self.scan_keyword("width")?.value {
+                dimensions.width = Some(self.scan_dimension()?.value);
+            } else if self.scan_keyword("height")?.value {
+                dimensions.height = Some(self.scan_dimension()?.value);
+            } else if self.scan_keyword("depth")?.value {
+                dimensions.depth = Some(self.scan_dimension()?.value);
+            } else {
+                return Ok(dimensions);
+            }
+        }
+    }
+
+    fn scan_pdf_positive(&mut self, kind: &'static str) -> Result<u32, CommandError> {
+        let value = self.scan_integer()?.value;
+        if value <= 0 {
+            return Err(CommandError::PdfNavigation(match kind {
+                "struct identifier" => "pdfTeX error (ext1): struct identifier must be positive",
+                _ => "pdfTeX error (ext1): num identifier must be positive",
+            }));
+        }
+        if value > 1_073_741_823 {
+            return Err(CommandError::PdfNavigation(
+                "pdfTeX error (ext1): number too big",
+            ));
+        }
+        Ok(value as u32)
+    }
+
+    fn scan_pdf_identifier(
+        &mut self,
+        kind: &'static str,
+    ) -> Result<tex_state::PdfActionIdentifier, CommandError> {
+        if self.scan_keyword("name")?.value {
+            Ok(tex_state::PdfActionIdentifier::Name(
+                self.scan_balanced_text(true)?.tokens.token_list(),
+            ))
+        } else if self.scan_keyword("num")?.value {
+            Ok(tex_state::PdfActionIdentifier::Number(
+                self.scan_pdf_positive(kind)?,
+            ))
+        } else {
+            Err(CommandError::PdfNavigation(
+                "pdfTeX error (ext1): identifier type missing",
+            ))
+        }
+    }
+
+    fn scan_pdf_action(&mut self) -> Result<tex_state::PdfActionSpec, CommandError> {
+        use tex_state::{PdfActionDestination, PdfActionSpec, PdfActionTarget, PdfActionWindow};
+        if self.scan_keyword("user")?.value {
+            return Ok(PdfActionSpec::User(
+                self.scan_balanced_text(true)?.tokens.token_list(),
+            ));
+        }
+        let goto = if self.scan_keyword("goto")?.value {
+            true
+        } else if self.scan_keyword("thread")?.value {
+            false
+        } else {
+            return Err(CommandError::PdfNavigation(
+                "pdfTeX error (ext1): action type missing",
+            ));
+        };
+        let file = self
+            .scan_keyword("file")?
+            .value
+            .then(|| {
+                self.scan_balanced_text(true)
+                    .map(|text| text.tokens.token_list())
+            })
+            .transpose()?;
+        let structure = if self.scan_keyword("struct")?.value {
+            if !goto {
+                return Err(CommandError::PdfNavigation(
+                    "pdfTeX error (ext1): only GoTo action can be used with `struct'",
+                ));
+            }
+            if file.is_some() {
+                Some(tex_state::PdfActionIdentifier::Raw(
+                    self.scan_balanced_text(true)?.tokens.token_list(),
+                ))
+            } else {
+                Some(self.scan_pdf_identifier("struct identifier")?)
+            }
+        } else {
+            None
+        };
+        let target = if self.scan_keyword("page")?.value {
+            if !goto {
+                return Err(CommandError::PdfNavigation(
+                    "pdfTeX error (ext1): only GoTo action can be used with `page'",
+                ));
+            }
+            let number = self.scan_pdf_positive("page number")?;
+            PdfActionTarget::Page {
+                number,
+                view: self.scan_balanced_text(true)?.tokens.token_list(),
+            }
+        } else if self.scan_keyword("name")?.value {
+            PdfActionTarget::Destination(tex_state::PdfActionIdentifier::Name(
+                self.scan_balanced_text(true)?.tokens.token_list(),
+            ))
+        } else if self.scan_keyword("num")?.value {
+            if goto && file.is_some() {
+                return Err(CommandError::PdfNavigation(
+                    "pdfTeX error (ext1): `goto' option cannot be used with both `file' and `num'",
+                ));
+            }
+            PdfActionTarget::Destination(tex_state::PdfActionIdentifier::Number(
+                self.scan_pdf_positive("num identifier")?,
+            ))
+        } else {
+            return Err(CommandError::PdfNavigation(
+                "pdfTeX error (ext1): identifier type missing",
+            ));
+        };
+        let window = if self.scan_keyword("newwindow")?.value {
+            PdfActionWindow::New
+        } else if self.scan_keyword("nonewwindow")?.value {
+            PdfActionWindow::Same
+        } else {
+            PdfActionWindow::Unspecified
+        };
+        if window != PdfActionWindow::Unspecified && (!goto || file.is_none()) {
+            return Err(CommandError::PdfNavigation(
+                "pdfTeX error (ext1): `newwindow'/`nonewwindow' must be used with `goto' and `file' option",
+            ));
+        }
+        let action = PdfActionDestination {
+            file,
+            structure,
+            target,
+            window,
+        };
+        Ok(if goto {
+            PdfActionSpec::GoTo(action)
+        } else {
+            PdfActionSpec::Thread(action)
+        })
     }
 
     /// Scans pdfTeX's raw-object, form, and document-fragment extensions.

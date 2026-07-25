@@ -195,6 +195,8 @@ pub enum ExecError {
     PdfDestinationInForm,
     PdfThreadIdentifierMissing,
     PdfThreadInForm,
+    /// A command-owned pdfTeX navigation scanner emitted an ext diagnostic.
+    PdfNavigation(&'static str),
     VSplitNeedsVBox,
     Box255NotVoidBeforeOutput,
     OutputRoutineBox255NotVoid,
@@ -435,6 +437,7 @@ impl fmt::Display for ExecError {
             Self::PdfThreadInForm => {
                 f.write_str("pdfTeX error (ext4): threads cannot be inside an XForm")
             }
+            Self::PdfNavigation(message) => f.write_str(message),
             Self::VSplitNeedsVBox => write!(f, "\\vsplit needs a \\vbox"),
             Self::Box255NotVoidBeforeOutput => write!(f, "\\box255 is not void"),
             Self::OutputRoutineBox255NotVoid => {
@@ -548,6 +551,7 @@ impl std::error::Error for ExecError {
             | Self::PdfDestinationInForm
             | Self::PdfThreadIdentifierMissing
             | Self::PdfThreadInForm
+            | Self::PdfNavigation(_)
             | Self::VSplitNeedsVBox
             | Self::Box255NotVoidBeforeOutput
             | Self::OutputRoutineBox255NotVoid
@@ -647,6 +651,7 @@ impl ExecError {
             | Self::PdfDestinationInForm
             | Self::PdfThreadIdentifierMissing
             | Self::PdfThreadInForm
+            | Self::PdfNavigation(_)
             | Self::VSplitNeedsVBox
             | Self::Box255NotVoidBeforeOutput
             | Self::OutputRoutineBox255NotVoid

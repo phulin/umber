@@ -12,11 +12,12 @@ use tex_command::{
     CommandRuntime, CommandState, CommandStateSnapshot, FontLoadRequest, FontResource,
     ImmediateExtension, InputStreamRequest, MathDelimiterBoundary, MathDelimiterBoundaryKind,
     MathEpisodeRecovery, MathLimitKind, MathScriptKind, MathStyleKind, MathTextFieldKind,
-    PdfColorStackActionRequest, PdfDocumentFragmentRequest, PdfFormRequest, PdfGraphicsRequest,
-    PdfImageRequest, PdfImageResource, PdfObjectRequest, PdfReferenceObjectRequest, ScannedAccent,
-    ScannedBoxConstruction, ScannedBoxKind, ScannedDiscretionary, ScannedDisplayDiagnostic,
-    ScannedLeaderPayload, ScannedMathMuMaterial, ScannedPackingSpec, ScannedVSplit,
-    SourceRegistration, SourceRegistrationError,
+    PdfAnnotationRequest, PdfColorStackActionRequest, PdfDestinationRequest,
+    PdfDocumentFragmentRequest, PdfFormRequest, PdfGraphicsRequest, PdfImageRequest,
+    PdfImageResource, PdfNavigationRequest, PdfObjectRequest, PdfReferenceObjectRequest,
+    PdfStartLinkRequest, ScannedAccent, ScannedBoxConstruction, ScannedBoxKind,
+    ScannedDiscretionary, ScannedDisplayDiagnostic, ScannedLeaderPayload, ScannedMathMuMaterial,
+    ScannedPackingSpec, ScannedVSplit, SourceRegistration, SourceRegistrationError,
 };
 #[cfg(any(test, feature = "instrumentation"))]
 use tex_command::{
@@ -25,7 +26,7 @@ use tex_command::{
 use tex_state::code_tables::{DelCode, LcCode, MathCode, SfCode, UcCode};
 use tex_state::env::banks::{DimenParam, GlueParam, IntParam, TokParam};
 use tex_state::glue::{GlueSpec, Order};
-use tex_state::ids::{FontId, NodeListId};
+use tex_state::ids::{FontId, NodeListId, TokenListId};
 use tex_state::interner::Symbol;
 use tex_state::macro_store::{MacroDefinitionProvenance, MacroMeaning};
 use tex_state::math::{
@@ -37,8 +38,8 @@ use tex_state::node::{DiscKind, GlueKind, KernKind, LeaderPayload, Node, Whatsit
 use tex_state::scaled::Scaled;
 use tex_state::token::{Catcode, Token};
 use tex_state::{
-    GroupKind, InputOpenState, InputReadState, ParagraphShapeLine, PrintSink, StreamSlot,
-    TracedTokenList, Universe,
+    ExpansionState, GroupKind, InputOpenState, InputReadState, ParagraphShapeLine, PrintSink,
+    StreamSlot, TracedTokenList, Universe,
 };
 use tex_typeset::PackSpec;
 
@@ -1929,6 +1930,7 @@ enum ScannedStep {
     PdfReferenceObject(PdfReferenceObjectRequest),
     PdfForm(PdfFormRequest),
     PdfDocumentFragment(PdfDocumentFragmentRequest),
+    PdfNavigation(PdfNavigationRequest),
     FontDimen {
         font: FontId,
         number: u32,
@@ -3183,6 +3185,16 @@ fn scan_command(
                 .map_err(command_error)?
                 .expect("graphics primitive has a typed request"),
         )),
+        Meaning::UnexpandablePrimitive(
+            primitive @ (UnexpandablePrimitive::PdfAnnot
+            | UnexpandablePrimitive::PdfStartLink
+            | UnexpandablePrimitive::PdfEndLink
+            | UnexpandablePrimitive::PdfDest),
+        ) => Ok(ScannedStep::PdfNavigation(
+            processor
+                .scan_pdf_navigation_request(primitive)
+                .map_err(command_error)?,
+        )),
         Meaning::Font(font) => Ok(ScannedStep::FontSelect {
             font,
             selector: command.control_sequence(),
@@ -3618,6 +3630,172 @@ fn pdf_graphics_text(tokens: TracedTokenList, stores: &Universe) -> Vec<u8> {
         tex_expand::append_token_string_text(stores, token, &mut text);
     }
     tex_byte_text(&text)
+}
+
+fn pdf_navigation_identity(
+    stores: &Universe,
+    identifier: tex_state::PdfActionIdentifier,
+) -> tex_state::PdfDestinationIdentity {
+    match identifier {
+        tex_state::PdfActionIdentifier::Number(number) => {
+            tex_state::PdfDestinationIdentity::Number(number)
+        }
+        tex_state::PdfActionIdentifier::Name(tokens) => tex_state::PdfDestinationIdentity::Name(
+            pdf_graphics_text(TracedTokenList::synthetic(tokens), stores),
+        ),
+        tex_state::PdfActionIdentifier::Raw(tokens) => tex_state::PdfDestinationIdentity::Name(
+            pdf_graphics_text(TracedTokenList::synthetic(tokens), stores),
+        ),
+    }
+}
+
+fn apply_pdf_navigation_request(
+    request: PdfNavigationRequest,
+    stores: &mut Universe,
+    modes: &mut ModeNest,
+) -> Result<ReplayStep, ExecError> {
+    match request {
+        PdfNavigationRequest::Annotation(request) => {
+            if stores.int_param(IntParam::PDF_OUTPUT) <= 0 {
+                return Err(ExecError::PdfExtensionInDviMode("pdfannot"));
+            }
+            match request {
+                PdfAnnotationRequest::Reserve => {
+                    stores
+                        .reserve_pdf_annotation()
+                        .map_err(|_| ExecError::PdfObjectCapacity)?;
+                }
+                PdfAnnotationRequest::Define {
+                    use_object,
+                    dimensions,
+                    entries,
+                } => {
+                    let data = tex_state::PdfAnnotationData {
+                        dimensions,
+                        entries: entries.tokens.token_list(),
+                    };
+                    let record = match use_object {
+                        Some(object) => stores
+                            .initialize_pdf_annotation(
+                                u32::try_from(object)
+                                    .map_err(|_| ExecError::PdfReferencedObjectNotFound)?,
+                                data,
+                            )
+                            .map_err(|_| ExecError::PdfReferencedObjectNotFound)?,
+                        None => stores
+                            .create_pdf_annotation(data)
+                            .map_err(|_| ExecError::PdfObjectCapacity)?,
+                    };
+                    modes
+                        .current_list_mut()
+                        .push(Node::Whatsit(Whatsit::PdfAnnotation {
+                            object: record.object(),
+                        }));
+                }
+            }
+        }
+        PdfNavigationRequest::StartLink(PdfStartLinkRequest {
+            dimensions,
+            attributes,
+            action,
+        }) => {
+            if matches!(
+                modes.current_mode(),
+                Mode::Vertical | Mode::InternalVertical
+            ) {
+                return Err(ExecError::PdfLinkInVerticalMode("pdfstartlink"));
+            }
+            if stores.int_param(IntParam::PDF_OUTPUT) <= 0 {
+                return Err(ExecError::PdfExtensionInDviMode("pdfstartlink"));
+            }
+            let record = stores
+                .create_pdf_link(
+                    dimensions,
+                    attributes.map_or(TokenListId::EMPTY, |value| value.tokens.token_list()),
+                    action,
+                    stores.execution_group_depth(),
+                )
+                .map_err(|_| ExecError::PdfObjectCapacity)?;
+            reserve_navigation_action_targets(stores, action)?;
+            modes
+                .current_list_mut()
+                .push(Node::Whatsit(Whatsit::PdfLinkStart {
+                    object: record.object(),
+                }));
+        }
+        PdfNavigationRequest::EndLink => {
+            if matches!(
+                modes.current_mode(),
+                Mode::Vertical | Mode::InternalVertical
+            ) {
+                return Err(ExecError::PdfLinkInVerticalMode("pdfendlink"));
+            }
+            if stores.int_param(IntParam::PDF_OUTPUT) <= 0 {
+                return Err(ExecError::PdfExtensionInDviMode("pdfendlink"));
+            }
+            let open = stores
+                .end_pdf_link()
+                .ok_or(ExecError::PdfEndLinkWithoutStart)?;
+            if open.nesting_depth != stores.execution_group_depth() {
+                stores.world_mut().write_text(PrintSink::TerminalAndLog, "\npdfTeX warning: \\pdfendlink ended up in different nesting level than \\pdfstartlink\n");
+            }
+            modes
+                .current_list_mut()
+                .push(Node::Whatsit(Whatsit::PdfLinkEnd {
+                    object: open.record.object(),
+                }));
+        }
+        PdfNavigationRequest::Destination(PdfDestinationRequest {
+            structure,
+            identifier,
+            kind,
+        }) => {
+            if stores.int_param(IntParam::PDF_OUTPUT) <= 0 {
+                return Err(ExecError::PdfExtensionInDviMode("pdfdest"));
+            }
+            let identity = pdf_navigation_identity(stores, identifier);
+            if stores
+                .pdf_destination(&identity, structure.is_some())
+                .is_some_and(tex_state::PdfDestinationRecord::defined)
+            {
+                crate::assignments::warn_pdf_destination_duplicate(stores, &identity);
+                return Ok(ReplayStep::Continue);
+            }
+            modes
+                .current_list_mut()
+                .push(Node::Whatsit(Whatsit::PdfDestination(Box::new(
+                    tex_state::node::PdfDestinationNode {
+                        identifier,
+                        structure,
+                        kind,
+                    },
+                ))));
+        }
+    }
+    Ok(ReplayStep::Continue)
+}
+
+fn reserve_navigation_action_targets(
+    stores: &mut Universe,
+    action: tex_state::PdfActionSpec,
+) -> Result<(), ExecError> {
+    let tex_state::PdfActionSpec::GoTo(destination) = action else {
+        return Ok(());
+    };
+    if destination.file.is_some() {
+        return Ok(());
+    }
+    if let tex_state::PdfActionTarget::Destination(identifier) = destination.target {
+        stores
+            .reserve_pdf_destination(pdf_navigation_identity(stores, identifier), false)
+            .map_err(|_| ExecError::PdfObjectCapacity)?;
+    }
+    if let Some(identifier) = destination.structure {
+        stores
+            .reserve_pdf_destination(pdf_navigation_identity(stores, identifier), true)
+            .map_err(|_| ExecError::PdfObjectCapacity)?;
+    }
+    Ok(())
 }
 
 fn apply_pdf_graphics_request(
@@ -5123,6 +5301,7 @@ fn apply_scanned_step(
             Ok(ReplayStep::Continue)
         }
         ScannedStep::PdfGraphics(request) => apply_pdf_graphics_request(request, stores, modes),
+        ScannedStep::PdfNavigation(request) => apply_pdf_navigation_request(request, stores, modes),
         ScannedStep::PdfObject(request) => apply_pdf_object_request(request, stores, false),
         ScannedStep::PdfReferenceObject(request) => {
             if stores.int_param(IntParam::PDF_OUTPUT) <= 0 {
@@ -6617,6 +6796,7 @@ fn schedule_everymath(command: &mut CommandState, stores: &mut Universe, display
 fn command_error(error: CommandError) -> ExecError {
     match error {
         CommandError::MissingInput(name) => ExecError::MissingCanonicalInput { name },
+        CommandError::PdfNavigation(message) => ExecError::PdfNavigation(message),
         _ => ExecError::MissingToken {
             context: "command processor",
         },

@@ -83,6 +83,61 @@ fn register_cmr10_font(control: &mut CanonicalMainControl, universe: &mut Univer
 }
 
 #[test]
+fn canonical_pdf_navigation_scans_rules_actions_and_deferred_markers() {
+    let mut universe = Universe::new();
+    universe.set_int_param(IntParam::PDF_OUTPUT, 1);
+    for (name, primitive) in [
+        (
+            "pdfannot",
+            tex_state::meaning::UnexpandablePrimitive::PdfAnnot,
+        ),
+        (
+            "pdfdest",
+            tex_state::meaning::UnexpandablePrimitive::PdfDest,
+        ),
+        (
+            "pdfstartlink",
+            tex_state::meaning::UnexpandablePrimitive::PdfStartLink,
+        ),
+        (
+            "pdfendlink",
+            tex_state::meaning::UnexpandablePrimitive::PdfEndLink,
+        ),
+    ] {
+        let symbol = universe.intern(name).symbol();
+        universe.set_meaning(symbol, Meaning::UnexpandablePrimitive(primitive));
+    }
+    let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+    control.modes.push(Mode::Horizontal);
+    register_source(
+        &mut control,
+        br"\pdfannot width 2pt height 3pt { /Subtype /Text }\pdfdest name {target} fitr depth 4pt\pdfstartlink width 5pt attr { /Border [0 0 0] } goto name {target}\pdfendlink",
+    );
+    run_to_end(&mut control, &mut universe);
+
+    let nodes = control.modes.current_list().nodes();
+    assert!(
+        matches!(
+            nodes[0],
+            Node::Whatsit(tex_state::node::Whatsit::PdfAnnotation { .. })
+        ),
+        "nodes: {nodes:#?}"
+    );
+    assert!(matches!(
+        nodes[1],
+        Node::Whatsit(tex_state::node::Whatsit::PdfDestination(_))
+    ));
+    assert!(matches!(
+        nodes[2],
+        Node::Whatsit(tex_state::node::Whatsit::PdfLinkStart { .. })
+    ));
+    assert!(matches!(
+        nodes[3],
+        Node::Whatsit(tex_state::node::Whatsit::PdfLinkEnd { .. })
+    ));
+}
+
+#[test]
 fn canonical_math_replay_finalizes_fields_and_delimiter_groups_before_parent_source() {
     let mut universe = Universe::new();
     let mut control = CanonicalMainControl::tex82_initex(&mut universe);

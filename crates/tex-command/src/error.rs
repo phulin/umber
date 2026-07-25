@@ -19,6 +19,8 @@ pub enum CommandError {
     /// This expansion slice has not installed the primitive's canonical
     /// scalar handler yet.
     UnsupportedExpandablePrimitive(tex_state::meaning::ExpandablePrimitive),
+    /// A pdfTeX navigation scanner rejected an action, identifier, or view.
+    PdfNavigation(&'static str),
 }
 
 impl std::fmt::Display for CommandError {
@@ -42,6 +44,7 @@ impl std::fmt::Display for CommandError {
                     "expandable primitive {primitive:?} is not installed"
                 )
             }
+            Self::PdfNavigation(message) => formatter.write_str(message),
         }
     }
 }
