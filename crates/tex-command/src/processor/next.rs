@@ -550,6 +550,35 @@ impl CommandProcessor<'_> {
         Ok(())
     }
 
+    /// Starts TeX82 §1016's already-selected output token list.
+    ///
+    /// Page selection and `\box255` packing belong to the stomach, but the
+    /// resulting token-list ownership never leaves command control.  Unlike
+    /// [`Self::begin_output_routine_after_stop`], this is not a §46 recovery:
+    /// there is no exhausted final-stop backup to retire or recreate.
+    pub fn begin_selected_output_routine(&mut self) -> Result<(), CommandError> {
+        let output = TracedTokenList::synthetic(self.state.tok_param(TokParam::OUTPUT));
+        let level = self.command.push_token_level(
+            TokenPayload::Stored {
+                tokens: output.token_list(),
+                origins: output.origin_list(),
+            },
+            TokenBehavior::Ordinary,
+            RetirementBehavior::Pop,
+            ReplayTrace::Stored(crate::input::StoredReplayReason::OutputRoutine),
+        );
+        #[cfg(not(any(test, feature = "instrumentation")))]
+        let _ = level;
+        #[cfg(any(test, feature = "instrumentation"))]
+        self.observe(CommandObservation::Input(InputRecord {
+            transition: InputTransition::Push,
+            reason: InputReason::TokenList,
+            level: level.0,
+            position: 0,
+        }));
+        Ok(())
+    }
+
     /// Performs TeX82 §1064 `off_save` input recovery for a command.
     ///
     /// The executor selects the closer from its actual group, but raw backup,

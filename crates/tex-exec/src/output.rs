@@ -24,6 +24,65 @@ use crate::{ExecError, ExecutionStats, Mode, ModeNest, leave_group, push_traced_
 /// TeX.web's `-1073741824` end-job penalty from `its_all_over`.
 const END_JOB_PENALTY: i32 = -AWFUL_BAD - 1;
 
+/// The typed result of TeX82 §1016 packing, before either the default
+/// routine or command-owned `\\output` replay begins.
+#[derive(Debug)]
+pub(crate) enum SelectedPageOutput {
+    Default(Node),
+    UserRoutine,
+}
+
+/// Selects and packages one pending page without accessing input.  Canonical
+/// main control owns the subsequent mode/group transition; command control
+/// owns replay of `\\output` itself.
+pub(crate) fn select_pending_page_output(
+    stores: &mut Universe,
+    fire_up: PageFireUp,
+) -> Result<SelectedPageOutput, ExecError> {
+    prepare_box255(stores, fire_up)?;
+    let output = stores.tok_param(TokParam::OUTPUT);
+    if stores.tokens(output).is_empty() {
+        prepend_output_heldover(stores, Vec::new());
+        let page = take_box255_node(stores)?;
+        stores.clear_page_discards();
+        build_page(stores)?;
+        return Ok(SelectedPageOutput::Default(page));
+    }
+    let dead_cycles = stores.page_integer(PageInteger::DeadCycles);
+    if dead_cycles >= stores.int_param(IntParam::MAX_DEAD_CYCLES) {
+        stores.world_mut().write_text(
+            tex_state::PrintSink::TerminalAndLog,
+            &format!("\n! Output loop---{dead_cycles} consecutive dead cycles.\nI've concluded that your \\output is awry; it never does a\n\\shipout, so I'm shipping \\box255 out myself. Next time\nincrease \\maxdeadcycles if you want me to be more patient!\n"),
+        );
+        prepend_output_heldover(stores, Vec::new());
+        let page = take_box255_node(stores)?;
+        stores.clear_page_discards();
+        build_page(stores)?;
+        return Ok(SelectedPageOutput::Default(page));
+    }
+    stores.record_output_routine_execution();
+    stores.set_page_integer(PageInteger::DeadCycles, dead_cycles + 1);
+    Ok(SelectedPageOutput::UserRoutine)
+}
+
+/// TeX82 §1026's input-free tail after the command-owned output list has
+/// closed.  `output_nodes` is the internal-vertical list built by the routine.
+pub(crate) fn resume_page_builder_after_output(
+    stores: &mut Universe,
+    output_nodes: Vec<Node>,
+) -> Result<(), ExecError> {
+    if stores.box_reg(255).is_some() {
+        stores.clear_box_reg_same_level(255);
+        stores.world_mut().write_text(
+            tex_state::PrintSink::TerminalAndLog,
+            "\n! Output routine didn't use all of \\box255.\nYour \\output commands should empty \\box255,\ne.g., by saying `\\shipout\\box255'.\nProceed; I'll discard its present contents.\n",
+        );
+    }
+    stores.clear_page_discards();
+    prepend_output_heldover(stores, output_nodes);
+    build_page(stores)
+}
+
 pub(crate) fn drain_pending_output(
     nest: &mut ModeNest,
     input: &mut InputStack,

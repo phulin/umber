@@ -716,6 +716,7 @@ impl CanonicalMainControl {
             return self.apply_discretionary(discretionary, stores);
         }
         let fires_afterassignment = scanned.fires_afterassignment();
+        let artifact_count = stores.world().artifact_commits().len();
         let result = apply_scanned_step(
             scanned,
             stores,
@@ -728,7 +729,42 @@ impl CanonicalMainControl {
         if fires_afterassignment {
             schedule_afterassignment(&mut self.command, stores);
         }
+        if stores.world().artifact_commits().len() != artifact_count {
+            self.output_dead_cycles = 0;
+        }
+        self.fire_pending_page_output(stores)?;
         Ok(result)
+    }
+
+    /// TeX82 §§1006--1028's typed page/output boundary.  The page builder
+    /// and packing stay here with the mode nest; `CommandProcessor` alone
+    /// installs the selected output token-list replay.
+    fn fire_pending_page_output(&mut self, stores: &mut Universe) -> Result<(), ExecError> {
+        while !self.boxes.output_routine_active {
+            let Some(fire_up) = stores.page_fire_up() else {
+                break;
+            };
+            match crate::output::select_pending_page_output(stores, fire_up)? {
+                crate::output::SelectedPageOutput::Default(page) => {
+                    shipout_replay_box(page, stores)?;
+                }
+                crate::output::SelectedPageOutput::UserRoutine => {
+                    CommandProcessor::new(
+                        &mut self.command,
+                        &mut self.runtime,
+                        stores.command_context(),
+                        CommandHostContext::new(&mut self.capabilities),
+                    )
+                    .begin_selected_output_routine()
+                    .map_err(command_error)?;
+                    stores.enter_group_with_kind(GroupKind::Output);
+                    self.modes.push(Mode::InternalVertical);
+                    self.boxes.output_routine_active = true;
+                    self.boxes.output_routine_opening_pending = true;
+                }
+            }
+        }
+        Ok(())
     }
 
     fn execute_math_episode(
@@ -4022,6 +4058,10 @@ fn shipout_replay_box(node: Node, stores: &mut Universe) -> Result<(), ExecError
         stores,
         &mut execution,
     )?;
+    // TeX82's `ship_out` clears the consecutive-dead-output counter (§643).
+    // Canonical lowering bypasses the legacy executor's bookkeeping, so keep
+    // the page-state transition at the typed shipout boundary.
+    stores.set_page_integer(tex_state::page::PageInteger::DeadCycles, 0);
     Ok(())
 }
 
@@ -5195,13 +5235,17 @@ fn apply_scanned_step(
             ) {
                 let _ = modes.pop()?;
             }
-            let _ = modes.pop()?;
+            let output_level = modes.pop()?;
             stores
                 .leave_group_with_kind(GroupKind::Output)
                 .map_err(|_| ExecError::MissingToken {
                     context: "output routine group",
                 })?;
             boxes.output_routine_active = false;
+            crate::output::resume_page_builder_after_output(
+                stores,
+                output_level.list().nodes().to_vec(),
+            )?;
             Ok(ReplayStep::Continue)
         }
         ScannedStep::ForcedOutputShipout => {
