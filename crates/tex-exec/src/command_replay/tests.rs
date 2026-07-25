@@ -3078,3 +3078,23 @@ fn canonical_vsplit_scans_operands_before_replaying_destructive_repack() {
         "vsplit does not alias its destructive remainder"
     );
 }
+
+#[test]
+fn canonical_display_diagnostics_keep_show_raw_and_scan_other_operands() {
+    let mut universe = Universe::new();
+    let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+    register_source(
+        &mut control,
+        br"\def\shown{expanded}\show\shown\count0=17\showthe\count0\setbox0=\hbox{}\showbox0\end",
+    );
+    run_to_end(&mut control, &mut universe);
+
+    let text = terminal_text(&universe);
+    assert!(text.contains("> \\shown=macro:->expanded."), "{text}");
+    assert!(text.contains("> 17."), "{text}");
+    assert!(text.contains("> \\box0="), "{text}");
+    assert!(
+        !text.contains("Undefined control sequence \\expanded"),
+        "raw show must not expand its operand: {text}"
+    );
+}

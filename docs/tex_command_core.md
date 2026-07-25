@@ -236,6 +236,10 @@ lists; their only canonical trace consequence is that ordered DVI effect.
 Canonical `\shipout` replay likewise crosses the executor only as a completed
 box. The artifact kernel receives an already-published detached input summary;
 it must not construct a `tex_lex::InputStack` as a publication fallback.
+TeX82 §46 display diagnostics follow the same seam: `\show` consumes and
+renders its raw operand, while `\showthe` and `\showbox` complete their
+expanded/internal scans in `tex-command`; replay writes only the frozen
+diagnostic request and never probes an executor input source.
 Explicit `\begingroup` is a typed `SemiSimple` entry and `\endgroup` its
 matching typed exit. TeX82 §1064 recovery remains command-owned: malformed
 macro targets and parameter markers preserve/replay their source spellings in

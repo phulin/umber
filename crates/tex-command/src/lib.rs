@@ -56,10 +56,10 @@ pub use scanners::{
     AlignmentCellOpening, FileNameTermination, FontLoadRequest, ImmediateExtension,
     InputStreamRequest, InternalValue, RegisteredInput, ScalarProvenance, ScalarRecovery,
     ScannedAccent, ScannedAccentBase, ScannedBalancedText, ScannedBoxConstruction, ScannedBoxKind,
-    ScannedBoxRegister, ScannedDiscretionary, ScannedFileName, ScannedGlueParameterAssignment,
-    ScannedLeaderPayload, ScannedLetAssignment, ScannedMacroDefinition, ScannedPackingSpec,
-    ScannedRuleSpec, ScannedScalar, ScannedSetBoxAssignment, ScannedTokenRegisterAssignment,
-    ScannedVSplit, StructuredProvenance,
+    ScannedBoxRegister, ScannedDiscretionary, ScannedDisplayDiagnostic, ScannedFileName,
+    ScannedGlueParameterAssignment, ScannedLeaderPayload, ScannedLetAssignment,
+    ScannedMacroDefinition, ScannedPackingSpec, ScannedRuleSpec, ScannedScalar,
+    ScannedSetBoxAssignment, ScannedTokenRegisterAssignment, ScannedVSplit, StructuredProvenance,
 };
 pub use snapshot::{CommandStateSnapshot, CommandSummary, CommandSummaryError};
 pub use state::{CommandReplayEpisode, CommandRuntime, CommandState, UnknownRegisteredSource};

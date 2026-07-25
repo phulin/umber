@@ -606,7 +606,7 @@ fn page_mark(primitive: ExpandablePrimitive) -> PageMark {
     }
 }
 
-fn string_text(state: &tex_state::CommandContext<'_>, token: Token) -> String {
+pub(crate) fn string_text(state: &tex_state::CommandContext<'_>, token: Token) -> String {
     match token {
         Token::Cs(symbol) => {
             let mut text = String::new();
@@ -623,7 +623,10 @@ fn string_text(state: &tex_state::CommandContext<'_>, token: Token) -> String {
     }
 }
 
-fn meaning_text(state: &tex_state::CommandContext<'_>, command: &CurrentCommand) -> String {
+pub(crate) fn meaning_text(
+    state: &tex_state::CommandContext<'_>,
+    command: &CurrentCommand,
+) -> String {
     match command.meaning() {
         Meaning::Undefined => "undefined".to_owned(),
         Meaning::Relax => "\\relax".to_owned(),

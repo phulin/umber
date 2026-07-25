@@ -19,7 +19,10 @@ use crate::processor::status::{
     AlignmentId, AlignmentScanContext, ScannerStatus, ScannerWarning, TokenBuilderId,
 };
 use crate::scan_toks::{ScanToksMode, ScannedToks};
-use crate::{AlignmentCellTemplates, AlignmentPreamble, CommandError, CommandProcessor};
+use crate::{
+    AlignmentCellTemplates, AlignmentPreamble, CommandError, CommandProcessor, InternalValue,
+    processor::{meaning_text, render_the_value, string_text},
+};
 
 /// Stable pending-diagnostic identities for TeX82 §760 template recovery.
 const MISSING_PARAMETER_DIAGNOSTIC: u64 = 0x616c_6967_0000_0001;
@@ -138,6 +141,14 @@ pub struct ScannedVSplit {
     pub index: i32,
     pub height: Scaled,
     pub missing_to: bool,
+}
+
+/// A completed display diagnostic. Its text and source origin are frozen while
+/// command input is borrowed, leaving replay no operand-reading work.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ScannedDisplayDiagnostic {
+    pub text: String,
+    pub provenance: StructuredProvenance,
 }
 
 /// The completed payload prefix of TeX82's `\\leaders` family.
@@ -606,6 +617,71 @@ impl CommandProcessor<'_> {
             height,
             missing_to,
         })
+    }
+
+    /// TeX82 §46's raw `\\show` operand scan.
+    pub fn scan_show(&mut self) -> Result<ScannedDisplayDiagnostic, CommandError> {
+        let command = self.get_token()?.ok_or(CommandError::InputInvariant)?;
+        let token = command.spelling().semantic_token();
+        let text = match token {
+            Token::Cs(_)
+            | Token::Char {
+                cat: Catcode::Active,
+                ..
+            } => format!(
+                "\n> {}={}.\n",
+                string_text(&self.state, token),
+                meaning_text(&self.state, &command)
+            ),
+            Token::Char { .. } | Token::Param(_) | Token::Frozen(_) => {
+                format!("\n> {}.\n", meaning_text(&self.state, &command))
+            }
+        };
+        Ok(ScannedDisplayDiagnostic {
+            text,
+            provenance: StructuredProvenance {
+                primary: command.origin(),
+            },
+        })
+    }
+
+    /// TeX82 §46's `\\showthe` internal-value scan.
+    pub fn scan_showthe(&mut self) -> Result<ScannedDisplayDiagnostic, CommandError> {
+        let value = self
+            .scan_internal_value()?
+            .ok_or(CommandError::InputInvariant)?;
+        let text = match value.value {
+            value @ (InternalValue::Integer(_)
+            | InternalValue::Dimension(_)
+            | InternalValue::Glue(_)
+            | InternalValue::MuGlue(_)) => {
+                render_the_value(value).expect("non-token values render")
+            }
+            InternalValue::Tokens { tokens, .. } => self
+                .state
+                .tokens(tokens)
+                .iter()
+                .copied()
+                .map(|token| string_text(&self.state, token))
+                .collect(),
+        };
+        Ok(ScannedDisplayDiagnostic {
+            text: format!("\n> {text}.\n"),
+            provenance: StructuredProvenance {
+                primary: value.provenance.primary,
+            },
+        })
+    }
+
+    /// TeX82 §46's expanded box-register scan for `\\showbox`.
+    pub fn scan_showbox(&mut self) -> Result<(i32, StructuredProvenance), CommandError> {
+        let index = self.scan_integer()?;
+        Ok((
+            index.value,
+            StructuredProvenance {
+                primary: index.provenance.primary,
+            },
+        ))
     }
 
     /// Scans the payload prefix of TeX82 §1090's leader commands.

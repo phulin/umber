@@ -10,8 +10,8 @@ pub use structured::{
     AlignmentCellOpening, FileNameTermination, FontLoadRequest, ImmediateExtension,
     InputStreamRequest, RegisteredInput, ScannedAccent, ScannedAccentBase, ScannedBalancedText,
     ScannedBoxConstruction, ScannedBoxKind, ScannedBoxRegister, ScannedDiscretionary,
-    ScannedFileName, ScannedGlueParameterAssignment, ScannedLeaderPayload, ScannedLetAssignment,
-    ScannedMacroDefinition, ScannedPackingSpec, ScannedRuleSpec, ScannedSetBoxAssignment,
-    ScannedVSplit, StructuredProvenance,
+    ScannedDisplayDiagnostic, ScannedFileName, ScannedGlueParameterAssignment,
+    ScannedLeaderPayload, ScannedLetAssignment, ScannedMacroDefinition, ScannedPackingSpec,
+    ScannedRuleSpec, ScannedSetBoxAssignment, ScannedVSplit, StructuredProvenance,
 };
 pub use token_list::ScannedTokenRegisterAssignment;

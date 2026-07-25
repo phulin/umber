@@ -11,8 +11,8 @@ use tex_command::{
     CommandHostCapabilities, CommandHostContext, CommandProcessor, CommandProfile, CommandRuntime,
     CommandState, CommandStateSnapshot, FontLoadRequest, FontResource, ImmediateExtension,
     InputStreamRequest, ScannedAccent, ScannedBoxConstruction, ScannedBoxKind,
-    ScannedDiscretionary, ScannedLeaderPayload, ScannedPackingSpec, ScannedVSplit,
-    SourceRegistration, SourceRegistrationError,
+    ScannedDiscretionary, ScannedDisplayDiagnostic, ScannedLeaderPayload, ScannedPackingSpec,
+    ScannedVSplit, SourceRegistration, SourceRegistrationError,
 };
 #[cfg(any(test, feature = "instrumentation"))]
 use tex_command::{
@@ -1115,6 +1115,10 @@ enum ScannedStep {
     Message {
         tokens: TracedTokenList,
         error: bool,
+    },
+    DisplayDiagnostic(ScannedDisplayDiagnostic),
+    ShowBox {
+        index: u16,
     },
     VSplit(ScannedVSplit),
     ImmediateExtension(ImmediateExtension),
@@ -2311,13 +2315,18 @@ fn scan_command(
                 error: primitive == UnexpandablePrimitive::ErrMessage,
             })
         }
-        // TeX82 §46's `show_whatever` uses `get_token`, rather than the
-        // expanded delivery used by main control.  This must stay on the
-        // command side of replay: a macro shown by `\show` is observed raw
-        // and is not invoked as the following main-control command.
-        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Show) => {
-            let _ = processor.get_token().map_err(command_error)?;
-            Ok(ScannedStep::Continue)
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Show) => Ok(
+            ScannedStep::DisplayDiagnostic(processor.scan_show().map_err(command_error)?),
+        ),
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::ShowThe) => Ok(
+            ScannedStep::DisplayDiagnostic(processor.scan_showthe().map_err(command_error)?),
+        ),
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::ShowBox) => {
+            let (index, _) = processor.scan_showbox().map_err(command_error)?;
+            Ok(ScannedStep::ShowBox {
+                index: u16::try_from(index)
+                    .map_err(|_| ExecError::RegisterNumberOutOfRange(index))?,
+            })
         }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Immediate) => {
             Ok(ScannedStep::ImmediateExtension(
@@ -3679,6 +3688,16 @@ fn apply_scanned_step(
                     .world_mut()
                     .write_text(PrintSink::TerminalAndLog, &text);
             }
+            Ok(ReplayStep::Continue)
+        }
+        ScannedStep::DisplayDiagnostic(diagnostic) => {
+            stores
+                .world_mut()
+                .write_text(PrintSink::TerminalAndLog, &diagnostic.text);
+            Ok(ReplayStep::Continue)
+        }
+        ScannedStep::ShowBox { index } => {
+            crate::diagnostics::execute_showbox(stores, index);
             Ok(ReplayStep::Continue)
         }
         ScannedStep::ImmediateExtension(extension) => {
