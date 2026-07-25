@@ -1943,6 +1943,9 @@ enum ScannedStep {
         stream: i32,
         tokens: TracedTokenList,
     },
+    DeferredSpecial {
+        tokens: TracedTokenList,
+    },
     Arithmetic {
         primitive: UnexpandablePrimitive,
         target: ArithmeticTarget,
@@ -3187,6 +3190,11 @@ fn scan_command(
                 .tokens;
             Ok(ScannedStep::DeferredWrite { stream, tokens })
         }
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Special) => {
+            Ok(ScannedStep::DeferredSpecial {
+                tokens: processor.scan_special().map_err(command_error)?.tokens,
+            })
+        }
         Meaning::UnexpandablePrimitive(
             primitive @ (UnexpandablePrimitive::CatCode
             | UnexpandablePrimitive::LcCode
@@ -3539,6 +3547,21 @@ fn replay_text(tokens: &[tex_state::token::Token]) -> String {
             _ => None,
         })
         .collect()
+}
+
+/// TeX's eight-bit extension payload convention, with UTF-8 retained for
+/// extended host-profile characters exactly as the legacy byte boundary does.
+fn tex_byte_text(text: &str) -> Vec<u8> {
+    let mut bytes = Vec::with_capacity(text.len());
+    for ch in text.chars() {
+        if let Ok(byte) = u8::try_from(ch as u32) {
+            bytes.push(byte);
+        } else {
+            let mut encoded = [0; 4];
+            bytes.extend_from_slice(ch.encode_utf8(&mut encoded).as_bytes());
+        }
+    }
+    bytes
 }
 
 fn replay_stream_slot(value: i32, stores: &mut Universe) -> StreamSlot {
@@ -4881,6 +4904,19 @@ fn apply_scanned_step(
                 .push(Node::Whatsit(Whatsit::DeferredWrite {
                     sink: replay_write_sink(stream),
                     tokens: tokens.token_list(),
+                }));
+            Ok(ReplayStep::Continue)
+        }
+        ScannedStep::DeferredSpecial { tokens } => {
+            let mut text = String::new();
+            for &token in stores.tokens(tokens.token_list()) {
+                tex_expand::append_token_string_text(stores, token, &mut text);
+            }
+            modes
+                .current_list_mut()
+                .push(Node::Whatsit(Whatsit::Special {
+                    class: "dvi".to_owned(),
+                    payload: tex_byte_text(&text),
                 }));
             Ok(ReplayStep::Continue)
         }

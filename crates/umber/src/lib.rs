@@ -1829,6 +1829,36 @@ mod tests {
     }
 
     #[test]
+    fn canonical_special_is_deferred_until_shipout() {
+        let mut stores = Universe::new();
+        install_expandable_primitives(&mut stores);
+        install_unexpandable_primitives(&mut stores);
+        let mut input = InputStack::new(MemoryInput::new("legacy input"));
+        let mut session = EngineSession::new(
+            &mut input,
+            &mut stores,
+            ExecutionContext::new("canonical-whatsits"),
+        );
+        session
+            .register_canonical_root(
+                "whatsits.tex",
+                RegisteredSourceKind::Generated,
+                Arc::from(&b"\\shipout\\hbox{\\special{one}}\\end"[..]),
+            )
+            .expect("root registers");
+
+        let result = session.execute().expect("canonical whatsits complete");
+
+        assert_eq!(result.terminal_text, "");
+        let page = tex_out::PageArtifact::from_bytes(result.committed_artifacts[0].bytes())
+            .expect("committed artifact parses");
+        assert!(matches!(
+            page.effects.as_slice(),
+            [tex_out::PageEffect::Special { payload, .. }] if payload == b"one"
+        ));
+    }
+
+    #[test]
     fn fresh_and_format_sessions_pin_the_same_command_profile() {
         use crate::EngineMode;
 

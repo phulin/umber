@@ -1722,6 +1722,16 @@ impl CommandProcessor<'_> {
         })
     }
 
+    /// Scans TeX82 §53's `\special` general text.
+    ///
+    /// Like `new_whatsit`, this expands the balanced general text while the
+    /// command processor owns the input episode.  Main control receives only
+    /// the immutable result and appends the deferred node; it never reads a
+    /// token or opens a compatibility input stack during shipout.
+    pub fn scan_special(&mut self) -> Result<ScannedBalancedText, CommandError> {
+        self.scan_balanced_text(true)
+    }
+
     /// Scans a macro parameter text and replacement text without exposing the
     /// temporary macro-argument matcher or its input frames.
     pub fn scan_macro_definition(
