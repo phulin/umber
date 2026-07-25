@@ -1115,6 +1115,13 @@ impl CommandProcessor<'_> {
         }
 
         let recovery = self.command.scanner.recovery_context();
+        // The pinned TeX82 observer instruments `check_outer_validity` at
+        // entry, before §23 backs up the forbidden outer control sequence.
+        // Keep this command-owned: the backup still belongs to raw delivery,
+        // but the diagnostic describes the live scanner episode that selected
+        // its recovery.
+        #[cfg(any(test, feature = "instrumentation"))]
+        self.observe_outer_validity_diagnostic(&recovery.status, false);
         if matches!(recovery.status, ScannerStatus::Matching(_)) {
             self.outer_recovered_while_matching = true;
         }
@@ -1138,6 +1145,8 @@ impl CommandProcessor<'_> {
             // the expansion returns.
             self.eof_recovered_while_matching = true;
         }
+        #[cfg(any(test, feature = "instrumentation"))]
+        self.observe_outer_validity_diagnostic(&recovery.status, true);
         self.install_outer_recovery(recovery)?;
         Ok(true)
     }
@@ -1147,11 +1156,6 @@ impl CommandProcessor<'_> {
     /// reassigned their visible spellings.
     fn install_outer_recovery(&mut self, recovery: RecoveryContext) -> Result<(), CommandError> {
         let RecoveryContext { status, warning } = recovery;
-        // TeX82 §379 reports the outer-validity EOF before it clears the
-        // scanner episode.  §510 then reports the incomplete skipped
-        // conditional before `ins_error` inserts frozen `\fi`.
-        #[cfg(any(test, feature = "instrumentation"))]
-        self.observe_runaway_eof_diagnostics(&status);
         #[cfg(any(test, feature = "instrumentation"))]
         if matches!(status, ScannerStatus::Aligning(_)) {
             // TeX82 §23's `check_outer_validity` reports the aligning
@@ -1245,7 +1249,7 @@ impl CommandProcessor<'_> {
     }
 
     #[cfg(any(test, feature = "instrumentation"))]
-    fn observe_runaway_eof_diagnostics(&mut self, status: &ScannerStatus) {
+    fn observe_outer_validity_diagnostic(&mut self, status: &ScannerStatus, at_eof: bool) {
         let status_name = match status {
             ScannerStatus::Normal => "normal",
             ScannerStatus::Skipping(_) => "skipping",
@@ -1256,10 +1260,14 @@ impl CommandProcessor<'_> {
         };
         self.observe(CommandObservation::Diagnostic(DiagnosticRecord {
             severity: "error",
-            diagnostic: "outer_validity_eof",
+            diagnostic: if at_eof {
+                "outer_validity_eof"
+            } else {
+                "outer_validity_control_sequence"
+            },
             arguments: vec![DiagnosticArgument::Name(status_name.into())],
         }));
-        if matches!(status, ScannerStatus::Skipping(_)) {
+        if at_eof && matches!(status, ScannerStatus::Skipping(_)) {
             self.observe(CommandObservation::Diagnostic(DiagnosticRecord {
                 severity: "error",
                 diagnostic: "conditional_incomplete",

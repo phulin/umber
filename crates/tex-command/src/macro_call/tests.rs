@@ -502,6 +502,93 @@ fn outer_argument_token_uses_raw_delivery_recovery_then_aborts_match() {
 }
 
 #[test]
+fn matching_outer_recovery_reports_before_backing_up_the_forbidden_control_sequence() {
+    // TeX82 §23's `check_outer_validity` is instrumented at entry, before
+    // its `back_list` call; §394 owns the live matching episode.
+    let mut command = CommandState::default();
+    let source = command
+        .register_source(SourceRegistration::new(
+            RegisteredSourceKind::Generated,
+            Arc::<[u8]>::from(&b"\\m\\outer"[..]),
+        ))
+        .expect("source registers");
+    command
+        .open_registered_source(source)
+        .expect("source opens");
+    let mut runtime = CommandRuntime::default();
+    let mut universe = Universe::new();
+    universe.install_primitive_meaning(
+        "par",
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Par),
+    );
+    let macro_name = universe.intern("m").symbol();
+    let parameters = universe.intern_token_list(&[Token::param(1)]);
+    let replacement = universe.intern_token_list(&[]);
+    let definition = universe.intern_macro(MacroMeaning::new(
+        MeaningFlags::EMPTY,
+        parameters,
+        replacement,
+    ));
+    universe.set_meaning(
+        macro_name,
+        Meaning::Macro {
+            flags: MeaningFlags::EMPTY,
+            definition,
+        },
+    );
+    let outer_name = universe.intern("outer").symbol();
+    let empty = universe.intern_token_list(&[]);
+    let outer_definition =
+        universe.intern_macro(MacroMeaning::new(MeaningFlags::OUTER, empty, empty));
+    universe.set_meaning(
+        outer_name,
+        Meaning::Macro {
+            flags: MeaningFlags::OUTER,
+            definition: outer_definition,
+        },
+    );
+    let mut capabilities = CommandHostCapabilities::default();
+    let mut recorder = Recorder::default();
+    let mut processor = CommandProcessor::new(
+        &mut command,
+        &mut runtime,
+        universe.command_context(),
+        CommandHostContext::new(&mut capabilities),
+    )
+    .with_observer(&mut recorder);
+
+    let call = processor
+        .get_next()
+        .expect("macro call delivery")
+        .expect("macro token");
+    assert_eq!(
+        processor.macro_call(call),
+        Err(CommandError::OuterInMacroArgument)
+    );
+
+    let diagnostic = recorder
+        .0
+        .iter()
+        .position(|observation| matches!(
+            observation,
+            CommandObservation::Diagnostic(diagnostic)
+                if diagnostic.diagnostic == "outer_validity_control_sequence"
+                    && diagnostic.arguments == [crate::DiagnosticArgument::Name("matching".into())]
+        ))
+        .expect("matching outer diagnostic");
+    let backup = recorder
+        .0
+        .iter()
+        .position(|observation| matches!(
+            observation,
+            CommandObservation::Input(record)
+                if record.transition == InputTransition::Backup && record.reason == InputReason::Backup
+        ))
+        .expect("outer control sequence backup");
+    assert!(diagnostic < backup, "diagnostic precedes raw backup");
+}
+
+#[test]
 fn successful_call_activates_canonical_replacement_and_replays_parameter_range() {
     let mut command = CommandState::default();
     let source = command

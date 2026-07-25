@@ -1208,9 +1208,12 @@ one-delivery backed-up suppression, current-meaning resolution, and literal
 brace `align_state` accounting. `get_token` is routed through that same loop.
 Scanner-status outer recovery and alignment-template interception have their
 sole entry points in this loop. `check_outer_validity` captures the live typed
-status and warning identity, backs up an offending outer macro through exact
-delivery identity, substitutes the current recovery space, clears the live
-scanner episode, and pushes bounded ordinary recovery input. Terminal runaway
+status and warning identity, records a forbidden-control-sequence diagnostic
+before backing up an offending outer macro through exact delivery identity,
+substitutes the current recovery space, clears the live scanner episode, and
+pushes bounded ordinary recovery input. This follows the pinned TeX82 §23
+instrumentation boundary; terminal EOF reports its separate diagnostic before
+the same recovery insertion. Terminal runaway
 recovery follows the same path: definitions and absorbed text receive `}`;
 macro matching receives frozen `\par`; alignment preambles receive frozen
 `\cr` then `}`; and skipped conditional text receives frozen `\fi`. The
