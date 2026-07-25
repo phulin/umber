@@ -1,5 +1,6 @@
 use std::fmt;
 
+use tex_command::CommandError;
 use tex_expand::ExpandError;
 use tex_expand::scan::ScanToksError;
 use tex_lex::LexError;
@@ -130,6 +131,11 @@ pub enum ExecError {
     MissingTracedToken {
         context: TracedTokenWord,
     },
+    /// A canonical command-core operation failed with a `CommandError` other
+    /// than `MissingInput` or `PdfNavigation`, which map to their own
+    /// dedicated variants above. This preserves the originating variant and
+    /// message instead of collapsing it into a generic `MissingToken`.
+    Command(CommandError),
     InvalidLetRhs {
         token: Token,
         origin: OriginId,
@@ -318,6 +324,7 @@ impl fmt::Display for ExecError {
                 write!(f, "image resource `{}` is unavailable", request.name)
             }
             Self::MissingTracedToken { .. } => f.write_str("missing token while scanning input"),
+            Self::Command(err) => write!(f, "{err}"),
             Self::InvalidLetRhs { token, .. } => {
                 write!(f, "\\let cannot assign macro parameter token {token:?}")
             }
@@ -472,6 +479,7 @@ impl std::error::Error for ExecError {
             Self::World(err) => Some(err),
             Self::FontParse(err) => Some(err),
             Self::PdfFontMap(err) => Some(err),
+            Self::Command(err) => Some(err),
             Self::NeedResource(_)
             | Self::ExecutionAlreadyTerminated
             | Self::ExecutionCancelled
@@ -612,6 +620,7 @@ impl ExecError {
             | Self::MissingCanonicalInput { .. }
             | Self::MissingCanonicalFont { .. }
             | Self::MissingCanonicalPdfImage { .. }
+            | Self::Command(_)
             | Self::UnsupportedAssignmentTarget
             | Self::RegisterNumberOutOfRange(_)
             | Self::ArithmeticOverflow

@@ -745,6 +745,39 @@ fn canonical_definition_recovery_keeps_target_and_parameter_tokens_command_owned
 }
 
 #[test]
+fn canonical_macro_prefix_mismatch_surfaces_its_own_command_error() {
+    // `\foo` requires the literal text `XY` before its (parameterless) body,
+    // but the invocation supplies `AB`. `CommandError::MacroPrefixMismatch`
+    // is not recovered anywhere in `tex-command`'s expansion loop (unlike
+    // `ParagraphInMacroArgument`/`OuterInMacroArgument`, which are absorbed
+    // in `processor/expand.rs`), so it must reach `tex-exec` as its own
+    // named `ExecError::Command` variant rather than collapsing into a
+    // generic `ExecError::MissingToken`.
+    let mut universe = Universe::new();
+    let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+    register_source(&mut control, br"\def\foo XY{Z}\foo AB");
+
+    let error = loop {
+        match control.step(&mut universe) {
+            Ok(MainControlStep::End | MainControlStep::EndOfInput) => {
+                panic!("expected the mismatched macro invocation to fail")
+            }
+            Ok(MainControlStep::Continue) => {}
+            Err(error) => break error,
+        }
+    };
+
+    assert!(
+        matches!(error, ExecError::Command(CommandError::MacroPrefixMismatch)),
+        "expected ExecError::Command(CommandError::MacroPrefixMismatch), got {error:?}"
+    );
+    assert_eq!(
+        error.to_string(),
+        "macro invocation does not match its definition"
+    );
+}
+
+#[test]
 fn canonical_grouping_reports_and_recovers_extra_closers() {
     let mut universe = Universe::new();
     let mut control = CanonicalMainControl::tex82_initex(&mut universe);

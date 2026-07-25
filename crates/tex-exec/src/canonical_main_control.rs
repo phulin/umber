@@ -7290,13 +7290,24 @@ fn case_shift_tokens(
     stores.finish_traced_token_list(&shifted)
 }
 
+/// Converts a command-core failure into its `ExecError` counterpart,
+/// preserving the originating `CommandError` variant and message. Only
+/// `MissingInput` and `PdfNavigation` map onto dedicated `ExecError` variants
+/// shared with other producers; every other variant is carried through
+/// verbatim via `ExecError::Command` so it names itself instead of collapsing
+/// into a generic `MissingToken`. This match is written one arm per variant
+/// (no wildcard) so adding a new `CommandError` variant fails to compile here
+/// until it is explicitly handled.
 fn command_error(error: CommandError) -> ExecError {
     match error {
         CommandError::MissingInput(name) => ExecError::MissingCanonicalInput { name },
         CommandError::PdfNavigation(message) => ExecError::PdfNavigation(message),
-        _ => ExecError::MissingToken {
-            context: "command processor",
-        },
+        CommandError::InputInvariant
+        | CommandError::StaleDelivery
+        | CommandError::MacroPrefixMismatch
+        | CommandError::ParagraphInMacroArgument
+        | CommandError::OuterInMacroArgument
+        | CommandError::UnsupportedExpandablePrimitive(_) => ExecError::Command(error),
     }
 }
 

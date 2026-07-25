@@ -129,15 +129,13 @@ fn report_error(source: &str, session: &CanonicalEngineSession<'_>, error: &Cano
     match error {
         CanonicalSessionError::Execution(exec_error) => {
             eprintln!("{}", exec_error.format_with_provenance(session.stores()));
-            if let ExecError::MissingToken { context } = exec_error
-                && *context == "command processor"
-            {
+            if let ExecError::Command(command_error) = exec_error {
                 eprintln!(
-                    "note: this generic diagnosis usually means CommandProcessor returned a \
-                     CommandError that command_error() collapsed to a plain MissingToken in \
-                     crates/tex-exec/src/canonical_main_control.rs; see umber2-johp.58 for the \
-                     temporary panic-based CommandError recovery recipe (add a panic!() in the \
-                     relevant CommandError match arm and re-run with RUST_BACKTRACE=1)."
+                    "note: this is a canonical command-core failure ({command_error:?}); \
+                     `command_error()` in crates/tex-exec/src/canonical_main_control.rs \
+                     names every `CommandError` variant explicitly (see umber2-johp.59), so \
+                     this message and variant identify the true origin directly -- no debug \
+                     panic needed."
                 );
             }
         }
