@@ -1127,8 +1127,26 @@ fn replay_executes_immediate_stream_extensions_and_replays_other_lookahead() {
         ] if *slot == StreamSlot::new(2)
             && target.path() == std::path::Path::new("trace.tex")
             && *write_slot == StreamSlot::new(2)
-            && text == "ready"
+            && text == "ready\n"
             && *close_slot == StreamSlot::new(2)
+    ));
+}
+
+#[test]
+fn replay_appends_an_unexpanded_deferred_write_whatsit() {
+    let mut universe = Universe::new();
+    let mut control = CommandReplayControl::tex82_initex(&mut universe);
+    control.modes.push(Mode::RestrictedHorizontal);
+    register_source(&mut control, br"\write2{during}");
+
+    assert_eq!(
+        control.step(&mut universe).expect("deferred write"),
+        ReplayStep::Continue
+    );
+    assert!(matches!(
+        control.modes.current_list().nodes(),
+        [Node::Whatsit(tex_state::node::Whatsit::DeferredWrite { sink, .. })]
+            if *sink == tex_state::PrintSink::Stream(StreamSlot::new(2))
     ));
 }
 

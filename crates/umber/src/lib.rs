@@ -1797,6 +1797,13 @@ mod tests {
         assert_eq!(result.artifacts.len(), 2);
         assert_eq!(result.dvi_pages.len(), result.artifacts.len());
         assert!(session.stores().pure_memo_stats().shipout_hits >= 1);
+        assert!(result.committed_artifacts.iter().all(|artifact| {
+            tex_out::PageArtifact::from_bytes(artifact.bytes())
+                .expect("memoized artifact parses")
+                .effects
+                .is_empty()
+        }));
+        assert!(session.stores().world().effect_records().is_empty());
     }
 
     #[test]
@@ -1856,6 +1863,277 @@ mod tests {
             page.effects.as_slice(),
             [tex_out::PageEffect::Special { payload, .. }] if payload == b"one"
         ));
+    }
+
+    #[test]
+    fn canonical_stream_effects_and_page_effects_commit_in_tex_order() {
+        let mut stores = Universe::new();
+        install_expandable_primitives(&mut stores);
+        install_unexpandable_primitives(&mut stores);
+        let mut input = InputStack::new(MemoryInput::new("legacy input"));
+        let mut session = EngineSession::new(
+            &mut input,
+            &mut stores,
+            ExecutionContext::new("canonical-effects"),
+        );
+        session
+            .register_canonical_root(
+                "effects.tex",
+                RegisteredSourceKind::Generated,
+                Arc::from(
+                    &b"\\immediate\\openout2=ordered.aux \
+                       \\immediate\\write2{before} \
+                       \\shipout\\hbox{\\write2{during}\\special{after-write}} \
+                       \\immediate\\closeout2 \\end"[..],
+                ),
+            )
+            .expect("root registers");
+
+        let result = session.execute().expect("canonical effects complete");
+
+        assert_eq!(
+            session.stores().world().memory_output("ordered.aux"),
+            Some(&b"before\nduring\n"[..])
+        );
+        assert!(matches!(
+            session.stores().world().effect_records(),
+            [tex_state::EffectRecord::StreamClose { slot }]
+                if *slot == StreamSlot::new(2)
+        ));
+        let page = tex_out::PageArtifact::from_bytes(result.committed_artifacts[0].bytes())
+            .expect("committed artifact parses");
+        assert!(matches!(
+            page.effects.as_slice(),
+            [
+                tex_out::PageEffect::OpenOut { stream: 2, path },
+                tex_out::PageEffect::Write { text: before, .. },
+                tex_out::PageEffect::Write { text: during, .. },
+                tex_out::PageEffect::Special { payload, .. },
+            ] if path == "ordered.aux"
+                && before == "before\n"
+                && during == "during\n"
+                && payload == b"after-write"
+        ));
+    }
+
+    #[test]
+    fn canonical_pdf_whatsits_keep_explicit_shipout_order() {
+        let mut stores = Universe::new();
+        crate::prepare_pdftex_run_stores(&mut stores);
+        stores.set_int_param_global(tex_state::env::banks::IntParam::PDF_OUTPUT, 1);
+        let mut input = InputStack::new(MemoryInput::new("legacy input"));
+        let mut session = EngineSession::with_command_profile(
+            &mut input,
+            &mut stores,
+            ExecutionContext::new("canonical-pdf-effects"),
+            tex_command::CommandProfile::PDFTEX14027,
+        );
+        session
+            .register_canonical_root(
+                "pdf-effects.tex",
+                RegisteredSourceKind::Generated,
+                Arc::from(
+                    &b"\\shipout\\hbox{\
+                       \\pdfliteral direct{A}\
+                       \\pdfsave\\pdfrestore\
+                       \\pdfdest name{target}fit\
+                       \\special{B}\
+                       \\pdfannot width1pt{/Subtype/Text}\
+                       \\pdfstartlink width1pt goto name{target}\\pdfendlink}\\end"[..],
+                ),
+            )
+            .expect("root registers");
+
+        let result = session.execute().expect("canonical PDF effects complete");
+        let page = tex_out::PageArtifact::from_bytes(result.committed_artifacts[0].bytes())
+            .expect("committed artifact parses");
+
+        assert!(matches!(
+            page.effects.as_slice(),
+            [
+                tex_out::PageEffect::PdfLiteral { payload: literal, .. },
+                tex_out::PageEffect::PdfSave,
+                tex_out::PageEffect::PdfRestore,
+                tex_out::PageEffect::PdfDestination(destination),
+                tex_out::PageEffect::Special { payload: special, .. },
+                tex_out::PageEffect::PdfAnnotation(
+                    tex_out::PdfAnnotationEffect::Annotation { .. },
+                ),
+                tex_out::PageEffect::PdfAnnotation(
+                    tex_out::PdfAnnotationEffect::LinkStart { .. },
+                ),
+                tex_out::PageEffect::PdfAnnotation(
+                    tex_out::PdfAnnotationEffect::LinkEnd { .. },
+                ),
+            ] if literal == b"A"
+                && destination.identifier
+                    == tex_out::PdfDestinationIdentifier::Name(b"target".to_vec())
+                && special == b"B"
+        ));
+    }
+
+    #[test]
+    fn canonical_pdf_whatsits_survive_default_and_output_routine_shipout() {
+        let run = |source: &'static [u8]| {
+            let mut stores = Universe::new();
+            crate::prepare_pdftex_run_stores(&mut stores);
+            stores.set_int_param_global(tex_state::env::banks::IntParam::PDF_OUTPUT, 1);
+            let mut input = InputStack::new(MemoryInput::new("legacy input"));
+            let mut session = EngineSession::with_command_profile(
+                &mut input,
+                &mut stores,
+                ExecutionContext::new("canonical-pdf-page-builder"),
+                tex_command::CommandProfile::PDFTEX14027,
+            );
+            session
+                .register_canonical_root(
+                    "page-builder.tex",
+                    RegisteredSourceKind::Generated,
+                    Arc::from(source),
+                )
+                .expect("root registers");
+            let result = session.execute().expect("page builder ships PDF whatsit");
+            result
+                .committed_artifacts
+                .iter()
+                .map(|artifact| {
+                    tex_out::PageArtifact::from_bytes(artifact.bytes())
+                        .expect("committed artifact parses")
+                })
+                .collect::<Vec<_>>()
+        };
+
+        let default_pages = run(
+            b"\\topskip=0pt\\setbox0=\\hbox{\\vrule width1pt height1pt\\pdfliteral direct{default}}\
+              \\copy0\\penalty-10000\\end",
+        );
+        assert_eq!(default_pages.len(), 1);
+        assert!(matches!(
+            default_pages[0].effects.as_slice(),
+            [tex_out::PageEffect::PdfLiteral { payload, .. }] if payload == b"default"
+        ));
+
+        let output_pages = run(b"\\output={\\shipout\\box255}\\topskip=0pt\
+              \\setbox0=\\hbox{\\vrule width1pt height1pt\\pdfliteral direct{routine}}\
+              \\copy0\\penalty-10000\\end");
+        let output_effects = output_pages
+            .iter()
+            .flat_map(|page| page.effects.iter())
+            .collect::<Vec<_>>();
+        assert_eq!(output_effects.len(), 1, "effects: {output_effects:#?}");
+        assert!(
+            matches!(
+                output_effects[0],
+                tex_out::PageEffect::PdfLiteral { payload, .. } if payload == b"routine"
+            ),
+            "effects: {output_effects:#?}"
+        );
+    }
+
+    #[test]
+    fn canonical_pdf_resource_retry_matches_no_failure_effect_sequence() {
+        let source = &b"\\immediate\\write17{once} \\pdfximage image.png \
+                         \\shipout\\hbox{\\pdfrefximage1}\\end"[..];
+        let image = tex_state::PdfExternalImageSource {
+            identity: tex_state::ContentHash::from_bytes(b"canonical retry image"),
+            metadata: tex_state::PdfExternalImageMetadata::Raster(
+                tex_state::PdfRasterImageMetadata {
+                    format: tex_state::PdfRasterFormat::Png,
+                    width: 1,
+                    height: 1,
+                    bits_per_component: 8,
+                    color_space: tex_state::PdfRasterColorSpace::Gray,
+                    alpha: false,
+                    png_color_type: Some(0),
+                },
+            ),
+            natural_width: tex_state::scaled::Scaled::from_raw(tex_state::scaled::Scaled::UNITY),
+            natural_height: tex_state::scaled::Scaled::from_raw(tex_state::scaled::Scaled::UNITY),
+            bytes: Arc::from(&b"retry image bytes"[..]),
+        };
+
+        let mut retry_stores = Universe::new();
+        crate::prepare_pdftex_run_stores(&mut retry_stores);
+        retry_stores.set_int_param_global(tex_state::env::banks::IntParam::PDF_OUTPUT, 1);
+        let mut retry_input = InputStack::new(MemoryInput::new("legacy input"));
+        let mut retry = EngineSession::with_command_profile(
+            &mut retry_input,
+            &mut retry_stores,
+            ExecutionContext::new("canonical-pdf-retry"),
+            tex_command::CommandProfile::PDFTEX14027,
+        );
+        retry
+            .register_canonical_root(
+                "retry.tex",
+                RegisteredSourceKind::Generated,
+                Arc::from(source),
+            )
+            .expect("retry root registers");
+        assert!(matches!(
+            retry.advance_canonical().expect("immediate write"),
+            CanonicalStepResult::Progress(MainControlStep::Continue)
+        ));
+        let request = loop {
+            match retry.advance_canonical().expect("image suspension") {
+                CanonicalStepResult::Progress(MainControlStep::Continue) => {}
+                CanonicalStepResult::Suspended(CanonicalResourceNeed::PdfImage { request }) => {
+                    break request;
+                }
+                other => panic!("expected image suspension, got {other:?}"),
+            }
+        };
+        assert_eq!(retry.stores().world().effect_records().len(), 1);
+        assert!(retry.stores().world().artifact_commits().is_empty());
+        retry.provide_canonical_pdf_image(
+            request.clone(),
+            PdfImageResource::Available(image.clone()),
+        );
+        let retried = retry.execute().expect("retried execution succeeds");
+
+        let mut fresh_stores = Universe::new();
+        crate::prepare_pdftex_run_stores(&mut fresh_stores);
+        fresh_stores.set_int_param_global(tex_state::env::banks::IntParam::PDF_OUTPUT, 1);
+        let mut fresh_input = InputStack::new(MemoryInput::new("legacy input"));
+        let mut fresh = EngineSession::with_command_profile(
+            &mut fresh_input,
+            &mut fresh_stores,
+            ExecutionContext::new("canonical-pdf-fresh"),
+            tex_command::CommandProfile::PDFTEX14027,
+        );
+        fresh
+            .register_canonical_root(
+                "fresh.tex",
+                RegisteredSourceKind::Generated,
+                Arc::from(source),
+            )
+            .expect("fresh root registers");
+        fresh.provide_canonical_pdf_image(request, PdfImageResource::Available(image));
+        let no_failure = fresh.execute().expect("no-failure execution succeeds");
+
+        assert_eq!(
+            retried.committed_artifacts[0].bytes(),
+            no_failure.committed_artifacts[0].bytes()
+        );
+        let page = tex_out::PageArtifact::from_bytes(retried.committed_artifacts[0].bytes())
+            .expect("retried artifact parses");
+        assert!(matches!(
+            page.effects.as_slice(),
+            [
+                tex_out::PageEffect::Write {
+                    sink: tex_out::EffectSink::TerminalAndLog,
+                    text,
+                },
+                tex_out::PageEffect::PdfRefXImage { object: 1, .. },
+            ] if text == "once\n"
+        ));
+        assert_eq!(
+            retry.stores().world().memory_terminal_output(),
+            Some(&b"once\n"[..])
+        );
+        assert_eq!(
+            fresh.stores().world().memory_terminal_output(),
+            Some(&b"once\n"[..])
+        );
     }
 
     #[test]

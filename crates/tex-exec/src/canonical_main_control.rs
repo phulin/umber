@@ -233,7 +233,6 @@ impl CanonicalMainControl {
     pub fn tex82_initex(stores: &mut Universe) -> Self {
         tex_expand::install_expandable_primitives(stores);
         crate::install_unexpandable_primitives(stores);
-        install_write_stopper(stores);
         Self {
             command: CommandState::new(CommandProfile::TEX82),
             next_alignment_identity: 1,
@@ -1571,21 +1570,6 @@ impl CanonicalMainControl {
         self.capabilities.set_startup_job_name(&filename);
         Ok(filename)
     }
-}
-
-/// Installs TeX82 §53's inaccessible outer `\\endwrite` sentinel.
-///
-/// It is a frozen primitive spelling backed by an empty outer macro so the
-/// command core can observe its raw stopper delivery without exposing a
-/// fixture-specific marker to ordinary source input.
-fn install_write_stopper(stores: &mut Universe) {
-    let empty = stores.intern_token_list(&[]);
-    let definition = stores.intern_macro(MacroMeaning::new(MeaningFlags::OUTER, empty, empty));
-    let meaning = Meaning::Macro {
-        flags: MeaningFlags::OUTER,
-        definition,
-    };
-    stores.install_primitive_meaning("endwrite", meaning);
 }
 
 /// The structural outcome of one canonical main-control operation.
@@ -3612,6 +3596,16 @@ fn replay_text(tokens: &[tex_state::token::Token]) -> String {
         .collect()
 }
 
+fn canonical_write_text(tokens: &[Token], stores: &Universe) -> String {
+    let mut text = String::new();
+    for &token in tokens {
+        crate::diagnostics::append_token_show_text(stores, token, &mut text);
+    }
+    let mut text = crate::diagnostics::print_text_with_newlinechar(stores, &text);
+    text.push('\n');
+    text
+}
+
 /// TeX's eight-bit extension payload convention, with UTF-8 retained for
 /// extended host-profile characters exactly as the legacy byte boundary does.
 fn tex_byte_text(text: &str) -> Vec<u8> {
@@ -5598,7 +5592,7 @@ fn apply_scanned_step(
                 }
                 ImmediateExtension::Write { stream, tokens } => {
                     let sink = replay_write_sink(stream);
-                    let text = replay_text(stores.tokens(tokens.token_list()));
+                    let text = canonical_write_text(stores.tokens(tokens.token_list()), stores);
                     stores.world_mut().write_text(sink, &text);
                 }
                 ImmediateExtension::CloseOut { stream } => {

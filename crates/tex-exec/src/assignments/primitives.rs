@@ -1,4 +1,5 @@
 use super::*;
+use tex_state::macro_store::MacroMeaning;
 use tex_state::meaning::InternalInteger;
 use tex_state::page::{PageDimension, PageInteger};
 
@@ -223,6 +224,27 @@ fn configure_unexpandable_primitives(stores: &mut Universe, install: bool) {
         install,
         "inputlineno",
         Meaning::InternalInteger(InternalInteger::InputLineNumber),
+    );
+    configure_write_stopper(stores, install);
+}
+
+/// Registers TeX82 §53's inaccessible outer `\endwrite` sentinel with every
+/// fresh and format-restored primitive table.
+fn configure_write_stopper(stores: &mut Universe, install: bool) {
+    if let Some(meaning) = stores.primitive_meaning("endwrite") {
+        configure_primitive(stores, install, "endwrite", meaning);
+        return;
+    }
+    let empty = stores.intern_token_list(&[]);
+    let definition = stores.intern_macro(MacroMeaning::new(MeaningFlags::OUTER, empty, empty));
+    configure_primitive(
+        stores,
+        install,
+        "endwrite",
+        Meaning::Macro {
+            flags: MeaningFlags::OUTER,
+            definition,
+        },
     );
 }
 
