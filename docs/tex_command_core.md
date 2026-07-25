@@ -185,6 +185,14 @@ overtake the diagnostic; at bottom level it reports the drop before the backup
 retires. This applies equally to ordinary `\endgroup` recovery and alignment
 `endv` replay.
 
+For TeX82 §1095's `hmode+stop` `head_for_vmode` branch, `tex-command` likewise
+owns the two exact backups: it first backs up `\end` (or `\dump`), then backs
+up the synthesized primitive `\par` with inserted input ownership. The
+executor applies only the typed paragraph transition, after which command
+processing retires that inserted recovery level and redelivers the stop in
+vertical mode. This precedes §46's `its_all_over` end-game decision; no
+executor source-read path may manufacture either token.
+
 At TeX82 §23's `check_outer_validity` boundary, an aligning scanner reports
 the typed `outer_validity` alignment recovery after its EOF diagnostic and
 before command processing pushes the frozen `\cr` recovery list. The record

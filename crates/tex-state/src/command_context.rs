@@ -121,6 +121,13 @@ impl CommandContext<'_> {
         self.universe.resolve(symbol)
     }
 
+    /// Finds an already-interned control-sequence spelling without creating
+    /// a new entry in the command namespace.
+    #[must_use]
+    pub fn symbol(&self, name: &str) -> Option<Symbol> {
+        self.universe.symbol(name).map(|symbol| symbol.symbol())
+    }
+
     /// Returns the registered canonical spelling of one frozen primitive
     /// meaning, independent of a mutable control-sequence cell.
     #[must_use]

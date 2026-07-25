@@ -185,6 +185,7 @@ impl CommandReplayControl {
         alignment: AlignmentIdentity,
         stores: &mut Universe,
     ) -> Result<ReplayStep, ExecError> {
+        let mode = self.modes.current_mode();
         let innermost_group = stores.innermost_group_kind();
         let scanned = {
             let mut processor = CommandProcessor::new(
@@ -198,6 +199,7 @@ impl CommandReplayControl {
                 alignment,
                 &ReplayBoxes::default(),
                 innermost_group,
+                mode,
             )?
         };
         apply_scanned_step(
@@ -213,10 +215,8 @@ impl CommandReplayControl {
 
     /// Delivers and executes one replay command through the command processor.
     pub fn step(&mut self, stores: &mut Universe) -> Result<ReplayStep, ExecError> {
-        let starts_paragraph = matches!(
-            self.modes.current_mode(),
-            Mode::Vertical | Mode::InternalVertical
-        );
+        let mode = self.modes.current_mode();
+        let starts_paragraph = matches!(mode, Mode::Vertical | Mode::InternalVertical);
         let alignment_preamble = alignment_preamble(self.active_alignment.as_mut());
         let innermost_group = stores.innermost_group_kind();
         let scanned = {
@@ -228,6 +228,7 @@ impl CommandReplayControl {
             );
             scan_replay_step(
                 &mut processor,
+                mode,
                 starts_paragraph,
                 &self.boxes,
                 alignment_preamble,
@@ -253,10 +254,8 @@ impl CommandReplayControl {
         stores: &mut Universe,
         observer: &mut dyn CommandObserver,
     ) -> Result<ReplayStep, ExecError> {
-        let starts_paragraph = matches!(
-            self.modes.current_mode(),
-            Mode::Vertical | Mode::InternalVertical
-        );
+        let mode = self.modes.current_mode();
+        let starts_paragraph = matches!(mode, Mode::Vertical | Mode::InternalVertical);
         let alignment_preamble = alignment_preamble(self.active_alignment.as_mut());
         let innermost_group = stores.innermost_group_kind();
         let scanned = {
@@ -269,6 +268,7 @@ impl CommandReplayControl {
             .with_observer(observer);
             scan_replay_step(
                 &mut processor,
+                mode,
                 starts_paragraph,
                 &self.boxes,
                 alignment_preamble,
@@ -610,6 +610,7 @@ enum ScannedStep {
 /// only the second replay reaches TeX82's live preamble scanner.
 fn scan_replay_step(
     processor: &mut CommandProcessor<'_>,
+    mode: Mode,
     starts_paragraph: bool,
     boxes: &ReplayBoxes,
     alignment_preamble: Option<(AlignmentIdentity, AlignmentPreamblePhase)>,
@@ -650,13 +651,15 @@ fn scan_replay_step(
             AlignmentPreamblePhase::AlignPeek { after_noalign } => {
                 scan_alignment_peek(processor, alignment, after_noalign)
             }
-            AlignmentPreamblePhase::NoAlignBody => scan_noalign_body(processor, alignment, boxes),
+            AlignmentPreamblePhase::NoAlignBody => {
+                scan_noalign_body(processor, alignment, boxes, mode)
+            }
             AlignmentPreamblePhase::CellDelivery => {
-                scan_alignment_delivery_step(processor, alignment, boxes, innermost_group)
+                scan_alignment_delivery_step(processor, alignment, boxes, innermost_group, mode)
             }
         };
     }
-    scan_step(processor, starts_paragraph, boxes)
+    scan_step(processor, mode, starts_paragraph, boxes)
 }
 
 #[derive(Clone, Copy)]
@@ -745,6 +748,7 @@ fn scan_noalign_body(
     processor: &mut CommandProcessor<'_>,
     alignment: AlignmentIdentity,
     boxes: &ReplayBoxes,
+    mode: Mode,
 ) -> Result<ScannedStep, ExecError> {
     let Some(command) = processor.get_x_token().map_err(command_error)? else {
         return Ok(ScannedStep::EndOfInput);
@@ -758,7 +762,15 @@ fn scan_noalign_body(
             cat: Catcode::EndGroup,
             ..
         } => Ok(ScannedStep::NoAlignEndGroup { alignment }),
-        _ => scan_command(processor, command, false, MeaningFlags::EMPTY, false, boxes),
+        _ => scan_command(
+            processor,
+            command,
+            false,
+            MeaningFlags::EMPTY,
+            mode,
+            false,
+            boxes,
+        ),
     }
 }
 
@@ -771,6 +783,7 @@ fn scan_alignment_delivery_step(
     alignment: AlignmentIdentity,
     boxes: &ReplayBoxes,
     innermost_group: Option<GroupKind>,
+    mode: Mode,
 ) -> Result<ScannedStep, ExecError> {
     match processor
         .get_x_alignment_delivery()
@@ -807,7 +820,15 @@ fn scan_alignment_delivery_step(
                 }
                 return Ok(ScannedStep::AlignmentCellFinish { alignment });
             }
-            scan_command(processor, command, false, MeaningFlags::EMPTY, false, boxes)
+            scan_command(
+                processor,
+                command,
+                false,
+                MeaningFlags::EMPTY,
+                mode,
+                false,
+                boxes,
+            )
         }
         Some(AlignmentDelivery::Event(event)) => {
             match event {
@@ -844,6 +865,7 @@ fn scan_alignment_delivery_step(
 
 fn scan_step(
     processor: &mut CommandProcessor<'_>,
+    mode: Mode,
     starts_paragraph: bool,
     boxes: &ReplayBoxes,
 ) -> Result<ScannedStep, ExecError> {
@@ -868,7 +890,15 @@ fn scan_step(
         }
         command = next_non_space(processor)?.ok_or(ExecError::MissingPrefixedCommand)?;
     }
-    scan_command(processor, command, global, flags, starts_paragraph, boxes)
+    scan_command(
+        processor,
+        command,
+        global,
+        flags,
+        mode,
+        starts_paragraph,
+        boxes,
+    )
 }
 
 fn scan_command(
@@ -876,6 +906,7 @@ fn scan_command(
     command: tex_command::CurrentCommand,
     global: bool,
     flags: MeaningFlags,
+    mode: Mode,
     starts_paragraph: bool,
     boxes: &ReplayBoxes,
 ) -> Result<ScannedStep, ExecError> {
@@ -977,6 +1008,17 @@ fn scan_command(
                         cat: Catcode::EndGroup,
                     },
                 )
+                .map_err(command_error)?;
+            Ok(ScannedStep::Continue)
+        }
+        Meaning::UnexpandablePrimitive(
+            UnexpandablePrimitive::End | UnexpandablePrimitive::Dump,
+        ) if mode == Mode::Horizontal => {
+            // TeX82 §1095's `hmode+stop` case reaches `head_for_vmode`.
+            // The command core owns both backups; replay merely processes
+            // the resulting `\\par` and retries the stop in vertical mode.
+            processor
+                .recover_stop_for_vertical_mode(command)
                 .map_err(command_error)?;
             Ok(ScannedStep::Continue)
         }

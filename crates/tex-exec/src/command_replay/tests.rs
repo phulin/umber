@@ -595,7 +595,7 @@ fn alignment_preamble_opener_uses_command_owned_backup_before_source_resumes() {
         control
             .step_with_observer(&mut universe, &mut observations)
             .expect("u-template retires before the cell body resumes"),
-        ReplayStep::End
+        ReplayStep::Continue
     );
     assert!(
         observations.0.windows(3).any(|events| {
@@ -616,6 +616,18 @@ fn alignment_preamble_opener_uses_command_owned_backup_before_source_resumes() {
         }),
         "unexpected observations: {:?}",
         observations.0
+    );
+    assert_eq!(
+        control
+            .step(&mut universe)
+            .expect("inserted paragraph ends the outer horizontal list"),
+        ReplayStep::Continue
+    );
+    assert_eq!(
+        control
+            .step(&mut universe)
+            .expect("end retries in vertical mode"),
+        ReplayStep::End
     );
 }
 
@@ -1110,6 +1122,99 @@ fn canonical_initex_replay_observes_committed_message_effects() {
 }
 
 #[test]
+fn end_in_outer_horizontal_mode_replays_paragraph_before_retrying_stop() {
+    // TeX82 §1095 (`hmode+stop` / `head_for_vmode`) first backs up \end,
+    // then backs up inserted \par. The command processor owns both input
+    // transitions; applying the delivered paragraph is the executor's typed
+    // mode transition before \end is reconsidered in vertical mode.
+    let mut universe = Universe::new();
+    let mut control = CommandReplayControl::tex82_initex(&mut universe);
+    register_source(&mut control, b"x\\end");
+    let mut observations = ObservationRecorder::default();
+
+    assert_eq!(
+        control
+            .step_with_observer(&mut universe, &mut observations)
+            .expect("paragraph starts"),
+        ReplayStep::Continue
+    );
+    assert_eq!(control.current_mode(), crate::Mode::Horizontal);
+    observations.0.clear();
+
+    assert_eq!(
+        control
+            .step_with_observer(&mut universe, &mut observations)
+            .expect("replayed paragraph character"),
+        ReplayStep::Continue
+    );
+    observations.0.clear();
+
+    assert_eq!(
+        control
+            .step_with_observer(&mut universe, &mut observations)
+            .expect("stop is deferred to vertical mode"),
+        ReplayStep::Continue
+    );
+    assert!(
+        matches!(
+            observations.0.as_slice(),
+            [
+                CommandObservation::Input(previous_retirement),
+                CommandObservation::Command(raw),
+                CommandObservation::Command(expanded),
+                CommandObservation::Input(end_backup),
+                CommandObservation::Recovery(end_recovery),
+                CommandObservation::Input(par_backup),
+                CommandObservation::Recovery(par_recovery),
+            ] if previous_retirement.transition == InputTransition::Retire
+                && previous_retirement.reason == InputReason::Backup
+                && raw.command == "stop"
+                && expanded.command == "stop"
+                && end_backup.transition == InputTransition::Backup
+                && end_recovery.kind == RecoveryKind::Backup
+                && par_backup.transition == InputTransition::Backup
+                && par_recovery.kind == RecoveryKind::Backup
+                && matches!(par_recovery.tokens.as_slice(), [ObservedToken::ControlSequence(name)] if name == "par")
+        ),
+        "unexpected stop recovery observations: {:?}",
+        observations.0
+    );
+
+    observations.0.clear();
+    assert_eq!(
+        control
+            .step_with_observer(&mut universe, &mut observations)
+            .expect("inserted paragraph"),
+        ReplayStep::Continue
+    );
+    assert_eq!(control.current_mode(), crate::Mode::Vertical);
+    assert!(matches!(
+        observations.0.as_slice(),
+        [CommandObservation::Command(raw), CommandObservation::Command(expanded)]
+            if raw.command == "par_end" && expanded.command == "par_end"
+    ));
+
+    observations.0.clear();
+    assert_eq!(
+        control
+            .step_with_observer(&mut universe, &mut observations)
+            .expect("stop retries in vertical mode"),
+        ReplayStep::End
+    );
+    assert!(matches!(
+        observations.0.as_slice(),
+        [
+            CommandObservation::Input(retirement),
+            CommandObservation::Command(raw),
+            CommandObservation::Command(expanded),
+        ] if retirement.transition == InputTransition::Retire
+            && retirement.reason == InputReason::Recovery
+            && raw.command == "stop"
+            && expanded.command == "stop"
+    ));
+}
+
+#[test]
 fn off_save_reports_before_replaying_its_inserted_closer() {
     let mut universe = Universe::new();
     let mut control = CommandReplayControl::tex82_initex(&mut universe);
@@ -1293,7 +1398,20 @@ fn canonical_initex_replay_futurelet_preserves_lookahead_order_after_assignment(
             .expect("paragraph character replay"),
         ReplayStep::Continue
     );
-    assert_eq!(control.step(&mut universe).expect("end"), ReplayStep::End);
+    assert_eq!(
+        control
+            .step(&mut universe)
+            .expect("end is deferred through paragraph recovery"),
+        ReplayStep::Continue
+    );
+    assert_eq!(
+        control.step(&mut universe).expect("inserted paragraph"),
+        ReplayStep::Continue
+    );
+    assert_eq!(
+        control.step(&mut universe).expect("retried end"),
+        ReplayStep::End
+    );
 }
 
 #[test]

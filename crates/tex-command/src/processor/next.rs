@@ -413,6 +413,54 @@ impl CommandProcessor<'_> {
         Ok(())
     }
 
+    /// Performs TeX82 §1095's `head_for_vmode` replay for a stop command.
+    ///
+    /// In outer horizontal mode, `\\end` is not yet eligible for final
+    /// termination.  TeX backs the stop command up, sets `cur_tok` to the
+    /// primitive `\\par`, and backs that synthesized token up with inserted
+    /// token-list ownership.  The executor subsequently applies only the
+    /// typed paragraph transition; all raw input and recovery observations
+    /// remain here.
+    pub fn recover_stop_for_vertical_mode(
+        &mut self,
+        command: CurrentCommand,
+    ) -> Result<(), CommandError> {
+        self.back_input(command)?;
+        let par = TracedTokenWord::pack(
+            Token::Cs(
+                self.state
+                    .symbol("par")
+                    .ok_or(CommandError::InputInvariant)?,
+            ),
+            OriginId::UNKNOWN,
+        );
+        let level = self.command.push_token_level(
+            TokenPayload::Transient(SharedTokenBuffer::new(vec![par])),
+            TokenBehavior::Recovery,
+            RetirementBehavior::Pop,
+            ReplayTrace::Transient(crate::input::TransientReplayReason::Inserted),
+        );
+        #[cfg(not(any(test, feature = "instrumentation")))]
+        let _ = level;
+        #[cfg(any(test, feature = "instrumentation"))]
+        {
+            // `head_for_vmode` calls `back_input` after assigning `cur_tok`;
+            // the push is therefore observed as backup even though its
+            // inserted ownership makes retirement a recovery transition.
+            self.observe(CommandObservation::Input(InputRecord {
+                transition: InputTransition::Backup,
+                reason: InputReason::Backup,
+                level: level.0,
+                position: 0,
+            }));
+            self.observe(CommandObservation::Recovery(RecoveryRecord {
+                kind: RecoveryKind::Backup,
+                tokens: vec![self.observed_token(par)],
+            }));
+        }
+        Ok(())
+    }
+
     /// Performs TeX82 §1064 `off_save` input recovery for a command.
     ///
     /// The executor selects the closer from its actual group, but raw backup,
