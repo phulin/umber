@@ -2342,6 +2342,111 @@ fn canonical_read_line_tokens(line: &str, raw_catcodes: bool, stores: &Universe)
     tokens
 }
 
+/// Collects TeX82's balanced `read_toks` text using only World-owned line
+/// acquisition. The result is an immutable replacement list; neither a live
+/// cursor nor an input level crosses the canonical replay boundary.
+fn canonical_read_tokens(
+    slot: StreamSlot,
+    target: Symbol,
+    raw_catcodes: bool,
+    stores: &mut Universe,
+) -> Result<Vec<Token>, ExecError> {
+    let mut tokens = Vec::new();
+    let mut depth = 0_u32;
+    let mut first_terminal_line = true;
+    loop {
+        let stream_open = stores
+            .world()
+            .stream_bufs()
+            .read_stream_target(slot)
+            .is_some();
+        let line = if stream_open {
+            stores.world_mut().read_stream_line(slot)?
+        } else {
+            match stores.interaction_mode() {
+                tex_state::InteractionMode::Batch | tex_state::InteractionMode::Nonstop => {
+                    return Err(ExecError::ReadNotImplemented);
+                }
+                tex_state::InteractionMode::Scroll | tex_state::InteractionMode::ErrorStop => {}
+            }
+            if first_terminal_line {
+                let prompt = tex_expand::token_text(stores, Token::Cs(target));
+                stores
+                    .world_mut()
+                    .write_text(PrintSink::TerminalAndLog, &format!("\n{prompt}="));
+                first_terminal_line = false;
+            }
+            Some(
+                stores
+                    .world_mut()
+                    .read_terminal_line()?
+                    .ok_or(ExecError::TerminalReadEof)?,
+            )
+        };
+        let Some(line) = line else {
+            return Err(ExecError::ReadNotImplemented);
+        };
+        let line_tokens = canonical_read_line_tokens(&line, raw_catcodes, stores);
+        if raw_catcodes {
+            return Ok(line_tokens);
+        }
+        for token in line_tokens {
+            let meaning = match token {
+                Token::Cs(symbol) => stores.meaning(symbol),
+                _ => Meaning::Undefined,
+            };
+            if matches!(meaning, Meaning::Macro { flags, .. } if flags.contains(MeaningFlags::OUTER))
+            {
+                tokens.extend((0..depth).map(|_| Token::Char {
+                    ch: '}',
+                    cat: Catcode::EndGroup,
+                }));
+                return Ok(tokens);
+            }
+            match token {
+                Token::Char {
+                    cat: Catcode::BeginGroup,
+                    ..
+                } => {
+                    depth += 1;
+                    tokens.push(token);
+                }
+                Token::Char {
+                    cat: Catcode::EndGroup,
+                    ..
+                } if depth == 0 => return Ok(tokens),
+                Token::Char {
+                    cat: Catcode::EndGroup,
+                    ..
+                } => {
+                    depth -= 1;
+                    tokens.push(token);
+                }
+                _ => tokens.push(token),
+            }
+        }
+        if depth == 0 {
+            return Ok(tokens);
+        }
+        if stream_open
+            && stores
+                .world()
+                .stream_bufs()
+                .read_stream_target(slot)
+                .is_none()
+        {
+            stores
+                .world_mut()
+                .write_text(PrintSink::TerminalAndLog, "\n! File ended within \\read.\n");
+            tokens.extend((0..depth).map(|_| Token::Char {
+                ch: '}',
+                cat: Catcode::EndGroup,
+            }));
+            return Ok(tokens);
+        }
+    }
+}
+
 fn replay_write_sink(value: i32) -> PrintSink {
     match value {
         0..=15 => PrintSink::Stream(StreamSlot::new(value as u8)),
@@ -3172,9 +3277,7 @@ fn apply_scanned_step(
                     raw_catcodes,
                 } => {
                     let slot = replay_stream_slot(stream, stores);
-                    let line = stores.world_mut().read_stream_line(slot)?;
-                    let line = line.ok_or(ExecError::ReadNotImplemented)?;
-                    let tokens = canonical_read_line_tokens(&line, raw_catcodes, stores);
+                    let tokens = canonical_read_tokens(slot, target, raw_catcodes, stores)?;
                     let replacement = stores.intern_token_list(&tokens);
                     let parameters = stores.intern_token_list(&[]);
                     stores.set_macro_meaning(

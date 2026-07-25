@@ -183,6 +183,104 @@ fn canonical_openin_read_and_closein_use_registered_immutable_input() {
 }
 
 #[test]
+fn canonical_read_collects_balanced_multiline_text_and_recovers_file_eof() {
+    let mut universe = Universe::new();
+    let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+    control.capabilities_mut().register_input(
+        "child.tex",
+        SourceRegistration::new(
+            RegisteredSourceKind::World,
+            Arc::<[u8]>::from(&b"{one\ntwo"[..]),
+        ),
+    );
+    register_source(&mut control, br"\openin1=child.tex \read1 to \line\end");
+
+    run_to_end(&mut control, &mut universe);
+
+    let line = universe.intern("line");
+    let replacement = universe
+        .macro_meaning(line)
+        .expect("read target is defined")
+        .replacement_text();
+    let text: String = universe
+        .tokens(replacement)
+        .iter()
+        .filter_map(|token| match token {
+            tex_state::token::Token::Char { ch, .. } => Some(*ch),
+            _ => None,
+        })
+        .collect();
+    assert!(text.contains("one"));
+    assert!(text.contains("two"));
+    assert!(text.ends_with('}'));
+    assert!(terminal_text(&universe).contains("File ended within \\read"));
+}
+
+#[test]
+fn canonical_terminal_read_prompts_once_and_collects_until_balanced() {
+    let mut universe = Universe::new();
+    universe.set_interaction_mode(tex_state::InteractionMode::ErrorStop);
+    universe
+        .world_mut()
+        .push_memory_terminal_line("{first")
+        .expect("terminal line");
+    universe
+        .world_mut()
+        .push_memory_terminal_line("second}")
+        .expect("terminal line");
+    let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+    register_source(&mut control, br"\read1 to \line\end");
+
+    run_to_end(&mut control, &mut universe);
+
+    let output = terminal_text(&universe);
+    assert_eq!(output.matches("\\line=").count(), 1, "{output:?}");
+    let line = universe.intern("line");
+    let replacement = universe
+        .macro_meaning(line)
+        .expect("read target")
+        .replacement_text();
+    assert!(
+        universe
+            .tokens(replacement)
+            .iter()
+            .any(|token| { matches!(token, tex_state::token::Token::Char { ch: 's', .. }) })
+    );
+}
+
+#[test]
+fn canonical_read_closes_partial_text_at_an_outer_token() {
+    let mut universe = Universe::new();
+    let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+    control.capabilities_mut().register_input(
+        "child.tex",
+        SourceRegistration::new(
+            RegisteredSourceKind::World,
+            Arc::<[u8]>::from(&b"{x\\stop"[..]),
+        ),
+    );
+    register_source(
+        &mut control,
+        br"\outer\def\stop{}\openin1=child.tex \read1 to \line\end",
+    );
+
+    run_to_end(&mut control, &mut universe);
+
+    let line = universe.intern("line");
+    let replacement = universe
+        .macro_meaning(line)
+        .expect("read target")
+        .replacement_text();
+    assert!(matches!(
+        universe.tokens(replacement).last(),
+        Some(tex_state::token::Token::Char {
+            cat: tex_state::token::Catcode::EndGroup,
+            ..
+        })
+    ));
+}
+
+#[test]
 fn canonical_openin_missing_resource_rolls_back_and_retries_fresh() {
     let mut universe = Universe::new();
     let mut control = CanonicalMainControl::tex82_initex(&mut universe);
