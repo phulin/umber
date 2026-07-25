@@ -40,7 +40,7 @@ use tex_state::{
 };
 use tex_typeset::PackSpec;
 
-use crate::mode::AlignmentKind;
+use crate::mode::{AlignColumn, AlignState, AlignmentKind, AlignmentPackSpec};
 use crate::{ExecError, Mode, ModeNest};
 
 /// Production command main control with command-owned source consumption.
@@ -111,11 +111,11 @@ struct ActiveReplayAlignment {
     align_peek_pending: bool,
     align_peek_after_noalign: bool,
     noalign_depth: Option<u32>,
-    /// The canonical replay driver captures row and cell material at the
-    /// structural boundary.  Width resolution and insertion remain a later
-    /// `fin_align` migration, so these frozen lists deliberately have no
-    /// effect on the enclosing list yet.
+    /// Frozen cell material retained for lifecycle diagnostics. The actual
+    /// row records live on the alignment level, exactly as TeX82 §775 does.
     captured_rows: Vec<Vec<NodeListId>>,
+    tabskip: tex_state::ids::GlueId,
+    cell_span: u16,
     row_open: bool,
     cell_open: bool,
 }
@@ -3963,7 +3963,14 @@ fn begin_next_replay_alignment_cell(
     if active.columns.is_empty() {
         return Ok(());
     }
-    capture_replay_alignment_cell(active, modes, stores)?;
+    if delimiter == AlignmentCellDelimiter::Span {
+        active.cell_span = active
+            .cell_span
+            .checked_add(1)
+            .ok_or(ExecError::ArithmeticOverflow)?;
+    } else {
+        capture_replay_alignment_cell(active, modes, stores)?;
+    }
     let next_column = match delimiter {
         AlignmentCellDelimiter::Tab | AlignmentCellDelimiter::Span => active
             .column
@@ -4033,7 +4040,9 @@ fn begin_next_replay_alignment_cell(
                 .map_err(|_| ExecError::MissingToken {
                     context: "alignment next-cell lifecycle",
                 })?;
-            begin_replay_alignment_cell(active, modes)?;
+            if delimiter == AlignmentCellDelimiter::Tab {
+                begin_replay_alignment_cell(active, modes)?;
+            }
             active.next_cell_opening_pending = true;
         }
     }
@@ -4070,6 +4079,11 @@ fn begin_replay_alignment_cell(
 ) -> Result<(), ExecError> {
     if !active.row_open {
         modes.push(replay_alignment_row_mode(active.kind));
+        modes.current_list_mut().push(Node::Glue {
+            spec: active.tabskip,
+            kind: GlueKind::TabSkip,
+            leader: None,
+        });
         active.captured_rows.push(Vec::new());
         active.row_open = true;
     }
@@ -4079,6 +4093,7 @@ fn begin_replay_alignment_cell(
         });
     }
     modes.push(replay_alignment_cell_mode(active.kind));
+    active.cell_span = 1;
     active.cell_open = true;
     Ok(())
 }
@@ -4093,7 +4108,12 @@ fn capture_replay_alignment_cell(
     }
     crate::assignments::flush_pending_hchars(modes, stores)?;
     let mut cell = modes.pop()?;
-    let material = stores.freeze_node_list(&cell.list_mut().take_nodes());
+    let material = if active.kind == AlignmentKind::HAlign {
+        crate::math::finish_math_lists_owned(stores, cell.list_mut().take_nodes(), false)
+    } else {
+        cell.list_mut().take_nodes()
+    };
+    let material = stores.freeze_node_list(&material);
     active
         .captured_rows
         .last_mut()
@@ -4101,6 +4121,18 @@ fn capture_replay_alignment_cell(
             context: "active replay alignment row",
         })?
         .push(material);
+    let cell = crate::align::packaging::make_unset_node(
+        stores,
+        material,
+        crate::align::packaging::cell_unset_kind(active.kind),
+        active.cell_span,
+    );
+    modes.current_list_mut().push(cell);
+    modes.current_list_mut().push(Node::Glue {
+        spec: active.tabskip,
+        kind: GlueKind::TabSkip,
+        leader: None,
+    });
     active.cell_open = false;
     Ok(())
 }
@@ -4115,7 +4147,15 @@ fn finish_replay_alignment_row(
         return Ok(());
     }
     crate::assignments::flush_pending_hchars(modes, stores)?;
-    let _row_material = stores.freeze_node_list(&modes.pop()?.list_mut().take_nodes());
+    let mut row = modes.pop()?;
+    let children = stores.freeze_node_list(&row.list_mut().take_nodes());
+    let row = crate::align::packaging::make_unset_node(
+        stores,
+        children,
+        crate::align::packaging::row_unset_kind(active.kind),
+        1,
+    );
+    modes.current_list_mut().push(row);
     active.row_open = false;
     Ok(())
 }
@@ -4126,7 +4166,37 @@ fn finish_replay_alignment(
     stores: &mut Universe,
 ) -> Result<(), ExecError> {
     finish_replay_alignment_row(active, modes, stores)?;
-    let _alignment_material = stores.freeze_node_list(&modes.pop()?.list_mut().take_nodes());
+    let mut alignment = modes.pop()?;
+    let rows = alignment.list_mut().take_nodes();
+    let columns = active
+        .columns
+        .iter()
+        .map(|templates| AlignColumn {
+            u_template: templates
+                .u_template
+                .expect("canonical columns retain u templates")
+                .token_list(),
+            v_template: templates.v_template.token_list(),
+        })
+        .collect();
+    let state = AlignState::new(
+        active.kind,
+        AlignmentPackSpec::Natural,
+        columns,
+        vec![active.tabskip; active.columns.len().saturating_add(1)],
+        active.tabskip,
+        active.repeat_start,
+    );
+    let finished = crate::align::widths::finish_alignment(&state, &rows, stores)?;
+    crate::align::append_finished_alignment(
+        modes,
+        stores,
+        crate::align::FinishedAlignment {
+            nodes: finished,
+            aux_prev_depth: alignment.list().prev_depth(),
+        },
+    );
+    crate::vertical::build_page_if_outer_vertical(modes, stores)?;
     Ok(())
 }
 
@@ -5179,6 +5249,8 @@ fn apply_scanned_step(
                 align_peek_after_noalign: false,
                 noalign_depth: None,
                 captured_rows: Vec::new(),
+                tabskip: stores.glue_param(GlueParam::TAB_SKIP),
+                cell_span: 1,
                 row_open: false,
                 cell_open: false,
             });

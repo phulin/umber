@@ -12,7 +12,7 @@ use crate::ExecError;
 use crate::mode::{AlignState, AlignmentKind, AlignmentPackSpec};
 use crate::packing_params::{hpack, hpack_params as read_hpack_params, vpack, vpack_params};
 
-pub(super) fn finish_alignment(
+pub(crate) fn finish_alignment(
     state: &AlignState,
     rows: &[Node],
     stores: &mut Universe,

@@ -4,7 +4,7 @@ use tex_typeset::measure_unset;
 
 use crate::mode::AlignmentKind;
 
-pub(super) fn make_unset_node(
+pub(crate) fn make_unset_node(
     stores: &Universe,
     children: tex_state::ids::NodeListId,
     kind: UnsetKind,
@@ -25,13 +25,13 @@ pub(super) fn make_unset_node(
     }))
 }
 
-pub(super) fn cell_unset_kind(kind: AlignmentKind) -> UnsetKind {
+pub(crate) fn cell_unset_kind(kind: AlignmentKind) -> UnsetKind {
     match kind {
         AlignmentKind::HAlign => UnsetKind::HBox,
         AlignmentKind::VAlign => UnsetKind::VBox,
     }
 }
 
-pub(super) fn row_unset_kind(kind: AlignmentKind) -> UnsetKind {
+pub(crate) fn row_unset_kind(kind: AlignmentKind) -> UnsetKind {
     cell_unset_kind(kind)
 }

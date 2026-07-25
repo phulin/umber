@@ -2,17 +2,16 @@
 
 mod execution;
 pub(crate) use execution::FinishedAlignment;
-#[cfg(test)]
 pub(crate) use execution::append_finished_alignment;
 pub(crate) use execution::{DoEndV, do_endv};
 
 mod noalign;
-mod packaging;
+pub(crate) mod packaging;
 mod preamble;
 mod support;
 mod template;
 mod transitions;
-mod widths;
+pub(crate) mod widths;
 
 use tex_lex::InputStack;
 use tex_state::Universe;

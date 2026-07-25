@@ -2745,6 +2745,8 @@ fn nested_alignment_begin_suspends_the_outer_replay_context() {
         align_peek_after_noalign: false,
         noalign_depth: None,
         captured_rows: Vec::new(),
+        tabskip: universe.glue_param(GlueParam::TAB_SKIP),
+        cell_span: 1,
         row_open: false,
         cell_open: false,
     });
@@ -2807,6 +2809,23 @@ fn canonical_alignment_captures_completed_cell_material_before_fin_align() {
         }
     }
     panic!("canonical alignment did not capture its first completed row");
+}
+
+#[test]
+fn canonical_alignment_finalizes_rows_into_the_enclosing_list() {
+    let mut universe = Universe::new();
+    let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+    register_source(&mut control, br"\halign{#&#\cr\kern1pt&\kern2pt\cr}");
+
+    run_to_end(&mut control, &mut universe);
+
+    assert_eq!(control.current_mode(), Mode::Horizontal);
+    let nodes = control.modes.current_list().nodes();
+    assert!(
+        matches!(nodes.first(), Some(Node::HList(_))),
+        "nodes: {nodes:?}; terminal: {}",
+        terminal_text(&universe)
+    );
 }
 
 #[test]
