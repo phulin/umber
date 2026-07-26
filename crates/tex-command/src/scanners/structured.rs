@@ -312,6 +312,32 @@ pub struct ScannedInsertConstruction {
     pub opening_brace_replay: bool,
 }
 
+/// The completed command-owned operand of a TeX82 §1073 box-shift prefix
+/// (`\raise`, `\lower`, `\moveleft`, `\moveright`): `scan_box`'s own
+/// `make_box` dispatch (§1076), scanned after the shift's dimension.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ScannedBoxShiftPayload {
+    /// `scan_box`'s "A <box> was supposed to be here" recovery: the rejected
+    /// command has already been backed up for ordinary replay.
+    Missing,
+    BoxRegister {
+        index: i32,
+        copy: bool,
+    },
+    LastBox,
+    VSplit(ScannedVSplit),
+    Construction(ScannedBoxConstruction),
+}
+
+/// A completed TeX82 §1073 box-shift prefix: the already-signed shift amount
+/// (tex.web's `box_context`) paired with the following box operand it
+/// applies to.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ScannedBoxShift {
+    pub delta: Scaled,
+    pub payload: ScannedBoxShiftPayload,
+}
+
 /// The completed register operand of TeX82's `\\box` command.
 ///
 /// `make_box(box_code)` calls `scan_int` before main control can apply the
@@ -2008,6 +2034,87 @@ impl CommandProcessor<'_> {
             class,
             opening_brace_replay,
         })
+    }
+
+    /// Scans TeX82 §1073's box-shift prefix (`\raise`, `\lower`, `\moveleft`,
+    /// `\moveright`) once the caller has already validated `abs(mode)+cur_cmd`
+    /// legality (tex.web's "Forbidden cases": `vmode+vmove`, `hmode+hmove`,
+    /// and `mmode+hmove` never reach `scan_normal_dimen` at all).
+    ///
+    /// The main-control case reads: `t:=cur_chr; scan_normal_dimen; if t=0
+    /// then scan_box(cur_val) else scan_box(-cur_val)`. `\lower`/`\moveright`
+    /// have `chr_code=0` and keep the scanned dimension; `\raise`/`\moveleft`
+    /// have `chr_code=1` and negate it. This is `box_context`, later stored
+    /// verbatim as `shift_amount(cur_box)`.
+    pub fn scan_box_shift(
+        &mut self,
+        primitive: UnexpandablePrimitive,
+    ) -> Result<ScannedBoxShift, CommandError> {
+        let amount = self.scan_dimension()?.value;
+        let delta = match primitive {
+            UnexpandablePrimitive::Lower | UnexpandablePrimitive::MoveRight => amount,
+            UnexpandablePrimitive::Raise | UnexpandablePrimitive::MoveLeft => -amount,
+            _ => return Err(CommandError::InputInvariant),
+        };
+        let payload = self.scan_box_shift_payload()?;
+        Ok(ScannedBoxShift { delta, payload })
+    }
+
+    /// Scans TeX82 §1076's `scan_box` operand for a box-shift prefix: `scan_box`
+    /// begins with "the next non-blank non-relax" token (§1076's own
+    /// `get_x_token` loop), then requires `cur_cmd=make_box`. Since `box_context`
+    /// here is always a signed dimension (bounded by `max_dimen`), it can never
+    /// reach `leader_flag`, so `scan_box`'s rule-spec branch never applies to a
+    /// box-shift operand -- only `\hbox`/`\vbox`/`\vtop`, `\box`, `\copy`,
+    /// `\lastbox`, and `\vsplit` are accepted, matching `scan_box_value`'s
+    /// `make_box` family exactly. Anything else is `scan_box`'s "A <box> was
+    /// supposed to be here" recovery: the rejected command is backed up
+    /// (`back_error`) for ordinary replay, and replay alone reports the
+    /// diagnostic since it needs a `Universe` sink.
+    fn scan_box_shift_payload(&mut self) -> Result<ScannedBoxShiftPayload, CommandError> {
+        loop {
+            let Some(command) = self.get_x_token()? else {
+                return Ok(ScannedBoxShiftPayload::Missing);
+            };
+            match command.meaning() {
+                Meaning::CharToken {
+                    cat: Catcode::Space,
+                    ..
+                }
+                | Meaning::Relax => continue,
+                Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Box) => {
+                    return Ok(ScannedBoxShiftPayload::BoxRegister {
+                        index: self.scan_box_register()?.index,
+                        copy: false,
+                    });
+                }
+                Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Copy) => {
+                    return Ok(ScannedBoxShiftPayload::BoxRegister {
+                        index: self.scan_box_register()?.index,
+                        copy: true,
+                    });
+                }
+                Meaning::UnexpandablePrimitive(UnexpandablePrimitive::LastBox) => {
+                    return Ok(ScannedBoxShiftPayload::LastBox);
+                }
+                Meaning::UnexpandablePrimitive(UnexpandablePrimitive::VSplit) => {
+                    return Ok(ScannedBoxShiftPayload::VSplit(self.scan_vsplit()?));
+                }
+                Meaning::UnexpandablePrimitive(
+                    primitive @ (UnexpandablePrimitive::HBox
+                    | UnexpandablePrimitive::VBox
+                    | UnexpandablePrimitive::VTop),
+                ) => {
+                    return Ok(ScannedBoxShiftPayload::Construction(
+                        self.scan_box_construction(primitive)?,
+                    ));
+                }
+                _ => {
+                    self.back_input(command)?;
+                    return Ok(ScannedBoxShiftPayload::Missing);
+                }
+            }
+        }
     }
 
     /// Validates an alignment preamble's required opening brace, then restores

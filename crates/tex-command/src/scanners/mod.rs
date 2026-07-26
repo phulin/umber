@@ -16,11 +16,12 @@ pub use structured::{
     PdfGraphicsRequest, PdfImagePageBox, PdfImageRequest, PdfNavigationRequest, PdfObjectRequest,
     PdfReferenceObjectRequest, PdfStartLinkRequest, PdfThreadRequest, RegisteredInput,
     ScannedAccent, ScannedAccentBase, ScannedBalancedText, ScannedBoxConstruction, ScannedBoxKind,
-    ScannedBoxRegister, ScannedCharacterDefinition, ScannedDiscretionary, ScannedDisplayDiagnostic,
-    ScannedEquationNumber, ScannedFileName, ScannedGlueParameterAssignment,
-    ScannedInsertConstruction, ScannedLeaderPayload, ScannedLetAssignment, ScannedMacroDefinition,
-    ScannedMathCharacter, ScannedMathDelimiter, ScannedMathFamily, ScannedMathFraction,
-    ScannedMathMuMaterial, ScannedMathScript, ScannedPackingSpec, ScannedRegisterDefinition,
-    ScannedRuleSpec, ScannedSetBoxAssignment, ScannedVSplit, StructuredProvenance,
+    ScannedBoxRegister, ScannedBoxShift, ScannedBoxShiftPayload, ScannedCharacterDefinition,
+    ScannedDiscretionary, ScannedDisplayDiagnostic, ScannedEquationNumber, ScannedFileName,
+    ScannedGlueParameterAssignment, ScannedInsertConstruction, ScannedLeaderPayload,
+    ScannedLetAssignment, ScannedMacroDefinition, ScannedMathCharacter, ScannedMathDelimiter,
+    ScannedMathFamily, ScannedMathFraction, ScannedMathMuMaterial, ScannedMathScript,
+    ScannedPackingSpec, ScannedRegisterDefinition, ScannedRuleSpec, ScannedSetBoxAssignment,
+    ScannedVSplit, StructuredProvenance,
 };
 pub use token_list::ScannedTokenRegisterAssignment;
