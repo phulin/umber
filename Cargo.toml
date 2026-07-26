@@ -27,6 +27,7 @@ default-members = [
   "crates/umber-fetch",
   "crates/umber-vfs",
   "tools/parity-harness",
+  "tools/tex-command-stream",
 ]
 exclude = [
   "tools/corpus-sync",

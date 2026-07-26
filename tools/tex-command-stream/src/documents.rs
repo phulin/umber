@@ -58,6 +58,7 @@ pub struct DocumentRegistry {
     pub skipped: Vec<String>,
 }
 
+#[derive(Debug)]
 struct DocumentRecord {
     name: String,
     root_source: String,

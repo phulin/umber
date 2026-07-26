@@ -1963,6 +1963,8 @@ mod tests {
             root_name: CANONICAL_ROOT_SOURCE.into(),
             root_bytes: Arc::from(&b"a\\input child b"[..]),
             input_capabilities: BTreeMap::from([("child".into(), Arc::from(&b"c"[..]))]),
+            fonts: BTreeMap::new(),
+            expected_events: 0,
         }
     }
 
@@ -2054,6 +2056,7 @@ mod tests {
         let startup = CanonicalStartup::from_fixture(
             &repository.join(FIXTURE_ROOT).join("command-transitions-v1"),
             &fixture,
+            &ReplayResources::committed(),
         )
         .expect("canonical startup");
 
@@ -2253,6 +2256,8 @@ mod tests {
             root_name: "alignment-delivery.tex".into(),
             root_bytes: Arc::from(&b"\\relax"[..]),
             input_capabilities: BTreeMap::new(),
+            fonts: BTreeMap::new(),
+            expected_events: 0,
         };
 
         let error = startup.replay().expect_err("stale root must not open");
