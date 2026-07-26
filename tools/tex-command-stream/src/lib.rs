@@ -35,13 +35,35 @@ const CANONICAL_ROOT_SOURCE: &str = "transitions.tex";
 const TERMINAL_FILENAME_TERMINATOR: u8 = b' ';
 const CANONICAL_ROOT_PUSH_NAME: &str = "terminal";
 
-/// Runs every registered TeX82 committed fixture with no live-engine access.
-pub fn run_repository(repository: impl AsRef<Path>) -> Result<(), RunnerError> {
+/// Default cap on ordered divergences a run reports (`--max-divergences`
+/// overrides it). Chosen to comfortably batch a run's independent defects
+/// into one worklist without an unbounded report against a long fixture.
+pub const DEFAULT_MAX_DIVERGENCES: usize = 20;
+
+/// Runs every registered TeX82 committed fixture with no live-engine access,
+/// reporting up to `max_divergences` ordered divergences instead of only the
+/// first.
+///
+/// A fixture whose replay hits a Rust panic or a command-core `ExecError` is
+/// contained (`catch_panic`/`ReplayFailure`) and reported as its own ordered
+/// divergence entry, exactly like a stream mismatch: it does not abort the
+/// run or hide any fixture ordered after it. Comparison also does not stop
+/// at a fixture's first stream mismatch -- it keeps scanning that fixture's
+/// remaining events for independent, later mismatches until either the
+/// fixture's stream is exhausted or the run's total divergence budget is
+/// spent.
+pub fn run_repository(
+    repository: impl AsRef<Path>,
+    max_divergences: usize,
+) -> Result<(), RunnerError> {
     let repository = repository.as_ref();
     let suite = validate_tex82_command_trace_suite(repository)
         .map_err(|error| RunnerError::Suite(error.to_string()))?;
-    let mut failures = Vec::new();
+    let mut divergences = Vec::new();
     for entry in suite.fixtures {
+        if divergences.len() >= max_divergences {
+            break;
+        }
         let fixture_directory =
             repository
                 .join(FIXTURE_ROOT)
@@ -55,19 +77,26 @@ pub fn run_repository(repository: impl AsRef<Path>) -> Result<(), RunnerError> {
             "{} manifest={}",
             fixture.manifest.name, fixture.stream.header.manifest
         );
-        if let Err(mismatch) = compare_streams(&identity, &fixture.stream.events, &replay.events) {
-            failures.push(*mismatch);
-        } else if let Some(error) = replay.failure {
-            return Err(RunnerError::Replay(format!(
-                "fixture {} replay did not reach a terminal command state: {error}",
-                fixture.manifest.name
-            )));
+        let remaining = max_divergences - divergences.len();
+        divergences.extend(
+            find_divergences(&identity, &fixture.stream.events, &replay.events, remaining)
+                .into_iter()
+                .map(Divergence::Mismatch),
+        );
+        if let Some(failure) = replay.failure
+            && divergences.len() < max_divergences
+        {
+            divergences.push(Divergence::Failure {
+                fixture: identity,
+                index: replay.events.len(),
+                failure,
+            });
         }
     }
-    if failures.is_empty() {
+    if divergences.is_empty() {
         Ok(())
     } else {
-        Err(RunnerError::Comparison(failures))
+        Err(RunnerError::Comparison(divergences))
     }
 }
 
@@ -75,6 +104,7 @@ pub fn run_repository(repository: impl AsRef<Path>) -> Result<(), RunnerError> {
 pub fn run_cli() -> Result<(), RunnerError> {
     let mut arguments = env::args_os().skip(1);
     let mut repository = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let mut max_divergences = DEFAULT_MAX_DIVERGENCES;
     while let Some(argument) = arguments.next() {
         if argument == "--repository" {
             repository = arguments
@@ -83,21 +113,41 @@ pub fn run_cli() -> Result<(), RunnerError> {
                     RunnerError::Usage("--repository requires a directory argument".into())
                 })?
                 .into();
+        } else if argument == "--max-divergences" {
+            let value = arguments.next().ok_or_else(|| {
+                RunnerError::Usage("--max-divergences requires an integer argument".into())
+            })?;
+            max_divergences = value
+                .to_str()
+                .and_then(|value| value.parse::<usize>().ok())
+                .filter(|value| *value > 0)
+                .ok_or_else(|| {
+                    RunnerError::Usage(format!(
+                        "--max-divergences requires a positive integer, got {}",
+                        value.to_string_lossy()
+                    ))
+                })?;
         } else {
             return Err(RunnerError::Usage(format!(
-                "unknown argument {}; expected --repository <path>",
+                "unknown argument {}; expected --repository <path> or --max-divergences <n>",
                 argument.to_string_lossy()
             )));
         }
     }
-    run_repository(repository)
+    run_repository(repository, max_divergences)
 }
 
-/// First deterministic stream divergence for one fixture.
+/// One ordered stream divergence for one fixture: the expected and observed
+/// event disagree at the same index, or one stream ran out before the other.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct StreamMismatch {
     fixture: String,
     index: usize,
+    /// Cheap structural label distinguishing the kind of disagreement (e.g.
+    /// a wrong command identity vs. a wrong operand vs. a different event
+    /// kind entirely) so a coordinator can group same-kind divergences
+    /// without re-running the engine or re-deriving what differs by hand.
+    kind: &'static str,
     expected: Option<Event>,
     actual: Option<ObservedEvent>,
 }
@@ -106,8 +156,8 @@ impl fmt::Display for StreamMismatch {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             formatter,
-            "fixture {} diverged at event {}",
-            self.fixture, self.index
+            "fixture {} diverged at event {} [{}]",
+            self.fixture, self.index, self.kind
         )?;
         if let Some(expected) = &self.expected {
             write!(formatter, "\n  expected: {}", bounded_debug(expected))?;
@@ -126,26 +176,95 @@ impl fmt::Display for StreamMismatch {
     }
 }
 
-/// Compares complete ordered streams without omitting unsupported event kinds.
+/// Compares complete ordered streams without omitting unsupported event kinds,
+/// reporting only the earliest divergence. Kept for callers that only need
+/// the first mismatch; [`find_divergences`] reports up to `max_results`.
 pub fn compare_streams(
     fixture: &str,
     expected: &[NormalizedEvent],
     actual: &[ObservedEvent],
 ) -> Result<(), Box<StreamMismatch>> {
+    match find_divergences(fixture, expected, actual, 1)
+        .into_iter()
+        .next()
+    {
+        Some(mismatch) => Err(Box::new(mismatch)),
+        None => Ok(()),
+    }
+}
+
+/// Compares complete ordered streams, collecting up to `max_results` ordered
+/// divergences instead of stopping at the first.
+///
+/// Comparison stays index-aligned rather than resynchronizing after a
+/// mismatch: most classification/scanner defects change an event's content
+/// without changing how many events a delivery produces, so later indices
+/// commonly still line up and expose independent, later defects
+/// (`docs/canonical_divergence_workflow.md`'s batching rationale). A
+/// mismatch that does desynchronize the two streams (e.g. a missing or
+/// extra event) still reports at its own index; every following index then
+/// legitimately mismatches too, so a caller comparing across fixtures should
+/// treat a long unbroken run of mismatches as one structural defect, not
+/// `max_results` independent ones.
+pub fn find_divergences(
+    fixture: &str,
+    expected: &[NormalizedEvent],
+    actual: &[ObservedEvent],
+    max_results: usize,
+) -> Vec<StreamMismatch> {
+    let mut mismatches = Vec::new();
     let count = expected.len().max(actual.len());
     for index in 0..count {
+        if mismatches.len() >= max_results {
+            break;
+        }
         let expected_event = expected.get(index).map(|event| &event.semantic);
         let actual_event = actual.get(index);
-        if !events_match(expected_event, actual_event.map(|event| &event.event)) {
-            return Err(Box::new(StreamMismatch {
+        let actual_borrowed = actual_event.map(|event| &event.event);
+        if !events_match(expected_event, actual_borrowed) {
+            mismatches.push(StreamMismatch {
                 fixture: fixture.into(),
                 index,
+                kind: classify_mismatch_kind(expected_event, actual_borrowed),
                 expected: expected_event.cloned(),
                 actual: actual_event.cloned(),
-            }));
+            });
         }
     }
-    Ok(())
+    mismatches
+}
+
+/// Cheap structural label for one mismatch, computed from the already
+/// available expected/actual events without any additional engine work.
+fn classify_mismatch_kind(expected: Option<&Event>, actual: Option<&Event>) -> &'static str {
+    match (expected, actual) {
+        (Some(_), None) => "stream_truncated_early",
+        (None, Some(_)) => "stream_has_unexpected_trailing_events",
+        (None, None) => "unreachable_both_absent",
+        (Some(expected), Some(actual)) => {
+            if let (Event::Command(expected), Event::Command(actual)) = (expected, actual) {
+                classify_command_mismatch_kind(expected, actual)
+            } else if std::mem::discriminant(expected) == std::mem::discriminant(actual) {
+                "event_value_mismatch"
+            } else {
+                "event_kind_mismatch"
+            }
+        }
+    }
+}
+
+fn classify_command_mismatch_kind(expected: &CommandEvent, actual: &CommandEvent) -> &'static str {
+    if expected.command.command != actual.command.command {
+        "command_identity_mismatch"
+    } else if expected.command.operand != actual.command.operand {
+        "command_operand_mismatch"
+    } else if expected.command.control_sequence != actual.command.control_sequence {
+        "command_spelling_mismatch"
+    } else if expected.delivery != actual.delivery {
+        "command_delivery_mismatch"
+    } else {
+        "command_location_mismatch"
+    }
 }
 
 /// Compares portable command observations with the committed TeX82 trace.
@@ -218,13 +337,86 @@ impl ObservedEvent {
     }
 }
 
+/// One ordered worklist entry: either a stream-content mismatch or a
+/// contained replay failure (a command-core `ExecError` or a Rust panic)
+/// that ended a fixture's replay early. Both are ordered and labeled the
+/// same way so a coordinator can batch them without distinguishing "found a
+/// wrong event" from "the engine gave up" -- both are equally a defect to
+/// file.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum Divergence {
+    Mismatch(StreamMismatch),
+    Failure {
+        fixture: String,
+        /// The observed-event index the failure occurred after; the
+        /// contained failure has no expected/actual event of its own.
+        index: usize,
+        failure: ReplayFailure,
+    },
+}
+
+impl fmt::Display for Divergence {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Mismatch(mismatch) => mismatch.fmt(formatter),
+            Self::Failure {
+                fixture,
+                index,
+                failure,
+            } => write!(
+                formatter,
+                "fixture {fixture} {} after event {index} [{}]\n  {}",
+                failure.label(),
+                failure.kind(),
+                failure.message()
+            ),
+        }
+    }
+}
+
+/// Why a fixture's replay stopped before producing a complete observed
+/// stream. Both variants are contained (`catch_panic`, ordinary `Result`
+/// propagation) rather than aborting the whole run: see
+/// [`run_repository`]'s documentation.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ReplayFailure {
+    /// A command-core `ExecError`/`CanonicalSessionError` the processor
+    /// returned normally.
+    Error(String),
+    /// A Rust panic caught by [`catch_panic`], with its rendered message and
+    /// source location (when the panic runtime provided one).
+    Panic(String),
+}
+
+impl ReplayFailure {
+    fn label(&self) -> &'static str {
+        match self {
+            Self::Error(_) => "replay failed",
+            Self::Panic(_) => "engine panicked",
+        }
+    }
+
+    fn kind(&self) -> &'static str {
+        match self {
+            Self::Error(_) => "exec_error",
+            Self::Panic(_) => "panic",
+        }
+    }
+
+    fn message(&self) -> &str {
+        match self {
+            Self::Error(message) | Self::Panic(message) => message,
+        }
+    }
+}
+
 #[derive(Debug)]
 pub enum RunnerError {
     Usage(String),
     Suite(String),
     Fixture(String, String),
     Replay(String),
-    Comparison(Vec<StreamMismatch>),
+    Comparison(Vec<Divergence>),
 }
 
 impl fmt::Display for RunnerError {
@@ -234,12 +426,14 @@ impl fmt::Display for RunnerError {
                 formatter.write_str(error)
             }
             Self::Fixture(fixture, error) => write!(formatter, "fixture {fixture}: {error}"),
-            Self::Comparison(mismatches) => {
-                for (index, mismatch) in mismatches.iter().enumerate() {
+            Self::Comparison(divergences) => {
+                writeln!(formatter, "{} ordered divergence(s):", divergences.len())?;
+                for (index, divergence) in divergences.iter().enumerate() {
                     if index != 0 {
                         formatter.write_str("\n")?;
                     }
-                    mismatch.fmt(formatter)?;
+                    write!(formatter, "[{index}] ")?;
+                    divergence.fmt(formatter)?;
                 }
                 Ok(())
             }
@@ -248,6 +442,40 @@ impl fmt::Display for RunnerError {
 }
 
 impl Error for RunnerError {}
+
+/// Runs `f`, containing a panic instead of letting it unwind past this call.
+///
+/// The default panic hook already prints a panic's message and source
+/// location to stderr; this installs a capturing hook for the duration of
+/// the call so that same rendered text becomes an ordered [`Divergence`]
+/// entry too, then restores the previous hook. `RUST_BACKTRACE=1` still
+/// produces a full backtrace on stderr exactly as it would for an uncaught
+/// panic, since the default hook's formatting is preserved verbatim
+/// (`PanicHookInfo`'s own `Display` impl), only additionally captured.
+fn catch_panic<T>(f: impl FnOnce() -> T + std::panic::UnwindSafe) -> Result<T, String> {
+    use std::panic;
+    use std::sync::{Arc, Mutex};
+
+    let captured: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
+    let sink = Arc::clone(&captured);
+    let previous_hook = panic::take_hook();
+    panic::set_hook(Box::new(move |info| {
+        let rendered = info.to_string();
+        eprintln!("{rendered}");
+        *sink
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(rendered);
+    }));
+    let result = panic::catch_unwind(f);
+    panic::set_hook(previous_hook);
+    result.map_err(|_| {
+        captured
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .take()
+            .unwrap_or_else(|| "engine panicked with no captured message".into())
+    })
+}
 
 fn replay_fixture(
     directory: &Path,
@@ -265,16 +493,18 @@ fn replay_fixture(
     CanonicalStartup::from_fixture(directory, fixture)?.replay()
 }
 
-/// Observer output plus a nonterminal executor failure, if one occurred.
+/// Observer output plus a contained, nonterminal replay failure, if one
+/// occurred.
 ///
-/// The complete fixture stream is still compared first, so a command error
-/// after an already-produced earlier semantic divergence cannot mask that
-/// deterministic earliest mismatch. If the observed prefix is exact, the
-/// failure becomes a runner error instead of being mistaken for EOF.
+/// The complete fixture stream is still compared first, so a failure after
+/// an already-produced earlier semantic divergence cannot mask that
+/// deterministic earlier mismatch. If the observed prefix is exact, the
+/// failure becomes its own ordered [`Divergence::Failure`] entry instead of
+/// being mistaken for a clean EOF.
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct ReplayOutput {
     events: Vec<ObservedEvent>,
-    failure: Option<String>,
+    failure: Option<ReplayFailure>,
 }
 
 /// Typed host-harness state preceding the first TeX command transition.
@@ -441,16 +671,28 @@ impl CanonicalStartup {
                         self.root_name
                     )));
                 }
-                match control.step_with_observer(&mut universe, &mut recorder) {
-                    Ok(MainControlStep::Continue) => deliveries += 1,
-                    Ok(MainControlStep::End | MainControlStep::EndOfInput) => break,
-                    Err(error) => {
+                let step = catch_panic(std::panic::AssertUnwindSafe(|| {
+                    control.step_with_observer(&mut universe, &mut recorder)
+                }));
+                match step {
+                    Ok(Ok(MainControlStep::Continue)) => deliveries += 1,
+                    Ok(Ok(MainControlStep::End | MainControlStep::EndOfInput)) => break,
+                    Ok(Err(error)) => {
                         return Ok(ReplayOutput {
                             events: recorder.events,
-                            failure: Some(format!(
+                            failure: Some(ReplayFailure::Error(format!(
                                 "root source {} replay failed after {deliveries} deliveries: {error}",
                                 self.root_name
-                            )),
+                            ))),
+                        });
+                    }
+                    Err(message) => {
+                        return Ok(ReplayOutput {
+                            events: recorder.events,
+                            failure: Some(ReplayFailure::Panic(format!(
+                                "root source {} panicked after {deliveries} deliveries: {message}",
+                                self.root_name
+                            ))),
                         });
                     }
                 }
@@ -1828,10 +2070,8 @@ mod tests {
             "missing input must not be opened from the host"
         );
         assert!(
-            replay
-                .failure
-                .as_deref()
-                .is_some_and(|failure| failure.contains("missing token while scanning \\input"))
+            matches!(&replay.failure, Some(ReplayFailure::Error(message))
+            if message.contains("missing token while scanning \\input"))
         );
     }
 
