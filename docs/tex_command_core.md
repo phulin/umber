@@ -757,6 +757,31 @@ itself loops on `CommandProcessor::get_x_token` until a non-space command
 appears, then backs it up for ordinary redelivery, achieving tex.web's `goto
 reswitch` without a `reswitch` label to jump to.
 
+TeX82 §1046's full `non_math(...)` table is exactly the math-noad, math-style,
+and math-delimiter primitive family that `scan_canonical_math_request` (§5's
+math-request vocabulary above) and the `\left`/`\right`/`\middle` gate
+otherwise dispatch only under `Mode::Math`/`Mode::DisplayMath`: `\mathchar`,
+`\delimiter`, the eight `mathord`/`.../mathinner` component primitives plus
+`\underline`/`\overline`, `\left`/`\right`/`\middle`, the six `\above`/`\atop`/
+`\over` (with and without delimiters) fraction primitives, `\radical`, the
+four style primitives, `\mathchoice`, `\vcenter`, `\mkern`, the three
+`\limits`/`\nolimits`/`\displaylimits` switches, `\mskip`, and `\mathaccent`
+(`\nonscript` above is one member of this same family, not a special case).
+`scan_unclassified_primitive`'s fallback match expresses that whole table as
+one grouped arm -- not 34 duplicated ones -- calling the same
+`recover_missing_math_shift` used by `mmode+hrule`/`mmode+vskip`/
+`non_math(non_script)`, since every member reaching that fallback has already
+proven `mode` is not math (the math-mode dispatch above would have consumed
+it first). `\eqno`/`\leqno` are deliberately excluded even though tex.web
+registers them under the same `eq_no` command code as the math-request
+vocabulary: `non_math(eq_no)` is listed under the tex.web's separate
+`@<Forbidden cases@>` module, so vmode/hmode `\eqno`/`\leqno` take
+`report_illegal_case` ("You can't use `\eqno' in ... mode"), not
+`insert_dollar_sign` -- they remain `Err(UnimplementedPrimitive)` until that
+distinct mechanism is implemented (tracked as umber2-johp.86). This is
+umber2-johp.79's generalization of umber2-johp.56's original `mmode+hrule`
+mechanism to the entire §1046 table.
+
 ### 5.4 Proposed module layout
 
 ```text

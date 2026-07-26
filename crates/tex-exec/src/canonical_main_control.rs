@@ -4131,7 +4131,7 @@ fn scan_command(
         // `ScannedStep::Continue` below -- see umber2-johp.69 and
         // `docs/tex_command_core.md`'s dispatch-completeness invariant.
         Meaning::UnexpandablePrimitive(primitive) => {
-            scan_unclassified_primitive(primitive, mode, command.origin())
+            scan_unclassified_primitive(processor, command, primitive, mode)
         }
         _ => Ok(ScannedStep::Continue),
     }
@@ -4170,10 +4170,26 @@ fn scan_command(
 ///   Per umber2-johp.69's scope, this function does not implement any of
 ///   these; it only makes each one fail loudly and names it so follow-on
 ///   work can be tracked as ordinary chain links (see umber2-johp.74).
+/// - `insert_dollar_sign` recovery: this primitive is a member of TeX82
+///   §1046's "math-only cases in non-math modes" table (`non_math(...)` in
+///   tex.web) -- it is dispatched correctly by `scan_canonical_math_request`
+///   or the `\left`/`\right`/`\middle` gate above whenever `mode` actually is
+///   `Math`/`DisplayMath`, so reaching this function at all proves `mode` is
+///   not math. §1047's `insert_dollar_sign` backs the offending command up
+///   behind a synthesized `$` (umber2-johp.56/.79's
+///   `CommandProcessor::recover_missing_math_shift`, already used by the
+///   `mmode+hrule`/`mmode+vskip`/`non_math(non_script)` arms above) so the
+///   next two deliveries close math and replay the command in the resulting
+///   mode. `\eqno`/`\leqno` are deliberately excluded: tex.web's separate
+///   `@<Forbidden cases@>=non_math(eq_no)` routes them through
+///   `report_illegal_case` ("You can't use `\eqno' in ... mode") instead, not
+///   `insert_dollar_sign`, so they remain in the `Err` bucket above until that
+///   distinct mechanism is implemented (tracked as umber2-johp.86).
 fn scan_unclassified_primitive(
+    processor: &mut CommandProcessor<'_>,
+    command: tex_command::CurrentCommand,
     primitive: UnexpandablePrimitive,
     mode: Mode,
-    origin: tex_state::token::OriginId,
 ) -> Result<ScannedStep, ExecError> {
     use UnexpandablePrimitive as P;
     match primitive {
@@ -4317,24 +4333,70 @@ fn scan_unclassified_primitive(
             "UnexpandablePrimitive::{primitive:?} has an explicit, mode-complete \
              scan_command dispatch arm and must never reach the exhaustive fallback"
         ),
+        // TeX82 §1046's `non_math(...)` table: each of these primitives is a
+        // math-noad, math-style, or math-delimiter command whose *only*
+        // canonical dispatch is `scan_canonical_math_request` (or the
+        // `\left`/`\right`/`\middle` gate) under `Mode::Math`/`DisplayMath`.
+        // Reaching this arm therefore proves `mode` is not math, which is
+        // exactly tex.web's non-math table; §1047's `insert_dollar_sign`
+        // recovers uniformly for the whole family via the same
+        // `recover_missing_math_shift` helper the `mmode+hrule`/`mmode+vskip`/
+        // `non_math(non_script)` arms above already use.
         P::Above
         | P::AboveWithDelims
         | P::Atop
         | P::AtopWithDelims
-        | P::BatchMode
+        | P::Delimiter
+        | P::DisplayLimits
+        | P::DisplayStyle
+        | P::Left
+        | P::Limits
+        | P::MKern
+        | P::MSkip
+        | P::MathAccent
+        | P::MathBin
+        | P::MathChar
+        | P::MathChoice
+        | P::MathClose
+        | P::MathInner
+        | P::MathOp
+        | P::MathOpen
+        | P::MathOrd
+        | P::MathPunct
+        | P::MathRel
+        | P::Middle
+        | P::NoLimits
+        | P::Over
+        | P::OverWithDelims
+        | P::Overline
+        | P::Radical
+        | P::Right
+        | P::ScriptScriptStyle
+        | P::ScriptStyle
+        | P::TextStyle
+        | P::Underline
+        | P::VCenter => {
+            processor
+                .recover_missing_math_shift(command)
+                .map_err(command_error)?;
+            Ok(ScannedStep::MissingMathShift)
+        }
+        P::BatchMode
         | P::BeginL
         | P::BeginR
         | P::ClubPenalties
         | P::Cr
         | P::CrCr
-        | P::Delimiter
         | P::DimExpr
         | P::DiscretionaryHyphen
-        | P::DisplayLimits
-        | P::DisplayStyle
         | P::DisplayWidowPenalties
         | P::EndL
         | P::EndR
+        // `\eqno`/`\leqno`: tex.web's `non_math(eq_no)` is listed under the
+        // *separate* `@<Forbidden cases@>` module (report_illegal_case's
+        // "You can't use `\eqno' in ... mode"), not `insert_dollar_sign` --
+        // it is deliberately not part of the recovery bucket above. Tracked
+        // as umber2-johp.86.
         | P::EqNo
         | P::ErrorStopMode
         | P::FontCharDp
@@ -4354,37 +4416,17 @@ fn scan_unclassified_primitive(
         | P::LastKern
         | P::LastPenalty
         | P::LastSkip
-        | P::Left
         | P::LeftEqNo
         | P::LetterspaceFont
-        | P::Limits
         | P::Long
-        | P::MKern
-        | P::MSkip
         | P::Marks
-        | P::MathAccent
-        | P::MathBin
-        | P::MathChar
-        | P::MathChoice
-        | P::MathClose
-        | P::MathInner
-        | P::MathOp
-        | P::MathOpen
-        | P::MathOrd
-        | P::MathPunct
-        | P::MathRel
-        | P::Middle
         | P::MuExpr
         | P::MuToGlue
         | P::NoAlign
-        | P::NoLimits
         | P::NonstopMode
         | P::NumExpr
         | P::Omit
         | P::Outer
-        | P::Over
-        | P::OverWithDelims
-        | P::Overline
         | P::PageDiscards
         | P::ParShapeDimen
         | P::ParShapeIndent
@@ -4423,10 +4465,6 @@ fn scan_unclassified_primitive(
         | P::PrevGraf
         | P::Protected
         | P::QuitVMode
-        | P::Radical
-        | P::Right
-        | P::ScriptScriptStyle
-        | P::ScriptStyle
         | P::ScrollMode
         | P::SetLanguage
         | P::ShowGroups
@@ -4437,9 +4475,6 @@ fn scan_unclassified_primitive(
         | P::SpaceFactor
         | P::Span
         | P::SplitDiscards
-        | P::TextStyle
-        | P::Underline
-        | P::VCenter
         | P::VFil
         | P::VFilNeg
         | P::VFill
@@ -4448,7 +4483,7 @@ fn scan_unclassified_primitive(
         | P::WidowPenalties => Err(ExecError::UnimplementedPrimitive {
             primitive,
             mode,
-            origin,
+            origin: command.origin(),
         }),
     }
 }

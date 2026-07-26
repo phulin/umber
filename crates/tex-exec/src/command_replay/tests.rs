@@ -5016,3 +5016,67 @@ fn canonical_nonscript_outside_math_mode_inserts_missing_dollar_sign() {
     let text = terminal_text(&universe);
     assert!(text.contains("Missing $ inserted."), "{text}");
 }
+
+// umber2-johp.79: TeX82 §1046's `non_math(...)` table also lists every
+// math-noad, math-style, and math-delimiter primitive that
+// `scan_canonical_math_request` (or the `\left`/`\right`/`\middle` gate)
+// otherwise dispatches only under `Mode::Math`/`DisplayMath`. Each of these
+// covers a structurally distinct scan shape (no operand, a scalar integer, a
+// paired delimiter boundary, and an `mu` dimension) to demonstrate the shared
+// `recover_missing_math_shift` category, not just the single primitive
+// `non_math(non_script)` above already happened to cover.
+
+#[test]
+fn canonical_displaystyle_outside_math_mode_inserts_missing_dollar_sign() {
+    // `\displaystyle` takes no operand at all: recovery must fire before any
+    // scan is attempted, purely from the primitive's identity.
+    let mut universe = Universe::new();
+    let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+    register_source(&mut control, br"\setbox0=\hbox{\displaystyle$}");
+    run_to_end(&mut control, &mut universe);
+
+    let text = terminal_text(&universe);
+    assert!(text.contains("Missing $ inserted."), "{text}");
+}
+
+#[test]
+fn canonical_mathchar_outside_math_mode_inserts_missing_dollar_sign() {
+    // `\mathchar` scans a 15-bit integer constant (§1046's
+    // `non_math(math_char_num)`); the recovered replay must still be able to
+    // complete that scan once math mode is open.
+    let mut universe = Universe::new();
+    let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+    register_source(&mut control, br#"\setbox0=\hbox{\mathchar"41 $}"#);
+    run_to_end(&mut control, &mut universe);
+
+    let text = terminal_text(&universe);
+    assert!(text.contains("Missing $ inserted."), "{text}");
+}
+
+#[test]
+fn canonical_left_outside_math_mode_inserts_missing_dollar_sign() {
+    // `\left`/`\right`/`\middle` have their own early gate for entering
+    // `scan_math_delimiter_boundary` once already in math mode (§1046's
+    // `non_math(left_right)`), separate from `scan_canonical_math_request`;
+    // this proves that gate's recovery is likewise generic outside math mode.
+    let mut universe = Universe::new();
+    let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+    register_source(&mut control, br"\setbox0=\hbox{\left.\right.$}");
+    run_to_end(&mut control, &mut universe);
+
+    let text = terminal_text(&universe);
+    assert!(text.contains("Missing $ inserted."), "{text}");
+}
+
+#[test]
+fn canonical_mkern_outside_math_mode_inserts_missing_dollar_sign() {
+    // `\mkern` scans an `mu` dimension (§1046's `non_math(mkern)`), a
+    // distinct unit family from the ordinary dimension `\kern` scans.
+    let mut universe = Universe::new();
+    let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+    register_source(&mut control, br"\setbox0=\hbox{\mkern5mu $}");
+    run_to_end(&mut control, &mut universe);
+
+    let text = terminal_text(&universe);
+    assert!(text.contains("Missing $ inserted."), "{text}");
+}
