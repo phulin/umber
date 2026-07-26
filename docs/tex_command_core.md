@@ -2123,6 +2123,22 @@ internal result directly; a complete glue-valued register likewise bypasses
 the trailing `plus`/`minus` scan. The observer records the resulting typed
 internal integer, scaled, or glue value without leaking register storage.
 
+That bypass is not a register-family privilege. TeX82 §208/§209 make every
+command code in `min_internal..=max_internal` an internal quantity, and
+`scan_int` (§440), `scan_dimen` (§448), the internal-unit probe (§455), and
+`scan_glue` (§461) all branch on exactly that range: the internal branch keeps
+the token it already has, and only the other branch runs `back_input`. So a
+`\dimendef` name, a named parameter, `\wd`/`\ht`/`\dp`, `\fontdimen`, a
+`\chardef` constant, a page quantity, or any other internal quantity reaches
+`scan_something_internal` with no backup level and no second delivery of its
+own command. Restricting the retained-token branch to one primitive family
+instead makes every other internal quantity push a backup, emit a recovery
+record, and redeliver a command TeX82 delivers once (`umber2-johp.135`). The
+scalar scanners therefore decide the branch by asking the shared internal-value
+classifier itself, never by matching a per-primitive list: whatever that
+classifier recognizes is retained, so wiring a new internal quantity into it
+also puts it on the retained branch.
+
 `scan_dimen` delegates its integral prefix to that same integer scanner. Its
 backed-up decimal point is then consumed raw, while a backed-up unit remains
 available to the canonical keyword retry sequence. `scan_glue` first probes a
