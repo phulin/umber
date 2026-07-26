@@ -45,6 +45,7 @@ use tex_state::{
 use tex_typeset::PackSpec;
 
 use crate::mode::{AlignColumn, AlignState, AlignmentKind, AlignmentPackSpec};
+use crate::vertical::is_outer_vertical;
 use crate::{ExecError, Mode, ModeNest};
 
 /// Production command main control with command-owned source consumption.
@@ -405,7 +406,7 @@ impl CanonicalMainControl {
     ///
     /// This is intentionally call-local capability state rather than part of
     /// a command snapshot or durable session summary.
-    pub fn refresh_host_capabilities(&mut self) {
+    pub fn refresh_host_capabilities(&mut self, stores: &Universe) {
         self.capabilities
             .set_conditional_state(self.modes.conditional_state());
         self.capabilities.set_space_factor(
@@ -415,6 +416,67 @@ impl CanonicalMainControl {
             )
             .then(|| self.modes.current_list().space_factor()),
         );
+        self.capabilities
+            .set_last_node(self.last_node_value(stores));
+    }
+
+    /// TeX82 §424's "Fetch an item in the current node, if appropriate": the
+    /// current list's tail-node classification consumed by
+    /// `\lastpenalty`/`\lastkern`/`\lastskip`.
+    ///
+    /// The outer vertical list is special (matching `\unskip`'s existing
+    /// `is_outer_vertical`/`page_has_last_glue` precedent from
+    /// umber2-johp.81, reused here rather than duplicated):
+    /// `append_vertical_contribution` moves every node contributed at that
+    /// level straight to the page builder's contribution list instead of
+    /// `ModeNest`'s own list, so this mode nest's list is never the right
+    /// place to look. tex.web's real tail there is `contrib_head`, a fixed
+    /// address in `is_char_node`'s address range, which is why its
+    /// `scan_something_internal` falls through to `last_penalty`/
+    /// `last_kern`/`last_glue` (updated together by §996 whenever the page
+    /// builder sweeps a node onto the page) exactly when the contribution
+    /// list has been swept empty; while it is nonempty, the real
+    /// contribution tail governs, just as it does for `\unskip`.
+    fn last_node_value(&self, stores: &Universe) -> Option<tex_command::LastNodeItem> {
+        if is_outer_vertical(&self.modes) {
+            return match stores.page_contribution_tail() {
+                Some(node) => Self::classify_last_node(stores, node),
+                None => match stores.page_last_node_type() {
+                    11 => Some(tex_command::LastNodeItem::Glue(stores.page_last_skip())),
+                    12 => Some(tex_command::LastNodeItem::Kern(stores.page_last_kern())),
+                    13 => Some(tex_command::LastNodeItem::Penalty(
+                        stores.page_last_penalty(),
+                    )),
+                    _ => None,
+                },
+            };
+        }
+        self.modes
+            .current_list()
+            .nodes()
+            .last()
+            .and_then(|node| Self::classify_last_node(stores, node))
+    }
+
+    /// Classifies one real node as a `\lastpenalty`/`\lastkern`/`\lastskip`
+    /// tail, resolving a glue node's stored specification and distinguishing
+    /// TeX82's `mu_glue` subtype (an explicit `\mskip`, matched here by
+    /// [`GlueKind::MuSkip`]) so `\lastskip` reads it at `mu_val` level. Any
+    /// other node shape (including a character, which tex.web excludes via
+    /// `is_char_node`) has no matching case, exactly like tex.web's
+    /// `case cur_chr of ... end {there are no other cases}`.
+    fn classify_last_node(stores: &Universe, node: &Node) -> Option<tex_command::LastNodeItem> {
+        match node {
+            Node::Penalty(value) => Some(tex_command::LastNodeItem::Penalty(*value)),
+            Node::Kern { amount, .. } => Some(tex_command::LastNodeItem::Kern(*amount)),
+            Node::Glue {
+                spec,
+                kind: GlueKind::MuSkip,
+                ..
+            } => Some(tex_command::LastNodeItem::MuGlue(stores.glue(*spec))),
+            Node::Glue { spec, .. } => Some(tex_command::LastNodeItem::Glue(stores.glue(*spec))),
+            _ => None,
+        }
     }
 
     fn snapshot_step(&self, stores: &mut Universe) -> CanonicalStepSnapshot {
@@ -734,7 +796,7 @@ impl CanonicalMainControl {
     }
 
     fn step_once(&mut self, stores: &mut Universe) -> Result<ReplayStep, ExecError> {
-        self.refresh_host_capabilities();
+        self.refresh_host_capabilities(stores);
         let mode = self.modes.current_mode();
         let outer_paragraph_was_active = mode == Mode::Horizontal && self.modes.depth() == 2;
         let starts_paragraph = matches!(mode, Mode::Vertical | Mode::InternalVertical);
@@ -1406,7 +1468,7 @@ impl CanonicalMainControl {
         // execution mode. Keep the command processor's borrowed mode facts
         // identical to an unobserved step (notably for \ifhmode after a
         // paragraph-start transition).
-        self.refresh_host_capabilities();
+        self.refresh_host_capabilities(stores);
         let mode = self.modes.current_mode();
         let starts_paragraph = matches!(mode, Mode::Vertical | Mode::InternalVertical);
         let alignment_preamble = alignment_preamble(self.active_alignment.as_mut());
@@ -2333,6 +2395,20 @@ enum ScannedStep {
     /// same-shaped recovery. `mmode+eq_no` itself (gated by
     /// `privileged`/`cur_group`) is unaffected.
     IllegalEqNo {
+        token: Token,
+    },
+    /// TeX82 §1048's `@<Forbidden cases@>=...,any_mode(last_item),...` (the
+    /// same module `IllegalBoxShift`'s `vmode+vmove`/`hmode+hmove`/
+    /// `mmode+hmove` triple comes from, and that `IllegalEqNo`'s §1144
+    /// addition later extends): `\lastpenalty`, `\lastkern`, and `\lastskip`
+    /// have no assignment form and no standalone typesetting meaning in any
+    /// mode -- they are legal only as an internal-value operand inside a
+    /// scan (`CommandProcessor::internal_value_from_command`'s `LastPenalty`/
+    /// `LastKern`/`LastSkip` arms). Reaching main control with one of these
+    /// as the delivered command therefore always means `report_illegal_case`,
+    /// matching `IllegalBoxShift`/`IllegalInsertOrAdjust`/`IllegalEqNo`'s
+    /// same-shaped recovery.
+    IllegalLastItem {
         token: Token,
     },
     ReplayBoxOpeningBrace,
@@ -4605,6 +4681,14 @@ fn scan_unclassified_primitive(
         P::EqNo | P::LeftEqNo => Ok(ScannedStep::IllegalEqNo {
             token: command.spelling().semantic_token(),
         }),
+        // TeX82 §1048's `any_mode(last_item)` Forbidden case: see
+        // `ScannedStep::IllegalLastItem`. These three reach this function
+        // only when delivered standalone (not mid-scan, where
+        // `internal_value_from_command` already consumes them), exactly
+        // like `\eqno`/`\leqno` above.
+        P::LastKern | P::LastPenalty | P::LastSkip => Ok(ScannedStep::IllegalLastItem {
+            token: command.spelling().semantic_token(),
+        }),
         P::BeginL
         | P::BeginR
         | P::ClubPenalties
@@ -4629,9 +4713,6 @@ fn scan_unclassified_primitive(
         | P::GlueToMu
         | P::InterLinePenalties
         | P::InteractionMode
-        | P::LastKern
-        | P::LastPenalty
-        | P::LastSkip
         | P::LetterspaceFont
         | P::Long
         | P::Marks
@@ -7459,6 +7540,10 @@ fn apply_scanned_step(
             Ok(ReplayStep::Continue)
         }
         ScannedStep::IllegalEqNo { token } => {
+            crate::diagnostics::report_illegal_case(stores, token, modes.current_mode());
+            Ok(ReplayStep::Continue)
+        }
+        ScannedStep::IllegalLastItem { token } => {
             crate::diagnostics::report_illegal_case(stores, token, modes.current_mode());
             Ok(ReplayStep::Continue)
         }

@@ -5019,6 +5019,102 @@ fn canonical_delete_last_outer_vertical_apologizes_only_when_last_page_item_is_g
 }
 
 #[test]
+fn canonical_last_item_reads_the_matching_current_list_tail_and_zero_otherwise() {
+    // TeX82 §424's "Fetch an item in the current node, if appropriate":
+    // `\lastkern` reads the tail when it really is a kern node, while
+    // `\lastpenalty`/`\lastskip` see a type mismatch and fall back to their
+    // own level's zero, exactly like an empty list would.
+    let mut universe = Universe::new();
+    let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+    control.modes.push(Mode::InternalVertical);
+    control.modes.current_list_mut().push(Node::Kern {
+        amount: Scaled::from_raw(65536 * 3),
+        kind: tex_state::node::KernKind::Explicit,
+    });
+    register_source(
+        &mut control,
+        br"\showthe\lastkern\showthe\lastpenalty\showthe\lastskip",
+    );
+    run_to_end(&mut control, &mut universe);
+
+    let text = terminal_text(&universe);
+    assert!(text.contains("> 3.0pt."), "{text}");
+    assert!(text.contains("> 0."), "{text}");
+    assert!(text.contains("> 0.0pt."), "{text}");
+}
+
+#[test]
+fn canonical_last_item_outer_vertical_prefers_real_contribution_tail_over_page_memo() {
+    // TeX82 §424: while the outer vertical list's contribution tail is
+    // still real (not yet swept onto the page by `build_page`), it governs
+    // -- the page builder's own memo is consulted only once that list is
+    // empty, exactly like `\unskip`'s existing precedent.
+    let mut universe = Universe::new();
+    universe.update_page_last_from_node(&Node::Penalty(99));
+    universe.append_page_contribution(Node::Penalty(7));
+    let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+    register_source(&mut control, br"\showthe\lastpenalty");
+    run_to_end(&mut control, &mut universe);
+
+    assert!(
+        terminal_text(&universe).contains("> 7."),
+        "the real contribution tail (7), not the stale page memo (99): {}",
+        terminal_text(&universe)
+    );
+}
+
+#[test]
+fn canonical_last_item_outer_vertical_falls_back_to_page_memo_when_contribution_list_is_empty() {
+    // TeX82 §996/§424: once `build_page` has swept the whole contribution
+    // list onto the page, `\lastskip` reads the page builder's own
+    // `last_glue` memo instead of the (now empty) contribution list.
+    let mut universe = Universe::new();
+    let glue_spec = universe.intern_glue(GlueSpec {
+        width: Scaled::from_raw(65536 * 5),
+        ..GlueSpec::ZERO
+    });
+    universe.update_page_last_from_node(&Node::Glue {
+        spec: glue_spec,
+        kind: tex_state::node::GlueKind::Normal,
+        leader: None,
+    });
+    let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+    register_source(&mut control, br"\showthe\lastskip\showthe\lastpenalty");
+    run_to_end(&mut control, &mut universe);
+
+    let text = terminal_text(&universe);
+    assert!(text.contains("> 5.0pt."), "{text}");
+    assert!(text.contains("> 0."), "{text}");
+}
+
+#[test]
+fn canonical_last_skip_reads_an_explicit_mskip_at_mu_val_level() {
+    // TeX82 §424: `if subtype(tail)=mu_glue then cur_val_level:=mu_val` --
+    // an explicit `\mskip`-shaped glue node (`GlueKind::MuSkip`) renders in
+    // mu units through `\the`, unlike ordinary glue.
+    let mut universe = Universe::new();
+    let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+    control.modes.push(Mode::Math);
+    let glue_spec = universe.intern_glue(GlueSpec {
+        width: Scaled::from_raw(65536 * 2),
+        ..GlueSpec::ZERO
+    });
+    control.modes.current_list_mut().push(Node::Glue {
+        spec: glue_spec,
+        kind: tex_state::node::GlueKind::MuSkip,
+        leader: None,
+    });
+    register_source(&mut control, br"\showthe\lastskip");
+    run_to_end(&mut control, &mut universe);
+
+    assert!(
+        terminal_text(&universe).contains("> 2.0mu."),
+        "{}",
+        terminal_text(&universe)
+    );
+}
+
+#[test]
 fn canonical_italic_correction_appends_kern_even_when_zero() {
     // TeX82 §1113's `append_italic_correction` appends the kern
     // unconditionally when the tail is a character node, even when the
