@@ -1458,71 +1458,42 @@ fn translate_alignment(record: AlignmentRecord, nesting: Option<u32>) -> Event {
     })
 }
 fn translate_mutation(record: MutationRecord) -> Event {
-    if record.target == "meaning"
-        && let (Some(key), Some(tokens)) = (record.key.as_ref(), record.tokens.as_ref())
-    {
-        return Event::Mutation(MutationEvent {
-            target: StateTarget::Meaning,
-            key: CanonicalValue::Name(key.clone()),
-            value: CanonicalValue::Tokens(tokens.iter().cloned().map(oracle_token).collect()),
-            scope: if record.global { "global" } else { "local" }.into(),
-        });
-    }
-    if record.target == "register"
-        && let (Some(key), Some(tokens)) = (record.key.as_ref(), record.tokens.as_ref())
-    {
-        return Event::Mutation(MutationEvent {
-            target: StateTarget::Register,
-            key: CanonicalValue::Name(key.clone()),
-            value: CanonicalValue::Tokens(tokens.iter().cloned().map(oracle_token).collect()),
-            scope: if record.global { "global" } else { "local" }.into(),
-        });
-    }
-    if record.target == "register"
+    // `meaning`, `register`, and `parameter` records all pair an explicit key
+    // with a typed value, and it is the value's own encoding -- not the
+    // target -- that says how to parse it. Selecting the target once and
+    // sharing the value decoding keeps every combination available to every
+    // keyed target, which is what lets `\dimen` *parameter* mutations reuse
+    // the `scaled:` encoding `\dimen` registers already used
+    // (umber2-johp.124); enumerating target/encoding pairs by hand had left
+    // that one combination silently falling through to the untyped tail.
+    let keyed_target = match record.target {
+        "meaning" => Some(StateTarget::Meaning),
+        "register" => Some(StateTarget::Register),
+        "parameter" => Some(StateTarget::Parameter),
+        _ => None,
+    };
+    if let Some(target) = keyed_target
         && let Some(key) = record.key.as_ref()
-        && let Some(value) = record.value.strip_prefix("scaled:")
-        && let Ok(value) = value.parse::<i64>()
     {
-        return Event::Mutation(MutationEvent {
-            target: StateTarget::Register,
-            key: CanonicalValue::Name(key.clone()),
-            value: CanonicalValue::Scaled(value),
-            scope: if record.global { "global" } else { "local" }.into(),
-        });
-    }
-    if record.target == "register"
-        && let Some(key) = record.key.as_ref()
-        && let Some(value) = record.value.strip_prefix("glue:")
-        && let Some(value) = parse_glue_scanner_value(value)
-    {
-        return Event::Mutation(MutationEvent {
-            target: StateTarget::Register,
-            key: CanonicalValue::Name(key.clone()),
-            value,
-            scope: if record.global { "global" } else { "local" }.into(),
-        });
-    }
-    if record.target == "parameter"
-        && let (Some(key), Some(tokens)) = (record.key.as_ref(), record.tokens.as_ref())
-    {
-        return Event::Mutation(MutationEvent {
-            target: StateTarget::Parameter,
-            key: CanonicalValue::Name(key.clone()),
-            value: CanonicalValue::Tokens(tokens.iter().cloned().map(oracle_token).collect()),
-            scope: if record.global { "global" } else { "local" }.into(),
-        });
-    }
-    if record.target == "parameter"
-        && let Some(key) = record.key.as_ref()
-        && let Some(value) = record.value.strip_prefix("glue:")
-        && let Some(value) = parse_glue_scanner_value(value)
-    {
-        return Event::Mutation(MutationEvent {
-            target: StateTarget::Parameter,
-            key: CanonicalValue::Name(key.clone()),
-            value,
-            scope: if record.global { "global" } else { "local" }.into(),
-        });
+        let value = if let Some(tokens) = record.tokens.as_ref() {
+            Some(CanonicalValue::Tokens(
+                tokens.iter().cloned().map(oracle_token).collect(),
+            ))
+        } else if let Some(value) = record.value.strip_prefix("scaled:") {
+            value.parse::<i64>().ok().map(CanonicalValue::Scaled)
+        } else if let Some(value) = record.value.strip_prefix("glue:") {
+            parse_glue_scanner_value(value)
+        } else {
+            None
+        };
+        if let Some(value) = value {
+            return Event::Mutation(MutationEvent {
+                target,
+                key: CanonicalValue::Name(key.clone()),
+                value,
+                scope: if record.global { "global" } else { "local" }.into(),
+            });
+        }
     }
     if record.target == "catcode" {
         if let Some((character, value)) = record.value.split_once('=') {

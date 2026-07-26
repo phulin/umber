@@ -1642,7 +1642,7 @@ impl CanonicalMainControl {
                 }
             }
             if let Some(mutation) = mutation {
-                observer.committed(CommandObservation::Mutation(mutation));
+                observer.committed(CommandObservation::Mutation(mutation.resolve(stores)));
             }
             if let Some(effect) = effect {
                 observer.committed(CommandObservation::Effect(effect));
@@ -5835,71 +5835,219 @@ fn next_non_space(
     }
 }
 
-/// Captures executor-owned mutation data before structural application, then
-/// emits it only after that application commits. This preserves the command
-/// observer's canonical order without asking `tex-command` to inspect an
-/// executor-owned aggregate mutation.
+/// A committed `eqtb` mutation captured for the command observer, together
+/// with when its observed value becomes readable.
+///
+/// Most assignments know their committed value while they are still a
+/// `ScannedStep`, so the record is captured before structural application and
+/// merely held until that application commits, preserving the observer's
+/// canonical order. TeX82 §1236's `do_register_command` is the exception: it
+/// folds the target's *current* `eqtb` value into the result, so its record
+/// can only be read after the single `word_define`/`define` exit commits.
+#[cfg(any(test, feature = "instrumentation"))]
+enum PendingMutation {
+    Captured(MutationRecord),
+    Arithmetic {
+        target: ArithmeticTarget,
+        global: bool,
+    },
+}
+
+#[cfg(any(test, feature = "instrumentation"))]
+impl PendingMutation {
+    fn resolve(self, stores: &Universe) -> MutationRecord {
+        match self {
+            Self::Captured(record) => record,
+            Self::Arithmetic { target, global } => {
+                committed_arithmetic_mutation(target, global, stores)
+            }
+        }
+    }
+}
+
+/// Serializes a committed glue value the way the reference instrumentation's
+/// `umber_trace_glue_value` does.
+#[cfg(any(test, feature = "instrumentation"))]
+fn glue_mutation_value(value: &GlueSpec) -> String {
+    format!(
+        "glue:width={};stretch={};stretch_order={:?};shrink={};shrink_order={:?}",
+        value.width.raw(),
+        value.stretch.raw(),
+        value.stretch_order,
+        value.shrink.raw(),
+        value.shrink_order,
+    )
+}
+
+/// Reads back the value TeX82 §1236's `do_register_command` committed at its
+/// single exit.
+///
+/// §1236 computes `cur_val` from the target's current value (§1238's
+/// `cur_val+eqtb[l].int`, §1239's glue sum, §1240's `mult_integers`/
+/// `x_over_n`) and then commits it exactly once -- `word_define(l,cur_val)`
+/// for `int_val`/`dimen_val` targets, `define(l,glue_ref,cur_val)` for
+/// `glue_val`/`mu_val` ones. The observed record therefore carries the
+/// *result*, never the scanned operand, and is read after application rather
+/// than before it. An `arith_error` return in §1236 leaves `eqtb` untouched
+/// and is observed as no mutation at all, which falls out of resolving this
+/// only when application succeeded.
+#[cfg(any(test, feature = "instrumentation"))]
+fn committed_arithmetic_mutation(
+    target: ArithmeticTarget,
+    global: bool,
+    stores: &Universe,
+) -> MutationRecord {
+    match target {
+        ArithmeticTarget::IntegerRegister(index) => MutationRecord {
+            target: "register",
+            value: format!("count:{index}={}", stores.count(index)),
+            key: None,
+            tokens: None,
+            global,
+        },
+        ArithmeticTarget::DimensionRegister(index) => MutationRecord {
+            target: "register",
+            value: format!("scaled:{}", stores.dimen(index).raw()),
+            key: Some(format!("dimen:{index}")),
+            tokens: None,
+            global,
+        },
+        ArithmeticTarget::GlueRegister { index, mu } => MutationRecord {
+            target: "register",
+            value: glue_mutation_value(&stores.glue(if mu {
+                stores.muskip(index)
+            } else {
+                stores.skip(index)
+            })),
+            key: Some(format!("{}:{index}", if mu { "muskip" } else { "skip" })),
+            tokens: None,
+            global,
+        },
+        ArithmeticTarget::IntegerParameter(index) => MutationRecord {
+            target: "parameter",
+            value: format!(
+                "integer_parameter:{index}={}",
+                stores.int_param(IntParam::new(index))
+            ),
+            key: None,
+            tokens: None,
+            global,
+        },
+        ArithmeticTarget::DimensionParameter(index) => MutationRecord {
+            target: "parameter",
+            value: format!(
+                "scaled:{}",
+                stores.dimen_param(DimenParam::new(index)).raw()
+            ),
+            key: Some(format!("dimension_parameter:{index}")),
+            tokens: None,
+            global,
+        },
+        // TeX82 keeps `\thinmuskip`/`\medmuskip`/`\thickmuskip` in the same
+        // `glue_par` block as the ordinary glue parameters (§224), and the
+        // reference instrumentation names that whole block
+        // `glue_parameter:<n>`; the `mu` flag only selected which scanner
+        // §1236 used for the operand.
+        ArithmeticTarget::GlueParameter { index, .. } => MutationRecord {
+            target: "parameter",
+            value: glue_mutation_value(&stores.glue(stores.glue_param(GlueParam::new(index)))),
+            key: Some(format!("glue_parameter:{index}")),
+            tokens: None,
+            global,
+        },
+    }
+}
+
+/// Classifies the committed `eqtb` mutation, if any, that applying a scanned
+/// step performs, for the command observer.
+///
+/// TeX82 §1211's `prefixed_command` is TeX's single assignment dispatcher,
+/// and the reference instrumentation observes exactly the `eq_define`,
+/// `eq_word_define`, `geq_define`, and `geq_word_define` writes (§277-§279)
+/// that run inside it. Its `umber_trace_eq_mutation`/`umber_trace_word_mutation`
+/// classifiers then keep only the `eqtb` regions they can name: control
+/// sequence meanings, the glue/token/integer/dimension parameter blocks, the
+/// `\count`/`\dimen`/`\skip`/`\muskip`/`\toks` registers, and the
+/// `\catcode`/`\lccode`/`\uccode`/`\sfcode`/`\mathcode`/`\delcode` tables.
+///
+/// The match is exhaustive over [`ScannedStep`] deliberately (umber2-johp.124,
+/// the same defect shape removed by umber2-johp.69/.97/.108/.123). This was an
+/// `if let` chain ending in `None`, and a step that fell off its end did not
+/// merely get mislabeled -- it produced *no* event where the oracle produced
+/// one, which desynchronizes every following event in the trace. A newly
+/// added step now has to state which bucket below it belongs to.
+///
+/// # Buckets
+///
+/// - `Some(PendingMutation::Captured(..))`: the assignment's committed value
+///   is already known from the scanned step.
+/// - `Some(PendingMutation::Arithmetic { .. })`: §1236's result is only
+///   readable after application; see [`committed_arithmetic_mutation`].
+/// - `None`: the step writes no `eqtb` location the reference instrumentation
+///   names -- either it is not an `eqtb` write at all, or it lands in a region
+///   `umber_trace_eq_mutation` deliberately declines to serialize. Each arm
+///   cites which.
+/// - `unreachable!()`: `step_with_observer_once` intercepts the step before
+///   this classifier runs, so reaching it means that interception was removed
+///   without updating this classifier.
 #[cfg(any(test, feature = "instrumentation"))]
 fn applied_mutation_observation(
     scanned: &ScannedStep,
     stores: &Universe,
-) -> Option<MutationRecord> {
-    if let ScannedStep::Count {
-        index,
-        value,
-        global,
-    } = scanned
-    {
-        return Some(MutationRecord {
+) -> Option<PendingMutation> {
+    let captured = match scanned {
+        // -- Registers: §1226's `toks_register` and §1228's `register` cases,
+        // whose `eqtb` slots the instrumentation names `count:<n>`,
+        // `dimen:<n>`, `skip:<n>`, `muskip:<n>`, and `toks:<n>`.
+        ScannedStep::Count {
+            index,
+            value,
+            global,
+        } => MutationRecord {
             target: "register",
             value: format!("count:{index}={value}"),
             key: None,
             tokens: None,
             global: *global,
-        });
-    }
-    if let ScannedStep::Dimen {
-        index,
-        value,
-        global,
-    } = scanned
-    {
-        return Some(MutationRecord {
+        },
+        ScannedStep::Dimen {
+            index,
+            value,
+            global,
+        } => MutationRecord {
             target: "register",
             value: format!("scaled:{}", value.raw()),
             key: Some(format!("dimen:{index}")),
             tokens: None,
             global: *global,
-        });
-    }
-    if let ScannedStep::Skip {
-        index,
-        value,
-        global,
-    } = scanned
-    {
-        return Some(MutationRecord {
+        },
+        ScannedStep::Skip {
+            index,
+            value,
+            global,
+        } => MutationRecord {
             target: "register",
-            value: format!(
-                "glue:width={};stretch={};stretch_order={:?};shrink={};shrink_order={:?}",
-                value.width.raw(),
-                value.stretch.raw(),
-                value.stretch_order,
-                value.shrink.raw(),
-                value.shrink_order,
-            ),
+            value: glue_mutation_value(value),
             key: Some(format!("skip:{index}")),
             tokens: None,
             global: *global,
-        });
-    }
-    if let ScannedStep::Toks {
-        index,
-        tokens,
-        global,
-    } = scanned
-    {
-        return Some(MutationRecord {
+        },
+        ScannedStep::Muskip {
+            index,
+            value,
+            global,
+        } => MutationRecord {
+            target: "register",
+            value: glue_mutation_value(value),
+            key: Some(format!("muskip:{index}")),
+            tokens: None,
+            global: *global,
+        },
+        ScannedStep::Toks {
+            index,
+            tokens,
+            global,
+        } => MutationRecord {
             target: "register",
             value: "tokens".into(),
             key: Some(format!("toks:{index}")),
@@ -5912,15 +6060,47 @@ fn applied_mutation_observation(
                     .collect(),
             ),
             global: *global,
-        });
-    }
-    if let ScannedStep::TokParam {
-        index,
-        tokens,
-        global,
-    } = scanned
-    {
-        return Some(MutationRecord {
+        },
+        // -- Parameters: §1226/§1227's token-list parameters and §1228's
+        // `assign_int`/`assign_dimen`/`assign_glue`/`assign_mu_glue` cases.
+        ScannedStep::IntParam {
+            index,
+            value,
+            global,
+        } => MutationRecord {
+            target: "parameter",
+            value: format!("integer_parameter:{index}={value}"),
+            key: None,
+            tokens: None,
+            global: *global,
+        },
+        ScannedStep::DimenParam {
+            index,
+            value,
+            global,
+        } => MutationRecord {
+            target: "parameter",
+            value: format!("scaled:{}", value.raw()),
+            key: Some(format!("dimension_parameter:{index}")),
+            tokens: None,
+            global: *global,
+        },
+        ScannedStep::GlueParam {
+            index,
+            value,
+            global,
+        } => MutationRecord {
+            target: "parameter",
+            value: glue_mutation_value(value),
+            key: Some(format!("glue_parameter:{index}")),
+            tokens: None,
+            global: *global,
+        },
+        ScannedStep::TokParam {
+            index,
+            tokens,
+            global,
+        } => MutationRecord {
             target: "parameter",
             value: "tokens".into(),
             key: Some(format!("token_parameter:{index}")),
@@ -5933,181 +6113,302 @@ fn applied_mutation_observation(
                     .collect(),
             ),
             global: *global,
-        });
-    }
-    if let ScannedStep::IntParam {
-        index,
-        value,
-        global,
-    } = scanned
-    {
-        return Some(MutationRecord {
-            target: "parameter",
-            value: format!("integer_parameter:{index}={value}"),
-            key: None,
-            tokens: None,
-            global: *global,
-        });
-    }
-    if let ScannedStep::GlueParam {
-        index,
-        value,
-        global,
-    } = scanned
-    {
-        return Some(MutationRecord {
-            target: "parameter",
-            value: format!(
-                "glue:width={};stretch={};stretch_order={:?};shrink={};shrink_order={:?}",
-                value.width.raw(),
-                value.stretch.raw(),
-                value.stretch_order,
-                value.shrink.raw(),
-                value.shrink_order,
-            ),
-            key: Some(format!("glue_parameter:{index}")),
-            tokens: None,
-            global: *global,
-        });
-    }
-    if let ScannedStep::CodeTable {
-        primitive,
-        character,
-        value,
-        global,
-    } = scanned
-    {
-        // tex.web §232 lists cat_code, lc_code, uc_code, sf_code, math_code,
-        // and del_code as the eqtb code-table regions written by
-        // \catcode/\lccode/\uccode/\sfcode/\mathcode/\delcode (§239, §1123);
-        // every scan arm that produces `ScannedStep::CodeTable` (see the
-        // grouped primitive match above) must have a corresponding arm here.
-        let (target, value) = match primitive {
-            UnexpandablePrimitive::CatCode => {
-                ("catcode", format!("{}={value}", u32::from(*character)))
-            }
-            UnexpandablePrimitive::LcCode => (
-                "code_table",
-                format!("lccode:{}={value}", u32::from(*character)),
-            ),
-            UnexpandablePrimitive::UcCode => (
-                "code_table",
-                format!("uccode:{}={value}", u32::from(*character)),
-            ),
-            UnexpandablePrimitive::SfCode => (
-                "code_table",
-                format!("sfcode:{}={value}", u32::from(*character)),
-            ),
-            UnexpandablePrimitive::MathCode => (
-                "code_table",
-                format!("mathcode:{}={value}", u32::from(*character)),
-            ),
-            UnexpandablePrimitive::DelCode => (
-                "code_table",
-                format!("delcode:{}={value}", u32::from(*character)),
-            ),
-            _ => unreachable!("only code-table primitives are scanned"),
-        };
-        return Some(MutationRecord {
-            target,
+        },
+        // -- Code tables: §1230's `def_code` command. tex.web §232 lists
+        // cat_code, lc_code, uc_code, sf_code, math_code, and del_code as the
+        // eqtb code-table regions it writes; every scan arm that produces
+        // `ScannedStep::CodeTable` must have a corresponding arm here.
+        ScannedStep::CodeTable {
+            primitive,
+            character,
             value,
-            key: None,
-            tokens: None,
-            global: *global,
-        });
-    }
-    if let ScannedStep::Let {
-        target,
-        source,
-        meaning,
-        global,
-    } = scanned
-    {
-        return Some(MutationRecord {
+            global,
+        } => {
+            let (target, value) = match primitive {
+                UnexpandablePrimitive::CatCode => {
+                    ("catcode", format!("{}={value}", u32::from(*character)))
+                }
+                UnexpandablePrimitive::LcCode => (
+                    "code_table",
+                    format!("lccode:{}={value}", u32::from(*character)),
+                ),
+                UnexpandablePrimitive::UcCode => (
+                    "code_table",
+                    format!("uccode:{}={value}", u32::from(*character)),
+                ),
+                UnexpandablePrimitive::SfCode => (
+                    "code_table",
+                    format!("sfcode:{}={value}", u32::from(*character)),
+                ),
+                UnexpandablePrimitive::MathCode => (
+                    "code_table",
+                    format!("mathcode:{}={value}", u32::from(*character)),
+                ),
+                UnexpandablePrimitive::DelCode => (
+                    "code_table",
+                    format!("delcode:{}={value}", u32::from(*character)),
+                ),
+                _ => unreachable!("only code-table primitives are scanned"),
+            };
+            MutationRecord {
+                target,
+                value,
+                key: None,
+                tokens: None,
+                global: *global,
+            }
+        }
+        // -- Meanings: §1221's `let`, §1224's `shorthand_def`, and §1218's
+        // macro `def`. §1224's provisional `define(p,relax,256)` is committed
+        // and observed by the command-owned scanner that performs it, so only
+        // the final meaning is observed here.
+        ScannedStep::Let {
+            target,
+            source,
+            meaning,
+            global,
+        } => MutationRecord {
             target: "meaning",
             value: let_mutation_value(*meaning, *source, stores),
             key: Some(stores.resolve(*target).to_owned()),
             tokens: None,
             global: *global,
-        });
-    }
-    if let ScannedStep::CharacterDefinition {
-        primitive,
-        target,
-        value,
-        global,
-    } = scanned
-    {
-        let value = match primitive {
-            UnexpandablePrimitive::CharDef => format!("character:{value}"),
-            UnexpandablePrimitive::MathCharDef => format!("integer:{value}"),
-            _ => unreachable!("character-definition step carries only §1220 primitives"),
-        };
-        return Some(MutationRecord {
-            target: "meaning",
+        },
+        ScannedStep::CharacterDefinition {
+            primitive,
+            target,
             value,
-            key: Some(stores.resolve(*target).to_owned()),
-            tokens: None,
-            global: *global,
-        });
-    }
-    if let ScannedStep::RegisterDefinition {
-        primitive,
-        target,
-        global,
-        ..
-    } = scanned
-    {
-        let value = match primitive {
-            UnexpandablePrimitive::CountDef => "assign_int",
-            UnexpandablePrimitive::DimenDef => "assign_dimen",
-            UnexpandablePrimitive::SkipDef => "assign_glue",
-            UnexpandablePrimitive::MuskipDef => "assign_mu_glue",
-            UnexpandablePrimitive::ToksDef => "assign_toks",
-            _ => unreachable!("register-definition step carries only §1221 primitives"),
-        };
-        return Some(MutationRecord {
-            target: "meaning",
-            value: value.into(),
-            key: Some(stores.resolve(*target).to_owned()),
-            tokens: None,
-            global: *global,
-        });
-    }
-    let ScannedStep::MacroDefinition {
-        target,
-        parameter_text,
-        replacement_text,
-        global,
-        ..
-    } = scanned
-    else {
-        return None;
+            global,
+        } => {
+            let value = match primitive {
+                UnexpandablePrimitive::CharDef => format!("character:{value}"),
+                UnexpandablePrimitive::MathCharDef => format!("integer:{value}"),
+                _ => unreachable!("character-definition step carries only §1224 primitives"),
+            };
+            MutationRecord {
+                target: "meaning",
+                value,
+                key: Some(stores.resolve(*target).to_owned()),
+                tokens: None,
+                global: *global,
+            }
+        }
+        ScannedStep::RegisterDefinition {
+            primitive,
+            target,
+            global,
+            ..
+        } => {
+            let value = match primitive {
+                UnexpandablePrimitive::CountDef => "assign_int",
+                UnexpandablePrimitive::DimenDef => "assign_dimen",
+                UnexpandablePrimitive::SkipDef => "assign_glue",
+                UnexpandablePrimitive::MuskipDef => "assign_mu_glue",
+                UnexpandablePrimitive::ToksDef => "assign_toks",
+                _ => unreachable!("register-definition step carries only §1224 primitives"),
+            };
+            MutationRecord {
+                target: "meaning",
+                value: value.into(),
+                key: Some(stores.resolve(*target).to_owned()),
+                tokens: None,
+                global: *global,
+            }
+        }
+        ScannedStep::MacroDefinition {
+            target,
+            parameter_text,
+            replacement_text,
+            global,
+            ..
+        } => {
+            let mut tokens = stores
+                .tokens(parameter_text.token_list())
+                .iter()
+                .copied()
+                .map(|token| match token {
+                    Token::Param(_) => ObservedToken::MacroMatch,
+                    token => observed_macro_token(token, stores),
+                })
+                .collect::<Vec<_>>();
+            tokens.push(ObservedToken::MacroEndMatch);
+            tokens.extend(
+                stores
+                    .tokens(replacement_text.token_list())
+                    .iter()
+                    .copied()
+                    .map(|token| observed_macro_token(token, stores)),
+            );
+            MutationRecord {
+                target: "meaning",
+                value: "macro definition".into(),
+                key: Some(stores.resolve(*target).to_owned()),
+                tokens: Some(tokens),
+                global: *global,
+            }
+        }
+        // -- §1236's `do_register_command`, whose committed value is only
+        // readable after application.
+        ScannedStep::Arithmetic { target, global, .. } => {
+            return Some(PendingMutation::Arithmetic {
+                target: *target,
+                global: *global,
+            });
+        }
+        // -- Assignments that do write `eqtb`, into a region the reference
+        // instrumentation deliberately declines to name: §1241's `set_box`
+        // writes `box_base`, §1217's `set_font` writes `cur_font_loc`,
+        // §1234's `def_family` writes `math_font_base`, and §1248's
+        // `set_shape` writes `par_shape_loc`, whose equivalent is a pointer
+        // to a scaled list rather than a serializable value.
+        // `umber_trace_eq_mutation` classifies each of these as family -1 and
+        // returns without an event, so Umber must stay silent for exactly
+        // these four.
+        ScannedStep::SetBox(..)
+        | ScannedStep::FontSelect { .. }
+        | ScannedStep::MathFamily { .. }
+        | ScannedStep::ParagraphShape { .. } => return None,
+        // -- Assignments whose committed state lives outside `eqtb` entirely,
+        // so no `eq_define`/`eq_word_define` runs and no mutation is observed
+        // on either side: §1247's `alter_box_dimen` (a box node's `mem`
+        // fields), §1243's `alter_aux` and §1244's `alter_prev_graf` (the mode
+        // `nest`), §1245's `alter_page_so_far` and §1246's `alter_integer`
+        // (`page_so_far`, `dead_cycles`, `insert_penalties`), §1253's
+        // `assign_font_dimen`/`assign_font_int` (`font_info`, `hyphen_char`,
+        // `skew_char`), §1252's `hyph_data` (the pattern trie and exception
+        // table), and §1265's `new_interaction` (the `interaction` global).
+        // §1058's `\nointerlineskip` is `\prevdepth`'s own primitive writing
+        // the same `nest` field.
+        ScannedStep::BoxDimensionAssignment { .. }
+        | ScannedStep::PrevDepth { .. }
+        | ScannedStep::SpaceFactor { .. }
+        | ScannedStep::PrevGraf { .. }
+        | ScannedStep::PageDimension { .. }
+        | ScannedStep::PageInteger { .. }
+        | ScannedStep::NoInterlineSkip
+        | ScannedStep::FontDimen { .. }
+        | ScannedStep::FontInteger { .. }
+        | ScannedStep::HyphenationData { .. }
+        | ScannedStep::SetInteractionMode(..) => return None,
+        // -- Assignments that do commit an instrumentation-named `eqtb`
+        // meaning, but whose observation Umber cannot yet place correctly.
+        // §1257's `new_font` runs `define(u,set_font,null_font)` *before* it
+        // scans the file name and `at`/`scaled` size, so the oracle's mutation
+        // is ordered ahead of those operand deliveries while this single
+        // apply seam could only emit it after them; §1225's `read_to_cs` runs
+        // `define(p,call,cur_val)` after `read_toks`, but the scanned step
+        // carries no `\global` prefix to report a scope with. Tracked as
+        // umber2-johp.127 rather than emitted at the wrong point or with a
+        // guessed scope.
+        ScannedStep::FontDefinition { .. } | ScannedStep::InputStream { .. } => return None,
+        // -- Steps that perform no assignment at all: mode and list building,
+        // box and alignment structure, grouping, diagnostics, recovery, and
+        // the pdfTeX extension requests. None of them reaches §1211's
+        // `prefixed_command`, so the reference engine has
+        // `umber_mutation_command` false throughout and emits nothing.
+        ScannedStep::Continue
+        | ScannedStep::MissingMathShift
+        | ScannedStep::EndOfInput
+        | ScannedStep::Terminate
+        | ScannedStep::End
+        | ScannedStep::HorizontalSkip { .. }
+        | ScannedStep::VerticalSkip { .. }
+        | ScannedStep::Kern { .. }
+        | ScannedStep::Penalty { .. }
+        | ScannedStep::CharacterCode { .. }
+        | ScannedStep::DeleteLast(..)
+        | ScannedStep::ItalicCorrection
+        | ScannedStep::IllegalItalicCorrection { .. }
+        | ScannedStep::NoBoundary
+        | ScannedStep::NonScript
+        | ScannedStep::ControlSpace
+        | ScannedStep::FixedHorizontalGlue { .. }
+        | ScannedStep::FixedVerticalGlue { .. }
+        | ScannedStep::ParagraphIndent { .. }
+        | ScannedStep::PdfXImage { .. }
+        | ScannedStep::PdfRefXImage { .. }
+        | ScannedStep::PdfGraphics(..)
+        | ScannedStep::PdfObject(..)
+        | ScannedStep::PdfReferenceObject(..)
+        | ScannedStep::PdfForm(..)
+        | ScannedStep::PdfDocumentFragment(..)
+        | ScannedStep::PdfNavigation(..)
+        | ScannedStep::DeferredOpenOut { .. }
+        | ScannedStep::DeferredCloseOut { .. }
+        | ScannedStep::DeferredWrite { .. }
+        | ScannedStep::DeferredSpecial { .. }
+        | ScannedStep::CaseShift { .. }
+        | ScannedStep::AfterGroup(..)
+        | ScannedStep::AfterAssignment(..)
+        | ScannedStep::Rule { .. }
+        | ScannedStep::Message { .. }
+        | ScannedStep::DisplayDiagnostic(..)
+        | ScannedStep::ShowBox { .. }
+        | ScannedStep::VSplit(..)
+        | ScannedStep::ImmediateExtension(..)
+        | ScannedStep::BoxRegister { .. }
+        | ScannedStep::Unbox { .. }
+        | ScannedStep::LastBox
+        | ScannedStep::Leaders { .. }
+        | ScannedStep::LeaderRegister { .. }
+        | ScannedStep::MissingLeaderPayload
+        | ScannedStep::LeadersNotFollowedByGlue
+        | ScannedStep::BeginShipout
+        | ScannedStep::BeginAlignment { .. }
+        | ScannedStep::AlignmentPreambleOpening { .. }
+        | ScannedStep::AlignmentPreambleOpeningReplay { .. }
+        | ScannedStep::AlignmentPreambleStart { .. }
+        | ScannedStep::AlignmentCellOpening { .. }
+        | ScannedStep::AlignmentCellFinish { .. }
+        | ScannedStep::AlignmentFinish { .. }
+        | ScannedStep::BeginNoAlign { .. }
+        | ScannedStep::AlignmentRecovery { .. }
+        | ScannedStep::BeginSimpleGroup
+        | ScannedStep::EndSimpleGroup
+        | ScannedStep::BeginSemiSimpleGroup
+        | ScannedStep::EndSemiSimpleGroup
+        | ScannedStep::ExtraRightBrace
+        | ScannedStep::ExtraRightBraceEndsSemiSimpleGroup
+        | ScannedStep::ExtraEndGroup
+        | ScannedStep::OffSave(..)
+        | ScannedStep::OffSaveBottomDrop { .. }
+        | ScannedStep::BeginOrdinaryGroup
+        | ScannedStep::EndOrdinaryGroup
+        | ScannedStep::BeginOutputRoutine
+        | ScannedStep::OutputRoutineOpeningBrace
+        | ScannedStep::EndOutputRoutine
+        | ScannedStep::ForcedOutputShipout
+        | ScannedStep::AlignmentPeekCell { .. }
+        | ScannedStep::NoAlignBeginGroup { .. }
+        | ScannedStep::NoAlignEndGroup { .. }
+        | ScannedStep::BeginBox(..)
+        | ScannedStep::BeginLeaderBox { .. }
+        | ScannedStep::BoxShift(..)
+        | ScannedStep::IllegalBoxShift { .. }
+        | ScannedStep::BeginInsert(..)
+        | ScannedStep::IllegalInsertOrAdjust { .. }
+        | ScannedStep::IllegalEqNo { .. }
+        | ScannedStep::IllegalLastItem { .. }
+        | ScannedStep::ReplayBoxOpeningBrace
+        | ScannedStep::BoxBeginGroup
+        | ScannedStep::BoxEndGroup { .. }
+        | ScannedStep::Mark(..)
+        | ScannedStep::Paragraph
+        | ScannedStep::MathShift { .. }
+        | ScannedStep::ParagraphStart
+        | ScannedStep::Character { .. }
+        | ScannedStep::Accent(..) => return None,
+        // -- Intercepted by `step_with_observer_once` before this classifier
+        // runs, either because the step is applied through its own typed
+        // request path or because it ends the replay episode outright.
+        ScannedStep::ReplayCompleted(..)
+        | ScannedStep::Math(..)
+        | ScannedStep::MathDelimiter(..)
+        | ScannedStep::Discretionary(..) => {
+            unreachable!("step_with_observer_once applies this step before classifying mutations")
+        }
     };
-    let mut tokens = stores
-        .tokens(parameter_text.token_list())
-        .iter()
-        .copied()
-        .map(|token| match token {
-            Token::Param(_) => ObservedToken::MacroMatch,
-            token => observed_macro_token(token, stores),
-        })
-        .collect::<Vec<_>>();
-    tokens.push(ObservedToken::MacroEndMatch);
-    tokens.extend(
-        stores
-            .tokens(replacement_text.token_list())
-            .iter()
-            .copied()
-            .map(|token| observed_macro_token(token, stores)),
-    );
-    Some(MutationRecord {
-        target: "meaning",
-        value: "macro definition".into(),
-        key: Some(stores.resolve(*target).to_owned()),
-        tokens: Some(tokens),
-        global: *global,
-    })
+    Some(PendingMutation::Captured(captured))
 }
 
 /// Captures an executor-owned observable effect before application, then
