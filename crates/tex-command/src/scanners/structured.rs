@@ -2460,14 +2460,16 @@ impl CommandProcessor<'_> {
         &mut self,
         expanded: bool,
     ) -> Result<ScannedBalancedText, CommandError> {
-        // Expanded general text (for `\message`, for example) enters its
-        // absorbing episode before the required opening brace. The ordinary
-        // token-list assignment scan retains TeX82's initial validation and
-        // replay, whose backup transition is separately observable.
-        if !expanded {
-            let opening = self.scan_left_brace(true)?;
-            self.back_input(opening)?;
-        }
+        // TeX82 §473's `scan_toks` sets `scanner_status` *before* §403's
+        // `scan_left_brace` removes the compulsory opening brace, for both
+        // collection modes. Callers that reach here -- §1288's `shift_case`,
+        // §1352's `\write`, `\special`, and the pdfTeX graphics family --
+        // enter `scan_toks` directly, so the brace must not be scanned and
+        // backed up here first: that produced a raw delivery and a
+        // backup/recovery pair ahead of the absorbing transition, and cost
+        // the redelivered brace its source location. The one call site where
+        // TeX really does look the brace up first, §1227's token-list
+        // assignment, states that explicitly through `GeneralAfterOpening`.
         let scanned = self.scan_toks(ScanToksMode::General { expanded })?;
         Ok(ScannedBalancedText {
             tokens: scanned.replacement_text,
