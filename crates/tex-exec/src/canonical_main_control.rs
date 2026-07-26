@@ -6642,6 +6642,14 @@ fn observed_macro_body(
 #[cfg(any(test, feature = "instrumentation"))]
 fn observed_macro_token(token: Token, stores: &Universe) -> ObservedToken {
     match token {
+        // §353 gives an active character the control sequence
+        // `active_base + c`, so §365's `cur_tok` stores it as
+        // `cs_token_flag + cur_cs` and its §289 spelling is the single
+        // character, never a character token with command code 13.
+        Token::Char {
+            ch,
+            cat: tex_state::token::Catcode::Active,
+        } => ObservedToken::ControlSequence(ch.to_string()),
         Token::Char { ch, cat } => ObservedToken::Character {
             character: ch,
             catcode: cat,
