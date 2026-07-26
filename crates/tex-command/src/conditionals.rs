@@ -464,15 +464,35 @@ impl CommandProcessor<'_> {
     }
 
     fn evaluate_if(&mut self) -> Result<bool, CommandError> {
-        let first = self.get_x_token()?.ok_or(CommandError::input_invariant())?;
-        let second = self.get_x_token()?.ok_or(CommandError::input_invariant())?;
-        Ok(Self::if_character_code(first.meaning()) == Self::if_character_code(second.meaning()))
+        let first = self.get_x_token_or_active_char()?;
+        let second = self.get_x_token_or_active_char()?;
+        Ok(Self::if_character_code(first) == Self::if_character_code(second))
     }
 
     fn evaluate_ifcat(&mut self) -> Result<bool, CommandError> {
-        let first = self.get_x_token()?.ok_or(CommandError::input_invariant())?;
-        let second = self.get_x_token()?.ok_or(CommandError::input_invariant())?;
-        Ok(Self::if_category_code(first.meaning()) == Self::if_category_code(second.meaning()))
+        let first = self.get_x_token_or_active_char()?;
+        let second = self.get_x_token_or_active_char()?;
+        Ok(Self::if_category_code(first) == Self::if_category_code(second))
+    }
+
+    /// TeX.web §506's `get_x_token_or_active_char`, the operand fetch used by
+    /// `\\if` and `\\ifcat` alone.
+    ///
+    /// An active character replayed by `\\noexpand` arrives as the generic
+    /// frozen-`\\relax`/`no_expand_flag` command, which would otherwise
+    /// compare as "not a character". §506 restores `cur_cmd:=active_char` and
+    /// `cur_chr` from the retained `cur_tok`, so `\\if\\noexpand~` compares
+    /// against the active character's own code and `\\ifcat\\noexpand~`
+    /// against category 13.
+    fn get_x_token_or_active_char(&mut self) -> Result<Meaning, CommandError> {
+        let command = self.get_x_token()?.ok_or(CommandError::input_invariant())?;
+        Ok(match command.no_expand_active_character() {
+            Some(ch) => Meaning::CharToken {
+                ch,
+                cat: tex_state::token::Catcode::Active,
+            },
+            None => command.meaning(),
+        })
     }
 
     /// TeX.web part 28 maps every non-character `\\if` operand to the

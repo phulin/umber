@@ -237,6 +237,27 @@ impl CurrentCommand {
         self.identity
     }
 
+    /// The active character this delivery would have been, had `\\noexpand`
+    /// not replaced it with the frozen-`\\relax` command identity.
+    ///
+    /// TeX82 §506's `get_x_token_or_active_char` recovers exactly this from
+    /// the retained `cur_tok`: `cur_cmd:=active_char` and
+    /// `cur_chr:=cur_tok-cs_token_flag-active_base`. Only `\\if` and
+    /// `\\ifcat` perform that reconstruction — everywhere else a `\\noexpand`
+    /// delivery keeps its `relax`/`no_expand_flag` identity.
+    pub(crate) fn no_expand_active_character(&self) -> Option<char> {
+        if !matches!(self.identity, CommandIdentity::NoExpandFrozenRelax) {
+            return None;
+        }
+        match self.spelling.semantic_token() {
+            Token::Char {
+                ch,
+                cat: Catcode::Active,
+            } => Some(ch),
+            _ => None,
+        }
+    }
+
     /// Converts the effective current command to TeX82's recovery space
     /// while preserving the original spelling for diagnostics and exact input
     /// replay. This is the final step of `check_outer_validity`.
