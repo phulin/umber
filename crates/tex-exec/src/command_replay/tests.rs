@@ -4466,10 +4466,10 @@ fn canonical_delete_last_removes_only_matching_tail_node() {
     // matches and removes it.
     let mut universe = Universe::new();
     let mut control = CanonicalMainControl::tex82_initex(&mut universe);
-    // `\hbox`, not `\vbox`: this keeps `\kern`'s own (separately tracked,
-    // out-of-scope) canonical vmode-paragraph-start handling out of this
-    // test entirely, so it exercises only `delete_last`'s ordinary
-    // (`tail<>head`) branch.
+    // `\hbox`, not `\vbox`: `\kern` in vertical mode is covered separately by
+    // `canonical_kern_in_vertical_mode_does_not_start_a_paragraph` below, so
+    // this test exercises only `delete_last`'s ordinary (`tail<>head`)
+    // branch.
     register_source(
         &mut control,
         br"\setbox0=\hbox{\kern1pt\unpenalty\kern2pt\unkern}",
@@ -4491,6 +4491,45 @@ fn canonical_delete_last_removes_only_matching_tail_node() {
             kind: KernKind::Explicit,
         }],
         "\\unpenalty left the kern alone; \\unkern removed the second one: {children:?}"
+    );
+}
+
+#[test]
+fn canonical_kern_in_vertical_mode_does_not_start_a_paragraph() {
+    // TeX82 §1057's `any_mode(kern): append_kern` (§1061): `\kern` has no
+    // mode-specific dispatch entry at all, unlike `\hskip` (§1090's
+    // `head_for_vmode`, genuinely `vmode+hskip`-listed). A bare `\kern` in
+    // (internal) vertical mode must append directly to the current list, not
+    // silently trigger `new_graf` and swallow the kern into a bogus empty
+    // paragraph -- regression test for umber2-johp.85.
+    let mut universe = Universe::new();
+    let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+    register_source(&mut control, br"\setbox0=\vbox{\kern5pt\hrule height1pt}");
+    run_to_end(&mut control, &mut universe);
+
+    let vbox = universe
+        .box_reg(0)
+        .and_then(|id| universe.nodes(id).first().map(|node| node.to_owned()))
+        .expect("outer vbox stores");
+    let Node::VList(vbox) = vbox else {
+        panic!("setbox0 contains a vbox");
+    };
+    let children = universe.nodes(vbox.children).to_vec();
+    assert_eq!(
+        children,
+        vec![
+            Node::Kern {
+                amount: Scaled::from_raw(5 * Scaled::UNITY),
+                kind: KernKind::Explicit,
+            },
+            Node::Rule {
+                width: None,
+                height: Some(Scaled::from_raw(Scaled::UNITY)),
+                depth: Some(Scaled::from_raw(0)),
+            },
+        ],
+        "the kern must land directly on the vlist, not be dropped by a bogus \
+         empty paragraph: {children:?}"
     );
 }
 

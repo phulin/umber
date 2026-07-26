@@ -5988,12 +5988,15 @@ fn apply_scanned_step(
             Ok(ReplayStep::Continue)
         }
         ScannedStep::Kern { amount } => {
-            if matches!(
-                modes.current_mode(),
-                Mode::Vertical | Mode::InternalVertical
-            ) {
-                start_canonical_paragraph(command, modes, stores, true)?;
-            }
+            // TeX82 §1057's `any_mode(kern),mmode+mkern: append_kern`
+            // (§1061: `tail_append(new_kern(cur_val)); subtype(tail):=s`).
+            // Unlike `\hskip` (§1090's `head_for_vmode`, which is genuinely
+            // `vmode+hskip`-listed), `\kern` has no mode-specific dispatch
+            // entry at all -- it is legal in every mode and always appends
+            // directly to whatever list is current, with no paragraph start
+            // and no page-builder call (contrast `\penalty`, §1103, which
+            // also never starts a paragraph but does call `build_page` in
+            // outer vertical mode).
             crate::assignments::flush_pending_hchars(modes, stores)?;
             modes.current_list_mut().push(Node::Kern {
                 amount,
