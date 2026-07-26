@@ -9,7 +9,8 @@
   ],
   "excludes": [
     "crates/umber-wasm/package.json",
-    "tests/corpus/command/**/manifest.json"
+    "tests/corpus/command/**/manifest.json",
+    "tests/tex82-documents/*/template-manifest.json"
   ],
   "plugins": [
     "https://plugins.dprint.dev/json-0.23.0.wasm",

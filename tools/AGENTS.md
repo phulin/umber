@@ -41,11 +41,23 @@ sidecars including inline frames, and reports self/inclusive, subtree, and
 runtime-caller attribution for persistent engine profiles.
 
 `tools/tex-command-stream` is the offline, test-only canonical command-stream
-comparison runner. It replays committed TeX82 command fixture inputs through
-the instrumented command boundary, translates the owned observer records into
-the portable `tex-oracle` schema, and reports the earliest ordered divergence.
-It never invokes a reference engine or joins the production engine dependency
-graph.
+comparison runner. It replays TeX82 command fixture inputs through the
+instrumented command boundary, translates the owned observer records into the
+portable `tex-oracle` schema, and reports a ranked worklist of up to
+`--max-divergences` ordered divergences (stream mismatches and contained
+replay failures alike). It never invokes a reference engine or joins the
+production engine dependency graph.
+
+It replays two registries: the committed, always-present fixtures under
+`tests/corpus/command/tex82`, then the full-document traces (plain bootstrap,
+Story, Gentle) under `tests/corpus/command/tex82-documents`. The document tier
+is generated on demand by `scripts/build-tex82-document-traces.sh` and
+gitignored -- those traces run 17-156 MB each -- with its identity pinned in
+`tests/tex82-document-trace-manifest.txt`; an ungenerated document is skipped
+with a stderr notice rather than failing. Document replay registers the staged
+TFM set through `CommandHostCapabilities::register_font` before its first step,
+because canonical font resolution fails rather than suspends. See
+"Differential Tracer" in `docs/testing_infrastructure.md`.
 
 `scripts/fetch-conformance-inputs.sh` acquires the external hyphenation and
 Computer Modern font inputs and fetches and verifies the pinned official Knuth
