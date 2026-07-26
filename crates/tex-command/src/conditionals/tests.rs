@@ -892,6 +892,102 @@ fn selected_ifcase_limb_skips_remaining_limbs_without_extra_delimiter_errors() {
     )));
 }
 
+/// Defines `ch` as an active character with an expandable (macro) meaning,
+/// returning the active-character token that spells it in a token list.
+fn active_macro(universe: &mut Universe, ch: char) -> Token {
+    let symbol = universe.intern_active_character(ch).symbol();
+    let parameter_text = universe.intern_token_list(&[]);
+    let replacement_text = universe.intern_token_list(&[other('!')]);
+    universe.set_macro_meaning(
+        symbol,
+        MacroMeaning::new(MeaningFlags::EMPTY, parameter_text, replacement_text),
+    );
+    Token::Char {
+        ch,
+        cat: tex_state::token::Catcode::Active,
+    }
+}
+
+#[test]
+fn noexpand_before_an_active_character_compares_as_that_character() {
+    let mut command = CommandState::default();
+    let mut runtime = CommandRuntime::default();
+    let mut universe = Universe::new();
+    let if_char = install(&mut universe, "if", ExpandablePrimitive::If);
+    let if_cat = install(&mut universe, "ifcat", ExpandablePrimitive::IfCat);
+    let no_expand = install(&mut universe, "noexpand", ExpandablePrimitive::NoExpand);
+    let otherwise = install(&mut universe, "else", ExpandablePrimitive::Else);
+    let fi = install(&mut universe, "fi", ExpandablePrimitive::Fi);
+    let tilde = active_macro(&mut universe, '~');
+    let at = active_macro(&mut universe, '@');
+    let ordinary = macro_token(
+        &mut universe,
+        "foo",
+        MeaningFlags::EMPTY,
+        &[],
+        &[other('!')],
+    );
+    // TeX.web §506's `get_x_token_or_active_char` rebuilds `cur_cmd` and
+    // `cur_chr` from the retained token, so a `\noexpand`ed active character
+    // compares as category 13 with its own character code instead of as the
+    // shared `relax`/256 non-character sentinel.
+    push(
+        &mut command,
+        vec![
+            // Two distinct active characters share category 13.
+            if_cat,
+            no_expand,
+            tilde,
+            no_expand,
+            at,
+            other('s'),
+            otherwise,
+            other('d'),
+            fi,
+            // An active character does not share a category with an ordinary
+            // `\noexpand`ed control sequence, which stays the sentinel.
+            if_cat,
+            no_expand,
+            tilde,
+            no_expand,
+            ordinary,
+            other('s'),
+            otherwise,
+            other('d'),
+            fi,
+            // Character codes are compared, so two different active
+            // characters differ under `\if`.
+            if_char,
+            no_expand,
+            tilde,
+            no_expand,
+            at,
+            other('s'),
+            otherwise,
+            other('d'),
+            fi,
+            // The same active character matches itself.
+            if_char,
+            no_expand,
+            tilde,
+            no_expand,
+            tilde,
+            other('s'),
+            otherwise,
+            other('d'),
+            fi,
+        ],
+    );
+    let mut capabilities = CommandHostCapabilities::default();
+    let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+
+    assert_eq!(next_character(&mut processor), 's');
+    assert_eq!(next_character(&mut processor), 'd');
+    assert_eq!(next_character(&mut processor), 'd');
+    assert_eq!(next_character(&mut processor), 's');
+    assert!(processor.command.expansion.pending_diagnostics.is_empty());
+}
+
 #[test]
 fn ifeof_reads_stream_open_state_and_recovers_a_bad_stream_number() {
     let mut command = CommandState::default();
