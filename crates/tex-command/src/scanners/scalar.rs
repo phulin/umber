@@ -54,6 +54,66 @@ pub enum InternalValue {
     },
 }
 
+impl InternalValue {
+    /// TeX82 §410's `cur_val_level` for this value.
+    ///
+    /// The six levels are totally ordered (`int_val` < `dimen_val` <
+    /// `glue_val` < `mu_val` < `ident_val` < `tok_val`), which is what makes
+    /// §413's `while cur_val_level>level` coercion loop well defined.
+    const fn level(self) -> InternalLevel {
+        match self {
+            Self::Integer(_) => InternalLevel::Integer,
+            Self::Dimension(_) => InternalLevel::Dimension,
+            Self::Glue(_) => InternalLevel::Glue,
+            Self::MuGlue(_) => InternalLevel::MuGlue,
+            Self::Font(_) => InternalLevel::Font,
+            Self::Tokens { .. } => InternalLevel::Tokens,
+        }
+    }
+}
+
+/// TeX82 §410's six internal-quantity levels, in their defining order.
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+enum InternalLevel {
+    /// `int_val`.
+    Integer,
+    /// `dimen_val`.
+    Dimension,
+    /// `glue_val`.
+    Glue,
+    /// `mu_val`.
+    MuGlue,
+    /// `ident_val`.
+    Font,
+    /// `tok_val`.
+    Tokens,
+}
+
+/// TeX82 §430's "Negate all three glue components of `cur_val`".
+///
+/// A leading sign in front of an internal glue or mu-glue quantity negates
+/// the whole specification, not just its width: `\skip0=-\skip1` keeps the
+/// stretch and shrink and negates them too. The orders of infinity are
+/// magnitudes and are unaffected.
+fn negated_glue(glue: GlueSpec) -> GlueSpec {
+    GlueSpec {
+        width: Scaled::from_raw(-glue.width.raw()),
+        stretch: Scaled::from_raw(-glue.stretch.raw()),
+        shrink: Scaled::from_raw(-glue.shrink.raw()),
+        ..glue
+    }
+}
+
+/// The outcome of TeX82 §449's internal-quantity fetch inside `scan_dimen`.
+enum InternalDimension {
+    /// The quantity reached the requested dimension level: `goto attach_sign`
+    /// with no unit scan and no trailing optional space.
+    Complete(Scaled),
+    /// The quantity settled at `int_val`: it is the numeric prefix of an
+    /// ordinary units scan.
+    Prefix(i32),
+}
+
 enum DimensionUnit {
     Physical(PhysicalUnit),
     Internal(Scaled),
@@ -230,30 +290,38 @@ impl CommandProcessor<'_> {
         provenance: OriginId,
     ) -> Result<ScannedScalar<i32>, CommandError> {
         let value = match self.internal_value_from_command(&first)? {
-            Some(InternalValue::Integer(value)) => value,
-            // TeX82 §424 lowers an internal dimension to `int_val` for
-            // `scan_int`; the scaled representation is already its integer
-            // value. Plain's `\ht\z@` relies on this because `\z@` is a
-            // dimension register containing zero, not a numeric literal.
-            Some(InternalValue::Dimension(value)) => value.raw(),
-            Some(_) => {
-                self.retire_exhausted_backup_before_scalar_replay(first.delivery_stamp())?;
-                self.back_input(first)?;
-                let scanned = ScannedScalar {
-                    value: 0,
-                    recovery: ScalarRecovery::InsertedZero,
-                    provenance: ScalarProvenance {
-                        primary: provenance,
-                    },
-                };
-                #[cfg(any(test, feature = "instrumentation"))]
-                self.observe(CommandObservation::Scanner(ScannerRecord {
-                    kind: "integer",
-                    value: scanned.value.to_string(),
-                    tokens: None,
-                }));
-                return Ok(scanned);
-            }
+            // TeX82 §440's `scan_int` fetches at `int_val`, so §413's §429
+            // loop lowers every numeric level to an integer: a dimension keeps
+            // its scaled representation, and glue or mu glue first becomes its
+            // width. Plain's `\ht\z@` relies on the dimension step because
+            // `\z@` is a dimension register, not a numeric literal; `\ifnum
+            // \parskip>0` and `\count0=\skip3` rely on the glue step.
+            Some(value) => match self.coerce_internal_value(value, InternalLevel::Integer) {
+                Some(InternalValue::Integer(value)) => value,
+                Some(_) => unreachable!("coercion to int_val always yields an integer"),
+                // TeX82 §415: a font identifier or token list requested below
+                // `tok_val` is not coerced at all. TeX prints "Missing
+                // number, treated as zero", backs the operand up, and yields
+                // zero.
+                None => {
+                    self.retire_exhausted_backup_before_scalar_replay(first.delivery_stamp())?;
+                    self.back_input(first)?;
+                    let scanned = ScannedScalar {
+                        value: 0,
+                        recovery: ScalarRecovery::InsertedZero,
+                        provenance: ScalarProvenance {
+                            primary: provenance,
+                        },
+                    };
+                    #[cfg(any(test, feature = "instrumentation"))]
+                    self.observe(CommandObservation::Scanner(ScannerRecord {
+                        kind: "integer",
+                        value: scanned.value.to_string(),
+                        tokens: None,
+                    }));
+                    return Ok(scanned);
+                }
+            },
             None => match first.meaning() {
                 Meaning::CharToken { ch, .. } if ch.is_ascii_digit() => {
                     self.scan_radix_tail(ch, 10)?
@@ -368,18 +436,33 @@ impl CommandProcessor<'_> {
             None => self.get_x_token()?.ok_or(CommandError::input_invariant())?,
         };
         let (value, order, internal_dimension) = match self.internal_value_from_command(&first)? {
-            Some(InternalValue::Dimension(value)) => (value, Order::Normal, true),
-            Some(_) => {
-                self.back_input(first)?;
-                return Ok((
-                    ScannedScalar {
-                        value: Scaled::from_raw(0),
-                        recovery: ScalarRecovery::InsertedZero,
-                        provenance,
-                    },
-                    Order::Normal,
-                ));
-            }
+            // TeX82 §449's "Fetch an internal dimension and goto attach_sign,
+            // or fetch an internal integer". A quantity that ends up at the
+            // requested dimension level is the whole answer and skips both the
+            // unit scan and its optional space; one that ends up an integer
+            // becomes the numeric prefix of an ordinary units scan (`\dimen0=
+            // \count5 pt`).
+            Some(value) => match self.fetch_internal_dimension(value, mu) {
+                Some(InternalDimension::Complete(value)) => (value, Order::Normal, true),
+                Some(InternalDimension::Prefix(integer)) => {
+                    self.last_integer_terminator = None;
+                    let (value, order, flip) =
+                        self.scan_units_after_integer(integer, false, allow_infinite, mu)?;
+                    negative ^= flip;
+                    (value, order, false)
+                }
+                None => {
+                    self.back_input(first)?;
+                    return Ok((
+                        ScannedScalar {
+                            value: Scaled::from_raw(0),
+                            recovery: ScalarRecovery::InsertedZero,
+                            provenance,
+                        },
+                        Order::Normal,
+                    ));
+                }
+            },
             None => match first.meaning() {
                 Meaning::CharToken { ch, .. } if ch.is_ascii_digit() || ch == '.' => {
                     // TeX82 `scan_dimen` delegates the integral prefix to
@@ -408,8 +491,9 @@ impl CommandProcessor<'_> {
                         // for the keyword scanner instead.
                         let _ = self.get_next()?;
                     }
-                    let (value, order) =
-                        self.scan_decimal_dimension(integer, decimal, allow_infinite, mu)?;
+                    let (value, order, flip) =
+                        self.scan_units_after_integer(integer, decimal, allow_infinite, mu)?;
+                    negative ^= flip;
                     (value, order, false)
                 }
                 _ => {
@@ -446,46 +530,206 @@ impl CommandProcessor<'_> {
         Ok((scanned, order))
     }
 
+    /// TeX82 §449's "Fetch an internal dimension ..., or fetch an internal
+    /// integer", including §450's "Coerce glue to a dimension".
+    ///
+    /// `None` is §415's missing-number case: a font identifier or token list
+    /// where a dimension was requested. The caller owns backing that operand
+    /// up and reporting the inserted zero.
+    fn fetch_internal_dimension(
+        &mut self,
+        value: InternalValue,
+        mu: bool,
+    ) -> Option<InternalDimension> {
+        if !mu {
+            // `scan_something_internal(dimen_val,false)`: §429 lowers glue and
+            // mu glue to a width, so anything that is still a dimension after
+            // the cascade is the complete answer.
+            return match self.coerce_internal_value(value, InternalLevel::Dimension)? {
+                InternalValue::Dimension(value) => Some(InternalDimension::Complete(value)),
+                InternalValue::Integer(value) => Some(InternalDimension::Prefix(value)),
+                _ => unreachable!("coercion to dimen_val yields a dimension or an integer"),
+            };
+        }
+        // `scan_something_internal(mu_val,false)`: `mu_val` is the highest
+        // numeric level, so §429's loop never runs and the level reached is
+        // exactly the quantity's own.
+        match value {
+            // §450 replaces the specification by its width while leaving
+            // `cur_val_level` at `mu_val`, so `goto attach_sign` takes it as
+            // the whole mu dimension. This is what `\mkern\thinmuskip` reads.
+            InternalValue::MuGlue(glue) => Some(InternalDimension::Complete(glue.width)),
+            // §450 coerces this width too, but `cur_val_level` stays
+            // `glue_val`, which is neither `mu_val` nor `int_val`: TeX reports
+            // `mu_error` and continues with the width as the units prefix.
+            InternalValue::Glue(glue) => {
+                self.mu_error();
+                Some(InternalDimension::Prefix(glue.width.raw()))
+            }
+            // `dimen_val` is below `glue_val`, so §450 does not apply; the
+            // level test still reports `mu_error` and keeps the value.
+            InternalValue::Dimension(value) => {
+                self.mu_error();
+                Some(InternalDimension::Prefix(value.raw()))
+            }
+            InternalValue::Integer(value) => Some(InternalDimension::Prefix(value)),
+            InternalValue::Font(_) | InternalValue::Tokens { .. } => None,
+        }
+    }
+
+    /// TeX82 §448's shared tail: normalize the integer part's sign, then scan
+    /// units for `cur_val + f/2^16`.
+    ///
+    /// The returned flag is §448's `if cur_val<0 then negative:=not negative`.
+    /// Only an internal integer prefix (`\dimen0=\count5 pt`, or `\mkern`'s
+    /// mu-level mismatch recovery) can deliver a negative value here, and the
+    /// fixed-point unit conversion is defined only for a nonnegative operand.
+    fn scan_units_after_integer(
+        &mut self,
+        integer: i32,
+        decimal: bool,
+        allow_infinite: bool,
+        mu: bool,
+    ) -> Result<(Scaled, Order, bool), CommandError> {
+        let flip = integer < 0;
+        let integer = if flip {
+            integer.saturating_neg()
+        } else {
+            integer
+        };
+        let (value, order) = self.scan_decimal_dimension(integer, decimal, allow_infinite, mu)?;
+        Ok((value, order, flip))
+    }
+
+    /// TeX82 §448's `scan_dimen(mu,false,true)` shortcut: the integer part is
+    /// already in hand, so only the units remain to be scanned.
+    fn scan_dimension_shortcut(&mut self, integer: i32, mu: bool) -> Result<Scaled, CommandError> {
+        self.last_integer_terminator = None;
+        let (value, _order, flip) = self.scan_units_after_integer(integer, false, false, mu)?;
+        self.scan_optional_space()?;
+        Ok(if flip {
+            Scaled::from_raw(-value.raw())
+        } else {
+            value
+        })
+    }
+
     /// Scans a normal or mu glue specification.
     pub fn scan_glue(&mut self, mu: bool) -> Result<ScannedScalar<GlueSpec>, CommandError> {
+        // TeX82 §461's `<Get the next non-blank non-sign token>`: `scan_glue`
+        // owns its own leading signs so that §430 can negate an internal
+        // glue's three components as a unit (`\skip0=-\skip1`). Routing a
+        // signed internal glue through the width-only dimension scanner
+        // instead would drop its stretch and shrink.
+        let mut negative = false;
+        let mut provenance = OriginId::UNKNOWN;
+        let first = loop {
+            let Some(command) = self.get_x_token()? else {
+                break None;
+            };
+            if provenance == OriginId::UNKNOWN {
+                provenance = command.origin();
+            }
+            match command.meaning() {
+                Meaning::CharToken { ch: ' ', .. } | Meaning::CharToken { ch: '+', .. } => {}
+                Meaning::CharToken { ch: '-', .. } => negative = !negative,
+                _ => break Some(command),
+            }
+        };
+        let provenance = ScalarProvenance {
+            primary: provenance,
+        };
+        let level = if mu {
+            InternalLevel::MuGlue
+        } else {
+            InternalLevel::Glue
+        };
         // TeX82 probes an internal glue quantity before treating the input as
         // a width dimension.  An ordinary number therefore travels through
         // one canonical backup/replay cycle before `scan_dimen` owns its
         // integer prefix; collapsing the probe loses that input lifecycle and
         // also prevents a direct `\skip` RHS from being accepted as glue.
-        let (mut value, mut recovery, provenance, internal_glue) = match self.get_x_token()? {
+        let (mut value, mut recovery, provenance, internal_glue) = match first {
             Some(command) => match self.internal_value_from_command(&command)? {
-                Some(InternalValue::Glue(value)) => (
-                    value,
-                    ScalarRecovery::None,
-                    ScalarProvenance {
-                        primary: command.origin(),
-                    },
-                    true,
-                ),
+                // §461: `if cur_val_level>=glue_val then begin if
+                // cur_val_level<>level then mu_error; return end`. The
+                // specification is the complete answer, so no `plus`/`minus`
+                // components follow it, and §430 negates all three of its
+                // components together when a leading sign asked for it.
+                Some(internal @ (InternalValue::Glue(_) | InternalValue::MuGlue(_))) => {
+                    if internal.level() != level {
+                        self.mu_error();
+                    }
+                    let (InternalValue::Glue(glue) | InternalValue::MuGlue(glue)) = internal else {
+                        unreachable!("outer pattern restricts the value to a glue specification")
+                    };
+                    (
+                        if negative { negated_glue(glue) } else { glue },
+                        ScalarRecovery::None,
+                        provenance,
+                        true,
+                    )
+                }
                 // TeX82's `scan_glue` accepts an internal dimension as the
-                // width of an ordinary glue specification.  In particular,
+                // width of an ordinary glue specification, negated by §430
+                // because `dimen_val` is below `glue_val`.  In particular,
                 // `\ht<box>` has already consumed its bounded box index;
                 // backing up the primitive here would both replay an
                 // incomplete internal value and use a stale delivery proof.
-                // See TeX.web §458 (`scan_glue`).
-                Some(InternalValue::Dimension(width)) if !mu => (
-                    GlueSpec {
-                        width,
-                        ..GlueSpec::ZERO
-                    },
-                    ScalarRecovery::None,
-                    ScalarProvenance {
-                        primary: command.origin(),
-                    },
-                    false,
-                ),
-                Some(_) | None => {
+                // See TeX.web §461 (`scan_glue`). A mu-level request reports
+                // `mu_error` first and keeps the dimension.
+                Some(InternalValue::Dimension(width)) => {
+                    if mu {
+                        self.mu_error();
+                    }
+                    (
+                        GlueSpec {
+                            width: if negative {
+                                Scaled::from_raw(-width.raw())
+                            } else {
+                                width
+                            },
+                            ..GlueSpec::ZERO
+                        },
+                        ScalarRecovery::None,
+                        provenance,
+                        false,
+                    )
+                }
+                // §461: `if cur_val_level=int_val then scan_dimen(mu,false,
+                // true)`. §430 has already negated the integer, which is the
+                // numeric prefix of a units-only dimension scan.
+                Some(InternalValue::Integer(integer)) => {
+                    let integer = if negative {
+                        integer.saturating_neg()
+                    } else {
+                        integer
+                    };
+                    let width = self.scan_dimension_shortcut(integer, mu)?;
+                    (
+                        GlueSpec {
+                            width,
+                            ..GlueSpec::ZERO
+                        },
+                        ScalarRecovery::None,
+                        provenance,
+                        false,
+                    )
+                }
+                // §461's non-internal branch: `back_input; scan_dimen(mu,
+                // false,false); if negative then negate(cur_val)`. §415's
+                // missing-number recovery for a font identifier or token list
+                // reaches the same zero through one more probe cycle.
+                Some(InternalValue::Font(_) | InternalValue::Tokens { .. }) | None => {
                     self.back_input(command)?;
                     let width = self.scan_dimension_with_order(false, mu)?.0;
                     (
                         GlueSpec {
-                            width: width.value,
+                            width: if negative {
+                                Scaled::from_raw(-width.value.raw())
+                            } else {
+                                width.value
+                            },
                             ..GlueSpec::ZERO
                         },
                         width.recovery,
@@ -498,7 +742,11 @@ impl CommandProcessor<'_> {
                 let width = self.scan_dimension_with_order(false, mu)?.0;
                 (
                     GlueSpec {
-                        width: width.value,
+                        width: if negative {
+                            Scaled::from_raw(-width.value.raw())
+                        } else {
+                            width.value
+                        },
                         ..GlueSpec::ZERO
                     },
                     width.recovery,
@@ -862,6 +1110,53 @@ impl CommandProcessor<'_> {
             }
         }
         Ok(DimensionUnit::Infinite(order))
+    }
+
+    /// Runs TeX82 §413's `while cur_val_level>level do <Convert cur_val to a
+    /// lower level>` cascade over one fetched internal quantity.
+    ///
+    /// §429 defines a single downward step: a `glue_val` becomes its `width`,
+    /// a `mu_val` reports [`Self::mu_error`] and keeps the same value while
+    /// dropping to `glue_val`, and a `dimen_val` becomes an `int_val` holding
+    /// the identical scaled representation. Repeating that step is what makes
+    /// `\count0=\skip3`, `\dimen0=\parskip`, and `\hsize=\baselineskip` read
+    /// the register's width instead of silently scanning as zero.
+    ///
+    /// `ident_val` and `tok_val` never enter the loop in tex.web: §415 has
+    /// already replaced a font identifier or token list requested below
+    /// `tok_val` with a backed-up zero. `None` reports that same case to the
+    /// caller, which owns the backup and the missing-number recovery.
+    fn coerce_internal_value(
+        &mut self,
+        mut value: InternalValue,
+        level: InternalLevel,
+    ) -> Option<InternalValue> {
+        while value.level() > level {
+            value = match value {
+                InternalValue::MuGlue(glue) => {
+                    self.mu_error();
+                    InternalValue::Glue(glue)
+                }
+                InternalValue::Glue(glue) => InternalValue::Dimension(glue.width),
+                InternalValue::Dimension(dimension) => InternalValue::Integer(dimension.raw()),
+                InternalValue::Font(_) | InternalValue::Tokens { .. } => return None,
+                InternalValue::Integer(_) => {
+                    unreachable!("int_val is the lowest level, so it never exceeds a target level")
+                }
+            };
+        }
+        Some(value)
+    }
+
+    /// TeX82 §408's `mu_error`: "Incompatible glue units" -- mu and non-mu
+    /// quantities were mixed, and TeX assumes `1mu=1pt` and continues.
+    ///
+    /// The recovery is the observable behavior and is implemented by every
+    /// caller. The accompanying terminal/log text is not: `tex-command` has
+    /// no diagnostic channel yet (no canonical scanner prints anything), so
+    /// the message is tracked separately rather than half-routed here.
+    fn mu_error(&mut self) {
+        let _ = self;
     }
 
     pub(crate) fn internal_value_from_command(
