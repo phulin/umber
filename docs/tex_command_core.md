@@ -37,7 +37,14 @@ ends; the first character is reconsidered only through the command core's
 backed-up input level.
 
 Canonical `\font` definitions scan their target, optional equals, expanded
-filename, and `at`/`scaled` clause into an immutable `FontLoadRequest`. After
+filename, and `at`/`scaled` clause into an immutable `FontLoadRequest`. TeX82
+§1257's `new_font` runs `define(u,set_font,null_font)` on the `get_r_token`
+target *before* the optional equals and filename, so `CommandProcessor` makes
+that provisional null-font definition and publishes its meaning mutation
+there, under the `\global`/`\globaldefs` scope main control selects, exactly
+as §1224's provisional `\relax` is. §1257's `common_ending: equiv(u):=f` then
+overwrites the equivalent directly rather than through a second `eq_define`,
+so the completed definition publishes no second mutation. After
 that processor borrow ends, replay resolves the request through its transient
 registered-font capability and installs the loaded meaning atomically. An
 absent capability is a typed font suspension, so the enclosing aggregate rolls
