@@ -1,6 +1,8 @@
 # Required schema-v1 TeX82 command-core observations.
 # Columns: family|boundary|fixture|final-change seam|fixed JSON fragment
 command|raw delivery|transitions.tex|get_next return|"event":"command","data":{"delivery":"raw"
+command|nonprintable control-sequence name escape|transitions.tex|umber_trace_char and umber_trace_hex JSON escaping|"control_sequence":"\u000b"
+command|short control-sequence name escape|transitions.tex|umber_trace_char short JSON control escapes|"control_sequence":"\t"
 command|expanded delivery|transitions.tex|get_x_token and x_token return|"event":"command","data":{"delivery":"expanded"
 command|get_x_token expands macro|expansion-macros.tex|get_x_token expandable loop|"control_sequence":"expandleaf","location":{"source":"expansion-macros.tex","line":2,"byte":27}
 command|noexpand one-delivery suppression|expansion-macros.tex|expand no_expand and backed-up get_next|"command":"relax","operand":{"type":"integer","value":257},"control_sequence":"noexpandleaf"

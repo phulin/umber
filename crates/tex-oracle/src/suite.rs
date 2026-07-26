@@ -10,7 +10,7 @@ const REGENERATION_MANIFEST: &str = "tests/oracle-regeneration-manifest.txt";
 const TEX82_FIXTURE_ROOT: &str = "tests/corpus/command/tex82";
 
 #[cfg(test)]
-pub(crate) const COMMITTED_TEX82_COMMAND_TRACE_EVENT_COUNT: usize = 12_352;
+pub(crate) const COMMITTED_TEX82_COMMAND_TRACE_EVENT_COUNT: usize = 12_391;
 
 /// A deterministic inventory of the offline TeX82 command-trace suite.
 #[derive(Clone, Debug, Eq, PartialEq)]
