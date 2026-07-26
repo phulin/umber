@@ -9,6 +9,7 @@ use tex_state::ProvenanceResolver;
 use tex_state::Universe;
 use tex_state::WorldError;
 use tex_state::meaning::ExpandablePrimitive;
+use tex_state::meaning::UnexpandablePrimitive;
 use tex_state::provenance::DiagnosticSite;
 use tex_state::token::{OriginId, Token, TracedTokenWord};
 
@@ -94,6 +95,25 @@ pub enum ExecError {
     UnsupportedCommand {
         token: Token,
         opcode: u8,
+        origin: OriginId,
+    },
+    /// A `Meaning::UnexpandablePrimitive` variant reached `scan_command`'s
+    /// exhaustive fallback classifier without a named dispatch arm.
+    ///
+    /// This is deliberately distinct from `UnsupportedCommand` (an opcode
+    /// `meaning.rs` itself does not recognize): every variant here is a real,
+    /// named TeX82/e-TeX/pdfTeX primitive that canonical main control simply
+    /// does not route yet in the current mode, either because no dispatch
+    /// arm has been written for it or because it is legal only in a
+    /// different mode (e.g. a math-noad primitive reached outside math
+    /// mode). See `docs/tex_command_core.md`'s dispatch-completeness
+    /// invariant and umber2-johp.69: converting this from a silent
+    /// `ScannedStep::Continue` into a loud, named failure is the point --
+    /// the alternative silently drops the primitive's own operand tokens
+    /// into the document as literal text arbitrarily far downstream.
+    UnimplementedPrimitive {
+        primitive: UnexpandablePrimitive,
+        mode: Mode,
         origin: OriginId,
     },
     MissingPrefixedCommand,
@@ -297,6 +317,10 @@ impl fmt::Display for ExecError {
                     "unsupported unexpandable opcode {opcode} for token {token:?}"
                 )
             }
+            Self::UnimplementedPrimitive { primitive, mode, .. } => write!(
+                f,
+                "canonical execution does not dispatch \\{primitive:?} in {mode:?} mode yet"
+            ),
             Self::MissingPrefixedCommand => write!(f, "You can't use a prefix with `end of input'"),
             Self::PrefixWithNonAssignment { token, .. } => {
                 write!(f, "You can't use a prefix with `{token:?}'")
@@ -501,6 +525,7 @@ impl std::error::Error for ExecError {
             | Self::EndGroupMismatch { .. }
             | Self::MathShiftGroupMismatch { .. }
             | Self::UnsupportedCommand { .. }
+            | Self::UnimplementedPrimitive { .. }
             | Self::MissingPrefixedCommand
             | Self::PrefixWithNonAssignment { .. }
             | Self::PrefixWithNonDefinition { .. }
@@ -592,6 +617,7 @@ impl ExecError {
             | Self::EndGroupMismatch { origin, .. }
             | Self::MathShiftGroupMismatch { origin, .. }
             | Self::UnsupportedCommand { origin, .. }
+            | Self::UnimplementedPrimitive { origin, .. }
             | Self::PrefixWithNonAssignment { origin, .. }
             | Self::ExpectedControlSequence { origin, .. }
             | Self::InvalidLetRhs { origin, .. }

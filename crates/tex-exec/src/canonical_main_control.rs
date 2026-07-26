@@ -1872,6 +1872,19 @@ enum ScannedStep {
         value: Scaled,
         global: bool,
     },
+    /// TeX82 §1055's `assign_box_dimen: alter_box_dimen(cur_chr)` (`\wd`,
+    /// `\ht`, `\dp`): `scan_eight_bit_int`, `scan_optional_equals`, then
+    /// `scan_normal_dimen` set the given dimension on the box register's
+    /// visible node if it is not void; a void or absent register is a
+    /// documented no-op (§1055 skips the mutation entirely rather than
+    /// erroring), matched by `Universe::set_box_dimension`'s own early
+    /// return.
+    BoxDimensionAssignment {
+        index: u16,
+        dimension: tex_state::BoxDimension,
+        value: Scaled,
+        global: bool,
+    },
     Skip {
         index: u16,
         value: GlueSpec,
@@ -1916,6 +1929,13 @@ enum ScannedStep {
     PrevDepth {
         value: Scaled,
     },
+    /// TeX82 §1058's `nointerlineskip` chr code on the same `set_aux` command
+    /// as `\prevdepth`: it is `\prevdepth`'s own primitive, wired to always
+    /// assign the fixed `ignore_depth` sentinel instead of scanning an
+    /// operand. The sentinel itself (`crate::mode::ignored_depth`) is
+    /// resolved at apply time, where `Universe` is available, because
+    /// pdfTeX's `\pdfignoreddimen` can override the classic TeX82 constant.
+    NoInterlineSkip,
     FixedHorizontalGlue {
         primitive: UnexpandablePrimitive,
     },
@@ -2194,6 +2214,7 @@ impl ScannedStep {
             self,
             Self::Count { .. }
                 | Self::Dimen { .. }
+                | Self::BoxDimensionAssignment { .. }
                 | Self::Skip { .. }
                 | Self::Muskip { .. }
                 | Self::Toks { .. }
@@ -3083,6 +3104,29 @@ fn scan_command(
                 global,
             })
         }
+        Meaning::UnexpandablePrimitive(
+            primitive @ (UnexpandablePrimitive::Wd
+            | UnexpandablePrimitive::Ht
+            | UnexpandablePrimitive::Dp),
+        ) => {
+            let index = processor
+                .scan_eight_bit_register_index()
+                .map_err(command_error)?;
+            let _ = processor.scan_optional_equals().map_err(command_error)?;
+            let value = processor.scan_dimension().map_err(command_error)?.value;
+            let dimension = match primitive {
+                UnexpandablePrimitive::Wd => tex_state::BoxDimension::Width,
+                UnexpandablePrimitive::Ht => tex_state::BoxDimension::Height,
+                UnexpandablePrimitive::Dp => tex_state::BoxDimension::Depth,
+                _ => unreachable!(),
+            };
+            Ok(ScannedStep::BoxDimensionAssignment {
+                index,
+                dimension,
+                value,
+                global,
+            })
+        }
         Meaning::DimenRegister(index) => {
             let _ = processor.scan_optional_equals().map_err(command_error)?;
             let value = processor.scan_dimension().map_err(command_error)?.value;
@@ -3161,6 +3205,9 @@ fn scan_command(
             let _ = processor.scan_optional_equals().map_err(command_error)?;
             let value = processor.scan_dimension().map_err(command_error)?.value;
             Ok(ScannedStep::PrevDepth { value })
+        }
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::NoInterlineSkip) => {
+            Ok(ScannedStep::NoInterlineSkip)
         }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Char) => {
             let value = processor.scan_integer().map_err(command_error)?.value;
@@ -3799,7 +3846,334 @@ fn scan_command(
                 patterns: primitive == UnexpandablePrimitive::Patterns,
             })
         }
+        // Every other `Meaning::UnexpandablePrimitive` reaching this point has
+        // no named dispatch arm above (or is legal only in a mode this
+        // `command` was not delivered in). `scan_unclassified_primitive` is
+        // written as an exhaustive match over `UnexpandablePrimitive`
+        // specifically so that a newly added variant fails to compile here
+        // instead of silently falling through to the ordinary
+        // `ScannedStep::Continue` below -- see umber2-johp.69 and
+        // `docs/tex_command_core.md`'s dispatch-completeness invariant.
+        Meaning::UnexpandablePrimitive(primitive) => {
+            scan_unclassified_primitive(primitive, mode, command.origin())
+        }
         _ => Ok(ScannedStep::Continue),
+    }
+}
+
+/// Classifies every `UnexpandablePrimitive` variant that reaches
+/// `scan_command`'s final fallback arm.
+///
+/// This match is deliberately written over the full `UnexpandablePrimitive`
+/// enum, not just the ~140 variants that currently lack a dispatch arm
+/// above: the `unreachable` bucket below exists so that removing (or
+/// mode-narrowing) one of `scan_command`'s existing named arms, or adding a
+/// brand new primitive variant, fails to compile until this function is
+/// updated with a deliberate decision. This is the mechanism umber2-johp.69
+/// asked for: an unimplemented or wrong-mode primitive must stop the run at
+/// its true site with a named error, never silently succeed while leaving
+/// its own operand tokens (if any) in the input stream to be typeset as
+/// literal text -- exactly how umber2-johp.67's `\patterns` bug and
+/// umber2-johp.68's `\penalty` bug both escaped detection.
+///
+/// # Buckets
+///
+/// - `unreachable!()`: this primitive already has an explicit, mode-complete
+///   dispatch arm earlier in `scan_command`'s outer match (including the
+///   early math/family gates before that match). It can never actually
+///   reach this function; if it does, `scan_command` was edited to narrow or
+///   remove that arm without updating this classifier, which is exactly the
+///   defect this function exists to catch -- panicking here is preferable to
+///   silently reverting to the swallowed-primitive behavior.
+/// - `Err(ExecError::UnimplementedPrimitive { .. })`: this primitive has no
+///   dispatch at all yet in canonical main control, or is dispatched only
+///   conditionally elsewhere (for example the math-noad family routed
+///   through `scan_canonical_math_request`, or `\left`/`\right`/`\middle`'s
+///   math-delimiter gate) and was reached outside that context, or is a
+///   e-TeX/pdfTeX extension whose canonical routing has not been written.
+///   Per umber2-johp.69's scope, this function does not implement any of
+///   these; it only makes each one fail loudly and names it so follow-on
+///   work can be tracked as ordinary chain links (see umber2-johp.74).
+fn scan_unclassified_primitive(
+    primitive: UnexpandablePrimitive,
+    mode: Mode,
+    origin: tex_state::token::OriginId,
+) -> Result<ScannedStep, ExecError> {
+    use UnexpandablePrimitive as P;
+    match primitive {
+        P::Accent
+        | P::Advance
+        | P::AfterAssignment
+        | P::AfterGroup
+        | P::BeginGroup
+        | P::Box
+        | P::CLeaders
+        | P::CatCode
+        | P::Char
+        | P::CharDef
+        | P::CloseIn
+        | P::CloseOut
+        | P::ControlSpace
+        | P::Copy
+        | P::Count
+        | P::CountDef
+        | P::Def
+        | P::DelCode
+        | P::Dimen
+        | P::DimenDef
+        | P::Discretionary
+        | P::Divide
+        | P::Dump
+        | P::Edef
+        | P::End
+        | P::EndGraf
+        | P::EndGroup
+        | P::ErrMessage
+        | P::Font
+        | P::FontDimen
+        | P::FutureLet
+        | P::Gdef
+        | P::HAlign
+        | P::HBox
+        | P::HFil
+        | P::HFilNeg
+        | P::HFill
+        | P::HRule
+        | P::HSkip
+        | P::HSs
+        | P::HyphenChar
+        | P::Hyphenation
+        | P::Immediate
+        | P::Indent
+        | P::Kern
+        | P::LastBox
+        | P::NoInterlineSkip
+        | P::LcCode
+        | P::Leaders
+        | P::Let
+        | P::Lowercase
+        | P::MathCharDef
+        | P::MathCode
+        | P::Message
+        | P::Multiply
+        | P::Muskip
+        | P::MuskipDef
+        | P::NoIndent
+        | P::OpenIn
+        | P::OpenOut
+        | P::Par
+        | P::ParShape
+        | P::Patterns
+        | P::PdfAnnot
+        | P::PdfCatalog
+        | P::PdfColorStack
+        | P::PdfDest
+        | P::PdfEndLink
+        | P::PdfEndThread
+        | P::PdfInfo
+        | P::PdfLiteral
+        | P::PdfNames
+        | P::PdfObject
+        | P::PdfRefXForm
+        | P::PdfRefXImage
+        | P::PdfReferenceObject
+        | P::PdfRestore
+        | P::PdfSave
+        | P::PdfSavePos
+        | P::PdfSetMatrix
+        | P::PdfStartLink
+        | P::PdfStartThread
+        | P::PdfThread
+        | P::PdfTrailer
+        | P::PdfTrailerId
+        | P::PdfXForm
+        | P::PdfXImage
+        | P::Penalty
+        | P::PrevDepth
+        | P::Read
+        | P::ReadLine
+        | P::ScriptFont
+        | P::ScriptScriptFont
+        | P::SetBox
+        | P::SfCode
+        | P::Shipout
+        | P::Show
+        | P::ShowBox
+        | P::ShowThe
+        | P::SkewChar
+        | P::Skip
+        | P::SkipDef
+        | P::Special
+        | P::TextFont
+        | P::Toks
+        | P::ToksDef
+        | P::UcCode
+        | P::UnHBox
+        | P::UnHCopy
+        | P::UnVBox
+        | P::UnVCopy
+        | P::Uppercase
+        | P::VAlign
+        | P::VBox
+        | P::VRule
+        | P::VSplit
+        | P::VTop
+        | P::Wd
+        | P::Ht
+        | P::Dp
+        | P::Write
+        | P::XLeaders
+        | P::Xdef => unreachable!(
+            "UnexpandablePrimitive::{primitive:?} has an explicit, mode-complete \
+             scan_command dispatch arm and must never reach the exhaustive fallback"
+        ),
+        P::Above
+        | P::AboveWithDelims
+        | P::Atop
+        | P::AtopWithDelims
+        | P::BatchMode
+        | P::BeginL
+        | P::BeginR
+        | P::ClubPenalties
+        | P::Cr
+        | P::CrCr
+        | P::Delimiter
+        | P::DimExpr
+        | P::DiscretionaryHyphen
+        | P::DisplayLimits
+        | P::DisplayStyle
+        | P::DisplayWidowPenalties
+        | P::EndL
+        | P::EndR
+        | P::EqNo
+        | P::ErrorStopMode
+        | P::FontCharDp
+        | P::FontCharHt
+        | P::FontCharIc
+        | P::FontCharWd
+        | P::Global
+        | P::GlobalDefs
+        | P::GlueExpr
+        | P::GlueShrink
+        | P::GlueShrinkOrder
+        | P::GlueStretch
+        | P::GlueStretchOrder
+        | P::GlueToMu
+        | P::IgnoreSpaces
+        | P::Insert
+        | P::InterLinePenalties
+        | P::InteractionMode
+        | P::ItalicCorrection
+        | P::LastKern
+        | P::LastPenalty
+        | P::LastSkip
+        | P::Left
+        | P::LeftEqNo
+        | P::LetterspaceFont
+        | P::Limits
+        | P::Long
+        | P::Lower
+        | P::MKern
+        | P::MSkip
+        | P::Mark
+        | P::Marks
+        | P::MathAccent
+        | P::MathBin
+        | P::MathChar
+        | P::MathChoice
+        | P::MathClose
+        | P::MathInner
+        | P::MathOp
+        | P::MathOpen
+        | P::MathOrd
+        | P::MathPunct
+        | P::MathRel
+        | P::Middle
+        | P::MoveLeft
+        | P::MoveRight
+        | P::MuExpr
+        | P::MuToGlue
+        | P::NoAlign
+        | P::NoBoundary
+        | P::NoLimits
+        | P::NonScript
+        | P::NonstopMode
+        | P::NumExpr
+        | P::Omit
+        | P::Outer
+        | P::Over
+        | P::OverWithDelims
+        | P::Overline
+        | P::PageDiscards
+        | P::ParShapeDimen
+        | P::ParShapeIndent
+        | P::ParShapeLength
+        | P::PdfCopyFont
+        | P::PdfEfCode
+        | P::PdfFakeSpace
+        | P::PdfFontAttr
+        | P::PdfFontExpand
+        | P::PdfGlyphToUnicode
+        | P::PdfIncludeChars
+        | P::PdfInterwordSpaceOff
+        | P::PdfInterwordSpaceOn
+        | P::PdfKnacCode
+        | P::PdfKnbcCode
+        | P::PdfKnbsCode
+        | P::PdfLpCode
+        | P::PdfMapFile
+        | P::PdfMapLine
+        | P::PdfNoBuiltinToUnicode
+        | P::PdfNoLigatures
+        | P::PdfOutline
+        | P::PdfResetTimer
+        | P::PdfRpCode
+        | P::PdfRunningLinkOff
+        | P::PdfRunningLinkOn
+        | P::PdfSetRandomSeed
+        | P::PdfShbsCode
+        | P::PdfSnapRefPoint
+        | P::PdfSnapY
+        | P::PdfSnapYComp
+        | P::PdfSpaceFont
+        | P::PdfStbsCode
+        | P::PdfTagCode
+        | P::PdfTeXUnimplemented
+        | P::PrevGraf
+        | P::Protected
+        | P::QuitVMode
+        | P::Radical
+        | P::Raise
+        | P::Right
+        | P::ScriptScriptStyle
+        | P::ScriptStyle
+        | P::ScrollMode
+        | P::SetLanguage
+        | P::ShowGroups
+        | P::ShowHyphens
+        | P::ShowIfs
+        | P::ShowLists
+        | P::ShowTokens
+        | P::SpaceFactor
+        | P::Span
+        | P::SplitDiscards
+        | P::TextStyle
+        | P::UnKern
+        | P::UnPenalty
+        | P::UnSkip
+        | P::Underline
+        | P::VAdjust
+        | P::VCenter
+        | P::VFil
+        | P::VFilNeg
+        | P::VFill
+        | P::VSkip
+        | P::VSs
+        | P::WidowPenalties => Err(ExecError::UnimplementedPrimitive {
+            primitive,
+            mode,
+            origin,
+        }),
     }
 }
 
@@ -5354,6 +5728,23 @@ fn apply_scanned_step(
             }
             Ok(ReplayStep::Continue)
         }
+        ScannedStep::BoxDimensionAssignment {
+            index,
+            dimension,
+            value,
+            global,
+        } => {
+            // `Universe::set_box_dimension{,_global}` share one body: TeX82
+            // §1055's `alter_box_dimen` mutates the visible box node
+            // directly rather than through the save stack, so the assignment
+            // prefix does not change which binding level is affected.
+            if assignment_global(global, stores) {
+                stores.set_box_dimension_global(index, dimension, value);
+            } else {
+                stores.set_box_dimension(index, dimension, value);
+            }
+            Ok(ReplayStep::Continue)
+        }
         ScannedStep::Skip {
             index,
             value,
@@ -5498,6 +5889,21 @@ fn apply_scanned_step(
                 stores.world_mut().write_text(
                     PrintSink::TerminalAndLog,
                     "\n! You can't use `\\prevdepth' in this mode.\n",
+                );
+            }
+            Ok(ReplayStep::Continue)
+        }
+        ScannedStep::NoInterlineSkip => {
+            if matches!(
+                modes.current_mode(),
+                Mode::Vertical | Mode::InternalVertical
+            ) {
+                let value = crate::mode::ignored_depth(stores);
+                modes.current_list_mut().set_prev_depth(value);
+            } else {
+                stores.world_mut().write_text(
+                    PrintSink::TerminalAndLog,
+                    "\n! You can't use `\\nointerlineskip' in this mode.\n",
                 );
             }
             Ok(ReplayStep::Continue)
