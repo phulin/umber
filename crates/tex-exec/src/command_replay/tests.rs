@@ -4684,6 +4684,101 @@ fn canonical_kern_in_vertical_mode_does_not_start_a_paragraph() {
 }
 
 #[test]
+fn canonical_unhbox_in_vertical_mode_starts_a_paragraph() {
+    // TeX82 §1090's vmode-paragraph-starting list includes `vmode+un_hbox`
+    // (opposite-direction category error from umber2-johp.85's `\kern` bug):
+    // unlike `\unvbox`/`\unvcopy` (`vmode+un_vbox`, legitimately *not* in
+    // this list, spliced directly onto the vlist), a bare `\unhbox`/
+    // `\unhcopy` directly in vertical mode must back up the token and start
+    // a paragraph first, so the unboxed hlist's contents become ordinary
+    // horizontal-mode material instead of being spliced directly onto the
+    // enclosing vlist -- regression test for umber2-johp.87.
+    let mut universe = Universe::new();
+    let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+    register_source(&mut control, br"\setbox1=\hbox{}\setbox0=\vbox{\unhbox1}");
+    run_to_end(&mut control, &mut universe);
+
+    let vbox = universe
+        .box_reg(0)
+        .and_then(|id| universe.nodes(id).first().map(|node| node.to_owned()))
+        .expect("outer vbox stores");
+    let Node::VList(vbox) = vbox else {
+        panic!("setbox0 contains a vbox");
+    };
+    let children = universe.nodes(vbox.children).to_vec();
+    assert!(
+        matches!(children.first(), Some(Node::HList(_))),
+        "\\unhbox started a paragraph, indenting the (empty) first line: {children:?}"
+    );
+}
+
+#[test]
+fn canonical_unvbox_in_vertical_mode_does_not_start_a_paragraph() {
+    // TeX82 §1090's vmode-paragraph-starting list does *not* include
+    // `vmode+un_vbox`: `\unvbox`/`\unvcopy` legitimately append the unboxed
+    // vlist directly to the current vertical list. Negative control for
+    // `canonical_unhbox_in_vertical_mode_starts_a_paragraph` above.
+    let mut universe = Universe::new();
+    let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+    register_source(
+        &mut control,
+        br"\setbox1=\vbox{\kern1pt}\setbox0=\vbox{\unvbox1}",
+    );
+    run_to_end(&mut control, &mut universe);
+
+    let vbox = universe
+        .box_reg(0)
+        .and_then(|id| universe.nodes(id).first().map(|node| node.to_owned()))
+        .expect("outer vbox stores");
+    let Node::VList(vbox) = vbox else {
+        panic!("setbox0 contains a vbox");
+    };
+    let children = universe.nodes(vbox.children).to_vec();
+    assert_eq!(
+        children,
+        vec![Node::Kern {
+            amount: Scaled::from_raw(Scaled::UNITY),
+            kind: KernKind::Explicit,
+        }],
+        "the unboxed kern must land directly on the vlist, with no bogus \
+         paragraph started: {children:?}"
+    );
+}
+
+#[test]
+fn canonical_valign_in_vertical_mode_starts_a_paragraph() {
+    // TeX82 §1090's vmode-paragraph-starting list includes `vmode+valign`
+    // (unlike `vmode+halign`, which is legal directly in vertical mode via
+    // `vmode+halign,hmode+valign:init_align` and is not in this list): a
+    // bare `\valign` directly in vertical mode must back up the token and
+    // start a paragraph first, then reprocess `\valign` as embedded
+    // alignment material inside the resulting paragraph's horizontal list
+    // -- regression test for umber2-johp.87.
+    let mut universe = Universe::new();
+    let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+    register_source(&mut control, br"\setbox0=\vbox{\valign{#\cr\cr}}");
+    run_to_end(&mut control, &mut universe);
+
+    assert!(
+        !terminal_text(&universe).contains('!'),
+        "no diagnostics expected: {}",
+        terminal_text(&universe)
+    );
+    let vbox = universe
+        .box_reg(0)
+        .and_then(|id| universe.nodes(id).first().map(|node| node.to_owned()))
+        .expect("outer vbox stores");
+    let Node::VList(vbox) = vbox else {
+        panic!("setbox0 contains a vbox");
+    };
+    let children = universe.nodes(vbox.children).to_vec();
+    assert!(
+        matches!(children.first(), Some(Node::HList(_))),
+        "\\valign started a paragraph, indenting the (empty) first line: {children:?}"
+    );
+}
+
+#[test]
 fn canonical_spacefactor_assignment_sets_the_current_horizontal_list() {
     // TeX82 §1243's `alter_aux` (`set_aux` with `cur_chr=hmode`): a legal
     // `\spacefactor=<number>` in horizontal or restricted-horizontal mode

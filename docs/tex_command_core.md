@@ -808,6 +808,15 @@ is a distinct, currently dead enum variant: no primitive name registers it,
 so it can never actually reach `scan_unclassified_primitive`'s `Err` bucket
 in production.
 
+TeX82 §1090's vmode-paragraph-starting list (`back_input; new_graf(true)`)
+also includes `vmode+un_hbox` and `vmode+valign` -- unlike `vmode+un_vbox`
+and `vmode+halign`, which are not in that list and legitimately act directly
+in vertical mode. A bare `\unhbox`/`\unhcopy` or `\valign` reached in
+`Mode::Vertical`/`Mode::InternalVertical` therefore backs up the token and
+starts a paragraph before its operand (the box register, or the alignment
+preamble) is ever scanned, exactly like `vmode+math_shift` and
+`vmode+no_boundary` (umber2-johp.87).
+
 ### 5.4 Proposed module layout
 
 ```text

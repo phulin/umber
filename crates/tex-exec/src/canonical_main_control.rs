@@ -3890,6 +3890,19 @@ fn scan_command(
                 ships_out: boxes.pending_shipout,
             })
         }
+        // TeX82 §1090's vmode-paragraph-starting list includes
+        // `vmode+un_hbox` (but not `vmode+un_vbox`, which legitimately
+        // appends an unboxed vlist directly to the enclosing vertical list):
+        // `\unhbox`/`\unhcopy` in (internal) vertical mode back up the token
+        // and start a paragraph, exactly like `vmode+math_shift` and
+        // `vmode+no_boundary` above, before their register operand is ever
+        // scanned. `\unvbox`/`\unvcopy` are unaffected.
+        Meaning::UnexpandablePrimitive(
+            UnexpandablePrimitive::UnHBox | UnexpandablePrimitive::UnHCopy,
+        ) if matches!(mode, Mode::Vertical | Mode::InternalVertical) => {
+            processor.back_input(command).map_err(command_error)?;
+            Ok(ScannedStep::ParagraphStart)
+        }
         Meaning::UnexpandablePrimitive(
             primitive @ (UnexpandablePrimitive::UnHBox
             | UnexpandablePrimitive::UnHCopy
@@ -3997,8 +4010,24 @@ fn scan_command(
                 .map_err(command_error)?
                 .tokens,
         )),
+        // `\halign` is legal directly in vertical mode (TeX82's
+        // `vmode+halign,hmode+valign:init_align`) and is not part of §1090's
+        // vmode-paragraph-starting list, so it is never mode-gated here.
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::HAlign) => {
             Ok(ScannedStep::BeginAlignment { vertical: false })
+        }
+        // TeX82 §1090's vmode-paragraph-starting list includes
+        // `vmode+valign` (unlike `vmode+halign` above): a bare `\valign` in
+        // (internal) vertical mode backs up the token and starts a
+        // paragraph first, then reprocesses `\valign` as `hmode+valign`
+        // (embedded alignment material inside the resulting paragraph's
+        // horizontal list) exactly like `vmode+math_shift` and
+        // `vmode+no_boundary` above.
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::VAlign)
+            if matches!(mode, Mode::Vertical | Mode::InternalVertical) =>
+        {
+            processor.back_input(command).map_err(command_error)?;
+            Ok(ScannedStep::ParagraphStart)
         }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::VAlign) => {
             Ok(ScannedStep::BeginAlignment { vertical: true })
