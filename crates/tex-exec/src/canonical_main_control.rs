@@ -4359,13 +4359,19 @@ fn scan_command(
         // `command` was not delivered in). `scan_unclassified_primitive` is
         // written as an exhaustive match over `UnexpandablePrimitive`
         // specifically so that a newly added variant fails to compile here
-        // instead of silently falling through to the ordinary
-        // `ScannedStep::Continue` below -- see umber2-johp.69 and
+        // instead of silently falling through to a silent
+        // `ScannedStep::Continue` -- see umber2-johp.69 and
         // `docs/tex_command_core.md`'s dispatch-completeness invariant.
         Meaning::UnexpandablePrimitive(primitive) => {
             scan_unclassified_primitive(processor, command, primitive, mode)
         }
-        _ => Ok(ScannedStep::Continue),
+        // Every other `Meaning` variant reaching this point has no named
+        // dispatch arm above. `scan_unclassified_meaning` applies the same
+        // remedy one level up the meaning word (umber2-johp.108): it is an
+        // exhaustive match over `Meaning` -- and, inside its `CharToken`
+        // case, over `Catcode` -- so a newly added variant fails to compile
+        // there instead of reaching a silent `ScannedStep::Continue` here.
+        meaning => scan_unclassified_meaning(processor, command, meaning, mode),
     }
 }
 
@@ -4805,6 +4811,220 @@ fn scan_unclassified_primitive(
             mode,
             origin: command.origin(),
         }),
+    }
+}
+
+/// Classifies every `Meaning` variant that `scan_command`'s outer match does
+/// not name, so that "no dispatch arm" can never again mean "succeeded and
+/// consumed nothing".
+///
+/// This is `scan_unclassified_primitive`'s sibling one level up the meaning
+/// word (umber2-johp.108). That function made the
+/// `Meaning::UnexpandablePrimitive` payload compile-time exhaustive, but the
+/// outer `Meaning` match kept an ordinary `_ => Ok(ScannedStep::Continue)`
+/// wildcard, which became the remaining hiding place: an unrouted meaning
+/// left its own operand tokens in the input to be typeset as literal text
+/// arbitrarily far from the real defect (umber2-johp.106's `\pagegoal=100pt`
+/// is the canonical example). Matching `Meaning` exhaustively here -- and
+/// `Catcode` exhaustively inside the `CharToken` case -- converts each such
+/// gap into either a deliberate, cited routing decision or a loud, named
+/// failure, and makes a newly added variant a build failure.
+///
+/// # Buckets
+///
+/// - `Ok(...)`: tex.web routes this meaning somewhere canonical main control
+///   already implements generically, cited per arm. Two of these arms
+///   reproduce the cited section's *action* while its diagnostic is still
+///   missing; both say so and name umber2-johp.110.
+/// - `unreachable!()`: `scan_command`'s outer match already has an
+///   unconditional named arm for this case, so it cannot arrive here. If it
+///   does, that arm was narrowed without updating this classifier, which is
+///   exactly the defect this function exists to catch.
+/// - `Err(ExecError::UnimplementedMeaning { .. })`: canonical main control
+///   has no routing for this meaning yet, or the meaning should be
+///   unreachable by a gullet invariant and the error names the broken
+///   invariant exactly. Per umber2-johp.108's scope this function implements
+///   none of them; it only makes each one fail loudly, tracked as
+///   umber2-johp.111.
+fn scan_unclassified_meaning(
+    processor: &mut CommandProcessor<'_>,
+    command: tex_command::CurrentCommand,
+    meaning: Meaning,
+    mode: Mode,
+) -> Result<ScannedStep, ExecError> {
+    match meaning {
+        // TeX82 §1045's `any_mode(relax): do_nothing`. `\relax` -- and the
+        // frozen relax `\noexpand` substitutes for its operand (§358) -- is
+        // the one meaning for which "consume nothing and proceed" is the
+        // whole specified behavior.
+        Meaning::Relax => Ok(ScannedStep::Continue),
+        // TeX82 §1048's Forbidden case `any_mode(last_item)`:
+        // `report_illegal_case`. `Meaning::InternalInteger` is tex.web's
+        // `last_item` command code with an operand other than
+        // `\lastpenalty`/`\lastkern`/`\lastskip` (`\badness`,
+        // `\inputlineno`, e-TeX's `\currentgrouplevel` family, pdfTeX's
+        // `\pdflastxpos` family, ...). Like those three -- which
+        // `scan_unclassified_primitive` already routes to the same
+        // `ScannedStep` -- these are legal only as an internal-value operand
+        // inside a scan, never as a delivered main-control command.
+        Meaning::InternalInteger(_) => Ok(ScannedStep::IllegalLastItem {
+            token: command.spelling().semantic_token(),
+        }),
+        Meaning::CharToken { ch, cat } => {
+            scan_unclassified_char_token(processor, command, ch, cat, mode)
+        }
+        // `scan_command`'s outer match ends with an unconditional
+        // `Meaning::UnexpandablePrimitive(primitive)` arm delegating to
+        // `scan_unclassified_primitive`, so this payload never reaches here.
+        Meaning::UnexpandablePrimitive(_) => {
+            unreachable!("unexpandable primitives are classified by scan_unclassified_primitive")
+        }
+        // TeX82 §1210's `register`, `assign_int`/`assign_dimen`/
+        // `assign_glue`/`assign_mu_glue`, `toks_register`/`assign_toks`, and
+        // `set_font` assignment forms: `scan_command`'s outer match names
+        // every one of them unconditionally.
+        Meaning::CountRegister(_)
+        | Meaning::DimenRegister(_)
+        | Meaning::SkipRegister(_)
+        | Meaning::MuskipRegister(_)
+        | Meaning::ToksRegister(_)
+        | Meaning::IntParam(_)
+        | Meaning::DimenParam(_)
+        | Meaning::GlueParam(_)
+        | Meaning::MuGlueParam(_)
+        | Meaning::TokParam(_)
+        | Meaning::Font(_) => {
+            unreachable!("scan_command names this assignment meaning unconditionally")
+        }
+        // TeX82 gives a `\chardef`'d character exactly the same three-mode
+        // behavior as `\char`: §1090's `vmode+char_given` starts a
+        // paragraph, §1034's `main_loop` typesets it in horizontal mode, and
+        // §1154's `mmode+char_given: set_math_char(ho(math_code(cur_chr)))`
+        // appends a math-char noad. tex.web keeps the two interchangeable
+        // right down to §1038's ligature lookahead, which accepts
+        // `char_given` and `char_num` at the same label, so this reuses
+        // `\char`'s own already-dispatched `ScannedStep`; the only
+        // difference is that the character code is already known and needs
+        // no `scan_char_num`.
+        Meaning::CharGiven(ch) => Ok(ScannedStep::CharacterCode { value: ch as i32 }),
+        // TeX82 §1154's `mmode+math_given: set_math_char(cur_chr)` and
+        // §1046's `non_math(math_given): insert_dollar_sign`. Unlike
+        // `char_given` above, `math_given` carries a full math code rather
+        // than a character, so it has no already-dispatched `ScannedStep` to
+        // reuse.
+        Meaning::MathCharGiven(_) => Err(unimplemented_meaning(&command, meaning, mode)),
+        // TeX82 §1242's `set_page_dimen: alter_page_so_far` (§1245) and
+        // `set_page_int: alter_integer` (§1246).
+        Meaning::PageDimension(_) | Meaning::PageInteger(_) => {
+            Err(unimplemented_meaning(&command, meaning, mode))
+        }
+        // TeX82 §370's `@<Complain about an undefined macro@>`: `expand`
+        // reports "Undefined control sequence" and then does nothing at all,
+        // so proceeding without consuming anything is the specified
+        // *action*. Umber's gullet treats `Meaning::Undefined` as
+        // unexpandable and delivers it here instead, and no diagnostic is
+        // produced anywhere on the canonical path -- that missing §370
+        // report is tracked separately (umber2-johp.110), not silently
+        // accepted.
+        Meaning::Undefined => Ok(ScannedStep::Continue),
+        // A macro is expanded by `get_x_token` (§380) and `\noexpand` turns
+        // one into a frozen relax (§358), so neither should ever be
+        // delivered as an unexpandable command. `\endcsname` is the one
+        // deliberately unexpandable `ExpandablePrimitive`; TeX82 §1135's
+        // `cs_error` gives it "Extra \endcsname", which is not routed here.
+        Meaning::Macro { .. } | Meaning::ExpandablePrimitive(_) => {
+            Err(unimplemented_meaning(&command, meaning, mode))
+        }
+        // TeX82 §1130's `vmode+endv,hmode+endv: do_endv` (§1131) and §1046's
+        // `mmode+endv: insert_dollar_sign`. `scan_alignment_delivery_step`
+        // implements the in-alignment half of §1131 before it ever calls
+        // `scan_command`; an `endv` reaching main control by any other route
+        // ("a devious user might force an `endv` command to occur just about
+        // anywhere", §1131) has no dispatch.
+        Meaning::EndV => Err(unimplemented_meaning(&command, meaning, mode)),
+        // An opcode `tex-state`'s meaning decoder itself does not recognize.
+        Meaning::Unknown(_) => Err(unimplemented_meaning(&command, meaning, mode)),
+    }
+}
+
+/// Classifies the character-token category codes that `scan_command`'s outer
+/// match does not name, exhaustively over [`Catcode`].
+///
+/// See [`scan_unclassified_meaning`] for the bucket definitions.
+fn scan_unclassified_char_token(
+    processor: &mut CommandProcessor<'_>,
+    command: tex_command::CurrentCommand,
+    ch: char,
+    cat: Catcode,
+    mode: Mode,
+) -> Result<ScannedStep, ExecError> {
+    match cat {
+        // TeX82 §1046's `non_math(sup_mark)`/`non_math(sub_mark)`:
+        // §1047's `insert_dollar_sign` backs the command up behind a
+        // synthesized `$`. Reaching this arm proves `mode` is not
+        // `Math`/`DisplayMath`, since `scan_command`'s superscript/subscript
+        // gates consume both categories before its outer match in those two
+        // modes.
+        Catcode::Superscript | Catcode::Subscript => {
+            processor
+                .recover_missing_math_shift(command)
+                .map_err(command_error)?;
+            Ok(ScannedStep::MissingMathShift)
+        }
+        // TeX82 §1045's `any_mode(mac_param): report_illegal_case`. A bare
+        // parameter token has no operand of its own, so the only divergence
+        // is the missing diagnostic.
+        Catcode::Parameter => Err(unimplemented_meaning(
+            &command,
+            Meaning::CharToken { ch, cat },
+            mode,
+        )),
+        // TeX82 §1126's `any_mode(car_ret), any_mode(tab_mark):
+        // align_error` (§1127). Like §370's undefined-control-sequence
+        // report above, `align_error`'s own action when
+        // `abs(align_state) > 2` is to complain and drop the delimiter
+        // (§1128) -- proceeding without consuming anything -- while its
+        // `abs(align_state) <= 2` branch inserts a missing brace. Umber
+        // implements the brace-insertion half only at the in-alignment
+        // delivery boundary (`recover_alignment_unbalanced_delimiter`); the
+        // main-control entry point is tracked separately (umber2-johp.110).
+        Catcode::AlignmentTab | Catcode::EndLine => Ok(ScannedStep::Continue),
+        // Category codes that never become a delivered command: `get_next`
+        // (§341-§356) consumes escape characters into control-sequence
+        // spellings, resolves active characters to their own meanings, drops
+        // ignored and comment characters, and reports invalid characters at
+        // the lexer boundary.
+        Catcode::Escape
+        | Catcode::Active
+        | Catcode::Ignored
+        | Catcode::Comment
+        | Catcode::Invalid => Err(unimplemented_meaning(
+            &command,
+            Meaning::CharToken { ch, cat },
+            mode,
+        )),
+        // `scan_command`'s outer match names all five of these
+        // unconditionally.
+        Catcode::BeginGroup
+        | Catcode::EndGroup
+        | Catcode::MathShift
+        | Catcode::Space
+        | Catcode::Letter
+        | Catcode::Other => {
+            unreachable!("scan_command names this character category unconditionally")
+        }
+    }
+}
+
+fn unimplemented_meaning(
+    command: &tex_command::CurrentCommand,
+    meaning: Meaning,
+    mode: Mode,
+) -> ExecError {
+    ExecError::UnimplementedMeaning {
+        meaning,
+        mode,
+        origin: command.origin(),
     }
 }
 
