@@ -118,6 +118,8 @@ pub struct CommandHostCapabilities {
     job_name: String,
     conditional_state: ConditionalState,
     space_factor: Option<i32>,
+    prev_depth: Option<Scaled>,
+    prev_graf: Option<i32>,
     last_node: Option<LastNodeItem>,
 }
 
@@ -132,6 +134,8 @@ impl Default for CommandHostCapabilities {
             // vertical mode. Real execution replaces this per operation.
             conditional_state: ConditionalState::new(ConditionalMode::Vertical, false),
             space_factor: None,
+            prev_depth: None,
+            prev_graf: None,
             last_node: None,
         }
     }
@@ -221,6 +225,20 @@ impl CommandHostCapabilities {
         self.space_factor = space_factor;
     }
 
+    /// Installs the current vertical list's `prev_depth` for one command
+    /// operation. `None` records that the executor is not in vertical mode,
+    /// where tex.web's §418 reports "Improper \prevdepth" and reads zero.
+    pub fn set_prev_depth(&mut self, prev_depth: Option<Scaled>) {
+        self.prev_depth = prev_depth;
+    }
+
+    /// Installs the nearest enclosing vertical level's `prev_graf` for one
+    /// command operation, for `\prevgraf` (tex.web §422). `None` records
+    /// tex.web's `mode=0` case, which reads zero.
+    pub fn set_prev_graf(&mut self, prev_graf: Option<i32>) {
+        self.prev_graf = prev_graf;
+    }
+
     /// Installs the current list's tail-node classification for one command
     /// operation, for `\lastpenalty`/`\lastkern`/`\lastskip`. `None` records
     /// that the tail matches none of the three tracked node shapes.
@@ -274,6 +292,16 @@ impl<'a> CommandHostContext<'a> {
     #[must_use]
     pub(crate) const fn space_factor(&self) -> Option<i32> {
         self._capabilities.space_factor
+    }
+
+    #[must_use]
+    pub(crate) const fn prev_depth(&self) -> Option<Scaled> {
+        self._capabilities.prev_depth
+    }
+
+    #[must_use]
+    pub(crate) const fn prev_graf(&self) -> Option<i32> {
+        self._capabilities.prev_graf
     }
 
     #[must_use]

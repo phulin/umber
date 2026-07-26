@@ -416,6 +416,25 @@ impl CanonicalMainControl {
             )
             .then(|| self.modes.current_list().space_factor()),
         );
+        // tex.web §418's `set_aux` twin of `space_factor`: `\prevdepth` is
+        // readable only in vertical mode, where an unset `prev_depth` is
+        // §215's `ignore_depth` initial value.
+        self.capabilities.set_prev_depth(
+            matches!(
+                self.modes.current_mode(),
+                Mode::Vertical | Mode::InternalVertical
+            )
+            .then(|| {
+                self.modes
+                    .current_list()
+                    .prev_depth()
+                    .unwrap_or_else(|| crate::mode::ignored_depth(stores))
+            }),
+        );
+        // tex.web §422's `set_prev_graf` walks up to the nearest enclosing
+        // vertical level rather than testing the current mode.
+        self.capabilities
+            .set_prev_graf(Some(self.modes.enclosing_vertical_prev_graf()));
         self.capabilities
             .set_last_node(self.last_node_value(stores));
     }
