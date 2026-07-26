@@ -704,52 +704,43 @@ impl CommandProcessor<'_> {
                 self.observe_condition("pop", &frame, None);
                 Ok(())
             }
-            ConditionalDelimiter::Else if frame.limit == IfLimit::Else => {
+            // Every other accepted delimiter terminates the selected limb.
+            // TeX.web §510's `else` branch is unconditional in the delimiter:
+            // once `cur_chr <= if_limit`, the remaining text up to the
+            // matching `\fi` is skipped and the frame is popped.
+            ConditionalDelimiter::Else | ConditionalDelimiter::Or => {
                 self.command
                     .conditions
                     .change_if_limit(frame.identity, IfLimit::Fi);
                 self.skip_to_fi_after_delimiter(frame)
             }
-            ConditionalDelimiter::Else
-                if frame.kind == ConditionalKind::IfCase && frame.limit == IfLimit::Or =>
-            {
-                self.command
-                    .conditions
-                    .change_if_limit(frame.identity, IfLimit::Fi);
-                self.skip_to_fi_after_delimiter(frame)
-            }
-            ConditionalDelimiter::Or
-                if frame.kind == ConditionalKind::IfCase && frame.limit == IfLimit::Or =>
-            {
-                self.command
-                    .conditions
-                    .change_if_limit(frame.identity, IfLimit::Fi);
-                self.skip_to_fi_after_delimiter(frame)
-            }
-            _ => Ok(()),
         }
     }
 
     /// Skips the remainder of a selected limb after its `\else` or `\or`.
     /// The pre-change frame remains the canonical branch-observation seam;
     /// the independent stack is then unlinked only after `pass_text` reaches
-    /// its matching `\fi` (TeX.web part 28).
+    /// its matching `\fi` (TeX.web §510).
+    ///
+    /// TeX.web §510 spells this skip `while cur_chr<>fi_code do pass_text`:
+    /// the loop inspects only whether the delimiter `pass_text` stopped at is
+    /// `\fi`. Any `\or`/`\else` closing an unselected remaining limb is
+    /// silently swallowed here, and is never a diagnostic — the ordinary
+    /// multi-arm `\ifcase` with a non-final limb selected reaches this loop
+    /// once per remaining limb.
     fn skip_to_fi_after_delimiter(&mut self, frame: ConditionFrame) -> Result<(), CommandError> {
         loop {
-            match self.pass_text(frame.identity, ScannerWarning(0))?.delimiter {
-                ConditionalDelimiter::Fi => {
-                    self.observe_condition("branch", &frame, Some("fi".into()));
-                    let _popped = self
-                        .command
-                        .conditions
-                        .pop()
-                        .ok_or(CommandError::input_invariant())?;
-                    self.observe_condition("pop", &frame, None);
-                    return Ok(());
-                }
-                ConditionalDelimiter::Else | ConditionalDelimiter::Or => {
-                    self.record_extra_delimiter()
-                }
+            if self.pass_text(frame.identity, ScannerWarning(0))?.delimiter
+                == ConditionalDelimiter::Fi
+            {
+                self.observe_condition("branch", &frame, Some("fi".into()));
+                let _popped = self
+                    .command
+                    .conditions
+                    .pop()
+                    .ok_or(CommandError::input_invariant())?;
+                self.observe_condition("pop", &frame, None);
+                return Ok(());
             }
         }
     }
