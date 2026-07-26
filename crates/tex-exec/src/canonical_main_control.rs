@@ -16,8 +16,9 @@ use tex_command::{
     PdfDocumentFragmentRequest, PdfFormRequest, PdfGraphicsRequest, PdfImageRequest,
     PdfImageResource, PdfNavigationRequest, PdfObjectRequest, PdfReferenceObjectRequest,
     PdfStartLinkRequest, ScannedAccent, ScannedBoxConstruction, ScannedBoxKind,
-    ScannedDiscretionary, ScannedDisplayDiagnostic, ScannedLeaderPayload, ScannedMathMuMaterial,
-    ScannedPackingSpec, ScannedVSplit, SourceRegistration, SourceRegistrationError,
+    ScannedDiscretionary, ScannedDisplayDiagnostic, ScannedInsertConstruction,
+    ScannedLeaderPayload, ScannedMathMuMaterial, ScannedPackingSpec, ScannedVSplit,
+    SourceRegistration, SourceRegistrationError,
 };
 #[cfg(any(test, feature = "instrumentation"))]
 use tex_command::{
@@ -91,6 +92,13 @@ enum ReplayBoxKind {
     HBox,
     VBox,
     VTop,
+    /// TeX82 §968/§1096's `\insert<class>{...}` body. This reuses the box
+    /// brace-matching machinery (`active_boxes`, `BoxBeginGroup`,
+    /// `BoxEndGroup`) purely for its nested-brace bookkeeping; its group kind,
+    /// closing action, and page-builder interaction are entirely different
+    /// from an ordinary vbox and are handled by a dedicated branch in
+    /// `BoxEndGroup`.
+    Insert(u16),
 }
 
 impl ReplayBoxKind {
@@ -103,6 +111,7 @@ impl ReplayBoxKind {
             Self::HBox => GroupKind::HBox,
             Self::VBox => GroupKind::VBox,
             Self::VTop => GroupKind::VTop,
+            Self::Insert(_) => GroupKind::Insert,
         }
     }
 }
@@ -2189,6 +2198,12 @@ enum ScannedStep {
         construction: ScannedBoxConstruction,
         kind: GlueKind,
     },
+    /// TeX82 §968's `begin_insert_or_adjust` for `\insert`. The class-number
+    /// bound check (0..=255) and the reserved-255 recovery both need
+    /// `Universe` diagnostics, so replay receives only the raw scanned class
+    /// and the validated opening-brace backup state; it shares the same
+    /// brace-matching machinery as `BeginBox`/`BoxBeginGroup`/`BoxEndGroup`.
+    BeginInsert(ScannedInsertConstruction),
     ReplayBoxOpeningBrace,
     BoxBeginGroup,
     BoxEndGroup {
@@ -3774,6 +3789,17 @@ fn scan_command(
                 .scan_box_construction(primitive)
                 .map_err(command_error)?,
         )),
+        // TeX82 §968's `begin_insert_or_adjust` -- any_mode(insert). `\insert`
+        // is legal in every mode with no mode switch of its own, exactly like
+        // `\penalty` and `\mark` above; only `\vadjust` (subtype 255) is
+        // restricted to h/mmode, and that primitive is not implemented here.
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Insert) => {
+            Ok(ScannedStep::BeginInsert(
+                processor
+                    .scan_insert_construction()
+                    .map_err(command_error)?,
+            ))
+        }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::HAlign) => {
             Ok(ScannedStep::BeginAlignment { vertical: false })
         }
@@ -3945,6 +3971,7 @@ fn scan_unclassified_primitive(
         | P::Hyphenation
         | P::Immediate
         | P::Indent
+        | P::Insert
         | P::Kern
         | P::LastBox
         | P::NoInterlineSkip
@@ -4060,7 +4087,6 @@ fn scan_unclassified_primitive(
         | P::GlueStretchOrder
         | P::GlueToMu
         | P::IgnoreSpaces
-        | P::Insert
         | P::InterLinePenalties
         | P::InteractionMode
         | P::ItalicCorrection
@@ -6757,6 +6783,45 @@ fn apply_scanned_step(
             schedule_everybox(command, stores, kind.horizontal());
             Ok(ReplayStep::Continue)
         }
+        ScannedStep::BeginInsert(construction) => {
+            // TeX82 §968's `begin_insert_or_adjust`: `scan_eight_bit_int`'s
+            // own range clamp ("Bad register code", recovering as class 0)
+            // and the additional `\insert255` rejection ("box 255 is
+            // special") both run here, now that a `Universe` diagnostic sink
+            // is available.
+            let mut class = construction.class;
+            if !(0..=255).contains(&class) {
+                stores.report_bad_register_code(class, 255);
+                class = 0;
+            }
+            if class == 255 {
+                stores.world_mut().write_text(
+                    PrintSink::TerminalAndLog,
+                    "\n! You can't \\insert255.\nI'm changing to \\insert0; box 255 is special.\n",
+                );
+                class = 0;
+            }
+            let class = class as u16;
+            stores.enter_group_with_kind(GroupKind::Insert);
+            modes.push(Mode::InternalVertical);
+            // §968: `normal_paragraph` resets \parshape/\looseness/\hangindent/
+            // \hangafter local to the just-opened insert group, exactly like
+            // `begin_box` does for `\vbox`/`\vtop` (§1051-2).
+            crate::assignments::normal_paragraph(modes, stores);
+            boxes.active_boxes.push(ActiveReplayBox {
+                target: None,
+                ships_out: false,
+                opening_brace_replay: construction.opening_brace_replay,
+                body_opener_pending: construction.opening_brace_replay,
+                depth: 1,
+                kind: ReplayBoxKind::Insert(class),
+                packing: PackSpec::Natural,
+                leader_kind: None,
+            });
+            // Unlike `\hbox`/`\vbox`/`\vtop`, §968 never begins the
+            // `\everyhbox`/`\everyvbox` token list for an insertion body.
+            Ok(ReplayStep::Continue)
+        }
         ScannedStep::BeginLeaderBox {
             construction,
             kind: leader_kind,
@@ -6941,6 +7006,9 @@ fn apply_scanned_step(
                 return Ok(ReplayStep::Continue);
             }
             let box_state = boxes.active_boxes.pop().expect("active box was checked");
+            if let ReplayBoxKind::Insert(class) = box_state.kind {
+                return finish_insert_group(class, modes, stores);
+            }
             // TeX82's main-control loop appends every character (and its
             // resolved ligature/kern chain) to the current list synchronously
             // as it is scanned, so by the time `handle_right_brace` reaches
@@ -6988,6 +7056,9 @@ fn apply_scanned_step(
                         .node
                     }
                     ReplayBoxKind::HBox => unreachable!("horizontal box was handled above"),
+                    ReplayBoxKind::Insert(_) => {
+                        unreachable!("insert bodies return through finish_insert_group above")
+                    }
                 })
             };
             let boxed = stores.freeze_node_list(std::slice::from_ref(&node));
@@ -7880,6 +7951,69 @@ fn start_canonical_paragraph(
         command.push_everypar(stores.finish_traced_token_list(&traced));
     }
     Ok(())
+}
+
+/// Closes a `\insert<class>{...}` body: TeX82 §968/§1096's `insert_group`
+/// case of `handle_right_brace`.
+///
+/// `end_graf` first finishes any paragraph left open inside the insertion
+/// (§1096: `end_graf` runs before anything else, exactly like
+/// `vbox_group`/`vtop_group`). `\splittopskip`, `\splitmaxdepth`, and
+/// `\floatingpenalty` are read at their current (still-local) values before
+/// `unsave` -- assignments to those parameters made inside the insertion body
+/// govern its own splitting, exactly as tex.web's `q:=split_top_skip;
+/// d:=split_max_depth; f:=floating_penalty; unsave` orders it. The body is
+/// then packed with TeX82's `vpack` macro (`vpackage(p,h,m,max_dimen)`):
+/// unconstrained depth, but the *current* `\vbadness`/`\vfuzz` -- unlike an
+/// ordinary `\vbox`, `\insert` never suppresses those parameters. The
+/// resulting `ins_node`'s `height` field is the packed natural height+depth
+/// (TeX82's `size`, consumed only by the page builder's splitting
+/// arithmetic, `crate::page_builder`), and the node is appended to whatever
+/// list was open when `\insert` began -- the enclosing mode's list, not a
+/// side channel -- exactly like `\mark` and `\penalty` above. `nest_ptr=0`
+/// (`is_outer_vertical`) then invokes `build_page`, matching §968's `if
+/// nest_ptr=0 then build_page`.
+fn finish_insert_group(
+    class: u16,
+    modes: &mut ModeNest,
+    stores: &mut Universe,
+) -> Result<ReplayStep, ExecError> {
+    crate::assignments::end_paragraph(modes, stores)?;
+    let split_top_skip = stores.glue_param(GlueParam::SPLIT_TOP_SKIP);
+    let split_max_depth = stores.dimen_param(DimenParam::SPLIT_MAX_DEPTH);
+    let floating_penalty = stores.int_param(IntParam::FLOATING_PENALTY);
+    stores
+        .leave_group_with_kind(GroupKind::Insert)
+        .map_err(|_| ExecError::MissingToken {
+            context: "insert group",
+        })?;
+    let level = modes.pop()?;
+    let content = stores.freeze_node_list(level.list().nodes());
+    let params = tex_typeset::VpackParams {
+        box_max_depth: Scaled::MAX_DIMEN,
+        ..crate::packing_params::vpack_params(stores)
+    };
+    let packed = crate::packing_params::vpack(stores, content, PackSpec::Natural, params);
+    let size = packed
+        .node
+        .height
+        .checked_add(packed.node.depth)
+        .ok_or(ExecError::ArithmeticOverflow)?;
+    crate::assignments::flush_pending_hchars(modes, stores)?;
+    crate::vertical::append_vertical_contribution(
+        modes,
+        stores,
+        Node::Ins {
+            class,
+            size,
+            split_top_skip,
+            split_max_depth,
+            floating_penalty,
+            content,
+        },
+    );
+    crate::vertical::build_page_if_outer_vertical(modes, stores)?;
+    Ok(ReplayStep::Continue)
 }
 
 /// Schedules an every-box list after replay has entered its scoped group and

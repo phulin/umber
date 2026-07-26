@@ -4001,6 +4001,114 @@ fn canonical_box_lifecycle_unboxing_and_leaders_do_not_reopen_input() {
 }
 
 #[test]
+fn canonical_insert_builds_typed_ins_node_in_current_list() {
+    // TeX82 §968/§1096: `\insert<class>{...}` packages its body like a
+    // natural `\vbox` and appends the resulting `ins_node` to whatever list
+    // was open, not a side channel -- so it shows up as a plain child of the
+    // enclosing `\vbox` here, carrying its own separate `content` list.
+    let mut universe = Universe::new();
+    let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+    register_source(
+        &mut control,
+        br"\setbox0=\vbox{\insert3{\hrule height5pt}}\end",
+    );
+    run_to_end(&mut control, &mut universe);
+
+    let vbox = universe
+        .box_reg(0)
+        .and_then(|id| universe.nodes(id).first().map(|node| node.to_owned()))
+        .expect("outer vbox stores");
+    let Node::VList(vbox) = vbox else {
+        panic!("setbox0 contains a vbox");
+    };
+    let children = universe.nodes(vbox.children);
+    assert_eq!(children.len(), 1, "the ins_node is the vbox's only child");
+    let Node::Ins {
+        class,
+        size,
+        content,
+        ..
+    } = children.first().expect("checked len").to_owned()
+    else {
+        panic!("vbox child is an ins_node");
+    };
+    assert_eq!(class, 3);
+    assert_eq!(size, Scaled::from_raw(5 * Scaled::UNITY));
+    let inner = universe.nodes(content);
+    assert_eq!(inner.len(), 1, "insertion content is the lone rule");
+    assert!(matches!(
+        inner.first().expect("checked len").to_owned(),
+        Node::Rule {
+            height: Some(height),
+            depth: Some(depth),
+            ..
+        } if height == Scaled::from_raw(5 * Scaled::UNITY) && depth == Scaled::from_raw(0)
+    ));
+}
+
+#[test]
+fn canonical_insert_recovers_reserved_and_out_of_range_class_numbers() {
+    // TeX82 §968: `scan_eight_bit_int`'s own 0..=255 clamp ("Bad register
+    // code") and the additional `\insert255` rejection ("box 255 is
+    // special") both recover as class 0 rather than aborting the run.
+    let mut universe = Universe::new();
+    let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+    register_source(
+        &mut control,
+        br"\setbox0=\vbox{\insert255{}\insert1000{}}\end",
+    );
+    run_to_end(&mut control, &mut universe);
+
+    let text = terminal_text(&universe);
+    assert!(
+        text.contains("You can't \\insert255"),
+        "reserved class 255 is diagnosed: {text}"
+    );
+    assert!(
+        text.contains("Bad register code (1000)"),
+        "out-of-range class is diagnosed: {text}"
+    );
+
+    let vbox = universe
+        .box_reg(0)
+        .and_then(|id| universe.nodes(id).first().map(|node| node.to_owned()))
+        .expect("outer vbox stores");
+    let Node::VList(vbox) = vbox else {
+        panic!("setbox0 contains a vbox");
+    };
+    let children = universe.nodes(vbox.children);
+    assert_eq!(children.len(), 2);
+    for child in children {
+        let Node::Ins { class, .. } = child.to_owned() else {
+            panic!("vbox child is an ins_node");
+        };
+        assert_eq!(class, 0, "both recoveries fall back to class 0");
+    }
+}
+
+#[test]
+fn canonical_insert_at_outer_vertical_reaches_the_page_builder() {
+    // TeX82 §968: `if nest_ptr=0 then build_page` -- an `\insert` delivered
+    // directly in outer vertical mode must hand its ins_node to the page
+    // builder immediately, exercising §§980--987's insertion-class
+    // accounting (`tex-exec::page_builder`) rather than merely constructing
+    // the typed node.
+    let mut universe = Universe::new();
+    let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+    register_source(&mut control, br"\dimen0=100pt \insert0{\hrule height5pt}");
+    run_to_end(&mut control, &mut universe);
+
+    let insertions = universe.page_insertions();
+    assert_eq!(insertions.len(), 1);
+    assert_eq!(insertions[0].class(), 0);
+    assert_eq!(insertions[0].height(), Scaled::from_raw(5 * Scaled::UNITY));
+    assert_eq!(
+        insertions[0].status(),
+        tex_state::page::PageInsertionStatus::Inserting
+    );
+}
+
+#[test]
 fn canonical_assignments_cover_code_tables_and_reject_macro_prefixes() {
     let mut universe = Universe::new();
     let mut control = CanonicalMainControl::tex82_initex(&mut universe);
