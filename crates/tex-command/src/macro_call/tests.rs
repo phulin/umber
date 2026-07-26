@@ -289,7 +289,7 @@ fn parameterless_macro_pushes_replacement_without_matching_status() {
     }));
     assert!(recorder.0.iter().all(|observation| !matches!(
         observation,
-        CommandObservation::ScannerStatus(status) if status.to.starts_with("Matching")
+        CommandObservation::ScannerStatus(status) if status.to == "matching"
     )));
 }
 
@@ -346,7 +346,7 @@ fn matching_transition_retains_the_enclosing_definition_status() {
     assert!(recorder.0.iter().any(|observation| matches!(
         observation,
         CommandObservation::ScannerStatus(status)
-            if status.from.starts_with("Defining") && status.to.starts_with("Matching")
+            if status.from == "defining" && status.to == "matching"
     )));
 }
 
@@ -488,7 +488,7 @@ fn non_long_paragraph_backs_up_before_restoring_matching_status() {
             matches!(
                 observation,
                 CommandObservation::ScannerStatus(status)
-                    if status.from.starts_with("Matching") && status.to.starts_with("Defining")
+                    if status.from == "matching" && status.to == "defining"
             )
         })
         .expect("matching restores enclosing definition status");

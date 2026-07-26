@@ -34,6 +34,10 @@ pub use input::{
     SourceProvenance, SourceRange, SourceRegistration, SourceRegistrationError, SourceScalarRange,
     SourceToken, SourceTokenizationStep,
 };
+/// The single canonical naming vocabulary shared by every observation
+/// producer and transport (`docs/tex_command_core.md` §33.3).
+#[cfg(any(test, feature = "instrumentation"))]
+pub use observation::canonical_names;
 #[cfg(any(test, feature = "instrumentation"))]
 pub use observation::{
     AlignmentRecord, CommandDeliveryBoundary, CommandDeliveryRecord, CommandObservation,

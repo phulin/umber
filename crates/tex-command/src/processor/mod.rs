@@ -51,8 +51,6 @@ pub struct CommandProcessor<'a> {
     pub(crate) host: CommandHostContext<'a>,
     #[cfg(any(test, feature = "instrumentation"))]
     observer: Option<&'a mut dyn CommandObserver>,
-    #[cfg(any(test, feature = "instrumentation"))]
-    observe_next_raw_as_character_code: bool,
     /// The §53 write scanner registers its replay level here solely to name
     /// that level in detached observation. This is processor-local observer
     /// metadata: raw delivery neither reads replay provenance nor lets this
@@ -97,8 +95,6 @@ impl<'a> CommandProcessor<'a> {
             host,
             #[cfg(any(test, feature = "instrumentation"))]
             observer: None,
-            #[cfg(any(test, feature = "instrumentation"))]
-            observe_next_raw_as_character_code: false,
             #[cfg(any(test, feature = "instrumentation"))]
             immediate_write_retirement: None,
             last_delivery: None,

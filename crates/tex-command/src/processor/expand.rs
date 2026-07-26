@@ -1104,7 +1104,7 @@ mod tests {
         let status_exit = recorder
             .0
             .iter()
-            .position(|record| matches!(record, CommandObservation::ScannerStatus(status) if status.from.starts_with("Defining") && status.to.starts_with("Normal")))
+            .position(|record| matches!(record, CommandObservation::ScannerStatus(status) if status.from == "defining" && status.to == "normal"))
             .expect("string leaves defining status before its target");
         let target_delivery = recorder
             .0
@@ -1114,7 +1114,7 @@ mod tests {
         let status_restore = recorder
             .0
             .iter()
-            .rposition(|record| matches!(record, CommandObservation::ScannerStatus(status) if status.from.starts_with("Normal") && status.to.starts_with("Defining")))
+            .rposition(|record| matches!(record, CommandObservation::ScannerStatus(status) if status.from == "normal" && status.to == "defining"))
             .expect("string restores defining status after its target");
         let recovery = recorder
             .0
