@@ -697,6 +697,33 @@ standalone. A rejected non-box operand replays `scan_box`'s own "A <box> was
 supposed to be here" backup exactly like `scan_leader_payload`'s twin
 recovery, leaving the diagnostic to replay since it needs a `Universe` sink.
 
+Several no-operand primitives cross the boundary as a bare mode-classification
+with no scanner of their own, since `scan_command` already has the live mode
+and (for the two that need it) `command` to back up: TeX82 §1105's
+`any_mode(remove_item): delete_last` (`\unpenalty`/`\unkern`/`\unskip`) is
+identical in every mode, so `scan_command` returns `ScannedStep::DeleteLast`
+unconditionally and replay's existing mode/list-sensitive `delete_last` helper
+(shared with the legacy dispatcher) does the rest. TeX82 §1112's
+`hmode+ital_corr`/`mmode+ital_corr` (`\/`) differ only in which apply-time
+kern gets appended (hmode's font-metric kern vs. math's fixed zero kern, whose
+subtype must stay `KernKind::Font` -- `new_kern`'s default -- rather than
+`Explicit`, since only an explicit kern is a legal kern-then-glue line-break
+point); §1111's "Forbidden cases" makes vertical mode `IllegalItalicCorrection`
+instead, mirroring `IllegalBoxShift`'s `report_illegal_case` reuse. TeX82
+§1030/§1045/§1090's `\noboundary` similarly resolves per mode at apply time
+(a flag on the current list in hmode, `do_nothing` in mmode) except in
+vertical mode, where `scan_command` backs the token up and returns the
+existing generic `ScannedStep::ParagraphStart` exactly as `\hskip`/`\accent`
+already do. TeX82 §1171's `mmode+non_script` (`\nonscript`) and §1046's
+`non_math(non_script)` recovery for every other mode reuse
+`CommandProcessor::recover_missing_math_shift` unchanged -- the same generic
+`insert_dollar_sign` call already used for `\vskip` reached in math mode --
+proving that helper is not `\vskip`-specific. TeX82 §1045's
+`any_mode(ignore_spaces)` needs no apply-side step at all: `scan_command`
+itself loops on `CommandProcessor::get_x_token` until a non-space command
+appears, then backs it up for ordinary redelivery, achieving tex.web's `goto
+reswitch` without a `reswitch` label to jump to.
+
 ### 5.4 Proposed module layout
 
 ```text

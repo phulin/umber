@@ -1932,6 +1932,47 @@ enum ScannedStep {
     CharacterCode {
         value: i32,
     },
+    /// TeX82 §1105's `any_mode(remove_item): delete_last` -- `\unpenalty`,
+    /// `\unkern`, and `\unskip` are legal in every mode with no scan of their
+    /// own (the removed node, if any, is selected purely by matching the
+    /// primitive against the current list's tail).
+    DeleteLast(UnexpandablePrimitive),
+    /// TeX82 §1112's `hmode+ital_corr: append_italic_correction` (the
+    /// procedure itself is §1113) or its math-mode twin (§1112's
+    /// `mmode+ital_corr: tail_append(new_kern(0))`); which applies is
+    /// resolved from the live mode at apply time since neither takes an
+    /// operand. Vertical mode is instead `IllegalItalicCorrection` below
+    /// (`\/` is one of §1111's "Forbidden cases", not a paragraph-starting
+    /// command).
+    ItalicCorrection,
+    /// TeX82 §1111's "Forbidden cases" `you_cant`/`report_illegal_case`
+    /// recovery for `\/` in vertical or internal-vertical mode
+    /// (`vmode+ital_corr`).
+    IllegalItalicCorrection {
+        token: Token,
+    },
+    /// TeX82 §1045's `any_mode(ignore_spaces)` is scanned entirely in
+    /// `scan_command`: it repeats `get_x_token` until a non-space is found,
+    /// then backs that command up for ordinary redelivery (`goto reswitch`).
+    /// Nothing remains to apply.
+    ///
+    /// TeX82 §1030's `hmode+no_boundary` (peek the next token and suppress
+    /// its left boundary ligature/kern) is instead represented here as a
+    /// plain per-list flag consulted when Umber's pending-character run is
+    /// next flushed, since character appending is buffered rather than
+    /// processed token-by-token; setting the flag regardless of what follows
+    /// is equivalent because the flush point is exactly the next character
+    /// append. §1045's `mmode+no_boundary` is tex.web's `do_nothing`;
+    /// vertical mode instead starts a paragraph via `ParagraphStart` above,
+    /// matching §1090's `vmode+no_boundary` membership in the `back_input;
+    /// new_graf(true)` group alongside `vmode+ex_space` and friends.
+    NoBoundary,
+    /// TeX82 §1171's `mmode+non_script: tail_append(new_glue(zero_glue));
+    /// subtype(tail):=cond_math_glue`. Legal only in math/display-math mode;
+    /// §1046's `non_math(non_script)` routes every other mode through
+    /// `MissingMathShift` instead (`scan_command` selects between the two
+    /// before this step is produced).
+    NonScript,
     /// TeX82 §1030's `hmode+ex_space,mmode+ex_space: goto append_normal_space`
     /// and §1090's `vmode+ex_space: back_input; new_graf(true)` -- `\ ` (the
     /// explicit control-space primitive) starts a paragraph in vertical mode
@@ -3909,6 +3950,80 @@ fn scan_command(
             cat,
             origin: command.spelling().origin(),
         }),
+        // TeX82 §1105's `any_mode(remove_item): delete_last`. No operand of
+        // its own; `\unpenalty`/`\unkern`/`\unskip` differ only in which node
+        // type is a removal target, decided at apply time against the live
+        // mode nest and `Universe`.
+        Meaning::UnexpandablePrimitive(
+            primitive @ (UnexpandablePrimitive::UnPenalty
+            | UnexpandablePrimitive::UnKern
+            | UnexpandablePrimitive::UnSkip),
+        ) => Ok(ScannedStep::DeleteLast(primitive)),
+        // TeX82 §1111's "Forbidden cases" (`vmode+ital_corr`) vs. §1112's
+        // `hmode+ital_corr`/`mmode+ital_corr`. Mode legality is decided here
+        // (only `scan_command` sees `command` to back it up before the
+        // Forbidden-case diagnostic); the actual append is mode-sensitive
+        // apply-time work with no scan of its own.
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::ItalicCorrection) => {
+            if matches!(mode, Mode::Vertical | Mode::InternalVertical) {
+                Ok(ScannedStep::IllegalItalicCorrection {
+                    token: command.spelling().semantic_token(),
+                })
+            } else {
+                Ok(ScannedStep::ItalicCorrection)
+            }
+        }
+        // TeX82 §1045's `any_mode(ignore_spaces)`: `get_x_token` repeatedly
+        // until a non-space token is found, then `goto reswitch` reprocesses
+        // it in place. The canonical loop has no `reswitch` label to jump
+        // to, so it achieves the same effect by backing that first non-space
+        // command up for ordinary redelivery on the ensuing ordinary fetch.
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::IgnoreSpaces) => {
+            loop {
+                let Some(next) = processor.get_x_token().map_err(command_error)? else {
+                    break;
+                };
+                if matches!(
+                    next.meaning(),
+                    Meaning::CharToken {
+                        cat: Catcode::Space,
+                        ..
+                    }
+                ) {
+                    continue;
+                }
+                processor.back_input(next).map_err(command_error)?;
+                break;
+            }
+            Ok(ScannedStep::Continue)
+        }
+        // TeX82 §1090's `vmode+no_boundary` groups with `vmode+ex_space` and
+        // friends: back up the token and start the paragraph, then let the
+        // backed-up `\noboundary` be redelivered in horizontal mode. §1030's
+        // `hmode+no_boundary` and §1045's `mmode+no_boundary` (`do_nothing`)
+        // both need only the live mode at apply time, with no scan here.
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::NoBoundary) => {
+            if matches!(mode, Mode::Vertical | Mode::InternalVertical) {
+                processor.back_input(command).map_err(command_error)?;
+                Ok(ScannedStep::ParagraphStart)
+            } else {
+                Ok(ScannedStep::NoBoundary)
+            }
+        }
+        // TeX82 §1171's `mmode+non_script` vs. §1046's `non_math(non_script)`
+        // recovery, exactly mirroring the `\vskip`-in-math-mode gate above
+        // (`recover_missing_math_shift` already implements §1047's
+        // `insert_dollar_sign` generically for any command).
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::NonScript) => {
+            if matches!(mode, Mode::Math | Mode::DisplayMath) {
+                Ok(ScannedStep::NonScript)
+            } else {
+                processor
+                    .recover_missing_math_shift(command)
+                    .map_err(command_error)?;
+                Ok(ScannedStep::MissingMathShift)
+            }
+        }
         Meaning::UnexpandablePrimitive(
             primitive @ (UnexpandablePrimitive::Patterns | UnexpandablePrimitive::Hyphenation),
         ) => {
@@ -4077,6 +4192,10 @@ fn scan_unclassified_primitive(
         | P::PdfTrailerId
         | P::PdfXForm
         | P::PdfXImage
+        | P::IgnoreSpaces
+        | P::ItalicCorrection
+        | P::NoBoundary
+        | P::NonScript
         | P::Penalty
         | P::PrevDepth
         | P::Raise
@@ -4100,6 +4219,9 @@ fn scan_unclassified_primitive(
         | P::UcCode
         | P::UnHBox
         | P::UnHCopy
+        | P::UnKern
+        | P::UnPenalty
+        | P::UnSkip
         | P::UnVBox
         | P::UnVCopy
         | P::Uppercase
@@ -4149,10 +4271,8 @@ fn scan_unclassified_primitive(
         | P::GlueStretch
         | P::GlueStretchOrder
         | P::GlueToMu
-        | P::IgnoreSpaces
         | P::InterLinePenalties
         | P::InteractionMode
-        | P::ItalicCorrection
         | P::LastKern
         | P::LastPenalty
         | P::LastSkip
@@ -4180,9 +4300,7 @@ fn scan_unclassified_primitive(
         | P::MuExpr
         | P::MuToGlue
         | P::NoAlign
-        | P::NoBoundary
         | P::NoLimits
-        | P::NonScript
         | P::NonstopMode
         | P::NumExpr
         | P::Omit
@@ -4243,9 +4361,6 @@ fn scan_unclassified_primitive(
         | P::Span
         | P::SplitDiscards
         | P::TextStyle
-        | P::UnKern
-        | P::UnPenalty
-        | P::UnSkip
         | P::Underline
         | P::VAdjust
         | P::VCenter
@@ -5896,6 +6011,58 @@ fn apply_scanned_step(
             crate::assignments::flush_pending_hchars(modes, stores)?;
             crate::vertical::append_vertical_contribution(modes, stores, Node::Penalty(amount));
             crate::vertical::build_page_if_outer_vertical(modes, stores)?;
+            Ok(ReplayStep::Continue)
+        }
+        ScannedStep::DeleteLast(primitive) => {
+            crate::assignments::execute_delete_last(primitive, modes, stores)?;
+            Ok(ReplayStep::Continue)
+        }
+        ScannedStep::ItalicCorrection => {
+            match modes.current_mode() {
+                Mode::Horizontal | Mode::RestrictedHorizontal => {
+                    crate::assignments::append_italic_correction(modes, stores)?;
+                }
+                Mode::Math | Mode::DisplayMath => {
+                    // TeX82 §1112: `mmode+ital_corr: tail_append(new_kern(0));`
+                    // -- `new_kern`'s default subtype (`normal`) is never
+                    // overridden here (unlike hmode's italic-correction kern,
+                    // or an explicit `\kern`), so it must not become a legal
+                    // kern-then-glue line-break point.
+                    modes.current_list_mut().push(Node::Kern {
+                        amount: Scaled::from_raw(0),
+                        kind: KernKind::Font,
+                    });
+                }
+                Mode::Vertical | Mode::InternalVertical => {
+                    unreachable!("vertical \\/ is scanned as IllegalItalicCorrection")
+                }
+            }
+            Ok(ReplayStep::Continue)
+        }
+        ScannedStep::IllegalItalicCorrection { token } => {
+            crate::diagnostics::report_illegal_case(stores, token, modes.current_mode());
+            Ok(ReplayStep::Continue)
+        }
+        ScannedStep::NoBoundary => {
+            // TeX82 §1030's `hmode+no_boundary`; §1045's `mmode+no_boundary`
+            // is `do_nothing`. Vertical mode never reaches this step (see
+            // `ScannedStep::ParagraphStart` above).
+            if matches!(
+                modes.current_mode(),
+                Mode::Horizontal | Mode::RestrictedHorizontal
+            ) {
+                modes.current_list_mut().set_no_boundary(true);
+            }
+            Ok(ReplayStep::Continue)
+        }
+        ScannedStep::NonScript => {
+            // TeX82 §1171: a zero glue with the `cond_math_glue` subtype.
+            let spec = stores.intern_glue(GlueSpec::ZERO);
+            modes.current_list_mut().push(Node::Glue {
+                spec,
+                kind: GlueKind::NonScript,
+                leader: None,
+            });
             Ok(ReplayStep::Continue)
         }
         ScannedStep::CharacterCode { value } => {

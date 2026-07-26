@@ -51,6 +51,7 @@ use admissibility::is_assignment_primitive;
 pub(crate) use admissibility::math_allows_mode_independent_primitive;
 use arithmetic::*;
 pub(crate) use boxes::append_box_node_to_current_list;
+pub(crate) use boxes::execute_delete_last;
 pub(crate) use boxes::execute_scanned_box_register;
 pub(crate) use boxes::hpack_with_overfull_rule;
 pub(crate) use boxes::scan_math_box;
@@ -64,8 +65,8 @@ pub(crate) use hmode::scan_rule_node;
 use hmode::*;
 pub(crate) use hmode::{
     append_canonical_character, append_canonical_control_space, append_canonical_space,
-    append_given_char, control_space_glue_spec, flush_pending_hchars, try_append_character,
-    try_append_tfm_character_span,
+    append_given_char, append_italic_correction, control_space_glue_spec, flush_pending_hchars,
+    try_append_character, try_append_tfm_character_span,
 };
 #[cfg(test)]
 pub(crate) use hyphenation::hyphenated_hlist as test_hyphenated_hlist_owned;

@@ -45,6 +45,21 @@ fn run_to_end(control: &mut CanonicalMainControl, universe: &mut Universe) {
     }
 }
 
+/// Like `run_to_end`, but for the small set of `ExecError`s (such as
+/// `CannotDeleteFromCurrentPage`) that abort the run rather than being
+/// printed as an ordinary `Universe` diagnostic and continuing.
+fn run_to_error(control: &mut CanonicalMainControl, universe: &mut Universe) -> ExecError {
+    loop {
+        match control.step(universe) {
+            Ok(MainControlStep::End | MainControlStep::EndOfInput) => {
+                panic!("expected the run to abort with an error before completion")
+            }
+            Ok(MainControlStep::Continue) => {}
+            Err(err) => return err,
+        }
+    }
+}
+
 fn terminal_text(universe: &Universe) -> String {
     universe
         .world()
@@ -4442,4 +4457,298 @@ fn canonical_errmessage_uses_the_world_terminal_and_log_boundary() {
     let text = terminal_text(&universe);
     assert!(text.contains("! canonical diagnostic."), "{text}");
     assert!(text.contains("recovered"), "{text}");
+}
+
+#[test]
+fn canonical_delete_last_removes_only_matching_tail_node() {
+    // TeX82 §1105's `delete_last`: `\unpenalty` after a kern tail leaves the
+    // list untouched (no error, no removal), while `\unkern` correctly
+    // matches and removes it.
+    let mut universe = Universe::new();
+    let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+    // `\hbox`, not `\vbox`: this keeps `\kern`'s own (separately tracked,
+    // out-of-scope) canonical vmode-paragraph-start handling out of this
+    // test entirely, so it exercises only `delete_last`'s ordinary
+    // (`tail<>head`) branch.
+    register_source(
+        &mut control,
+        br"\setbox0=\hbox{\kern1pt\unpenalty\kern2pt\unkern}",
+    );
+    run_to_end(&mut control, &mut universe);
+
+    let hbox = universe
+        .box_reg(0)
+        .and_then(|id| universe.nodes(id).first().map(|node| node.to_owned()))
+        .expect("outer hbox stores");
+    let Node::HList(hbox) = hbox else {
+        panic!("setbox0 contains an hbox");
+    };
+    let children = universe.nodes(hbox.children).to_vec();
+    assert_eq!(
+        children,
+        vec![Node::Kern {
+            amount: Scaled::from_raw(Scaled::UNITY),
+            kind: KernKind::Explicit,
+        }],
+        "\\unpenalty left the kern alone; \\unkern removed the second one: {children:?}"
+    );
+}
+
+#[test]
+fn canonical_delete_last_outer_vertical_apologizes_only_when_last_page_item_is_glue() {
+    // TeX82 §1105: `(mode=vmode)and(tail=head)` never structurally removes
+    // anything -- `\unpenalty`/`\unkern` always apologize, but `\unskip`
+    // apologizes only when the page builder's own `last_glue` memo (§996)
+    // shows the most recently placed page item really was glue. This is a
+    // regression test for a real bug: the outer-vertical empty-list branch
+    // used to ignore that memo entirely and always succeed for `\unskip`.
+    let mut universe = Universe::new();
+    let glue_spec = universe.intern_glue(GlueSpec::ZERO);
+    universe.update_page_last_from_node(&Node::Glue {
+        spec: glue_spec,
+        kind: tex_state::node::GlueKind::Normal,
+        leader: None,
+    });
+    let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+    register_source(&mut control, br"\unskip");
+    let err = run_to_error(&mut control, &mut universe);
+    assert_eq!(
+        err.to_string(),
+        "You can't use `\\unskip' in vertical mode."
+    );
+
+    let mut universe = Universe::new();
+    universe.update_page_last_from_node(&Node::Penalty(0));
+    let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+    register_source(&mut control, br"\unskip\end");
+    run_to_end(&mut control, &mut universe);
+    assert!(
+        !terminal_text(&universe).contains("You can't"),
+        "\\unskip is silent when the last page item was not glue: {}",
+        terminal_text(&universe)
+    );
+}
+
+#[test]
+fn canonical_italic_correction_appends_kern_even_when_zero() {
+    // TeX82 §1113's `append_italic_correction` appends the kern
+    // unconditionally when the tail is a character node, even when the
+    // correction happens to be exactly zero -- there is no width guard in
+    // tex.web. This is a regression test: the ported logic used to skip the
+    // append whenever the metric was zero.
+    let mut universe = Universe::new();
+    let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+    register_cmr10_font(&mut control, &mut universe);
+    register_source(&mut control, br"\font\f=cmr10 \setbox0=\hbox{\f A\/}");
+    run_to_end(&mut control, &mut universe);
+
+    let hbox = universe
+        .box_reg(0)
+        .and_then(|id| universe.nodes(id).first().map(|node| node.to_owned()))
+        .expect("outer hbox stores");
+    let Node::HList(hbox) = hbox else {
+        panic!("setbox0 contains an hbox");
+    };
+    let children = universe.nodes(hbox.children).to_vec();
+    assert!(
+        matches!(
+            children.last(),
+            Some(Node::Kern {
+                amount,
+                kind: KernKind::Explicit,
+            }) if *amount == Scaled::from_raw(0)
+        ),
+        "a zero-width explicit kern still lands after `A`: {children:?}"
+    );
+}
+
+#[test]
+fn canonical_italic_correction_uses_the_font_metric_amount() {
+    // Same TeX82 §1113 path as above, but `f` has a real (nonzero) italic
+    // correction in cmr10 -- the classic textbook example.
+    let mut universe = Universe::new();
+    let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+    register_cmr10_font(&mut control, &mut universe);
+    register_source(&mut control, br"\font\f=cmr10 \setbox0=\hbox{\f f\/}");
+    run_to_end(&mut control, &mut universe);
+
+    let hbox = universe
+        .box_reg(0)
+        .and_then(|id| universe.nodes(id).first().map(|node| node.to_owned()))
+        .expect("outer hbox stores");
+    let Node::HList(hbox) = hbox else {
+        panic!("setbox0 contains an hbox");
+    };
+    let children = universe.nodes(hbox.children).to_vec();
+    assert!(
+        matches!(
+            children.last(),
+            Some(Node::Kern {
+                amount,
+                kind: KernKind::Explicit,
+            }) if amount.raw() > 0
+        ),
+        "`f`'s nonzero italic correction lands as an explicit kern: {children:?}"
+    );
+}
+
+#[test]
+fn canonical_italic_correction_in_math_mode_appends_a_font_kind_zero_kern() {
+    // TeX82 §1112's `mmode+ital_corr: tail_append(new_kern(0))` never
+    // overrides `new_kern`'s default `normal` subtype the way hmode's
+    // italic-correction kern (or an explicit `\kern`) does, so it must not
+    // become a legal kern-then-glue line-break point. `KernKind::Font` is
+    // Umber's non-breakpoint kern kind (see `linebreak::mod`'s
+    // `KernKind::Explicit | KernKind::Mu` break-legality check).
+    let mut universe = Universe::new();
+    let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+    register_source(&mut control, br"\setbox0=\hbox{$\/$}");
+    run_to_end(&mut control, &mut universe);
+
+    let hbox = universe
+        .box_reg(0)
+        .and_then(|id| universe.nodes(id).first().map(|node| node.to_owned()))
+        .expect("outer hbox stores");
+    let Node::HList(hbox) = hbox else {
+        panic!("setbox0 contains an hbox");
+    };
+    let children = universe.nodes(hbox.children).to_vec();
+    assert!(
+        children.iter().any(|node| matches!(
+            node,
+            Node::Kern {
+                amount,
+                kind: KernKind::Font,
+            } if *amount == Scaled::from_raw(0)
+        )),
+        "math-mode \\/ appends a zero kern with the non-breakpoint `Font` kind: {children:?}"
+    );
+}
+
+#[test]
+fn canonical_italic_correction_in_vertical_mode_reports_illegal_case() {
+    // TeX82 §1111's "Forbidden cases": `vmode+ital_corr` never starts a
+    // paragraph the way most other hmode-triggering commands do; it is a
+    // plain `report_illegal_case` diagnostic, and the following text is
+    // therefore never scanned as an operand.
+    let mut universe = Universe::new();
+    let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+    register_source(&mut control, br"\/\end");
+    run_to_end(&mut control, &mut universe);
+
+    let text = terminal_text(&universe);
+    assert!(
+        text.contains("You can't use `\\/' in vertical mode."),
+        "{text}"
+    );
+}
+
+#[test]
+fn canonical_ignorespaces_skips_spaces_before_the_next_command() {
+    // TeX82 §1045's `any_mode(ignore_spaces)`: repeated `get_x_token` skips
+    // spaces, then the first non-space command is reprocessed in place --
+    // it must not itself become an interword-glue-triggering space.
+    let mut universe = Universe::new();
+    let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+    register_cmr10_font(&mut control, &mut universe);
+    register_source(
+        &mut control,
+        br"\font\f=cmr10 \setbox0=\hbox{\f \ignorespaces   A}",
+    );
+    run_to_end(&mut control, &mut universe);
+
+    let hbox = universe
+        .box_reg(0)
+        .and_then(|id| universe.nodes(id).first().map(|node| node.to_owned()))
+        .expect("outer hbox stores");
+    let Node::HList(hbox) = hbox else {
+        panic!("setbox0 contains an hbox");
+    };
+    let children = universe.nodes(hbox.children).to_vec();
+    assert!(
+        matches!(children.as_slice(), [Node::Char { ch: 'A', .. }]),
+        "the skipped spaces left no glue behind: {children:?}"
+    );
+}
+
+#[test]
+fn canonical_noboundary_in_vertical_mode_starts_a_paragraph() {
+    // TeX82 §1090's `vmode+no_boundary` groups with `vmode+ex_space` and
+    // friends: `back_input; new_graf(true)`.
+    let mut universe = Universe::new();
+    let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+    register_source(&mut control, br"\setbox0=\vbox{\noboundary}");
+    run_to_end(&mut control, &mut universe);
+
+    let vbox = universe
+        .box_reg(0)
+        .and_then(|id| universe.nodes(id).first().map(|node| node.to_owned()))
+        .expect("outer vbox stores");
+    let Node::VList(vbox) = vbox else {
+        panic!("setbox0 contains a vbox");
+    };
+    let children = universe.nodes(vbox.children).to_vec();
+    assert!(
+        matches!(children.first(), Some(Node::HList(_))),
+        "\\noboundary started a paragraph, indenting the (empty) first line: {children:?}"
+    );
+}
+
+#[test]
+fn canonical_noboundary_in_math_mode_is_a_no_op() {
+    // TeX82 §1045's `mmode+no_boundary: do_nothing`.
+    let mut universe = Universe::new();
+    let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+    register_source(&mut control, br"$\noboundary$\end");
+    run_to_end(&mut control, &mut universe);
+
+    assert!(
+        !terminal_text(&universe).contains('!'),
+        "no diagnostics expected: {}",
+        terminal_text(&universe)
+    );
+}
+
+#[test]
+fn canonical_nonscript_appends_a_zero_glue_in_math_mode() {
+    // TeX82 §1171's `mmode+non_script: tail_append(new_glue(zero_glue));
+    // subtype(tail):=cond_math_glue`.
+    let mut universe = Universe::new();
+    let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+    register_source(&mut control, br"\setbox0=\hbox{$\nonscript\kern1pt$}");
+    run_to_end(&mut control, &mut universe);
+
+    let hbox = universe
+        .box_reg(0)
+        .and_then(|id| universe.nodes(id).first().map(|node| node.to_owned()))
+        .expect("outer hbox stores");
+    let Node::HList(hbox) = hbox else {
+        panic!("setbox0 contains an hbox");
+    };
+    let children = universe.nodes(hbox.children).to_vec();
+    assert!(
+        children.iter().any(|node| matches!(
+            node,
+            Node::Glue {
+                kind: tex_state::node::GlueKind::NonScript,
+                ..
+            }
+        )),
+        "the nonscript glue reaches the finished hlist: {children:?}"
+    );
+}
+
+#[test]
+fn canonical_nonscript_outside_math_mode_inserts_missing_dollar_sign() {
+    // TeX82 §1046's `non_math(non_script)`: `insert_dollar_sign` recovers by
+    // opening math mode and reconsidering `\nonscript` there, exactly like
+    // the existing `\vskip`-in-math-mode recovery this reuses
+    // (`recover_missing_math_shift` is generic over the offending command).
+    let mut universe = Universe::new();
+    let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+    register_source(&mut control, br"\setbox0=\hbox{\nonscript\kern1pt$}");
+    run_to_end(&mut control, &mut universe);
+
+    let text = terminal_text(&universe);
+    assert!(text.contains("Missing $ inserted."), "{text}");
 }
