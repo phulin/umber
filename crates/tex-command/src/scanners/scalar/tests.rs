@@ -1051,3 +1051,74 @@ fn parshape_reads_its_line_count() {
         2
     );
 }
+
+#[test]
+fn prev_depth_and_prev_graf_read_through_the_host_capability() {
+    // TeX82 §418's "Fetch the space_factor or the prev_depth" and §422's
+    // "Fetch the prev_graf": `\prevdepth` reads at `dimen_val` in vertical
+    // mode and `\prevgraf` at `int_val`. Both are executor-owned mode-nest
+    // facts, refreshed per operation like `space_factor`. Without the arms,
+    // `\ifdim\prevdepth>-1000pt` silently compared zero and changed every
+    // vertical spacing decision that idiom guards.
+    use tex_state::meaning::UnexpandablePrimitive as P;
+
+    let mut command = CommandState::default();
+    let mut runtime = CommandRuntime::default();
+    let mut universe = Universe::new();
+    let prev_depth = universe.intern("prevdepth").symbol();
+    universe.set_meaning(prev_depth, Meaning::UnexpandablePrimitive(P::PrevDepth));
+    let prev_graf = universe.intern("prevgraf").symbol();
+    universe.set_meaning(prev_graf, Meaning::UnexpandablePrimitive(P::PrevGraf));
+    push(
+        &mut command,
+        vec![Token::Cs(prev_depth), Token::Cs(prev_graf)],
+    );
+
+    let mut capabilities = CommandHostCapabilities::default();
+    capabilities.set_prev_depth(Some(Scaled::from_raw(3 * Scaled::UNITY)));
+    capabilities.set_prev_graf(Some(4));
+    let mut processor = CommandProcessor::new(
+        &mut command,
+        &mut runtime,
+        universe.command_context(),
+        CommandHostContext::new(&mut capabilities),
+    );
+
+    assert_eq!(
+        processor
+            .scan_dimension()
+            .expect("prev_depth scans")
+            .value
+            .raw(),
+        3 * Scaled::UNITY
+    );
+    assert_eq!(processor.scan_integer().expect("prev_graf scans").value, 4);
+}
+
+#[test]
+fn prev_depth_outside_vertical_mode_reads_zero() {
+    // §418's `if abs(mode)<>m then ... scanned_result(0)(dimen_val)`: an
+    // absent capability is the improper-mode case, which reads zero rather
+    // than the last vertical list's depth.
+    use tex_state::meaning::UnexpandablePrimitive as P;
+
+    let mut command = CommandState::default();
+    let mut runtime = CommandRuntime::default();
+    let mut universe = Universe::new();
+    let prev_depth = universe.intern("prevdepth").symbol();
+    universe.set_meaning(prev_depth, Meaning::UnexpandablePrimitive(P::PrevDepth));
+    push(&mut command, vec![Token::Cs(prev_depth)]);
+
+    let mut capabilities = CommandHostCapabilities::default();
+    capabilities.set_prev_depth(None);
+    let mut processor = CommandProcessor::new(
+        &mut command,
+        &mut runtime,
+        universe.command_context(),
+        CommandHostContext::new(&mut capabilities),
+    );
+
+    let scanned = processor.scan_dimension().expect("improper mode recovers");
+    assert_eq!(scanned.value.raw(), 0);
+    assert_eq!(scanned.recovery, ScalarRecovery::InsertedZero);
+}

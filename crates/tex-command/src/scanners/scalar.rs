@@ -1450,6 +1450,29 @@ impl CommandProcessor<'_> {
                 };
                 InternalValue::Integer(value)
             }
+            // TeX82 §418's "Fetch the `space_factor` or the `prev_depth`":
+            // `\prevdepth` is the vertical-mode half of `set_aux` and reads at
+            // `dimen_val`. Like `space_factor` above it is executor-owned mode
+            // nest state projected through the bounded host capability; `None`
+            // records tex.web's `abs(mode)<>m` case, which reports "Improper
+            // \prevdepth" and reads zero. Reading it silently as a missing
+            // number would change every `\ifdim\prevdepth>-1000pt` vertical
+            // spacing decision.
+            Meaning::UnexpandablePrimitive(UnexpandablePrimitive::PrevDepth) => {
+                let Some(value) = self.host.prev_depth() else {
+                    return Ok(None);
+                };
+                InternalValue::Dimension(value)
+            }
+            // TeX82 §422's "Fetch the `prev_graf`": the paragraph count of the
+            // nearest enclosing vertical level, at `int_val`. `None` records
+            // tex.web's `mode=0` case (inside `\write`), which reads zero.
+            Meaning::UnexpandablePrimitive(UnexpandablePrimitive::PrevGraf) => {
+                let Some(value) = self.host.prev_graf() else {
+                    return Ok(None);
+                };
+                InternalValue::Integer(value)
+            }
             // TeX82 §424's "Fetch an item in the current node, if
             // appropriate" (`last_item`): `\lastpenalty`, `\lastkern`, and
             // `\lastskip` read the current list's tail node, or -- in the
