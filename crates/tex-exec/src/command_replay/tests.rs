@@ -1155,6 +1155,35 @@ fn production_driver_applies_typed_parshape_indent_and_horizontal_nodes() {
     );
 }
 
+/// TeX82 §1214's "Adjust for the setting of `\globaldefs`" runs before
+/// `prefixed_command`'s assignment `case`, so it governs all thirty forms
+/// §1210 lists -- including `set_shape` (§1248's
+/// `define(par_shape_loc,shape_ref,p)`). The canonical apply arm passed the
+/// raw `\global` prefix bit through instead of resolving it through
+/// `assignment_global`, so a grouped `\parshape` under `\globaldefs=1` was
+/// silently reverted at the closing brace and a `\global\parshape` under
+/// `\globaldefs=-1` was silently made global anyway.
+#[test]
+fn canonical_parshape_assignment_resolves_scope_through_globaldefs() {
+    let mut universe = Universe::new();
+    let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+    register_source(
+        &mut control,
+        br"\globaldefs=1 {\parshape=1 2pt 20pt}\globaldefs=-1 {\global\parshape=1 3pt 30pt}",
+    );
+
+    run_to_end(&mut control, &mut universe);
+
+    let shape = universe.paragraph_shape();
+    assert_eq!(
+        shape.len(),
+        1,
+        "the unprefixed \\parshape under \\globaldefs=1 outlived its group"
+    );
+    assert_eq!(shape[0].indent, Scaled::from_raw(2 * Scaled::UNITY));
+    assert_eq!(shape[0].width, Scaled::from_raw(20 * Scaled::UNITY));
+}
+
 #[test]
 fn canonical_paragraph_page_builder_is_observer_neutral() {
     #[derive(Debug, Eq, PartialEq)]
