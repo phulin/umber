@@ -1316,56 +1316,46 @@ impl CommandProcessor<'_> {
         }
     }
 
-    /// TeX82 §25's `\\expandafter` hand-off retires only its one-token
-    /// backup before a macro body is installed. Recovery insertions share the
-    /// scalar scanner retry helper above, but must remain visible until the
-    /// ordinary raw-delivery loop retires them.
-    pub(crate) fn retire_exhausted_backup_before_macro_replay(
-        &mut self,
-        stamp: DeliveryStamp,
-    ) -> Result<(), CommandError> {
-        let exhausted_backup = matches!(
-            self.command.input.levels.last(),
-            Some(InputLevel::Tokens(cursor))
-                if cursor.identity.0 == stamp.input_level()
-                    && matches!(cursor.behavior, TokenBehavior::BackedUp(_))
-                    && self.next_stored_token(cursor).is_none()
-        );
-        if exhausted_backup {
-            match self.retire_and_restart(InputLevelId(stamp.input_level()))? {
-                RetirementRestart::Continue => Ok(()),
-                RetirementRestart::Stop
-                | RetirementRestart::EndV(_)
-                | RetirementRestart::Completed => Err(CommandError::input_invariant()),
-            }
-        } else {
-            Ok(())
-        }
-    }
-
-    /// TeX82 §392 drains a depleted macro body before `macro_call` pushes its
-    /// replacement body. In this typed stack, ordinary inserted recovery
-    /// input remains for the raw-delivery loop, while `BackedUp` input follows
-    /// its distinct §25 hand-off. Restricting this cleanup to macro bodies
-    /// preserves those two independently observable lifecycles.
-    pub(crate) fn retire_exhausted_macro_bodies_before_macro_replay(
+    /// TeX82 §390 cleans off *every* recently depleted token list before
+    /// `macro_call` installs the macro body:
+    ///
+    /// ```text
+    /// while (state=token_list)and(loc=null)and(token_type<>v_template) do
+    ///   end_token_list; {conserve stack space}
+    /// ```
+    ///
+    /// The loop is generic over token-list kind by construction -- exhausted
+    /// macro bodies, replayed parameters, backups, recovery insertions, and
+    /// stored replay episodes all drain here -- so a macro that ends with a
+    /// call to itself cannot grow the input stack without bound, and every
+    /// resulting retirement is observable *before* the new body's push.
+    /// `v_template` is the section's sole exception: an exhausted v-part stays
+    /// live until `do_endv` retires it.
+    pub(crate) fn retire_depleted_token_lists_before_macro_replay(
         &mut self,
     ) -> Result<(), CommandError> {
+        let mut completed = false;
         loop {
-            let exhausted = match self.command.input.levels.last() {
+            let depleted = match self.command.input.levels.last() {
                 Some(InputLevel::Tokens(cursor))
-                    if matches!(cursor.behavior, TokenBehavior::MacroBody(_))
+                    if drains_before_macro_replay(&cursor.behavior)
                         && self.next_stored_token(cursor).is_none() =>
                 {
                     Some(cursor.identity)
                 }
                 Some(InputLevel::Tokens(_)) | Some(InputLevel::Source(_)) | None => None,
             };
-            let Some(identity) = exhausted else {
+            let Some(identity) = depleted else {
                 return Ok(());
             };
             match self.retire_and_restart(identity)? {
                 RetirementRestart::Continue => {}
+                // A finished stored replay episode is recorded on the
+                // processor and reported to the caller by the next `get_next`;
+                // draining continues so the whole depleted run is cleaned off.
+                // Two completions in one drain would overwrite that one slot,
+                // so refuse loudly rather than dropping an episode silently.
+                RetirementRestart::Completed if !completed => completed = true,
                 RetirementRestart::Stop
                 | RetirementRestart::EndV(_)
                 | RetirementRestart::Completed => {
@@ -1690,6 +1680,21 @@ enum RetirementRestart {
     Continue,
     EndV(InputLevelId),
     Completed,
+}
+
+/// Exhaustive over [`TokenBehavior`]: TeX82 §390's pre-replay cleanup loop
+/// excludes exactly one token type, `v_template`. A new token-list kind must
+/// state which side of that rule it is on rather than inherit a default.
+fn drains_before_macro_replay(behavior: &TokenBehavior) -> bool {
+    match behavior {
+        TokenBehavior::Ordinary
+        | TokenBehavior::Recovery
+        | TokenBehavior::MacroBody(_)
+        | TokenBehavior::Parameter
+        | TokenBehavior::BackedUp(_)
+        | TokenBehavior::UTemplate => true,
+        TokenBehavior::VTemplate => false,
+    }
 }
 
 fn character_from_code(code: CharacterCode) -> char {
