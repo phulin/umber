@@ -3085,6 +3085,43 @@ fn scan_command(
     {
         return Ok(ScannedStep::EndOrdinaryGroup);
     }
+    // TeX82 §1153's `mmode+left_brace`: a bare explicit brace encountered
+    // directly in math mode starts a subformula that becomes the nucleus of a
+    // freshly appended noad -- `tail_append(new_noad); back_input;
+    // scan_math(nucleus(tail))` -- rather than an ordinary `simple_group`
+    // scope or a box body's nested-brace-depth counter. This must be checked
+    // before the `active_boxes` depth-counting arms below: a math formula
+    // nested inside an active box body (for example plain.tex's
+    // `\maketable` macro, which replays its whole `\halign` argument inside
+    // `\setbox1=\vbox{#2}`) otherwise had its bare `{`/`}` swallowed as an
+    // opaque `BoxBeginGroup`/`BoxEndGroup` depth increment/decrement with no
+    // noad ever appended, so a following `^`/`_` incorrectly saw the
+    // *enclosing* list's last node (an ordinary character, from *outside*
+    // the formula) as its attachment target instead of a fresh empty
+    // nucleus. Reusing the existing `TextField(Ord)` request (the same
+    // completed-field plumbing `\mathord{...}` already drives) is exact:
+    // `scan_math`'s brace case and `\mathord`'s explicit field scan both
+    // bottom out in one `scan_math_group_episode`/`fin_mlist` cycle, and an
+    // Ord-classified noad is what an unornamented brace group produces. That
+    // scan consumes the matching closing brace itself (via `scan_toks`), so
+    // the box body's depth counter -- which only this opening brace would
+    // otherwise have touched -- correctly never sees either brace of the
+    // pair, leaving its count unaffected, exactly as a fully balanced nested
+    // construct should. A box's own still-pending opening brace (the
+    // `ReplayBoxOpeningBrace` arm below) can never coincide with `mode` being
+    // math: that opener is always consumed before the box's body -- and
+    // hence any math it contains -- is reached.
+    if matches!(mode, Mode::Math | Mode::DisplayMath)
+        && let Meaning::CharToken {
+            cat: Catcode::BeginGroup,
+            ..
+        } = command.meaning()
+    {
+        processor.back_input(command).map_err(command_error)?;
+        return Ok(ScannedStep::Math(CanonicalMathRequest::TextField(
+            MathTextFieldKind::Ord,
+        )));
+    }
     if boxes
         .active_boxes
         .last()
