@@ -373,6 +373,24 @@ impl CommandContext<'_> {
         self.universe.font_parameter(font, number)
     }
 
+    /// Reads one named font's `\\hyphenchar` through the command boundary.
+    ///
+    /// TeX82 §426's "Fetch a font integer" is `assign_font_int`'s half of
+    /// `scan_something_internal`: `scan_font_ident` selects the font and
+    /// `hyphen_char[cur_val]` is delivered at `int_val`.
+    #[must_use]
+    pub fn font_hyphen_char(&self, font: FontId) -> i32 {
+        self.universe.font_hyphen_char(font)
+    }
+
+    /// Reads one named font's `\\skewchar` through the command boundary.
+    ///
+    /// The `m<>0` half of TeX82 §426's "Fetch a font integer".
+    #[must_use]
+    pub fn font_skew_char(&self, font: FontId) -> i32 {
+        self.universe.font_skew_char(font)
+    }
+
     /// Reads one font-family selector through the command boundary.
     #[must_use]
     pub fn math_family_font(&self, size: MathFontSize, family: u8) -> FontId {

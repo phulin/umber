@@ -1122,3 +1122,89 @@ fn prev_depth_outside_vertical_mode_reads_zero() {
     assert_eq!(scanned.value.raw(), 0);
     assert_eq!(scanned.recovery, ScalarRecovery::InsertedZero);
 }
+
+#[test]
+fn font_integers_fetch_hyphen_and_skew_characters_of_the_current_font() {
+    // tex.web §426's "Fetch a font integer": `scan_font_ident` selects the
+    // font, then `m=0` reads `hyphen_char[f]` and `m<>0` reads `skew_char[f]`,
+    // both at `int_val`. Without this arm `\hyphenchar\font` fell through to
+    // `scan_int`'s missing-number recovery and silently scanned as zero.
+    use tex_state::font::NULL_FONT;
+    use tex_state::meaning::UnexpandablePrimitive as P;
+
+    let mut command = CommandState::default();
+    let mut runtime = CommandRuntime::default();
+    let mut universe = Universe::new();
+    let hyphen_char = universe.intern("hyphenchar").symbol();
+    let skew_char = universe.intern("skewchar").symbol();
+    let current_font = universe.intern("font").symbol();
+    universe.set_meaning(hyphen_char, Meaning::UnexpandablePrimitive(P::HyphenChar));
+    universe.set_meaning(skew_char, Meaning::UnexpandablePrimitive(P::SkewChar));
+    universe.set_meaning(current_font, Meaning::UnexpandablePrimitive(P::Font));
+    universe.set_font_hyphen_char(NULL_FONT, -1);
+    universe.set_font_skew_char(NULL_FONT, 127);
+
+    let mut tokens = vec![
+        Token::Cs(hyphen_char),
+        Token::Cs(current_font),
+        Token::Cs(skew_char),
+        Token::Cs(current_font),
+    ];
+    tokens.extend("42".chars().map(char_token));
+    push(&mut command, tokens);
+
+    let mut capabilities = CommandHostCapabilities::default();
+    let mut processor = CommandProcessor::new(
+        &mut command,
+        &mut runtime,
+        universe.command_context(),
+        CommandHostContext::new(&mut capabilities),
+    );
+
+    let hyphen = processor.scan_integer().expect("hyphenchar scans");
+    assert_eq!(hyphen.value, -1);
+    assert_eq!(hyphen.recovery, ScalarRecovery::None);
+    let skew = processor.scan_integer().expect("skewchar scans");
+    assert_eq!(skew.value, 127);
+    assert_eq!(skew.recovery, ScalarRecovery::None);
+    assert_eq!(
+        processor
+            .scan_integer()
+            .expect("the following number is still available")
+            .value,
+        42
+    );
+}
+
+#[test]
+fn font_integers_read_the_named_font_rather_than_the_current_one() {
+    // §426 fetches through `scan_font_ident`, so `\skewchar\tenrm` reads the
+    // named font's `skew_char` while a different font is selected.
+    use tex_state::font::NULL_FONT;
+    use tex_state::meaning::UnexpandablePrimitive as P;
+
+    let mut command = CommandState::default();
+    let mut runtime = CommandRuntime::default();
+    let mut universe = Universe::new();
+    let tenrm = universe.intern("tenrm").symbol();
+    let named = universe
+        .try_copy_font_with_identifier(NULL_FONT, tenrm)
+        .expect("a font identifier is definable from nullfont");
+    universe.set_meaning(tenrm, Meaning::Font(named));
+    let skew_char = universe.intern("skewchar").symbol();
+    universe.set_meaning(skew_char, Meaning::UnexpandablePrimitive(P::SkewChar));
+    universe.set_font_skew_char(NULL_FONT, 11);
+    universe.set_font_skew_char(named, 96);
+
+    push(&mut command, vec![Token::Cs(skew_char), Token::Cs(tenrm)]);
+
+    let mut capabilities = CommandHostCapabilities::default();
+    let mut processor = CommandProcessor::new(
+        &mut command,
+        &mut runtime,
+        universe.command_context(),
+        CommandHostContext::new(&mut capabilities),
+    );
+
+    assert_eq!(processor.scan_integer().expect("skewchar scans").value, 96);
+}
