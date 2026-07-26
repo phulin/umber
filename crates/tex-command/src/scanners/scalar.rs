@@ -6,7 +6,8 @@ use tex_state::ids::{FontId, TokenListId};
 use tex_state::interner::Symbol;
 use tex_state::meaning::{Meaning, UnexpandablePrimitive};
 use tex_state::scaled::{
-    PhysicalUnit, Scaled, nx_plus_y, round_decimal_fraction, scaled_from_decimal_parts, xn_over_d,
+    PhysicalUnit, Scaled, nx_plus_y, round_decimal_fraction, scale_true_dimension_parts,
+    scaled_from_decimal_parts, xn_over_d,
 };
 use tex_state::token::{OriginId, Token};
 
@@ -907,7 +908,7 @@ impl CommandProcessor<'_> {
                 }
             }
         }
-        let unit = if allow_infinite
+        let (unit, true_dimension) = if allow_infinite
             && !decimal
             && self
                 .last_integer_terminator
@@ -924,12 +925,26 @@ impl CommandProcessor<'_> {
             if !matches!(first.meaning(), Meaning::CharToken { ch: 'f', .. }) {
                 return Err(CommandError::input_invariant());
             }
-            self.scan_infinite_unit_from_fil()?
+            (self.scan_infinite_unit_from_fil()?, false)
         } else {
             self.scan_dimension_unit(allow_infinite, mu)?
         };
         let digits = fraction.bytes().map(|byte| byte - b'0').collect::<Vec<_>>();
         let fraction = round_decimal_fraction(&digits);
+        // TeX82 §457's "Adjust for the magnification ratio", applied between
+        // recognizing `true` and converting the physical unit: `prepare_mag`
+        // validates and freezes `\mag`, and a magnification other than 1000
+        // divides the scanned quantity by `mag/1000` so that one `true` unit
+        // still measures one physical unit on the magnified page. Its
+        // diagnostic (an illegal or job-incompatible `\mag`) needs a canonical
+        // scanner diagnostic channel that does not exist yet.
+        let (integer, fraction) = if true_dimension {
+            let (mag, _diagnostic) = self.state.prepare_mag();
+            scale_true_dimension_parts(integer, fraction, mag)
+                .map_err(|_| CommandError::input_invariant())?
+        } else {
+            (integer, fraction)
+        };
         let (value, order) = match unit {
             DimensionUnit::Internal(unit) => (
                 nx_plus_y(
@@ -969,11 +984,16 @@ impl CommandProcessor<'_> {
         value.map(|value| (value, order))
     }
 
+    /// TeX82 §453's "Scan units and set `cur_val`".
+    ///
+    /// The returned flag reports that §457's `true` prefix was recognized, so
+    /// the caller applies "Adjust for the magnification ratio" to the integer
+    /// and fractional parts before converting the physical unit.
     fn scan_dimension_unit(
         &mut self,
         allow_infinite: bool,
         mu: bool,
-    ) -> Result<DimensionUnit, CommandError> {
+    ) -> Result<(DimensionUnit, bool), CommandError> {
         // TeX82 §455 first looks for an internal dimension, then probes `em`
         // and `ex`, before accepting `true`, `pt`, or a physical unit.  Each
         // unsuccessful probe owns one `back_input` hand-off.  In particular,
@@ -981,28 +1001,38 @@ impl CommandProcessor<'_> {
         // internal/`em`/`ex`/`true`/`pt` probes before `scan_keyword("in")`
         // consumes its `i` and its following `n` directly.
         if allow_infinite && self.scan_keyword("fil")?.value {
-            return self.scan_infinite_unit(Order::Fil);
+            return Ok((self.scan_infinite_unit(Order::Fil)?, false));
         }
         if let Some(unit) = self.probe_dimension_unit(mu)? {
-            return Ok(DimensionUnit::Internal(unit));
+            return Ok((DimensionUnit::Internal(unit), false));
         }
-        // §455 recognizes `em` and `ex` before the physical units.  They are
-        // current-font parameters 6 (quad) and 5 (x-height), respectively;
-        // keep the successful keyword result so the shared internal-unit
-        // fixed-point path scales both whole and fractional dimensions.
-        for (keyword, parameter) in [("em", 6), ("ex", 5)] {
-            if self.scan_keyword(keyword)?.value {
-                return Ok(DimensionUnit::Internal(
-                    self.state.current_font_parameter(parameter),
-                ));
+        // §455 recognizes `em` and `ex` before the physical units, and skips
+        // both entirely when a mu dimension is required (`if mu then goto
+        // not_found`).  They are current-font parameters 6 (quad) and 5
+        // (x-height), respectively; keep the successful keyword result so the
+        // shared internal-unit fixed-point path scales both whole and
+        // fractional dimensions.
+        if !mu {
+            for (keyword, parameter) in [("em", 6), ("ex", 5)] {
+                if self.scan_keyword(keyword)?.value {
+                    return Ok((
+                        DimensionUnit::Internal(self.state.current_font_parameter(parameter)),
+                        false,
+                    ));
+                }
             }
         }
-        let _true_dimension = self.scan_keyword("true")?.value;
-        if mu && self.scan_keyword("mu")?.value {
-            return Ok(DimensionUnit::Mu);
+        // §456: a mu dimension admits only the `mu` unit, and `true` is never
+        // recognized in a mu context.
+        if mu {
+            if self.scan_keyword("mu")?.value {
+                return Ok((DimensionUnit::Mu, false));
+            }
+            return Err(CommandError::input_invariant());
         }
+        let true_dimension = self.scan_keyword("true")?.value;
         if self.scan_keyword("pt")?.value {
-            return Ok(DimensionUnit::Physical(PhysicalUnit::Pt));
+            return Ok((DimensionUnit::Physical(PhysicalUnit::Pt), true_dimension));
         }
         for (keyword, unit) in [
             ("in", PhysicalUnit::In),
@@ -1015,7 +1045,7 @@ impl CommandProcessor<'_> {
             ("sp", PhysicalUnit::Sp),
         ] {
             if self.scan_keyword(keyword)?.value {
-                return Ok(DimensionUnit::Physical(unit));
+                return Ok((DimensionUnit::Physical(unit), true_dimension));
             }
         }
         Err(CommandError::input_invariant())
