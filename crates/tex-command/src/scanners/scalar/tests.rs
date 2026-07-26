@@ -585,3 +585,222 @@ fn leading_decimal_dimension_replays_the_point_before_scanning_its_fraction() {
         42
     );
 }
+
+/// Builds a processor over one pushed token list, for the level-coercion
+/// tests below. Each of them scans exactly one scalar from state that the
+/// caller has already installed.
+fn scan_with<T>(
+    universe: &mut Universe,
+    tokens: Vec<Token>,
+    scan: impl FnOnce(&mut CommandProcessor<'_>) -> T,
+) -> T {
+    let mut command = CommandState::default();
+    push(&mut command, tokens);
+    let mut runtime = CommandRuntime::default();
+    let mut capabilities = CommandHostCapabilities::default();
+    let mut processor = CommandProcessor::new(
+        &mut command,
+        &mut runtime,
+        universe.command_context(),
+        CommandHostContext::new(&mut capabilities),
+    );
+    scan(&mut processor)
+}
+
+fn glue(width: i32, stretch: i32, shrink: i32) -> GlueSpec {
+    GlueSpec {
+        width: Scaled::from_raw(width),
+        stretch: Scaled::from_raw(stretch),
+        shrink: Scaled::from_raw(shrink),
+        ..GlueSpec::ZERO
+    }
+}
+
+#[test]
+fn integer_scanner_coerces_internal_glue_and_mu_glue_to_their_width() {
+    // TeX82 §429: `scan_int` fetches at `int_val`, so §413's coercion loop
+    // lowers `glue_val` to its width and then reinterprets that width's
+    // scaled representation as an integer. `\count0=\skip3` and
+    // `\ifnum\parskip>0` both depend on this; treating the glue as "not a
+    // number" silently reads zero instead.
+    let mut universe = Universe::new();
+    let skip = universe.intern("skip").symbol();
+    universe.set_meaning(
+        skip,
+        Meaning::UnexpandablePrimitive(tex_state::meaning::UnexpandablePrimitive::Skip),
+    );
+    let spec = universe.intern_glue(glue(7 * Scaled::UNITY, Scaled::UNITY, 0));
+    universe.set_skip(3, spec);
+    let muskip = universe.intern("muskip").symbol();
+    universe.set_meaning(muskip, Meaning::MuskipRegister(1));
+    let mu = universe.intern_glue(glue(5 * Scaled::UNITY, 0, 0));
+    universe.set_muskip(1, mu);
+
+    assert_eq!(
+        scan_with(
+            &mut universe,
+            vec![Token::Cs(skip), char_token('3')],
+            |processor| processor.scan_integer().expect("glue coerces").value,
+        ),
+        7 * Scaled::UNITY
+    );
+    // The `mu_val` step reports `mu_error` and then falls through the same
+    // width/int cascade.
+    assert_eq!(
+        scan_with(&mut universe, vec![Token::Cs(muskip)], |processor| {
+            processor.scan_integer().expect("mu glue coerces").value
+        }),
+        5 * Scaled::UNITY
+    );
+}
+
+#[test]
+fn dimension_scanner_coerces_internal_glue_to_its_width() {
+    // TeX82 §429/§449: `scan_dimen` fetches at `dimen_val`, so a glue
+    // parameter becomes its width and is the complete answer
+    // (`\hsize=\parskip`).
+    let mut universe = Universe::new();
+    let parskip = universe.intern("parskip").symbol();
+    universe.set_meaning(parskip, Meaning::GlueParam(2));
+    let spec = universe.intern_glue(glue(3 * Scaled::UNITY, 2 * Scaled::UNITY, 0));
+    universe.set_glue_param(tex_state::env::banks::GlueParam::PAR_SKIP, spec);
+
+    assert_eq!(
+        scan_with(&mut universe, vec![Token::Cs(parskip)], |processor| {
+            processor
+                .scan_dimension()
+                .expect("glue coerces")
+                .value
+                .raw()
+        }),
+        3 * Scaled::UNITY
+    );
+}
+
+#[test]
+fn dimension_scanner_negates_a_signed_internal_glue_width() {
+    // TeX82 §448's `attach_sign`: an internal quantity reached through the
+    // leading-sign loop is negated after the level cascade, so `-\skip0`
+    // scans as the negated width rather than as a missing number.
+    let mut universe = Universe::new();
+    let skip = universe.intern("skip").symbol();
+    universe.set_meaning(skip, Meaning::SkipRegister(0));
+    let spec = universe.intern_glue(glue(4 * Scaled::UNITY, 0, Scaled::UNITY));
+    universe.set_skip(0, spec);
+
+    assert_eq!(
+        scan_with(
+            &mut universe,
+            vec![char_token('-'), Token::Cs(skip)],
+            |processor| processor
+                .scan_dimension()
+                .expect("signed glue scans")
+                .value
+                .raw(),
+        ),
+        -4 * Scaled::UNITY
+    );
+}
+
+#[test]
+fn mu_dimension_scanner_accepts_a_bare_internal_mu_glue_quantity() {
+    // TeX82 §449/§450: with `mu` set, `scan_dimen` fetches at `mu_val` and
+    // "Coerce glue to a dimension" replaces the specification by its width
+    // without changing `cur_val_level`, so `\mkern\thinmuskip` uses the
+    // parameter's width directly.
+    let mut universe = Universe::new();
+    let thinmuskip = universe.intern("thinmuskip").symbol();
+    universe.set_meaning(thinmuskip, Meaning::MuGlueParam(15));
+    let spec = universe.intern_glue(glue(3 * Scaled::UNITY, Scaled::UNITY, 0));
+    universe.set_glue_param(tex_state::env::banks::GlueParam::new(15), spec);
+
+    assert_eq!(
+        scan_with(&mut universe, vec![Token::Cs(thinmuskip)], |processor| {
+            processor
+                .scan_mu_dimension()
+                .expect("mu glue scans as a mu dimension")
+                .value
+                .raw()
+        }),
+        3 * Scaled::UNITY
+    );
+}
+
+#[test]
+fn glue_scanner_negates_all_three_components_of_a_signed_internal_glue() {
+    // TeX82 §430's "Negate all three glue components": `\skip0=-\skip1`
+    // negates the width, stretch, and shrink together. Routing the signed
+    // quantity through the width-only dimension scanner would drop the
+    // stretch and shrink entirely.
+    let mut universe = Universe::new();
+    let skip = universe.intern("skip").symbol();
+    universe.set_meaning(skip, Meaning::SkipRegister(1));
+    let spec = universe.intern_glue(glue(6 * Scaled::UNITY, 2 * Scaled::UNITY, Scaled::UNITY));
+    universe.set_skip(1, spec);
+
+    let scanned = scan_with(
+        &mut universe,
+        vec![char_token('-'), Token::Cs(skip)],
+        |processor| {
+            processor
+                .scan_glue(false)
+                .expect("signed internal glue scans")
+                .value
+        },
+    );
+    assert_eq!(scanned.width.raw(), -6 * Scaled::UNITY);
+    assert_eq!(scanned.stretch.raw(), -2 * Scaled::UNITY);
+    assert_eq!(scanned.shrink.raw(), -Scaled::UNITY);
+}
+
+#[test]
+fn dimension_scanner_uses_an_internal_integer_as_its_numeric_prefix() {
+    // TeX82 §449: an internal quantity that settles at `int_val` is not the
+    // answer but the numeric prefix of an ordinary units scan, and §448's
+    // `if cur_val<0` moves its sign to `attach_sign` so the fixed-point
+    // conversion still sees a nonnegative operand (`\dimen0=\count5 pt`).
+    let mut universe = Universe::new();
+    let count = universe.intern("count").symbol();
+    universe.set_meaning(count, Meaning::CountRegister(5));
+    universe.set_count(5, -3);
+
+    assert_eq!(
+        scan_with(
+            &mut universe,
+            vec![Token::Cs(count), char_token('p'), char_token('t')],
+            |processor| processor
+                .scan_dimension()
+                .expect("internal integer prefix scans")
+                .value
+                .raw(),
+        ),
+        -3 * Scaled::UNITY
+    );
+}
+
+#[test]
+fn glue_scanner_scans_units_after_an_internal_integer_prefix() {
+    // TeX82 §461: `if cur_val_level=int_val then scan_dimen(mu,false,true)`
+    // -- the internal integer is the width's numeric prefix, and the glue's
+    // stretch and shrink keywords still follow.
+    let mut universe = Universe::new();
+    let count = universe.intern("count").symbol();
+    universe.set_meaning(count, Meaning::CountRegister(0));
+    universe.set_count(0, 2);
+
+    let scanned = scan_with(
+        &mut universe,
+        vec![Token::Cs(count)]
+            .into_iter()
+            .chain("pt plus 1pt".chars().map(char_token))
+            .collect(),
+        |processor| {
+            processor
+                .scan_glue(false)
+                .expect("internal integer glue width scans")
+                .value
+        },
+    );
+    assert_eq!(scanned.width.raw(), 2 * Scaled::UNITY);
+    assert_eq!(scanned.stretch.raw(), Scaled::UNITY);
+}
