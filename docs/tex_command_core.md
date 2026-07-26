@@ -2664,6 +2664,65 @@ is a transaction-local commit buffer, not cached command state: a failed
 operation rolls it back without publication, then retries with a fresh
 processor episode.
 
+### 33.2 Dispatch-completeness invariant
+
+`canonical_main_control.rs`'s `scan_command` is the sole place an
+`UnexpandablePrimitive` reaches stomach dispatch. Every variant must be either
+routed by a named arm (directly, or through an explicit generic path such as
+`scan_canonical_math_request` for the math-noad family) or must fail loudly
+and name itself. A silent catch-all that treats "no dispatch arm" as
+"succeeded and consumed nothing" is a standing defect, not a placeholder: main
+control has already consumed the primitive's own token, so if its scanner
+never runs, any mandatory operand (an integer, dimension, glue, or braced
+group) is left in the input stream and gets typeset as literal document text
+arbitrarily far downstream of the real gap. `\patterns`/`\hyphenation`
+(Beads `umber2-johp.67`), `\penalty` (`umber2-johp.68`), `\ ` (control space),
+and `\prevdepth` (both `umber2-johp.73`) were each found only after silently
+corrupting output this way; `umber2-johp.69` replaced the wildcard with the
+mechanism below after a survey found roughly half of
+`tex_state::meaning::UnexpandablePrimitive`'s ~266 variants had no named arm.
+
+**Mechanism.** `scan_command`'s final match arm no longer reads
+`_ => Ok(ScannedStep::Continue)` for `Meaning::UnexpandablePrimitive`. Instead
+it delegates to `scan_unclassified_primitive(primitive, mode, origin)`, which
+is written as an **exhaustive match over the complete `UnexpandablePrimitive`
+enum** (not just the variants that currently lack a dispatch arm), split into
+two buckets:
+
+- `unreachable!()` for every primitive that already has an explicit,
+  mode-complete dispatch arm earlier in `scan_command` (including the early
+  math-family gates before the main match). Listing these here, rather than
+  relying on the earlier arms alone, is what makes the match exhaustive: if a
+  later edit narrows or removes one of those arms without updating this
+  classifier, the primitive falls through to its `unreachable!()` arm and
+  panics instead of silently reverting to swallowed-primitive behavior.
+- `Err(ExecError::UnimplementedPrimitive { primitive, mode, origin })` for
+  every primitive with no dispatch yet, or dispatched only conditionally
+  elsewhere (the math-noad family, or `\left`/`\right`/`\middle`'s
+  math-delimiter gate) and reached outside that context.
+
+Because the match is exhaustive over the enum itself, **adding a new
+`UnexpandablePrimitive` variant fails to compile** in
+`scan_unclassified_primitive` until it is deliberately placed in one of the
+two buckets -- this compile-time property, not just the runtime error, is the
+main deliverable: it prevents this exact defect from being reintroduced by a
+future primitive addition. `ExecError::UnimplementedPrimitive` follows the
+`umber2-johp.59` precedent of `ExecError::Command(CommandError)`: a named,
+typed failure that carries the offending variant (via `{primitive:?}`) rather
+than a generic message, so the run stops at its true site.
+
+This exhaustiveness is scoped to `UnexpandablePrimitive` specifically (the
+survey's subject); it does not extend to every other `Meaning` variant
+`scan_command` also matches on (`CharToken`, register/parameter accessors,
+`Relax`, `Undefined`, and so on), which keep their own ordinary
+`_ => Ok(ScannedStep::Continue)` fallback.
+
+Reaching an `UnimplementedPrimitive` failure is expected and correct for
+primitives that have not been routed yet; it is a precise, individually
+fixable divergence, not a regression to soften. Beads `umber2-johp.69`'s
+closing comment inventories which variants fall into the loud bucket, grouped
+by whether Story, Gentle, or Plain reach them, for follow-on work.
+
 ## 34. End-state invariants
 
 The replacement is complete only when all of these hold:
