@@ -78,7 +78,7 @@ Private state-machine modules must not be widened for compatibility with
 
 ## Canonical Observation Vocabulary
 
-Every string an observation payload carries for a *concept* -- a category
+Every string an observation payload carries for a _concept_ -- a category
 code, a character command, a scanner status, a glue order, a token's catcode
 or spelling, a meaning's command name -- is spelled once, in
 `src/observation/canonical_names.rs`, and nowhere else. Producers in
