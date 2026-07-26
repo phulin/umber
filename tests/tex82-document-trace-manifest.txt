@@ -1,0 +1,11 @@
+# Pinned identities for generated-on-demand TeX82 full-document semantic traces.
+# Regenerate with scripts/build-tex82-document-traces.sh; the traces themselves are
+# too large to commit (17-156 MB each) and live in the gitignored
+# tests/corpus/command/tex82-documents tree.
+# Formats:
+#   contract-schema VERSION
+#   document NAME ROOT-SOURCE FIXTURE-MANIFEST-SHA256 EVENTS FONT-SET-SHA256
+contract-schema 1
+document plain root.tex aa58661e7199d34fa0cd0b8587f946598e7993f6c4a99387c0e7d28e4e959cc1 87965 90d34b89bd949249ec6b7add31c2a3f530fa724ce30bc07b77f2432c55dad703
+document story root.tex 2d549071465380537b0f83df435701fdff55dcfb996d2867cec9e46a501709a2 89524 90d34b89bd949249ec6b7add31c2a3f530fa724ce30bc07b77f2432c55dad703
+document gentle root.tex c17349a3d35a049037d540130dc6ef2dfd6f1c9d785805eca743e7170d0d6259 930240 90d34b89bd949249ec6b7add31c2a3f530fa724ce30bc07b77f2432c55dad703

@@ -31,3 +31,7 @@ notes.md
 .beads/proxieddb/
 .beads/interactions.jsonl
 .beads/config.yaml
+
+# Generated-on-demand full-document TeX82 semantic traces (17-156 MB each);
+# rebuild with scripts/build-tex82-document-traces.sh.
+/tests/corpus/command/tex82-documents/

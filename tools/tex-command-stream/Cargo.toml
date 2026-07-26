@@ -4,6 +4,7 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
+sha2.workspace = true
 tex-command = { path = "../../crates/tex-command", features = ["instrumentation"] }
 tex-exec = { path = "../../crates/tex-exec", features = ["instrumentation"] }
 tex-oracle = { path = "../../crates/tex-oracle" }

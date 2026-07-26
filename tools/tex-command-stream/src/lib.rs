@@ -13,9 +13,10 @@ use std::sync::Arc;
 
 use tex_command::{
     AlignmentRecord, CommandDeliveryBoundary, CommandObservation, CommandObserver, CommandProfile,
-    ConditionRecord, EffectRecord, InputReason as CommandInputReason, InputRecord, InputTransition,
-    MacroRecord, MutationRecord, ObservedToken, RecoveryKind as CommandRecoveryKind,
-    RecoveryRecord, RegisteredSourceKind, ScannerStatusRecord, SourceRegistration, TokenListRecord,
+    ConditionRecord, EffectRecord, FontResource, InputReason as CommandInputReason, InputRecord,
+    InputTransition, MacroRecord, MutationRecord, ObservedToken,
+    RecoveryKind as CommandRecoveryKind, RecoveryRecord, RegisteredSourceKind, ScannerStatusRecord,
+    SourceRegistration, TokenListRecord,
 };
 use tex_exec::{CanonicalMainControl, MainControlStep};
 use tex_oracle::{
@@ -26,7 +27,9 @@ use tex_oracle::{
     ScannerEvent, ScannerStatus, ScannerStatusEvent, SourceLocation, StateTarget, TokenListEvent,
     TokenListTransition, validate_tex82_command_trace_suite,
 };
-use tex_state::{SourceId, Universe, token::Catcode};
+use tex_state::{InputOpenState, InputReadState, SourceId, Universe, token::Catcode};
+
+pub mod documents;
 
 const FIXTURE_ROOT: &str = "tests/corpus/command/tex82";
 const MAX_DIAGNOSTIC_CHARS: usize = 960;
@@ -35,14 +38,29 @@ const CANONICAL_ROOT_SOURCE: &str = "transitions.tex";
 const TERMINAL_FILENAME_TERMINATOR: u8 = b' ';
 const CANONICAL_ROOT_PUSH_NAME: &str = "terminal";
 
-/// Default cap on ordered divergences a run reports (`--max-divergences`
-/// overrides it). Chosen to comfortably batch a run's independent defects
-/// into one worklist without an unbounded report against a long fixture.
+/// Default cap on ordered divergences reported *per fixture*
+/// (`--max-divergences` overrides it). Chosen to comfortably batch a
+/// fixture's independent defects into one worklist without an unbounded
+/// report against a long fixture.
+///
+/// The cap is per fixture rather than per run so that one noisy fixture --
+/// typically a single structural defect producing a long unbroken run of
+/// consecutive-index mismatches -- cannot starve every fixture ordered after
+/// it, which would hide whole documents from the worklist.
 pub const DEFAULT_MAX_DIVERGENCES: usize = 20;
 
-/// Runs every registered TeX82 committed fixture with no live-engine access,
-/// reporting up to `max_divergences` ordered divergences instead of only the
+/// Runs every registered TeX82 trace with no live-engine access, reporting up
+/// to `max_divergences` ordered divergences *per fixture* instead of only the
 /// first.
+///
+/// Two registries are replayed, in this order: the committed, hermetic
+/// fixtures under `tests/corpus/command/tex82`, then the generated-on-demand
+/// full-document traces described by [`documents`]. Committed fixtures come
+/// first because they are always present and their divergences are the
+/// cheapest to act on; a document trace tree that has not been generated on
+/// this checkout is reported as skipped, not as a failure. Every fixture is
+/// replayed and gets its own divergence budget, so an earlier fixture's
+/// defects never hide a later fixture's.
 ///
 /// A fixture whose replay hits a Rust panic or a command-core `ExecError` is
 /// contained (`catch_panic`/`ReplayFailure`) and reported as its own ordered
@@ -61,9 +79,6 @@ pub fn run_repository(
         .map_err(|error| RunnerError::Suite(error.to_string()))?;
     let mut divergences = Vec::new();
     for entry in suite.fixtures {
-        if divergences.len() >= max_divergences {
-            break;
-        }
         let fixture_directory =
             repository
                 .join(FIXTURE_ROOT)
@@ -72,32 +87,73 @@ pub fn run_repository(
                 })?);
         let fixture = CommittedFixture::load(&fixture_directory)
             .map_err(|error| RunnerError::Fixture(entry.selector.clone(), error.to_string()))?;
-        let replay = replay_fixture(&fixture_directory, &fixture)?;
-        let identity = format!(
-            "{} manifest={}",
-            fixture.manifest.name, fixture.stream.header.manifest
-        );
-        let remaining = max_divergences - divergences.len();
-        divergences.extend(
-            find_divergences(&identity, &fixture.stream.events, &replay.events, remaining)
-                .into_iter()
-                .map(Divergence::Mismatch),
-        );
-        if let Some(failure) = replay.failure
-            && divergences.len() < max_divergences
-        {
-            divergences.push(Divergence::Failure {
-                fixture: identity,
-                index: replay.events.len(),
-                failure,
-            });
-        }
+        collect_fixture_divergences(
+            &fixture_directory,
+            &fixture,
+            &ReplayResources::committed(),
+            max_divergences,
+            &mut divergences,
+        )?;
     }
+
+    let registry = documents::load_registry(repository)?;
+    for name in &registry.skipped {
+        eprintln!(
+            "tex-command-stream: document trace {name} is not generated on this checkout; \
+             run scripts/build-tex82-document-traces.sh to include it"
+        );
+    }
+    for trace in &registry.traces {
+        collect_fixture_divergences(
+            &trace.directory,
+            &trace.fixture,
+            &trace.resources,
+            max_divergences,
+            &mut divergences,
+        )?;
+    }
+
     if divergences.is_empty() {
         Ok(())
     } else {
         Err(RunnerError::Comparison(divergences))
     }
+}
+
+fn collect_fixture_divergences(
+    directory: &Path,
+    fixture: &CommittedFixture,
+    resources: &ReplayResources,
+    max_divergences: usize,
+    divergences: &mut Vec<Divergence>,
+) -> Result<(), RunnerError> {
+    let replay = replay_fixture(directory, fixture, resources)?;
+    let identity = format!(
+        "{} manifest={}",
+        fixture.manifest.name, fixture.stream.header.manifest
+    );
+    divergences.extend(
+        find_divergences(
+            &identity,
+            &fixture.stream.events,
+            &replay.events,
+            max_divergences,
+        )
+        .into_iter()
+        .map(Divergence::Mismatch),
+    );
+    // A contained failure is at most one entry per fixture and names a
+    // concrete `ExecError` or panic site, so it is reported outside the
+    // mismatch budget: the twentieth consecutive mismatch of an
+    // already-reported structural defect must never crowd it out.
+    if let Some(failure) = replay.failure {
+        divergences.push(Divergence::Failure {
+            fixture: identity,
+            index: replay.events.len(),
+            failure,
+        });
+    }
+    Ok(())
 }
 
 /// Parses the intentionally narrow offline runner interface.
@@ -415,6 +471,9 @@ pub enum RunnerError {
     Usage(String),
     Suite(String),
     Fixture(String, String),
+    /// The generated document-trace registry is registered but inconsistent
+    /// with its committed pin, or unreadable.
+    Document(String),
     Replay(String),
     Comparison(Vec<Divergence>),
 }
@@ -422,9 +481,10 @@ pub enum RunnerError {
 impl fmt::Display for RunnerError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Usage(error) | Self::Suite(error) | Self::Replay(error) => {
-                formatter.write_str(error)
-            }
+            Self::Usage(error)
+            | Self::Suite(error)
+            | Self::Document(error)
+            | Self::Replay(error) => formatter.write_str(error),
             Self::Fixture(fixture, error) => write!(formatter, "fixture {fixture}: {error}"),
             Self::Comparison(divergences) => {
                 writeln!(formatter, "{} ordered divergence(s):", divergences.len())?;
@@ -480,6 +540,7 @@ fn catch_panic<T>(f: impl FnOnce() -> T + std::panic::UnwindSafe) -> Result<T, S
 fn replay_fixture(
     directory: &Path,
     fixture: &CommittedFixture,
+    resources: &ReplayResources,
 ) -> Result<ReplayOutput, RunnerError> {
     if fixture.manifest.oracle.engine.dialect != EngineDialect::Tex82
         || fixture.manifest.profile.invocation != "initex"
@@ -490,7 +551,33 @@ fn replay_fixture(
             fixture.manifest.name
         )));
     }
-    CanonicalStartup::from_fixture(directory, fixture)?.replay()
+    CanonicalStartup::from_fixture(directory, fixture, resources)?.replay()
+}
+
+/// Replay inputs a fixture needs that its committed `.tex` sources do not
+/// carry: which declared source TeX's terminal filename scan selects, and the
+/// opaque font metrics canonical `\font` resolution must find already
+/// registered.
+///
+/// `CanonicalMainControl::resolve_font_resource` never suspends -- an
+/// unregistered font is an immediate `ExecError::MissingCanonicalFont` -- so
+/// every font a document can reach is registered up front, before the first
+/// step, rather than through a lazy resource-host retry loop.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct ReplayResources {
+    root_source: String,
+    fonts: BTreeMap<String, Arc<[u8]>>,
+}
+
+impl ReplayResources {
+    /// The committed suite's convention: a fixed root-source name and
+    /// font-independent sources.
+    fn committed() -> Self {
+        Self {
+            root_source: CANONICAL_ROOT_SOURCE.into(),
+            fonts: BTreeMap::new(),
+        }
+    }
 }
 
 /// Observer output plus a contained, nonterminal replay failure, if one
@@ -520,6 +607,8 @@ struct CanonicalStartup {
     root_name: String,
     root_bytes: Arc<[u8]>,
     input_capabilities: BTreeMap<String, Arc<[u8]>>,
+    fonts: BTreeMap<String, Arc<[u8]>>,
+    expected_events: usize,
 }
 
 impl CanonicalStartup {
@@ -527,33 +616,34 @@ impl CanonicalStartup {
         clippy::disallowed_methods,
         reason = "this offline host tool reads fixture bytes after CommittedFixture validation"
     )]
-    fn from_fixture(directory: &Path, fixture: &CommittedFixture) -> Result<Self, RunnerError> {
-        let artifact = fixture
-            .manifest
-            .sources
-            .get(CANONICAL_ROOT_SOURCE)
-            .ok_or_else(|| {
-                RunnerError::Replay(format!(
-                    "{} does not declare canonical root source {CANONICAL_ROOT_SOURCE}",
-                    fixture.manifest.name
-                ))
-            })?;
+    fn from_fixture(
+        directory: &Path,
+        fixture: &CommittedFixture,
+        resources: &ReplayResources,
+    ) -> Result<Self, RunnerError> {
+        let root_source = resources.root_source.as_str();
+        let artifact = fixture.manifest.sources.get(root_source).ok_or_else(|| {
+            RunnerError::Replay(format!(
+                "{} does not declare canonical root source {root_source}",
+                fixture.manifest.name
+            ))
+        })?;
         let bytes = std::fs::read(directory.join(&artifact.path)).map_err(|error| {
             RunnerError::Replay(format!(
-                "{} source {CANONICAL_ROOT_SOURCE} cannot be read: {error}",
+                "{} source {root_source} cannot be read: {error}",
                 fixture.manifest.name
             ))
         })?;
         if u64::try_from(bytes.len()).ok() != Some(artifact.bytes) {
             return Err(RunnerError::Replay(format!(
-                "{} source {CANONICAL_ROOT_SOURCE} changed after fixture validation",
+                "{} source {root_source} changed after fixture validation",
                 fixture.manifest.name
             )));
         }
 
         let mut input_capabilities = BTreeMap::new();
         for (source_name, source_artifact) in &fixture.manifest.sources {
-            if source_name == CANONICAL_ROOT_SOURCE {
+            if source_name == root_source {
                 continue;
             }
             let input_name = canonical_input_name(source_name)?;
@@ -581,18 +671,25 @@ impl CanonicalStartup {
             }
         }
 
-        let mut terminal_filename = CANONICAL_ROOT_SOURCE.as_bytes().to_vec();
+        let mut terminal_filename = root_source.as_bytes().to_vec();
         terminal_filename.push(TERMINAL_FILENAME_TERMINATOR);
         Ok(Self {
             profile: CommandProfile::TEX82,
             terminal_filename: Arc::from(terminal_filename),
-            root_name: CANONICAL_ROOT_SOURCE.into(),
+            root_name: root_source.into(),
             root_bytes: Arc::from(bytes),
             input_capabilities,
+            fonts: resources.fonts.clone(),
+            expected_events: fixture.stream.events.len(),
         })
     }
 
     fn replay(self) -> Result<ReplayOutput, RunnerError> {
+        // Replay must terminate even when a defect leaves the engine looping.
+        // Registered input bytes alone bound the committed suite's synthetic
+        // fixtures, but a real document expands far more commands than it has
+        // source bytes, so the expected stream length -- which a correct
+        // replay reproduces exactly -- bounds the useful work too.
         let limit = self
             .terminal_filename
             .len()
@@ -602,6 +699,7 @@ impl CanonicalStartup {
                     .values()
                     .try_fold(count, |total, source| total.checked_add(source.len()))
             })
+            .and_then(|count| count.checked_add(self.expected_events))
             .and_then(|count| count.checked_mul(2))
             .and_then(|count| count.checked_add(MAX_DELIVERIES_OVERHEAD))
             .ok_or_else(|| {
@@ -643,6 +741,24 @@ impl CanonicalStartup {
                 SourceRegistration::new(RegisteredSourceKind::World, Arc::clone(bytes)),
             );
         }
+        // `resolve_font_resource` returns `MissingCanonicalFont` immediately
+        // rather than suspending, so the whole staged metric set is installed
+        // before the first step instead of through a retry loop.
+        for (name, bytes) in &self.fonts {
+            let metrics = universe
+                .input_open_context()
+                .read_supplied_input_file(Path::new(name), Arc::clone(bytes))
+                .map_err(|error| {
+                    RunnerError::Replay(format!("font metrics {name} cannot be supplied: {error}"))
+                })?;
+            control.capabilities_mut().register_font(
+                Path::new(name),
+                FontResource::Tfm {
+                    metrics,
+                    opentype: None,
+                },
+            );
+        }
         let mut recorder = Recorder::new("terminal", self.input_capabilities);
         let scanned = control
             .scan_startup_file_name(&mut universe, &mut recorder)
@@ -666,10 +782,16 @@ impl CanonicalStartup {
         {
             loop {
                 if deliveries == limit {
-                    return Err(RunnerError::Replay(format!(
-                        "root source {} exceeded replay bound {limit}",
-                        self.root_name
-                    )));
+                    // Contained like any other replay failure: an engine that
+                    // will not terminate is a worklist entry, not a reason to
+                    // hide every divergence already observed.
+                    return Ok(ReplayOutput {
+                        events: recorder.events,
+                        failure: Some(ReplayFailure::Error(format!(
+                            "root source {} exceeded replay bound {limit}",
+                            self.root_name
+                        ))),
+                    });
                 }
                 let step = catch_panic(std::panic::AssertUnwindSafe(|| {
                     control.step_with_observer(&mut universe, &mut recorder)
