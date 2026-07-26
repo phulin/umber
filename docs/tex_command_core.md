@@ -2980,7 +2980,7 @@ arm that resolves to a `ScannedStep` any more, at either level.
 
 ### 33.3 Canonical observation vocabulary
 
-The same invariant applies to *naming*, not just dispatch. Every string an
+The same invariant applies to _naming_, not just dispatch. Every string an
 observation payload carries for a concept -- a category code, a character
 command, a scanner status, a glue order, a token's catcode or spelling, a
 meaning's command name -- is spelled once, in
