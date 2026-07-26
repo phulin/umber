@@ -2011,9 +2011,19 @@ publishes its extra-delimiter diagnostic at that raw delimiter delivery
    validation and extra-delimiter recovery to the caller;
 5. preserves literal-brace alignment accounting and template interception;
 6. applies outer-validity recovery at each exhausted source boundary through
-   the shared mechanism, before parent input resumes; and
+   the shared mechanism, before parent input resumes;
 7. observes the live `skipping` to prior-status restoration, then restores
-   the prior scanner status.
+   the prior scanner status; and
+8. records the delimiter it stopped at as one condition `branch` observation
+   against the live top-of-stack frame.
+
+Step 8 is TeX82 §494's `done:` label, which every skip reaches, so no caller
+records a branch of its own: §498's false boolean limb, §509's `\ifcase` limb
+count, and §510's skip to `\fi` all publish exactly one branch per `pass_text`
+invocation, under whatever limit that frame currently carries. The observed
+frame is the stack top — TeX's `cur_if`/`if_limit` — which is not always the
+frame the skip was started for, because §500's `\if\iftrue abc\else d\fi`
+leaves an inner frame above it.
 
 The TeX82 predicate dispatcher selects `get_x_token` for character/category
 tests and `get_token` specifically for `\ifx`; the latter preserves raw
@@ -2033,17 +2043,25 @@ executor-owned mode nest and aggregate box state when those boundaries are
 active.
 
 For a false boolean limb, its frame remains `evaluating` while `pass_text`
-delivers the skipped raw tokens. Once the delimiter has been delivered and the
-scanner status restored, the command core records that delimiter as the branch
-under the pre-change limit, then changes the frame to `fi` for `\else` (or
-records and pops it for `\fi`). This keeps the observable TeX82 transition
-order separate from the stack's typed state transitions.
+delivers the skipped raw tokens, so the branch `pass_text` records is under
+that pre-change limit. TeX82 §498's shared `common_ending` then either pops
+the frame for `\fi` or changes it to `fi` for `\else`, and §509's exhausted
+`\ifcase` limb count reaches the same `common_ending` rather than a
+duplicate of it. This keeps the observable TeX82 transition order separate
+from the stack's typed state transitions.
 
 An `\ifcase` frame likewise remains `evaluating` while `pass_text` skips each
-non-selected limb. Each traversed `\or` is recorded under that pre-change
-limit; only after the selected delimiter restores normal scanner status does
-the command core change the frame to `or` and record the selected `case`
-branch. This projection ordering does not alter condition-stack evaluation.
+non-selected limb, so each traversed `\or` is recorded under that pre-change
+limit; only after the last one does the command core change the frame to `or`
+and record the selected `case` branch. A negative case index is not a separate
+path: §509's `while n<>0 do ... decr(n)` loop never reaches zero for one, so
+the same loop skips to `\else` or `\fi`.
+
+`\or` and `\else` reaching §510 as accepted delimiters do not change
+`if_limit`. TeX82 §510 is only `while cur_chr<>fi_code do pass_text` followed
+by a pop, testing the delimiter already in hand so `\fi` skips nothing; the
+frame keeps the limit it had, which is the limit each remaining skipped limb
+is recorded under.
 
 The command host installs an ephemeral `ConditionalState` projection for each
 executor operation. It contains only the three-way mode family and the
