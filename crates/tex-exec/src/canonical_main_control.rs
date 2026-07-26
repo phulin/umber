@@ -101,12 +101,16 @@ enum ReplayBoxKind {
     HBox,
     VBox,
     VTop,
-    /// TeX82 §968/§1096's `\insert<class>{...}` body. This reuses the box
-    /// brace-matching machinery (`active_boxes`, `BoxBeginGroup`,
-    /// `BoxEndGroup`) purely for its nested-brace bookkeeping; its group kind,
-    /// closing action, and page-builder interaction are entirely different
-    /// from an ordinary vbox and are handled by a dedicated branch in
-    /// `BoxEndGroup`.
+    /// TeX82 §968/§1096's `\insert<class>{...}` or `\vadjust{...}` body --
+    /// the latter shares the exact same construction with `class` fixed at
+    /// 255 (`begin_insert_or_adjust`'s `if cur_cmd=vadjust then
+    /// cur_val:=255`). This reuses the box brace-matching machinery
+    /// (`active_boxes`, `BoxBeginGroup`, `BoxEndGroup`) purely for its
+    /// nested-brace bookkeeping; its group kind, closing action, and
+    /// page-builder interaction are entirely different from an ordinary vbox
+    /// and are handled by a dedicated branch in `BoxEndGroup`
+    /// (`finish_insert_or_adjust_group`, which also picks `ins_node` vs.
+    /// `adjust_node` by this class).
     Insert(u16),
 }
 
@@ -2283,17 +2287,27 @@ enum ScannedStep {
     IllegalBoxShift {
         token: Token,
     },
-    /// TeX82 §968's `begin_insert_or_adjust` for `\insert`. The class-number
-    /// bound check (0..=255) and the reserved-255 recovery both need
-    /// `Universe` diagnostics, so replay receives only the raw scanned class
-    /// and the validated opening-brace backup state; it shares the same
-    /// brace-matching machinery as `BeginBox`/`BoxBeginGroup`/`BoxEndGroup`.
+    /// TeX82 §968's `begin_insert_or_adjust` for `\insert` and `\vadjust`.
+    /// The class-number bound check (0..=255) and the reserved-255 recovery
+    /// both need `Universe` diagnostics, so replay receives only the raw
+    /// scanned class (fixed at 255 for `\vadjust`) and the validated
+    /// opening-brace backup state; it shares the same brace-matching
+    /// machinery as `BeginBox`/`BoxBeginGroup`/`BoxEndGroup`.
     BeginInsert(ScannedInsertConstruction),
+    /// TeX82's "Forbidden cases" `vmode+vadjust`: `\vadjust` never reaches
+    /// `scan_box_group_opening` in vertical mode, matching
+    /// `IllegalBoxShift`/`IllegalItalicCorrection`'s same-shaped recovery.
+    IllegalInsertOrAdjust {
+        token: Token,
+    },
     ReplayBoxOpeningBrace,
     BoxBeginGroup,
     BoxEndGroup {
         ships_out: bool,
     },
+    /// TeX82 §1101's `make_mark`: a fully expanded balanced general text,
+    /// appended as a class-0 mark node wherever `\mark` was encountered.
+    Mark(TracedTokenList),
     Paragraph,
     MathShift {
         paired: bool,
@@ -3920,8 +3934,7 @@ fn scan_command(
         )),
         // TeX82 §968's `begin_insert_or_adjust` -- any_mode(insert). `\insert`
         // is legal in every mode with no mode switch of its own, exactly like
-        // `\penalty` and `\mark` above; only `\vadjust` (subtype 255) is
-        // restricted to h/mmode, and that primitive is not implemented here.
+        // `\penalty` and `\mark` above.
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Insert) => {
             Ok(ScannedStep::BeginInsert(
                 processor
@@ -3929,6 +3942,40 @@ fn scan_command(
                     .map_err(command_error)?,
             ))
         }
+        // TeX82 §968's `begin_insert_or_adjust` with `cur_val:=255` fixed
+        // (`if cur_cmd=vadjust then cur_val:=255`) rather than scanned --
+        // `\vadjust` shares `\insert`'s exact class-255 body construction,
+        // recognized in `finish_insert_or_adjust_group` below. Unlike
+        // `\insert`, `\vadjust` is restricted to `hmode+vadjust`/
+        // `mmode+vadjust`; `vmode+vadjust` is one of tex.web's "Forbidden
+        // cases" (`@<Forbidden...@>=`), so vertical mode never reaches
+        // `scan_box_group_opening` at all.
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::VAdjust) => {
+            if matches!(mode, Mode::Vertical | Mode::InternalVertical) {
+                Ok(ScannedStep::IllegalInsertOrAdjust {
+                    token: command.spelling().semantic_token(),
+                })
+            } else {
+                Ok(ScannedStep::BeginInsert(ScannedInsertConstruction {
+                    class: 255,
+                    opening_brace_replay: processor
+                        .scan_box_group_opening()
+                        .map_err(command_error)?,
+                    is_vadjust: true,
+                }))
+            }
+        }
+        // TeX82 §1101's `make_mark` -- any_mode(mark). `p:=scan_toks(false,
+        // true)`: a fully expanded balanced general text, exactly like
+        // `\special`'s and `\message`'s bodies. The e-TeX numbered `\marks`
+        // variant needs its own class-index scan and is not implemented here
+        // (tracked separately for the e-TeX phase).
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Mark) => Ok(ScannedStep::Mark(
+            processor
+                .scan_balanced_text(true)
+                .map_err(command_error)?
+                .tokens,
+        )),
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::HAlign) => {
             Ok(ScannedStep::BeginAlignment { vertical: false })
         }
@@ -4264,7 +4311,9 @@ fn scan_unclassified_primitive(
         | P::Dp
         | P::Write
         | P::XLeaders
-        | P::Xdef => unreachable!(
+        | P::Xdef
+        | P::Mark
+        | P::VAdjust => unreachable!(
             "UnexpandablePrimitive::{primitive:?} has an explicit, mode-complete \
              scan_command dispatch arm and must never reach the exhaustive fallback"
         ),
@@ -4312,7 +4361,6 @@ fn scan_unclassified_primitive(
         | P::Long
         | P::MKern
         | P::MSkip
-        | P::Mark
         | P::Marks
         | P::MathAccent
         | P::MathBin
@@ -4391,7 +4439,6 @@ fn scan_unclassified_primitive(
         | P::SplitDiscards
         | P::TextStyle
         | P::Underline
-        | P::VAdjust
         | P::VCenter
         | P::VFil
         | P::VFilNeg
@@ -7093,18 +7140,23 @@ fn apply_scanned_step(
             // own range clamp ("Bad register code", recovering as class 0)
             // and the additional `\insert255` rejection ("box 255 is
             // special") both run here, now that a `Universe` diagnostic sink
-            // is available.
+            // is available. `\vadjust` set `class:=255` directly
+            // (`is_vadjust`), without ever calling `scan_eight_bit_int`, so
+            // neither diagnostic applies to it -- 255 is its correct,
+            // already-valid sentinel class, not a user-typed `\insert255`.
             let mut class = construction.class;
-            if !(0..=255).contains(&class) {
-                stores.report_bad_register_code(class, 255);
-                class = 0;
-            }
-            if class == 255 {
-                stores.world_mut().write_text(
-                    PrintSink::TerminalAndLog,
-                    "\n! You can't \\insert255.\nI'm changing to \\insert0; box 255 is special.\n",
-                );
-                class = 0;
+            if !construction.is_vadjust {
+                if !(0..=255).contains(&class) {
+                    stores.report_bad_register_code(class, 255);
+                    class = 0;
+                }
+                if class == 255 {
+                    stores.world_mut().write_text(
+                        PrintSink::TerminalAndLog,
+                        "\n! You can't \\insert255.\nI'm changing to \\insert0; box 255 is special.\n",
+                    );
+                    class = 0;
+                }
             }
             let class = class as u16;
             stores.enter_group_with_kind(GroupKind::Insert);
@@ -7126,6 +7178,27 @@ fn apply_scanned_step(
             });
             // Unlike `\hbox`/`\vbox`/`\vtop`, §968 never begins the
             // `\everyhbox`/`\everyvbox` token list for an insertion body.
+            Ok(ReplayStep::Continue)
+        }
+        ScannedStep::IllegalInsertOrAdjust { token } => {
+            crate::diagnostics::report_illegal_case(stores, token, modes.current_mode());
+            Ok(ReplayStep::Continue)
+        }
+        ScannedStep::Mark(tokens) => {
+            // TeX82 §1101's `make_mark`: no mode check (`any_mode(mark)`) and
+            // no `build_page` call afterward (unlike `\penalty`/`\insert`,
+            // which both invoke it in outer vertical mode). Plain `\mark`
+            // always uses class 0; the e-TeX `\marks<n>` variant is not
+            // wired here.
+            crate::assignments::flush_pending_hchars(modes, stores)?;
+            crate::vertical::append_vertical_contribution(
+                modes,
+                stores,
+                Node::Mark {
+                    class: 0,
+                    tokens: tokens.token_list(),
+                },
+            );
             Ok(ReplayStep::Continue)
         }
         ScannedStep::BeginLeaderBox {
@@ -7319,7 +7392,7 @@ fn apply_scanned_step(
             }
             let box_state = boxes.active_boxes.pop().expect("active box was checked");
             if let ReplayBoxKind::Insert(class) = box_state.kind {
-                return finish_insert_group(class, modes, stores);
+                return finish_insert_or_adjust_group(class, modes, stores);
             }
             // TeX82's main-control loop appends every character (and its
             // resolved ligature/kern chain) to the current list synchronously
@@ -7369,7 +7442,9 @@ fn apply_scanned_step(
                     }
                     ReplayBoxKind::HBox => unreachable!("horizontal box was handled above"),
                     ReplayBoxKind::Insert(_) => {
-                        unreachable!("insert bodies return through finish_insert_group above")
+                        unreachable!(
+                            "insert/adjust bodies return through finish_insert_or_adjust_group above"
+                        )
                     }
                 })
             };
@@ -8388,27 +8463,35 @@ fn start_canonical_paragraph(
     Ok(())
 }
 
-/// Closes a `\insert<class>{...}` body: TeX82 §968/§1096's `insert_group`
-/// case of `handle_right_brace`.
+/// Closes a `\insert<class>{...}` or `\vadjust{...}` body: TeX82 §968/§1096's
+/// shared `insert_group` case of `handle_right_brace`.
 ///
-/// `end_graf` first finishes any paragraph left open inside the insertion
-/// (§1096: `end_graf` runs before anything else, exactly like
+/// `end_graf` first finishes any paragraph left open inside the body (§1096:
+/// `end_graf` runs before anything else, exactly like
 /// `vbox_group`/`vtop_group`). `\splittopskip`, `\splitmaxdepth`, and
 /// `\floatingpenalty` are read at their current (still-local) values before
-/// `unsave` -- assignments to those parameters made inside the insertion body
-/// govern its own splitting, exactly as tex.web's `q:=split_top_skip;
+/// `unsave` -- assignments to those parameters made inside the body govern
+/// its own splitting, exactly as tex.web's `q:=split_top_skip;
 /// d:=split_max_depth; f:=floating_penalty; unsave` orders it. The body is
 /// then packed with TeX82's `vpack` macro (`vpackage(p,h,m,max_dimen)`):
 /// unconstrained depth, but the *current* `\vbadness`/`\vfuzz` -- unlike an
-/// ordinary `\vbox`, `\insert` never suppresses those parameters. The
-/// resulting `ins_node`'s `height` field is the packed natural height+depth
+/// ordinary `\vbox`, neither `\insert` nor `\vadjust` ever suppresses those
+/// parameters.
+///
+/// §1096 then branches on `saved(0)` (`class`, here): `class<255` builds an
+/// `ins_node` whose `height` field is the packed natural height+depth
 /// (TeX82's `size`, consumed only by the page builder's splitting
-/// arithmetic, `crate::page_builder`), and the node is appended to whatever
-/// list was open when `\insert` began -- the enclosing mode's list, not a
-/// side channel -- exactly like `\mark` and `\penalty` above. `nest_ptr=0`
+/// arithmetic, `crate::page_builder`); `class=255` (`\vadjust`) instead
+/// builds an `adjust_node` carrying only the packed content -- `q`/`d`/`f`
+/// are still read above (mirroring tex.web's unconditional `q:=...; d:=...;
+/// f:=...` before the branch) but never stored, matching
+/// `delete_glue_ref(q)`'s discard. Either node is appended to whatever list
+/// was open when `\insert`/`\vadjust` began -- the enclosing mode's list, not
+/// a side channel -- exactly like `\mark` and `\penalty` above. `nest_ptr=0`
 /// (`is_outer_vertical`) then invokes `build_page`, matching §968's `if
-/// nest_ptr=0 then build_page`.
-fn finish_insert_group(
+/// nest_ptr=0 then build_page` (`\vadjust` never actually reaches this since
+/// it is forbidden in outer vertical mode).
+fn finish_insert_or_adjust_group(
     class: u16,
     modes: &mut ModeNest,
     stores: &mut Universe,
@@ -8429,15 +8512,15 @@ fn finish_insert_group(
         ..crate::packing_params::vpack_params(stores)
     };
     let packed = crate::packing_params::vpack(stores, content, PackSpec::Natural, params);
-    let size = packed
-        .node
-        .height
-        .checked_add(packed.node.depth)
-        .ok_or(ExecError::ArithmeticOverflow)?;
     crate::assignments::flush_pending_hchars(modes, stores)?;
-    crate::vertical::append_vertical_contribution(
-        modes,
-        stores,
+    let node = if class == 255 {
+        Node::Adjust(content)
+    } else {
+        let size = packed
+            .node
+            .height
+            .checked_add(packed.node.depth)
+            .ok_or(ExecError::ArithmeticOverflow)?;
         Node::Ins {
             class,
             size,
@@ -8445,8 +8528,9 @@ fn finish_insert_group(
             split_max_depth,
             floating_penalty,
             content,
-        },
-    );
+        }
+    };
+    crate::vertical::append_vertical_contribution(modes, stores, node);
     crate::vertical::build_page_if_outer_vertical(modes, stores)?;
     Ok(ReplayStep::Continue)
 }

@@ -4123,6 +4123,156 @@ fn canonical_insert_at_outer_vertical_reaches_the_page_builder() {
     );
 }
 
+#[test]
+fn canonical_vadjust_builds_adjust_node_migrated_out_of_its_enclosing_hbox() {
+    // TeX82 §968/§1096: `\vadjust{...}` shares `\insert`'s exact
+    // `begin_insert_or_adjust`/`insert_group` construction with `class`
+    // fixed at 255, but closes as an `adjust_node` holding only the packed
+    // content (no split parameters). §1096's own hpack (§649) then migrates
+    // that `adjust_node` out of the enclosing `\hbox` when *that* box is
+    // appended to the vlist -- `extract_box_migrations` unwraps it to its
+    // bare content, exactly like tex.web's `Transfer node p to the
+    // adjustment list` discarding the `adjust_node` wrapper itself.
+    let mut universe = Universe::new();
+    let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+    register_source(
+        &mut control,
+        br"\setbox0=\vbox{\hbox{\vadjust{\penalty123}}}\end",
+    );
+    run_to_end(&mut control, &mut universe);
+
+    let vbox = universe
+        .box_reg(0)
+        .and_then(|id| universe.nodes(id).first().map(|node| node.to_owned()))
+        .expect("outer vbox stores");
+    let Node::VList(vbox) = vbox else {
+        panic!("setbox0 contains a vbox");
+    };
+    let children = universe.nodes(vbox.children);
+    assert_eq!(
+        children.len(),
+        2,
+        "the migrated penalty follows the now-empty hbox: {children:?}"
+    );
+    let Node::HList(hbox) = children.iter().next().expect("checked len").to_owned() else {
+        panic!("first child is the hbox that housed \\vadjust");
+    };
+    assert!(
+        universe.nodes(hbox.children).is_empty(),
+        "the adjust_node's content left the hbox behind"
+    );
+    assert_eq!(
+        children.iter().nth(1).expect("checked len").to_owned(),
+        Node::Penalty(123)
+    );
+}
+
+#[test]
+fn canonical_vadjust_splices_across_a_paragraph_line_break() {
+    // TeX82 §§1355ish (`post_line_break`'s per-line `hpack` with `adjust_tail`
+    // engaged): a `\vadjust` inside a paragraph line must be spliced out of
+    // that line's packed hbox and appear as the line's next vlist sibling,
+    // not buried inside the line's own hlist.
+    let mut universe = Universe::new();
+    let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+    register_source(
+        &mut control,
+        br"\setbox0=\vbox{\hsize=1000pt \parindent=0pt Hello\vadjust{\penalty456}world\par}\end",
+    );
+    run_to_end(&mut control, &mut universe);
+
+    let vbox = universe
+        .box_reg(0)
+        .and_then(|id| universe.nodes(id).first().map(|node| node.to_owned()))
+        .expect("outer vbox stores");
+    let Node::VList(vbox) = vbox else {
+        panic!("setbox0 contains a vbox");
+    };
+    let children = universe.nodes(vbox.children);
+    let penalty_position = children
+        .iter()
+        .position(|node| matches!(node.to_owned(), Node::Penalty(456)))
+        .expect("the migrated penalty appears as a direct vlist sibling");
+    let line_position = children
+        .iter()
+        .position(|node| matches!(node.to_owned(), Node::HList(_)))
+        .expect("the paragraph produced its one line");
+    assert!(
+        line_position < penalty_position,
+        "the migrated material follows the line it came from: {children:?}"
+    );
+    let Node::HList(line) = children
+        .iter()
+        .nth(line_position)
+        .expect("checked above")
+        .to_owned()
+    else {
+        unreachable!("checked above")
+    };
+    assert!(
+        universe
+            .nodes(line.children)
+            .iter()
+            .all(|node| !matches!(node.to_owned(), Node::Penalty(456))),
+        "the penalty left the packed line behind"
+    );
+}
+
+#[test]
+fn canonical_vadjust_is_forbidden_in_vertical_mode() {
+    // tex.web's "Forbidden cases" list includes `vmode+vadjust`; unlike
+    // `\insert` (`any_mode`), `\vadjust` directly in vertical mode never
+    // reaches `scan_box_group_opening` at all.
+    let mut universe = Universe::new();
+    let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+    register_source(&mut control, br"\vadjust{\kern1pt}\end");
+    run_to_end(&mut control, &mut universe);
+
+    let text = terminal_text(&universe);
+    assert!(
+        text.contains("You can't use `\\vadjust' in vertical mode"),
+        "{text}"
+    );
+}
+
+#[test]
+fn canonical_mark_builds_mark_node_with_expanded_text() {
+    // TeX82 §1101's `make_mark`: `scan_toks(false,true)` -- a fully expanded
+    // balanced general text -- becomes a class-0 mark node appended to
+    // whatever list is current, with no mode restriction and no `build_page`
+    // call (unlike `\insert`/`\penalty`).
+    let mut universe = Universe::new();
+    let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+    register_source(
+        &mut control,
+        br"\setbox0=\vbox{\def\who{world}\mark{hello \who}}\end",
+    );
+    run_to_end(&mut control, &mut universe);
+
+    let vbox = universe
+        .box_reg(0)
+        .and_then(|id| universe.nodes(id).first().map(|node| node.to_owned()))
+        .expect("outer vbox stores");
+    let Node::VList(vbox) = vbox else {
+        panic!("setbox0 contains a vbox");
+    };
+    let children = universe.nodes(vbox.children);
+    assert_eq!(children.len(), 1, "the mark node is the vbox's only child");
+    let Node::Mark { class, tokens } = children.first().expect("checked len").to_owned() else {
+        panic!("vbox child is a mark_node");
+    };
+    assert_eq!(class, 0, "plain \\mark always uses class 0");
+    let text: String = universe
+        .tokens(tokens)
+        .iter()
+        .filter_map(|token| match token {
+            Token::Char { ch, .. } => Some(*ch),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(text, "hello world", "\\who expanded before capture");
+}
+
 /// Extracts the shift of each `HList`/`VList` child of `children`, skipping
 /// interleaved glue (e.g. `\baselineskip` inserted between vertical-list
 /// boxes) so tests can assert on box shifts alone.
