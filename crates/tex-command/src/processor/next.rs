@@ -390,14 +390,19 @@ impl CommandProcessor<'_> {
     }
 
     /// Delivers the raw token following TeX's backtick character-code
-    /// introducer. Its scanner interpretation is category-independent.
+    /// introducer.
+    ///
+    /// §442 reads it with `get_token`, so the delivery is an ordinary raw
+    /// command whose identity is its own category code -- the *scanner's*
+    /// later interpretation of `cur_chr` is category-independent, the
+    /// delivery is not. This observed nothing of its own until
+    /// `umber2-johp.141`: it used to force the observed spelling to
+    /// `other_char`, which existed only to feed a spelling-derived command
+    /// name in the transport and silently masked whatever category code the
+    /// engine actually held.
     pub(crate) fn get_next_character_code(
         &mut self,
     ) -> Result<Option<CurrentCommand>, CommandError> {
-        #[cfg(any(test, feature = "instrumentation"))]
-        {
-            self.observe_next_raw_as_character_code = true;
-        }
         self.get_next()
     }
 
@@ -1547,7 +1552,16 @@ impl CommandProcessor<'_> {
         &self,
         token: TracedTokenWord,
     ) -> crate::observation::ObservedToken {
-        observed_token(token, |symbol| self.state.resolve(symbol).to_owned())
+        observed_token(
+            token,
+            |symbol| self.state.resolve(symbol).to_owned(),
+            |frozen| {
+                self.state
+                    .frozen_primitive_meaning(frozen)
+                    .and_then(|meaning| self.state.primitive_name(meaning))
+                    .map(str::to_owned)
+            },
+        )
     }
 
     #[cfg(any(test, feature = "instrumentation"))]
@@ -1596,27 +1610,7 @@ impl CommandProcessor<'_> {
     fn observe_raw_delivery(&mut self, command: &CurrentCommand) {
         let (command_name, command_operand) =
             crate::observation::canonical_current_command_identity(command);
-        let spelling = if self.observe_next_raw_as_character_code {
-            self.observe_next_raw_as_character_code = false;
-            match self.observed_token(command.spelling()) {
-                crate::observation::ObservedToken::Character {
-                    character,
-                    catcode: tex_state::token::Catcode::Letter,
-                } => crate::observation::ObservedToken::Character {
-                    character,
-                    catcode: tex_state::token::Catcode::Letter,
-                },
-                crate::observation::ObservedToken::Character { character, .. } => {
-                    crate::observation::ObservedToken::Character {
-                        character,
-                        catcode: tex_state::token::Catcode::Other,
-                    }
-                }
-                spelling => spelling,
-            }
-        } else {
-            self.observed_command_spelling(command)
-        };
+        let spelling = self.observed_command_spelling(command);
         self.observe(CommandObservation::Command(CommandDeliveryRecord {
             boundary: CommandDeliveryBoundary::Raw,
             spelling,

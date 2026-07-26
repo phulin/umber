@@ -11,6 +11,8 @@ use tex_state::scaled::{
 };
 use tex_state::token::{OriginId, Token};
 
+#[cfg(any(test, feature = "instrumentation"))]
+use crate::observation::canonical_names::glue_order_name;
 use crate::{CommandError, CurrentCommand, processor::CommandProcessor};
 #[cfg(any(test, feature = "instrumentation"))]
 use crate::{CommandObservation, ScannerRecord};
@@ -853,12 +855,12 @@ impl CommandProcessor<'_> {
         self.observe(CommandObservation::Scanner(ScannerRecord {
             kind: "glue",
             value: format!(
-                "width={};stretch={};stretch_order={:?};shrink={};shrink_order={:?}",
+                "width={};stretch={};stretch_order={};shrink={};shrink_order={}",
                 scanned.value.width.raw(),
                 scanned.value.stretch.raw(),
-                scanned.value.stretch_order,
+                glue_order_name(scanned.value.stretch_order),
                 scanned.value.shrink.raw(),
-                scanned.value.shrink_order,
+                glue_order_name(scanned.value.shrink_order),
             ),
             tokens: None,
         }));
@@ -1569,12 +1571,12 @@ impl CommandProcessor<'_> {
             InternalValue::Dimension(value) => (format!("scaled:{}", value.raw()), None),
             InternalValue::Glue(glue) | InternalValue::MuGlue(glue) => (
                 format!(
-                    "glue:width={};stretch={};stretch_order={:?};shrink={};shrink_order={:?}",
+                    "glue:width={};stretch={};stretch_order={};shrink={};shrink_order={}",
                     glue.width.raw(),
                     glue.stretch.raw(),
-                    glue.stretch_order,
+                    glue_order_name(glue.stretch_order),
                     glue.shrink.raw(),
-                    glue.shrink_order,
+                    glue_order_name(glue.shrink_order),
                 ),
                 None,
             ),

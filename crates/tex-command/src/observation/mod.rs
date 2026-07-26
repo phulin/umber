@@ -15,22 +15,32 @@ use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 
 use crate::{DeliveryStamp, SourceLocation, SourceProvenance, SourceRange};
 
+pub mod canonical_names;
 mod primitive_identity;
 mod variable_identity;
+use canonical_names::character_command_name;
 use primitive_identity::{expandable_primitive_identity, unexpandable_primitive_identity};
 pub use variable_identity::{ParameterClass, parameter_mutation_key};
 
 /// An owned, allocation-independent spelling used by command observation.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ObservedToken {
-    Character { character: char, catcode: Catcode },
+    Character {
+        character: char,
+        catcode: Catcode,
+    },
     ControlSequence(String),
     MacroMatch,
     MacroEndMatch,
     Parameter(u8),
     FrozenEndTemplate,
     FrozenEndV,
-    FrozenPrimitive(u16),
+    /// A frozen primitive sentinel, carrying tex.web's `text` for the frozen
+    /// control sequence rather than an engine-local slot index. The spelling
+    /// is resolved where the token is observed, because an observation payload
+    /// must never carry an allocation identity a transport would have to
+    /// render itself.
+    FrozenPrimitive(String),
     FrozenOther,
 }
 
@@ -134,20 +144,26 @@ pub(crate) fn canonical_command_identity(meaning: Meaning) -> (String, Option<i6
         // `cur_cmd`/`cur_chr` with a space while the original control-sequence
         // token remains backed up for rereading.  Project character commands
         // from that effective pair, never from the input spelling.
+        //
+        // The command name comes from `canonical_names::character_command_name`,
+        // the single §207 table for character commands. It used to end in a
+        // `_ => "character"` catch-all, which silently reported every
+        // `\catcode`-7 and `\catcode`-8 character as a plausible-looking
+        // command name no engine installs, masking real divergences behind it
+        // (`umber2-johp.141`).
         Meaning::CharToken { ch, cat } => (
-            match cat {
-                Catcode::BeginGroup => "left_brace",
-                Catcode::EndGroup => "right_brace",
-                Catcode::MathShift => "math_shift",
-                Catcode::AlignmentTab => "tab_mark",
-                Catcode::EndLine => "car_ret",
-                Catcode::Parameter => "mac_param",
-                Catcode::Letter => "letter",
-                Catcode::Space => "spacer",
-                Catcode::Other => "other_char",
-                _ => "character",
-            }
-            .into(),
+            character_command_name(cat)
+                .unwrap_or_else(|| {
+                    // §341's `get_next` consumes escape, ignore, comment, and
+                    // invalid characters and replaces an active character by
+                    // its meaning, so none of them can reach a delivered
+                    // command. A stored meaning that claims otherwise is a
+                    // `tex-state` defect and must look like one rather than
+                    // borrowing a real command's name.
+                    debug_assert!(false, "catcode {cat:?} has no §207 character command");
+                    "uncommandable_character"
+                })
+                .into(),
             Some(i64::from(u32::from(ch))),
         ),
         // TeX.web's `relax` command has the fixed `cur_chr` value 256.  It
@@ -388,10 +404,15 @@ pub struct RecoveryRecord {
 }
 
 /// A committed change between live scanner episodes.
-#[derive(Clone, Debug, Eq, PartialEq)]
+///
+/// Both ends carry tex.web §305's `scanner_status` name, never a `Debug`
+/// rendering of Umber's own variant and its episode context: a transport must
+/// receive the canonical vocabulary, not reconstruct it by prefix-matching a
+/// Rust type's spelling (`umber2-johp.141`).
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ScannerStatusRecord {
-    pub from: String,
-    pub to: String,
+    pub from: &'static str,
+    pub to: &'static str,
 }
 
 /// A completed scalar macro-match milestone.
@@ -523,20 +544,22 @@ pub trait CommandObserver {
 pub(crate) fn observed_token(
     token: TracedTokenWord,
     resolve: impl FnOnce(tex_state::interner::Symbol) -> String,
+    frozen_spelling: impl FnOnce(Token) -> Option<String>,
 ) -> ObservedToken {
-    match token.semantic_token() {
+    let semantic = token.semantic_token();
+    match semantic {
         Token::Char { ch, cat } => ObservedToken::Character {
             character: ch,
             catcode: cat,
         },
         Token::Cs(symbol) => ObservedToken::ControlSequence(resolve(symbol)),
         Token::Param(slot) => ObservedToken::Parameter(slot),
-        Token::Frozen(_) if token.semantic_token().is_frozen_end_template() => {
-            ObservedToken::FrozenEndTemplate
-        }
-        Token::Frozen(_) if token.semantic_token().is_frozen_endv() => ObservedToken::FrozenEndV,
-        Token::Frozen(frozen) => frozen
-            .primitive_index()
+        Token::Frozen(_) if semantic.is_frozen_end_template() => ObservedToken::FrozenEndTemplate,
+        Token::Frozen(_) if semantic.is_frozen_endv() => ObservedToken::FrozenEndV,
+        // A frozen primitive is one of tex.web's frozen control sequences, so
+        // it is observed by the spelling tex.web assigns its `text`, never by
+        // an engine-local slot index a transport would have to render.
+        Token::Frozen(_) => frozen_spelling(semantic)
             .map_or(ObservedToken::FrozenOther, ObservedToken::FrozenPrimitive),
     }
 }

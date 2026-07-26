@@ -11,6 +11,7 @@ use std::fmt;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use tex_command::canonical_names;
 use tex_command::{
     AlignmentRecord, CommandDeliveryBoundary, CommandObservation, CommandObserver, CommandProfile,
     ConditionRecord, EffectRecord, FontResource, InputReason as CommandInputReason, InputRecord,
@@ -27,7 +28,7 @@ use tex_oracle::{
     ScannerStatus, ScannerStatusEvent, SourceLocation, StateTarget, TokenListEvent,
     TokenListTransition, validate_tex82_command_trace_suite,
 };
-use tex_state::{InputOpenState, InputReadState, SourceId, Universe, token::Catcode};
+use tex_state::{InputOpenState, InputReadState, SourceId, Universe};
 
 pub mod compare;
 pub mod documents;
@@ -875,7 +876,12 @@ fn translate_observation(
                         CommandDeliveryBoundary::Expanded => CommandDelivery::Expanded,
                     },
                     command: CanonicalCommand {
-                        command: canonical_command_name(&record),
+                        // `canonical_command_identity` already named this
+                        // delivery from its *effective* meaning, which is what
+                        // §23's outer-validity recovery changes without
+                        // changing the spelling. Re-deriving a name from the
+                        // spelling here would be a second, divergent table.
+                        command: record.command.clone(),
                         operand,
                         control_sequence,
                         location: command_location(&record, source, source_id, source_bytes),
@@ -990,9 +996,11 @@ fn parse_glue_scanner_value(value: &str) -> Option<CanonicalValue> {
     let mut fields = value.split(';').map(|field| field.split_once('='));
     let width = fields.next()??.1.parse().ok()?;
     let stretch = fields.next()??.1.parse().ok()?;
-    let stretch_order = fields.next()??.1.to_ascii_lowercase();
+    // The producer already spelled §135's order through `canonical_names`;
+    // this must not re-case or otherwise reinterpret a canonical name.
+    let stretch_order = fields.next()??.1.to_owned();
     let shrink = fields.next()??.1.parse().ok()?;
-    let shrink_order = fields.next()??.1.to_ascii_lowercase();
+    let shrink_order = fields.next()??.1.to_owned();
     if fields.next().is_some() {
         return None;
     }
@@ -1029,24 +1037,12 @@ fn command_location(
     })
 }
 
-fn canonical_command_name(record: &tex_command::CommandDeliveryRecord) -> String {
-    match &record.spelling {
-        ObservedToken::Character { catcode, .. } => match catcode {
-            Catcode::BeginGroup => "left_brace".into(),
-            Catcode::EndGroup => "right_brace".into(),
-            Catcode::MathShift => "math_shift".into(),
-            Catcode::AlignmentTab => "tab_mark".into(),
-            Catcode::EndLine => "car_ret".into(),
-            Catcode::Parameter => "mac_param".into(),
-            Catcode::Letter => "letter".into(),
-            Catcode::Space => "spacer".into(),
-            Catcode::Other => "other_char".into(),
-            _ => record.command.clone(),
-        },
-        _ => record.command.clone(),
-    }
-}
-
+/// The spelling and typed operand a delivered command carries.
+///
+/// A character command carries its character code; a control sequence carries
+/// its spelling. Every other spelling is a §289 token-only or frozen sentinel,
+/// which `canonical_names` names for both fields -- this must never fall back
+/// to a `Debug` rendering of Umber's own enum (`umber2-johp.141`).
 fn command_token(token: &ObservedToken) -> (CanonicalValue, Option<String>) {
     match token {
         ObservedToken::Character { character, .. } => (
@@ -1054,72 +1050,20 @@ fn command_token(token: &ObservedToken) -> (CanonicalValue, Option<String>) {
             None,
         ),
         ObservedToken::ControlSequence(name) => (CanonicalValue::None, Some(name.clone())),
-        _ => (CanonicalValue::Name(format!("{token:?}")), None),
+        token => (
+            CanonicalValue::None,
+            canonical_names::observed_token_control_sequence(token).map(str::to_owned),
+        ),
     }
 }
 
 fn oracle_token(token: ObservedToken) -> OracleToken {
-    match token {
-        ObservedToken::Character { character, catcode } => OracleToken {
-            character: u32::from(character),
-            catcode: catcode_name(catcode).into(),
-            control_sequence: None,
-            location: None,
-        },
-        ObservedToken::ControlSequence(control_sequence) => OracleToken {
-            character: 0,
-            catcode: "escape".into(),
-            control_sequence: Some(control_sequence),
-            location: None,
-        },
-        ObservedToken::MacroMatch => OracleToken {
-            character: u32::from('#'),
-            catcode: "match".into(),
-            control_sequence: None,
-            location: None,
-        },
-        ObservedToken::MacroEndMatch => OracleToken {
-            character: 0,
-            catcode: "end_match".into(),
-            control_sequence: None,
-            location: None,
-        },
-        ObservedToken::Parameter(slot) => OracleToken {
-            character: u32::from(slot),
-            catcode: "out_parameter".into(),
-            control_sequence: None,
-            location: None,
-        },
-        other => OracleToken {
-            character: 0,
-            catcode: format!("{other:?}"),
-            control_sequence: None,
-            location: None,
-        },
-    }
-}
-
-fn catcode_name(catcode: Catcode) -> &'static str {
-    match catcode {
-        Catcode::Escape => "escape",
-        // The schema deliberately retains TeX's command names rather than
-        // Rust/engine catcode variant names. Token-bearing events therefore
-        // use the same spellings as raw command delivery.
-        Catcode::BeginGroup => "left_brace",
-        Catcode::EndGroup => "right_brace",
-        Catcode::MathShift => "math_shift",
-        Catcode::AlignmentTab => "tab_mark",
-        Catcode::EndLine => "end_line",
-        Catcode::Parameter => "parameter",
-        Catcode::Superscript => "superscript",
-        Catcode::Subscript => "subscript",
-        Catcode::Ignored => "ignored",
-        Catcode::Space => "spacer",
-        Catcode::Letter => "letter",
-        Catcode::Other => "other_char",
-        Catcode::Active => "active",
-        Catcode::Comment => "comment",
-        Catcode::Invalid => "invalid",
+    OracleToken {
+        character: canonical_names::observed_token_character(&token),
+        catcode: canonical_names::observed_token_catcode(&token).into(),
+        control_sequence: canonical_names::observed_token_control_sequence(&token)
+            .map(str::to_owned),
+        location: None,
     }
 }
 
@@ -1175,23 +1119,23 @@ fn translate_recovery(record: RecoveryRecord) -> Event {
 }
 fn translate_status(record: ScannerStatusRecord) -> Event {
     Event::ScannerStatus(ScannerStatusEvent {
-        from: scanner_status(&record.from),
-        to: scanner_status(&record.to),
+        from: scanner_status(record.from),
+        to: scanner_status(record.to),
     })
 }
+/// Maps tex.web §305's `scanner_status` name onto the schema's enum.
+///
+/// The record already carries the canonical name, so this is an exact match on
+/// the five non-normal values, never a prefix test against a `Debug` rendering
+/// of Umber's own variants (`umber2-johp.141`).
 fn scanner_status(status: &str) -> ScannerStatus {
-    if status.starts_with("Skipping") {
-        ScannerStatus::Skipping
-    } else if status.starts_with("Defining") {
-        ScannerStatus::Defining
-    } else if status.starts_with("Matching") {
-        ScannerStatus::Matching
-    } else if status.starts_with("Aligning") {
-        ScannerStatus::Aligning
-    } else if status.starts_with("Absorbing") {
-        ScannerStatus::Absorbing
-    } else {
-        ScannerStatus::Normal
+    match status {
+        "skipping" => ScannerStatus::Skipping,
+        "defining" => ScannerStatus::Defining,
+        "matching" => ScannerStatus::Matching,
+        "aligning" => ScannerStatus::Aligning,
+        "absorbing" => ScannerStatus::Absorbing,
+        _ => ScannerStatus::Normal,
     }
 }
 fn translate_macro(record: MacroRecord) -> Event {
@@ -1420,28 +1364,10 @@ fn translate_mutation(record: MutationRecord) -> Event {
     })
 }
 
-/// Converts TeX's numeric `cat_code` table value into the canonical command
-/// name emitted by the instrumented TeX82 oracle.
+/// Converts TeX's numeric `cat_code` table value into tex.web §207's category
+/// code name, through the one shared table every observation vocabulary uses.
 fn canonical_catcode_assignment(value: &str) -> Option<&'static str> {
-    match value.parse::<u8>().ok()? {
-        0 => Some("escape"),
-        1 => Some("left_brace"),
-        2 => Some("right_brace"),
-        3 => Some("math_shift"),
-        4 => Some("tab_mark"),
-        5 => Some("car_ret"),
-        6 => Some("mac_param"),
-        7 => Some("sup_mark"),
-        8 => Some("sub_mark"),
-        9 => Some("ignore"),
-        10 => Some("spacer"),
-        11 => Some("letter"),
-        12 => Some("other_char"),
-        13 => Some("active_char"),
-        14 => Some("comment"),
-        15 => Some("invalid_char"),
-        _ => None,
-    }
+    canonical_names::catcode_assignment_name(value.parse::<i64>().ok()?)
 }
 fn translate_effect(record: EffectRecord) -> Event {
     if record.kind == "message" {
@@ -1512,7 +1438,7 @@ mod tests {
     use tex_oracle::{Event, NormalizedEvent, ScannerEvent};
     use tex_state::{
         meaning::{ExpandablePrimitive, Meaning},
-        token::Token,
+        token::{Catcode, Token},
     };
 
     fn committed_fixture() -> CommittedFixture {
@@ -1531,13 +1457,36 @@ mod tests {
         ObservedEvent::new(scanner(value), "source=case.tex; input_level=1".into())
     }
 
+    /// The transport owns no catcode table of its own: it renders whatever
+    /// `canonical_names` spells, so a frozen sentinel arrives as a §289
+    /// control-sequence token rather than a `Debug` rendering of Umber's enum.
     #[test]
-    fn token_catcodes_use_canonical_tex_command_names() {
-        assert_eq!(catcode_name(Catcode::BeginGroup), "left_brace");
-        assert_eq!(catcode_name(Catcode::EndGroup), "right_brace");
-        assert_eq!(catcode_name(Catcode::AlignmentTab), "tab_mark");
-        assert_eq!(catcode_name(Catcode::Space), "spacer");
-        assert_eq!(catcode_name(Catcode::Other), "other_char");
+    fn token_transport_carries_only_canonical_names() {
+        assert_eq!(
+            oracle_token(ObservedToken::Character {
+                character: '_',
+                catcode: Catcode::Subscript,
+            }),
+            OracleToken {
+                character: u32::from('_'),
+                catcode: "sub_mark".into(),
+                control_sequence: None,
+                location: None,
+            }
+        );
+        assert_eq!(
+            oracle_token(ObservedToken::FrozenEndTemplate),
+            OracleToken {
+                character: 0,
+                catcode: "escape".into(),
+                control_sequence: Some("endtemplate".into()),
+                location: None,
+            }
+        );
+        assert_eq!(
+            command_token(&ObservedToken::FrozenEndV),
+            (CanonicalValue::None, Some("endtemplate".into()))
+        );
     }
 
     #[test]
@@ -1774,8 +1723,11 @@ mod tests {
 
     #[test]
     fn glue_scanners_and_mutations_keep_structured_orders() {
+        // The producer already spells tex.web §135's order names; the
+        // transport carries them through verbatim rather than re-casing a
+        // Rust `Debug` rendering (`umber2-johp.141`).
         let value =
-            "width=131072;stretch=196608;stretch_order=Fil;shrink=262144;shrink_order=Normal";
+            "width=131072;stretch=196608;stretch_order=fil;shrink=262144;shrink_order=normal";
         let expected = CanonicalValue::Glue {
             width: 131_072,
             stretch: 196_608,

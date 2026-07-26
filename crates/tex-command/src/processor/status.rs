@@ -93,8 +93,8 @@ impl CommandProcessor<'_> {
     ) {
         #[cfg(any(test, feature = "instrumentation"))]
         self.observe(CommandObservation::ScannerStatus(ScannerStatusRecord {
-            from: format!("{from:?}"),
-            to: format!("{to:?}"),
+            from: crate::observation::canonical_names::scanner_status_name(&from),
+            to: crate::observation::canonical_names::scanner_status_name(&to),
         }));
     }
 

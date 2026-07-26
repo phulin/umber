@@ -23,7 +23,7 @@ use tex_command::{
 #[cfg(any(test, feature = "instrumentation"))]
 use tex_command::{
     CommandObservation, CommandObserver, EffectRecord, MutationRecord, ObservedToken,
-    ParameterClass, parameter_mutation_key,
+    ParameterClass, canonical_names::glue_order_name, parameter_mutation_key,
 };
 use tex_state::code_tables::{DelCode, LcCode, MathCode, SfCode, UcCode};
 use tex_state::env::banks::{DimenParam, GlueParam, IntParam, TokParam};
@@ -5881,12 +5881,12 @@ impl PendingMutation {
 #[cfg(any(test, feature = "instrumentation"))]
 fn glue_mutation_value(value: &GlueSpec) -> String {
     format!(
-        "glue:width={};stretch={};stretch_order={:?};shrink={};shrink_order={:?}",
+        "glue:width={};stretch={};stretch_order={};shrink={};shrink_order={}",
         value.width.raw(),
         value.stretch.raw(),
-        value.stretch_order,
+        glue_order_name(value.stretch_order),
         value.shrink.raw(),
-        value.shrink_order,
+        glue_order_name(value.shrink_order),
     )
 }
 
@@ -6177,18 +6177,26 @@ fn applied_mutation_observation(
         // macro `def`. §1224's provisional `define(p,relax,256)` is committed
         // and observed by the command-owned scanner that performs it, so only
         // the final meaning is observed here.
+        // §1221's `let` commits `define(p, eq_type(q), equiv(q))`: the copied
+        // *meaning*, never the source control sequence's spelling. The
+        // observation must therefore name the meaning the same way raw
+        // delivery would, which is what `meaning_mutation_value` does
+        // (`umber2-johp.141`).
         ScannedStep::Let {
             target,
-            source,
             meaning,
             global,
-        } => MutationRecord {
-            target: "meaning",
-            value: let_mutation_value(*meaning, *source, stores),
-            key: Some(stores.resolve(*target).to_owned()),
-            tokens: None,
-            global: *global,
-        },
+            ..
+        } => {
+            let (value, tokens) = meaning_mutation_value(*meaning, stores);
+            MutationRecord {
+                target: "meaning",
+                value,
+                key: Some(stores.resolve(*target).to_owned()),
+                tokens,
+                global: *global,
+            }
+        }
         ScannedStep::CharacterDefinition {
             primitive,
             target,
@@ -6236,32 +6244,17 @@ fn applied_mutation_observation(
             replacement_text,
             global,
             ..
-        } => {
-            let mut tokens = stores
-                .tokens(parameter_text.token_list())
-                .iter()
-                .copied()
-                .map(|token| match token {
-                    Token::Param(_) => ObservedToken::MacroMatch,
-                    token => observed_macro_token(token, stores),
-                })
-                .collect::<Vec<_>>();
-            tokens.push(ObservedToken::MacroEndMatch);
-            tokens.extend(
-                stores
-                    .tokens(replacement_text.token_list())
-                    .iter()
-                    .copied()
-                    .map(|token| observed_macro_token(token, stores)),
-            );
-            MutationRecord {
-                target: "meaning",
-                value: "macro definition".into(),
-                key: Some(stores.resolve(*target).to_owned()),
-                tokens: Some(tokens),
-                global: *global,
-            }
-        }
+        } => MutationRecord {
+            target: "meaning",
+            value: "macro definition".into(),
+            key: Some(stores.resolve(*target).to_owned()),
+            tokens: Some(observed_macro_body(
+                parameter_text.token_list(),
+                replacement_text.token_list(),
+                stores,
+            )),
+            global: *global,
+        },
         // -- §1236's `do_register_command`, whose committed value is only
         // readable after application.
         ScannedStep::Arithmetic { target, global, .. } => {
@@ -6522,9 +6515,13 @@ fn applied_effect_observation(scanned: &ScannedStep, stores: &Universe) -> Optio
         }
         ScannedStep::ImmediateExtension(ImmediateExtension::CloseOut { .. }) => {
             match stores.world().effect_records().last()? {
+                // The channel is the stream, exactly as `umber_trace_effect`
+                // reports it for every non-terminal, non-DVI effect kind; the
+                // `\0` separates channel from detail and must be present even
+                // when a close carries no detail (`umber2-johp.141`).
                 tex_state::EffectRecord::StreamClose { slot } => Some(EffectRecord {
                     kind: "close",
-                    detail: format!("stream:{}", slot.raw()),
+                    detail: format!("stream:{}\0", slot.raw()),
                     tokens: None,
                 }),
                 _ => None,
@@ -6572,15 +6569,74 @@ fn shipout_replay_box(
 }
 
 #[cfg(any(test, feature = "instrumentation"))]
-fn let_mutation_value(meaning: Meaning, source: Option<Symbol>, stores: &Universe) -> String {
+/// Renders a committed meaning the way the reference instrumentation's
+/// `umber_trace_meaning_value` does.
+///
+/// tex.web stores a meaning as an `(eq_type, equiv)` pair and names it by its
+/// command code, so the canonical rendering is a three-way split on the
+/// command, never on how the meaning was reached:
+///
+/// - a macro (`eq_type >= call`) is its whole §294 body -- parameter text,
+///   the `end_match` that separates the two halves, then replacement text;
+/// - §208's `char_given` and `math_given` carry the shorthand code stored by
+///   §1224 as a typed scalar;
+/// - everything else is §207/§208's command name for the `eq_type`.
+///
+/// It must never fall back to a spelling (the source control sequence of a
+/// `\let`) or to a Rust `Debug` rendering: both name where the meaning came
+/// from rather than what it is (`umber2-johp.141`).
+#[cfg(any(test, feature = "instrumentation"))]
+fn meaning_mutation_value(
+    meaning: Meaning,
+    stores: &Universe,
+) -> (String, Option<Vec<ObservedToken>>) {
     match meaning {
-        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::BeginGroup) => "begin_group".into(),
-        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::EndGroup) => "end_group".into(),
-        _ => source.map_or_else(
-            || format!("{meaning:?}"),
-            |source| stores.resolve(source).to_owned(),
+        Meaning::Macro { definition, .. } => {
+            let macro_meaning = stores.macro_definition(definition);
+            (
+                "macro definition".into(),
+                Some(observed_macro_body(
+                    macro_meaning.parameter_text(),
+                    macro_meaning.replacement_text(),
+                    stores,
+                )),
+            )
+        }
+        Meaning::CharGiven(character) => (format!("character:{}", u32::from(character)), None),
+        Meaning::MathCharGiven(code) => (format!("integer:{code}"), None),
+        meaning => (
+            tex_command::canonical_names::meaning_command_name(meaning),
+            None,
         ),
     }
+}
+
+/// §294's stored macro body: parameter text, the separating `end_match`, then
+/// replacement text, as one token sequence.
+#[cfg(any(test, feature = "instrumentation"))]
+fn observed_macro_body(
+    parameter_text: TokenListId,
+    replacement_text: TokenListId,
+    stores: &Universe,
+) -> Vec<ObservedToken> {
+    let mut tokens = stores
+        .tokens(parameter_text)
+        .iter()
+        .copied()
+        .map(|token| match token {
+            Token::Param(_) => ObservedToken::MacroMatch,
+            token => observed_macro_token(token, stores),
+        })
+        .collect::<Vec<_>>();
+    tokens.push(ObservedToken::MacroEndMatch);
+    tokens.extend(
+        stores
+            .tokens(replacement_text)
+            .iter()
+            .copied()
+            .map(|token| observed_macro_token(token, stores)),
+    );
+    tokens
 }
 
 #[cfg(any(test, feature = "instrumentation"))]
@@ -6594,8 +6650,13 @@ fn observed_macro_token(token: Token, stores: &Universe) -> ObservedToken {
         Token::Param(slot) => ObservedToken::Parameter(slot),
         Token::Frozen(_) if token.is_frozen_end_template() => ObservedToken::FrozenEndTemplate,
         Token::Frozen(_) if token.is_frozen_endv() => ObservedToken::FrozenEndV,
-        Token::Frozen(frozen) => frozen
-            .primitive_index()
+        // A frozen primitive is one of tex.web's frozen control sequences, so
+        // it is observed by the spelling tex.web assigns its `text`, never by
+        // an engine-local slot index a transport would have to render.
+        Token::Frozen(_) => stores
+            .frozen_primitive_meaning(token)
+            .and_then(|meaning| stores.primitive_name(meaning))
+            .map(str::to_owned)
             .map_or(ObservedToken::FrozenOther, ObservedToken::FrozenPrimitive),
     }
 }

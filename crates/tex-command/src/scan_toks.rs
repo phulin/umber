@@ -620,7 +620,7 @@ mod tests {
             .iter()
             .position(|event| {
                 matches!(event, CommandObservation::ScannerStatus(status)
-                if status.from.starts_with("Defining") && status.to == "Normal")
+                if status.from == "defining" && status.to == "normal")
             })
             .expect("defining status restores after the inserted right brace");
         assert!(close < restored);

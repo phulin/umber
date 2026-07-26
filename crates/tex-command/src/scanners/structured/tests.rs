@@ -912,8 +912,8 @@ fn balanced_text_enters_absorbing_before_its_opening_brace() {
             CommandObservation::ScannerStatus(status),
             CommandObservation::Command(opening),
             ..
-        ] if status.from.starts_with("Normal")
-            && status.to.starts_with("Absorbing")
+        ] if status.from == "normal"
+            && status.to == "absorbing"
             && matches!(opening.spelling, crate::ObservedToken::Character {
                 character: '{', catcode: Catcode::BeginGroup
             })

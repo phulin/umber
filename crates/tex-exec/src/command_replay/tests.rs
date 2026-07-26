@@ -1962,8 +1962,8 @@ fn alignment_preamble_opener_uses_command_owned_backup_before_source_resumes() {
                     && state_change.previous_align_state == Some(-1_000_000)
                     && matches!(raw.spelling, ObservedToken::Character { character: '{', .. })
                     && matches!(expanded.spelling, ObservedToken::Character { character: '{', .. })
-                    && status.from.starts_with("Normal")
-                    && status.to.starts_with("Aligning")
+                    && status.from == "normal"
+                    && status.to == "aligning"
                     && preamble_start.transition == "preamble_start"
                     && preamble_start.align_state == -1_000_000
                     && retirement.transition == InputTransition::Retire
@@ -1972,8 +1972,8 @@ fn alignment_preamble_opener_uses_command_owned_backup_before_source_resumes() {
                     && matches!(template.spelling, ObservedToken::Character { character: 'U', .. })
                     && matches!(parameter.spelling, ObservedToken::Character { character: '#', .. })
                     && matches!(terminator.spelling, ObservedToken::ControlSequence(ref name) if name == "cr")
-                    && finished.from.starts_with("Aligning")
-                    && finished.to.starts_with("Normal")
+                    && finished.from == "aligning"
+                    && finished.to == "normal"
                     && preamble_finish.transition == "preamble_finish"
         ),
         "unexpected observations: {:?}",
@@ -2312,7 +2312,7 @@ fn canonical_initex_replay_scans_token_register_assignments_through_command_core
             CommandObservation::ScannerStatus(status),
             CommandObservation::TokenList(tokens),
             CommandObservation::Mutation(mutation)]
-            if status.to.starts_with("Normal")
+            if status.to == "normal"
                 && tokens.transition == "complete"
                 && tokens.purpose == "scan_toks"
                 && mutation.target == "register"
