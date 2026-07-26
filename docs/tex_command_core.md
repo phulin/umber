@@ -980,12 +980,27 @@ blank line rather than falling back to the preceding line's anchor. An
 unterminated final line remains zero-width.
 
 Each direct source delivery also carries a typed canonical location distinct
-from its raw span. It is TeX82's post-delivery `loc - start - 1`: ordinary
-one-byte spellings therefore locate at their span start, while a decoded
-`^^41` retains its full four-byte raw span but locates at the final `1`.
-Zero-width synthetic spellings retain their physical anchor. This provenance
-pair is ordinary snapshot-owned input state, including backup replay; it is
-not reconstructed by fixture observation.
+from its raw span. It is the physical source column of the final byte the
+spelling consumed: ordinary one-byte spellings therefore locate at their span
+start, while a decoded `^^41` retains its full four-byte raw span but locates
+at the final `1`. Zero-width synthetic spellings retain their physical anchor.
+This provenance pair is ordinary snapshot-owned input state, including backup
+replay; it is not reconstructed by fixture observation.
+
+TeX82 observes that column as `loc - start - 1`, and the two agree only while
+`buffer` still mirrors the source line. tex.web §355 reduces an expanded code
+inside a control-sequence name _in place_, writing the decoded character over
+`buffer[k-1]` and shifting the remainder of the line down by `d` (two or
+three) while decrementing `limit` and `first`; from that point on every
+`buffer` index on that line is `d` smaller than the source column it came
+from, and the deficit accumulates across further reductions on the same line.
+tex.web §352's character-path reduction has no such effect: it only advances
+`loc` past the whole `^^` form. The canonical location is always the source
+column, so the instrumented oracles accumulate each line's collapsed bytes
+(`umber_line_shift`, stacked per input level alongside `line_stack`) and add
+them back before emitting `byte`. A location that shifted because of an
+unrelated earlier `^^` control sequence on the same line would not be
+provenance at all.
 
 Control-sequence names are semantically sequences of `CharacterCode`. Their
 storage may use a compact UTF-8 representation when lossless for the active
