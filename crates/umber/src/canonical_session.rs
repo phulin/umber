@@ -219,8 +219,8 @@ impl<'a> CanonicalEngineSession<'a> {
     /// Reports the live execution mode at the top of the mode nest.
     ///
     /// This is diagnostic-only: it exists so a host driving the retained
-    /// session (for example the `canonical_probe` example) can attribute a
-    /// suspension or error to the mode active when it occurred.
+    /// session (for example the `first_failure_locator` example) can
+    /// attribute a suspension or error to the mode active when it occurred.
     #[must_use]
     pub fn current_mode(&self) -> tex_exec::Mode {
         self.control.current_mode()

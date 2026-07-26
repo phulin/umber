@@ -30,24 +30,63 @@ Scope: working a semantic or byte-level divergence between Umber's canonical
 
 ## 2. Diagnosis order
 
-Fixed order; do not skip a step or substitute ad hoc instrumentation for it:
+Fixed order; do not skip a step or substitute ad hoc instrumentation for it.
+Do not start with hand-added `eprintln!`/debug-panic instrumentation or
+another ad hoc reproduction: both tools below already report a
+source-attributed divergence or a Rust panic origin, and skipping them wastes
+a run re-deriving what they would have named directly. The retired Umber
+implementation (`Executor`/`InputStack`, `tex-lex`, `tex-expand`) is never an
+oracle at any step (§1.3); consult it only as a migration target being routed
+away from.
 
-1. **Differential tracer** (hermetic, no corpus/distribution/font setup):
-   `cargo run -q -p tex-command-stream -- --repository .`. Exit 0: no
-   divergence in the committed fixture registry. Exit 1: prints the earliest
-   ordered divergence. Exit 101: a Rust panic reached before any mismatch —
-   the panic itself is the diagnosis.
-2. **`canonical_probe`**, only when the tracer's fixture registry doesn't
-   cover the failing input (for example, it needs live document/font/hyphenation
-   material): `cargo run --profile test -p umber --example canonical_probe --
-   gentle` (or `story`).
-3. **Manual instrumentation** (`eprintln!`, debug panics, ad hoc repros) only
-   after both of the above come up short. Remove it once the tracer or probe
+1. **Differential tracer first**, for the earliest ordered semantic
+   divergence against committed fixtures:
+
+   ```bash
+   cargo run -q -p tex-command-stream -- --repository .
+   ```
+
+   Run this from the repository root. It is hermetic (no corpus,
+   distribution, or live TeX tool required) and never invokes a reference
+   engine.
+   - Exit `0`: no divergence in the committed fixture registry.
+   - Exit `1`: prints the earliest ordered divergence -- `fixture <name>
+     diverged at event <index>` -- followed by the expected event, the actual
+     observed event, and source context.
+   - Exit `101`: a Rust panic reached before any semantic mismatch; the panic
+     message and `file:line` (rerun with `RUST_BACKTRACE=1` for a full
+     backtrace) is itself the diagnosis and takes priority over a
+     stream-mismatch report because it is reached first.
+
+2. **First-failure locator next**, for the live end-to-end front, only when
+   the tracer's fixture registry doesn't cover the failing input (for
+   example, it needs live document/font/hyphenation material outside
+   `tests/corpus/command`):
+
+   ```bash
+   cargo run --profile test -p umber --example first_failure_locator -- gentle
+   cargo run --profile test -p umber --example first_failure_locator -- story
+   ```
+
+   It reports the live execution mode and the first `ExecError`/
+   `CanonicalSessionError` (with provenance-resolved source context) or Rust
+   panic it hits. As a first-failure locator (Glossary), it can only show
+   that execution stopped, not that completed output is wrong. `story`
+   currently completes cleanly and is a regression gate (§5): a new `story`
+   failure is a regression to fix immediately, not the divergence under
+   investigation.
+
+3. **Manual instrumentation only if both come up short.** Reach for
+   `eprintln!`/debug-panic probes or a custom reproduction only after the
+   tracer's fixtures do not exercise the failing input and the first-failure
+   locator does not reproduce it with actionable context. Keep any such
+   instrumentation temporary and remove it once the tracer or locator
    confirms the fix.
 
-Full recipe, exact output shapes, and rationale: "Diagnosing A Canonical
-Divergence" in [Testing Infrastructure](testing_infrastructure.md). Read it
-there; this document does not restate it.
+Tool descriptions -- exact staged inputs, build-profile rationale, and what
+each command's output looks like -- live in "Canonical Command-Core
+Diagnostics" in [Testing Infrastructure](testing_infrastructure.md). Read
+them there; this document does not restate them.
 
 ## 3. Fix discipline
 
@@ -69,7 +108,7 @@ there; this document does not restate it.
 - Before closing, file the next divergence as a new bd issue titled
   `Investigate next <front> canonical divergence after <this-issue-id>`. The
   title names no root cause.
-- The body carries only OBSERVED facts: the exact probe/tracer output,
+- The body carries only OBSERVED facts: the exact tracer/locator output,
   execution mode, the failing token or meaning, the error identity (type and
   fields), file:line, and the exact reproduction command.
 - Any theory about the cause goes under an explicit heading
@@ -88,11 +127,11 @@ once tests have already passed. `e2e_conformance_story_canonical` (see
 "Canonical Story Regression Gate" in
 [Testing Infrastructure](testing_infrastructure.md)) must stay byte-exact
 against real pdfTeX output — never weaken or skip that comparison. Its live
-proxy, `canonical_probe -- story`, must keep completing without a divergence;
-a new `story` failure is a regression to fix immediately, not the divergence
-under investigation.
+proxy, `first_failure_locator -- story`, must keep completing without a
+failure; a new `story` failure is a regression to fix immediately, not the
+divergence under investigation.
 
-The tracer and probe fronts advance every time a divergence is fixed, so no
+The tracer and locator fronts advance every time a divergence is fixed, so no
 fixed event index or issue number is pinned here. Before starting, run
 `bd show umber2-johp` (or `bd ready`) to find the current open successor for
 the front you're diagnosing, and compare its recorded OBSERVED output against
@@ -119,3 +158,34 @@ Never use `git stash` to compare "with fix" and "without fix" behavior —
 state under it is easy to lose or misattribute. Use a second git worktree
 (`git worktree add <path> <branch>`) or a saved patch file
 (`git diff > patch`, then `git apply`/`git apply -R`) instead.
+
+## Glossary
+
+Terms this epic uses without defining them, in the sense used throughout this
+document and [Testing Infrastructure](testing_infrastructure.md):
+
+- **canonical**: the `tex-command`/`tex-exec` command-core architecture and
+  its behavior, as defined solely by tex.web/e-TeX/pdfTeX (§1.1). "Canonical"
+  never refers to the retired Umber implementation (§1.3).
+- **oracle**: the pinned reference used as ground truth for canonical
+  behavior -- either the `tex-oracle` semantic command-transition traces
+  (compared by the differential tracer, `tools/tex-command-stream`) or
+  byte-exact reference DVI from a real pdfTeX build (compared by
+  `tools/parity-harness`). See `docs/tex_command_core.md` §31 for how these
+  are built and regenerated.
+- **gate**: a check that must pass before a divergence issue closes (§5):
+  `cargo test -q --tests`, `cargo fmt --all --check`,
+  `cargo clippy --all-targets -- -D warnings`, and the byte-exact
+  `e2e_conformance_story_canonical` test.
+- **divergence**: a point where Umber's canonical behavior differs from an
+  oracle -- a semantic event mismatch reported by the differential tracer, or
+  a DVI byte mismatch reported by the parity harness.
+- **first-failure locator**: `crates/umber/examples/first_failure_locator.rs`
+  (§2 step 2). Runs a document through the canonical engine end-to-end and
+  reports where execution first stopped -- an error or a panic. It proves
+  execution stopped, not that output is wrong: a run that completes is not
+  proof of correctness, only silence past that point.
+- **target**: code being deleted or routed away from during migration -- the
+  retired `Executor`/`InputStack`, `tex-lex`, `tex-expand` path (§1.3). A
+  target may be inspected to understand what is being replaced, but is never
+  a source of expected behavior.
