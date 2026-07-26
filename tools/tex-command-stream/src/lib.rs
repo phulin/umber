@@ -553,21 +553,20 @@ impl Recorder {
     }
 }
 
+/// Recovers TeX82's `.tex`-defaulted display name for an `\input` target
+/// scanned without an explicit extension.
+///
+/// tex.web §537's `start_input` applies `if cur_ext="" then cur_ext:=".tex"`
+/// before packing the name it opens and later prints (`slow_print(name)`).
+/// The fixture registry keys registered inputs by the bare stem actually
+/// typed in source (`\input case-shift`), so the trace must independently
+/// reapply that same default rather than special-casing individual fixture
+/// file stems.
 fn canonical_trace_source_name(name: &str) -> String {
-    match name {
-        "alignment-delivery"
-        | "expansion-macros"
-        | "input-eof-absorbing"
-        | "input-eof-aligning"
-        | "input-eof-defining"
-        | "input-eof-matching"
-        | "input-eof-normal"
-        | "input-recovery"
-        | "off-save"
-        | "scanner-conditionals"
-        | "scanner-conditionals-eof"
-        | "transitions-child" => format!("{name}.tex"),
-        _ => name.into(),
+    if name.contains('.') {
+        name.into()
+    } else {
+        format!("{name}.tex")
     }
 }
 
@@ -1785,7 +1784,10 @@ mod tests {
             Event::Input(InputEvent {
                 transition: tex_oracle::InputTransition::Retire,
                 reason: InputReason::Source,
-                name: "child".into(),
+                // tex.web §537's `start_input` defaults the missing
+                // extension to `.tex` before packing the name it opens and
+                // prints; the retirement identity must match that name.
+                name: "child.tex".into(),
             }),
             "the retirement event retains the child identity before the trace stack pops it"
         );
@@ -1796,7 +1798,7 @@ mod tests {
             "input resumes the still-live parent source after child EOF"
         );
         assert!(first.events.iter().any(|event| {
-            event.context.starts_with("source=child;")
+            event.context.starts_with("source=child.tex;")
                 && matches!(
                     &event.event,
                     Event::Command(CommandEvent {
@@ -1805,7 +1807,7 @@ mod tests {
                             ..
                         },
                         ..
-                    }) if source == "child"
+                    }) if source == "child.tex"
                 )
         }));
     }
