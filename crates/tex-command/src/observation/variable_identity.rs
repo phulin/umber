@@ -111,71 +111,71 @@ pub(crate) fn int_parameter_code(slot: u16) -> Option<i64> {
     // `INT_PARAMS` (plus its e-TeX and pdfTeX tables); the right column is
     // tex.web §236 / `etex.ch`.
     Some(match slot {
-        0 => 0,    // \pretolerance
-        1 => 1,    // \tolerance
-        2 => 2,    // \linepenalty
-        3 => 3,    // \hyphenpenalty
-        4 => 4,    // \exhyphenpenalty
-        5 => 5,    // \clubpenalty
-        6 => 6,    // \widowpenalty
-        7 => 7,    // \displaywidowpenalty
-        8 => 8,    // \brokenpenalty
-        9 => 9,    // \binoppenalty
-        10 => 10,  // \relpenalty
-        11 => 11,  // \predisplaypenalty
-        12 => 12,  // \postdisplaypenalty
-        13 => 13,  // \interlinepenalty
-        14 => 14,  // \doublehyphendemerits
-        15 => 15,  // \finalhyphendemerits
-        16 => 16,  // \adjdemerits
-        17 => 17,  // \mag
-        18 => 18,  // \delimiterfactor
-        19 => 19,  // \looseness
-        20 => 20,  // \time
-        21 => 21,  // \day
-        22 => 22,  // \month
-        23 => 23,  // \year
-        24 => 24,  // \showboxbreadth
-        25 => 25,  // \showboxdepth
-        26 => 26,  // \hbadness
-        27 => 27,  // \vbadness
-        28 => 28,  // \pausing
-        29 => 29,  // \tracingonline
-        30 => 30,  // \tracingmacros
-        31 => 31,  // \tracingstats
-        32 => 43,  // \globaldefs
-        33 => 32,  // \tracingparagraphs
-        34 => 33,  // \tracingpages
-        35 => 34,  // \tracingoutput
-        36 => 35,  // \tracinglostchars
-        37 => 36,  // \tracingcommands
-        38 => 37,  // \tracingrestores
-        39 => 38,  // \uchyph
-        40 => 45,  // \escapechar
-        41 => 46,  // \defaulthyphenchar
-        42 => 47,  // \defaultskewchar
-        48 => 48,  // \endlinechar
-        49 => 49,  // \newlinechar
-        50 => 50,  // \language
-        51 => 51,  // \lefthyphenmin
-        52 => 52,  // \righthyphenmin
-        53 => 53,  // \holdinginserts
-        54 => 54,  // \errorcontextlines
-        55 => 39,  // \outputpenalty
-        56 => 40,  // \maxdeadcycles
-        57 => 41,  // \hangafter
-        58 => 42,  // \floatingpenalty
-        59 => 44,  // \fam
-        61 => 58,  // \tracingscantokens (e-TeX)
-        62 => 64,  // \TeXXeTstate (e-TeX `eTeX_state_code`)
-        63 => 60,  // \predisplaydirection (e-TeX)
-        64 => 55,  // \tracingassigns (e-TeX)
-        65 => 56,  // \tracinggroups (e-TeX)
-        66 => 57,  // \tracingifs (e-TeX)
-        67 => 59,  // \tracingnesting (e-TeX)
-        68 => 62,  // \savingvdiscards (e-TeX)
-        69 => 61,  // \lastlinefit (e-TeX)
-        70 => 63,  // \savinghyphcodes (e-TeX)
+        0 => 0,   // \pretolerance
+        1 => 1,   // \tolerance
+        2 => 2,   // \linepenalty
+        3 => 3,   // \hyphenpenalty
+        4 => 4,   // \exhyphenpenalty
+        5 => 5,   // \clubpenalty
+        6 => 6,   // \widowpenalty
+        7 => 7,   // \displaywidowpenalty
+        8 => 8,   // \brokenpenalty
+        9 => 9,   // \binoppenalty
+        10 => 10, // \relpenalty
+        11 => 11, // \predisplaypenalty
+        12 => 12, // \postdisplaypenalty
+        13 => 13, // \interlinepenalty
+        14 => 14, // \doublehyphendemerits
+        15 => 15, // \finalhyphendemerits
+        16 => 16, // \adjdemerits
+        17 => 17, // \mag
+        18 => 18, // \delimiterfactor
+        19 => 19, // \looseness
+        20 => 20, // \time
+        21 => 21, // \day
+        22 => 22, // \month
+        23 => 23, // \year
+        24 => 24, // \showboxbreadth
+        25 => 25, // \showboxdepth
+        26 => 26, // \hbadness
+        27 => 27, // \vbadness
+        28 => 28, // \pausing
+        29 => 29, // \tracingonline
+        30 => 30, // \tracingmacros
+        31 => 31, // \tracingstats
+        32 => 43, // \globaldefs
+        33 => 32, // \tracingparagraphs
+        34 => 33, // \tracingpages
+        35 => 34, // \tracingoutput
+        36 => 35, // \tracinglostchars
+        37 => 36, // \tracingcommands
+        38 => 37, // \tracingrestores
+        39 => 38, // \uchyph
+        40 => 45, // \escapechar
+        41 => 46, // \defaulthyphenchar
+        42 => 47, // \defaultskewchar
+        48 => 48, // \endlinechar
+        49 => 49, // \newlinechar
+        50 => 50, // \language
+        51 => 51, // \lefthyphenmin
+        52 => 52, // \righthyphenmin
+        53 => 53, // \holdinginserts
+        54 => 54, // \errorcontextlines
+        55 => 39, // \outputpenalty
+        56 => 40, // \maxdeadcycles
+        57 => 41, // \hangafter
+        58 => 42, // \floatingpenalty
+        59 => 44, // \fam
+        61 => 58, // \tracingscantokens (e-TeX)
+        62 => 64, // \TeXXeTstate (e-TeX `eTeX_state_code`)
+        63 => 60, // \predisplaydirection (e-TeX)
+        64 => 55, // \tracingassigns (e-TeX)
+        65 => 56, // \tracinggroups (e-TeX)
+        66 => 57, // \tracingifs (e-TeX)
+        67 => 59, // \tracingnesting (e-TeX)
+        68 => 62, // \savingvdiscards (e-TeX)
+        69 => 61, // \lastlinefit (e-TeX)
+        70 => 63, // \savinghyphcodes (e-TeX)
         // 43..=47 and 60 are dense-bank cells with no `assign_int`
         // primitive: 60 stores `\badness`, which is read through
         // `last_item`, and 43..=47 are unallocated. 71 is Umber's hidden
@@ -278,16 +278,16 @@ mod tests {
     #[test]
     fn int_parameter_codes_match_the_pinned_oracle_probes() {
         for (slot, selector) in [
-            (0_u16, 27_167_i64),  // \pretolerance
-            (36, 27_202),         // \tracinglostchars
-            (39, 27_205),         // \uchyph
-            (40, 27_212),         // \escapechar
-            (41, 27_213),         // \defaulthyphenchar
-            (42, 27_214),         // \defaultskewchar
-            (49, 27_216),         // \newlinechar
-            (50, 27_217),         // \language
-            (54, 27_221),         // \errorcontextlines
-            (59, 27_211),         // \fam
+            (0_u16, 27_167_i64), // \pretolerance
+            (36, 27_202),        // \tracinglostchars
+            (39, 27_205),        // \uchyph
+            (40, 27_212),        // \escapechar
+            (41, 27_213),        // \defaulthyphenchar
+            (42, 27_214),        // \defaultskewchar
+            (49, 27_216),        // \newlinechar
+            (50, 27_217),        // \language
+            (54, 27_221),        // \errorcontextlines
+            (59, 27_211),        // \fam
         ] {
             assert_eq!(
                 int_parameter_code(slot).map(|code| INT_BASE + code),
