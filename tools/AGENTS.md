@@ -48,6 +48,15 @@ portable `tex-oracle` schema, and reports a ranked worklist of up to
 replay failures alike). It never invokes a reference engine or joins the
 production engine dependency graph.
 
+Comparison is a two-tier keyed sequence alignment, not an index-parallel
+scan: `src/compare.rs` splits each event into an identity key and a payload,
+reports a payload-only difference once without desynchronizing, and repairs a
+key mismatch with a bounded wavefront search (`--realign-window`,
+`--realign-confirm`) followed by a structural anchor fallback
+(`--anchor-scan`), stopping a fixture's comparison outright rather than
+guessing when neither confirms. Each entry names its repair and the cascade
+it suppressed. See "Stream alignment" in `docs/testing_infrastructure.md`.
+
 It replays two registries: the committed, always-present fixtures under
 `tests/corpus/command/tex82`, then the full-document traces (plain bootstrap,
 Story, Gentle) under `tests/corpus/command/tex82-documents`. The document tier
