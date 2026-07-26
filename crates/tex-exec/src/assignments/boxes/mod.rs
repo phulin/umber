@@ -508,7 +508,11 @@ pub(super) fn execute_hrule(
     Ok(())
 }
 
-pub(super) fn execute_delete_last(
+/// TeX82 §1105's `delete_last`. Shared by the legacy dispatcher
+/// (`assignments::mod`) and canonical main control's `ScannedStep::DeleteLast`
+/// handler, since `\unpenalty`/`\unkern`/`\unskip` need no operand scan --
+/// only this mode/list-sensitive removal.
+pub(crate) fn execute_delete_last(
     primitive: UnexpandablePrimitive,
     nest: &mut ModeNest,
     stores: &mut Universe,
@@ -546,7 +550,22 @@ fn execute_delete_last_outer_vertical(
     stores: &mut Universe,
 ) -> Result<(), ExecError> {
     let Some(tail) = stores.page_contribution_tail() else {
+        // TeX82 §1105: `(mode=vmode)and(tail=head)` -- the contribution list
+        // is empty because `build_page` has already swept every prior item
+        // onto the current page, whose cost accounting can no longer be
+        // undone. Nothing is ever structurally removed in this branch: only
+        // the diagnostic differs. `\unpenalty`/`\unkern` always apologize
+        // ("Sorry...I usually can't take things from the current page.").
+        // `\unskip` apologizes only when the page builder's own `last_glue`
+        // memo (§996) shows the most recently placed page item really was
+        // glue; otherwise it is `\unskip` "following non-glue" and silently
+        // succeeds, matching the one case tex.web exempts from the apology.
         return match primitive {
+            UnexpandablePrimitive::UnSkip if stores.page_has_last_glue() => {
+                Err(ExecError::CannotDeleteFromCurrentPage {
+                    command: "\\unskip",
+                })
+            }
             UnexpandablePrimitive::UnSkip => Ok(()),
             UnexpandablePrimitive::UnPenalty => Err(ExecError::CannotDeleteFromCurrentPage {
                 command: "\\unpenalty",

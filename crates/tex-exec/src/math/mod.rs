@@ -826,9 +826,14 @@ fn dispatch_math_primitive(
             Ok(DispatchAction::Continue)
         }
         UnexpandablePrimitive::ItalicCorrection => {
+            // TeX82 §1113: `mmode+ital_corr: tail_append(new_kern(0));` --
+            // unlike hmode's italic correction, this never overrides
+            // `new_kern`'s default `normal` subtype to `explicit`, so it must
+            // not become a legal kern-then-glue line-break point the way an
+            // explicit `\kern` or hmode `\/` would.
             nest.current_list_mut().push(Node::Kern {
                 amount: Scaled::from_raw(0),
-                kind: KernKind::Explicit,
+                kind: KernKind::Font,
             });
             Ok(DispatchAction::Continue)
         }

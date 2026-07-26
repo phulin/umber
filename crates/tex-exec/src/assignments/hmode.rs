@@ -1599,7 +1599,20 @@ fn scan_hlist_group(
     Ok(nodes)
 }
 
-fn append_italic_correction(nest: &mut ModeNest, stores: &mut Universe) -> Result<(), ExecError> {
+/// TeX82 §1113's `append_italic_correction` (`hmode+ital_corr`). Shared by
+/// the legacy dispatcher and canonical main control's
+/// `ScannedStep::ItalicCorrection` handler.
+///
+/// tex.web appends the italic-correction kern unconditionally whenever the
+/// tail is a character or ligature node -- including when the correction
+/// happens to be exactly zero (`tail_append(new_kern(char_italic(...)))`
+/// runs with no guard on the resulting width). Only an empty list, or a tail
+/// that is neither a character nor a ligature, leaves the list untouched
+/// (`return` with no append).
+pub(crate) fn append_italic_correction(
+    nest: &mut ModeNest,
+    stores: &mut Universe,
+) -> Result<(), ExecError> {
     flush_pending_hchars(nest, stores)?;
     let Some((font, ch)) = last_font_char(nest.current_list().nodes()) else {
         return Ok(());
@@ -1610,12 +1623,10 @@ fn append_italic_correction(nest: &mut ModeNest, stores: &mut Universe) -> Resul
     let Some(metrics) = stores.font_char_metrics(font, code) else {
         return Ok(());
     };
-    if metrics.italic_correction.raw() != 0 {
-        nest.current_list_mut().push(Node::Kern {
-            amount: metrics.italic_correction,
-            kind: KernKind::Explicit,
-        });
-    }
+    nest.current_list_mut().push(Node::Kern {
+        amount: metrics.italic_correction,
+        kind: KernKind::Explicit,
+    });
     Ok(())
 }
 
