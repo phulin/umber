@@ -629,14 +629,18 @@ impl CommandProcessor<'_> {
 
     /// Performs TeX82 §1064 `off_save` input recovery for a command.
     ///
-    /// The executor selects the closer from its actual group, but raw backup,
-    /// inserted-token ownership, and observer order remain in the command
-    /// core. This is used by §1131 `do_endv` and by ordinary main control
-    /// when an inaccessible closer must first end an intervening group.
+    /// `closing` holds the one or more tokens §1065 prepares to match the
+    /// current group (a single `}`/`$` character, or the two-token
+    /// `\right.` a `math_left_group` needs); they replay in order, ahead of
+    /// the backed-up command. The executor selects `closing` from its actual
+    /// group, but raw backup, inserted-token ownership, and observer order
+    /// remain in the command core. This is used by §1131 `do_endv` and by
+    /// ordinary main control when an inaccessible closer must first end an
+    /// intervening group.
     pub fn recover_off_save(
         &mut self,
         command: CurrentCommand,
-        closing: Token,
+        closing: &[Token],
     ) -> Result<(), CommandError> {
         #[cfg(any(test, feature = "instrumentation"))]
         self.observe(CommandObservation::Diagnostic(
@@ -650,10 +654,12 @@ impl CommandProcessor<'_> {
         ));
         self.back_input(command)?;
         let level = self.command.push_token_level(
-            TokenPayload::Transient(SharedTokenBuffer::new(vec![TracedTokenWord::pack(
-                closing,
-                OriginId::UNKNOWN,
-            )])),
+            TokenPayload::Transient(SharedTokenBuffer::new(
+                closing
+                    .iter()
+                    .map(|&token| TracedTokenWord::pack(token, OriginId::UNKNOWN))
+                    .collect::<Vec<_>>(),
+            )),
             TokenBehavior::Recovery,
             RetirementBehavior::Pop,
             ReplayTrace::Transient(crate::input::TransientReplayReason::Inserted),
@@ -670,9 +676,12 @@ impl CommandProcessor<'_> {
             }));
             self.observe(CommandObservation::Recovery(RecoveryRecord {
                 kind: RecoveryKind::InsertedToken,
-                tokens: vec![
-                    self.observed_token(TracedTokenWord::pack(closing, OriginId::UNKNOWN)),
-                ],
+                tokens: closing
+                    .iter()
+                    .map(|&token| {
+                        self.observed_token(TracedTokenWord::pack(token, OriginId::UNKNOWN))
+                    })
+                    .collect(),
             }));
         }
         Ok(())
@@ -714,7 +723,19 @@ impl CommandProcessor<'_> {
         command: CurrentCommand,
         closing: Token,
     ) -> Result<(), CommandError> {
-        self.recover_off_save(command, closing)
+        self.recover_off_save(command, &[closing])
+    }
+
+    /// Looks up the frozen (redefinition-proof) control-sequence token for a
+    /// primitive by its canonical name, e.g. TeX82's `frozen_end_group` /
+    /// `frozen_right`, the tokens §1065's `off_save` inserts for a
+    /// `semi_simple_group` / `math_left_group` respectively so that a
+    /// user redefinition of `\endgroup` or `\right` cannot change what the
+    /// recovery closes.
+    pub fn frozen_primitive_token(&self, name: &str) -> Result<Token, CommandError> {
+        self.state
+            .primitive_token(name)
+            .ok_or(CommandError::InputInvariant)
     }
 
     /// Replaces an exhausted one-token backup with a fresh backup of its
@@ -1508,11 +1529,10 @@ impl CommandProcessor<'_> {
     }
 
     fn frozen_primitive(&self, name: &str) -> Result<TracedTokenWord, CommandError> {
-        let token = self
-            .state
-            .primitive_token(name)
-            .ok_or(CommandError::InputInvariant)?;
-        Ok(TracedTokenWord::pack(token, OriginId::UNKNOWN))
+        Ok(TracedTokenWord::pack(
+            self.frozen_primitive_token(name)?,
+            OriginId::UNKNOWN,
+        ))
     }
 
     #[cfg(any(test, feature = "instrumentation"))]

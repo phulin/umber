@@ -2250,6 +2250,21 @@ enum ScannedStep {
     ExtraRightBrace,
     ExtraRightBraceEndsSemiSimpleGroup,
     ExtraEndGroup,
+    /// TeX82 §1064's general `off_save`: the innermost group could not
+    /// accommodate the scanned command, so `scan_off_save` already chose and
+    /// inserted the matching closer ahead of the backed-up command
+    /// (`CommandProcessor::recover_off_save`). The execute phase only prints
+    /// §1065's diagnostic naming what was inserted; the four cases share one
+    /// static message because the closer itself was already selected during
+    /// scanning.
+    OffSave(&'static str),
+    /// TeX82 §§1064/1066's bottom-level `off_save`: no enclosing group
+    /// existed to close, so the offending command was dropped outright
+    /// (`CommandProcessor::report_off_save_bottom_drop` already ran); the
+    /// execute phase prints "Extra `<command>`" naming its own spelling.
+    OffSaveBottomDrop {
+        token: Token,
+    },
     BeginOrdinaryGroup,
     EndOrdinaryGroup,
     BeginOutputRoutine,
@@ -3160,10 +3175,10 @@ fn scan_command(
             processor
                 .recover_off_save(
                     command,
-                    Token::Char {
+                    &[Token::Char {
                         ch: '}',
                         cat: Catcode::EndGroup,
-                    },
+                    }],
                 )
                 .map_err(command_error)?;
             Ok(ScannedStep::Continue)
@@ -3406,10 +3421,7 @@ fn scan_command(
         // (`mode>=0`) from restricted `hmode` (`mode<0`, e.g. inside an
         // `\hbox`): only the unrestricted case takes the simple
         // "back up, insert `\par`, retry" path that
-        // `recover_stop_for_vertical_mode` implements; the restricted case
-        // instead calls `off_save`, unimplemented here, so `RestrictedHorizontal`
-        // is intentionally left unmatched (falling through to the ordinary
-        // `ScannedStep::Continue` default, unchanged from before this arm).
+        // `recover_stop_for_vertical_mode` implements.
         Meaning::UnexpandablePrimitive(
             UnexpandablePrimitive::VSkip
             | UnexpandablePrimitive::VFil
@@ -3421,6 +3433,22 @@ fn scan_command(
                 .recover_stop_for_vertical_mode(command)
                 .map_err(command_error)?;
             Ok(ScannedStep::Continue)
+        }
+        // §1091's `head_for_vmode`'s restricted-`hmode` branch
+        // (`mode<0`): `if cur_cmd<>hrule then off_save`. Unlike the
+        // unrestricted case above, restricted horizontal mode (e.g. inside
+        // an `\hbox`) cannot simply insert `\par` and retry -- `\par` has no
+        // meaning there -- so TeX instead runs the fully general §1064
+        // `off_save` recovery against whatever group the `\hbox` (or other
+        // box-making construct) opened.
+        Meaning::UnexpandablePrimitive(
+            UnexpandablePrimitive::VSkip
+            | UnexpandablePrimitive::VFil
+            | UnexpandablePrimitive::VFill
+            | UnexpandablePrimitive::VSs
+            | UnexpandablePrimitive::VFilNeg,
+        ) if mode == Mode::RestrictedHorizontal => {
+            scan_off_save(processor, command, innermost_group)
         }
         // TeX82 §1054's `vmode+vskip: append_glue` (using `abs(mode)`, so both
         // outer `Vertical` and `InternalVertical` match `vmode`).
@@ -4199,6 +4227,82 @@ fn scan_command(
             scan_unclassified_primitive(processor, command, primitive, mode)
         }
         _ => Ok(ScannedStep::Continue),
+    }
+}
+
+/// Runs TeX82 §1064's `off_save`, in full generality across every group
+/// kind, not just the `RestrictedHorizontal` `\vskip` family that is this
+/// function's first caller.
+///
+/// `off_save` recovers from a command that the current (innermost) group
+/// cannot accommodate. Per §1066, a `bottom_level` group (no group open at
+/// all) simply drops the command with an "Extra `<command>`" diagnostic --
+/// there is nothing to close, so nothing is backed up or replayed. Otherwise
+/// §1065 selects one of four closers to insert ahead of the backed-up
+/// command, matching `cur_group`: a `semi_simple_group` needs the frozen,
+/// redefinition-proof `\endgroup` control sequence (a plain `}` cannot close
+/// it); a `math_shift_group` needs `$`; a `math_left_group` needs the
+/// two-token `\right.` (frozen `\right` followed by a `.` other-character,
+/// mirroring tex.web's `get_avail`-built two-node list); every other group
+/// kind (box-making groups among them, the only case reachable from
+/// restricted horizontal mode today) needs an ordinary `}`. Selecting and
+/// inserting the closer is command-owned
+/// (`CommandProcessor::recover_off_save`/`report_off_save_bottom_drop`); the
+/// execute phase (`apply_scanned_step`) only prints the matching text once
+/// the returned `ScannedStep` is applied.
+fn scan_off_save(
+    processor: &mut CommandProcessor<'_>,
+    command: tex_command::CurrentCommand,
+    innermost_group: Option<GroupKind>,
+) -> Result<ScannedStep, ExecError> {
+    let Some(kind) = innermost_group else {
+        let token = command.spelling().semantic_token();
+        processor.report_off_save_bottom_drop(&command);
+        return Ok(ScannedStep::OffSaveBottomDrop { token });
+    };
+    match kind {
+        GroupKind::SemiSimple => {
+            let endgroup = processor
+                .frozen_primitive_token("endgroup")
+                .map_err(command_error)?;
+            processor
+                .recover_off_save(command, &[endgroup])
+                .map_err(command_error)?;
+            Ok(ScannedStep::OffSave("\n! Missing \\endgroup inserted.\n"))
+        }
+        GroupKind::MathShift => {
+            let dollar = Token::Char {
+                ch: '$',
+                cat: Catcode::MathShift,
+            };
+            processor
+                .recover_off_save(command, &[dollar])
+                .map_err(command_error)?;
+            Ok(ScannedStep::OffSave("\n! Missing $ inserted.\n"))
+        }
+        GroupKind::MathLeft => {
+            let right = processor
+                .frozen_primitive_token("right")
+                .map_err(command_error)?;
+            let dot = Token::Char {
+                ch: '.',
+                cat: Catcode::Other,
+            };
+            processor
+                .recover_off_save(command, &[right, dot])
+                .map_err(command_error)?;
+            Ok(ScannedStep::OffSave("\n! Missing \\right. inserted.\n"))
+        }
+        _ => {
+            let right_brace = Token::Char {
+                ch: '}',
+                cat: Catcode::EndGroup,
+            };
+            processor
+                .recover_off_save(command, &[right_brace])
+                .map_err(command_error)?;
+            Ok(ScannedStep::OffSave("\n! Missing } inserted.\n"))
+        }
     }
 }
 
@@ -7475,6 +7579,29 @@ fn apply_scanned_step(
             stores
                 .world_mut()
                 .write_text(PrintSink::TerminalAndLog, "\n! Extra \\endgroup.\n");
+            Ok(ReplayStep::Continue)
+        }
+        ScannedStep::OffSave(message) => {
+            // `scan_off_save` already ran the input recovery (backing up the
+            // command behind its chosen closer); this only prints TeX82
+            // §1065's diagnostic naming what was inserted.
+            stores
+                .world_mut()
+                .write_text(PrintSink::TerminalAndLog, message);
+            Ok(ReplayStep::Continue)
+        }
+        ScannedStep::OffSaveBottomDrop { token } => {
+            // TeX82 §1066: "print_err("Extra "); print_cmd_chr(cur_cmd,
+            // cur_chr)". `scan_off_save` already dropped the command itself
+            // (no backup, nothing to replay); this only names it.
+            let command = match token {
+                Token::Cs(symbol) => format!("\\{}", stores.resolve(symbol)),
+                _ => format!("{token:?}"),
+            };
+            stores.world_mut().write_text(
+                PrintSink::TerminalAndLog,
+                &format!("\n! Extra {command}.\n"),
+            );
             Ok(ReplayStep::Continue)
         }
         ScannedStep::EndOrdinaryGroup => {

@@ -261,6 +261,27 @@ overtake the diagnostic; at bottom level it reports the drop before the backup
 retires. This applies equally to ordinary `\endgroup` recovery and alignment
 `endv` replay.
 
+`CommandProcessor::recover_off_save` takes the closer as a token slice rather
+than a single token, because §1065's four cases are not all one token: a
+`math_left_group` needs the two-token `\right.` (frozen `\right` followed by
+a `.` other-character), while the other three cases each need exactly one.
+`CommandProcessor::frozen_primitive_token` looks up the frozen,
+redefinition-proof control-sequence token backing a primitive by name (e.g.
+`"endgroup"`, `"right"`), shared with the pre-existing `check_outer_validity`
+frozen-insertion recoveries (`\par`/`\fi`/`\cr`) rather than duplicated.
+`tex-exec`'s `scan_off_save` (`canonical_main_control.rs`) is the executor-side
+half: given a command and the innermost `GroupKind`, it selects and issues the
+matching closer (`SemiSimple` → `\endgroup`, `MathShift` → `$`, `MathLeft` →
+`\right.`, otherwise → `}`, or the bottom-level drop when no group is open),
+returning `ScannedStep::OffSave`/`OffSaveBottomDrop` so the execute phase
+prints the matching "Missing ... inserted"/"Extra ..." text once, after
+scanning already ran the recovery. It is written as a general, reusable
+routine rather than inlined at its first call site (TeX82 §1091's
+`head_for_vmode` restricted-`hmode` branch, reached by `\vskip`/`\vfil`/
+`\vfill`/`\vss`/`\vfilneg` inside an `\hbox`); future primitives that reach
+`off_save` in other modes should call it too instead of re-deriving the
+four-way group dispatch.
+
 For TeX82 §1095's `hmode+stop` `head_for_vmode` branch, `tex-command` likewise
 owns the two exact backups: it first backs up `\end` (or `\dump`), then backs
 up the synthesized primitive `\par` with inserted input ownership. The

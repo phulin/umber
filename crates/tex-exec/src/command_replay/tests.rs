@@ -2806,6 +2806,86 @@ fn off_save_reports_before_replaying_its_inserted_closer() {
 }
 
 #[test]
+fn canonical_vskip_in_restricted_horizontal_runs_off_save() {
+    // TeX82 §1091's `head_for_vmode` restricted branch (`mode<0`): inside an
+    // `\hbox`, `\vskip` (and its `\vfil`/`\vfill`/`\vss`/`\vfilneg` siblings)
+    // cannot simply retry behind an inserted `\par` the way unrestricted
+    // horizontal mode does -- `\par` has no meaning in restricted horizontal
+    // mode. Instead `off_save` (§1064) must first close the hbox's own
+    // group, which is a `HBox`-kind `Universe` group here, so it takes
+    // §1065's "othercases" branch and inserts an ordinary `}`.
+    let mut universe = Universe::new();
+    let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+    register_source(&mut control, br"\setbox0=\hbox{\vskip1pt}");
+    run_to_end(&mut control, &mut universe);
+
+    let text = terminal_text(&universe);
+    assert!(text.contains("Missing } inserted"), "{text}");
+
+    // The hbox is packaged empty: `\vskip` never entered its hlist.
+    let box_nodes = universe
+        .box_reg(0)
+        .map(|id| universe.nodes(id))
+        .expect("hbox was still assigned despite the interrupted body");
+    let Some(tex_state::node_arena::NodeRef::HList(hbox)) = box_nodes.first() else {
+        panic!("expected an assigned hbox: {box_nodes:?}");
+    };
+    assert!(
+        universe.nodes(hbox.children).is_empty(),
+        "vskip should not have entered the hbox"
+    );
+
+    // Once off_save closes the hbox, the recovered `\vskip1pt` replays as
+    // ordinary vertical glue -- outer vertical mode contributes straight to
+    // the page builder's contribution list rather than `ModeNest`'s own
+    // per-mode list, so that (not `control.modes.current_list()`) is where
+    // the recovered glue shows up.
+    assert!(matches!(
+        universe.page_contributions().back(),
+        Some(Node::Glue { spec, .. })
+            if universe.glue(*spec).width == Scaled::from_raw(Scaled::UNITY)
+    ));
+}
+
+#[test]
+fn canonical_vskip_in_restricted_horizontal_closes_a_semisimple_group_first() {
+    // TeX82 §1065's `semi_simple_group` branch of `off_save`: `\begingroup`
+    // (`any_mode(begin_group): new_save_level(semi_simple_group)`) can open
+    // a semisimple group nested inside an `\hbox` without changing the mode,
+    // so `off_save` must close it with the frozen, redefinition-proof
+    // `\endgroup` rather than the hbox's own `}` -- and exercises
+    // `CommandProcessor::frozen_primitive_token` in the process.
+    let mut universe = Universe::new();
+    let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+    register_source(&mut control, br"\setbox0=\hbox{\begingroup\vskip1pt}");
+    run_to_end(&mut control, &mut universe);
+
+    let text = terminal_text(&universe);
+    assert!(text.contains("Missing \\endgroup inserted"), "{text}");
+    // Closing the semisimple group still leaves restricted horizontal mode
+    // active, so `\vskip` reaches `off_save` a second time against the
+    // hbox's own group.
+    assert!(text.contains("Missing } inserted"), "{text}");
+
+    let box_nodes = universe
+        .box_reg(0)
+        .map(|id| universe.nodes(id))
+        .expect("hbox was still assigned despite the interrupted body");
+    let Some(tex_state::node_arena::NodeRef::HList(hbox)) = box_nodes.first() else {
+        panic!("expected an assigned hbox: {box_nodes:?}");
+    };
+    assert!(
+        universe.nodes(hbox.children).is_empty(),
+        "vskip should not have entered the hbox"
+    );
+    assert!(matches!(
+        universe.page_contributions().back(),
+        Some(Node::Glue { spec, .. })
+            if universe.glue(*spec).width == Scaled::from_raw(Scaled::UNITY)
+    ));
+}
+
+#[test]
 fn canonical_initex_replay_scans_and_applies_code_table_assignments() {
     let mut universe = Universe::new();
     let mut control = CommandReplayControl::tex82_initex(&mut universe);
