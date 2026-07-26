@@ -930,3 +930,47 @@ fn oversized_dimension_clamps_to_max_dimen() {
         Scaled::MAX_DIMEN
     );
 }
+
+#[test]
+fn continental_decimal_comma_introduces_a_fraction_like_a_point() {
+    // TeX82 §448 aliases `continental_point_token` to `point_token` twice in
+    // `scan_dimen`, so `3,5pt` is exactly `3.5pt` and a leading `,5pt` is
+    // `0.5pt`. Without it an embedded comma survives the integer scan and no
+    // unit keyword can match, and a leading one reads as a missing number.
+    let mut universe = Universe::new();
+
+    assert_eq!(
+        scan_with(
+            &mut universe,
+            "3,5pt ,5pt".chars().map(char_token).collect(),
+            |processor| (
+                processor.scan_dimension().expect("embedded").value.raw(),
+                processor.scan_dimension().expect("leading").value.raw(),
+            ),
+        ),
+        (3 * Scaled::UNITY + Scaled::UNITY / 2, Scaled::UNITY / 2)
+    );
+}
+
+#[test]
+fn excess_l_suffixes_past_filll_are_consumed_rather_than_left_in_the_input() {
+    // TeX82 §454's `while scan_keyword("l") do`: `filllll` yields `filll`
+    // plus one error per extra `l`, and every `l` is consumed. Stopping the
+    // loop at `filll` would leak the extra letters into later parsing.
+    let mut universe = Universe::new();
+
+    let (glue, following) = scan_with(
+        &mut universe,
+        "0pt plus 1filllll 5".chars().map(char_token).collect(),
+        |processor| {
+            let glue = processor
+                .scan_glue(false)
+                .expect("infinite stretch scans")
+                .value;
+            (glue, processor.scan_integer().expect("integer").value)
+        },
+    );
+    assert_eq!(glue.stretch.raw(), Scaled::UNITY);
+    assert_eq!(glue.stretch_order, Order::Filll);
+    assert_eq!(following, 5);
+}
