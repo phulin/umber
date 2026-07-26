@@ -1251,85 +1251,24 @@ impl CommandProcessor<'_> {
             // scanner's result (TeX.web `scan_something_internal`/`scan_int`).
             Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Count) => {
                 let index = self.scan_eight_bit_register_index()?;
-                let value = self.state.count(index);
-                #[cfg(any(test, feature = "instrumentation"))]
-                self.observe(CommandObservation::Scanner(ScannerRecord {
-                    kind: "internal",
-                    value: value.to_string(),
-                    tokens: None,
-                }));
-                InternalValue::Integer(value)
+                InternalValue::Integer(self.state.count(index))
             }
             Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Dimen) => {
                 let index = self.scan_eight_bit_register_index()?;
-                let value = self.state.dimen(index);
-                #[cfg(any(test, feature = "instrumentation"))]
-                self.observe(CommandObservation::Scanner(ScannerRecord {
-                    kind: "internal",
-                    value: format!("scaled:{}", value.raw()),
-                    tokens: None,
-                }));
-                InternalValue::Dimension(value)
+                InternalValue::Dimension(self.state.dimen(index))
             }
             Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Skip) => {
                 let index = self.scan_eight_bit_register_index()?;
-                let value = self.state.glue(self.state.skip(index));
-                #[cfg(any(test, feature = "instrumentation"))]
-                self.observe(CommandObservation::Scanner(ScannerRecord {
-                    kind: "internal",
-                    value: format!(
-                        "glue:width={};stretch={};stretch_order={:?};shrink={};shrink_order={:?}",
-                        value.width.raw(),
-                        value.stretch.raw(),
-                        value.stretch_order,
-                        value.shrink.raw(),
-                        value.shrink_order,
-                    ),
-                    tokens: None,
-                }));
-                InternalValue::Glue(value)
+                InternalValue::Glue(self.state.glue(self.state.skip(index)))
             }
             Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Muskip) => {
                 let index = self.scan_eight_bit_register_index()?;
-                let value = self.state.glue(self.state.muskip(index));
-                #[cfg(any(test, feature = "instrumentation"))]
-                self.observe(CommandObservation::Scanner(ScannerRecord {
-                    kind: "internal",
-                    value: format!(
-                        "glue:width={};stretch={};stretch_order={:?};shrink={};shrink_order={:?}",
-                        value.width.raw(),
-                        value.stretch.raw(),
-                        value.stretch_order,
-                        value.shrink.raw(),
-                        value.shrink_order,
-                    ),
-                    tokens: None,
-                }));
-                InternalValue::MuGlue(value)
+                InternalValue::MuGlue(self.state.glue(self.state.muskip(index)))
             }
             Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Toks) => {
                 let index = self.scan_eight_bit_register_index()?;
-                let tokens = self.state.toks(index);
-                #[cfg(any(test, feature = "instrumentation"))]
-                self.observe(CommandObservation::Scanner(ScannerRecord {
-                    kind: "internal",
-                    value: "tokens".into(),
-                    tokens: Some(
-                        self.state
-                            .tokens(tokens)
-                            .iter()
-                            .copied()
-                            .map(|token| {
-                                self.observed_token(tex_state::token::TracedTokenWord::pack(
-                                    token,
-                                    OriginId::UNKNOWN,
-                                ))
-                            })
-                            .collect(),
-                    ),
-                }));
                 InternalValue::Tokens {
-                    tokens,
+                    tokens: self.state.toks(index),
                     index,
                     parameter: false,
                 }
@@ -1365,14 +1304,7 @@ impl CommandProcessor<'_> {
                 let number = self.scan_integer()?.value;
                 let font = self.scan_font_selector()?;
                 let number = u32::try_from(number).unwrap_or(0);
-                let value = self.state.font_dimen(font, number);
-                #[cfg(any(test, feature = "instrumentation"))]
-                self.observe(CommandObservation::Scanner(ScannerRecord {
-                    kind: "internal",
-                    value: format!("scaled:{}", value.raw()),
-                    tokens: None,
-                }));
-                InternalValue::Dimension(value)
+                InternalValue::Dimension(self.state.font_dimen(font, number))
             }
             // TeX82 §426's "Fetch a font integer": `assign_font_int` runs
             // `scan_font_ident` and then reads `hyphen_char[cur_val]` (`m=0`,
@@ -1391,12 +1323,6 @@ impl CommandProcessor<'_> {
                     UnexpandablePrimitive::SkewChar => self.state.font_skew_char(font),
                     _ => unreachable!("outer match restricts primitive to the font integers"),
                 };
-                #[cfg(any(test, feature = "instrumentation"))]
-                self.observe(CommandObservation::Scanner(ScannerRecord {
-                    kind: "internal",
-                    value: value.to_string(),
-                    tokens: None,
-                }));
                 InternalValue::Integer(value)
             }
             // TeX82 §414's "Fetch a character code from some table":
@@ -1431,12 +1357,6 @@ impl CommandProcessor<'_> {
                     UnexpandablePrimitive::DelCode => self.state.delcode(character),
                     _ => unreachable!("outer match restricts primitive to the code tables"),
                 };
-                #[cfg(any(test, feature = "instrumentation"))]
-                self.observe(CommandObservation::Scanner(ScannerRecord {
-                    kind: "internal",
-                    value: value.to_string(),
-                    tokens: None,
-                }));
                 InternalValue::Integer(value)
             }
             // TeX82 §423's "Fetch the par_shape size": `\parshape` reads the
@@ -1561,29 +1481,11 @@ impl CommandProcessor<'_> {
             // and on the latter for `\@M` (`\mathchardef\@M=10000`), which
             // `\break`/`\eject` scan as `\penalty-\@M`; treating either as a
             // missing number silently produces zero instead of the stored
-            // code. Like every other case of §413 this commits an internal
-            // scanner result of its own before the outer `scan_int`/
-            // `scan_dimen`/`scan_glue` result that consumes it.
-            Meaning::CharGiven(character) => {
-                let value = i32::try_from(u32::from(character)).expect("characters fit in i32");
-                #[cfg(any(test, feature = "instrumentation"))]
-                self.observe(CommandObservation::Scanner(ScannerRecord {
-                    kind: "internal",
-                    value: value.to_string(),
-                    tokens: None,
-                }));
-                InternalValue::Integer(value)
-            }
-            Meaning::MathCharGiven(code) => {
-                let value = i32::from(code);
-                #[cfg(any(test, feature = "instrumentation"))]
-                self.observe(CommandObservation::Scanner(ScannerRecord {
-                    kind: "internal",
-                    value: value.to_string(),
-                    tokens: None,
-                }));
-                InternalValue::Integer(value)
-            }
+            // code.
+            Meaning::CharGiven(character) => InternalValue::Integer(
+                i32::try_from(u32::from(character)).expect("characters fit in i32"),
+            ),
+            Meaning::MathCharGiven(code) => InternalValue::Integer(i32::from(code)),
             // TeX82 §424 represents `set_font`, `def_font`, and `def_family`
             // as ident_val at the token-list level. Preserve the control
             // sequence identity instead of rendering a font number or name.
@@ -1616,7 +1518,62 @@ impl CommandProcessor<'_> {
             }
             _ => return Ok(None),
         };
+        #[cfg(any(test, feature = "instrumentation"))]
+        self.observe_internal_value(value);
         Ok(Some(value))
+    }
+
+    /// Commits TeX82 §413's single internal scanner result.
+    ///
+    /// `scan_something_internal` has exactly one exit, and every case above
+    /// reaches it, so exactly one internal result is committed per successful
+    /// internal scan -- never one per case. Emitting it per case instead left
+    /// most of §413's cases (every classical register, every named parameter,
+    /// the page quantities, the read-only integers, and the font identifiers)
+    /// committing no internal result at all, which does not merely mislabel
+    /// an event: it makes Umber emit one event FEWER than the oracle and
+    /// desynchronizes the whole remaining stream.
+    #[cfg(any(test, feature = "instrumentation"))]
+    fn observe_internal_value(&mut self, value: InternalValue) {
+        let (rendered, tokens) = match value {
+            InternalValue::Integer(value) => (value.to_string(), None),
+            InternalValue::Dimension(value) => (format!("scaled:{}", value.raw()), None),
+            InternalValue::Glue(glue) | InternalValue::MuGlue(glue) => (
+                format!(
+                    "glue:width={};stretch={};stretch_order={:?};shrink={};shrink_order={:?}",
+                    glue.width.raw(),
+                    glue.stretch.raw(),
+                    glue.stretch_order,
+                    glue.shrink.raw(),
+                    glue.shrink_order,
+                ),
+                None,
+            ),
+            // TeX82 §413's `ident_val`: the font's own control-sequence
+            // spelling, never a font number or file name.
+            InternalValue::Font(symbol) => (self.state.resolve(symbol).to_owned(), None),
+            InternalValue::Tokens { tokens, .. } => (
+                "tokens".into(),
+                Some(
+                    self.state
+                        .tokens(tokens)
+                        .iter()
+                        .copied()
+                        .map(|token| {
+                            self.observed_token(tex_state::token::TracedTokenWord::pack(
+                                token,
+                                OriginId::UNKNOWN,
+                            ))
+                        })
+                        .collect(),
+                ),
+            ),
+        };
+        self.observe(CommandObservation::Scanner(ScannerRecord {
+            kind: "internal",
+            value: rendered,
+            tokens,
+        }));
     }
 
     fn font_identity(&self, font: FontId) -> InternalValue {
