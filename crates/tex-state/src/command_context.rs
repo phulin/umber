@@ -73,6 +73,42 @@ impl CommandContext<'_> {
         self.universe.catcode(ch)
     }
 
+    /// Reads one lowercase code through the aggregate code-table boundary.
+    #[must_use]
+    pub fn lccode(&self, ch: char) -> crate::code_tables::LcCode {
+        self.universe.lccode(ch)
+    }
+
+    /// Reads one uppercase code through the aggregate code-table boundary.
+    #[must_use]
+    pub fn uccode(&self, ch: char) -> crate::code_tables::UcCode {
+        self.universe.uccode(ch)
+    }
+
+    /// Reads one space factor code through the aggregate code-table boundary.
+    #[must_use]
+    pub fn sfcode(&self, ch: char) -> crate::code_tables::SfCode {
+        self.universe.sfcode(ch)
+    }
+
+    /// Reads one math code through the aggregate code-table boundary.
+    #[must_use]
+    pub fn mathcode(&self, ch: char) -> crate::code_tables::MathCode {
+        self.universe.mathcode(ch)
+    }
+
+    /// Reads one delimiter code through the aggregate code-table boundary.
+    #[must_use]
+    pub fn delcode(&self, ch: char) -> crate::code_tables::DelCode {
+        self.universe.delcode(ch)
+    }
+
+    /// Reads the number of lines in TeX's current `\parshape` value.
+    #[must_use]
+    pub fn paragraph_shape_len(&self) -> usize {
+        self.universe.paragraph_shape_len()
+    }
+
     /// Interns a control-sequence spelling without assigning it a meaning.
     #[must_use]
     pub fn intern_control_sequence(&mut self, name: &str) -> Symbol {

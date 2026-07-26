@@ -1351,6 +1351,51 @@ impl CommandProcessor<'_> {
                 }));
                 InternalValue::Dimension(value)
             }
+            // TeX82 §414's "Fetch a character code from some table":
+            // `scan_char_num` selects the entry and every code table reads at
+            // `int_val`. These six primitives were wired for assignment only,
+            // so `\the\catcode`\A` failed outright while `\ifnum\catcode`\A
+            // =13` -- the standard active-character and verbatim catcode
+            // probes -- silently compared against zero.
+            Meaning::UnexpandablePrimitive(
+                primitive @ (UnexpandablePrimitive::CatCode
+                | UnexpandablePrimitive::LcCode
+                | UnexpandablePrimitive::UcCode
+                | UnexpandablePrimitive::SfCode
+                | UnexpandablePrimitive::MathCode
+                | UnexpandablePrimitive::DelCode),
+            ) => {
+                let character = self.scan_character_number()?;
+                let value = match primitive {
+                    UnexpandablePrimitive::CatCode => {
+                        i32::from(self.state.catcode(character) as u8)
+                    }
+                    UnexpandablePrimitive::LcCode => {
+                        i32::try_from(self.state.lccode(character)).unwrap_or(0)
+                    }
+                    UnexpandablePrimitive::UcCode => {
+                        i32::try_from(self.state.uccode(character)).unwrap_or(0)
+                    }
+                    UnexpandablePrimitive::SfCode => i32::from(self.state.sfcode(character)),
+                    UnexpandablePrimitive::MathCode => {
+                        i32::try_from(self.state.mathcode(character)).unwrap_or(0)
+                    }
+                    UnexpandablePrimitive::DelCode => self.state.delcode(character),
+                    _ => unreachable!("outer match restricts primitive to the code tables"),
+                };
+                #[cfg(any(test, feature = "instrumentation"))]
+                self.observe(CommandObservation::Scanner(ScannerRecord {
+                    kind: "internal",
+                    value: value.to_string(),
+                    tokens: None,
+                }));
+                InternalValue::Integer(value)
+            }
+            // TeX82 §423's "Fetch the par_shape size": `\parshape` reads the
+            // number of lines in the current shape, or zero when none is set.
+            Meaning::UnexpandablePrimitive(UnexpandablePrimitive::ParShape) => {
+                InternalValue::Integer(i32::try_from(self.state.paragraph_shape_len()).unwrap_or(0))
+            }
             Meaning::CountRegister(index) => InternalValue::Integer(self.state.count(index)),
             Meaning::IntParam(index) => InternalValue::Integer(
                 self.state
@@ -1503,6 +1548,21 @@ impl CommandProcessor<'_> {
     /// The recovery is part of TeX82's `scan_eight_bit_int`: values outside
     /// the classical range select register zero after the integer scanner has
     /// completed its normal command-owned delivery and backup lifecycle.
+    /// Scans TeX82's `scan_char_num` character selector.
+    ///
+    /// tex.web bounds the scanned integer to a character code and recovers
+    /// from anything outside that range by selecting character zero, exactly
+    /// as `scan_eight_bit_int` recovers to register zero. Umber's character
+    /// domain is the Unicode scalar range, so a non-scalar value takes the
+    /// same recovery.
+    fn scan_character_number(&mut self) -> Result<char, CommandError> {
+        let value = self.scan_integer()?.value;
+        Ok(u32::try_from(value)
+            .ok()
+            .and_then(char::from_u32)
+            .unwrap_or('\0'))
+    }
+
     pub fn scan_eight_bit_register_index(&mut self) -> Result<u16, CommandError> {
         let value = self.scan_integer()?.value;
         Ok(u16::try_from(value)
