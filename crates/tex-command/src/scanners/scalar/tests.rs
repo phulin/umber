@@ -392,6 +392,134 @@ fn dimension_scanner_accepts_an_internal_dimension_as_its_unit() {
 }
 
 #[test]
+fn an_internal_dimension_unit_leaves_the_following_space_in_the_input() {
+    // tex.web §455's internal-dimension exit sets `v` and jumps straight to
+    // `found:`, whose `goto attach_sign` bypasses both §455's own
+    // `<Scan an optional space>` (which only the `em`/`ex` path runs) and
+    // §448's trailing one. So `3\unit x` consumes no space at all.
+    let mut command = CommandState::default();
+    let mut runtime = CommandRuntime::default();
+    let mut universe = Universe::new();
+    let unit = universe.intern("unit").symbol();
+    universe.set_meaning(unit, Meaning::DimenRegister(0));
+    universe.set_dimen(0, tex_state::scaled::Scaled::from_raw(Scaled::UNITY));
+    let mut capabilities = CommandHostCapabilities::default();
+
+    push(
+        &mut command,
+        vec![
+            char_token('3'),
+            Token::Cs(unit),
+            Token::Char {
+                ch: ' ',
+                cat: Catcode::Space,
+            },
+            char_token('x'),
+        ],
+    );
+    let mut processor = CommandProcessor::new(
+        &mut command,
+        &mut runtime,
+        universe.command_context(),
+        CommandHostContext::new(&mut capabilities),
+    );
+
+    assert_eq!(
+        processor
+            .scan_dimension()
+            .expect("internal unit scans")
+            .value
+            .raw(),
+        3 * Scaled::UNITY
+    );
+    assert!(matches!(
+        processor
+            .get_x_token()
+            .expect("the following token delivers")
+            .expect("the following token exists")
+            .meaning(),
+        Meaning::CharToken {
+            ch: ' ',
+            cat: Catcode::Space
+        }
+    ));
+    assert!(matches!(
+        processor
+            .get_x_token()
+            .expect("the next token delivers")
+            .expect("the next token exists")
+            .meaning(),
+        Meaning::CharToken { ch: 'x', .. }
+    ));
+}
+
+#[test]
+fn an_em_unit_consumes_exactly_one_following_space() {
+    // §455's `em`/`ex` path is the only one that runs
+    // `<Scan an optional space>` before `found:`, and `found:`'s
+    // `goto attach_sign` still skips §448's trailing one. So `3em  x`
+    // consumes exactly one of its two spaces.
+    use tex_state::font::NULL_FONT;
+
+    let mut command = CommandState::default();
+    let mut runtime = CommandRuntime::default();
+    let mut universe = Universe::new();
+    universe
+        .set_font_dimen(NULL_FONT, 6, Scaled::from_raw(10 * Scaled::UNITY))
+        .expect("nullfont has a quad parameter");
+    let space = Token::Char {
+        ch: ' ',
+        cat: Catcode::Space,
+    };
+    push(
+        &mut command,
+        vec![
+            char_token('3'),
+            char_token('e'),
+            char_token('m'),
+            space,
+            space,
+            char_token('x'),
+        ],
+    );
+    let mut capabilities = CommandHostCapabilities::default();
+    let mut processor = CommandProcessor::new(
+        &mut command,
+        &mut runtime,
+        universe.command_context(),
+        CommandHostContext::new(&mut capabilities),
+    );
+
+    assert_eq!(
+        processor
+            .scan_dimension()
+            .expect("em dimension scans")
+            .value
+            .raw(),
+        30 * Scaled::UNITY
+    );
+    assert!(matches!(
+        processor
+            .get_x_token()
+            .expect("the second space delivers")
+            .expect("the second space exists")
+            .meaning(),
+        Meaning::CharToken {
+            ch: ' ',
+            cat: Catcode::Space
+        }
+    ));
+    assert!(matches!(
+        processor
+            .get_x_token()
+            .expect("the next token delivers")
+            .expect("the next token exists")
+            .meaning(),
+        Meaning::CharToken { ch: 'x', .. }
+    ));
+}
+
+#[test]
 fn dimension_scanner_recognizes_current_font_em_and_ex_units() {
     use tex_state::font::NULL_FONT;
     use tex_state::scaled::Scaled;

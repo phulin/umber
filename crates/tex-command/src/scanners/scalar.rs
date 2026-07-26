@@ -145,6 +145,17 @@ enum DimensionUnit {
     Mu,
 }
 
+/// A completed TeX82 §453 "Scan units and set `cur_val`" step.
+struct ScannedUnits {
+    value: Scaled,
+    order: Order,
+    /// TeX82 §455's `found:` exit ends in `goto attach_sign`, which bypasses
+    /// `scan_dimen`'s trailing `<Scan an optional space>`. Both internal-unit
+    /// paths take it; every other unit falls through `attach_fraction`/`done`
+    /// into that optional space.
+    attach_sign: bool,
+}
+
 impl CommandProcessor<'_> {
     /// Scans TeX's optional signs from expanded command-owned input.
     pub fn scan_optional_sign(&mut self) -> Result<ScannedScalar<bool>, CommandError> {
@@ -459,7 +470,7 @@ impl CommandProcessor<'_> {
             Some(command) => command,
             None => self.get_x_token()?.ok_or(CommandError::input_invariant())?,
         };
-        let (value, order, internal_dimension) = match self.internal_value_from_command(&first)? {
+        let (value, order, attach_sign) = match self.internal_value_from_command(&first)? {
             // TeX82 §449's "Fetch an internal dimension and goto attach_sign,
             // or fetch an internal integer". A quantity that ends up at the
             // requested dimension level is the whole answer and skips both the
@@ -470,10 +481,10 @@ impl CommandProcessor<'_> {
                 Some(InternalDimension::Complete(value)) => (value, Order::Normal, true),
                 Some(InternalDimension::Prefix(integer)) => {
                     self.last_integer_terminator = None;
-                    let (value, order, flip) =
+                    let (units, flip) =
                         self.scan_units_after_integer(integer, false, allow_infinite, mu)?;
                     negative ^= flip;
-                    (value, order, false)
+                    (units.value, units.order, units.attach_sign)
                 }
                 None => {
                     self.back_input(first)?;
@@ -520,10 +531,10 @@ impl CommandProcessor<'_> {
                         // for the keyword scanner instead.
                         let _ = self.get_next()?;
                     }
-                    let (value, order, flip) =
+                    let (units, flip) =
                         self.scan_units_after_integer(integer, decimal, allow_infinite, mu)?;
                     negative ^= flip;
-                    (value, order, false)
+                    (units.value, units.order, units.attach_sign)
                 }
                 _ => {
                     self.back_input(first)?;
@@ -538,7 +549,11 @@ impl CommandProcessor<'_> {
                 }
             },
         };
-        if !internal_dimension {
+        // TeX82 §448's trailing `<Scan an optional space>` sits between the
+        // unit scan and `attach_sign:`, so every path that reached
+        // `attach_sign` by a `goto` -- §449's whole internal dimension and
+        // §455's two internal-unit exits -- skips it.
+        if !attach_sign {
             self.scan_optional_space()?;
         }
         let scanned = ScannedScalar {
@@ -619,27 +634,29 @@ impl CommandProcessor<'_> {
         decimal: bool,
         allow_infinite: bool,
         mu: bool,
-    ) -> Result<(Scaled, Order, bool), CommandError> {
+    ) -> Result<(ScannedUnits, bool), CommandError> {
         let flip = integer < 0;
         let integer = if flip {
             integer.saturating_neg()
         } else {
             integer
         };
-        let (value, order) = self.scan_decimal_dimension(integer, decimal, allow_infinite, mu)?;
-        Ok((value, order, flip))
+        let units = self.scan_decimal_dimension(integer, decimal, allow_infinite, mu)?;
+        Ok((units, flip))
     }
 
     /// TeX82 §448's `scan_dimen(mu,false,true)` shortcut: the integer part is
     /// already in hand, so only the units remain to be scanned.
     fn scan_dimension_shortcut(&mut self, integer: i32, mu: bool) -> Result<Scaled, CommandError> {
         self.last_integer_terminator = None;
-        let (value, _order, flip) = self.scan_units_after_integer(integer, false, false, mu)?;
-        self.scan_optional_space()?;
+        let (units, flip) = self.scan_units_after_integer(integer, false, false, mu)?;
+        if !units.attach_sign {
+            self.scan_optional_space()?;
+        }
         Ok(if flip {
-            Scaled::from_raw(-value.raw())
+            Scaled::from_raw(-units.value.raw())
         } else {
-            value
+            units.value
         })
     }
 
@@ -920,7 +937,7 @@ impl CommandProcessor<'_> {
         decimal: bool,
         allow_infinite: bool,
         mu: bool,
-    ) -> Result<(Scaled, Order), CommandError> {
+    ) -> Result<ScannedUnits, CommandError> {
         let mut fraction = String::new();
         if decimal {
             loop {
@@ -1011,14 +1028,15 @@ impl CommandProcessor<'_> {
                 Order::Normal,
             ),
         };
-        Ok((
-            if arith_error {
+        Ok(ScannedUnits {
+            value: if arith_error {
                 Scaled::MAX_DIMEN
             } else {
                 value
             },
             order,
-        ))
+            attach_sign: matches!(unit, DimensionUnit::Internal(_)),
+        })
     }
 
     /// TeX82 §453's "Scan units and set `cur_val`".
@@ -1049,13 +1067,18 @@ impl CommandProcessor<'_> {
         // (x-height), respectively; keep the successful keyword result so the
         // shared internal-unit fixed-point path scales both whole and
         // fractional dimensions.
+        //
+        // §455 places its `<Scan an optional space>` here, on the `em`/`ex`
+        // path alone: the internal-dimension probe above jumps straight to
+        // `found:`.  Both then reach `attach_sign`, so `scan_dimen`'s own
+        // trailing optional space never runs for either.  `3em x` therefore
+        // consumes exactly one space and `3\dimen0 x` consumes none.
         if !mu {
             for (keyword, parameter) in [("em", 6), ("ex", 5)] {
                 if self.scan_keyword(keyword)?.value {
-                    return Ok((
-                        DimensionUnit::Internal(self.state.current_font_parameter(parameter)),
-                        false,
-                    ));
+                    let unit = self.state.current_font_parameter(parameter);
+                    self.scan_optional_space()?;
+                    return Ok((DimensionUnit::Internal(unit), false));
                 }
             }
         }
