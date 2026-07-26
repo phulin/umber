@@ -15,10 +15,10 @@ use tex_command::{
     PdfAnnotationRequest, PdfColorStackActionRequest, PdfDestinationRequest,
     PdfDocumentFragmentRequest, PdfFormRequest, PdfGraphicsRequest, PdfImageRequest,
     PdfImageResource, PdfNavigationRequest, PdfObjectRequest, PdfReferenceObjectRequest,
-    PdfStartLinkRequest, ScannedAccent, ScannedBoxConstruction, ScannedBoxKind,
-    ScannedDiscretionary, ScannedDisplayDiagnostic, ScannedInsertConstruction,
-    ScannedLeaderPayload, ScannedMathMuMaterial, ScannedPackingSpec, ScannedVSplit,
-    SourceRegistration, SourceRegistrationError,
+    PdfStartLinkRequest, ScannedAccent, ScannedBoxConstruction, ScannedBoxKind, ScannedBoxShift,
+    ScannedBoxShiftPayload, ScannedDiscretionary, ScannedDisplayDiagnostic,
+    ScannedInsertConstruction, ScannedLeaderPayload, ScannedMathMuMaterial, ScannedPackingSpec,
+    ScannedVSplit, SourceRegistration, SourceRegistrationError,
 };
 #[cfg(any(test, feature = "instrumentation"))]
 use tex_command::{
@@ -85,6 +85,15 @@ struct ActiveReplayBox {
     kind: ReplayBoxKind,
     packing: PackSpec,
     leader_kind: Option<GlueKind>,
+    /// TeX82 §1073's `shift_amount`, already sign-adjusted at scan time, for
+    /// a box construction reached through `\raise`/`\lower`/`\moveleft`/
+    /// `\moveright`. Applied once the body is packaged, immediately before
+    /// the ordinary (non-register, non-shipout, non-leader) append in
+    /// `BoxEndGroup`; always `None` for `\setbox`/`\shipout`/leader/insert
+    /// bodies, since none of those box-openers can themselves be wrapped by
+    /// a shift (`scan_box`'s `cur_cmd=make_box` requirement excludes `vmove`
+    /// and `hmove`).
+    shift: Option<Scaled>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -2198,6 +2207,22 @@ enum ScannedStep {
         construction: ScannedBoxConstruction,
         kind: GlueKind,
     },
+    /// TeX82 §1073's box-shift prefixes (`\raise`, `\lower`, `\moveleft`,
+    /// `\moveright`): the already-signed shift amount (tex.web's
+    /// `box_context`) plus `scan_box`'s own `make_box` operand (§1076).
+    /// `ScannedBoxShiftPayload::Construction` shares the `BeginBox`/
+    /// `BoxBeginGroup`/`BoxEndGroup` brace-matching machinery; the other
+    /// variants resolve to a node immediately, exactly like `\box<n>`,
+    /// `\lastbox`, and `\vsplit` do outside a shift.
+    BoxShift(ScannedBoxShift),
+    /// TeX82's "Forbidden cases" `you_cant`/`report_illegal_case` recovery
+    /// for a box-shift prefix used in the wrong mode (`vmode+vmove`,
+    /// `hmode+hmove`, `mmode+hmove`): the dimension is never scanned, unlike
+    /// `\prevdepth`'s mode check, which runs only after its value is
+    /// scanned.
+    IllegalBoxShift {
+        token: Token,
+    },
     /// TeX82 §968's `begin_insert_or_adjust` for `\insert`. The class-number
     /// bound check (0..=255) and the reserved-255 recovery both need
     /// `Universe` diagnostics, so replay receives only the raw scanned class
@@ -3772,6 +3797,40 @@ fn scan_command(
             Ok(ScannedStep::Unbox { primitive, index })
         }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::LastBox) => Ok(ScannedStep::LastBox),
+        // TeX82's main-control dispatch on `abs(mode)+cur_cmd` (tex.web
+        // §1073): `\raise`/`\lower` (`vmove`) are legal only outside vertical
+        // mode (`hmode+vmove`, `mmode+vmove`); `\moveleft`/`\moveright`
+        // (`hmove`) are legal only inside it (`vmode+hmove`). The three
+        // remaining combinations (`vmode+vmove`, `hmode+hmove`,
+        // `mmode+hmove`) are tex.web's "Forbidden cases" list and never
+        // reach `scan_normal_dimen` at all -- only `report_illegal_case`
+        // fires, so the dimension must not be scanned here.
+        Meaning::UnexpandablePrimitive(
+            primitive @ (UnexpandablePrimitive::Raise | UnexpandablePrimitive::Lower),
+        ) => {
+            if matches!(mode, Mode::Vertical | Mode::InternalVertical) {
+                Ok(ScannedStep::IllegalBoxShift {
+                    token: command.spelling().semantic_token(),
+                })
+            } else {
+                Ok(ScannedStep::BoxShift(
+                    processor.scan_box_shift(primitive).map_err(command_error)?,
+                ))
+            }
+        }
+        Meaning::UnexpandablePrimitive(
+            primitive @ (UnexpandablePrimitive::MoveLeft | UnexpandablePrimitive::MoveRight),
+        ) => {
+            if matches!(mode, Mode::Vertical | Mode::InternalVertical) {
+                Ok(ScannedStep::BoxShift(
+                    processor.scan_box_shift(primitive).map_err(command_error)?,
+                ))
+            } else {
+                Ok(ScannedStep::IllegalBoxShift {
+                    token: command.spelling().semantic_token(),
+                })
+            }
+        }
         Meaning::UnexpandablePrimitive(
             primitive @ (UnexpandablePrimitive::Leaders
             | UnexpandablePrimitive::CLeaders
@@ -3978,10 +4037,13 @@ fn scan_unclassified_primitive(
         | P::LcCode
         | P::Leaders
         | P::Let
+        | P::Lower
         | P::Lowercase
         | P::MathCharDef
         | P::MathCode
         | P::Message
+        | P::MoveLeft
+        | P::MoveRight
         | P::Multiply
         | P::Muskip
         | P::MuskipDef
@@ -4017,6 +4079,7 @@ fn scan_unclassified_primitive(
         | P::PdfXImage
         | P::Penalty
         | P::PrevDepth
+        | P::Raise
         | P::Read
         | P::ReadLine
         | P::ScriptFont
@@ -4098,7 +4161,6 @@ fn scan_unclassified_primitive(
         | P::LetterspaceFont
         | P::Limits
         | P::Long
-        | P::Lower
         | P::MKern
         | P::MSkip
         | P::Mark
@@ -4115,8 +4177,6 @@ fn scan_unclassified_primitive(
         | P::MathPunct
         | P::MathRel
         | P::Middle
-        | P::MoveLeft
-        | P::MoveRight
         | P::MuExpr
         | P::MuToGlue
         | P::NoAlign
@@ -4169,7 +4229,6 @@ fn scan_unclassified_primitive(
         | P::Protected
         | P::QuitVMode
         | P::Radical
-        | P::Raise
         | P::Right
         | P::ScriptScriptStyle
         | P::ScriptStyle
@@ -6779,6 +6838,7 @@ fn apply_scanned_step(
                 kind,
                 packing,
                 leader_kind: None,
+                shift: None,
             });
             schedule_everybox(command, stores, kind.horizontal());
             Ok(ReplayStep::Continue)
@@ -6817,6 +6877,7 @@ fn apply_scanned_step(
                 kind: ReplayBoxKind::Insert(class),
                 packing: PackSpec::Natural,
                 leader_kind: None,
+                shift: None,
             });
             // Unlike `\hbox`/`\vbox`/`\vtop`, §968 never begins the
             // `\everyhbox`/`\everyvbox` token list for an insertion body.
@@ -6851,8 +6912,14 @@ fn apply_scanned_step(
                 kind,
                 packing,
                 leader_kind: Some(leader_kind),
+                shift: None,
             });
             schedule_everybox(command, stores, kind.horizontal());
+            Ok(ReplayStep::Continue)
+        }
+        ScannedStep::BoxShift(shift) => apply_box_shift(shift, command, modes, stores, boxes),
+        ScannedStep::IllegalBoxShift { token } => {
+            crate::diagnostics::report_illegal_case(stores, token, modes.current_mode());
             Ok(ReplayStep::Continue)
         }
         ScannedStep::BeginSimpleGroup => {
@@ -7096,6 +7163,18 @@ fn apply_scanned_step(
                 // plain.tex's `\centerline`) appended directly in vertical
                 // mode: the node landed in the mode-nest list rather than the
                 // page contribution list the page builder actually drains.
+                //
+                // TeX82 §1073's box-shift prefixes (`\raise`/`\lower`/
+                // `\moveleft`/`\moveright`) reach exactly this branch: their
+                // wrapped `\hbox`/`\vbox`/`\vtop` can never itself be a
+                // `\setbox` target, a `\shipout` operand, or a leader payload
+                // (`scan_box`'s `cur_cmd=make_box` requirement excludes
+                // `vmove`/`hmove`), so `box_state.shift` is only ever set
+                // here.
+                let mut node = node;
+                if let Some(delta) = box_state.shift {
+                    crate::assignments::apply_box_shift_delta(&mut node, delta)?;
+                }
                 crate::assignments::append_box_node_to_current_list(modes, stores, node)?;
                 crate::vertical::build_page_if_outer_vertical(modes, stores)?;
             }
@@ -7707,6 +7786,117 @@ fn glue_scale(spec: GlueSpec, factor: i32, divide: bool) -> Result<GlueSpec, Exe
 /// and replays §1047's `insert_dollar_sign` instead. `\vrule` in math mode
 /// (§1056's `mmode+vrule`) is an ordinary direct contribution and falls
 /// through the `else` branch below like any other mode.
+/// Applies a scanned TeX82 §1073 box-shift prefix (`\raise`, `\lower`,
+/// `\moveleft`, `\moveright`). `ScannedBoxShiftPayload::Construction` opens
+/// the same `BoxBeginGroup`/`BoxEndGroup` brace-matching episode as an
+/// ordinary `\hbox`/`\vbox`/`\vtop` (`BeginBox`/`BeginLeaderBox`'s twin),
+/// deferring the shift until `BoxEndGroup` packages the body; every other
+/// payload resolves to a node immediately and is shifted and appended right
+/// here, exactly like `\box<n>`, `\lastbox`, and `\vsplit` do outside a
+/// shift.
+fn apply_box_shift(
+    shift: ScannedBoxShift,
+    command: &mut CommandState,
+    modes: &mut ModeNest,
+    stores: &mut Universe,
+    boxes: &mut ReplayBoxes,
+) -> Result<ReplayStep, ExecError> {
+    match shift.payload {
+        ScannedBoxShiftPayload::Missing => {
+            // `scan_box`'s own "A <box> was supposed to be here" recovery
+            // (tex.web §1076); the rejected command has already been backed
+            // up by `scan_box_shift_payload` for ordinary replay.
+            stores.world_mut().write_text(
+                PrintSink::TerminalAndLog,
+                "\n! A <box> was supposed to be here.\nI was expecting to see \\hbox or \\vbox or \\copy or \\box or\nsomething like that. So you might find something missing in\nyour output. But keep trying; you can fix this later.\n",
+            );
+            Ok(ReplayStep::Continue)
+        }
+        ScannedBoxShiftPayload::BoxRegister { index, copy } => {
+            let index =
+                u16::try_from(index).map_err(|_| ExecError::RegisterNumberOutOfRange(index))?;
+            let id = if copy {
+                stores.box_reg(index)
+            } else {
+                stores.take_box_reg_same_level(index)
+            };
+            if copy && let Some(id) = id {
+                stores.pin_survivor(id);
+            }
+            let node = id.and_then(|id| stores.nodes(id).first().map(|node| node.to_owned()));
+            append_shifted_box(modes, stores, node, shift.delta)?;
+            Ok(ReplayStep::Continue)
+        }
+        ScannedBoxShiftPayload::LastBox => {
+            let node = crate::assignments::take_last_box(modes, stores)?;
+            append_shifted_box(modes, stores, node, shift.delta)?;
+            Ok(ReplayStep::Continue)
+        }
+        ScannedBoxShiftPayload::VSplit(split) => {
+            if split.missing_to {
+                stores.world_mut().write_text(
+                    PrintSink::TerminalAndLog,
+                    "\n! Missing `to' inserted.\nI'm working on `\\vsplit<box number> to <dimen>';\nwill look for the <dimen> next.\n",
+                );
+            }
+            let index = u16::try_from(split.index)
+                .map_err(|_| ExecError::RegisterNumberOutOfRange(split.index))?;
+            let node = crate::assignments::split_vbox_register(stores, index, split.height)?;
+            append_shifted_box(modes, stores, node, shift.delta)?;
+            Ok(ReplayStep::Continue)
+        }
+        ScannedBoxShiftPayload::Construction(construction) => {
+            let kind = match construction.kind {
+                ScannedBoxKind::HBox => ReplayBoxKind::HBox,
+                ScannedBoxKind::VBox => ReplayBoxKind::VBox,
+                ScannedBoxKind::VTop => ReplayBoxKind::VTop,
+            };
+            let packing = match construction.packing {
+                ScannedPackingSpec::Natural => PackSpec::Natural,
+                ScannedPackingSpec::Exactly(size) => PackSpec::Exactly(size),
+                ScannedPackingSpec::Spread(size) => PackSpec::Spread(size),
+            };
+            stores.enter_group_with_kind(kind.group_kind());
+            modes.push(if kind.horizontal() {
+                Mode::RestrictedHorizontal
+            } else {
+                Mode::InternalVertical
+            });
+            boxes.active_boxes.push(ActiveReplayBox {
+                target: None,
+                ships_out: false,
+                opening_brace_replay: construction.opening_brace_replay,
+                body_opener_pending: construction.opening_brace_replay,
+                depth: 1,
+                kind,
+                packing,
+                leader_kind: None,
+                shift: Some(shift.delta),
+            });
+            schedule_everybox(command, stores, kind.horizontal());
+            Ok(ReplayStep::Continue)
+        }
+    }
+}
+
+/// Applies TeX82 §1073's `shift_amount(cur_box):=box_context` to an already
+/// scanned box, then appends it exactly like an ordinary standalone box
+/// (`\box<n>`'s bare append, or `BoxEndGroup`'s final branch). A void box is
+/// a no-op, matching `box_end`'s `if cur_box<>null` guard.
+fn append_shifted_box(
+    modes: &mut ModeNest,
+    stores: &mut Universe,
+    node: Option<Node>,
+    delta: Scaled,
+) -> Result<(), ExecError> {
+    let Some(mut node) = node else {
+        return Ok(());
+    };
+    crate::assignments::apply_box_shift_delta(&mut node, delta)?;
+    crate::assignments::append_box_node_to_current_list(modes, stores, node)?;
+    crate::vertical::build_page_if_outer_vertical(modes, stores)
+}
+
 fn apply_scanned_rule(
     command: &mut CommandState,
     modes: &mut ModeNest,

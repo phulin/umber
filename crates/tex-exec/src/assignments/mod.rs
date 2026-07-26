@@ -55,6 +55,7 @@ pub(crate) use boxes::execute_scanned_box_register;
 pub(crate) use boxes::hpack_with_overfull_rule;
 pub(crate) use boxes::scan_math_box;
 use boxes::*;
+pub(crate) use boxes::{apply_box_shift_delta, take_last_box};
 pub(crate) use boxes::{execute_scanned_last_box, execute_scanned_unbox};
 pub(crate) use boxes::{scan_box_group, scan_pack_spec, split_vbox_register};
 use fonts::*;

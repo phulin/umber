@@ -672,6 +672,31 @@ mode then invokes `build_page`, which owns §§980--987's insertion-class
 splitting and height accounting (`tex-exec::page_builder`) once the node
 reaches the page contribution list.
 
+TeX82 §1073's box-shift prefixes (`\raise`, `\lower`, `\moveleft`,
+`\moveright`) cross the boundary as one completed operation, unlike the
+box-opener family above: `CommandProcessor::scan_box_shift` owns the mode
+legality that `tex.web`'s `abs(mode)+cur_cmd` dispatch performs by construction
+(`\raise`/`\lower` legal only outside vertical mode, `\moveleft`/`\moveright`
+only inside it; the three complementary "Forbidden cases" combinations never
+reach a scanner at all, so replay's `IllegalBoxShift` reports
+`report_illegal_case` without having scanned anything), the already-signed
+dimension (`\lower`/`\moveright` keep it, `\raise`/`\moveleft` negate it), and
+then `scan_box`'s own operand (§1076): any `make_box` command. `\hbox`/`\vbox`/
+`\vtop` reuse `scan_box_construction` and are returned as an ordinary
+`ScannedBoxShiftPayload::Construction`, deferring to the same
+`active_boxes`/`BoxBeginGroup`/`BoxEndGroup` machinery as `BeginBox` --
+`ActiveReplayBox` carries the pending signed shift, applied to
+`shift_amount(cur_box)` immediately before `BoxEndGroup`'s ordinary
+(non-register, non-shipout, non-leader) append, since a box-shift's own box
+can never itself be a `\setbox` target, `\shipout` operand, or leader payload
+(`scan_box` requires `cur_cmd=make_box`, which `vmove`/`hmove` never are).
+`\box`, `\copy`, `\lastbox`, and `\vsplit` instead resolve to a node
+immediately inside `tex-command`, exactly as they do outside a shift, and
+replay shifts and appends that completed value the same way `\box<n>` does
+standalone. A rejected non-box operand replays `scan_box`'s own "A <box> was
+supposed to be here" backup exactly like `scan_leader_payload`'s twin
+recovery, leaving the diagnostic to replay since it needs a `Universe` sink.
+
 ### 5.4 Proposed module layout
 
 ```text

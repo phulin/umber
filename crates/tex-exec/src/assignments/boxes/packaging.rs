@@ -152,7 +152,7 @@ fn recover_missing_box(
     Ok(None)
 }
 
-pub(super) fn take_last_box(
+pub(crate) fn take_last_box(
     nest: &mut ModeNest,
     stores: &mut Universe,
 ) -> Result<Option<Node>, ExecError> {

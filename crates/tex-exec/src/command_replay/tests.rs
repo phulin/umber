@@ -4108,6 +4108,212 @@ fn canonical_insert_at_outer_vertical_reaches_the_page_builder() {
     );
 }
 
+/// Extracts the shift of each `HList`/`VList` child of `children`, skipping
+/// interleaved glue (e.g. `\baselineskip` inserted between vertical-list
+/// boxes) so tests can assert on box shifts alone.
+fn box_shifts(universe: &Universe, children: tex_state::ids::NodeListId) -> Vec<Scaled> {
+    universe
+        .nodes(children)
+        .into_iter()
+        .filter_map(|node| match node.to_owned() {
+            Node::HList(box_node) | Node::VList(box_node) => Some(box_node.shift),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn canonical_raise_lower_apply_signed_shift_in_horizontal_mode() {
+    // TeX82 §1073: `hmode+vmove` is legal (`\raise`/`\lower`'s own mode
+    // family), and `t:=cur_chr; scan_normal_dimen; if t=0 then
+    // scan_box(cur_val) else scan_box(-cur_val)` -- `\lower` (chr_code 0)
+    // keeps the scanned dimension, `\raise` (chr_code 1) negates it.
+    let mut universe = Universe::new();
+    let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+    register_source(
+        &mut control,
+        br"\setbox0=\hbox{\lower3pt\hbox{}\raise2pt\hbox{}}",
+    );
+    run_to_end(&mut control, &mut universe);
+
+    let outer = universe
+        .box_reg(0)
+        .and_then(|id| universe.nodes(id).first().map(|node| node.to_owned()))
+        .expect("outer hbox stores");
+    let Node::HList(outer) = outer else {
+        panic!("setbox0 contains an hbox");
+    };
+    assert_eq!(
+        box_shifts(&universe, outer.children),
+        vec![
+            Scaled::from_raw(3 * Scaled::UNITY),
+            Scaled::from_raw(-2 * Scaled::UNITY),
+        ],
+        "\\lower keeps its sign, \\raise negates it"
+    );
+}
+
+#[test]
+fn canonical_moveleft_moveright_apply_signed_shift_in_vertical_mode() {
+    // TeX82 §1073: `vmode+hmove` is legal (`\moveleft`/`\moveright`'s own
+    // mode family). `\moveright` (chr_code 0) keeps the scanned dimension,
+    // `\moveleft` (chr_code 1) negates it -- the opposite pairing from
+    // `\raise`/`\lower` even though the sign rule is the same shape.
+    let mut universe = Universe::new();
+    let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+    register_source(
+        &mut control,
+        br"\setbox0=\vbox{\moveright3pt\hbox{}\moveleft2pt\hbox{}}",
+    );
+    run_to_end(&mut control, &mut universe);
+
+    let outer = universe
+        .box_reg(0)
+        .and_then(|id| universe.nodes(id).first().map(|node| node.to_owned()))
+        .expect("outer vbox stores");
+    let Node::VList(outer) = outer else {
+        panic!("setbox0 contains a vbox");
+    };
+    assert_eq!(
+        box_shifts(&universe, outer.children),
+        vec![
+            Scaled::from_raw(3 * Scaled::UNITY),
+            Scaled::from_raw(-2 * Scaled::UNITY),
+        ],
+        "\\moveright keeps its sign, \\moveleft negates it"
+    );
+}
+
+#[test]
+fn canonical_box_shift_illegal_mode_reports_and_never_scans_a_dimension() {
+    // TeX82 §1073's "Forbidden cases" list `hmode+hmove` (`\moveleft`/
+    // `\moveright` used outside vertical mode) alongside `vmode+vmove` and
+    // `mmode+hmove`. `report_illegal_case` fires immediately and
+    // `scan_normal_dimen` is never called, so the following "2pt" is left
+    // as perfectly ordinary character tokens -- not consumed as an
+    // operand -- and `\hbox{}` after them is a plain, unshifted box. A real
+    // font is selected first so those characters actually reach the list
+    // instead of being dropped as "Missing character" under `\nullfont`.
+    let mut universe = Universe::new();
+    let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+    register_cmr10_font(&mut control, &mut universe);
+    register_source(
+        &mut control,
+        br"\font\f=cmr10 \setbox0=\hbox{\f \moveleft2pt\hbox{}}",
+    );
+    run_to_end(&mut control, &mut universe);
+
+    let text = terminal_text(&universe);
+    assert!(
+        text.contains("You can't use `\\moveleft' in restricted horizontal mode"),
+        "illegal box-shift mode is diagnosed: {text}"
+    );
+
+    let outer = universe
+        .box_reg(0)
+        .and_then(|id| universe.nodes(id).first().map(|node| node.to_owned()))
+        .expect("outer hbox stores");
+    let Node::HList(outer) = outer else {
+        panic!("setbox0 contains an hbox");
+    };
+    let children = universe.nodes(outer.children);
+    let chars: String = children
+        .iter()
+        .filter_map(|node| match node.to_owned() {
+            Node::Char { ch, .. } => Some(ch),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        chars, "2pt",
+        "the un-scanned dimension became ordinary characters: {children:?}"
+    );
+    assert_eq!(
+        box_shifts(&universe, outer.children),
+        vec![Scaled::from_raw(0)],
+        "the trailing \\hbox{{}} is an ordinary, unshifted box"
+    );
+}
+
+#[test]
+fn canonical_box_shift_applies_to_box_register_and_last_box() {
+    // TeX82 §1076's `scan_box` accepts any `make_box` command, not just
+    // `\hbox`/`\vbox`/`\vtop`: `\box`/`\copy` and `\lastbox` resolve to a
+    // node immediately rather than opening a group, and the shift must
+    // still apply to that immediate result. (A box-shift's own box can
+    // never itself be a `\setbox` target -- `scan_box` requires
+    // `cur_cmd=make_box`, which `\raise`/`\lower`/`\moveleft`/`\moveright`
+    // never are -- so both results are observed as the last thing appended
+    // to an enclosing box body instead.)
+    let mut universe = Universe::new();
+    let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+    register_source(
+        &mut control,
+        br"\setbox1=\hbox{}\setbox0=\hbox{\raise5pt\box1}\setbox3=\hbox{\hbox{}\lower4pt\lastbox}",
+    );
+    run_to_end(&mut control, &mut universe);
+
+    let register_shift = universe
+        .box_reg(0)
+        .and_then(|id| universe.nodes(id).first().map(|node| node.to_owned()))
+        .expect("outer hbox stores");
+    let Node::HList(register_shift) = register_shift else {
+        panic!("setbox0 contains an hbox");
+    };
+    assert_eq!(
+        box_shifts(&universe, register_shift.children),
+        vec![Scaled::from_raw(-5 * Scaled::UNITY)],
+        "\\raise5pt\\box1 shifts the register's box by -5pt"
+    );
+
+    let last_box_shift = universe
+        .box_reg(3)
+        .and_then(|id| universe.nodes(id).first().map(|node| node.to_owned()))
+        .expect("outer hbox stores");
+    let Node::HList(last_box_shift) = last_box_shift else {
+        panic!("setbox3 contains an hbox");
+    };
+    // `\lastbox` removes the inner `\hbox{}` from this same body, then the
+    // shifted result is re-appended to it -- so exactly one child remains.
+    assert_eq!(
+        box_shifts(&universe, last_box_shift.children),
+        vec![Scaled::from_raw(4 * Scaled::UNITY)],
+        "\\lower4pt\\lastbox shifts the removed box by +4pt and reappends it"
+    );
+}
+
+#[test]
+fn canonical_box_shift_missing_box_operand_recovers_and_replays_the_command() {
+    // TeX82 §1076's `scan_box` "A <box> was supposed to be here" recovery:
+    // a non-`make_box` command is backed up and replayed normally, rather
+    // than being consumed as (or silently dropping) the shift's operand.
+    let mut universe = Universe::new();
+    let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+    register_source(&mut control, br"\setbox0=\hbox{\raise2pt\kern1pt}");
+    run_to_end(&mut control, &mut universe);
+
+    let text = terminal_text(&universe);
+    assert!(
+        text.contains("A <box> was supposed to be here"),
+        "the missing box operand is diagnosed: {text}"
+    );
+
+    let outer = universe
+        .box_reg(0)
+        .and_then(|id| universe.nodes(id).first().map(|node| node.to_owned()))
+        .expect("outer hbox stores");
+    let Node::HList(outer) = outer else {
+        panic!("setbox0 contains an hbox");
+    };
+    let children = universe.nodes(outer.children);
+    assert!(
+        children
+            .iter()
+            .any(|node| matches!(node.to_owned(), Node::Kern { amount, .. } if amount == Scaled::from_raw(Scaled::UNITY))),
+        "the backed-up \\kern1pt was replayed normally: {children:?}"
+    );
+}
+
 #[test]
 fn canonical_assignments_cover_code_tables_and_reject_macro_prefixes() {
     let mut universe = Universe::new();

@@ -21,10 +21,9 @@ use leaders::{leader_glue_kind, scan_leader_glue, scan_leader_payload};
 pub(super) use packaging::scan_box_value_node;
 use packaging::{
     ScannedBoxValue, first_box_node, kind_for_primitive, scan_box_node, scan_box_value,
-    take_last_box,
 };
 pub(crate) use packaging::{hpack_owned_with_overfull_rule, hpack_with_overfull_rule};
-pub(crate) use packaging::{scan_box_group, scan_pack_spec};
+pub(crate) use packaging::{scan_box_group, scan_pack_spec, take_last_box};
 use vsplit::scan_vsplit_node;
 pub(crate) use vsplit::split_vbox_register;
 
@@ -724,14 +723,24 @@ fn apply_shift(
     primitive: UnexpandablePrimitive,
     amount: Scaled,
 ) -> Result<(), ExecError> {
-    let box_node = match node {
-        Node::HList(box_node) | Node::VList(box_node) => box_node,
-        _ => return Err(ExecError::MissingToken { context: "box" }),
-    };
     let delta = match primitive {
         UnexpandablePrimitive::Lower | UnexpandablePrimitive::MoveRight => amount,
         UnexpandablePrimitive::Raise | UnexpandablePrimitive::MoveLeft => -amount,
         _ => unreachable!("caller restricts shift primitives"),
+    };
+    apply_box_shift_delta(node, delta)
+}
+
+/// TeX82 §1073's `shift_amount(cur_box):=box_context`, applied directly to an
+/// already-signed delta. `\raise`/`\moveleft` negate their scanned dimension
+/// and `\lower`/`\moveright` keep it (tex.web's `t:=cur_chr; scan_normal_dimen;
+/// if t=0 then scan_box(cur_val) else scan_box(-cur_val)`); callers that have
+/// already resolved that sign (the canonical box-shift path) call this
+/// directly, while [`apply_shift`] resolves it from a legacy primitive first.
+pub(crate) fn apply_box_shift_delta(node: &mut Node, delta: Scaled) -> Result<(), ExecError> {
+    let box_node = match node {
+        Node::HList(box_node) | Node::VList(box_node) => box_node,
+        _ => return Err(ExecError::MissingToken { context: "box" }),
     };
     box_node.shift = box_node
         .shift
