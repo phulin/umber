@@ -1053,6 +1053,38 @@ impl CommandProcessor<'_> {
                 };
                 InternalValue::Integer(value)
             }
+            // TeX82 §424's "Fetch an item in the current node, if
+            // appropriate" (`last_item`): `\lastpenalty`, `\lastkern`, and
+            // `\lastskip` read the current list's tail node, or -- in the
+            // outer vertical list, whose tail moves to the page immediately
+            // -- the page builder's own `last_penalty`/`last_kern`/
+            // `last_glue` memo (§996). Like `space_factor` above, this is
+            // executor/page-owned state projected through the bounded host
+            // capability rather than durable command state. When the tail
+            // matches none of the three tracked shapes (empty list,
+            // character, or any other node type), tex.web leaves `cur_val`
+            // at the zero it initialized for the requested level; `None`
+            // here plays that same role for every one of the three
+            // primitives.
+            Meaning::UnexpandablePrimitive(UnexpandablePrimitive::LastPenalty) => {
+                InternalValue::Integer(match self.host.last_node() {
+                    Some(crate::LastNodeItem::Penalty(value)) => value,
+                    _ => 0,
+                })
+            }
+            Meaning::UnexpandablePrimitive(UnexpandablePrimitive::LastKern) => {
+                InternalValue::Dimension(match self.host.last_node() {
+                    Some(crate::LastNodeItem::Kern(value)) => value,
+                    _ => Scaled::from_raw(0),
+                })
+            }
+            Meaning::UnexpandablePrimitive(UnexpandablePrimitive::LastSkip) => {
+                match self.host.last_node() {
+                    Some(crate::LastNodeItem::Glue(value)) => InternalValue::Glue(value),
+                    Some(crate::LastNodeItem::MuGlue(value)) => InternalValue::MuGlue(value),
+                    _ => InternalValue::Glue(GlueSpec::ZERO),
+                }
+            }
             // TeX82 §424's `scan_something_internal` groups `char_given` and
             // `math_given` under one case: `scanned_result(cur_chr)(int_val)`.
             // A `\chardef` or `\mathchardef` constant scans as its stored

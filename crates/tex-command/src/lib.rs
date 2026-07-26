@@ -26,7 +26,7 @@ pub use command::{CurrentCommand, DeliveryStamp};
 pub use error::CommandError;
 pub use host::{
     CommandHostCapabilities, CommandHostContext, ConditionalMode, ConditionalState, FontResource,
-    PdfImageResource,
+    LastNodeItem, PdfImageResource,
 };
 pub use input::{
     InvalidSourceCharacter, LexerState, LineTerminator, MalformedUnicodeRange, PhysicalLine,

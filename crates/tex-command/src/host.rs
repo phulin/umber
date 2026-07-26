@@ -4,6 +4,8 @@ use std::collections::BTreeMap;
 
 use crate::{PdfImageRequest, SourceRegistration};
 use std::path::{Path, PathBuf};
+use tex_state::glue::GlueSpec;
+use tex_state::scaled::Scaled;
 use tex_state::world::FileContent;
 
 /// Immutable font bytes selected by the host for a canonical `\\font` replay.
@@ -78,6 +80,31 @@ pub enum ConditionalMode {
     Math,
 }
 
+/// TeX82 §424's "last item in the current list" fetch result, for
+/// `\lastpenalty`, `\lastkern`, and `\lastskip`.
+///
+/// This is a copy-only query result refreshed by the executor for each
+/// bounded command operation, exactly like [`ConditionalState`] and the
+/// horizontal-mode space factor: the current list's tail node (or, in the
+/// outer vertical list, the page builder's own `last_glue`/`last_penalty`/
+/// `last_kern` memo) is executor- and page-owned state that command
+/// processing only observes. `None` means the tail node matched none of
+/// these three shapes (an empty list, a character, or any other node type),
+/// in which case every one of the three primitives reads its level-specific
+/// zero, per tex.web's "Fetch an item in the current node, if appropriate".
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum LastNodeItem {
+    /// The tail is a penalty node: `\lastpenalty` reads its value.
+    Penalty(i32),
+    /// The tail is a kern node: `\lastkern` reads its width.
+    Kern(Scaled),
+    /// The tail is a glue node: `\lastskip` reads its specification.
+    Glue(GlueSpec),
+    /// The tail is a glue node created in mu units (TeX82's `mu_glue`
+    /// subtype, e.g. from `\mskip`): `\lastskip` reads it at `mu_val` level.
+    MuGlue(GlueSpec),
+}
+
 /// Opaque capability set installed by the executor for one bounded operation.
 ///
 /// The fields remain private so host access can only be introduced as typed
@@ -91,6 +118,7 @@ pub struct CommandHostCapabilities {
     job_name: String,
     conditional_state: ConditionalState,
     space_factor: Option<i32>,
+    last_node: Option<LastNodeItem>,
 }
 
 impl Default for CommandHostCapabilities {
@@ -104,6 +132,7 @@ impl Default for CommandHostCapabilities {
             // vertical mode. Real execution replaces this per operation.
             conditional_state: ConditionalState::new(ConditionalMode::Vertical, false),
             space_factor: None,
+            last_node: None,
         }
     }
 }
@@ -191,6 +220,13 @@ impl CommandHostCapabilities {
     pub fn set_space_factor(&mut self, space_factor: Option<i32>) {
         self.space_factor = space_factor;
     }
+
+    /// Installs the current list's tail-node classification for one command
+    /// operation, for `\lastpenalty`/`\lastkern`/`\lastskip`. `None` records
+    /// that the tail matches none of the three tracked node shapes.
+    pub fn set_last_node(&mut self, last_node: Option<LastNodeItem>) {
+        self.last_node = last_node;
+    }
 }
 
 /// A non-owning host-capability boundary for one command-processor operation.
@@ -238,6 +274,11 @@ impl<'a> CommandHostContext<'a> {
     #[must_use]
     pub(crate) const fn space_factor(&self) -> Option<i32> {
         self._capabilities.space_factor
+    }
+
+    #[must_use]
+    pub(crate) const fn last_node(&self) -> Option<LastNodeItem> {
+        self._capabilities.last_node
     }
 }
 
