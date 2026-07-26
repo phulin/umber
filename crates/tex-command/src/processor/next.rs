@@ -275,9 +275,10 @@ impl CommandProcessor<'_> {
         ) {
             return Err(CommandError::input_invariant());
         }
-        // The brace arrived by replaying the next-cell opener backup. TeX82
-        // retires that exhausted backup before §1103 makes its own backup.
-        self.back_input_after_backup_replay(command)?;
+        // The brace arrived by replaying the next-cell opener backup. §325's
+        // stack-conservation loop retires that exhausted backup before §1103
+        // makes its own backup.
+        self.back_input(command)?;
         let frozen_cr = self
             .state
             .primitive_token("cr")
@@ -461,6 +462,7 @@ impl CommandProcessor<'_> {
         &mut self,
         spelling: TracedTokenWord,
     ) -> Result<(), CommandError> {
+        self.conserve_input_stack()?;
         let level = self.command.push_token_level(
             TokenPayload::BackedUp(SharedBackedUpBuffer::new(vec![BackedUpToken {
                 spelling,
@@ -596,7 +598,6 @@ impl CommandProcessor<'_> {
         &mut self,
         command: CurrentCommand,
     ) -> Result<(), CommandError> {
-        self.retire_exhausted_backup_before_scalar_replay(command.delivery_stamp())?;
         self.back_input(command)?;
 
         let output = TracedTokenList::synthetic(self.state.tok_param(TokParam::OUTPUT));
@@ -761,17 +762,6 @@ impl CommandProcessor<'_> {
             .ok_or(CommandError::input_invariant())
     }
 
-    /// Replaces an exhausted one-token backup with a fresh backup of its
-    /// replayed delivery.  TeX82 uses this when a scanner hands an opening
-    /// brace from one structural phase to the next.
-    pub fn back_input_after_backup_replay(
-        &mut self,
-        command: CurrentCommand,
-    ) -> Result<(), CommandError> {
-        self.retire_exhausted_backup_before_scalar_replay(command.delivery_stamp())?;
-        self.back_input(command)
-    }
-
     /// Restores a command and records the diagnostic selected by `back_error`.
     ///
     /// Full diagnostic-text rendering for the identities this records remains
@@ -800,12 +790,15 @@ impl CommandProcessor<'_> {
             return Err(CommandError::StaleDelivery);
         }
         self.last_delivery = None;
+        // §325 runs the stack-conservation loop before it touches
+        // `align_state` and before it pushes the `backed_up` list, so every
+        // depleted level retires ahead of the backup.
+        self.conserve_input_stack()?;
         #[cfg(any(test, feature = "instrumentation"))]
         let previous_align_state = self.command.alignment.align_state;
         #[cfg(any(test, feature = "instrumentation"))]
         let adjustment = command.alignment_adjustment();
         self.undo_alignment_delivery(&command);
-        self.retire_exhausted_parameter_before_backup(stamp)?;
 
         let level = self.command.push_token_level(
             TokenPayload::BackedUp(SharedBackedUpBuffer::new(vec![BackedUpToken {
@@ -1265,85 +1258,35 @@ impl CommandProcessor<'_> {
         Some((spelling.0, position, cursor.behavior.clone(), spelling.1))
     }
 
-    /// TeX's `back_input` first lets an exhausted one-token macro parameter
-    /// level retire, then installs the backed-up command above its caller.
-    /// Other deliveries retain their live cursor until their next raw fetch.
-    fn retire_exhausted_parameter_before_backup(
-        &mut self,
-        stamp: DeliveryStamp,
-    ) -> Result<(), CommandError> {
-        let exhausted_parameter = matches!(
-            self.command.input.levels.last(),
-            Some(InputLevel::Tokens(cursor))
-                if cursor.identity.0 == stamp.input_level()
-                    && matches!(cursor.behavior, TokenBehavior::Parameter)
-                    && self.next_stored_token(cursor).is_none()
-        );
-        if exhausted_parameter {
-            match self.retire_and_restart(InputLevelId(stamp.input_level()))? {
-                RetirementRestart::Continue => Ok(()),
-                RetirementRestart::Stop
-                | RetirementRestart::EndV(_)
-                | RetirementRestart::Completed => Err(CommandError::input_invariant()),
-            }
-        } else {
-            Ok(())
-        }
-    }
-
-    /// Scalar scanner retries replay an exhausted one-token frame before
-    /// asking for another token. Retire the frame first so the retry has the
-    /// same input lifecycle as TeX82's `back_list` hand-off. This applies both
-    /// to an ordinary prior backup and to a transient recovery insertion.
-    pub(crate) fn retire_exhausted_backup_before_scalar_replay(
-        &mut self,
-        stamp: DeliveryStamp,
-    ) -> Result<(), CommandError> {
-        let exhausted_backup = matches!(
-            self.command.input.levels.last(),
-            Some(InputLevel::Tokens(cursor))
-                if cursor.identity.0 == stamp.input_level()
-                    && matches!(
-                        cursor.behavior,
-                        TokenBehavior::BackedUp(_) | TokenBehavior::Recovery
-                    )
-                    && self.next_stored_token(cursor).is_none()
-        );
-        if exhausted_backup {
-            match self.retire_and_restart(InputLevelId(stamp.input_level()))? {
-                RetirementRestart::Continue => Ok(()),
-                RetirementRestart::Stop
-                | RetirementRestart::EndV(_)
-                | RetirementRestart::Completed => Err(CommandError::input_invariant()),
-            }
-        } else {
-            Ok(())
-        }
-    }
-
-    /// TeX82 §390 cleans off *every* recently depleted token list before
-    /// `macro_call` installs the macro body:
+    /// TeX82 §§325 and 390 clean off *every* recently depleted token list
+    /// before a new one is pushed. Both sections spell the same loop, and
+    /// §390's comment states its purpose for both:
     ///
     /// ```text
     /// while (state=token_list)and(loc=null)and(token_type<>v_template) do
     ///   end_token_list; {conserve stack space}
     /// ```
     ///
-    /// The loop is generic over token-list kind by construction -- exhausted
-    /// macro bodies, replayed parameters, backups, recovery insertions, and
-    /// stored replay episodes all drain here -- so a macro that ends with a
-    /// call to itself cannot grow the input stack without bound, and every
-    /// resulting retirement is observable *before* the new body's push.
-    /// `v_template` is the section's sole exception: an exhausted v-part stays
-    /// live until `do_endv` retires it.
-    pub(crate) fn retire_depleted_token_lists_before_macro_replay(
-        &mut self,
-    ) -> Result<(), CommandError> {
+    /// §390 runs it before `macro_call` installs a macro body; §325 runs it as
+    /// `back_input`'s first act, before the one-token `backed_up` list. The
+    /// loop is generic over token-list kind by construction -- exhausted macro
+    /// bodies, replayed parameters, backups, recovery insertions, and stored
+    /// replay episodes all drain here -- so a macro that ends with a call to
+    /// itself cannot grow the input stack without bound, and every resulting
+    /// retirement is observable *before* the new level's push. `v_template` is
+    /// the sections' sole exception: an exhausted v-part stays live until
+    /// `do_endv` retires it.
+    ///
+    /// Because the condition is `loc=null` alone, this must never be narrowed
+    /// to a particular token-list kind or to the level that made the last
+    /// delivery: a run of levels can be depleted at once, and the whole run
+    /// retires before the push.
+    pub(crate) fn conserve_input_stack(&mut self) -> Result<(), CommandError> {
         let mut completed = false;
         loop {
             let depleted = match self.command.input.levels.last() {
                 Some(InputLevel::Tokens(cursor))
-                    if drains_before_macro_replay(&cursor.behavior)
+                    if drains_for_stack_conservation(&cursor.behavior)
                         && self.next_stored_token(cursor).is_none() =>
                 {
                     Some(cursor.identity)
@@ -1676,10 +1619,10 @@ enum RetirementRestart {
     Completed,
 }
 
-/// Exhaustive over [`TokenBehavior`]: TeX82 §390's pre-replay cleanup loop
-/// excludes exactly one token type, `v_template`. A new token-list kind must
-/// state which side of that rule it is on rather than inherit a default.
-fn drains_before_macro_replay(behavior: &TokenBehavior) -> bool {
+/// Exhaustive over [`TokenBehavior`]: TeX82 §§325 and 390's stack-conservation
+/// loop excludes exactly one token type, `v_template`. A new token-list kind
+/// must state which side of that rule it is on rather than inherit a default.
+fn drains_for_stack_conservation(behavior: &TokenBehavior) -> bool {
     match behavior {
         TokenBehavior::Ordinary
         | TokenBehavior::Recovery
@@ -2488,7 +2431,10 @@ mod tests {
             .expect("token delivers")
             .expect("token level is live");
         processor.back_input(first).expect("token backs up");
-        assert_eq!(processor.command.input.levels.len(), 2);
+        // TeX82 §325 conserves stack space first: the one-token list is
+        // depleted by that delivery, so it retires before the backup is
+        // pushed, leaving the backup alone rather than stacked on a dead level.
+        assert_eq!(processor.command.input.levels.len(), 1);
         let replayed = processor
             .get_next()
             .expect("backed-up token delivers")
@@ -2946,7 +2892,9 @@ mod tests {
         processor
             .back_input_with_treatment(target, BackupTreatment::SuppressExpandableControlSequence)
             .expect("noexpand backs up the exact token-list delivery");
-        assert_eq!(processor.command.input.levels.len(), 2);
+        // §325's stack-conservation loop retires the depleted token list
+        // before the `backed_up` level, independently of its treatment.
+        assert_eq!(processor.command.input.levels.len(), 1);
         assert_eq!(
             processor
                 .get_next()

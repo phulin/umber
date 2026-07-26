@@ -3261,9 +3261,7 @@ fn scan_command(
             }
         )
     {
-        processor
-            .back_input_after_backup_replay(command)
-            .map_err(command_error)?;
+        processor.back_input(command).map_err(command_error)?;
         return Ok(ScannedStep::ReplayBoxOpeningBrace);
     }
     if boxes
@@ -3372,9 +3370,7 @@ fn scan_command(
             // retires that exhausted level, backs `\end` up for the final
             // retry, and only then enters the output token list.
             if *output_dead_cycles >= max_dead_cycles {
-                processor
-                    .back_input_after_backup_replay(command)
-                    .map_err(command_error)?;
+                processor.back_input(command).map_err(command_error)?;
                 Ok(ScannedStep::ForcedOutputShipout)
             } else {
                 processor

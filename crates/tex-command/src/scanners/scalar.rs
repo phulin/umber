@@ -174,7 +174,6 @@ impl CommandProcessor<'_> {
                 Meaning::CharToken { ch: ' ', .. } | Meaning::CharToken { ch: '+', .. } => {}
                 Meaning::CharToken { ch: '-', .. } => negative = !negative,
                 _ => {
-                    self.retire_exhausted_backup_before_scalar_replay(command.delivery_stamp())?;
                     self.back_input(command)?;
                     break;
                 }
@@ -341,7 +340,6 @@ impl CommandProcessor<'_> {
                 // number, treated as zero", backs the operand up, and yields
                 // zero.
                 None => {
-                    self.retire_exhausted_backup_before_scalar_replay(first.delivery_stamp())?;
                     self.back_input(first)?;
                     let scanned = ScannedScalar {
                         value: 0,
@@ -375,7 +373,6 @@ impl CommandProcessor<'_> {
                 // optional following space remains an expanded scanner token.
                 Meaning::CharToken { ch: '`', .. } => self.scan_character_code()?,
                 _ => {
-                    self.retire_exhausted_backup_before_scalar_replay(first.delivery_stamp())?;
                     self.back_input(first)?;
                     let scanned = ScannedScalar {
                         value: 0,
@@ -562,8 +559,6 @@ impl CommandProcessor<'_> {
         mu: bool,
         provenance: ScalarProvenance,
     ) -> Result<Option<(ScannedUnits, bool)>, CommandError> {
-        let stamp = first.delivery_stamp();
-        self.retire_exhausted_backup_before_scalar_replay(stamp)?;
         self.back_input(first)?;
         let replayed = self.get_x_token()?.ok_or(CommandError::input_invariant())?;
         let Meaning::CharToken { ch, .. } = replayed.meaning() else {
@@ -1161,7 +1156,6 @@ impl CommandProcessor<'_> {
             _ => None,
         };
         if unit.is_none() {
-            self.retire_exhausted_backup_before_scalar_replay(command.delivery_stamp())?;
             self.back_input(command)?;
         }
         Ok(unit)
@@ -1172,7 +1166,6 @@ impl CommandProcessor<'_> {
             return Ok(());
         };
         if !matches!(command.meaning(), Meaning::CharToken { ch: ' ', .. }) {
-            self.retire_exhausted_backup_before_scalar_replay(command.delivery_stamp())?;
             self.back_input(command)?;
         }
         Ok(())
@@ -1657,7 +1650,6 @@ impl CommandProcessor<'_> {
         }
         if commands.len() == 1 {
             let command = commands.into_iter().next().expect("checked singleton");
-            self.retire_exhausted_backup_before_scalar_replay(command.delivery_stamp())?;
             return self.back_input(command);
         }
         for command in &commands {

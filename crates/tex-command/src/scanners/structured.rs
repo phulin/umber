@@ -2200,7 +2200,7 @@ impl CommandProcessor<'_> {
     /// being recreated by replay main control.
     pub fn replay_alignment_preamble_opening(&mut self) -> Result<(), CommandError> {
         let opening = self.scan_left_brace(true)?;
-        self.back_input_after_backup_replay(opening)
+        self.back_input(opening)
     }
 
     /// Delivers the first alignment cell's lookahead, then backs it up before
