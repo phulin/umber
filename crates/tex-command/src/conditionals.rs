@@ -119,6 +119,15 @@ pub(crate) enum ConditionalDelimiter {
 
 #[allow(dead_code)] // used by pass_text now; delimiter execution follows next
 impl ConditionalDelimiter {
+    #[cfg(any(test, feature = "instrumentation"))]
+    const fn canonical_branch(self) -> &'static str {
+        match self {
+            Self::Or => "or",
+            Self::Else => "else",
+            Self::Fi => "fi",
+        }
+    }
+
     const fn from_meaning(meaning: Meaning) -> Option<Self> {
         match meaning {
             Meaning::ExpandablePrimitive(ExpandablePrimitive::Or) => Some(Self::Or),
@@ -338,37 +347,32 @@ impl CommandProcessor<'_> {
         condition: ConditionId,
         result: bool,
     ) -> Result<(), CommandError> {
-        if result {
-            let evaluating = self
-                .command
-                .conditions
-                .frame(condition)
-                .cloned()
-                .ok_or(CommandError::input_invariant())?;
-            self.command
-                .conditions
-                .change_if_limit(condition, IfLimit::Else)
-                .then_some(())
-                .ok_or(CommandError::input_invariant())?;
-            self.observe_condition("branch", &evaluating, Some("true".into()));
-            let frame = self
-                .command
-                .conditions
-                .frame(condition)
-                .cloned()
-                .ok_or(CommandError::input_invariant())?;
-            self.observe_condition("limit", &frame, None);
-            Ok(())
-        } else {
-            let evaluating = self
-                .command
-                .conditions
-                .frame(condition)
-                .cloned()
-                .ok_or(CommandError::input_invariant())?;
-            self.observe_condition("branch", &evaluating, Some("false".into()));
-            self.resume_after_skip(condition)
+        // TeX.web §498 records the evaluated value while `if_limit` still
+        // says the operands were being scanned, then changes the limit.
+        let evaluating = self
+            .command
+            .conditions
+            .frame(condition)
+            .cloned()
+            .ok_or(CommandError::input_invariant())?;
+        let branch = if result { "true" } else { "false" };
+        self.observe_condition("branch", &evaluating, Some(branch.into()));
+        if !result {
+            return self.resume_after_skip(condition);
         }
+        self.command
+            .conditions
+            .change_if_limit(condition, IfLimit::Else)
+            .then_some(())
+            .ok_or(CommandError::input_invariant())?;
+        let frame = self
+            .command
+            .conditions
+            .frame(condition)
+            .cloned()
+            .ok_or(CommandError::input_invariant())?;
+        self.observe_condition("limit", &frame, None);
+        Ok(())
     }
 
     fn complete_ifcase(
@@ -376,13 +380,7 @@ impl CommandProcessor<'_> {
         condition: ConditionId,
         selected: i32,
     ) -> Result<(), CommandError> {
-        let selected_limb = if selected < 0 {
-            self.skip_to_else_or_fi(condition)?;
-            false
-        } else {
-            self.skip_ifcase_limbs(condition, selected)?
-        };
-        if selected_limb {
+        if self.skip_ifcase_limbs(condition, selected)? {
             self.command
                 .conditions
                 .change_if_limit(condition, IfLimit::Or)
@@ -610,109 +608,73 @@ impl CommandProcessor<'_> {
         }));
     }
 
+    /// TeX.web §509's limb skip, spelled `while n<>0 do begin pass_text; if
+    /// cur_chr=or_code then decr(n) else goto common_ending end`.
+    ///
+    /// A negative case index is not a separate path: `n` only ever decreases,
+    /// so it never reaches zero and the same loop skips through every limb to
+    /// `\else` or `\fi`. Returns whether a limb was actually selected.
     fn skip_ifcase_limbs(
         &mut self,
         condition: ConditionId,
         mut remaining: i32,
     ) -> Result<bool, CommandError> {
-        if remaining == 0 {
-            return Ok(true);
-        }
-        loop {
-            match self.pass_text(condition, ScannerWarning(0))?.delimiter {
-                ConditionalDelimiter::Or => {
-                    let evaluating = self
-                        .command
-                        .conditions
-                        .frame(condition)
-                        .cloned()
-                        .ok_or(CommandError::input_invariant())?;
-                    self.observe_condition("branch", &evaluating, Some("or".into()));
-                    remaining -= 1;
-                    if remaining == 0 {
-                        return Ok(true);
-                    }
-                }
-                ConditionalDelimiter::Else => {
-                    self.command
-                        .conditions
-                        .change_if_limit(condition, IfLimit::Fi);
-                    return Ok(false);
-                }
-                ConditionalDelimiter::Fi => {
-                    let frame = self
-                        .command
-                        .conditions
-                        .pop()
-                        .ok_or(CommandError::input_invariant())?;
-                    self.observe_condition("pop", &frame, None);
-                    return Ok(false);
-                }
+        while remaining != 0 {
+            let delimiter = self.pass_text(condition, ScannerWarning(0))?.delimiter;
+            if delimiter == ConditionalDelimiter::Or {
+                remaining = remaining.saturating_sub(1);
+                continue;
             }
+            self.common_ending(condition, delimiter)?;
+            return Ok(false);
         }
+        Ok(true)
     }
 
-    fn skip_to_else_or_fi(&mut self, condition: ConditionId) -> Result<(), CommandError> {
-        loop {
-            match self.pass_text(condition, ScannerWarning(0))?.delimiter {
-                ConditionalDelimiter::Or => {}
-                ConditionalDelimiter::Else => {
-                    self.command
-                        .conditions
-                        .change_if_limit(condition, IfLimit::Fi);
-                    return Ok(());
-                }
-                ConditionalDelimiter::Fi => {
-                    let frame = self
-                        .command
-                        .conditions
-                        .pop()
-                        .ok_or(CommandError::input_invariant())?;
-                    self.observe_condition("pop", &frame, None);
-                    return Ok(());
-                }
-            }
-        }
-    }
-
+    /// TeX.web §500's `\if\iftrue abc\else d\fi` skip: an `\or` reached while
+    /// looking for this condition's `\else` or `\fi` matches no `\ifcase`
+    /// limb and is diagnosed rather than accepted.
     fn resume_after_skip(&mut self, condition: ConditionId) -> Result<(), CommandError> {
         loop {
-            match self.pass_text(condition, ScannerWarning(0))?.delimiter {
-                ConditionalDelimiter::Else => {
-                    let evaluating = self
-                        .command
-                        .conditions
-                        .frame(condition)
-                        .cloned()
-                        .ok_or(CommandError::input_invariant())?;
-                    self.observe_condition("branch", &evaluating, Some("else".into()));
-                    self.command
-                        .conditions
-                        .change_if_limit(condition, IfLimit::Fi)
-                        .then_some(())
-                        .ok_or(CommandError::input_invariant())?;
-                    let frame = self
-                        .command
-                        .conditions
-                        .frame(condition)
-                        .cloned()
-                        .ok_or(CommandError::input_invariant())?;
-                    self.observe_condition("limit", &frame, None);
-                    return Ok(());
-                }
-                ConditionalDelimiter::Fi => {
-                    let frame = self
-                        .command
-                        .conditions
-                        .pop()
-                        .ok_or(CommandError::input_invariant())?;
-                    self.observe_condition("branch", &frame, Some("fi".into()));
-                    self.observe_condition("pop", &frame, None);
-                    return Ok(());
-                }
-                ConditionalDelimiter::Or => self.record_extra_delimiter(),
+            let delimiter = self.pass_text(condition, ScannerWarning(0))?.delimiter;
+            if delimiter == ConditionalDelimiter::Or {
+                self.record_extra_delimiter();
+                continue;
             }
+            return self.common_ending(condition, delimiter);
         }
+    }
+
+    /// TeX.web §498's `common_ending`: `if cur_chr=fi_code then <Pop the
+    /// condition stack> else if_limit:=fi_code`. Shared verbatim by §498's
+    /// false boolean branch and §509's exhausted `\ifcase` limb count.
+    fn common_ending(
+        &mut self,
+        condition: ConditionId,
+        delimiter: ConditionalDelimiter,
+    ) -> Result<(), CommandError> {
+        if delimiter == ConditionalDelimiter::Fi {
+            let frame = self
+                .command
+                .conditions
+                .pop()
+                .ok_or(CommandError::input_invariant())?;
+            self.observe_condition("pop", &frame, None);
+            return Ok(());
+        }
+        self.command
+            .conditions
+            .change_if_limit(condition, IfLimit::Fi)
+            .then_some(())
+            .ok_or(CommandError::input_invariant())?;
+        let frame = self
+            .command
+            .conditions
+            .frame(condition)
+            .cloned()
+            .ok_or(CommandError::input_invariant())?;
+        self.observe_condition("limit", &frame, None);
+        Ok(())
     }
 
     pub(crate) fn expand_conditional_delimiter(
@@ -748,55 +710,37 @@ impl CommandProcessor<'_> {
             self.record_extra_delimiter();
             return Ok(());
         }
-        match delimiter {
-            ConditionalDelimiter::Fi => {
-                let frame = self
-                    .command
-                    .conditions
-                    .pop()
-                    .ok_or(CommandError::input_invariant())?;
-                self.observe_condition("pop", &frame, None);
-                Ok(())
-            }
-            // Every other accepted delimiter terminates the selected limb.
-            // TeX.web §510's `else` branch is unconditional in the delimiter:
-            // once `cur_chr <= if_limit`, the remaining text up to the
-            // matching `\fi` is skipped and the frame is popped.
-            ConditionalDelimiter::Else | ConditionalDelimiter::Or => {
-                self.command
-                    .conditions
-                    .change_if_limit(frame.identity, IfLimit::Fi);
-                self.skip_to_fi_after_delimiter(frame)
-            }
-        }
+        self.skip_to_fi_after_delimiter(frame, delimiter)
     }
 
-    /// Skips the remainder of a selected limb after its `\else` or `\or`.
-    /// The pre-change frame remains the canonical branch-observation seam;
-    /// the independent stack is then unlinked only after `pass_text` reaches
-    /// its matching `\fi` (TeX.web §510).
+    /// TeX.web §510's accepted-delimiter tail, spelled `while cur_chr<>fi_code
+    /// do pass_text; <Pop the condition stack>`.
     ///
-    /// TeX.web §510 spells this skip `while cur_chr<>fi_code do pass_text`:
-    /// the loop inspects only whether the delimiter `pass_text` stopped at is
-    /// `\fi`. Any `\or`/`\else` closing an unselected remaining limb is
-    /// silently swallowed here, and is never a diagnostic — the ordinary
-    /// multi-arm `\ifcase` with a non-final limb selected reaches this loop
-    /// once per remaining limb.
-    fn skip_to_fi_after_delimiter(&mut self, frame: ConditionFrame) -> Result<(), CommandError> {
-        loop {
-            if self.pass_text(frame.identity, ScannerWarning(0))?.delimiter
-                == ConditionalDelimiter::Fi
-            {
-                self.observe_condition("branch", &frame, Some("fi".into()));
-                let _popped = self
-                    .command
-                    .conditions
-                    .pop()
-                    .ok_or(CommandError::input_invariant())?;
-                self.observe_condition("pop", &frame, None);
-                return Ok(());
-            }
+    /// The loop tests the delimiter already in hand first, so `\fi` skips
+    /// nothing and pops immediately — §510 has no separate `\fi` case. Any
+    /// `\or`/`\else` closing an unselected remaining limb is swallowed by the
+    /// loop and is never a diagnostic: the ordinary multi-arm `\ifcase` with a
+    /// non-final limb selected reaches this loop once per remaining limb.
+    ///
+    /// §510 deliberately leaves `if_limit` alone: the frame is popped at the
+    /// end regardless, and the limit it still carries is what §494's branch
+    /// records name for every limb skipped here.
+    fn skip_to_fi_after_delimiter(
+        &mut self,
+        frame: ConditionFrame,
+        delimiter: ConditionalDelimiter,
+    ) -> Result<(), CommandError> {
+        let mut stopped = delimiter;
+        while stopped != ConditionalDelimiter::Fi {
+            stopped = self.pass_text(frame.identity, ScannerWarning(0))?.delimiter;
         }
+        let popped = self
+            .command
+            .conditions
+            .pop()
+            .ok_or(CommandError::input_invariant())?;
+        self.observe_condition("pop", &popped, None);
+        Ok(())
     }
 
     fn record_extra_delimiter(&mut self) {
@@ -861,8 +805,17 @@ impl CommandProcessor<'_> {
         }
         Ok(())
     }
-    /// TeX.web's `pass_text`: skip through the sole canonical raw delivery
-    /// path, never by peeking at input levels or retokenizing source.
+    /// TeX.web §494's `pass_text`: skip through the sole canonical raw
+    /// delivery path, never by peeking at input levels or retokenizing source.
+    ///
+    /// §494's `done:` label is the one place TeX resolves a skipped limb, so
+    /// it is also the one place the canonical observer records which
+    /// delimiter ended it. Every caller — §498's false branch, §509's
+    /// `\ifcase` limb count, §510's skip to `\fi` — reaches that same label,
+    /// so none of them records a branch of its own. The record names the live
+    /// top-of-stack frame, TeX's `cur_if`/`if_limit`, which is not
+    /// necessarily the frame this skip was started for: §500's
+    /// `\if\iftrue...` case leaves an inner frame on top.
     pub(crate) fn pass_text(
         &mut self,
         condition: ConditionId,
@@ -886,7 +839,20 @@ impl CommandProcessor<'_> {
         // skipping-to-prior transition instead of publishing a spurious
         // normal-to-normal restoration after nested-source EOF.
         self.restore_scanner_status_with_observation(skipping, prior);
+        if let Ok(stop) = &result {
+            self.observe_pass_text_branch(stop.delimiter);
+        }
         result
+    }
+
+    /// TeX.web §494's `done:` branch record, published after the
+    /// scanner-status restoration it follows in the same label.
+    #[allow(unused_variables)]
+    fn observe_pass_text_branch(&mut self, delimiter: ConditionalDelimiter) {
+        #[cfg(any(test, feature = "instrumentation"))]
+        if let Some(frame) = self.command.conditions.current().cloned() {
+            self.observe_condition("branch", &frame, Some(delimiter.canonical_branch().into()));
+        }
     }
 
     #[allow(unused_variables)]
