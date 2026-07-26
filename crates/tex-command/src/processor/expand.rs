@@ -264,7 +264,7 @@ impl CommandProcessor<'_> {
             Meaning::ExpandablePrimitive(primitive) => {
                 Err(CommandError::UnsupportedExpandablePrimitive(primitive))
             }
-            _ => Err(CommandError::InputInvariant),
+            _ => Err(CommandError::input_invariant()),
         }
     }
 
@@ -273,7 +273,7 @@ impl CommandProcessor<'_> {
     fn expand_noexpand(&mut self) -> Result<(), CommandError> {
         let target = self
             .get_token_with_normal_scanner_status()?
-            .ok_or(CommandError::InputInvariant)?;
+            .ok_or(CommandError::input_invariant())?;
         self.back_input_with_treatment(target, BackupTreatment::SuppressExpandableControlSequence)
     }
 
@@ -309,8 +309,8 @@ impl CommandProcessor<'_> {
     /// input. The first delivery is intentionally replayed through an
     /// explicit backed-up level because it is no longer the latest delivery.
     fn expand_expandafter(&mut self) -> Result<(), CommandError> {
-        let first = self.get_token()?.ok_or(CommandError::InputInvariant)?;
-        let second = self.get_token()?.ok_or(CommandError::InputInvariant)?;
+        let first = self.get_token()?.ok_or(CommandError::input_invariant())?;
+        let second = self.get_token()?.ok_or(CommandError::input_invariant())?;
         if is_expandable(second.meaning()) {
             self.expand(second)?;
         } else {
@@ -327,7 +327,7 @@ impl CommandProcessor<'_> {
         let mut name = String::new();
         loop {
             let Some(command) = self.get_x_token()? else {
-                return Err(CommandError::InputInvariant);
+                return Err(CommandError::input_invariant());
             };
             match command.meaning() {
                 Meaning::ExpandablePrimitive(ExpandablePrimitive::EndCsName) => break,
@@ -350,7 +350,7 @@ impl CommandProcessor<'_> {
     fn expand_string(&mut self, opener: CurrentCommand) -> Result<(), CommandError> {
         let target = self
             .get_token_with_normal_scanner_status()?
-            .ok_or(CommandError::InputInvariant)?;
+            .ok_or(CommandError::input_invariant())?;
         self.push_rendered_text(
             &string_text(&self.state, target.spelling().semantic_token()),
             opener.origin(),
@@ -361,7 +361,7 @@ impl CommandProcessor<'_> {
     fn expand_meaning(&mut self, opener: CurrentCommand) -> Result<(), CommandError> {
         let target = self
             .get_token_with_normal_scanner_status()?
-            .ok_or(CommandError::InputInvariant)?;
+            .ok_or(CommandError::input_invariant())?;
         self.push_rendered_text(&meaning_text(&self.state, &target), opener.origin());
         Ok(())
     }
@@ -386,7 +386,7 @@ impl CommandProcessor<'_> {
     /// scanner and changes the observable input ordering.
     fn expand_the(&mut self, opener: CurrentCommand) -> Result<(), CommandError> {
         let Some(target) = self.scan_internal_value()? else {
-            return Err(CommandError::InputInvariant);
+            return Err(CommandError::input_invariant());
         };
         self.expand_the_value(opener.origin(), target.value)
     }
@@ -415,9 +415,9 @@ impl CommandProcessor<'_> {
     }
 
     fn expand_fontname(&mut self, opener: CurrentCommand) -> Result<(), CommandError> {
-        let target = self.get_token()?.ok_or(CommandError::InputInvariant)?;
+        let target = self.get_token()?.ok_or(CommandError::input_invariant())?;
         let Meaning::Font(font) = target.meaning() else {
-            return Err(CommandError::InputInvariant);
+            return Err(CommandError::input_invariant());
         };
         self.push_rendered_text(&self.state.font_name(font), opener.origin());
         Ok(())
@@ -439,7 +439,7 @@ impl CommandProcessor<'_> {
         self.command
             .end_current_source_after_current_line()
             .then_some(())
-            .ok_or(CommandError::InputInvariant)
+            .ok_or(CommandError::input_invariant())
     }
 
     fn expand_mark(&mut self, primitive: ExpandablePrimitive) -> Result<(), CommandError> {

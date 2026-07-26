@@ -186,11 +186,11 @@ impl CommandProcessor<'_> {
         call: crate::CurrentCommand,
     ) -> Result<MacroArguments, CommandError> {
         let Meaning::Macro { definition, .. } = call.meaning() else {
-            return Err(CommandError::InputInvariant);
+            return Err(CommandError::input_invariant());
         };
         let macro_name = call
             .control_sequence()
-            .ok_or(CommandError::InputInvariant)?;
+            .ok_or(CommandError::input_invariant())?;
         let meaning = self.state.macro_definition(definition);
         let pattern = self.state.macro_definition_parameter_pattern(definition);
         // TeX82 §392 calls the parameter matcher only when the macro's
@@ -329,7 +329,7 @@ impl CommandProcessor<'_> {
             }));
             arguments
                 .complete((parameter + 1) as u8, argument)
-                .map_err(|_| CommandError::InputInvariant)?;
+                .map_err(|_| CommandError::input_invariant())?;
         }
         Ok(arguments.finish())
     }

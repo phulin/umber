@@ -8955,7 +8955,7 @@ fn command_error(error: CommandError) -> ExecError {
     match error {
         CommandError::MissingInput(name) => ExecError::MissingCanonicalInput { name },
         CommandError::PdfNavigation(message) => ExecError::PdfNavigation(message),
-        CommandError::InputInvariant
+        CommandError::InputInvariant(_)
         | CommandError::StaleDelivery
         | CommandError::MacroPrefixMismatch
         | CommandError::ParagraphInMacroArgument

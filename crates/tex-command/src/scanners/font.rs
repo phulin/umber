@@ -12,7 +12,7 @@ impl CommandProcessor<'_> {
     /// Scans TeX82's `scan_font_ident` through canonical expanded delivery.
     pub fn scan_font_selector(&mut self) -> Result<FontId, CommandError> {
         let command = loop {
-            let command = self.get_x_token()?.ok_or(CommandError::InputInvariant)?;
+            let command = self.get_x_token()?.ok_or(CommandError::input_invariant())?;
             if !matches!(
                 command.meaning(),
                 Meaning::CharToken {

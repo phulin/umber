@@ -133,7 +133,7 @@ impl CommandProcessor<'_> {
 
     fn next_non_space_non_relax_x_token(&mut self) -> Result<crate::CurrentCommand, CommandError> {
         loop {
-            let command = self.get_x_token()?.ok_or(CommandError::InputInvariant)?;
+            let command = self.get_x_token()?.ok_or(CommandError::input_invariant())?;
             match command.meaning() {
                 Meaning::CharToken {
                     cat: Catcode::Space,

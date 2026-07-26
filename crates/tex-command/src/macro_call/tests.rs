@@ -201,7 +201,9 @@ fn run_macro(
             universe.command_context(),
             CommandHostContext::new(&mut capabilities),
         );
-        let call = processor.get_next()?.ok_or(CommandError::InputInvariant)?;
+        let call = processor
+            .get_next()?
+            .ok_or(CommandError::input_invariant())?;
         processor.macro_call(call)
     };
     result.map(|arguments| (command, arguments))

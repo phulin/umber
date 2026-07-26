@@ -751,7 +751,7 @@ impl CommandProcessor<'_> {
         let target = self
             .next_non_space_raw()?
             .and_then(|command| command.control_sequence())
-            .ok_or(CommandError::InputInvariant)?;
+            .ok_or(CommandError::input_invariant())?;
         self.state
             .set_provisional_meaning(target, Meaning::Relax, provisional_global);
         #[cfg(any(test, feature = "instrumentation"))]
@@ -781,7 +781,7 @@ impl CommandProcessor<'_> {
         let target = self
             .next_non_space_raw()?
             .and_then(|command| command.control_sequence())
-            .ok_or(CommandError::InputInvariant)?;
+            .ok_or(CommandError::input_invariant())?;
         self.state
             .set_provisional_meaning(target, Meaning::Relax, provisional_global);
         #[cfg(any(test, feature = "instrumentation"))]
@@ -948,7 +948,7 @@ impl CommandProcessor<'_> {
                 running: primitive == UnexpandablePrimitive::PdfStartThread,
             })),
             UnexpandablePrimitive::PdfEndThread => Ok(Request::EndThread),
-            _ => Err(CommandError::InputInvariant),
+            _ => Err(CommandError::input_invariant()),
         }
     }
 
@@ -1178,7 +1178,7 @@ impl CommandProcessor<'_> {
             UnexpandablePrimitive::PdfNames => Kind::Names,
             UnexpandablePrimitive::PdfTrailer => Kind::Trailer,
             UnexpandablePrimitive::PdfTrailerId => Kind::TrailerId,
-            _ => return Err(CommandError::InputInvariant),
+            _ => return Err(CommandError::input_invariant()),
         };
         let text = self.scan_balanced_text(true)?;
         let open_action = if primitive == UnexpandablePrimitive::PdfCatalog
@@ -1259,7 +1259,7 @@ impl CommandProcessor<'_> {
                     provenance: StructuredProvenance { primary },
                 })
             }
-            Err(CommandError::InputInvariant) => Ok(MathGroupEpisode {
+            Err(CommandError::InputInvariant(_)) => Ok(MathGroupEpisode {
                 tokens: self.state.finish_traced_token_list(&[]),
                 recovery: MathEpisodeRecovery::MissingOpeningBrace,
                 provenance: StructuredProvenance {
@@ -1476,19 +1476,19 @@ impl CommandProcessor<'_> {
             UnexpandablePrimitive::CloseIn => Ok(InputStreamRequest::Close { stream }),
             UnexpandablePrimitive::Read | UnexpandablePrimitive::ReadLine => {
                 if !self.scan_keyword("to")?.value {
-                    return Err(CommandError::InputInvariant);
+                    return Err(CommandError::input_invariant());
                 }
                 let target = self
                     .next_non_space_raw()?
                     .and_then(|command| command.control_sequence())
-                    .ok_or(CommandError::InputInvariant)?;
+                    .ok_or(CommandError::input_invariant())?;
                 Ok(InputStreamRequest::Read {
                     stream,
                     target,
                     raw_catcodes: primitive == UnexpandablePrimitive::ReadLine,
                 })
             }
-            _ => Err(CommandError::InputInvariant),
+            _ => Err(CommandError::input_invariant()),
         }
     }
 
@@ -1498,7 +1498,7 @@ impl CommandProcessor<'_> {
         let target = self
             .next_non_space_raw()?
             .and_then(|command| command.control_sequence())
-            .ok_or(CommandError::InputInvariant)?;
+            .ok_or(CommandError::input_invariant())?;
         let _ = self.scan_optional_equals()?;
         let file_name = self.scan_file_name()?;
         let size = if self.scan_keyword("at")?.value {
@@ -1613,7 +1613,7 @@ impl CommandProcessor<'_> {
                     cat: Catcode::Active,
                 } => {
                     let character =
-                        u8::try_from(ch as u32).map_err(|_| CommandError::InputInvariant)?;
+                        u8::try_from(ch as u32).map_err(|_| CommandError::input_invariant())?;
                     break Some(ScannedAccentBase {
                         character,
                         provenance: StructuredProvenance {
@@ -1623,7 +1623,7 @@ impl CommandProcessor<'_> {
                 }
                 Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Char) => {
                     let character = u8::try_from(self.scan_integer()?.value)
-                        .map_err(|_| CommandError::InputInvariant)?;
+                        .map_err(|_| CommandError::input_invariant())?;
                     break Some(ScannedAccentBase {
                         character,
                         provenance: StructuredProvenance {
@@ -1665,7 +1665,7 @@ impl CommandProcessor<'_> {
     /// scans remain in this command-owned episode.
     pub fn scan_immediate_extension(&mut self) -> Result<ImmediateExtension, CommandError> {
         let command = loop {
-            let command = self.get_x_token()?.ok_or(CommandError::InputInvariant)?;
+            let command = self.get_x_token()?.ok_or(CommandError::input_invariant())?;
             if !matches!(
                 command.meaning(),
                 Meaning::CharToken {
@@ -1719,7 +1719,7 @@ impl CommandProcessor<'_> {
         let endwrite = self
             .state
             .primitive_token("endwrite")
-            .ok_or(CommandError::InputInvariant)?;
+            .ok_or(CommandError::input_invariant())?;
         let right_brace = Token::Char {
             ch: '}',
             cat: Catcode::EndGroup,
@@ -1758,9 +1758,9 @@ impl CommandProcessor<'_> {
         self.push_write_recovery(vec![left_brace], left_brace);
 
         let expanded = self.scan_balanced_text(true)?.tokens;
-        let stopper = self.get_token()?.ok_or(CommandError::InputInvariant)?;
+        let stopper = self.get_token()?.ok_or(CommandError::input_invariant())?;
         if stopper.spelling().semantic_token() != endwrite {
-            return Err(CommandError::InputInvariant);
+            return Err(CommandError::input_invariant());
         }
         self.retire_last_delivery_level()?;
         Ok(expanded)
@@ -1839,7 +1839,7 @@ impl CommandProcessor<'_> {
 
     /// TeX82 §46's raw `\\show` operand scan.
     pub fn scan_show(&mut self) -> Result<ScannedDisplayDiagnostic, CommandError> {
-        let command = self.get_token()?.ok_or(CommandError::InputInvariant)?;
+        let command = self.get_token()?.ok_or(CommandError::input_invariant())?;
         let token = command.spelling().semantic_token();
         let text = match token {
             Token::Cs(_)
@@ -1867,7 +1867,7 @@ impl CommandProcessor<'_> {
     pub fn scan_showthe(&mut self) -> Result<ScannedDisplayDiagnostic, CommandError> {
         let value = self
             .scan_internal_value()?
-            .ok_or(CommandError::InputInvariant)?;
+            .ok_or(CommandError::input_invariant())?;
         let text = match value.value {
             value @ (InternalValue::Integer(_)
             | InternalValue::Dimension(_)
@@ -1996,7 +1996,7 @@ impl CommandProcessor<'_> {
             // `scan_left_brace` has retained the rejected command through
             // its canonical backup. Replay opens the required group as the
             // inserted brace, then consumes that command as box material.
-            Err(CommandError::InputInvariant) => Ok(false),
+            Err(CommandError::InputInvariant(_)) => Ok(false),
             Err(error) => Err(error),
         }
     }
@@ -2010,7 +2010,7 @@ impl CommandProcessor<'_> {
             UnexpandablePrimitive::HBox => ScannedBoxKind::HBox,
             UnexpandablePrimitive::VBox => ScannedBoxKind::VBox,
             UnexpandablePrimitive::VTop => ScannedBoxKind::VTop,
-            _ => return Err(CommandError::InputInvariant),
+            _ => return Err(CommandError::input_invariant()),
         };
         let packing = if self.scan_keyword("to")?.value {
             ScannedPackingSpec::Exactly(self.scan_dimension()?.value)
@@ -2059,7 +2059,7 @@ impl CommandProcessor<'_> {
         let delta = match primitive {
             UnexpandablePrimitive::Lower | UnexpandablePrimitive::MoveRight => amount,
             UnexpandablePrimitive::Raise | UnexpandablePrimitive::MoveLeft => -amount,
-            _ => return Err(CommandError::InputInvariant),
+            _ => return Err(CommandError::input_invariant()),
         };
         let payload = self.scan_box_shift_payload()?;
         Ok(ScannedBoxShift { delta, payload })
@@ -2158,7 +2158,7 @@ impl CommandProcessor<'_> {
     /// TeX82 §765 does not require the backed-up lookahead to be a left brace.
     pub fn scan_alignment_cell_opening(&mut self) -> Result<AlignmentCellOpening, CommandError> {
         loop {
-            let opening = self.get_x_token()?.ok_or(CommandError::InputInvariant)?;
+            let opening = self.get_x_token()?.ok_or(CommandError::input_invariant())?;
             match opening.meaning() {
                 Meaning::CharToken {
                     cat: Catcode::Space,
@@ -2167,7 +2167,7 @@ impl CommandProcessor<'_> {
                 Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Omit) => {
                     self.command
                         .prepare_alignment_cell_lookahead()
-                        .map_err(|_| CommandError::InputInvariant)?;
+                        .map_err(|_| CommandError::input_invariant())?;
                     return Ok(AlignmentCellOpening::Omit);
                 }
                 _ => {
@@ -2186,9 +2186,9 @@ impl CommandProcessor<'_> {
     ) -> Result<AlignmentCellOpening, CommandError> {
         self.command
             .prepare_alignment_cell_lookahead()
-            .map_err(|_| CommandError::InputInvariant)?;
+            .map_err(|_| CommandError::input_invariant())?;
         loop {
-            let command = self.get_x_token()?.ok_or(CommandError::InputInvariant)?;
+            let command = self.get_x_token()?.ok_or(CommandError::input_invariant())?;
             if matches!(
                 command.meaning(),
                 Meaning::CharToken {
@@ -2228,7 +2228,7 @@ impl CommandProcessor<'_> {
         let changed = self.command.alignment.align_state != 1_000_000;
         self.command
             .prepare_alignment_cell_lookahead()
-            .map_err(|_| CommandError::InputInvariant)?;
+            .map_err(|_| CommandError::input_invariant())?;
         // TeX82 §37 assigns the `align_peek` sentinel before its first
         // expanded lookahead.  Keep that transition command-owned and emit
         // it before an exhausted backup is retired by `get_x_token`.
@@ -2268,11 +2268,11 @@ impl CommandProcessor<'_> {
             .command
             .alignment
             .active_alignment
-            .ok_or(CommandError::InputInvariant)?;
+            .ok_or(CommandError::input_invariant())?;
         self.command
             .alignment
             .set_preamble_phase(alignment)
-            .map_err(|_| CommandError::InputInvariant)?;
+            .map_err(|_| CommandError::input_invariant())?;
         let _prior =
             self.command
                 .begin_scanner_status(ScannerStatus::Aligning(AlignmentScanContext {
@@ -2303,7 +2303,7 @@ impl CommandProcessor<'_> {
             // A single combined u/v phase loses that replay boundary.
             let mut u_template = Vec::new();
             loop {
-                let command = self.get_next()?.ok_or(CommandError::InputInvariant)?;
+                let command = self.get_next()?.ok_or(CommandError::input_invariant())?;
                 let token = command.spelling().semantic_token();
                 if matches!(
                     token,
@@ -2365,7 +2365,7 @@ impl CommandProcessor<'_> {
 
             let mut v_template = Vec::new();
             let ends_preamble = loop {
-                let command = self.get_next()?.ok_or(CommandError::InputInvariant)?;
+                let command = self.get_next()?.ok_or(CommandError::input_invariant())?;
                 let token = command.spelling().semantic_token();
                 let ends_column = matches!(
                     token,
@@ -2431,7 +2431,7 @@ impl CommandProcessor<'_> {
                     repeat_start,
                 },
             )
-            .map_err(|_| CommandError::InputInvariant)?;
+            .map_err(|_| CommandError::input_invariant())?;
         #[cfg(any(test, feature = "instrumentation"))]
         self.observe(crate::CommandObservation::Alignment(
             crate::AlignmentRecord {
@@ -2493,7 +2493,7 @@ impl CommandProcessor<'_> {
     ) -> Result<ScannedMacroDefinition, CommandError> {
         let command = self
             .next_non_space_raw()?
-            .ok_or(CommandError::InputInvariant)?;
+            .ok_or(CommandError::input_invariant())?;
         let (target, missing_target) = if let Some(target) = command.control_sequence() {
             (target, false)
         } else {
@@ -2523,18 +2523,18 @@ impl CommandProcessor<'_> {
         let target = self
             .next_non_space_raw()?
             .and_then(|command| command.control_sequence())
-            .ok_or(CommandError::InputInvariant)?;
+            .ok_or(CommandError::input_invariant())?;
         let (source, meaning) = if future {
-            let first = self.get_token()?.ok_or(CommandError::InputInvariant)?;
-            let second = self.get_token()?.ok_or(CommandError::InputInvariant)?;
+            let first = self.get_token()?.ok_or(CommandError::input_invariant())?;
+            let second = self.get_token()?.ok_or(CommandError::input_invariant())?;
             let source = second.control_sequence();
             let meaning = second.meaning();
             self.replay_raw_commands([first, second]);
             (source, meaning)
         } else {
-            let mut source = self.get_token()?.ok_or(CommandError::InputInvariant)?;
+            let mut source = self.get_token()?.ok_or(CommandError::input_invariant())?;
             if matches!(source.meaning(), Meaning::CharToken { ch: '=', .. }) {
-                source = self.get_token()?.ok_or(CommandError::InputInvariant)?;
+                source = self.get_token()?.ok_or(CommandError::input_invariant())?;
                 if matches!(
                     source.meaning(),
                     Meaning::CharToken {
@@ -2542,7 +2542,7 @@ impl CommandProcessor<'_> {
                         ..
                     }
                 ) {
-                    source = self.get_token()?.ok_or(CommandError::InputInvariant)?;
+                    source = self.get_token()?.ok_or(CommandError::input_invariant())?;
                 }
             }
             (source.control_sequence(), source.meaning())
@@ -2558,7 +2558,7 @@ impl CommandProcessor<'_> {
     /// cursor or a backed-up raw command.
     pub fn scan_file_name(&mut self) -> Result<ScannedFileName, CommandError> {
         let first = loop {
-            let command = self.get_x_token()?.ok_or(CommandError::InputInvariant)?;
+            let command = self.get_x_token()?.ok_or(CommandError::input_invariant())?;
             if !matches!(
                 command.meaning(),
                 Meaning::CharToken {
@@ -2617,11 +2617,11 @@ impl CommandProcessor<'_> {
                     self.back_input(command)?;
                     break FileNameTermination::NonCharacter;
                 }
-                _ => return Err(CommandError::InputInvariant),
+                _ => return Err(CommandError::input_invariant()),
             }
         };
         if name.is_empty() {
-            return Err(CommandError::InputInvariant);
+            return Err(CommandError::input_invariant());
         }
         Ok(ScannedFileName {
             name,
@@ -2641,10 +2641,10 @@ impl CommandProcessor<'_> {
         let source = self
             .command
             .register_source(source)
-            .map_err(|_| CommandError::InputInvariant)?;
+            .map_err(|_| CommandError::input_invariant())?;
         self.command
             .open_registered_source(source)
-            .map_err(|_| CommandError::InputInvariant)?;
+            .map_err(|_| CommandError::input_invariant())?;
         Ok(RegisteredInput { file_name, source })
     }
 

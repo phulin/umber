@@ -119,9 +119,9 @@ impl CommandProcessor<'_> {
                     (expanded, Vec::new(), 0, None, primary, false)
                 }
                 ScanToksMode::GeneralAfterOpening { expanded, primary } => {
-                    let opening = self.get_token()?.ok_or(CommandError::InputInvariant)?;
+                    let opening = self.get_token()?.ok_or(CommandError::input_invariant())?;
                     if !is_begin_group(opening.spelling().semantic_token()) {
-                        return Err(CommandError::InputInvariant);
+                        return Err(CommandError::input_invariant());
                     }
                     #[cfg(any(test, feature = "instrumentation"))]
                     self.observe_expanded_delivery(&opening);
@@ -165,7 +165,7 @@ impl CommandProcessor<'_> {
             } else {
                 self.get_token()?
             }
-            .ok_or(CommandError::InputInvariant)?;
+            .ok_or(CommandError::input_invariant())?;
             match command.meaning() {
                 Meaning::CharToken {
                     cat: Catcode::Space,
@@ -177,7 +177,7 @@ impl CommandProcessor<'_> {
                 } => return Ok(command),
                 _ => {
                     self.back_input(command)?;
-                    return Err(CommandError::InputInvariant);
+                    return Err(CommandError::input_invariant());
                 }
             }
         }
@@ -192,7 +192,7 @@ impl CommandProcessor<'_> {
         let mut primary = OriginId::UNKNOWN;
         let mut malformed_parameter = false;
         loop {
-            let command = self.get_token()?.ok_or(CommandError::InputInvariant)?;
+            let command = self.get_token()?.ok_or(CommandError::input_invariant())?;
             if primary == OriginId::UNKNOWN {
                 primary = command.origin();
             }
@@ -210,7 +210,7 @@ impl CommandProcessor<'_> {
                 output.push(command.spelling());
                 continue;
             }
-            let follower = self.get_token()?.ok_or(CommandError::InputInvariant)?;
+            let follower = self.get_token()?.ok_or(CommandError::input_invariant())?;
             let follower_token = follower.spelling().semantic_token();
             if is_begin_group(follower_token) {
                 output.push(follower.spelling());
@@ -263,7 +263,7 @@ impl CommandProcessor<'_> {
             } else {
                 self.get_token()?
             }
-            .ok_or(CommandError::InputInvariant)?;
+            .ok_or(CommandError::input_invariant())?;
 
             if expanded && is_expandable(command.meaning()) {
                 if matches!(
@@ -355,7 +355,7 @@ impl CommandProcessor<'_> {
         &mut self,
         output: &mut Vec<TracedTokenWord>,
     ) -> Result<bool, CommandError> {
-        let target = self.get_x_token()?.ok_or(CommandError::InputInvariant)?;
+        let target = self.get_x_token()?.ok_or(CommandError::input_invariant())?;
         let Some(value) = self.internal_value_from_command(&target)? else {
             self.back_input(target)?;
             return Ok(false);

@@ -54,11 +54,11 @@ impl CommandProcessor<'_> {
     /// must retire before the caller publishes the write effect, but the
     /// following source token must remain untouched (§53).
     pub(crate) fn retire_last_delivery_level(&mut self) -> Result<(), CommandError> {
-        let stamp = self.last_delivery.ok_or(CommandError::InputInvariant)?;
+        let stamp = self.last_delivery.ok_or(CommandError::input_invariant())?;
         match self.retire_and_restart(InputLevelId(stamp.input_level()))? {
             RetirementRestart::Continue => Ok(()),
             RetirementRestart::Stop | RetirementRestart::EndV(_) | RetirementRestart::Completed => {
-                Err(CommandError::InputInvariant)
+                Err(CommandError::input_invariant())
             }
         }
     }
@@ -147,7 +147,7 @@ impl CommandProcessor<'_> {
             }
             AlignmentDeliveryEvent::UnbalancedDelimiter(_)
             | AlignmentDeliveryEvent::ClosingBrace(_) => {
-                return Err(CommandError::InputInvariant);
+                return Err(CommandError::input_invariant());
             }
         };
         self.start_alignment_v_template(alignment, saved_delimiter)
@@ -161,7 +161,7 @@ impl CommandProcessor<'_> {
         event: AlignmentDeliveryEvent,
     ) -> Result<Token, CommandError> {
         let AlignmentDeliveryEvent::UnbalancedDelimiter(command) = event else {
-            return Err(CommandError::InputInvariant);
+            return Err(CommandError::input_invariant());
         };
         let previous = self.command.alignment.align_state;
         self.back_input(command)?;
@@ -169,7 +169,7 @@ impl CommandProcessor<'_> {
             .command
             .alignment
             .correct_unbalanced_delimiter()
-            .ok_or(CommandError::InputInvariant)?;
+            .ok_or(CommandError::input_invariant())?;
         let recovery_name = match recovery {
             Token::Char {
                 cat: Catcode::BeginGroup,
@@ -179,7 +179,7 @@ impl CommandProcessor<'_> {
                 cat: Catcode::EndGroup,
                 ..
             } => "missing_right_brace",
-            _ => return Err(CommandError::InputInvariant),
+            _ => return Err(CommandError::input_invariant()),
         };
         #[cfg(any(test, feature = "instrumentation"))]
         {
@@ -246,7 +246,7 @@ impl CommandProcessor<'_> {
         event: AlignmentDeliveryEvent,
     ) -> Result<(), CommandError> {
         let AlignmentDeliveryEvent::ClosingBrace(command) = event else {
-            return Err(CommandError::InputInvariant);
+            return Err(CommandError::input_invariant());
         };
         if !matches!(
             command.meaning(),
@@ -255,7 +255,7 @@ impl CommandProcessor<'_> {
                 ..
             }
         ) {
-            return Err(CommandError::InputInvariant);
+            return Err(CommandError::input_invariant());
         }
         // The brace arrived by replaying the next-cell opener backup. TeX82
         // retires that exhausted backup before §1103 makes its own backup.
@@ -263,7 +263,7 @@ impl CommandProcessor<'_> {
         let frozen_cr = self
             .state
             .primitive_token("cr")
-            .ok_or(CommandError::InputInvariant)?;
+            .ok_or(CommandError::input_invariant())?;
         let level = self.command.push_token_level(
             TokenPayload::Transient(SharedTokenBuffer::new(vec![TracedTokenWord::pack(
                 frozen_cr,
@@ -311,7 +311,7 @@ impl CommandProcessor<'_> {
                 crate::processor::alignment::AlignmentDelimiter::Cr
                 | crate::processor::alignment::AlignmentDelimiter::CrCr,
             ) => Ok(crate::AlignmentCellDelimiter::Row),
-            _ => Err(CommandError::InputInvariant),
+            _ => Err(CommandError::input_invariant()),
         }
     }
 
@@ -325,7 +325,7 @@ impl CommandProcessor<'_> {
     ) -> Result<(), CommandError> {
         self.command
             .begin_alignment_v_template(alignment, saved_delimiter)
-            .map_err(|_| CommandError::InputInvariant)?;
+            .map_err(|_| CommandError::input_invariant())?;
         #[cfg(any(test, feature = "instrumentation"))]
         if let Some(input) = self
             .command
@@ -482,7 +482,7 @@ impl CommandProcessor<'_> {
             Token::Cs(
                 self.state
                     .symbol("par")
-                    .ok_or(CommandError::InputInvariant)?,
+                    .ok_or(CommandError::input_invariant())?,
             ),
             OriginId::UNKNOWN,
         );
@@ -735,7 +735,7 @@ impl CommandProcessor<'_> {
     pub fn frozen_primitive_token(&self, name: &str) -> Result<Token, CommandError> {
         self.state
             .primitive_token(name)
-            .ok_or(CommandError::InputInvariant)
+            .ok_or(CommandError::input_invariant())
     }
 
     /// Replaces an exhausted one-token backup with a fresh backup of its
@@ -751,10 +751,9 @@ impl CommandProcessor<'_> {
 
     /// Restores a command and records the diagnostic selected by `back_error`.
     ///
-    /// Scanner-status recovery supplies the canonical diagnostic identity in a
-    /// later milestone; keeping its accounting here ensures recovery input
+    /// Full diagnostic-text rendering for the identities this records remains
+    /// a later milestone; keeping its accounting here ensures recovery input
     /// remains ordinary input after the one backup transition.
-    #[allow(dead_code)] // invoked by scanner-status recovery in the next milestone
     pub(crate) fn back_error(
         &mut self,
         command: CurrentCommand,
@@ -843,7 +842,7 @@ impl CommandProcessor<'_> {
             .command
             .alignment
             .active_alignment
-            .ok_or(CommandError::InputInvariant)?;
+            .ok_or(CommandError::input_invariant())?;
         let delimiter = Self::saved_alignment_delimiter(&command)?;
         if self.last_delivery != Some(command.delivery_stamp()) {
             return Err(CommandError::StaleDelivery);
@@ -882,7 +881,7 @@ impl CommandProcessor<'_> {
                 let replay = self
                     .command
                     .replay_out_parameter(level, slot)
-                    .map_err(|_| CommandError::InputInvariant)?;
+                    .map_err(|_| CommandError::input_invariant())?;
                 if let OutParameterReplay::Pushed(_parameter_level) = replay {
                     #[cfg(any(test, feature = "instrumentation"))]
                     self.observe(CommandObservation::Input(InputRecord {
@@ -1016,7 +1015,7 @@ impl CommandProcessor<'_> {
                                     }
                                 }
                                 RetirementRestart::EndV(_) => {
-                                    return Err(CommandError::InputInvariant);
+                                    return Err(CommandError::input_invariant());
                                 }
                                 RetirementRestart::Completed => {
                                     return Ok(None);
@@ -1060,7 +1059,7 @@ impl CommandProcessor<'_> {
                                 ),
                                 level,
                                 position: u64::try_from(cursor.index)
-                                    .map_err(|_| CommandError::InputInvariant)?,
+                                    .map_err(|_| CommandError::input_invariant())?,
                                 behavior: TokenBehavior::VTemplate,
                                 source_provenance: None,
                                 direct_source: false,
@@ -1080,7 +1079,7 @@ impl CommandProcessor<'_> {
         let retirement = self
             .command
             .retire_exhausted_input(identity)
-            .map_err(|_| CommandError::InputInvariant)?;
+            .map_err(|_| CommandError::input_invariant())?;
         let action = retirement.action;
         #[cfg(any(test, feature = "instrumentation"))]
         if !matches!(action, InputRetirementAction::VTemplateRetained) {
@@ -1262,7 +1261,7 @@ impl CommandProcessor<'_> {
                 RetirementRestart::Continue => Ok(()),
                 RetirementRestart::Stop
                 | RetirementRestart::EndV(_)
-                | RetirementRestart::Completed => Err(CommandError::InputInvariant),
+                | RetirementRestart::Completed => Err(CommandError::input_invariant()),
             }
         } else {
             Ok(())
@@ -1292,7 +1291,7 @@ impl CommandProcessor<'_> {
                 RetirementRestart::Continue => Ok(()),
                 RetirementRestart::Stop
                 | RetirementRestart::EndV(_)
-                | RetirementRestart::Completed => Err(CommandError::InputInvariant),
+                | RetirementRestart::Completed => Err(CommandError::input_invariant()),
             }
         } else {
             Ok(())
@@ -1319,7 +1318,7 @@ impl CommandProcessor<'_> {
                 RetirementRestart::Continue => Ok(()),
                 RetirementRestart::Stop
                 | RetirementRestart::EndV(_)
-                | RetirementRestart::Completed => Err(CommandError::InputInvariant),
+                | RetirementRestart::Completed => Err(CommandError::input_invariant()),
             }
         } else {
             Ok(())
@@ -1352,7 +1351,7 @@ impl CommandProcessor<'_> {
                 RetirementRestart::Stop
                 | RetirementRestart::EndV(_)
                 | RetirementRestart::Completed => {
-                    return Err(CommandError::InputInvariant);
+                    return Err(CommandError::input_invariant());
                 }
             }
         }

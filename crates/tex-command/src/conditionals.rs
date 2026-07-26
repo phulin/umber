@@ -23,6 +23,7 @@ use crate::observation::{
 /// Stable pending-diagnostic identities for TeX.web part 28 recovery.
 const INCOMPLETE_IF_DIAGNOSTIC: u64 = 0x636f_6e64_0000_0001;
 const EXTRA_DELIMITER_DIAGNOSTIC: u64 = 0x636f_6e64_0000_0002;
+const MISSING_RELATION_DIAGNOSTIC: u64 = 0x636f_6e64_0000_0003;
 
 /// TeX conditional opcode, kept distinct from delimiter and limit values.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -255,6 +256,25 @@ pub(crate) struct PassTextStop {
     pub(crate) nested_conditions: u32,
 }
 
+/// The classified `<`, `=`, or `>` relation token TeX.web §503 requires
+/// between an `\ifnum`/`\ifdim` pair of operands.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+enum IfRelation {
+    Less,
+    Equal,
+    Greater,
+}
+
+impl IfRelation {
+    fn compare<T: PartialOrd>(self, left: T, right: T) -> bool {
+        match self {
+            Self::Less => left < right,
+            Self::Equal => left == right,
+            Self::Greater => left > right,
+        }
+    }
+}
+
 impl CommandProcessor<'_> {
     /// TeX.web part 28's `conditional`, entered after delivery of an `if`
     /// primitive.  The frame is installed before any operand scan because
@@ -265,17 +285,17 @@ impl CommandProcessor<'_> {
         inverted: bool,
     ) -> Result<(), CommandError> {
         let Meaning::ExpandablePrimitive(primitive) = command.meaning() else {
-            return Err(CommandError::InputInvariant);
+            return Err(CommandError::input_invariant());
         };
         let kind =
-            ConditionalKind::from_primitive(primitive).ok_or(CommandError::InputInvariant)?;
+            ConditionalKind::from_primitive(primitive).ok_or(CommandError::input_invariant())?;
         let condition = self.command.conditions.push(kind, 0);
         let frame = self
             .command
             .conditions
             .frame(condition)
             .cloned()
-            .ok_or(CommandError::InputInvariant)?;
+            .ok_or(CommandError::input_invariant())?;
         self.observe_condition("push", &frame, None);
         match kind {
             ConditionalKind::IfCase => {
@@ -300,14 +320,14 @@ impl CommandProcessor<'_> {
         // The following conditional is an operand of `\unless`, not an
         // ordinary expansion result: preserve its primitive command for the
         // shared evaluator to install the one inverted frame.
-        let next = self.get_token()?.ok_or(CommandError::InputInvariant)?;
+        let next = self.get_token()?.ok_or(CommandError::input_invariant())?;
         let Meaning::ExpandablePrimitive(primitive) = next.meaning() else {
-            return Err(CommandError::InputInvariant);
+            return Err(CommandError::input_invariant());
         };
         let kind =
-            ConditionalKind::from_primitive(primitive).ok_or(CommandError::InputInvariant)?;
+            ConditionalKind::from_primitive(primitive).ok_or(CommandError::input_invariant())?;
         if kind == ConditionalKind::IfCase {
-            return Err(CommandError::InputInvariant);
+            return Err(CommandError::input_invariant());
         }
         self.expand_conditional(next, true)
     }
@@ -323,19 +343,19 @@ impl CommandProcessor<'_> {
                 .conditions
                 .frame(condition)
                 .cloned()
-                .ok_or(CommandError::InputInvariant)?;
+                .ok_or(CommandError::input_invariant())?;
             self.command
                 .conditions
                 .change_if_limit(condition, IfLimit::Else)
                 .then_some(())
-                .ok_or(CommandError::InputInvariant)?;
+                .ok_or(CommandError::input_invariant())?;
             self.observe_condition("branch", &evaluating, Some("true".into()));
             let frame = self
                 .command
                 .conditions
                 .frame(condition)
                 .cloned()
-                .ok_or(CommandError::InputInvariant)?;
+                .ok_or(CommandError::input_invariant())?;
             self.observe_condition("limit", &frame, None);
             Ok(())
         } else {
@@ -344,7 +364,7 @@ impl CommandProcessor<'_> {
                 .conditions
                 .frame(condition)
                 .cloned()
-                .ok_or(CommandError::InputInvariant)?;
+                .ok_or(CommandError::input_invariant())?;
             self.observe_condition("branch", &evaluating, Some("false".into()));
             self.resume_after_skip(condition)
         }
@@ -366,13 +386,13 @@ impl CommandProcessor<'_> {
                 .conditions
                 .change_if_limit(condition, IfLimit::Or)
                 .then_some(())
-                .ok_or(CommandError::InputInvariant)?;
+                .ok_or(CommandError::input_invariant())?;
             let frame = self
                 .command
                 .conditions
                 .frame(condition)
                 .cloned()
-                .ok_or(CommandError::InputInvariant)?;
+                .ok_or(CommandError::input_invariant())?;
             self.observe_condition("limit", &frame, None);
             self.observe_condition("branch", &frame, Some("case".into()));
         }
@@ -406,7 +426,7 @@ impl CommandProcessor<'_> {
             ConditionalKind::IfInner => Ok(self.host.conditional_state().is_inner()),
             ConditionalKind::IfVoid | ConditionalKind::IfHBox | ConditionalKind::IfVBox => {
                 let index = self.scan_integer()?.value;
-                let index = u16::try_from(index).map_err(|_| CommandError::InputInvariant)?;
+                let index = u16::try_from(index).map_err(|_| CommandError::input_invariant())?;
                 let box_kind = self.state.box_kind(index);
                 Ok(match kind {
                     ConditionalKind::IfVoid => box_kind.is_none(),
@@ -438,14 +458,14 @@ impl CommandProcessor<'_> {
     }
 
     fn evaluate_if(&mut self) -> Result<bool, CommandError> {
-        let first = self.get_x_token()?.ok_or(CommandError::InputInvariant)?;
-        let second = self.get_x_token()?.ok_or(CommandError::InputInvariant)?;
+        let first = self.get_x_token()?.ok_or(CommandError::input_invariant())?;
+        let second = self.get_x_token()?.ok_or(CommandError::input_invariant())?;
         Ok(Self::if_character_code(first.meaning()) == Self::if_character_code(second.meaning()))
     }
 
     fn evaluate_ifcat(&mut self) -> Result<bool, CommandError> {
-        let first = self.get_x_token()?.ok_or(CommandError::InputInvariant)?;
-        let second = self.get_x_token()?.ok_or(CommandError::InputInvariant)?;
+        let first = self.get_x_token()?.ok_or(CommandError::input_invariant())?;
+        let second = self.get_x_token()?.ok_or(CommandError::input_invariant())?;
         Ok(Self::if_category_code(first.meaning()) == Self::if_category_code(second.meaning()))
     }
 
@@ -468,8 +488,8 @@ impl CommandProcessor<'_> {
     }
 
     fn evaluate_ifx(&mut self) -> Result<bool, CommandError> {
-        let first = self.get_token()?.ok_or(CommandError::InputInvariant)?;
-        let second = self.get_token()?.ok_or(CommandError::InputInvariant)?;
+        let first = self.get_token()?.ok_or(CommandError::input_invariant())?;
+        let second = self.get_token()?.ok_or(CommandError::input_invariant())?;
         Ok(self.ifx_meaning_eq(first.meaning(), second.meaning()))
     }
 
@@ -505,25 +525,34 @@ impl CommandProcessor<'_> {
 
     fn evaluate_numeric_comparison(&mut self) -> Result<bool, CommandError> {
         let left = self.scan_integer()?.value;
-        let relation = self.get_x_token()?.ok_or(CommandError::InputInvariant)?;
+        let relation = self.scan_if_relation()?;
         let right = self.scan_integer()?.value;
-        match relation.meaning() {
-            Meaning::CharToken { ch: '<', .. } => Ok(left < right),
-            Meaning::CharToken { ch: '=', .. } => Ok(left == right),
-            Meaning::CharToken { ch: '>', .. } => Ok(left > right),
-            _ => Err(CommandError::InputInvariant),
-        }
+        Ok(relation.compare(left, right))
     }
 
     fn evaluate_dimension_comparison(&mut self) -> Result<bool, CommandError> {
         let left = self.scan_dimension()?.value;
-        let relation = self.get_x_token()?.ok_or(CommandError::InputInvariant)?;
+        let relation = self.scan_if_relation()?;
         let right = self.scan_dimension()?.value;
+        Ok(relation.compare(left, right))
+    }
+
+    /// TeX.web §503's relation lookahead for `\ifnum`/`\ifdim`: fetches the
+    /// expanded token after the first operand and classifies it as `<`, `=`,
+    /// or `>`. A token outside that set is not a scan failure: §503 reports
+    /// "Missing = inserted for \ifnum"/"\ifdim" and calls `back_error` (back
+    /// up the offending token, then continue as though `=` had been found),
+    /// so the second operand is still scanned and the comparison completes.
+    fn scan_if_relation(&mut self) -> Result<IfRelation, CommandError> {
+        let relation = self.get_x_token()?.ok_or(CommandError::input_invariant())?;
         match relation.meaning() {
-            Meaning::CharToken { ch: '<', .. } => Ok(left < right),
-            Meaning::CharToken { ch: '=', .. } => Ok(left == right),
-            Meaning::CharToken { ch: '>', .. } => Ok(left > right),
-            _ => Err(CommandError::InputInvariant),
+            Meaning::CharToken { ch: '<', .. } => Ok(IfRelation::Less),
+            Meaning::CharToken { ch: '=', .. } => Ok(IfRelation::Equal),
+            Meaning::CharToken { ch: '>', .. } => Ok(IfRelation::Greater),
+            _ => {
+                self.back_error(relation, MISSING_RELATION_DIAGNOSTIC)?;
+                Ok(IfRelation::Equal)
+            }
         }
     }
 
@@ -543,7 +572,7 @@ impl CommandProcessor<'_> {
                         .conditions
                         .frame(condition)
                         .cloned()
-                        .ok_or(CommandError::InputInvariant)?;
+                        .ok_or(CommandError::input_invariant())?;
                     self.observe_condition("branch", &evaluating, Some("or".into()));
                     remaining -= 1;
                     if remaining == 0 {
@@ -561,7 +590,7 @@ impl CommandProcessor<'_> {
                         .command
                         .conditions
                         .pop()
-                        .ok_or(CommandError::InputInvariant)?;
+                        .ok_or(CommandError::input_invariant())?;
                     self.observe_condition("pop", &frame, None);
                     return Ok(false);
                 }
@@ -584,7 +613,7 @@ impl CommandProcessor<'_> {
                         .command
                         .conditions
                         .pop()
-                        .ok_or(CommandError::InputInvariant)?;
+                        .ok_or(CommandError::input_invariant())?;
                     self.observe_condition("pop", &frame, None);
                     return Ok(());
                 }
@@ -601,19 +630,19 @@ impl CommandProcessor<'_> {
                         .conditions
                         .frame(condition)
                         .cloned()
-                        .ok_or(CommandError::InputInvariant)?;
+                        .ok_or(CommandError::input_invariant())?;
                     self.observe_condition("branch", &evaluating, Some("else".into()));
                     self.command
                         .conditions
                         .change_if_limit(condition, IfLimit::Fi)
                         .then_some(())
-                        .ok_or(CommandError::InputInvariant)?;
+                        .ok_or(CommandError::input_invariant())?;
                     let frame = self
                         .command
                         .conditions
                         .frame(condition)
                         .cloned()
-                        .ok_or(CommandError::InputInvariant)?;
+                        .ok_or(CommandError::input_invariant())?;
                     self.observe_condition("limit", &frame, None);
                     return Ok(());
                 }
@@ -622,7 +651,7 @@ impl CommandProcessor<'_> {
                         .command
                         .conditions
                         .pop()
-                        .ok_or(CommandError::InputInvariant)?;
+                        .ok_or(CommandError::input_invariant())?;
                     self.observe_condition("branch", &frame, Some("fi".into()));
                     self.observe_condition("pop", &frame, None);
                     return Ok(());
@@ -641,7 +670,7 @@ impl CommandProcessor<'_> {
             ExpandablePrimitive::Else => ConditionalDelimiter::Else,
             ExpandablePrimitive::Or => ConditionalDelimiter::Or,
             ExpandablePrimitive::Fi => ConditionalDelimiter::Fi,
-            _ => return Err(CommandError::InputInvariant),
+            _ => return Err(CommandError::input_invariant()),
         };
         let Some(frame) = self.command.conditions.current().cloned() else {
             self.record_extra_delimiter();
@@ -671,7 +700,7 @@ impl CommandProcessor<'_> {
                     .command
                     .conditions
                     .pop()
-                    .ok_or(CommandError::InputInvariant)?;
+                    .ok_or(CommandError::input_invariant())?;
                 self.observe_condition("pop", &frame, None);
                 Ok(())
             }
@@ -714,7 +743,7 @@ impl CommandProcessor<'_> {
                         .command
                         .conditions
                         .pop()
-                        .ok_or(CommandError::InputInvariant)?;
+                        .ok_or(CommandError::input_invariant())?;
                     self.observe_condition("pop", &frame, None);
                     return Ok(());
                 }
@@ -749,7 +778,7 @@ impl CommandProcessor<'_> {
         let relax = self
             .state
             .primitive_token("relax")
-            .ok_or(CommandError::InputInvariant)?;
+            .ok_or(CommandError::input_invariant())?;
         self.command
             .expansion
             .pending_diagnostics
@@ -836,12 +865,12 @@ impl CommandProcessor<'_> {
         self.command
             .conditions
             .limit(condition)
-            .ok_or(CommandError::InputInvariant)?;
+            .ok_or(CommandError::input_invariant())?;
 
         let mut nested_conditions = 0_u32;
         loop {
             let Some(command) = self.get_next()? else {
-                return Err(CommandError::InputInvariant);
+                return Err(CommandError::input_invariant());
             };
             if let Meaning::ExpandablePrimitive(primitive) = command.meaning()
                 && ConditionalKind::from_primitive(primitive).is_some()

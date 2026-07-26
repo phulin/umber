@@ -365,7 +365,7 @@ impl CommandProcessor<'_> {
         };
         let first = match retained_internal_dimension {
             Some(command) => command,
-            None => self.get_x_token()?.ok_or(CommandError::InputInvariant)?,
+            None => self.get_x_token()?.ok_or(CommandError::input_invariant())?,
         };
         let (value, order, internal_dimension) = match self.internal_value_from_command(&first)? {
             Some(InternalValue::Dimension(value)) => (value, Order::Normal, true),
@@ -671,10 +671,10 @@ impl CommandProcessor<'_> {
             // Replay it once, then finish the `fil` suffix without routing the
             // same candidate through unrelated physical-unit keywords.
             let Some(first) = self.get_x_token()? else {
-                return Err(CommandError::InputInvariant);
+                return Err(CommandError::input_invariant());
             };
             if !matches!(first.meaning(), Meaning::CharToken { ch: 'f', .. }) {
-                return Err(CommandError::InputInvariant);
+                return Err(CommandError::input_invariant());
             }
             self.scan_infinite_unit_from_fil()?
         } else {
@@ -688,10 +688,10 @@ impl CommandProcessor<'_> {
                     integer,
                     unit,
                     xn_over_d(unit, fraction, Scaled::UNITY)
-                        .map_err(|_| CommandError::InputInvariant)?
+                        .map_err(|_| CommandError::input_invariant())?
                         .quotient,
                 )
-                .map_err(|_| CommandError::InputInvariant),
+                .map_err(|_| CommandError::input_invariant()),
                 Order::Normal,
             ),
             DimensionUnit::Physical(unit) => (
@@ -702,19 +702,19 @@ impl CommandProcessor<'_> {
                 } else {
                     scaled_from_decimal_parts(integer, fraction, unit)
                 }
-                .map_err(|_| CommandError::InputInvariant),
+                .map_err(|_| CommandError::input_invariant()),
                 Order::Normal,
             ),
             // TeX stores an infinite glue component's finite coefficient as a
             // scaled value, while its order is carried separately.
             DimensionUnit::Infinite(order) => (
                 scaled_from_decimal_parts(integer, fraction, PhysicalUnit::Pt)
-                    .map_err(|_| CommandError::InputInvariant),
+                    .map_err(|_| CommandError::input_invariant()),
                 order,
             ),
             DimensionUnit::Mu => (
                 scaled_from_decimal_parts(integer, fraction, PhysicalUnit::Pt)
-                    .map_err(|_| CommandError::InputInvariant),
+                    .map_err(|_| CommandError::input_invariant()),
                 Order::Normal,
             ),
         };
@@ -770,7 +770,7 @@ impl CommandProcessor<'_> {
                 return Ok(DimensionUnit::Physical(unit));
             }
         }
-        Err(CommandError::InputInvariant)
+        Err(CommandError::input_invariant())
     }
 
     /// Performs TeX82 §455's internal-dimension unit lookahead.
@@ -831,9 +831,9 @@ impl CommandProcessor<'_> {
 
     fn scan_infinite_unit_from_fil(&mut self) -> Result<DimensionUnit, CommandError> {
         for expected in ['i', 'l'] {
-            let command = self.get_x_token()?.ok_or(CommandError::InputInvariant)?;
+            let command = self.get_x_token()?.ok_or(CommandError::input_invariant())?;
             if !matches!(command.meaning(), Meaning::CharToken { ch, .. } if ch == expected) {
-                return Err(CommandError::InputInvariant);
+                return Err(CommandError::input_invariant());
             }
         }
         let mut order = Order::Fil;
