@@ -653,6 +653,25 @@ through its normal backup and marks an inserted-brace recovery; replay enters
 the typed box group without fabricating a command event, so that backed-up
 command becomes the first box-body material.
 
+TeX82 §968's `\insert<class>{...}` (`begin_insert_or_adjust`) follows the same
+box-opener split, minus the packing clause: `CommandProcessor` owns the raw
+`scan_int` class-number scan (any_mode; the reserved-255 rejection and the
+ordinary 0..=255 range clamp both write a `Universe` diagnostic, so they are
+deferred to replay) and the same required-opening-brace validation
+`\hbox`/`\vbox`/`\vtop` use. Replay enters `GroupKind::Insert`/internal
+vertical mode, applies §968's `normal_paragraph` reset, and reuses the box
+family's brace-matching bookkeeping (`active_boxes`/`BoxBeginGroup`/
+`BoxEndGroup`) purely for nested-brace counting -- an insertion body is not a
+box and schedules no `\everyhbox`/`\everyvbox` hook. Its closing action is a
+dedicated branch (`finish_insert_group`): §1096's `end_graf`, then TeX82's
+`vpack` macro (unconstrained depth, but the box's *current*
+`\vbadness`/`\vfuzz`, unlike an ordinary `\vbox`) packages the body, and the
+resulting `ins_node` is appended to whatever list was open when `\insert`
+began -- not a side channel -- exactly like `\mark`/`\penalty`. Outer vertical
+mode then invokes `build_page`, which owns §§980--987's insertion-class
+splitting and height accounting (`tex-exec::page_builder`) once the node
+reaches the page contribution list.
+
 ### 5.4 Proposed module layout
 
 ```text
