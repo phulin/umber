@@ -3748,7 +3748,15 @@ fn scan_command(
             resource: None,
         }),
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Font) => {
-            let request = processor.scan_font_definition().map_err(command_error)?;
+            // TeX82 §1257's `define(u,set_font,null_font)` precedes the file
+            // name scan, so like §1224's provisional `\relax` it takes the
+            // scope the eventual definition would take, `\globaldefs`
+            // included.
+            let provisional_global =
+                effective_global(processor.int_param(IntParam::GLOBAL_DEFS), global);
+            let request = processor
+                .scan_font_definition(provisional_global)
+                .map_err(command_error)?;
             Ok(ScannedStep::FontDefinition {
                 request,
                 resource: Box::new(None),
@@ -3946,16 +3954,13 @@ fn scan_command(
         Meaning::UnexpandablePrimitive(
             primitive @ (UnexpandablePrimitive::CharDef | UnexpandablePrimitive::MathCharDef),
         ) => {
-            // TeX82 §1220 installs the scanner-time `\relax` through
+            // TeX82 §1224 installs the scanner-time `\relax` through
             // `define`, so it has the same effective scope as the eventual
             // definition, including `\globaldefs`. This remains main-control
             // scope policy; the command processor only receives the selected
             // provisional scope while it owns raw operand delivery.
-            let provisional_global = match processor.int_param(IntParam::GLOBAL_DEFS).cmp(&0) {
-                std::cmp::Ordering::Greater => true,
-                std::cmp::Ordering::Less => false,
-                std::cmp::Ordering::Equal => global,
-            };
+            let provisional_global =
+                effective_global(processor.int_param(IntParam::GLOBAL_DEFS), global);
             let definition = processor
                 .scan_character_definition(provisional_global)
                 .map_err(command_error)?;
@@ -3973,11 +3978,8 @@ fn scan_command(
             | UnexpandablePrimitive::MuskipDef
             | UnexpandablePrimitive::ToksDef),
         ) => {
-            let provisional_global = match processor.int_param(IntParam::GLOBAL_DEFS).cmp(&0) {
-                std::cmp::Ordering::Greater => true,
-                std::cmp::Ordering::Less => false,
-                std::cmp::Ordering::Equal => global,
-            };
+            let provisional_global =
+                effective_global(processor.int_param(IntParam::GLOBAL_DEFS), global);
             let definition = processor
                 .scan_register_definition(provisional_global)
                 .map_err(command_error)?;
@@ -6298,17 +6300,20 @@ fn applied_mutation_observation(
         | ScannedStep::FontInteger { .. }
         | ScannedStep::HyphenationData { .. }
         | ScannedStep::SetInteractionMode(..) => return None,
-        // -- Assignments that do commit an instrumentation-named `eqtb`
-        // meaning, but whose observation Umber cannot yet place correctly.
-        // §1257's `new_font` runs `define(u,set_font,null_font)` *before* it
-        // scans the file name and `at`/`scaled` size, so the oracle's mutation
-        // is ordered ahead of those operand deliveries while this single
-        // apply seam could only emit it after them; §1225's `read_to_cs` runs
-        // `define(p,call,cur_val)` after `read_toks`, but the scanned step
-        // carries no `\global` prefix to report a scope with. Tracked as
-        // umber2-johp.127 rather than emitted at the wrong point or with a
-        // guessed scope.
-        ScannedStep::FontDefinition { .. } | ScannedStep::InputStream { .. } => return None,
+        // -- §1257's `new_font` commits its only `eq_define`,
+        // `define(u,set_font,null_font)`, *before* it scans the file name and
+        // `at`/`scaled` size, so the command-owned `scan_font_definition`
+        // performs and observes it there, exactly as §1224's provisional
+        // `\relax` is. §1257's `common_ending: equiv(u):=f` then overwrites
+        // the equivalent directly, which is not an `eq_define` and which
+        // `umber_trace_eq_mutation` therefore never sees, so this apply seam
+        // stays silent.
+        ScannedStep::FontDefinition { .. } => return None,
+        // -- §1225's `read_to_cs` runs `define(p,call,cur_val)` after
+        // `read_toks`, but the scanned step carries no `\global` prefix to
+        // report a scope with. Tracked as umber2-johp.127 rather than emitted
+        // with a guessed scope.
+        ScannedStep::InputStream { .. } => return None,
         // -- Steps that perform no assignment at all: mode and list building,
         // box and alignment structure, grouping, diagnostics, recovery, and
         // the pdfTeX extension requests. None of them reaches §1211's
@@ -7886,7 +7891,7 @@ fn apply_scanned_step(
                         "A mathchar number must be between 0 and 32767.",
                     ) as u16)
                 }
-                _ => unreachable!("character-definition step carries only §1220 primitives"),
+                _ => unreachable!("character-definition step carries only §1224 primitives"),
             };
             if assignment_global(global, stores) {
                 stores.set_meaning_global(target, meaning);
@@ -8972,7 +8977,14 @@ fn schedule_afterassignment(command: &mut CommandState, stores: &mut Universe) {
 }
 
 fn assignment_global(explicit_global: bool, stores: &Universe) -> bool {
-    match stores.int_param(IntParam::GLOBAL_DEFS).cmp(&0) {
+    effective_global(stores.int_param(IntParam::GLOBAL_DEFS), explicit_global)
+}
+
+/// Applies TeX82 §1214's `\globaldefs` override to a prefixed assignment's
+/// scope: a positive `\globaldefs` forces `global_defs`, a negative one forces
+/// local scope, and zero leaves the `\global` prefix in charge.
+fn effective_global(global_defs: i32, explicit_global: bool) -> bool {
+    match global_defs.cmp(&0) {
         std::cmp::Ordering::Greater => true,
         std::cmp::Ordering::Less => false,
         std::cmp::Ordering::Equal => explicit_global,

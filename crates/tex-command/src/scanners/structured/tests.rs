@@ -196,6 +196,64 @@ fn register_definition_scanner_owns_target_scope_equals_and_bounded_index() {
 }
 
 #[test]
+fn font_definition_scanner_defines_the_null_font_before_scanning_operands() {
+    // TeX82 §1257's `new_font` runs `define(u,set_font,null_font)` on the
+    // `get_r_token` target before `scan_optional_equals` and `scan_file_name`,
+    // so the identifier already denotes the null font while those operands are
+    // delivered, and the observed mutation precedes them.
+    let mut command = CommandState::default();
+    let mut runtime = CommandRuntime::default();
+    let mut universe = Universe::new();
+    let mut capabilities = CommandHostCapabilities::default();
+    let target = universe.intern("tenrm").symbol();
+    let mut tokens = vec![Token::Cs(target)];
+    tokens.extend(text_tokens("=cmr10 "));
+    push(&mut command, tokens);
+
+    let mut recorder = Recorder::default();
+    let request = {
+        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities)
+            .with_observer(&mut recorder);
+        processor
+            .scan_font_definition(false)
+            .expect("font definition scans")
+    };
+
+    assert_eq!(request.target, target);
+    assert_eq!(request.name, "cmr10");
+    assert_eq!(
+        universe.meaning(target),
+        Meaning::Font(tex_state::font::NULL_FONT),
+    );
+
+    let mutation = recorder
+        .0
+        .iter()
+        .position(|observation| {
+            matches!(
+                observation,
+                CommandObservation::Mutation(record)
+                    if record.target == "meaning"
+                        && record.value == "set_font"
+                        && record.key.as_deref() == Some("tenrm")
+                        && !record.global
+            )
+        })
+        .expect("the provisional null-font definition is observed");
+    let equals = recorder
+        .0
+        .iter()
+        .position(|observation| {
+            matches!(
+                observation,
+                CommandObservation::Command(record) if record.command_operand == Some(i64::from('=' as u32))
+            )
+        })
+        .expect("the optional equals sign is delivered");
+    assert!(mutation < equals);
+}
+
+#[test]
 fn completed_math_field_replays_nested_group_without_exposing_tokens() {
     let mut command = CommandState::default();
     let mut runtime = CommandRuntime::default();
