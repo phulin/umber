@@ -26,9 +26,11 @@ pub(crate) enum ScanToksMode {
     /// Collect balanced general text; parameter characters are ordinary text.
     General { expanded: bool },
     /// Collect general text after the caller has validated and backed up the
-    /// required opening brace. This preserves TeX82's scanner ordering for
-    /// `\\write`: `scan_int`'s terminator is first validated through the
-    /// expanded path, then the absorbing collector replays that exact backup.
+    /// required opening brace. This is TeX82 §1227's token-list assignment
+    /// alone: it reads the right-hand side's first token through `get_x_token`
+    /// to tell a braced list from a token register or parameter, then backs
+    /// that brace up for `scan_toks`. Every other caller enters §473 directly
+    /// and must use `General`, whose absorbing transition precedes the brace.
     GeneralAfterOpening { expanded: bool, primary: OriginId },
     /// Collect a macro parameter text followed by its replacement text.
     MacroDefinition { expanded: bool },
