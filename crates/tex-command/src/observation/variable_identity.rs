@@ -219,6 +219,61 @@ pub(crate) fn token_parameter_address(slot: u16) -> Option<i64> {
     }
 }
 
+/// One eqtb-addressed named-parameter class an observed mutation can name.
+///
+/// The reference instrumentation's `umber_trace_named_slot` names a mutated
+/// parameter by *family* plus the parameter's position inside its own eqtb
+/// region (`glue_parameter`, `token_parameter`, `integer_parameter`, and
+/// `dimension_parameter`). That position is tex.web's parameter code, not a
+/// dense-bank slot, so a mutation observation has to translate exactly as
+/// `canonical_command_identity` does for a delivered `Meaning`.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ParameterClass {
+    /// tex.web §236's `int_par` block, reached through `assign_int`.
+    Integer,
+    /// tex.web §247's `dimen_par` block, reached through `assign_dimen`.
+    Dimension,
+    /// tex.web §224's `glue_par` block, reached through `assign_glue` and
+    /// `assign_mu_glue`; both commands share one region and one family name.
+    Glue,
+    /// tex.web §230's `local_base` token-list parameters, reached through
+    /// `assign_toks`.
+    Token,
+}
+
+/// Names a mutated named parameter the way the reference instrumentation's
+/// `umber_trace_named_slot` does: `<family>:<tex.web parameter code>`.
+///
+/// This is the only supported way to build a parameter mutation key. Emitting
+/// the raw `IntParam`/`DimenParam`/`GlueParam`/`TokParam` bank slot instead
+/// silently misnames every integer parameter whose dense slot is not its
+/// tex.web §236 code -- `\tracinglostchars` is Umber slot 36 and code 35,
+/// `\defaulthyphenchar` is slot 41 and code 46 (umber2-johp.134).
+///
+/// A slot with no code in the TeX82/e-TeX dialect (pdfTeX-only parameters and
+/// Umber's own hidden cells, see the module docs) is named with its bank slot
+/// under an `umber` marker rather than a bare number. A bare number would be
+/// indistinguishable from -- and could silently agree with -- a real code for
+/// a different parameter. The record is still emitted: dropping it would
+/// remove an event the oracle produces and desynchronize the whole trace.
+pub fn parameter_mutation_key(class: ParameterClass, slot: u16) -> String {
+    let (family, code) = match class {
+        ParameterClass::Integer => ("integer_parameter", int_parameter_code(slot)),
+        ParameterClass::Dimension => ("dimension_parameter", dimen_parameter_code(slot)),
+        ParameterClass::Glue => ("glue_parameter", glue_parameter_code(slot)),
+        ParameterClass::Token => (
+            "token_parameter",
+            // §230's token-list parameters are named by their offset from
+            // `output_routine_loc`, the first one the instrumentation names.
+            token_parameter_address(slot).map(|address| address - OUTPUT_ROUTINE_LOC),
+        ),
+    };
+    match code {
+        Some(code) => format!("{family}:{code}"),
+        None => format!("{family}:umber{slot}"),
+    }
+}
+
 /// Returns the `last_item` selector for a read-only internal integer.
 ///
 /// tex.web §413 reads these through `last_item`; §416 gives TeX82's
@@ -295,6 +350,52 @@ mod tests {
                 "int parameter slot {slot}"
             );
         }
+    }
+
+    #[test]
+    fn parameter_mutation_keys_name_tex_web_parameter_codes() {
+        // The four parameters plain.tex assigns whose dense bank slot is not
+        // their tex.web §236 code (umber2-johp.134).
+        for (slot, key) in [
+            (36_u16, "integer_parameter:35"), // \tracinglostchars
+            (39, "integer_parameter:38"),     // \uchyph
+            (41, "integer_parameter:46"),     // \defaulthyphenchar
+            (42, "integer_parameter:47"),     // \defaultskewchar
+            (32, "integer_parameter:43"),     // \globaldefs
+            (59, "integer_parameter:44"),     // \fam
+            (23, "integer_parameter:23"),     // \year, where the map is identity
+        ] {
+            assert_eq!(parameter_mutation_key(ParameterClass::Integer, slot), key);
+        }
+        // §247, §224, and §230 store their parameters in tex.web's own order,
+        // so those classes name the slot itself.
+        assert_eq!(
+            parameter_mutation_key(ParameterClass::Dimension, 6),
+            "dimension_parameter:6"
+        );
+        assert_eq!(
+            parameter_mutation_key(ParameterClass::Glue, 11),
+            "glue_parameter:11"
+        );
+        assert_eq!(
+            parameter_mutation_key(ParameterClass::Token, 0),
+            "token_parameter:0"
+        );
+    }
+
+    #[test]
+    fn parameter_mutation_keys_mark_slots_with_no_tex82_or_etex_code() {
+        // Umber slot 72 is `\pdfoutput`, whose code belongs to pdfTeX's own
+        // renumbered block; naming it `integer_parameter:72` would collide
+        // with a real TeX82/e-TeX code for an unrelated parameter.
+        assert_eq!(
+            parameter_mutation_key(ParameterClass::Integer, 72),
+            "integer_parameter:umber72"
+        );
+        assert_eq!(
+            parameter_mutation_key(ParameterClass::Dimension, 21),
+            "dimension_parameter:umber21"
+        );
     }
 
     #[test]

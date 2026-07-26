@@ -23,6 +23,7 @@ use tex_command::{
 #[cfg(any(test, feature = "instrumentation"))]
 use tex_command::{
     CommandObservation, CommandObserver, EffectRecord, MutationRecord, ObservedToken,
+    ParameterClass, parameter_mutation_key,
 };
 use tex_state::code_tables::{DelCode, LcCode, MathCode, SfCode, UcCode};
 use tex_state::env::banks::{DimenParam, GlueParam, IntParam, TokParam};
@@ -5936,7 +5937,8 @@ fn committed_arithmetic_mutation(
         ArithmeticTarget::IntegerParameter(index) => MutationRecord {
             target: "parameter",
             value: format!(
-                "integer_parameter:{index}={}",
+                "{}={}",
+                parameter_mutation_key(ParameterClass::Integer, index),
                 stores.int_param(IntParam::new(index))
             ),
             key: None,
@@ -5949,7 +5951,7 @@ fn committed_arithmetic_mutation(
                 "scaled:{}",
                 stores.dimen_param(DimenParam::new(index)).raw()
             ),
-            key: Some(format!("dimension_parameter:{index}")),
+            key: Some(parameter_mutation_key(ParameterClass::Dimension, index)),
             tokens: None,
             global,
         },
@@ -5961,7 +5963,7 @@ fn committed_arithmetic_mutation(
         ArithmeticTarget::GlueParameter { index, .. } => MutationRecord {
             target: "parameter",
             value: glue_mutation_value(&stores.glue(stores.glue_param(GlueParam::new(index)))),
-            key: Some(format!("glue_parameter:{index}")),
+            key: Some(parameter_mutation_key(ParameterClass::Glue, index)),
             tokens: None,
             global,
         },
@@ -6079,7 +6081,10 @@ fn applied_mutation_observation(
             global,
         } => MutationRecord {
             target: "parameter",
-            value: format!("integer_parameter:{index}={value}"),
+            value: format!(
+                "{}={value}",
+                parameter_mutation_key(ParameterClass::Integer, *index)
+            ),
             key: None,
             tokens: None,
             global: *global,
@@ -6091,7 +6096,7 @@ fn applied_mutation_observation(
         } => MutationRecord {
             target: "parameter",
             value: format!("scaled:{}", value.raw()),
-            key: Some(format!("dimension_parameter:{index}")),
+            key: Some(parameter_mutation_key(ParameterClass::Dimension, *index)),
             tokens: None,
             global: *global,
         },
@@ -6102,7 +6107,7 @@ fn applied_mutation_observation(
         } => MutationRecord {
             target: "parameter",
             value: glue_mutation_value(value),
-            key: Some(format!("glue_parameter:{index}")),
+            key: Some(parameter_mutation_key(ParameterClass::Glue, *index)),
             tokens: None,
             global: *global,
         },
@@ -6113,7 +6118,7 @@ fn applied_mutation_observation(
         } => MutationRecord {
             target: "parameter",
             value: "tokens".into(),
-            key: Some(format!("token_parameter:{index}")),
+            key: Some(parameter_mutation_key(ParameterClass::Token, *index)),
             tokens: Some(
                 stores
                     .tokens(tokens.token_list())

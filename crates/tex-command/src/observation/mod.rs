@@ -18,6 +18,7 @@ use crate::{DeliveryStamp, SourceLocation, SourceProvenance, SourceRange};
 mod primitive_identity;
 mod variable_identity;
 use primitive_identity::{expandable_primitive_identity, unexpandable_primitive_identity};
+pub use variable_identity::{ParameterClass, parameter_mutation_key};
 
 /// An owned, allocation-independent spelling used by command observation.
 #[derive(Clone, Debug, Eq, PartialEq)]
