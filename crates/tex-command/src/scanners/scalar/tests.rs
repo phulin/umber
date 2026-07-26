@@ -384,6 +384,76 @@ fn internal_dimension_register_scans_and_bounds_its_index_through_command_input(
 }
 
 #[test]
+fn a_whole_internal_dimension_operand_is_never_backed_up_and_redelivered() {
+    // tex.web §448: `<Get the next non-blank non-sign token>` leaves the
+    // token in hand, and only the branch for a command code outside
+    // §208/§209's `min_internal..=max_internal` runs `back_input`. A
+    // `\dimendef` name (`\maxdimen`) is `assign_dimen`, so `\splitmaxdepth=
+    // \maxdimen` delivers it exactly once, with no backup level and no
+    // recovery record, before `scan_something_internal` publishes its value
+    // (`umber2-johp.135`).
+    let mut command = CommandState::default();
+    let mut runtime = CommandRuntime::default();
+    let mut universe = Universe::new();
+    let maxdimen = universe.intern("maxdimen").symbol();
+    universe.set_meaning(maxdimen, Meaning::DimenRegister(0));
+    universe.set_dimen(0, tex_state::scaled::Scaled::from_raw(1_073_741_823));
+    let mut capabilities = CommandHostCapabilities::default();
+    let mut recorder = Recorder::default();
+
+    push(&mut command, vec![Token::Cs(maxdimen)]);
+    {
+        let mut processor = CommandProcessor::new(
+            &mut command,
+            &mut runtime,
+            universe.command_context(),
+            CommandHostContext::new(&mut capabilities),
+        )
+        .with_observer(&mut recorder);
+
+        assert_eq!(
+            processor
+                .scan_dimension()
+                .expect("internal dimension scans")
+                .value
+                .raw(),
+            1_073_741_823
+        );
+    }
+
+    assert!(
+        !recorder.0.iter().any(|record| matches!(
+            record,
+            CommandObservation::Input(record) if record.transition == InputTransition::Backup
+        )),
+        "an internal dimension operand must not install a backup level: {:?}",
+        recorder.0
+    );
+    assert!(
+        !recorder
+            .0
+            .iter()
+            .any(|record| matches!(record, CommandObservation::Recovery(_))),
+        "an internal dimension operand must not record a recovery: {:?}",
+        recorder.0
+    );
+    assert_eq!(
+        recorder
+            .0
+            .iter()
+            .filter(
+                |record| matches!(record, CommandObservation::Command(command)
+                if command.boundary == crate::CommandDeliveryBoundary::Raw)
+            )
+            .count(),
+        1,
+        "the operand is delivered exactly once: {:?}",
+        recorder.0
+    );
+    assert_eq!(scanner_kinds(&recorder), vec!["internal", "dimension"]);
+}
+
+#[test]
 fn dimension_scanner_accepts_an_internal_dimension_as_its_unit() {
     let mut command = CommandState::default();
     let mut runtime = CommandRuntime::default();

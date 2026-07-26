@@ -429,12 +429,22 @@ impl CommandProcessor<'_> {
         allow_infinite: bool,
         mu: bool,
     ) -> Result<(ScannedScalar<Scaled>, Order), CommandError> {
-        // TeX82 §455's signed lookahead normally backs up its first non-sign
-        // token before the integer scanner owns it. An internal dimension is
-        // the exception: it goes directly to `scan_something_internal`.
+        // TeX82 §448's `<Get the next non-blank non-sign token>` leaves that
+        // token in hand and branches on it: an internal quantity (a command
+        // code in §208/§209's `min_internal..=max_internal`) goes straight to
+        // `scan_something_internal`, and only the other branch runs
+        // `back_input` before `scan_int` owns the constant. Backing the token
+        // up unconditionally and re-reading it would install a backup level
+        // and redeliver the command that TeX never re-delivers.
+        //
+        // `internal_value_from_command` is that command-code test: it is
+        // exhaustive over the internal families and consumes an internal
+        // quantity's own operand (a register index, a font selector, a
+        // character code), so it must see the token before any `back_input`
+        // could split the quantity from its operand.
         let mut negative = false;
         let mut provenance = OriginId::UNKNOWN;
-        let retained_internal_dimension = loop {
+        let first = loop {
             let Some(command) = self.get_x_token()? else {
                 return Ok((
                     ScannedScalar {
@@ -453,22 +463,11 @@ impl CommandProcessor<'_> {
             match command.meaning() {
                 Meaning::CharToken { ch: ' ', .. } | Meaning::CharToken { ch: '+', .. } => {}
                 Meaning::CharToken { ch: '-', .. } => negative = !negative,
-                Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Dimen) => {
-                    break Some(command);
-                }
-                _ => {
-                    self.retire_exhausted_backup_before_scalar_replay(command.delivery_stamp())?;
-                    self.back_input(command)?;
-                    break None;
-                }
+                _ => break command,
             }
         };
         let provenance = ScalarProvenance {
             primary: provenance,
-        };
-        let first = match retained_internal_dimension {
-            Some(command) => command,
-            None => self.get_x_token()?.ok_or(CommandError::input_invariant())?,
         };
         let (value, order, attach_sign) = match self.internal_value_from_command(&first)? {
             // TeX82 §449's "Fetch an internal dimension and goto attach_sign,
@@ -498,46 +497,14 @@ impl CommandProcessor<'_> {
                     ));
                 }
             },
-            None => match first.meaning() {
-                Meaning::CharToken { ch, .. } if ch.is_ascii_digit() || is_decimal_point(ch) => {
-                    // TeX82 `scan_dimen` delegates the integral prefix to
-                    // `scan_int`.  Besides sharing radix and recovery rules,
-                    // that ownership is observable: `scan_int` backs up the
-                    // decimal point before completing, then `scan_dimen`
-                    // consumes it raw before scanning fractional digits.
-                    // Keep that hand-off inside the command scanner rather
-                    // than collapsing it into a private decimal parser.
-                    self.last_integer_terminator = None;
-                    let leading_decimal = matches!(
-                        first.meaning(),
-                        Meaning::CharToken { ch, .. } if is_decimal_point(ch)
-                    );
-                    let integer = self
-                        .complete_integer(first, false, provenance.primary)?
-                        .value;
-                    let decimal = leading_decimal
-                        || self
-                            .last_integer_terminator
-                            .as_ref()
-                            .is_some_and(|command| {
-                                matches!(
-                                    command.meaning(),
-                                    Meaning::CharToken { ch, .. } if is_decimal_point(ch)
-                                )
-                            });
-                    if decimal {
-                        // The decimal point is replayed raw after `scan_int`
-                        // backed it up.  A unit stays in the backed-up input
-                        // for the keyword scanner instead.
-                        let _ = self.get_next()?;
-                    }
-                    let (units, flip) =
-                        self.scan_units_after_integer(integer, decimal, allow_infinite, mu)?;
+            // TeX82 §448's other branch: `back_input`, then `scan_int` owns
+            // the integer part.
+            None => match self.scan_dimension_constant(first, allow_infinite, mu, provenance)? {
+                Some((units, flip)) => {
                     negative ^= flip;
                     (units.value, units.order, units.attach_sign)
                 }
-                _ => {
-                    self.back_input(first)?;
+                None => {
                     return Ok((
                         ScannedScalar {
                             value: Scaled::from_raw(0),
@@ -572,6 +539,68 @@ impl CommandProcessor<'_> {
             tokens: None,
         }));
         Ok((scanned, order))
+    }
+
+    /// TeX82 §448's non-internal branch of `scan_dimen`: `back_input`, then
+    /// `scan_int` (or §452's decimal fraction) owns the numeric part, and
+    /// §453's unit scan completes it.
+    ///
+    /// The backup and the integer scanner's own redelivery of that token are
+    /// both observable, so the hand-off stays a real backup/replay cycle
+    /// rather than passing the already-delivered command straight through.
+    ///
+    /// `None` is §444's `vacuous` case: `scan_int` found no digit at all, so
+    /// §446's "Express astonishment that no number was here" backs the
+    /// offending token up a second time (`back_error`) and the caller reads
+    /// zero.
+    fn scan_dimension_constant(
+        &mut self,
+        first: CurrentCommand,
+        allow_infinite: bool,
+        mu: bool,
+        provenance: ScalarProvenance,
+    ) -> Result<Option<(ScannedUnits, bool)>, CommandError> {
+        let stamp = first.delivery_stamp();
+        self.retire_exhausted_backup_before_scalar_replay(stamp)?;
+        self.back_input(first)?;
+        let replayed = self.get_x_token()?.ok_or(CommandError::input_invariant())?;
+        let Meaning::CharToken { ch, .. } = replayed.meaning() else {
+            self.back_input(replayed)?;
+            return Ok(None);
+        };
+        if !ch.is_ascii_digit() && !is_decimal_point(ch) {
+            self.back_input(replayed)?;
+            return Ok(None);
+        }
+        // TeX82 `scan_dimen` delegates the integral prefix to `scan_int`.
+        // Besides sharing radix and recovery rules, that ownership is
+        // observable: `scan_int` backs up the decimal point before
+        // completing, then `scan_dimen` consumes it raw before scanning
+        // fractional digits. Keep that hand-off inside the command scanner
+        // rather than collapsing it into a private decimal parser.
+        self.last_integer_terminator = None;
+        let leading_decimal = is_decimal_point(ch);
+        let integer = self
+            .complete_integer(replayed, false, provenance.primary)?
+            .value;
+        let decimal = leading_decimal
+            || self
+                .last_integer_terminator
+                .as_ref()
+                .is_some_and(|command| {
+                    matches!(
+                        command.meaning(),
+                        Meaning::CharToken { ch, .. } if is_decimal_point(ch)
+                    )
+                });
+        if decimal {
+            // The decimal point is replayed raw after `scan_int` backed it
+            // up. A unit stays in the backed-up input for the keyword scanner
+            // instead.
+            let _ = self.get_next()?;
+        }
+        self.scan_units_after_integer(integer, decimal, allow_infinite, mu)
+            .map(Some)
     }
 
     /// TeX82 §449's "Fetch an internal dimension ..., or fetch an internal
