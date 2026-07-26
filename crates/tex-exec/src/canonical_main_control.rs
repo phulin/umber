@@ -7004,7 +7004,19 @@ fn apply_scanned_step(
             Ok(ReplayStep::Continue)
         }
         ScannedStep::ParagraphShape { lines, global } => {
-            stores.set_paragraph_shape(&lines, global);
+            // TeX82 §1214's "Adjust for the setting of `\globaldefs`" runs
+            // unconditionally before `prefixed_command`'s `case cur_cmd of
+            // @<Assignments@> endcases`, so it applies uniformly to all
+            // thirty assignment forms §1210 dispatches -- `set_shape`
+            // (§1248's `define(par_shape_loc,shape_ref,p)`) among them,
+            // since `\parshape` is an ordinary `eqtb` entry that `define`
+            // scopes through the save stack. This was the third canonical
+            // apply arm (after `\def`/`\edef`/`\gdef`/`\xdef` and
+            // `\let`/`\futurelet`) that passed the raw `\global` prefix bit
+            // straight through and silently ignored a nonzero
+            // `\globaldefs`; it was missed by both earlier sweeps because
+            // `set_shape` belongs to neither definition family.
+            stores.set_paragraph_shape(&lines, assignment_global(global, stores));
             Ok(ReplayStep::Continue)
         }
         ScannedStep::Toks {
