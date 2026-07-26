@@ -868,3 +868,65 @@ fn true_units_scale_fractional_dimensions_before_converting_the_unit() {
         75 * Scaled::UNITY + 18_383
     );
 }
+
+#[test]
+fn unknown_unit_recovers_by_assuming_points() {
+    // TeX82 §459's "Complain about unknown unit": TeX reports "Illegal unit
+    // of measure (pt inserted)", assumes `pt`, and finishes the job. A hard
+    // scanner failure would abandon a run that real pdfTeX completes.
+    let mut universe = Universe::new();
+
+    assert_eq!(
+        scan_with(
+            &mut universe,
+            "3xy".chars().map(char_token).collect(),
+            |processor| processor
+                .scan_dimension()
+                .expect("unknown unit recovers")
+                .value
+                .raw(),
+        ),
+        3 * Scaled::UNITY
+    );
+}
+
+#[test]
+fn mu_dimension_with_a_non_mu_unit_recovers_by_assuming_mu() {
+    // TeX82 §456's "Illegal unit of measure (mu inserted)": the scanned
+    // quantity is kept as mu and the offending unit text stays in the input.
+    let mut universe = Universe::new();
+
+    let (value, following) = scan_with(
+        &mut universe,
+        "2pt".chars().map(char_token).collect(),
+        |processor| {
+            let value = processor
+                .scan_mu_dimension()
+                .expect("mu mismatch recovers")
+                .value
+                .raw();
+            (value, processor.scan_keyword("pt").expect("keyword").value)
+        },
+    );
+    assert_eq!(value, 2 * Scaled::UNITY);
+    assert!(following, "the rejected unit text is left to be re-read");
+}
+
+#[test]
+fn oversized_dimension_clamps_to_max_dimen() {
+    // TeX82 §460's "Report that this dimension is out of range": TeX prints
+    // "Dimension too large", uses `max_dimen`, and clears `arith_error`.
+    let mut universe = Universe::new();
+
+    assert_eq!(
+        scan_with(
+            &mut universe,
+            "20000pt".chars().map(char_token).collect(),
+            |processor| processor
+                .scan_dimension()
+                .expect("oversized dimension recovers")
+                .value,
+        ),
+        Scaled::MAX_DIMEN
+    );
+}

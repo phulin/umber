@@ -938,50 +938,59 @@ impl CommandProcessor<'_> {
         // still measures one physical unit on the magnified page. Its
         // diagnostic (an illegal or job-incompatible `\mag`) needs a canonical
         // scanner diagnostic channel that does not exist yet.
+        // Every arithmetic failure below is tex.web's `arith_error`, which
+        // §460's `attach_sign` turns into "Dimension too large" -- a reported,
+        // recoverable error that clamps to `max_dimen` and keeps going, not an
+        // abandoned job.
+        let mut arith_error = false;
         let (integer, fraction) = if true_dimension {
             let (mag, _diagnostic) = self.state.prepare_mag();
-            scale_true_dimension_parts(integer, fraction, mag)
-                .map_err(|_| CommandError::input_invariant())?
+            scale_true_dimension_parts(integer, fraction, mag).unwrap_or_else(|_| {
+                arith_error = true;
+                (integer, fraction)
+            })
         } else {
             (integer, fraction)
         };
         let (value, order) = match unit {
+            // §455's `nx_plus_y(save_cur_val,v,xn_over_d(v,f,@'200000))`.
             DimensionUnit::Internal(unit) => (
                 nx_plus_y(
                     integer,
                     unit,
                     xn_over_d(unit, fraction, Scaled::UNITY)
-                        .map_err(|_| CommandError::input_invariant())?
-                        .quotient,
+                        .map_or(Scaled::MAX_DIMEN, |result| result.quotient),
                 )
-                .map_err(|_| CommandError::input_invariant()),
+                .unwrap_or(Scaled::MAX_DIMEN),
                 Order::Normal,
             ),
             DimensionUnit::Physical(unit) => (
-                if matches!(unit, PhysicalUnit::Pt) && mu {
-                    // A mu unit has the same scaled representation as a point; its
-                    // distinctness belongs to the surrounding glue family.
-                    scaled_from_decimal_parts(integer, fraction, PhysicalUnit::Pt)
-                } else {
-                    scaled_from_decimal_parts(integer, fraction, unit)
-                }
-                .map_err(|_| CommandError::input_invariant()),
+                scaled_from_decimal_parts(integer, fraction, unit).unwrap_or(Scaled::MAX_DIMEN),
                 Order::Normal,
             ),
             // TeX stores an infinite glue component's finite coefficient as a
             // scaled value, while its order is carried separately.
             DimensionUnit::Infinite(order) => (
                 scaled_from_decimal_parts(integer, fraction, PhysicalUnit::Pt)
-                    .map_err(|_| CommandError::input_invariant()),
+                    .unwrap_or(Scaled::MAX_DIMEN),
                 order,
             ),
+            // A mu unit has the same scaled representation as a point; its
+            // distinctness belongs to the surrounding glue family.
             DimensionUnit::Mu => (
                 scaled_from_decimal_parts(integer, fraction, PhysicalUnit::Pt)
-                    .map_err(|_| CommandError::input_invariant()),
+                    .unwrap_or(Scaled::MAX_DIMEN),
                 Order::Normal,
             ),
         };
-        value.map(|value| (value, order))
+        Ok((
+            if arith_error {
+                Scaled::MAX_DIMEN
+            } else {
+                value
+            },
+            order,
+        ))
     }
 
     /// TeX82 §453's "Scan units and set `cur_val`".
@@ -1023,12 +1032,12 @@ impl CommandProcessor<'_> {
             }
         }
         // §456: a mu dimension admits only the `mu` unit, and `true` is never
-        // recognized in a mu context.
+        // recognized in a mu context. A missing `mu` is "Illegal unit of
+        // measure (mu inserted)": TeX reports it, keeps the scanned quantity
+        // as mu, and leaves the offending text for the caller to re-read.
         if mu {
-            if self.scan_keyword("mu")?.value {
-                return Ok((DimensionUnit::Mu, false));
-            }
-            return Err(CommandError::input_invariant());
+            let _ = self.scan_keyword("mu")?;
+            return Ok((DimensionUnit::Mu, false));
         }
         let true_dimension = self.scan_keyword("true")?.value;
         if self.scan_keyword("pt")?.value {
@@ -1048,7 +1057,10 @@ impl CommandProcessor<'_> {
                 return Ok((DimensionUnit::Physical(unit), true_dimension));
             }
         }
-        Err(CommandError::input_invariant())
+        // §459's "Complain about unknown unit": TeX reports "Illegal unit of
+        // measure (pt inserted)", assumes `pt`, and finishes the job that a
+        // hard scanner failure here would abandon.
+        Ok((DimensionUnit::Physical(PhysicalUnit::Pt), true_dimension))
     }
 
     /// Performs TeX82 §455's internal-dimension unit lookahead.
