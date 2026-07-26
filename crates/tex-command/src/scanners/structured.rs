@@ -298,18 +298,22 @@ pub enum ScannedPackingSpec {
 }
 
 /// The completed command-owned prefix of TeX82 §968's `begin_insert_or_adjust`
-/// for `\insert`.
+/// for `\insert` and `\vadjust`.
 ///
 /// `scan_eight_bit_int`'s range clamp and §968's reserved-255 recovery both
 /// need to write a `Universe`-routed diagnostic, so this keeps only the raw
 /// scanned class number (any `i32` the integer scanner produced) and the
 /// validated opening-brace backup state. Replay performs the bounded 0..=255
 /// recovery and the `\insert255` rejection immediately before opening the
-/// insertion group.
+/// insertion group -- but only for `\insert`: `\vadjust` sets `class:=255`
+/// unconditionally (`if cur_cmd=vadjust then cur_val:=255`) without ever
+/// calling `scan_eight_bit_int`, so `is_vadjust` tells replay to skip both
+/// diagnostics for that already-valid sentinel class.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ScannedInsertConstruction {
     pub class: i32,
     pub opening_brace_replay: bool,
+    pub is_vadjust: bool,
 }
 
 /// The completed command-owned operand of a TeX82 §1073 box-shift prefix
@@ -2033,6 +2037,7 @@ impl CommandProcessor<'_> {
         Ok(ScannedInsertConstruction {
             class,
             opening_brace_replay,
+            is_vadjust: false,
         })
     }
 
