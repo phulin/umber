@@ -105,6 +105,29 @@ fn negated_glue(glue: GlueSpec) -> GlueSpec {
     }
 }
 
+/// TeX82 §454's `while scan_keyword("l") do ... incr(cur_order)`.
+///
+/// Every `l` after `fil` is consumed, and one past `filll` is an error that
+/// tex.web reports and then discards ("A specification like `filllll` ...
+/// will lead to two error messages"). Leaving the excess `l` in the input
+/// instead would leak it into later parsing as literal text.
+const fn raise_infinite_order(order: Order) -> Order {
+    match order {
+        Order::Normal => Order::Fil,
+        Order::Fil => Order::Fill,
+        Order::Fill | Order::Filll => Order::Filll,
+    }
+}
+
+/// Recognizes TeX82 §448's decimal point.
+///
+/// `scan_dimen` aliases `continental_point_token` to `point_token` twice, so
+/// a comma introduces a decimal fraction exactly like a period: `3,5pt` is
+/// `3.5pt`, and a leading `,5pt` is `0.5pt`.
+const fn is_decimal_point(ch: char) -> bool {
+    matches!(ch, '.' | ',')
+}
+
 /// The outcome of TeX82 §449's internal-quantity fetch inside `scan_dimen`.
 enum InternalDimension {
     /// The quantity reached the requested dimension level: `goto attach_sign`
@@ -465,7 +488,7 @@ impl CommandProcessor<'_> {
                 }
             },
             None => match first.meaning() {
-                Meaning::CharToken { ch, .. } if ch.is_ascii_digit() || ch == '.' => {
+                Meaning::CharToken { ch, .. } if ch.is_ascii_digit() || is_decimal_point(ch) => {
                     // TeX82 `scan_dimen` delegates the integral prefix to
                     // `scan_int`.  Besides sharing radix and recovery rules,
                     // that ownership is observable: `scan_int` backs up the
@@ -474,8 +497,10 @@ impl CommandProcessor<'_> {
                     // Keep that hand-off inside the command scanner rather
                     // than collapsing it into a private decimal parser.
                     self.last_integer_terminator = None;
-                    let leading_decimal =
-                        matches!(first.meaning(), Meaning::CharToken { ch: '.', .. });
+                    let leading_decimal = matches!(
+                        first.meaning(),
+                        Meaning::CharToken { ch, .. } if is_decimal_point(ch)
+                    );
                     let integer = self
                         .complete_integer(first, false, provenance.primary)?
                         .value;
@@ -484,7 +509,10 @@ impl CommandProcessor<'_> {
                             .last_integer_terminator
                             .as_ref()
                             .is_some_and(|command| {
-                                matches!(command.meaning(), Meaning::CharToken { ch: '.', .. })
+                                matches!(
+                                    command.meaning(),
+                                    Meaning::CharToken { ch, .. } if is_decimal_point(ch)
+                                )
                             });
                     if decimal {
                         // The decimal point is replayed raw after `scan_int`
@@ -1102,14 +1130,7 @@ impl CommandProcessor<'_> {
                 break;
             };
             match command.meaning() {
-                Meaning::CharToken { ch: 'l', .. } if order != Order::Filll => {
-                    order = match order {
-                        Order::Normal => Order::Fil,
-                        Order::Fil => Order::Fill,
-                        Order::Fill => Order::Filll,
-                        _ => unreachable!("infinite glue order is bounded"),
-                    };
-                }
+                Meaning::CharToken { ch: 'l', .. } => order = raise_infinite_order(order),
                 _ => {
                     self.back_input(command)?;
                     break;
@@ -1132,13 +1153,7 @@ impl CommandProcessor<'_> {
                 break;
             };
             match command.meaning() {
-                Meaning::CharToken { ch: 'l', .. } if order != Order::Filll => {
-                    order = match order {
-                        Order::Fil => Order::Fill,
-                        Order::Fill => Order::Filll,
-                        _ => unreachable!("infinite glue order is bounded"),
-                    };
-                }
+                Meaning::CharToken { ch: 'l', .. } => order = raise_infinite_order(order),
                 Meaning::CharToken { ch: ' ', .. } => {
                     if let Some(next) = self.get_x_token()? {
                         self.back_input(next)?;
