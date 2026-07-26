@@ -54,7 +54,12 @@ Private state-machine modules must not be widened for compatibility with
 - `src/conditionals.rs`: private independent condition-stack machine.
 - `src/scan_toks.rs`: private canonical token-list scanner.
 - `src/provenance.rs`: private command provenance construction.
-- `src/observation.rs`: private aggregate read observation.
+- `src/observation/`: private aggregate read observation. `mod.rs` owns the
+  record union and the exhaustive `Meaning`-level command classification;
+  `primitive_identity.rs` and `variable_identity.rs` own the exhaustive
+  primitive and eqtb-addressed variable identities beneath it. None of the
+  three may reintroduce a catch-all: an unclassified meaning must be a build
+  failure, never a plausible generic identity in a trace.
 - `src/snapshot.rs` and `src/snapshot/tests.rs`: command snapshot, quiescent
   summary ownership, and focused internal roundtrip/rejection tests.
 - `tests/`: external dependency, visibility, and capability-boundary tests.

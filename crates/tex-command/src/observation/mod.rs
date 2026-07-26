@@ -16,6 +16,7 @@ use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 use crate::{DeliveryStamp, SourceLocation, SourceProvenance, SourceRange};
 
 mod primitive_identity;
+mod variable_identity;
 use primitive_identity::{expandable_primitive_identity, unexpandable_primitive_identity};
 
 /// An owned, allocation-independent spelling used by command observation.
@@ -115,6 +116,17 @@ pub struct CommandDeliveryRecord {
 ///
 /// This is instrumentation-only metadata.  It is derived from the installed
 /// primitive registry, not from a fixture or host replay policy.
+///
+/// The match below is EXHAUSTIVE over `Meaning`: a variant added to
+/// `tex_state::meaning::Meaning` without a deliberate arm here is a build
+/// failure (`error[E0004]`), not a silent generic identity. It used to end
+/// in `_ => ("internal", None)`, which is strictly worse than failing --
+/// every register-defining and parameter meaning that reached it was
+/// reported to the differential tracer as a plausible-looking command with
+/// no selector, so the oracle comparison ran against fabricated data. This
+/// is `docs/tex_command_core.md` §33.2's dispatch-completeness invariant
+/// applied to classification, the same remedy `primitive_identity` already
+/// applies beneath the two primitive arms.
 pub(crate) fn canonical_command_identity(meaning: Meaning) -> (String, Option<i64>) {
     match meaning {
         // TeX82 §23 can replace an offending outer control sequence's
@@ -165,12 +177,87 @@ pub(crate) fn canonical_command_identity(meaning: Meaning) -> (String, Option<i6
         // classifier): a variant added to the enum without a named arm there
         // is a build failure, not a silent generic fallback.
         Meaning::ExpandablePrimitive(primitive) => expandable_primitive_identity(primitive),
-        Meaning::IntParam(index) => ("assign_int".into(), Some(27_167 + i64::from(index))),
-        // TeX82's named glue parameters occupy the contiguous `assign_glue`
-        // command range. Their selector is the glue-parameter base plus the
-        // stored parameter index (for example, `\\tabskip` is 24538).
-        Meaning::GlueParam(index) => ("assign_glue".into(), Some(24_527 + i64::from(index))),
-        Meaning::TokParam(index) => ("assign_toks".into(), Some(25_058 + i64::from(index))),
+        // TeX82's named parameters and classical registers are variables
+        // whose command selector is a real eqtb address. `variable_identity`
+        // owns both the region bases and the translation from Umber's dense
+        // bank slot to tex.web's parameter code, which is NOT the identity
+        // map: `\\fam` is Umber slot 59 and tex.web §236 code 44.
+        Meaning::IntParam(slot) => (
+            "assign_int".into(),
+            variable_identity::int_parameter_code(slot)
+                .map(|code| variable_identity::INT_BASE + code),
+        ),
+        Meaning::DimenParam(slot) => (
+            "assign_dimen".into(),
+            variable_identity::dimen_parameter_code(slot)
+                .map(|code| variable_identity::DIMEN_BASE + code),
+        ),
+        Meaning::GlueParam(slot) => (
+            "assign_glue".into(),
+            variable_identity::glue_parameter_code(slot)
+                .map(|code| variable_identity::GLUE_BASE + code),
+        ),
+        // TeX82 §224 stores `\\thinmuskip`, `\\medmuskip`, and `\\thickmuskip`
+        // in the same glue-parameter region as the ordinary glue parameters
+        // (codes 15..17); only their command differs.
+        Meaning::MuGlueParam(slot) => (
+            "assign_mu_glue".into(),
+            variable_identity::glue_parameter_code(slot)
+                .map(|code| variable_identity::GLUE_BASE + code),
+        ),
+        Meaning::TokParam(slot) => (
+            "assign_toks".into(),
+            variable_identity::token_parameter_address(slot),
+        ),
+        // TeX82 §1224's `shorthand_def` gives a `\\countdef`/`\\dimendef`/
+        // `\\skipdef`/`\\muskipdef`/`\\toksdef` control sequence the command
+        // of the register class it names and the register's own eqtb address
+        // as its selector -- `define(p,assign_int,count_base+cur_val)` for
+        // `\\countdef`. Such a control sequence is therefore indistinguishable
+        // from a named parameter of the same class at every delivery
+        // boundary, which is exactly what lets §1226's `prefixed_command`
+        // assign through it.
+        Meaning::CountRegister(index) => (
+            "assign_int".into(),
+            Some(variable_identity::COUNT_BASE + i64::from(index)),
+        ),
+        Meaning::DimenRegister(index) => (
+            "assign_dimen".into(),
+            Some(variable_identity::SCALED_BASE + i64::from(index)),
+        ),
+        Meaning::SkipRegister(index) => (
+            "assign_glue".into(),
+            Some(variable_identity::SKIP_BASE + i64::from(index)),
+        ),
+        Meaning::MuskipRegister(index) => (
+            "assign_mu_glue".into(),
+            Some(variable_identity::MU_SKIP_BASE + i64::from(index)),
+        ),
+        Meaning::ToksRegister(index) => (
+            "assign_toks".into(),
+            Some(variable_identity::TOKS_BASE + i64::from(index)),
+        ),
+        // TeX82 §982/§986 install the page-so-far quantities under
+        // `set_page_dimen` and `set_page_int`, selected by their small
+        // `page_so_far`/`dead_cycles` ordinal rather than an eqtb address.
+        Meaning::PageDimension(dimension) => {
+            ("set_page_dimen".into(), Some(i64::from(dimension.index())))
+        }
+        Meaning::PageInteger(integer) => ("set_page_int".into(), Some(i64::from(integer.index()))),
+        // TeX82 §416 installs the read-only internal quantities under the
+        // shared `last_item` command; `primitive_identity` classifies the
+        // ones Umber models as primitives, and this arm the ones it models as
+        // state (`\\badness`, `\\inputlineno`, and the e-TeX/pdfTeX
+        // extensions).
+        Meaning::InternalInteger(integer) => (
+            "last_item".into(),
+            variable_identity::internal_integer_code(integer),
+        ),
+        // TeX82 §1257's `new_font` defines a font identifier as
+        // `define(u,set_font,null_font)` and then stores the internal font
+        // number, so a font control sequence delivers `set_font` with that
+        // number (§577's `\\nullfont` is the same command with number zero).
+        Meaning::Font(font) => ("set_font".into(), Some(i64::from(font.raw()))),
         // Every `UnexpandablePrimitive` variant has a real tex.web/e-TeX/pdfTeX
         // command identity, computed exhaustively by `unexpandable_primitive_identity`
         // (`docs/tex_command_core.md` §33.2's dispatch-completeness invariant,
@@ -192,7 +279,13 @@ pub(crate) fn canonical_command_identity(meaning: Meaning) -> (String, Option<i6
         }
         Meaning::MathCharGiven(code) => ("math_given".into(), Some(i64::from(code))),
         Meaning::Undefined => ("undefined_cs".into(), Some(-268_435_455)),
-        _ => ("internal".into(), None),
+        // A stored meaning word whose opcode, flags, or operand does not
+        // decode into any modeled meaning. This is not a TeX command at all,
+        // so it deliberately gets a name no engine installs rather than
+        // being folded into a real command family: a spelling that reaches
+        // the trace under this name is a `tex-state` decoding defect, and
+        // must look like one.
+        Meaning::Unknown(_) => ("undecodable_meaning".into(), None),
     }
 }
 
@@ -661,6 +754,76 @@ mod tests {
         assert_eq!(
             canonical_command_identity(Meaning::GlueParam(11)),
             ("assign_glue".into(), Some(24_538))
+        );
+    }
+
+    #[test]
+    fn shorthand_registers_use_their_register_class_command() {
+        // TeX82 §1224's `shorthand_def`: a `\countdef`'d control sequence is
+        // `define(p,assign_int,count_base+cur_val)`, and its siblings define
+        // `assign_dimen`/`assign_glue`/`assign_mu_glue`/`assign_toks` at
+        // `scaled_base`/`skip_base`/`mu_skip_base`/`toks_base`. plain.tex's
+        // `\countdef\m@ne=22` therefore delivers `assign_int` 27251, not a
+        // selectorless generic command.
+        assert_eq!(
+            canonical_command_identity(Meaning::CountRegister(22)),
+            ("assign_int".into(), Some(27_251))
+        );
+        assert_eq!(
+            canonical_command_identity(Meaning::DimenRegister(10)),
+            ("assign_dimen".into(), Some(27_772))
+        );
+        assert_eq!(
+            canonical_command_identity(Meaning::SkipRegister(10)),
+            ("assign_glue".into(), Some(24_555))
+        );
+        assert_eq!(
+            canonical_command_identity(Meaning::MuskipRegister(0)),
+            ("assign_mu_glue".into(), Some(24_801))
+        );
+        assert_eq!(
+            canonical_command_identity(Meaning::ToksRegister(10)),
+            ("assign_toks".into(), Some(25_077))
+        );
+    }
+
+    #[test]
+    fn int_parameters_use_tex_web_parameter_codes_not_umber_bank_slots() {
+        // TeX82 §236 `cur_fam_code=44`; Umber stores `\fam` in dense bank
+        // slot 59, so an identity map reported 27226 instead of 27211.
+        assert_eq!(
+            canonical_command_identity(Meaning::IntParam(59)),
+            ("assign_int".into(), Some(27_211))
+        );
+        // §236 `global_defs_code=43` (Umber slot 32) and `escape_char_code=45`
+        // (Umber slot 40) are the same reordering.
+        assert_eq!(
+            canonical_command_identity(Meaning::IntParam(32)),
+            ("assign_int".into(), Some(27_210))
+        );
+        assert_eq!(
+            canonical_command_identity(Meaning::IntParam(40)),
+            ("assign_int".into(), Some(27_212))
+        );
+    }
+
+    #[test]
+    fn page_quantities_and_fonts_use_their_tex82_commands() {
+        assert_eq!(
+            canonical_command_identity(Meaning::PageDimension(
+                tex_state::page::PageDimension::Goal
+            )),
+            ("set_page_dimen".into(), Some(0))
+        );
+        assert_eq!(
+            canonical_command_identity(Meaning::PageInteger(
+                tex_state::page::PageInteger::InsertPenalties
+            )),
+            ("set_page_int".into(), Some(1))
+        );
+        assert_eq!(
+            canonical_command_identity(Meaning::Font(tex_state::font::NULL_FONT)),
+            ("set_font".into(), Some(0))
         );
     }
 
