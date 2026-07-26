@@ -52,7 +52,7 @@
 
 use tex_state::meaning::{ExpandablePrimitive, UnexpandablePrimitive};
 
-/// TeX82 `@d vmode=1` (`\prevdepth`/`\nointerlineskip`'s `set_aux` selector).
+/// TeX82 `@d vmode=1` (`\prevdepth`'s `set_aux` selector).
 const VMODE: i64 = 1;
 /// TeX82 `@d hmode=vmode+max_command+1`, `max_command=100`
 /// (`\spacefactor`'s `set_aux` selector).
@@ -127,18 +127,10 @@ pub(crate) fn unexpandable_primitive_identity(
         P::Hyphenation => ("hyph_data".into(), Some(0)),
         P::Patterns => ("hyph_data".into(), Some(1)),
         P::Par => ("par_end".into(), Some(256)),
-        // `\endgraf` is Umber's own primitive alias for `\par` (plain.tex
-        // ordinarily provides it via `\let`); every dispatch site treats the
-        // two identically, so they share `par_end`'s identity too.
-        P::EndGraf => ("par_end".into(), Some(256)),
         P::Indent => ("start_par".into(), Some(1)),
         P::NoIndent => ("start_par".into(), Some(0)),
         P::ParShape => ("set_shape".into(), Some(0)),
         P::PrevDepth => ("set_aux".into(), Some(VMODE)),
-        // `\nointerlineskip` is Umber's own fixed-chr-code primitive for what
-        // plain.tex ordinarily spells `\prevdepth=-1000pt` (`umber2-johp.69`);
-        // it performs the identical `set_aux` assignment as `\prevdepth`.
-        P::NoInterlineSkip => ("set_aux".into(), Some(VMODE)),
         P::PrevGraf => ("set_prev_graf".into(), Some(0)),
         P::HAlign => ("halign".into(), Some(0)),
         P::VAlign => ("valign".into(), Some(0)),
@@ -296,7 +288,6 @@ pub(crate) fn unexpandable_primitive_identity(
         // Not a tex.web primitive; no e-TeX/pdfTeX registration was found
         // either. BEST-EFFORT: kept in the `xray` diagnostic family it
         // behaves like, with a selector past e-TeX's highest (`show_ifs`=6).
-        P::ShowHyphens => ("xray".into(), Some(7)),
         // tex.web: `primitive("uppercase",case_shift,uc_code_base)`,
         // `primitive("lowercase",case_shift,lc_code_base)` -- the same
         // eqtb addresses already confirmed for `\uccode`/`\lccode`

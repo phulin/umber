@@ -72,6 +72,8 @@ pub(crate) use hmode::{
 pub(crate) use hyphenation::hyphenated_hlist as test_hyphenated_hlist_owned;
 #[cfg(test)]
 pub(crate) use hyphenation::test_hyphenated_word as test_hyphenated_hlist;
+#[cfg(test)]
+pub(crate) use hyphenation::test_hyphenated_word_text;
 use hyphenation::*;
 pub(crate) use hyphenation::{
     apply_hyphenation_exceptions, apply_patterns, hyphenation_words_from_tokens,
@@ -1881,7 +1883,6 @@ fn execute_prefixed_command(
                 Ok(CommandOutcome::assigned())
             }
             UnexpandablePrimitive::Par
-            | UnexpandablePrimitive::EndGraf
             | UnexpandablePrimitive::Indent
             | UnexpandablePrimitive::NoIndent
             | UnexpandablePrimitive::QuitVMode
@@ -1891,15 +1892,12 @@ fn execute_prefixed_command(
             | UnexpandablePrimitive::WidowPenalties
             | UnexpandablePrimitive::DisplayWidowPenalties
             | UnexpandablePrimitive::PrevDepth
-            | UnexpandablePrimitive::PrevGraf
-            | UnexpandablePrimitive::NoInterlineSkip => {
+            | UnexpandablePrimitive::PrevGraf => {
                 reject_macro_prefixes(prefixes)?;
                 if prefixes.global
                     && matches!(
                         primitive,
-                        UnexpandablePrimitive::PrevDepth
-                            | UnexpandablePrimitive::PrevGraf
-                            | UnexpandablePrimitive::NoInterlineSkip
+                        UnexpandablePrimitive::PrevDepth | UnexpandablePrimitive::PrevGraf
                     )
                 {
                     stores.world_mut().write_text(
@@ -2352,11 +2350,6 @@ fn execute_prefixed_command(
             UnexpandablePrimitive::ShowLists => {
                 reject_all_prefixes(prefixes)?;
                 diagnostics::execute_showlists(stores, nest);
-                Ok(CommandOutcome::continue_only())
-            }
-            UnexpandablePrimitive::ShowHyphens => {
-                reject_all_prefixes(prefixes)?;
-                diagnostics::execute_showhyphens(command.traced, input, stores, execution)?;
                 Ok(CommandOutcome::continue_only())
             }
             UnexpandablePrimitive::Uppercase => {

@@ -13,7 +13,7 @@ use tex_typeset::linebreak::{
 
 use super::boxes::hpack_owned_with_overfull_rule;
 use super::*;
-use crate::mode::{ParagraphParams, ignored_depth};
+use crate::mode::ParagraphParams;
 use crate::vertical::{
     append_migrated_contribution, append_node_to_current_list, append_vertical_contribution,
     build_page_if_outer_vertical,
@@ -30,7 +30,7 @@ pub(super) fn execute_paragraph_command(
     global: bool,
 ) -> Result<(), ExecError> {
     match primitive {
-        UnexpandablePrimitive::Par | UnexpandablePrimitive::EndGraf => {
+        UnexpandablePrimitive::Par => {
             if matches!(nest.current_mode(), Mode::Vertical | Mode::InternalVertical) {
                 // TeX82's `vmode + par_end` branch calls `normal_paragraph`
                 // even though there is no horizontal list to finish. LaTeX
@@ -65,11 +65,6 @@ pub(super) fn execute_paragraph_command(
             assign_prevdepth(nest, input, stores, execution, context)
         }
         UnexpandablePrimitive::PrevGraf => assign_prevgraf(nest, input, stores, execution, context),
-        UnexpandablePrimitive::NoInterlineSkip => {
-            nest.current_list_mut()
-                .set_prev_depth(ignored_depth(stores));
-            Ok(())
-        }
         _ => unreachable!("caller restricts paragraph commands"),
     }
 }

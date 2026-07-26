@@ -3,6 +3,17 @@ use tex_state::macro_store::MacroMeaning;
 use tex_state::meaning::InternalInteger;
 use tex_state::page::{PageDimension, PageInteger};
 
+/// Installs TeX82's unexpandable primitive table.
+///
+/// The names registered here, together with `tex-expand`'s expandable table,
+/// are exactly the 325 strings tex.web passes to `primitive(...)` (§264's
+/// `@p @!init procedure primitive`), plus §1369's frozen `\endwrite`
+/// sentinel. It is never a superset: a control sequence that plain.tex or
+/// latex.ltx merely *defines* as a macro -- `\endgraf`, `\nointerlineskip`,
+/// `\showhyphens`, and their kin -- must remain undefined until the format
+/// source defines it, so `\let`/`\def` over that name reports §210's
+/// `undefined_cs` (the `eq_type` §222 gives `undefined_control_sequence`)
+/// exactly as the reference engine does.
 pub fn install_unexpandable_primitives(stores: &mut Universe) {
     configure_unexpandable_primitives(stores, true);
 }
@@ -56,13 +67,11 @@ fn configure_unexpandable_primitives(stores: &mut Universe, install: bool) {
         ("patterns", UnexpandablePrimitive::Patterns),
         ("hyphenation", UnexpandablePrimitive::Hyphenation),
         ("par", UnexpandablePrimitive::Par),
-        ("endgraf", UnexpandablePrimitive::EndGraf),
         ("indent", UnexpandablePrimitive::Indent),
         ("noindent", UnexpandablePrimitive::NoIndent),
         ("parshape", UnexpandablePrimitive::ParShape),
         ("prevdepth", UnexpandablePrimitive::PrevDepth),
         ("prevgraf", UnexpandablePrimitive::PrevGraf),
-        ("nointerlineskip", UnexpandablePrimitive::NoInterlineSkip),
         ("halign", UnexpandablePrimitive::HAlign),
         ("valign", UnexpandablePrimitive::VAlign),
         ("noalign", UnexpandablePrimitive::NoAlign),
@@ -139,7 +148,6 @@ fn configure_unexpandable_primitives(stores: &mut Universe, install: bool) {
         ("message", UnexpandablePrimitive::Message),
         ("errmessage", UnexpandablePrimitive::ErrMessage),
         ("showlists", UnexpandablePrimitive::ShowLists),
-        ("showhyphens", UnexpandablePrimitive::ShowHyphens),
         ("uppercase", UnexpandablePrimitive::Uppercase),
         ("lowercase", UnexpandablePrimitive::Lowercase),
         ("ignorespaces", UnexpandablePrimitive::IgnoreSpaces),
@@ -228,8 +236,13 @@ fn configure_unexpandable_primitives(stores: &mut Universe, install: bool) {
     configure_write_stopper(stores, install);
 }
 
-/// Registers TeX82 §53's inaccessible outer `\endwrite` sentinel with every
-/// fresh and format-restored primitive table.
+/// Registers TeX82's inaccessible outer `\endwrite` sentinel with every fresh
+/// and format-restored primitive table.
+///
+/// §222 reserves it at `end_write=frozen_control_sequence+8` and §1369 gives
+/// it `text(end_write):="endwrite"` with `eq_type:=outer_call`, so it is the
+/// one non-`primitive(...)` name this table owns. (The previous citation here,
+/// "§53", is TeX.POOL's check sum and was never about `\endwrite`.)
 fn configure_write_stopper(stores: &mut Universe, install: bool) {
     if let Some(meaning) = stores.primitive_meaning("endwrite") {
         configure_primitive(stores, install, "endwrite", meaning);

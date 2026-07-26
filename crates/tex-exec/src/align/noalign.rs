@@ -24,8 +24,8 @@ pub(super) fn execute_noalign(
         }
         stores.enter_group_with_kind(tex_state::GroupKind::NoAlign);
         // TeX scans \noalign in the alignment's own outer list. In
-        // particular, \nointerlineskip must update the prev_depth that the
-        // next row's append_to_vlist observes.
+        // particular, a `\prevdepth` assignment must update the prev_depth
+        // that the next row's append_to_vlist observes.
         crate::assignments::normal_paragraph(nest, stores);
         scan_noalign_group(nest, input, stores, execution)?;
         leave_group(input, stores, tex_state::GroupKind::NoAlign)?;

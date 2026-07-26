@@ -16,22 +16,30 @@ use tex_state::node::{GlueKind, Node};
 use tex_state::scaled::Scaled;
 
 #[test]
-fn patterns_and_exceptions_feed_showhyphens() {
+fn patterns_and_exceptions_drive_word_hyphenation() {
     let mut stores = Universe::new();
     tex_expand::install_expandable_primitives(&mut stores);
     install_unexpandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new(
-        "\\patterns{a1ba t2e1st}\\hyphenation{tes-ting}\\lefthyphenmin=1 \\righthyphenmin=1 \\showhyphens{aba testing test}\\end",
+        "\\patterns{a1ba t2e1st}\\hyphenation{tes-ting}\\lefthyphenmin=1 \\righthyphenmin=1 \\end",
     ));
 
     Executor::new()
         .run(&mut input, &mut stores)
         .expect("hyphenation primitives execute");
 
-    let output = terminal_effect_text(&stores);
-    assert!(output.contains("a-ba"));
-    assert!(output.contains("tes-ting"));
-    assert!(output.contains("te-st"));
+    assert_eq!(
+        crate::assignments::test_hyphenated_word_text(&stores, "aba"),
+        "a-ba"
+    );
+    assert_eq!(
+        crate::assignments::test_hyphenated_word_text(&stores, "testing"),
+        "tes-ting"
+    );
+    assert_eq!(
+        crate::assignments::test_hyphenated_word_text(&stores, "test"),
+        "te-st"
+    );
 }
 
 #[test]
@@ -43,37 +51,55 @@ fn etex_saved_hyphen_codes_are_language_specific_and_survive_lccode_changes() {
     let mut input = InputStack::new(MemoryInput::new(
         "\\savinghyphcodes=1 \\language=1 \\lccode`A=`a \\patterns{a1ba} \
          \\lccode`A=`z \\lefthyphenmin=1 \\righthyphenmin=1 \
-         \\showhyphens{Aba} \
          \\language=2 \\lccode`A=`x \\patterns{x1ba} \\lccode`A=`z \
-         \\hyphenation{Ab-a} \\showhyphens{Aba} \
-         \\language=1 \\showhyphens{Aba} \\end",
+         \\hyphenation{Ab-a} \
+         \\language=1 \\end",
     ));
 
     Executor::new()
         .run(&mut input, &mut stores)
         .expect("saved hyphenation codes execute");
 
-    let output = terminal_effect_text(&stores);
-    assert_eq!(output.matches("a-ba").count(), 2, "{output}");
-    assert!(output.contains("xb-a"), "{output}");
+    // `\lccode`A` ends the run as `z`, so every mapping below comes from the
+    // per-language codes e-TeX saved when each `\patterns` list was read.
+    assert_eq!(
+        crate::assignments::test_hyphenated_word_text(&stores, "Aba"),
+        "a-ba"
+    );
+    stores.set_int_param(IntParam::LANGUAGE, 2);
+    assert_eq!(
+        crate::assignments::test_hyphenated_word_text(&stores, "Aba"),
+        "xb-a"
+    );
+    stores.set_int_param(IntParam::LANGUAGE, 1);
+    assert_eq!(
+        crate::assignments::test_hyphenated_word_text(&stores, "Aba"),
+        "a-ba"
+    );
 }
 
 #[test]
-fn showhyphens_honors_hyphen_minima() {
+fn word_hyphenation_honors_hyphen_minima() {
     let mut stores = Universe::new();
     tex_expand::install_expandable_primitives(&mut stores);
     install_unexpandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new(
-        "\\patterns{a1ba}\\righthyphenmin=1 \\lefthyphenmin=3 \\showhyphens{aba}\\lefthyphenmin=1 \\showhyphens{aba}\\end",
+        "\\patterns{a1ba}\\righthyphenmin=1 \\lefthyphenmin=3 \\end",
     ));
 
     Executor::new()
         .run(&mut input, &mut stores)
         .expect("hyphen minima execute");
 
-    let output = terminal_effect_text(&stores);
-    assert!(output.contains("\naba\n! OK."));
-    assert!(output.contains("\na-ba\n! OK."));
+    assert_eq!(
+        crate::assignments::test_hyphenated_word_text(&stores, "aba"),
+        "aba"
+    );
+    stores.set_int_param(IntParam::LEFT_HYPHEN_MIN, 1);
+    assert_eq!(
+        crate::assignments::test_hyphenated_word_text(&stores, "aba"),
+        "a-ba"
+    );
 }
 
 #[test]

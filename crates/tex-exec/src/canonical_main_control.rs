@@ -2126,13 +2126,6 @@ enum ScannedStep {
         integer: PageInteger,
         value: i32,
     },
-    /// TeX82 §1058's `nointerlineskip` chr code on the same `set_aux` command
-    /// as `\prevdepth`: it is `\prevdepth`'s own primitive, wired to always
-    /// assign the fixed `ignore_depth` sentinel instead of scanning an
-    /// operand. The sentinel itself (`crate::mode::ignored_depth`) is
-    /// resolved at apply time, where `Universe` is available, because
-    /// pdfTeX's `\pdfignoreddimen` can override the classic TeX82 constant.
-    NoInterlineSkip,
     FixedHorizontalGlue {
         primitive: UnexpandablePrimitive,
     },
@@ -3515,9 +3508,6 @@ fn scan_command(
             let value = processor.scan_dimension().map_err(command_error)?.value;
             Ok(ScannedStep::PrevDepth { value })
         }
-        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::NoInterlineSkip) => {
-            Ok(ScannedStep::NoInterlineSkip)
-        }
         // TeX82 §1265's `any_mode(set_interaction): prefixed_command` ->
         // `new_interaction` (§1264): `interaction:=cur_chr`. The four
         // primitives differ only in the fixed `chr_code` each was installed
@@ -4262,9 +4252,7 @@ fn scan_command(
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::VAlign) => {
             Ok(ScannedStep::BeginAlignment { vertical: true })
         }
-        Meaning::UnexpandablePrimitive(
-            UnexpandablePrimitive::Par | UnexpandablePrimitive::EndGraf,
-        ) => Ok(ScannedStep::Paragraph),
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Par) => Ok(ScannedStep::Paragraph),
         Meaning::CharToken {
             cat: Catcode::MathShift,
             ..
@@ -4580,7 +4568,6 @@ fn scan_unclassified_primitive(
         | P::Dump
         | P::Edef
         | P::End
-        | P::EndGraf
         | P::EndGroup
         | P::ErrMessage
         | P::Font
@@ -4602,7 +4589,6 @@ fn scan_unclassified_primitive(
         | P::Insert
         | P::Kern
         | P::LastBox
-        | P::NoInterlineSkip
         | P::LcCode
         | P::Leaders
         | P::Let
@@ -4842,7 +4828,6 @@ fn scan_unclassified_primitive(
         | P::QuitVMode
         | P::SetLanguage
         | P::ShowGroups
-        | P::ShowHyphens
         | P::ShowIfs
         | P::ShowLists
         | P::ShowTokens
@@ -6283,15 +6268,12 @@ fn applied_mutation_observation(
         // `assign_font_dimen`/`assign_font_int` (`font_info`, `hyphen_char`,
         // `skew_char`), §1252's `hyph_data` (the pattern trie and exception
         // table), and §1265's `new_interaction` (the `interaction` global).
-        // §1058's `\nointerlineskip` is `\prevdepth`'s own primitive writing
-        // the same `nest` field.
         ScannedStep::BoxDimensionAssignment { .. }
         | ScannedStep::PrevDepth { .. }
         | ScannedStep::SpaceFactor { .. }
         | ScannedStep::PrevGraf { .. }
         | ScannedStep::PageDimension { .. }
         | ScannedStep::PageInteger { .. }
-        | ScannedStep::NoInterlineSkip
         | ScannedStep::FontDimen { .. }
         | ScannedStep::FontInteger { .. }
         | ScannedStep::HyphenationData { .. }
@@ -7300,21 +7282,6 @@ fn apply_scanned_step(
             // `\maxdeadcycles`, so a wrong value here is only visible once a
             // page ships.
             stores.set_page_integer(integer, value);
-            Ok(ReplayStep::Continue)
-        }
-        ScannedStep::NoInterlineSkip => {
-            if matches!(
-                modes.current_mode(),
-                Mode::Vertical | Mode::InternalVertical
-            ) {
-                let value = crate::mode::ignored_depth(stores);
-                modes.current_list_mut().set_prev_depth(value);
-            } else {
-                stores.world_mut().write_text(
-                    PrintSink::TerminalAndLog,
-                    "\n! You can't use `\\nointerlineskip' in this mode.\n",
-                );
-            }
             Ok(ReplayStep::Continue)
         }
         ScannedStep::FixedHorizontalGlue { primitive } => {

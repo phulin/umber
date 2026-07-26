@@ -825,7 +825,6 @@ fn is_alignment_par(stores: &Universe, token: Token) -> bool {
         stores.meaning(symbol),
         tex_state::meaning::Meaning::UnexpandablePrimitive(
             tex_state::meaning::UnexpandablePrimitive::Par
-                | tex_state::meaning::UnexpandablePrimitive::EndGraf
         )
     )
 }

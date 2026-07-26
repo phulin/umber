@@ -1668,9 +1668,9 @@ fn booktabs_rules_stay_structural_after_rows_with_unclosed_brace_alias_groups() 
 }
 
 #[test]
-fn noalign_nointerlineskip_suppresses_next_row_baseline_glue() {
+fn noalign_ignored_prevdepth_suppresses_next_row_baseline_glue() {
     let stores = run_boxed_alignment_source(
-        "\\baselineskip=20pt \\halign{#\\cr a\\cr\\noalign{\\nointerlineskip}b\\cr}",
+        "\\baselineskip=20pt \\halign{#\\cr a\\cr\\noalign{\\prevdepth-1000pt}b\\cr}",
     );
     let vbox = box_zero_vlist(&stores);
     let nodes = stores.nodes(vbox.children).testing_decoded();
@@ -2017,7 +2017,7 @@ fn alignment_cells_accept_all_fixed_infinite_glues_in_math_mode() {
 #[test]
 fn plain_angle_style_alignment_restores_outer_cell_after_nested_leader_row() {
     let stores = run_boxed_alignment_source(
-        "\\def\\angle{{\\vbox{\\halign{##\\cr x\\cr\\noalign{\\nointerlineskip}\\leaders\\hrule height.34pt\\hfill\\cr}}}}\\halign{#\\cr $\\angle$\\cr}",
+        "\\def\\angle{{\\vbox{\\halign{##\\cr x\\cr\\noalign{\\prevdepth-1000pt}\\leaders\\hrule height.34pt\\hfill\\cr}}}}\\halign{#\\cr $\\angle$\\cr}",
     );
     let vbox = box_zero_vlist(&stores);
     let rows = vlist_rows(&stores, vbox);
@@ -2030,7 +2030,7 @@ fn plain_angle_style_alignment_restores_outer_cell_after_nested_leader_row() {
 #[test]
 fn plain_angle_style_nested_alignment_executes_math_wrapped_leader_row() {
     let stores = run_alignment_source(
-        "\\font\\sy=cmsy10 \\font\\ex=cmex10 \\textfont2=\\sy \\scriptfont2=\\sy \\scriptscriptfont2=\\sy \\textfont3=\\ex \\scriptfont3=\\ex \\scriptscriptfont3=\\ex \\def\\angle{{\\vbox{\\halign{$\\scriptstyle##$\\crcr x\\crcr\\noalign{\\nointerlineskip}\\mkern2.5mu\\leaders\\hrule height.34pt\\hfill\\mkern2.5mu\\crcr}}}}\\setbox0=\\vbox{\\halign{#\\cr $\\angle$\\cr}}",
+        "\\font\\sy=cmsy10 \\font\\ex=cmex10 \\textfont2=\\sy \\scriptfont2=\\sy \\scriptscriptfont2=\\sy \\textfont3=\\ex \\scriptfont3=\\ex \\scriptscriptfont3=\\ex \\def\\angle{{\\vbox{\\halign{$\\scriptstyle##$\\crcr x\\crcr\\noalign{\\prevdepth-1000pt}\\mkern2.5mu\\leaders\\hrule height.34pt\\hfill\\mkern2.5mu\\crcr}}}}\\setbox0=\\vbox{\\halign{#\\cr $\\angle$\\cr}}",
     );
     let vbox = box_zero_vlist(&stores);
 
@@ -2047,7 +2047,7 @@ fn plain_angle_style_nested_alignment_executes_math_wrapped_leader_row() {
 fn plain_angle_style_nested_alignment_replays_identically_after_rollback() {
     let mut stores = support::stores_with_fonts();
     let checkpoint = stores.snapshot();
-    let source = "\\def\\angle{{\\vbox{\\halign{##\\cr x\\cr\\noalign{\\nointerlineskip}\\leaders\\hrule height.34pt\\hfill\\cr}}}}\\setbox0=\\vbox{\\halign{#\\cr $\\angle$\\cr}}";
+    let source = "\\def\\angle{{\\vbox{\\halign{##\\cr x\\cr\\noalign{\\prevdepth-1000pt}\\leaders\\hrule height.34pt\\hfill\\cr}}}}\\setbox0=\\vbox{\\halign{#\\cr $\\angle$\\cr}}";
 
     run_alignment_source_in(&mut stores, source);
     let first_hash = stores.snapshot().state_hash();
