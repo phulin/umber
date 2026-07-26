@@ -299,6 +299,15 @@ impl CommandContext<'_> {
         self.universe.current_font()
     }
 
+    /// Validates and freezes TeX's job magnification, for `scan_dimen`'s
+    /// `true` unit prefix (tex.web's `prepare_mag`).
+    ///
+    /// The returned diagnostic is the aggregate's own report of an illegal or
+    /// incompatible `\mag`; presenting it is the caller's concern.
+    pub fn prepare_mag(&mut self) -> (i32, Option<crate::PrepareMagDiagnostic>) {
+        self.universe.prepare_mag()
+    }
+
     /// Reads one current-font parameter through the command boundary.
     #[must_use]
     pub fn current_font_parameter(&self, number: u32) -> crate::scaled::Scaled {

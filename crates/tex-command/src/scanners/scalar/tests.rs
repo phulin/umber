@@ -804,3 +804,67 @@ fn glue_scanner_scans_units_after_an_internal_integer_prefix() {
     assert_eq!(scanned.width.raw(), 2 * Scaled::UNITY);
     assert_eq!(scanned.stretch.raw(), Scaled::UNITY);
 }
+
+#[test]
+fn dimension_scanner_scales_true_units_by_the_prepared_magnification() {
+    // TeX82 §457's "Adjust for the magnification ratio": `true` divides the
+    // scanned quantity by `mag/1000` before the physical unit is converted,
+    // so a `true` unit still measures one physical unit on the magnified
+    // page. Recognizing the keyword and discarding it silently produces
+    // `mag/1000`-times-too-large scaled points in every `\mag`-scaled job.
+    let mut universe = Universe::new();
+    universe.set_mag_global(2000);
+
+    assert_eq!(
+        scan_with(
+            &mut universe,
+            "1truept".chars().map(char_token).collect(),
+            |processor| processor
+                .scan_dimension()
+                .expect("true dimension scans")
+                .value
+                .raw(),
+        ),
+        Scaled::UNITY / 2
+    );
+    // `\mag=1000` is the identity, and a plain unit is never scaled.
+    let mut unmagnified = Universe::new();
+    assert_eq!(
+        scan_with(
+            &mut unmagnified,
+            "1truept 1pt".chars().map(char_token).collect(),
+            |processor| (
+                processor.scan_dimension().expect("true scans").value.raw(),
+                processor.scan_dimension().expect("plain scans").value.raw(),
+            ),
+        ),
+        (Scaled::UNITY, Scaled::UNITY)
+    );
+}
+
+#[test]
+fn true_units_scale_fractional_dimensions_before_converting_the_unit() {
+    // §457 rescales `cur_val` and the fraction `f` together, carrying the
+    // remainder, and does so *before* §458 converts the physical unit --
+    // scaling the assembled scaled value instead loses the carried
+    // remainder. Hand-evaluating tex.web for `\mag=1440` and `1.5truein`:
+    // `f=round_decimals("5")=32768`; `xn_over_d(1,1000,1440)` is 0 remainder
+    // 1000, so `f=(1000*32768+65536*1000) div 1440=68266`, `cur_val=1`, and
+    // `f=2730`; then `in`'s 7227/100 gives `cur_val=75` and `f=18383`, so
+    // `attach_fraction` yields `75*65536+18383`.
+    let mut universe = Universe::new();
+    universe.set_mag_global(1440);
+
+    assert_eq!(
+        scan_with(
+            &mut universe,
+            "1.5truein".chars().map(char_token).collect(),
+            |processor| processor
+                .scan_dimension()
+                .expect("true fractional dimension scans")
+                .value
+                .raw(),
+        ),
+        75 * Scaled::UNITY + 18_383
+    );
+}
