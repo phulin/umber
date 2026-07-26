@@ -4534,6 +4534,81 @@ fn canonical_kern_in_vertical_mode_does_not_start_a_paragraph() {
 }
 
 #[test]
+fn canonical_spacefactor_assignment_sets_the_current_horizontal_list() {
+    // TeX82 §1243's `alter_aux` (`set_aux` with `cur_chr=hmode`): a legal
+    // `\spacefactor=<number>` in horizontal or restricted-horizontal mode
+    // writes the current list's space factor directly -- regression test for
+    // umber2-johp.86.
+    let mut universe = Universe::new();
+    let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+    control.modes.push(Mode::Horizontal);
+    register_source(&mut control, br"\spacefactor=250 ");
+    run_to_end(&mut control, &mut universe);
+
+    assert_eq!(control.modes.current_list().space_factor(), 250);
+}
+
+#[test]
+fn canonical_spacefactor_out_of_range_value_is_diagnosed_and_left_unchanged() {
+    // TeX82 §1243: `if (cur_val<=0)or(cur_val>32767) then int_error(cur_val)
+    // else space_factor:=cur_val` -- an out-of-range value is diagnosed and
+    // the space factor is left untouched, not clamped.
+    let mut universe = Universe::new();
+    let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+    control.modes.push(Mode::Horizontal);
+    control.modes.current_list_mut().set_space_factor(1000);
+    register_source(&mut control, br"\spacefactor=0 ");
+    run_to_end(&mut control, &mut universe);
+
+    assert_eq!(control.modes.current_list().space_factor(), 1000);
+    assert!(terminal_text(&universe).contains("Bad space factor (0)"));
+}
+
+#[test]
+fn canonical_spacefactor_assignment_in_vertical_mode_is_illegal_and_ignored() {
+    // TeX82 §1243's `report_illegal_case` (`cur_chr<>abs(mode)`): outer
+    // vertical mode rejects `\spacefactor` entirely.
+    let mut universe = Universe::new();
+    let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+    register_source(&mut control, br"\spacefactor=250 ");
+    run_to_end(&mut control, &mut universe);
+
+    assert!(
+        terminal_text(&universe).contains("You can't use `\\spacefactor' in this mode."),
+        "{}",
+        terminal_text(&universe)
+    );
+}
+
+#[test]
+fn canonical_prevgraf_assignment_sets_the_enclosing_vertical_level() {
+    // TeX82 §1244's `alter_prev_graf`: `\prevgraf` is `any_mode` and writes
+    // the nearest enclosing vertical level's paragraph count, even from
+    // horizontal mode -- regression test for umber2-johp.86.
+    let mut universe = Universe::new();
+    let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+    control.modes.push(Mode::Horizontal);
+    register_source(&mut control, br"\prevgraf=3 ");
+    run_to_end(&mut control, &mut universe);
+
+    assert_eq!(control.modes.enclosing_vertical_prev_graf(), 3);
+}
+
+#[test]
+fn canonical_prevgraf_negative_value_is_diagnosed_and_left_unchanged() {
+    // TeX82 §1244: `if cur_val<0 then int_error(cur_val)` -- a negative value
+    // is diagnosed and the paragraph count is left untouched.
+    let mut universe = Universe::new();
+    let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+    control.modes.set_enclosing_vertical_prev_graf(7);
+    register_source(&mut control, br"\prevgraf=-1 ");
+    run_to_end(&mut control, &mut universe);
+
+    assert_eq!(control.modes.enclosing_vertical_prev_graf(), 7);
+    assert!(terminal_text(&universe).contains("Bad \\prevgraf (-1)"));
+}
+
+#[test]
 fn canonical_delete_last_outer_vertical_apologizes_only_when_last_page_item_is_glue() {
     // TeX82 §1105: `(mode=vmode)and(tail=head)` never structurally removes
     // anything -- `\unpenalty`/`\unkern` always apologize, but `\unskip`

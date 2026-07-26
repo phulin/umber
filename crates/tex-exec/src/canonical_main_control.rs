@@ -1979,14 +1979,33 @@ enum ScannedStep {
     /// exactly like a letter, then always appends the plain interword glue
     /// regardless of the current space factor.
     ControlSpace,
-    /// TeX82 §1214's `set_aux` assignment (`alter_aux`) for the vertical-mode
+    /// TeX82 §1243's `set_aux` assignment (`alter_aux`) for the vertical-mode
     /// modifier: `\prevdepth=<dimen>` sets the enclosing vertical list's
     /// `prev_depth`, the field `append_to_vlist` (§679) reads to decide
     /// baselineskip/lineskip insertion before the next box. Legal only in
-    /// vertical or internal-vertical mode; §1214's `report_illegal_case`
+    /// vertical or internal-vertical mode; §1243's `report_illegal_case`
     /// (`abs(mode)<>vmode`) otherwise leaves the value alone.
     PrevDepth {
         value: Scaled,
+    },
+    /// TeX82 §1243's `set_aux` assignment for the horizontal-mode modifier:
+    /// `\spacefactor=<number>` sets the current horizontal list's space
+    /// factor. Legal only in horizontal or restricted-horizontal mode;
+    /// §1243's `report_illegal_case` (`abs(mode)<>hmode`) otherwise leaves
+    /// the value alone. A scanned value outside `1..32767` is a "Bad space
+    /// factor" diagnostic that likewise leaves the space factor unchanged.
+    SpaceFactor {
+        value: i32,
+    },
+    /// TeX82 §1244's `set_prev_graf` (`alter_prev_graf`): `\prevgraf=<number>`
+    /// is `any_mode` and walks the mode nest up to its nearest enclosing
+    /// vertical level (`while abs(nest[p].mode_field)<>vmode do decr(p)`),
+    /// setting that level's `prev_graf` (paragraph count so far) directly --
+    /// unlike `\spacefactor`/`\prevdepth`, it never reports an illegal case. A
+    /// negative scanned value is a "Bad \prevgraf" diagnostic that leaves the
+    /// count unchanged.
+    PrevGraf {
+        value: i32,
     },
     /// TeX82 §1058's `nointerlineskip` chr code on the same `set_aux` command
     /// as `\prevdepth`: it is `\prevdepth`'s own primitive, wired to always
@@ -3289,6 +3308,16 @@ fn scan_command(
         }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::NoInterlineSkip) => {
             Ok(ScannedStep::NoInterlineSkip)
+        }
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::SpaceFactor) => {
+            let _ = processor.scan_optional_equals().map_err(command_error)?;
+            let value = processor.scan_integer().map_err(command_error)?.value;
+            Ok(ScannedStep::SpaceFactor { value })
+        }
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::PrevGraf) => {
+            let _ = processor.scan_optional_equals().map_err(command_error)?;
+            let value = processor.scan_integer().map_err(command_error)?.value;
+            Ok(ScannedStep::PrevGraf { value })
         }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Char) => {
             let value = processor.scan_integer().map_err(command_error)?.value;
@@ -6137,7 +6166,7 @@ fn apply_scanned_step(
             ) {
                 modes.current_list_mut().set_prev_depth(value);
             } else {
-                // TeX82 §1214's `alter_aux`: `if cur_chr<>abs(mode) then
+                // TeX82 §1243's `alter_aux`: `if cur_chr<>abs(mode) then
                 // report_illegal_case`, which prints "You can't use
                 // `\prevdepth' in ... mode" and otherwise leaves the value
                 // alone -- it does not raise an executor error.
@@ -6145,6 +6174,52 @@ fn apply_scanned_step(
                     PrintSink::TerminalAndLog,
                     "\n! You can't use `\\prevdepth' in this mode.\n",
                 );
+            }
+            Ok(ReplayStep::Continue)
+        }
+        ScannedStep::SpaceFactor { value } => {
+            if matches!(
+                modes.current_mode(),
+                Mode::Horizontal | Mode::RestrictedHorizontal
+            ) {
+                // TeX82 §1243's `alter_aux`: `if (cur_val<=0)or(cur_val>32767)
+                // then int_error(cur_val) else space_factor:=cur_val` -- an
+                // out-of-range value is diagnosed and left unchanged, exactly
+                // like an illegal mode, rather than being clamped.
+                if (1..=32767).contains(&value) {
+                    modes.current_list_mut().set_space_factor(value);
+                } else {
+                    stores.world_mut().write_text(
+                        PrintSink::TerminalAndLog,
+                        &format!(
+                            "\n! Bad space factor ({value}).\nI allow only values in the range 1..32767 here.\n"
+                        ),
+                    );
+                }
+            } else {
+                // TeX82 §1243's `alter_aux`: `if cur_chr<>abs(mode) then
+                // report_illegal_case`.
+                stores.world_mut().write_text(
+                    PrintSink::TerminalAndLog,
+                    "\n! You can't use `\\spacefactor' in this mode.\n",
+                );
+            }
+            Ok(ReplayStep::Continue)
+        }
+        ScannedStep::PrevGraf { value } => {
+            // TeX82 §1244's `alter_prev_graf`: `\prevgraf` is `any_mode` (it
+            // walks the mode nest up to its nearest enclosing vertical level
+            // rather than checking the current mode), unlike `\spacefactor`/
+            // `\prevdepth`'s §1243 `report_illegal_case`.
+            if value < 0 {
+                stores.world_mut().write_text(
+                    PrintSink::TerminalAndLog,
+                    &format!(
+                        "\n! Bad \\prevgraf ({value}).\nI allow only nonnegative values here.\n"
+                    ),
+                );
+            } else {
+                modes.set_enclosing_vertical_prev_graf(value);
             }
             Ok(ReplayStep::Continue)
         }
