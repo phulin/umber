@@ -81,3 +81,9 @@ Use this crate when behavior mutates live engine state or depends on TeX's curre
 ## Validation
 
 Run `cargo test --tests -p tex-exec` after local changes. For CLI-visible behavior or shipout effects, also run the relevant `umber` integration tests or corpus fixture checks. Regenerate `tex_exec`/`tex_exec_io` fixtures through `scripts/regen-fixtures.sh`.
+
+Working a canonical-command (`umber2-johp`) semantic or DVI divergence that
+touches this crate's main-control dispatch: read
+[Canonical Divergence Working Contract](../../docs/canonical_divergence_workflow.md)
+first for the oracle hierarchy, diagnosis order, fix discipline, successor-filing
+rule, and standing gates.
