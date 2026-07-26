@@ -844,3 +844,82 @@ fn mode_and_box_predicates_use_host_and_aggregate_queries() {
     }
     assert!(processor.get_x_token().expect("final fi expands").is_none());
 }
+
+#[test]
+fn selected_ifcase_limb_skips_remaining_limbs_without_extra_delimiter_errors() {
+    let mut command = CommandState::default();
+    let mut runtime = CommandRuntime::default();
+    let mut universe = Universe::new();
+    let if_case = install(&mut universe, "ifcase", ExpandablePrimitive::IfCase);
+    let or = install(&mut universe, "or", ExpandablePrimitive::Or);
+    let fi = install(&mut universe, "fi", ExpandablePrimitive::Fi);
+    // `\ifcase0 a\or b\or c\or d\fi e` selects the *first* of four limbs, so
+    // TeX.web §510's `while cur_chr<>fi_code do pass_text` passes over two
+    // further `\or` delimiters before the matching `\fi`. Neither is a
+    // diagnostic: §510 never inspects which delimiter the skip stopped at.
+    push(
+        &mut command,
+        vec![
+            if_case,
+            other('0'),
+            other('a'),
+            or,
+            other('b'),
+            or,
+            other('c'),
+            or,
+            other('d'),
+            fi,
+            other('e'),
+        ],
+    );
+    let mut capabilities = CommandHostCapabilities::default();
+    let mut recorder = Recorder::default();
+    {
+        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities)
+            .with_observer(&mut recorder);
+
+        assert_eq!(next_character(&mut processor), 'a');
+        assert_eq!(next_character(&mut processor), 'e');
+        assert!(processor.command.conditions.current().is_none());
+    }
+
+    assert!(command.expansion.pending_diagnostics.is_empty());
+    assert!(!recorder.0.iter().any(|observation| matches!(
+        observation,
+        CommandObservation::Diagnostic(diagnostic)
+            if diagnostic.diagnostic == "conditional_extra_delimiter"
+    )));
+}
+
+#[test]
+fn redundant_else_inside_a_selected_true_limb_is_skipped_silently() {
+    let mut command = CommandState::default();
+    let mut runtime = CommandRuntime::default();
+    let mut universe = Universe::new();
+    let if_true = install(&mut universe, "iftrue", ExpandablePrimitive::IfTrue);
+    let otherwise = install(&mut universe, "else", ExpandablePrimitive::Else);
+    let fi = install(&mut universe, "fi", ExpandablePrimitive::Fi);
+    // A second `\else` in the skipped remainder is legal in TeX.web §510: the
+    // skip loop swallows it and only `\fi` terminates the conditional.
+    push(
+        &mut command,
+        vec![
+            if_true,
+            other('t'),
+            otherwise,
+            other('f'),
+            otherwise,
+            other('g'),
+            fi,
+            other('z'),
+        ],
+    );
+    let mut capabilities = CommandHostCapabilities::default();
+    let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+
+    assert_eq!(next_character(&mut processor), 't');
+    assert_eq!(next_character(&mut processor), 'z');
+    assert!(processor.command.expansion.pending_diagnostics.is_empty());
+    assert!(processor.command.conditions.current().is_none());
+}
