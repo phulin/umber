@@ -477,6 +477,7 @@ an oracle, and what to do with the result, see the diagnosis order in
 ```bash
 cargo run -q -p tex-command-stream -- --repository .
 cargo run -q -p tex-command-stream -- --repository . --max-divergences 50
+cargo run -q -p tex-command-stream -- --repository . --realign-window 128
 ```
 
 Run this from the repository root. It replays the committed
@@ -496,16 +497,19 @@ It reports a ranked WORKLIST, not just the first divergence:
   - A stream mismatch: the expected event, the actual observed event, and
     source context, labeled with a cheap structural `kind` (for example
     `command_identity_mismatch`, `command_operand_mismatch`,
-    `event_kind_mismatch`, `stream_truncated_early`) so same-kind entries can
-    be batched without re-running the engine. Comparison does not resync
-    after a mismatch -- it keeps comparing the same index in both streams,
-    so a defect that does not change how many events a delivery produces
-    typically still exposes later, independent divergences at their own
-    indices. A defect that desynchronizes the two streams (a missing or
-    extra event) instead produces a long unbroken run of mismatches at
-    consecutive indices; that run is one structural defect, not one per
-    entry -- read the entries' `kind`s and locations together before filing
-    separate issues for what turns out to be a single root cause.
+    `event_kind_mismatch`, `mutation_mismatch`, `stream_truncated_early`) so
+    same-kind entries can be batched without re-running the engine. The
+    header line also carries the resynchronization the comparator applied and
+    the cascade that resynchronization absorbed:
+
+    ```text
+    fixture <name> diverged at event 11375 (observed event 11385)
+      [event_kind_mismatch] (resync: 1 oracle event(s) dropped by Umber;
+       suppressed 32 cascade event(s))
+    ```
+
+    The observed index is printed only once it has drifted from the oracle
+    index. See "Stream alignment" below for what each resync means.
   - A contained replay failure (`engine panicked` or `replay failed`): a
     command-core `ExecError` or a Rust panic during that fixture's replay is
     caught (`catch_panic`/`ReplayFailure`) and reported as its own ordered
@@ -521,6 +525,106 @@ It reports a ranked WORKLIST, not just the first divergence:
 See `docs/command_semantic_fixtures.md` and `docs/alignment_brace_semantics.md`
 for the fixture registry and event schema this replays and compares against,
 and `tools/AGENTS.md` for what the tool does and does not do.
+
+#### Stream alignment
+
+The comparator (`tools/tex-command-stream/src/compare.rs`) treats the pinned
+oracle stream and the observed stream as two sequences to be aligned, not as
+two index-parallel arrays. Index-aligned comparison is only correct while
+both streams agree on how many events each delivery produces; one dropped or
+extra event otherwise turns every later index into a mismatch, and one root
+defect fills the whole per-fixture budget with entries that say nothing new.
+
+Every event splits into an alignment KEY and a PAYLOAD.
+
+- The key is identity: the event kind, the canonical command identity
+  (command name, control-sequence spelling, raw/expanded delivery) and its
+  source position, and every structural transition -- input push/retire/stop,
+  condition push/branch/pop, alignment transitions, token-list
+  splice/complete, macro argument vs. activation.
+- The payload is content: operands, scanner results, mutation keys and
+  values, align state, token lists, diagnostic arguments.
+
+A command's source position is part of its identity because long runs of
+like-catcode characters are otherwise indistinguishable, and a shifted stream
+could confirm a realignment against the wrong occurrence.
+
+From that split the comparator produces one of these resyncs per entry.
+
+- `payload differs, streams stay aligned` -- same key, different payload. A
+  content-only defect; nothing was skipped and nothing cascades.
+- `N oracle event(s) dropped by Umber` -- the oracle emitted N events Umber
+  never produced.
+- `N extra Umber event(s)` -- Umber emitted N events the oracle never
+  produced.
+- `N oracle event(s) replaced by M Umber event(s)` -- a short edit run; one
+  replaced by one is an ordinary substitution.
+- `structural: ... rejoined at <anchor> after skipping ...` -- nothing
+  confirmed inside the window; the anchor fallback rejoined the two streams.
+- `structural: ... no shared anchor; comparison of this fixture stopped here`
+  -- neither the window nor an anchor confirmed a repair.
+- `one stream ended with N event(s) remaining in the other` -- one stream ran
+  out first.
+
+On a key mismatch the comparator runs a wavefront search confined to a window
+of events on each side, visiting candidates in ascending edit distance (and,
+within one distance, ascending oracle skip) so the smallest repair wins
+deterministically. A candidate is accepted only after a run of consecutive
+key-equal pairs confirms it. When fewer than that many pairs remain before
+the end of a stream, all remaining pairs must agree; skipping both streams to
+their ends with no agreeing pair at all is a fork, not a repair.
+
+If nothing confirms inside the window, the divergence is structural and one
+anchor resync is attempted: both streams are scanned forward for the nearest
+shared high-salience boundary -- an input-stack push/retire/stop, or the
+first delivery attributed to a new source line -- and the same confirmation
+is required there. If that also fails, comparison of that fixture stops and
+says so. The bias is deliberate: cascade noise is visible, but a real defect
+hidden behind an over-eager realignment is not.
+
+This is not a global minimum-edit-distance diff, and deliberately so. Myers
+is `O(ND)` and Gentle's trace is over 100 000 events; worse, a global minimum
+would happily pair oracle event 700 with observed event 40 000 when that
+minimizes total edits. Every search here is local, bounded, and paid at most
+once per reported divergence, so the run stays linear in the streams.
+
+`suppressed N cascade event(s)` counts the mismatches plain index-aligned
+comparison would have reported over the stream region this entry covers --
+from this entry's oracle index up to the next reported entry's, or to the end
+of the streams for the last entry -- not counting the entry itself. It is the
+cascade the entry stands in for, and it is how to tell one root site from
+many: as of this writing the three document traces report 230, 269, and 501
+entries where index-aligned comparison would report roughly 95 000, 96 000,
+and 922 000.
+
+#### Alignment tunables
+
+Three flags bound the search. Widen them when a suspected repair is larger
+than the defaults; narrow them to prove a reported realignment is not an
+artifact of an over-generous bound.
+
+- `--realign-window` (default 64) -- half-width of the wavefront search, in
+  events per stream.
+- `--realign-confirm` (default 8) -- consecutive key-equal pairs required to
+  accept a realignment.
+- `--anchor-scan` (default 4096) -- events scanned forward on each side by
+  the structural anchor fallback.
+
+A window of 64 costs `O(window^2)` key comparisons in the worst case, paid at
+most once per reported divergence, and comfortably spans every repair shape
+this epic has produced (a missing backup push, a duplicated raw/expanded
+delivery pair, a macro activation expanded one level too far) while staying
+far below the distance at which a confirmed match would be coincidence rather
+than the same point in the document. A confirmation run of 8 is far more than
+the two or three events that repeat by chance inside a run of like-catcode
+characters, and small enough that a genuine repair immediately followed by a
+second independent defect still confirms, leaving the second defect to be
+reported on its own. The anchor scan is only reached once the window search
+has already failed, so 4096 events -- roughly a page of document activity --
+is generous on purpose; at most 64 anchors per side are considered.
+
+All three flags take a positive integer and reject anything else with a usage
+error.
 
 #### Registries
 
