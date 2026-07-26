@@ -23,13 +23,19 @@ use tex_oracle::{
     AlignmentEvent, AlignmentTransition, CanonicalCommand, CanonicalValue, CommandDelivery,
     CommandEvent, CommittedFixture, ConditionEvent, ConditionTransition, DiagnosticEvent,
     DiagnosticSeverity, EffectEvent, EffectKind, EngineDialect, Event, InputEvent, InputReason,
-    MacroEvent, MutationEvent, NormalizedEvent, OracleToken, RecoveryEvent, RecoveryKind,
-    ScannerEvent, ScannerStatus, ScannerStatusEvent, SourceLocation, StateTarget, TokenListEvent,
+    MacroEvent, MutationEvent, OracleToken, RecoveryEvent, RecoveryKind, ScannerEvent,
+    ScannerStatus, ScannerStatusEvent, SourceLocation, StateTarget, TokenListEvent,
     TokenListTransition, validate_tex82_command_trace_suite,
 };
 use tex_state::{InputOpenState, InputReadState, SourceId, Universe, token::Catcode};
 
+pub mod compare;
 pub mod documents;
+
+pub use compare::{
+    AlignmentTuning, DEFAULT_ANCHOR_SCAN, DEFAULT_REALIGN_CONFIRMATION, DEFAULT_REALIGN_WINDOW,
+    MismatchSides, Repair, StreamMismatch, compare_streams, find_divergences,
+};
 
 const FIXTURE_ROOT: &str = "tests/corpus/command/tex82";
 const MAX_DIAGNOSTIC_CHARS: usize = 960;
@@ -49,9 +55,27 @@ const CANONICAL_ROOT_PUSH_NAME: &str = "terminal";
 /// it, which would hide whole documents from the worklist.
 pub const DEFAULT_MAX_DIVERGENCES: usize = 20;
 
+/// Everything one offline comparison run is allowed to vary.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct RunOptions {
+    /// Cap on ordered divergences reported per fixture.
+    pub max_divergences: usize,
+    /// Bounds on the comparator's resynchronization search.
+    pub alignment: AlignmentTuning,
+}
+
+impl Default for RunOptions {
+    fn default() -> Self {
+        Self {
+            max_divergences: DEFAULT_MAX_DIVERGENCES,
+            alignment: AlignmentTuning::default(),
+        }
+    }
+}
+
 /// Runs every registered TeX82 trace with no live-engine access, reporting up
-/// to `max_divergences` ordered divergences *per fixture* instead of only the
-/// first.
+/// to `options.max_divergences` ordered divergences *per fixture* instead of
+/// only the first.
 ///
 /// Two registries are replayed, in this order: the committed, hermetic
 /// fixtures under `tests/corpus/command/tex82`, then the generated-on-demand
@@ -66,13 +90,14 @@ pub const DEFAULT_MAX_DIVERGENCES: usize = 20;
 /// contained (`catch_panic`/`ReplayFailure`) and reported as its own ordered
 /// divergence entry, exactly like a stream mismatch: it does not abort the
 /// run or hide any fixture ordered after it. Comparison also does not stop
-/// at a fixture's first stream mismatch -- it keeps scanning that fixture's
-/// remaining events for independent, later mismatches until either the
-/// fixture's stream is exhausted or the run's total divergence budget is
-/// spent.
+/// at a fixture's first stream mismatch -- it resynchronizes the two streams
+/// (`compare`) and keeps scanning that fixture's remaining events for
+/// independent, later divergences until either the fixture's stream is
+/// exhausted, the alignment is abandoned as structurally irreparable, or the
+/// fixture's divergence budget is spent.
 pub fn run_repository(
     repository: impl AsRef<Path>,
-    max_divergences: usize,
+    options: RunOptions,
 ) -> Result<(), RunnerError> {
     let repository = repository.as_ref();
     let suite = validate_tex82_command_trace_suite(repository)
@@ -91,7 +116,7 @@ pub fn run_repository(
             &fixture_directory,
             &fixture,
             &ReplayResources::committed(),
-            max_divergences,
+            options,
             &mut divergences,
         )?;
     }
@@ -108,7 +133,7 @@ pub fn run_repository(
             &trace.directory,
             &trace.fixture,
             &trace.resources,
-            max_divergences,
+            options,
             &mut divergences,
         )?;
     }
@@ -124,7 +149,7 @@ fn collect_fixture_divergences(
     directory: &Path,
     fixture: &CommittedFixture,
     resources: &ReplayResources,
-    max_divergences: usize,
+    options: RunOptions,
     divergences: &mut Vec<Divergence>,
 ) -> Result<(), RunnerError> {
     let replay = replay_fixture(directory, fixture, resources)?;
@@ -137,9 +162,11 @@ fn collect_fixture_divergences(
             &identity,
             &fixture.stream.events,
             &replay.events,
-            max_divergences,
+            options.max_divergences,
+            options.alignment,
         )
         .into_iter()
+        .map(Box::new)
         .map(Divergence::Mismatch),
     );
     // A contained failure is at most one entry per fixture and names a
@@ -156,11 +183,18 @@ fn collect_fixture_divergences(
     Ok(())
 }
 
+const USAGE: &str = "expected --repository <path>, --max-divergences <n>, \
+                     --realign-window <n>, --realign-confirm <n>, or --anchor-scan <n>";
+
 /// Parses the intentionally narrow offline runner interface.
+///
+/// The three alignment tunables exist so a coordinator can widen the search
+/// when a suspected repair is larger than the default window, or narrow it to
+/// prove a reported realignment is not an artifact of an over-generous bound.
 pub fn run_cli() -> Result<(), RunnerError> {
     let mut arguments = env::args_os().skip(1);
     let mut repository = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
-    let mut max_divergences = DEFAULT_MAX_DIVERGENCES;
+    let mut options = RunOptions::default();
     while let Some(argument) = arguments.next() {
         if argument == "--repository" {
             repository = arguments
@@ -170,214 +204,41 @@ pub fn run_cli() -> Result<(), RunnerError> {
                 })?
                 .into();
         } else if argument == "--max-divergences" {
-            let value = arguments.next().ok_or_else(|| {
-                RunnerError::Usage("--max-divergences requires an integer argument".into())
-            })?;
-            max_divergences = value
-                .to_str()
-                .and_then(|value| value.parse::<usize>().ok())
-                .filter(|value| *value > 0)
-                .ok_or_else(|| {
-                    RunnerError::Usage(format!(
-                        "--max-divergences requires a positive integer, got {}",
-                        value.to_string_lossy()
-                    ))
-                })?;
+            options.max_divergences = positive_argument(&mut arguments, "--max-divergences")?;
+        } else if argument == "--realign-window" {
+            options.alignment.window = positive_argument(&mut arguments, "--realign-window")?;
+        } else if argument == "--realign-confirm" {
+            options.alignment.confirmation =
+                positive_argument(&mut arguments, "--realign-confirm")?;
+        } else if argument == "--anchor-scan" {
+            options.alignment.anchor_scan = positive_argument(&mut arguments, "--anchor-scan")?;
         } else {
             return Err(RunnerError::Usage(format!(
-                "unknown argument {}; expected --repository <path> or --max-divergences <n>",
+                "unknown argument {}; {USAGE}",
                 argument.to_string_lossy()
             )));
         }
     }
-    run_repository(repository, max_divergences)
+    run_repository(repository, options)
 }
 
-/// One ordered stream divergence for one fixture: the expected and observed
-/// event disagree at the same index, or one stream ran out before the other.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct StreamMismatch {
-    fixture: String,
-    index: usize,
-    /// Cheap structural label distinguishing the kind of disagreement (e.g.
-    /// a wrong command identity vs. a wrong operand vs. a different event
-    /// kind entirely) so a coordinator can group same-kind divergences
-    /// without re-running the engine or re-deriving what differs by hand.
-    kind: &'static str,
-    expected: Option<Event>,
-    actual: Option<ObservedEvent>,
-}
-
-impl fmt::Display for StreamMismatch {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            formatter,
-            "fixture {} diverged at event {} [{}]",
-            self.fixture, self.index, self.kind
-        )?;
-        if let Some(expected) = &self.expected {
-            write!(formatter, "\n  expected: {}", bounded_debug(expected))?;
-        } else {
-            formatter.write_str("\n  expected: <end of committed stream>")?;
-        }
-        if let Some(actual) = &self.actual {
-            write!(formatter, "\n  actual: {}", bounded_debug(&actual.event))?;
-            if !actual.context.is_empty() {
-                write!(formatter, "\n  context: {}", actual.context)?;
-            }
-        } else {
-            formatter.write_str("\n  actual: <end of observer stream>")?;
-        }
-        Ok(())
-    }
-}
-
-/// Compares complete ordered streams without omitting unsupported event kinds,
-/// reporting only the earliest divergence. Kept for callers that only need
-/// the first mismatch; [`find_divergences`] reports up to `max_results`.
-pub fn compare_streams(
-    fixture: &str,
-    expected: &[NormalizedEvent],
-    actual: &[ObservedEvent],
-) -> Result<(), Box<StreamMismatch>> {
-    match find_divergences(fixture, expected, actual, 1)
-        .into_iter()
+fn positive_argument(
+    arguments: &mut impl Iterator<Item = std::ffi::OsString>,
+    flag: &str,
+) -> Result<usize, RunnerError> {
+    let value = arguments
         .next()
-    {
-        Some(mismatch) => Err(Box::new(mismatch)),
-        None => Ok(()),
-    }
-}
-
-/// Compares complete ordered streams, collecting up to `max_results` ordered
-/// divergences instead of stopping at the first.
-///
-/// Comparison stays index-aligned rather than resynchronizing after a
-/// mismatch: most classification/scanner defects change an event's content
-/// without changing how many events a delivery produces, so later indices
-/// commonly still line up and expose independent, later defects
-/// (`docs/canonical_divergence_workflow.md`'s batching rationale). A
-/// mismatch that does desynchronize the two streams (e.g. a missing or
-/// extra event) still reports at its own index; every following index then
-/// legitimately mismatches too, so a caller comparing across fixtures should
-/// treat a long unbroken run of mismatches as one structural defect, not
-/// `max_results` independent ones.
-pub fn find_divergences(
-    fixture: &str,
-    expected: &[NormalizedEvent],
-    actual: &[ObservedEvent],
-    max_results: usize,
-) -> Vec<StreamMismatch> {
-    let mut mismatches = Vec::new();
-    let count = expected.len().max(actual.len());
-    for index in 0..count {
-        if mismatches.len() >= max_results {
-            break;
-        }
-        let expected_event = expected.get(index).map(|event| &event.semantic);
-        let actual_event = actual.get(index);
-        let actual_borrowed = actual_event.map(|event| &event.event);
-        if !events_match(expected_event, actual_borrowed) {
-            mismatches.push(StreamMismatch {
-                fixture: fixture.into(),
-                index,
-                kind: classify_mismatch_kind(expected_event, actual_borrowed),
-                expected: expected_event.cloned(),
-                actual: actual_event.cloned(),
-            });
-        }
-    }
-    mismatches
-}
-
-/// Cheap structural label for one mismatch, computed from the already
-/// available expected/actual events without any additional engine work.
-fn classify_mismatch_kind(expected: Option<&Event>, actual: Option<&Event>) -> &'static str {
-    match (expected, actual) {
-        (Some(_), None) => "stream_truncated_early",
-        (None, Some(_)) => "stream_has_unexpected_trailing_events",
-        (None, None) => "unreachable_both_absent",
-        (Some(expected), Some(actual)) => {
-            if let (Event::Command(expected), Event::Command(actual)) = (expected, actual) {
-                classify_command_mismatch_kind(expected, actual)
-            } else if std::mem::discriminant(expected) == std::mem::discriminant(actual) {
-                "event_value_mismatch"
-            } else {
-                "event_kind_mismatch"
-            }
-        }
-    }
-}
-
-fn classify_command_mismatch_kind(expected: &CommandEvent, actual: &CommandEvent) -> &'static str {
-    if expected.command.command != actual.command.command {
-        "command_identity_mismatch"
-    } else if expected.command.operand != actual.command.operand {
-        "command_operand_mismatch"
-    } else if expected.command.control_sequence != actual.command.control_sequence {
-        "command_spelling_mismatch"
-    } else if expected.delivery != actual.delivery {
-        "command_delivery_mismatch"
-    } else {
-        "command_location_mismatch"
-    }
-}
-
-/// Compares portable command observations with the committed TeX82 trace.
-///
-/// TeX82 records the `cur_chr` field for every raw command.  For a macro call
-/// that field is the mutable `def_ref` token-list address, rather than a
-/// semantic macro operand.  The command core intentionally replaces that
-/// allocator address with immutable macro-definition ownership, so the trace
-/// comparison projects this one reference-only field away.  Macro command
-/// kind and control-sequence spelling remain exact, and an observed macro
-/// call must likewise expose no operand.
-fn events_match(expected: Option<&Event>, actual: Option<&Event>) -> bool {
-    match (expected, actual) {
-        (Some(expected), Some(actual)) if macro_call_operand_is_reference(expected, actual) => true,
-        _ => expected == actual,
-    }
-}
-
-fn macro_call_operand_is_reference(expected: &Event, actual: &Event) -> bool {
-    let (
-        Event::Command(CommandEvent {
-            delivery: expected_delivery,
-            command:
-                CanonicalCommand {
-                    command: expected_command,
-                    operand: CanonicalValue::Integer(_),
-                    control_sequence: expected_control_sequence,
-                    location: expected_location,
-                },
-        }),
-        Event::Command(CommandEvent {
-            delivery: actual_delivery,
-            command:
-                CanonicalCommand {
-                    command: actual_command,
-                    operand: CanonicalValue::None,
-                    control_sequence: actual_control_sequence,
-                    location: actual_location,
-                },
-        }),
-    ) = (expected, actual)
-    else {
-        return false;
-    };
-
-    is_macro_call_command(expected_command)
-        && expected_delivery == actual_delivery
-        && expected_command == actual_command
-        && expected_control_sequence == actual_control_sequence
-        && expected_location == actual_location
-}
-
-fn is_macro_call_command(command: &str) -> bool {
-    matches!(
-        command,
-        "call" | "long_call" | "outer_call" | "long_outer_call"
-    )
+        .ok_or_else(|| RunnerError::Usage(format!("{flag} requires an integer argument")))?;
+    value
+        .to_str()
+        .and_then(|value| value.parse::<usize>().ok())
+        .filter(|value| *value > 0)
+        .ok_or_else(|| {
+            RunnerError::Usage(format!(
+                "{flag} requires a positive integer, got {}",
+                value.to_string_lossy()
+            ))
+        })
 }
 
 /// One translated observer event plus source/provenance-only diagnostic context.
@@ -401,7 +262,7 @@ impl ObservedEvent {
 /// file.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Divergence {
-    Mismatch(StreamMismatch),
+    Mismatch(Box<StreamMismatch>),
     Failure {
         fixture: String,
         /// The observed-event index the failure occurred after; the
@@ -948,15 +809,16 @@ impl CommandObserver for Recorder {
             return;
         }
         if let CommandObservation::Effect(effect) = &mut observation {
-            if effect.kind == "open" {
-                if let Some((stream, target)) = effect.detail.split_once('\0') {
-                    self.open_write_targets.insert(stream.into(), target.into());
-                }
-            } else if effect.kind == "close" && !effect.detail.contains('\0') {
-                if let Some(target) = self.open_write_targets.remove(&effect.detail) {
-                    effect.detail.push('\0');
-                    effect.detail.push_str(&target);
-                }
+            if effect.kind == "open"
+                && let Some((stream, target)) = effect.detail.split_once('\0')
+            {
+                self.open_write_targets.insert(stream.into(), target.into());
+            } else if effect.kind == "close"
+                && !effect.detail.contains('\0')
+                && let Some(target) = self.open_write_targets.remove(&effect.detail)
+            {
+                effect.detail.push('\0');
+                effect.detail.push_str(&target);
             }
         }
         let (source_name, source_id, source_bytes) = {
@@ -974,13 +836,13 @@ impl CommandObserver for Recorder {
             observation.clone(),
             &mut self.alignment_nesting,
         ));
-        match observation {
-            CommandObservation::Input(InputRecord {
-                transition: InputTransition::Retire,
-                reason: CommandInputReason::Source,
-                ..
-            }) => self.retire_current_source(),
-            _ => {}
+        if let CommandObservation::Input(InputRecord {
+            transition: InputTransition::Retire,
+            reason: CommandInputReason::Source,
+            ..
+        }) = observation
+        {
+            self.retire_current_source();
         }
     }
 }
@@ -1053,8 +915,7 @@ fn translate_observation(
                         CanonicalValue::Scaled,
                     )
                 } else if let Some(value) = record.value.strip_prefix("glue:") {
-                    parse_glue_scanner_value(value)
-                        .unwrap_or_else(|| CanonicalValue::Name(record.value))
+                    parse_glue_scanner_value(value).unwrap_or(CanonicalValue::Name(record.value))
                 } else {
                     record.value.parse::<i64>().map_or_else(
                         |_| CanonicalValue::Name(record.value),
@@ -1073,7 +934,7 @@ fn translate_observation(
                 )
             } else if record.kind == "glue" {
                 parse_glue_scanner_value(&record.value)
-                    .unwrap_or_else(|| CanonicalValue::Name(record.value))
+                    .unwrap_or(CanonicalValue::Name(record.value))
             } else {
                 CanonicalValue::Name(record.value)
             };
@@ -1495,20 +1356,19 @@ fn translate_mutation(record: MutationRecord) -> Event {
             });
         }
     }
-    if record.target == "catcode" {
-        if let Some((character, value)) = record.value.split_once('=') {
-            if let (Ok(character), Some(value)) = (
-                character.parse::<u32>(),
-                canonical_catcode_assignment(value),
-            ) {
-                return Event::Mutation(MutationEvent {
-                    target: StateTarget::Catcode,
-                    key: CanonicalValue::Character(character),
-                    value: CanonicalValue::Name(value.into()),
-                    scope: if record.global { "global" } else { "local" }.into(),
-                });
-            }
-        }
+    if record.target == "catcode"
+        && let Some((character, value)) = record.value.split_once('=')
+        && let (Ok(character), Some(value)) = (
+            character.parse::<u32>(),
+            canonical_catcode_assignment(value),
+        )
+    {
+        return Event::Mutation(MutationEvent {
+            target: StateTarget::Catcode,
+            key: CanonicalValue::Character(character),
+            value: CanonicalValue::Name(value.into()),
+            scope: if record.global { "global" } else { "local" }.into(),
+        });
     }
     if record.target == "meaning"
         && let Some(key) = record.key
@@ -1725,7 +1585,7 @@ mod tests {
         assert_eq!(
             translate_effect(EffectRecord {
                 kind: "shipout",
-                detail: "dvi\01".into(),
+                detail: "dvi\x001".into(),
                 tokens: None,
             }),
             Event::Effect(EffectEvent {
