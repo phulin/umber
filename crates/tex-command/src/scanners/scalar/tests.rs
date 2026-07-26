@@ -115,19 +115,25 @@ fn integer_scanner_accepts_chardef_values() {
     universe.set_meaning(active, Meaning::CharGiven('\r'));
     push(&mut command, vec![Token::Cs(active)]);
     let mut capabilities = CommandHostCapabilities::default();
-    let mut processor = CommandProcessor::new(
-        &mut command,
-        &mut runtime,
-        universe.command_context(),
-        CommandHostContext::new(&mut capabilities),
-    );
+    let mut recorder = Recorder::default();
+    {
+        let mut processor = CommandProcessor::new(
+            &mut command,
+            &mut runtime,
+            universe.command_context(),
+            CommandHostContext::new(&mut capabilities),
+        )
+        .with_observer(&mut recorder);
 
-    assert_eq!(processor.scan_integer().expect("chardef scans").value, 13);
+        assert_eq!(processor.scan_integer().expect("chardef scans").value, 13);
+    }
+
+    assert_eq!(scanner_kinds(&recorder), vec!["internal", "integer"]);
 }
 
 #[test]
 fn integer_scanner_accepts_mathchardef_values() {
-    // TeX82 §424 groups `char_given` and `math_given` under one
+    // TeX82 §413 groups `char_given` and `math_given` under one
     // `scanned_result(cur_chr)(int_val)` case. plain.tex's
     // `\mathchardef\@M=10000` must scan as the integer 10000 wherever an
     // internal integer is accepted, e.g. `\penalty-\@M` inside `\break`.
@@ -138,17 +144,39 @@ fn integer_scanner_accepts_mathchardef_values() {
     universe.set_meaning(at_m, Meaning::MathCharGiven(10_000));
     push(&mut command, vec![Token::Cs(at_m)]);
     let mut capabilities = CommandHostCapabilities::default();
-    let mut processor = CommandProcessor::new(
-        &mut command,
-        &mut runtime,
-        universe.command_context(),
-        CommandHostContext::new(&mut capabilities),
-    );
+    let mut recorder = Recorder::default();
+    {
+        let mut processor = CommandProcessor::new(
+            &mut command,
+            &mut runtime,
+            universe.command_context(),
+            CommandHostContext::new(&mut capabilities),
+        )
+        .with_observer(&mut recorder);
 
-    assert_eq!(
-        processor.scan_integer().expect("mathchardef scans").value,
-        10_000
-    );
+        assert_eq!(
+            processor.scan_integer().expect("mathchardef scans").value,
+            10_000
+        );
+    }
+
+    assert_eq!(scanner_kinds(&recorder), vec!["internal", "integer"]);
+}
+
+/// The committed scanner results a replay observed, in order.
+///
+/// TeX82 §413's `scan_something_internal` commits its own result before the
+/// §440 `scan_int` (or §448 `scan_dimen`, §461 `scan_glue`) result that
+/// consumes it, so a `\chardef`/`\mathchardef` constant must produce both.
+fn scanner_kinds(recorder: &Recorder) -> Vec<&'static str> {
+    recorder
+        .0
+        .iter()
+        .filter_map(|record| match record {
+            CommandObservation::Scanner(scanner) => Some(scanner.kind),
+            _ => None,
+        })
+        .collect()
 }
 
 #[test]

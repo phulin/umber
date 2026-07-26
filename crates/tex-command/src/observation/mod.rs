@@ -177,6 +177,20 @@ pub(crate) fn canonical_command_identity(meaning: Meaning) -> (String, Option<i6
         // applied to this classifier): a variant added to the enum without a
         // named arm there is a build failure, not a silent generic fallback.
         Meaning::UnexpandablePrimitive(primitive) => unexpandable_primitive_identity(primitive),
+        // TeX82 §208 gives `\chardef` and `\mathchardef` constants their own
+        // command codes, `char_given=68` and `math_given=69`, and §1224's
+        // `shorthand_def` stores the scanned code as the `equiv`/`cur_chr` of
+        // the defined control sequence (§1222: "A `\chardef` creates a control
+        // sequence whose `cmd` is `char_given`"). §413's
+        // `scan_something_internal` then reads that `cur_chr` at `int_val`,
+        // but that is how the constant is *scanned*, not how it is
+        // *classified*: both stay distinct commands with the stored code as
+        // their operand at every delivery boundary, which is also what lets
+        // §935 and §1030's main control treat `char_given` like `char_num`.
+        Meaning::CharGiven(character) => {
+            ("char_given".into(), Some(i64::from(u32::from(character))))
+        }
+        Meaning::MathCharGiven(code) => ("math_given".into(), Some(i64::from(code))),
         Meaning::Undefined => ("undefined_cs".into(), Some(-268_435_455)),
         _ => ("internal".into(), None),
     }
@@ -443,6 +457,23 @@ mod tests {
         assert_eq!(
             canonical_command_identity(Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Par)),
             ("par_end".into(), Some(256))
+        );
+    }
+
+    #[test]
+    fn shorthand_definitions_keep_their_own_tex82_command_codes() {
+        // TeX82 §208's `char_given`/`math_given` are distinct commands whose
+        // `cur_chr` is the code §1224's `shorthand_def` stored. §413 reading
+        // them at `int_val` describes how they are *scanned*, not how they are
+        // classified: plain.tex's `\chardef\active=13` must still deliver
+        // `char_given` with operand 13.
+        assert_eq!(
+            canonical_command_identity(Meaning::CharGiven('\r')),
+            ("char_given".into(), Some(13))
+        );
+        assert_eq!(
+            canonical_command_identity(Meaning::MathCharGiven(10_000)),
+            ("math_given".into(), Some(10_000))
         );
     }
 
