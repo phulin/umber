@@ -1941,6 +1941,11 @@ enum ScannedStep {
     /// own (the removed node, if any, is selected purely by matching the
     /// primitive against the current list's tail).
     DeleteLast(UnexpandablePrimitive),
+    /// TeX82 §1264's `new_interaction`: `\batchmode`/`\nonstopmode`/
+    /// `\scrollmode`/`\errorstopmode` carry no operand of their own -- the
+    /// target `InteractionMode` is selected from the delivered primitive at
+    /// apply time, mirroring `DeleteLast` above.
+    SetInteractionMode(UnexpandablePrimitive),
     /// TeX82 §1112's `hmode+ital_corr: append_italic_correction` (the
     /// procedure itself is §1113) or its math-mode twin (§1112's
     /// `mmode+ital_corr: tail_append(new_kern(0))`); which applies is
@@ -3323,6 +3328,22 @@ fn scan_command(
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::NoInterlineSkip) => {
             Ok(ScannedStep::NoInterlineSkip)
         }
+        // TeX82 §1265's `any_mode(set_interaction): prefixed_command` ->
+        // `new_interaction` (§1264): `interaction:=cur_chr`. The four
+        // primitives differ only in the fixed `chr_code` each was installed
+        // with (§1264's four `primitive("...",set_interaction,...)` calls),
+        // so there is no operand scan of any kind -- the target level is
+        // selected purely from which primitive was delivered, exactly like
+        // `\unpenalty`/`\unkern`/`\unskip` above. `interaction` is a plain
+        // global Pascal variable outside `eqtb`, so this assignment is never
+        // grouped/undone and ignores `\global`/`\globaldefs` entirely, unlike
+        // ordinary parameter assignments.
+        Meaning::UnexpandablePrimitive(
+            primitive @ (UnexpandablePrimitive::BatchMode
+            | UnexpandablePrimitive::NonstopMode
+            | UnexpandablePrimitive::ScrollMode
+            | UnexpandablePrimitive::ErrorStopMode),
+        ) => Ok(ScannedStep::SetInteractionMode(primitive)),
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::SpaceFactor) => {
             let _ = processor.scan_optional_equals().map_err(command_error)?;
             let value = processor.scan_integer().map_err(command_error)?.value;
@@ -4329,7 +4350,11 @@ fn scan_unclassified_primitive(
         | P::XLeaders
         | P::Xdef
         | P::Mark
-        | P::VAdjust => unreachable!(
+        | P::VAdjust
+        | P::BatchMode
+        | P::NonstopMode
+        | P::ScrollMode
+        | P::ErrorStopMode => unreachable!(
             "UnexpandablePrimitive::{primitive:?} has an explicit, mode-complete \
              scan_command dispatch arm and must never reach the exhaustive fallback"
         ),
@@ -4381,8 +4406,7 @@ fn scan_unclassified_primitive(
                 .map_err(command_error)?;
             Ok(ScannedStep::MissingMathShift)
         }
-        P::BatchMode
-        | P::BeginL
+        P::BeginL
         | P::BeginR
         | P::ClubPenalties
         | P::Cr
@@ -4398,7 +4422,6 @@ fn scan_unclassified_primitive(
         // it is deliberately not part of the recovery bucket above. Tracked
         // as umber2-johp.86.
         | P::EqNo
-        | P::ErrorStopMode
         | P::FontCharDp
         | P::FontCharHt
         | P::FontCharIc
@@ -4423,7 +4446,6 @@ fn scan_unclassified_primitive(
         | P::MuExpr
         | P::MuToGlue
         | P::NoAlign
-        | P::NonstopMode
         | P::NumExpr
         | P::Omit
         | P::Outer
@@ -4465,7 +4487,6 @@ fn scan_unclassified_primitive(
         | P::PrevGraf
         | P::Protected
         | P::QuitVMode
-        | P::ScrollMode
         | P::SetLanguage
         | P::ShowGroups
         | P::ShowHyphens
@@ -6131,6 +6152,17 @@ fn apply_scanned_step(
             crate::assignments::execute_delete_last(primitive, modes, stores)?;
             Ok(ReplayStep::Continue)
         }
+        ScannedStep::SetInteractionMode(primitive) => {
+            let mode = match primitive {
+                UnexpandablePrimitive::BatchMode => tex_state::InteractionMode::Batch,
+                UnexpandablePrimitive::NonstopMode => tex_state::InteractionMode::Nonstop,
+                UnexpandablePrimitive::ScrollMode => tex_state::InteractionMode::Scroll,
+                UnexpandablePrimitive::ErrorStopMode => tex_state::InteractionMode::ErrorStop,
+                _ => unreachable!("only the four interaction-mode primitives are scanned"),
+            };
+            stores.set_interaction_mode(mode);
+            Ok(ReplayStep::Continue)
+        }
         ScannedStep::ItalicCorrection => {
             match modes.current_mode() {
                 Mode::Horizontal | Mode::RestrictedHorizontal => {
@@ -6834,7 +6866,15 @@ fn apply_scanned_step(
                 parameter_text.origin_list(),
                 replacement_text.origin_list(),
             );
-            if global {
+            // TeX82 §1221's generic `prefixed_command` global-scope
+            // resolution (the same `\globaldefs` override every other
+            // assignment consults via `assignment_global`) applies to
+            // `\def`/`\edef`/`\gdef`/`\xdef` exactly like any other
+            // assignment; `global` here already folds in `\gdef`/`\xdef`'s
+            // own forced-global chr_code (see the scan arm above), and
+            // `assignment_global` resolves the final effective bit against
+            // the live `\globaldefs` value.
+            if assignment_global(global, stores) {
                 stores.set_macro_meaning_global_with_provenance(target, meaning, provenance);
             } else {
                 stores.set_macro_meaning_with_provenance(target, meaning, provenance);
@@ -6922,7 +6962,14 @@ fn apply_scanned_step(
             global,
         } => {
             let _ = source;
-            if global {
+            // TeX82 `\let`/`\futurelet` are ordinary `prefixed_command`
+            // assignments too (§1221), so `\globaldefs` must override their
+            // scope exactly like every other assignment kind's
+            // `assignment_global` call above -- this was the second (with
+            // `\def`/`\edef`/`\gdef`/`\xdef`) canonical apply arm that used
+            // the raw `\global` prefix bit directly and silently ignored a
+            // nonzero `\globaldefs`.
+            if assignment_global(global, stores) {
                 stores.set_meaning_global(target, meaning);
             } else {
                 stores.set_meaning(target, meaning);

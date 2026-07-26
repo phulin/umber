@@ -5080,3 +5080,88 @@ fn canonical_mkern_outside_math_mode_inserts_missing_dollar_sign() {
     let text = terminal_text(&universe);
     assert!(text.contains("Missing $ inserted."), "{text}");
 }
+
+#[test]
+fn canonical_globaldefs_forces_and_suppresses_global_assignments() {
+    // TeX82 §1221's `prefixed_command` resolves every assignment's effective
+    // global bit from the live `\globaldefs` value before mutating, the same
+    // `assignment_global` helper already used by ordinary register/parameter
+    // assignments (canonical_main_control.rs) -- regression test for
+    // umber2-johp.83: `\def`'s and `\let`'s apply arms used the raw `\global`
+    // prefix bit directly and silently ignored a nonzero `\globaldefs`.
+    let mut universe = Universe::new();
+    let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+    register_source(
+        &mut control,
+        br"{\globaldefs=1 \def\a{A}\globaldefs=-1 \gdef\b{B}\globaldefs=1 \let\c=\relax}",
+    );
+    run_to_end(&mut control, &mut universe);
+
+    let a = universe.symbol("a").expect("a");
+    let b = universe.symbol("b").expect("b");
+    let c = universe.symbol("c").expect("c");
+
+    // The group (and its closing brace) has already fully run by this point.
+    // `\a` was forced global by `\globaldefs=1`, so its `\def` survives group
+    // exit; `\b`'s `\gdef` was forced back to local by `\globaldefs=-1`, so it
+    // does not; `\c`'s `\let` was forced global by `\globaldefs=1` again.
+    assert!(matches!(universe.meaning(a), Meaning::Macro { .. }));
+    assert_eq!(universe.meaning(b), Meaning::Undefined);
+    assert_eq!(universe.meaning(c), Meaning::Relax);
+}
+
+#[test]
+fn canonical_interaction_mode_primitives_set_the_live_mode() {
+    // TeX82 §1264's `new_interaction`: `\batchmode`/`\nonstopmode`/
+    // `\scrollmode`/`\errorstopmode` each set `interaction` directly from
+    // their own fixed `chr_code`, with no operand scan of their own.
+    let mut universe = Universe::new();
+    let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+    assert_eq!(
+        universe.interaction_mode(),
+        tex_state::InteractionMode::ErrorStop
+    );
+
+    register_source(&mut control, br"\batchmode");
+    run_to_end(&mut control, &mut universe);
+    assert_eq!(
+        universe.interaction_mode(),
+        tex_state::InteractionMode::Batch
+    );
+
+    register_source(&mut control, br"\nonstopmode");
+    run_to_end(&mut control, &mut universe);
+    assert_eq!(
+        universe.interaction_mode(),
+        tex_state::InteractionMode::Nonstop
+    );
+
+    register_source(&mut control, br"\scrollmode");
+    run_to_end(&mut control, &mut universe);
+    assert_eq!(
+        universe.interaction_mode(),
+        tex_state::InteractionMode::Scroll
+    );
+
+    register_source(&mut control, br"\errorstopmode");
+    run_to_end(&mut control, &mut universe);
+    assert_eq!(
+        universe.interaction_mode(),
+        tex_state::InteractionMode::ErrorStop
+    );
+}
+
+#[test]
+fn canonical_interaction_mode_assignment_is_ungrouped() {
+    // `interaction` is a plain global Pascal variable outside `eqtb`
+    // (tex.web's globals), so `\batchmode` inside a group is never undone at
+    // group exit -- unlike an ordinary local assignment.
+    let mut universe = Universe::new();
+    let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+    register_source(&mut control, br"{\batchmode}");
+    run_to_end(&mut control, &mut universe);
+    assert_eq!(
+        universe.interaction_mode(),
+        tex_state::InteractionMode::Batch
+    );
+}

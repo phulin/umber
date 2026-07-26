@@ -782,6 +782,32 @@ distinct mechanism is implemented (tracked as umber2-johp.86). This is
 umber2-johp.79's generalization of umber2-johp.56's original `mmode+hrule`
 mechanism to the entire §1046 table.
 
+TeX82 §1264's `new_interaction` (`\batchmode`/`\nonstopmode`/`\scrollmode`/
+`\errorstopmode`, any_mode via §1210's `set_interaction`) sets `interaction`
+directly from the delivered primitive's own `chr_code`, with no operand scan
+of its own -- the same no-scan shape as `\unpenalty`/`\unkern`/`\unskip`'s
+`ScannedStep::DeleteLast`. `interaction` is a plain global Pascal variable
+outside `eqtb`, so this assignment ignores `\global`/`\globaldefs` and is
+never undone by group exit, unlike an ordinary parameter assignment
+(umber2-johp.83).
+
+`\globaldefs` itself was already a plain `Meaning::IntParam` assignment (the
+generic `Meaning::IntParam(index)` scan/apply arms, shared with every other
+integer parameter) rather than a distinct `UnexpandablePrimitive` variant, so
+its own value was already written correctly. The actual defect was that two
+of canonical replay's assignment apply arms -- `ScannedStep::MacroDefinition`
+(`\def`/`\edef`/`\gdef`/`\xdef`) and `ScannedStep::Let` (`\let`/
+`\futurelet`) -- used their raw `\global` prefix bit directly instead of
+resolving it through `assignment_global` (the shared helper every other
+assignment kind, including `\count`/`\dimen`/`\toks`/code-table/
+`\countdef`-family/`\chardef`-family assignments, already calls), so a
+nonzero `\globaldefs` silently had no effect on macro or `\let` scope --
+precisely the write-that-lands-nowhere pattern this epic's exhaustiveness
+work exists to surface (umber2-johp.83). `UnexpandablePrimitive::GlobalDefs`
+is a distinct, currently dead enum variant: no primitive name registers it,
+so it can never actually reach `scan_unclassified_primitive`'s `Err` bucket
+in production.
+
 ### 5.4 Proposed module layout
 
 ```text
