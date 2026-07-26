@@ -39,7 +39,8 @@ pub use observation::{
     AlignmentRecord, CommandDeliveryBoundary, CommandDeliveryRecord, CommandObservation,
     CommandObserver, CommandProvenance, ConditionRecord, DiagnosticArgument, EffectRecord,
     InputReason, InputRecord, InputTransition, MacroRecord, MutationRecord, ObservedToken,
-    RecoveryKind, RecoveryRecord, ScannerRecord, ScannerStatusRecord, TokenListRecord,
+    ParameterClass, RecoveryKind, RecoveryRecord, ScannerRecord, ScannerStatusRecord,
+    TokenListRecord, parameter_mutation_key,
 };
 #[cfg(any(test, feature = "instrumentation"))]
 pub use processor::AlignmentCellFinishObservations;
