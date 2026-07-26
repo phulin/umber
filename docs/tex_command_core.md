@@ -774,13 +774,15 @@ one grouped arm -- not 34 duplicated ones -- calling the same
 proven `mode` is not math (the math-mode dispatch above would have consumed
 it first). `\eqno`/`\leqno` are deliberately excluded even though tex.web
 registers them under the same `eq_no` command code as the math-request
-vocabulary: `non_math(eq_no)` is listed under the tex.web's separate
-`@<Forbidden cases@>` module, so vmode/hmode `\eqno`/`\leqno` take
-`report_illegal_case` ("You can't use `\eqno' in ... mode"), not
-`insert_dollar_sign` -- they remain `Err(UnimplementedPrimitive)` until that
-distinct mechanism is implemented (tracked as umber2-johp.86). This is
-umber2-johp.79's generalization of umber2-johp.56's original `mmode+hrule`
-mechanism to the entire §1046 table.
+vocabulary: TeX82 §1144's `@<Forbidden cases@>=non_math(eq_no)` (added to the
+shared Forbidden-cases list first built at §1048) routes vmode/hmode
+`\eqno`/`\leqno` through the same `report_illegal_case` ("You can't use
+`\eqno' in ... mode") already reused by `IllegalBoxShift`/
+`IllegalItalicCorrection`/`IllegalInsertOrAdjust`, via their own dedicated
+`ScannedStep::IllegalEqNo` arm (umber2-johp.88), not `insert_dollar_sign`.
+`mmode+eq_no` itself (gated by `privileged`/`cur_group`, §§1140-1142) is
+unaffected. This is umber2-johp.79's generalization of umber2-johp.56's
+original `mmode+hrule` mechanism to the entire §1046 table.
 
 TeX82 §1264's `new_interaction` (`\batchmode`/`\nonstopmode`/`\scrollmode`/
 `\errorstopmode`, any_mode via §1210's `set_interaction`) sets `interaction`

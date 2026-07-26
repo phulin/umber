@@ -4236,6 +4236,56 @@ fn canonical_vadjust_is_forbidden_in_vertical_mode() {
 }
 
 #[test]
+fn canonical_eqno_outside_math_mode_reports_illegal_case() {
+    // TeX82 §1144's `@<Forbidden cases@>=non_math(eq_no)`: `\eqno`/`\leqno`
+    // outside math mode take `report_illegal_case`, not §1047's
+    // `insert_dollar_sign` (unlike the rest of the math-noad family sharing
+    // the `eq_no` command code) -- regression test for umber2-johp.88.
+    let mut universe = Universe::new();
+    let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+    register_source(&mut control, br"\eqno\end");
+    run_to_end(&mut control, &mut universe);
+
+    let text = terminal_text(&universe);
+    assert!(
+        text.contains("You can't use `\\eqno' in vertical mode"),
+        "{text}"
+    );
+}
+
+#[test]
+fn canonical_leqno_in_horizontal_mode_reports_illegal_case() {
+    // `hmode+eq_no` is likewise a Forbidden case (`non_math(#)==vmode+#,
+    // hmode+#`); `\leqno` shares `eq_no`'s command code with chr_code 1.
+    let mut universe = Universe::new();
+    let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+    register_source(&mut control, br"\setbox0=\hbox{\leqno}");
+    run_to_end(&mut control, &mut universe);
+
+    let text = terminal_text(&universe);
+    assert!(
+        text.contains("You can't use `\\leqno' in restricted horizontal mode"),
+        "{text}"
+    );
+}
+
+#[test]
+fn canonical_eqno_inside_display_math_is_unaffected() {
+    // `mmode+eq_no` (gated by `privileged`/`cur_group`, TeX82 §1140-1142)
+    // must be unaffected by the vmode/hmode Forbidden-case wiring above.
+    let mut universe = Universe::new();
+    let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+    register_source(&mut control, br"$$a\eqno b$$\end");
+    run_to_end(&mut control, &mut universe);
+
+    let text = terminal_text(&universe);
+    assert!(
+        !text.contains("You can't use `\\eqno'"),
+        "\\eqno is legal in display math mode: {text}"
+    );
+}
+
+#[test]
 fn canonical_mark_builds_mark_node_with_expanded_text() {
     // TeX82 §1101's `make_mark`: `scan_toks(false,true)` -- a fully expanded
     // balanced general text -- becomes a class-0 mark node appended to

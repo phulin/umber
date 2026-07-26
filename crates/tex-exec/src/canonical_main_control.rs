@@ -2305,6 +2305,21 @@ enum ScannedStep {
     IllegalInsertOrAdjust {
         token: Token,
     },
+    /// TeX82 §1144's `@<Forbidden cases@>=non_math(eq_no)` (added to the
+    /// shared Forbidden-cases list first built at §1048): `\eqno`/`\leqno`
+    /// outside math mode take `report_illegal_case` ("You can't use
+    /// `\eqno' in ... mode") rather than §1047's `insert_dollar_sign`, even
+    /// though tex.web registers them under the same `eq_no` command code as
+    /// the math-request vocabulary `scan_canonical_math_request` otherwise
+    /// dispatches. Reaching this arm proves `mode` is not
+    /// `Math`/`DisplayMath` (that gate would have consumed the primitive
+    /// first via `Request::EquationNumber`), matching
+    /// `IllegalBoxShift`/`IllegalItalicCorrection`/`IllegalInsertOrAdjust`'s
+    /// same-shaped recovery. `mmode+eq_no` itself (gated by
+    /// `privileged`/`cur_group`) is unaffected.
+    IllegalEqNo {
+        token: Token,
+    },
     ReplayBoxOpeningBrace,
     BoxBeginGroup,
     BoxEndGroup {
@@ -4230,11 +4245,11 @@ fn scan_command(
 ///   `CommandProcessor::recover_missing_math_shift`, already used by the
 ///   `mmode+hrule`/`mmode+vskip`/`non_math(non_script)` arms above) so the
 ///   next two deliveries close math and replay the command in the resulting
-///   mode. `\eqno`/`\leqno` are deliberately excluded: tex.web's separate
-///   `@<Forbidden cases@>=non_math(eq_no)` routes them through
-///   `report_illegal_case` ("You can't use `\eqno' in ... mode") instead, not
-///   `insert_dollar_sign`, so they remain in the `Err` bucket above until that
-///   distinct mechanism is implemented (tracked as umber2-johp.86).
+///   mode. `\eqno`/`\leqno` are deliberately excluded from this bucket:
+///   tex.web's separate `@<Forbidden cases@>=non_math(eq_no)` (§1144) routes
+///   them through `report_illegal_case` ("You can't use `\eqno' in ...
+///   mode") instead, via their own dedicated `ScannedStep::IllegalEqNo` arm
+///   below (umber2-johp.88).
 fn scan_unclassified_primitive(
     processor: &mut CommandProcessor<'_>,
     command: tex_command::CurrentCommand,
@@ -4435,6 +4450,20 @@ fn scan_unclassified_primitive(
                 .map_err(command_error)?;
             Ok(ScannedStep::MissingMathShift)
         }
+        // TeX82 §1144's `@<Forbidden cases@>=non_math(eq_no)`: unlike the
+        // math-noad family immediately above, `\eqno`/`\leqno` outside math
+        // mode take `report_illegal_case` ("You can't use `\eqno' in ...
+        // mode"), not `insert_dollar_sign` -- tex.web lists them under the
+        // separate Forbidden-cases module even though they share the same
+        // `eq_no` command code as the math-request vocabulary. Reaching this
+        // arm proves `mode` is not `Math`/`DisplayMath` (that gate would
+        // have consumed the primitive first via
+        // `scan_canonical_math_request`'s `Request::EquationNumber`);
+        // `mmode+eq_no` itself (gated by `privileged`/`cur_group`) is
+        // unaffected.
+        P::EqNo | P::LeftEqNo => Ok(ScannedStep::IllegalEqNo {
+            token: command.spelling().semantic_token(),
+        }),
         P::BeginL
         | P::BeginR
         | P::ClubPenalties
@@ -4445,12 +4474,6 @@ fn scan_unclassified_primitive(
         | P::DisplayWidowPenalties
         | P::EndL
         | P::EndR
-        // `\eqno`/`\leqno`: tex.web's `non_math(eq_no)` is listed under the
-        // *separate* `@<Forbidden cases@>` module (report_illegal_case's
-        // "You can't use `\eqno' in ... mode"), not `insert_dollar_sign` --
-        // it is deliberately not part of the recovery bucket above. Tracked
-        // as umber2-johp.86.
-        | P::EqNo
         | P::FontCharDp
         | P::FontCharHt
         | P::FontCharIc
@@ -4468,7 +4491,6 @@ fn scan_unclassified_primitive(
         | P::LastKern
         | P::LastPenalty
         | P::LastSkip
-        | P::LeftEqNo
         | P::LetterspaceFont
         | P::Long
         | P::Marks
@@ -7292,6 +7314,10 @@ fn apply_scanned_step(
             Ok(ReplayStep::Continue)
         }
         ScannedStep::IllegalInsertOrAdjust { token } => {
+            crate::diagnostics::report_illegal_case(stores, token, modes.current_mode());
+            Ok(ReplayStep::Continue)
+        }
+        ScannedStep::IllegalEqNo { token } => {
             crate::diagnostics::report_illegal_case(stores, token, modes.current_mode());
             Ok(ReplayStep::Continue)
         }
