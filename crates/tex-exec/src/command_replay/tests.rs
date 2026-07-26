@@ -3169,10 +3169,19 @@ fn canonical_case_shift_replays_raw_text_with_categories_and_order_intact() {
             .expect("uppercase scans its balanced text"),
         ReplayStep::Continue
     );
+    // TeX82 §1288 ends `shift_case` with §323's `back_list`, so the last
+    // thing the scanning step commits is a backup-class input push, after
+    // the completed `scan_toks` collection.
     assert!(matches!(
-        observations.0.last(),
+        observations.0.iter().rev().nth(1),
         Some(CommandObservation::TokenList(record))
             if record.transition == "complete" && record.purpose == "scan_toks"
+    ));
+    assert!(matches!(
+        observations.0.last(),
+        Some(CommandObservation::Input(push))
+            if push.transition == InputTransition::Push
+                && push.reason == InputReason::Backup
     ));
     assert_eq!(
         control
@@ -3192,7 +3201,7 @@ fn canonical_case_shift_replays_raw_text_with_categories_and_order_intact() {
         observations.0.as_slice(),
         [CommandObservation::Input(retirement), ..]
             if retirement.transition == InputTransition::Retire
-                && retirement.reason == InputReason::TokenList
+                && retirement.reason == InputReason::Backup
     ));
     assert_eq!(
         control
@@ -3267,63 +3276,6 @@ fn canonical_case_shift_replays_raw_text_with_categories_and_order_intact() {
             ch: '@',
             cat: Catcode::Other,
         }]
-    );
-}
-
-#[test]
-fn case_shift_substitution_preserves_active_categories_and_origins() {
-    let mut universe = Universe::new();
-    let origin = universe.bootstrap_origin();
-    let control = universe.intern("control").symbol();
-    let tokens = universe.finish_traced_token_list(&[
-        tex_state::token::TracedTokenWord::pack(
-            Token::Char {
-                ch: 'a',
-                cat: Catcode::Letter,
-            },
-            origin,
-        ),
-        tex_state::token::TracedTokenWord::pack(
-            Token::Char {
-                ch: 'b',
-                cat: Catcode::Active,
-            },
-            origin,
-        ),
-        tex_state::token::TracedTokenWord::pack(
-            Token::Char {
-                ch: '@',
-                cat: Catcode::Other,
-            },
-            origin,
-        ),
-        tex_state::token::TracedTokenWord::pack(Token::Cs(control), origin),
-        tex_state::token::TracedTokenWord::pack(Token::param(1), origin),
-    ]);
-
-    let shifted = case_shift_tokens(tokens, true, &mut universe);
-    assert_eq!(
-        universe.tokens(shifted.token_list()),
-        &[
-            Token::Char {
-                ch: 'A',
-                cat: Catcode::Letter,
-            },
-            Token::Char {
-                ch: 'B',
-                cat: Catcode::Active,
-            },
-            Token::Char {
-                ch: '@',
-                cat: Catcode::Other,
-            },
-            Token::Cs(control),
-            Token::param(1),
-        ]
-    );
-    assert_eq!(
-        universe.origin_list(shifted.origin_list()),
-        universe.origin_list(tokens.origin_list())
     );
 }
 

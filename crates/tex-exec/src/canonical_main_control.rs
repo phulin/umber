@@ -2249,10 +2249,6 @@ enum ScannedStep {
         value: i32,
         global: bool,
     },
-    CaseShift {
-        tokens: TracedTokenList,
-        uppercase: bool,
-    },
     /// TeX82 §960/§1252's `hyph_data` command: `\patterns` (`chr_code=1`)
     /// installs pattern data through `new_patterns` (§961); `\hyphenation`
     /// (`chr_code=0`) installs exception words through the analogous
@@ -3988,15 +3984,18 @@ fn scan_command(
                 global,
             })
         }
+        // TeX82 §1288's `shift_case` is entirely a command-core operation:
+        // `scan_toks`, a `\uccode`/`\lccode` rewrite, and `back_list`. It
+        // reaches no stomach state, so it completes inside the command
+        // processor and its `back_list` push stays on the observed path.
         Meaning::UnexpandablePrimitive(
             primitive @ (UnexpandablePrimitive::Uppercase | UnexpandablePrimitive::Lowercase),
-        ) => Ok(ScannedStep::CaseShift {
-            tokens: processor
-                .scan_balanced_text(false)
-                .map_err(command_error)?
-                .tokens,
-            uppercase: primitive == UnexpandablePrimitive::Uppercase,
-        }),
+        ) => {
+            processor
+                .shift_case(primitive == UnexpandablePrimitive::Uppercase)
+                .map_err(command_error)?;
+            Ok(ScannedStep::Continue)
+        }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Let) => {
             let assignment = processor
                 .scan_let_assignment(false)
@@ -6337,7 +6336,6 @@ fn applied_mutation_observation(
         | ScannedStep::DeferredCloseOut { .. }
         | ScannedStep::DeferredWrite { .. }
         | ScannedStep::DeferredSpecial { .. }
-        | ScannedStep::CaseShift { .. }
         | ScannedStep::AfterGroup(..)
         | ScannedStep::AfterAssignment(..)
         | ScannedStep::Rule { .. }
@@ -7831,10 +7829,6 @@ fn apply_scanned_step(
             } else {
                 stores.set_meaning(target, meaning);
             }
-            Ok(ReplayStep::Continue)
-        }
-        ScannedStep::CaseShift { tokens, uppercase } => {
-            command.push_case_shift(case_shift_tokens(tokens, uppercase, stores));
             Ok(ReplayStep::Continue)
         }
         ScannedStep::HyphenationData { tokens, patterns } => {
@@ -9610,42 +9604,6 @@ fn recover_character_definition_value(
         &format!("\n! {message} ({value}).\n{help}\nI changed this one to zero.\n"),
     );
     0
-}
-
-/// Applies TeX82 §914's case-table substitution without changing token
-/// categories or source provenance. Control-sequence tokens are deliberately
-/// untouched; active characters are ordinary character tokens here and are
-/// therefore remapped through the selected table.
-fn case_shift_tokens(
-    tokens: TracedTokenList,
-    uppercase: bool,
-    stores: &mut Universe,
-) -> TracedTokenList {
-    let source_tokens = stores.tokens(tokens.token_list());
-    let origins = stores.origin_list(tokens.origin_list());
-    debug_assert_eq!(source_tokens.len(), origins.len());
-    let shifted = source_tokens
-        .iter()
-        .copied()
-        .zip(origins.iter().copied())
-        .map(|(token, origin)| {
-            let token = match token {
-                Token::Char { ch, cat } => {
-                    let code = if uppercase {
-                        stores.uccode(ch)
-                    } else {
-                        stores.lccode(ch)
-                    };
-                    char::from_u32(code)
-                        .filter(|_| code != 0)
-                        .map_or(token, |ch| Token::Char { ch, cat })
-                }
-                _ => token,
-            };
-            tex_state::token::TracedTokenWord::pack(token, origin)
-        })
-        .collect::<Vec<_>>();
-    stores.finish_traced_token_list(&shifted)
 }
 
 /// Converts a command-core failure into its `ExecError` counterpart,

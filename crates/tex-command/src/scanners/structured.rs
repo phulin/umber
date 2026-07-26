@@ -12,8 +12,8 @@ use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 use tex_state::{SourceId, TracedTokenList};
 
 use crate::input::{
-    ReplayTrace, RetirementBehavior, SharedTokenBuffer, StoredReplayReason, TokenBehavior,
-    TokenPayload, TransientReplayReason,
+    BackupTreatment, ReplayTrace, RetirementBehavior, SharedTokenBuffer, StoredReplayReason,
+    TokenBehavior, TokenPayload, TransientReplayReason,
 };
 use crate::processor::status::{
     AlignmentId, AlignmentScanContext, ScannerStatus, ScannerWarning, TokenBuilderId,
@@ -2475,6 +2475,69 @@ impl CommandProcessor<'_> {
             tokens: scanned.replacement_text,
             provenance: provenance(&scanned),
         })
+    }
+
+    /// Performs TeX82 §1288's complete `shift_case`.
+    ///
+    /// `\uppercase`/`\lowercase` are `any_mode` main-control cases that never
+    /// reach the stomach: §1288 collects a general text with `scan_toks`,
+    /// rewrites each token through the current `\uccode`/`\lccode` table, and
+    /// hands the result straight back to the input stack with
+    /// `back_list(link(def_ref))`. §323's `back_list` is
+    /// `begin_token_list(p, backed_up)`, so the resulting level is a
+    /// backed-up token list -- one observed input push, and a retirement that
+    /// reports backup rather than a stored token-list replay. Keeping the
+    /// whole section here makes the observed command-processor path the only
+    /// path: no executor-side step re-pushes this list behind the observer.
+    pub fn shift_case(&mut self, uppercase: bool) -> Result<(), CommandError> {
+        let scanned = self.scan_balanced_text(false)?.tokens;
+        // §1288 changes only tokens below `cs_token_flag+single_base`, i.e.
+        // character tokens and active characters (both `Token::Char` here),
+        // and leaves the `cmd` alone; a zero `\uccode`/`\lccode` entry means
+        // "no change".  Multiletter control sequences and frozen tokens are
+        // above that bound and are never rewritten.
+        let tokens = self.state.tokens(scanned.token_list()).to_vec();
+        let origins = self.state.origin_list(scanned.origin_list()).to_vec();
+        let shifted = tokens
+            .into_iter()
+            .enumerate()
+            .map(|(index, token)| {
+                let origin = origins.get(index).copied().unwrap_or(OriginId::UNKNOWN);
+                let token = match token {
+                    Token::Char { ch, cat } => {
+                        let code = if uppercase {
+                            self.state.uccode(ch)
+                        } else {
+                            self.state.lccode(ch)
+                        };
+                        char::from_u32(code)
+                            .filter(|_| code != 0)
+                            .map_or(token, |ch| Token::Char { ch, cat })
+                    }
+                    Token::Cs(_) | Token::Param(_) | Token::Frozen(_) => token,
+                };
+                TracedTokenWord::pack(token, origin)
+            })
+            .collect::<Vec<_>>();
+        let level = self.command.push_token_level(
+            TokenPayload::Transient(SharedTokenBuffer::new(shifted)),
+            TokenBehavior::BackedUp(BackupTreatment::Ordinary),
+            RetirementBehavior::Pop,
+            ReplayTrace::BackedUp,
+        );
+        #[cfg(not(any(test, feature = "instrumentation")))]
+        let _ = level;
+        #[cfg(any(test, feature = "instrumentation"))]
+        // `back_list` is a plain `begin_token_list`, not §325's `back_input`:
+        // it pushes a backed-up level without the accompanying recovery
+        // record that a backed-up raw delivery reports.
+        self.observe(crate::CommandObservation::Input(crate::InputRecord {
+            transition: crate::InputTransition::Push,
+            reason: crate::InputReason::Backup,
+            level: level.0,
+            position: 0,
+        }));
+        Ok(())
     }
 
     /// Scans TeX82 §53's `\special` general text.

@@ -1573,3 +1573,92 @@ fn pdf_navigation_applies_halfword_bound_only_to_dest_and_thread_ids() {
         CommandError::PdfNavigation("pdfTeX error (ext1): number too big")
     );
 }
+
+#[test]
+fn shift_case_rewrites_characters_and_backs_the_shifted_list_up() {
+    let mut command = CommandState::default();
+    let source = command
+        .register_source(SourceRegistration::new(
+            RegisteredSourceKind::Generated,
+            Arc::<[u8]>::from(b"{ab@}".as_slice()),
+        ))
+        .expect("source registers");
+    command
+        .open_registered_source(source)
+        .expect("source opens");
+    let mut runtime = CommandRuntime::default();
+    let mut universe = Universe::new();
+    universe.set_catcode('b', Catcode::Active);
+    let mut capabilities = CommandHostCapabilities::default();
+    let mut recorder = Recorder::default();
+    {
+        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities)
+            .with_observer(&mut recorder);
+        processor.shift_case(true).expect("shift_case completes");
+    }
+
+    // TeX82 §1288 rewrites character *and* active-character tokens through
+    // `\uccode` without changing their category, leaves a zero-code entry
+    // alone, and hands the result to `back_list`.
+    let Some(crate::input::InputLevel::Tokens(cursor)) = command.input.levels.last() else {
+        panic!("shift_case pushes a token level");
+    };
+    let crate::input::TokenPayload::Transient(buffer) = &cursor.payload else {
+        panic!("`back_list` owns a temporary list, not immutable storage");
+    };
+    let shifted: Vec<_> = (0..3)
+        .map(|index| {
+            buffer
+                .get(index)
+                .expect("the shifted list retains every token")
+                .semantic_token()
+        })
+        .collect();
+    assert_eq!(
+        shifted,
+        vec![
+            Token::Char {
+                ch: 'A',
+                cat: Catcode::Letter,
+            },
+            Token::Char {
+                ch: 'B',
+                cat: Catcode::Active,
+            },
+            Token::Char {
+                ch: '@',
+                cat: Catcode::Other,
+            },
+        ]
+    );
+    assert!(buffer.get(3).is_none());
+    assert_eq!(
+        cursor.behavior,
+        TokenBehavior::BackedUp(crate::input::BackupTreatment::Ordinary)
+    );
+    assert_eq!(cursor.trace, ReplayTrace::BackedUp);
+
+    // §323's `back_list` is a plain `begin_token_list`: exactly one observed
+    // input push, classified as backup, and no §325 recovery record.
+    let pushes: Vec<_> = recorder
+        .0
+        .iter()
+        .filter_map(|observation| match observation {
+            CommandObservation::Input(record)
+                if record.reason == crate::InputReason::Backup
+                    && record.level == cursor.identity.0 =>
+            {
+                Some(record.transition)
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(pushes, vec![crate::InputTransition::Push]);
+    assert!(
+        !recorder
+            .0
+            .iter()
+            .any(|observation| matches!(observation, CommandObservation::Recovery(_))),
+        "back_list reports no inserted-token recovery",
+    );
+}
