@@ -24,6 +24,7 @@ use crate::observation::{
 const INCOMPLETE_IF_DIAGNOSTIC: u64 = 0x636f_6e64_0000_0001;
 const EXTRA_DELIMITER_DIAGNOSTIC: u64 = 0x636f_6e64_0000_0002;
 const MISSING_RELATION_DIAGNOSTIC: u64 = 0x636f_6e64_0000_0003;
+const BAD_NUMBER_DIAGNOSTIC: u64 = 0x636f_6e64_0000_0004;
 
 /// TeX conditional opcode, kept distinct from delimiter and limit values.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -439,14 +440,19 @@ impl CommandProcessor<'_> {
                     _ => unreachable!(),
                 })
             }
-            ConditionalKind::IfEof
-            | ConditionalKind::IfDefined
+            // TeX.web §501: `scan_four_bit_int; b:=(read_open[cur_val]=closed)`.
+            ConditionalKind::IfEof => {
+                let stream = self.scan_four_bit_int()?;
+                Ok(self
+                    .state
+                    .read_stream_at_eof(tex_state::world::StreamSlot::new(stream)))
+            }
+            ConditionalKind::IfDefined
             | ConditionalKind::IfCsName
             | ConditionalKind::IfFontChar
             | ConditionalKind::IfInCsName
             | ConditionalKind::IfCase => {
                 Err(CommandError::UnsupportedExpandablePrimitive(match kind {
-                    ConditionalKind::IfEof => ExpandablePrimitive::IfEof,
                     ConditionalKind::IfDefined => ExpandablePrimitive::IfDefined,
                     ConditionalKind::IfCsName => ExpandablePrimitive::IfCsName,
                     ConditionalKind::IfFontChar => ExpandablePrimitive::IfFontChar,
@@ -554,6 +560,34 @@ impl CommandProcessor<'_> {
                 Ok(IfRelation::Equal)
             }
         }
+    }
+
+    /// TeX.web §433's `scan_four_bit_int`: an ordinary integer scan whose
+    /// result must name one of TeX's sixteen streams. Anything outside
+    /// `0..=15` reports "Bad number" and recovers as stream zero rather than
+    /// truncating; the scan itself has already completed normally.
+    fn scan_four_bit_int(&mut self) -> Result<u8, CommandError> {
+        let value = self.scan_integer()?.value;
+        match u8::try_from(value) {
+            Ok(stream) if stream <= 15 => Ok(stream),
+            _ => {
+                self.record_bad_number();
+                Ok(0)
+            }
+        }
+    }
+
+    fn record_bad_number(&mut self) {
+        self.command
+            .expansion
+            .pending_diagnostics
+            .push(BAD_NUMBER_DIAGNOSTIC);
+        #[cfg(any(test, feature = "instrumentation"))]
+        self.observe(CommandObservation::Diagnostic(DiagnosticRecord {
+            severity: "error",
+            diagnostic: "conditional_bad_stream_number",
+            arguments: Vec::new(),
+        }));
     }
 
     fn skip_ifcase_limbs(

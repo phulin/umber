@@ -284,6 +284,17 @@ impl CommandContext<'_> {
         }
     }
 
+    /// Reads TeX82 §501's `\ifeof` predicate, `read_open[n] = closed`.
+    ///
+    /// A stream that was never opened, one whose `\openin` found no file, and
+    /// one whose final line has already been consumed are all closed, so this
+    /// is a single boolean read rather than an exposure of stream ownership.
+    /// The caller supplies a `scan_four_bit_int`-bounded slot (§433).
+    #[must_use]
+    pub fn read_stream_at_eof(&self, stream: crate::world::StreamSlot) -> bool {
+        self.universe.world().input_stream_eof(stream)
+    }
+
     /// Reads one box-register dimension through the aggregate state boundary.
     ///
     /// A void box has no dimension; TeX's internal-quantity scanner maps
