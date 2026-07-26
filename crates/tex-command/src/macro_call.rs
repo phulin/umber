@@ -193,7 +193,7 @@ impl CommandProcessor<'_> {
             .ok_or(CommandError::input_invariant())?;
         let meaning = self.state.macro_definition(definition);
         let pattern = self.state.macro_definition_parameter_pattern(definition);
-        // TeX82 §392 calls the parameter matcher only when the macro's
+        // TeX82 §389 calls the §391 parameter matcher only when the macro's
         // parameter text does not begin with `end_match`. A parameterless
         // macro therefore feeds its replacement directly, without a transient
         // `matching` scanner episode. Literal leading tokens still need the
@@ -236,15 +236,12 @@ impl CommandProcessor<'_> {
         // the input. The activation owns that one shared buffer; its body
         // replays the canonical immutable replacement list and resolves
         // compact `OutParameter` tokens through that owner.
-        // TeX82 §392's replacement hand-off drains an exhausted macro body
-        // before `begin_token_list(..., macro)`. A recovered paragraph can
-        // leave that caller at the input top, and recursive macros rely on
-        // the same cleanup to avoid unbounded stack growth. Backups retain
-        // their separate §25 hand-off rule below; other transient recovery
-        // input remains live until the ordinary raw-delivery loop consumes
-        // it. The macro retirement must precede this body's input push.
-        self.retire_exhausted_backup_before_macro_replay(call.delivery_stamp())?;
-        self.retire_exhausted_macro_bodies_before_macro_replay()?;
+        // TeX82 §390's replacement hand-off first drains every depleted token
+        // list -- the exhausted macro body or replayed parameter the call
+        // token itself came from, any backup or recovery insertion, and any
+        // finished stored replay -- before `begin_token_list(..., macro)`.
+        // Those retirements must precede this body's input push.
+        self.retire_depleted_token_lists_before_macro_replay()?;
         let provenance = self.state.macro_definition_provenance(definition);
         let _level = self.push_macro_activation(
             definition,

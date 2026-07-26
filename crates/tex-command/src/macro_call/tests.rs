@@ -791,7 +791,7 @@ fn nested_macro_activation_retires_the_exhausted_caller_before_pushing_the_calle
             InputTransition::Push,
             InputTransition::Retire,
         ],
-        "TeX82 §392 retires the depleted caller before the callee body is pushed"
+        "TeX82 §390 retires the depleted caller before the callee body is pushed"
     );
 }
 
@@ -861,7 +861,12 @@ fn nested_calls_keep_out_parameter_ownership_and_invocation_provenance() {
             .expect("inner delivery")
             .expect("inner token");
         processor.macro_call(inner_call).expect("inner matches");
-        assert_eq!(processor.command.parameters.activations.len(), 2);
+        // TeX82 §390 drains every depleted token list before the callee body
+        // is pushed. Matching `\inner`'s argument exhausts both the replayed
+        // parameter level and the caller's macro body, so `end_token_list`
+        // pops the body and flushes its `param_stack` entries: this tail call
+        // leaves exactly one live activation, the callee's.
+        assert_eq!(processor.command.parameters.activations.len(), 1);
         assert_eq!(
             processor
                 .get_token()
