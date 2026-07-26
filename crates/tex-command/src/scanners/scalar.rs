@@ -1351,6 +1351,31 @@ impl CommandProcessor<'_> {
                 }));
                 InternalValue::Dimension(value)
             }
+            // TeX82 §426's "Fetch a font integer": `assign_font_int` runs
+            // `scan_font_ident` and then reads `hyphen_char[cur_val]` (`m=0`,
+            // `\hyphenchar`) or `skew_char[cur_val]` (`\skewchar`) at
+            // `int_val`. Without this arm both primitives fell through to
+            // `scan_int`'s missing-number recovery and silently scanned as
+            // zero, so `\ifnum\hyphenchar\font=-1` -- the standard probe for a
+            // font whose hyphenation was disabled -- compared against the
+            // wrong value with no diagnostic.
+            Meaning::UnexpandablePrimitive(
+                primitive @ (UnexpandablePrimitive::HyphenChar | UnexpandablePrimitive::SkewChar),
+            ) => {
+                let font = self.scan_font_selector()?;
+                let value = match primitive {
+                    UnexpandablePrimitive::HyphenChar => self.state.font_hyphen_char(font),
+                    UnexpandablePrimitive::SkewChar => self.state.font_skew_char(font),
+                    _ => unreachable!("outer match restricts primitive to the font integers"),
+                };
+                #[cfg(any(test, feature = "instrumentation"))]
+                self.observe(CommandObservation::Scanner(ScannerRecord {
+                    kind: "internal",
+                    value: value.to_string(),
+                    tokens: None,
+                }));
+                InternalValue::Integer(value)
+            }
             // TeX82 §414's "Fetch a character code from some table":
             // `scan_char_num` selects the entry and every code table reads at
             // `int_val`. These six primitives were wired for assignment only,
