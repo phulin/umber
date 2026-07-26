@@ -1,26 +1,29 @@
-//! Reusable direct canonical Gentle/Story e2e divergence probe.
+//! First-failure locator for the canonical Gentle/Story e2e path.
 //!
-//! The `umber2-johp` epic converges Umber against instrumented TeX/pdfTeX by
-//! fixing one earliest divergence at a time. Each successive fix has had to
-//! reconstruct, from scratch, an ad hoc in-process probe that drives Plain
-//! bootstrap plus a corpus source through `CanonicalEngineSession` and
-//! reports where it first fails. This example commits that probe so a
-//! cold-start agent can reproduce the current earliest divergence in one
-//! command instead of rebuilding the harness.
+//! This is a *first-failure locator*: it drives Plain bootstrap plus a corpus
+//! source directly through `CanonicalEngineSession` and reports where
+//! execution first stops. It can only show that execution stopped, never that
+//! completed output is wrong -- see the Glossary in
+//! `docs/canonical_divergence_workflow.md`. The `umber2-johp` epic converges
+//! Umber against instrumented TeX/pdfTeX by fixing one earliest divergence at
+//! a time; each successive fix had to reconstruct this ad hoc in-process
+//! locator from scratch, so this example commits it once so a cold-start
+//! agent can reproduce the current earliest failure in one command instead of
+//! rebuilding the harness.
 //!
 //! # Usage
 //!
 //! ```text
-//! cargo run -p umber --example canonical_probe -- gentle
-//! cargo run -p umber --example canonical_probe -- story
-//! cargo run -p umber --example canonical_probe -- story /tmp/story.actual.dvi
+//! cargo run -p umber --example first_failure_locator -- gentle
+//! cargo run -p umber --example first_failure_locator -- story
+//! cargo run -p umber --example first_failure_locator -- story /tmp/story.actual.dvi
 //! ```
 //!
 //! The first argument names a document in `third_party/corpus/<name>.tex`
 //! (the `.tex` suffix is optional); it defaults to `gentle`. An optional
 //! second argument is a path to write the assembled DVI bytes to, for
 //! comparison against a fixture such as `tests/corpus/e2e/story.expected.dvi`
-//! (e.g. with `cmp` or `sha256sum`). The probe requires
+//! (e.g. with `cmp` or `sha256sum`). The locator requires
 //! `third_party/corpus/plain.tex`, `third_party/corpus/<name>.tex`, and
 //! `third_party/hyphen/hyphen.tex` (fetched by
 //! `scripts/setup-conformance-tests.sh` or `scripts/fetch-conformance-inputs.sh`),
@@ -30,7 +33,7 @@
 //! `parity_harness::locate_tfm`).
 //!
 //! On success it reports the number of artifacts and DVI pages produced. On
-//! the first divergence -- an `ExecError`/`CanonicalSessionError`, or a Rust
+//! the first failure -- an `ExecError`/`CanonicalSessionError`, or a Rust
 //! panic -- it reports the live execution mode, the canonical error (with
 //! provenance-resolved TeX source context when the error carries an origin),
 //! and, for panics, lets the default panic hook report the Rust-side
@@ -40,7 +43,7 @@
 //! is tracked separately as `umber2-johp.28`). Running against `gentle` is
 //! expected to fail today: see the current open successor issue under the
 //! `umber2-johp` epic (`bd show umber2-johp` for its children, or `bd ready`)
-//! for the earliest tracked Gentle divergence this probe reproduces -- that
+//! for the earliest tracked Gentle divergence this locator reproduces -- that
 //! issue ID advances every time a divergence is fixed, so it is deliberately
 //! not hardcoded here.
 
@@ -74,7 +77,7 @@ fn main() -> ExitCode {
     for path in [&plain_path, &doc_path, &hyphen_path] {
         if !path.is_file() {
             eprintln!(
-                "canonical_probe: missing required external input {}; run \
+                "first_failure_locator: missing required external input {}; run \
                  scripts/setup-conformance-tests.sh (or scripts/fetch-conformance-inputs.sh) first",
                 path.display()
             );
@@ -102,7 +105,7 @@ fn main() -> ExitCode {
     let root_source = format!("\\input plain.tex \\input {source}.tex\n");
     session
         .register_authored_root("job.tex", Arc::from(root_source.into_bytes()))
-        .expect("register the probe's authored root");
+        .expect("register the locator's authored root");
 
     let mut host = CorpusHost;
     let mut checkpoints: Vec<EngineCheckpoint> = Vec::new();
@@ -113,7 +116,7 @@ fn main() -> ExitCode {
     match outcome {
         Ok(Ok(run)) => {
             println!(
-                "canonical_probe: {source} completed with no divergence: {} artifact(s), {} DVI page(s)",
+                "first_failure_locator: {source} completed with no failure: {} artifact(s), {} DVI page(s)",
                 run.artifacts.len(),
                 run.dvi_pages.len()
             );
@@ -121,22 +124,22 @@ fn main() -> ExitCode {
                 match umber::dvi_from_page_plans(&run.dvi_pages) {
                     Ok(dvi) => {
                         if let Some(out_path) = env::args().nth(2) {
-                            if let Err(error) = write_probe_output(&out_path, &dvi) {
+                            if let Err(error) = write_locator_output(&out_path, &dvi) {
                                 eprintln!(
-                                    "canonical_probe: failed to write DVI to {out_path}: {error}"
+                                    "first_failure_locator: failed to write DVI to {out_path}: {error}"
                                 );
                             } else {
                                 println!(
-                                    "canonical_probe: wrote {} DVI byte(s) to {out_path}",
+                                    "first_failure_locator: wrote {} DVI byte(s) to {out_path}",
                                     dvi.len()
                                 );
                             }
                         } else {
-                            println!("canonical_probe: assembled {} DVI byte(s)", dvi.len());
+                            println!("first_failure_locator: assembled {} DVI byte(s)", dvi.len());
                         }
                     }
                     Err(error) => {
-                        eprintln!("canonical_probe: failed to assemble DVI: {error}");
+                        eprintln!("first_failure_locator: failed to assemble DVI: {error}");
                         return ExitCode::FAILURE;
                     }
                 }
@@ -155,7 +158,7 @@ fn main() -> ExitCode {
 }
 
 fn report_error(source: &str, session: &CanonicalEngineSession<'_>, error: &CanonicalSessionError) {
-    eprintln!("canonical_probe: {source} run diverged");
+    eprintln!("first_failure_locator: {source} run stopped");
     eprintln!("current mode: {:?}", session.current_mode());
     match error {
         CanonicalSessionError::Execution(exec_error) => {
@@ -182,7 +185,7 @@ fn report_panic(
     // The default panic hook already printed the Rust-side "panicked at
     // src/file.rs:LINE:COL" location (and a backtrace under
     // RUST_BACKTRACE=1) before unwinding reached this catch_unwind boundary.
-    eprintln!("canonical_probe: {source} run panicked");
+    eprintln!("first_failure_locator: {source} run panicked");
     eprintln!("current mode: {:?}", session.current_mode());
     let message = payload
         .downcast_ref::<&str>()
@@ -199,12 +202,12 @@ fn repo_root() -> PathBuf {
         .expect("resolve repository root")
 }
 
-#[allow(clippy::disallowed_methods)] // Host-side probe output; engine I/O still goes through World.
-fn write_probe_output(path: &str, bytes: &[u8]) -> std::io::Result<()> {
+#[allow(clippy::disallowed_methods)] // Host-side locator output; engine I/O still goes through World.
+fn write_locator_output(path: &str, bytes: &[u8]) -> std::io::Result<()> {
     fs::write(path, bytes)
 }
 
-#[allow(clippy::disallowed_methods)] // Host-side probe staging; engine I/O still goes through World.
+#[allow(clippy::disallowed_methods)] // Host-side locator staging; engine I/O still goes through World.
 fn seed_memory_file(world: &mut World, name: &str, path: &Path) {
     let bytes = fs::read(path).unwrap_or_else(|error| panic!("read {}: {error}", path.display()));
     world
@@ -217,9 +220,11 @@ fn seed_corpus_tfms(world: &mut World, root: &Path) {
         match parity_harness::locate_tfm(root, name, true) {
             Ok(Some(path)) => seed_memory_file(world, &format!("{name}.tfm"), &path),
             Ok(None) => eprintln!(
-                "canonical_probe: warning: could not locate {name}.tfm; requests for it will be declined"
+                "first_failure_locator: warning: could not locate {name}.tfm; requests for it will be declined"
             ),
-            Err(error) => eprintln!("canonical_probe: warning: error locating {name}.tfm: {error}"),
+            Err(error) => {
+                eprintln!("first_failure_locator: warning: error locating {name}.tfm: {error}")
+            }
         }
     }
 }
