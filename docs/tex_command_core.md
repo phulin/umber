@@ -663,14 +663,47 @@ vertical mode, applies §968's `normal_paragraph` reset, and reuses the box
 family's brace-matching bookkeeping (`active_boxes`/`BoxBeginGroup`/
 `BoxEndGroup`) purely for nested-brace counting -- an insertion body is not a
 box and schedules no `\everyhbox`/`\everyvbox` hook. Its closing action is a
-dedicated branch (`finish_insert_group`): §1096's `end_graf`, then TeX82's
-`vpack` macro (unconstrained depth, but the box's *current*
+dedicated branch (`finish_insert_or_adjust_group`): §1096's `end_graf`, then
+TeX82's `vpack` macro (unconstrained depth, but the box's *current*
 `\vbadness`/`\vfuzz`, unlike an ordinary `\vbox`) packages the body, and the
 resulting `ins_node` is appended to whatever list was open when `\insert`
 began -- not a side channel -- exactly like `\mark`/`\penalty`. Outer vertical
 mode then invokes `build_page`, which owns §§980--987's insertion-class
 splitting and height accounting (`tex-exec::page_builder`) once the node
 reaches the page contribution list.
+
+`\vadjust{...}` (the exact same `begin_insert_or_adjust`/`handle_right_brace`
+procedures as `\insert` above, §968/§1096) shares that entire construction
+rather than duplicating it: tex.web's own
+`begin_insert_or_adjust` sets `cur_val:=255` directly for `\vadjust` instead
+of calling `scan_eight_bit_int`, so `scan_command` builds the same
+`ScannedInsertConstruction{class: 255, ..}` used for `\insert`, with a
+dedicated `is_vadjust` flag telling replay to skip the 0..=255 clamp and the
+"you can't `\insert255`" rejection -- both diagnostics are specific to a
+user-scanned class and would otherwise misfire on `\vadjust`'s always-valid
+255 sentinel. `\vadjust` in (outer or internal) vertical mode is one of
+tex.web's "Forbidden cases" (`ScannedStep::IllegalInsertOrAdjust`, sharing
+`report_illegal_case` with `IllegalBoxShift`/`IllegalItalicCorrection`) rather
+than `any_mode` like `\insert`. `finish_insert_or_adjust_group` branches on
+the completed class: 255 builds a bare `adjust_node` (`Node::Adjust`,
+carrying only the packed content -- `\splittopskip`/`\splitmaxdepth`/
+`\floatingpenalty` are still read at the same point as `\insert`, mirroring
+tex.web's unconditional read before the branch, but never stored) instead of
+an `ins_node`. Splice-back out of an enclosing `\hbox`/paragraph line is not
+new architecture: it already existed as a general `Node::Mark`/`Node::Ins`/
+`Node::Adjust` migration mechanism (`extract_box_migrations` in
+`tex-exec::assignments::boxes`, and `extract_migrating_material` in
+`tex-exec::assignments::paragraph`, mirroring tex.web's `hpack`
+`adjust_tail` and `post_line_break`), so wiring the canonical primitive was
+sufficient to exercise it correctly with no further changes.
+
+`\mark{...}` (TeX82 §1101's `make_mark`) needs none of the box-opener
+machinery: `CommandProcessor::scan_balanced_text(true)` (the same fully
+expanded general-text scan already used for `\special`/`\message`) is the
+entire command-side operand, and replay appends a class-0 `Node::Mark`
+directly to whatever list is current -- `any_mode`, and unlike `\insert`,
+never followed by a `build_page` call. The e-TeX numbered `\marks<n>{...}`
+variant is not wired (tracked separately for the e-TeX phase, umber2-johp.9).
 
 TeX82 §1073's box-shift prefixes (`\raise`, `\lower`, `\moveleft`,
 `\moveright`) cross the boundary as one completed operation, unlike the
