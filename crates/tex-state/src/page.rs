@@ -916,6 +916,17 @@ impl PageBuilderState {
     pub(crate) const fn last_node_type(&self) -> i32 {
         self.last_node_type
     }
+
+    /// Whether the page builder's `last_glue` memo (TeX82 §996's "Update the
+    /// values of `last_glue`...") currently names a real glue node, i.e. the
+    /// most recently placed current-page item was itself glue. Unlike
+    /// `last_skip`, which folds "no known last glue" into `GlueSpec::ZERO`,
+    /// this distinguishes that case from a real zero-valued last glue -- the
+    /// distinction `delete_last` (§1105) needs for `\unskip`'s apology.
+    #[must_use]
+    pub(crate) const fn has_last_glue(&self) -> bool {
+        self.last_glue.is_some()
+    }
 }
 
 #[cfg(test)]

@@ -5793,6 +5793,12 @@ impl Universe {
         self.page.last_node_type()
     }
 
+    /// See [`crate::page::PageBuilderState::has_last_glue`].
+    #[must_use]
+    pub fn page_has_last_glue(&self) -> bool {
+        self.page.has_last_glue()
+    }
+
     pub fn take_box_reg(&mut self, index: u16) -> Option<NodeListId> {
         let value = self.stores.box_reg(index);
         if let Some(value) = value {
