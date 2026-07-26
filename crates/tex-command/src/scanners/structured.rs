@@ -71,7 +71,7 @@ pub struct ScannedLetAssignment {
     pub meaning: Meaning,
 }
 
-/// A completed TeX82 §1220 `\\chardef` or `\\mathchardef` operand.
+/// A completed TeX82 §1224 `\\chardef` or `\\mathchardef` operand.
 ///
 /// Command processing owns the raw target, optional equals sign, and integer
 /// scan. Main control receives no token or input capability: it only applies
@@ -739,7 +739,7 @@ pub enum AlignmentCellOpening {
 }
 
 impl CommandProcessor<'_> {
-    /// Scans TeX82 §1220's complete `\\chardef` or `\\mathchardef` operand.
+    /// Scans TeX82 §1224's complete `\\chardef` or `\\mathchardef` operand.
     ///
     /// The target remains a raw control-sequence delivery as required by
     /// `get_r_token`; the optional equals sign and numeric value use the
@@ -771,7 +771,7 @@ impl CommandProcessor<'_> {
 
     /// Scans TeX82 §1221's complete register-definition operand.
     ///
-    /// As in §1220, TeX temporarily gives the target `\relax` before the
+    /// As in §1224, TeX temporarily gives the target `\relax` before the
     /// index scan. This makes a repeated target terminate its own integer
     /// scan rather than expand its previous meaning or report undefined.
     pub fn scan_register_definition(
@@ -1494,11 +1494,35 @@ impl CommandProcessor<'_> {
 
     /// Scans a complete ordinary font definition without retaining a raw
     /// command, cursor, or host capability.
-    pub fn scan_font_definition(&mut self) -> Result<FontLoadRequest, CommandError> {
+    ///
+    /// TeX82 §1257's `new_font` runs `define(u,set_font,null_font)` on the
+    /// `get_r_token` target *before* `scan_optional_equals` and
+    /// `scan_file_name`, exactly as §1224 gives a `\\chardef` target a
+    /// provisional `\\relax`. The identifier therefore already denotes the
+    /// null font while the file name and `at`/`scaled` size are scanned, and
+    /// §1257's `common_ending: equiv(u):=f` later overwrites that equivalent
+    /// in place rather than through a second `eq_define`.
+    pub fn scan_font_definition(
+        &mut self,
+        provisional_global: bool,
+    ) -> Result<FontLoadRequest, CommandError> {
         let target = self
             .next_non_space_raw()?
             .and_then(|command| command.control_sequence())
             .ok_or(CommandError::input_invariant())?;
+        self.state.set_provisional_meaning(
+            target,
+            Meaning::Font(tex_state::font::NULL_FONT),
+            provisional_global,
+        );
+        #[cfg(any(test, feature = "instrumentation"))]
+        self.observe(crate::CommandObservation::Mutation(crate::MutationRecord {
+            target: "meaning",
+            value: "set_font".into(),
+            key: Some(self.state.resolve(target).to_owned()),
+            tokens: None,
+            global: provisional_global,
+        }));
         let _ = self.scan_optional_equals()?;
         let file_name = self.scan_file_name()?;
         let size = if self.scan_keyword("at")?.value {
