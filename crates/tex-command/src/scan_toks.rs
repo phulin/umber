@@ -306,6 +306,48 @@ impl CommandProcessor<'_> {
                 self.observe_expanded_delivery(&command);
             }
 
+            // TeX82 §790's `insert_vj` replaces a delivered `\cr`/`\span`/tab
+            // delimiter by inserting the `v_j` template and restarting
+            // `get_next` -- the delimiter itself never becomes an ordinary
+            // token to any caller, including a balanced-text collector like
+            // this one. This matters for a braced group whose matching `}`
+            // lives in the `v_j` template (plain.tex's
+            // `\eqalign`/`\displaylines` idiom `$\displaystyle{##}$` is the
+            // common case): without the check below, this still-open depth
+            // would carry the raw scan straight through the delimiter,
+            // capturing its spelling as literal replacement text. That
+            // captured spelling is later replayed verbatim to build the
+            // group's material, so the same `\cr` reaches raw delivery a
+            // second time -- by then `align_state`/the active cell have
+            // already moved past the point where this delivery's own
+            // interception is recognized again, so it falls through to
+            // ordinary primitive dispatch instead.
+            //
+            // `get_x_token_scalar` (this crate's `get_x_token`) already
+            // performs exactly this handoff for its own expanded delivery
+            // loop: on an intercepted delimiter it calls
+            // `begin_scalar_alignment_v_template` and restarts, rather than
+            // ever handing the delimiter to its caller as ordinary content.
+            // For the `expanded: true` collector above, `is_expandable`
+            // already routes a converted `end_template` through
+            // `self.expand`, which performs that same handoff before this
+            // point is reached. This collector's `expanded: false` mode
+            // uses the non-expanding `get_token`, which never reaches
+            // either dispatch, so the delimiter's own structural
+            // consequence (the `v_j` template becoming the input this loop
+            // reads next) must be performed explicitly here. Dropping the
+            // delimiter's spelling from the collected text (never storing
+            // it, but still advancing the loop) then lets the newly
+            // inserted `v_j` tokens continue this same balanced scan
+            // exactly as if no alignment boundary had been crossed.
+            if matches!(
+                command.alignment_adjustment(),
+                crate::processor::AlignmentDeliveryAdjustment::Delimiter(_)
+            ) {
+                self.begin_scalar_alignment_v_template(command)?;
+                continue;
+            }
+
             let spelling = command.spelling();
             let token = spelling.semantic_token();
             if let Some(hash) = pending_parameter.take() {

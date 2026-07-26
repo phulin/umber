@@ -5501,6 +5501,35 @@ fn production_driver_math_choice_inside_alignment_cell_retires_cleanly() {
 }
 
 #[test]
+fn canonical_math_group_spanning_v_template_does_not_redeliver_its_row_terminator() {
+    // plain.tex's `\eqalign` (and `\displaylines`) wraps every cell field in
+    // `$\displaystyle{##}$`, and its second-column template additionally
+    // nests an empty group before the field: `$\displaystyle{{}##}$`. That
+    // outer `{` is a bare `mmode+left_brace` (TeX82 §1153), whose *matching*
+    // `}` lives in the column's `v_j` template -- i.e. on the far side of
+    // the row's `\cr`. `scan_math_group_episode`'s `scan_toks`-based capture
+    // (crates/tex-command/src/scanners/structured.rs) must scan straight
+    // through that `\cr`; TeX82 §790's `insert_vj` intercepts it and inserts
+    // `v_j` exactly once, never letting the delimiter surface as ordinary
+    // scanned text (§343, `car_ret`/`tab_mark` at `align_state=0`). Before
+    // the fix in crates/tex-command/src/scan_toks.rs, the collector treated
+    // the intercepted delimiter as literal content, capturing it into the
+    // group's replay episode; replaying that episode then redelivered the
+    // same `\cr` a second time, after `align_state` had already moved past
+    // the point where interception is recognized, so it fell through to
+    // ordinary primitive dispatch and errored as
+    // `ExecError::UnimplementedPrimitive` in Math mode.
+    let mut universe = Universe::new();
+    let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+    register_source(
+        &mut control,
+        br"$$\halign{#&$\displaystyle{{}#}$\cr a&b\cr x&y\cr e&f\cr}$$\end",
+    );
+    run_to_end(&mut control, &mut universe);
+    assert_eq!(control.current_mode(), crate::Mode::Vertical);
+}
+
+#[test]
 fn canonical_interaction_mode_assignment_is_ungrouped() {
     // `interaction` is a plain global Pascal variable outside `eqtb`
     // (tex.web's globals), so `\batchmode` inside a group is never undone at
