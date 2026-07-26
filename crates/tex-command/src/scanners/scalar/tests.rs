@@ -974,3 +974,80 @@ fn excess_l_suffixes_past_filll_are_consumed_rather_than_left_in_the_input() {
     assert_eq!(glue.stretch_order, Order::Filll);
     assert_eq!(following, 5);
 }
+
+#[test]
+fn code_table_primitives_read_at_the_integer_level() {
+    // TeX82 §414's "Fetch a character code from some table": `\catcode`,
+    // `\lccode`, `\uccode`, `\sfcode`, `\mathcode`, and `\delcode` all scan
+    // a character selector and read at `int_val`. They were wired for
+    // assignment only, so `\ifnum\catcode`\~=13` silently compared zero.
+    use tex_state::meaning::UnexpandablePrimitive as P;
+
+    for (name, primitive, expected) in [
+        ("catcode", P::CatCode, 11),
+        ("lccode", P::LcCode, i32::from(b'a')),
+        ("uccode", P::UcCode, i32::from(b'A')),
+        ("sfcode", P::SfCode, 999),
+        ("mathcode", P::MathCode, 7),
+        ("delcode", P::DelCode, 42),
+    ] {
+        let mut universe = Universe::new();
+        universe.set_catcode('A', Catcode::Letter);
+        universe.set_lccode('A', u32::from(b'a'));
+        universe.set_uccode('A', u32::from(b'A'));
+        universe.set_sfcode('A', 999);
+        universe.set_mathcode('A', 7);
+        universe.set_delcode('A', 42);
+        let symbol = universe.intern(name).symbol();
+        universe.set_meaning(symbol, Meaning::UnexpandablePrimitive(primitive));
+
+        assert_eq!(
+            scan_with(
+                &mut universe,
+                vec![Token::Cs(symbol), char_token('`'), char_token('A')],
+                |processor| processor.scan_integer().expect("code table scans").value,
+            ),
+            expected,
+            "\\{name} reads at int_val"
+        );
+    }
+}
+
+#[test]
+fn parshape_reads_its_line_count() {
+    // TeX82 §423's "Fetch the par_shape size": `\parshape` reads the number
+    // of lines in the current shape, or zero when none is set.
+    let mut universe = Universe::new();
+    let parshape = universe.intern("parshape").symbol();
+    universe.set_meaning(
+        parshape,
+        Meaning::UnexpandablePrimitive(tex_state::meaning::UnexpandablePrimitive::ParShape),
+    );
+
+    assert_eq!(
+        scan_with(&mut universe, vec![Token::Cs(parshape)], |processor| {
+            processor.scan_integer().expect("empty shape scans").value
+        }),
+        0
+    );
+
+    universe.set_paragraph_shape(
+        &[
+            tex_state::ParagraphShapeLine {
+                indent: Scaled::from_raw(0),
+                width: Scaled::from_raw(Scaled::UNITY),
+            },
+            tex_state::ParagraphShapeLine {
+                indent: Scaled::from_raw(0),
+                width: Scaled::from_raw(Scaled::UNITY),
+            },
+        ],
+        false,
+    );
+    assert_eq!(
+        scan_with(&mut universe, vec![Token::Cs(parshape)], |processor| {
+            processor.scan_integer().expect("shape size scans").value
+        }),
+        2
+    );
+}
