@@ -229,6 +229,12 @@ pub(crate) fn canonical_command_identity(meaning: Meaning) -> (String, Option<i6
             UnexpandablePrimitive::Toks => ("toks_register".into(), Some(0)),
             UnexpandablePrimitive::CatCode => ("def_code".into(), Some(25_631)),
             UnexpandablePrimitive::LcCode => ("def_code".into(), Some(25_887)),
+            // TeX82 §1230 installs `\uccode` under the shared `def_code`
+            // command with the `uc_code_base` eqtb address as its selector
+            // (`uc_code_base = lc_code_base + 256`; see tex.web's `@d
+            // uc_code_base=lc_code_base+256` and the `primitive("uccode",
+            // def_code,uc_code_base)` call).
+            UnexpandablePrimitive::UcCode => ("def_code".into(), Some(26_143)),
             // TeX.web's primitive `\par` is `par_end` with the distinguished
             // `cur_chr` value 256; this is not the Rust primitive enum's
             // storage operand.
