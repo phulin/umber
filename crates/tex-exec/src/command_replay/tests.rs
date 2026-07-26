@@ -187,6 +187,112 @@ fn canonical_chardef_character_typesets_exactly_like_char() {
     );
 }
 
+/// TeX82 §1210 lists `set_page_dimen` and `set_page_int` among
+/// `prefixed_command`'s ordinary assignment forms; §1242 routes them to
+/// `alter_page_so_far` (§1245) and `alter_integer` (§1246). Neither had a
+/// `scan_command` arm before umber2-johp.106, so the assignment was a silent
+/// no-op. Only a legacy-path test covered these before.
+///
+/// The page is deliberately frozen first (`\copy0` contributes a box to it):
+/// §986's `@<Fetch the |page_so_far|@>` reads back `max_dimen` for
+/// `\pagegoal` and zero for the rest while `page_contents=empty`, no matter
+/// what was stored.
+#[test]
+fn canonical_page_dimension_and_page_integer_assignments_write_engine_state() {
+    let mut universe = Universe::new();
+    let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+    register_source(
+        &mut control,
+        br"\topskip=0pt \setbox0=\hbox{}\copy0 \pagegoal=100pt\pagetotal=12pt\pageshrink 3pt\pagedepth=1pt\deadcycles=7\insertpenalties=4",
+    );
+
+    run_to_end(&mut control, &mut universe);
+
+    assert_eq!(
+        universe.page_dimension(tex_state::page::PageDimension::Goal),
+        Scaled::from_raw(100 * Scaled::UNITY)
+    );
+    assert_eq!(
+        universe.page_dimension(tex_state::page::PageDimension::Total),
+        Scaled::from_raw(12 * Scaled::UNITY)
+    );
+    // `scan_optional_equals` makes the `=` optional, exactly as it is for
+    // `\dimen`/`\count`; `\pageshrink 3pt` must assign just like the others.
+    assert_eq!(
+        universe.page_dimension(tex_state::page::PageDimension::Shrink),
+        Scaled::from_raw(3 * Scaled::UNITY)
+    );
+    assert_eq!(
+        universe.page_dimension(tex_state::page::PageDimension::Depth),
+        Scaled::from_raw(Scaled::UNITY)
+    );
+    assert_eq!(
+        universe.page_integer(tex_state::page::PageInteger::DeadCycles),
+        7
+    );
+    assert_eq!(
+        universe.page_integer(tex_state::page::PageInteger::InsertPenalties),
+        4
+    );
+}
+
+/// The undispatched-assignment symptom that made umber2-johp.106 a
+/// silent-corruption bug rather than a missing feature: `scan_command`
+/// returned `Continue` without consuming `=100pt`, so main control typeset
+/// the operand as literal document text.
+#[test]
+fn canonical_page_scalar_assignment_consumes_its_own_operand() {
+    let mut universe = Universe::new();
+    let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+    register_cmr10_font(&mut control, &mut universe);
+    register_source(
+        &mut control,
+        br"\font\f=cmr10 \setbox1=\hbox{\f \pagegoal=100pt\deadcycles=7}",
+    );
+
+    run_to_end(&mut control, &mut universe);
+
+    let stored = universe
+        .box_reg(1)
+        .and_then(|id| universe.nodes(id).first().map(|node| node.to_owned()))
+        .expect("setbox1 stores an hbox");
+    let Node::HList(stored) = stored else {
+        panic!("setbox1 contains an hbox");
+    };
+    let children = universe.nodes(stored.children).to_vec();
+    assert!(
+        children.is_empty(),
+        "no operand escaped into the document as literal text: {children:?}"
+    );
+}
+
+/// TeX82 §1242 states outright that the `set_page_dimen`/`set_page_int`
+/// definitions "are always global": `page_so_far`, `dead_cycles`, and
+/// `insert_penalties` are engine variables rather than `eqtb` entries, so no
+/// save-stack entry is pushed and a group boundary cannot restore them.
+#[test]
+fn canonical_page_scalar_assignments_ignore_grouping_entirely() {
+    let mut universe = Universe::new();
+    let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+    register_source(
+        &mut control,
+        br"\topskip=0pt \setbox0=\hbox{}\copy0 \pagegoal=100pt\deadcycles=1{\pagegoal=5pt\deadcycles=9}",
+    );
+
+    run_to_end(&mut control, &mut universe);
+
+    assert_eq!(
+        universe.page_dimension(tex_state::page::PageDimension::Goal),
+        Scaled::from_raw(5 * Scaled::UNITY),
+        "the grouped \\pagegoal survives the closing brace"
+    );
+    assert_eq!(
+        universe.page_integer(tex_state::page::PageInteger::DeadCycles),
+        9,
+        "the grouped \\deadcycles survives the closing brace"
+    );
+}
+
 #[test]
 fn canonical_pdf_navigation_scans_rules_actions_and_deferred_markers() {
     let mut universe = Universe::new();

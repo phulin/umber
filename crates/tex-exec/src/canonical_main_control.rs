@@ -36,6 +36,7 @@ use tex_state::math::{
 };
 use tex_state::meaning::{Meaning, MeaningFlags, UnexpandablePrimitive};
 use tex_state::node::{DiscKind, GlueKind, KernKind, LeaderPayload, Node, Whatsit};
+use tex_state::page::{PageDimension, PageInteger};
 use tex_state::scaled::Scaled;
 use tex_state::token::{Catcode, Token};
 use tex_state::{
@@ -2097,6 +2098,33 @@ enum ScannedStep {
     PrevGraf {
         value: i32,
     },
+    /// TeX82 §1242's `set_page_dimen: alter_page_so_far`, whose body is
+    /// §1245: `c:=cur_chr; scan_optional_equals; scan_normal_dimen;
+    /// page_so_far[c]:=cur_val`. This is `\pagegoal`, `\pagetotal`,
+    /// `\pagestretch`, `\pagefilstretch`, `\pagefillstretch`,
+    /// `\pagefilllstretch`, `\pageshrink`, and `\pagedepth`.
+    ///
+    /// There is deliberately no `global` field: §1242 states outright that
+    /// "these definitions are always global", and `page_so_far` is a plain
+    /// engine array rather than an `eqtb` entry, so neither the `\global`
+    /// prefix nor `\globaldefs` can reach it and no save-stack entry is
+    /// pushed. `PrevDepth`/`SpaceFactor`/`PrevGraf` above and
+    /// `BoxDimensionAssignment` below are scoped identically for the same
+    /// reason.
+    PageDimension {
+        dimension: PageDimension,
+        value: Scaled,
+    },
+    /// TeX82 §1242's `set_page_int: alter_integer`, whose body is §1246:
+    /// `c:=cur_chr; scan_optional_equals; scan_int; if c=0 then
+    /// dead_cycles:=cur_val else insert_penalties:=cur_val`. This is
+    /// `\deadcycles` and `\insertpenalties`.
+    ///
+    /// Unscoped for the same §1242 reason as `PageDimension` above.
+    PageInteger {
+        integer: PageInteger,
+        value: i32,
+    },
     /// TeX82 §1058's `nointerlineskip` chr code on the same `set_aux` command
     /// as `\prevdepth`: it is `\prevdepth`'s own primitive, wired to always
     /// assign the fixed `ignore_depth` sentinel instead of scanning an
@@ -3662,6 +3690,25 @@ fn scan_command(
                 global,
             })
         }
+        // TeX82 §1210 lists `set_page_dimen` and `set_page_int` among
+        // `prefixed_command`'s ordinary assignment forms, and §1242 routes
+        // them to `alter_page_so_far` (§1245) and `alter_integer` (§1246).
+        // Both scan exactly like the `\dimen`/`\count` parameter arms above,
+        // and both deliberately drop `global`: §1242's own comment ("these
+        // definitions are always global") applies because `page_so_far`,
+        // `dead_cycles`, and `insert_penalties` are engine variables rather
+        // than `eqtb` entries, so neither `\global` nor `\globaldefs` has
+        // anything to scope.
+        Meaning::PageDimension(dimension) => {
+            let _ = processor.scan_optional_equals().map_err(command_error)?;
+            let value = processor.scan_dimension().map_err(command_error)?.value;
+            Ok(ScannedStep::PageDimension { dimension, value })
+        }
+        Meaning::PageInteger(integer) => {
+            let _ = processor.scan_optional_equals().map_err(command_error)?;
+            let value = processor.scan_integer().map_err(command_error)?.value;
+            Ok(ScannedStep::PageInteger { integer, value })
+        }
         Meaning::TokParam(index) => {
             let tokens = processor
                 .scan_token_parameter_assignment()
@@ -4893,6 +4940,8 @@ fn scan_unclassified_meaning(
         | Meaning::GlueParam(_)
         | Meaning::MuGlueParam(_)
         | Meaning::TokParam(_)
+        | Meaning::PageDimension(_)
+        | Meaning::PageInteger(_)
         | Meaning::Font(_) => {
             unreachable!("scan_command names this assignment meaning unconditionally")
         }
@@ -4913,11 +4962,6 @@ fn scan_unclassified_meaning(
         // than a character, so it has no already-dispatched `ScannedStep` to
         // reuse.
         Meaning::MathCharGiven(_) => Err(unimplemented_meaning(&command, meaning, mode)),
-        // TeX82 §1242's `set_page_dimen: alter_page_so_far` (§1245) and
-        // `set_page_int: alter_integer` (§1246).
-        Meaning::PageDimension(_) | Meaning::PageInteger(_) => {
-            Err(unimplemented_meaning(&command, meaning, mode))
-        }
         // TeX82 §370's `@<Complain about an undefined macro@>`: `expand`
         // reports "Undefined control sequence" and then does nothing at all,
         // so proceeding without consuming anything is the specified
@@ -6854,6 +6898,23 @@ fn apply_scanned_step(
             } else {
                 modes.set_enclosing_vertical_prev_graf(value);
             }
+            Ok(ReplayStep::Continue)
+        }
+        ScannedStep::PageDimension { dimension, value } => {
+            // TeX82 §1245's `alter_page_so_far`: a direct
+            // `page_so_far[c]:=cur_val` store with no mode check, no
+            // diagnostic, and no save-stack entry (§1242: "these definitions
+            // are always global"). The page builder reads the same slots.
+            stores.set_page_dimension(dimension, value);
+            Ok(ReplayStep::Continue)
+        }
+        ScannedStep::PageInteger { integer, value } => {
+            // TeX82 §1246's `alter_integer`, scoped exactly like
+            // `alter_page_so_far` above. `\deadcycles` in particular is what
+            // §1024's output-routine loop guard compares against
+            // `\maxdeadcycles`, so a wrong value here is only visible once a
+            // page ships.
+            stores.set_page_integer(integer, value);
             Ok(ReplayStep::Continue)
         }
         ScannedStep::NoInterlineSkip => {
