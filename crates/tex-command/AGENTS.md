@@ -65,8 +65,54 @@ Private state-machine modules must not be widened for compatibility with
   bank slots are not tex.web's parameter codes, so an observation that
   formats a raw `IntParam`/`DimenParam`/`GlueParam`/`TokParam` slot reports
   one parameter's assignment under another's name (umber2-johp.134).
+  `canonical_names.rs` generalizes that rule to the whole vocabulary: it is
+  the only place any observation name is spelled, and it is re-exported as
+  `tex_command::canonical_names` so producers in other crates and the
+  differential tracer share one table rather than each keeping their own.
+  See "Canonical observation vocabulary" below.
 - `src/snapshot.rs` and `src/snapshot/tests.rs`: command snapshot, quiescent
   summary ownership, and focused internal roundtrip/rejection tests.
 - `tests/`: external dependency, visibility, and capability-boundary tests.
   Character/input integration coverage binds the exact shared-domain tokenizer
   to the pinned TeX82 fixture and compile-fail gates profile immutability.
+
+## Canonical Observation Vocabulary
+
+Every string an observation payload carries for a *concept* -- a category
+code, a character command, a scanner status, a glue order, a token's catcode
+or spelling, a meaning's command name -- is spelled once, in
+`src/observation/canonical_names.rs`, and nowhere else. Producers in
+`tex-command` and `tex-exec` and the differential tracer all call it.
+
+Rules, all of them load-bearing (umber2-johp.141):
+
+- **tex.web is the authority, never Umber's enum spellings.** §207 fixes the
+  category codes and the command codes that share their numeric values; §135
+  fixes the glue orders; §305 fixes `scanner_status`; §289/§365 fix how a
+  token is represented. Umber's Rust variants are `Superscript`, `EndLine`,
+  `Parameter`, `Ignored`, `Active`, `Invalid`; tex.web's names are `sup_mark`,
+  `car_ret`, `mac_param`, `ignore`, `active_char`, `invalid_char`.
+- **The catcode table and the character-command table are different tables.**
+  They agree only at codes 1..8 and 10..12. Catcode 0 is `escape` but command
+  0 is `relax`; catcode 9 is `ignore` but command 9 is `endv`; catcode 13 is
+  `active_char` but command 13 is `par_end`; catcode 14 is `comment` but
+  command 14 is `stop`; catcode 15 is `invalid_char` but command 15 is
+  `delim_num`. Keeping one table and reusing it for both is a naming defect
+  that will look correct on most inputs.
+- **A Rust `Debug` rendering must never reach an observation payload,** and
+  never round-trip through one either: `Debug` spells Umber's variant names
+  and the oracle spells tex.web's, so any agreement is accidental. A
+  `format!("{x:?}")` in a record field, or a transport that prefix-matches a
+  record field against a Rust variant name, is a bug on its own terms
+  regardless of whether a fixture currently notices.
+- **Each family gets one total function with a single entry point.** No
+  silent catch-all: an unnameable value either has an explicit,
+  tex.web-cited arm or gets a deliberate name no engine installs
+  (`undecodable_meaning`, `uncommandable_character`) so that it looks like the
+  internal defect it is. Adding a `Catcode`, `Order`, or `ScannerStatus`
+  variant must fail to compile until it is placed deliberately.
+- **Never re-derive a name a producer already computed.** A transport that
+  recomputes a command name from the spelling instead of carrying the
+  producer's is a second, divergent table; it will silently mask engine
+  divergences that the producer's name would have exposed, which is exactly
+  what a spelling-derived command name did until umber2-johp.141 deleted it.

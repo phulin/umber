@@ -57,6 +57,15 @@ key mismatch with a bounded wavefront search (`--realign-window`,
 guessing when neither confirms. Each entry names its repair and the cascade
 it suppressed. See "Stream alignment" in `docs/testing_infrastructure.md`.
 
+The runner owns no canonical vocabulary of its own. Every name it puts in an
+event -- catcodes, command names, glue orders, scanner statuses, token
+spellings -- comes from `tex_command::canonical_names`, and the command name
+comes from the producer's record rather than being re-derived from the
+spelling. Keeping a second table here is how `umber2-johp.141` found a
+transport-side catcode table that had drifted from tex.web's §207 names in
+seven places while silently masking an engine divergence; see "Canonical
+Observation Vocabulary" in `crates/tex-command/AGENTS.md`.
+
 It replays two registries: the committed, always-present fixtures under
 `tests/corpus/command/tex82`, then the full-document traces (plain bootstrap,
 Story, Gentle) under `tests/corpus/command/tex82-documents`. The document tier

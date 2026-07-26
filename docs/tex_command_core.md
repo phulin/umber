@@ -2978,6 +2978,35 @@ Adding a new `Meaning` variant, or a new `Catcode`, therefore fails to compile
 until it is deliberately placed in a bucket. `scan_command` has no wildcard
 arm that resolves to a `ScannedStep` any more, at either level.
 
+### 33.3 Canonical observation vocabulary
+
+The same invariant applies to *naming*, not just dispatch. Every string an
+observation payload carries for a concept -- a category code, a character
+command, a scanner status, a glue order, a token's catcode or spelling, a
+meaning's command name -- is spelled once, in
+`tex_command::canonical_names`, and is re-exported so that producers in
+`tex-exec` and the differential tracer use the same table instead of each
+keeping their own.
+
+This exists because three consecutive `umber2-johp` root causes
+(`.134` parameter names, `.140` catcode names, part of `.135`) were naming
+defects rather than engine defects: Umber behaved correctly and only the
+emitted name disagreed with tex.web's. Each cost a full agent run to find one
+at a time, and each masked real divergences behind it. `umber2-johp.141`
+enumerated the whole vocabulary in one pass and found five families wrong.
+
+The durable rules, with rationale, live in `crates/tex-command/AGENTS.md`
+under "Canonical Observation Vocabulary". The two that are easiest to
+reintroduce:
+
+- A Rust `Debug` rendering must never reach an observation payload, and must
+  never round-trip through one either. `Debug` spells Umber's variant names
+  and the oracle spells tex.web's, so any agreement between them is
+  accidental and silently breaks when a variant is renamed.
+- A transport must never re-derive a name the producer already computed.
+  A second table always drifts, and while it drifts it hides exactly the
+  engine divergences the producer's name would have exposed.
+
 ## 34. End-state invariants
 
 The replacement is complete only when all of these hold:
