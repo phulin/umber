@@ -2914,17 +2914,38 @@ future primitive addition. `ExecError::UnimplementedPrimitive` follows the
 typed failure that carries the offending variant (via `{primitive:?}`) rather
 than a generic message, so the run stops at its true site.
 
-This exhaustiveness is scoped to `UnexpandablePrimitive` specifically (the
-survey's subject); it does not extend to every other `Meaning` variant
-`scan_command` also matches on (`CharToken`, register/parameter accessors,
-`Relax`, `Undefined`, and so on), which keep their own ordinary
-`_ => Ok(ScannedStep::Continue)` fallback.
-
 Reaching an `UnimplementedPrimitive` failure is expected and correct for
 primitives that have not been routed yet; it is a precise, individually
 fixable divergence, not a regression to soften. Beads `umber2-johp.69`'s
 closing comment inventories which variants fall into the loud bucket, grouped
 by whether Story, Gentle, or Plain reach them, for follow-on work.
+
+**The same invariant applies one level up the meaning word.**
+`umber2-johp.69` scoped itself to `UnexpandablePrimitive`, leaving every other
+`Meaning` variant (`CharToken`, register/parameter accessors, `Relax`,
+`Undefined`, `PageDimension`, and so on) to an ordinary
+`_ => Ok(ScannedStep::Continue)` fallback -- which then became the active
+hiding place, since it turns "not implemented" into "succeeded and consumed
+nothing" just as effectively (`\pagegoal=100pt` silently typeset `=100pt` as
+document text; Beads `umber2-johp.106`). `umber2-johp.108` removed it:
+`scan_command`'s final arm now delegates to `scan_unclassified_meaning`, an
+**exhaustive match over `Meaning`** which in turn delegates its `CharToken`
+case to `scan_unclassified_char_token`, an **exhaustive match over
+`Catcode`**. Both use the same buckets as `scan_unclassified_primitive`, plus
+one more:
+
+- `Ok(...)` for meanings tex.web routes somewhere canonical main control
+  already implements generically, cited per arm. This bucket is where
+  "consume nothing and proceed" is now allowed to appear -- but only as a
+  named, tex.web-cited decision (`any_mode(relax): do_nothing`, §1045), never
+  as an anonymous wildcard.
+- `unreachable!()` and
+  `Err(ExecError::UnimplementedMeaning { meaning, mode, origin })` exactly as
+  above.
+
+Adding a new `Meaning` variant, or a new `Catcode`, therefore fails to compile
+until it is deliberately placed in a bucket. `scan_command` has no wildcard
+arm that resolves to a `ScannedStep` any more, at either level.
 
 ## 34. End-state invariants
 

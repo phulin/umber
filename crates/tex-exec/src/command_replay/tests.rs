@@ -147,6 +147,46 @@ fn canonical_character_definitions_scan_scope_and_recovery() {
     assert!(output.contains("Bad mathchar (32768)"));
 }
 
+/// TeX82 keeps `char_given` and `char_num` interchangeable everywhere they
+/// typeset: §1034's `main_loop` (`hmode+char_given`), §1090's
+/// `vmode+char_given`, §1154's `mmode+char_given`, and even §1038's ligature
+/// lookahead, which accepts both at the same label. `Meaning::CharGiven` had
+/// no `scan_command` arm at all before umber2-johp.108, so a `\chardef`'d
+/// character was silently dropped from the document while the literal
+/// `\char` beside it typeset normally.
+#[test]
+fn canonical_chardef_character_typesets_exactly_like_char() {
+    let mut universe = Universe::new();
+    let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+    register_cmr10_font(&mut control, &mut universe);
+    register_source(
+        &mut control,
+        br"\font\f=cmr10 \chardef\bee=66 \setbox0=\hbox{\f \char65\bee\char67}",
+    );
+
+    run_to_end(&mut control, &mut universe);
+
+    let stored = universe
+        .box_reg(0)
+        .and_then(|id| universe.nodes(id).first().map(|node| node.to_owned()))
+        .expect("setbox0 stores an hbox");
+    let Node::HList(stored) = stored else {
+        panic!("setbox0 contains an hbox");
+    };
+    let chars: String = universe
+        .nodes(stored.children)
+        .iter()
+        .filter_map(|node| match node.to_owned() {
+            Node::Char { ch, .. } => Some(ch),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        chars, "ABC",
+        "the \\chardef'd character sits between its two \\char neighbours"
+    );
+}
+
 #[test]
 fn canonical_pdf_navigation_scans_rules_actions_and_deferred_markers() {
     let mut universe = Universe::new();

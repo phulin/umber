@@ -116,6 +116,24 @@ pub enum ExecError {
         mode: Mode,
         origin: OriginId,
     },
+    /// A non-`UnexpandablePrimitive` `Meaning` variant reached
+    /// `scan_command`'s exhaustive fallback classifier without a named
+    /// dispatch arm.
+    ///
+    /// This is `UnimplementedPrimitive`'s sibling one level up the meaning
+    /// word, and exists for the same reason (umber2-johp.108): main
+    /// control's `Meaning`-level match used to end in a silent
+    /// `_ => Ok(ScannedStep::Continue)`, which turned "this meaning has no
+    /// dispatch" into "succeeded and consumed nothing" and left the
+    /// command's own operand tokens to be typeset as literal text
+    /// arbitrarily far downstream. Every variant reported here is a real
+    /// TeX82/e-TeX/pdfTeX command class that canonical main control does not
+    /// route yet; the `Meaning` payload names the exact gap.
+    UnimplementedMeaning {
+        meaning: tex_state::meaning::Meaning,
+        mode: Mode,
+        origin: OriginId,
+    },
     MissingPrefixedCommand,
     PrefixWithNonAssignment {
         token: Token,
@@ -320,6 +338,10 @@ impl fmt::Display for ExecError {
             Self::UnimplementedPrimitive { primitive, mode, .. } => write!(
                 f,
                 "canonical execution does not dispatch \\{primitive:?} in {mode:?} mode yet"
+            ),
+            Self::UnimplementedMeaning { meaning, mode, .. } => write!(
+                f,
+                "canonical execution does not dispatch {meaning:?} in {mode:?} mode yet"
             ),
             Self::MissingPrefixedCommand => write!(f, "You can't use a prefix with `end of input'"),
             Self::PrefixWithNonAssignment { token, .. } => {
@@ -526,6 +548,7 @@ impl std::error::Error for ExecError {
             | Self::MathShiftGroupMismatch { .. }
             | Self::UnsupportedCommand { .. }
             | Self::UnimplementedPrimitive { .. }
+            | Self::UnimplementedMeaning { .. }
             | Self::MissingPrefixedCommand
             | Self::PrefixWithNonAssignment { .. }
             | Self::PrefixWithNonDefinition { .. }
@@ -618,6 +641,7 @@ impl ExecError {
             | Self::MathShiftGroupMismatch { origin, .. }
             | Self::UnsupportedCommand { origin, .. }
             | Self::UnimplementedPrimitive { origin, .. }
+            | Self::UnimplementedMeaning { origin, .. }
             | Self::PrefixWithNonAssignment { origin, .. }
             | Self::ExpectedControlSequence { origin, .. }
             | Self::InvalidLetRhs { origin, .. }
