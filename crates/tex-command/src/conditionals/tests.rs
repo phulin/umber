@@ -893,6 +893,62 @@ fn selected_ifcase_limb_skips_remaining_limbs_without_extra_delimiter_errors() {
 }
 
 #[test]
+fn ifeof_reads_stream_open_state_and_recovers_a_bad_stream_number() {
+    let mut command = CommandState::default();
+    let mut runtime = CommandRuntime::default();
+    let mut universe = Universe::new();
+    let if_eof = install(&mut universe, "ifeof", ExpandablePrimitive::IfEof);
+    let otherwise = install(&mut universe, "else", ExpandablePrimitive::Else);
+    let fi = install(&mut universe, "fi", ExpandablePrimitive::Fi);
+    universe
+        .world_mut()
+        .set_memory_file("stream.tex", b"one\n".to_vec())
+        .expect("seed stream content");
+    universe
+        .world_mut()
+        .open_in(tex_state::StreamSlot::new(1), "stream.tex")
+        .expect("open stream 1");
+    push(
+        &mut command,
+        vec![
+            // An open stream is not at end of file.
+            if_eof,
+            other('1'),
+            other('o'),
+            otherwise,
+            other('x'),
+            fi,
+            // A stream that was never opened is closed, hence at end of file.
+            if_eof,
+            other('3'),
+            other('c'),
+            otherwise,
+            other('x'),
+            fi,
+            // TeX.web §433 recovers an out-of-range stream as stream zero,
+            // which is closed here, after reporting "Bad number".
+            if_eof,
+            other('9'),
+            other('9'),
+            other('b'),
+            otherwise,
+            other('x'),
+            fi,
+        ],
+    );
+    let mut capabilities = CommandHostCapabilities::default();
+    let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+
+    assert_eq!(next_character(&mut processor), 'x');
+    assert_eq!(next_character(&mut processor), 'c');
+    assert_eq!(next_character(&mut processor), 'b');
+    assert_eq!(
+        processor.command.expansion.pending_diagnostics,
+        [BAD_NUMBER_DIAGNOSTIC]
+    );
+}
+
+#[test]
 fn redundant_else_inside_a_selected_true_limb_is_skipped_silently() {
     let mut command = CommandState::default();
     let mut runtime = CommandRuntime::default();
