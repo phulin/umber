@@ -56,8 +56,8 @@ pub struct CommandProvenance {
     /// Exact physical range for direct source delivery. Replayed and expanded
     /// commands retain it through their traced spelling origin instead.
     pub source_range: Option<SourceRange>,
-    /// TeX82's post-delivery source cursor location. This differs from the
-    /// raw span start for decoded caret notation.
+    /// Source column of the final byte the spelling consumed. This differs
+    /// from the raw span start for decoded caret notation.
     pub source_location: Option<SourceLocation>,
 }
 

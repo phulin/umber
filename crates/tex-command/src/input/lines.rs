@@ -43,12 +43,19 @@ impl SourceRange {
         self.start == self.end
     }
 
-    /// TeX82's current source location after this spelling was consumed.
+    /// Physical source column of the final byte this spelling consumed.
     ///
-    /// `get_next` observes `loc - start - 1`, so a reduced `^^` spelling is
-    /// located at its final physical byte even though its provenance span
-    /// covers every byte consumed to produce the decoded character. Synthetic
-    /// spellings retain their zero-width physical anchor.
+    /// A reduced `^^` spelling is located at its final physical byte even
+    /// though its provenance span covers every byte consumed to produce the
+    /// decoded character. Synthetic spellings retain their zero-width physical
+    /// anchor.
+    ///
+    /// TeX82 observes this as `loc - start - 1`, but that equality holds only
+    /// while `buffer` still mirrors the source line: tex.web §355 reduces an
+    /// expanded code inside a control-sequence name *in place* and shifts the
+    /// remainder of the line down by two or three bytes, after which every
+    /// `buffer` index on that line is smaller than the source column it came
+    /// from. This location is the source column, never the `buffer` index.
     #[must_use]
     pub const fn terminal_location(self) -> SourceLocation {
         SourceLocation {
@@ -65,8 +72,8 @@ impl SourceRange {
 /// TeX82's canonical physical source location for one delivered spelling.
 ///
 /// This is intentionally separate from [`SourceRange`]: the latter retains
-/// every raw source byte that formed a decoded token, while this value mirrors
-/// the post-delivery `loc - start - 1` location observed by `get_next`.
+/// every raw source byte that formed a decoded token, while this value is the
+/// single source column of the final byte the spelling consumed.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct SourceLocation {
     source: SourceId,

@@ -370,8 +370,8 @@ impl CurrentCommand {
         }
     }
 
-    /// Returns TeX82's post-delivery physical source location, if this
-    /// command originated in registered source input.
+    /// Returns the physical source column of the final byte this command's
+    /// spelling consumed, if it originated in registered source input.
     #[must_use]
     pub const fn source_location(&self) -> Option<SourceLocation> {
         match self.source_provenance {

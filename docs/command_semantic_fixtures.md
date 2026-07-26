@@ -78,6 +78,15 @@ narrowest stable WEB procedure or section that owns the observed transition;
 instrumentation helper names are not authorities. Every event source location
 must name a declared fixture source and use a nonzero line.
 
+A location's `byte` is a zero-based column of the immutable declared source
+line -- the final byte the delivered spelling consumed -- not an index into
+TeX's `buffer`. The two coincide until tex.web §355 reduces an expanded code
+inside a control-sequence name, which rewrites the line in place and shifts
+its remainder down by two or three bytes; the instrumented oracles accumulate
+that per-line deficit and add it back, so a `^^` control sequence never moves
+the reported column of anything else on its line. See
+[TeX Command Core](tex_command_core.md) for the full rule.
+
 ## Ordinary artifact observations
 
 Semantic events do not replace ordinary reference behavior. Each committed
