@@ -69,9 +69,27 @@ impl CommandProcessor<'_> {
     /// No executor-side classifier is involved: `get_next` has already made
     /// the canonical `align_state` decision before this method observes the
     /// frozen `end_template` meaning.
+    ///
+    /// This must use the completion-aware raw fetch, not plain `get_next`.
+    /// An alignment cell's body can itself contain an executor-owned replay
+    /// episode (a math field, math-group/choice branch, or discretionary
+    /// part -- for example `\vphantom`'s `\mathchoice` inside an inline `$#$`
+    /// cell template). Plain `get_next` silently swallows that episode's
+    /// retirement and keeps cascading to whatever real token follows, which
+    /// can belong to the *enclosing* context rather than the episode; the
+    /// caller (`scan_alignment_delivery_step`) needs `Completed` surfaced so
+    /// it can report `ScannedStep::ReplayCompleted` exactly as ordinary
+    /// (non-alignment) `scan_step` already does via
+    /// `get_x_token_with_replay_completion`.
     pub fn get_x_alignment_delivery(&mut self) -> Result<Option<AlignmentDelivery>, CommandError> {
         loop {
-            let Some(mut command) = self.get_next()? else {
+            let Some(mut command) = (match self.get_next_with_replay_completion()? {
+                Some(CommandReplayDelivery::Command(command)) => Some(command),
+                Some(CommandReplayDelivery::Completed(episode)) => {
+                    return Ok(Some(AlignmentDelivery::Completed(episode)));
+                }
+                None => None,
+            }) else {
                 return Ok(None);
             };
             if matches!(
@@ -2729,6 +2747,9 @@ mod tests {
                 ) => panic!("base-depth delimiter does not need recovery"),
                 crate::AlignmentDelivery::Event(crate::AlignmentDeliveryEvent::ClosingBrace(_)) => {
                     panic!("base-depth delimiter is not an align-group closing brace")
+                }
+                crate::AlignmentDelivery::Completed(_) => {
+                    panic!("no executor-owned replay episode is active in this fixture")
                 }
             };
             processor

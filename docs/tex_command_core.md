@@ -254,6 +254,22 @@ opaque `AlignmentDeliveryEvent::EndTemplate`, which is handed back to
 `\span`, or `\cr`, while `off_save` recovery and group policy remain
 executor-owned after the typed event has been delivered.
 
+`get_x_alignment_delivery` also surfaces `AlignmentDelivery::Completed` for
+an executor-owned replay episode (a math field, math-group/choice branch, or
+discretionary part) that retires while a cell's own content is being
+delivered -- for example plain.tex's `\vphantom`/`\mathpalette` building a
+`\mathchoice` inside an inline `$#$` cell template. It uses the same
+completion-aware raw fetch as ordinary (non-alignment) `get_x_token`
+(`docs/tex_command_core.md` §2.1's swallowed-retirement discussion applies
+identically here): the retiring level can sit below several other
+exhausted-but-unpopped levels (nested macro expansions, parameter
+substitutions, a trailing operand scan with no lookahead of its own), so the
+next real token the cascade finds can belong to the *enclosing* cell/field
+context rather than the episode. `scan_alignment_delivery_step` reports this
+as `ScannedStep::ReplayCompleted`, exactly like ordinary `scan_step` already
+does via `get_x_token_with_replay_completion`, rather than risking that
+enclosing token being misattributed to the just-retired episode.
+
 For TeX82 §§1064, 1066, and 1131 `off_save`, the executor chooses only the
 typed structural closer. `tex-command` reports `off_save_replay` before it
 backs up the offending command and inserts that closer, so raw delivery cannot

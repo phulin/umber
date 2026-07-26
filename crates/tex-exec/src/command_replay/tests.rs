@@ -5473,6 +5473,34 @@ fn canonical_interaction_mode_primitives_set_the_live_mode() {
 }
 
 #[test]
+fn production_driver_math_choice_inside_alignment_cell_retires_cleanly() {
+    // Regression test for umber2-johp.93: a `\mathchoice` (as plain.tex's
+    // `\mathstrut`/`\mathpalette` build via `\vphantom`) whose branches
+    // conclude with a `\chardef`'d register operand (no scan_int trailing-
+    // space lookahead of its own, unlike an ordinary digit sequence) reached
+    // inside an alignment cell's own inline math. Each branch is its own
+    // executor-owned replay episode (`execute_math_group`); its retirement
+    // must be detected by `scan_alignment_delivery_step` exactly like
+    // ordinary (non-alignment) `scan_step` already detects an episode's
+    // completion, rather than silently cascading past it (via
+    // `CommandProcessor::get_x_alignment_delivery`'s former plain `get_next`)
+    // and misattributing the alignment cell's own closing `$` to the
+    // just-retired branch. Before the fix, this panicked in
+    // `tex-exec::align::widths::debug::debug_assert_no_unset_node` ("unset
+    // node escaped fin_align") because the misattributed `$` prematurely
+    // popped and converted the branch's own math level, throwing off the
+    // mode nest so the alignment's row/cell structure never packaged
+    // correctly.
+    let mut universe = Universe::new();
+    let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+    register_source(
+        &mut control,
+        br"\chardef\myreg=0\setbox\myreg=\hbox{}$$\halign{#\cr$\mathchoice{\box\myreg}{\box\myreg}{\box\myreg}{\box\myreg}$\cr}$$\end",
+    );
+    run_to_end(&mut control, &mut universe);
+}
+
+#[test]
 fn canonical_interaction_mode_assignment_is_ungrouped() {
     // `interaction` is a plain global Pascal variable outside `eqtb`
     // (tex.web's globals), so `\batchmode` inside a group is never undone at

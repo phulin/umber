@@ -187,6 +187,20 @@ pub enum AlignmentDelivery {
     Command(crate::CurrentCommand),
     /// A command-core alignment event.
     Event(AlignmentDeliveryEvent),
+    /// An executor-requested stored replay episode (a math field, math
+    /// group/choice branch, or discretionary part) retired during this
+    /// delivery. This must be surfaced rather than silently continuing to
+    /// fetch the next token: the retiring level may sit arbitrarily deep
+    /// below several other exhausted-but-unpopped levels (nested macro
+    /// expansions, parameter substitutions, `\box`-style operand scans with
+    /// no trailing lookahead of their own), so the *next* real token found
+    /// by the cascade can belong to the enclosing context, not to the
+    /// episode the caller is replaying. See TeX82's `get_next`/`get_x_token`
+    /// (§§24-25) uninterrupted-boundary discussion in
+    /// `docs/tex_command_core.md` §2.1: ordinary `get_x_token` (and this
+    /// alignment-delivery twin, before this fix) consumes that boundary
+    /// internally, but a driving loop that owns an episode must observe it.
+    Completed(crate::CommandReplayEpisode),
 }
 
 /// A lifecycle request did not match the currently active alignment.

@@ -2685,6 +2685,13 @@ fn scan_alignment_delivery_step(
         .map_err(command_error)?
     {
         None => Ok(ScannedStep::EndOfInput),
+        // An executor-owned replay episode (a math field/group/choice branch
+        // or discretionary part) retired mid-cell. This must be reported
+        // exactly like ordinary `scan_step`'s `ReplayCompleted` case, rather
+        // than falling through to interpret whatever the cascade found next
+        // as this cell's own content: that next token can belong to the
+        // *enclosing* cell/field context, not the just-retired episode.
+        Some(AlignmentDelivery::Completed(episode)) => Ok(ScannedStep::ReplayCompleted(episode)),
         Some(AlignmentDelivery::Command(command)) => {
             if matches!(command.meaning(), Meaning::EndV) {
                 // Replay's structural alignment group is deliberately not a
