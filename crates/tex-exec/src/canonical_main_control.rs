@@ -3869,7 +3869,10 @@ fn scan_command(
             })
         }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Write) => {
-            let stream = processor.scan_integer().map_err(command_error)?.value;
+            // TeX82 §1350's `new_write_whatsit` normalizes the stream number
+            // before storing it in `write_stream(tail)`, for the deferred
+            // whatsit exactly as for the `\immediate` one.
+            let stream = processor.scan_write_stream().map_err(command_error)?;
             let tokens = processor
                 .scan_balanced_text(false)
                 .map_err(command_error)?
@@ -5799,10 +5802,18 @@ fn canonical_read_tokens(
     }
 }
 
+/// Selects TeX82 §1370 `write_out`'s destination for a stream number that
+/// §1350's `new_write_whatsit` has already normalized into `0..=17`.
+///
+/// §1342: `write_open[17]` stands for every negative stream and
+/// `write_open[16]` for every stream above 15, and both are permanently
+/// closed. §1370 therefore sends 17 to the log alone (`if (j=17) and
+/// (selector=term_and_log) then selector:=log_only`) and 16 to the terminal
+/// and log.
 fn replay_write_sink(value: i32) -> PrintSink {
     match value {
         0..=15 => PrintSink::Stream(StreamSlot::new(value as u8)),
-        value if value < 0 => PrintSink::Log,
+        17 => PrintSink::Log,
         _ => PrintSink::TerminalAndLog,
     }
 }

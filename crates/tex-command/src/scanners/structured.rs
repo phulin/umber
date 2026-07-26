@@ -1657,6 +1657,37 @@ impl CommandProcessor<'_> {
         })
     }
 
+    /// Scans TeX82 §1350's `new_write_whatsit` stream number for a
+    /// `write_node_size` extension.
+    ///
+    /// `new_write_whatsit` normalizes the scanned number *before* it reaches
+    /// `write_stream(tail)`:
+    ///
+    /// ```text
+    /// else begin scan_int;
+    ///   if cur_val<0 then cur_val:=17
+    ///   else if cur_val>15 then cur_val:=16;
+    ///   end;
+    /// write_stream(tail):=cur_val;
+    /// ```
+    ///
+    /// §1342 explains the two extra slots: `write_open[16]` stands for every
+    /// stream number above 15 and `write_open[17]` for every negative one, so
+    /// the recorded stream is always in `0..=17`. This is deliberately *not*
+    /// §433's `scan_four_bit_int`, which `new_write_whatsit` uses only for
+    /// the `open_node_size` case (`\openout`) and which reports "Bad number"
+    /// and recovers as stream zero instead.
+    pub fn scan_write_stream(&mut self) -> Result<i32, CommandError> {
+        let value = self.scan_integer()?.value;
+        Ok(if value < 0 {
+            17
+        } else if value > 15 {
+            16
+        } else {
+            value
+        })
+    }
+
     /// Scans TeX82 §53's one-token `\immediate` extension execution.
     ///
     /// `do_extension` calls `get_x_token`, executes only `openout`, `write`,
@@ -1684,7 +1715,7 @@ impl CommandProcessor<'_> {
                 Ok(ImmediateExtension::OpenOut { stream, file_name })
             }
             Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Write) => {
-                let stream = self.scan_integer()?.value;
+                let stream = self.scan_write_stream()?;
                 // TeX82 §53 first saves write text without expansion, then
                 // `write_out` replays it under an outer `\\endwrite` stopper
                 // and scans the resulting expanded text. Keep both episodes

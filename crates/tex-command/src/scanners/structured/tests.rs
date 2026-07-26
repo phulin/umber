@@ -1662,3 +1662,24 @@ fn shift_case_rewrites_characters_and_backs_the_shifted_list_up() {
         "back_list reports no inserted-token recovery",
     );
 }
+
+#[test]
+fn write_stream_scan_normalizes_out_of_range_stream_numbers() {
+    let mut command = CommandState::default();
+    let mut runtime = CommandRuntime::default();
+    let mut universe = Universe::new();
+    let mut capabilities = CommandHostCapabilities::default();
+    push(&mut command, text_tokens("3 -1 16 15 "));
+    let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+    // TeX82 §1350: `if cur_val<0 then cur_val:=17 else if cur_val>15 then
+    // cur_val:=16`, so `write_stream` is always one of §1342's eighteen
+    // slots and `\wlog`'s `\m@ne` is recorded as 17, not -1.
+    let scanned: Vec<_> = (0..4)
+        .map(|_| {
+            processor
+                .scan_write_stream()
+                .expect("write stream number scans")
+        })
+        .collect();
+    assert_eq!(scanned, vec![3, 17, 16, 15]);
+}
