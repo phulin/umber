@@ -38,21 +38,38 @@ end;
 procedure umber_trace_hex(@!c:integer);
 var d:integer;
 begin
+{|xchr|, not |chr|: web2c compiles Pascal's identity |chr| away, so
+|write(f,chr(n))| emits the decimal number |n| instead of that character.}
 d:=c div 16;
-if d<10 then write(umber_trace_file,chr(d+48))
-else write(umber_trace_file,chr(d+87));
+if d<10 then write(umber_trace_file,xchr[d+48])
+else write(umber_trace_file,xchr[d+87]);
 d:=c mod 16;
-if d<10 then write(umber_trace_file,chr(d+48))
-else write(umber_trace_file,chr(d+87));
+if d<10 then write(umber_trace_file,xchr[d+48])
+else write(umber_trace_file,xchr[d+87]);
 end;
 
+{JSON has exactly one canonical spelling per character, and the fixture
+contract requires the stream to round-trip through it byte for byte: the two
+mandatory escapes, the five short control escapes, |\u00xx| for the remaining
+C0 controls, and the character itself otherwise. |DEL| needs no escape, and
+codes 128-255 denote U+0080-U+00FF, whose canonical form is their two-byte
+UTF-8 encoding rather than a |\u00xx| escape.}
 procedure umber_trace_char(@!c:integer);
 begin
 if c=34 then write(umber_trace_file,'\"')
 else if c=92 then write(umber_trace_file,'\\')
-else if (c<32)or(c>126) then
+else if c=8 then write(umber_trace_file,'\b')
+else if c=9 then write(umber_trace_file,'\t')
+else if c=10 then write(umber_trace_file,'\n')
+else if c=12 then write(umber_trace_file,'\f')
+else if c=13 then write(umber_trace_file,'\r')
+else if c<32 then
   begin write(umber_trace_file,'\u00'); umber_trace_hex(c mod 256); end
-else write(umber_trace_file,xchr[c]);
+else if c<128 then write(umber_trace_file,xchr[c])
+else begin
+  write(umber_trace_file,xchr[192+((c mod 256) div 64)]);
+  write(umber_trace_file,xchr[128+(c mod 64)]);
+  end;
 end;
 
 procedure umber_trace_string_contents(@!s:str_number);
