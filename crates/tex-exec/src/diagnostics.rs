@@ -379,61 +379,6 @@ fn mode_text(mode: Mode) -> &'static str {
     }
 }
 
-pub(crate) fn execute_showhyphens(
-    context: TracedTokenWord,
-    input: &mut InputStack,
-    stores: &mut Universe,
-    execution: &mut crate::ExecutionContext<'_>,
-) -> Result<(), ExecError> {
-    let tokens = scan_balanced_expanded_text(context, input, stores, execution)?;
-    let language = u8::try_from(stores.int_param(IntParam::LANGUAGE)).unwrap_or(0);
-    let mut words = Vec::new();
-    let mut current = String::new();
-    for token in tokens {
-        match token {
-            Token::Char {
-                ch: _,
-                cat: Catcode::Space,
-            } => {
-                if !current.is_empty() {
-                    words.push(std::mem::take(&mut current));
-                }
-            }
-            Token::Char { ch, .. } => {
-                let lower = stores
-                    .saved_hyphenation_code(language, ch)
-                    .unwrap_or_else(|| char::from_u32(stores.lccode(ch)).filter(|&ch| ch != '\0'));
-                if let Some(lower) = lower {
-                    current.push(lower);
-                } else if !current.is_empty() {
-                    words.push(std::mem::take(&mut current));
-                }
-            }
-            Token::Cs(_) | Token::Param(_) | Token::Frozen(_) => {
-                if !current.is_empty() {
-                    words.push(std::mem::take(&mut current));
-                }
-            }
-        }
-    }
-    if !current.is_empty() {
-        words.push(current);
-    }
-
-    let left = stores.int_param(IntParam::LEFT_HYPHEN_MIN).max(0) as usize;
-    let right = stores.int_param(IntParam::RIGHT_HYPHEN_MIN).max(0) as usize;
-    let mut lines = String::new();
-    lines.push('\n');
-    for word in words {
-        let positions = stores.hyphen_positions_for_language(language, &word, left, right);
-        lines.push_str(&hyphenated_word_text(&word, &positions));
-        lines.push('\n');
-    }
-    lines.push_str("! OK.\n");
-    write_diagnostic(stores, &lines);
-    Ok(())
-}
-
 pub(crate) fn report_dimension_diagnostic(stores: &mut Universe, diagnostic: DimensionDiagnostic) {
     match diagnostic {
         DimensionDiagnostic::IllegalMagnification { attempted } => {
@@ -661,20 +606,6 @@ fn message_tokens_text(stores: &Universe, tokens: &[Token]) -> String {
 /// `print_cs` emits after a control word.
 pub(crate) fn append_token_show_text(stores: &Universe, token: Token, text: &mut String) {
     tex_expand::append_token_show_text(stores, token, text);
-}
-
-fn hyphenated_word_text(word: &str, positions: &[usize]) -> String {
-    let mut out = String::new();
-    for (index, ch) in word.chars().enumerate() {
-        if positions.contains(&index) {
-            out.push('-');
-        }
-        out.push(ch);
-    }
-    if positions.contains(&word.chars().count()) {
-        out.push('-');
-    }
-    out
 }
 
 fn diagnostic_print_column(stores: &Universe) -> usize {

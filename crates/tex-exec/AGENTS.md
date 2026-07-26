@@ -25,13 +25,13 @@ Use this crate when behavior mutates live engine state or depends on TeX's curre
 - `src/assignments/fonts.rs`: `\font` scanning and driver-resolved TFM/OpenType selection loading, plus font parameter, hyphenchar, and skewchar assignment behavior.
 - `src/assignments/hmode.rs`: horizontal-mode character, glue, kern, discretionary, and ligature handling.
 - `src/assignments/hmode/tests.rs`: focused text-accent scanner recovery and traced-token replay tests.
-- `src/assignments/hyphenation.rs`: `\patterns`, `\hyphenation`, and `\showhyphens` execution support.
+- `src/assignments/hyphenation.rs`: `\patterns` and `\hyphenation` execution support plus paragraph hyphenation.
 - `src/assignments/macros.rs`: macro-definition primitives plus `\aftergroup` and `\afterassignment`.
 - `src/assignments/mod.rs`: assignment dispatcher, prefix handling, group commands, and shared scan helpers.
 - `src/assignments/paragraph.rs`: paragraph start/end, parshape, line breaking, indentation, prevdepth logic, and the optional detached pretolerance-plan experiment.
 - `src/assignments/pdf_fonts.rs`: pdfTeX map, font-attribute, and forced-character action scanning into host-neutral state.
 - `src/assignments/pdf_actions.rs`: shared pdfTeX action scanner for catalog, link, and outline consumers.
-- `src/assignments/primitives.rs`: registration table for unexpandable primitive meanings.
+- `src/assignments/primitives.rs`: registration table for unexpandable primitive meanings. The TeX82 table is exactly the set of names tex.web passes to `primitive(...)` (325 of them, plus §1369's frozen `\endwrite` sentinel) -- never a superset. Names that plain.tex or latex.ltx define as macros (`\endgraf`, `\nointerlineskip`, `\showhyphens`, ...) must stay undefined here so `\let`/`\def` over them reports `undefined_cs` exactly as the reference engine does (`umber2-johp.153`).
 - `src/assignments/scanning.rs`: assignment classification and operand scanners for variables and definitions.
 - `src/assignments/shipout.rs`: `\shipout` transaction, commit, publication orchestration, and finalized effect-free artifact reuse; deferred and host-effect paths remain explicit barriers.
 - `src/assignments/shipout/direct.rs`: fused fresh-page artifact and DVI emission over compact state node lists.

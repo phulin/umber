@@ -279,7 +279,7 @@ The token-list form of `\the` uses a dedicated `TheToksOutput` replay reason,
 not e-TeX `\unexpanded`: TeX.web §366 requires nested `\expandafter` targets to
 resume ordinary expansion (including `\csname` termination), while §§473–478
 copy that output directly only inside expanding `scan_toks`. All execution-side
-general-text consumers, including `\message` and `\showhyphens`, route through
+general-text consumers, including `\message` and `\errmessage`, route through
 the shared `tex-expand` collector so they preserve the same splice contract.
 
 End of source input is accepted only when the expansion loop is quiescent.

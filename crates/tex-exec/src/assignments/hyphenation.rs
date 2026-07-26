@@ -160,6 +160,37 @@ pub(super) fn candidate_positions_for_chars(
     stores.hyphen_positions_for_language(language, &normalized, left, right)
 }
 
+/// Renders the discretionary breaks TeX82 §923's `hyphenate` would find in a
+/// single word, using the current `\language`, `\lefthyphenmin`, and
+/// `\righthyphenmin`.
+///
+/// This is the query plain.tex's `\showhyphens` macro answers indirectly, by
+/// packing the word into an over-wide `\vbox` and reading the underfull-box
+/// report. Tests that only need the pattern/exception/hyphen-code decision
+/// ask for it directly instead of asserting on box-display text.
+#[cfg(test)]
+pub(crate) fn test_hyphenated_word_text(stores: &Universe, word: &str) -> String {
+    let language = current_language(stores);
+    let Some(normalized) = word
+        .chars()
+        .map(|ch| normalized_hyphen_code(stores, language, ch))
+        .collect::<Option<String>>()
+    else {
+        return word.to_owned();
+    };
+    let left = usize::try_from(stores.int_param(IntParam::LEFT_HYPHEN_MIN).max(0)).unwrap_or(0);
+    let right = usize::try_from(stores.int_param(IntParam::RIGHT_HYPHEN_MIN).max(0)).unwrap_or(0);
+    let positions = stores.hyphen_positions_for_language(language, &normalized, left, right);
+    let mut text = String::new();
+    for (index, ch) in normalized.chars().enumerate() {
+        if positions.contains(&index) {
+            text.push('-');
+        }
+        text.push(ch);
+    }
+    text
+}
+
 #[cfg(test)]
 pub(crate) fn test_hyphenated_word(stores: &mut Universe, nodes: &[Node]) -> Vec<Node> {
     let glue = stores.glue_param(tex_state::env::banks::GlueParam::PAR_SKIP);

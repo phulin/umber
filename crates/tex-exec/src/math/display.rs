@@ -363,9 +363,7 @@ fn is_par_or_end_group(stores: &Universe, token: Token) -> bool {
     };
     matches!(
         stores.meaning(symbol),
-        tex_state::meaning::Meaning::UnexpandablePrimitive(
-            UnexpandablePrimitive::Par | UnexpandablePrimitive::EndGraf
-        )
+        tex_state::meaning::Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Par)
     )
 }
 
