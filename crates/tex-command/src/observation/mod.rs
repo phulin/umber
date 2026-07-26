@@ -548,6 +548,17 @@ pub(crate) fn observed_token(
 ) -> ObservedToken {
     let semantic = token.semantic_token();
     match semantic {
+        // §353's `get_next` gives an active character the control sequence
+        // `active_base + c`, and §365's `cur_tok` therefore stores it as
+        // `cs_token_flag + cur_cs` -- a control-sequence token whose §289
+        // spelling is the single character -- never as a character token with
+        // command code 13. Umber keeps the character representation
+        // internally, so the observation renders it TeX's way rather than
+        // exposing Umber's storage (`umber2-johp.141`).
+        Token::Char {
+            ch,
+            cat: Catcode::Active,
+        } => ObservedToken::ControlSequence(ch.to_string()),
         Token::Char { ch, cat } => ObservedToken::Character {
             character: ch,
             catcode: cat,

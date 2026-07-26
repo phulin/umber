@@ -1570,10 +1570,10 @@ impl CommandProcessor<'_> {
         command: &CurrentCommand,
     ) -> crate::observation::ObservedToken {
         if let Some(symbol) = command.control_sequence() {
-            // TeX82's active characters are character tokens in `cur_tok`,
-            // but `get_next` resolves them through their distinct active
-            // control-sequence cells and records that cell in `cur_cs`.
-            // Observations expose the latter identity at the current-command
+            // §353's `get_next` resolves an active character through its own
+            // `active_base + c` control-sequence cell and records that cell
+            // in `cur_cs`, so §365's `cur_tok` is `cs_token_flag + cur_cs`.
+            // Observations expose that identity at the current-command
             // boundary, just as they do for escaped control sequences.  The
             // raw token spelling remains available on `CurrentCommand` for
             // token-sensitive consumers.
