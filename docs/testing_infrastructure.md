@@ -476,6 +476,7 @@ an oracle, and what to do with the result, see the diagnosis order in
 
 ```bash
 cargo run -q -p tex-command-stream -- --repository .
+cargo run -q -p tex-command-stream -- --repository . --max-divergences 50
 ```
 
 Run this from the repository root. It replays the committed
@@ -485,17 +486,46 @@ against the expected trace. It is fully hermetic (no external corpus,
 distribution, or live TeX tool required) and never invokes a reference
 engine.
 
-- Exit `0`: it prints nothing; no mismatch against the fixture registry.
-- Exit `1`: a genuine stream mismatch. Prints the earliest ordered
-  divergence -- `fixture <name> diverged at event <index>` -- followed by the
-  expected event, the actual observed event, and source context.
-- Exit `101`: an engine panic reached before any semantic mismatch is
-  produced. Prints the ordinary Rust panic message and `file:line` (rerun
-  with `RUST_BACKTRACE=1` for a full backtrace).
+It reports a ranked WORKLIST, not just the first divergence:
+
+- Exit `0`: it prints nothing; no divergence against the fixture registry.
+- Exit `1`: prints up to `--max-divergences` ordered divergences (default
+  `DEFAULT_MAX_DIVERGENCES` = 20), one `[index] fixture <name> ... [kind]`
+  entry per line pair, in stream order across every registered fixture. Two
+  entry shapes share this ordered list:
+  - A stream mismatch: the expected event, the actual observed event, and
+    source context, labeled with a cheap structural `kind` (for example
+    `command_identity_mismatch`, `command_operand_mismatch`,
+    `event_kind_mismatch`, `stream_truncated_early`) so same-kind entries can
+    be batched without re-running the engine. Comparison does not resync
+    after a mismatch -- it keeps comparing the same index in both streams,
+    so a defect that does not change how many events a delivery produces
+    typically still exposes later, independent divergences at their own
+    indices. A defect that desynchronizes the two streams (a missing or
+    extra event) instead produces a long unbroken run of mismatches at
+    consecutive indices; that run is one structural defect, not one per
+    entry -- read the entries' `kind`s and locations together before filing
+    separate issues for what turns out to be a single root cause.
+  - A contained replay failure (`engine panicked` or `replay failed`): a
+    command-core `ExecError` or a Rust panic during that fixture's replay is
+    caught (`catch_panic`/`ReplayFailure`) and reported as its own ordered
+    entry with the fixture, the event index it occurred after, and the
+    failure's message (a panic's message and source location, exactly as
+    the default panic hook would have printed -- `RUST_BACKTRACE=1` still
+    produces a full backtrace on stderr). It does not abort the run: fixture
+    replay continues afterward for any fixture ordered after it, up to the
+    divergence budget. A panic outside a fixture's replay proper (fixture
+    loading, suite/contract validation, argument parsing) is not contained
+    and still aborts the process with the ordinary Rust panic exit code.
 
 See `docs/command_semantic_fixtures.md` and `docs/alignment_brace_semantics.md`
 for the fixture registry and event schema this replays and compares against,
-and `tools/AGENTS.md` for what the tool does and does not do.
+and `tools/AGENTS.md` for what the tool does and does not do. The registry
+currently replays only the synthetic `tex82/command-transitions-v1` fixture;
+extending it to full documents (plain/story/gentle) is tracked separately
+(`bd show umber2-johp` for the current child issue) and requires live
+reference/font-resource plumbing this tool does not have yet -- see that
+issue for what is already proven to work and what remains.
 
 ### First-Failure Locator
 
