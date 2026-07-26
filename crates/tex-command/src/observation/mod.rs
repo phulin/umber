@@ -8,12 +8,15 @@
 
 #![cfg(any(test, feature = "instrumentation"))]
 
-use tex_state::meaning::{ExpandablePrimitive, Meaning, UnexpandablePrimitive};
+use tex_state::meaning::Meaning;
 
 use crate::command::{CommandIdentity, CurrentCommand};
 use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 
 use crate::{DeliveryStamp, SourceLocation, SourceProvenance, SourceRange};
+
+mod primitive_identity;
+use primitive_identity::{expandable_primitive_identity, unexpandable_primitive_identity};
 
 /// An owned, allocation-independent spelling used by command observation.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -154,168 +157,26 @@ pub(crate) fn canonical_command_identity(meaning: Meaning) -> (String, Option<i6
             .into(),
             None,
         ),
-        Meaning::ExpandablePrimitive(tex_state::meaning::ExpandablePrimitive::The) => {
-            ("the".into(), Some(0))
-        }
-        Meaning::ExpandablePrimitive(tex_state::meaning::ExpandablePrimitive::NoExpand) => {
-            ("no_expand".into(), Some(0))
-        }
-        Meaning::ExpandablePrimitive(tex_state::meaning::ExpandablePrimitive::EndTemplate) => {
-            ("end_template".into(), Some(249_988))
-        }
-        // TeX82 stores every `\if...` primitive under the shared `if_test`
-        // command code; `cur_chr` selects the particular test. The Rust
-        // primitive enum's discriminants are an implementation detail, so
-        // observation maps the canonical TeX82 identity explicitly.
-        Meaning::ExpandablePrimitive(primitive) => match primitive {
-            ExpandablePrimitive::If => ("if_test".into(), Some(0)),
-            ExpandablePrimitive::IfCat => ("if_test".into(), Some(1)),
-            ExpandablePrimitive::IfNum => ("if_test".into(), Some(2)),
-            ExpandablePrimitive::IfDim => ("if_test".into(), Some(3)),
-            ExpandablePrimitive::IfOdd => ("if_test".into(), Some(4)),
-            ExpandablePrimitive::IfVMode => ("if_test".into(), Some(5)),
-            ExpandablePrimitive::IfHMode => ("if_test".into(), Some(6)),
-            ExpandablePrimitive::IfMMode => ("if_test".into(), Some(7)),
-            ExpandablePrimitive::IfInner => ("if_test".into(), Some(8)),
-            ExpandablePrimitive::IfVoid => ("if_test".into(), Some(9)),
-            ExpandablePrimitive::IfHBox => ("if_test".into(), Some(10)),
-            ExpandablePrimitive::IfVBox => ("if_test".into(), Some(11)),
-            ExpandablePrimitive::IfX => ("if_test".into(), Some(12)),
-            ExpandablePrimitive::IfEof => ("if_test".into(), Some(13)),
-            ExpandablePrimitive::IfTrue => ("if_test".into(), Some(14)),
-            ExpandablePrimitive::IfFalse => ("if_test".into(), Some(15)),
-            ExpandablePrimitive::IfCase => ("if_test".into(), Some(16)),
-            // TeX82 likewise stores conditional delimiters under one command
-            // code. Their `cur_chr` operands are `fi_code`, `else_code`, and
-            // `or_code`, rather than the Rust primitive enum discriminants.
-            ExpandablePrimitive::Fi => ("fi_or_else".into(), Some(2)),
-            ExpandablePrimitive::Else => ("fi_or_else".into(), Some(3)),
-            ExpandablePrimitive::Or => ("fi_or_else".into(), Some(4)),
-            // `\input` is a TeX82 command family with its fixed filename
-            // selector, rather than a generic expandable command.
-            ExpandablePrimitive::Input => ("input".into(), Some(0)),
-            _ => ("expandable".into(), None),
-        },
+        // Every `ExpandablePrimitive` variant (including `The`/`NoExpand`/
+        // `EndTemplate`, which used to have their own arms here) has a real
+        // tex.web/e-TeX/pdfTeX command identity, computed exhaustively by
+        // `expandable_primitive_identity` (`docs/tex_command_core.md`
+        // §33.2's dispatch-completeness invariant, applied to this
+        // classifier): a variant added to the enum without a named arm there
+        // is a build failure, not a silent generic fallback.
+        Meaning::ExpandablePrimitive(primitive) => expandable_primitive_identity(primitive),
         Meaning::IntParam(index) => ("assign_int".into(), Some(27_167 + i64::from(index))),
         // TeX82's named glue parameters occupy the contiguous `assign_glue`
         // command range. Their selector is the glue-parameter base plus the
         // stored parameter index (for example, `\\tabskip` is 24538).
         Meaning::GlueParam(index) => ("assign_glue".into(), Some(24_527 + i64::from(index))),
         Meaning::TokParam(index) => ("assign_toks".into(), Some(25_058 + i64::from(index))),
-        Meaning::UnexpandablePrimitive(primitive) => match primitive {
-            UnexpandablePrimitive::Def
-            | UnexpandablePrimitive::Edef
-            | UnexpandablePrimitive::Gdef
-            | UnexpandablePrimitive::Xdef => (
-                "def".into(),
-                Some(match primitive {
-                    UnexpandablePrimitive::Def => 0,
-                    UnexpandablePrimitive::Gdef => 1,
-                    UnexpandablePrimitive::Edef => 2,
-                    UnexpandablePrimitive::Xdef => 3,
-                    _ => unreachable!("definition primitive is matched above"),
-                }),
-            ),
-            UnexpandablePrimitive::Long => ("prefix".into(), Some(1)),
-            UnexpandablePrimitive::Outer => ("prefix".into(), Some(2)),
-            UnexpandablePrimitive::Global => ("prefix".into(), Some(4)),
-            UnexpandablePrimitive::Let => ("let".into(), Some(0)),
-            UnexpandablePrimitive::FutureLet => ("let".into(), Some(1)),
-            UnexpandablePrimitive::Count => ("register".into(), Some(0)),
-            UnexpandablePrimitive::Dimen => ("register".into(), Some(1)),
-            UnexpandablePrimitive::Skip => ("register".into(), Some(2)),
-            // `\toks` is its own command family in TeX82 and starts at
-            // `cur_chr = 0`; the Rust selector is not a trace operand.
-            UnexpandablePrimitive::Toks => ("toks_register".into(), Some(0)),
-            UnexpandablePrimitive::CatCode => ("def_code".into(), Some(25_631)),
-            UnexpandablePrimitive::LcCode => ("def_code".into(), Some(25_887)),
-            // TeX82 §1230 installs `\uccode` under the shared `def_code`
-            // command with the `uc_code_base` eqtb address as its selector
-            // (`uc_code_base = lc_code_base + 256`; see tex.web's `@d
-            // uc_code_base=lc_code_base+256` and the `primitive("uccode",
-            // def_code,uc_code_base)` call).
-            UnexpandablePrimitive::UcCode => ("def_code".into(), Some(26_143)),
-            // TeX.web's primitive `\par` is `par_end` with the distinguished
-            // `cur_chr` value 256; this is not the Rust primitive enum's
-            // storage operand.
-            UnexpandablePrimitive::Par => ("par_end".into(), Some(256)),
-            // TeX82 gives both row-return primitives the shared `car_ret`
-            // command identity. Their selectors distinguish `\cr` from
-            // `\crcr` and are consumed by alignment handling after raw
-            // delivery; the Rust primitive enum must not leak into traces.
-            // See TeX.web's `cr_code` and `cr_cr_code` definitions.
-            UnexpandablePrimitive::Cr => ("car_ret".into(), Some(257)),
-            UnexpandablePrimitive::CrCr => ("car_ret".into(), Some(258)),
-            // TeX82 assigns `\\omit` its own command code and installs it
-            // with `cur_chr = 0`; the executor's alignment-cell handling
-            // consumes the typed primitive without reconstructing this
-            // observational identity. See TeX.web §§15, 18, and 37
-            // (`init_col`).
-            UnexpandablePrimitive::Omit => ("omit".into(), Some(0)),
-            // `\\noalign` is a distinct TeX82 command with a zero selector,
-            // not a generic unexpandable primitive.  `align_peek` consumes
-            // this raw identity after a completed row.  See TeX.web §§15,
-            // 18, and 37 (`align_peek`).
-            UnexpandablePrimitive::NoAlign => ("no_align".into(), Some(0)),
-            UnexpandablePrimitive::HAlign => ("halign".into(), Some(0)),
-            // TeX82 §15 gives every horizontal glue primitive the `hskip`
-            // command code, while §18 installs its canonical `cur_chr`
-            // selector: fil=0, fill=1, ss=2, fil_neg=3, and skip=4.  The
-            // selector is observable command identity, not an executor-side
-            // shorthand implementation detail.
-            UnexpandablePrimitive::HFil => ("hskip".into(), Some(0)),
-            UnexpandablePrimitive::HFill => ("hskip".into(), Some(1)),
-            UnexpandablePrimitive::HSs => ("hskip".into(), Some(2)),
-            UnexpandablePrimitive::HFilNeg => ("hskip".into(), Some(3)),
-            UnexpandablePrimitive::HSkip => ("hskip".into(), Some(4)),
-            // The vertical family has the same TeX82 selectors under the
-            // `vskip` command code.
-            UnexpandablePrimitive::VFil => ("vskip".into(), Some(0)),
-            UnexpandablePrimitive::VFill => ("vskip".into(), Some(1)),
-            UnexpandablePrimitive::VSs => ("vskip".into(), Some(2)),
-            UnexpandablePrimitive::VFilNeg => ("vskip".into(), Some(3)),
-            UnexpandablePrimitive::VSkip => ("vskip".into(), Some(4)),
-            // TeX82 §15 gives `\\shipout` the shared `leader_ship` command
-            // code. Section 35 installs it with `a_leaders - 1`, where
-            // `a_leaders = 100`; its canonical selector is therefore 99.
-            // This identity is emitted before the typed replay seam consumes
-            // the required box and commits its output semantics.
-            UnexpandablePrimitive::Shipout => ("leader_ship".into(), Some(99)),
-            UnexpandablePrimitive::SetBox => ("set_box".into(), Some(0)),
-            // TeX82 §15 places `\box` in the `make_box` command family,
-            // and §35 installs its `box_code` selector as zero.  The box
-            // register operand is scanned by command control after this
-            // identity has been delivered; replay consumes only the typed
-            // resulting box semantics.
-            UnexpandablePrimitive::Box => ("make_box".into(), Some(0)),
-            UnexpandablePrimitive::HBox => ("make_box".into(), Some(4)),
-            UnexpandablePrimitive::VBox => ("make_box".into(), Some(5)),
-            UnexpandablePrimitive::VTop => ("make_box".into(), Some(6)),
-            // Rule primitives have fixed TeX82 command codes and a zero
-            // selector; the executor's Rust primitive identity is not a
-            // canonical command-trace operand.
-            UnexpandablePrimitive::VRule => ("vrule".into(), Some(0)),
-            UnexpandablePrimitive::HRule => ("hrule".into(), Some(0)),
-            // Explicit group primitives share TeX82's `begin_group` and
-            // `end_group` command codes with a zero selector. Their Rust
-            // enum discriminants must not leak into the trace.
-            UnexpandablePrimitive::BeginGroup => ("begin_group".into(), Some(0)),
-            UnexpandablePrimitive::EndGroup => ("end_group".into(), Some(0)),
-            UnexpandablePrimitive::Message => ("message".into(), Some(0)),
-            // TeX82 §53 keeps these output primitives under the shared
-            // `extension` command code. Their operands are the canonical
-            // whatsit subtypes, plus `immediate_code` and `set_language_code`;
-            // the raw identity remains observable before tex-exec performs
-            // the selected extension behavior.
-            UnexpandablePrimitive::OpenOut => ("extension".into(), Some(0)),
-            UnexpandablePrimitive::Write => ("extension".into(), Some(1)),
-            UnexpandablePrimitive::CloseOut => ("extension".into(), Some(2)),
-            UnexpandablePrimitive::Special => ("extension".into(), Some(3)),
-            UnexpandablePrimitive::Immediate => ("extension".into(), Some(4)),
-            UnexpandablePrimitive::SetLanguage => ("extension".into(), Some(5)),
-            UnexpandablePrimitive::End => ("stop".into(), Some(0)),
-            _ => ("unexpandable".into(), None),
-        },
+        // Every `UnexpandablePrimitive` variant has a real tex.web/e-TeX/pdfTeX
+        // command identity, computed exhaustively by `unexpandable_primitive_identity`
+        // (`docs/tex_command_core.md` §33.2's dispatch-completeness invariant,
+        // applied to this classifier): a variant added to the enum without a
+        // named arm there is a build failure, not a silent generic fallback.
+        Meaning::UnexpandablePrimitive(primitive) => unexpandable_primitive_identity(primitive),
         Meaning::Undefined => ("undefined_cs".into(), Some(-268_435_455)),
         _ => ("internal".into(), None),
     }
@@ -575,6 +436,7 @@ pub(crate) fn observed_token(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tex_state::meaning::{ExpandablePrimitive, UnexpandablePrimitive};
 
     #[test]
     fn par_uses_tex82_par_end_identity() {
