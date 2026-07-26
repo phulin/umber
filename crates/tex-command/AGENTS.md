@@ -60,6 +60,11 @@ Private state-machine modules must not be widened for compatibility with
   primitive and eqtb-addressed variable identities beneath it. None of the
   three may reintroduce a catch-all: an unclassified meaning must be a build
   failure, never a plausible generic identity in a trace.
+  `variable_identity.rs` also owns `parameter_mutation_key`, the single
+  supported way to name a mutated named parameter. Umber's dense parameter
+  bank slots are not tex.web's parameter codes, so an observation that
+  formats a raw `IntParam`/`DimenParam`/`GlueParam`/`TokParam` slot reports
+  one parameter's assignment under another's name (umber2-johp.134).
 - `src/snapshot.rs` and `src/snapshot/tests.rs`: command snapshot, quiescent
   summary ownership, and focused internal roundtrip/rejection tests.
 - `tests/`: external dependency, visibility, and capability-boundary tests.
