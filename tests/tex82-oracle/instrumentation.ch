@@ -15,7 +15,11 @@
 @!umber_mutation_command:boolean;
 @!umber_trip_profile:boolean;
 @!umber_line_shift:integer;
+@!umber_shift_tail:integer;
+@!umber_shift_pos:integer;
 @!umber_shift_stack:array[1..sup_max_in_open] of integer;
+@!umber_tail_stack:array[1..sup_max_in_open] of integer;
+@!umber_pos_stack:array[1..sup_max_in_open] of integer;
 @z
 
 @x [22] Detached schema-v1 JSON Lines transport.
@@ -247,15 +251,36 @@ othercases write(umber_trace_file,'"escape"')
 endcases;
 end;
 
+function umber_source_column(@!p:integer):integer;
+begin
+if p>=umber_shift_pos then umber_source_column:=p+umber_line_shift
+else umber_source_column:=p+umber_line_shift-umber_shift_tail;
+end;
+
 {The emitted |byte| is a column of the immutable source line, not an index
 into |buffer|. The two coincide only until \S355 reduces an expanded code
 inside a control-sequence name: that reduction rewrites |buffer[k-1]| in place
 and shifts the remainder of the line down by |d|, so from then on every
 |buffer| index on that line is |d| smaller than the source column it came
 from. |umber_line_shift| accumulates exactly those collapsed bytes for the
-current line, and adding it back restores the source column of the final byte
-consumed by the delivered spelling -- including the reduced code itself, whose
-own |d| is already accumulated when it is delivered.}
+current line.
+
+A collapse only moves the columns of bytes that follow it, so it must be
+added back for a reported byte at or after the reduced code and withheld for
+one before it. That distinction is real, not theoretical: \S355 is reached
+from two places. Reached directly (the |else| arm of \S354, a single-character
+control sequence like \.{\\\^\^L}) the reduced code *is* the delivered
+spelling's final byte, so its own |d| counts. Reached from \S356's
+scan-ahead, the collapse is pure lookahead past a control-sequence name that
+has already ended -- \.{\\def\^\^L} reduces the \.{\^\^L} while scanning
+\.{\\def}, then restarts at |start_cs| and delivers \.{\\def} alone -- and
+counting its |d| would inflate \.{\\def}'s column by bytes collapsed strictly
+to its right. Only the most recent collapse can be of the second kind: after
+it, |start_cs| rescans and stops at the reduced byte unless that byte is
+itself a letter, in which case it joins the name and the collapse belongs to
+the delivered spelling after all. So |umber_shift_pos| (the reduced byte's
+position, which the collapse does not move) and |umber_shift_tail| (its |d|)
+are enough to decide.}
 procedure umber_trace_command(@!expanded:boolean);
 begin
 if (not umber_trace_opened)or(umber_trip_profile) then return;
@@ -274,7 +299,7 @@ if (state<>0)and(name>17) then
   begin write(umber_trace_file,',"location":{"source":');
   umber_trace_string(name);
   write(umber_trace_file,',"line":',line:1,',"byte":');
-  if loc>start then write(umber_trace_file,loc-start-1+umber_line_shift:1)
+  if loc>start then write(umber_trace_file,umber_source_column(loc-start-1):1)
   else write(umber_trace_file,'0');
   write(umber_trace_file,'}'); end;
 write_ln(umber_trace_file,'}}}}');
@@ -880,7 +905,7 @@ procedure umber_trace_open;
 begin umber_trace_sequence:=0; umber_recovery_insert:=false;
 umber_alignment_depth:=0; umber_mutation_command:=false;
 umber_trip_profile:=false;
-umber_line_shift:=0;
+umber_line_shift:=0; umber_shift_tail:=0; umber_shift_pos:=0;
 rewrite(umber_trace_file,'tex82-events.jsonl');
 umber_trace_opened:=true;
 if umber_trace_opened then write_ln(umber_trace_file,
@@ -1030,7 +1055,10 @@ name:=0; {|terminal_input| is now |true|}
 end;
 @y
 name:=0; {|terminal_input| is now |true|}
-umber_shift_stack[index]:=umber_line_shift; umber_line_shift:=0;
+umber_shift_stack[index]:=umber_line_shift;
+umber_tail_stack[index]:=umber_shift_tail;
+umber_pos_stack[index]:=umber_shift_pos;
+umber_line_shift:=0; umber_shift_tail:=0; umber_shift_pos:=0;
 umber_trace_input(0,0,0);
 end;
 @z
@@ -1046,6 +1074,8 @@ end;
 begin umber_trace_input(1,0,0);
 first:=start; line:=line_stack[index];
 umber_line_shift:=umber_shift_stack[index];
+umber_shift_tail:=umber_tail_stack[index];
+umber_shift_pos:=umber_pos_stack[index];
 if name>17 then a_close(cur_file); {forget it}
 pop_input; decr(in_open);
 end;
@@ -1122,7 +1152,8 @@ skip_blanks+right_brace,new_line+right_brace: begin
     if mubyte_in>0 then mubyte_keep := k-loc;
 @y
     limit:=limit-d; first:=first-d;
-    umber_line_shift:=umber_line_shift+d;
+    umber_line_shift:=umber_line_shift+d; umber_shift_tail:=d;
+    umber_shift_pos:=k-1-start;
     if mubyte_in>0 then mubyte_keep := k-loc;
 @z
 
@@ -1152,7 +1183,7 @@ first:=limit+1; loc:=start; {ready to read}
 end
 @y
 first:=limit+1; loc:=start; {ready to read}
-umber_line_shift:=0;
+umber_line_shift:=0; umber_shift_tail:=0; umber_shift_pos:=0;
 end
 @z
 

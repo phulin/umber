@@ -1,4 +1,4 @@
-{"schema":1,"manifest":"cada16ce203c7f27342eed16ff517282ffdfe6217df3c1a920339f82556713b9"}
+{"schema":1,"manifest":"bd07148f98c1dbe7bea20287301ac29ff457bac5a9dd06d4a23005717d71a39b"}
 {"sequence":0,"semantic":{"event":"command","data":{"delivery":"raw","command":{"command":"letter","operand":{"type":"integer","value":116}}}}}
 {"sequence":1,"semantic":{"event":"command","data":{"delivery":"expanded","command":{"command":"letter","operand":{"type":"integer","value":116}}}}}
 {"sequence":2,"semantic":{"event":"input","data":{"transition":"push","reason":"backup","name":"backup"}}}
