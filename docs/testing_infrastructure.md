@@ -4,8 +4,13 @@ Status: current repository reference
 Scope: the test commands, measured budgets, fixtures, corpora, and harnesses
 that exist in this workspace today.
 
-This document records current implementation facts. For rules that should
-guide future test design and placement, see [Rust Testing Policy](testing_policy.md).
+This document records current implementation facts: what each tool is and how
+to run it. For rules that should guide future test design and placement, see
+[Rust Testing Policy](testing_policy.md). For the *process* of working a
+`umber2-johp` canonical/oracle divergence with these tools -- diagnosis order,
+oracle hierarchy, fix discipline, gates, and the glossary defining that
+vocabulary -- see [Canonical Divergence Working Contract](canonical_divergence_workflow.md).
+This document does not restate that process.
 
 ---
 
@@ -433,9 +438,9 @@ memory `World` (via the shared `staged_world` helper both runners now use),
 installs the canonical primitive tables with
 `tex_expand::install_expandable_primitives`/
 `tex_exec::install_unexpandable_primitives` (matching
-`examples/canonical_probe.rs`'s proven-working setup rather than the CLI's
-`prepare_run_stores`), registers the staged job wrapper as an authored root,
-and answers `\input`/font resource suspensions from a `StagedDirResourceHost`
+`examples/first_failure_locator.rs`'s proven-working setup rather than the
+CLI's `prepare_run_stores`), registers the staged job wrapper as an authored
+root, and answers `\input`/font resource suspensions from a `StagedDirResourceHost`
 that reads the same staged files the legacy resolvers do. It does not perform
 the legacy test's macro-invocation-provenance budget check: that budget is a
 legacy `EngineSession`/`ExecutionContext` observation that does not yet have a
@@ -454,72 +459,55 @@ DVI opcode and writing a triage bundle under
 corrupting one assembled byte before the DVI comparison made
 `e2e_conformance_story_canonical` fail with an exact byte/page/opcode mismatch
 while `e2e_conformance_story` (legacy) kept passing; reverting the corruption
-restored both to green. See "Diagnosing A Canonical Divergence" below for the
-differential-tracer/`canonical_probe` recipe to use once this gate actually
-fails on a real regression.
+restored both to green. See the diagnosis order in [Canonical Divergence
+Working Contract](canonical_divergence_workflow.md#2-diagnosis-order) for the
+differential-tracer/first-failure-locator recipe to use once this gate
+actually fails on a real regression.
 
-## Diagnosing A Canonical Divergence
+## Canonical Command-Core Diagnostics
 
-Investigating a `umber2-johp` command-core divergence has a fixed order of
-diagnostics. Do not start with hand-added `eprintln!`/debug-panic
-instrumentation or another ad hoc reproduction: both tools below already
-report a source-attributed divergence or a Rust panic origin, and skipping
-them wastes a run re-deriving what they would have named directly. The
-retired Umber implementation (`Executor`/`InputStack`, `tex-lex`, `tex-expand`)
-is never an oracle for expected behavior at any step; canonical expectations
-come only from the pinned TeX82/e-TeX/pdfTeX oracle traces described in
-[The Canonical Command Core](tex_command_core.md).
+Two tools locate a `umber2-johp` command-core divergence or failure. This
+section describes what each tool is, what it requires, and what it prints.
+For the order to run them in, why the retired Umber implementation is never
+an oracle, and what to do with the result, see the diagnosis order in
+[Canonical Divergence Working Contract](canonical_divergence_workflow.md#2-diagnosis-order).
 
-1. **Differential tracer first**, for the earliest ordered semantic
-   divergence against committed fixtures:
+### Differential Tracer
 
-   ```bash
-   cargo run -q -p tex-command-stream -- --repository .
-   ```
+```bash
+cargo run -q -p tex-command-stream -- --repository .
+```
 
-   Run this from the repository root. It is fully hermetic against the
-   committed `tests/corpus/command/tex82` fixture registry (no external
-   corpus, distribution, or live TeX tool required) and never invokes a
-   reference engine. On success it prints nothing and exits `0`. On a genuine
-   stream mismatch it exits `1` and prints the earliest ordered divergence:
-   `fixture <name> diverged at event <index>` followed by the expected event,
-   the actual observed event, and source context. On an engine panic reached
-   before any semantic mismatch is produced, it instead exits `101` with the
-   ordinary Rust panic message and `file:line` (rerun with
-   `RUST_BACKTRACE=1` for a full backtrace) — that panic origin is itself the
-   diagnosis, and it takes priority over a stream-mismatch report because it
-   is reached first. See `docs/command_semantic_fixtures.md` and
-   `docs/alignment_brace_semantics.md` for the fixture registry and event
-   schema this replays and compares against, and `tools/AGENTS.md` for what
-   the tool does and does not do.
+Run this from the repository root. It replays the committed
+`tests/corpus/command/tex82` fixture registry through the instrumented
+command boundary and compares the translated `tex-oracle` event stream
+against the expected trace. It is fully hermetic (no external corpus,
+distribution, or live TeX tool required) and never invokes a reference
+engine.
 
-2. **`canonical_probe` next**, for the live end-to-end front, when the
-   tracer's fixture registry does not cover the failing input (for example, it
-   depends on live document/font/hyphenation material outside
-   `tests/corpus/command`):
+- Exit `0`: it prints nothing; no mismatch against the fixture registry.
+- Exit `1`: a genuine stream mismatch. Prints the earliest ordered
+  divergence -- `fixture <name> diverged at event <index>` -- followed by the
+  expected event, the actual observed event, and source context.
+- Exit `101`: an engine panic reached before any semantic mismatch is
+  produced. Prints the ordinary Rust panic message and `file:line` (rerun
+  with `RUST_BACKTRACE=1` for a full backtrace).
 
-   ```bash
-   cargo run --profile test -p umber --example canonical_probe -- gentle
-   cargo run --profile test -p umber --example canonical_probe -- story
-   ```
+See `docs/command_semantic_fixtures.md` and `docs/alignment_brace_semantics.md`
+for the fixture registry and event schema this replays and compares against,
+and `tools/AGENTS.md` for what the tool does and does not do.
 
-   See "Canonical Divergence Probe" below for its exact staged inputs and
-   reported output. `story` currently completes cleanly and is a regression
-   gate: a new `story` failure is a regression to fix, not the divergence
-   under investigation, and must not be treated as expected.
+### First-Failure Locator
 
-3. **Manual instrumentation only if both come up short.** Reach for
-   `eprintln!`/debug-panic probes or a custom reproduction only after the
-   tracer's fixtures do not exercise the failing input and `canonical_probe`
-   does not reproduce it with actionable context. Keep any such instrumentation
-   temporary and remove it once the tracer or probe confirms the fix.
-
-## Canonical Divergence Probe
-
-`crates/umber/examples/canonical_probe.rs` is a standalone diagnostic entry
-point for the `umber2-johp` command-core migration, separate from the
+`crates/umber/examples/first_failure_locator.rs` is a standalone diagnostic
+entry point for the `umber2-johp` command-core migration, separate from the
 DVI-parity Cargo tests above and from the `umber2-johp.28` production
-migration itself. It stages `third_party/corpus/{plain,<source>}.tex`,
+migration itself. Use it for the live end-to-end front, when the differential
+tracer's fixture registry does not cover the failing input -- for example, it
+depends on live document/font/hyphenation material outside
+`tests/corpus/command`.
+
+It stages `third_party/corpus/{plain,<source>}.tex`,
 `third_party/hyphen/hyphen.tex`, and the plain-format CM/`manfnt` TFMs into an
 in-memory `World` (reusing the same `parity_harness::CORPUS_TFMS`/`locate_tfm`
 resolution as the harness above), then drives them directly through
@@ -528,8 +516,8 @@ resolution as the harness above), then drives them directly through
 migration is converging:
 
 ```bash
-cargo run --profile test -p umber --example canonical_probe -- gentle
-cargo run --profile test -p umber --example canonical_probe -- story
+cargo run --profile test -p umber --example first_failure_locator -- gentle
+cargo run --profile test -p umber --example first_failure_locator -- story
 ```
 
 Use `--profile test` (matching `cargo run-dev`'s alias) rather than the plain
@@ -538,18 +526,24 @@ Use `--profile test` (matching `cargo run-dev`'s alias) rather than the plain
 several minutes where the `test` profile's `opt-level = 1` finishes in
 seconds.
 
-The probe reports the first divergence it hits: the live execution mode, the
+It reports the first failure it hits: the live execution mode, the
 `ExecError`/`CanonicalSessionError` rendered with provenance-resolved TeX
 source context (`ExecError::format_with_provenance`), or, for a Rust panic,
 lets the default panic hook report the Rust-side `file:line` origin (rerun
-with `RUST_BACKTRACE=1` for a full backtrace). It intentionally does not run
-under `cargo test`: the command core is mid-migration and this probe is
-expected to fail on `gentle` until each earlier divergence in the
-`umber2-johp` chain is fixed. See the current open successor issue under the
-`umber2-johp` epic (`bd show umber2-johp` for its children) for the earliest
-tracked Gentle divergence it reproduces -- that issue ID advances every time a
-divergence is fixed, so it is not pinned here -- and `docs/tex_command_core.md`
-for the canonical command-core architecture it exercises.
+with `RUST_BACKTRACE=1` for a full backtrace). As a first-failure locator (see
+the Glossary in [Canonical Divergence Working
+Contract](canonical_divergence_workflow.md#glossary)), it can only show that
+execution stopped, never that completed output is wrong. It intentionally
+does not run under `cargo test`: the command core is mid-migration and this
+locator is expected to fail on `gentle` until each earlier divergence in the
+`umber2-johp` chain is fixed. `story` currently completes cleanly and is a
+regression gate (see "Canonical Story Regression Gate" above): a new `story`
+failure is a regression to fix immediately, not the divergence under
+investigation. See the current open successor issue under the `umber2-johp`
+epic (`bd show umber2-johp` for its children) for the earliest tracked Gentle
+divergence it reproduces -- that issue ID advances every time a divergence is
+fixed, so it is not pinned here -- and `docs/tex_command_core.md` for the
+canonical command-core architecture it exercises.
 
 ## TRIP Corpus
 

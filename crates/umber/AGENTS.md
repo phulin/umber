@@ -19,7 +19,7 @@ Use this crate when behavior is about driving the engine, presenting CLI output,
 
 - `AGENTS.md`: crate-local guidance for CLI-driver ownership, boundaries, validation, and this file map.
 - `Cargo.toml`: package metadata, feature flags, workspace lint inheritance, and engine/test dependencies.
-- `src/canonical_session.rs`: `CanonicalEngineSession`, the retained host-neutral entry point for canonical `tex-command`/`CanonicalMainControl` execution; typed resource-suspension fulfillment, checkpoint publication, and the `CanonicalResourceHost` contract used by real drivers and by `examples/canonical_probe.rs`.
+- `src/canonical_session.rs`: `CanonicalEngineSession`, the retained host-neutral entry point for canonical `tex-command`/`CanonicalMainControl` execution; typed resource-suspension fulfillment, checkpoint publication, and the `CanonicalResourceHost` contract used by real drivers and by `examples/first_failure_locator.rs`.
 - `src/expand_dump.rs`: implementation of the `expand-dump` CLI command through the shared engine session and dump primitive setup.
 - `src/format_cache_cli.rs`: pinned LaTeX/pdfLaTeX generated-format cache identity, validated restore, and atomic publication CLI adapter.
 - `src/bib.rs`: native host-file staging, resource retry, and detached artifact publication for the in-process `bib` command.
@@ -70,17 +70,18 @@ Use this crate when behavior is about driving the engine, presenting CLI output,
   program, cmap, MATH, license, and retained-object inventory audit.
 - `tests/it/pdf_parity.rs`: hermetic pinned-pdfTeX normalized structure, exact Umber byte, and Poppler raster-attestation fixture gate.
 - `tests/it/replay_identity.rs`: property and regression tests that generated primitive programs rollback to identical state.
-- `examples/canonical_probe.rs`: reusable direct canonical Gentle/Story e2e divergence probe (`umber2-johp.57`). Stages `third_party/corpus/{plain,<source>}.tex`, `third_party/hyphen/hyphen.tex`, and the plain-format CM/`manfnt` TFMs (via `parity_harness::{CORPUS_TFMS, locate_tfm}`) into an in-memory `World`, drives them through `CanonicalEngineSession`, and on the first `ExecError`/panic reports the live mode, provenance-resolved TeX source context, and (for panics) lets the default panic hook report the Rust `file:line` origin. Run with `cargo run -p umber --example canonical_probe -- gentle` (or `story`); not part of `cargo test`. See `docs/tex_command_core.md` and the current open successor issue under the `umber2-johp` epic (`bd show umber2-johp` for its children) for the currently tracked Gentle divergence it reproduces.
+- `examples/first_failure_locator.rs`: reusable direct canonical Gentle/Story e2e first-failure locator (`umber2-johp.57`). Stages `third_party/corpus/{plain,<source>}.tex`, `third_party/hyphen/hyphen.tex`, and the plain-format CM/`manfnt` TFMs (via `parity_harness::{CORPUS_TFMS, locate_tfm}`) into an in-memory `World`, drives them through `CanonicalEngineSession`, and on the first `ExecError`/panic reports the live mode, provenance-resolved TeX source context, and (for panics) lets the default panic hook report the Rust `file:line` origin. It can only show that execution stopped, never that completed output is wrong (see the Glossary in `docs/canonical_divergence_workflow.md`). Run with `cargo run -p umber --example first_failure_locator -- gentle` (or `story`); not part of `cargo test`. See `docs/tex_command_core.md` and the current open successor issue under the `umber2-johp` epic (`bd show umber2-johp` for its children) for the currently tracked Gentle divergence it reproduces.
 
 ## Validation
 
 Run `cargo test --tests -p umber` after CLI or composed-runner changes. For behavior that changes emitted diagnostics or fixtures, follow `tests/AGENTS.md` and regenerate deliberately with `scripts/regen-fixtures.sh`. Ordinary corpus tests consume committed fixtures; external end-to-end conformance tests conditionally consume locally generated oracles.
 
-Diagnosing a `canonical_probe`/`umber2-johp` divergence has a fixed recipe:
-run the differential tracer (`cargo run -q -p tex-command-stream --
---repository .`) first, then `canonical_probe` for the live end-to-end front,
-and only fall back to manual instrumentation if both come up short. See
-"Diagnosing A Canonical Divergence" in
-[Testing Infrastructure](../../docs/testing_infrastructure.md) for the exact
-commands, output shapes, and why ad hoc probes and the retired Umber engine
-are excluded.
+Diagnosing a `umber2-johp` divergence has a fixed recipe: run the
+differential tracer (`cargo run -q -p tex-command-stream -- --repository .`)
+first, then the `first_failure_locator` example for the live end-to-end
+front, and only fall back to manual instrumentation if both come up short.
+See the diagnosis order in
+[Canonical Divergence Working Contract](../../docs/canonical_divergence_workflow.md#2-diagnosis-order)
+for why ad hoc probes and the retired Umber engine are excluded, and
+[Testing Infrastructure](../../docs/testing_infrastructure.md) for each
+tool's exact commands and output shapes.

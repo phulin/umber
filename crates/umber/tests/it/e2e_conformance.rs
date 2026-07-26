@@ -331,7 +331,7 @@ impl CanonicalResourceHost for StagedDirResourceHost {
     }
 }
 
-/// Renders a canonical session failure the same way `canonical_probe.rs`
+/// Renders a canonical session failure the same way `first_failure_locator.rs`
 /// does: an execution error gets its provenance-resolved TeX source context,
 /// while every other `CanonicalSessionError` variant already carries enough
 /// context through its own `Display` impl.
