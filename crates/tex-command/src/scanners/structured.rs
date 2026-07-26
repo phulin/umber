@@ -297,6 +297,21 @@ pub enum ScannedPackingSpec {
     Spread(Scaled),
 }
 
+/// The completed command-owned prefix of TeX82 §968's `begin_insert_or_adjust`
+/// for `\insert`.
+///
+/// `scan_eight_bit_int`'s range clamp and §968's reserved-255 recovery both
+/// need to write a `Universe`-routed diagnostic, so this keeps only the raw
+/// scanned class number (any `i32` the integer scanner produced) and the
+/// validated opening-brace backup state. Replay performs the bounded 0..=255
+/// recovery and the `\insert255` rejection immediately before opening the
+/// insertion group.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ScannedInsertConstruction {
+    pub class: i32,
+    pub opening_brace_replay: bool,
+}
+
 /// The completed register operand of TeX82's `\\box` command.
 ///
 /// `make_box(box_code)` calls `scan_int` before main control can apply the
@@ -1978,6 +1993,19 @@ impl CommandProcessor<'_> {
         Ok(ScannedBoxConstruction {
             kind,
             packing,
+            opening_brace_replay,
+        })
+    }
+
+    /// Scans TeX82 §968's `begin_insert_or_adjust` prefix for `\insert`:
+    /// `scan_eight_bit_int`'s raw integer scan (range validation deferred to
+    /// replay, which alone can report through `Universe`), followed by the
+    /// same required-opening-brace validation `\hbox`/`\vbox`/`\vtop` use.
+    pub fn scan_insert_construction(&mut self) -> Result<ScannedInsertConstruction, CommandError> {
+        let class = self.scan_integer()?.value;
+        let opening_brace_replay = self.scan_box_group_opening()?;
+        Ok(ScannedInsertConstruction {
+            class,
             opening_brace_replay,
         })
     }

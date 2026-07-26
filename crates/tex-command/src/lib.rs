@@ -65,11 +65,11 @@ pub use scanners::{
     ScalarProvenance, ScalarRecovery, ScannedAccent, ScannedAccentBase, ScannedBalancedText,
     ScannedBoxConstruction, ScannedBoxKind, ScannedBoxRegister, ScannedCharacterDefinition,
     ScannedDiscretionary, ScannedDisplayDiagnostic, ScannedEquationNumber, ScannedFileName,
-    ScannedGlueParameterAssignment, ScannedLeaderPayload, ScannedLetAssignment,
-    ScannedMacroDefinition, ScannedMathCharacter, ScannedMathDelimiter, ScannedMathFamily,
-    ScannedMathFraction, ScannedMathMuMaterial, ScannedMathScript, ScannedPackingSpec,
-    ScannedRegisterDefinition, ScannedRuleSpec, ScannedScalar, ScannedSetBoxAssignment,
-    ScannedTokenRegisterAssignment, ScannedVSplit, StructuredProvenance,
+    ScannedGlueParameterAssignment, ScannedInsertConstruction, ScannedLeaderPayload,
+    ScannedLetAssignment, ScannedMacroDefinition, ScannedMathCharacter, ScannedMathDelimiter,
+    ScannedMathFamily, ScannedMathFraction, ScannedMathMuMaterial, ScannedMathScript,
+    ScannedPackingSpec, ScannedRegisterDefinition, ScannedRuleSpec, ScannedScalar,
+    ScannedSetBoxAssignment, ScannedTokenRegisterAssignment, ScannedVSplit, StructuredProvenance,
 };
 pub use snapshot::{CommandStateSnapshot, CommandSummary, CommandSummaryError};
 pub use state::{
