@@ -241,7 +241,7 @@ impl CommandProcessor<'_> {
         // token itself came from, any backup or recovery insertion, and any
         // finished stored replay -- before `begin_token_list(..., macro)`.
         // Those retirements must precede this body's input push.
-        self.retire_depleted_token_lists_before_macro_replay()?;
+        self.conserve_input_stack()?;
         let provenance = self.state.macro_definition_provenance(definition);
         let _level = self.push_macro_activation(
             definition,

@@ -1670,27 +1670,52 @@ become normal input.
 `get_token` invokes `get_next` under canonical control-sequence creation policy
 and returns the same `CurrentCommand` with its packed token spelling.
 
-`back_input`:
+`back_input` implements TeX82 §325 in that section's order:
 
 1. validates that the nonce-bearing delivery stamp still identifies the most
    recent raw transition in the live processor episode (not merely an equal
    token at an equal cursor position);
-2. undoes exactly one literal-brace alignment adjustment made by that
-   delivery;
-3. rewinds the current level without allocation when the exact level and
-   cursor remain current and the backup treatment is ordinary; otherwise
+2. runs §325's stack-conservation loop (§15.1 below) so every depleted
+   token-list level retires _before_ the backup exists;
+3. undoes exactly one literal-brace alignment adjustment made by that
+   delivery, which is §325's `align_state` correction;
 4. pushes a backed-up token level carrying the exact spelling, origin, raw
    source span, and typed canonical location.
 
-One-delivery treatments such as `\\noexpand` always use the backed-up level,
-including when the original token-list cursor remains rewindable.
+Every backup is an explicit level: §325 has no in-place rewind, and a
+one-delivery treatment such as `\\noexpand` therefore needs no special case.
 
 Semantic equality to a previously delivered token is not proof that the token
-can be rewound.
+can be backed up.
 
 `back_error` performs the same backup and then queues the canonical recoverable
 diagnostic. Inserted recovery tokens acquire explicit inserted origins and
 ordinary future delivery semantics.
+
+### 15.1 Stack conservation before a new token list
+
+TeX82 §§325 and 390 spell the identical loop before pushing a new token list:
+
+```text
+while (state=token_list)and(loc=null)and(token_type<>v_template) do
+  end_token_list; {conserve stack space}
+```
+
+§390 runs it before `macro_call` installs a replacement text; §325 runs it as
+`back_input`'s first act. The command core has exactly one implementation,
+`CommandProcessor::conserve_input_stack`, and both callers use it.
+
+The loop's condition is `loc=null` alone. It is therefore total over
+token-list kind -- depleted macro bodies, replayed parameters, backups,
+recovery insertions, u-templates, and stored replay episodes all drain here --
+it iterates over a whole depleted run rather than one level, and it does not
+consult which level made the last delivery. Narrowing it to a particular kind
+or to the delivering level reorders the resulting `input retire` transitions
+after the new level's push, which is observable. `v_template` is the sole
+exception in both sections: an exhausted v-part stays live until `do_endv`
+retires it (§13's alignment cell completion). A retirement that completes an
+executor-owned stored replay episode records that completion for the next
+`get_next` and keeps draining.
 
 ## 16. Scanner status and outer validity
 

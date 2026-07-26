@@ -316,7 +316,7 @@ impl CommandProcessor<'_> {
         } else {
             self.back_input(second)?;
         }
-        self.replay_expandafter_first(first);
+        self.replay_expandafter_first(first)?;
         Ok(())
     }
 
@@ -540,7 +540,8 @@ impl CommandProcessor<'_> {
         }
     }
 
-    fn replay_expandafter_first(&mut self, command: CurrentCommand) {
+    fn replay_expandafter_first(&mut self, command: CurrentCommand) -> Result<(), CommandError> {
+        self.conserve_input_stack()?;
         self.undo_alignment_delivery(&command);
         let level = self.command.push_token_level(
             TokenPayload::BackedUp(SharedBackedUpBuffer::new(vec![BackedUpToken {
@@ -569,6 +570,7 @@ impl CommandProcessor<'_> {
                 tokens: vec![self.observed_command_spelling(&command)],
             }));
         }
+        Ok(())
     }
 
     /// Creates one invocation provenance node and atomically exposes its
