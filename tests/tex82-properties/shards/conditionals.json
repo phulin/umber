@@ -1,0 +1,526 @@
+{
+  "schema": 1,
+  "domain": "conditionals",
+  "reviewed": true,
+  "module_dispositions": [
+    {
+      "modules": { "first": 210, "last": 210 },
+      "disposition": "property",
+      "owner": "tex-command::conditionals",
+      "property_ids": ["tex82.conditionals.classification"],
+      "gap_bead": null,
+      "rationale": "Defines the shared if_test and fi_or_else command classes exercised by conditional dispatch."
+    },
+    {
+      "modules": { "first": 222, "last": 222 },
+      "disposition": "definition_only",
+      "owner": "tex-command::conditionals",
+      "property_ids": [],
+      "gap_bead": null,
+      "rationale": "Defines frozen_fi among the permanent eqtb identities; its executable recovery use is classified in §§336 and 493–510."
+    },
+    {
+      "modules": { "first": 336, "last": 336 },
+      "disposition": "property",
+      "owner": "tex-command::conditionals",
+      "property_ids": ["tex82.conditionals.eof-and-final-recovery"],
+      "gap_bead": null,
+      "rationale": "Owns outer-validity recovery when skipped conditional text reaches EOF or an outer token."
+    },
+    {
+      "modules": { "first": 366, "last": 366 },
+      "disposition": "context_only",
+      "owner": "tex-command::expansion",
+      "property_ids": [],
+      "gap_bead": null,
+      "rationale": "Enumerates the general expandable-command interval; §367 supplies the independently executable conditional dispatch."
+    },
+    {
+      "modules": { "first": 367, "last": 367 },
+      "disposition": "property",
+      "owner": "tex-command::conditionals",
+      "property_ids": ["tex82.conditionals.expandable-dispatch"],
+      "gap_bead": null,
+      "rationale": "Dispatches if_test to conditional and fi_or_else to delimiter processing from the expansion loop."
+    },
+    {
+      "modules": { "first": 487, "last": 487 },
+      "disposition": "property",
+      "owner": "tex-command::conditionals",
+      "property_ids": ["tex82.conditionals.classification"],
+      "gap_bead": null,
+      "rationale": "Defines and registers all seventeen TeX82 conditional predicate operands."
+    },
+    {
+      "modules": { "first": 488, "last": 488 },
+      "disposition": "definition_only",
+      "owner": "tex-command::conditionals",
+      "property_ids": [],
+      "gap_bead": null,
+      "rationale": "Provides print_cmd_chr spellings for predicate command codes already classified by §487."
+    },
+    {
+      "modules": { "first": 489, "last": 489 },
+      "disposition": "property",
+      "owner": "tex-command::conditionals",
+      "property_ids": ["tex82.conditionals.stack-lifecycle"],
+      "gap_bead": null,
+      "rationale": "Defines the independent condition stack, current limit, kind, and source-line state."
+    },
+    {
+      "modules": { "first": 490, "last": 490 },
+      "disposition": "definition_only",
+      "owner": "tex-command::conditionals",
+      "property_ids": [],
+      "gap_bead": null,
+      "rationale": "Initializes the empty condition-stack representation defined by §489."
+    },
+    {
+      "modules": { "first": 491, "last": 491 },
+      "disposition": "property",
+      "owner": "tex-command::conditionals",
+      "property_ids": ["tex82.conditionals.classification"],
+      "gap_bead": null,
+      "rationale": "Registers fi, or, and else in the shared fi_or_else command class and freezes fi for recovery."
+    },
+    {
+      "modules": { "first": 492, "last": 492 },
+      "disposition": "definition_only",
+      "owner": "tex-command::conditionals",
+      "property_ids": [],
+      "gap_bead": null,
+      "rationale": "Provides print_cmd_chr spellings for delimiter command codes already classified by §491."
+    },
+    {
+      "modules": { "first": 493, "last": 494 },
+      "disposition": "property",
+      "owner": "tex-command::conditionals",
+      "property_ids": ["tex82.conditionals.skipped-text"],
+      "gap_bead": null,
+      "rationale": "Defines pass_text scanner scope, nested-condition counting, delimiter stopping, and skip-line tracking."
+    },
+    {
+      "modules": { "first": 495, "last": 497 },
+      "disposition": "property",
+      "owner": "tex-command::conditionals",
+      "property_ids": ["tex82.conditionals.stack-lifecycle"],
+      "gap_bead": null,
+      "rationale": "Defines push, pop, and identity-specific limit changes across recursive conditional evaluation."
+    },
+    {
+      "modules": { "first": 498, "last": 500 },
+      "disposition": "property",
+      "owner": "tex-command::conditionals",
+      "property_ids": ["tex82.conditionals.branch-and-delimiters"],
+      "gap_bead": null,
+      "rationale": "Defines true/false branch selection and the nested-frame-sensitive false-limb skip."
+    },
+    {
+      "modules": { "first": 501, "last": 501 },
+      "disposition": "property",
+      "owner": "tex-command::conditionals",
+      "property_ids": ["tex82.conditionals.scalar-state-predicates"],
+      "gap_bead": null,
+      "rationale": "Dispatches every TeX82 comparison family to its canonical operand scanner or state query."
+    },
+    {
+      "modules": { "first": 502, "last": 502 },
+      "disposition": "context_only",
+      "owner": "tex-command::conditionals",
+      "property_ids": [],
+      "gap_bead": null,
+      "rationale": "Tracing-only display of an already computed boolean; it adds no independent conditional transition."
+    },
+    {
+      "modules": { "first": 503, "last": 505 },
+      "disposition": "property",
+      "owner": "tex-command::conditionals",
+      "property_ids": ["tex82.conditionals.scalar-state-predicates"],
+      "gap_bead": null,
+      "rationale": "Defines integer/dimension relations and recovery, oddness, and box-register predicates."
+    },
+    {
+      "modules": { "first": 506, "last": 508 },
+      "disposition": "property",
+      "owner": "tex-command::conditionals",
+      "property_ids": ["tex82.conditionals.token-predicates"],
+      "gap_bead": null,
+      "rationale": "Defines expanded character/category comparison and raw meaning/token-list comparison for ifx."
+    },
+    {
+      "modules": { "first": 509, "last": 510 },
+      "disposition": "property",
+      "owner": "tex-command::conditionals",
+      "property_ids": ["tex82.conditionals.branch-and-delimiters"],
+      "gap_bead": null,
+      "rationale": "Defines ifcase limb selection and legal, premature, and extra delimiter handling through fi."
+    },
+    {
+      "modules": { "first": 1335, "last": 1335 },
+      "disposition": "property",
+      "owner": "tex-command::conditionals",
+      "property_ids": ["tex82.conditionals.eof-and-final-recovery"],
+      "gap_bead": null,
+      "rationale": "Reports and unwinds every condition frame still incomplete at final cleanup."
+    }
+  ],
+  "properties": [
+    {
+      "id": "tex82.conditionals.classification",
+      "sections": [210, 487, 491],
+      "claim": "The seventeen TeX82 predicates share the expandable if_test command with operands 0 through 16, while fi, else, and or share fi_or_else operands 2, 3, and 4; recovery uses the frozen fi meaning rather than a redefinable control sequence.",
+      "preconditions": [
+        "The exact eight-bit TeX82 primitive profile has been initialized.",
+        "No extension-only predicate or delimiter is admitted to the TeX82 classification."
+      ],
+      "stimulus": [
+        "Resolve and deliver every TeX82 predicate and delimiter primitive, including a redefinition of the public fi control sequence before incomplete-skip recovery."
+      ],
+      "expected_observations": [
+        "Canonical command observations use if_test operands 0–16 and fi_or_else operands fi=2, else=3, and or=4.",
+        "Inserted recovery fi retains the inaccessible frozen primitive identity."
+      ],
+      "postconditions": [
+        "Classification alone neither pushes nor pops a condition frame.",
+        "Primitive aliases preserve the same command and operand identity."
+      ],
+      "equivalence_cases": [
+        "Existing exact tests tex82_conditionals_use_shared_if_test_identity and tex82_conditional_delimiters_use_shared_fi_or_else_identity cover all public primitive identities.",
+        "Phase 2 adds conditionals::tests::tex82_predicates_and_delimiters_classify_and_dispatch_from_aliases plus a scanner-conditionals recovery case with a redefined public fi."
+      ],
+      "recovery_cases": [
+        "An inserted frozen fi is unaffected by a live fi redefinition.",
+        "A delimiter delivered with no live condition is classified normally before extra-delimiter recovery."
+      ],
+      "semantic_owner": "tex-command::conditionals",
+      "test_level": "rust-unit+semantic-minifixture",
+      "coverage": [
+        {
+          "path": "crates/tex-command/src/observation/mod.rs",
+          "test": "tex82_conditionals_use_shared_if_test_identity"
+        },
+        {
+          "path": "crates/tex-command/src/observation/mod.rs",
+          "test": "tex82_conditional_delimiters_use_shared_fi_or_else_identity"
+        }
+      ],
+      "status": "gap",
+      "gap_bead": "umber2-johp.225"
+    },
+    {
+      "id": "tex82.conditionals.expandable-dispatch",
+      "sections": [367],
+      "claim": "Expanded delivery invokes the conditional evaluator for if_test and the delimiter terminator for fi_or_else, recursively completing the selected branch without leaking either command as unexpandable output.",
+      "preconditions": [
+        "Canonical expanded delivery has resolved a predicate or delimiter meaning.",
+        "The independent condition stack contains exactly the frames established by prior expanded delivery."
+      ],
+      "stimulus": [
+        "Request expanded tokens through nested predicates, accepted delimiters, premature delimiters, and delimiters in skipped text."
+      ],
+      "expected_observations": [
+        "Predicate delivery enters conditional evaluation and emits stack/branch observations before expanded delivery resumes.",
+        "Delimiter delivery validates the live frame limit, skips when required, and never escapes as an ordinary expanded token."
+      ],
+      "postconditions": [
+        "Expanded delivery resumes at the first token in the selected live branch.",
+        "Recursive expansion changes only the frame identified by the predicate that initiated it."
+      ],
+      "equivalence_cases": [
+        "Direct primitive tokens and control-sequence aliases use the same dispatch.",
+        "Phase 2 adds conditionals::tests::expanded_dispatch_consumes_all_if_test_and_fi_or_else_commands and a semantic-matrix row proving no expanded delimiter leakage."
+      ],
+      "recovery_cases": [
+        "A premature delimiter replays the inserted relax before operand scanning continues.",
+        "An extra delimiter is diagnosed and ignored at its raw-delivery boundary."
+      ],
+      "semantic_owner": "tex-command::conditionals",
+      "test_level": "rust-unit+semantic-minifixture",
+      "coverage": [
+        {
+          "path": "crates/tex-command/src/conditionals/tests.rs",
+          "test": "boolean_condition_skips_false_limb_and_else_skips_true_remainder"
+        },
+        {
+          "path": "crates/tex-command/src/conditionals/tests.rs",
+          "test": "delimiter_during_operand_scan_replays_each_missing_if_operand"
+        }
+      ],
+      "status": "gap",
+      "gap_bead": "umber2-johp.225"
+    },
+    {
+      "id": "tex82.conditionals.stack-lifecycle",
+      "sections": [489, 495, 496, 497],
+      "claim": "Conditions form a stack independent of input and save stacks; push preserves the prior limit, kind, and source line, pop restores them, and limit changes target the initiating frame even when recursive operand expansion has pushed newer frames.",
+      "preconditions": [
+        "The condition stack is empty or contains a well-formed outer frame.",
+        "The current source line is known at predicate entry."
+      ],
+      "stimulus": [
+        "Enter, complete, and pop nested conditions, including an outer operand whose expansion evaluates and closes an inner condition."
+      ],
+      "expected_observations": [
+        "Each predicate pushes an evaluating frame with its kind and source line.",
+        "True completion changes that exact frame to else; false completion changes it to fi or pops it; fi restores the prior frame."
+      ],
+      "postconditions": [
+        "Popping the last frame restores the empty-stack normal limit and zero current condition state.",
+        "Input-level pushes/pops and grouping do not own or reorder condition frames."
+      ],
+      "equivalence_cases": [
+        "Nested source, macro, and token-list inputs share one independent condition stack.",
+        "Existing condition_identity_updates_outer_frame_after_nested_push covers stable identity; Phase 2 adds conditionals::tests::stack_preserves_lines_limits_and_independence_across_all_pop_paths."
+      ],
+      "recovery_cases": [
+        "Recursive evaluation may temporarily place a newer frame above the saved frame without retargeting its limit change.",
+        "Final cleanup reports source lines from top to bottom before freeing incomplete frames."
+      ],
+      "semantic_owner": "tex-command::conditionals",
+      "test_level": "rust-unit+semantic-minifixture",
+      "coverage": [
+        {
+          "path": "crates/tex-command/src/conditionals/tests.rs",
+          "test": "condition_identity_updates_outer_frame_after_nested_push"
+        },
+        {
+          "path": "crates/tex-command/src/conditionals/tests.rs",
+          "test": "true_ifx_fi_observes_branch_before_popping_its_frame"
+        }
+      ],
+      "status": "gap",
+      "gap_bead": "umber2-johp.225"
+    },
+    {
+      "id": "tex82.conditionals.skipped-text",
+      "sections": [493, 494],
+      "claim": "pass_text temporarily sets scanner status to skipping, reads only raw commands, balances nested if_test/fi pairs, ignores braces as structure, and stops at the first outer or, else, or fi while preserving the found delimiter for its caller.",
+      "preconditions": [
+        "A live condition has selected a limb that must be skipped.",
+        "The prior scanner status and the starting source line are available."
+      ],
+      "stimulus": [
+        "Skip text containing expandable macros, braces, nested conditions, inner delimiters, outer control sequences, and an EOF boundary."
+      ],
+      "expected_observations": [
+        "Skipped expandable tokens are delivered raw and not expanded, while nested predicates increment and nested fi decrements the local depth.",
+        "Scanner status changes to skipping and is restored exactly once around each pass_text invocation."
+      ],
+      "postconditions": [
+        "The cursor is immediately after the stopping delimiter and no skipped branch effect has executed.",
+        "The independent condition stack is changed only by the caller or by nested-fi cleanup required by §500."
+      ],
+      "equivalence_cases": [
+        "Literal and control-sequence braces have no grouping effect while skipped.",
+        "Existing pass_text_uses_get_next_and_skips_nested_conditionals covers raw nesting; Phase 2 adds conditionals::tests::pass_text_does_not_expand_or_execute_skipped_tokens and scanner-conditionals skipped-side-effect markers."
+      ],
+      "recovery_cases": [
+        "An outer token during skipping is backed up and recovery inserts frozen fi.",
+        "EOF during skipping reports the skip start line before inserted-fi replay."
+      ],
+      "semantic_owner": "tex-command::conditionals",
+      "test_level": "rust-unit+semantic-minifixture",
+      "coverage": [
+        {
+          "path": "crates/tex-command/src/conditionals/tests.rs",
+          "test": "pass_text_uses_get_next_and_skips_nested_conditionals"
+        }
+      ],
+      "status": "gap",
+      "gap_bead": "umber2-johp.225"
+    },
+    {
+      "id": "tex82.conditionals.branch-and-delimiters",
+      "sections": [498, 499, 500, 509, 510],
+      "claim": "Boolean and ifcase selection use one nesting-aware skip machine: true booleans wait for else or fi, false booleans find their own else/fi, ifcase skips exactly the requested limbs, and accepted or/else skip through the matching fi before popping.",
+      "preconditions": [
+        "A predicate frame was pushed with evaluating limit before any operands were scanned.",
+        "Delimiter legality is compared against the live frame's canonical limit ordering."
+      ],
+      "stimulus": [
+        "Evaluate true and false booleans; zero, positive, exhausted, and negative ifcase indices; nested conditions during evaluation and skipping; and every delimiter at evaluating, else, or, fi, and empty-stack limits."
+      ],
+      "expected_observations": [
+        "False limbs record each stopped delimiter while still evaluating, then common_ending pops on fi or changes the frame to fi on else.",
+        "ifcase records each skipped or under evaluating, changes to or only for a selected case, and negative indices continue until else or fi.",
+        "Accepted or and else skip remaining limbs without changing the frame limit; fi pops immediately."
+      ],
+      "postconditions": [
+        "Exactly one branch is selected and only its effects execute.",
+        "After the matching fi, the prior condition frame and limit are restored."
+      ],
+      "equivalence_cases": [
+        "Zero ifcase selects the first limb without pass_text; positive indices select the corresponding or-delimited limb.",
+        "Existing focused tests cover selected/exhausted positive cases; Phase 2 adds conditionals::tests::ifcase_zero_negative_else_and_fi_boundaries and scanner-conditionals transcript markers for every case boundary."
+      ],
+      "recovery_cases": [
+        "An or encountered while seeking a false boolean's else/fi is diagnosed as extra and skipping continues.",
+        "A delimiter above an evaluating limit inserts relax; above any completed limit it emits the matching Extra diagnostic and is ignored."
+      ],
+      "semantic_owner": "tex-command::conditionals",
+      "test_level": "rust-unit+semantic-minifixture",
+      "coverage": [
+        {
+          "path": "crates/tex-command/src/conditionals/tests.rs",
+          "test": "boolean_condition_skips_false_limb_and_else_skips_true_remainder"
+        },
+        {
+          "path": "crates/tex-command/src/conditionals/tests.rs",
+          "test": "numeric_and_ifcase_selection_use_the_same_skip_machine"
+        },
+        {
+          "path": "crates/tex-command/src/conditionals/tests.rs",
+          "test": "selected_ifcase_limb_skips_remaining_limbs_without_extra_delimiter_errors"
+        },
+        {
+          "path": "crates/tex-command/src/conditionals/tests.rs",
+          "test": "redundant_else_inside_a_selected_true_limb_is_skipped_silently"
+        }
+      ],
+      "status": "gap",
+      "gap_bead": "umber2-johp.225"
+    },
+    {
+      "id": "tex82.conditionals.scalar-state-predicates",
+      "sections": [501, 503, 504, 505],
+      "claim": "TeX82 evaluates integer and dimension relations, oddness, mode/inner state, box kind/voidness, stream EOF state, and constant true/false predicates through their canonical scanners and executor-owned state without changing the tested values.",
+      "preconditions": [
+        "Typed integer, normal-dimension, register, box, mode, and read-stream queries expose canonical current state.",
+        "Predicate operands are scanned after the evaluating frame has been pushed."
+      ],
+      "stimulus": [
+        "Exercise less/equal/greater integer and dimension comparisons, odd positive/zero/negative integers, every outer/inner mode family, void/hbox/vbox registers, open/closed streams, and true/false constants."
+      ],
+      "expected_observations": [
+        "ifnum and ifdim consume two typed operands and one relation; ifodd uses Pascal odd semantics.",
+        "Mode predicates use absolute mode, ifinner uses negative mode, box predicates distinguish null/hlist/vlist, and ifeof tests the scanned four-bit stream."
+      ],
+      "postconditions": [
+        "Predicate reads do not mutate registers, boxes, mode, or stream-open state.",
+        "The selected boolean is handed to the common branch machine."
+      ],
+      "equivalence_cases": [
+        "Literal, signed-radix, register, parameter, and internal values with equal canonical values compare identically.",
+        "Existing tests cover representative numeric, dimension, mode, box, and stream cases; Phase 2 adds conditionals::tests::all_scalar_and_state_predicate_truth_tables and scanner-conditionals reference-visible truth-table markers."
+      ],
+      "recovery_cases": [
+        "A missing relation reports Missing = inserted, backs up the nonrelation token, and compares for equality.",
+        "An out-of-range stream or box number follows its canonical scanner recovery before the predicate query."
+      ],
+      "semantic_owner": "tex-command::conditionals",
+      "test_level": "rust-unit+semantic-minifixture",
+      "coverage": [
+        {
+          "path": "crates/tex-command/src/conditionals/tests.rs",
+          "test": "numeric_and_ifcase_selection_use_the_same_skip_machine"
+        },
+        {
+          "path": "crates/tex-command/src/conditionals/tests.rs",
+          "test": "ifdim_uses_typed_units_and_internal_dimensions"
+        },
+        {
+          "path": "crates/tex-command/src/conditionals/tests.rs",
+          "test": "mode_and_box_predicates_use_host_and_aggregate_queries"
+        },
+        {
+          "path": "crates/tex-command/src/conditionals/tests.rs",
+          "test": "ifeof_reads_stream_open_state_and_recovers_a_bad_stream_number"
+        }
+      ],
+      "status": "gap",
+      "gap_bead": "umber2-johp.225"
+    },
+    {
+      "id": "tex82.conditionals.token-predicates",
+      "sections": [506, 507, 508],
+      "claim": "if and ifcat expand operands and compare normalized character code or category, including noexpand-active handling, while ifx reads both operands raw and compares nonmacro meanings or macro flags plus complete parameter/replacement token texts.",
+      "preconditions": [
+        "Current meanings and immutable macro token texts are available without using allocation identity as semantics.",
+        "The scanner status can be temporarily normalized while ifx reads outer meanings."
+      ],
+      "stimulus": [
+        "Compare characters, category variants, active characters after noexpand, noncharacter controls, equal/different primitive meanings, and macros varying flags, parameter text, replacement text, and storage identity."
+      ],
+      "expected_observations": [
+        "if compares character codes and ifcat compares categories after expanded delivery; noncharacters use the common relax/256 sentinel.",
+        "ifx does not expand operands, admits outer controls, and treats macros as equal exactly when command flags and raw token sequences match."
+      ],
+      "postconditions": [
+        "Exactly two operands are consumed and the prior scanner status is restored.",
+        "Macro reference/storage identity has no effect on ifx equality."
+      ],
+      "equivalence_cases": [
+        "Distinct macro allocations containing identical flags and tokens compare equal; expanded definitions with different stored tokens compare unequal.",
+        "Existing tests cover normalization, raw delivery, flags, and noexpand-active behavior; Phase 2 adds conditionals::tests::if_ifcat_and_ifx_complete_operand_matrix and matching scanner-conditionals markers."
+      ],
+      "recovery_cases": [
+        "A delimiter encountered while either operand is being obtained follows evaluating-limit inserted-relax recovery.",
+        "A noncharacter operand to if/ifcat is normalized rather than diagnosed."
+      ],
+      "semantic_owner": "tex-command::conditionals",
+      "test_level": "rust-unit+semantic-minifixture",
+      "coverage": [
+        {
+          "path": "crates/tex-command/src/conditionals/tests.rs",
+          "test": "ifx_reads_unexpanded_operands_through_get_token"
+        },
+        {
+          "path": "crates/tex-command/src/conditionals/tests.rs",
+          "test": "ifx_compares_macro_flags_and_raw_definition_tokens_not_storage_identity"
+        },
+        {
+          "path": "crates/tex-command/src/conditionals/tests.rs",
+          "test": "character_and_category_tests_normalize_non_character_operands"
+        },
+        {
+          "path": "crates/tex-command/src/conditionals/tests.rs",
+          "test": "noexpand_before_an_active_character_compares_as_that_character"
+        }
+      ],
+      "status": "gap",
+      "gap_bead": "umber2-johp.225"
+    },
+    {
+      "id": "tex82.conditionals.eof-and-final-recovery",
+      "sections": [336, 1335],
+      "claim": "EOF or an outer token during conditional skipping emits the canonical incomplete-if diagnostic and inserts frozen fi before parent input resumes; end/dump separately reports and unwinds every still-open condition with its kind and source line.",
+      "preconditions": [
+        "Scanner status is skipping with a live current condition, or final cleanup begins with one or more live condition frames.",
+        "The skip start line and each condition's entry line have been retained."
+      ],
+      "stimulus": [
+        "Exhaust a child file and the terminal source while pass_text is active, encounter an outer control during skipping, and invoke final cleanup with nested incomplete conditions."
+      ],
+      "expected_observations": [
+        "Outer-validity recovery identifies the current condition, reports the skip start line, distinguishes EOF wording, and inserts inaccessible frozen fi.",
+        "Final cleanup reports incomplete frames from innermost to outermost with nonzero source lines and frees the entire stack."
+      ],
+      "postconditions": [
+        "Inserted-fi replay permits ordinary conditional completion without redefinable-token dependence.",
+        "After final cleanup no condition node remains live."
+      ],
+      "equivalence_cases": [
+        "Physical-file and token-list exhaustion use the same skipping recovery ordering at their canonical input boundaries.",
+        "The committed scanner-conditionals-eof minifixture covers one child EOF; Phase 2 adds conditionals::tests::skipping_eof_outer_and_final_cleanup_recovery_order plus nested EOF/final-cleanup semantic cases."
+      ],
+      "recovery_cases": [
+        "An outer token is backed up for rereading after inserted-fi recovery; EOF has no token to back up.",
+        "Multiple incomplete conditions at final cleanup each produce one ordered report rather than one collapsed diagnostic."
+      ],
+      "semantic_owner": "tex-command::conditionals",
+      "test_level": "rust-unit+semantic-minifixture",
+      "coverage": [
+        {
+          "path": "crates/tex-command/src/conditionals/tests.rs",
+          "test": "evaluating_delimiter_recovery_is_typed_and_frame_specific"
+        },
+        {
+          "path": "crates/tex-command/src/conditionals/tests.rs",
+          "test": "delimiter_during_operand_scan_replays_each_missing_if_operand"
+        }
+      ],
+      "status": "gap",
+      "gap_bead": "umber2-johp.225"
+    }
+  ]
+}
