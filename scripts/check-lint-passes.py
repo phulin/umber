@@ -55,6 +55,11 @@ PASSES = (
             "tex-state": ["default", "testing"],
             "umber": ["default"],
         },
+        # Widening this pass to `--workspace --all-targets` is the obvious next
+        # step and is not free: the test targets of the non-default members are
+        # linted by no pass, and they do not currently pass the workspace lint
+        # policy (umber2-johp.201). Their lib and bin targets are covered by the
+        # shipping pass below.
         "quarantine": {},
     },
     {
@@ -142,14 +147,22 @@ def run_pass(spec: dict, member_names: dict[str, str]) -> tuple[dict[str, set[st
     """Runs one clippy pass, returning its resolved features and its diagnostics."""
 
     # No `-D warnings` on the command line.  Denial happens in this script
-    # instead, from the parsed diagnostic stream, because rustc's own level
-    # flags cannot express "deny everything except this quarantined lint":
-    # `-D warnings -W unused_variables` still denies, and `-A unused_variables`
-    # stops the diagnostic being emitted at all, which would make a stale
-    # quarantine entry indistinguishable from a live one.  Counting gives the
-    # gate strictly more teeth than `-D warnings` had: a warning from a
-    # workspace crate in dependency position, which `-D warnings` never
-    # applies to, now fails the gate too.
+    # instead, from the parsed diagnostic stream, because no rustc level flag
+    # expresses "deny everything except this lint in this one package":
+    # `-D warnings -W <lint>` still denies, and `-A <lint>` stops the
+    # diagnostic being emitted at all, which would make a stale quarantine
+    # entry indistinguishable from a live one.  Counting is strictly stronger
+    # than `-D warnings`, which never applied to a workspace crate in
+    # dependency position.
+    #
+    # A quarantined lint is downgraded to warn for this pass so the compilation
+    # survives long enough to report every diagnostic, including the ones a
+    # manifest `deny` would otherwise turn into a hard error.  That downgrade
+    # loses no strictness: an occurrence outside the quarantine's package, or
+    # beyond its recorded count, still fails below.
+    lint_flags = []
+    for code in sorted({code for _, code in spec["quarantine"]}):
+        lint_flags += ["-W", code]
     rendered = "json-diagnostic-rendered-ansi" if sys.stderr.isatty() else "json"
     command = [
         "cargo",
@@ -157,6 +170,7 @@ def run_pass(spec: dict, member_names: dict[str, str]) -> tuple[dict[str, set[st
         "--quiet",
         f"--message-format={rendered}",
         *spec["args"],
+        *(["--", *lint_flags] if lint_flags else []),
     ]
     print(f"--- lint pass: {spec['name']} ({spec['summary']})", flush=True)
     print(f"    {' '.join(command)}", flush=True)
@@ -192,7 +206,7 @@ def run_pass(spec: dict, member_names: dict[str, str]) -> tuple[dict[str, set[st
                 sys.stderr.flush()
                 continue
             code = (message.get("code") or {}).get("code")
-            key = (package, code.removeprefix("clippy::") if code else "<uncoded>")
+            key = (package, code or "<uncoded>")
             diagnostics.record(key, rendering, quarantined=key in spec["quarantine"])
     status = process.wait()
     if status != 0:
