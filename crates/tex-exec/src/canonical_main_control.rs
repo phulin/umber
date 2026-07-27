@@ -7242,7 +7242,7 @@ fn observed_macro_token(token: Token, stores: &Universe) -> ObservedToken {
 fn begin_next_replay_alignment_cell(
     alignment: AlignmentIdentity,
     delimiter: AlignmentCellDelimiter,
-    command: &mut CommandState,
+    command: &mut CommandMachine<'_>,
     active_alignment: &mut Option<ActiveReplayAlignment>,
     modes: &mut ModeNest,
     stores: &mut Universe,
@@ -7255,7 +7255,8 @@ fn begin_next_replay_alignment_cell(
         })?;
     // Focused lifecycle tests may construct a command-state cell directly,
     // without replaying a preamble.  There is then no executor template
-    // selection to perform after the otherwise complete command transition.
+    // selection to perform after the otherwise complete command transition,
+    // and no §774 entry save level to replace either.
     if active.columns.is_empty() {
         return Ok(());
     }
@@ -7274,14 +7275,30 @@ fn begin_next_replay_alignment_cell(
             .ok_or(ExecError::ArithmeticOverflow)?,
         AlignmentCellDelimiter::Row => 0,
     };
-    if next_column >= active.columns.len()
+    let extra_tab_recovery = next_column >= active.columns.len()
         && active.repeat_start.is_none()
         && matches!(
             delimiter,
             AlignmentCellDelimiter::Tab | AlignmentCellDelimiter::Span
-        )
-    {
+        );
+    // TeX82 §791's `if extra_info(cur_align)<>span_code then begin unsave;
+    // new_save_level(align_group)`: every entry that does not continue through
+    // `\span` replaces the §774 entry save level, discarding the cell's local
+    // assignments. §792's extra-tab recovery rewrites `extra_info` to
+    // `cr_code` *before* that test, so a `\span` whose column does not exist
+    // ends the entry -- and its save level -- after all.
+    //
+    // §791 unsaves before `@<Package an unset box for the current column@>`;
+    // here the packaging (`capture_replay_alignment_cell`) runs first because
+    // it also flushes the cell's pending characters, which TeX had already
+    // appended with the in-cell `cur_font`. `hpack`/`vpackage` at natural size
+    // read no restorable parameter, so the two orders agree.
+    if delimiter != AlignmentCellDelimiter::Span || extra_tab_recovery {
+        replace_alignment_entry_save_level(command, stores)?;
+    }
+    if extra_tab_recovery {
         let recovered = command
+            .state
             .apply_alignment_request(AlignmentRequest::RecoverExtraTab(alignment))
             .map_err(|_| ExecError::MissingToken {
                 context: "alignment extra-tab recovery",
@@ -7329,6 +7346,7 @@ fn begin_next_replay_alignment_cell(
         }
         AlignmentCellDelimiter::Tab | AlignmentCellDelimiter::Span => {
             command
+                .state
                 .apply_alignment_request(AlignmentRequest::BeginCell {
                     alignment,
                     templates,
@@ -7343,6 +7361,32 @@ fn begin_next_replay_alignment_cell(
         }
     }
     Ok(())
+}
+
+/// Applies TeX82 §791 `fin_col`'s `unsave; new_save_level(align_group)`.
+///
+/// The pair is what makes an alignment entry a scope: assignments a cell makes
+/// -- a font selection such as plain.tex's `\bf`, a `\fam`, any local register
+/// -- must not survive the `&` or `\cr` that ends it. §1063's `unsave` also
+/// releases the level's `\aftergroup` tokens, so they are backed up here just
+/// as every other canonical group exit does.
+fn replace_alignment_entry_save_level(
+    command: &mut CommandMachine<'_>,
+    stores: &mut Universe,
+) -> Result<(), ExecError> {
+    let aftergroup = leave_alignment_save_level(stores, "alignment entry group")?;
+    stores.enter_group_with_kind(GroupKind::Align);
+    schedule_aftergroup(command, stores, aftergroup)
+}
+
+/// One of TeX82 §800 `fin_align`'s `unsave`s, or §791's.
+fn leave_alignment_save_level(
+    stores: &mut Universe,
+    context: &'static str,
+) -> Result<Vec<Token>, ExecError> {
+    stores
+        .leave_group_with_kind(GroupKind::Align)
+        .map_err(|_| ExecError::MissingToken { context })
 }
 
 fn replay_alignment_mode(kind: AlignmentKind) -> Mode {
@@ -9196,6 +9240,11 @@ fn apply_scanned_step(
                 active.preamble_opening_pending = false;
                 active.preamble_start_pending = true;
             }
+            // TeX82 §774's `init_align` reaches the preamble through §645's
+            // `scan_spec(align_group,false)`, whose `new_save_level(c)` opens
+            // the save level that brackets the alignment as a whole. §800's
+            // `fin_align` removes it with the second of its two `unsave`s.
+            stores.enter_group_with_kind(GroupKind::Align);
             Ok(ReplayStep::Continue)
         }
         ScannedStep::AlignmentPreambleStart { alignment } => {
@@ -9231,6 +9280,14 @@ fn apply_scanned_step(
                 // input still reaches the existing typed init-col path.
                 active.align_peek_pending = true;
             }
+            // TeX82 §774 closes `init_align` with a second
+            // `new_save_level(align_group)`, the level that brackets one
+            // alignment *entry*. §791's `fin_col` replaces it at every `&`,
+            // `\\span`-free column end, and `\\cr`, so an assignment made in a
+            // cell -- `\\bf`, `\\tt`, a `\\fam`, any local register -- is
+            // restored before the next entry begins. §800's first `unsave`
+            // removes the last one.
+            stores.enter_group_with_kind(GroupKind::Align);
             Ok(ReplayStep::Continue)
         }
         ScannedStep::BeginNoAlign { alignment } => {
@@ -9376,7 +9433,7 @@ fn apply_scanned_step(
             begin_next_replay_alignment_cell(
                 alignment,
                 finished.delimiter,
-                command.state,
+                command,
                 active_alignment,
                 modes,
                 stores,
@@ -9389,10 +9446,18 @@ fn apply_scanned_step(
                     context: "active replay alignment",
                 });
             }
+            // TeX82 §800's `fin_align` opens with two `unsave`s -- "that
+            // |align_group| was for individual entries", then "that
+            // |align_group| was for the whole alignment" -- before it
+            // determines the column widths and packages the prototype box.
+            let entry_aftergroup = leave_alignment_save_level(stores, "alignment entry group")?;
+            let alignment_aftergroup = leave_alignment_save_level(stores, "alignment group")?;
             let active = active_alignment
                 .as_mut()
                 .expect("active replay alignment was checked");
             finish_replay_alignment(active, modes, stores)?;
+            schedule_aftergroup(command, stores, entry_aftergroup)?;
+            schedule_aftergroup(command, stores, alignment_aftergroup)?;
             command
                 .state
                 .apply_alignment_request(AlignmentRequest::Finish(alignment))

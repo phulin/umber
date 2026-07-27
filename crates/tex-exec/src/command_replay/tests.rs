@@ -4498,6 +4498,14 @@ fn nested_alignment_begin_suspends_the_outer_replay_context() {
         .active_alignment()
         .expect("inner alignment is active");
     assert_ne!(inner, outer);
+    // This focused lifecycle test drives `BeginAlignment` straight to
+    // `AlignmentFinish` without replaying a preamble, so it must stand in for
+    // the two save levels TeX82 §774's `init_align` would have opened -- §645's
+    // `scan_spec(align_group,false)` for the alignment and the explicit
+    // `new_save_level(align_group)` for its first entry -- which §800's
+    // `fin_align` removes with its two `unsave`s.
+    universe.enter_group_with_kind(tex_state::GroupKind::Align);
+    universe.enter_group_with_kind(tex_state::GroupKind::Align);
     apply_scanned_step(
         ScannedStep::AlignmentFinish { alignment: inner },
         &mut universe,
@@ -4569,6 +4577,31 @@ fn canonical_alignment_finalizes_rows_into_the_enclosing_list() {
         "nodes: {nodes:?}; terminal: {}",
         terminal_text(&universe)
     );
+}
+
+#[test]
+fn canonical_alignment_entries_are_save_levels() {
+    let mut universe = Universe::new_with_plain_catcodes();
+    let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+    // TeX82 §774 opens two `align_group` save levels -- §645's
+    // `scan_spec(align_group,false)` for the alignment and an explicit
+    // `new_save_level(align_group)` for its first entry -- §791's `fin_col`
+    // replaces the entry level at every `&` and `\cr`, and §800's `fin_align`
+    // removes both. A local assignment made in one cell therefore reaches
+    // neither the next cell, nor the next row, nor anything after the
+    // alignment.
+    register_source(
+        &mut control,
+        br"\halign{#&#\cr\count0=1 \global\count3=\count0 &\global\count4=\count0 \cr\global\count5=\count0 &\cr}\global\count6=\count0 \end",
+    );
+
+    run_to_end(&mut control, &mut universe);
+
+    assert_eq!(universe.count(3), 1, "the assigning cell still sees it");
+    assert_eq!(universe.count(4), 0, "§791 unsaves at the alignment tab");
+    assert_eq!(universe.count(5), 0, "§791 unsaves at the carriage return");
+    assert_eq!(universe.count(6), 0, "§800 unsaves both align levels");
+    assert_eq!(universe.count(0), 0);
 }
 
 #[test]
