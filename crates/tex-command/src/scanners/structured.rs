@@ -2854,7 +2854,6 @@ impl CommandProcessor<'_> {
             }
         }
     }
-
 }
 
 fn provenance(scanned: &ScannedToks) -> StructuredProvenance {
