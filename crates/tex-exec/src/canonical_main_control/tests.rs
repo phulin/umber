@@ -299,11 +299,16 @@ fn show_meaning_reads_raw_token_and_formats_each_macro_meaning_kind() {
 fn showbox_scans_register_and_distinguishes_void_from_box_contents() {
     let mut stores = Universe::new_with_plain_catcodes();
     let mut control = CanonicalMainControl::tex82_initex(&mut stores);
-    register_source(&mut control, br"\setbox0=\hbox{}\showbox0\showbox255\end");
+    register_source(
+        &mut control,
+        br"\showboxbreadth=10\showboxdepth=10\setbox0=\hbox{\kern1pt}\setbox255=\hbox{}\showbox0\showbox255\showbox1\end",
+    );
     run_to_end(&mut control, &mut stores);
     let output = terminal_text(&stores);
     assert!(output.contains("> \\box0="), "{output}");
+    assert!(output.contains("\\kern 1.0"), "{output}");
     assert!(output.contains("> \\box255="), "{output}");
+    assert!(output.contains("> \\box1="), "{output}");
     assert!(output.contains("\nvoid"), "{output}");
 }
 

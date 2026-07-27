@@ -573,15 +573,15 @@
       "recovery_cases": ["Invalid values diagnose and retain the canonical effective value."],
       "semantic_owner": "tex-exec::assignment-state",
       "test_level": "planned-rust-unit+semantic-minifixture",
-      "coverage": [],
-      "status": "gap",
-      "gap_bead": "umber2-johp.226",
-      "planned_coverage": [
+      "coverage": [
         {
           "path": "crates/tex-exec/src/assignments/tests.rs",
           "test": "prepare_mag_bounds_and_freezes_first_effective_value"
         }
-      ]
+      ],
+      "status": "covered",
+      "gap_bead": null,
+      "planned_coverage": []
     },
     {
       "id": "tex82.main-control.mode-dispatch",
@@ -623,15 +623,15 @@
       "recovery_cases": ["Repeated invalid input remains finite and stop cannot bypass pending material."],
       "semantic_owner": "tex-exec::main-control",
       "test_level": "planned-rust-unit+semantic-minifixture",
-      "coverage": [],
-      "status": "gap",
-      "gap_bead": "umber2-johp.226",
-      "planned_coverage": [
+      "coverage": [
         {
           "path": "crates/tex-exec/src/canonical_main_control/tests.rs",
           "test": "main_control_error_privilege_and_stop_paths_are_finite"
         }
-      ]
+      ],
+      "status": "covered",
+      "gap_bead": null,
+      "planned_coverage": []
     },
     {
       "id": "tex82.group.brace-dispatch",
@@ -827,7 +827,7 @@
       "test_level": "planned-rust-unit+semantic-minifixture",
       "coverage": [],
       "status": "gap",
-      "gap_bead": "umber2-johp.226",
+      "gap_bead": "umber2-vq14",
       "planned_coverage": [
         {
           "path": "crates/tex-exec/src/assignments/tests.rs",
@@ -877,7 +877,7 @@
       "test_level": "planned-rust-unit+semantic-minifixture",
       "coverage": [],
       "status": "gap",
-      "gap_bead": "umber2-johp.226",
+      "gap_bead": "umber2-t7fl",
       "planned_coverage": [
         {
           "path": "crates/tex-exec/src/assignments/tests.rs",
@@ -901,15 +901,15 @@
       "recovery_cases": ["Wrong mode, bad space factor/prevgraf, and void box diagnose or no-op as specified."],
       "semantic_owner": "tex-exec::assignments",
       "test_level": "planned-rust-unit+semantic-minifixture",
-      "coverage": [],
-      "status": "gap",
-      "gap_bead": "umber2-johp.226",
-      "planned_coverage": [
+      "coverage": [
         {
           "path": "crates/tex-exec/src/assignments/tests.rs",
           "test": "auxiliary_assignments_validate_mode_bounds_and_update_only_owned_state"
         }
-      ]
+      ],
+      "status": "covered",
+      "gap_bead": null,
+      "planned_coverage": []
     },
     {
       "id": "tex82.assignment.parshape",
@@ -925,15 +925,15 @@
       "recovery_cases": ["Dimension scanner recovery supplies each malformed pair component before installation."],
       "semantic_owner": "tex-exec::assignments",
       "test_level": "planned-rust-unit+semantic-minifixture",
-      "coverage": [],
-      "status": "gap",
-      "gap_bead": "umber2-johp.226",
-      "planned_coverage": [
+      "coverage": [
         {
           "path": "crates/tex-exec/src/assignments/tests.rs",
           "test": "parshape_assignment_scans_pair_count_and_restores_local_shape"
         }
-      ]
+      ],
+      "status": "covered",
+      "gap_bead": null,
+      "planned_coverage": []
     },
     {
       "id": "tex82.assignment.hyphenation-data",
@@ -955,7 +955,7 @@
       "test_level": "planned-rust-unit+semantic-minifixture",
       "coverage": [],
       "status": "gap",
-      "gap_bead": "umber2-johp.226",
+      "gap_bead": "umber2-ktj0",
       "planned_coverage": [
         {
           "path": "crates/tex-exec/src/assignments/tests.rs",
@@ -979,7 +979,7 @@
       "test_level": "planned-rust-unit+semantic-minifixture",
       "coverage": [],
       "status": "gap",
-      "gap_bead": "umber2-johp.226",
+      "gap_bead": "umber2-90qe",
       "planned_coverage": [
         {
           "path": "crates/tex-exec/src/assignments/tests.rs",
@@ -1007,7 +1007,7 @@
       "test_level": "planned-rust-unit+semantic-minifixture",
       "coverage": [],
       "status": "gap",
-      "gap_bead": "umber2-johp.226",
+      "gap_bead": "umber2-jrvz",
       "planned_coverage": [
         {
           "path": "crates/tex-exec/src/assignments/tests.rs",
@@ -1031,7 +1031,7 @@
       "test_level": "planned-rust-unit+semantic-minifixture",
       "coverage": [],
       "status": "gap",
-      "gap_bead": "umber2-johp.226",
+      "gap_bead": "umber2-mp0d",
       "planned_coverage": [
         {
           "path": "crates/tex-exec/src/assignments/tests.rs",
@@ -1081,15 +1081,15 @@
       "recovery_cases": ["EOF or malformed expansion recovers finitely without fabricating a terminator."],
       "semantic_owner": "tex-exec::assignments",
       "test_level": "planned-rust-unit+semantic-minifixture",
-      "coverage": [],
-      "status": "gap",
-      "gap_bead": "umber2-johp.226",
-      "planned_coverage": [
+      "coverage": [
         {
           "path": "crates/tex-exec/src/assignments/tests.rs",
           "test": "assignment_terminator_skips_space_and_relax_but_retains_first_command"
         }
-      ]
+      ],
+      "status": "covered",
+      "gap_bead": null,
+      "planned_coverage": []
     },
     {
       "id": "tex82.main-control.input-stream-open-close",
@@ -1109,7 +1109,7 @@
       "test_level": "planned-rust-unit+semantic-minifixture",
       "coverage": [],
       "status": "gap",
-      "gap_bead": "umber2-johp.226",
+      "gap_bead": "umber2-chi1",
       "planned_coverage": [
         {
           "path": "crates/tex-exec/src/canonical_main_control/tests.rs",
@@ -1135,7 +1135,7 @@
       "test_level": "planned-rust-unit+semantic-minifixture",
       "coverage": [],
       "status": "gap",
-      "gap_bead": "umber2-johp.226",
+      "gap_bead": "umber2-19aw",
       "planned_coverage": [
         {
           "path": "crates/tex-exec/src/canonical_main_control/tests.rs",
@@ -1161,7 +1161,7 @@
       "test_level": "planned-rust-unit+semantic-minifixture",
       "coverage": [],
       "status": "gap",
-      "gap_bead": "umber2-johp.226",
+      "gap_bead": "umber2-djge",
       "planned_coverage": [
         {
           "path": "crates/tex-exec/src/canonical_main_control/tests.rs",
@@ -1187,15 +1187,15 @@
       "recovery_cases": ["Runaway or missing brace follows scan_toks recovery before transformation."],
       "semantic_owner": "tex-exec::main-control",
       "test_level": "planned-rust-unit+semantic-minifixture",
-      "coverage": [],
-      "status": "gap",
-      "gap_bead": "umber2-johp.226",
-      "planned_coverage": [
+      "coverage": [
         {
           "path": "crates/tex-exec/src/canonical_main_control/tests.rs",
           "test": "case_shift_substitutes_character_codes_preserves_commands_and_replays"
         }
-      ]
+      ],
+      "status": "covered",
+      "gap_bead": null,
+      "planned_coverage": []
     },
     {
       "id": "tex82.main-control.show-dispatch",
@@ -1215,7 +1215,7 @@
       "test_level": "planned-rust-unit+semantic-minifixture",
       "coverage": [],
       "status": "gap",
-      "gap_bead": "umber2-johp.226",
+      "gap_bead": "umber2-abvi",
       "planned_coverage": [
         {
           "path": "crates/tex-exec/src/canonical_main_control/tests.rs",
@@ -1239,15 +1239,15 @@
       "recovery_cases": ["EOF raw-token recovery precedes meaning rendering."],
       "semantic_owner": "tex-exec::main-control",
       "test_level": "planned-rust-unit+semantic-minifixture",
-      "coverage": [],
-      "status": "gap",
-      "gap_bead": "umber2-johp.226",
-      "planned_coverage": [
+      "coverage": [
         {
           "path": "crates/tex-exec/src/canonical_main_control/tests.rs",
           "test": "show_meaning_reads_raw_token_and_formats_each_macro_meaning_kind"
         }
-      ]
+      ],
+      "status": "covered",
+      "gap_bead": null,
+      "planned_coverage": []
     },
     {
       "id": "tex82.main-control.show-box",
@@ -1263,15 +1263,15 @@
       "recovery_cases": ["Out-of-range selectors recover through the eight-bit scanner before inspection."],
       "semantic_owner": "tex-exec::main-control",
       "test_level": "planned-rust-unit+semantic-minifixture",
-      "coverage": [],
-      "status": "gap",
-      "gap_bead": "umber2-johp.226",
-      "planned_coverage": [
+      "coverage": [
         {
           "path": "crates/tex-exec/src/canonical_main_control/tests.rs",
           "test": "showbox_scans_register_and_distinguishes_void_from_box_contents"
         }
-      ]
+      ],
+      "status": "covered",
+      "gap_bead": null,
+      "planned_coverage": []
     },
     {
       "id": "tex82.main-control.show-value",
@@ -1287,15 +1287,15 @@
       "recovery_cases": ["Invalid internal quantities follow the_toks scanner recovery before printing."],
       "semantic_owner": "tex-exec::main-control",
       "test_level": "planned-rust-unit+semantic-minifixture",
-      "coverage": [],
-      "status": "gap",
-      "gap_bead": "umber2-johp.226",
-      "planned_coverage": [
+      "coverage": [
         {
           "path": "crates/tex-exec/src/canonical_main_control/tests.rs",
           "test": "showthe_uses_the_toks_for_each_internal_value_family_and_releases_output"
         }
-      ]
+      ],
+      "status": "covered",
+      "gap_bead": null,
+      "planned_coverage": []
     },
     {
       "id": "tex82.main-control.show-completion",
@@ -1317,7 +1317,7 @@
       "test_level": "planned-rust-unit+semantic-minifixture",
       "coverage": [],
       "status": "gap",
-      "gap_bead": "umber2-johp.226",
+      "gap_bead": "umber2-74vb",
       "planned_coverage": [
         {
           "path": "crates/tex-exec/src/canonical_main_control/tests.rs",
@@ -1349,7 +1349,7 @@
       "test_level": "planned-rust-unit+semantic-minifixture",
       "coverage": [],
       "status": "gap",
-      "gap_bead": "umber2-johp.226",
+      "gap_bead": "umber2-xfj3",
       "planned_coverage": [
         {
           "path": "crates/tex-exec/src/canonical_main_control/tests.rs",
