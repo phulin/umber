@@ -491,20 +491,48 @@ impl CommandProcessor<'_> {
         self.back_input_with_treatment(command, BackupTreatment::Ordinary)
     }
 
-    /// Performs the command-owned paired-shift probe used by TeX's math
-    /// entry and display closing paths.  A non-shift is restored through the
-    /// ordinary backup machinery, rather than becoming executor replay state.
-    pub fn scan_paired_math_shift(&mut self) -> Result<bool, CommandError> {
+    /// Performs TeX82 §1138 `init_math`'s opening probe: the lookahead that
+    /// decides whether a `$` seen in horizontal mode opens display math.
+    ///
+    /// §1138 reads the second token with `get_token`, and states the reason on
+    /// that very line -- "`get_x_token` would fail on `\ifmmode`". The probe
+    /// therefore must not expand the peeked token, and must not observe an
+    /// expanded delivery for it.
+    ///
+    /// The pair is consumed only when `outer_horizontal` holds, matching
+    /// §1138's `(cur_cmd=math_shift)and(mode>0)`: in restricted horizontal
+    /// mode `mode<0`, so even a genuine second `$` is backed up and reread as
+    /// the immediate end of an empty inline formula. Every other outcome runs
+    /// §325 `back_input`, so exactly one raw delivery is ever consumed without
+    /// a backup level.
+    pub fn scan_init_math_display_pair(
+        &mut self,
+        outer_horizontal: bool,
+    ) -> Result<bool, CommandError> {
+        let Some(next) = self.get_token()? else {
+            return Ok(false);
+        };
+        if outer_horizontal && is_math_shift(&next) {
+            Ok(true)
+        } else {
+            self.back_input(next)?;
+            Ok(false)
+        }
+    }
+
+    /// Performs TeX82 §1197's `@<Check that another \.\$ follows@>`, the probe
+    /// §1194 `after_math` runs when a display, or a display's equation number,
+    /// is closing.
+    ///
+    /// Unlike §1138's opener this one _is_ `get_x_token`, so the peeked token
+    /// is expanded and observed as an expanded delivery. A non-shift reaches
+    /// §327 `back_error`, whose backup half lives here; the executor owns the
+    /// accompanying ``Display math should end with $$`` diagnostic.
+    pub fn scan_display_end_math_shift(&mut self) -> Result<bool, CommandError> {
         let Some(next) = self.get_x_token()? else {
             return Ok(false);
         };
-        if matches!(
-            next.meaning(),
-            tex_state::meaning::Meaning::CharToken {
-                cat: tex_state::token::Catcode::MathShift,
-                ..
-            }
-        ) {
+        if is_math_shift(&next) {
             Ok(true)
         } else {
             self.back_input(next)?;
@@ -1735,6 +1763,19 @@ fn character_from_code(code: CharacterCode) -> char {
             .to_char()
             .expect("registered Unicode source supplies valid scalars"),
     }
+}
+
+/// Whether a delivered command is TeX82's `math_shift` command code -- the
+/// single test both §1138's opener and §1197's closer apply to their peeked
+/// token, and the reason neither may grow a private notion of "a `$`".
+fn is_math_shift(command: &CurrentCommand) -> bool {
+    matches!(
+        command.meaning(),
+        Meaning::CharToken {
+            cat: Catcode::MathShift,
+            ..
+        }
+    )
 }
 
 fn right_brace() -> TracedTokenWord {

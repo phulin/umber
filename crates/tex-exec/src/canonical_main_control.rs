@@ -1247,7 +1247,11 @@ impl CanonicalMainControl {
         match self.modes.current_mode() {
             Mode::Horizontal | Mode::RestrictedHorizontal => {
                 crate::assignments::flush_pending_hchars(&mut self.modes, stores)?;
-                if paired && self.modes.current_mode() == Mode::Horizontal {
+                // §1138 already applied its own `mode>0` test while probing:
+                // in restricted horizontal mode the second `$` was backed up
+                // rather than consumed, so `paired` is false there and this
+                // must not retest the mode and disagree with the backup.
+                if paired {
                     self.enter_canonical_display(stores)?;
                 } else {
                     self.enter_canonical_math(false, stores);
@@ -4411,25 +4415,41 @@ fn scan_command(
         Meaning::CharToken {
             cat: Catcode::MathShift,
             ..
-        } => {
-            if matches!(mode, Mode::Vertical | Mode::InternalVertical) {
-                // §1090 retries this exact shift after `new_graf`; probing it
-                // here would run before `\everypar`.
+        } => match mode {
+            // §1090 retries this exact shift after `new_graf`; probing it
+            // here would run before `\everypar`.
+            Mode::Vertical | Mode::InternalVertical => {
                 processor.back_input(command).map_err(command_error)?;
                 Ok(ScannedStep::ParagraphStart)
-            } else {
-                let paired = matches!(
-                    mode,
-                    Mode::Horizontal | Mode::RestrictedHorizontal | Mode::DisplayMath
-                ) || (mode == Mode::Math && display_eq_no);
-                let paired = if paired {
-                    processor.scan_paired_math_shift().map_err(command_error)?
-                } else {
-                    false
-                };
+            }
+            // §1138 `init_math`: `hmode+math_shift`, for either sign of
+            // `hmode`. The probe is `get_token`, and only `mode>0` -- the
+            // unrestricted horizontal mode -- may consume the second `$`.
+            Mode::Horizontal | Mode::RestrictedHorizontal => {
+                let paired = processor
+                    .scan_init_math_display_pair(mode == Mode::Horizontal)
+                    .map_err(command_error)?;
                 Ok(ScannedStep::MathShift { paired })
             }
-        }
+            // §1194 `after_math` reaches §1197's `get_x_token` probe twice
+            // over: once for a closing display (`m>=0` with `a=null`) and
+            // once for a closing equation number (`mode=-m`).
+            Mode::DisplayMath => {
+                let paired = processor
+                    .scan_display_end_math_shift()
+                    .map_err(command_error)?;
+                Ok(ScannedStep::MathShift { paired })
+            }
+            Mode::Math if display_eq_no => {
+                let paired = processor
+                    .scan_display_end_math_shift()
+                    .map_err(command_error)?;
+                Ok(ScannedStep::MathShift { paired })
+            }
+            // §1194's `m<0` closes inline math through `@<Finish math in
+            // text@>`, which probes nothing at all.
+            Mode::Math => Ok(ScannedStep::MathShift { paired: false }),
+        },
         Meaning::CharToken {
             cat: Catcode::Letter | Catcode::Other,
             ..
