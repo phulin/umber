@@ -11,6 +11,47 @@ cd "$repo_root"
 # formatter can never hide a red linter: under `set -e` a failing `dprint check`
 # aborted the script before clippy ever ran, and the run reported only the first
 # failure.
+#
+# Naming gates on the command line runs exactly those gates, with byte-identical
+# commands. This exists so nobody has to retype a gate's invocation: a hand
+# written `cargo clippy -p <crate>` omits the `-D warnings` that gives the
+# workspace lint policy its teeth, exits 0 on a real violation, and makes a
+# "clippy clean" report mean nothing. `scripts/check.sh clippy` cannot diverge
+# from the gate because it is the gate.
+
+all_gates=(dprint biome rustfmt clippy node-width-budget)
+selected_gates=()
+
+usage() {
+  cat >&2 <<EOF
+usage: ${BASH_SOURCE[0]##*/} [gate ...]
+
+Runs the repository format and lint gates. With no arguments every gate runs.
+Naming gates runs exactly those, with the same commands the full run uses.
+
+gates: ${all_gates[*]}
+EOF
+}
+
+for requested in "$@"; do
+  case " ${all_gates[*]} " in
+    *" $requested "*) selected_gates+=("$requested") ;;
+    *)
+      printf 'check.sh: unknown gate %q\n\n' "$requested" >&2
+      usage
+      exit 2
+      ;;
+  esac
+done
+
+# The node-width budget is opt-in in a full run because it is slow; naming it
+# explicitly is itself the opt-in.
+if ((${#selected_gates[@]} == 0)); then
+  selected_gates=(dprint biome rustfmt clippy)
+  if [[ "${CHECK_BENCH:-0}" == 1 ]]; then
+    selected_gates+=(node-width-budget)
+  fi
+fi
 
 failed_gates=()
 ran_gates=0
@@ -18,6 +59,10 @@ ran_gates=0
 gate() {
   local name="$1"
   shift
+  case " ${selected_gates[*]} " in
+    *" $name "*) ;;
+    *) return 0 ;;
+  esac
   ran_gates=$((ran_gates + 1))
   printf '\n=== check.sh gate: %s\n' "$name"
   local status=0
@@ -64,10 +109,7 @@ gate dprint run_dprint
 gate biome run_biome
 gate rustfmt cargo fmt --all --check
 gate clippy run_clippy
-
-if [[ "${CHECK_BENCH:-0}" == 1 ]]; then
-  gate node-width-budget scripts/check-node-width-budget.sh
-fi
+gate node-width-budget scripts/check-node-width-budget.sh
 
 if ((${#failed_gates[@]} == 0)); then
   printf '\ncheck.sh: all %d gates passed.\n' "$ran_gates"

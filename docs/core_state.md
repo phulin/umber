@@ -216,7 +216,13 @@ handle-bearing node forms miss before live execution mutates.
 `World` is the sole capability for inputs, output streams, terminal text,
 fixed job time, randomness, filesystem-like effects, and resource observation.
 Engine crates do not call host filesystem, clock, terminal, or random APIs.
-`clippy.toml` enforces the principal forbidden methods.
+`clippy.toml` lists the principal forbidden methods and
+`[workspace.lints.clippy]` denies `disallowed_methods`, so the policy fails any
+`cargo clippy` rather than only the `-D warnings` gate. Host-side test
+harnesses and tooling that legitimately own filesystem I/O carry a narrow
+per-item `#[allow(clippy::disallowed_methods)]` with a reason; engine and test
+code that can avoid the read entirely, such as a compile-time `include_str!`,
+should do that instead of taking the exception.
 
 Input streams retain TeX's semantic open/closed state separately from their
 byte cursor. Reading the final physical line leaves a stream open; only a
