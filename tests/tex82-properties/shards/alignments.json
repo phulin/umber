@@ -1,0 +1,589 @@
+{
+  "domain": "alignment-preambles-templates-and-lifecycle",
+  "module_dispositions": [
+    {
+      "modules": { "first": 768, "last": 768 },
+      "disposition": "context_only",
+      "owner": "tex-exec::align",
+      "property_ids": [],
+      "gap_bead": null,
+      "rationale": "Worked alignment narrative that motivates the executable procedures in §§769–812."
+    },
+    {
+      "modules": { "first": 769, "last": 769 },
+      "disposition": "definition_only",
+      "owner": "tex-exec::align",
+      "property_ids": [],
+      "gap_bead": null,
+      "rationale": "Alignrecord field aliases used by the lifecycle and packing properties."
+    },
+    {
+      "modules": { "first": 770, "last": 772 },
+      "disposition": "property",
+      "owner": "tex-command::alignment-delivery",
+      "property_ids": ["tex82.align.nested-state-stack"],
+      "gap_bead": "umber2-johp.227",
+      "rationale": "Complete push/pop ownership of nested alignment delivery state."
+    },
+    {
+      "modules": { "first": 773, "last": 773 },
+      "disposition": "context_only",
+      "owner": "tex-exec::align",
+      "property_ids": [],
+      "gap_bead": null,
+      "rationale": "Procedure-order overview; each named procedure is claimed below."
+    },
+    {
+      "modules": { "first": 774, "last": 776 },
+      "disposition": "property",
+      "owner": "tex-exec::align",
+      "property_ids": ["tex82.align.initialize-spec-and-mode"],
+      "gap_bead": "umber2-johp.227",
+      "rationale": "Alignment initialization, packing specification, mode transition, and display recovery."
+    },
+    {
+      "modules": { "first": 777, "last": 782 },
+      "disposition": "property",
+      "owner": "tex-exec::align-preamble",
+      "property_ids": ["tex82.align.preamble-tabskip-and-delimiters"],
+      "gap_bead": "umber2-johp.227",
+      "rationale": "Preamble list construction, delimiter identities, tabskip assignment, span expansion, and interwoven recovery."
+    },
+    {
+      "modules": { "first": 783, "last": 784 },
+      "disposition": "property",
+      "owner": "tex-exec::align-preamble",
+      "property_ids": ["tex82.align.u-v-template-scan"],
+      "gap_bead": "umber2-johp.227",
+      "rationale": "Distinct u- and v-template scanning and malformed-parameter recovery."
+    },
+    {
+      "modules": { "first": 785, "last": 785 },
+      "disposition": "property",
+      "owner": "tex-exec::align",
+      "property_ids": ["tex82.align.row-lookahead-noalign-finish"],
+      "gap_bead": "umber2-johp.227",
+      "rationale": "Row lookahead selects noalign, finish, ignored crcr, or a new row."
+    },
+    {
+      "modules": { "first": 786, "last": 786 },
+      "disposition": "property",
+      "owner": "tex-exec::align",
+      "property_ids": ["tex82.align.row-start-mode"],
+      "gap_bead": "umber2-johp.227",
+      "rationale": "Row semantic level, mode switch, and leading tabskip lifecycle."
+    },
+    {
+      "modules": { "first": 787, "last": 787 },
+      "disposition": "property",
+      "owner": "tex-exec::align",
+      "property_ids": ["tex82.align.span-start"],
+      "gap_bead": "umber2-johp.227",
+      "rationale": "Span semantic-level initialization in horizontal and vertical alignments."
+    },
+    {
+      "modules": { "first": 788, "last": 790 },
+      "disposition": "property",
+      "owner": "tex-command::alignment-delivery",
+      "property_ids": ["tex82.align.cell-u-v-omit-delivery"],
+      "gap_bead": "umber2-johp.227",
+      "rationale": "Cell opening, u-template replay, delimiter interception, v-template replay, and omit-template selection."
+    },
+    {
+      "modules": { "first": 791, "last": 795 },
+      "disposition": "property",
+      "owner": "tex-exec::align",
+      "property_ids": ["tex82.align.finish-column-and-repeat-preamble"],
+      "gap_bead": "umber2-johp.227",
+      "rationale": "End-v validation, cell/span completion, periodic extension, and extra-tab recovery."
+    },
+    {
+      "modules": { "first": 796, "last": 799 },
+      "disposition": "property",
+      "owner": "tex-exec::align-packing",
+      "property_ids": ["tex82.align.package-cell-span-and-row"],
+      "gap_bead": "umber2-johp.227",
+      "rationale": "Unset cell packaging, span maxima, and row packaging."
+    },
+    {
+      "modules": { "first": 800, "last": 812 },
+      "disposition": "property",
+      "owner": "tex-exec::align-packing",
+      "property_ids": ["tex82.align.finish-widths-and-pack"],
+      "gap_bead": "umber2-johp.227",
+      "rationale": "Preamble dismantling, span-width resolution, glue setting, rule dimensions, box conversion, and final mode-dependent append."
+    },
+    {
+      "modules": { "first": 1126, "last": 1129 },
+      "disposition": "property",
+      "owner": "tex-command::alignment-recovery",
+      "property_ids": ["tex82.align.misplaced-delimiter-omit-noalign-recovery"],
+      "gap_bead": "umber2-johp.227",
+      "rationale": "Missing-brace correction and misplaced alignment-command diagnostics."
+    },
+    {
+      "modules": { "first": 1130, "last": 1130 },
+      "disposition": "context_only",
+      "owner": "tex-exec::align",
+      "property_ids": [],
+      "gap_bead": null,
+      "rationale": "Main-control alignment dispatch context for init_align and do_endv."
+    },
+    {
+      "modules": { "first": 1131, "last": 1131 },
+      "disposition": "property",
+      "owner": "tex-exec::align",
+      "property_ids": ["tex82.align.endv-validation-and-off-save"],
+      "gap_bead": "umber2-johp.227",
+      "rationale": "Effective end-v validation, active align-group completion, and off-save recovery."
+    },
+    {
+      "modules": { "first": 1132, "last": 1132 },
+      "disposition": "property",
+      "owner": "tex-command::alignment-recovery",
+      "property_ids": ["tex82.align.missing-cr-before-close"],
+      "gap_bead": "umber2-johp.227",
+      "rationale": "Alignment-group right brace is backed up behind an inserted frozen cr."
+    },
+    {
+      "modules": { "first": 1133, "last": 1133 },
+      "disposition": "property",
+      "owner": "tex-exec::align",
+      "property_ids": ["tex82.align.noalign-group-close"],
+      "gap_bead": "umber2-johp.227",
+      "rationale": "Noalign group closure resumes alignment row lookahead."
+    },
+    {
+      "modules": { "first": 1206, "last": 1206 },
+      "disposition": "property",
+      "owner": "tex-exec::math-display",
+      "property_ids": ["tex82.align.display-finish"],
+      "gap_bead": "umber2-johp.227",
+      "rationale": "Display alignment assignment scan, dollar recovery, list insertion, and display resumption."
+    }
+  ],
+  "properties": [
+    {
+      "id": "tex82.align.nested-state-stack",
+      "sections": [770, 771, 772],
+      "claim": "Starting a nested alignment saves the complete outer preamble cursor, span and loop cursors, align_state, and adjustment list; finishing restores that exact state and frees only the inner level.",
+      "preconditions": ["An outer alignment delivery level is active with nondefault cursors and brace state."],
+      "stimulus": [
+        "Existing unit `nested_alignment_resume_preserves_outer_align_state`; Phase 2 unit `nested_alignment_restores_all_delivery_fields` and semantic case `alignment-nested-state-stack`."
+      ],
+      "expected_observations": [
+        "Begin, suspend, inner finish, and resume observations preserve structural nesting without exposing pointer identities."
+      ],
+      "postconditions": [
+        "The outer cell, template ownership, brace depth, row/span cursors, and mode-facing adjustment list resume unchanged."
+      ],
+      "equivalence_cases": [
+        "Nesting: one and two nested alignments; brace: balanced and nonzero outer depth; template: empty and nonempty outer templates; cell/row/span: first cell and active span; mode: halign and valign."
+      ],
+      "recovery_cases": [
+        "Recovery: abort an incomplete inner alignment and restore the outer level atomically without retiring its templates."
+      ],
+      "semantic_owner": "tex-command::alignment-delivery",
+      "test_level": "planned-rust-unit+semantic-minifixture",
+      "coverage": [],
+      "status": "gap",
+      "gap_bead": "umber2-johp.227"
+    },
+    {
+      "id": "tex82.align.initialize-spec-and-mode",
+      "sections": [774, 775, 776],
+      "claim": "init_align pushes alignment state, installs the preamble sentinel, enters the opposite internal mode, scans the optional to/spread specification and opening brace, and rejects prior display material before preamble scanning.",
+      "preconditions": [
+        "A legal halign/valign command is delivered in its admitted outer mode, optionally as the sole display material."
+      ],
+      "stimulus": [
+        "Phase 2 units `alignment_scan_spec_consumes_brace_after_keyword_backups` and `alignment_initial_mode_matrix`; semantic cases `alignment-spec-modes` and `alignment-improper-display`."
+      ],
+      "expected_observations": [
+        "Specification kind/value, align-group creation, preamble sentinel -1000000, and mode transition occur in TeX82 order."
+      ],
+      "postconditions": [
+        "Preamble scanning owns a fresh alignment level and the enclosing prev_depth is preserved where TeX82 requires it."
+      ],
+      "equivalence_cases": [
+        "Nesting: top-level and nested; brace: direct, to, and spread opener; template/cell/row/span: before all lifecycle activity; mode: vmode halign, hmode valign, display halign."
+      ],
+      "recovery_cases": [
+        "Recovery: improper display material is flushed with the canonical diagnostic; missing specification brace uses compulsory-brace recovery."
+      ],
+      "semantic_owner": "tex-exec::align",
+      "test_level": "planned-rust-unit+semantic-minifixture",
+      "coverage": [],
+      "status": "gap",
+      "gap_bead": "umber2-johp.227"
+    },
+    {
+      "id": "tex82.align.preamble-tabskip-and-delimiters",
+      "sections": [777, 778, 779, 780, 781, 782],
+      "claim": "Preamble scanning alternates copied tabskip glue with alignrecords, assigns distinct span/cr/crcr modifiers, expands only span-following tokens and tabskip specifications, and ends at a top-level cr.",
+      "preconditions": ["Alignment specification scanning has consumed its opening brace and align_state is -1000000."],
+      "stimulus": [
+        "Phase 2 unit `preamble_tabskip_span_expansion_and_delimiter_identity` and semantic case `alignment-preamble-tabskip`."
+      ],
+      "expected_observations": [
+        "Local/global tabskip updates and frozen delimiter identities are visible while ordinary preamble tokens remain unexpanded."
+      ],
+      "postconditions": [
+        "The preamble has leading/intercolumn/trailing glue, frozen column pairs, periodic-loop identity if selected, and scanner status returns to normal."
+      ],
+      "equivalence_cases": [
+        "Nesting: outer and inner preambles; brace: nested template braces; template: empty/nonempty pairs; cell/row/span: ordinary, span and crcr delimiters; mode: halign and valign."
+      ],
+      "recovery_cases": [
+        "Recovery: effective endv during preamble scanning raises interwoven-preamble failure; exhausted preamble input follows aligning-status EOF recovery."
+      ],
+      "semantic_owner": "tex-exec::align-preamble",
+      "test_level": "planned-rust-unit+semantic-minifixture",
+      "coverage": [],
+      "status": "gap",
+      "gap_bead": "umber2-johp.227"
+    },
+    {
+      "id": "tex82.align.u-v-template-scan",
+      "sections": [783, 784],
+      "claim": "The u-template drops leading spaces and ends at its first top-level parameter marker; the v-template retains tokens through its top-level delimiter, discards extra parameter markers with diagnostics, and appends frozen end-template.",
+      "preconditions": ["Preamble scanning is active at a new alignrecord."],
+      "stimulus": [
+        "Phase 2 unit `scan_u_v_templates_empty_nested_and_malformed` and semantic cases `alignment-template-scan` and `alignment-template-recovery`."
+      ],
+      "expected_observations": [
+        "Frozen u/v token lists preserve braces and delimiter boundaries, with exactly one end-template appended to v."
+      ],
+      "postconditions": [
+        "Every completed column has one u/v pair; empty u and v lists retain their canonical lifecycle distinctions."
+      ],
+      "equivalence_cases": [
+        "Nesting: braces and nested macros inside templates; brace: balanced groups; template: empty u/v and token-rich u/v; cell/row/span: repeated columns and span expansion; mode: halign and valign."
+      ],
+      "recovery_cases": [
+        "Recovery: missing # backs up the top-level tab/cr for v scanning; extra # is discarded and v scanning continues; empty-u && selects periodic repetition only at the first eligible site."
+      ],
+      "semantic_owner": "tex-exec::align-preamble",
+      "test_level": "planned-rust-unit+semantic-minifixture",
+      "coverage": [],
+      "status": "gap",
+      "gap_bead": "umber2-johp.227"
+    },
+    {
+      "id": "tex82.align.row-lookahead-noalign-finish",
+      "sections": [785],
+      "claim": "align_peek resets align_state to 1000000, skips blanks and expandable calls, starts noalign after consuming its brace, finishes on right brace, ignores crcr, or backs up and starts a row and first cell.",
+      "preconditions": ["Preamble completion or fin_row has reached row lookahead."],
+      "stimulus": [
+        "Phase 2 unit `align_peek_selects_noalign_finish_crcr_or_row` and semantic case `alignment-row-lookahead`."
+      ],
+      "expected_observations": [
+        "Exactly one branch owns the lookahead token and u-template installation follows command-owned backup for an ordinary row."
+      ],
+      "postconditions": [
+        "The engine is in noalign group, alignment finish, repeated lookahead, or a new row/cell with no duplicated token."
+      ],
+      "equivalence_cases": [
+        "Nesting: outer and nested alignment; brace: closing and noalign opener; template: empty/nonempty u; cell/row/span: first row and later row; mode: internal vertical/horizontal."
+      ],
+      "recovery_cases": [
+        "Recovery: malformed noalign opener uses scan_left_brace recovery; repeated crcr remains bounded and does not create an empty row."
+      ],
+      "semantic_owner": "tex-exec::align",
+      "test_level": "planned-rust-unit+semantic-minifixture",
+      "coverage": [],
+      "status": "gap",
+      "gap_bead": "umber2-johp.227"
+    },
+    {
+      "id": "tex82.align.row-start-mode",
+      "sections": [786],
+      "claim": "init_row pushes one semantic level, switches halign to restricted horizontal mode or valign to internal vertical mode, appends the first tabskip, and begins a span at the first alignrecord.",
+      "preconditions": [
+        "align_peek selected a real row and the preamble contains its leading glue and first alignrecord."
+      ],
+      "stimulus": [
+        "Phase 2 unit `init_row_switches_mode_and_copies_leading_tabskip` and semantic case `alignment-row-modes`."
+      ],
+      "expected_observations": [
+        "One leading tabskip precedes the first cell and the row-local auxiliary mode field is initialized canonically."
+      ],
+      "postconditions": [
+        "cur_align and cur_span select the first column and the row list is ready for cell packaging."
+      ],
+      "equivalence_cases": [
+        "Nesting: top-level/nested rows; brace: balanced row body; template: empty/nonempty first u; cell/row/span: first/later row and initial span; mode: halign/valign."
+      ],
+      "recovery_cases": [
+        "Recovery: an empty or exhausted preamble is rejected before row initialization rather than manufacturing a column."
+      ],
+      "semantic_owner": "tex-exec::align",
+      "test_level": "planned-rust-unit+semantic-minifixture",
+      "coverage": [],
+      "status": "gap",
+      "gap_bead": "umber2-johp.227"
+    },
+    {
+      "id": "tex82.align.span-start",
+      "sections": [787],
+      "claim": "init_span pushes a cell-list semantic level, initializes horizontal or vertical auxiliary state, normalizes paragraph state for valign, and records the starting alignrecord.",
+      "preconditions": ["A row has started or a completed nonspan cell advances to another span start."],
+      "stimulus": [
+        "Phase 2 unit `init_span_initializes_mode_aux_and_start_column` and semantic case `alignment-span-start`."
+      ],
+      "expected_observations": [
+        "The span start is the current column and subsequent span delimiters retain the same cell-list level."
+      ],
+      "postconditions": ["Cell material accumulates in a fresh list with canonical space_factor or prev_depth."],
+      "equivalence_cases": [
+        "Nesting: nested alignment inside cell; brace: grouped cell material; template: omitted/ordinary; cell/row/span: one and multiple columns; mode: halign/valign."
+      ],
+      "recovery_cases": [
+        "Recovery: failed nested alignment rolls back its inner span level without changing the outer span start."
+      ],
+      "semantic_owner": "tex-exec::align",
+      "test_level": "planned-rust-unit+semantic-minifixture",
+      "coverage": [],
+      "status": "gap",
+      "gap_bead": "umber2-johp.227"
+    },
+    {
+      "id": "tex82.align.cell-u-v-omit-delivery",
+      "sections": [788, 789, 790],
+      "claim": "An ordinary cell backs up its first token and replays the selected u-template, whose exhaustion changes align_state from 1000000 to 0; a top-level delimiter then selects the saved v-template and restores 1000000, while omit bypasses u and selects only frozen end-template.",
+      "preconditions": [
+        "A row/span is active, cur_align selects a frozen column, and lookahead has delivered omit or the cell's first token."
+      ],
+      "stimulus": [
+        "Existing units `active_alignment_predicate_tracks_scanner_levels_not_only_cells` and `completed_alignment_cell_retires_exhausted_v_template_boundary`; Phase 2 unit `cell_template_delivery_matrix` and semantic case `alignment-cell-template-delivery`."
+      ],
+      "expected_observations": [
+        "Backup correction precedes u-template push; delimiter identity is retained; u/v/omit pushes and retirements are distinct and ordered."
+      ],
+      "postconditions": [
+        "The active v-template owns end-template/endv completion and no delimiter escapes as an ordinary command."
+      ],
+      "equivalence_cases": [
+        "Nesting: nested box/alignment cell; brace: physical braces and control-sequence aliases; template: empty/nonempty u/v and omit; cell/row/span: tab/span/cr/crcr; mode: halign/valign."
+      ],
+      "recovery_cases": [
+        "Recovery: delimiter at align_state ±1 triggers missing-brace correction; delimiter during aligning or without cur_align reports interwoven-preamble failure."
+      ],
+      "semantic_owner": "tex-command::alignment-delivery",
+      "test_level": "planned-rust-unit+semantic-minifixture",
+      "coverage": [],
+      "status": "gap",
+      "gap_bead": "umber2-johp.227"
+    },
+    {
+      "id": "tex82.align.finish-column-and-repeat-preamble",
+      "sections": [791, 792, 793, 794, 795],
+      "claim": "A valid exhausted v-template permits fin_col to package the current cell, preserve spans across span delimiters, end a row on cr/crcr, or start the next cell; periodic preambles copy exact u/v lists and tabskip, while an extra tab without a loop is changed to cr.",
+      "preconditions": [
+        "Effective endv was delivered from an exhausted active v-template and the align group remains active."
+      ],
+      "stimulus": [
+        "Existing unit `do_endv_stack_walk_accepts_only_empty_frames_above_v_template`; Phase 2 units `fin_col_delimiter_matrix_and_periodic_extension` and `fin_col_extra_tab_recovers_to_cr`; semantic cases `alignment-finish-column` and `alignment-extra-tab`."
+      ],
+      "expected_observations": [
+        "Saved delimiter, cell packaging, span continuation, row outcome, periodic-copy, and extra-tab recovery occur before template retirement."
+      ],
+      "postconditions": [
+        "Exactly one next-cell, continued-span, or completed-row state results and align_state is 1000000 during lookahead."
+      ],
+      "equivalence_cases": [
+        "Nesting: outer/inner endv; brace: balanced and corrected cell; template: ordinary/omit/periodic; cell/row/span: tab/span/cr/crcr and exhausted preamble; mode: halign/valign."
+      ],
+      "recovery_cases": [
+        "Recovery: invalid endv stack or align_state below 500000 raises interwoven-preamble failure; extra tab/span without periodic suffix becomes cr with the canonical diagnostic."
+      ],
+      "semantic_owner": "tex-exec::align",
+      "test_level": "planned-rust-unit+semantic-minifixture",
+      "coverage": [],
+      "status": "gap",
+      "gap_bead": "umber2-johp.227"
+    },
+    {
+      "id": "tex82.align.package-cell-span-and-row",
+      "sections": [796, 797, 798, 799],
+      "claim": "Cell completion naturally packs the current list into an unset node, records maximum single-column or ordered span width and glue orders, and row completion naturally packs all cells/tabskips into one unset row while moving halign adjustments outward.",
+      "preconditions": ["fin_col has a completed cell list and fin_row is invoked only after a row-ending delimiter."],
+      "stimulus": [
+        "Phase 2 units `package_alignment_cell_tracks_glue_orders_and_span_maxima` and `finish_row_moves_halign_adjustments`."
+      ],
+      "expected_observations": [
+        "Unset-node span_count, natural extent, stretch/shrink order, tabskip ordering, row dimensions, and adjustment placement match TeX82."
+      ],
+      "postconditions": [
+        "The row list contains one unset row and the per-column/span maxima are ready for final width resolution."
+      ],
+      "equivalence_cases": [
+        "Nesting: nested alignment cell boxes; brace: grouped material; template: ordinary/omit; cell/row/span: empty/nonempty and repeated span widths; mode: halign/valign."
+      ],
+      "recovery_cases": [
+        "Recovery: a span count beyond the representable TeX82 bound fails canonically; incomplete cell/row never publishes a partially packaged unset node."
+      ],
+      "semantic_owner": "tex-exec::align-packing",
+      "test_level": "planned-rust-unit+semantic-minifixture",
+      "coverage": [],
+      "status": "gap",
+      "gap_bead": "umber2-johp.227"
+    },
+    {
+      "id": "tex82.align.finish-widths-and-pack",
+      "sections": [800, 801, 802, 803, 804, 805, 806, 807, 808, 809, 810, 811, 812],
+      "claim": "fin_align removes the active alignment level, resolves unset column widths and sorted span constraints through intervening tabskip, packs the prototype to the saved specification, sets every row/cell and running rule dimension, then appends the completed list according to enclosing mode.",
+      "preconditions": [
+        "align_peek delivered the alignment-closing right brace after all rows are represented as unset boxes."
+      ],
+      "stimulus": ["Phase 2 unit `finish_alignment_resolves_spans_glue_rules_and_modes`."],
+      "expected_observations": [
+        "Column null widths become zero, span constraints propagate monotonically, prototype glue ratios control every row, and running rules inherit final row dimensions."
+      ],
+      "postconditions": [
+        "Preamble/template nodes are retired, the outer alignment state resumes, and the final h/v/display list contains only set boxes, glue, rules, and canonical surrounding material."
+      ],
+      "equivalence_cases": [
+        "Nesting: nested finalization/resumption; brace: delivered closing brace; template: empty/omit/ordinary; cell/row/span: zero-width, multispan and multiple rows; mode: vmode, hmode and display."
+      ],
+      "recovery_cases": [
+        "Recovery: overfull/underfull packing reports through normal pack diagnostics; malformed internal span ordering fails rather than producing a partial final list."
+      ],
+      "semantic_owner": "tex-exec::align-packing",
+      "test_level": "planned-rust-unit+semantic-minifixture",
+      "coverage": [],
+      "status": "gap",
+      "gap_bead": "umber2-johp.227"
+    },
+    {
+      "id": "tex82.align.misplaced-delimiter-omit-noalign-recovery",
+      "sections": [1126, 1127, 1128, 1129],
+      "claim": "A tab/span/cr reaching main control at align_state -1 or 1 is backed up behind an inserted balancing brace; at larger absolute depth it is merely misplaced, and misplaced noalign or omit reports and is ignored.",
+      "preconditions": [
+        "An alignment-sensitive command escaped normal zero-depth interception or appears outside its admitted lifecycle point."
+      ],
+      "stimulus": [
+        "Existing unit `recovery_inserted_left_brace_updates_active_alignment_state`; Phase 2 unit `alignment_misplaced_command_recovery_matrix` and semantic case `alignment-delimiter-recovery`."
+      ],
+      "expected_observations": [
+        "Backup correction, inserted brace delivery, restored zero depth, replayed delimiter interception, or misplaced-command discard is observed in canonical order."
+      ],
+      "postconditions": [
+        "Recoverable ±1 cases resume the active cell; nonalignment cases do not create alignment state, templates, cells, rows, or spans."
+      ],
+      "equivalence_cases": [
+        "Nesting: active and absent alignment; brace: -1/+1/>2; template: ordinary/omit; cell/row/span: tab/span/cr; mode: every main-control mode."
+      ],
+      "recovery_cases": [
+        "Recovery: missing left/right brace is inserted at ±1; otherwise tab/span/cr/noalign/omit produces its specific diagnostic and is ignored."
+      ],
+      "semantic_owner": "tex-command::alignment-recovery",
+      "test_level": "planned-rust-unit+semantic-minifixture",
+      "coverage": [],
+      "status": "gap",
+      "gap_bead": "umber2-johp.227"
+    },
+    {
+      "id": "tex82.align.endv-validation-and-off-save",
+      "sections": [1131],
+      "claim": "do_endv accepts only an effective endv above an exhausted v-template through empty token-list frames, finishes the cell/row only in align_group, and otherwise invokes off_save without losing the retained template.",
+      "preconditions": ["Frozen end-template has expanded to effective endv."],
+      "stimulus": [
+        "Existing unit `do_endv_stack_walk_accepts_only_empty_frames_above_v_template`; Phase 2 unit `do_endv_validates_template_and_group_matrix` and semantic case `alignment-endv-off-save`."
+      ],
+      "expected_observations": [
+        "Template provenance is validated before end_graf/fin_col, and off-save recovery precedes eventual template retirement."
+      ],
+      "postconditions": [
+        "Success retires exactly the completed v-template and advances the cell/row; recovery retains it until replayed endv succeeds."
+      ],
+      "equivalence_cases": [
+        "Nesting: nested template stacks; brace: balanced and wrong execution group; template: direct and empty-frame-separated endv; cell/row/span: cell/span/row endings; mode: hmode/vmode."
+      ],
+      "recovery_cases": [
+        "Recovery: invalid template provenance is fatal interwoven-preamble failure; wrong group performs canonical off_save closer insertion and endv replay; bottom level drops the offending command."
+      ],
+      "semantic_owner": "tex-exec::align",
+      "test_level": "planned-rust-unit+semantic-minifixture",
+      "coverage": [],
+      "status": "gap",
+      "gap_bead": "umber2-johp.227"
+    },
+    {
+      "id": "tex82.align.missing-cr-before-close",
+      "sections": [1132],
+      "claim": "A right brace seen while align_group is active is backed up, then frozen cr is inserted so v-template and cell/row completion occur before the original brace is replayed to finish the alignment.",
+      "preconditions": ["A physical right brace closes an alignment entry before a row-ending cr."],
+      "stimulus": [
+        "Phase 2 unit `alignment_close_inserts_frozen_cr_before_brace_replay` and semantic case `alignment-missing-cr`."
+      ],
+      "expected_observations": [
+        "Brace delivery and backup correction precede inserted-cr delivery, v-template completion, row completion, and brace replay."
+      ],
+      "postconditions": [
+        "The cell and row close exactly once and the replayed brace reaches align_peek as the alignment terminator."
+      ],
+      "equivalence_cases": [
+        "Nesting: top-level/nested close; brace: empty/nonempty cell body; template: ordinary/omit; cell/row/span: single/spanned final cell; mode: halign/valign."
+      ],
+      "recovery_cases": [
+        "Recovery: missing cr emits the canonical diagnostic and immutable frozen cr; no execution group is closed by the first brace delivery."
+      ],
+      "semantic_owner": "tex-command::alignment-recovery",
+      "test_level": "planned-rust-unit+semantic-minifixture",
+      "coverage": [],
+      "status": "gap",
+      "gap_bead": "umber2-johp.227"
+    },
+    {
+      "id": "tex82.align.noalign-group-close",
+      "sections": [1133],
+      "claim": "Closing no_align_group ends any paragraph, unsaves exactly that group, and resumes align_peek with the surrounding alignment state intact.",
+      "preconditions": ["align_peek selected noalign, consumed its opening brace, and no_align_group is current."],
+      "stimulus": [
+        "Phase 2 unit `noalign_close_resumes_row_lookahead_in_both_modes` and semantic case `alignment-noalign-group`."
+      ],
+      "expected_observations": [
+        "Noalign material occupies the enclosing row-list orientation and group close is followed by row lookahead, not cell-template replay."
+      ],
+      "postconditions": [
+        "Local noalign assignments are unsaved and the next row, repeated noalign, crcr, or alignment close is selected normally."
+      ],
+      "equivalence_cases": [
+        "Nesting: nested alignment noalign; brace: grouped/no paragraph material; template: before next u; cell/row/span: between rows and repeated noalign; mode: halign/valign."
+      ],
+      "recovery_cases": [
+        "Recovery: missing noalign opener uses scan_left_brace recovery; misplaced noalign is handled by §1129 and never creates this group."
+      ],
+      "semantic_owner": "tex-exec::align",
+      "test_level": "planned-rust-unit+semantic-minifixture",
+      "coverage": [],
+      "status": "gap",
+      "gap_bead": "umber2-johp.227"
+    },
+    {
+      "id": "tex82.align.display-finish",
+      "sections": [1206],
+      "claim": "A completed display halign scans following assignments, requires and recovers the closing double math shift, restores the enclosing nest, inserts display penalties/glue around the alignment list, restores prev_depth, and resumes after display.",
+      "preconditions": ["fin_align completed a halign whose enclosing mode is display math."],
+      "stimulus": [
+        "Phase 2 unit `display_alignment_finish_assignments_delimiters_and_spacing` and semantic case `alignment-display-finish`."
+      ],
+      "expected_observations": [
+        "Assignments precede delimiter validation and the final vertical list orders pre-penalty, above glue, alignment, post-penalty, and below glue."
+      ],
+      "postconditions": ["Display mode is closed, prev_depth is restored, and normal post-display scanning resumes."],
+      "equivalence_cases": [
+        "Nesting: display inside enclosing vertical group; brace: alignment close before dollars; template: ordinary/omit; cell/row/span: single/multiple rows and spans; mode: display halign."
+      ],
+      "recovery_cases": [
+        "Recovery: missing or single closing math shift follows the canonical display-delimiter diagnostic and insertion path without duplicating the alignment list."
+      ],
+      "semantic_owner": "tex-exec::math-display",
+      "test_level": "planned-rust-unit+semantic-minifixture",
+      "coverage": [],
+      "status": "gap",
+      "gap_bead": "umber2-johp.227"
+    }
+  ]
+}
