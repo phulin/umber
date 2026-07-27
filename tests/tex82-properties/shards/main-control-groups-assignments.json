@@ -416,6 +416,14 @@
       "property_ids": ["tex82.main-control.show-completion"],
       "gap_bead": null,
       "rationale": "Show diagnostics terminate with canonical interaction-dependent completion."
+    },
+    {
+      "modules": { "first": 1335, "last": 1335 },
+      "disposition": "property",
+      "owner": "tex-exec::main-control",
+      "property_ids": ["tex82.main-control.final-cleanup-end-or-dump"],
+      "gap_bead": null,
+      "rationale": "Final cleanup retires input, reports open groups, coordinates conditional unwind, and selects end or dump cleanup. Conditional frame semantics and output termination remain cross-domain dependencies, not duplicate section claims."
     }
   ],
   "properties": [
@@ -439,7 +447,13 @@
       "test_level": "planned-rust-unit+semantic-minifixture",
       "coverage": [],
       "status": "gap",
-      "gap_bead": "umber2-johp.226"
+      "gap_bead": "umber2-johp.226",
+      "planned_coverage": [
+        {
+          "path": "crates/tex-exec/src/assignments/tests.rs",
+          "test": "eqtb_regions_keep_parameter_register_kinds_and_shared_zero_glue_distinct"
+        }
+      ]
     },
     {
       "id": "tex82.group.save-level-lifecycle",
@@ -457,7 +471,13 @@
       "test_level": "planned-rust-unit+semantic-minifixture",
       "coverage": [],
       "status": "gap",
-      "gap_bead": "umber2-johp.226"
+      "gap_bead": "umber2-johp.226",
+      "planned_coverage": [
+        {
+          "path": "crates/tex-exec/src/assignments/tests.rs",
+          "test": "nested_typed_groups_push_one_boundary_and_restore_outer_metadata"
+        }
+      ]
     },
     {
       "id": "tex82.assignment.local-global-save",
@@ -479,7 +499,13 @@
       "test_level": "planned-rust-unit+semantic-minifixture",
       "coverage": [],
       "status": "gap",
-      "gap_bead": "umber2-johp.226"
+      "gap_bead": "umber2-johp.226",
+      "planned_coverage": [
+        {
+          "path": "crates/tex-exec/src/assignments/tests.rs",
+          "test": "save_stack_local_global_redefinition_restores_once_per_level"
+        }
+      ]
     },
     {
       "id": "tex82.group.aftergroup-replay",
@@ -497,7 +523,13 @@
       "test_level": "planned-rust-unit+semantic-minifixture",
       "coverage": [],
       "status": "gap",
-      "gap_bead": "umber2-johp.226"
+      "gap_bead": "umber2-johp.226",
+      "planned_coverage": [
+        {
+          "path": "crates/tex-exec/src/assignments/tests.rs",
+          "test": "save_stack_aftergroup_tokens_replay_fifo_after_unsave"
+        }
+      ]
     },
     {
       "id": "tex82.group.unsave-restoration",
@@ -517,7 +549,13 @@
       "test_level": "planned-rust-unit+semantic-minifixture",
       "coverage": [],
       "status": "gap",
-      "gap_bead": "umber2-johp.226"
+      "gap_bead": "umber2-johp.226",
+      "planned_coverage": [
+        {
+          "path": "crates/tex-exec/src/assignments/tests.rs",
+          "test": "unsave_restores_local_entries_retains_globals_then_replays_tokens"
+        }
+      ]
     },
     {
       "id": "tex82.assignment.mag-freeze",
@@ -537,7 +575,13 @@
       "test_level": "planned-rust-unit+semantic-minifixture",
       "coverage": [],
       "status": "gap",
-      "gap_bead": "umber2-johp.226"
+      "gap_bead": "umber2-johp.226",
+      "planned_coverage": [
+        {
+          "path": "crates/tex-exec/src/assignments/tests.rs",
+          "test": "prepare_mag_bounds_and_freezes_first_effective_value"
+        }
+      ]
     },
     {
       "id": "tex82.main-control.mode-dispatch",
@@ -557,7 +601,13 @@
       "test_level": "planned-rust-unit+semantic-minifixture",
       "coverage": [],
       "status": "gap",
-      "gap_bead": "umber2-johp.226"
+      "gap_bead": "umber2-johp.226",
+      "planned_coverage": [
+        {
+          "path": "crates/tex-exec/src/canonical_main_control/tests.rs",
+          "test": "main_control_dispatch_matrix_consumes_each_command_once"
+        }
+      ]
     },
     {
       "id": "tex82.main-control.error-and-stop",
@@ -575,7 +625,13 @@
       "test_level": "planned-rust-unit+semantic-minifixture",
       "coverage": [],
       "status": "gap",
-      "gap_bead": "umber2-johp.226"
+      "gap_bead": "umber2-johp.226",
+      "planned_coverage": [
+        {
+          "path": "crates/tex-exec/src/canonical_main_control/tests.rs",
+          "test": "main_control_error_privilege_and_stop_paths_are_finite"
+        }
+      ]
     },
     {
       "id": "tex82.group.brace-dispatch",
@@ -595,7 +651,13 @@
       "test_level": "planned-rust-unit+semantic-minifixture",
       "coverage": [],
       "status": "gap",
-      "gap_bead": "umber2-johp.226"
+      "gap_bead": "umber2-johp.226",
+      "planned_coverage": [
+        {
+          "path": "crates/tex-exec/src/assignments/tests.rs",
+          "test": "brace_dispatch_opens_normal_groups_and_recovers_each_mismatched_closer"
+        }
+      ]
     },
     {
       "id": "tex82.assignment.prefix-collection",
@@ -615,7 +677,13 @@
       "test_level": "planned-rust-unit+semantic-minifixture",
       "coverage": [],
       "status": "gap",
-      "gap_bead": "umber2-johp.226"
+      "gap_bead": "umber2-johp.226",
+      "planned_coverage": [
+        {
+          "path": "crates/tex-exec/src/assignments/tests.rs",
+          "test": "prefix_collection_expands_repeats_validates_and_resolves_globaldefs"
+        }
+      ]
     },
     {
       "id": "tex82.assignment.redefinable-target",
@@ -635,7 +703,13 @@
       "test_level": "planned-rust-unit+semantic-minifixture",
       "coverage": [],
       "status": "gap",
-      "gap_bead": "umber2-johp.226"
+      "gap_bead": "umber2-johp.226",
+      "planned_coverage": [
+        {
+          "path": "crates/tex-exec/src/assignments/tests.rs",
+          "test": "get_r_token_skips_spaces_and_recovers_non_control_sequence_targets"
+        }
+      ]
     },
     {
       "id": "tex82.assignment.current-font-selection",
@@ -653,7 +727,13 @@
       "test_level": "planned-rust-unit+semantic-minifixture",
       "coverage": [],
       "status": "gap",
-      "gap_bead": "umber2-johp.226"
+      "gap_bead": "umber2-johp.226",
+      "planned_coverage": [
+        {
+          "path": "crates/tex-exec/src/assignments/tests.rs",
+          "test": "set_font_assignment_obeys_local_global_and_globaldefs_scope"
+        }
+      ]
     },
     {
       "id": "tex82.assignment.macro-definitions",
@@ -673,7 +753,13 @@
       "test_level": "planned-rust-unit+semantic-minifixture",
       "coverage": [],
       "status": "gap",
-      "gap_bead": "umber2-johp.226"
+      "gap_bead": "umber2-johp.226",
+      "planned_coverage": [
+        {
+          "path": "crates/tex-exec/src/assignments/tests.rs",
+          "test": "def_family_selects_expansion_flags_meaning_kind_and_effective_scope"
+        }
+      ]
     },
     {
       "id": "tex82.assignment.let-and-futurelet",
@@ -693,7 +779,13 @@
       "test_level": "planned-rust-unit+semantic-minifixture",
       "coverage": [],
       "status": "gap",
-      "gap_bead": "umber2-johp.226"
+      "gap_bead": "umber2-johp.226",
+      "planned_coverage": [
+        {
+          "path": "crates/tex-exec/src/assignments/tests.rs",
+          "test": "let_and_futurelet_copy_meaning_and_preserve_lookahead_order"
+        }
+      ]
     },
     {
       "id": "tex82.assignment.shorthand-definitions",
@@ -711,7 +803,13 @@
       "test_level": "planned-rust-unit+semantic-minifixture",
       "coverage": [],
       "status": "gap",
-      "gap_bead": "umber2-johp.226"
+      "gap_bead": "umber2-johp.226",
+      "planned_coverage": [
+        {
+          "path": "crates/tex-exec/src/assignments/tests.rs",
+          "test": "shorthand_definitions_install_each_command_operand_and_bound_recovery"
+        }
+      ]
     },
     {
       "id": "tex82.assignment.read-to-definition",
@@ -729,7 +827,13 @@
       "test_level": "planned-rust-unit+semantic-minifixture",
       "coverage": [],
       "status": "gap",
-      "gap_bead": "umber2-johp.226"
+      "gap_bead": "umber2-johp.226",
+      "planned_coverage": [
+        {
+          "path": "crates/tex-exec/src/assignments/tests.rs",
+          "test": "read_to_definition_scans_stream_keyword_target_and_installs_tokens"
+        }
+      ]
     },
     {
       "id": "tex82.assignment.parameters-registers-arithmetic",
@@ -749,7 +853,13 @@
       "test_level": "planned-rust-unit+semantic-minifixture",
       "coverage": [],
       "status": "gap",
-      "gap_bead": "umber2-johp.226"
+      "gap_bead": "umber2-johp.226",
+      "planned_coverage": [
+        {
+          "path": "crates/tex-exec/src/assignments/tests.rs",
+          "test": "typed_parameter_register_and_arithmetic_assignments_cover_scope_copy_and_bounds"
+        }
+      ]
     },
     {
       "id": "tex82.assignment.setbox-request",
@@ -767,7 +877,13 @@
       "test_level": "planned-rust-unit+semantic-minifixture",
       "coverage": [],
       "status": "gap",
-      "gap_bead": "umber2-johp.226"
+      "gap_bead": "umber2-johp.226",
+      "planned_coverage": [
+        {
+          "path": "crates/tex-exec/src/assignments/tests.rs",
+          "test": "setbox_request_encodes_scope_and_rejects_disallowed_contexts"
+        }
+      ]
     },
     {
       "id": "tex82.assignment.auxiliary-state",
@@ -787,7 +903,13 @@
       "test_level": "planned-rust-unit+semantic-minifixture",
       "coverage": [],
       "status": "gap",
-      "gap_bead": "umber2-johp.226"
+      "gap_bead": "umber2-johp.226",
+      "planned_coverage": [
+        {
+          "path": "crates/tex-exec/src/assignments/tests.rs",
+          "test": "auxiliary_assignments_validate_mode_bounds_and_update_only_owned_state"
+        }
+      ]
     },
     {
       "id": "tex82.assignment.parshape",
@@ -805,7 +927,13 @@
       "test_level": "planned-rust-unit+semantic-minifixture",
       "coverage": [],
       "status": "gap",
-      "gap_bead": "umber2-johp.226"
+      "gap_bead": "umber2-johp.226",
+      "planned_coverage": [
+        {
+          "path": "crates/tex-exec/src/assignments/tests.rs",
+          "test": "parshape_assignment_scans_pair_count_and_restores_local_shape"
+        }
+      ]
     },
     {
       "id": "tex82.assignment.hyphenation-data",
@@ -827,7 +955,13 @@
       "test_level": "planned-rust-unit+semantic-minifixture",
       "coverage": [],
       "status": "gap",
-      "gap_bead": "umber2-johp.226"
+      "gap_bead": "umber2-johp.226",
+      "planned_coverage": [
+        {
+          "path": "crates/tex-exec/src/assignments/tests.rs",
+          "test": "hyphenation_data_distinguishes_exceptions_initex_patterns_and_flush_recovery"
+        }
+      ]
     },
     {
       "id": "tex82.assignment.font-parameters",
@@ -845,7 +979,13 @@
       "test_level": "planned-rust-unit+semantic-minifixture",
       "coverage": [],
       "status": "gap",
-      "gap_bead": "umber2-johp.226"
+      "gap_bead": "umber2-johp.226",
+      "planned_coverage": [
+        {
+          "path": "crates/tex-exec/src/assignments/tests.rs",
+          "test": "font_parameter_assignments_update_global_dimen_hyphenchar_and_skewchar"
+        }
+      ]
     },
     {
       "id": "tex82.assignment.font-definition",
@@ -867,7 +1007,13 @@
       "test_level": "planned-rust-unit+semantic-minifixture",
       "coverage": [],
       "status": "gap",
-      "gap_bead": "umber2-johp.226"
+      "gap_bead": "umber2-johp.226",
+      "planned_coverage": [
+        {
+          "path": "crates/tex-exec/src/assignments/tests.rs",
+          "test": "font_definition_scans_sizes_reuses_identity_and_recovers_illegal_values"
+        }
+      ]
     },
     {
       "id": "tex82.assignment.interaction-mode",
@@ -885,7 +1031,13 @@
       "test_level": "planned-rust-unit+semantic-minifixture",
       "coverage": [],
       "status": "gap",
-      "gap_bead": "umber2-johp.226"
+      "gap_bead": "umber2-johp.226",
+      "planned_coverage": [
+        {
+          "path": "crates/tex-exec/src/assignments/tests.rs",
+          "test": "interaction_assignment_updates_mode_and_selector_for_log_state"
+        }
+      ]
     },
     {
       "id": "tex82.assignment.afterassignment",
@@ -905,7 +1057,13 @@
       "test_level": "planned-rust-unit+semantic-minifixture",
       "coverage": [],
       "status": "gap",
-      "gap_bead": "umber2-johp.226"
+      "gap_bead": "umber2-johp.226",
+      "planned_coverage": [
+        {
+          "path": "crates/tex-exec/src/assignments/tests.rs",
+          "test": "afterassignment_slot_overwrites_and_fires_once_after_successful_assignment"
+        }
+      ]
     },
     {
       "id": "tex82.assignment.command-terminator",
@@ -925,7 +1083,13 @@
       "test_level": "planned-rust-unit+semantic-minifixture",
       "coverage": [],
       "status": "gap",
-      "gap_bead": "umber2-johp.226"
+      "gap_bead": "umber2-johp.226",
+      "planned_coverage": [
+        {
+          "path": "crates/tex-exec/src/assignments/tests.rs",
+          "test": "assignment_terminator_skips_space_and_relax_but_retains_first_command"
+        }
+      ]
     },
     {
       "id": "tex82.main-control.input-stream-open-close",
@@ -945,7 +1109,13 @@
       "test_level": "planned-rust-unit+semantic-minifixture",
       "coverage": [],
       "status": "gap",
-      "gap_bead": "umber2-johp.226"
+      "gap_bead": "umber2-johp.226",
+      "planned_coverage": [
+        {
+          "path": "crates/tex-exec/src/canonical_main_control/tests.rs",
+          "test": "openin_closein_replace_stream_state_and_apply_default_extension"
+        }
+      ]
     },
     {
       "id": "tex82.main-control.messages",
@@ -965,7 +1135,13 @@
       "test_level": "planned-rust-unit+semantic-minifixture",
       "coverage": [],
       "status": "gap",
-      "gap_bead": "umber2-johp.226"
+      "gap_bead": "umber2-johp.226",
+      "planned_coverage": [
+        {
+          "path": "crates/tex-exec/src/canonical_main_control/tests.rs",
+          "test": "message_expands_balanced_text_and_applies_terminal_line_spacing"
+        }
+      ]
     },
     {
       "id": "tex82.main-control.errmessage-help",
@@ -985,7 +1161,13 @@
       "test_level": "planned-rust-unit+semantic-minifixture",
       "coverage": [],
       "status": "gap",
-      "gap_bead": "umber2-johp.226"
+      "gap_bead": "umber2-johp.226",
+      "planned_coverage": [
+        {
+          "path": "crates/tex-exec/src/canonical_main_control/tests.rs",
+          "test": "errmessage_selects_user_or_once_only_builtin_help_and_clears_flag"
+        }
+      ]
     },
     {
       "id": "tex82.main-control.case-shift",
@@ -1007,7 +1189,13 @@
       "test_level": "planned-rust-unit+semantic-minifixture",
       "coverage": [],
       "status": "gap",
-      "gap_bead": "umber2-johp.226"
+      "gap_bead": "umber2-johp.226",
+      "planned_coverage": [
+        {
+          "path": "crates/tex-exec/src/canonical_main_control/tests.rs",
+          "test": "case_shift_substitutes_character_codes_preserves_commands_and_replays"
+        }
+      ]
     },
     {
       "id": "tex82.main-control.show-dispatch",
@@ -1027,7 +1215,13 @@
       "test_level": "planned-rust-unit+semantic-minifixture",
       "coverage": [],
       "status": "gap",
-      "gap_bead": "umber2-johp.226"
+      "gap_bead": "umber2-johp.226",
+      "planned_coverage": [
+        {
+          "path": "crates/tex-exec/src/canonical_main_control/tests.rs",
+          "test": "show_dispatch_selects_activities_box_meaning_or_value_without_mode_dependence"
+        }
+      ]
     },
     {
       "id": "tex82.main-control.show-meaning",
@@ -1047,7 +1241,13 @@
       "test_level": "planned-rust-unit+semantic-minifixture",
       "coverage": [],
       "status": "gap",
-      "gap_bead": "umber2-johp.226"
+      "gap_bead": "umber2-johp.226",
+      "planned_coverage": [
+        {
+          "path": "crates/tex-exec/src/canonical_main_control/tests.rs",
+          "test": "show_meaning_reads_raw_token_and_formats_each_macro_meaning_kind"
+        }
+      ]
     },
     {
       "id": "tex82.main-control.show-box",
@@ -1065,7 +1265,13 @@
       "test_level": "planned-rust-unit+semantic-minifixture",
       "coverage": [],
       "status": "gap",
-      "gap_bead": "umber2-johp.226"
+      "gap_bead": "umber2-johp.226",
+      "planned_coverage": [
+        {
+          "path": "crates/tex-exec/src/canonical_main_control/tests.rs",
+          "test": "showbox_scans_register_and_distinguishes_void_from_box_contents"
+        }
+      ]
     },
     {
       "id": "tex82.main-control.show-value",
@@ -1083,7 +1289,13 @@
       "test_level": "planned-rust-unit+semantic-minifixture",
       "coverage": [],
       "status": "gap",
-      "gap_bead": "umber2-johp.226"
+      "gap_bead": "umber2-johp.226",
+      "planned_coverage": [
+        {
+          "path": "crates/tex-exec/src/canonical_main_control/tests.rs",
+          "test": "showthe_uses_the_toks_for_each_internal_value_family_and_releases_output"
+        }
+      ]
     },
     {
       "id": "tex82.main-control.show-completion",
@@ -1105,7 +1317,45 @@
       "test_level": "planned-rust-unit+semantic-minifixture",
       "coverage": [],
       "status": "gap",
-      "gap_bead": "umber2-johp.226"
+      "gap_bead": "umber2-johp.226",
+      "planned_coverage": [
+        {
+          "path": "crates/tex-exec/src/canonical_main_control/tests.rs",
+          "test": "show_completion_routes_transcript_and_adjusts_error_count_by_interaction"
+        }
+      ]
+    },
+    {
+      "id": "tex82.main-control.final-cleanup-end-or-dump",
+      "sections": [1335],
+      "claim": "After end or dump reaches final cleanup, TeX retires every remaining input level, balances open-file parentheses, reports but does not unsave open groups, reports and frees incomplete condition frames, emits history-dependent transcript guidance, and selects ordinary return versus INITEX format dump cleanup.",
+      "preconditions": ["its_all_over accepted end or dump and current command operand distinguishes the two paths."],
+      "stimulus": [
+        "Phase 2 white-box unit `final_cleanup_retires_inputs_reports_open_state_and_selects_end_or_dump` covers nested source/token input, open groups/conditions, history/interaction states, and INITEX/production dump."
+      ],
+      "expected_observations": [
+        "Input levels retire innermost-first; open groups are reported without restoration; each condition report uses its saved kind/line before the frame is freed; transcript guidance follows history and selector; dump releases marks/last glue then stores format only in INITEX."
+      ],
+      "postconditions": [
+        "input_ptr and open_parens are zero, cond_ptr is null, group state is unchanged except for reporting, and end/dump returns at the canonical boundary."
+      ],
+      "equivalence_cases": [
+        "End/dump with spotless/warning/error history, terminal/log selectors, zero/nested inputs, zero/open groups, zero/nested conditions, and INITEX/production profiles."
+      ],
+      "recovery_cases": [
+        "Production dump prints the canonical INITEX-only diagnostic and returns without format storage; preexisting incomplete groups/conditions are reported and condition nodes are freed without invoking ordinary delimiter recovery."
+      ],
+      "semantic_owner": "tex-exec::main-control",
+      "test_level": "planned-rust-unit+semantic-minifixture",
+      "coverage": [],
+      "status": "gap",
+      "gap_bead": "umber2-johp.226",
+      "planned_coverage": [
+        {
+          "path": "crates/tex-exec/src/canonical_main_control/tests.rs",
+          "test": "final_cleanup_retires_inputs_reports_open_state_and_selects_end_or_dump"
+        }
+      ]
     }
   ]
 }
