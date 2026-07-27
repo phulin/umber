@@ -2773,6 +2773,39 @@ fn canonical_initex_replay_scans_setbox_then_hands_vbox_to_executor() {
     }));
 }
 
+/// TeX82 §1063's `non_math(left_brace): new_save_level(simple_group)` applies
+/// inside a box body exactly as it does outside one, and §1069's
+/// `simple_group: unsave` closes it -- backing up the `\aftergroup` tokens
+/// §282's `unsave` saved and restoring the level's local values. Only the
+/// brace delivered while `cur_group` is still the body's own group packages
+/// the box (§1068's `handle_right_brace` dispatches purely on `cur_group`).
+#[test]
+fn canonical_nested_brace_in_box_body_is_a_simple_group() {
+    let mut universe = Universe::new_with_plain_catcodes();
+    let mut control = CommandReplayControl::tex82_initex(&mut universe);
+    register_source(
+        &mut control,
+        br"\def\A{\global\count1=2}\setbox10=\vbox{{\count0=1\aftergroup\A}}\end",
+    );
+
+    run_to_end(&mut control, &mut universe);
+
+    assert!(
+        universe.box_reg(10).is_some(),
+        "the body's own closing brace still packages the vbox"
+    );
+    assert_eq!(
+        universe.count(0),
+        0,
+        "the nested group's local assignment is restored by §1069's unsave"
+    );
+    assert_eq!(
+        universe.count(1),
+        2,
+        "§282's unsave backs the nested group's \\aftergroup token up"
+    );
+}
+
 #[test]
 fn canonical_initex_replay_scans_box_register_before_stomach_consumes_it() {
     let mut universe = Universe::new_with_plain_catcodes();
