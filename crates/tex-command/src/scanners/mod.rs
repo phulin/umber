@@ -1,10 +1,12 @@
 //! Private typed scanner family.
 
 mod font;
+mod hyphenation;
 mod scalar;
 mod structured;
 mod token_list;
 
+pub use hyphenation::{HyphenationDataKind, ScannedHyphenationData};
 pub use scalar::{InternalValue, ScalarProvenance, ScalarRecovery, ScannedScalar};
 pub use structured::{
     AlignmentCellOpening, CanonicalMathRequest, EquationNumberSide, FileNameTermination,

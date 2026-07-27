@@ -1625,7 +1625,7 @@ impl CommandProcessor<'_> {
     /// as `scan_eight_bit_int` recovers to register zero. Umber's character
     /// domain is the Unicode scalar range, so a non-scalar value takes the
     /// same recovery.
-    fn scan_character_number(&mut self) -> Result<char, CommandError> {
+    pub(crate) fn scan_character_number(&mut self) -> Result<char, CommandError> {
         let value = self.scan_integer()?.value;
         Ok(u32::try_from(value)
             .ok()

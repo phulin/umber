@@ -63,39 +63,6 @@ pub(crate) fn apply_hyphenation_exceptions(stores: &mut Universe, words: Vec<Vec
     }
 }
 
-/// Splits an already fully expanded, brace-balanced token list into raw
-/// hyphenation-data words, exactly as TeX82 §961's `get_x_token` loop would
-/// classify each delivered command while scanning `\patterns`/`\hyphenation`'s
-/// braced group directly from a live input stream. `Catcode::Space` and the
-/// group's own closing brace are TeX82's `spacer`/`right_brace` word
-/// boundaries; any nested `Catcode::BeginGroup`/`EndGroup` pair that
-/// `scan_balanced_text` retained verbatim is otherwise inert here, like the
-/// control-sequence and parameter tokens TeX82's `othercases` would instead
-/// diagnose as "Bad \patterns" (Appendix H); real pattern data contains
-/// neither.
-pub(crate) fn hyphenation_words_from_tokens(tokens: &[Token]) -> Vec<Vec<char>> {
-    let mut words = Vec::new();
-    let mut current = Vec::new();
-    for token in tokens {
-        match token {
-            Token::Char {
-                cat: Catcode::Space,
-                ..
-            } => {
-                if !current.is_empty() {
-                    words.push(std::mem::take(&mut current));
-                }
-            }
-            Token::Char { ch, .. } => current.push(*ch),
-            Token::Cs(_) | Token::Param(_) | Token::Frozen(_) => {}
-        }
-    }
-    if !current.is_empty() {
-        words.push(current);
-    }
-    words
-}
-
 pub(crate) fn hyphenated_hlist(stores: &mut Universe, nodes: Vec<Node>) -> Vec<Node> {
     let mut out: Option<Vec<Node>> = None;
     let mut index = 0;

@@ -10,9 +10,9 @@ use tex_command::{
     AlignmentIdentity, AlignmentRequest, AlignmentRequestResult, CanonicalMathRequest,
     CommandError, CommandHostCapabilities, CommandHostContext, CommandProcessor, CommandProfile,
     CommandRuntime, CommandState, CommandStateSnapshot, FontLoadRequest, FontResource,
-    ImmediateExtension, InputStreamRequest, MathDelimiterBoundary, MathDelimiterBoundaryKind,
-    MathEpisodeRecovery, MathLimitKind, MathScriptKind, MathStyleKind, MathTextFieldKind,
-    PdfAnnotationRequest, PdfColorStackActionRequest, PdfDestinationRequest,
+    HyphenationDataKind, ImmediateExtension, InputStreamRequest, MathDelimiterBoundary,
+    MathDelimiterBoundaryKind, MathEpisodeRecovery, MathLimitKind, MathScriptKind, MathStyleKind,
+    MathTextFieldKind, PdfAnnotationRequest, PdfColorStackActionRequest, PdfDestinationRequest,
     PdfDocumentFragmentRequest, PdfFormRequest, PdfGraphicsRequest, PdfImageRequest,
     PdfImageResource, PdfNavigationRequest, PdfObjectRequest, PdfReferenceObjectRequest,
     PdfStartLinkRequest, ScannedAccent, ScannedBoxConstruction, ScannedBoxKind, ScannedBoxShift,
@@ -2247,13 +2247,13 @@ enum ScannedStep {
         value: i32,
         global: bool,
     },
-    /// TeX82 §960/§1252's `hyph_data` command: `\patterns` (`chr_code=1`)
-    /// installs pattern data through `new_patterns` (§961); `\hyphenation`
-    /// (`chr_code=0`) installs exception words through the analogous
-    /// `new_hyph_exceptions` scan. Both consume one expanded balanced group;
-    /// the flag selects which table the frozen word data populates.
+    /// TeX82 §1252's `hyph_data` command: `\patterns` (`chr_code=1`) installs
+    /// pattern data through §960's `new_patterns`; `\hyphenation`
+    /// (`chr_code=0`) installs exception words through §934's
+    /// `new_hyph_exceptions`. Each scan has already classified its group into
+    /// §935/§961's raw words; the flag selects which table they populate.
     HyphenationData {
-        tokens: TracedTokenList,
+        words: Vec<Vec<char>>,
         patterns: bool,
     },
     RegisterDefinition {
@@ -4352,24 +4352,27 @@ fn scan_command(
         Meaning::UnexpandablePrimitive(
             primitive @ (UnexpandablePrimitive::Patterns | UnexpandablePrimitive::Hyphenation),
         ) => {
-            // TeX82 §960's `new_patterns` (`\patterns`) and its analogous
-            // `new_hyph_exceptions` (`\hyphenation`) both require `scan_left_brace`
-            // and then read an expanded balanced group through `get_x_token`
-            // (§961), classifying each delivered command as a pattern
-            // letter/digit, a word boundary, or the closing brace. `plain.tex`'s
-            // `\input hyphen` loads this data directly, so Umber treats both
-            // primitives as always legal here (matching TeX82's
-            // INITEX-only legality, since Umber has no non-INITEX format-loaded
+            // TeX82 §960's `new_patterns` (`\patterns`) and §934's
+            // `new_hyph_exceptions` (`\hyphenation`) each require §403's
+            // `scan_left_brace` and then classify a `get_x_token` loop's
+            // deliveries (§961, §935) as word characters, word boundaries, or
+            // the closing brace. Neither absorbs a balanced text, so neither
+            // enters §473's `absorbing` scanner status. `plain.tex`'s `\input
+            // hyphen` loads this data directly, so Umber treats both
+            // primitives as always legal here (matching TeX82's INITEX-only
+            // legality, since Umber has no non-INITEX format-loaded
             // distinction) rather than raising §1252's "Patterns can be loaded
             // only by INITEX" diagnostic.
-            let tokens = processor
-                .scan_balanced_text(true)
+            let patterns = primitive == UnexpandablePrimitive::Patterns;
+            let words = processor
+                .scan_hyphenation_data(if patterns {
+                    HyphenationDataKind::Patterns
+                } else {
+                    HyphenationDataKind::Exceptions
+                })
                 .map_err(command_error)?
-                .tokens;
-            Ok(ScannedStep::HyphenationData {
-                tokens,
-                patterns: primitive == UnexpandablePrimitive::Patterns,
-            })
+                .words;
+            Ok(ScannedStep::HyphenationData { words, patterns })
         }
         // Every other `Meaning::UnexpandablePrimitive` reaching this point has
         // no named dispatch arm above (or is legal only in a mode this
@@ -7864,10 +7867,7 @@ fn apply_scanned_step(
             }
             Ok(ReplayStep::Continue)
         }
-        ScannedStep::HyphenationData { tokens, patterns } => {
-            let words = crate::assignments::hyphenation_words_from_tokens(
-                stores.tokens(tokens.token_list()),
-            );
+        ScannedStep::HyphenationData { words, patterns } => {
             if patterns {
                 crate::assignments::apply_patterns(stores, words);
             } else {

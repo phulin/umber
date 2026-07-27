@@ -25,7 +25,7 @@ Use this crate when behavior mutates live engine state or depends on TeX's curre
 - `src/assignments/fonts.rs`: `\font` scanning and driver-resolved TFM/OpenType selection loading, plus font parameter, hyphenchar, and skewchar assignment behavior.
 - `src/assignments/hmode.rs`: horizontal-mode character, glue, kern, discretionary, and ligature handling.
 - `src/assignments/hmode/tests.rs`: focused text-accent scanner recovery and traced-token replay tests.
-- `src/assignments/hyphenation.rs`: `\patterns` and `\hyphenation` execution support plus paragraph hyphenation.
+- `src/assignments/hyphenation.rs`: installation of the words `\patterns` and `\hyphenation` scanned (the scan itself is `tex-command`'s §934/§960 scanner), the retired `InputStack` scanner, and paragraph hyphenation.
 - `src/assignments/macros.rs`: macro-definition primitives plus `\aftergroup` and `\afterassignment`.
 - `src/assignments/mod.rs`: assignment dispatcher, prefix handling, group commands, and shared scan helpers.
 - `src/assignments/paragraph.rs`: paragraph start/end, parshape, line breaking, indentation, prevdepth logic, and the optional detached pretolerance-plan experiment.

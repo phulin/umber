@@ -47,7 +47,10 @@ Private state-machine modules must not be widened for compatibility with
 - `src/input/`: remaining private backup and summary state machines.
 - `src/processor/`: public borrow-only processor facade with private raw
   delivery, expansion, scanner-status, and alignment orchestration.
-- `src/scanners/`: private typed scanner family.
+- `src/scanners/`: private typed scanner family. `hyphenation.rs` owns TeX82
+  §934/§960's `\hyphenation`/`\patterns` scans, which are `get_x_token`
+  classification loops rather than `scan_toks` collections and so must never
+  enter the `absorbing` scanner status or track a brace depth.
 - `src/primitives/`: private static TeX82, e-TeX, and pdfTeX dispatch families.
 - `src/macro_call.rs`, `src/macro_call/tests.rs`: private canonical scalar
   macro matcher, invocation/argument activation ownership, and focused tests.
