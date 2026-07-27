@@ -972,6 +972,51 @@ fn canonical_math_replay_observer_does_not_change_frozen_mlist() {
     );
 }
 
+/// TeX82 §1176's `sub_sup` finishes its script through §1151's `scan_math`,
+/// which reads the field with `get_x_token` and, for a braced field, §1153's
+/// `back_input; scan_left_brace`. That episode runs nested inside a host-applied step
+/// (`docs/tex_command_core.md` §33.5), and its command processor used to be
+/// constructed at a call site that never installed the operation's observer,
+/// so the entire braced field was consumed with zero observations while the
+/// unobserved run consumed it identically (umber2-johp.195).
+#[test]
+fn canonical_math_script_field_is_observed_like_every_other_episode() {
+    let source = br"a^{bc}";
+    let mut universe = Universe::new_with_plain_catcodes();
+    let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+    control.modes.push(Mode::Math);
+    register_source(&mut control, source);
+    let mut observations = ObservationRecorder::default();
+    loop {
+        match control
+            .step_with_observer(&mut universe, &mut observations)
+            .expect("observed canonical math script executes")
+        {
+            MainControlStep::End | MainControlStep::EndOfInput => break,
+            MainControlStep::Continue => {}
+        }
+    }
+
+    let delivered = observations
+        .0
+        .iter()
+        .filter_map(|observation| match observation {
+            CommandObservation::Command(record) => Some(record.command.as_str()),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert!(
+        delivered.contains(&"sup_mark"),
+        "the script marker must be delivered: {delivered:?}"
+    );
+    for inside_the_field in ["left_brace", "letter", "right_brace"] {
+        assert!(
+            delivered.contains(&inside_the_field),
+            "the script field's own {inside_the_field} delivery must be observed: {delivered:?}"
+        );
+    }
+}
+
 #[test]
 fn canonical_math_family_assignment_and_fam_select_variable_mathcode_family() {
     let mut universe = Universe::new_with_plain_catcodes();

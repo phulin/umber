@@ -3357,6 +3357,34 @@ independent copies of a routing decision are the mechanism that lets that
 happen, so the fix is always to derive both paths from one shared commit
 rather than to repair the copy that drifted.
 
+A host-applied step is also where an operation stops being one command
+processor episode. `init_math`, the math-noad family, and `append_discretionary`
+each run **nested** episodes while they execute -- a math field (§1151
+`scan_math`, reached from §1176's `sub_sup` for a script), a `\mathchoice`
+branch, a discretionary part -- and each of those
+is a fresh `CommandProcessor`. Which is the same duplication one level down:
+every construction site got to decide for itself whether the operation's
+observer was installed, and the three nested math constructions never did.
+An observed `^{\the\footnotenum}` then consumed its entire braced field with
+zero observations, and the backup level holding the backed-up `^` was never
+seen retiring, while the unobserved run consumed it identically
+(`umber2-johp.195`). That is the same defect as `umber2-johp.118` with the
+opposite symptom: not a step that behaves differently when observed, but a
+step whose observation silently stops partway through. Both make the traced
+run a different artifact from the shipped one.
+
+So the construction is named once too. `command_processor` is the only
+`CommandProcessor::new` call in `tex-exec`, and it takes the operation's
+commit slot as a parameter, so an episode cannot be constructed without
+stating which buffer it publishes into. `CanonicalMainControl` holds that slot
+as engine state (`operation_observations`) rather than threading an observer
+argument, precisely because a nested episode is several frames below the entry
+point that knows whether the operation is observed. Deliberate silence -- the
+startup terminal line's exhaustion retirement -- vacates the slot for that one
+episode and says so; it is never expressed by omitting the observer at a
+construction site. `crates/tex-exec/tests/it.rs` pins the single constructor
+and the single `.with_observer` call.
+
 ### 33.6 The two math-shift probes are not one probe
 
 A `$` delivered to main control is followed by a lookahead in three of the
