@@ -15,8 +15,10 @@ scripts/test-arxiv-corpus.sh
 scripts/test-stepwise-arxiv-census.sh
 scripts/test-oracle-regeneration.sh
 
-cargo test -q -p profile-analyzer --tests
-cargo test -q -p refexec --tests
+# `profile-analyzer` and `refexec` are tested by `scripts/run-native-tests.py`
+# with everything else, so re-running them here would only thrash the shared
+# target directory with a narrower feature resolution. `parity-harness` stays
+# because `reference-tools` is a resolution no other gate builds.
 cargo test -q -p parity-harness --tests --features reference-tools
 
 CARGO_TARGET_DIR="${TOOLS_TARGET_DIR:-target/tools}" \
