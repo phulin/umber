@@ -61,6 +61,15 @@ pub struct CanonicalMainControl {
     active_alignment: Option<ActiveReplayAlignment>,
     boxes: ReplayBoxes,
     output_dead_cycles: i32,
+    /// True while `main_control` is parked at TeX82 §1034's
+    /// `main_loop_lookahead` rather than at §1030's `big_switch`.
+    ///
+    /// TeX's inner character loop appends a character and then fetches the
+    /// next command from §1038's lookahead, which starts with a bare
+    /// `get_next`; only `big_switch` uses `get_x_token`. Umber executes one
+    /// command per `step_once`, so the label it would have jumped to has to
+    /// be carried across steps explicitly.
+    main_loop_active: bool,
     completed_replay_episode: Option<tex_command::CommandReplayEpisode>,
     /// Detached DVI receipts whose artifact commits have survived an entire
     /// canonical aggregate operation. This is replay state so rollback drops
@@ -210,6 +219,7 @@ struct CanonicalStepSnapshot {
     active_alignment: Option<ActiveReplayAlignment>,
     boxes: ReplayBoxes,
     output_dead_cycles: i32,
+    main_loop_active: bool,
     completed_replay_episode: Option<tex_command::CommandReplayEpisode>,
     prepared_dvi_pages: Vec<crate::dispatch::PreparedDviPage>,
     completed_boundaries: Vec<crate::EngineBoundary>,
@@ -512,11 +522,36 @@ impl CanonicalMainControl {
             active_alignment: self.active_alignment.clone(),
             boxes: self.boxes.clone(),
             output_dead_cycles: self.output_dead_cycles,
+            main_loop_active: self.main_loop_active,
             completed_replay_episode: self.completed_replay_episode,
             prepared_dvi_pages: self.prepared_dvi_pages.clone(),
             completed_boundaries: self.completed_boundaries.clone(),
             universe: stores.snapshot(),
         }
+    }
+
+    /// Records which of TeX82 §1030's two fetch labels `main_control` is
+    /// parked at now that this step has been applied.
+    ///
+    /// §1034's `main_loop` is reached only from `hmode`, so the mode tested
+    /// is the one the step left behind: §1090's `vmode+letter` opens a
+    /// paragraph first and arrives in horizontal mode, while `mmode+letter`
+    /// (§1154) appends a math char and never enters the loop at all.
+    ///
+    /// A character the current font does not contain never reaches the
+    /// lookahead either: §1036's `main_loop_move+2` issues `char_warning`,
+    /// frees the would-be node, and jumps straight back to `big_switch`. With
+    /// `\nullfont` selected -- §552 gives it `font_bc=1`, `font_ec=0`, so no
+    /// character at all exists -- that is every character in the document.
+    fn park_main_control(&mut self, character: Option<char>, stores: &Universe) {
+        self.main_loop_active = character.is_some_and(|character| {
+            matches!(
+                self.modes.current_mode(),
+                Mode::Horizontal | Mode::RestrictedHorizontal
+            ) && stores
+                .font(stores.current_font())
+                .character_exists(character)
+        });
     }
 
     fn rollback_step(&mut self, snapshot: CanonicalStepSnapshot, stores: &mut Universe) {
@@ -535,6 +570,7 @@ impl CanonicalMainControl {
         self.active_alignment = snapshot.active_alignment;
         self.boxes = snapshot.boxes;
         self.output_dead_cycles = snapshot.output_dead_cycles;
+        self.main_loop_active = snapshot.main_loop_active;
         self.completed_replay_episode = snapshot.completed_replay_episode;
         self.prepared_dvi_pages = snapshot.prepared_dvi_pages;
         self.completed_boundaries = snapshot.completed_boundaries;
@@ -648,6 +684,7 @@ impl CanonicalMainControl {
     ) -> Result<ReplayStep, ExecError> {
         let mode = self.modes.current_mode();
         let innermost_group = stores.innermost_group_kind();
+        let main_loop_active = self.main_loop_active;
         let scanned = {
             let mut processor = CommandProcessor::new(
                 &mut self.command,
@@ -661,26 +698,43 @@ impl CanonicalMainControl {
                 &ReplayBoxes::default(),
                 innermost_group,
                 mode,
+                main_loop_active,
             )?
         };
         let scanned = self.resolve_font_resource(scanned)?;
         let scanned = self.resolve_input_stream_resource(scanned)?;
         let scanned = self.resolve_pdf_image_resource(scanned, stores)?;
+        // Every case of §1030's big `case` statement other than the four
+        // `main_loop` entries ends at `goto big_switch`.
+        let main_loop_character = scanned.main_loop_character();
+        self.main_loop_active = false;
         if let ScannedStep::ReplayCompleted(episode) = scanned {
             self.completed_replay_episode = Some(episode);
             return Ok(ReplayStep::Continue);
         }
+        // Each of these runs nested command-owned episodes whose own last
+        // character would otherwise leave `main_loop_active` set. None of
+        // them is a §1030 `main_loop` entry, so all of them resume at
+        // `big_switch`.
         if let ScannedStep::Math(request) = scanned {
-            return self.apply_canonical_math_request(request, stores);
+            let step = self.apply_canonical_math_request(request, stores);
+            self.main_loop_active = false;
+            return step;
         }
         if let ScannedStep::MathDelimiter(boundary) = scanned {
-            return self.apply_canonical_math_delimiter(boundary, stores);
+            let step = self.apply_canonical_math_delimiter(boundary, stores);
+            self.main_loop_active = false;
+            return step;
         }
         if let ScannedStep::MathShift { paired } = scanned {
-            return self.apply_canonical_math_shift(paired, stores);
+            let step = self.apply_canonical_math_shift(paired, stores);
+            self.main_loop_active = false;
+            return step;
         }
         if let ScannedStep::Discretionary(discretionary) = scanned {
-            return self.apply_discretionary(discretionary, stores);
+            let step = self.apply_discretionary(discretionary, stores);
+            self.main_loop_active = false;
+            return step;
         }
         let fires_afterassignment = scanned.fires_afterassignment();
         let result = apply_scanned_step(
@@ -693,6 +747,7 @@ impl CanonicalMainControl {
             &mut self.boxes,
             &mut self.prepared_dvi_pages,
         )?;
+        self.park_main_control(main_loop_character, stores);
         if fires_afterassignment {
             schedule_afterassignment(&mut self.command, stores);
         }
@@ -735,9 +790,11 @@ impl CanonicalMainControl {
         stores.enter_group_with_kind(GroupKind::Disc);
         self.modes.push(Mode::RestrictedHorizontal);
         let episode = self.command.push_discretionary_episode(tokens);
+        self.main_loop_active = false;
         while self.command.replay_episode_is_active(episode) {
             let _ = self.step_once(stores)?;
         }
+        self.main_loop_active = false;
         crate::assignments::flush_pending_hchars(&mut self.modes, stores)?;
         let level = self.modes.pop()?;
         let nodes = stores.freeze_node_list(level.list().nodes());
@@ -762,9 +819,11 @@ impl CanonicalMainControl {
             let aftergroup = self
                 .command
                 .push_aftergroup(stores.finish_traced_token_list(&traced));
+            self.main_loop_active = false;
             while self.command.replay_episode_is_active(aftergroup) {
                 let _ = self.step_once(stores)?;
             }
+            self.main_loop_active = false;
         }
         Ok(nodes)
     }
@@ -845,26 +904,43 @@ impl CanonicalMainControl {
                 &mut self.output_dead_cycles,
                 max_dead_cycles,
                 self.modes.current_list().display_eq_no().is_some(),
+                self.main_loop_active,
             )?
         };
         let scanned = self.resolve_font_resource(scanned)?;
         let scanned = self.resolve_input_stream_resource(scanned)?;
         let scanned = self.resolve_pdf_image_resource(scanned, stores)?;
+        // Every case of §1030's big `case` statement other than the four
+        // `main_loop` entries ends at `goto big_switch`.
+        let main_loop_character = scanned.main_loop_character();
+        self.main_loop_active = false;
         if let ScannedStep::ReplayCompleted(episode) = scanned {
             self.completed_replay_episode = Some(episode);
             return Ok(ReplayStep::Continue);
         }
+        // Each of these runs nested command-owned episodes whose own last
+        // character would otherwise leave `main_loop_active` set. None of
+        // them is a §1030 `main_loop` entry, so all of them resume at
+        // `big_switch`.
         if let ScannedStep::Math(request) = scanned {
-            return self.apply_canonical_math_request(request, stores);
+            let step = self.apply_canonical_math_request(request, stores);
+            self.main_loop_active = false;
+            return step;
         }
         if let ScannedStep::MathDelimiter(boundary) = scanned {
-            return self.apply_canonical_math_delimiter(boundary, stores);
+            let step = self.apply_canonical_math_delimiter(boundary, stores);
+            self.main_loop_active = false;
+            return step;
         }
         if let ScannedStep::MathShift { paired } = scanned {
-            return self.apply_canonical_math_shift(paired, stores);
+            let step = self.apply_canonical_math_shift(paired, stores);
+            self.main_loop_active = false;
+            return step;
         }
         if let ScannedStep::Discretionary(discretionary) = scanned {
-            return self.apply_discretionary(discretionary, stores);
+            let step = self.apply_discretionary(discretionary, stores);
+            self.main_loop_active = false;
+            return step;
         }
         let fires_afterassignment = scanned.fires_afterassignment();
         let artifact_count = stores.world().artifact_commits().len();
@@ -878,6 +954,7 @@ impl CanonicalMainControl {
             &mut self.boxes,
             &mut self.prepared_dvi_pages,
         )?;
+        self.park_main_control(main_loop_character, stores);
         if fires_afterassignment {
             schedule_afterassignment(&mut self.command, stores);
         }
@@ -952,6 +1029,7 @@ impl CanonicalMainControl {
         // the field. Checking liveness directly is correct regardless of
         // which nested scan discovered the retirement, and matches the
         // already-established pattern in `execute_discretionary_part`.
+        self.main_loop_active = false;
         while self.command.replay_episode_is_active(episode) {
             match self.step_once(stores)? {
                 ReplayStep::End | ReplayStep::EndOfInput => {
@@ -962,6 +1040,7 @@ impl CanonicalMainControl {
                 ReplayStep::Continue => {}
             }
         }
+        self.main_loop_active = false;
         while canonical_left_group_open(&self.modes, stores) {
             stores.world_mut().write_text(
                 PrintSink::TerminalAndLog,
@@ -1517,23 +1596,34 @@ impl CanonicalMainControl {
                 &mut self.output_dead_cycles,
                 max_dead_cycles,
                 self.modes.current_list().display_eq_no().is_some(),
+                self.main_loop_active,
             )?
         };
         let scanned = self.resolve_font_resource(scanned)?;
         let scanned = self.resolve_input_stream_resource(scanned)?;
         let scanned = self.resolve_pdf_image_resource(scanned, stores)?;
+        // Every case of §1030's big `case` statement other than the four
+        // `main_loop` entries ends at `goto big_switch`.
+        let main_loop_character = scanned.main_loop_character();
+        self.main_loop_active = false;
         if let ScannedStep::ReplayCompleted(episode) = scanned {
             self.completed_replay_episode = Some(episode);
             return Ok(ReplayStep::Continue);
         }
         if let ScannedStep::Math(request) = scanned {
-            return self.apply_canonical_math_request(request, stores);
+            let step = self.apply_canonical_math_request(request, stores);
+            self.main_loop_active = false;
+            return step;
         }
         if let ScannedStep::MathDelimiter(boundary) = scanned {
-            return self.apply_canonical_math_delimiter(boundary, stores);
+            let step = self.apply_canonical_math_delimiter(boundary, stores);
+            self.main_loop_active = false;
+            return step;
         }
         if let ScannedStep::Discretionary(discretionary) = scanned {
-            return self.apply_discretionary(discretionary, stores);
+            let step = self.apply_discretionary(discretionary, stores);
+            self.main_loop_active = false;
+            return step;
         }
         let mutation = applied_mutation_observation(&scanned, stores);
         let begins_alignment = matches!(&scanned, ScannedStep::BeginAlignment { .. });
@@ -1587,6 +1677,9 @@ impl CanonicalMainControl {
             &mut self.boxes,
             &mut self.prepared_dvi_pages,
         );
+        if result.is_ok() {
+            self.park_main_control(main_loop_character, stores);
+        }
         if result.is_ok() && fires_afterassignment {
             schedule_afterassignment(&mut self.command, stores);
         }
@@ -2500,6 +2593,27 @@ impl ScannedStep {
                 | Self::ParagraphShape { .. }
         )
     }
+
+    /// The character TeX82 §1030 hands to §1034's `main_loop`, if this step
+    /// is one of its four entries: `hmode+letter`, `hmode+other_char`,
+    /// `hmode+char_given`, or `hmode+char_num`.
+    ///
+    /// These are the only cases of the big `case` statement that do not end
+    /// at `goto big_switch`. The mode and font tests §1030/§1036 also impose
+    /// are applied by the caller against the state the step *left* behind,
+    /// because §1090's `vmode+letter` starts a paragraph first and only then
+    /// reaches the same `main_loop`.
+    fn main_loop_character(&self) -> Option<char> {
+        match *self {
+            Self::Character {
+                ch,
+                cat: Catcode::Letter | Catcode::Other,
+                ..
+            } => Some(ch),
+            Self::CharacterCode { value } => u32::try_from(value).ok().and_then(char::from_u32),
+            _ => None,
+        }
+    }
 }
 
 /// A completed assignable quantity selector.  It is intentionally a semantic
@@ -2536,6 +2650,7 @@ fn scan_replay_step(
     output_dead_cycles: &mut i32,
     max_dead_cycles: i32,
     display_eq_no: bool,
+    main_loop_active: bool,
 ) -> Result<ScannedStep, ExecError> {
     if let Some((alignment, phase)) = alignment_preamble {
         return match phase {
@@ -2575,9 +2690,14 @@ fn scan_replay_step(
             AlignmentPreamblePhase::NoAlignBody => {
                 scan_noalign_body(processor, alignment, boxes, innermost_group, mode)
             }
-            AlignmentPreamblePhase::CellDelivery => {
-                scan_alignment_delivery_step(processor, alignment, boxes, innermost_group, mode)
-            }
+            AlignmentPreamblePhase::CellDelivery => scan_alignment_delivery_step(
+                processor,
+                alignment,
+                boxes,
+                innermost_group,
+                mode,
+                main_loop_active,
+            ),
         };
     }
     scan_step(
@@ -2589,6 +2709,7 @@ fn scan_replay_step(
         output_dead_cycles,
         max_dead_cycles,
         display_eq_no,
+        main_loop_active,
     )
 }
 
@@ -2719,9 +2840,10 @@ fn scan_alignment_delivery_step(
     boxes: &ReplayBoxes,
     innermost_group: Option<GroupKind>,
     mode: Mode,
+    main_loop_active: bool,
 ) -> Result<ScannedStep, ExecError> {
     match processor
-        .get_x_alignment_delivery()
+        .get_x_alignment_delivery(main_loop_active)
         .map_err(command_error)?
     {
         None => Ok(ScannedStep::EndOfInput),
@@ -2819,11 +2941,18 @@ fn scan_step(
     output_dead_cycles: &mut i32,
     max_dead_cycles: i32,
     display_eq_no: bool,
+    main_loop_active: bool,
 ) -> Result<ScannedStep, ExecError> {
-    let Some(delivery) = processor
-        .get_x_token_with_replay_completion()
-        .map_err(command_error)?
-    else {
+    // TeX82 §1030 has two fetch labels, not one. `big_switch` uses
+    // `get_x_token`; §1034's inner character loop instead re-enters at
+    // §1038's `main_loop_lookahead`, whose bare `get_next` is what keeps a
+    // run of adjacent characters from being delivered through expansion.
+    let delivery = if main_loop_active {
+        processor.main_loop_lookahead()
+    } else {
+        processor.get_x_token_with_replay_completion()
+    };
+    let Some(delivery) = delivery.map_err(command_error)? else {
         return Ok(if boxes.terminal_output_shipout_complete {
             ScannedStep::Terminate
         } else {

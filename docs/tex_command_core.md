@@ -3100,6 +3100,55 @@ reintroduce:
   A second table always drifts, and while it drifts it hides exactly the
   engine divergences the producer's name would have exposed.
 
+### 33.4 Main-control fetch labels
+
+TeX82 §1030 gives `main_control` two places to fetch its next command, not
+one, and which one is live is engine state that survives across Umber's
+`step_once` boundary.
+
+- `big_switch` calls `get_x_token`. This is where all but four cases of the
+  big `case` statement resume, because each of them ends at
+  `goto big_switch`.
+- §1034's inner character loop (`main_loop`) instead resumes at §1038's
+  `main_loop_lookahead`, which starts with a bare `get_next` -- "set only
+  `cur_cmd` and `cur_chr`, for speed" -- and jumps straight back into the
+  loop when that raw command is `letter`, `other_char`, or `char_given`.
+  Only a raw command outside those three reaches `x_token`.
+
+So a run of adjacent ordinary characters produces exactly one raw delivery
+per character and no expanded delivery at all, while the first character of
+a run -- fetched at `big_switch` -- produces both. A canonical engine that
+fetches every command through `get_x_token` is not merely noisy in the trace:
+it has collapsed two distinct labels into one, and the extra expanded
+deliveries desynchronize the semantic stream from the first word of body text
+onward.
+
+`CanonicalMainControl::main_loop_active` carries the live label. It is set
+only by §1030's four `main_loop` entries -- `hmode+letter`,
+`hmode+other_char`, `hmode+char_given`, `hmode+char_num` -- and only when
+both of the tests those entries then pass hold:
+
+- the mode the step left behind is horizontal or restricted horizontal
+  (§1090's `vmode+letter` starts a paragraph first and arrives there;
+  §1154's `mmode+letter` appends a math char and never enters the loop); and
+- the current font contains the character. §1036's `main_loop_move+2`
+  answers a missing character with `char_warning`, frees the would-be node,
+  and jumps to `big_switch` rather than the lookahead. Under `\nullfont`
+  -- §552 gives it `font_bc=1`, `font_ec=0`, so it contains nothing -- that
+  is _every_ character, which is why a font-free fixture legitimately shows
+  a raw and an expanded delivery for each of its letters.
+
+Both of main control's fetch sites honor the label: ordinary `scan_step` and
+the alignment cell's `get_x_alignment_delivery`. An alignment cell body is
+ordinary `main_control` material, and neither of that path's recovery
+predicates can fire for the three commands §1038 accepts raw.
+
+Executor-owned replay episodes (a discretionary part, a math field, an
+`\aftergroup` list) clear the label on entry and exit. TeX reaches those
+lists through `scan_left_brace`/`push_nest` and leaves them through
+`handle_right_brace`, never mid-character-run, so an episode's own last
+character must not park the enclosing context at the lookahead.
+
 ## 34. End-state invariants
 
 The replacement is complete only when all of these hold:

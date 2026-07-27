@@ -1,7 +1,7 @@
 //! Ephemeral command-processor orchestration.
 
 mod alignment;
-mod expand;
+pub(crate) mod expand;
 mod next;
 pub(crate) mod status;
 
