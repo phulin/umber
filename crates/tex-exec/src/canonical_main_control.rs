@@ -71,6 +71,14 @@ pub struct CanonicalMainControl {
     /// command per `step_once`, so the label it would have jumped to has to
     /// be carried across steps explicitly.
     main_loop_active: bool,
+    /// False until TeX82 §1030's `main_control` prologue has run.
+    ///
+    /// `main_control` is entered once per job and opens with
+    /// `if every_job<>null then begin_token_list(every_job,every_job_text)`,
+    /// before `big_switch` fetches anything. Umber executes one command per
+    /// step, so the prologue is carried as a one-shot on the first step rather
+    /// than by a distinct entry call every driver would have to remember.
+    main_control_entered: bool,
     /// Observations produced by `fire_pending_page_output` after the current
     /// step's own records. Drained by every step, observed or not.
     #[cfg(any(test, feature = "instrumentation"))]
@@ -758,6 +766,25 @@ impl CanonicalMainControl {
         Ok(())
     }
 
+    /// Runs TeX82 §1030 `main_control`'s prologue exactly once per job.
+    ///
+    /// tex.web enters `main_control` with
+    /// `if every_job<>null then begin_token_list(every_job,every_job_text)`
+    /// and only then reaches `big_switch`, so the hook's tokens precede every
+    /// command the job delivers. `scan_startup_file_name` (§1337's
+    /// `@<Get the first line of input and prepare to start@>`) still runs
+    /// before this, exactly as it does in tex.web's main program.
+    ///
+    /// Returns whether this call was the entry, so an observed step publishes
+    /// the prologue's push only on the step that produced it.
+    fn enter_main_control(&mut self, stores: &mut Universe) -> bool {
+        if std::mem::replace(&mut self.main_control_entered, true) {
+            return false;
+        }
+        schedule_everyjob(&mut self.command, stores);
+        true
+    }
+
     /// Appends already-committed records to the operation's commit buffer.
     /// They are published only when the whole operation commits.
     #[cfg(any(test, feature = "instrumentation"))]
@@ -999,6 +1026,7 @@ impl CanonicalMainControl {
     }
 
     fn step_once(&mut self, stores: &mut Universe) -> Result<ReplayStep, ExecError> {
+        self.enter_main_control(stores);
         self.refresh_host_capabilities(stores);
         let mode = self.modes.current_mode();
         let outer_paragraph_was_active = mode == Mode::Horizontal && self.modes.depth() == 2;
@@ -1809,6 +1837,18 @@ impl CanonicalMainControl {
         // execution mode. Keep the command processor's borrowed mode facts
         // identical to an unobserved step (notably for \ifhmode after a
         // paragraph-start transition).
+        if self.enter_main_control(stores) {
+            // §1030's prologue precedes `big_switch`, so its push is published
+            // ahead of the first command this step delivers rather than with
+            // the step's own applied records.
+            let entry_records: Vec<CommandObservation> = self
+                .command
+                .take_named_token_list_push_observations()
+                .into_iter()
+                .map(CommandObservation::Input)
+                .collect();
+            self.observe_committed(entry_records);
+        }
         self.refresh_host_capabilities(stores);
         let mode = self.modes.current_mode();
         let alignment_preamble = alignment_preamble(self.active_alignment.as_mut());
@@ -7398,6 +7438,10 @@ fn begin_next_replay_alignment_cell(
         ));
         finish_replay_alignment_row(active, modes, stores)?;
         active.column = 0;
+        // §792's extra-tab recovery rewrites `extra_info` to `cr_code`, so
+        // §791's `fin_col` returns true and §1131's `do_endv` runs `fin_row`
+        // here too -- including its `\everycr` push.
+        schedule_everycr(command.state, stores);
         active.align_peek_pending = true;
         return Ok(());
     }
@@ -7431,6 +7475,11 @@ fn begin_next_replay_alignment_cell(
     match delimiter {
         AlignmentCellDelimiter::Row => {
             finish_replay_alignment_row(active, modes, stores)?;
+            // TeX82 §799 `fin_row` closes with
+            // `if every_cr<>null then begin_token_list(every_cr,every_cr_text);
+            // align_peek`, so the hook is installed before the lookahead that
+            // starts the next row reads a token.
+            schedule_everycr(command.state, stores);
             active.align_peek_pending = true;
         }
         AlignmentCellDelimiter::Tab | AlignmentCellDelimiter::Span => {
@@ -9366,6 +9415,12 @@ fn apply_scanned_step(
             // restored before the next entry begins. §800's first `unsave`
             // removes the last one.
             stores.enter_group_with_kind(GroupKind::Align);
+            // §774 then runs
+            // `if every_cr<>null then begin_token_list(every_cr,every_cr_text)`
+            // before its own `align_peek`, exactly as §799 does at every later
+            // row boundary. The push follows the entry save level, so the hook
+            // is scoped to the entry it opens.
+            schedule_everycr(command.state, stores);
             Ok(ReplayStep::Continue)
         }
         ScannedStep::BeginNoAlign { alignment } => {
@@ -10378,6 +10433,67 @@ fn schedule_everybox(command: &mut CommandState, stores: &mut Universe, horizont
         })
         .collect();
     command.push_everybox(stores.finish_traced_token_list(&traced), horizontal);
+}
+
+/// Runs TeX82 §774 `init_align`'s and §799 `fin_row`'s shared
+/// `if every_cr<>null then begin_token_list(every_cr,every_cr_text)`.
+///
+/// Both sections push `\everycr` immediately before `align_peek`, so the hook
+/// supplies the tokens that lookahead classifies -- typically plain.tex's
+/// `\noalign{...}`. §785's `align_peek` itself never pushes it, and neither
+/// does §1133's `no_align_group` case of `handle_right_brace`, which reaches
+/// `align_peek` a second time after a `\noalign` body.
+fn schedule_everycr(command: &mut CommandState, stores: &mut Universe) {
+    let tokens = stores.tok_param(TokParam::EVERY_CR);
+    if stores.tokens(tokens).is_empty() {
+        return;
+    }
+    let tokens: Vec<_> = stores.tokens(tokens).to_vec();
+    let traced: Vec<_> = tokens
+        .into_iter()
+        .map(|token| {
+            let origin = stores.inserted_origin(
+                tex_state::provenance::InsertedOriginKind::TokenListReplay(
+                    tex_state::TokenListReplayKind::EveryCr,
+                ),
+                token,
+                stores.bootstrap_origin(),
+            );
+            tex_state::token::TracedTokenWord::pack(token, origin)
+        })
+        .collect();
+    command.push_everycr(stores.finish_traced_token_list(&traced));
+}
+
+/// Runs TeX82 §1030 `main_control`'s prologue,
+/// `if every_job<>null then begin_token_list(every_job,every_job_text)`.
+///
+/// `\everyjob` is read once, before `big_switch` fetches anything, so the hook
+/// is owned by the entry into `main_control` rather than by any command.
+/// `Universe::take_pending_every_job` is the one-shot that distinguishes a job
+/// started from a format image (where the parameter the format dumped is live
+/// at entry) from the INITEX job that built it and from a resumed timeline
+/// that already passed this point.
+fn schedule_everyjob(command: &mut CommandState, stores: &mut Universe) {
+    let tokens = stores.take_pending_every_job();
+    if stores.tokens(tokens).is_empty() {
+        return;
+    }
+    let tokens: Vec<_> = stores.tokens(tokens).to_vec();
+    let traced: Vec<_> = tokens
+        .into_iter()
+        .map(|token| {
+            let origin = stores.inserted_origin(
+                tex_state::provenance::InsertedOriginKind::TokenListReplay(
+                    tex_state::TokenListReplayKind::EveryJob,
+                ),
+                token,
+                stores.bootstrap_origin(),
+            );
+            tex_state::token::TracedTokenWord::pack(token, origin)
+        })
+        .collect();
+    command.push_everyjob(stores.finish_traced_token_list(&traced));
 }
 
 fn schedule_everymath(command: &mut CommandState, stores: &mut Universe, display: bool) {

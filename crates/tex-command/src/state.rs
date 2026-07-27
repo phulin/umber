@@ -174,6 +174,22 @@ impl CommandState {
         );
     }
 
+    /// Schedules the immutable `\everycr` payload for tex.web §774
+    /// `init_align`'s and §799 `fin_row`'s shared
+    /// `if every_cr<>null then begin_token_list(every_cr,every_cr_text)`,
+    /// which both run immediately before `align_peek`.
+    pub fn push_everycr(&mut self, tokens: TracedTokenList) {
+        self.push_named_token_list(tokens, StoredReplayReason::EveryCr);
+    }
+
+    /// Schedules the immutable `\everyjob` payload for tex.web §1030
+    /// `main_control`'s prologue,
+    /// `if every_job<>null then begin_token_list(every_job,every_job_text)`,
+    /// which runs once before the first `big_switch` fetch.
+    pub fn push_everyjob(&mut self, tokens: TracedTokenList) {
+        self.push_named_token_list(tokens, StoredReplayReason::EveryJob);
+    }
+
     /// Installs one tex.web §307-named token list and records its push.
     ///
     /// This is `begin_token_list` for the executor-requested hooks: the level

@@ -1617,6 +1617,167 @@ fn indent_inside_a_live_paragraph_does_not_replay_everypar() {
     );
 }
 
+/// Counts the `\everycr` token-list pushes a canonical run commits.
+fn everycr_push_count(source: &[u8]) -> usize {
+    let mut universe = Universe::new_with_plain_catcodes();
+    let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+    register_source(&mut control, source);
+    let mut observations = ObservationRecorder::default();
+    loop {
+        match control
+            .step_with_observer(&mut universe, &mut observations)
+            .expect("canonical program executes")
+        {
+            MainControlStep::End | MainControlStep::EndOfInput => break,
+            MainControlStep::Continue => {}
+        }
+    }
+    observations
+        .0
+        .iter()
+        .filter(|observation| {
+            matches!(
+                observation,
+                CommandObservation::Input(record)
+                    if record.transition == InputTransition::Push
+                        && record.reason == InputReason::EveryCr
+            )
+        })
+        .count()
+}
+
+/// tex.web pushes `\everycr` in exactly two places, both immediately before
+/// `align_peek`: §774 `init_align`, once the preamble and the entry save
+/// level exist, and §799 `fin_row`, once a row's unset box is appended.
+///
+/// §785's `align_peek` itself never pushes it, and neither does §1133's
+/// `no_align_group` case of `handle_right_brace`, so an alignment replays the
+/// hook once per row boundary plus once at entry -- not once per `align_peek`
+/// call, which a `\noalign` body would double.
+#[test]
+fn halign_replays_everycr_at_init_align_and_at_every_row_end() {
+    const HOOK: &[u8] = br"\everycr{\noalign{\relax}}";
+    let with_hook = |body: &[u8]| -> Vec<u8> { [HOOK, body].concat() };
+
+    assert_eq!(
+        everycr_push_count(&with_hook(br"\halign{#\cr}\end")),
+        1,
+        "§774 pushes \\everycr before its own align_peek, with no row at all"
+    );
+    assert_eq!(
+        everycr_push_count(&with_hook(br"\halign{#\cr\kern1pt\cr}\end")),
+        2,
+        "§774's push plus one §799 fin_row"
+    );
+    assert_eq!(
+        everycr_push_count(&with_hook(br"\halign{#\cr\kern1pt\cr\kern2pt\cr}\end")),
+        3,
+        "one §799 fin_row push per completed row"
+    );
+    assert_eq!(
+        everycr_push_count(&with_hook(br"\halign{#&#\cr\kern1pt&\kern2pt\cr}\end")),
+        2,
+        "a `&` ends an entry, not a row, so §791 fin_col alone pushes nothing"
+    );
+}
+
+/// `\everycr` is an ordinary token parameter, so a later assignment governs
+/// the next alignment and an empty value makes both guards `null` again --
+/// plain.tex's `\ialign` and `\@lign` both rely on exactly that.
+#[test]
+fn a_cleared_everycr_stops_being_pushed_by_the_next_alignment() {
+    assert_eq!(
+        everycr_push_count(
+            br"\everycr{\noalign{\relax}}\halign{#\cr\kern1pt\cr}\everycr{}\halign{#\cr\kern2pt\cr}\end"
+        ),
+        2,
+        "only the first alignment sees a non-null \\everycr"
+    );
+    assert_eq!(
+        everycr_push_count(br"{\everycr{\noalign{\relax}}}\halign{#\cr\kern1pt\cr}\end"),
+        0,
+        "the value was assigned locally and restored before the alignment"
+    );
+}
+
+/// The pushed level is ordinary replayed input, so its `\noalign` body runs
+/// between the rows exactly as a literal one would. `\noalign` opens
+/// §785's `no_align_group`, so only a global assignment survives it.
+#[test]
+fn everycr_noalign_body_executes_at_each_row_boundary() {
+    let mut universe = Universe::new_with_plain_catcodes();
+    let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+    register_source(
+        &mut control,
+        br"\everycr{\noalign{\global\advance\count7 by1 }}\halign{#\cr\kern1pt\cr\kern2pt\cr}\end",
+    );
+    run_to_end(&mut control, &mut universe);
+
+    assert_eq!(
+        universe.count(7),
+        3,
+        "§774's entry push and one §799 fin_row push per row, all replayed"
+    );
+}
+
+/// An empty `\everycr` is `null`, and both §774 and §799 guard their
+/// `begin_token_list` with `if every_cr<>null`.
+#[test]
+fn an_empty_everycr_pushes_no_token_list_at_all() {
+    assert_eq!(
+        everycr_push_count(br"\halign{#\cr\kern1pt\cr}\end"),
+        0,
+        "no \\everycr value was ever assigned"
+    );
+}
+
+/// tex.web §1030 opens `main_control` with
+/// `if every_job<>null then begin_token_list(every_job,every_job_text)`,
+/// before `big_switch` fetches its first token. The hook therefore belongs to
+/// entering main control, not to any command, and its tokens precede every
+/// token the root input contributes.
+#[test]
+fn format_loaded_canonical_job_replays_everyjob_before_root_input() {
+    let mut initex = Universe::new_with_plain_catcodes();
+    let mut builder = CanonicalMainControl::tex82_initex(&mut initex);
+    register_source(&mut builder, br"\everyjob{\count7=41}\end");
+    run_to_end(&mut builder, &mut initex);
+    let format = initex.dump_format().expect("dump format");
+
+    let mut universe =
+        Universe::from_format(tex_state::World::memory(), &format).expect("load format");
+    tex_expand::register_expandable_primitives(&mut universe);
+    crate::register_unexpandable_primitives(&mut universe);
+    let mut control = CanonicalMainControl::with_profile(CommandProfile::TEX82);
+    register_source(&mut control, br"\count8=\count7 \end");
+    let mut observations = ObservationRecorder::default();
+    loop {
+        match control
+            .step_with_observer(&mut universe, &mut observations)
+            .expect("canonical program executes")
+        {
+            MainControlStep::End | MainControlStep::EndOfInput => break,
+            MainControlStep::Continue => {}
+        }
+    }
+
+    assert_eq!(
+        universe.count(8),
+        41,
+        "\\everyjob ran before the root input read \\count7"
+    );
+    assert!(
+        matches!(
+            observations.0.first(),
+            Some(CommandObservation::Input(record))
+                if record.transition == InputTransition::Push
+                    && record.reason == InputReason::EveryJob
+        ),
+        "the §1030 prologue precedes big_switch: {:?}",
+        observations.0.first()
+    );
+}
+
 /// §1093 appends the `\parindent`-wide null box for `\indent` in horizontal
 /// mode and resets the space factor to 1000, without pushing a new nest
 /// level; `\noindent` is inert there and touches neither.
