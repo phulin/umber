@@ -2,7 +2,7 @@ use super::*;
 
 #[test]
 fn globaldefs_forces_and_suppresses_global_assignments() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     install_unexpandable_primitives(&mut stores);
     stores.enter_group();
     let mut input = InputStack::new(MemoryInput::new(
@@ -24,7 +24,7 @@ fn globaldefs_forces_and_suppresses_global_assignments() {
 
 #[test]
 fn brace_and_begingroup_groups_restore_local_assignments() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     install_unexpandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new(
         "{\\count0=1\\global\\count1=2}\\begingroup\\count2=3\\endgroup",
@@ -41,7 +41,7 @@ fn brace_and_begingroup_groups_restore_local_assignments() {
 
 #[test]
 fn box_builder_groups_restore_local_assignments() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     install_unexpandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new(
         "\\count0=1 \\dimen0=1pt \
@@ -63,7 +63,7 @@ fn box_builder_groups_restore_local_assignments() {
 
 #[test]
 fn brace_aliases_delimit_box_builder_groups_by_meaning() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     install_unexpandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new(
         "\\let\\bgroup={\\let\\egroup=}\\count0=1 \\setbox0=\\vbox\\bgroup\\count0=2\\bgroup\\count0=3\\egroup\\egroup",
@@ -79,7 +79,7 @@ fn brace_aliases_delimit_box_builder_groups_by_meaning() {
 
 #[test]
 fn aftergroup_replays_tokens_fifo_on_group_exit() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     install_unexpandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new(
         "\\def\\A{\\count0=1}\\def\\B{\\count0=2}{\\aftergroup\\A\\aftergroup\\B}",
@@ -94,7 +94,7 @@ fn aftergroup_replays_tokens_fifo_on_group_exit() {
 
 #[test]
 fn afterassignment_fires_before_aftergroup_tokens() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     install_unexpandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new(
         "\\def\\A{\\global\\count0=1}\\def\\B{\\global\\count0=2}{\\aftergroup\\B\\afterassignment\\A\\count1=7}",
@@ -110,7 +110,7 @@ fn afterassignment_fires_before_aftergroup_tokens() {
 
 #[test]
 fn afterassignment_slot_is_single_token_and_overwrites_previous() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     install_unexpandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new(
         "\\def\\A{\\count0=1}\\def\\B{\\count0=2}\\afterassignment\\A\\afterassignment\\B\\count1=7",
@@ -126,7 +126,7 @@ fn afterassignment_slot_is_single_token_and_overwrites_previous() {
 
 #[test]
 fn group_mismatch_errors_use_tex_primary_text() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     install_unexpandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new("}"));
 
@@ -135,7 +135,7 @@ fn group_mismatch_errors_use_tex_primary_text() {
         .expect("extra right brace is reported and ignored");
     assert!(support::terminal_effect_text(&stores).contains("Too many }'s"));
 
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     install_unexpandable_primitives(&mut stores);
     stores.enter_group_with_kind(tex_state::GroupKind::SemiSimple);
     let mut input = InputStack::new(MemoryInput::new("}"));
@@ -156,7 +156,7 @@ fn group_mismatch_errors_use_tex_primary_text() {
     assert_eq!(err.to_string(), "Extra }, or forgotten \\endgroup.");
     assert_ne!(err.primary_origin(), Some(OriginId::UNKNOWN));
 
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     install_unexpandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new("\\endgroup"));
     Executor::new()
@@ -164,7 +164,7 @@ fn group_mismatch_errors_use_tex_primary_text() {
         .expect("extra endgroup is reported and ignored");
     assert!(support::terminal_effect_text(&stores).contains("Extra \\endgroup"));
 
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     install_unexpandable_primitives(&mut stores);
     stores.enter_group_with_kind(tex_state::GroupKind::Simple);
     let mut input = InputStack::new(MemoryInput::new("\\endgroup"));

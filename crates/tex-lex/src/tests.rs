@@ -62,7 +62,7 @@ fn executor_step_snapshot_restores_complete_live_input_without_host_lookup() {
     }
 
     let reads = Arc::new(AtomicUsize::new(0));
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     stores.set_int_param(IntParam::END_LINE_CHAR, 13);
     let mut input = InputStack::new(CountingInput {
         inner: MemoryInput::new("a\nb"),
@@ -171,7 +171,7 @@ fn executor_step_snapshot_restores_complete_live_input_without_host_lookup() {
 
 #[test]
 fn macro_argument_replay_and_snapshots_share_the_matched_buffer() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     let body = stores.intern_token_list(&[Token::param(1)]);
     let argument_tokens = [
         char_token('a', Catcode::Letter),
@@ -252,7 +252,7 @@ fn macro_argument_replay_and_snapshots_share_the_matched_buffer() {
 
 #[test]
 fn macro_argument_replay_does_not_recursively_substitute_parameter_tokens() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     let body = stores.intern_token_list(&[
         char_token('a', Catcode::Letter),
         Token::param(1),
@@ -285,7 +285,7 @@ fn macro_argument_replay_does_not_recursively_substitute_parameter_tokens() {
 
 #[test]
 fn nested_token_list_resolves_current_macro_parameter() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     let body_token = char_token('b', Catcode::Letter);
     let argument_token = char_token('a', Catcode::Letter);
     let body = stores.intern_token_list(&[body_token]);
@@ -312,7 +312,7 @@ fn nested_token_list_resolves_current_macro_parameter() {
 
 #[test]
 fn nested_token_list_does_not_reach_past_current_macro_arguments() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     let outer_body = stores.intern_token_list(&[char_token('o', Catcode::Letter)]);
     let inner_body = stores.intern_token_list(&[char_token('i', Catcode::Letter)]);
     let nested = stores.intern_token_list(&[Token::param(1)]);
@@ -334,7 +334,7 @@ fn nested_token_list_does_not_reach_past_current_macro_arguments() {
 
 #[test]
 fn nested_unexpanded_list_preserves_parameter_token() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     let body = stores.intern_token_list(&[char_token('b', Catcode::Letter)]);
     let unexpanded = stores.intern_token_list(&[Token::param(1)]);
     let argument = TracedTokenWord::pack(char_token('a', Catcode::Letter), OriginId::UNKNOWN);
@@ -471,7 +471,7 @@ fn alignment_undo_bookkeeping_ignores_ordinary_deliveries() {
         0
     );
 
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     let symbol = stores.intern("brace-alias");
     let control_sequence = TracedTokenWord::pack(Token::Cs(symbol.symbol()), OriginId::UNKNOWN);
     input.undo_alignment_token_delivery(control_sequence);
@@ -491,7 +491,7 @@ fn condition_context() -> TracedTokenWord {
 
 #[test]
 fn traced_memory_source_registers_before_delivery_and_survives_frame_pop() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     let mut lexer = Lexer::new(MemoryInput::new("hello"));
     let first = lexer
         .next_traced_token(&mut stores)
@@ -511,7 +511,7 @@ fn traced_memory_source_registers_before_delivery_and_survives_frame_pop() {
 
 #[test]
 fn empty_memory_source_is_registered_even_without_delivered_tokens() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     stores.set_int_param(IntParam::END_LINE_CHAR, -1);
     let mut lexer = Lexer::new(MemoryInput::new(""));
     assert!(
@@ -533,7 +533,7 @@ fn empty_memory_source_is_registered_even_without_delivered_tokens() {
 
 #[test]
 fn strips_trailing_spaces_and_appends_endlinechar() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     stores.set_int_param(IntParam::END_LINE_CHAR, 13);
     let mut reader = LineReader::new(MemoryInput::new("abc   \n"));
 
@@ -553,7 +553,7 @@ fn strips_trailing_spaces_and_appends_endlinechar() {
 
 #[test]
 fn empty_lines_append_endlinechar_event() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     stores.set_int_param(IntParam::END_LINE_CHAR, 13);
     let mut reader = LineReader::new(MemoryInput::new("   \n\nx\n"));
 
@@ -585,7 +585,7 @@ fn empty_lines_append_endlinechar_event() {
 
 #[test]
 fn suppresses_invalid_endlinechar_values() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     stores.set_int_param(IntParam::END_LINE_CHAR, -1);
     let mut reader = LineReader::new(MemoryInput::new("abc\n"));
 
@@ -599,7 +599,7 @@ fn suppresses_invalid_endlinechar_values() {
 
 #[test]
 fn letters_spaces_and_endline_state_match_tex_rules() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     stores.set_int_param(IntParam::END_LINE_CHAR, 13);
     let mut lexer = Lexer::new(MemoryInput::new(" a  b\n\n"));
 
@@ -618,7 +618,7 @@ fn letters_spaces_and_endline_state_match_tex_rules() {
 
 #[test]
 fn blank_line_endlinechar_uses_current_catcode() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     stores.set_int_param(IntParam::END_LINE_CHAR, 13);
     stores.set_catcode('\r', Catcode::Other);
     let mut lexer = Lexer::new(MemoryInput::new("\n"));
@@ -632,7 +632,7 @@ fn blank_line_endlinechar_uses_current_catcode() {
 
 #[test]
 fn blank_line_endlinechar_catcode_changes_before_line_load() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     stores.set_int_param(IntParam::END_LINE_CHAR, 13);
     let mut lexer = Lexer::new(MemoryInput::new("a\n\n"));
 
@@ -655,7 +655,7 @@ fn blank_line_endlinechar_catcode_changes_before_line_load() {
 
 #[test]
 fn inactive_endlinechar_blank_line_does_not_emit_par_token() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     stores.set_int_param(IntParam::END_LINE_CHAR, -1);
     let mut lexer = Lexer::new(MemoryInput::new("a\n\nb"));
 
@@ -670,7 +670,7 @@ fn inactive_endlinechar_blank_line_does_not_emit_par_token() {
 
 #[test]
 fn scans_control_words_and_control_symbols() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     stores.set_int_param(IntParam::END_LINE_CHAR, 13);
     let mut lexer = Lexer::new(MemoryInput::new("\\foo   x\\$"));
 
@@ -687,7 +687,7 @@ fn scans_control_words_and_control_symbols() {
 
 #[test]
 fn control_space_enters_skipping_blanks_state() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     stores.set_int_param(IntParam::END_LINE_CHAR, 13);
     let mut lexer = Lexer::new(MemoryInput::new("a\\   b"));
 
@@ -704,7 +704,7 @@ fn control_space_enters_skipping_blanks_state() {
 
 #[test]
 fn control_word_scanning_uses_current_catcodes() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     stores.set_int_param(IntParam::END_LINE_CHAR, 13);
     stores.set_catcode('@', Catcode::Letter);
     let mut lexer = Lexer::new(MemoryInput::new("\\foo@bar"));
@@ -717,7 +717,7 @@ fn control_word_scanning_uses_current_catcodes() {
 
 #[test]
 fn unread_characters_use_catcodes_current_at_token_read() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     stores.set_int_param(IntParam::END_LINE_CHAR, 13);
     let mut lexer = Lexer::new(MemoryInput::new("a@b"));
 
@@ -742,7 +742,7 @@ fn unread_characters_use_catcodes_current_at_token_read() {
 
 #[test]
 fn control_word_scan_rechecks_catcodes_after_escape_token_read() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     stores.set_int_param(IntParam::END_LINE_CHAR, 13);
     stores.set_catcode('@', Catcode::Other);
     let mut lexer = Lexer::new(MemoryInput::new("\\@a"));
@@ -760,7 +760,7 @@ fn control_word_scan_rechecks_catcodes_after_escape_token_read() {
 
 #[test]
 fn next_physical_line_uses_current_endlinechar() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     stores.set_int_param(IntParam::END_LINE_CHAR, b'!' as i32);
     let mut lexer = Lexer::new(MemoryInput::new("a\nb\nc"));
 
@@ -799,7 +799,7 @@ fn next_physical_line_uses_current_endlinechar() {
 
 #[test]
 fn comments_ignore_rest_of_physical_line() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     stores.set_int_param(IntParam::END_LINE_CHAR, 13);
     let mut lexer = Lexer::new(MemoryInput::new("a% ignored\nb"));
 
@@ -815,7 +815,7 @@ fn comments_ignore_rest_of_physical_line() {
 
 #[test]
 fn comment_line_continuation_starts_next_line_in_new_line_state() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     stores.set_int_param(IntParam::END_LINE_CHAR, 13);
     let mut lexer = Lexer::new(MemoryInput::new("a%\n   b"));
 
@@ -831,7 +831,7 @@ fn comment_line_continuation_starts_next_line_in_new_line_state() {
 
 #[test]
 fn inactive_endlinechar_still_starts_next_line_in_new_line_state() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     stores.set_int_param(IntParam::END_LINE_CHAR, -1);
     let mut lexer = Lexer::new(MemoryInput::new("a\n   b"));
 
@@ -846,7 +846,7 @@ fn inactive_endlinechar_still_starts_next_line_in_new_line_state() {
 
 #[test]
 fn ignored_and_invalid_catcodes_follow_tex_rules() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     stores.set_catcode('!', Catcode::Ignored);
     stores.set_catcode('?', Catcode::Invalid);
     let mut lexer = Lexer::new(MemoryInput::new("a!?"));
@@ -874,7 +874,7 @@ fn ignored_and_invalid_catcodes_follow_tex_rules() {
 
 #[test]
 fn readonly_missing_control_sequence_retains_source_context() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     stores.set_int_param(IntParam::END_LINE_CHAR, 13);
     let mut input = InputStack::new(MemoryInput::new("\n"));
 
@@ -912,7 +912,7 @@ fn input_failure_retains_next_line_source_context() {
         }
     }
 
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     let world_error = stores
         .world_mut()
         .read_file(std::path::Path::new("missing-lex-input.tex"))
@@ -933,7 +933,7 @@ fn input_failure_retains_next_line_source_context() {
 
 #[test]
 fn superscript_notation_is_expanded_before_catcode_lookup() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     stores.set_int_param(IntParam::END_LINE_CHAR, 13);
     stores.set_catcode('@', Catcode::Letter);
     let mut lexer = Lexer::new(MemoryInput::new("^^40 ^^41 ^^^^00E9"));
@@ -953,7 +953,7 @@ fn superscript_notation_is_expanded_before_catcode_lookup() {
 
 #[test]
 fn superscript_notation_reprocesses_a_generated_superscript_character() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     stores.set_int_param(IntParam::END_LINE_CHAR, 13);
     stores.set_catcode('q', Catcode::Superscript);
     let mut lexer = Lexer::new(MemoryInput::new("qq5e^5cbox10"));
@@ -969,7 +969,7 @@ fn superscript_notation_reprocesses_a_generated_superscript_character() {
 
 #[test]
 fn traced_source_origins_use_token_start_coordinates() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     stores.set_int_param(IntParam::END_LINE_CHAR, -1);
     let mut lexer = Lexer::new(MemoryInput::new("aé\\foo ^^41"));
 
@@ -1006,7 +1006,7 @@ fn traced_source_origins_use_token_start_coordinates() {
 fn layout_cursor_hands_each_physical_line_its_fragment_registration() {
     let (fragments, layout, registrations) = three_line_fragment_layout();
     let cursor = LayoutCursor::new(&layout, &fragments).expect("line-aligned layout freezes");
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     stores.set_int_param(IntParam::END_LINE_CHAR, -1);
     let mut input = InputStack::new(MemoryInput::new("aa\nbb\ncc"));
     assert_eq!(
@@ -1059,7 +1059,7 @@ fn direct_root_delivery_exposes_piece_identity_without_origin_identity() {
     input.install_root_layout_cursor(
         LayoutCursor::new(&layout, &fragments).expect("layout cursor freezes"),
     );
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     stores.set_int_param(IntParam::END_LINE_CHAR, -1);
 
     let token = input
@@ -1083,7 +1083,7 @@ fn root_cursor_anchor_does_not_refill_underlying_source_during_token_replay() {
     input.install_root_layout_cursor(
         LayoutCursor::new(&layout, &fragments).expect("layout cursor freezes"),
     );
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     stores
         .install_editor_fragments(&fragments, &layout)
         .expect("editor fragments install");
@@ -1111,7 +1111,7 @@ fn root_cursor_anchor_does_not_refill_underlying_source_during_token_replay() {
 
 #[test]
 fn immutable_source_delivery_identity_uses_content_not_runtime_record() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     stores.set_int_param(IntParam::END_LINE_CHAR, -1);
     stores
         .world_mut()
@@ -1142,7 +1142,7 @@ fn immutable_source_delivery_identity_uses_content_not_runtime_record() {
         }
     );
 
-    let mut generated_stores = Universe::new();
+    let mut generated_stores = Universe::new_with_plain_catcodes();
     generated_stores.set_int_param(IntParam::END_LINE_CHAR, -1);
     let mut generated = InputStack::new(MemoryInput::new("x"));
     let token = generated
@@ -1190,7 +1190,7 @@ fn physical_line_and_normalization_identities_cover_exact_inputs() {
 
 #[test]
 fn line_reader_reuses_only_complete_normalization_keys() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     stores.set_int_param(IntParam::END_LINE_CHAR, 13);
     let mut reader = LineReader::new(MemoryInput::new("same\nsame\nsame\n"));
 
@@ -1217,7 +1217,7 @@ fn line_reader_reuses_only_complete_normalization_keys() {
 
 #[test]
 fn immutable_world_lines_bypass_source_local_normalization_cache() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     stores.set_int_param(IntParam::END_LINE_CHAR, 13);
     stores
         .world_mut()
@@ -1260,7 +1260,7 @@ fn layout_cursor_scalar_crossing_direct_boundary_uses_fragment_span() {
             LayoutCursor::new(&layout, &fragments).expect("layout cursor freezes"),
         )
         .expect("root source exists");
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     stores.set_int_param(IntParam::END_LINE_CHAR, -1);
 
     let direct = input
@@ -1308,7 +1308,7 @@ fn layout_cursor_preserves_transformed_spans_and_synthetic_anchors() {
     input.install_root_layout_cursor(
         LayoutCursor::new(&layout, &fragments).expect("line-aligned layout freezes"),
     );
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     stores.set_int_param(IntParam::END_LINE_CHAR, 13);
 
     let transformed = input
@@ -1347,7 +1347,7 @@ fn layout_cursor_preserves_transformed_spans_and_synthetic_anchors() {
 fn restored_summary_reinstalls_cursor_without_changing_root_source_id() {
     let (fragments, layout, registrations) = three_line_fragment_layout();
     let cursor = LayoutCursor::new(&layout, &fragments).expect("line-aligned layout freezes");
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     stores.set_int_param(IntParam::END_LINE_CHAR, -1);
     let source = "aa\nbb\ncc";
     let mut input = InputStack::new(MemoryInput::new(source));
@@ -1447,7 +1447,7 @@ fn three_line_fragment_layout() -> (
 
 #[test]
 fn control_sequences_and_transformed_input_retain_exact_physical_spellings() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     stores.set_int_param(IntParam::END_LINE_CHAR, -1);
     let mut lexer = Lexer::new(MemoryInput::new("\\foo ^^41"));
     let control = lexer
@@ -1469,7 +1469,7 @@ fn control_sequences_and_transformed_input_retain_exact_physical_spellings() {
 
 #[test]
 fn source_range_join_requires_same_live_direct_frame_proofs() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     stores.set_int_param(IntParam::END_LINE_CHAR, -1);
     let mut input = InputStack::new(MemoryInput::new("12"));
     let first = input
@@ -1510,7 +1510,7 @@ fn source_range_join_requires_same_live_direct_frame_proofs() {
 
 #[test]
 fn ordinary_source_scalars_append_no_provenance_records() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     let mut lexer = Lexer::new(MemoryInput::new("aé"));
     let before = stores.provenance_stats();
 
@@ -1540,7 +1540,7 @@ fn ordinary_source_scalars_append_no_provenance_records() {
 
 #[test]
 fn source_text_span_preserves_utf8_cursor_and_catcode_seams() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     stores.set_int_param(IntParam::END_LINE_CHAR, -1);
     stores.set_catcode('@', Catcode::Active);
     let mut input = InputStack::new(MemoryInput::new("aé@b"));
@@ -1579,7 +1579,7 @@ fn source_text_span_preserves_utf8_cursor_and_catcode_seams() {
 
 #[test]
 fn source_text_span_canonicalizes_and_collapses_spaces() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     stores.set_int_param(IntParam::END_LINE_CHAR, -1);
     let mut input = InputStack::new(MemoryInput::new("a   b c"));
     let first = input
@@ -1611,7 +1611,7 @@ fn source_text_span_canonicalizes_and_collapses_spaces() {
 
 #[test]
 fn source_text_span_deopts_for_superscript_notation_and_alignment() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     stores.set_int_param(IntParam::END_LINE_CHAR, -1);
     let mut input = InputStack::new(MemoryInput::new("a^^41b"));
     input
@@ -1636,7 +1636,7 @@ fn source_text_span_deopts_for_superscript_notation_and_alignment() {
 
 #[test]
 fn source_text_span_summary_resumes_at_the_exact_provenance_seam() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     stores.set_int_param(IntParam::END_LINE_CHAR, -1);
     let mut input = InputStack::new(MemoryInput::new("aébc\\foo"));
     input
@@ -1661,7 +1661,7 @@ fn source_text_span_summary_resumes_at_the_exact_provenance_seam() {
 
 #[test]
 fn source_text_span_deopts_for_pending_delivery_and_source_transition() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     stores.set_int_param(IntParam::END_LINE_CHAR, -1);
     let mut input = InputStack::new(MemoryInput::new("ab"));
     input
@@ -1728,7 +1728,7 @@ fn pending_paragraph_anchor_requires_direct_root_provenance() {
     input.install_root_layout_cursor(
         LayoutCursor::new(&layout, &fragments).expect("layout cursor freezes"),
     );
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     stores
         .install_editor_fragments(&fragments, &layout)
         .expect("fragment metadata installs");
@@ -1771,7 +1771,7 @@ fn pending_paragraph_anchor_requires_direct_root_provenance() {
 
 #[test]
 fn physical_byte_coordinates_preserve_crlf_trailing_spaces_and_utf8() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     stores.set_int_param(IntParam::END_LINE_CHAR, 13);
     let mut lexer = Lexer::new(MemoryInput::new("é  \r\nx"));
 
@@ -1810,7 +1810,7 @@ fn physical_byte_coordinates_preserve_crlf_trailing_spaces_and_utf8() {
 
 #[test]
 fn missing_final_newline_and_comments_keep_physical_coordinates() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     stores.set_int_param(IntParam::END_LINE_CHAR, -1);
     let mut lexer = Lexer::new(MemoryInput::new("a%ignored\r\nb"));
 
@@ -1828,7 +1828,7 @@ fn missing_final_newline_and_comments_keep_physical_coordinates() {
 
 #[test]
 fn failed_superscript_transform_restores_byte_cursor_and_column() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     stores.set_int_param(IntParam::END_LINE_CHAR, -1);
     let mut lexer = Lexer::new(MemoryInput::new("é^^"));
 
@@ -1854,7 +1854,7 @@ fn failed_superscript_transform_restores_byte_cursor_and_column() {
 
 #[test]
 fn classic_input_mode_delivers_utf8_bytes_and_resumes_mid_scalar() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     stores.set_int_param(IntParam::END_LINE_CHAR, -1);
     for byte in [0xef, 0xac, 0x80] {
         stores.set_catcode(char::from(byte), Catcode::Other);
@@ -1889,7 +1889,7 @@ fn classic_input_mode_delivers_utf8_bytes_and_resumes_mid_scalar() {
 
 #[test]
 fn classic_input_mode_does_not_reencode_a_lossless_byte_projection() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     stores.set_int_param(IntParam::END_LINE_CHAR, -1);
     stores.set_catcode(char::from(0xed), Catcode::Other);
     let projected: String = [b'a', 0xed, b'b'].into_iter().map(char::from).collect();
@@ -1919,7 +1919,7 @@ fn classic_input_mode_does_not_reencode_a_lossless_byte_projection() {
 
 #[test]
 fn classic_input_mode_does_not_reencode_scantokens_characters() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     stores.set_int_param(IntParam::END_LINE_CHAR, -1);
     let mut input = InputStack::new(MemoryInput::scantokens("é"));
     input.set_utf8_input_as_bytes(true);
@@ -1932,7 +1932,7 @@ fn classic_input_mode_does_not_reencode_scantokens_characters() {
 
 #[test]
 fn input_summary_restores_source_allocator_and_unicode_superscript_mode() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     stores.set_int_param(IntParam::END_LINE_CHAR, -1);
     let mut input = InputStack::new(MemoryInput::new("a"));
     assert_eq!(
@@ -1960,7 +1960,7 @@ fn input_summary_restores_source_allocator_and_unicode_superscript_mode() {
 
 #[test]
 fn source_depth_tracks_nested_sources_and_summary_restoration() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     stores.set_int_param(IntParam::END_LINE_CHAR, -1);
     let mut input = InputStack::new(MemoryInput::new("a"));
     assert_eq!(input.source_depth(), 1);
@@ -1988,7 +1988,7 @@ fn source_depth_tracks_nested_sources_and_summary_restoration() {
 
 #[test]
 fn nested_sources_keep_independent_physical_offsets() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     stores.set_int_param(IntParam::END_LINE_CHAR, -1);
     let mut input = InputStack::new(MemoryInput::new("outer"));
     let nested = input.push_source(MemoryInput::new("é"));
@@ -2014,7 +2014,7 @@ fn nested_sources_keep_independent_physical_offsets() {
 
 #[test]
 fn long_single_line_coordinates_advance_without_prefix_rescanning_state() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     stores.set_int_param(IntParam::END_LINE_CHAR, -1);
     let source = "a".repeat(64 * 1024);
     let mut input = InputStack::new(MemoryInput::new(source));
@@ -2030,7 +2030,7 @@ fn long_single_line_coordinates_advance_without_prefix_rescanning_state() {
 
 #[test]
 fn invalid_world_utf8_reports_exact_physical_byte_range() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     stores
         .world_mut()
         .set_memory_file("invalid.tex", vec![b'a', 0xF0, 0x28, 0x8C, 0x28])
@@ -2057,7 +2057,7 @@ fn invalid_world_utf8_reports_exact_physical_byte_range() {
 
 #[test]
 fn classic_input_mode_preserves_invalid_bytes_across_world_input_resume() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     stores.set_int_param(IntParam::END_LINE_CHAR, -1);
     for byte in [0xed, 0x80] {
         stores.set_catcode(char::from(byte), Catcode::Other);
@@ -2124,7 +2124,7 @@ fn classic_input_mode_preserves_invalid_bytes_across_world_input_resume() {
 
 #[test]
 fn endline_derived_tokens_have_inserted_origins() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     stores.set_int_param(IntParam::END_LINE_CHAR, 13);
     let mut lexer = Lexer::new(MemoryInput::new("a\n\n"));
 
@@ -2167,7 +2167,7 @@ fn every_non_ignored_non_invalid_char_catcode_emits_char_token() {
     ];
 
     for (ch, cat) in cases {
-        let mut stores = Universe::new();
+        let mut stores = Universe::new_with_plain_catcodes();
         stores.set_catcode(ch, cat);
         let mut lexer = Lexer::new(MemoryInput::new(ch.to_string()));
         assert_eq!(
@@ -2179,7 +2179,7 @@ fn every_non_ignored_non_invalid_char_catcode_emits_char_token() {
 
 #[test]
 fn token_list_frames_replay_before_sources_and_pop_at_end() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     stores.set_int_param(IntParam::END_LINE_CHAR, 13);
     let list = stores.intern_token_list(&[
         char_token('x', Catcode::Letter),
@@ -2221,7 +2221,7 @@ fn token_list_frames_replay_before_sources_and_pop_at_end() {
 
 #[test]
 fn replay_markers_distinguish_frames_with_identical_content() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     let list = stores.intern_token_list(&[char_token('x', Catcode::Letter)]);
     let mut input = InputStack::new(MemoryInput::new("a"));
     let outer = input.push_token_list(list, TokenListReplayKind::Inserted);
@@ -2252,7 +2252,7 @@ fn replay_markers_distinguish_frames_with_identical_content() {
 
 #[test]
 fn exhausted_nested_replays_finish_before_reading_below_marked_boundary() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     let list = stores.intern_token_list(&[char_token('x', Catcode::Letter)]);
     let mut input = InputStack::new(MemoryInput::new("a"));
     let template = input.push_token_list(list, TokenListReplayKind::Inserted);
@@ -2278,7 +2278,7 @@ fn exhausted_nested_replays_finish_before_reading_below_marked_boundary() {
 
 #[test]
 fn output_replay_exhaustion_does_not_read_underlying_continuation() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     let output = stores.intern_token_list(&[char_token('x', Catcode::Letter)]);
     let continuation = stores.intern_token_list(&[char_token('a', Catcode::Letter)]);
     let mut input = InputStack::new(MemoryInput::new(""));
@@ -2302,7 +2302,7 @@ fn output_replay_exhaustion_does_not_read_underlying_continuation() {
 
 #[test]
 fn do_endv_stack_walk_accepts_only_empty_frames_above_v_template() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     let list = stores.intern_token_list(&[char_token('x', Catcode::Letter)]);
     let mut input = InputStack::new(MemoryInput::new("a"));
     input.push_token_list(list, TokenListReplayKind::AlignmentVTemplate);
@@ -2320,7 +2320,7 @@ fn do_endv_stack_walk_accepts_only_empty_frames_above_v_template() {
 
 #[test]
 fn completed_alignment_cell_retires_exhausted_v_template_boundary() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     let template = stores.intern_token_list(&[char_token('x', Catcode::Letter)]);
     let mut input = InputStack::new(MemoryInput::new(""));
     input.begin_alignment();
@@ -2354,7 +2354,7 @@ fn completed_alignment_cell_retires_exhausted_v_template_boundary() {
 
 #[test]
 fn token_list_replay_uses_frame_origin_list_without_changing_semantic_identity() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     let tokens = [
         char_token('x', Catcode::Letter),
         char_token('y', Catcode::Letter),
@@ -2392,7 +2392,7 @@ fn token_list_replay_uses_frame_origin_list_without_changing_semantic_identity()
 
 #[test]
 fn transient_replay_preserves_inline_origins_and_summarizes_only_live_suffix() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     let first = char_token('x', Catcode::Letter);
     let second = char_token('y', Catcode::Letter);
     let first_origin = stores.source_origin(tex_state::SourceId::new(1), 10, 2, 3);
@@ -2431,7 +2431,7 @@ fn transient_replay_preserves_inline_origins_and_summarizes_only_live_suffix() {
 
 #[test]
 fn transient_replay_buffers_return_to_pool_on_exhaustion_and_abort() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     let token = char_token('x', Catcode::Letter);
     let word = TracedTokenWord::pack(token, OriginId::UNKNOWN);
     let mut input = InputStack::new(MemoryInput::new(""));
@@ -2468,7 +2468,7 @@ fn replay_abort_removes_nested_source_and_condition_frames() {
 
 #[test]
 fn transient_replay_pool_drops_exceptionally_large_buffers() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     let mut words = Vec::with_capacity(super::TRANSIENT_BUFFER_POOL_MAX_CAPACITY + 1);
     words.push(TracedTokenWord::pack(
         char_token('x', Catcode::Letter),
@@ -2489,7 +2489,7 @@ fn transient_replay_pool_drops_exceptionally_large_buffers() {
 
 #[test]
 fn macro_body_frame_invocation_origin_does_not_affect_summary_equality() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     let token = char_token('x', Catcode::Letter);
     let token_list = stores.intern_token_list(&[token]);
     let definition_origin = stores.source_origin(tex_state::SourceId::new(1), 10, 2, 3);
@@ -2530,7 +2530,7 @@ fn macro_body_frame_invocation_origin_does_not_affect_summary_equality() {
 
 #[test]
 fn macro_body_replay_without_origin_list_delivers_unknown_origin() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     let token = char_token('x', Catcode::Letter);
     let token_list = stores.intern_token_list(&[token]);
     let mut input = InputStack::new(MemoryInput::new(""));
@@ -2547,7 +2547,7 @@ fn macro_body_replay_without_origin_list_delivers_unknown_origin() {
 
 #[test]
 fn horizontal_macro_text_span_includes_canonical_space_tokens() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     let tokens = [
         char_token('a', Catcode::Letter),
         char_token(' ', Catcode::Space),
@@ -2572,7 +2572,7 @@ fn horizontal_macro_text_span_includes_canonical_space_tokens() {
 
 #[test]
 fn macro_literal_spans_copy_body_and_argument_provenance_at_matching_offsets() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     let stop = stores.intern("stop");
     let body_tokens = [
         char_token('a', Catcode::Letter),
@@ -2672,7 +2672,7 @@ fn macro_literal_spans_copy_body_and_argument_provenance_at_matching_offsets() {
 
 #[test]
 fn macro_literal_span_deopts_for_any_active_alignment_scanner() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     let body = stores.intern_token_list(&[
         char_token('x', Catcode::Letter),
         char_token('&', Catcode::AlignmentTab),
@@ -2705,7 +2705,7 @@ fn macro_literal_span_deopts_for_any_active_alignment_scanner() {
 #[cfg(feature = "profiling-stats")]
 #[test]
 fn expansion_stats_measure_literal_runs_and_segmentation_reuse() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     let body = stores.intern_token_list(&[
         char_token('a', Catcode::Letter),
         char_token('b', Catcode::Letter),
@@ -2760,7 +2760,7 @@ fn expansion_timers_sample_one_event_per_1024() {
 
 #[test]
 fn stale_replay_origin_list_degrades_to_unknown_after_rollback() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     let token = char_token('x', Catcode::Letter);
     let token_list = stores.intern_token_list(&[token]);
     let snapshot = stores.snapshot();
@@ -2781,7 +2781,7 @@ fn stale_replay_origin_list_degrades_to_unknown_after_rollback() {
 
 #[test]
 fn nested_popped_invocations_retain_the_complete_parent_chain_for_one_delivery_attempt() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     stores.set_int_param(IntParam::END_LINE_CHAR, -1);
     let empty = stores.intern_token_list(&[]);
     let definition = stores.intern_macro(tex_state::macro_store::MacroMeaning::new(
@@ -2858,7 +2858,7 @@ fn nested_popped_invocations_retain_the_complete_parent_chain_for_one_delivery_a
 #[test]
 #[should_panic(expected = "token-list replay origin-list length does not match token-list length")]
 fn token_list_replay_checks_origin_list_length() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     let token_list = stores.intern_token_list(&[
         char_token('x', Catcode::Letter),
         char_token('y', Catcode::Letter),
@@ -2873,7 +2873,7 @@ fn token_list_replay_checks_origin_list_length() {
 
 #[test]
 fn source_summaries_track_position_and_eof_pop() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     stores.set_int_param(IntParam::END_LINE_CHAR, 13);
     let mut input = InputStack::new(MemoryInput::new("ab\nc"));
 
@@ -2905,7 +2905,7 @@ fn source_summaries_track_position_and_eof_pop() {
 
 #[test]
 fn source_summary_is_resume_complete_inside_current_line() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     stores.set_int_param(IntParam::END_LINE_CHAR, 13);
     let mut input = InputStack::new(MemoryInput::new("éa"));
 
@@ -2935,7 +2935,7 @@ fn source_summary_is_resume_complete_inside_current_line() {
 
 #[test]
 fn source_summary_captures_blank_line_with_endlinechar() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     stores.set_int_param(IntParam::END_LINE_CHAR, 13);
     let mut input = InputStack::new(MemoryInput::new("\nnext"));
     let Some(InputFrame::Source(source)) = input.frames.last_mut() else {
@@ -2963,7 +2963,7 @@ fn source_summary_captures_blank_line_with_endlinechar() {
 
 #[test]
 fn condition_frames_round_trip_through_input_summary() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     stores.set_int_param(IntParam::END_LINE_CHAR, 13);
     let mut input = InputStack::new(MemoryInput::new("ab"));
     let condition = ConditionFrameSummary::new_ifcase(condition_context(), false)
@@ -3006,7 +3006,7 @@ fn condition_frames_round_trip_through_input_summary() {
 
 #[test]
 fn frozen_alignment_token_survives_input_summary_restore() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     let tokens = stores.intern_token_list(&[stores.frozen_end_template_token()]);
     let mut input = InputStack::new(MemoryInput::new(""));
     input.push_token_list(tokens, TokenListReplayKind::Inserted);
@@ -3023,7 +3023,7 @@ fn frozen_alignment_token_survives_input_summary_restore() {
 
 #[test]
 fn open_condition_survives_checkpoint_rollback_resume_summary() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     stores.set_int_param(IntParam::END_LINE_CHAR, 13);
     let mut input = InputStack::new(MemoryInput::new("xy"));
     let frame_token =
@@ -3101,7 +3101,7 @@ fn condition_identity_targets_frame_below_nested_condition_and_survives_summary(
 
 #[test]
 fn source_summary_restores_mid_world_input_from_recorded_content() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     stores.set_int_param(IntParam::END_LINE_CHAR, 13);
     stores
         .world_mut()

@@ -140,10 +140,12 @@ fn processor_projection(profile: CommandProfile, use_get_token: bool) -> Vec<Raw
         .open_registered_source(source)
         .expect("registered fixture source opens");
     let mut runtime = CommandRuntime::default();
-    let mut universe = Universe::new();
-    // The focused source makes `!` ignored before entering this body. Feed
-    // the committed body with that already-observed aggregate catcode state;
-    // the processor must query it itself for every delivered character.
+    // The focused source assigns `{`, `}`, `#`, and `&` (INITEX leaves them
+    // `other_char`, tex.web §232) and makes `!` ignored before entering this
+    // body. Feed the committed body with that already-observed aggregate
+    // catcode state; the processor must query it itself for every delivered
+    // character.
+    let mut universe = Universe::new_with_plain_catcodes();
     universe.set_catcode('!', Catcode::Ignored);
     let mut capabilities = CommandHostCapabilities::default();
     let mut processor = CommandProcessor::new(

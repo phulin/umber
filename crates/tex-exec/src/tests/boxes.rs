@@ -2,7 +2,7 @@ use super::*;
 use tex_state::provenance::{InsertedOriginKind, OriginRecord};
 
 fn run(source: &str) -> Universe {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     tex_expand::install_expandable_primitives(&mut stores);
     install_unexpandable_primitives(&mut stores);
     Executor::new()
@@ -100,7 +100,7 @@ fn every_box_hooks_survive_format_round_trip() {
 
 #[test]
 fn every_hbox_replay_has_specific_token_list_provenance() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     tex_expand::install_expandable_primitives(&mut stores);
     install_unexpandable_primitives(&mut stores);
     let error = Executor::new()

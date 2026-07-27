@@ -9,7 +9,7 @@ use tex_state::token::TracedTokenWord;
 
 #[test]
 fn non_character_accent_lookahead_replays_the_original_traced_token() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     crate::install_unexpandable_primitives(&mut stores);
     let origin = stores.synthetic_origin(SyntheticOriginKind::Test);
     let closing_group = TracedTokenWord::pack(
@@ -52,7 +52,7 @@ fn non_character_accent_lookahead_replays_the_original_traced_token() {
 
 #[test]
 fn accent_lookahead_runs_assignments_and_accepts_char_num() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     tex_expand::install_expandable_primitives(&mut stores);
     crate::install_unexpandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new("\\count0=7 \\char65"));
@@ -84,7 +84,7 @@ fn accent_lookahead_runs_assignments_and_accepts_char_num() {
 
 #[test]
 fn sentence_space_factor_does_not_jump_after_an_uppercase_letter() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     stores.set_sfcode('.', 3000);
     let mut nest = ModeNest::new();
 
@@ -159,7 +159,7 @@ fn opentype_cmap_accepts_a_non_byte_horizontal_character() {
         features: FontFeaturePolicy::default(),
         direction: WritingDirection::LeftToRight,
     });
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     let font = stores.intern_font(loaded);
     stores.set_current_font(font);
     let mut nest = ModeNest::new();
@@ -225,7 +225,7 @@ fn opentype_test_font(stores: &mut Universe, points: i32) -> tex_state::ids::Fon
 
 #[test]
 fn opentype_run_is_batched_and_uses_shaped_cluster_advance() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     let font = opentype_test_font(&mut stores, 10);
     stores.set_current_font(font);
     let mut nest = ModeNest::new();
@@ -281,7 +281,7 @@ fn opentype_run_is_batched_and_uses_shaped_cluster_advance() {
 
 #[test]
 fn long_opentype_run_preserves_every_source_character() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     let font = opentype_test_font(&mut stores, 10);
     stores.set_current_font(font);
     let mut nest = ModeNest::new();
@@ -303,7 +303,7 @@ fn long_opentype_run_preserves_every_source_character() {
 
 #[test]
 fn reshaping_respects_font_kern_glue_and_discretionary_boundaries() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     let first = opentype_test_font(&mut stores, 10);
     let second = opentype_test_font(&mut stores, 12);
     let empty = stores.freeze_node_list(&[]);
@@ -393,7 +393,7 @@ fn flushing_a_character_run_appends_its_right_boundary_kern() {
     metrics
         .validate()
         .expect("right-boundary test metrics should be valid");
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     let font = stores.intern_font(LoadedFont::new(
         "right-boundary-kern",
         "right-boundary-kern.tfm",
@@ -431,7 +431,7 @@ fn batched_tfm_run_records_an_absolute_insertion_index() {
         italic_correction: Scaled::from_raw(0),
         tag: tex_fonts::metrics::CharTag::None,
     });
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     let font = stores.intern_font(LoadedFont::new(
         "batched-tfm",
         "batched-tfm.tfm",
@@ -487,7 +487,7 @@ fn accent_delta_rounds_half_scaled_points_like_tex82() {
 #[test]
 fn paragraph_leading_accent_is_replayed_after_entering_horizontal_mode() {
     const CMR10: &[u8] = include_bytes!("../../../../tex-fonts/tests/fixtures/cm/cmr10.tfm");
-    let mut stores = Universe::with_world(tex_state::World::memory());
+    let mut stores = Universe::with_world(tex_state::World::memory()).with_plain_catcodes();
     crate::install_unexpandable_primitives(&mut stores);
     stores
         .world_mut()
@@ -534,7 +534,7 @@ fn paragraph_leading_accent_is_replayed_after_entering_horizontal_mode() {
 #[test]
 fn unrestricted_reconstitution_inserts_null_disc_after_font_hyphen() {
     const CMR10: &[u8] = include_bytes!("../../../../tex-fonts/tests/fixtures/cm/cmr10.tfm");
-    let mut stores = Universe::with_world(tex_state::World::memory());
+    let mut stores = Universe::with_world(tex_state::World::memory()).with_plain_catcodes();
     crate::install_unexpandable_primitives(&mut stores);
     stores
         .world_mut()
@@ -584,7 +584,7 @@ fn unrestricted_reconstitution_inserts_null_disc_after_font_hyphen() {
 #[test]
 fn hyphenation_inside_ff_ligature_preserves_the_unbroken_ligature() {
     const CMR10: &[u8] = include_bytes!("../../../../tex-fonts/tests/fixtures/cm/cmr10.tfm");
-    let mut stores = Universe::with_world(tex_state::World::memory());
+    let mut stores = Universe::with_world(tex_state::World::memory()).with_plain_catcodes();
     crate::install_unexpandable_primitives(&mut stores);
     stores
         .world_mut()
@@ -698,7 +698,7 @@ fn arbitrary_chained_ligature_keeps_complete_source_provenance() {
     metrics
         .validate()
         .expect("test font metrics should be valid");
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     let font = stores.intern_font(LoadedFont::new(
         "same-glyph-ligature",
         "same-glyph-ligature.tfm",
@@ -740,7 +740,7 @@ fn arbitrary_chained_ligature_keeps_complete_source_provenance() {
 #[test]
 fn char_primitive_continues_the_pending_ligature_run() {
     const CMR10: &[u8] = include_bytes!("../../../../tex-fonts/tests/fixtures/cm/cmr10.tfm");
-    let mut stores = Universe::with_world(tex_state::World::memory());
+    let mut stores = Universe::with_world(tex_state::World::memory()).with_plain_catcodes();
     tex_expand::install_expandable_primitives(&mut stores);
     crate::install_unexpandable_primitives(&mut stores);
     stores
@@ -771,7 +771,7 @@ fn char_primitive_continues_the_pending_ligature_run() {
 #[test]
 fn chained_ligature_retains_every_source_character() {
     const CMR10: &[u8] = include_bytes!("../../../../tex-fonts/tests/fixtures/cm/cmr10.tfm");
-    let mut stores = Universe::with_world(tex_state::World::memory());
+    let mut stores = Universe::with_world(tex_state::World::memory()).with_plain_catcodes();
     tex_expand::install_expandable_primitives(&mut stores);
     crate::install_unexpandable_primitives(&mut stores);
     stores
@@ -796,7 +796,7 @@ fn chained_ligature_retains_every_source_character() {
 
 #[test]
 fn hyphenation_does_not_partially_consume_a_boundary_ligature() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     let font = stores.current_font();
     stores.set_lccode('C', 'c' as u32);
     stores.set_lccode('/', 0);
@@ -824,7 +824,7 @@ fn hyphenation_does_not_partially_consume_a_boundary_ligature() {
 #[test]
 fn hyphenation_keeps_scanning_across_font_kerns() {
     const CMR10: &[u8] = include_bytes!("../../../../tex-fonts/tests/fixtures/cm/cmr10.tfm");
-    let mut stores = Universe::with_world(tex_state::World::memory());
+    let mut stores = Universe::with_world(tex_state::World::memory()).with_plain_catcodes();
     crate::install_unexpandable_primitives(&mut stores);
     stores
         .world_mut()
@@ -873,7 +873,7 @@ fn hyphenation_keeps_scanning_across_font_kerns() {
 
 #[test]
 fn hyphenation_preserves_the_font_kern_after_a_reconstituted_word() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     let font = stores.current_font();
     for ch in "abcd".chars() {
         stores.set_lccode(ch, ch as u32);
@@ -922,7 +922,7 @@ fn hyphenation_preserves_the_font_kern_after_a_reconstituted_word() {
 
 #[test]
 fn hyphenation_does_not_repeat_a_left_boundary_kern() {
-    let mut stores = Universe::new();
+    let mut stores = Universe::new_with_plain_catcodes();
     let font = stores.current_font();
     stores.set_lccode('A', 'a' as u32);
     let nodes = [
@@ -954,7 +954,7 @@ fn hyphenation_does_not_repeat_a_left_boundary_kern() {
 #[test]
 fn discretionary_absorbs_font_kern_across_hyphenated_line_boundary() {
     const CMR10: &[u8] = include_bytes!("../../../../tex-fonts/tests/fixtures/cm/cmr10.tfm");
-    let mut stores = Universe::with_world(tex_state::World::memory());
+    let mut stores = Universe::with_world(tex_state::World::memory()).with_plain_catcodes();
     crate::install_unexpandable_primitives(&mut stores);
     stores
         .world_mut()

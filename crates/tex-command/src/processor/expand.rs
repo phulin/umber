@@ -878,7 +878,7 @@ mod tests {
             .open_registered_source(parent)
             .expect("parent opens");
         let mut runtime = CommandRuntime::default();
-        let mut universe = Universe::new();
+        let mut universe = Universe::new_with_plain_catcodes();
         install_expandable(&mut universe, "input", ExpandablePrimitive::Input);
         let mut capabilities = CommandHostCapabilities::default();
         capabilities.register_input(
@@ -906,7 +906,7 @@ mod tests {
             .open_registered_source(parent)
             .expect("parent opens");
         let mut runtime = CommandRuntime::default();
-        let mut universe = Universe::new();
+        let mut universe = Universe::new_with_plain_catcodes();
         install_expandable(&mut universe, "input", ExpandablePrimitive::Input);
         install_expandable(&mut universe, "endinput", ExpandablePrimitive::EndInput);
         let mut capabilities = CommandHostCapabilities::default();
@@ -926,7 +926,7 @@ mod tests {
     fn jobname_and_mark_retrieval_replay_deterministic_state_values() {
         let mut command = CommandState::default();
         let mut runtime = CommandRuntime::default();
-        let mut universe = Universe::new();
+        let mut universe = Universe::new_with_plain_catcodes();
         let jobname = install_expandable(&mut universe, "jobname", ExpandablePrimitive::JobName);
         let topmark = install_expandable(&mut universe, "topmark", ExpandablePrimitive::TopMark);
         let mark = universe.intern_token_list(&[Token::Char {
@@ -954,7 +954,7 @@ mod tests {
     fn scalar_conversions_render_immutable_other_character_tokens() {
         let mut command = CommandState::default();
         let mut runtime = CommandRuntime::default();
-        let mut universe = Universe::new();
+        let mut universe = Universe::new_with_plain_catcodes();
         let number = install_expandable(&mut universe, "number", ExpandablePrimitive::Number);
         let roman = install_expandable(
             &mut universe,
@@ -999,7 +999,7 @@ mod tests {
     fn conversion_rendering_publishes_recovery_input_before_its_first_token() {
         let mut command = CommandState::default();
         let mut runtime = CommandRuntime::default();
-        let mut universe = Universe::new();
+        let mut universe = Universe::new_with_plain_catcodes();
         let number = install_expandable(&mut universe, "number", ExpandablePrimitive::Number);
         command.push_token_level(
             TokenPayload::Transient(SharedTokenBuffer::new(vec![
@@ -1062,7 +1062,7 @@ mod tests {
     fn string_reads_its_target_with_normal_scanner_status_then_restores_definition() {
         let mut command = CommandState::default();
         let mut runtime = CommandRuntime::default();
-        let mut universe = Universe::new();
+        let mut universe = Universe::new_with_plain_catcodes();
         let string = install_expandable(&mut universe, "string", ExpandablePrimitive::String);
         let target = install_macro(
             &mut universe,
@@ -1136,7 +1136,7 @@ mod tests {
     fn the_toks_pushes_immutable_stored_input_without_reading_beyond_target() {
         let mut command = CommandState::default();
         let mut runtime = CommandRuntime::default();
-        let mut universe = Universe::new();
+        let mut universe = Universe::new_with_plain_catcodes();
         let the = install_expandable(&mut universe, "the", ExpandablePrimitive::The);
         let register = universe.intern("stored").symbol();
         universe.set_meaning(register, Meaning::ToksRegister(7));
@@ -1194,7 +1194,7 @@ mod tests {
     fn ordinary_loop_expands_macro_body_on_the_canonical_raw_path() {
         let mut command = CommandState::default();
         let mut runtime = CommandRuntime::default();
-        let mut universe = Universe::new();
+        let mut universe = Universe::new_with_plain_catcodes();
         let macro_name = install_macro(
             &mut universe,
             "m",
@@ -1231,7 +1231,7 @@ mod tests {
     fn completed_expansion_rolls_back_to_the_exact_scalar_input_state() {
         let mut command = CommandState::default();
         let mut runtime = CommandRuntime::default();
-        let mut universe = Universe::new();
+        let mut universe = Universe::new_with_plain_catcodes();
         let macro_name = install_macro(
             &mut universe,
             "m",
@@ -1280,7 +1280,7 @@ mod tests {
     fn noexpand_suppresses_one_macro_delivery_without_changing_its_spelling() {
         let mut command = CommandState::default();
         let mut runtime = CommandRuntime::default();
-        let mut universe = Universe::new();
+        let mut universe = Universe::new_with_plain_catcodes();
         let noexpand = universe.intern("noexpand").symbol();
         universe.set_meaning(
             noexpand,
@@ -1327,7 +1327,7 @@ mod tests {
     fn expandafter_expands_second_token_before_replaying_first() {
         let mut command = CommandState::default();
         let mut runtime = CommandRuntime::default();
-        let mut universe = Universe::new();
+        let mut universe = Universe::new_with_plain_catcodes();
         let expandafter = universe.intern("expandafter").symbol();
         universe.set_meaning(
             expandafter,
@@ -1401,7 +1401,7 @@ mod tests {
     fn csname_expands_characters_then_injects_a_relaxed_named_control_sequence() {
         let mut command = CommandState::default();
         let mut runtime = CommandRuntime::default();
-        let mut universe = Universe::new();
+        let mut universe = Universe::new_with_plain_catcodes();
         let csname = install_expandable(&mut universe, "csname", ExpandablePrimitive::CsName);
         let endcsname =
             install_expandable(&mut universe, "endcsname", ExpandablePrimitive::EndCsName);
@@ -1457,7 +1457,7 @@ mod tests {
     fn csname_recovers_by_backing_up_a_non_character_before_constructing_the_name() {
         let mut command = CommandState::default();
         let mut runtime = CommandRuntime::default();
-        let mut universe = Universe::new();
+        let mut universe = Universe::new_with_plain_catcodes();
         let csname = install_expandable(&mut universe, "csname", ExpandablePrimitive::CsName);
         let endcsname =
             install_expandable(&mut universe, "endcsname", ExpandablePrimitive::EndCsName);
@@ -1500,7 +1500,7 @@ mod tests {
     fn endcsname_is_an_ordinary_loop_boundary_not_an_expandable_dispatch_error() {
         let mut command = CommandState::default();
         let mut runtime = CommandRuntime::default();
-        let mut universe = Universe::new();
+        let mut universe = Universe::new_with_plain_catcodes();
         let endcsname =
             install_expandable(&mut universe, "endcsname", ExpandablePrimitive::EndCsName);
         command.push_token_level(
@@ -1526,7 +1526,7 @@ mod tests {
     fn macro_activations_allocate_nested_invocation_provenance() {
         let mut command = CommandState::default();
         let mut runtime = CommandRuntime::default();
-        let mut universe = Universe::new();
+        let mut universe = Universe::new_with_plain_catcodes();
         let empty = universe.intern_token_list(&[]);
         let definition =
             universe.intern_macro(MacroMeaning::new(MeaningFlags::EMPTY, empty, empty));
@@ -1582,7 +1582,7 @@ mod tests {
     fn meaning_reads_immutable_replacement_after_nested_macro_retirement() {
         let mut command = CommandState::default();
         let mut runtime = CommandRuntime::default();
-        let mut universe = Universe::new();
+        let mut universe = Universe::new_with_plain_catcodes();
         let meaning = install_expandable(&mut universe, "meaning", ExpandablePrimitive::Meaning);
         let empty = universe.intern_token_list(&[]);
         let expanded = universe.intern_token_list(&letters("EXPANDED"));
@@ -1628,7 +1628,7 @@ mod tests {
 
     #[test]
     fn meaning_separates_a_control_word_from_following_letters() {
-        let mut universe = Universe::new();
+        let mut universe = Universe::new_with_plain_catcodes();
         let leaf = universe.intern("leaf").symbol();
         let replacement = universe.intern_token_list(&[
             Token::Cs(leaf),
@@ -1667,7 +1667,7 @@ mod tests {
 
     #[test]
     fn meaning_renders_tex82_long_and_outer_macro_command_identity() {
-        let mut universe = Universe::new();
+        let mut universe = Universe::new_with_plain_catcodes();
         let empty = universe.intern_token_list(&[]);
         for (index, (flags, expected)) in [
             (MeaningFlags::EMPTY, "macro:->"),

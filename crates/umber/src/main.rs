@@ -71,6 +71,10 @@ fn lex_dump(path: &str) -> Result<(), CliError> {
     let mut stores = Universe::with_world(World::real());
     let content = stores.world_mut().read_file(path)?;
     stores.set_int_param(IntParam::END_LINE_CHAR, 13);
+    // `lex-dump` reports what a format-loaded engine would tokenize, matching
+    // `umber run`; INITEX alone leaves `{ } $ & # ^ _` as `other_char`
+    // (tex.web §232).
+    stores.install_plain_catcodes();
     let mut lexer = Lexer::new(WorldInput::from_content(content));
 
     while let Some(token) = lexer.next_token(&mut stores)? {

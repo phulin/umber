@@ -446,7 +446,7 @@ fn illegal_font_magnification_reports_and_uses_design_size() {
 #[test]
 fn font_definition_uses_driver_font_resolution_and_records_resolved_path() {
     const CMR10: &[u8] = include_bytes!("../../../tex-fonts/tests/fixtures/cm/cmr10.tfm");
-    let mut stores = Universe::with_world(tex_state::World::memory());
+    let mut stores = Universe::with_world(tex_state::World::memory()).with_plain_catcodes();
     crate::install_unexpandable_primitives(&mut stores);
     stores
         .world_mut()

@@ -170,7 +170,7 @@ fn run_macro(
         .open_registered_source(source)
         .expect("source opens");
     let mut runtime = CommandRuntime::default();
-    let mut universe = Universe::new();
+    let mut universe = Universe::new_with_plain_catcodes();
     universe.install_primitive_meaning(
         "par",
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Par),
@@ -251,7 +251,7 @@ fn parameterless_macro_pushes_replacement_without_matching_status() {
         .open_registered_source(source)
         .expect("source opens");
     let mut runtime = CommandRuntime::default();
-    let mut universe = Universe::new();
+    let mut universe = Universe::new_with_plain_catcodes();
     let name = universe.intern("m").symbol();
     let empty = universe.intern_token_list(&[]);
     let definition = universe.intern_macro(MacroMeaning::new(MeaningFlags::EMPTY, empty, empty));
@@ -306,7 +306,7 @@ fn matching_transition_retains_the_enclosing_definition_status() {
         .open_registered_source(source)
         .expect("source opens");
     let mut runtime = CommandRuntime::default();
-    let mut universe = Universe::new();
+    let mut universe = Universe::new_with_plain_catcodes();
     let name = universe.intern("m").symbol();
     let parameters = universe.intern_token_list(&[Token::Param(1)]);
     let replacement = universe.intern_token_list(&[Token::Param(1)]);
@@ -428,7 +428,7 @@ fn non_long_paragraph_backs_up_before_restoring_matching_status() {
         .open_registered_source(source)
         .expect("source opens");
     let mut runtime = CommandRuntime::default();
-    let mut universe = Universe::new();
+    let mut universe = Universe::new_with_plain_catcodes();
     universe.install_primitive_meaning(
         "par",
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Par),
@@ -518,7 +518,7 @@ fn matching_outer_recovery_reports_before_backing_up_the_forbidden_control_seque
         .open_registered_source(source)
         .expect("source opens");
     let mut runtime = CommandRuntime::default();
-    let mut universe = Universe::new();
+    let mut universe = Universe::new_with_plain_catcodes();
     universe.install_primitive_meaning(
         "par",
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Par),
@@ -603,7 +603,7 @@ fn successful_call_activates_canonical_replacement_and_replays_parameter_range()
         .open_registered_source(source)
         .expect("source opens");
     let mut runtime = CommandRuntime::default();
-    let mut universe = Universe::new();
+    let mut universe = Universe::new_with_plain_catcodes();
     let name = universe.intern("m").symbol();
     let parameters = universe.intern_token_list(&[Token::param(1)]);
     let replacement = universe.intern_token_list(&[Token::param(1), other('!')]);
@@ -730,7 +730,7 @@ fn nested_macro_activation_retires_the_exhausted_caller_before_pushing_the_calle
         .open_registered_source(source)
         .expect("source opens");
     let mut runtime = CommandRuntime::default();
-    let mut universe = Universe::new();
+    let mut universe = Universe::new_with_plain_catcodes();
     let outer = universe.intern("outer").symbol();
     let inner = universe.intern("inner").symbol();
     let empty = universe.intern_token_list(&[]);
@@ -808,7 +808,7 @@ fn nested_calls_keep_out_parameter_ownership_and_invocation_provenance() {
         .open_registered_source(source)
         .expect("source opens");
     let mut runtime = CommandRuntime::default();
-    let mut universe = Universe::new();
+    let mut universe = Universe::new_with_plain_catcodes();
     let outer = universe.intern("outer").symbol();
     let inner = universe.intern("inner").symbol();
     let one_parameter = universe.intern_token_list(&[Token::param(1)]);
@@ -1063,7 +1063,7 @@ fn delimited_argument_strips_one_complete_outer_group() {
 
 #[test]
 fn non_long_delimited_argument_allows_a_recovered_paragraph_prefix() {
-    let mut universe = Universe::new();
+    let mut universe = Universe::new_with_plain_catcodes();
     let par = universe.intern("par").symbol();
     drop(universe);
     let (_, arguments) = run_macro(

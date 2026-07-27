@@ -39,6 +39,10 @@ fn dump(session: &mut EngineSession<'_, '_>) -> Result<(), ExpandDumpError> {
 
 fn install_dump_primitives(stores: &mut Universe) {
     stores.set_int_param(IntParam::END_LINE_CHAR, 13);
+    // `expand-dump` reports what a format-loaded engine would expand, matching
+    // `umber run`; INITEX alone leaves `{ } $ & # ^ _` as `other_char`
+    // (tex.web §232).
+    stores.install_plain_catcodes();
     let relax = stores.intern("relax");
     stores.set_meaning(relax, Meaning::Relax);
     stores.intern("par");
