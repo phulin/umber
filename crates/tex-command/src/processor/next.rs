@@ -142,15 +142,6 @@ impl CommandProcessor<'_> {
             if self
                 .command
                 .alignment
-                .needs_unbalanced_delimiter_recovery(&command)
-            {
-                return Ok(Some(AlignmentDelivery::Event(
-                    AlignmentDeliveryEvent::UnbalancedDelimiter(command),
-                )));
-            }
-            if self
-                .command
-                .alignment
                 .needs_closing_brace_recovery(&command)
             {
                 return Ok(Some(AlignmentDelivery::Event(
@@ -183,25 +174,35 @@ impl CommandProcessor<'_> {
                 self.last_delivery = None;
                 Self::saved_alignment_delimiter(&delimiter)?
             }
-            AlignmentDeliveryEvent::UnbalancedDelimiter(_)
-            | AlignmentDeliveryEvent::ClosingBrace(_) => {
+            AlignmentDeliveryEvent::ClosingBrace(_) => {
                 return Err(CommandError::input_invariant());
             }
         };
         self.start_alignment_v_template(alignment, saved_delimiter)
     }
 
-    /// Performs TeX82 §1102 `align_error` after main control has observed an
-    /// unbalanced cell delimiter.  Both backup levels and every `align_state`
-    /// adjustment remain command-owned; the caller receives no token.
-    pub fn recover_alignment_unbalanced_delimiter(
+    /// Performs TeX82 §1127's `align_error`, the whole of §1126's
+    /// `any_mode(car_ret), any_mode(tab_mark)` action.
+    ///
+    /// `Ok(None)` is §1128's `@<Express consternation over the fact that no
+    /// alignment is in progress@>` branch (`abs(align_state)>2`): the
+    /// delimiter is reported and dropped, with no backup and no insertion.
+    /// `Ok(Some(brace))` is the `abs(align_state)<=2` branch: the delimiter is
+    /// backed up and the missing brace is inserted above it by `ins_error`.
+    /// Both backup levels and every `align_state` adjustment remain
+    /// command-owned.
+    ///
+    /// The caller passes the delimiter exactly as main control received it;
+    /// this is not an alignment-delivery event, because tex.web reaches
+    /// `align_error` from `main_control`, not from `get_next`.
+    pub fn recover_align_error(
         &mut self,
-        event: AlignmentDeliveryEvent,
-    ) -> Result<Token, CommandError> {
-        let AlignmentDeliveryEvent::UnbalancedDelimiter(command) = event else {
-            return Err(CommandError::input_invariant());
-        };
+        command: CurrentCommand,
+    ) -> Result<Option<Token>, CommandError> {
         let previous = self.command.alignment.align_state;
+        if previous.unsigned_abs() > 2 {
+            return Ok(None);
+        }
         self.back_input(command)?;
         let recovery = self
             .command
@@ -269,10 +270,10 @@ impl CommandProcessor<'_> {
             delimiter: None,
             previous_align_state: Some(before_backup),
         }));
-        Ok(recovery)
+        Ok(Some(recovery))
     }
 
-    /// Performs TeX82 §1103's `align_group` right-brace recovery.
+    /// Performs TeX82 §1132's `align_group` `handle_right_brace` recovery.
     ///
     /// The executor selects this structural branch only after it has observed
     /// its active entry `align_group`; this command-core operation retains the
@@ -296,7 +297,7 @@ impl CommandProcessor<'_> {
             return Err(CommandError::input_invariant());
         }
         // The brace arrived by replaying the next-cell opener backup. §325's
-        // stack-conservation loop retires that exhausted backup before §1103
+        // stack-conservation loop retires that exhausted backup before §1132
         // makes its own backup.
         self.back_input(command)?;
         let frozen_cr = self
@@ -1792,18 +1793,37 @@ mod tests {
         assert!(
             matches!(processor.get_x_alignment_delivery(false).expect("brace delivers"), Some(crate::AlignmentDelivery::Command(command)) if matches!(command.meaning(), Meaning::CharToken { cat: Catcode::BeginGroup, .. }))
         );
-        let event = match processor
+        // §1126 routes the delimiter to `main_control`, so it is delivered as
+        // an ordinary command; `get_next` never intercepts it here.
+        let delimiter = match processor
             .get_x_alignment_delivery(false)
             .expect("unbalanced delimiter delivers")
         {
-            Some(crate::AlignmentDelivery::Event(
-                event @ crate::AlignmentDeliveryEvent::UnbalancedDelimiter(_),
-            )) => event,
-            other => panic!("expected command-owned unbalanced-delimiter event, got {other:?}"),
+            Some(crate::AlignmentDelivery::Command(command))
+                if matches!(
+                    command.meaning(),
+                    Meaning::CharToken {
+                        cat: Catcode::AlignmentTab,
+                        ..
+                    }
+                ) =>
+            {
+                command
+            }
+            other => panic!("expected a main-control tab-mark delivery, got {other:?}"),
         };
-        processor
-            .recover_alignment_unbalanced_delimiter(event)
-            .expect("TeX82 align_error recovery is command-owned");
+        assert!(
+            matches!(
+                processor
+                    .recover_align_error(delimiter)
+                    .expect("TeX82 align_error recovery is command-owned"),
+                Some(Token::Char {
+                    cat: Catcode::EndGroup,
+                    ..
+                })
+            ),
+            "§1127 inserts the missing right brace at align_state 1"
+        );
         assert!(
             matches!(processor.get_x_alignment_delivery(false).expect("inserted brace delivers"), Some(crate::AlignmentDelivery::Command(command)) if matches!(command.meaning(), Meaning::CharToken { cat: Catcode::EndGroup, .. }))
         );
@@ -1820,8 +1840,88 @@ mod tests {
         let recovery = recorder.0.iter().position(|record| matches!(record, CommandObservation::Input(input) if input.transition == InputTransition::Recovery)).expect("inserted brace recovery is observed");
         assert!(
             backup < recovery,
-            "§1102 backs up the delimiter before ins_error inserts its brace"
+            "§1127 backs up the delimiter before ins_error inserts its brace"
         );
+    }
+
+    /// TeX82 §1127 selects §1128's `@<Express consternation@>` branch --
+    /// report and drop, with no `back_input` and no `ins_error` -- whenever
+    /// `abs(align_state)>2`.  That is the branch every delimiter outside an
+    /// alignment takes, because §331 starts `align_state` at 1000000 and §772
+    /// restores it across every alignment.
+    #[test]
+    fn align_error_drops_the_delimiter_when_no_alignment_entry_is_in_progress() {
+        let mut command = CommandState::default();
+        let source = command
+            .register_source(SourceRegistration::new(
+                RegisteredSourceKind::Generated,
+                Arc::<[u8]>::from(b"&".as_slice()),
+            ))
+            .expect("source registers");
+        command
+            .open_registered_source(source)
+            .expect("source opens");
+        assert_eq!(
+            command.alignment.align_state,
+            crate::processor::TOP_LEVEL_ALIGN_STATE,
+            "§331 initializes align_state far above the recovery window"
+        );
+        let mut runtime = CommandRuntime::default();
+        let mut universe = Universe::new_with_plain_catcodes();
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut recorder = Recorder::default();
+        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities)
+            .with_observer(&mut recorder);
+
+        let delimiter = processor
+            .get_x_token()
+            .expect("tab mark delivers")
+            .expect("tab mark token");
+        assert!(
+            processor
+                .recover_align_error(delimiter)
+                .expect("align_error is command-owned")
+                .is_none(),
+            "§1128 drops the delimiter instead of inserting a brace"
+        );
+        let next = processor
+            .get_x_token()
+            .expect("input continues")
+            .expect("the synthetic end-line space is still there");
+        assert!(
+            matches!(
+                next.meaning(),
+                Meaning::CharToken {
+                    cat: Catcode::Space,
+                    ..
+                }
+            ),
+            "the dropped delimiter is not backed up, so the line's end-line \
+             space follows it directly"
+        );
+    }
+
+    /// TeX82 §772's `push_alignment`/`pop_alignment` save and restore
+    /// `align_state` around *every* alignment, so material after `fin_align`
+    /// sees the running brace count that was live at `\halign`, not zero.
+    #[test]
+    fn finishing_an_alignment_restores_the_saved_outer_align_state() {
+        let mut command = CommandState::default();
+        command.alignment.align_state = crate::processor::TOP_LEVEL_ALIGN_STATE + 1;
+        let alignment = crate::AlignmentIdentity::new(23);
+        command.begin_alignment(alignment);
+        assert_eq!(
+            command.alignment.align_state,
+            crate::processor::alignment::PREAMBLE_ALIGN_STATE
+        );
+        command
+            .apply_alignment_request(crate::AlignmentRequest::Finish(alignment))
+            .expect("alignment finishes");
+        assert_eq!(
+            command.alignment.align_state,
+            crate::processor::TOP_LEVEL_ALIGN_STATE + 1
+        );
+        assert!(command.alignment.align_stack.is_empty());
     }
 
     #[test]
@@ -1920,7 +2020,10 @@ mod tests {
             }
         );
         assert_eq!(first.delivery_stamp().position(), 0);
-        assert_eq!(processor.command.alignment.align_state, 1);
+        assert_eq!(
+            processor.command.alignment.align_state,
+            crate::processor::TOP_LEVEL_ALIGN_STATE + 1
+        );
         assert_eq!(
             processor
                 .get_next()
@@ -1945,7 +2048,10 @@ mod tests {
                 cat: Catcode::EndGroup
             }
         );
-        assert_eq!(processor.command.alignment.align_state, 0);
+        assert_eq!(
+            processor.command.alignment.align_state,
+            crate::processor::TOP_LEVEL_ALIGN_STATE
+        );
         assert_eq!(
             processor
                 .get_next()
@@ -2516,11 +2622,17 @@ mod tests {
             .expect("source is live");
         let original_stamp = opening.delivery_stamp();
         let original_range = opening.source_range();
-        assert_eq!(processor.command.alignment.align_state, 1);
+        assert_eq!(
+            processor.command.alignment.align_state,
+            crate::processor::TOP_LEVEL_ALIGN_STATE + 1
+        );
         processor
             .back_input(opening)
             .expect("exact delivery backs up");
-        assert_eq!(processor.command.alignment.align_state, 0);
+        assert_eq!(
+            processor.command.alignment.align_state,
+            crate::processor::TOP_LEVEL_ALIGN_STATE
+        );
 
         let replayed = processor
             .get_next()
@@ -2533,11 +2645,17 @@ mod tests {
             original_range,
             "backed-up direct-source commands retain their committed range"
         );
-        assert_eq!(processor.command.alignment.align_state, 1);
+        assert_eq!(
+            processor.command.alignment.align_state,
+            crate::processor::TOP_LEVEL_ALIGN_STATE + 1
+        );
         processor
             .back_input(replayed)
             .expect("replayed delivery backs up");
-        assert_eq!(processor.command.alignment.align_state, 0);
+        assert_eq!(
+            processor.command.alignment.align_state,
+            crate::processor::TOP_LEVEL_ALIGN_STATE
+        );
     }
 
     #[test]
@@ -2868,9 +2986,6 @@ mod tests {
                 crate::AlignmentDelivery::Command(_) => {
                     panic!("delimiter is delivered as an alignment event")
                 }
-                crate::AlignmentDelivery::Event(
-                    crate::AlignmentDeliveryEvent::UnbalancedDelimiter(_),
-                ) => panic!("base-depth delimiter does not need recovery"),
                 crate::AlignmentDelivery::Event(crate::AlignmentDeliveryEvent::ClosingBrace(_)) => {
                     panic!("base-depth delimiter is not an align-group closing brace")
                 }
@@ -2984,7 +3099,10 @@ mod tests {
             processor.back_input(opening),
             Err(CommandError::StaleDelivery)
         );
-        assert_eq!(processor.command.alignment.align_state, 1);
+        assert_eq!(
+            processor.command.alignment.align_state,
+            crate::processor::TOP_LEVEL_ALIGN_STATE + 1
+        );
     }
 
     #[test]

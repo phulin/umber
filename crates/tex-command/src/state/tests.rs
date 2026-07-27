@@ -101,6 +101,7 @@ fn semantic_ownership_domains_are_exhaustively_classified() {
     } = conditions;
     let AlignmentDeliveryState {
         align_state,
+        align_stack,
         active_alignment,
         suspended,
         active_cell,
@@ -137,6 +138,7 @@ fn semantic_ownership_domains_are_exhaustively_classified() {
         frames,
         next_identity,
         align_state,
+        align_stack,
         active_alignment,
         suspended,
         active_cell,

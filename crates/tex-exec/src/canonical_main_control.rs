@@ -2911,22 +2911,8 @@ fn scan_alignment_delivery_step(
                 tex_command::AlignmentDeliveryEvent::EndTemplate(_) => processor
                     .begin_alignment_v_template(alignment, event)
                     .map_err(command_error)?,
-                tex_command::AlignmentDeliveryEvent::UnbalancedDelimiter(_) => {
-                    let recovery = processor
-                        .recover_alignment_unbalanced_delimiter(event)
-                        .map_err(command_error)?;
-                    return Ok(ScannedStep::AlignmentRecovery {
-                        opens_simple_group: matches!(
-                            recovery,
-                            tex_state::token::Token::Char {
-                                cat: Catcode::BeginGroup,
-                                ..
-                            }
-                        ),
-                    });
-                }
                 tex_command::AlignmentDeliveryEvent::ClosingBrace(_) => {
-                    // TeX82 §1103 selects this executor-owned align_group
+                    // TeX82 §1132 selects this executor-owned align_group
                     // branch. Raw brace backup/correction and frozen-\cr
                     // insertion remain entirely command-owned.
                     processor
@@ -4888,11 +4874,23 @@ fn scan_unclassified_primitive(
         P::LastKern | P::LastPenalty | P::LastSkip => Ok(ScannedStep::IllegalLastItem {
             token: command.spelling().semantic_token(),
         }),
+        // TeX82 §1126's `any_mode(car_ret), any_mode(tab_mark): align_error`.
+        // `\cr` and `\crcr` carry the `car_ret` command code (chr `cr_code`
+        // and `cr_cr_code`); `\span` carries `tab_mark` with chr `span_code`.
+        // `get_next` (§342) only diverts them into a v-template when
+        // `align_state=0`, so every other occurrence -- inside an alignment
+        // cell whose braces are unbalanced, or outside any alignment at all --
+        // is main control's to recover through §1127.
+        P::Cr | P::CrCr | P::Span => scan_align_error(processor, command),
+        // TeX82 §1126's `any_mode(no_align): no_align_error` and
+        // `any_mode(omit): omit_error` (§1129). Both routines are a
+        // `print_err`/`help2`/`error` triple and nothing else, so ignoring the
+        // primitive is §1129's complete action; only the diagnostic is missing
+        // (umber2-johp.110).
+        P::NoAlign | P::Omit => Ok(ScannedStep::Continue),
         P::BeginL
         | P::BeginR
         | P::ClubPenalties
-        | P::Cr
-        | P::CrCr
         | P::DimExpr
         | P::DiscretionaryHyphen
         | P::DisplayWidowPenalties
@@ -4917,9 +4915,7 @@ fn scan_unclassified_primitive(
         | P::Marks
         | P::MuExpr
         | P::MuToGlue
-        | P::NoAlign
         | P::NumExpr
-        | P::Omit
         | P::Outer
         | P::PageDiscards
         | P::ParShapeDimen
@@ -4965,7 +4961,6 @@ fn scan_unclassified_primitive(
         | P::ShowLists
         | P::ShowTokens
         | P::SpaceFactor
-        | P::Span
         | P::SplitDiscards
         | P::VFil
         | P::VFilNeg
@@ -5142,16 +5137,11 @@ fn scan_unclassified_char_token(
             Meaning::CharToken { ch, cat },
             mode,
         )),
-        // TeX82 §1126's `any_mode(car_ret), any_mode(tab_mark):
-        // align_error` (§1127). Like §370's undefined-control-sequence
-        // report above, `align_error`'s own action when
-        // `abs(align_state) > 2` is to complain and drop the delimiter
-        // (§1128) -- proceeding without consuming anything -- while its
-        // `abs(align_state) <= 2` branch inserts a missing brace. Umber
-        // implements the brace-insertion half only at the in-alignment
-        // delivery boundary (`recover_alignment_unbalanced_delimiter`); the
-        // main-control entry point is tracked separately (umber2-johp.110).
-        Catcode::AlignmentTab | Catcode::EndLine => Ok(ScannedStep::Continue),
+        // TeX82 §1126's `any_mode(tab_mark)` (a category-4 character token)
+        // and `any_mode(car_ret)` (a category-5 one, which `get_next`'s
+        // §344 end-of-line handling normally consumes before delivery).
+        // Both command codes take §1127's `align_error`.
+        Catcode::AlignmentTab | Catcode::EndLine => scan_align_error(processor, command),
         // Category codes that never become a delivered command: `get_next`
         // (§341-§356) consumes escape characters into control-sequence
         // spellings, resolves active characters to their own meanings, drops
@@ -5176,6 +5166,39 @@ fn scan_unclassified_char_token(
         | Catcode::Other => {
             unreachable!("scan_command names this character category unconditionally")
         }
+    }
+}
+
+/// TeX82 §1126's `any_mode(car_ret), any_mode(tab_mark): align_error`.
+///
+/// This is the single entry point for every command tex.web routes to
+/// `align_error`: the `car_ret` command code (`\cr`, `\crcr`, and a category-5
+/// character token) and the `tab_mark` command code (`\span` and a category-4
+/// character token). §1127 chooses between dropping the delimiter (§1128, when
+/// `abs(align_state)>2`) and backing it up behind an inserted brace, entirely
+/// from the command-owned `align_state`; main control only records whether the
+/// inserted brace opens a recovery simple group for §1131's `off_save`.
+///
+/// The diagnostic §1128 prints is not emitted on the canonical path yet, the
+/// same gap §370's undefined-control-sequence report has (umber2-johp.110).
+fn scan_align_error(
+    processor: &mut CommandProcessor<'_>,
+    command: tex_command::CurrentCommand,
+) -> Result<ScannedStep, ExecError> {
+    match processor
+        .recover_align_error(command)
+        .map_err(command_error)?
+    {
+        None => Ok(ScannedStep::Continue),
+        Some(recovery) => Ok(ScannedStep::AlignmentRecovery {
+            opens_simple_group: matches!(
+                recovery,
+                tex_state::token::Token::Char {
+                    cat: Catcode::BeginGroup,
+                    ..
+                }
+            ),
+        }),
     }
 }
 

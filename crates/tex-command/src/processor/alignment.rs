@@ -16,6 +16,14 @@ use crate::input::InputLevelId;
 pub(crate) const PREAMBLE_ALIGN_STATE: i32 = -1_000_000;
 pub(crate) const TEMPLATE_ALIGN_STATE: i32 = 1_000_000;
 pub(crate) const CELL_ALIGN_STATE: i32 = 0;
+/// TeX82 §331's `align_state:=1000000` in `@<Initialize the input routines@>`.
+///
+/// `align_state` is a single running brace count that `get_next` maintains for
+/// the whole run, not a per-alignment counter.  Starting it far above zero is
+/// what makes §1127's `abs(align_state)>2` test mean "no alignment entry is in
+/// progress here": only material that has actually descended into an alignment
+/// cell can bring it near zero.
+pub(crate) const TOP_LEVEL_ALIGN_STATE: i32 = 1_000_000;
 
 /// Stable identity supplied by the executor for one structural alignment.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -165,11 +173,6 @@ pub enum AlignmentDeliveryEvent {
     /// `get_next` intercepted an active-cell delimiter and delivered frozen
     /// `end_template` instead.
     EndTemplate(crate::CurrentCommand),
-    /// A tab, span, or row terminator reached main control while literal
-    /// braces left the active cell above or below its base depth.  TeX82's
-    /// `align_error` recovery is performed by command delivery after the
-    /// expanded observation, not by the executor.
-    UnbalancedDelimiter(crate::CurrentCommand),
     /// A right brace reached the active entry `align_group` at depth `-1`.
     /// The executor selects the structural branch; command recovery owns the
     /// exact backup correction and frozen-row-terminator insertion.
@@ -250,9 +253,15 @@ impl std::fmt::Display for AlignmentLifecycleError {
 impl std::error::Error for AlignmentLifecycleError {}
 
 /// Persistent ownership for alignment-sensitive raw delivery.
-#[derive(Clone, Debug, Default, Eq, Hash, PartialEq)]
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub(crate) struct AlignmentDeliveryState {
     pub(crate) align_state: i32,
+    /// TeX82 §772's `align_stack`, restricted to the one field this layer
+    /// owns: the `align_state` that `push_alignment` saves and
+    /// `pop_alignment` restores.  Every alignment pushes an entry, nested or
+    /// not, so `fin_align` always returns `align_state` to the running brace
+    /// count that was live when `\\halign`/`\\valign` was read.
+    pub(crate) align_stack: Vec<i32>,
     pub(crate) active_alignment: Option<AlignmentIdentity>,
     pub(crate) suspended: Vec<SuspendedAlignment>,
     pub(crate) active_cell: Option<ActiveCellDelivery>,
@@ -264,10 +273,24 @@ pub(crate) struct AlignmentDeliveryState {
     pub(crate) extra_tab_recovery: Option<AlignmentIdentity>,
 }
 
+impl Default for AlignmentDeliveryState {
+    fn default() -> Self {
+        Self {
+            align_state: TOP_LEVEL_ALIGN_STATE,
+            align_stack: Vec::new(),
+            active_alignment: None,
+            suspended: Vec::new(),
+            active_cell: None,
+            completed_preamble: None,
+            pending_fin_col_delimiter: None,
+            extra_tab_recovery: None,
+        }
+    }
+}
+
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub(crate) struct SuspendedAlignment {
     pub(crate) alignment: AlignmentIdentity,
-    pub(crate) align_state: i32,
     pub(crate) active_cell: Option<ActiveCellDelivery>,
 }
 
@@ -324,12 +347,23 @@ impl AlignmentDelimiter {
 }
 
 impl AlignmentDeliveryState {
-    /// Applies TeX82 §1102's pre-insertion correction for `align_error`.
-    /// The later inserted-brace backup correction is deliberately separate:
-    /// it is observable input ownership, and raw delivery will then consume
-    /// that correction normally.
+    /// Applies TeX82 §1127 `align_error`'s pre-insertion correction.
+    ///
+    /// `None` selects §1128's `@<Express consternation over the fact that no
+    /// alignment is in progress@>` branch, which prints `Misplaced ...` and
+    /// drops the delimiter without backing anything up.  `Some(brace)` is
+    /// §1127's `abs(align_state)<=2` branch, which has already applied the
+    /// matching `incr`/`decr`; the caller owns the `back_input`/`ins_error`
+    /// pair.  The later inserted-brace backup correction is deliberately
+    /// separate: it is observable input ownership, and raw delivery will then
+    /// consume that correction normally.
+    ///
+    /// §1127 tests only `align_state`.  There is deliberately no active-cell
+    /// gate here: `align_state` is a whole-run brace count (§331, §772), so a
+    /// delimiter that reaches main control below base depth gets the same
+    /// recovery whether or not a cell happens to be open.
     pub(crate) fn correct_unbalanced_delimiter(&mut self) -> Option<Token> {
-        if self.active_cell.is_none() || self.align_state.unsigned_abs() > 2 {
+        if self.align_state.unsigned_abs() > 2 {
             return None;
         }
         if self.align_state < 0 {
@@ -338,18 +372,16 @@ impl AlignmentDeliveryState {
                 ch: '{',
                 cat: Catcode::BeginGroup,
             })
-        } else if self.align_state > 0 {
+        } else {
             self.align_state -= 1;
             Some(Token::Char {
                 ch: '}',
                 cat: Catcode::EndGroup,
             })
-        } else {
-            None
         }
     }
 
-    /// Mirrors `back_input` for the recovery brace that §1102 installs with
+    /// Mirrors `back_input` for the recovery brace that §1127 installs with
     /// `ins_error`, before that brace is replayed through `get_next`.
     pub(crate) fn correct_inserted_brace_backup(&mut self, token: Token) {
         match token {
@@ -365,23 +397,6 @@ impl AlignmentDeliveryState {
         }
     }
 
-    pub(crate) fn needs_unbalanced_delimiter_recovery(&self, command: &CurrentCommand) -> bool {
-        self.active_cell.is_some()
-            && self.align_state != CELL_ALIGN_STATE
-            && self.align_state.unsigned_abs() <= 2
-            && matches!(
-                command.meaning(),
-                Meaning::CharToken {
-                    cat: Catcode::AlignmentTab,
-                    ..
-                } | Meaning::UnexpandablePrimitive(
-                    UnexpandablePrimitive::Cr
-                        | UnexpandablePrimitive::CrCr
-                        | UnexpandablePrimitive::Span
-                )
-            )
-    }
-
     pub(crate) fn needs_closing_brace_recovery(&self, command: &CurrentCommand) -> bool {
         self.active_cell.is_some()
             && self.align_state == -1
@@ -393,7 +408,12 @@ impl AlignmentDeliveryState {
                 }
             )
     }
+    /// TeX82 §774's `init_align` prologue: `push_alignment` (§772) saves the
+    /// running `align_state`, then `align_state:=-1000000` enters the new
+    /// alignment level.  The save is unconditional in tex.web, so it happens
+    /// for the outermost alignment exactly as for a nested one.
     pub(crate) fn begin_alignment(&mut self, alignment: AlignmentIdentity) {
+        self.align_stack.push(self.align_state);
         self.active_alignment = Some(alignment);
         self.active_cell = None;
         self.completed_preamble = None;
@@ -613,11 +633,9 @@ impl AlignmentDeliveryState {
         self.require_alignment(alignment)?;
         self.suspended.push(SuspendedAlignment {
             alignment,
-            align_state: self.align_state,
             active_cell: self.active_cell.take(),
         });
         self.active_alignment = None;
-        self.align_state = CELL_ALIGN_STATE;
         Ok(())
     }
 
@@ -634,11 +652,15 @@ impl AlignmentDeliveryState {
             return Err(AlignmentLifecycleError::WrongAlignment);
         }
         self.active_alignment = Some(alignment);
-        self.align_state = suspended.align_state;
         self.active_cell = suspended.active_cell;
         Ok(())
     }
 
+    /// TeX82 §800's `fin_align` epilogue: `pop_alignment` (§772) restores the
+    /// `align_state` that `push_alignment` saved when this alignment started.
+    /// The outer running brace count therefore survives the alignment, which
+    /// is what makes §1127's `abs(align_state)>2` test still report "no
+    /// alignment is in progress" for material after `fin_align`.
     pub(crate) fn finish_alignment(
         &mut self,
         alignment: AlignmentIdentity,
@@ -647,7 +669,7 @@ impl AlignmentDeliveryState {
         self.active_alignment = None;
         self.active_cell = None;
         self.completed_preamble = None;
-        self.align_state = CELL_ALIGN_STATE;
+        self.align_state = self.align_stack.pop().unwrap_or(TOP_LEVEL_ALIGN_STATE);
         Ok(())
     }
 

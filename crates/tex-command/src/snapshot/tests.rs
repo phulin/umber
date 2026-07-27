@@ -258,7 +258,6 @@ fn summary_rejects_expansion_alignment_and_live_transients() {
         |state| {
             state.alignment.suspended.push(SuspendedAlignment {
                 alignment: AlignmentIdentity::new(1),
-                align_state: 2,
                 active_cell: None,
             });
         },

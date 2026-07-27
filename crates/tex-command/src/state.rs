@@ -234,16 +234,23 @@ impl CommandState {
     /// Returns the committed observation for a command-owned outer alignment
     /// suspension. The executor chooses the structural boundary, while this
     /// state remains the sole owner of the saved delivery snapshot.
+    ///
+    /// The reported `align_state` is the outer running brace count that TeX82
+    /// §772's `push_alignment` saved, read back from the top `align_stack`
+    /// entry.  The live `align_state` is already the nested alignment's
+    /// `-1000000` by the time this observation is committed, because §774's
+    /// `init_align` overwrites it immediately after the save.
     #[cfg(any(test, feature = "instrumentation"))]
     #[must_use]
     pub fn alignment_suspend_observation(&self) -> Option<AlignmentRecord> {
+        let saved = self.alignment.align_stack.last().copied();
         self.alignment
             .suspended
             .last()
             .map(|suspended| AlignmentRecord {
                 transition: "suspend",
                 alignment: Some(suspended.alignment.raw()),
-                align_state: suspended.align_state,
+                align_state: saved.unwrap_or(self.alignment.align_state),
                 delimiter: None,
                 previous_align_state: None,
             })
