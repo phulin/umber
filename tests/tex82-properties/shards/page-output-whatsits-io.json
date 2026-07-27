@@ -1,0 +1,934 @@
+{
+  "schema": 1,
+  "domain": "page-builder-output-whatsits-io-shipout",
+  "reviewed": true,
+  "module_dispositions": [
+    {
+      "modules": {
+        "first": 583,
+        "last": 591
+      },
+      "disposition": "context_only",
+      "owner": "tex-out::dvi",
+      "property_ids": [],
+      "gap_bead": null,
+      "rationale": "DVI byte-language, preamble, font-definition, rule-alignment, and postamble specification needed to interpret emitted shipout bytes."
+    },
+    {
+      "modules": {
+        "first": 592,
+        "last": 617
+      },
+      "disposition": "property",
+      "owner": "tex-out::dvi",
+      "property_ids": [
+        "tex82.shipout.dvi-stream-state"
+      ],
+      "gap_bead": null,
+      "rationale": "DVI stream initialization, buffering, signed encoding, font definitions, movement compression, and first-page preamble."
+    },
+    {
+      "modules": {
+        "first": 618,
+        "last": 637
+      },
+      "disposition": "property",
+      "owner": "tex-out::dvi",
+      "property_ids": [
+        "tex82.shipout.list-traversal"
+      ],
+      "gap_bead": null,
+      "rationale": "Recursive horizontal and vertical list traversal, positioning, rules, glue rounding, leaders, fonts, and whatsit anchors."
+    },
+    {
+      "modules": {
+        "first": 638,
+        "last": 641
+      },
+      "disposition": "property",
+      "owner": "tex-out::dvi",
+      "property_ids": [
+        "tex82.shipout.page-commit"
+      ],
+      "gap_bead": null,
+      "rationale": "Page shipout framing, count capture, dimension guards, commit accounting, and box retirement."
+    },
+    {
+      "modules": {
+        "first": 642,
+        "last": 643
+      },
+      "disposition": "property",
+      "owner": "tex-out::dvi",
+      "property_ids": [
+        "tex82.shipout.dvi-finalization"
+      ],
+      "gap_bead": null,
+      "rationale": "End-of-job page completion, postamble, used-font definitions, padding, and no-page path."
+    },
+    {
+      "modules": {
+        "first": 980,
+        "last": 993
+      },
+      "disposition": "property",
+      "owner": "tex-exec::page-builder",
+      "property_ids": [
+        "tex82.page.state-and-freeze"
+      ],
+      "gap_bead": null,
+      "rationale": "Page history, insertion records, totals, initialization, frozen specifications, contribution state, and box-register recovery."
+    },
+    {
+      "modules": {
+        "first": 994,
+        "last": 1007
+      },
+      "disposition": "property",
+      "owner": "tex-exec::page-builder",
+      "property_ids": [
+        "tex82.page.contribution-and-breaks"
+      ],
+      "gap_bead": null,
+      "rationale": "Outer-vertical contribution draining, discardability, topskip, totals, maximum depth, break legality, costs, and forced selection."
+    },
+    {
+      "modules": {
+        "first": 1008,
+        "last": 1011
+      },
+      "disposition": "property",
+      "owner": "tex-exec::page-builder",
+      "property_ids": [
+        "tex82.page.insertion-accounting"
+      ],
+      "gap_bead": null,
+      "rationale": "Insertion-class records, correction glue, scaled capacity, split selection, and insertion penalties."
+    },
+    {
+      "modules": {
+        "first": 1012,
+        "last": 1023
+      },
+      "disposition": "property",
+      "owner": "tex-exec::output",
+      "property_ids": [
+        "tex82.output.fire-up-packaging"
+      ],
+      "gap_bead": null,
+      "rationale": "Selected-page packaging, marks, insertion distribution/splitting, heldover material, box 255, and page-state reset."
+    },
+    {
+      "modules": {
+        "first": 1024,
+        "last": 1028
+      },
+      "disposition": "property",
+      "owner": "tex-exec::output",
+      "property_ids": [
+        "tex82.output.selection-resume-and-default"
+      ],
+      "gap_bead": null,
+      "rationale": "Output-routine activation, dead-cycle fallback, default output, teardown/resume ordering, and output recovery."
+    },
+    {
+      "modules": {
+        "first": 1340,
+        "last": 1348
+      },
+      "disposition": "context_only",
+      "owner": "tex-exec::whatsits",
+      "property_ids": [],
+      "gap_bead": null,
+      "rationale": "Extension overview, base subtype and stream representation, primitive selectors, diagnostics, dispatch, and procedure declarations."
+    },
+    {
+      "modules": {
+        "first": 1349,
+        "last": 1367
+      },
+      "disposition": "property",
+      "owner": "tex-exec::whatsits",
+      "property_ids": [
+        "tex82.whatsits.construction-and-list-semantics"
+      ],
+      "gap_bead": null,
+      "rationale": "Whatsit construction/scanning, node ownership, zero dimensions, page/break transparency, and h/v shipout dispatch."
+    },
+    {
+      "modules": {
+        "first": 1368,
+        "last": 1375
+      },
+      "disposition": "property",
+      "owner": "tex-exec::effects",
+      "property_ids": [
+        "tex82.effects.special-write-open-close"
+      ],
+      "gap_bead": null,
+      "rationale": "Special lowering, deferred write expansion and recovery, stream effects, leader suppression, and immediate execution."
+    },
+    {
+      "modules": {
+        "first": 1376,
+        "last": 1377
+      },
+      "disposition": "property",
+      "owner": "tex-exec::whatsits",
+      "property_ids": [
+        "tex82.whatsits.language-state"
+      ],
+      "gap_bead": null,
+      "rationale": "Automatic and explicit language whatsits and their paragraph-local hyphenation minima."
+    },
+    {
+      "modules": {
+        "first": 1378,
+        "last": 1378
+      },
+      "disposition": "property",
+      "owner": "tex-exec::effects",
+      "property_ids": [
+        "tex82.effects.final-stream-close"
+      ],
+      "gap_bead": null,
+      "rationale": "Terminal cleanup closes every still-open output stream."
+    }
+  ],
+  "properties": [
+    {
+      "id": "tex82.shipout.dvi-stream-state",
+      "sections": [
+        592,
+        593,
+        594,
+        595,
+        596,
+        597,
+        598,
+        599,
+        600,
+        601,
+        602,
+        603,
+        604,
+        605,
+        606,
+        607,
+        608,
+        609,
+        610,
+        611,
+        612,
+        613,
+        614,
+        615,
+        616,
+        617
+      ],
+      "claim": "The DVI writer opens lazily, emits one TeX82 preamble before the first accepted page, encodes signed quantities big-endian, buffers without changing byte order, defines fonts before first selection, and compresses repeated horizontal and vertical movements only while the corresponding movement-stack history remains valid.",
+      "preconditions": [
+        "A detached page has passed the shipout size guard and supplies fixed magnification, job-clock comment fields, font identities, and offsets.",
+        "The DVI stream is either unopened or contains a valid prefix produced by the same writer."
+      ],
+      "stimulus": [
+        "Write first and later pages whose nested boxes require positive, negative, repeated, overwritten, and pruned horizontal and vertical movements, including first-use and reused fonts.",
+        "Phase 2 focused unit `movement_history_obeys_push_pop_and_pruning` and tiny byte fixture `shipout-dvi-stream-state.tex` cover movement history and exact first-page framing."
+      ],
+      "expected_observations": [
+        "The first accepted page begins after exactly one preamble; later pages add no preamble, and movement opcodes preserve coordinates while applying §§607–615 reuse rules.",
+        "Buffer boundaries and flush timing do not alter the canonical byte sequence."
+      ],
+      "postconditions": [
+        "The stream cursor, previous-page pointer, font-used set, movement stacks, and frozen magnification describe exactly the emitted prefix.",
+        "No page effect is published merely by opening or buffering the stream."
+      ],
+      "equivalence_cases": [
+        "Buffered and single-slice emission are byte-identical; an optimized movement stream decodes to the same coordinates as uncompressed right/down commands.",
+        "First use of a low or high internal font differs only in the canonical font-selection width; repeated use does not redefine it."
+      ],
+      "recovery_cases": [
+        "A write failure or rejected page commits no partial page or externally visible shipout effect.",
+        "Movement reuse across a popped or pruned nesting boundary is forbidden and falls back to a fresh movement command."
+      ],
+      "semantic_owner": "tex-out::dvi",
+      "test_level": "planned-rust-unit+byte-exact-minifixture",
+      "coverage": [
+        {
+          "path": "crates/tex-out/src/dvi/tests.rs",
+          "test": "streaming_writer_flushes_preamble_each_page_and_postamble"
+        },
+        {
+          "path": "crates/tex-out/src/dvi/tests.rs",
+          "test": "vertical_movement_reuses_y_registers"
+        },
+        {
+          "path": "crates/tex-out/src/dvi/tests.rs",
+          "test": "horizontal_movement_reuses_w_registers"
+        }
+      ],
+      "status": "gap",
+      "gap_bead": "umber2-johp.229"
+    },
+    {
+      "id": "tex82.shipout.list-traversal",
+      "sections": [
+        618,
+        619,
+        620,
+        621,
+        622,
+        623,
+        624,
+        625,
+        626,
+        627,
+        628,
+        629,
+        630,
+        631,
+        632,
+        633,
+        634,
+        635,
+        636,
+        637
+      ],
+      "claim": "Shipout recursively traverses hlist and vlist nodes with TeX82 reference-point coordinates, cumulative glue rounding, running-rule dimensions, scoped push/pop state, font selection, shifts, and aligned/centered/expanded leaders; whatsits are visited in node order and leader copies suppress only their write-like effects.",
+      "preconditions": [
+        "The page root is a finite packed hlist or vlist whose glue sign, order, ratio, dimensions, child lists, fonts, and whatsit anchors are valid.",
+        "The current DVI position and nesting depth were initialized by §617."
+      ],
+      "stimulus": [
+        "Traverse nested shifted h/v boxes, characters, ligatures, rules, kerns, finite and infinite glue, all leader subtypes, specials, and deferred writes in both axes.",
+        "Phase 2 focused unit `nested_hv_traversal_restores_coordinates_and_effect_order` plus tiny DVI fixture `shipout-list-traversal.tex` cover coordinate restoration and mixed-node order."
+      ],
+      "expected_observations": [
+        "Characters, rules, motion, font changes, specials, and effects appear in canonical list order at the coordinates prescribed by §§618–637.",
+        "Glue adjustment is rounded cumulatively and leader placement uses the containing box edge and TeX82 ten-sp compensation."
+      ],
+      "postconditions": [
+        "Every recursive child restores its caller's DVI position and nesting state; the root finishes with an empty DVI push stack.",
+        "Traversal neither changes packed node dimensions nor reorders or duplicates nonleader effects."
+      ],
+      "equivalence_cases": [
+        "Empty child boxes advance by dimensions without push/pop; nonempty children produce equivalent final coordinates through recursive traversal.",
+        "Leader rules and leader boxes consume the same resolved glue extent, while their payload output follows their distinct canonical paths."
+      ],
+      "recovery_cases": [
+        "Zero or negative rule dimensions emit no rule but preserve the required axis movement.",
+        "A forbidden write inside leaders is suppressed without suppressing specials or corrupting later effect order."
+      ],
+      "semantic_owner": "tex-out::dvi",
+      "test_level": "rust-unit+planned-byte-exact-minifixture",
+      "coverage": [
+        {
+          "path": "crates/tex-out/src/dvi/tests.rs",
+          "test": "glue_set_is_rounded_cumulatively"
+        },
+        {
+          "path": "crates/tex-out/src/dvi/tests.rs",
+          "test": "hlist_box_leaders_repeat_payloads_for_all_subtypes"
+        },
+        {
+          "path": "crates/tex-exec/src/tests/io.rs",
+          "test": "shipout_lowers_supported_whatsit_adjacent_nodes_without_reordering_effects"
+        }
+      ],
+      "status": "gap",
+      "gap_bead": "umber2-johp.229"
+    },
+    {
+      "id": "tex82.shipout.page-commit",
+      "sections": [
+        638,
+        639,
+        640,
+        641
+      ],
+      "claim": "An accepted shipout captures count0 through count9 and offsets, emits bop/body/eop, chains the previous bop, increments the page count exactly once, resets dead cycles, and then retires the box; an oversized page is diagnosed and deleted without DVI bytes or a committed page.",
+      "preconditions": [
+        "A complete box has been selected by explicit shipout or default page output.",
+        "The page dimensions and offsets can be checked before any bop byte or page effect is committed."
+      ],
+      "stimulus": [
+        "Ship valid hlist and vlist pages with distinct count registers and offsets, then attempt each huge-page guard boundary.",
+        "Phase 2 focused unit `page_commit_is_atomic_across_all_huge_page_guards` and tiny fixture `shipout-counts-and-rejection.tex` cover count capture and rejection."
+      ],
+      "expected_observations": [
+        "A valid page contributes one ordered DVI artifact/effect with matching bop counts and eop; total pages and previous-bop state advance once.",
+        "An invalid page produces the huge-page diagnostic and no artifact, DVI page, or page-count increment."
+      ],
+      "postconditions": [
+        "The shipped or rejected box is retired, dead cycles is zero after ship_out returns, and no page-local traversal state remains live.",
+        "Committed pages retain their original order and one-based effect ordinal."
+      ],
+      "equivalence_cases": [
+        "Explicit shipout and the null-output default path use the same page commit semantics.",
+        "Hlist and vlist roots differ only in traversal geometry, not framing, count capture, atomicity, or retirement."
+      ],
+      "recovery_cases": [
+        "Any dimension beyond max_dimen, including height plus depth plus vertical offset or width plus horizontal offset, takes the no-commit deletion path.",
+        "A failed lowering or sink write rolls back the complete page transaction rather than exposing a prefix."
+      ],
+      "semantic_owner": "tex-out::dvi",
+      "test_level": "rust-unit+planned-byte-exact-minifixture",
+      "coverage": [
+        {
+          "path": "crates/tex-out/src/dvi/tests.rs",
+          "test": "writes_preamble_bop_body_and_postamble"
+        },
+        {
+          "path": "crates/tex-out/src/dvi/tests.rs",
+          "test": "chains_bop_pointers_across_pages"
+        },
+        {
+          "path": "crates/tex-exec/src/tests/io.rs",
+          "test": "huge_shipout_is_diagnosed_without_committing_an_artifact"
+        }
+      ],
+      "status": "gap",
+      "gap_bead": "umber2-johp.229"
+    },
+    {
+      "id": "tex82.shipout.dvi-finalization",
+      "sections": [
+        642,
+        643
+      ],
+      "claim": "DVI finalization closes any incomplete output nesting, emits no file when no page exists, otherwise writes a postamble containing the last bop, frozen scale and magnification, maximum dimensions, stack depth, page count, every used font definition, post_post, and at least four 223 bytes to a four-byte boundary.",
+      "preconditions": [
+        "Execution has reached end-of-job finalization with zero or more accepted pages and a valid DVI prefix.",
+        "Used-font, maximum-dimension, maximum-stack, page-count, and last-bop summaries match that prefix."
+      ],
+      "stimulus": [
+        "Finalize zero-page, one-page, multipage, multiple-font, and unfinished-nesting streams.",
+        "Phase 2 focused unit `postamble_summarizes_pages_fonts_stack_and_padding` covers every postamble field and the no-page branch."
+      ],
+      "expected_observations": [
+        "Zero pages report no output without opening a DVI file; nonzero pages receive exactly one valid postamble and terminal size summary.",
+        "Every used font is defined in the postamble and padding satisfies both the minimum count and alignment rule."
+      ],
+      "postconditions": [
+        "The DVI sink is flushed and closed once, and the finished byte stream is self-consistent.",
+        "Finalization does not manufacture a semantic page except when closing an already-live output nesting as prescribed by §642."
+      ],
+      "equivalence_cases": [
+        "Streaming and owned writers produce byte-identical postambles from the same ordered pages.",
+        "Fonts defined at first use are still repeated in the postamble; unused fonts are absent."
+      ],
+      "recovery_cases": [
+        "Sink failure returns an error without claiming a successful terminal output summary.",
+        "Zero pages take the explicit no-file path rather than emitting an empty preamble/postamble pair."
+      ],
+      "semantic_owner": "tex-out::dvi",
+      "test_level": "rust-unit",
+      "coverage": [
+        {
+          "path": "crates/tex-out/src/dvi/tests.rs",
+          "test": "streaming_writer_flushes_preamble_each_page_and_postamble"
+        },
+        {
+          "path": "crates/tex-out/src/dvi/tests.rs",
+          "test": "defines_fonts_at_first_use_and_uses_fnt_num_or_fnt1"
+        }
+      ],
+      "status": "gap",
+      "gap_bead": "umber2-johp.229"
+    },
+    {
+      "id": "tex82.page.state-and-freeze",
+      "sections": [
+        980,
+        981,
+        982,
+        983,
+        984,
+        985,
+        986,
+        987,
+        988,
+        989,
+        990,
+        991,
+        992,
+        993
+      ],
+      "claim": "Page state separates accounted current-page nodes from pending contributions, tracks ordered insertion-class records and eight page quantities, freezes vsize and maxdepth at the first box or insertion, starts each new page with empty history and last-item enquiries, and diagnoses/deletes a nonvoid box 255 or horizontal insertion box when canonical recovery requires it.",
+      "preconditions": [
+        "The engine owns an outer vertical contribution list, an empty or partially built page, page parameters, insertion registers, marks, and box 255.",
+        "No page-building step runs while output_active is true."
+      ],
+      "stimulus": [
+        "Start pages with marks/whatsits, insertions, and boxes; mutate vsize/maxdepth before and after freezing; reset after fire_up; present invalid box 255 and insertion boxes.",
+        "Phase 2 focused unit `page_freeze_and_reset_preserve_history_boundaries` plus tiny semantic fixture `page-state-history.tex` cover freeze time, enquiries, and reset."
+      ],
+      "expected_observations": [
+        "Marks and contentless whatsits alone leave page_contents empty; the first insertion freezes inserts_only and the first box freezes or promotes to box_there.",
+        "Page totals and insertion records reflect only accounted nodes, while pending contributions remain distinguishable."
+      ],
+      "postconditions": [
+        "A fresh page has empty current nodes, zero depth/max-depth history, reset last glue/penalty/kern values, and no stale best-break state.",
+        "Frozen specifications remain stable until fire_up even if their live parameters change."
+      ],
+      "equivalence_cases": [
+        "Cold execution and memo replay produce the same semantic page history independent of allocation identities.",
+        "First insertion then first box and first box directly select the same box_there totals after canonical topskip handling."
+      ],
+      "recovery_cases": [
+        "A nonvoid box 255 is diagnosed and deleted before page packaging; an hbox in an insertion register is diagnosed and discarded before appending insertion material.",
+        "Output-active build_page calls leave both current-page and contribution histories unchanged."
+      ],
+      "semantic_owner": "tex-exec::page-builder",
+      "test_level": "rust-unit+planned-semantic-minifixture",
+      "coverage": [
+        {
+          "path": "crates/tex-exec/src/tests/core.rs",
+          "test": "detached_page_episode_replays_before_output_fire_up"
+        },
+        {
+          "path": "crates/tex-exec/src/tests/core.rs",
+          "test": "page_builder_moves_box_and_updates_page_scalars"
+        },
+        {
+          "path": "crates/tex-exec/src/tests/core.rs",
+          "test": "writable_page_scalars_read_after_page_freeze"
+        }
+      ],
+      "status": "gap",
+      "gap_bead": "umber2-johp.229"
+    },
+    {
+      "id": "tex82.page.contribution-and-breaks",
+      "sections": [
+        994,
+        995,
+        996,
+        997,
+        998,
+        999,
+        1000,
+        1001,
+        1002,
+        1003,
+        1004,
+        1005,
+        1006,
+        1007
+      ],
+      "claim": "build_page drains outer-vertical contributions in order, updates last-item enquiries before classification, discards leading glue/kern/penalty, delays a terminal kern, inserts adjusted topskip before the first box/rule, accounts height/depth/glue with max-depth and finite-shrink correction, and chooses the latest minimum-cost legal break using badness, penalty, insertion penalties, and forced-break rules.",
+      "preconditions": [
+        "The contribution queue and current-page history are internally consistent and output_active is false.",
+        "Live page parameters and glue specs are available when the first substantial node freezes the page."
+      ],
+      "stimulus": [
+        "Contribute every legal vertical node kind around empty/nonempty page boundaries, terminal kerns, infinite shrink, equal-cost breaks, overfull pages, and eject penalties.",
+        "Phase 2 focused units `outer_vertical_contribution_matrix_matches_sections_994_1004` and `page_break_cost_boundaries_choose_latest_champion` plus tiny fixture `page-break-history.tex` cover node routing and cost boundaries."
+      ],
+      "expected_observations": [
+        "Contributions move, wait, or are discarded exactly once; current-page totals, depth, stretch orders, shrink, last-item enquiries, and diagnostics match §§994–1007.",
+        "A cost no greater than the prior champion replaces it; awful badness or eject penalty fires the selected champion rather than necessarily the trigger node."
+      ],
+      "postconditions": [
+        "If no break fires, the contribution queue is empty and its tail reset; if a break fires, post-break nodes remain in original order at the front of contributions.",
+        "Page history contains no discarded leading material and no unnormalized infinite shrink."
+      ],
+      "equivalence_cases": [
+        "A box whose height exceeds topskip and one with zero adjusted topskip both enter through the same initialized-page history.",
+        "A glue breakpoint and a kern-followed-by-glue breakpoint use identical zero penalty after their distinct legality checks."
+      ],
+      "recovery_cases": [
+        "Infinite-order page shrink emits the canonical diagnostic and replaces only that glue node with finite normal shrink.",
+        "Arithmetic overflow is a loud execution error and cannot leave a half-contributed node or partially updated totals."
+      ],
+      "semantic_owner": "tex-exec::page-builder",
+      "test_level": "rust-unit+planned-semantic-minifixture",
+      "coverage": [
+        {
+          "path": "crates/tex-exec/src/tests/core.rs",
+          "test": "page_builder_discards_glue_before_first_box"
+        },
+        {
+          "path": "crates/tex-exec/src/tests/core.rs",
+          "test": "page_builder_reports_and_normalizes_infinite_shrink_glue"
+        },
+        {
+          "path": "crates/tex-exec/src/output.rs",
+          "test": "chosen_pending_penalty_is_rewritten"
+        }
+      ],
+      "status": "gap",
+      "gap_bead": "umber2-johp.229"
+    },
+    {
+      "id": "tex82.page.insertion-accounting",
+      "sections": [
+        1008,
+        1009,
+        1010,
+        1011
+      ],
+      "claim": "The first insertion of each class creates one ordered page record, validates its box, captures existing box height and skip correction once, scales insertion demand by count, reduces page goal, accepts material within both page and dimen capacity, or records one canonical vertical split and its penalty while later nodes of a split class float.",
+      "preconditions": [
+        "An insertion node has a class, natural size, split-top skip, split maximum depth, floating penalty, and immutable vertical content.",
+        "The class count, dimen, skip, and box register are readable at the first insertion occurrence."
+      ],
+      "stimulus": [
+        "Contribute repeated and interleaved classes with counts below, equal to, and above 1000; zero/nonpositive counts; finite and infinite correction shrink; fitting, dimen-limited, and page-limited content; null and penalty split points.",
+        "Phase 2 focused unit `insertion_fit_split_and_float_matrix_matches_tex82` and tiny fixture `page-insertion-accounting.tex` cover scaling, ordered records, and split penalties."
+      ],
+      "expected_observations": [
+        "Each class captures its box and correction once, maintains last/best insertion pointers, and changes page goal/totals according to §§1008–1011.",
+        "A split records the chosen node and height, updates insertion penalties from null/penalty breaks, and makes subsequent same-class insertions float."
+      ],
+      "postconditions": [
+        "Insertion records remain sorted by class and page goal reflects exactly the accepted scaled material and one class correction.",
+        "Insertion content ownership remains valid for later fire_up distribution or heldover reuse."
+      ],
+      "equivalence_cases": [
+        "Count 1000 uses the natural size directly; other positive counts use TeX82 integer scaling and inverse-capacity operations.",
+        "A null insertion box and an empty vbox begin with equal natural height but retain their canonical box-state distinction."
+      ],
+      "recovery_cases": [
+        "Infinite shrink in insertion correction emits its specific diagnostic without treating the correction as infinite capacity.",
+        "An hbox insertion register is diagnosed and cleared; checked scaling overflow fails without a partial class record."
+      ],
+      "semantic_owner": "tex-exec::page-builder",
+      "test_level": "rust-unit+planned-semantic-minifixture",
+      "coverage": [
+        {
+          "path": "crates/tex-exec/src/tests/core.rs",
+          "test": "insertion_page_goal_uses_skip_once_and_count_scaling"
+        },
+        {
+          "path": "crates/tex-exec/src/tests/core.rs",
+          "test": "split_insertion_penalty_is_mainline_then_heldover_count_in_output"
+        },
+        {
+          "path": "crates/tex-exec/src/tests/core.rs",
+          "test": "insertion_skip_reports_infinite_shrink_correction"
+        }
+      ],
+      "status": "gap",
+      "gap_bead": "umber2-johp.229"
+    },
+    {
+      "id": "tex82.output.fire-up-packaging",
+      "sections": [
+        1012,
+        1013,
+        1014,
+        1015,
+        1016,
+        1017,
+        1018,
+        1019,
+        1020,
+        1021,
+        1022,
+        1023
+      ],
+      "claim": "fire_up globally records and neutralizes the chosen penalty, advances top/first/bot marks, packages exactly the best page into box 255 with frozen size and depth, distributes accepted insertion prefixes into class boxes, prunes and holds split remainders, restores split-top skip, resets page history, and preserves heldover insertion and contribution order.",
+      "preconditions": [
+        "A best page break, best size, per-class insertion choices, current-page list, contribution suffix, and mark history have been selected.",
+        "Box 255 is expected to be void before packaging and holding_inserts selects whether insertion distribution occurs."
+      ],
+      "stimulus": [
+        "Fire pages with penalty/nonpenalty breaks, zero/one/multiple marks, accepted/floating/split insertions, holding_inserts modes, trigger equal/not equal to best break, and existing contributions.",
+        "Phase 2 focused unit `fire_up_packages_marks_insertions_and_histories_atomically` plus tiny fixture `output-fire-up.tex` cover all mark and heldover histories."
+      ],
+      "expected_observations": [
+        "Box 255 contains exactly the selected noninsertion page nodes; output_penalty observes the original chosen penalty and that node is rewritten to inf_penalty.",
+        "Mark transitions, insertion boxes/remainders, heldover count, page reset, and contribution ordering match §§1012–1023."
+      ],
+      "postconditions": [
+        "All transient page-insertion records are retired, split_top_skip is restored, page history is fresh, and every node has exactly one live owner.",
+        "If a page contains no mark, first_mark inherits top_mark while bot_mark and top_mark preserve the prior-page relationship."
+      ],
+      "equivalence_cases": [
+        "A trigger node already equal to the best break and an unlinked trigger after an earlier best break package the same selected prefix.",
+        "holding_inserts positive preserves insertion nodes in box 255; nonpositive distribution preserves equivalent remaining-page order through class boxes and heldovers."
+      ],
+      "recovery_cases": [
+        "A preexisting box 255 is diagnosed and deleted before packaging rather than merged with the selected page.",
+        "Packaging failure restores marks, insertion boxes, page lists, output penalty, and node ownership to the pre-fire state."
+      ],
+      "semantic_owner": "tex-exec::output",
+      "test_level": "rust-unit+planned-semantic-minifixture",
+      "coverage": [
+        {
+          "path": "crates/tex-exec/src/tests/core.rs",
+          "test": "fire_up_updates_top_first_bot_marks_across_no_mark_page"
+        },
+        {
+          "path": "crates/tex-exec/src/tests/core.rs",
+          "test": "split_insertion_penalty_is_mainline_then_heldover_count_in_output"
+        },
+        {
+          "path": "crates/tex-exec/src/output.rs",
+          "test": "earlier_break_preserves_unrelated_pending_penalty"
+        }
+      ],
+      "status": "gap",
+      "gap_bead": "umber2-johp.229"
+    },
+    {
+      "id": "tex82.output.selection-resume-and-default",
+      "sections": [
+        1024,
+        1025,
+        1026,
+        1027,
+        1028
+      ],
+      "claim": "fire_up selects a user output routine only below maxdeadcycles, entering one implicit output group in internal vertical mode with reset paragraph state; otherwise it prepends heldovers and ships box 255 by default. Output completion drains its token list, ends the paragraph/group, clears output_active and insertion penalties, requires box 255 void, restores output-list and contribution order, pops the nest, and resumes page building.",
+      "preconditions": [
+        "fire_up has prepared box 255 and heldover material and can read output_routine, dead_cycles, and max_dead_cycles.",
+        "The default shipout path and output-routine execution both run inside the same aggregate page transaction."
+      ],
+      "stimulus": [
+        "Select null output, a balanced consuming routine, a routine leaving material, nonvoid box 255, unbalanced braces, and dead-cycle counts immediately below/at the maximum.",
+        "Phase 2 focused unit `output_selection_teardown_and_resume_matrix_matches_tex82` plus tiny fixture `output-routine-resume.tex` cover default, user, fallback, and recovery paths."
+      ],
+      "expected_observations": [
+        "Null output and dead-cycle overflow take the default path; a permitted routine increments dead_cycles, sets output_active, and executes inside exactly one output group.",
+        "Successful teardown emits a shipout checkpoint only after group/list retirement and resumes build_page with output material before heldover contributions."
+      ],
+      "postconditions": [
+        "After either completed path, output_active is false, box 255 is void, insertion penalties are reset, outer vertical mode is restored, and contributions retain canonical order.",
+        "Default output prepends heldover insertions before shipping box 255 and leaves them available to the resumed builder."
+      ],
+      "equivalence_cases": [
+        "Null output and max-dead-cycle escape commit the same selected box through default shipout, differing only by the canonical diagnostic.",
+        "An output routine that immediately ships box 255 and the default path produce equivalent page bytes for equal box contents."
+      ],
+      "recovery_cases": [
+        "An unbalanced output token list consumes through its own end marker with the canonical diagnostic before teardown.",
+        "A routine that leaves box 255 nonvoid emits the canonical diagnostic and deletes it; rollback cannot publish a premature output checkpoint."
+      ],
+      "semantic_owner": "tex-exec::output",
+      "test_level": "rust-unit+planned-semantic-minifixture",
+      "coverage": [
+        {
+          "path": "crates/tex-exec/src/tests/core.rs",
+          "test": "output_routine_replays_in_implicit_group_and_consumes_box255"
+        },
+        {
+          "path": "crates/tex-exec/src/tests/core.rs",
+          "test": "output_routine_emits_one_checkpoint_only_after_teardown"
+        },
+        {
+          "path": "crates/tex-exec/src/tests/core.rs",
+          "test": "canonical_dead_cycle_escape_ships_the_selected_residual_page"
+        },
+        {
+          "path": "crates/tex-exec/src/tests/core.rs",
+          "test": "output_routine_reports_nonvoid_box255_after_output"
+        }
+      ],
+      "status": "gap",
+      "gap_bead": "umber2-johp.229"
+    },
+    {
+      "id": "tex82.whatsits.construction-and-list-semantics",
+      "sections": [
+        1349,
+        1350,
+        1351,
+        1352,
+        1353,
+        1354,
+        1355,
+        1356,
+        1357,
+        1358,
+        1359,
+        1360,
+        1361,
+        1362,
+        1363,
+        1364,
+        1365,
+        1366,
+        1367
+      ],
+      "claim": "Base extension commands append typed whatsits to the current list: openout and closeout scan four-bit streams, write clamps arbitrary integers to terminal/log selectors and stores unexpanded text, special stores expanded text, and language nodes carry bounded state. Copy/destruction preserve token ownership; whatsits have zero dimensions, do not create vertical breakpoints, and dispatch in list order during h/v shipout.",
+      "preconditions": [
+        "Extension dispatch has selected open, write, close, special, or language in a legal current list.",
+        "Token-list and filename scanners can freeze their results before executor-side node construction."
+      ],
+      "stimulus": [
+        "Construct every subtype in hmode, internal/outer vmode, copied boxes, vertical breaking, and h/v shipout, with boundary stream numbers and scan-time macro changes.",
+        "Phase 2 focused unit `base_whatsit_construction_copy_and_list_matrix` plus tiny fixture `whatsit-list-semantics.tex` cover ownership, scan timing, zero geometry, and ordering."
+      ],
+      "expected_observations": [
+        "Each subtype retains exactly the fields prescribed by §§1349–1354; write remains deferred/unexpanded while special is fixed by scan-time expansion.",
+        "Packing and page breaking treat whatsits as zero-size nonbreak material, while shipout visits them at their exact list positions."
+      ],
+      "postconditions": [
+        "Copying increments or shares token ownership safely; deleting either copy cannot invalidate the other.",
+        "Node construction changes no stream state or external effect until immediate execution or shipout traversal."
+      ],
+      "equivalence_cases": [
+        "The same whatsit in an hlist or vlist has equal zero geometry and payload but is anchored at the traversal position of its containing axis.",
+        "Copied specials reuse scan-time expansion; copied deferred writes independently expand at each shipout."
+      ],
+      "recovery_cases": [
+        "Out-of-range write streams map to the canonical positive or negative selector instead of indexing file streams.",
+        "A malformed general-text scan follows scanner recovery before publishing a complete node; no partial whatsit is appended."
+      ],
+      "semantic_owner": "tex-exec::whatsits",
+      "test_level": "rust-unit+planned-semantic-minifixture",
+      "coverage": [
+        {
+          "path": "crates/tex-exec/src/tests/io.rs",
+          "test": "openout_closeout_append_deferred_whatsits_before_shipout"
+        },
+        {
+          "path": "crates/tex-exec/src/tests/io.rs",
+          "test": "copied_special_reuses_scan_time_expansion"
+        },
+        {
+          "path": "crates/tex-exec/src/tests/io.rs",
+          "test": "shipout_copy_expands_deferred_write_each_time"
+        }
+      ],
+      "status": "gap",
+      "gap_bead": "umber2-johp.229"
+    },
+    {
+      "id": "tex82.effects.special-write-open-close",
+      "sections": [
+        1368,
+        1369,
+        1370,
+        1371,
+        1372,
+        1373,
+        1374,
+        1375
+      ],
+      "claim": "Shipout emits special payloads as xxx1 or xxx4 after synchronizing position; deferred write rescans and fully expands its stored text behind an outer endwrite stopper at shipout-time state, then writes one line to an open stream or canonical terminal/log fallback. Deferred open closes any prior stream before opening the captured filename with .tex default, close closes it, leader copies suppress all three stream effects, and immediate performs only open/write/close recursively then removes the temporary node.",
+      "preconditions": [
+        "A valid whatsit reaches immediate execution or ordered h/v shipout traversal with transactional World stream/effect state.",
+        "Deferred write expansion can enter a mode-zero scanner episode isolated by the canonical endwrite token."
+      ],
+      "stimulus": [
+        "Execute immediate and deferred open/write/close across streams 0–17, extensionless names, reopen, unopened fallback, macro mutation between scan and shipout, copied boxes, leaders, short/long specials, and ordered mixed effects.",
+        "Phase 2 focused unit `write_open_close_effect_matrix_matches_sections_1368_1375` plus tiny semantic fixture `whatsit-effects.tex` cover exact event/file bytes and unbalanced-write recovery."
+      ],
+      "expected_observations": [
+        "Special bytes, generated file bytes, open/close effects, terminal/log fallbacks, and their ordering match §§1368–1375.",
+        "Immediate recognized operations act once without leaving a node; unrecognized expanded lookahead is backed up unchanged."
+      ],
+      "postconditions": [
+        "A successful effect updates stream state and effect history atomically; deferred nodes remain immutable and copied writes can expand again.",
+        "The synthetic write replay list and endwrite stopper retire before ordinary input resumes."
+      ],
+      "equivalence_cases": [
+        "Immediate and deferred open/write/close produce equal bytes when no relevant state changes before shipout, but differ at their canonical execution times.",
+        "Special payload lengths below 256 use xxx1 and longer payloads use xxx4 with identical payload bytes."
+      ],
+      "recovery_cases": [
+        "An unbalanced deferred write emits its canonical diagnostic and consumes only through endwrite, without absorbing the following source token.",
+        "Leader traversal suppresses open/write/close effects; failed effect commit rolls back stream state, generated bytes, and detached effect history together."
+      ],
+      "semantic_owner": "tex-exec::effects",
+      "test_level": "rust-unit+semantic-minifixture",
+      "coverage": [
+        {
+          "path": "crates/tex-exec/src/tests/io.rs",
+          "test": "immediate_openout_write_closeout_append_world_effect_records"
+        },
+        {
+          "path": "crates/tex-exec/src/tests/io.rs",
+          "test": "shipout_expands_write_against_barrier_state_and_stores_artifact"
+        },
+        {
+          "path": "crates/tex-exec/src/tests/io.rs",
+          "test": "shipout_commits_deferred_openout_closeout_whatsits"
+        },
+        {
+          "path": "crates/tex-exec/src/tests/io.rs",
+          "test": "deferred_write_does_not_absorb_following_par"
+        },
+        {
+          "path": "crates/tex-out/src/dvi/tests.rs",
+          "test": "specials_emit_xxx1_and_xxx4_at_anchor_positions"
+        }
+      ],
+      "status": "gap",
+      "gap_bead": "umber2-johp.229"
+    },
+    {
+      "id": "tex82.whatsits.language-state",
+      "sections": [
+        1376,
+        1377
+      ],
+      "claim": "Paragraph construction appends a language whatsit only when the normalized 0–255 language changes, capturing normalized left/right hyphen minima; explicit setlanguage is legal only in horizontal mode, scans its integer, normalizes out-of-range values to zero, appends the node, and updates the paragraph's current language.",
+      "preconditions": [
+        "Horizontal paragraph state has a current language, live language and hyphen-minimum parameters, and a current node list.",
+        "Automatic language fixing occurs before a character whose normalized language differs from the paragraph state."
+      ],
+      "stimulus": [
+        "Change language and minima across boundary/out-of-range values during a paragraph and invoke setlanguage in legal and illegal modes.",
+        "Phase 2 focused unit `language_whatsit_change_and_setlanguage_boundaries` covers automatic suppression, captured minima, explicit normalization, and mode recovery."
+      ],
+      "expected_observations": [
+        "Only actual normalized-language changes append automatic nodes, and each node freezes the live normalized minima.",
+        "Explicit setlanguage appends even when selecting the current language and uses zero for nonpositive or above-255 operands."
+      ],
+      "postconditions": [
+        "The paragraph current-language value equals the appended node and later line-breaking traversal observes its captured fields in order.",
+        "Language whatsits remain zero-size and produce no shipout bytes or external effects."
+      ],
+      "equivalence_cases": [
+        "Negative, zero, and above-255 language parameters all normalize to language zero.",
+        "Automatic and explicit nodes with equal captured fields have equal downstream language-state effects despite distinct append conditions."
+      ],
+      "recovery_cases": [
+        "Setlanguage outside horizontal mode reports the canonical illegal-case diagnostic without scanning an integer or appending a node.",
+        "Integer scanner recovery completes before any language state or node mutation."
+      ],
+      "semantic_owner": "tex-exec::whatsits",
+      "test_level": "planned-rust-unit",
+      "coverage": [],
+      "status": "gap",
+      "gap_bead": "umber2-johp.229"
+    },
+    {
+      "id": "tex82.effects.final-stream-close",
+      "sections": [
+        1378
+      ],
+      "claim": "End-of-job extension cleanup closes each currently open numbered output stream exactly once and leaves already-closed and special fallback selectors untouched.",
+      "preconditions": [
+        "Execution is finalizing with the complete 0–15 output-stream table and no further TeX commands will run."
+      ],
+      "stimulus": [
+        "Finalize jobs with no streams, sparse open streams, streams explicitly closed earlier, and streams reopened before termination.",
+        "Phase 2 focused unit `finalization_closes_each_live_output_stream_once` plus tiny effect fixture `final-stream-close.tex` cover final state and generated bytes."
+      ],
+      "expected_observations": [
+        "Every open numbered stream receives one close operation in ascending table traversal; closed streams and selectors 16/17 receive none."
+      ],
+      "postconditions": [
+        "No numbered output stream remains open and all successfully written bytes are available to the committed job effects."
+      ],
+      "equivalence_cases": [
+        "Explicit close immediately before finalization and final cleanup alone yield equal final bytes, differing only in close timing.",
+        "A never-opened stream and an already-closed stream are both no-ops at finalization."
+      ],
+      "recovery_cases": [
+        "A host close failure is reported without falsely marking unrelated streams or the whole job as successfully finalized.",
+        "Rollback before terminal commit restores the pre-finalization stream/effect snapshot."
+      ],
+      "semantic_owner": "tex-exec::effects",
+      "test_level": "planned-rust-unit+semantic-minifixture",
+      "coverage": [],
+      "status": "gap",
+      "gap_bead": "umber2-johp.229"
+    }
+  ]
+}
