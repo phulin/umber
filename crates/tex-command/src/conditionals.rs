@@ -512,9 +512,15 @@ impl CommandProcessor<'_> {
         }
     }
 
+    /// TeX82 §507 reads both `\\ifx` operands with `get_next`, not
+    /// `get_token`: `no_new_control_sequence` stays set (§365), so an operand
+    /// naming a control sequence the hash table has never held is §259's
+    /// dummy `undefined_control_sequence` and is not entered. Two such
+    /// operands still compare equal, because §222 gives the dummy the
+    /// `undefined_cs` command every fresh hash entry also starts with.
     fn evaluate_ifx(&mut self) -> Result<bool, CommandError> {
-        let first = self.get_token()?.ok_or(CommandError::input_invariant())?;
-        let second = self.get_token()?.ok_or(CommandError::input_invariant())?;
+        let first = self.get_next()?.ok_or(CommandError::input_invariant())?;
+        let second = self.get_next()?.ok_or(CommandError::input_invariant())?;
         Ok(self.ifx_meaning_eq(first.meaning(), second.meaning()))
     }
 

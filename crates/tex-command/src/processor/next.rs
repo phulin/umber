@@ -421,10 +421,15 @@ impl CommandProcessor<'_> {
     /// `other_char`, which existed only to feed a spelling-derived command
     /// name in the transport and silently masked whatever category code the
     /// engine actually held.
+    ///
+    /// It is `get_token`, not `get_next`, for the further reason §365 gives:
+    /// `get_token` is one of the two places TeX82 clears
+    /// `no_new_control_sequence`, so `` \`\newname `` enters `newname` in the
+    /// hash table exactly as any other `get_token` reader would.
     pub(crate) fn get_next_character_code(
         &mut self,
     ) -> Result<Option<CurrentCommand>, CommandError> {
-        self.get_next()
+        self.get_token()
     }
 
     /// Delivers one raw token for consumers which canonically permit a new
@@ -889,13 +894,13 @@ impl CommandProcessor<'_> {
 
     fn get_next_with_control_sequence_creation(
         &mut self,
-        _allow_control_sequence_creation: bool,
+        allow_control_sequence_creation: bool,
     ) -> Result<Option<CommandReplayDelivery>, CommandError> {
         loop {
             if let Some(episode) = self.replay_completion.take() {
                 return Ok(Some(CommandReplayDelivery::Completed(episode)));
             }
-            let Some(delivery) = self.take_input_token()? else {
+            let Some(delivery) = self.take_input_token(allow_control_sequence_creation)? else {
                 if let Some(episode) = self.replay_completion.take() {
                     return Ok(Some(CommandReplayDelivery::Completed(episode)));
                 }
@@ -1005,7 +1010,10 @@ impl CommandProcessor<'_> {
         }
     }
 
-    fn take_input_token(&mut self) -> Result<Option<DeliveredToken>, CommandError> {
+    fn take_input_token(
+        &mut self,
+        allow_control_sequence_creation: bool,
+    ) -> Result<Option<DeliveredToken>, CommandError> {
         loop {
             let Some(level) = self.command.input.levels.last().cloned() else {
                 #[cfg(any(test, feature = "instrumentation"))]
@@ -1024,7 +1032,8 @@ impl CommandProcessor<'_> {
                     self.ensure_source_registration(&source.cursor.backing);
                     match self.next_source_step() {
                         SourceTokenizationStep::Token(token) => {
-                            let spelling = self.source_spelling(&token);
+                            let spelling =
+                                self.source_spelling(&token, allow_control_sequence_creation);
                             return Ok(Some(DeliveredToken {
                                 spelling,
                                 level: identity,
@@ -1211,7 +1220,22 @@ impl CommandProcessor<'_> {
             .register_source(source.id, source.source_descriptor());
     }
 
-    fn source_spelling(&mut self, source_token: &SourceToken) -> TracedTokenWord {
+    /// Resolves one scanned source token into its semantic spelling.
+    ///
+    /// `allow_control_sequence_creation` is TeX82's `no_new_control_sequence`
+    /// inverted. §257 sets that flag, §365 clears it only around `get_token`,
+    /// and §374 clears it only around `\csname`'s `id_lookup`, so a raw
+    /// `get_next` may not enter a new name into the hash table: §259's
+    /// `id_lookup` hands it §222's dummy `undefined_control_sequence`
+    /// instead. Only §356's multiletter branch (`k>loc+1`) consults the hash
+    /// at all -- §354 resolves a control symbol to `single_base+c` and an
+    /// escape at line end to `null_cs`, and §351 gives a blank line's `\par`
+    /// `par_loc`, all permanent eqtb locations that exist before any scan.
+    fn source_spelling(
+        &mut self,
+        source_token: &SourceToken,
+        allow_control_sequence_creation: bool,
+    ) -> TracedTokenWord {
         let token = match source_token {
             SourceToken::Character { code, catcode, .. } => Token::Char {
                 ch: character_from_code(*code),
@@ -1226,8 +1250,15 @@ impl CommandProcessor<'_> {
                 | SourceControlSequenceKind::Symbol
                 | SourceControlSequenceKind::Paragraph
                 | SourceControlSequenceKind::Null => {
+                    let hashed = *kind == SourceControlSequenceKind::Word && name.len() > 1;
                     let name: String = name.iter().copied().map(character_from_code).collect();
-                    Token::Cs(self.state.intern_control_sequence(&name))
+                    if hashed && !allow_control_sequence_creation {
+                        self.state
+                            .known_control_sequence(&name)
+                            .map_or_else(Token::undefined_control_sequence, Token::Cs)
+                    } else {
+                        Token::Cs(self.state.intern_control_sequence(&name))
+                    }
                 }
             },
         };
@@ -1975,6 +2006,136 @@ mod tests {
                     && delivery.spelling
                         == crate::ObservedToken::ControlSequence("~".into())
         ));
+    }
+
+    fn open_generated(command: &mut CommandState, bytes: &'static [u8]) {
+        let source = command
+            .register_source(SourceRegistration::new(
+                RegisteredSourceKind::Generated,
+                Arc::<[u8]>::from(bytes),
+            ))
+            .expect("source registers");
+        command
+            .open_registered_source(source)
+            .expect("source opens");
+    }
+
+    /// TeX82 §365 clears `no_new_control_sequence` only inside `get_token`,
+    /// so §259's `id_lookup` gives a raw `get_next` §222's shared dummy
+    /// `undefined_control_sequence` for a multiletter name the hash table has
+    /// never held. §263's `sprint_cs` spells that slot with string number 0,
+    /// which §48 built as the printable form of character 0.
+    #[test]
+    fn raw_delivery_never_enters_a_new_multiletter_name_in_the_hash_table() {
+        let mut command = CommandState::default();
+        open_generated(&mut command, b"\\brm\\brm");
+        let mut runtime = CommandRuntime::default();
+        let mut universe = Universe::new_with_plain_catcodes();
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut recorder = Recorder::default();
+        {
+            let mut processor =
+                processor(&mut command, &mut runtime, &mut universe, &mut capabilities)
+                    .with_observer(&mut recorder);
+            let first = processor
+                .get_next()
+                .expect("raw delivery")
+                .expect("input is live");
+            assert!(
+                first
+                    .spelling()
+                    .semantic_token()
+                    .is_undefined_control_sequence()
+            );
+            assert_eq!(first.meaning(), Meaning::Undefined);
+            // A second raw scan of the same name must still find nothing:
+            // the first one entered no hash entry for it to reuse.
+            let second = processor
+                .get_next()
+                .expect("raw delivery")
+                .expect("input is live");
+            assert!(
+                second
+                    .spelling()
+                    .semantic_token()
+                    .is_undefined_control_sequence()
+            );
+        }
+        assert!(universe.symbol("brm").is_none());
+        let spellings: Vec<_> = recorder
+            .0
+            .iter()
+            .filter_map(|observation| match observation {
+                CommandObservation::Command(delivery) => Some(delivery),
+                _ => None,
+            })
+            .map(|delivery| (delivery.command.clone(), delivery.spelling.clone()))
+            .collect();
+        assert_eq!(
+            spellings,
+            vec![
+                (
+                    "undefined_cs".to_owned(),
+                    crate::ObservedToken::ControlSequence("^^@".into())
+                ),
+                (
+                    "undefined_cs".to_owned(),
+                    crate::ObservedToken::ControlSequence("^^@".into())
+                ),
+            ]
+        );
+    }
+
+    /// The other half of §365: `get_token` is one of the two readers that may
+    /// create, so the name it scans becomes a hash entry a later raw
+    /// `get_next` then finds and spells.
+    #[test]
+    fn get_token_enters_a_new_multiletter_name_a_later_raw_scan_then_finds() {
+        let mut command = CommandState::default();
+        open_generated(&mut command, b"\\brm\\brm");
+        let mut runtime = CommandRuntime::default();
+        let mut universe = Universe::new_with_plain_catcodes();
+        let mut capabilities = CommandHostCapabilities::default();
+        {
+            let mut processor =
+                processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+            let created = processor
+                .get_token()
+                .expect("raw delivery")
+                .expect("input is live");
+            assert!(matches!(created.spelling().semantic_token(), Token::Cs(_)));
+            let found = processor
+                .get_next()
+                .expect("raw delivery")
+                .expect("input is live");
+            assert_eq!(
+                found.spelling().semantic_token(),
+                created.spelling().semantic_token()
+            );
+        }
+        assert!(universe.symbol("brm").is_some());
+    }
+
+    /// §354 resolves a control symbol to `single_base+c` and an escape at
+    /// line end to `null_cs`, and §351 gives a blank line's `\par` `par_loc`.
+    /// None of those consult the hash table, so `no_new_control_sequence`
+    /// cannot turn them into §222's dummy.
+    #[test]
+    fn permanent_control_sequence_locations_are_never_the_undefined_dummy() {
+        let mut command = CommandState::default();
+        open_generated(&mut command, b"\\+\\\n\n");
+        let mut runtime = CommandRuntime::default();
+        let mut universe = Universe::new_with_plain_catcodes();
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+        while let Some(delivered) = processor.get_next().expect("raw delivery") {
+            assert!(
+                !delivered
+                    .spelling()
+                    .semantic_token()
+                    .is_undefined_control_sequence()
+            );
+        }
     }
 
     #[test]

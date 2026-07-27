@@ -194,6 +194,10 @@ impl CurrentCommand {
             // is nevertheless represented deterministically while recovery
             // remains the responsibility of the raw delivery loop.
             Token::Param(_) => (None, Meaning::Undefined),
+            // TeX82 §222 keeps `eq_type(undefined_control_sequence)` at
+            // `undefined_cs` and `equiv` at `null` for the whole run: the
+            // dummy location has no meaning cell an assignment could reach.
+            Token::Frozen(_) if token.is_undefined_control_sequence() => (None, Meaning::Undefined),
             Token::Frozen(_) if token.is_frozen_end_template() => (
                 None,
                 Meaning::ExpandablePrimitive(tex_state::meaning::ExpandablePrimitive::EndTemplate),
