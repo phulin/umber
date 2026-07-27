@@ -12,7 +12,7 @@ use tex_command::{
     CommandError, CommandHostCapabilities, CommandHostContext, CommandProcessor, CommandProfile,
     CommandRuntime, CommandState, CommandStateSnapshot, FontLoadRequest, FontResource,
     HyphenationDataKind, ImmediateExtension, InputStreamRequest, MathDelimiterBoundary,
-    MathDelimiterBoundaryKind, MathEpisodeRecovery, MathLimitKind, MathScriptKind, MathStyleKind,
+    MathDelimiterBoundaryKind, MathFieldBody, MathLimitKind, MathScriptKind, MathStyleKind,
     MathTextFieldKind, PdfAnnotationRequest, PdfColorStackActionRequest, PdfDestinationRequest,
     PdfDocumentFragmentRequest, PdfFormRequest, PdfGraphicsRequest, PdfImageRequest,
     PdfImageResource, PdfNavigationRequest, PdfObjectRequest, PdfReferenceObjectRequest,
@@ -1133,6 +1133,50 @@ impl CanonicalMainControl {
                 ReplayStep::Continue => {}
             }
         }
+        self.finish_math_level(stores)
+    }
+
+    /// Runs one live `math_group` (TeX82 §1153) to its closing brace.
+    ///
+    /// §1153 is ``back_input; scan_left_brace; saved(0):=p; incr(save_ptr);
+    /// push_math(math_group)``: the subformula's body is never absorbed, it
+    /// is ordinary input that main control reads, and §1186's `math_group`
+    /// arm of `handle_right_brace` closes it on the matching `}`. The
+    /// mandatory brace has already been consumed by
+    /// `scan_math_field_episode`; this opens `push_math`'s save level and
+    /// mode level and steps until the brace that closes *this* level
+    /// arrives.
+    fn execute_live_math_group(
+        &mut self,
+        stores: &mut Universe,
+    ) -> Result<tex_state::ids::NodeListId, ExecError> {
+        // The depth sampled before `push_math`, not the innermost group
+        // kind, is what identifies this group's own closing brace: a nested
+        // subformula opens another `math_group`, and any brace group inside
+        // the body opens a `simple_group`.
+        let enclosing_depth = stores.group_depth();
+        stores.enter_group_with_kind(GroupKind::Math);
+        self.modes.push(Mode::Math);
+        self.main_loop_active = false;
+        while stores.group_depth() > enclosing_depth {
+            match self.step_once(stores)? {
+                ReplayStep::End | ReplayStep::EndOfInput => {
+                    return Err(ExecError::MissingToken {
+                        context: "math group closing brace",
+                    });
+                }
+                ReplayStep::Continue => {}
+            }
+        }
+        self.finish_math_level(stores)
+    }
+
+    /// Closes any `\left` group TeX82 §1192 would have to recover, then pops
+    /// the math mode level and finishes its mlist (§1184's `fin_mlist`).
+    fn finish_math_level(
+        &mut self,
+        stores: &mut Universe,
+    ) -> Result<tex_state::ids::NodeListId, ExecError> {
         self.main_loop_active = false;
         while canonical_left_group_open(&self.modes, stores) {
             stores.world_mut().write_text(
@@ -1166,11 +1210,14 @@ impl CanonicalMainControl {
         field: tex_command::MathFieldEpisode,
         stores: &mut Universe,
     ) -> Result<MathField, ExecError> {
-        if matches!(field.recovery, MathEpisodeRecovery::MissingField) {
-            return Ok(MathField::Empty);
-        }
-        let episode = self.command.push_math_field_episode(field);
-        let list = self.execute_math_episode(episode, stores)?;
+        let list = match field.body {
+            MathFieldBody::Missing => return Ok(MathField::Empty),
+            MathFieldBody::OpenGroup => self.execute_live_math_group(stores)?,
+            MathFieldBody::Replay => {
+                let episode = self.command.push_math_field_episode(field);
+                self.execute_math_episode(episode, stores)?
+            }
+        };
         Ok(simplify_canonical_math_field(stores, list))
     }
 
@@ -2578,6 +2625,11 @@ enum ScannedStep {
     ExtraRightBrace,
     ExtraRightBraceEndsSemiSimpleGroup,
     ExtraEndGroup,
+    /// TeX82 §1186: the closing brace of a `math_group` opened by §1153's
+    /// `push_math`. Applying it only `unsave`s; the nested field loop in
+    /// `execute_live_math_group` notices the level is gone and finishes the
+    /// subformula's mlist.
+    EndMathGroup,
     /// TeX82 §1064's general `off_save`: the innermost group could not
     /// accommodate the scanned command, so `scan_off_save` already chose and
     /// inserted the matching closer ahead of the backed-up command
@@ -3459,7 +3511,23 @@ fn scan_command(
     {
         return Ok(ScannedStep::EndOrdinaryGroup);
     }
-    // TeX82 §1153's `mmode+left_brace`: a bare explicit brace encountered
+    // TeX82 §1186's `math_group` arm of `handle_right_brace`: the brace that
+    // closes a subformula scanned by §1151's `scan_math`. §1153 opened this
+    // level with `push_math(math_group)`, so the pair really does bracket a
+    // save-stack level and its closer must not fall through to the ordinary
+    // or box brace arms below.
+    if innermost_group == Some(GroupKind::Math)
+        && matches!(
+            command.meaning(),
+            Meaning::CharToken {
+                cat: Catcode::EndGroup,
+                ..
+            }
+        )
+    {
+        return Ok(ScannedStep::EndMathGroup);
+    }
+    // TeX82 §1150's `mmode+left_brace`: a bare explicit brace encountered
     // directly in math mode starts a subformula that becomes the nucleus of a
     // freshly appended noad -- `tail_append(new_noad); back_input;
     // scan_math(nucleus(tail))` -- rather than an ordinary `simple_group`
@@ -3473,14 +3541,11 @@ fn scan_command(
     // nucleus. Reusing the existing `TextField(Ord)` request (the same
     // completed-field plumbing `\mathord{...}` already drives) is exact:
     // `scan_math`'s brace case and `\mathord`'s explicit field scan both
-    // bottom out in one `scan_math_group_episode`/`fin_mlist` cycle, and an
-    // Ord-classified noad is what an unornamented brace group produces. That
-    // scan consumes the matching closing brace itself (via `scan_toks`), so
-    // neither brace of the pair opens or closes a save-stack level here,
-    // exactly as a fully balanced nested construct should. A box's own
-    // mandatory opening brace never reaches
-    // this dispatch at all: `scan_left_brace` (TeX82 §403) consumed it while
-    // the construction was still being scanned.
+    // bottom out in one §1153 `math_group`/`fin_mlist` cycle, and an
+    // Ord-classified noad is what an unornamented brace group produces. A
+    // box's own mandatory opening brace never reaches this dispatch at all:
+    // `scan_left_brace` (TeX82 §403) consumed it while the construction was
+    // still being scanned.
     if matches!(mode, Mode::Math | Mode::DisplayMath)
         && let Meaning::CharToken {
             cat: Catcode::BeginGroup,
@@ -6685,6 +6750,7 @@ fn applied_mutation_observation(
         | ScannedStep::OffSaveBottomDrop { .. }
         | ScannedStep::BeginOrdinaryGroup
         | ScannedStep::EndOrdinaryGroup
+        | ScannedStep::EndMathGroup
         | ScannedStep::OutputRoutineOpeningBrace
         | ScannedStep::EndOutputRoutine
         | ScannedStep::AlignmentPeekCell { .. }
@@ -8731,6 +8797,19 @@ fn apply_scanned_step(
                 .map_err(|_| ExecError::MissingToken {
                     context: "ordinary simple group",
                 })?;
+            schedule_aftergroup(command, stores, aftergroup);
+            Ok(ReplayStep::Continue)
+        }
+        ScannedStep::EndMathGroup => {
+            // TeX82 §1186 opens with `unsave`. Everything after it -- popping
+            // `saved(0)`, `fin_mlist`, and storing the result in the field --
+            // belongs to the scanner that opened the group, so
+            // `execute_live_math_group` performs it once its level is gone.
+            let aftergroup = stores.leave_group_with_kind(GroupKind::Math).map_err(|_| {
+                ExecError::MissingToken {
+                    context: "math group",
+                }
+            })?;
             schedule_aftergroup(command, stores, aftergroup);
             Ok(ReplayStep::Continue)
         }

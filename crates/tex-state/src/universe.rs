@@ -5103,6 +5103,17 @@ impl Universe {
         self.stores.group_kinds()
     }
 
+    /// Number of open groups, TeX82's `cur_level-level_one` (§271).
+    ///
+    /// A nested construction that must run until *its own* group closes
+    /// compares against a depth sampled before it opened, rather than
+    /// watching [`Self::innermost_group_kind`]: groups nested inside the
+    /// body make the innermost kind say nothing about whose brace arrived.
+    #[must_use]
+    pub fn group_depth(&self) -> u32 {
+        self.stores.env_group_depth()
+    }
+
     pub fn enter_group(&mut self) {
         self.stores.enter_group();
         self.dependencies

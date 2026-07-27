@@ -520,6 +520,30 @@ pub enum MathEpisodeRecovery {
     MissingField,
 }
 
+/// How the stomach must realize one completed math field.
+///
+/// TeX82 §1151's `scan_math` has exactly two outcomes: an unbraced field is
+/// one already-fetched command, while a braced field is §1153's
+/// ``back_input; scan_left_brace; ... push_math(math_group)`` -- the
+/// mandatory brace is consumed and the subformula body is then read *live*
+/// by ordinary main control, closed by §1186's `math_group` arm of
+/// `handle_right_brace`. A braced field is therefore not command-owned
+/// material at all, and must never be absorbed into a token list: doing so
+/// backs the brace up a second time, opens an extra replay input level, and
+/// swallows the closing brace that TeX delivers as a command.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum MathFieldBody {
+    /// Frozen command-owned material replayed as its own episode: the single
+    /// unbraced command spelling, or the empty list left behind when
+    /// `scan_left_brace` recovered a missing mandatory brace.
+    Replay,
+    /// TeX82 §1153: `math_group`'s opening brace has been consumed and the
+    /// body is live input the stomach reads through main control.
+    OpenGroup,
+    /// No field is available at all.
+    Missing,
+}
+
 /// Immutable command-owned material for one math field.
 ///
 /// The frozen payload is deliberately private. A consumer can only schedule
@@ -528,7 +552,7 @@ pub enum MathEpisodeRecovery {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct MathFieldEpisode {
     pub(crate) tokens: TracedTokenList,
-    pub recovery: MathEpisodeRecovery,
+    pub body: MathFieldBody,
     pub provenance: StructuredProvenance,
 }
 
@@ -1210,18 +1234,20 @@ impl CommandProcessor<'_> {
         })
     }
 
-    /// Completes one TeX82 math field into immutable command-owned material.
+    /// Completes one TeX82 §1151 `scan_math` field.
     ///
-    /// A braced field becomes a grouped mlist episode; an unbraced field is
-    /// one expanded command spelling. Active characters are resolved by
-    /// `get_x_token` before freezing, so their replay cannot reopen source
-    /// input or bypass command provenance.
+    /// An unbraced field is one expanded command spelling, frozen here.
+    /// Active characters are resolved by `get_x_token` before freezing, so
+    /// their replay cannot reopen source input or bypass command provenance.
+    /// A braced field is §1153: the mandatory brace is consumed by
+    /// `scan_left_brace` and nothing is absorbed, because `push_math`'s
+    /// `math_group` reads its body from live input.
     pub fn scan_math_field_episode(&mut self) -> Result<MathFieldEpisode, CommandError> {
         loop {
             let Some(command) = self.get_x_token()? else {
                 return Ok(MathFieldEpisode {
                     tokens: self.state.finish_traced_token_list(&[]),
-                    recovery: MathEpisodeRecovery::MissingField,
+                    body: MathFieldBody::Missing,
                     provenance: StructuredProvenance {
                         primary: OriginId::UNKNOWN,
                     },
@@ -1237,12 +1263,28 @@ impl CommandProcessor<'_> {
                     cat: Catcode::BeginGroup,
                     ..
                 } => {
+                    // TeX82 §1153 verbatim: `back_input; scan_left_brace;
+                    // ... push_math(math_group)`. The brace is re-read, not
+                    // re-consumed from `command`, because `scan_left_brace`
+                    // is what TeX runs here and its skipped spaces and
+                    // recovery are observable.
                     self.back_input(command)?;
-                    let group = self.scan_math_group_episode()?;
-                    return Ok(MathFieldEpisode {
-                        tokens: group.tokens,
-                        recovery: group.recovery,
-                        provenance: group.provenance,
+                    return Ok(match self.scan_left_brace(true) {
+                        Ok(opening) => MathFieldEpisode {
+                            tokens: self.state.finish_traced_token_list(&[]),
+                            body: MathFieldBody::OpenGroup,
+                            provenance: StructuredProvenance {
+                                primary: opening.origin(),
+                            },
+                        },
+                        Err(CommandError::InputInvariant(_)) => MathFieldEpisode {
+                            tokens: self.state.finish_traced_token_list(&[]),
+                            body: MathFieldBody::Replay,
+                            provenance: StructuredProvenance {
+                                primary: OriginId::UNKNOWN,
+                            },
+                        },
+                        Err(error) => return Err(error),
                     });
                 }
                 _ => {
@@ -1251,7 +1293,7 @@ impl CommandProcessor<'_> {
                     };
                     return Ok(MathFieldEpisode {
                         tokens: self.state.finish_traced_token_list(&[command.spelling()]),
-                        recovery: MathEpisodeRecovery::None,
+                        body: MathFieldBody::Replay,
                         provenance,
                     });
                 }
@@ -1262,6 +1304,10 @@ impl CommandProcessor<'_> {
     /// Completes one required braced math list. A missing opening brace is
     /// recovered here after `scan_left_brace` has backed the rejected command
     /// up, matching TeX's recovery ownership without exposing it to replay.
+    ///
+    /// This absorbing form serves only `\mathchoice` (TeX82 §1172), which
+    /// needs all four branches before any is built. §1151's `scan_math`
+    /// braced field does *not* use it: see [`MathFieldBody::OpenGroup`].
     pub fn scan_math_group_episode(&mut self) -> Result<MathGroupEpisode, CommandError> {
         match self.scan_left_brace(true) {
             Ok(opening) => {
