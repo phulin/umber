@@ -445,15 +445,15 @@
       "recovery_cases": ["Invalid selectors recover without mutating neighboring regions."],
       "semantic_owner": "tex-exec::assignment-state",
       "test_level": "planned-rust-unit+semantic-minifixture",
-      "coverage": [],
-      "status": "gap",
-      "gap_bead": "umber2-johp.226",
-      "planned_coverage": [
+      "coverage": [
         {
           "path": "crates/tex-exec/src/assignments/tests.rs",
           "test": "eqtb_regions_keep_parameter_register_kinds_and_shared_zero_glue_distinct"
         }
-      ]
+      ],
+      "status": "covered",
+      "gap_bead": null,
+      "planned_coverage": []
     },
     {
       "id": "tex82.group.save-level-lifecycle",
@@ -469,15 +469,15 @@
       "recovery_cases": ["Overflow reports before a partial boundary becomes current."],
       "semantic_owner": "tex-exec::save-stack",
       "test_level": "planned-rust-unit+semantic-minifixture",
-      "coverage": [],
-      "status": "gap",
-      "gap_bead": "umber2-johp.226",
-      "planned_coverage": [
+      "coverage": [
         {
           "path": "crates/tex-exec/src/assignments/tests.rs",
           "test": "nested_typed_groups_push_one_boundary_and_restore_outer_metadata"
         }
-      ]
+      ],
+      "status": "covered",
+      "gap_bead": null,
+      "planned_coverage": []
     },
     {
       "id": "tex82.assignment.local-global-save",
@@ -497,15 +497,15 @@
       "recovery_cases": ["Failed value scans create no save record or mutation."],
       "semantic_owner": "tex-exec::save-stack",
       "test_level": "planned-rust-unit+semantic-minifixture",
-      "coverage": [],
-      "status": "gap",
-      "gap_bead": "umber2-johp.226",
-      "planned_coverage": [
+      "coverage": [
         {
           "path": "crates/tex-exec/src/assignments/tests.rs",
           "test": "save_stack_local_global_redefinition_restores_once_per_level"
         }
-      ]
+      ],
+      "status": "covered",
+      "gap_bead": null,
+      "planned_coverage": []
     },
     {
       "id": "tex82.group.aftergroup-replay",
@@ -521,15 +521,15 @@
       "recovery_cases": ["Mismatch recovery never replays tokens from a still-open level."],
       "semantic_owner": "tex-exec::save-stack",
       "test_level": "planned-rust-unit+semantic-minifixture",
-      "coverage": [],
-      "status": "gap",
-      "gap_bead": "umber2-johp.226",
-      "planned_coverage": [
+      "coverage": [
         {
           "path": "crates/tex-exec/src/assignments/tests.rs",
           "test": "save_stack_aftergroup_tokens_replay_fifo_after_unsave"
         }
-      ]
+      ],
+      "status": "covered",
+      "gap_bead": null,
+      "planned_coverage": []
     },
     {
       "id": "tex82.group.unsave-restoration",
@@ -547,15 +547,15 @@
       "recovery_cases": ["Mismatched closers do not unsave the wrong group."],
       "semantic_owner": "tex-exec::save-stack",
       "test_level": "planned-rust-unit+semantic-minifixture",
-      "coverage": [],
-      "status": "gap",
-      "gap_bead": "umber2-johp.226",
-      "planned_coverage": [
+      "coverage": [
         {
           "path": "crates/tex-exec/src/assignments/tests.rs",
           "test": "unsave_restores_local_entries_retains_globals_then_replays_tokens"
         }
-      ]
+      ],
+      "status": "covered",
+      "gap_bead": null,
+      "planned_coverage": []
     },
     {
       "id": "tex82.assignment.mag-freeze",
@@ -599,15 +599,15 @@
       "recovery_cases": ["Wrong-mode commands diagnose or insert canonical recovery without silent success."],
       "semantic_owner": "tex-exec::main-control",
       "test_level": "planned-rust-unit+semantic-minifixture",
-      "coverage": [],
-      "status": "gap",
-      "gap_bead": "umber2-johp.226",
-      "planned_coverage": [
+      "coverage": [
         {
           "path": "crates/tex-exec/src/canonical_main_control/tests.rs",
           "test": "main_control_dispatch_matrix_consumes_each_command_once"
         }
-      ]
+      ],
+      "status": "covered",
+      "gap_bead": null,
+      "planned_coverage": []
     },
     {
       "id": "tex82.main-control.error-and-stop",
@@ -649,15 +649,15 @@
       "recovery_cases": ["Bottom-level, wrong-type, and excess closers diagnose once and progress."],
       "semantic_owner": "tex-exec::save-stack",
       "test_level": "planned-rust-unit+semantic-minifixture",
-      "coverage": [],
-      "status": "gap",
-      "gap_bead": "umber2-johp.226",
-      "planned_coverage": [
+      "coverage": [
         {
           "path": "crates/tex-exec/src/assignments/tests.rs",
           "test": "brace_dispatch_opens_normal_groups_and_recovers_each_mismatched_closer"
         }
-      ]
+      ],
+      "status": "covered",
+      "gap_bead": null,
+      "planned_coverage": []
     },
     {
       "id": "tex82.assignment.prefix-collection",
@@ -677,7 +677,7 @@
       "test_level": "planned-rust-unit+semantic-minifixture",
       "coverage": [],
       "status": "gap",
-      "gap_bead": "umber2-johp.226",
+      "gap_bead": "umber2-o96f",
       "planned_coverage": [
         {
           "path": "crates/tex-exec/src/assignments/tests.rs",
@@ -701,15 +701,15 @@
       "recovery_cases": ["Character and frozen targets diagnose and restart without defining them."],
       "semantic_owner": "tex-exec::assignments",
       "test_level": "planned-rust-unit+semantic-minifixture",
-      "coverage": [],
-      "status": "gap",
-      "gap_bead": "umber2-johp.226",
-      "planned_coverage": [
+      "coverage": [
         {
           "path": "crates/tex-exec/src/assignments/tests.rs",
           "test": "get_r_token_skips_spaces_and_recovers_non_control_sequence_targets"
         }
-      ]
+      ],
+      "status": "covered",
+      "gap_bead": null,
+      "planned_coverage": []
     },
     {
       "id": "tex82.assignment.current-font-selection",
@@ -725,15 +725,15 @@
       "recovery_cases": ["Unresolved font meanings are rejected before assignment."],
       "semantic_owner": "tex-exec::assignments",
       "test_level": "planned-rust-unit+semantic-minifixture",
-      "coverage": [],
-      "status": "gap",
-      "gap_bead": "umber2-johp.226",
-      "planned_coverage": [
+      "coverage": [
         {
           "path": "crates/tex-exec/src/assignments/tests.rs",
           "test": "set_font_assignment_obeys_local_global_and_globaldefs_scope"
         }
-      ]
+      ],
+      "status": "covered",
+      "gap_bead": null,
+      "planned_coverage": []
     },
     {
       "id": "tex82.assignment.macro-definitions",
@@ -751,15 +751,15 @@
       "recovery_cases": ["Runaway or outer input follows scan_toks recovery without changing target identity."],
       "semantic_owner": "tex-exec::assignments",
       "test_level": "planned-rust-unit+semantic-minifixture",
-      "coverage": [],
-      "status": "gap",
-      "gap_bead": "umber2-johp.226",
-      "planned_coverage": [
+      "coverage": [
         {
           "path": "crates/tex-exec/src/assignments/tests.rs",
           "test": "def_family_selects_expansion_flags_meaning_kind_and_effective_scope"
         }
-      ]
+      ],
+      "status": "covered",
+      "gap_bead": null,
+      "planned_coverage": []
     },
     {
       "id": "tex82.assignment.let-and-futurelet",
@@ -777,15 +777,15 @@
       "recovery_cases": ["Invalid targets recover before source meaning is copied."],
       "semantic_owner": "tex-exec::assignments",
       "test_level": "planned-rust-unit+semantic-minifixture",
-      "coverage": [],
-      "status": "gap",
-      "gap_bead": "umber2-johp.226",
-      "planned_coverage": [
+      "coverage": [
         {
           "path": "crates/tex-exec/src/assignments/tests.rs",
           "test": "let_and_futurelet_copy_meaning_and_preserve_lookahead_order"
         }
-      ]
+      ],
+      "status": "covered",
+      "gap_bead": null,
+      "planned_coverage": []
     },
     {
       "id": "tex82.assignment.shorthand-definitions",
@@ -801,15 +801,15 @@
       "recovery_cases": ["Out-of-range operands recover before final installation."],
       "semantic_owner": "tex-exec::assignments",
       "test_level": "planned-rust-unit+semantic-minifixture",
-      "coverage": [],
-      "status": "gap",
-      "gap_bead": "umber2-johp.226",
-      "planned_coverage": [
+      "coverage": [
         {
           "path": "crates/tex-exec/src/assignments/tests.rs",
           "test": "shorthand_definitions_install_each_command_operand_and_bound_recovery"
         }
-      ]
+      ],
+      "status": "covered",
+      "gap_bead": null,
+      "planned_coverage": []
     },
     {
       "id": "tex82.assignment.read-to-definition",
@@ -853,7 +853,7 @@
       "test_level": "planned-rust-unit+semantic-minifixture",
       "coverage": [],
       "status": "gap",
-      "gap_bead": "umber2-johp.226",
+      "gap_bead": "umber2-sb8t",
       "planned_coverage": [
         {
           "path": "crates/tex-exec/src/assignments/tests.rs",
@@ -1055,15 +1055,15 @@
       "recovery_cases": ["Failure or nonassignment does not fire or lose the token; retry fires once."],
       "semantic_owner": "tex-exec::assignments",
       "test_level": "planned-rust-unit+semantic-minifixture",
-      "coverage": [],
-      "status": "gap",
-      "gap_bead": "umber2-johp.226",
-      "planned_coverage": [
+      "coverage": [
         {
           "path": "crates/tex-exec/src/assignments/tests.rs",
           "test": "afterassignment_slot_overwrites_and_fires_once_after_successful_assignment"
         }
-      ]
+      ],
+      "status": "covered",
+      "gap_bead": null,
+      "planned_coverage": []
     },
     {
       "id": "tex82.assignment.command-terminator",
