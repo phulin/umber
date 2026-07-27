@@ -4,6 +4,7 @@
 //! expansion, macro calls, input nesting, and operand collection remain in
 //! `tex-command`; no `InputStack` is accepted here.
 
+use std::ops::ControlFlow;
 use std::path::PathBuf;
 use tex_command::{
     AlignmentCellDelimiter, AlignmentCellOpening, AlignmentCellTemplates, AlignmentDelivery,
@@ -710,34 +711,10 @@ impl CanonicalMainControl {
         // `main_loop` entries ends at `goto big_switch`.
         let main_loop_character = scanned.main_loop_character();
         self.main_loop_active = false;
-        if let ScannedStep::ReplayCompleted(episode) = scanned {
-            self.completed_replay_episode = Some(episode);
-            return Ok(ReplayStep::Continue);
-        }
-        // Each of these runs nested command-owned episodes whose own last
-        // character would otherwise leave `main_loop_active` set. None of
-        // them is a §1030 `main_loop` entry, so all of them resume at
-        // `big_switch`.
-        if let ScannedStep::Math(request) = scanned {
-            let step = self.apply_canonical_math_request(request, stores);
-            self.main_loop_active = false;
-            return step;
-        }
-        if let ScannedStep::MathDelimiter(boundary) = scanned {
-            let step = self.apply_canonical_math_delimiter(boundary, stores);
-            self.main_loop_active = false;
-            return step;
-        }
-        if let ScannedStep::MathShift { paired } = scanned {
-            let step = self.apply_canonical_math_shift(paired, stores);
-            self.main_loop_active = false;
-            return step;
-        }
-        if let ScannedStep::Discretionary(discretionary) = scanned {
-            let step = self.apply_discretionary(discretionary, stores);
-            self.main_loop_active = false;
-            return step;
-        }
+        let scanned = match self.apply_host_owned_step(scanned, stores) {
+            ControlFlow::Break(applied) => return applied,
+            ControlFlow::Continue(scanned) => scanned,
+        };
         let fires_afterassignment = scanned.fires_afterassignment();
         let result = apply_scanned_step(
             scanned,
@@ -754,6 +731,50 @@ impl CanonicalMainControl {
             schedule_afterassignment(&mut self.command, stores);
         }
         Ok(result)
+    }
+
+    /// Applies the scanned steps `CanonicalMainControl` owns itself instead of
+    /// routing through [`apply_scanned_step`], and hands every other step back
+    /// unchanged.
+    ///
+    /// Every step-delivery entry point -- unobserved, observed, and alignment
+    /// -- routes through this single match, so the host-applied set is stated
+    /// exactly once. It used to be an `if let` chain copied into each entry
+    /// point, and the observed copy was missing [`ScannedStep::MathShift`]:
+    /// an observed `$` fell through to `apply_scanned_step`'s `unreachable!()`
+    /// while the identical unobserved `$` was applied correctly
+    /// (umber2-johp.118). Add a host-applied step here, never at a call site.
+    ///
+    /// Each arm runs nested command-owned episodes whose own last character
+    /// would otherwise leave `main_loop_active` set. None of them is a §1030
+    /// `main_loop` entry, so all of them resume at `big_switch`.
+    fn apply_host_owned_step(
+        &mut self,
+        scanned: ScannedStep,
+        stores: &mut Universe,
+    ) -> ControlFlow<Result<ReplayStep, ExecError>, ScannedStep> {
+        let applied = match scanned {
+            ScannedStep::ReplayCompleted(episode) => {
+                self.completed_replay_episode = Some(episode);
+                Ok(ReplayStep::Continue)
+            }
+            ScannedStep::Math(request) => self.apply_canonical_math_request(request, stores),
+            ScannedStep::MathDelimiter(boundary) => {
+                self.apply_canonical_math_delimiter(boundary, stores)
+            }
+            // TeX82 §1137's `hmode+math_shift: init_math` and §1193's
+            // `mmode+math_shift: if cur_group=math_shift_group then
+            // after_math else off_save`. §1090 backs a `vmode+math_shift` up
+            // and runs `new_graf(true)` first, so vertical mode never reaches
+            // this step.
+            ScannedStep::MathShift { paired } => self.apply_canonical_math_shift(paired, stores),
+            ScannedStep::Discretionary(discretionary) => {
+                self.apply_discretionary(discretionary, stores)
+            }
+            scanned => return ControlFlow::Continue(scanned),
+        };
+        self.main_loop_active = false;
+        ControlFlow::Break(applied)
     }
 
     /// Executes TeX82's three completed discretionary parts as isolated
@@ -915,34 +936,10 @@ impl CanonicalMainControl {
         // `main_loop` entries ends at `goto big_switch`.
         let main_loop_character = scanned.main_loop_character();
         self.main_loop_active = false;
-        if let ScannedStep::ReplayCompleted(episode) = scanned {
-            self.completed_replay_episode = Some(episode);
-            return Ok(ReplayStep::Continue);
-        }
-        // Each of these runs nested command-owned episodes whose own last
-        // character would otherwise leave `main_loop_active` set. None of
-        // them is a §1030 `main_loop` entry, so all of them resume at
-        // `big_switch`.
-        if let ScannedStep::Math(request) = scanned {
-            let step = self.apply_canonical_math_request(request, stores);
-            self.main_loop_active = false;
-            return step;
-        }
-        if let ScannedStep::MathDelimiter(boundary) = scanned {
-            let step = self.apply_canonical_math_delimiter(boundary, stores);
-            self.main_loop_active = false;
-            return step;
-        }
-        if let ScannedStep::MathShift { paired } = scanned {
-            let step = self.apply_canonical_math_shift(paired, stores);
-            self.main_loop_active = false;
-            return step;
-        }
-        if let ScannedStep::Discretionary(discretionary) = scanned {
-            let step = self.apply_discretionary(discretionary, stores);
-            self.main_loop_active = false;
-            return step;
-        }
+        let scanned = match self.apply_host_owned_step(scanned, stores) {
+            ControlFlow::Break(applied) => return applied,
+            ControlFlow::Continue(scanned) => scanned,
+        };
         let fires_afterassignment = scanned.fires_afterassignment();
         let artifact_count = stores.world().artifact_commits().len();
         let result = apply_scanned_step(
@@ -1620,25 +1617,10 @@ impl CanonicalMainControl {
         // `main_loop` entries ends at `goto big_switch`.
         let main_loop_character = scanned.main_loop_character();
         self.main_loop_active = false;
-        if let ScannedStep::ReplayCompleted(episode) = scanned {
-            self.completed_replay_episode = Some(episode);
-            return Ok(ReplayStep::Continue);
-        }
-        if let ScannedStep::Math(request) = scanned {
-            let step = self.apply_canonical_math_request(request, stores);
-            self.main_loop_active = false;
-            return step;
-        }
-        if let ScannedStep::MathDelimiter(boundary) = scanned {
-            let step = self.apply_canonical_math_delimiter(boundary, stores);
-            self.main_loop_active = false;
-            return step;
-        }
-        if let ScannedStep::Discretionary(discretionary) = scanned {
-            let step = self.apply_discretionary(discretionary, stores);
-            self.main_loop_active = false;
-            return step;
-        }
+        let scanned = match self.apply_host_owned_step(scanned, stores) {
+            ControlFlow::Break(applied) => return applied,
+            ControlFlow::Continue(scanned) => scanned,
+        };
         let mutation = applied_mutation_observation(&scanned, stores);
         let begins_alignment = matches!(&scanned, ScannedStep::BeginAlignment { .. });
         let suspends_alignment = begins_alignment && self.active_alignment.is_some();
@@ -6195,9 +6177,9 @@ fn committed_arithmetic_mutation(
 ///   names -- either it is not an `eqtb` write at all, or it lands in a region
 ///   `umber_trace_eq_mutation` deliberately declines to serialize. Each arm
 ///   cites which.
-/// - `unreachable!()`: `step_with_observer_once` intercepts the step before
-///   this classifier runs, so reaching it means that interception was removed
-///   without updating this classifier.
+/// - `unreachable!()`: [`CanonicalMainControl::apply_host_owned_step`] applies
+///   the step before this classifier runs, so reaching it means that routing
+///   was removed without updating this classifier.
 #[cfg(any(test, feature = "instrumentation"))]
 fn applied_mutation_observation(
     scanned: &ScannedStep,
@@ -6598,18 +6580,19 @@ fn applied_mutation_observation(
         | ScannedStep::BoxEndGroup { .. }
         | ScannedStep::Mark(..)
         | ScannedStep::Paragraph
-        | ScannedStep::MathShift { .. }
         | ScannedStep::ParagraphStart
         | ScannedStep::Character { .. }
         | ScannedStep::Accent(..) => return None,
-        // -- Intercepted by `step_with_observer_once` before this classifier
-        // runs, either because the step is applied through its own typed
-        // request path or because it ends the replay episode outright.
+        // -- Applied by `CanonicalMainControl::apply_host_owned_step` before
+        // this classifier runs, either because the step is applied through its
+        // own typed request path or because it ends the replay episode
+        // outright.
         ScannedStep::ReplayCompleted(..)
         | ScannedStep::Math(..)
         | ScannedStep::MathDelimiter(..)
+        | ScannedStep::MathShift { .. }
         | ScannedStep::Discretionary(..) => {
-            unreachable!("step_with_observer_once applies this step before classifying mutations")
+            unreachable!("apply_host_owned_step applies this step before classifying mutations")
         }
     };
     Some(PendingMutation::Captured(captured))
@@ -9038,8 +9021,12 @@ fn apply_scanned_step(
             }
             Ok(ReplayStep::Continue)
         }
+        // TeX82 §1137 and §1193 need the mode nest, the save stack, and the
+        // command processor's token-list scheduling together, so
+        // `CanonicalMainControl::apply_host_owned_step` applies this step for
+        // every delivery entry point before `apply_scanned_step` runs.
         ScannedStep::MathShift { .. } => {
-            unreachable!("canonical math shifts are applied by CanonicalMainControl")
+            unreachable!("apply_host_owned_step applies canonical math shifts")
         }
         ScannedStep::ParagraphStart => {
             start_canonical_paragraph(command, modes, stores, true)?;
