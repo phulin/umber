@@ -161,6 +161,16 @@ impl CommandProcessor<'_> {
         })
     }
 
+    /// TeX82 §403's `scan_left_brace`, the one routine every mandatory
+    /// opening brace goes through.  On a non-brace it backs the rejected
+    /// command up, as §403's `back_error` does, and reports the failure so
+    /// the caller can apply §403's "behave as though a `{` had been read"
+    /// recovery where that recovery is observable.
+    ///
+    /// §403 skips spaces *and* `\relax` ("\TeX\ allows \relax to appear
+    /// before the left_brace", §406's non-blank-non-relax-non-call loop).
+    /// Only spaces are skipped here; the missing `\relax` arm is
+    /// `umber2-johp.209`.
     pub(crate) fn scan_left_brace(
         &mut self,
         expanded: bool,
