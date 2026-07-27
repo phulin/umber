@@ -194,8 +194,8 @@
           "test": "tex82_predicate_aliases_preserve_classification"
         },
         {
-          "path": "tools/tex-command-stream/tests/it/conditionals_semantic.rs",
-          "test": "classification_minifixture_matches_tex82_sections_210_487_491"
+          "path": "tools/tex-command-stream/tests/it/command_semantic.rs",
+          "test": "declared_command_semantic_cases_match"
         }
       ],
       "status": "covered",
@@ -247,8 +247,8 @@
           "test": "condition_stack_preserves_lines_limits_and_input_independence"
         },
         {
-          "path": "tools/tex-command-stream/tests/it/conditionals_semantic.rs",
-          "test": "stack_lifecycle_minifixture_matches_tex82_sections_489_495_497"
+          "path": "tools/tex-command-stream/tests/it/command_semantic.rs",
+          "test": "declared_command_semantic_cases_match"
         }
       ],
       "status": "covered",
@@ -296,8 +296,8 @@
           "test": "pass_text_does_not_expand_or_execute_skipped_tokens"
         },
         {
-          "path": "tools/tex-command-stream/tests/it/conditionals_semantic.rs",
-          "test": "skipped_text_minifixture_matches_tex82_sections_493_494"
+          "path": "tools/tex-command-stream/tests/it/command_semantic.rs",
+          "test": "declared_command_semantic_cases_match"
         }
       ],
       "status": "covered",
@@ -362,8 +362,8 @@
           "test": "conditional_delimiter_legality_matrix"
         },
         {
-          "path": "tools/tex-command-stream/tests/it/conditionals_semantic.rs",
-          "test": "branch_delimiter_minifixture_matches_tex82_sections_498_500_509_510"
+          "path": "tools/tex-command-stream/tests/it/command_semantic.rs",
+          "test": "declared_command_semantic_cases_match"
         }
       ],
       "status": "covered",
@@ -415,8 +415,8 @@
           "test": "predicate_dispatch_covers_all_seventeen_kinds_and_state_queries"
         },
         {
-          "path": "tools/tex-command-stream/tests/it/conditionals_semantic.rs",
-          "test": "predicate_dispatch_minifixture_matches_tex82_section_501"
+          "path": "tools/tex-command-stream/tests/it/command_semantic.rs",
+          "test": "declared_command_semantic_cases_match"
         }
       ],
       "planned_coverage": [],
@@ -468,8 +468,8 @@
           "test": "ifnum_ifdim_relation_and_missing_equals_matrix"
         },
         {
-          "path": "tools/tex-command-stream/tests/it/conditionals_semantic.rs",
-          "test": "ordered_relations_minifixture_matches_tex82_section_503"
+          "path": "tools/tex-command-stream/tests/it/command_semantic.rs",
+          "test": "declared_command_semantic_cases_match"
         }
       ],
       "planned_coverage": [],
@@ -513,8 +513,8 @@
           "test": "ifodd_signed_parity_and_scanner_recovery_matrix"
         },
         {
-          "path": "tools/tex-command-stream/tests/it/conditionals_semantic.rs",
-          "test": "odd_integer_minifixture_matches_tex82_section_504"
+          "path": "tools/tex-command-stream/tests/it/command_semantic.rs",
+          "test": "declared_command_semantic_cases_match"
         }
       ],
       "planned_coverage": [],
@@ -531,7 +531,7 @@
       ],
       "stimulus": [
         "Evaluate all three predicates over void, hbox, and vbox registers, including register selectors at the legal boundaries.",
-        "Planned semantic minifixture tests/tex82-oracle/scanner-conditionals.tex case box-predicate-void-hbox-vbox-matrix observes this property directly."
+        "The committed command-semantic case box-register-selector-recovery observes the bounded selector gap as a strict xfail linked to umber2-johp.246."
       ],
       "expected_observations": [
         "Ifvoid is true only for null; ifhbox and ifvbox are false for null and true only for their matching list type.",
@@ -548,10 +548,10 @@
       "recovery_cases": [
         "An out-of-range register selector completes canonical eight-bit scanner recovery before the box query.",
         "A void register never dereferences a node-list type.",
-        "Planned recovery minifixture tests/tex82-oracle/scanner-conditionals.tex case box-register-selector-recovery observes canonical recovery directly."
+        "The command-semantic box-register-selector-recovery case pins the first canonical-versus-current branch mismatch and rejects XPASS or changed failure."
       ],
       "semantic_owner": "tex-command::conditionals",
-      "test_level": "rust-unit+planned-semantic-minifixture",
+      "test_level": "rust-unit+strict-semantic-xfail",
       "coverage": [
         {
           "path": "crates/tex-command/src/conditionals/tests.rs",
@@ -570,6 +570,15 @@
             "eight-bit selector range recovery",
             "selector 256 is replaced by register zero",
             "blocked by umber2-johp.246"
+          ]
+        },
+        {
+          "path": "tools/tex-command-stream/tests/it/command_semantic.rs",
+          "test": "declared_command_semantic_cases_match",
+          "cases": [
+            "box-register-selector-recovery strict xfail",
+            "linked to umber2-johp.246",
+            "pinned first mismatch rejects XPASS and changed failure"
           ]
         }
       ],
@@ -629,8 +638,8 @@
           "test": "if_ifcat_and_ifx_complete_operand_matrix"
         },
         {
-          "path": "tools/tex-command-stream/tests/it/conditionals_semantic.rs",
-          "test": "token_predicates_minifixture_matches_tex82_sections_506_508"
+          "path": "tools/tex-command-stream/tests/it/command_semantic.rs",
+          "test": "declared_command_semantic_cases_match"
         }
       ],
       "status": "covered",

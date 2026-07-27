@@ -185,17 +185,33 @@ the pinned upstream biber compatibility suite, audited by
 `tests/it/scaffold.rs`; the verdict line states the count rather than hiding it
 behind a total.
 
-### Conditional Semantic Minifixtures
+### Declarative Command Semantic Minifixtures
 
-The eight TeX82 conditionals properties not blocked by box-register selector recovery have an independently runnable, fixture-only semantic tier:
+Run the fast property-scoped semantic tier independently with:
 
 ```bash
-cargo test -q -p tex-command-stream --test it conditionals_semantic
+cargo test -q -p tex-command-stream --test it command_semantic
 ```
 
-The single integration binary compiles the hand-authored inputs under `tests/corpus/command-semantic/conditionals`, drives each one through instrumented `tex_exec::CanonicalMainControl` in the exact TeX82 INITEX profile, and compares a short exact projection of committed `tex_command::CommandObservation` records. The projections cover predicate and delimiter classification, frozen-fi recovery, nested condition-stack transitions, skipping status and side-effect suppression, `ifcase` delimiter stops, mode/inner/stream/constant results, ordered scalar scans, signed oddness, and expanded-versus-raw token predicates.
+The one Cargo integration binary discovers independent domain manifests under
+`tests/corpus/command-semantic/<domain>/`; adding a domain does not edit a shared
+Rust registry or add a top-level integration target. Each versioned manifest
+binds a tiny source to its catalogue property, exact canonical authority and
+sections, projection kind, short expected observations, and either `pass` or a
+strict `xfail` expectation. Discovery rejects malformed, duplicate, unsafe, or
+unowned cases and sources.
 
-The tier is hermetic and normally completes in a few hundredths of a second. It invokes no live TeX, loads no format or fonts, and neither discovers nor reads the generated long-document trace registry. The corpus README binds every input to its TeX82 property and numbered `tex.web` sections. TeX82 §505 box-register semantics remain outside this tier until their explicit selector-recovery gap is resolved.
+The runner drives each input through instrumented
+`tex_exec::CanonicalMainControl` in the exact TeX82 INITEX profile and compares
+only the declared concise projection of committed
+`tex_command::CommandObservation` records. An xfail must link a concrete Beads
+bug and pin the first mismatch's index, kind, expected value, and actual value;
+XPASS and changed-failure results fail the test. Nothing uses `#[ignore]`,
+`should_panic`, a live TeX process, a format or fonts, or the generated
+long-document trace registry.
+
+The conditionals manifest preserves its eight passing cases and carries the
+bounded §505 selector-recovery gap as a strict xfail for `umber2-johp.246`.
 
 ### What The Clippy Gate Covers
 

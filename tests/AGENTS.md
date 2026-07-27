@@ -90,7 +90,7 @@ selection fixtures. They are hand-authored contract data, not live-reference
 outputs, and both `umber-distribution` and `manifest-schema.test.js` consume
 the exact same files.
 
-`tests/corpus/command-semantic/conditionals` contains hand-authored, property-scoped TeX82 inputs for the fast conditionals semantic-minifixture tier. `tools/tex-command-stream/tests/it/conditionals_semantic.rs` compiles these bytes into its single integration binary, runs them through instrumented canonical main control, and compares concise exact observation projections. The sibling README records the pinned `tex.web` provenance and numbered sections; Cargo tests invoke no live TeX and never read the long-document trace registry.
+`tests/corpus/command-semantic` contains the versioned schema and independently owned domain manifests for tiny property-scoped semantic inputs. The generic runner in `tools/tex-command-stream/tests/it/command_semantic.rs` discovers every domain without a Rust registry, validates catalogue ownership, source bounds, exact provenance, duplicates, and strict xfail fingerprints, then compares concise canonical-main-control projections. Cargo tests invoke no live TeX and never read the long-document trace registry.
 
 `tests/corpus/command` contains committed canonical command-core fixtures.
 Each engine/fixture directory carries a canonical contract-v1 `manifest.json`,

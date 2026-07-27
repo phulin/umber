@@ -10,5 +10,9 @@ tex-exec = { path = "../../crates/tex-exec", features = ["instrumentation"] }
 tex-oracle = { path = "../../crates/tex-oracle" }
 tex-state = { path = "../../crates/tex-state" }
 
+[dev-dependencies]
+serde.workspace = true
+serde_json.workspace = true
+
 [lints]
 workspace = true

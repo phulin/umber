@@ -1,2 +1,2 @@
-#[path = "it/conditionals_semantic.rs"]
-mod conditionals_semantic;
+#[path = "it/command_semantic.rs"]
+mod command_semantic;

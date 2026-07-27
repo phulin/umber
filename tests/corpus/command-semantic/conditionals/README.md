@@ -1,27 +1,28 @@
 # TeX82 Conditional Semantic Minifixtures
 
-These hand-authored inputs are the hermetic semantic tier for the eight
-conditionals properties that are not blocked by the box-register selector gap.
-They run through `tex_exec::CanonicalMainControl` with the TeX82 INITEX exact
-8-bit profile and compare short, exact projections of committed
-`tex_command::CommandObservation` records. They do not invoke TeX, load a
-format, read the long-document trace registry, or copy expected bytes from a
-reference run.
+This domain manifest owns tiny, hand-authored inputs for TeX82 conditional
+properties. The generic `tex-command-stream` integration test discovers the
+manifest at run time, validates its property ownership and provenance, drives
+each source through `tex_exec::CanonicalMainControl` in the TeX82 INITEX exact
+8-bit profile, and compares the declared short semantic observation projection.
+It does not invoke TeX, load a format, read the long-document trace registry, or
+copy expected bytes from a reference run.
 
 Canonical provenance is the `tex.web` identity pinned by
-`tests/tex82-oracle-manifest.txt`. Expected behavior comes from the numbered
-sections below; the retired Umber lexer/expander is not an oracle.
+`tests/tex82-oracle-manifest.txt`. Each case in `manifest.json` names its owning
+property, tiny source, exact numbered sections, projection kind, expected
+observations, and expectation. The eight passing cases preserve the established
+classification, stack, skipping, branch, predicate, scalar, and token coverage.
 
-| Input                    | Property                                   | `tex.web` sections | Exact semantic projection                                               |
-| ------------------------ | ------------------------------------------ | ------------------ | ----------------------------------------------------------------------- |
-| `classification.tex`     | `tex82.conditionals.classification`        | §§210, 487, 491    | `if_test` operands 0–16 and `fi_or_else` operands 2–4                   |
-| `stack-lifecycle.tex`    | `tex82.conditionals.stack-lifecycle`       | §§489, 495–497     | nested push, branch, limit, and LIFO pop                                |
-| `skipped-text.tex`       | `tex82.conditionals.skipped-text`          | §§493–494          | skipping-status bracket, nested raw skip, and selected assignment       |
-| `branch-delimiters.tex`  | `tex82.conditionals.branch-and-delimiters` | §§498–500, 509–510 | positive/negative `ifcase`, boolean false limb, and delimiter stops     |
-| `predicate-dispatch.tex` | `tex82.conditionals.predicate-dispatch`    | §501               | vertical/horizontal/math/inner, stream, and constant predicate branches |
-| `ordered-relations.tex`  | `tex82.conditionals.ordered-relations`     | §503               | all three integer/dimension relations and missing-relation recovery     |
-| `odd-integer.tex`        | `tex82.conditionals.odd-integer`           | §504               | signed even/odd scanner results and branches                            |
-| `token-predicates.tex`   | `tex82.conditionals.token-predicates`      | §§506–508          | expanded character/category and raw meaning/macro comparisons           |
+The §505 selector-recovery case is a strict expected failure linked to
+`umber2-johp.246`. Its canonical observation list remains the expectation, and
+its expectation record pins the first differing index, mismatch kind, expected
+value, and actual value. The runner rejects an XPASS and any different failure;
+it uses no ignored or panic-expected test.
 
-TeX82 §505 is deliberately absent. Its out-of-range box-register selector is
-tracked separately and must not be hidden by a reduced expectation here.
+`tests/corpus/command-semantic/manifest.schema.json` is the version-1 data
+schema. New property domains add their own `<domain>/manifest.json` and tiny
+sources without editing a Rust case registry or adding another Cargo integration
+binary. The runtime validator also rejects unknown manifest fields, duplicate
+case identities or source ownership, unsafe or oversized sources, unowned
+catalogue properties, malformed provenance, and malformed xfail records.
