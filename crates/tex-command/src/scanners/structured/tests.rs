@@ -298,7 +298,7 @@ fn font_definition_scanner_defines_the_null_font_before_scanning_operands() {
 }
 
 #[test]
-fn completed_math_field_replays_nested_group_without_exposing_tokens() {
+fn math_field_brace_opens_group_without_absorbing_its_body() {
     let mut command = CommandState::default();
     let mut runtime = CommandRuntime::default();
     let mut universe = Universe::new_with_plain_catcodes();
@@ -332,32 +332,43 @@ fn completed_math_field_replays_nested_group_without_exposing_tokens() {
         let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
         processor.scan_math_field_episode().expect("field scans")
     };
-    assert_eq!(field.recovery, MathEpisodeRecovery::None);
-    let episode = command.push_math_field_episode(field);
-    let nested = {
+    // TeX82 §1153 consumes only the mandatory brace; the body stays live
+    // input for `push_math`'s `math_group`, so no replay level is opened and
+    // the very next delivery is the body's own first token.
+    assert_eq!(field.body, MathFieldBody::OpenGroup);
+    let mut delivered = Vec::new();
+    for _ in 0..4 {
         let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
-        processor
-            .scan_math_group_episode()
-            .expect("nested group scans")
-    };
-    assert_eq!(nested.recovery, MathEpisodeRecovery::None);
-    let nested_episode = command.push_math_group_episode(nested);
-    let token = {
-        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
-        processor
-            .get_x_token()
-            .expect("delivery succeeds")
-            .expect("x arrives")
-    };
+        delivered.push(
+            processor
+                .get_x_token()
+                .expect("delivery succeeds")
+                .expect("body token arrives")
+                .spelling()
+                .semantic_token(),
+        );
+    }
     assert_eq!(
-        token.spelling().semantic_token(),
-        Token::Char {
-            ch: 'x',
-            cat: Catcode::Letter
-        }
+        delivered,
+        vec![
+            Token::Char {
+                ch: '{',
+                cat: Catcode::BeginGroup,
+            },
+            Token::Char {
+                ch: 'x',
+                cat: Catcode::Letter,
+            },
+            Token::Char {
+                ch: '}',
+                cat: Catcode::EndGroup,
+            },
+            Token::Char {
+                ch: '}',
+                cat: Catcode::EndGroup,
+            },
+        ]
     );
-    assert!(command.replay_episode_is_active(episode));
-    assert!(command.replay_episode_is_active(nested_episode));
 }
 
 #[test]
@@ -387,11 +398,13 @@ fn replay_completion_precedes_parent_delivery() {
             },
         ],
     );
-    let field = {
+    // `\mathchoice`'s absorbing branch scan (TeX82 §1172) is the vehicle:
+    // §1153's braced *field* deliberately opens no episode at all.
+    let group = {
         let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
-        processor.scan_math_field_episode().expect("field scans")
+        processor.scan_math_group_episode().expect("group scans")
     };
-    let episode = command.push_math_field_episode(field);
+    let episode = command.push_math_group_episode(group);
 
     let first = {
         let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
@@ -608,7 +621,7 @@ fn math_episode_observation_does_not_change_frozen_command_state() {
             .scan_math_field_episode()
             .expect("observed field scans")
     };
-    assert_eq!(plain_field.recovery, observed_field.recovery);
+    assert_eq!(plain_field.body, observed_field.body);
     assert_eq!(plain_field.provenance, observed_field.provenance);
     assert_eq!(plain.snapshot(), observed.snapshot());
     assert!(!recorder.0.is_empty());

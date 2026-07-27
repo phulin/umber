@@ -262,8 +262,8 @@ opaque `AlignmentDeliveryEvent::EndTemplate`, which is handed back to
 executor-owned after the typed event has been delivered.
 
 `get_x_alignment_delivery` also surfaces `AlignmentDelivery::Completed` for
-an executor-owned replay episode (a math field, math-group/choice branch, or
-discretionary part) that retires while a cell's own content is being
+an executor-owned replay episode (an unbraced math field, a `\mathchoice`
+branch, or a discretionary part) that retires while a cell's own content is being
 delivered -- for example plain.tex's `\vphantom`/`\mathpalette` building a
 `\mathchoice` inside an inline `$#$` cell template. It uses the same
 completion-aware raw fetch as ordinary (non-alignment) `get_x_token`
@@ -3340,8 +3340,8 @@ the alignment cell's `get_x_alignment_delivery`. An alignment cell body is
 ordinary `main_control` material, and neither of that path's recovery
 predicates can fire for the three commands §1038 accepts raw.
 
-Executor-owned replay episodes (a discretionary part, a math field, an
-`\aftergroup` list) clear the label on entry and exit. TeX reaches those
+Executor-owned replay episodes (a discretionary part, an unbraced math
+field, an `\aftergroup` list) clear the label on entry and exit. TeX reaches those
 lists through `scan_left_brace`/`push_nest` and leaves them through
 `handle_right_brace`, never mid-character-run, so an episode's own last
 character must not park the enclosing context at the lookahead.
@@ -3378,9 +3378,9 @@ rather than to repair the copy that drifted.
 A host-applied step is also where an operation stops being one command
 processor episode. `init_math`, the math-noad family, and `append_discretionary`
 each run **nested** episodes while they execute -- a math field (§1151
-`scan_math`, reached from §1176's `sub_sup` for a script), a `\mathchoice`
-branch, a discretionary part -- and each of those
-is a fresh `CommandProcessor`. Which is the same duplication one level down:
+`scan_math`, reached from §1176's `sub_sup` for a script; braced fields run
+as a live group instead, see §33.8), a `\mathchoice` branch, a discretionary
+part -- and each of those is a fresh `CommandProcessor`. Which is the same duplication one level down:
 every construction site got to decide for itself whether the operation's
 observer was installed, and the three nested math constructions never did.
 An observed `^{\the\footnotenum}` then consumed its entire braced field with
@@ -3460,6 +3460,49 @@ command's provenance from the backup level rather than from its source
 `hmode+no_boundary` is a second one inside `main_control`, and §1151's
 `scan_math` carries a `reswitch` label of its own for `char_num`. Neither may
 grow a backup, for the same reason.
+
+### 33.8 A braced math field is a live group, not an episode
+
+TeX82 §1151's `scan_math` splits on what the next non-blank non-relax token
+is. An unbraced field is the one command already fetched, and freezing that
+single spelling into a replay episode is exact. A braced field is §1153, and
+it is not command-owned material at all:
+
+```
+@<Scan a subformula...@>=
+begin back_input; scan_left_brace;@/
+saved(0):=p; incr(save_ptr); push_math(math_group); return;
+end
+```
+
+`push_math` (§1136) is `push_nest; mode:=-mmode; incompleat_noad:=null;
+new_save_level(c)`, so the pair of braces really does bracket a save-stack
+level, and §1153 _returns_ -- the subformula's body is read by ordinary main
+control, and §1186's `math_group` arm of `handle_right_brace` closes it on
+the matching `}`. Nothing is absorbed and nothing is replayed.
+
+Absorbing the body instead (`scan_left_brace`, then `back_input` and
+`scan_toks`, then replay the frozen list on a stored level) is observably a
+different engine, in four ways at once: the opening brace is delivered a
+second time behind a second backup level, an absorbing scanner-status
+transition is announced, an extra input level is pushed and retired around
+the body, and the closing brace is consumed by the scanner instead of being
+delivered as the command §1186 dispatches. gentle.tex's footnote marker --
+plain.tex's `\footnote` reaching `$^{\the\footnotenum}$` -- showed all four
+(`umber2-johp.199`).
+
+`MathFieldBody::OpenGroup` is therefore the braced outcome: `tex-command`
+consumes only the mandatory brace, and `execute_live_math_group` opens
+`push_math`'s save and mode levels and steps main control until the group's
+own level is gone. Which brace is "its own" is decided by the group _depth_
+sampled before `push_math`, never by the innermost group kind: a nested
+subformula opens another `math_group` and any brace group inside the body
+opens a `simple_group`, so the innermost kind says nothing about whose
+closer arrived.
+
+`\mathchoice` (§1172) keeps the absorbing `scan_math_group_episode`, because
+it is a genuinely different section: `append_choices` needs all four branches
+before any is built. It is not evidence that §1153 may absorb.
 
 ## 34. End-state invariants
 
