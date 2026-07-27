@@ -443,7 +443,17 @@
         "Filename scanning has begun with empty delimiter state and string-pool capacity is available."
       ],
       "stimulus": [
-        "Feed simple names, explicit areas, multiple dots, a space terminator, and a noncharacter terminator to planned unit `filename_components_split_at_last_area_and_first_extension`."
+        "Feed simple names, explicit areas, multiple dots, a space terminator, and a noncharacter terminator to the structured Phase 2 units below."
+      ],
+      "planned_coverage": [
+        {
+          "path": "crates/tex-command/src/scanners/filename/tests.rs",
+          "test": "filename_components_split_area_name_and_extension_canonically"
+        },
+        {
+          "path": "crates/tex-command/src/scanners/filename/tests.rs",
+          "test": "filename_component_terminators_and_string_overflow_follow_tex82"
+        }
       ],
       "expected_observations": [
         "The three components and backed-up noncharacter match §§511–520; packed and printed spellings preserve their canonical concatenation."
@@ -478,7 +488,17 @@
         "Expanded token delivery and interaction mode are explicit; current filename fields are writable."
       ],
       "stimulus": [
-        "Exercise expandable names, a backed-up control sequence, recursive input during a name scan, unset/set job names, extension defaults, and retry modes in planned unit `filename_scan_guard_job_name_and_retry_paths`."
+        "Exercise expandable names, a backed-up control sequence, recursive input during a name scan, unset/set job names, extension defaults, and retry modes in the structured Phase 2 units below."
+      ],
+      "planned_coverage": [
+        {
+          "path": "crates/tex-command/src/scanners/filename/tests.rs",
+          "test": "filename_scan_expands_characters_and_backs_up_first_noncharacter"
+        },
+        {
+          "path": "crates/tex-command/src/scanners/filename/tests.rs",
+          "test": "filename_scan_recursion_guard_and_retry_modes_follow_tex82"
+        }
       ],
       "expected_observations": [
         "The scan returns exact components, preserves the first nonfilename token, blocks recursive start_input, and produces the TeX82 retry or fatal path."
@@ -512,7 +532,17 @@
         "Job name, first input line, clock/banner fields, selector, and host open outcomes are explicit."
       ],
       "stimulus": [
-        "Run planned unit `lazy_dvi_and_log_names_follow_job_name_and_texput_fallback` and tiny boundary fixture `job-output-names.tex` with named and unnamed jobs plus one retry."
+        "Run the structured Phase 2 units below and tiny boundary fixture `job-output-names.tex` with named and unnamed jobs plus one retry."
+      ],
+      "planned_coverage": [
+        {
+          "path": "crates/tex-exec/src/job_output/tests.rs",
+          "test": "lazy_dvi_and_log_names_follow_job_name_and_texput_default"
+        },
+        {
+          "path": "crates/tex-exec/src/job_output/tests.rs",
+          "test": "output_and_transcript_open_retry_preserve_canonical_selector_behavior"
+        }
       ],
       "expected_observations": [
         "DVI/log names, open timing, banner fields, copied first line, log_opened, and selector transitions match §§532–536."
@@ -553,7 +583,17 @@
         "A page has passed the §641 dimension guard and supplies fixed clock, magnification, font, and filename state."
       ],
       "stimulus": [
-        "Exercise buffer boundaries, signed values, removable/nonremovable pop, and first/reused fonts in planned unit `dvi_buffer_signed_encoding_pop_and_font_definition` and byte fixture `shipout-dvi-byte-stream.tex`."
+        "Exercise buffer boundaries, signed values, removable/nonremovable pop, and first/reused fonts in the structured Phase 2 units below and byte fixture `shipout-dvi-byte-stream.tex`."
+      ],
+      "planned_coverage": [
+        {
+          "path": "crates/tex-out/src/dvi/tests.rs",
+          "test": "dvi_preamble_signed_encoding_pop_and_font_definition_match_tex82"
+        },
+        {
+          "path": "crates/tex-out/src/dvi/tests.rs",
+          "test": "dvi_buffer_half_boundaries_preserve_exact_byte_order"
+        }
       ],
       "expected_observations": [
         "The preamble appears once; buffering does not alter bytes; four-byte values and font definitions match §§592–603."
@@ -605,7 +645,17 @@
         "Movement stacks contain only live records from the current DVI nesting history."
       ],
       "stimulus": [
-        "Exercise every signed-width boundary, found/not-found reuse state, already-shipped and buffered rewrites, pruning, and page offsets in planned unit `movement_width_reuse_pruning_and_page_initialization`."
+        "Exercise every signed-width boundary, found/not-found reuse state, already-shipped and buffered rewrites, pruning, and page offsets in the structured Phase 2 units below."
+      ],
+      "planned_coverage": [
+        {
+          "path": "crates/tex-out/src/dvi/tests.rs",
+          "test": "dvi_movement_signed_width_boundaries_choose_shortest_opcode"
+        },
+        {
+          "path": "crates/tex-out/src/dvi/tests.rs",
+          "test": "dvi_movement_reuse_rewrite_prune_and_page_initialization_match_tex82"
+        }
       ],
       "expected_observations": [
         "Decoded coordinates match requested motions and opcode reuse follows §§604–617 without crossing a retired boundary."
@@ -658,7 +708,17 @@
         "A finite packed hlist supplies glue sign/order/ratio and valid child nodes."
       ],
       "stimulus": [
-        "Traverse mixed characters, ligatures, shifted empty/nonempty boxes, rules, kern/math nodes, adjusted glue, and all leader kinds in planned unit `hlist_out_node_and_leader_matrix`."
+        "Traverse mixed characters, ligatures, shifted empty/nonempty boxes, rules, kern/math nodes, adjusted glue, and all leader kinds in the structured Phase 2 units below."
+      ],
+      "planned_coverage": [
+        {
+          "path": "crates/tex-out/src/dvi/tests.rs",
+          "test": "hlist_out_node_positioning_and_coordinate_restoration_match_tex82"
+        },
+        {
+          "path": "crates/tex-out/src/dvi/tests.rs",
+          "test": "hlist_out_leader_and_nonpositive_rule_boundaries_match_tex82"
+        }
       ],
       "expected_observations": [
         "Bytes and positions match §§618–628; child recursion restores the caller baseline and DVI positions."
@@ -705,7 +765,17 @@
         "A finite packed vlist supplies glue sign/order/ratio and valid child nodes."
       ],
       "stimulus": [
-        "Traverse shifted empty/nonempty boxes, rules, kerns, adjusted glue, all leader kinds, and nested hlists/vlists in planned unit `vlist_out_node_and_leader_matrix`."
+        "Traverse shifted empty/nonempty boxes, rules, kerns, adjusted glue, all leader kinds, and nested hlists/vlists in the structured Phase 2 units below."
+      ],
+      "planned_coverage": [
+        {
+          "path": "crates/tex-out/src/dvi/tests.rs",
+          "test": "vlist_out_node_positioning_and_coordinate_restoration_match_tex82"
+        },
+        {
+          "path": "crates/tex-out/src/dvi/tests.rs",
+          "test": "vlist_out_leader_and_nonpositive_rule_boundaries_match_tex82"
+        }
       ],
       "expected_observations": [
         "Bytes and positions match §§629–637 and nested output returns to the caller left edge."
@@ -747,7 +817,17 @@
         "A complete hlist or vlist box and live count, offset, tracing, and DVI state are available."
       ],
       "stimulus": [
-        "Ship valid h/v roots with distinct counts and offsets, then cross each huge-page bound in planned unit `ship_out_counts_dimensions_and_box_retirement` and byte fixture `shipout-counts-and-rejection.tex`."
+        "Ship valid h/v roots with distinct counts and offsets, then cross each huge-page bound in the structured Phase 2 units below and byte fixture `shipout-counts-and-rejection.tex`."
+      ],
+      "planned_coverage": [
+        {
+          "path": "crates/tex-out/src/dvi/tests.rs",
+          "test": "ship_out_frames_counts_offsets_page_accounting_and_box_retirement"
+        },
+        {
+          "path": "crates/tex-out/src/dvi/tests.rs",
+          "test": "ship_out_rejects_each_huge_page_dimension_boundary"
+        }
       ],
       "expected_observations": [
         "Valid pages add exactly one bop/body/eop and page count; rejected pages add none and show the canonical huge-page diagnostic."
@@ -791,7 +871,17 @@
         "Execution has reached final cleanup with internally consistent DVI summary state."
       ],
       "stimulus": [
-        "Finalize zero-page, one-page, multipage, used/unused-font, and unfinished-nesting states in planned unit `dvi_finalization_page_font_stack_and_padding_matrix`."
+        "Finalize zero-page, one-page, multipage, used/unused-font, and unfinished-nesting states in the structured Phase 2 units below."
+      ],
+      "planned_coverage": [
+        {
+          "path": "crates/tex-out/src/dvi/tests.rs",
+          "test": "dvi_finalization_writes_postamble_fonts_stack_pages_and_padding"
+        },
+        {
+          "path": "crates/tex-out/src/dvi/tests.rs",
+          "test": "dvi_finalization_zero_page_and_unfinished_nesting_paths_match_tex82"
+        }
       ],
       "expected_observations": [
         "Every postamble field and padding byte follows §§642–643; zero pages never opened the DVI file."
@@ -836,7 +926,17 @@
         "Outer vertical page, contribution, insertion, mark, and parameter state exists."
       ],
       "stimulus": [
-        "Start with marks/whatsits, insertion-only, and box pages; change vsize/maxdepth around the freeze boundary; call during output_active in planned unit `page_state_freeze_insertion_records_and_output_suppression`."
+        "Start with marks/whatsits, insertion-only, and box pages; change vsize/maxdepth around the freeze boundary; call during output_active in the structured Phase 2 units below."
+      ],
+      "planned_coverage": [
+        {
+          "path": "crates/tex-exec/src/page_builder/tests.rs",
+          "test": "page_state_freezes_specs_and_tracks_sorted_insertion_records"
+        },
+        {
+          "path": "crates/tex-exec/src/page_builder/tests.rs",
+          "test": "page_builder_output_active_boundary_preserves_pending_contributions"
+        }
       ],
       "expected_observations": [
         "page_contents, page_goal, page_max_depth, totals, insertion ordering, and diagnostic display match §§980–990."
@@ -877,7 +977,17 @@
         "A page has ended or a canonical box-255/insertion-box validation point has been reached."
       ],
       "stimulus": [
-        "Reset populated page state and validate void/vbox/hbox registers in planned unit `new_page_reset_and_box_error_matrix`."
+        "Reset populated page state and validate void/vbox/hbox registers in the structured Phase 2 units below."
+      ],
+      "planned_coverage": [
+        {
+          "path": "crates/tex-exec/src/page_builder/tests.rs",
+          "test": "new_current_page_resets_nodes_totals_depth_and_last_item_state"
+        },
+        {
+          "path": "crates/tex-exec/src/page_builder/tests.rs",
+          "test": "box_error_and_ensure_vbox_recover_only_invalid_live_boxes"
+        }
       ],
       "expected_observations": [
         "Fresh state and diagnostics/deletion match §§991–993."
@@ -917,7 +1027,21 @@
         "Contribution and current-page lists are well formed and output_active is false."
       ],
       "stimulus": [
-        "Contribute every vertical node kind at empty/nonempty boundaries, terminal kerns, topskip edges, and each glue order in planned unit `outer_vertical_contribution_routing_and_totals_matrix` and fixture `page-contribution-accounting.tex`."
+        "Contribute every vertical node kind at empty/nonempty boundaries, terminal kerns, topskip edges, and each glue order in the structured Phase 2 units below and fixture `page-contribution-accounting.tex`."
+      ],
+      "planned_coverage": [
+        {
+          "path": "crates/tex-exec/src/page_builder/tests.rs",
+          "test": "outer_vertical_contribution_routes_every_node_kind_canonically"
+        },
+        {
+          "path": "crates/tex-exec/src/page_builder/tests.rs",
+          "test": "page_topskip_totals_depth_and_terminal_kern_boundaries_match_tex82"
+        },
+        {
+          "path": "crates/tex-exec/src/page_builder/tests.rs",
+          "test": "page_infinite_shrink_recovery_normalizes_only_the_offending_glue"
+        }
       ],
       "expected_observations": [
         "Every node is discarded, delayed, or moved once; totals and last-item enquiries match §§994–1004."
@@ -958,7 +1082,17 @@
         "Page totals and a legal breakpoint penalty are available."
       ],
       "stimulus": [
-        "Exercise exact fit, finite/infinite stretch, shrink equality/overflow, penalty thresholds, insertion penalty 10000, equal champions, and eject penalty in planned unit `page_break_badness_cost_and_champion_matrix`."
+        "Exercise exact fit, finite/infinite stretch, shrink equality/overflow, penalty thresholds, insertion penalty 10000, equal champions, and eject penalty in the structured Phase 2 units below."
+      ],
+      "planned_coverage": [
+        {
+          "path": "crates/tex-exec/src/page_builder/tests.rs",
+          "test": "page_break_badness_cost_and_equal_champion_boundaries_match_tex82"
+        },
+        {
+          "path": "crates/tex-exec/src/page_builder/tests.rs",
+          "test": "page_break_eject_and_awful_cost_paths_fire_the_selected_champion"
+        }
       ],
       "expected_observations": [
         "Badness, cost, latest champion, best size, best insertion pointers, and fire decision match §§1005–1007."
@@ -991,7 +1125,17 @@
         "A complete insertion node and live class count, dimen, skip, and box register are available."
       ],
       "stimulus": [
-        "Exercise repeated/interleaved classes, count boundaries, capacity boundaries, finite/infinite correction shrink, and null/penalty splits in planned unit `page_insertion_fit_split_float_and_penalty_matrix`."
+        "Exercise repeated/interleaved classes, count boundaries, capacity boundaries, finite/infinite correction shrink, and null/penalty splits in the structured Phase 2 units below."
+      ],
+      "planned_coverage": [
+        {
+          "path": "crates/tex-exec/src/page_builder/tests.rs",
+          "test": "page_insertion_class_order_scaling_skip_and_fit_match_tex82"
+        },
+        {
+          "path": "crates/tex-exec/src/page_builder/tests.rs",
+          "test": "page_insertion_split_float_penalty_and_invalid_box_recovery_match_tex82"
+        }
       ],
       "expected_observations": [
         "Class record, page goal, height, split pointers, and penalties match §§1008–1011."
@@ -1039,7 +1183,17 @@
         "A best break, best size, current page, contribution suffix, marks, and insertion choices exist."
       ],
       "stimulus": [
-        "Fire penalty/nonpenalty and trigger-equal/earlier breaks with zero/one/multiple marks in planned unit `fire_up_penalty_marks_boundary_and_box255_packaging` and fixture `output-fire-up-packaging.tex`."
+        "Fire penalty/nonpenalty and trigger-equal/earlier breaks with zero/one/multiple marks in the structured Phase 2 units below and fixture `output-fire-up-packaging.tex`."
+      ],
+      "planned_coverage": [
+        {
+          "path": "crates/tex-exec/src/output/tests.rs",
+          "test": "fire_up_records_penalty_marks_boundary_and_packages_box255"
+        },
+        {
+          "path": "crates/tex-exec/src/output/tests.rs",
+          "test": "fire_up_nonvoid_box255_recovery_discards_before_packaging"
+        }
       ],
       "expected_observations": [
         "output_penalty, rewritten node, marks, selected prefix, box 255 dimensions, suffix order, and reset match §§1012–1017."
@@ -1083,7 +1237,17 @@
         "Per-class best pointers and current-page insertion nodes correspond to the selected page break."
       ],
       "stimulus": [
-        "Exercise accepted, unselected, floating, null-split, nonempty-remainder, multiple-same-class, multiple-class, and holding_inserts cases in planned unit `fire_up_insertion_distribution_and_heldover_matrix`."
+        "Exercise accepted, unselected, floating, null-split, nonempty-remainder, multiple-same-class, multiple-class, and holding_inserts cases in the structured Phase 2 units below."
+      ],
+      "planned_coverage": [
+        {
+          "path": "crates/tex-exec/src/output/tests.rs",
+          "test": "fire_up_distributes_selected_insertions_into_class_boxes"
+        },
+        {
+          "path": "crates/tex-exec/src/output/tests.rs",
+          "test": "fire_up_split_remainder_heldover_and_holding_inserts_boundaries_match_tex82"
+        }
       ],
       "expected_observations": [
         "Class boxes, remainders, heldover order/count, split-top pruning, and record retirement match §§1018–1023."
@@ -1114,7 +1278,21 @@
         "fire_up has prepared box 255 and any heldovers; output_routine and dead-cycle parameters are live."
       ],
       "stimulus": [
-        "Exercise null output, dead-cycle below/at maximum, heldovers, and a balanced user routine in planned unit `output_selection_deadcycles_group_and_default_path` and fixture `output-selection-default.tex`."
+        "Exercise null output, dead-cycle below/at maximum, heldovers, and a balanced user routine in the structured Phase 2 units below and fixture `output-selection-default.tex`."
+      ],
+      "planned_coverage": [
+        {
+          "path": "crates/tex-exec/src/output/tests.rs",
+          "test": "output_selection_enters_one_user_output_group_below_deadcycle_limit"
+        },
+        {
+          "path": "crates/tex-exec/src/output/tests.rs",
+          "test": "output_default_path_prepends_heldovers_ships_and_voids_box255"
+        },
+        {
+          "path": "crates/tex-exec/src/output/tests.rs",
+          "test": "output_deadcycle_limit_reports_and_uses_default_path"
+        }
       ],
       "expected_observations": [
         "Selected path, diagnostic, mode/group/token-list entry, heldover placement, shipout, and box 255 state match §§1024–1025."
@@ -1155,7 +1333,21 @@
         "A user output routine is active in its implicit group with a saved outer page/contribution state."
       ],
       "stimulus": [
-        "Complete balanced, unbalanced, leftover-box, output-material, heldover, and pending-contribution routines in planned unit `output_resume_teardown_order_and_recovery_matrix` and fixture `output-resume-recovery.tex`."
+        "Complete balanced, unbalanced, leftover-box, output-material, heldover, and pending-contribution routines in the structured Phase 2 units below and fixture `output-resume-recovery.tex`."
+      ],
+      "planned_coverage": [
+        {
+          "path": "crates/tex-exec/src/output/tests.rs",
+          "test": "output_resume_tears_down_group_mode_and_page_state_canonically"
+        },
+        {
+          "path": "crates/tex-exec/src/output/tests.rs",
+          "test": "output_resume_orders_output_material_heldovers_and_contributions"
+        },
+        {
+          "path": "crates/tex-exec/src/output/tests.rs",
+          "test": "output_resume_recovers_unbalanced_tokens_and_nonvoid_box255"
+        }
       ],
       "expected_observations": [
         "Diagnostics, token draining, group/mode teardown, list order, restored nest, and resumed page activity match §§1026–1028."
@@ -1196,7 +1388,17 @@
         "Output-stream state is initializing or final cleanup has begun."
       ],
       "stimulus": [
-        "Initialize all selector states and finalize sparse open/closed stream tables in planned unit `output_stream_table_initialization_and_final_close`."
+        "Initialize all selector states and finalize sparse open/closed stream tables in the structured Phase 2 units below."
+      ],
+      "planned_coverage": [
+        {
+          "path": "crates/tex-exec/src/effects/tests.rs",
+          "test": "output_stream_table_initializes_numbered_and_fallback_selectors_closed"
+        },
+        {
+          "path": "crates/tex-exec/src/effects/tests.rs",
+          "test": "output_stream_final_cleanup_closes_only_live_numbered_files"
+        }
       ],
       "expected_observations": [
         "Selectors 0–17 begin closed; final cleanup closes only open files 0–15."
@@ -1227,7 +1429,17 @@
         "Base primitives are being installed or an extension command has reached main_control."
       ],
       "stimulus": [
-        "Resolve and dispatch all six primitives in outer/internal vmode, hmode, and math mode in planned unit `extension_primitive_selectors_and_any_mode_dispatch`."
+        "Resolve and dispatch all six primitives in outer/internal vmode, hmode, and math mode in the structured Phase 2 units below."
+      ],
+      "planned_coverage": [
+        {
+          "path": "crates/tex-command/src/command/tests.rs",
+          "test": "extension_primitives_preserve_tex82_selectors_and_any_mode_dispatch"
+        },
+        {
+          "path": "crates/tex-command/src/command/tests.rs",
+          "test": "unknown_extension_selector_fails_loudly_at_dispatch"
+        }
       ],
       "expected_observations": [
         "Raw command identity and selector match §§1344 and 1347 before subtype-specific scanning."
@@ -1269,7 +1481,21 @@
         "Subtype dispatch and scanners have explicit current-list ownership."
       ],
       "stimulus": [
-        "Construct, display, copy, free, and pack every subtype with stream boundaries and scan-time macro changes in planned unit `base_whatsit_construction_copy_free_and_zero_dimensions`."
+        "Construct, display, copy, free, and pack every subtype with stream boundaries and scan-time macro changes in the structured Phase 2 units below."
+      ],
+      "planned_coverage": [
+        {
+          "path": "crates/tex-exec/src/whatsits/tests.rs",
+          "test": "base_whatsit_scanners_construct_each_canonical_subtype"
+        },
+        {
+          "path": "crates/tex-exec/src/whatsits/tests.rs",
+          "test": "base_whatsit_copy_free_and_zero_dimension_ownership_match_tex82"
+        },
+        {
+          "path": "crates/tex-exec/src/whatsits/tests.rs",
+          "test": "write_whatsit_stream_clamping_and_malformed_scan_recovery_match_tex82"
+        }
       ],
       "expected_observations": [
         "Fields, scan timing, rendered form, allocation size, token ownership, and zero width follow §§1349–1361."
@@ -1313,7 +1539,17 @@
         "A well-formed node list contains base whatsits among ordinary nodes."
       ],
       "stimulus": [
-        "Visit every subtype through line breaking, pre-hyphenation, page building, vert_break, hlist_out, and vlist_out in planned unit `whatsit_visitation_matrix_has_one_primary_action_per_consumer`."
+        "Visit every subtype through line breaking, pre-hyphenation, page building, vert_break, hlist_out, and vlist_out in the structured Phase 2 units below."
+      ],
+      "planned_coverage": [
+        {
+          "path": "crates/tex-exec/src/whatsits/tests.rs",
+          "test": "whatsit_consumers_each_apply_only_their_primary_visit_action"
+        },
+        {
+          "path": "crates/tex-exec/src/whatsits/tests.rs",
+          "test": "contentless_whatsits_preserve_page_and_vertical_break_boundaries"
+        }
       ],
       "expected_observations": [
         "Each consumer performs only its §§1362–1367 action; no passive visit scans, expands, opens, writes, closes, or emits a special itself."
@@ -1343,7 +1579,17 @@
         "A special whatsit has reached out_what at a valid shipout coordinate."
       ],
       "stimulus": [
-        "Emit lengths 0, 255, 256, and multibyte TeX character payloads at shifted positions in planned unit `special_out_length_boundary_position_and_bytes`."
+        "Emit lengths 0, 255, 256, and multibyte TeX character payloads at shifted positions in the structured Phase 2 units below."
+      ],
+      "planned_coverage": [
+        {
+          "path": "crates/tex-exec/src/effects/tests.rs",
+          "test": "special_out_synchronizes_position_and_preserves_stored_payload_bytes"
+        },
+        {
+          "path": "crates/tex-exec/src/effects/tests.rs",
+          "test": "special_out_xxx1_xxx4_length_boundary_matches_tex82"
+        }
       ],
       "expected_observations": [
         "Opcode, length field, payload, and anchor position match §1368."
@@ -1385,7 +1631,21 @@
         "A write whatsit has reached out_what and its stored unexpanded token list is valid."
       ],
       "stimulus": [
-        "Vary meanings between scan and shipout, selectors 0/16/17, newlinechar, copied boxes, and balanced/unbalanced braces in planned unit `deferred_write_expansion_selector_and_stopper_matrix` and fixture `deferred-write-boundaries.tex`."
+        "Vary meanings between scan and shipout, selectors 0/16/17, newlinechar, copied boxes, and balanced/unbalanced braces in the structured Phase 2 units below and fixture `deferred-write-boundaries.tex`."
+      ],
+      "planned_coverage": [
+        {
+          "path": "crates/tex-exec/src/effects/tests.rs",
+          "test": "deferred_write_expands_at_shipout_time_and_retires_stopper_input"
+        },
+        {
+          "path": "crates/tex-exec/src/effects/tests.rs",
+          "test": "deferred_write_stream_selector_and_newline_boundaries_match_tex82"
+        },
+        {
+          "path": "crates/tex-exec/src/effects/tests.rs",
+          "test": "deferred_write_unbalanced_recovery_stops_at_endwrite"
+        }
       ],
       "expected_observations": [
         "Expansion time, output selector, exact line bytes, and input-list retirement match §§1369–1372."
@@ -1430,7 +1690,21 @@
         "A base effect whatsit reaches out_what or immediate has obtained one expanded lookahead token."
       ],
       "stimulus": [
-        "Exercise open/reopen/write/close, extension default, unavailable-open retry, leaders, recognized immediate operations, and unrecognized immediate lookahead in planned unit `out_what_stream_and_immediate_dispatch_matrix` and fixture `open-write-close-effects.tex`."
+        "Exercise open/reopen/write/close, extension default, unavailable-open retry, leaders, recognized immediate operations, and unrecognized immediate lookahead in the structured Phase 2 units below and fixture `open-write-close-effects.tex`."
+      ],
+      "planned_coverage": [
+        {
+          "path": "crates/tex-exec/src/effects/tests.rs",
+          "test": "out_what_open_write_close_updates_numbered_stream_state_canonically"
+        },
+        {
+          "path": "crates/tex-exec/src/effects/tests.rs",
+          "test": "immediate_recognized_default_extension_and_unrecognized_backup_paths_match_tex82"
+        },
+        {
+          "path": "crates/tex-exec/src/effects/tests.rs",
+          "test": "out_what_leader_suppression_and_open_retry_recovery_match_tex82"
+        }
       ],
       "expected_observations": [
         "File state, line output, leader suppression, temporary-node retirement, and lookahead backup match §§1373–1375."
@@ -1474,7 +1748,21 @@
         "Horizontal paragraph language and hyphen-minimum parameters are live."
       ],
       "stimulus": [
-        "Exercise automatic same/changed language, all normalization boundaries, minima boundaries, explicit same-language append, and illegal modes in planned unit `language_whatsit_change_capture_and_setlanguage_matrix`."
+        "Exercise automatic same/changed language, all normalization boundaries, minima boundaries, explicit same-language append, and illegal modes in the structured Phase 2 units below."
+      ],
+      "planned_coverage": [
+        {
+          "path": "crates/tex-exec/src/whatsits/tests.rs",
+          "test": "fix_language_and_setlanguage_append_with_captured_hyphen_minima"
+        },
+        {
+          "path": "crates/tex-exec/src/whatsits/tests.rs",
+          "test": "language_normalization_and_same_language_append_boundaries_match_tex82"
+        },
+        {
+          "path": "crates/tex-exec/src/whatsits/tests.rs",
+          "test": "setlanguage_illegal_mode_recovers_without_scan_or_append"
+        }
       ],
       "expected_observations": [
         "Append count, language, minima, and clang match §§1376–1377."
