@@ -75,6 +75,18 @@ pub struct CanonicalMainControl {
     /// step's own records. Drained by every step, observed or not.
     #[cfg(any(test, feature = "instrumentation"))]
     page_output_observations: Vec<CommandObservation>,
+    /// The commit buffer for the operation in flight, occupied exactly while
+    /// an observed operation is running.
+    ///
+    /// It is engine state rather than a parameter because a single operation
+    /// runs more than one `CommandProcessor` episode: a host-applied step
+    /// (`docs/tex_command_core.md` §33.5) runs nested math-field,
+    /// math-script, and `\mathchoice` episodes of its own while it executes.
+    /// Holding the slot here lets [`command_processor`] be the only place an
+    /// episode is constructed, so every episode of one operation is observed
+    /// or none is. Observation is an instrumentation boundary, not an
+    /// alternate execution mode.
+    operation_observations: ObservationSlot,
     completed_replay_episode: Option<tex_command::CommandReplayEpisode>,
     /// Detached DVI receipts whose artifact commits have survived an entire
     /// canonical aggregate operation. This is replay state so rollback drops
@@ -229,8 +241,19 @@ struct CanonicalStepSnapshot {
     universe: tex_state::Snapshot,
 }
 
+/// Where one command-processor episode publishes its committed records.
+///
+/// Outside instrumented builds there is no observer to install, so the slot
+/// carries nothing. It still exists as a parameter of [`command_processor`]
+/// so that no episode can be constructed without stating which commit buffer
+/// it belongs to.
 #[cfg(any(test, feature = "instrumentation"))]
-#[derive(Default)]
+type ObservationSlot = Option<ObservationBuffer>;
+#[cfg(not(any(test, feature = "instrumentation")))]
+type ObservationSlot = ();
+
+#[cfg(any(test, feature = "instrumentation"))]
+#[derive(Debug, Default)]
 struct ObservationBuffer(Vec<CommandObservation>);
 
 #[cfg(any(test, feature = "instrumentation"))]
@@ -247,6 +270,48 @@ impl CommandObserver for ObservationBuffer {
     fn committed(&mut self, observation: CommandObservation) {
         self.0.push(observation);
     }
+}
+
+/// Constructs the one kind of command-processor episode canonical main
+/// control ever runs.
+///
+/// This is the only `CommandProcessor::new` call in `tex-exec`, and the
+/// architecture test in `crates/tex-exec/tests/it.rs` pins it there. A single
+/// main-control operation runs several episodes -- the delivery episode
+/// itself, plus the nested math-field, math-script, and `\mathchoice`
+/// episodes a host-applied step (`docs/tex_command_core.md` §33.5) runs while
+/// it executes -- and each construction used to decide independently whether
+/// to install the operation's observer. The nested math episodes never did,
+/// so TeX82 §1151 `scan_math`'s whole braced script field was scanned with
+/// zero observations while the identical unobserved run behaved the same
+/// (Beads `umber2-johp.195`). Deciding once, here, is what makes that class
+/// of divergence unrepresentable: observation is an instrumentation boundary,
+/// not an alternate execution mode.
+///
+/// The borrows are passed individually rather than as `&mut self` so that a
+/// caller can still lend main control's disjoint replay state -- notably
+/// `boxes` -- to the scanner it drives with the returned processor.
+fn command_processor<'a>(
+    command: &'a mut CommandState,
+    runtime: &'a mut CommandRuntime,
+    capabilities: &'a mut CommandHostCapabilities,
+    observations: &'a mut ObservationSlot,
+    stores: &'a mut Universe,
+) -> CommandProcessor<'a> {
+    let processor = CommandProcessor::new(
+        command,
+        runtime,
+        stores.command_context(),
+        CommandHostContext::new(capabilities),
+    );
+    #[cfg(not(any(test, feature = "instrumentation")))]
+    let _ = observations;
+    #[cfg(any(test, feature = "instrumentation"))]
+    let processor = match observations.as_mut() {
+        Some(buffer) => processor.with_observer(buffer),
+        None => processor,
+    };
+    processor
 }
 
 impl CanonicalMainControl {
@@ -660,6 +725,15 @@ impl CanonicalMainControl {
         Ok(())
     }
 
+    /// Appends already-committed records to the operation's commit buffer.
+    /// They are published only when the whole operation commits.
+    #[cfg(any(test, feature = "instrumentation"))]
+    fn observe_committed(&mut self, records: impl IntoIterator<Item = CommandObservation>) {
+        if let Some(buffer) = self.operation_observations.as_mut() {
+            buffer.0.extend(records);
+        }
+    }
+
     /// Delivers one expanded command for an active alignment cell.
     ///
     /// In particular, the opaque end-template event is returned to the same
@@ -688,11 +762,12 @@ impl CanonicalMainControl {
         let main_loop_active = self.main_loop_active;
         let job_is_all_over = crate::output::job_is_all_over(stores);
         let scanned = {
-            let mut processor = CommandProcessor::new(
+            let mut processor = command_processor(
                 &mut self.command,
                 &mut self.runtime,
-                stores.command_context(),
-                CommandHostContext::new(&mut self.capabilities),
+                &mut self.capabilities,
+                &mut self.operation_observations,
+                stores,
             );
             scan_alignment_delivery_step(
                 &mut processor,
@@ -911,11 +986,12 @@ impl CanonicalMainControl {
         let innermost_group = stores.innermost_group_kind();
         let job_is_all_over = crate::output::job_is_all_over(stores);
         let scanned = {
-            let mut processor = CommandProcessor::new(
+            let mut processor = command_processor(
                 &mut self.command,
                 &mut self.runtime,
-                stores.command_context(),
-                CommandHostContext::new(&mut self.capabilities),
+                &mut self.capabilities,
+                &mut self.operation_observations,
+                stores,
             );
             scan_replay_step(
                 &mut processor,
@@ -994,23 +1070,34 @@ impl CanonicalMainControl {
                     }
                 }
                 crate::output::SelectedPageOutput::UserRoutine => {
+                    // This episode belongs to the step that contributed the
+                    // page, but an observed step publishes it only after its
+                    // own mutation and effect records.  Redirect the commit
+                    // buffer for the episode's duration instead of letting
+                    // this call site decide whether to observe at all.
                     #[cfg(any(test, feature = "instrumentation"))]
-                    let mut buffered = ObservationBuffer::default();
-                    let processor = CommandProcessor::new(
+                    let enclosing = self.operation_observations.take();
+                    #[cfg(any(test, feature = "instrumentation"))]
+                    if enclosing.is_some() {
+                        self.operation_observations = Some(ObservationBuffer::default());
+                    }
+                    let opened = command_processor(
                         &mut self.command,
                         &mut self.runtime,
-                        stores.command_context(),
-                        CommandHostContext::new(&mut self.capabilities),
-                    );
+                        &mut self.capabilities,
+                        &mut self.operation_observations,
+                        stores,
+                    )
+                    .begin_selected_output_routine()
+                    .map_err(command_error);
                     #[cfg(any(test, feature = "instrumentation"))]
-                    let mut processor = processor.with_observer(&mut buffered);
-                    #[cfg(not(any(test, feature = "instrumentation")))]
-                    let mut processor = processor;
-                    processor
-                        .begin_selected_output_routine()
-                        .map_err(command_error)?;
-                    #[cfg(any(test, feature = "instrumentation"))]
-                    self.page_output_observations.extend(buffered.0);
+                    if enclosing.is_some() {
+                        let deferred =
+                            std::mem::replace(&mut self.operation_observations, enclosing)
+                                .unwrap_or_default();
+                        self.page_output_observations.extend(deferred.0);
+                    }
+                    opened?;
                     stores.enter_group_with_kind(GroupKind::Output);
                     self.modes.push(Mode::InternalVertical);
                     self.boxes.output_routine_active = true;
@@ -1479,11 +1566,12 @@ impl CanonicalMainControl {
         &mut self,
         stores: &mut Universe,
     ) -> Result<tex_command::MathFieldEpisode, ExecError> {
-        CommandProcessor::new(
+        command_processor(
             &mut self.command,
             &mut self.runtime,
-            stores.command_context(),
-            CommandHostContext::new(&mut self.capabilities),
+            &mut self.capabilities,
+            &mut self.operation_observations,
+            stores,
         )
         .scan_math_field_episode()
         .map_err(command_error)
@@ -1494,11 +1582,12 @@ impl CanonicalMainControl {
         kind: MathScriptKind,
         stores: &mut Universe,
     ) -> Result<tex_command::MathFieldEpisode, ExecError> {
-        CommandProcessor::new(
+        command_processor(
             &mut self.command,
             &mut self.runtime,
-            stores.command_context(),
-            CommandHostContext::new(&mut self.capabilities),
+            &mut self.capabilities,
+            &mut self.operation_observations,
+            stores,
         )
         .scan_math_script_attachment(kind)
         .map(|attachment| attachment.field)
@@ -1509,11 +1598,12 @@ impl CanonicalMainControl {
         &mut self,
         stores: &mut Universe,
     ) -> Result<tex_command::MathChoiceEpisodes, ExecError> {
-        CommandProcessor::new(
+        command_processor(
             &mut self.command,
             &mut self.runtime,
-            stores.command_context(),
-            CommandHostContext::new(&mut self.capabilities),
+            &mut self.capabilities,
+            &mut self.operation_observations,
+            stores,
         )
         .scan_math_choice_episodes()
         .map_err(command_error)
@@ -1554,8 +1644,13 @@ impl CanonicalMainControl {
         observer: &mut dyn CommandObserver,
     ) -> Result<CanonicalStepResult, ExecError> {
         let snapshot = self.snapshot_step(stores);
-        let mut pending = ObservationBuffer::default();
-        match self.step_with_observer_once(stores, &mut pending) {
+        // Occupying the slot is what makes this operation observed. Every
+        // command-processor episode the operation runs, including the nested
+        // ones a host-applied step runs, publishes into this one buffer.
+        self.operation_observations = Some(ObservationBuffer::default());
+        let stepped = self.step_with_observer_once(stores);
+        let pending = self.operation_observations.take().unwrap_or_default();
+        match stepped {
             Ok(step) => {
                 pending.flush_into(observer);
                 Ok(CanonicalStepResult::Progress(step))
@@ -1579,11 +1674,7 @@ impl CanonicalMainControl {
     }
 
     #[cfg(any(test, feature = "instrumentation"))]
-    fn step_with_observer_once(
-        &mut self,
-        stores: &mut Universe,
-        observer: &mut dyn CommandObserver,
-    ) -> Result<ReplayStep, ExecError> {
+    fn step_with_observer_once(&mut self, stores: &mut Universe) -> Result<ReplayStep, ExecError> {
         // Observation is an instrumentation boundary, not an alternate
         // execution mode. Keep the command processor's borrowed mode facts
         // identical to an unobserved step (notably for \ifhmode after a
@@ -1595,13 +1686,13 @@ impl CanonicalMainControl {
         let innermost_group = stores.innermost_group_kind();
         let job_is_all_over = crate::output::job_is_all_over(stores);
         let scanned = {
-            let mut processor = CommandProcessor::new(
+            let mut processor = command_processor(
                 &mut self.command,
                 &mut self.runtime,
-                stores.command_context(),
-                CommandHostContext::new(&mut self.capabilities),
-            )
-            .with_observer(observer);
+                &mut self.capabilities,
+                &mut self.operation_observations,
+                stores,
+            );
             scan_replay_step(
                 &mut processor,
                 mode,
@@ -1693,68 +1784,73 @@ impl CanonicalMainControl {
             .filter(|_| completes_alignment_cell)
             .and_then(|_| self.command.take_alignment_extra_tab_recovery_observation());
         if result.is_ok() {
+            // These records are produced by applying the step, after the
+            // command-processor episode's own borrow has ended. They are
+            // collected first and appended to the operation's commit buffer
+            // in one place, so that the buffer is never borrowed while
+            // command state is still being read.
+            let mut records: Vec<CommandObservation> = Vec::new();
             let effect = applied_effect_observation(&scanned, stores);
             if suspends_alignment
                 && let Some(alignment) = self.command.alignment_suspend_observation()
             {
-                observer.committed(CommandObservation::Alignment(alignment));
+                records.push(CommandObservation::Alignment(alignment));
             }
             if begins_alignment && let Some(alignment) = self.command.alignment_begin_observation()
             {
-                observer.committed(CommandObservation::Alignment(alignment));
+                records.push(CommandObservation::Alignment(alignment));
             }
             if begins_alignment_cell
                 && let Some(alignment) = self.command.alignment_cell_begin_observation()
             {
-                observer.committed(CommandObservation::Alignment(alignment));
+                records.push(CommandObservation::Alignment(alignment));
             }
             if let Some(alignment) = installs_u_template
                 && let Some(input) = self
                     .command
                     .alignment_u_template_push_observation(alignment)
             {
-                observer.committed(CommandObservation::Input(input));
+                records.push(CommandObservation::Input(input));
                 if let Some(template) = self
                     .command
                     .alignment_u_template_push_alignment_observation(alignment)
                 {
-                    observer.committed(CommandObservation::Alignment(template));
+                    records.push(CommandObservation::Alignment(template));
                 }
             }
             if let Some(alignment) = installs_omit_cell
                 && let Some(omit) = self.command.alignment_omit_cell_observation(alignment)
             {
-                observer.committed(CommandObservation::Alignment(omit));
+                records.push(CommandObservation::Alignment(omit));
             }
             if let Some(recovery) = extra_tab_recovery {
-                observer.committed(CommandObservation::Alignment(recovery));
+                records.push(CommandObservation::Alignment(recovery));
             }
             if let Some(finish) = finishes_alignment_cell {
-                observer.committed(CommandObservation::Alignment(finish.state_change));
+                records.push(CommandObservation::Alignment(finish.state_change));
                 if let Some(retirement) = finish.backed_up_endv_retirement {
-                    observer.committed(CommandObservation::Input(retirement));
+                    records.push(CommandObservation::Input(retirement));
                 }
-                observer.committed(CommandObservation::Input(finish.v_template_retirement));
-                observer.committed(CommandObservation::Alignment(finish.template_retirement));
+                records.push(CommandObservation::Input(finish.v_template_retirement));
+                records.push(CommandObservation::Alignment(finish.template_retirement));
             }
             if let Some(finish) = finishes_alignment {
-                observer.committed(CommandObservation::Alignment(finish));
+                records.push(CommandObservation::Alignment(finish));
                 if let Some(resume) = self.command.alignment_resume_observation() {
-                    observer.committed(CommandObservation::Alignment(resume));
+                    records.push(CommandObservation::Alignment(resume));
                 }
             }
             if let Some(mutation) = mutation {
-                observer.committed(CommandObservation::Mutation(mutation.resolve(stores)));
+                records.push(CommandObservation::Mutation(mutation.resolve(stores)));
             }
             if let Some(effect) = effect {
-                observer.committed(CommandObservation::Effect(effect));
+                records.push(CommandObservation::Effect(effect));
             }
             for shipout in committed_shipout_observations(artifact_count, stores) {
-                observer.committed(CommandObservation::Effect(shipout));
+                records.push(CommandObservation::Effect(shipout));
             }
-            for observation in self.page_output_observations.drain(..) {
-                observer.committed(observation);
-            }
+            records.append(&mut self.page_output_observations);
+            self.observe_committed(records);
         }
         self.page_output_observations.clear();
         result
@@ -1768,15 +1864,26 @@ impl CanonicalMainControl {
         stores: &mut Universe,
         observer: &mut dyn CommandObserver,
     ) -> Result<String, ExecError> {
+        self.operation_observations = Some(ObservationBuffer::default());
+        let scanned = self.scan_startup_file_name_once(stores);
+        self.operation_observations
+            .take()
+            .unwrap_or_default()
+            .flush_into(observer);
+        scanned
+    }
+
+    #[cfg(any(test, feature = "instrumentation"))]
+    fn scan_startup_file_name_once(&mut self, stores: &mut Universe) -> Result<String, ExecError> {
         let filename =
             {
-                let mut processor = CommandProcessor::new(
+                let mut processor = command_processor(
                     &mut self.command,
                     &mut self.runtime,
-                    stores.command_context(),
-                    CommandHostContext::new(&mut self.capabilities),
-                )
-                .with_observer(observer);
+                    &mut self.capabilities,
+                    &mut self.operation_observations,
+                    stores,
+                );
                 let first = processor.get_x_token().map_err(command_error)?.ok_or(
                     ExecError::MissingToken {
                         context: "terminal filename",
@@ -1808,16 +1915,21 @@ impl CanonicalMainControl {
         // normal file-input level beneath the selected root, so retire its
         // exhausted source silently before main control starts.  The eventual
         // terminal stop is then emitted by command input after the root file
-        // retires (TeX82 §46 final cleanup).
-        let terminal_exhausted = CommandProcessor::new(
+        // retires (TeX82 §46 final cleanup).  Vacating the slot is what makes
+        // this one episode silent, and it is deliberate rather than an
+        // omitted observer at the construction site.
+        let silenced = self.operation_observations.take();
+        let exhausted = command_processor(
             &mut self.command,
             &mut self.runtime,
-            stores.command_context(),
-            CommandHostContext::new(&mut self.capabilities),
+            &mut self.capabilities,
+            &mut self.operation_observations,
+            stores,
         )
         .get_x_token()
-        .map_err(command_error)?
-        .is_none();
+        .map_err(command_error);
+        self.operation_observations = silenced;
+        let terminal_exhausted = exhausted?.is_none();
         if !terminal_exhausted {
             return Err(ExecError::MissingToken {
                 context: "terminal filename terminator",

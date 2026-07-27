@@ -81,9 +81,30 @@ fn canonical_main_control_has_one_command_owned_delivery_and_aggregate_rollback_
         "canonical retries must start a fresh command-owned processor episode"
     );
     assert!(
-        driver.contains("struct ObservationBuffer")
-            && driver.contains("pending.flush_into(observer)")
-            && driver.contains(".with_observer(observer)"),
+        driver.contains("struct ObservationBuffer") && driver.contains("pending.flush_into"),
         "observation must be transaction-buffered output from the same command processor, not a cached delivery path"
+    );
+    // One main-control operation runs several command-processor episodes: the
+    // delivery episode, the nested math-field/math-script/`\mathchoice`
+    // episodes a host-applied step runs, and the deferred `\output` episode.
+    // Each construction site used to decide for itself whether to install the
+    // operation's observer, and the nested math episodes never did, so a
+    // `^{...}` script field was scanned with zero observations
+    // (umber2-johp.195). One constructor, taking the commit slot as a
+    // parameter, is what makes that unrepresentable.
+    assert_eq!(
+        driver.matches("CommandProcessor::new(").count(),
+        1,
+        "canonical main control must construct every processor episode through one constructor"
+    );
+    assert_eq!(
+        driver.matches(".with_observer(").count(),
+        1,
+        "whether an episode is observed must be decided in that one constructor"
+    );
+    assert_eq!(
+        driver.matches("fn command_processor<").count(),
+        1,
+        "that constructor must be `command_processor`"
     );
 }
