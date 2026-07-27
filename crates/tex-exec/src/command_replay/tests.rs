@@ -835,7 +835,12 @@ fn canonical_math_given_builds_the_same_noads_as_math_char_num() {
     );
 
     // §1151's `math_given: c:=cur_chr` field case, which must resolve
-    // identically to the `math_char_num` case one noad earlier.
+    // identically to the `math_char_num` case one noad earlier. Both
+    // currently freeze a `MathField::SubMlist` where §1151's
+    // `math_type(p):=math_char` calls for a math char, because
+    // `simplify_canonical_math_field` collapses a one-noad field only when
+    // that noad is `Ord`; that pre-existing deviation is umber2-johp.204 and
+    // is deliberately not asserted as correct here.
     assert!(matches!(
         noad(5).kind,
         tex_state::math::NoadKind::Normal(tex_state::math::NoadClass::Inner)

@@ -7507,6 +7507,13 @@ fn apply_scanned_step(
                 // `mmode+letter`/`mmode+other_char`/`mmode+char_given` cases:
                 // it appends a math-char noad and never begins or continues
                 // a horizontal list from math mode.
+                //
+                // §1155's other branch, `if c>=@'100000 then <Treat cur_chr
+                // as an active character>` (§1152), is not implemented: a
+                // `\mathcode` of 32768 is dropped here instead of being
+                // re-dispatched through the active character. Tracked as
+                // umber2-johp.205; `math_given` cannot reach it, since
+                // §1224's `\mathchardef` bounds its code to fifteen bits.
                 let code = stores.mathcode(ch);
                 if code != 0x8000 {
                     append_canonical_math_char(
@@ -9151,6 +9158,9 @@ fn apply_scanned_step(
         ScannedStep::Character { ch, cat, origin } => {
             if matches!(modes.current_mode(), Mode::Math | Mode::DisplayMath) {
                 if !matches!(cat, Catcode::Space) {
+                    // §1155's active-character branch is missing here too;
+                    // see the `ScannedStep::CharacterCode` arm above and
+                    // umber2-johp.205.
                     let code = stores.mathcode(ch);
                     if code != 0x8000 {
                         append_canonical_math_char(modes.current_list_mut(), stores, code, origin)?;
