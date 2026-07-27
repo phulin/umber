@@ -154,7 +154,7 @@
       "rationale": "Magnification is checked and frozen at first preparation."
     },
     {
-      "modules": { "first": 1029, "last": 1033 },
+      "modules": { "first": 1029, "last": 1031 },
       "disposition": "property",
       "owner": "tex-exec::main-control",
       "property_ids": ["tex82.main-control.mode-dispatch"],
@@ -186,7 +186,7 @@
       "rationale": "Braces open groups or select finite mismatch recovery."
     },
     {
-      "modules": { "first": 1068, "last": 1070 },
+      "modules": { "first": 1068, "last": 1069 },
       "disposition": "property",
       "owner": "tex-exec::save-stack",
       "property_ids": ["tex82.group.unsave-restoration"],
@@ -336,7 +336,7 @@
     },
     {
       "id": "tex82.group.unsave-restoration",
-      "sections": [281, 282, 283, 284, 1068, 1069, 1070],
+      "sections": [281, 282, 283, 284, 1068, 1069],
       "claim": "Closing a typed group restores saved locals unless globally superseded, restores outer metadata, and only then resumes token delivery.",
       "preconditions": ["A non-bottom group has local and globally superseded saves."],
       "stimulus": ["Close ordinary and replay-created nested groups and observe state before the next token."],
@@ -383,7 +383,7 @@
     },
     {
       "id": "tex82.main-control.mode-dispatch",
-      "sections": [1029, 1030, 1031, 1032, 1033, 1045, 1046, 1047],
+      "sections": [1029, 1030, 1031, 1045, 1046, 1047],
       "claim": "Main control obtains one expanded command, dispatches on absolute mode plus command, and routes mode-independent meanings without consuming a second command.",
       "preconditions": ["A resolved command and canonical mode are current."],
       "stimulus": [
