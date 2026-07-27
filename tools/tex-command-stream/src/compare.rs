@@ -42,7 +42,7 @@ use tex_oracle::{
     NormalizedEvent, RecoveryKind, StateTarget, TokenListTransition,
 };
 
-use crate::{ObservedEvent, bounded_debug};
+use crate::{ObservedEvent, bounded_debug, hidden_difference_excerpt};
 
 #[cfg(test)]
 mod tests;
@@ -238,6 +238,9 @@ impl fmt::Display for StreamMismatch {
             MismatchSides::Both { expected, actual } => {
                 write!(formatter, "\n  expected: {}", bounded_debug(expected))?;
                 write!(formatter, "\n  actual: {}", bounded_debug(&actual.event))?;
+                if let Some(excerpt) = hidden_difference_excerpt(expected, &actual.event) {
+                    formatter.write_str(&excerpt)?;
+                }
                 if !actual.context.is_empty() {
                     write!(formatter, "\n  context: {}", actual.context)?;
                 }

@@ -510,6 +510,23 @@ It reports a ranked WORKLIST, not just the first divergence:
 
     The observed index is printed only once it has drifted from the oracle
     index. See "Stream alignment" below for what each resync means.
+
+    Both rendered events are truncated to a bounded number of characters, so
+    a long payload -- a macro body, a token register, a mutation value --
+    can differ past the cut and print two identical-looking sides. When that
+    happens the entry carries one extra pair of lines naming the character
+    offset where the two renderings first differ, with a window of context
+    around it:
+
+    ```text
+      first difference at character 4325, past the truncation above:
+        expected: …, OracleToken { … "mac_param" … }, OracleToken { … }] })
+        actual:   …, OracleToken { … "mac_param" … }, OracleToken { … }] })
+    ```
+
+    It is text-level rather than schema-aware, so it works for every event
+    kind without enumerating payload fields, and it is emitted only when the
+    truncation actually hid the difference.
   - A contained replay failure (`engine panicked` or `replay failed`): a
     command-core `ExecError` or a Rust panic during that fixture's replay is
     caught (`catch_panic`/`ReplayFailure`) and reported as its own ordered
